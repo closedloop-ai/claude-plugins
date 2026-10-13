@@ -274,3 +274,21 @@ export function huskyInputFixture(value: ReturnType<typeof syncFixture>) {
   value.write(output, body);
   return { output, body };
 }
+
+/** Mirrors pnpm's install-time launcher shim, which embeds the absolute checkout path beside the package's real content. */
+export function producerShimInputFixture(value: ReturnType<typeof syncFixture>) {
+  const generated = prismaInputFixture(value);
+  const install = String.raw`const fs=require('node:fs');const path=require('node:path');
+const root='node_modules/prisma';fs.mkdirSync(path.join(root,'build'),{recursive:true});fs.mkdirSync(path.join(root,'node_modules','.bin'),{recursive:true});
+fs.writeFileSync(path.join(root,'build','index.js'),'module.exports = {};\n');
+const shim=path.join(root,'node_modules','.bin','prisma');
+fs.writeFileSync(shim,'#!/bin/sh\nexec node "$(dirname "$0")/../../build/index.js" "$@"\n# cmd-shim-target='+path.join(process.cwd(),root,'build','index.js')+'\n');fs.chmodSync(shim,0o755);
+`;
+  value.write("scripts/fixture-producer-shim.cjs", install);
+  value.write(".closedloop-ai/loops-setup.sh", "#!/bin/sh\nset -eu\nnode scripts/fixture-producer-shim.cjs\npnpm --dir packages/database run db:generate\n");
+  value.git(["add", "scripts/fixture-producer-shim.cjs"]); value.git(["add", "-f", ".closedloop-ai/loops-setup.sh"]);
+  value.git(["commit", "-m", "Synthetic installed producer with a path-bearing launcher shim"]);
+  const run = spawnSync(process.execPath, ["scripts/fixture-producer-shim.cjs"], { cwd: value.worktree, encoding: "utf8", timeout: 10000 });
+  if (run.error || run.status !== 0) throw new Error(run.stderr || "Synthetic producer install failed");
+  return { ...generated, shim: "node_modules/prisma/node_modules/.bin/prisma", content: "node_modules/prisma/build/index.js" };
+}

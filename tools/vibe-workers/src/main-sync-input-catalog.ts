@@ -61,19 +61,24 @@ export function producerPackage(root: string, producer: InputProducer) {
   return { path: relative(root, canonical), directory: dirname(canonical), version: data.version };
 }
 
-/** Binds only the selected installed producer package, not the transitive node_modules population. */
+/** Binds only the selected installed producer package, not the transitive node_modules population.
+ * The package's own node_modules/.bin holds pnpm's install-time launcher shims, which embed the absolute
+ * checkout path (cmd-shim-target, NODE_PATH) and so can never match a pristine checkout elsewhere; their
+ * relative targets are the package content compared here or transitive packages this owner never binds. */
 export function producerOwnerInputs(root: string, producer: InputProducer, allowed?: ReadonlySet<string>) {
   const owner = producerPackage(root, producer);
   if (!owner) return [];
+  const shims = join(owner.directory, "node_modules", ".bin");
   const result: z.infer<typeof producerInputSchema>[] = [];
   const walk = (directory: string) => {
     for (const name of readdirSync(directory).sort()) {
       const path = join(directory, name);
+      if (path === shims) continue;
       const file = relative(root, path);
       const stat = lstatSync(path);
       if (stat.isSymbolicLink() || realpathSync(path) !== path) throw new MainSyncError(`Selected producer package contains a noncanonical node: ${producer.id}`, "NEEDS_CHANGE");
       if (stat.isDirectory()) {
-        if (allowed && ![...allowed].some((item) => item.startsWith(`${file}/`))) throw new MainSyncError("Selected producer contains an unknown directory; preserve it without reading contents", "NEEDS_CHANGE");
+        if (allowed && !shims.startsWith(`${path}${sep}`) && ![...allowed].some((item) => item.startsWith(`${file}/`))) throw new MainSyncError("Selected producer contains an unknown directory; preserve it without reading contents", "NEEDS_CHANGE");
         walk(path);
       }
       else {

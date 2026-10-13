@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { invokeSync, syncFixture, validateFixture, currentSyncDefinitions, selectedReportFixture } from "./main-sync-test-fixtures.js";
 import { prismaInputFixture, fumadocsInputFixture, buildInfoInputFixture, largeProducerInputFixture, nextInputFixture, pureInputFixture,
-  docsInputFixture, huskyInputFixture, desktopPrismaInputFixture } from "./main-sync-input-test-fixtures.js";
+  docsInputFixture, huskyInputFixture, desktopPrismaInputFixture, producerShimInputFixture } from "./main-sync-input-test-fixtures.js";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { originIdentity } from "./main-sync-input-files.js";
 
@@ -196,6 +196,39 @@ describe("production committed-input privacy and origin boundaries", () => {
       expect(result.json?.mainSync).toMatchObject({ status: "DONE", generatedFiles: 1 });
       expect(readFileSync(join(value.worktree, generated.output), "utf8")).toBe(generated.body);
       expect(existsSync(join(value.metadata, "FETCH_HEAD"))).toBe(false);
+    } finally { source.finish(); }
+  }, 30000);
+
+  it("matches a pristine install at another checkout path when only the package's own launcher shims embed that path", () => {
+    const value = setup();
+    const installed = producerShimInputFixture(value);
+    expect(readFileSync(join(value.worktree, installed.shim), "utf8")).toContain(value.worktree);
+    const source = value.sourceTurn();
+    try {
+      const result = invokeSync(value, "inputs", source.context);
+      expect(result.status, result.stdout).toBe(0);
+      const state = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8"));
+      const names = JSON.parse(gunzipSync(Buffer.from(state.inputs.packages[0].names, "base64")).toString("utf8"));
+      expect(names).toEqual(["build/index.js", "index.js", "package.json"]);
+    } finally { source.finish(); }
+    const publisher = value.start("redeploy");
+    try {
+      const prepared = invokeSync(value, "prepare", publisher.context);
+      expect(prepared.status, prepared.stdout).toBe(0);
+    } finally { publisher.finish(); }
+  }, 30000);
+
+  it.each(["content", "nested-module"] as const)("still refuses a selected producer whose real %s differs from the pristine install", (failure) => {
+    const value = setup();
+    const installed = producerShimInputFixture(value);
+    if (failure === "content") value.write(installed.content, "module.exports = { poisoned: true };\n");
+    else value.write("node_modules/prisma/node_modules/unexpected/index.js", "module.exports = {};\n");
+    const source = value.sourceTurn();
+    try {
+      const result = invokeSync(value, "inputs", source.context);
+      expect(result.status, result.stdout).toBe(1);
+      expect(String(result.json?.error)).toMatch(failure === "content" ? /differs from the pristine locked owner: shared-prisma/ : /unknown directory/);
+      expect(existsSync(join(value.metadata, "vibe-main-sync.json"))).toBe(false);
     } finally { source.finish(); }
   }, 30000);
 

@@ -226347,15 +226347,17 @@ function producerPackage(root, producer) {
 function producerOwnerInputs(root, producer, allowed) {
   const owner = producerPackage(root, producer);
   if (!owner) return [];
+  const shims = join7(owner.directory, "node_modules", ".bin");
   const result = [];
   const walk = (directory) => {
     for (const name of readdirSync2(directory).sort()) {
       const path2 = join7(directory, name);
+      if (path2 === shims) continue;
       const file = relative3(root, path2);
       const stat = lstatSync4(path2);
       if (stat.isSymbolicLink() || realpathSync6(path2) !== path2) throw new MainSyncError(`Selected producer package contains a noncanonical node: ${producer.id}`, "NEEDS_CHANGE");
       if (stat.isDirectory()) {
-        if (allowed && ![...allowed].some((item) => item.startsWith(`${file}/`))) throw new MainSyncError("Selected producer contains an unknown directory; preserve it without reading contents", "NEEDS_CHANGE");
+        if (allowed && !shims.startsWith(`${path2}${sep2}`) && ![...allowed].some((item) => item.startsWith(`${file}/`))) throw new MainSyncError("Selected producer contains an unknown directory; preserve it without reading contents", "NEEDS_CHANGE");
         walk(path2);
       } else {
         if (allowed && !allowed.has(file)) throw new MainSyncError("Selected producer contains an unknown file; preserve it without reading its body", "NEEDS_CHANGE");

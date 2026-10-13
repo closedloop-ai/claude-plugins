@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.15
+
+#### Fixed
+- Canonical input readiness no longer refuses every worktree with "Selected installed producer differs from the pristine locked owner". The pristine owner comparison skips the selected package's own `node_modules/.bin` launcher shims, which pnpm writes at install time with the checkout's absolute path, so an install at another checkout path now matches. Every other file in the package, including executables it ships and anything else under its `node_modules`, is still compared by path, size, sha256 and mode.
+
+#### Added
+- Readiness tests: an installed producer whose launcher shim embeds its checkout path matches the pristine install and is consumed by prepare; a changed `build/index.js` is still refused as differing from the pristine owner; an unexpected module under the package's `node_modules` is still refused as an unknown directory.
+
 ### vibe v1.0.14
 
 #### Fixed
