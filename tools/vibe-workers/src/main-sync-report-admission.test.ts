@@ -638,10 +638,11 @@ describe("canonical bootstrap health is not validation proof", () => {
     const runner = readFileSync(join(value.bin, "pnpm"), "utf8");
     value.write("../bin/pnpm", runner.replace("const args = process.argv.slice(2);", `const args = process.argv.slice(2);if(args[0]==='exec'&&args[1]==='node')fs.writeFileSync(${JSON.stringify(marker)},'ran');`));
     value.git(["add", "."]); value.git(["commit", "-m", "Synthetic discovery report input"]);
-    const prepare = value.start("redeploy", "build");
+    // Owning lane discovery runs only in the handoff matrix.
+    const prepare = value.start("redeploy", "handoff");
     try { expect(invokeSync(value, "prepare", prepare.context).status).toBe(0); }
     finally { prepare.finish(); }
-    const source = value.sourceTurn("build");
+    const source = value.sourceTurn("handoff");
     try {
       const result = invokeSync(value, "validate", source.context);
       expect(existsSync(marker)).toBe(false);

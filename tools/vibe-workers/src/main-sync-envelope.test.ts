@@ -87,7 +87,9 @@ describe("production derived Claude validation envelope", () => {
   it.each(["source", "recipe"] as const)("rejects %s drift after the owned Claude child starts but before any required check", (failure) => {
     const value = setup();
     const { transactionId, witness } = prepared(value);
-    const before = value.calls();
+    // A build recipe spawns no pnpm child before validation, so the call log may not exist yet.
+    const calls = () => existsSync(join(value.metadata, "validation-calls.jsonl")) ? value.calls() : "";
+    const before = calls();
     const claude = join(value.bin, "claude");
     const mutation = failure === "source"
       ? "fs.writeFileSync(path.join(process.cwd(),'apps/app/probe.ts'),'changed after owned launch\\n');"
@@ -98,7 +100,7 @@ describe("production derived Claude validation envelope", () => {
     expect(result.status, result.stdout).toBe(1);
     expect(result.json.data.mainSyncResult.status).toBe("NEEDS_CHANGE");
     expect(result.json.data.mainSyncResult.error).toMatch(failure === "source" ? /committed validation inputs/i : /recipe\/witness identity/);
-    expect(value.calls()).toBe(before);
+    expect(calls()).toBe(before);
     const state = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8"));
     expect(state.previous.validation).toBeUndefined();
     expect(existsSync(join(value.metadata, "vibe-record-turn.lock"))).toBe(false);

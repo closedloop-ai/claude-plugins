@@ -21,9 +21,10 @@ if(args[0]==='turbo'&&args[1]==='typecheck'&&args.includes('--dry=json')&&(${pin
 }
 if(args[0]==='typecheck:affected') {process.stdout.write('NOTHING WAS TYPECHECKED; this is NOT coverage\\n');process.exit(0);}
 if (args.includes('--dry=json')) {`));
-    const publisher = value.start("redeploy");
+    // The deployment-pinned matrix runs only at handoff since build deploys run the commit-hook checks alone.
+    const publisher = value.start("redeploy", "handoff");
     try { expect(invokeSync(value, "prepare", publisher.context).status).toBe(0); } finally { publisher.finish(); }
-    const source = value.sourceTurn();
+    const source = value.sourceTurn("handoff");
     try {
       const result = invokeSync(value, "validate", source.context);
       expect(result.status, result.stdout).toBe(pinned === "selected" ? 0 : 1);
@@ -57,7 +58,7 @@ if(args.includes('--dry=json') && args.includes(${JSON.stringify(`--filter=...[$
  process.stdout.write(JSON.stringify({tasks:[{taskId:'desktop#test',package:'desktop'},{taskId:'app#test',package:'app'}]}));process.exit(0);
 }
 if (args.includes('--dry=json')) {`));
-    expect(validateFixture(value).status).toBe(0);
+    expect(validateFixture(value, "handoff").status).toBe(0);
     const receipt = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8"));
     const affected = receipt.validation.commands.find((item: { argv: string[] }) => item.argv[1] === "test:affected");
     const pinned = receipt.validation.commands.find((item: { argv: string[] }) => item.argv[1] === "turbo" && item.argv[2] === "test");

@@ -85,9 +85,9 @@ describe("fixed budget refs and actual budget caller",()=>{
     expect(existsSync(join(value.metadata,"validation-calls.jsonl"))).toBe(false);
   },30000);
   it("actual canonical checkRecipe invokes paired budget owner without changed proof fields",()=>{
-    const value=setup();withPath(value);const publisher=value.start("redeploy");
+    const value=setup();withPath(value);const publisher=value.start("redeploy","handoff");
     try{expect(invokeSync(value,"prepare",publisher.context).status).toBe(0);}finally{publisher.finish();}
-    const receipt=mainSyncReceiptSchema.parse(JSON.parse(readFileSync(join(value.metadata,"vibe-main-sync.json"),"utf8"))),source=value.sourceTurn();
+    const receipt=mainSyncReceiptSchema.parse(JSON.parse(readFileSync(join(value.metadata,"vibe-main-sync.json"),"utf8"))),source=value.sourceTurn("handoff");
     try{const context=syncContext({context:source.context},"validate");control.calls.length=0;const recipe=checkRecipe(context,receipt);
       expect(control.calls.filter(x=>same(x,pair))).toHaveLength(2);
       expect(recipe.commands.some(x=>x.argv[1]==="test:affected")).toBe(true);
