@@ -349,9 +349,11 @@ between a request and the person seeing it.
   changed files, the affected typecheck and the source gates. When they fail
   on an existing test or fixture the change broke, the writer repairs it
   (`guardrails.md`, "Repair, don't author").
-- Commit, deploy and show: the orchestrator commits with its script and, when
-  the person asks to see it, deploys through the existing publication gate
-  (`SKILL.md`, section 6) and shows them. That gate's own fixed validation
+- Commit, deploy and show: after each finished change the orchestrator
+  commits with its script and deploys through the existing publication gate
+  without being asked (`SKILL.md`, section 6), batching changes that arrive
+  while a deploy runs into the next one, then tells the person it's ready to
+  look at. That gate's own fixed validation
   (`environment.md`, "Main-sync before publication") is unchanged.
 
 Browser E2E, visual QA, logical QA, Metal Andrew, the guardrails and
@@ -368,7 +370,10 @@ No test authoring in the build loop or at handoff, including new
 fixtures/snapshots (Daniel Ochoa's ruling, 2026-10-13; `guardrails.md`,
 "Tests"). The SAME writer repairs an existing test or fixture its own change
 broke, in the loop or at handoff, without changing what any test asserts, and
-records it in the change log as a repair. Stories remain part of component
+records it in the change log as a repair. It may delete a test file or case
+that covers only code the request retires, recorded with `retired-tests.mjs`
+and the ticket or PRD that retires it (`guardrails.md`, "Retired-only tests
+may be deleted"); a test of live behavior is only repaired. Stories remain part of component
 work. Needed new-test coverage is recorded locally as it is found, not an
 early-authoring gate. Failures of existing live contracts remain implementation
 findings. Never ask the person about tests or any other engineering choice;
@@ -380,8 +385,8 @@ missing test as engineering's scope of work: the behavior and row ID that
 needs it, the files to cover, and any existing test a human behavior ruling
 made obsolete, with that exact ruling, for engineering to update. Verify
 helpers and reviewers remain read-only. A test the session added, deleted or
-changed beyond a recorded repair is a finding; do not retrospectively relabel
-it. Preserve valid evidence when resuming an interrupted handoff.
+changed beyond a recorded repair or retired-only deletion is a finding; do not
+retrospectively relabel it. Preserve valid evidence when resuming an interrupted handoff.
 
 The only exception is the person explicitly asking for a pull request to be
 raised. Then the SAME writer, in an explicit `pull-request` turn, writes full

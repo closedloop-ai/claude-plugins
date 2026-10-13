@@ -160,6 +160,10 @@ subagent that worked on this.>
   ID each covers, the files that need coverage, and any existing test a human
   behavior ruling made obsolete, with that exact ruling. Vibe and handoff
   write no tests>, or "None: existing tests cover every row"
+- Retired tests deleted: <each test file or case the session deleted because
+  it covered only code this session retired, from the handoff inventory's
+  `retiredTests`: its path and case, the retired code it covered, and the
+  ticket or PRD that retired it>, or "None"
 - Pre-existing failures not touched by this work: <list or "none">
 - Next: <the next owner the person chose at handoff, by full name> picks
   this up. Usually design reviews the components in the Storybook above (it

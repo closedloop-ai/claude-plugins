@@ -249,10 +249,13 @@ it.
 
 No worker authors a test in vibe or handoff: no new `*.test.*` or `*.spec.*`
 file, nothing new under `__tests__/` or `e2e/`, no new case, assertion,
-snapshot or fixture, and no deleted test. This holds in the build loop and at
-handoff alike (Daniel Ochoa's ruling, 2026-10-13). The one edit allowed is a
-repair, below. Existing tests run at handoff, and stories remain part of
-component work.
+snapshot or fixture, and no deleted test of live behavior. This holds in the
+build loop and at handoff alike (Daniel Ochoa's ruling, 2026-10-13). The edits
+allowed are a repair and a retired-only deletion, below. Existing tests run
+at handoff, and stories remain part of component work.
+
+Never ask the person about tests or any other engineering choice. These rules
+decide it, or it goes to engineering, never to the person.
 
 ### Repair, don't author
 
@@ -270,13 +273,26 @@ repairs under `testRepairs` and reports an added or deleted test file, or a
 changed snapshot, as outside the allowed paths; `vibe-guardrails-reviewer`
 checks that every repair left each assertion unchanged.
 
-When the only way to make a test compile would change what it asserts (it
-covers behavior the session retired), that is not a repair: the test stays
-unedited, goes on Missing tests with the ruling that retired the behavior, and
-the blocked commit goes to engineering.
+When the only way to make a test compile would change what it asserts, that
+is not a repair. If the test covers only code the request retires, delete it
+as below; otherwise the test stays unedited, goes on Missing tests, and the
+blocked commit goes to engineering.
 
-Never ask the person about tests or any other engineering choice. These rules
-decide it, or it goes to engineering, never to the person.
+### Retired-only tests may be deleted
+
+The SAME writer may delete a test file or test case that covers ONLY code the
+request itself retires, citing the ticket or PRD that retires that code
+(Daniel Ochoa's ruling, 2026-10-13; the root `AGENTS.md`: "When the contract
+under test is deliberately retired, deleting its test is the complete and
+correct outcome"). A test that still covers any live behavior is only
+repaired, never deleted; when one file mixes both, delete only the retired
+cases and repair the rest. Record every deletion before the commit with
+`node <plugin-root>/skills/vibe/scripts/retired-tests.mjs record --worktree "<wt>" --path <test file> [--case "<test name>"] --retired-by <ISS-, PRD- or FEA- slug> --covers "<retired code it covered>"`.
+The handoff inventory admits a deleted test file outside a pull request only
+with that whole-file record and lists every recorded deletion under
+`retiredTests`; `vibe-guardrails-reviewer` verifies each one covered only
+retired code, and the live ticket lists them on its Retired tests deleted line
+next to Missing tests so engineering sees them.
 
 ### Running and missing tests
 
@@ -310,8 +326,9 @@ stays unedited: record that ruling and list the test under Missing tests for
 engineering to update, retaining coverage of every still-live contract.
 Never loosen, skip or remove a valid test, edit a fixture or harness to mask a
 failure, or raise timeouts/tolerances to get green; a repair only keeps an
-existing test compiling. Neither vibe nor handoff opens a pull request on its
-own.
+existing test compiling, and a recorded retired-only deletion removes only a
+test whose code the request retired. Neither vibe nor handoff opens a pull
+request on its own.
 
 ## Checks
 
@@ -320,7 +337,7 @@ expected values, snapshots, tolerances, skips, timeouts, coverage or size
 thresholds, lint and type suppressions (`biome-ignore`, `@ts-expect-error`, a
 cast that only quiets the compiler), a raised allowlist count, or the harness.
 Fix the code. The shrink-only allowlist edit above, a test repair that leaves
-every assertion unchanged and the repo's explicitly human-directed
+every assertion unchanged, a recorded retired-only test deletion and the repo's explicitly human-directed
 behavior-change rule in Tests are not ways to hide a failure.
 If an expectation looks wrong without that evidence, keep it and report it.
 

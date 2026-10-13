@@ -33,7 +33,10 @@ in Claude Code and uses that skill's own template. Plans and review drafts
 stay in the session worktree's `.closedloop-ai/vibe-plans/` folder, outside
 commits, publications, and ticket uploads. The build loop is lean: quick
 prep, the build, the quick checks the commit hooks need, the orchestrator's
-commit, deploy, and showing the person. The plan gets no review, and browser
+commit, deploy, and showing the person. Each finished change deploys to the
+session's Vercel preview without the person asking ("redeploy" still works),
+and changes that arrive during a deploy go out together in the next one.
+The plan gets no review, and browser
 E2E, visual QA, logical QA, Metal Andrew, the guardrails and adversarial
 reviews and other heavy validation run only at handoff.
 
@@ -52,7 +55,8 @@ handoff the reviewers, may run in parallel, read-only. Operational helpers retai
 and ticket duties without authoring implementation code. Shared session records,
 ticket sections and change logs stay serialized. Workers never commit; the
 orchestrator retains the commit boundary. No test is authored during building;
-the writer only repairs an existing test or fixture its own change broke,
+the writer only repairs an existing test or fixture its own change broke, or
+deletes a recorded test that covered only retired code,
 without changing what any test asserts, so the tree compiles and the hooks pass.
 Before the first remote publication and again at handoff, an owned transaction
 captures fresh main and prepares an ordinary noncommitting merge. The same writer
@@ -135,8 +139,11 @@ handoff ends at the branch without opening a pull request.
 Nobody authors tests in vibe or handoff. The same implementation writer only
 repairs existing tests and fixtures the session's change broke (imports,
 renamed or retired symbols, setup, type errors) without changing any
-assertion; the handoff inventory lists those repairs and rejects an added or
-deleted test file, and the guardrails reviewer checks each repair. Handoff
+assertion. It may delete a test file or case that covers only code the
+request retires, recorded with `retired-tests.mjs` and the retiring ticket or
+PRD, and the live ticket lists those deletions next to Missing tests. The
+handoff inventory lists repairs and recorded deletions and rejects an added or
+unrecorded deleted test file, and the guardrails reviewer checks each one. Handoff
 runs the existing affected tests, the writer fixes the session's own code
 when one fails, never what a test asserts, and the ticket lists the missing tests as
 engineering's scope of work: the behavior and row each covers and the files

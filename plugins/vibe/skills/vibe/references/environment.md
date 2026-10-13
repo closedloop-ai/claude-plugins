@@ -90,9 +90,11 @@ variant name.
 
 ## Redeploying (the orchestrator commits, then `vibe-environment-worker`, redeploy mode)
 
-Only when the person asks ("redeploy", "redeploy to Vercel", "push it up",
-"put it on Vercel", "let me see it live"). The orchestrator makes one commit
-of everything changed since the last redeploy, never a local fix, with
+After each change the build loop finishes, without the person asking, and
+whenever the person still says "redeploy" (or "redeploy to Vercel", "push it
+up", "put it on Vercel", "let me see it live"); changes that arrive while a
+deploy runs go out together in the next one (`SKILL.md`, section 6). The
+orchestrator makes one commit of everything changed since the last redeploy, never a local fix, with
 `scripts/commit-worktree.mjs` (the repository's commit hook runs there; no
 worker ever commits). Then the worker pushes, requests the environment again
 with the same mode, reads the deployed commit from that run, and tells the

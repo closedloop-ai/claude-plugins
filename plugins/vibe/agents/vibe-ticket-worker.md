@@ -196,7 +196,10 @@ historical inspections accurately. Preserve the existing grading block.
    line lists the edited pages from the writer's record and never claims a
    page that is not in the diff (`git -C "<wt>" diff --stat <inventory baseCommit>`).
    Missing tests lists every entry of the writer's missing tests list, each
-   with its behavior, row ID and files to cover. Running app checks and
+   with its behavior, row ID and files to cover. Retired tests deleted lists
+   every `retiredTests` entry the inventory reports as deleted (`D`) or
+   changed (`M`) with its path, case, the retired code it covered and the
+   ticket or PRD that retired it, or "None". Running app checks and
    Design Review's Visual evidence carry the control artifact paths with what
    each proves, kept apart from source-only claims, and name the exact command
    and reason for any surface control could not drive; upload the cited

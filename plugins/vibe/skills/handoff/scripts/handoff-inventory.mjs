@@ -25,7 +25,10 @@
 // existing test or fixture modified so the tree compiles after the session's
 // own change, never added, deleted or a snapshot updated. Repairs are listed
 // under `testRepairs` for the guardrails reviewer, which checks that no
-// assertion changed.
+// assertion changed. The one deletion allowed there is a test file that covered
+// only code the request retires, recorded with ../../vibe/scripts/retired-tests.mjs;
+// every recorded deletion, file or case, is listed under `retiredTests` with
+// its status so the reviewer can verify it and the ticket can list it.
 //
 // `backendChanged` says whether the work touched backend code
 // (`backendFiles`). Handoff runs its lighter checks when it did not, and the
@@ -39,7 +42,9 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { committedLocalPlans, isLocalPlanPath, LOCAL_PLAN_PREFIX } from "../../vibe/scripts/local-plans.mjs";
 import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe/scripts/prototype-session.mjs";
+import { readRetiredTests } from "../../vibe/scripts/retired-tests.mjs";
 import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
+import { isRootTest, isSnapshot, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
 import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
 import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-shrink.mjs";
 import { isPortableSurfaceAllowlistEdit, PORTABLE_SURFACE_CHECKER } from "./prototype-allowlist.mjs";
@@ -81,11 +86,8 @@ const COMPONENT_PATTERN = /\/components\/.+\.tsx$/;
 // Tests are written only when the person explicitly asks for a pull request
 // (Daniel Ochoa's ruling, 2026-10-13); earlier phases may only repair existing
 // tests and fixtures the session's change broke (Daniel Ochoa's ruling,
-// 2026-10-13, after the PRD-720 live test).
-const ROOT_TEST_PREFIXES = ["e2e/", "apps/desktop/test/"];
-const TEST_SPEC_PATTERN = /\.(?:test|spec)\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
-const TEST_SUPPORT_PATTERN = /(?:^|\/)(?:__tests__|__fixtures__|__mocks__|__snapshots__|fixtures)\//;
-const SNAPSHOT_PATTERN = /\.snap$/;
+// 2026-10-13, after the PRD-720 live test) or delete a recorded retired-only
+// test (Daniel Ochoa's ruling, 2026-10-13).
 // Handoff may edit, never create, existing product docs pages as marked agent
 // drafts (Daniel Ochoa's scoped exception, 2026-10-13); generated pages and
 // the internal docs/ folder stay out.
@@ -129,7 +131,11 @@ const changedFiles = allChangedFiles.filter((file) => !localFixTickets.has(file.
 const localFixes = allChangedFiles
   .filter((file) => localFixTickets.has(file.path))
   .map((file) => ({ ...file, ticket: localFixTickets.get(file.path) }));
+const retiredRecord = readRetiredTests(worktree);
+const retiredFiles = new Set(retiredRecord.filter((entry) => entry.case === undefined).map((entry) => entry.path));
 const testRepairs = changedFiles.filter((file) => isTestRepair(file));
+const changedStatus = new Map(changedFiles.map((file) => [file.path, file.status]));
+const retiredTests = retiredRecord.map((entry) => ({ ...entry, status: changedStatus.get(entry.path) ?? null }));
 const shrinkOnlyAllowlists = changedFiles.filter((file) => isShrinkOnlyEdit(file));
 const shrinkOnlyPaths = new Set(shrinkOnlyAllowlists.map((file) => file.path));
 const forbidden = changedFiles.filter((file) => isForbidden(file.path) && !shrinkOnlyPaths.has(file.path));
@@ -168,6 +174,7 @@ const result = {
   outsideAllowed,
   shrinkOnlyAllowlists,
   testRepairs,
+  retiredTests,
   backendChanged: backendFiles.length > 0,
   backendFiles,
   componentsWithoutStories,
@@ -230,7 +237,8 @@ function isShrinkOnlyEdit(file) {
 
 function isAllowed(file) {
   if (isTestFile(file.path)) {
-    return isTestRepair(file) || (values.phase === "pull-request" && isPullRequestTest(file));
+    return isTestRepair(file) || isRetiredDeletion(file) ||
+      (values.phase === "pull-request" && isPullRequestTest(file));
   }
   return isAllowedPath(file);
 }
@@ -257,22 +265,19 @@ function isAllowedPath(file) {
   return ALLOWED_PREFIXES.some((prefix) => filePath.startsWith(prefix));
 }
 
-function isTestFile(filePath) {
-  return TEST_SPEC_PATTERN.test(filePath) || TEST_SUPPORT_PATTERN.test(filePath) || SNAPSHOT_PATTERN.test(filePath);
-}
-
-function isRootTest(filePath) {
-  return ROOT_TEST_PREFIXES.some((prefix) => filePath.startsWith(prefix));
-}
-
 function isPullRequestTest(file) {
   return isAllowedPath(file) || (isRootTest(file.path) && TEST_SPEC_PATTERN.test(file.path));
 }
 
 /** An existing test or fixture modified in place; never an added or deleted file or an updated snapshot. */
 function isTestRepair(file) {
-  return file.status === "M" && isTestFile(file.path) && !SNAPSHOT_PATTERN.test(file.path) &&
+  return file.status === "M" && isTestFile(file.path) && !isSnapshot(file.path) &&
     (isRootTest(file.path) || isAllowedPath(file));
+}
+
+/** A deleted test file the writer recorded as covering only code the request retires. */
+function isRetiredDeletion(file) {
+  return file.status === "D" && retiredFiles.has(file.path) && (isRootTest(file.path) || isAllowedPath(file));
 }
 
 function isExistingDocsEdit(file) {

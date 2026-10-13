@@ -69,12 +69,13 @@ def test_guardrails_allow_repairs_that_change_no_assertion() -> None:
                      "It adds no test file, no case and no coverage; new tests still go on Missing tests",
                      "records each repaired file in the session change log as a repair", "`testRepairs`",
                      "`vibe-guardrails-reviewer` checks that every repair left each assertion unchanged",
-                     "that is not a repair: the test stays unedited", "the blocked commit goes to engineering",
-                     NO_ENGINEERING_QUESTIONS):
+                     "that is not a repair", "otherwise the test stays unedited, goes on Missing tests",
+                     "the blocked commit goes to engineering"):
         assert required in rule, required
     tests = section(GUARDRAILS.read_text(), "## Tests")
+    assert NO_ENGINEERING_QUESTIONS in tests
     assert "No worker authors a test in vibe or handoff" in tests
-    assert "and no deleted test" in tests
+    assert "and no deleted test of live behavior" in tests
 
 
 def test_no_surface_asks_the_person_about_tests() -> None:
@@ -84,7 +85,7 @@ def test_no_surface_asks_the_person_about_tests() -> None:
     writer = section(agent("vibe-change-worker"), "## Tests: repair, don't author")
     assert "Never return `NEEDS_PERSON` about a test or any other engineering choice" in writer
     assert "return `BLOCKED` for engineering" in writer
-    escalation = section(VIBE_SKILL.read_text(), "## 6. Redeploy")
+    escalation = section(VIBE_SKILL.read_text(), "## 6. Deploy each change")
     assert "this part needs engineering" in escalation
     assert "never ask them to decide it" in escalation
 
@@ -104,8 +105,9 @@ def test_the_writer_repairs_in_loop_and_handoff_turns_and_records_each_repair() 
 def test_the_inventory_lists_repairs_and_rejects_authored_test_files() -> None:
     inventory = INVENTORY.read_text()
     assert "testRepairs," in inventory
-    assert 'file.status === "M" && isTestFile(file.path) && !SNAPSHOT_PATTERN.test(file.path)' in inventory
-    assert 'isTestRepair(file) || (values.phase === "pull-request" && isPullRequestTest(file))' in inventory
+    assert 'file.status === "M" && isTestFile(file.path) && !isSnapshot(file.path)' in inventory
+    assert "isTestRepair(file) || isRetiredDeletion(file) ||" in inventory
+    assert '(values.phase === "pull-request" && isPullRequestTest(file))' in inventory
 
 
 def test_the_launcher_grants_repair_authority_separately_from_test_authoring() -> None:

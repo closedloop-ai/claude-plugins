@@ -4,6 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.20
+
+#### Changed
+- Retired-only tests may be deleted. The writer may delete a test file or test case that covers only code the request itself retires, citing the ticket or PRD that retires it, and records each deletion with the new `skills/vibe/scripts/retired-tests.mjs` (private Git metadata beside the session record). A test that still covers live behavior is only repaired, never deleted. The handoff inventory admits a deleted test file outside `--phase pull-request` only with a whole-file record and lists every recorded deletion under `retiredTests`; the guardrails reviewer verifies each deleted file or case covered only retired code and blocks unrecorded deletions; the live ticket gains a Retired tests deleted line next to Missing tests. Test-file classification moves to the shared `skills/vibe/scripts/test-files.mjs`, and the launcher's writer prompt names the deletion rule.
+- Auto-deploy. After each change in the build loop the orchestrator commits and deploys to the session's Vercel preview without being asked, then tells the person it is ready to look at. Saying "redeploy" still runs the same steps. One deploy runs at a time; requests that arrive while one runs wait in the writer's queue and go out together in the next deploy. The vibe skill's section 6 is now "Deploy each change", and the quality loop, environment reference and README follow it.
+- Contract tests for both rules, recorder tests, and an inventory test for recorded and unrecorded test deletions.
+
 ### vibe v1.0.19
 
 #### Changed

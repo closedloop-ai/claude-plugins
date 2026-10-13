@@ -205,6 +205,7 @@ describe("production Claude CLI adapter", () => {
     const prompt = proof[0]!.definition["vibe:vibe-change-worker"]!.prompt;
     expect(prompt).toContain("may only repair existing tests and fixtures your own change broke");
     expect(prompt).toContain("without changing what any test asserts; never add a test file");
+    expect(prompt).toContain("Delete a test file or case only when it covers nothing but code the request retires");
     expect(proof[4]?.definition["vibe:vibe-guardrails-reviewer"]?.prompt).toContain("Never write or edit tests. ");
   });
   it("admits only pre-session requirements and setup with their existing serialized ticket actions", () => {
