@@ -8,13 +8,14 @@ import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fi
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INVENTORY = path.join(HERE, "handoff-inventory.mjs");
 const SESSIONS = path.join(HERE, "..", "..", "vibe", "scripts", "vibe-sessions.mjs");
+const RETIRED = path.join(HERE, "..", "..", "vibe", "scripts", "retired-tests.mjs");
 const ALLOWLIST = "scripts/lint/source-gate-allowlist.json";
 const FOCUS_RING = { rule: "no-hand-rolled-focus-ring", file: "packages/app/a.tsx", fingerprint: "packages/app/a.tsx", count: 1, reason: "seeded" };
 const HEX = { rule: "no-hex-color-in-jsx-styling", file: "apps/app/b.tsx", fingerprint: "apps/app/b.tsx", count: 3, reason: "seeded" };
 const allowlist = (entries) =>
   `${JSON.stringify({ registeredRules: ["no-hand-rolled-focus-ring", "no-hex-color-in-jsx-styling"], entries }, null, 2)}\n`;
 
-function setup(t, slug) {
+function setup(t, slug, extraFiles = {}) {
   const fixture = makeHome("handoff-inventory-");
   t.after(fixture.cleanup);
   const checkout = path.join(fixture.home, "Documents", "Closedloop.ai - Active Work", "symphony-alpha");
@@ -31,6 +32,7 @@ function setup(t, slug) {
       "apps/web/content/docs/meta.json": "{\"pages\":[]}\n",
       "docs/runbooks/bulk-actions.md": "Runbook.\n",
       [ALLOWLIST]: allowlist([FOCUS_RING, HEX]),
+      ...extraFiles,
     },
   });
   const created = runNode(
@@ -94,6 +96,93 @@ test("root web and desktop test specs are allowed only for a requested pull requ
   assert.deepEqual(pullRequest.json.outsideAllowed, [{ path: "e2e/playwright.config.ts", status: "A" }]);
   const invalid = runNode(INVENTORY, ["--worktree", worktree, "--phase", "unknown"], home);
   assert.equal(invalid.status, 1);
+});
+
+test("existing tests and fixtures may be repaired in every phase; only a pull request adds, deletes or snapshot-updates one", (t) => {
+  const { home, worktree } = setup(t, "test-repairs", {
+    "packages/app/sessions/list.test.tsx": "expect(render(List)).toBeTruthy();\n",
+    "packages/app/sessions/__fixtures__/rows.ts": "export const rows = [];\n",
+    "packages/app/sessions/__snapshots__/list.test.tsx.snap": "exports[`list`] = `<ul />`;\n",
+    "packages/app/sessions/retired.test.tsx": "expect(retired()).toBe(1);\n",
+    "e2e/sessions.spec.ts": "test('sessions', () => {});\n",
+    "e2e/fixtures/auth.ts": "export const auth = {};\n",
+  });
+  write(worktree, "packages/app/sessions/list.test.tsx", "expect(render(ListV2)).toBeTruthy();\n");
+  write(worktree, "packages/app/sessions/__fixtures__/rows.ts", "export const rows: Row[] = [];\n");
+  write(worktree, "packages/app/sessions/__snapshots__/list.test.tsx.snap", "exports[`list`] = `<ol />`;\n");
+  write(worktree, "e2e/sessions.spec.ts", "test('sessions', async () => {});\n");
+  write(worktree, "e2e/fixtures/auth.ts", "export const auth: Auth = {};\n");
+  write(worktree, "packages/app/sessions/new.test.tsx", "expect(1).toBe(1);\n");
+  write(worktree, "packages/app/sessions/__tests__/helper.ts", "export {};\n");
+  git(worktree, ["rm", "-q", "packages/app/sessions/retired.test.tsx"], home);
+  const repairs = [
+    { path: "e2e/fixtures/auth.ts", status: "M" },
+    { path: "e2e/sessions.spec.ts", status: "M" },
+    { path: "packages/app/sessions/__fixtures__/rows.ts", status: "M" },
+    { path: "packages/app/sessions/list.test.tsx", status: "M" },
+  ];
+  const authored = [
+    { path: "packages/app/sessions/__snapshots__/list.test.tsx.snap", status: "M" },
+    { path: "packages/app/sessions/__tests__/helper.ts", status: "A" },
+    { path: "packages/app/sessions/new.test.tsx", status: "A" },
+    { path: "packages/app/sessions/retired.test.tsx", status: "D" },
+  ];
+  for (const phase of ["build", "handoff"]) {
+    const result = runNode(INVENTORY, ["--worktree", worktree, "--phase", phase], home);
+    assert.deepEqual(result.json.testRepairs, repairs, phase);
+    assert.deepEqual(result.json.outsideAllowed, authored, phase);
+  }
+  const pullRequest = runNode(INVENTORY, ["--worktree", worktree, "--phase", "pull-request"], home);
+  assert.deepEqual(pullRequest.json.testRepairs, repairs);
+  assert.deepEqual(pullRequest.json.outsideAllowed, []);
+});
+
+test("a deleted test is allowed outside a pull request only when recorded as covering retired code", (t) => {
+  const { home, worktree } = setup(t, "retired-tests", {
+    "packages/app/sessions/grouped-list.test.tsx": "expect(renderGrouped()).toBeTruthy();\n",
+    "packages/app/sessions/live.test.tsx": "expect(renderLive()).toBeTruthy();\n",
+    "packages/app/sessions/list.test.tsx": "it('flat', () => {});\nit('grouped', () => {});\n",
+  });
+  git(worktree, ["rm", "-q", "packages/app/sessions/grouped-list.test.tsx", "packages/app/sessions/live.test.tsx"], home);
+  write(worktree, "packages/app/sessions/list.test.tsx", "it('flat', () => {});\n");
+  const recorded = [
+    ["--path", "packages/app/sessions/grouped-list.test.tsx", "--retired-by", "PRD-720", "--covers", "GroupedListRenderer"],
+    ["--path", "packages/app/sessions/list.test.tsx", "--case", "grouped", "--retired-by", "PRD-720", "--covers", "the grouped mode"],
+  ];
+  for (const args of recorded) {
+    assert.equal(runNode(RETIRED, ["record", "--worktree", worktree, ...args], home).status, 0);
+  }
+  for (const phase of ["build", "handoff"]) {
+    const result = runNode(INVENTORY, ["--worktree", worktree, "--phase", phase], home);
+    assert.deepEqual(result.json.outsideAllowed, [{ path: "packages/app/sessions/live.test.tsx", status: "D" }], phase);
+    assert.deepEqual(result.json.testRepairs, [{ path: "packages/app/sessions/list.test.tsx", status: "M" }], phase);
+    assert.deepEqual(result.json.retiredTests, [
+      { path: "packages/app/sessions/grouped-list.test.tsx", retiredBy: "PRD-720", covers: "GroupedListRenderer", status: "D" },
+      { path: "packages/app/sessions/list.test.tsx", case: "grouped", retiredBy: "PRD-720", covers: "the grouped mode", status: "M" },
+    ], phase);
+  }
+  const caseOnly = runNode(RETIRED, ["record", "--worktree", worktree, "--path", "packages/app/sessions/live.test.tsx",
+    "--case", "renders", "--retired-by", "PRD-720", "--covers", "nothing retired"], home);
+  assert.equal(caseOnly.status, 0);
+  const stillOutside = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
+  assert.deepEqual(stillOutside.json.outsideAllowed, [{ path: "packages/app/sessions/live.test.tsx", status: "D" }]);
+});
+
+test("a test repair never admits a harness or a path the session may not edit", (t) => {
+  const { home, worktree } = setup(t, "repair-bounds", {
+    "e2e/playwright.config.ts": "export default {};\n",
+    "apps/mcp/fixtures/tool.ts": "export const tool = {};\n",
+  });
+  write(worktree, "e2e/playwright.config.ts", "export default { retries: 5 };\n");
+  write(worktree, "apps/mcp/fixtures/tool.ts", "export const tool: Tool = {};\n");
+  for (const phase of ["build", "handoff", "pull-request"]) {
+    const result = runNode(INVENTORY, ["--worktree", worktree, "--phase", phase], home);
+    assert.deepEqual(result.json.testRepairs, [], phase);
+    assert.deepEqual(result.json.outsideAllowed, [
+      { path: "apps/mcp/fixtures/tool.ts", status: "M" },
+      { path: "e2e/playwright.config.ts", status: "M" },
+    ], phase);
+  }
 });
 
 test("existing product docs pages may be edited only at handoff, never created, generated or internal", (t) => {

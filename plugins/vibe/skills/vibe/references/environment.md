@@ -90,9 +90,11 @@ variant name.
 
 ## Redeploying (the orchestrator commits, then `vibe-environment-worker`, redeploy mode)
 
-Only when the person asks ("redeploy", "redeploy to Vercel", "push it up",
-"put it on Vercel", "let me see it live"). The orchestrator makes one commit
-of everything changed since the last redeploy, never a local fix, with
+After each change the build loop finishes, without the person asking, and
+whenever the person still says "redeploy" (or "redeploy to Vercel", "push it
+up", "put it on Vercel", "let me see it live"); changes that arrive while a
+deploy runs go out together in the next one (`SKILL.md`, section 6). The
+orchestrator makes one commit of everything changed since the last redeploy, never a local fix, with
 `scripts/commit-worktree.mjs` (the repository's commit hook runs there; no
 worker ever commits). Then the worker pushes, requests the environment again
 with the same mode, reads the deployed commit from that run, and tells the
@@ -203,7 +205,7 @@ request, owned prototype share and final handoff, begin a fresh coherent transac
 Git push itself can trigger Vercel, so a stale interim push is forbidden even
 when no request workflow has started. The root keeps this sequence internal:
 
-ROOT commits the reviewed deliverable LOCALLY through the existing commit
+ROOT commits the checked deliverable LOCALLY through the existing commit
 script and normal hooks, still unpushed, BEFORE preparation. Private plans stay
 excluded; interfering protected localFix source is preserved and blocks parity,
 not silently included or discarded. A clean result needs no extra local commit.
@@ -235,7 +237,8 @@ main capture, test authority, validation PASS or permission to publish.
    session table/local canonical plan before source fixes and checks frozen
    earlier behavior/interactions against the merged result. All conflicts,
    generated source and fixes stay with that writer; no new tests are written
-   unless the person asked for a pull request (`guardrails.md`, "Tests").
+   unless the person asked for a pull request, and the writer only repairs
+   existing tests the merge broke (`guardrails.md`, "Tests").
    Upstream imports are not newly authored feature tests, but no actual
    unrecorded test edit is retrospectively relabeled.
 3. Only the root commits the staged merge/fixes through the existing commit

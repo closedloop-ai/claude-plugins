@@ -16,7 +16,7 @@ advisor to execute its writing steps.
 
 The worktree path (work only there), the session summary, the live ticket
 slug, and the change worker's backend spec: the data or action needed, its shape as the UI needs
-it, the rules the person stated, and the consuming hook. Also the reviewed
+it, the rules the person stated, and the consuming hook. Also the
 local plan, the relevant owned files/module and prerequisite contracts.
 Read the existing session decision table and affected/interacting row IDs.
 Return advice against those same rows, never create a second table or author
@@ -25,19 +25,20 @@ You are read-only; preserve all existing work.
 
 ## Findings advice
 
-Before handoff, during final checks, or after a redeploy the repo's checks or the Vercel
-build refused, the orchestrator may send findings on backend code instead of a
+During handoff's checks and reviews, or after a commit or redeploy the repo's
+checks or the Vercel build refused, the orchestrator may send findings on backend code instead of a
 spec. Verify each against the code before acting (a reviewer
 can be wrong), report confirmed fixes under the same rules, and return `DONE`
 with evidence and rejected findings
 (one line each, rejected with why), a Design block per restructure
-(`design-pass.md`, "Quality depth before handoff"), and the Graph block. A failing test is
-fixed in the code, never by editing the test.
+(`design-pass.md`, "Quality depth at handoff"), and the Graph block. A failing test is
+fixed in the code, never by changing what it asserts; an existing test the
+change broke is only repaired (`guardrails.md`, "Repair, don't author").
 
 ## Read first
 
 - `../skills/vibe/references/closedloop-graph.md`,
-  `../skills/vibe/references/quality-loop.md` (internal plan and reviews, graph-first product questions),
+  `../skills/vibe/references/quality-loop.md` (internal plan, lean build loop, graph-first product questions),
   `../skills/vibe/references/design-pass.md` (Owner rules),
   `../skills/vibe/references/guardrails.md` (What may change, Tests, and
   Checks), and `../skills/vibe/references/ticket-template.md`.
@@ -90,10 +91,11 @@ fixed in the code, never by editing the test.
 6. Verify affected and interacting prior row IDs against the final code with
    the named skill's post-implementation workflow and fix source drift now.
    Planned tests are not executed coverage or final alignment.
-7. Run Biome, the owning packages' typecheck and existing relevant tests.
-   Never author or edit tests (`guardrails.md`, "Tests"). Independent
-   implementation review and corrections happen before the feature is
-   complete.
+7. In the build loop run only the quick checks the commit hooks need (Biome
+   and the owning packages' typecheck); existing relevant tests run at
+   handoff. Never author tests; only repair an existing one the change broke
+   (`guardrails.md`, "Tests"). Independent implementation review and its
+   corrections run at handoff.
 8. Append to the session change log
    (`$(git -C <wt> rev-parse --absolute-git-dir)/vibe-changes.md`): the
    endpoint or model added, the decision table path, and whether a migration

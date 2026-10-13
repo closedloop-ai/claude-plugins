@@ -31,9 +31,14 @@ App and owned prototype changes use an internal quality loop. The same writer
 loads `$plan-structure` in Codex or `/closedloop-core:plan-structure`
 in Claude Code and uses that skill's own template. Plans and review drafts
 stay in the session worktree's `.closedloop-ai/vibe-plans/` folder, outside
-commits, publications, and ticket uploads. A separate adversarial reviewer
-checks the plan before implementation; independent implementation reviews,
-corrections, and existing checks precede feature completion.
+commits, publications, and ticket uploads. The build loop is lean: quick
+prep, the build, the quick checks the commit hooks need, the orchestrator's
+commit, deploy, and showing the person. Each finished change deploys to the
+session's Vercel preview without the person asking ("redeploy" still works),
+and changes that arrive during a deploy go out together in the next one.
+The plan gets no review, and browser
+E2E, visual QA, logical QA, Metal Andrew, the guardrails and adversarial
+reviews and other heavy validation run only at handoff.
 
 Every request also uses `$decision-table` or `/closedloop-core:decision-table`
 before code, including frontend-only, prototype and trivial edits. One living
@@ -45,12 +50,14 @@ implementation against affected and interacting prior rows after each correction
 Planned tests remain distinct from executed coverage.
 
 The orchestrator queues new requests and resumes that same writer's context
-for each request, correction and handoff. Independent specialists and reviewers
-may run in parallel, read-only. Operational helpers retain bootstrap, deployment
+for each request, correction and handoff. Independent specialists, and at
+handoff the reviewers, may run in parallel, read-only. Operational helpers retain bootstrap, deployment
 and ticket duties without authoring implementation code. Shared session records,
 ticket sections and change logs stay serialized. Workers never commit; the
-orchestrator retains the commit boundary. New or changed tests wait for handoff,
-while existing tests and Storybook checks run during building.
+orchestrator retains the commit boundary. No test is authored during building;
+the writer only repairs an existing test or fixture its own change broke, or
+deletes a recorded test that covered only retired code,
+without changing what any test asserts, so the tree compiles and the hooks pass.
 Before the first remote publication and again at handoff, an owned transaction
 captures fresh main and prepares an ordinary noncommitting merge. The same writer
 handles conflicts and executes the existing scope-specific checks against the
@@ -129,9 +136,16 @@ canonical prototype publication, and completes the same live ticket. Resolves
 the next owner named by the person and assigns the ticket with status In
 Progress. Canonical prototype review and metadata transitions are preserved;
 handoff ends at the branch without opening a pull request.
-Nobody writes or edits tests in vibe or handoff. Handoff runs the existing
-affected tests, the same implementation writer fixes the session's own code
-when one fails, never the test, and the ticket lists the missing tests as
+Nobody authors tests in vibe or handoff. The same implementation writer only
+repairs existing tests and fixtures the session's change broke (imports,
+renamed or retired symbols, setup, type errors) without changing any
+assertion. It may delete a test file or case that covers only code the
+request retires, recorded with `retired-tests.mjs` and the retiring ticket or
+PRD, and the live ticket lists those deletions next to Missing tests. The
+handoff inventory lists repairs and recorded deletions and rejects an added or
+unrecorded deleted test file, and the guardrails reviewer checks each one. Handoff
+runs the existing affected tests, the writer fixes the session's own code
+when one fails, never what a test asserts, and the ticket lists the missing tests as
 engineering's scope of work: the behavior and row each covers and the files
 to cover. Only the person's explicit request for a pull request authorizes
 tests, and then full tests for every change are written and pass before it
@@ -199,7 +213,7 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 | `vibe-storybook-decomposer` | sonnet | Read-only component extraction, placement, story and control guidance for that writer |
 | `vibe-verify-worker` | sonnet | Read-only existing checks, handoff coverage review, full backend suite, Storybook footprint and handoff running app checks with `pnpm control` |
 | `vibe-guardrails-reviewer` | sonnet | Read-only judgment-based review of reuse, placement, copy provenance, accessibility, and tests |
-| `vibe-adversarial-reviewer` | opus | Separate read-only plan and implementation reviews of ownership, dependencies, contracts, regressions, and web/Desktop behavior |
+| `vibe-adversarial-reviewer` | opus | Separate read-only handoff review of ownership, dependencies, contracts, regressions, and web/Desktop behavior |
 | `vibe-handoff-summarizer` | sonnet | Read-only plain-language summary of the session inventory, changes, and overlaps |
 | `vibe-seed-check-worker` | sonnet | Fresh-main seed checks and latest Vibe Seed Walk inspection |
 | `vibe-seed-fix-worker` | sonnet | Seed drift fixes, validation, and follow-up PR-check and review-comment fixes |

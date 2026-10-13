@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### closedloop-core v1.2.4
+### closedloop-core v1.2.5
 
 #### Removed
 - `workflow-code-review` lens files no longer tell planning, plan-review, implementation-review, fix and re-check subagents to post ClosedLoop loop events (`add_loop_event` with a `planning_loop_id` or `execution_loop_id`). `plan-review-lanes/common.md` drops its `Loop Events` section, and the numbered steps in `planning-phase.md` and `implementation-quality-gate.md` are renumbered.
@@ -43,11 +43,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - The `export-closedloop-learnings` usage example, the `process-chat-learnings.sh` header and the `perf_summary.py` output-path docstring no longer refer to `run-loop.sh` or Loop runs, and `process-learnings` no longer says `compute_success_rates.py` runs as a step of the post-iteration pipeline.
 
-### vibe v1.0.18
+### vibe v1.0.21
 
 #### Removed
 - `vibe-seed-refresh` no longer creates a ClosedLoop loop, posts loop events or completes a loop. Its state file drops `loopId`, and the done step goes straight to `update-document`. `vibe-seed-fix-worker` returns its summary for the PR body only.
 - The "do not create loops" boundary lines in `cl-analyze`, `cl-execute`, `cl-split`, `cl-sweep`, `cl-find-related-tickets` and `cl-work-report`. `cl-execute` keeps its rule that ticket status, linked plan, pull request, validation evidence, structured result and workflow repo memory are the execution record.
+
+### vibe v1.0.20
+
+#### Changed
+- Retired-only tests may be deleted. The writer may delete a test file or test case that covers only code the request itself retires, citing the ticket or PRD that retires it, and records each deletion with the new `skills/vibe/scripts/retired-tests.mjs` (private Git metadata beside the session record). A test that still covers live behavior is only repaired, never deleted. The handoff inventory admits a deleted test file outside `--phase pull-request` only with a whole-file record and lists every recorded deletion under `retiredTests`; the guardrails reviewer verifies each deleted file or case covered only retired code and blocks unrecorded deletions; the live ticket gains a Retired tests deleted line next to Missing tests. Test-file classification moves to the shared `skills/vibe/scripts/test-files.mjs`, and the launcher's writer prompt names the deletion rule.
+- Auto-deploy. After each change in the build loop the orchestrator commits and deploys to the session's Vercel preview without being asked, then tells the person it is ready to look at. Saying "redeploy" still runs the same steps. One deploy runs at a time; requests that arrive while one runs wait in the writer's queue and go out together in the next deploy. The vibe skill's section 6 is now "Deploy each change", and the quality loop, environment reference and README follow it.
+- Contract tests for both rules, recorder tests, and an inventory test for recorded and unrecorded test deletions.
+
+### closedloop-core v1.2.4
+
+#### Changed
+- `measurement-discipline` prioritizes the largest measured contributors and ranks mechanisms by credible whole-target impact, evidence, and experiment cost. Bounded diagnostics screen mechanisms before expensive repeated comparisons; explicitly requested small scopes and evidence of compounding gains remain valid. Encourages creative architecture and lifecycle experiments within scope while preserving functionality, data, responsiveness, repeated controls, and product-level proof. Measurement entries record the impact ceiling and experiment cost, and remaining opportunities are ranked again after each adopted improvement.
+
+### vibe v1.0.19
+
+#### Changed
+- Repair, don't author. When the session's own change breaks an existing test or fixture (an import, a renamed or retired symbol, setup, a type error), the same writer may mechanically update that file so the tree compiles and the commit hooks pass, in the build loop or at handoff, without changing what any test asserts: no weakened or deleted assertion, changed expected value or snapshot, new skip, or loosened matcher, tolerance or timeout. New tests and coverage still go on the ticket's Missing tests line. A test that cannot compile without changing its assertions stays unedited, goes on Missing tests and is escalated to engineering. Nobody asks the person about tests or any other engineering choice. The Claude launcher adds `authority.testRepairAuthorized`, true only for the writer's `request`, `fix`, `handoff` and `pull-request` turns, while `testAuthoringAuthorized` stays true only for `pull-request`. The handoff inventory lists modified existing tests and fixtures under `testRepairs` and, outside `--phase pull-request`, reports an added or deleted test file or a changed snapshot as outside the allowed paths, including co-located tests under the allowed app paths. The guardrails reviewer reads each repair's diff and blocks any changed assertion or an unrecorded repair; the change worker, verify worker, adversarial reviewer, quality loop, guardrails, design pass, both skills and the README follow the same rule.
+- Lean build loop. The loop is quick prep, the build, the quick checks the commit hooks need (Biome on the changed files, the affected typecheck, the source gates), the orchestrator's commit, deploy and showing the person. The adversarial plan review is gone (the writer builds right after its plan and table rows), and the adversarial reviewer loses its plan mode. Browser E2E, visual QA, logical QA, Metal Andrew, the guardrails and adversarial reviews, `workflow-code-review`, the existing test suite and other heavy validation run only at handoff, which gains a step that runs the repository's visual QA, logical QA and Metal Andrew skills where its AGENTS.md calls for them. The reference-product and new Storybook components notices are unchanged.
+- Contract tests for both rules, launcher tests for the repair authority per turn mode, and inventory tests for repairs, authored test files, snapshots and harness files. The cl-sweep skill contract test now pins that vibe has no plan review.
 
 ### vibe v1.0.17
 

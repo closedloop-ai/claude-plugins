@@ -639,22 +639,20 @@ test('cl-execute gives a plan exactly one independent review', () => {
   assert.deepEqual(plainReviewScanHits(sources), []);
 });
 
-test('vibe sessions give a plan exactly one review with no recheck', () => {
+// Daniel Ochoa's 2026-10-13 lean build loop ruling removed the vibe plan review:
+// the writer builds right after its plan and reviews run only at handoff.
+test('vibe sessions build right after the plan with no plan review', () => {
   const skill = read('vibe/SKILL.md');
   const loop = read('vibe/references/quality-loop.md');
   const reviewer = read('../agents/vibe-adversarial-reviewer.md');
   const writer = read('../agents/vibe-change-worker.md');
 
-  assert.match(skill, /A plan gets exactly one review/);
-  assert.match(skill, /moves on\s+to implementation without a recheck\. Never run a second plan review/);
-  assert.match(loop, /A plan gets exactly one review/);
-  assert.match(loop, /moves on to\s+code without a recheck\. Never run a second plan review/);
-  assert.match(reviewer, /This is the plan's only review/);
-  assert.match(reviewer, /Never\s+recheck plan corrections, and never run a second plan review/);
-  assert.match(writer, /then implement without a recheck;\s+never run a second plan review/);
+  assert.match(skill, /There is no plan review\. The writer builds right after its plan/);
+  assert.match(loop, /The plan gets no review: the writer writes it and builds in the same turn/);
+  assert.match(writer, /The plan gets no review: build in the same turn/);
+  assert.doesNotMatch(reviewer, /## Plan mode|PLAN_REVIEW/);
   for (const source of [skill, loop, writer]) {
-    assert.match(source, /verif(?:y|ies) each finding against the code/);
-    assert.match(source, /detail-level\s+suggestions\s+into\s+the\s+plan's\s+`## Implementation Notes` section/);
+    assert.doesNotMatch(source, /adversarial plan review|A plan gets exactly one review/);
   }
 
   const sources = [...filesUnder('vibe'), ...filesUnder('../agents')];
