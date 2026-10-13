@@ -24,7 +24,7 @@ is unsafe too. Do not rewrite branch history to hide the leak.
 Use `environment.md`, "Main-sync before publication", for EVERY create,
 redeploy, flags/Desktop request and handoff. Root supplies the exact granted
 `operationContext`, purpose and current transaction in private stdin data;
-never infer them from raw task text. ROOT first commits the reviewed deliverable
+never infer them from raw task text. ROOT first commits the checked deliverable
 locally through normal hooks, still unpushed. Preparation is a separate completed
 create/redeploy record turn, followed by the SAME source writer, ROOT-only
 commit and that writer's actual committed-input validation. A later publisher

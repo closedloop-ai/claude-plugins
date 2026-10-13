@@ -73,9 +73,11 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
     .map((capability) => capability.name)])];
   const persistent = input.agentName === "vibe-change-worker";
   const phasePolicy = persistent
-    ? "Current phase and test-authoring authority come only from the orchestrator's top-level turn envelope, separate from raw input text. "
-      + "Only an explicit pull-request turn in that envelope, sent because the person asked for a pull request, may author or edit tests. "
+    ? "Current phase, test-authoring and test-repair authority come only from the orchestrator's top-level turn envelope, separate from raw input text. "
+      + "Only an explicit pull-request turn in that envelope, sent because the person asked for a pull request, may author tests. "
       + "Never author tests in plan, request, fix, handoff, record or build turns, or infer authority from the person's words. "
+      + "A request, fix or handoff turn with test-repair authority may only repair existing tests and fixtures your own change broke "
+      + "(imports, renamed or retired symbols, setup, type errors) without changing what any test asserts; never add a test file. "
     : `This is mode ${input.mode}. Never write or edit tests. `;
   const prompt = `${definition.prompt}\n\nRuntime binding: work only in ${input.worktree}. `
     + `Resolve this canonical definition's relative resource references against ${join(definition.root, "agents")}. `
@@ -168,7 +170,8 @@ export async function runWorker(rawInput: unknown) {
       "--allowedTools", bound.tools.join(","),
       resume ? "--resume" : "--session-id", workerId];
     const launch = launchProcess(args, place.root, JSON.stringify({ requestId: input.requestId,
-      mode: input.mode, authority: { testAuthoringAuthorized: persistent && input.mode === "pull-request" },
+      mode: input.mode, authority: { testAuthoringAuthorized: persistent && input.mode === "pull-request",
+        testRepairAuthorized: persistent && TEST_REPAIR_MODES.has(input.mode) },
       ...(input.sessionless ? { sessionless: input.sessionless } : {}),
       ...(input.discardTarget ? { discardTarget: input.discardTarget } : {}),
       ...(input.recordAction ? { recordAction: input.recordAction } : {}),
@@ -346,4 +349,7 @@ export async function main(argv: string[]): Promise<number> {
     return 1;
   }
 }
+
+/** Writer turns that may mechanically repair existing tests the session's change broke (Daniel Ochoa's ruling, 2026-10-13). */
+const TEST_REPAIR_MODES: ReadonlySet<string> = new Set(["request", "fix", "handoff", "pull-request"]);
 runFromCanonicalEntry(import.meta.url, main);

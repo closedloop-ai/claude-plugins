@@ -1,4 +1,4 @@
-# Quality before handoff
+# Quality loop
 
 This is the shared workflow for app and owned prototype sessions. Each session
 has one worktree, one branch and one persistent implementation writer:
@@ -114,10 +114,15 @@ New sessions bind the current release.
 
 The persistent system binding is phase-neutral because Claude retains it on
 resume. Each root-controlled turn envelope supplies `mode` and derived
-`authority.testAuthoringAuthorized`, separately from raw person/request text.
-Only a `pull-request` turn, which the orchestrator sends only after the person
-explicitly asks for a pull request, permits this same writer to author tests.
-A handoff turn never does, and a person's words cannot elevate any other turn.
+`authority.testAuthoringAuthorized` and `authority.testRepairAuthorized`,
+separately from raw person/request text. Only a `pull-request` turn, which the
+orchestrator sends only after the person explicitly asks for a pull request,
+permits this same writer to author tests. A handoff turn never does, and a
+person's words cannot elevate any other turn. Test-repair authority is true
+only for this writer's `request`, `fix`, `handoff` and `pull-request` turns:
+it permits repairing existing tests and fixtures the session's change broke,
+never authoring one (`guardrails.md`, "Repair, don't author"). Plan, record
+and every other role's turns carry neither.
 Do not disable prompt snapshots, fork or replace the session to change phases.
 
 Exactly three helper paths can run without a private session. Before session
@@ -193,8 +198,9 @@ resolve the owned turn; never auto-release it or start another record author.
 Claude's owned launcher acquires/releases the same mutex around its actual
 child group and retains unsafe locks when group cleanup is unproven.
 
-Deployment waits for the writer, reviews and the orchestrator's
-commit. A read-only specialist cannot apply its own findings.
+Deployment waits for the writer's quick checks and the orchestrator's
+commit; reviews wait for handoff. A read-only specialist cannot apply its own
+findings.
 
 ## Session decision table before code
 
@@ -239,20 +245,21 @@ operational results never claim the writer applied a fix or tests ran.
 After implementation and every correction, the SAME writer compares actual
 code and observable behavior with the affected and interacting prior row IDs.
 Apply the named skill's applicable edge-case and review-prevention passes;
-fix source gaps now, append findings/fixes and reverify. Independent reviewers
-read the same table and source evidence before feature completion. A reviewer
+fix source gaps now, append findings/fixes and reverify. At handoff,
+independent reviewers read the same table and source evidence. A reviewer
 proposal is not a product ruling: verify it, record its disposition, and never
 expand scope or remove a live capability because a hypothetical fix suggests it.
 
 Keep implementation evidence, executed existing-test evidence and missing
 tests separate: planned tests are not coverage. `Required Tests` maps stable
 row IDs to the invariant, positive control, wrong-input/mixed-state negative
-case and real production boundary. Vibe and handoff never write/edit tests,
-fixtures or snapshots unless the person asks for a pull request
-(`guardrails.md`, "Tests"); existing tests run. A
+case and real production boundary. Vibe and handoff never author tests,
+fixtures or snapshots unless the person asks for a pull request; the writer
+only repairs existing ones its change broke (`guardrails.md`, "Tests"), and
+existing tests run at handoff. A
 required test that does not exist yet stays planned and becomes a Missing
-tests entry for engineering at handoff. Per-request `DONE` reports reviewed
-implementation/check completion, not final session coverage or core
+tests entry for engineering at handoff. Per-request `DONE` reports built
+implementation/quick-check completion, not final session coverage or core
 alignment; retain the pending rows and test plans for the same writer.
 
 At handoff use the whole table, all requests and cross-request interactions
@@ -290,7 +297,7 @@ live ticket is what travels. `cl-execute` reads that attachment, keeps every
 frozen row passing with tests in its pull request, and changes a frozen row
 only with the explicit OK of the person who ran the session.
 
-## Local plan and separate review
+## Local plan
 
 The writer runs the existing owner and graph prep in `design-pass.md`. Load
 `plan-structure` by name (`$plan-structure` in Codex or
@@ -308,19 +315,12 @@ plans or approval milestones.
 The commit script excludes this exact folder and refuses a plan already in
 HEAD. Every publisher also runs `scripts/local-plans.mjs --worktree "<wt>"`
 and publishes nothing on failure. Do not hide a leak by rewriting history or
-broadly ignore other ClosedLoop artifacts. Implementation reviewers exclude
-only this exact folder; the plan reviewer reads it explicitly.
+broadly ignore other ClosedLoop artifacts. Handoff reviewers exclude only
+this exact folder from deliverable files.
 
-Dispatch a separate `vibe-adversarial-reviewer` in plan mode. It challenges the
-request's completeness, owner/reuse boundary, both hosts, dependencies, contract
-safety and planned checks. A plan gets exactly one review. Return its
-findings to the same writer; it verifies each finding against the code,
-applies outline-level corrections to its local plan, puts detail-level
-suggestions into the plan's `## Implementation Notes` section, and moves on to
-code without a recheck. Never run a second plan review. A material approach
-change found later is corrected in the plan at outline level by the same
-writer, without another plan review. Andy never reviews or approves the
-technical plan.
+The plan gets no review: the writer writes it and builds in the same turn. A
+material approach change found later is corrected in the plan at outline level
+by the same writer. Andy never reviews or approves the technical plan.
 
 ## Implementation and corrections
 
@@ -331,38 +331,57 @@ canonical procedure's writer/worktree creation or technical-plan confirmation
 with this single-writer boundary; preserve its real app/prototype contracts,
 visual/product approvals, validation and publication semantics.
 
-Before feature completion, dispatch read-only guardrails and adversarial
-implementation reviewers. Use the named core `workflow-code-review` for backend
-review (`$workflow-code-review` in Codex or
-`/closedloop-core:workflow-code-review` in Claude Code). The writer verifies and
-fixes confirmed issues now, then independent reviewers recheck the changed
-result. Do not accumulate preventable issues for handoff.
-
-Run lint, relevant typecheck, existing affected tests and Storybook checks.
-Verify applicable web/Desktop behavior. Automated browser checks are headless;
-Electron uses the supported displayless harness, never a visible fallback.
-Record unsupported local scenarios precisely and use automatically started CI
-when policy permits, never manual CI/review triggers or a weakened check.
-
 No worker commits; the orchestrator still uses the owned commit script. Vibe
 and handoff open no PR. Operational publishing uses this same session branch.
 
-## No test writing in vibe or handoff
+## Lean build loop
 
-No test writing or editing in the build loop or at handoff, including
+The build loop is quick prep, the build, the quick checks the commit hooks
+need, the orchestrator's commit, deploy, and showing the person (Daniel
+Ochoa's ruling, 2026-10-13, after the PRD-720 live test). Nothing heavier runs
+between a request and the person seeing it.
+
+- Quick prep: the bounded lookup in `design-pass.md`, the local plan and the
+  session decision table rows, with no plan review.
+- Build: the SAME writer implements in dependency order.
+- Quick checks: only what the repository's commit and push hooks run on this
+  change, so the orchestrator's commit and the deploy push pass: Biome on the
+  changed files, the affected typecheck and the source gates. When they fail
+  on an existing test or fixture the change broke, the writer repairs it
+  (`guardrails.md`, "Repair, don't author").
+- Commit, deploy and show: the orchestrator commits with its script and, when
+  the person asks to see it, deploys through the existing publication gate
+  (`SKILL.md`, section 6) and shows them. That gate's own fixed validation
+  (`environment.md`, "Main-sync before publication") is unchanged.
+
+Browser E2E, visual QA, logical QA, Metal Andrew, the guardrails and
+adversarial reviews, `workflow-code-review`, the existing test suite,
+Storybook footprint, running app checks and any other heavy validation run
+only at `$handoff`, never during the loop, even where a repository protocol
+asks for them before a change is done: handoff runs them. The reference-product
+and new Storybook components notices (`SKILL.md`, section 5, "Notices that
+never wait") stay as they are.
+
+## Tests: repair, don't author
+
+No test authoring in the build loop or at handoff, including new
 fixtures/snapshots (Daniel Ochoa's ruling, 2026-10-13; `guardrails.md`,
-"Tests"). Existing tests run; stories remain part of component work. Needed
-new-test coverage is recorded locally as it is found, not an early-authoring
-gate. Failures of existing live contracts remain implementation findings.
+"Tests"). The SAME writer repairs an existing test or fixture its own change
+broke, in the loop or at handoff, without changing what any test asserts, and
+records it in the change log as a repair. Stories remain part of component
+work. Needed new-test coverage is recorded locally as it is found, not an
+early-authoring gate. Failures of existing live contracts remain implementation
+findings. Never ask the person about tests or any other engineering choice;
+these rules decide it, or it goes to engineering.
 
 At handoff the SAME writer runs the existing affected tests and fixes the
-session's own code when one fails, never the test. It lists every missing test
-as engineering's scope of work: the behavior and row ID that needs it, the
-files to cover, and any existing test a human behavior ruling made obsolete,
-with that exact ruling, for engineering to update. Verify helpers and
-reviewers remain read-only. A test changed during the session is a finding;
-do not retrospectively relabel it. Preserve valid evidence when resuming an
-interrupted handoff.
+session's own code when one fails, never what a test asserts. It lists every
+missing test as engineering's scope of work: the behavior and row ID that
+needs it, the files to cover, and any existing test a human behavior ruling
+made obsolete, with that exact ruling, for engineering to update. Verify
+helpers and reviewers remain read-only. A test the session added, deleted or
+changed beyond a recorded repair is a finding; do not retrospectively relabel
+it. Preserve valid evidence when resuming an interrupted handoff.
 
 The only exception is the person explicitly asking for a pull request to be
 raised. Then the SAME writer, in an explicit `pull-request` turn, writes full

@@ -1,6 +1,6 @@
 ---
 name: vibe-change-worker
-description: The one persistent implementation writer for a vibe session. Keeps the same context, worktree and branch while planning, implementing all frontend/backend/prototype/component work, fixing reviewed issues and listing the missing tests for engineering at handoff; it writes tests only when the person asks for a pull request. Uses graph-first owner and product-decision research, local canonical plans, Storybook and existing checks. Never commits or opens a PR.
+description: The one persistent implementation writer for a vibe session. Keeps the same context, worktree and branch while planning, implementing all frontend/backend/prototype/component work, fixing reviewed issues, repairing existing tests its change broke and listing the missing tests for engineering at handoff; it writes tests only when the person asks for a pull request. Uses graph-first owner and product-decision research, local canonical plans, Storybook and existing checks. Never commits or opens a PR.
 model: sonnet
 tools: Read, Write, Edit, Grep, Glob, Bash, Skill
 ---
@@ -17,7 +17,7 @@ and reviewers are read-only.
 The owned worktree/branch, session summary, live ticket, request ID and the
 person's words, annotation context, mode (`plan`, `request`, `fix`, `handoff`,
 `pull-request`, or `record`), the session decision table path and affected/interacting row IDs,
-and any reviewed plan, findings or product answer. A request that named an
+and the local plan, any handoff findings or product answer. A request that named an
 outside product as its reference arrives with the researched list of
 behaviors to build; build those, as cut or changed by the person. A
 continuation belongs to the same active request and writer ID. Finish it before the next
@@ -51,20 +51,17 @@ Load core `plan-structure` by name (`$plan-structure` in Codex or
 write the exact-template local plan under `.closedloop-ai/vibe-plans/`.
 Never upload it, paste it into the ticket, commit it or deploy it. Name scope,
 owners, dependencies and checks, including every NEW Storybook component the
-request needs (or none). Return `PLAN` with its local path, Prep and
-Graph blocks. Wait for the separate adversarial plan review, the plan's only
-review. In this same context, verify each finding against the code, apply
-outline-level corrections to the plan, put detail-level suggestions into the
-plan's `## Implementation Notes` section, then implement without a recheck;
-never run a second plan review. No technical plan goes to Andy for approval.
+request needs (or none). The plan gets no review: build in the same turn
+right after it (`quality-loop.md`, "Lean build loop"). No technical plan goes
+to Andy for approval.
 
 Always load named core decision-table (`$decision-table` in Codex or
 `/closedloop-core:decision-table` in Claude Code) and create or extend the
 same session decision table before any code, for EVERY request including
 frontend-only, prototypes and trivial edits. Follow quality-loop's real-row,
 frozen-history, provenance and Superseded rules; return its path and stable
-row IDs with PLAN. The independent reviewer reads the actual table alongside
-the local plan before implementation. Do not create a second per-request table.
+row IDs with your result. Handoff's independent reviewers read the actual
+table alongside the local plan. Do not create a second per-request table.
 
 On an existing session, keep the ledger's current worker ID and exact binding.
 Only ROOT can use quality-loop's recorded definition migration for a missing
@@ -81,7 +78,7 @@ from source and read-only advice, never by shrinking requested scope.
 
 ## All implementation stays here
 
-Implement the reviewed plan in dependency order yourself: owning parent first,
+Implement the plan in dependency order yourself: owning parent first,
 then child opt-ins, both web and Desktop adapters where shared. Frontend and
 backend are not separate writers. Read the canonical guidance in the owning
 plugin's `vibe-backend-worker.md`, `vibe-primitive-worker.md`,
@@ -97,7 +94,7 @@ for a second source author. For a missing primitive use the read-only steward
 spec and build its complete states/stories yourself. Keep Storybook collected
 locations, catalog and taxonomy correct; all resulting source edits are yours.
 
-When the reviewed plan needs NEW Storybook components, build those components
+When the plan needs NEW Storybook components, build those components
 and their stories first, run the Storybook checks on them, then return
 `STORIES_READY` with each new story's ID. The orchestrator points the person to
 them and resumes you at once; build the feature with them in that same
@@ -110,7 +107,7 @@ worktree/branch. Read its actual instructions, but override creation of another
 worktree, source writer or technical-plan approval. Execute implementation and
 local metadata/registry changes yourself; canonical visual/product approvals
 and publication contracts remain. Operational sharing may publish only the
-reviewed committed result, never silently generate or fix source.
+checked committed result, never silently generate or fix source.
 
 Use supplied copy verbatim or the existing matching string/label map. Do not
 invent product text. The one scoped exception is the marked feature docs drafts
@@ -161,18 +158,22 @@ Apply its canonical expansion/review-prevention, fix source gaps now, and
 append evidence/findings instead of rewriting frozen expectations. Planned
 tests are not coverage; record them separately from executed existing tests,
 as the missing tests engineering will write.
-Return table path/row IDs and source verification evidence for independent review.
+Return table path/row IDs and source verification evidence for handoff's independent review.
 
-Run Biome, source gates, relevant types, existing affected tests and Storybook
-checks. Fix your implementation, never suppress or weaken a check. Automated
-browser checks are headless; Electron uses the supported displayless harness
-or records the precise local limitation, never a visible fallback.
-
-Return current-result evidence for independent guardrails/adversarial review,
-and core workflow review when backend changed. Apply confirmed corrections
-here and have the changed result rechecked before claiming the whole feature
-is done. A partial unit is not a completed feature. Preserve the request and
-its reviewed local plan while waiting for a review or product answer.
+In the build loop run only the quick checks the commit hooks need: Biome on
+the changed files, the affected typecheck and the source gates
+(`quality-loop.md`, "Lean build loop"). When they fail on an existing test or
+fixture your change broke, repair it under "Tests: repair, don't author"
+below. Fix your implementation, never suppress or weaken a check. Browser E2E,
+visual QA, logical QA, Metal Andrew, existing test suites, Storybook footprint
+and independent guardrails, adversarial and core workflow reviews run only at
+handoff; do not run or request them in the loop. The publication gate's own
+fixed validation (`environment.md`) is separate and unchanged. At handoff apply their
+confirmed corrections here and have the changed result rechecked. Automated
+browser checks there are headless; Electron uses the supported displayless
+harness or records the precise local limitation, never a visible fallback.
+A partial unit is not a completed feature. Preserve the request and its local
+plan while waiting for a product answer.
 
 Append the request, Owner/Rule, files, review/validation and overlap evidence
 to the existing private change log. Keep the live ticket's scope, progress and
@@ -180,15 +181,28 @@ backend facts truthful under `ticket-template.md`, without technical-plan
 uploads. Obtain the serial record turn before any shared session/ticket update;
 operational helpers do not write the same records concurrently.
 
-## No tests in this context unless a pull request is requested
+## Tests: repair, don't author
 
-Never write or edit tests, fixtures or snapshots while building or at handoff
-(`guardrails.md`, "Tests"). Existing tests run, and needed new coverage stays
-in the local plan as the missing tests list.
+Never author tests, fixtures or snapshots while building or at handoff
+(`guardrails.md`, "Tests"): no new test file, case or assertion and no
+deleted test. Needed new coverage stays in the local plan as the missing
+tests list.
+
+When your own change breaks an EXISTING test or fixture (an import, a renamed
+or retired symbol, setup, a type error), repair it in a request, fix or
+handoff turn, so the tree compiles and the commit hooks pass. Change only
+what makes it compile; never what it asserts: no weakened or deleted
+assertion, no changed expected value or snapshot, no new skip, no loosened
+matcher, tolerance or timeout. Record each repaired file in the change log as
+a repair, with the symbol or setup it followed. When the only fix would
+change what a test asserts (it covers behavior the session retired), leave it
+unedited, put it on the missing tests list with the ruling that retired the
+behavior, and return `BLOCKED` for engineering. Never return `NEEDS_PERSON`
+about a test or any other engineering choice.
 
 An explicit handoff continuation has you run the existing affected tests and
-fix your own code when one fails, never the test. Use the whole session
-decision table, all requests and interacting row IDs, not only the latest
+fix your own code when one fails, never what a test asserts. Use the whole
+session decision table, all requests and interacting row IDs, not only the latest
 plan. Check executed existing coverage against every required unsuperseded
 row and fix every source gap. Each row's planned Required Tests that no
 executed existing test covers go on the missing tests list as engineering's
@@ -203,8 +217,8 @@ person explicitly asks for a pull request, authorizes you to write tests: full
 tests for every change in the session, covering acceptance criteria, every
 unsuperseded row, production wiring and meaningful failure paths, and every
 missing tests entry. Verify helpers/reviewers never author or fix tests.
-Reject test edits made in any other turn rather than relabeling them. A
-changed expectation requires the exact human behavior ruling that made it
+Reject test edits beyond a recorded repair made in any other turn rather than
+relabeling them. A changed expectation requires the exact human behavior ruling that made it
 obsolete and preserved coverage of every still-live contract. No skips,
 loosened assertions, raised tolerances/timeouts, changed harness or
 suppression for green. Record phase, criteria, paths and human rulings, run
@@ -223,11 +237,11 @@ whenever a handoff answer changes the table.
 ## Return
 
 Return a short status plus Prep/Graph or Design evidence as applicable, and at
-handoff the missing tests list: `PLAN` waits for independent plan review;
-`STORIES_READY` names the new Storybook components' story IDs and continues the
-same request; `NEEDS_REVIEW` waits for current implementation/coverage review;
+handoff the missing tests list: `STORIES_READY` names the new Storybook
+components' story IDs and continues the same request; `NEEDS_REVIEW` waits for handoff's implementation/coverage review;
 `NEEDS_PERSON` is only a researched necessary product question or legitimate
-human-only action; `NEEDS_COMMIT` waits for the orchestrator; `DONE` means the
-whole requested feature passed its required review/checks. `BLOCKED` gives
+human-only action, never a test or engineering choice; `NEEDS_COMMIT` waits
+for the orchestrator; `DONE` means the whole requested feature passed its
+quick checks in the loop, or its checks and reviews at handoff. `BLOCKED` gives
 evidence without a technical question or silent downscope. Every non-trivial
 result ends with the required Graph block.

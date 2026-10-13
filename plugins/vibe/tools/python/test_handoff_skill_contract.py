@@ -169,7 +169,7 @@ def test_check_weight_follows_whether_the_session_changed_backend_code() -> None
     assert "Lighter: read-only verify checks mode" in checks
     assert "Backend: full-suite mode runs every required lane" in checks
     assert "Lighter: repo `review-soul`" in reviews
-    assert "`vibe-adversarial-reviewer` implementation mode" in reviews
+    assert "`vibe-adversarial-reviewer`" in reviews
     assert "parallel, read-only" in reviews
     assert "Backend: named core `workflow-code-review`" in reviews
     assert "two existing review passes" in reviews
@@ -230,7 +230,7 @@ def test_handoff_verifies_coverage_from_the_whole_session_table() -> None:
     ticket = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
     assert "required session decision table" in ticket
     assert "decision tables in `.closedloop-ai/decision-tables/` if any" not in ticket
-    worker = section(CHANGE_WORKER.read_text(), "## No tests in this context unless a pull request is requested")
+    worker = section(CHANGE_WORKER.read_text(), "## Tests: repair, don't author")
     assert "whole session decision table" in worker and "row IDs" in worker
     assert "planned" in worker and "executed" in worker
 

@@ -41,16 +41,23 @@ incomplete; dispatch the worker again saying so. A Graph block that says
 the connection before the next step. Every worker that edits the live ticket
 follows `../vibe/references/ticket-template.md`.
 
-Handoff writes no tests (`../vibe/references/guardrails.md`, "Tests"; Daniel
+Handoff authors no tests (`../vibe/references/guardrails.md`, "Tests"; Daniel
 Ochoa's ruling, 2026-10-13). It runs the existing affected tests, and when one
 fails the SAME persistent `vibe-change-worker` fixes the session's own code,
-never the test. The tests the session still needs go on the live ticket under
-Missing tests as engineering's scope of work. Verification/review helpers are
-read-only. Preserve test integrity and fix implementation defects rather than
-weakening a check. Code quality and implementation reviews already run before
-handoff; these are final integrated checks, not the first attempt to correct
-preventable issues. Handoff opens no pull request; "A requested pull request"
-below is the one exception to the no-tests rule.
+never what the test asserts; it only repairs an existing test or fixture the
+session's change broke ("Repair, don't author"). The tests the session still
+needs go on the live ticket under Missing tests as engineering's scope of
+work. Verification/review helpers are read-only. Preserve test integrity and
+fix implementation defects rather than weakening a check. Never ask the
+person about tests or any other engineering choice: those rules decide it, or
+it goes to engineering.
+
+The build loop is lean (`../vibe/references/quality-loop.md`, "Lean build
+loop"), so handoff is where the session's reviews and heavy validation run:
+the guardrails and adversarial reviews, browser E2E, visual QA, logical QA,
+Metal Andrew, the existing tests, Storybook footprint and the running app
+checks. Handoff opens no pull request; "A requested pull request" below is the
+one exception to the no-tests rule.
 
 Harness notes match the `vibe` skill: in Codex invoke as `$handoff` and spawn
 plugin agents from `../../agents/<name>.md` with the file's body as the
@@ -120,6 +127,7 @@ change worker has not handled; it refuses one with `NEEDS_CHANGE`.
 | Existing code checks, coverage advice, suite and footprint | read-only `vibe-verify-worker` |
 | Running app checks with `pnpm control` | read-only `vibe-verify-worker` (control mode) |
 | Lighter: tough review | repo `review-soul` and `vibe-adversarial-reviewer`, in parallel |
+| Visual QA, logical QA and Metal Andrew | the repository's own read-only skills (step 6) |
 | Backend: two review passes | the `workflow-code-review` skill (itself orchestrator-only) |
 | Last push and Vercel check | `vibe-environment-worker` (redeploy mode) |
 | Next owner, ticket check, and assignment | `vibe-ticket-worker` (lookup mode, then handoff mode, then assign mode) |
@@ -202,7 +210,8 @@ use the backend checks from then on and update the internal checklist.
 
 Keep the remaining checklist internal: inventory and shared-owner checks,
 Storybook coverage and footprint, existing tests and the missing tests list,
-validation, integrated review and corrections, publication, running app checks
+validation, integrated review and corrections, browser E2E and the
+repository's QA passes, publication, running app checks
 with control, next-owner lookup, ticket completion and assignment. Do not show
 the person a technical task list, upfront summary or plan to approve. Preserve
 the lighter versus backend validation and review weights below.
@@ -228,9 +237,11 @@ worker in step 8.
 
 ## 3. Guardrail check
 
-Read-only guardrails review treats every test the session added or changed as
-a finding; only a requested pull request's recorded tests are allowed. Reject
-those edits and never retrospectively relabel them. Preserve valid evidence
+Read-only guardrails review treats every test the session added, deleted or
+changed as a finding, except the inventory's `testRepairs` whose diffs it
+confirms changed no assertion and the change log records as repairs, and a
+requested pull request's recorded tests. Reject other test edits and never
+retrospectively relabel them. Preserve valid evidence
 when resuming interrupted handoff.
 
 Non-publication inventory failures, outside-allowed paths, owner/duplicate
@@ -258,8 +269,9 @@ Resume the SAME writer with an explicit handoff continuation, acceptance
 criteria, inventory, private local coverage plan and the whole session decision table.
 Read all requests, stable row IDs, cross-request interactions and its
 `Required Tests`, including positive, negative and mixed-state production-boundary
-cases. It writes no tests. It runs the existing affected tests, fixes the
-session's own code when one fails, never the test, and lists every missing
+cases. It authors no tests. It runs the existing affected tests, fixes the
+session's own code when one fails, never what a test asserts (it only repairs
+an existing test the session's change broke), and lists every missing
 test as engineering's scope of work: the behavior and row ID that needs it,
 the files to cover, and any existing test a recorded human behavior ruling
 made obsolete, with that ruling. The verify worker never writes or fixes tests.
@@ -293,8 +305,9 @@ edits with the rest of the diff.
 ## 6. Independent integrated review
 
 Exclude exactly `.closedloop-ai/vibe-plans/` and historical `localFixes` from
-deliverable review, not other artifacts. Separate plan review reads the local
-plan explicitly. Pass phase handoff and the writer's missing tests list.
+deliverable review, not other artifacts. Reviewers may read the local plans
+for context. Pass phase handoff, the inventory's `testRepairs` and the
+writer's missing tests list.
 Pass the whole session decision table and actual row/test evidence to each
 reviewer. They read the actual artifact and use named core decision-table's
 consistency, review-prevention and applicable adversarial rules. Missing source,
@@ -303,7 +316,7 @@ that does not exist yet is listed under Missing tests instead. Require defensibl
 `Final Alignment Status: Aligned` for the whole table before step 7 or final
 ticket completion; Not aligned is a stop, not a success with a test-later note.
 
-Lighter: repo `review-soul` and `vibe-adversarial-reviewer` implementation mode
+Lighter: repo `review-soul` and `vibe-adversarial-reviewer`
 may review independently in parallel, read-only. Backend: named core
 `workflow-code-review` runs its two existing review passes
 (`$workflow-code-review` in Codex or `/closedloop-core:workflow-code-review` in
@@ -311,6 +324,20 @@ Claude Code). ALL confirmed code/story findings resume the SAME writer,
 which verifies and corrects them; recheck its current result and repeat
 validation. A coverage gap goes on the missing tests list; nobody writes a
 test here.
+
+### Browser E2E and the repository's QA passes
+
+These run here and never in the build loop (Daniel Ochoa's ruling,
+2026-10-13). Browser E2E runs headless in step 5's checks and step 7's
+validation. For the screens the session touched, run the repository's own
+read-only passes where its root `AGENTS.md` calls for them on this change:
+visual QA (`/visual-qa` in Claude Code, `$visual-qa` in Codex) for a UI
+change, logical QA (`/logical-qa`, `$logical-qa`) for a data or metric
+surface, then Metal Andrew (`/metal-andrew`, `$metal-andrew`) once that
+evidence is visible. Each skill dispatches its own read-only agents. Confirmed
+findings resume the SAME writer in fix mode, then steps 3 to 6 run again on
+the result. Their reports feed the Design Review evidence in step 8. Owned
+prototype sessions keep their canonical single design review instead.
 
 ## 7. Upload the last changes
 

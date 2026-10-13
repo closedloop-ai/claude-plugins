@@ -167,6 +167,7 @@ describe("production Claude CLI adapter", () => {
     expect(proof[1]?.payload.authority.testAuthoringAuthorized).toBe(false);
     expect(proof[2]?.payload.mode).toBe("pull-request");
     expect(proof[2]?.payload.authority.testAuthoringAuthorized).toBe(true);
+    expect(proof[2]?.payload.authority.testRepairAuthorized).toBe(true);
     const prompt = proof[0]!.definition["vibe:vibe-change-worker"]!.prompt;
     expect(prompt).toContain("Never author tests in plan, request, fix, handoff, record or build turns");
     expect(prompt).toContain("Only an explicit pull-request turn");
@@ -177,6 +178,34 @@ describe("production Claude CLI adapter", () => {
     expect(advice?.definition["vibe:vibe-guardrails-reviewer"]?.prompt).toContain("Never write or edit tests. ");
     expect(prompt).not.toContain("This is mode request");
     expect(prompt).not.toContain("Never write or edit tests. ");
+  });
+  it("grants test-repair authority only to the writer's request, fix, handoff and pull-request turns", () => {
+    const value = setup();
+    // PLAN_FIRST keeps the fixture's request active so each later turn continues it.
+    const turns = [
+      { input: "PLAN_FIRST: plan the change", mode: "plan" },
+      { continuation: "PLAN_FIRST: build the change", mode: "request" },
+      { continuation: "PLAN_FIRST: fix the hook failure", mode: "fix" },
+      { continuation: "PLAN_FIRST: handoff checks and fixes", mode: "handoff" },
+    ];
+    for (const turn of turns) {
+      const result = run(value, turn);
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+    }
+    const advisor = run(value, { agentName: "vibe-guardrails-reviewer", input: "Review the change", mode: "request" });
+    expect(advisor.status, advisor.stderr).toBe(0);
+    const proof = readProof(value.metadata);
+    expect(proof.map((entry) => [entry.payload.mode, entry.payload.authority])).toEqual([
+      ["plan", { testAuthoringAuthorized: false, testRepairAuthorized: false }],
+      ["request", { testAuthoringAuthorized: false, testRepairAuthorized: true }],
+      ["fix", { testAuthoringAuthorized: false, testRepairAuthorized: true }],
+      ["handoff", { testAuthoringAuthorized: false, testRepairAuthorized: true }],
+      ["request", { testAuthoringAuthorized: false, testRepairAuthorized: false }],
+    ]);
+    const prompt = proof[0]!.definition["vibe:vibe-change-worker"]!.prompt;
+    expect(prompt).toContain("may only repair existing tests and fixtures your own change broke");
+    expect(prompt).toContain("without changing what any test asserts; never add a test file");
+    expect(proof[4]?.definition["vibe:vibe-guardrails-reviewer"]?.prompt).toContain("Never write or edit tests. ");
   });
   it("admits only pre-session requirements and setup with their existing serialized ticket actions", () => {
     const value = setup();

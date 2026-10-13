@@ -1,10 +1,10 @@
 # Design pass
 
 Vibe requests arrive in the person's own words. The prep picks ownership by
-rule; `quality-loop.md` then keeps the local technical plan, separate plan
-review and implementation corrections internal and before handoff. Existing
-tests may run, but no tests are written in vibe or handoff unless the person
-asks for a pull request.
+rule; `quality-loop.md` then keeps the local technical plan and the lean build
+loop internal, with independent reviews at handoff. Existing tests run at
+handoff; no tests are authored in vibe or handoff unless the person asks for a
+pull request, and the writer only repairs existing tests its change broke.
 Nothing here is shown to or asked of the person.
 
 ## Owner rules
@@ -90,11 +90,11 @@ Graph:
 The SAME persistent writer builds at that owner and names `Owner: <path>`
 with its Graph block. Units are tasks in its local plan, not separate writers.
 
-## Quality depth before handoff
+## Quality depth at handoff
 
-Before completing a feature `vibe-guardrails-reviewer` screens its diff and same
-session decision table, and the SAME persistent change worker fixes what it confirms in
-fix mode, without asking the person.
+At handoff, never during the build loop, `vibe-guardrails-reviewer` screens the
+session's diff and its session decision table, and the SAME persistent change
+worker fixes what it confirms in fix mode, without asking the person.
 
 ### Red flags
 
@@ -139,9 +139,10 @@ A fix that moves behavior to its owner works through, in its own reasoning:
   the worktree for the session's own code) and consolidate repeats in the
   session's own code. Do not opt in children the person did not name; list
   them.
-- Tests and checks: no tests are written; handoff lists the missing ones for
-  engineering (`guardrails.md`, "Tests"), and a failing check is never made to
-  pass by changing it (`guardrails.md`, "Checks").
+- Tests and checks: no tests are authored; an existing test the restructure
+  broke is repaired without changing what it asserts, handoff lists the
+  missing ones for engineering (`guardrails.md`, "Tests"), and a failing check
+  is never made to pass by changing it (`guardrails.md`, "Checks").
 
 The fix status carries this block for each restructure, and handoff passes
 it to the live ticket's Design decisions line:
@@ -162,5 +163,5 @@ site: each red flag; two children of one parent that each implement the
 same behavior (blocking, naming the parent and the slot it belongs in); domain
 code in a design-system slot; and code that is not in the `Owner` its change
 log entry names. `vibe-adversarial-reviewer` checks whether repeated copies
-already disagree. Both report to the orchestrator before handoff, which sends
-confirmed findings to a fixing worker; the person is not involved.
+already disagree. Both run at handoff and report to the orchestrator, which
+sends confirmed findings to the SAME writer; the person is not involved.

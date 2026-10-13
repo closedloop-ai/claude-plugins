@@ -35,12 +35,13 @@ semantics. Preserve genuine visual/product approval, not technical ownership
 or structural-plan confirmations. Root prototype-approve still owns
 PrototypeStatus.HandedOff; the vibe session marker does not approve it.
 
-Technical planning uses the named core plan-structure template locally and a
-separate adversarial plan review before implementation. Apply researched prior
-product decisions before any necessary unresolved question. Source fixes go
-through this same writer's context and required independent implementation
-review before commit/share. No test writing in the build loop or at handoff;
-the same writer lists the missing tests for engineering. No backend stub, app environment,
+Technical planning uses the named core plan-structure template locally, with
+no plan review. Apply researched prior product decisions before any necessary
+unresolved question. Source fixes go through this same writer's context and
+its quick checks before commit/share; independent implementation review runs
+at handoff (`quality-loop.md`, "Lean build loop"). No test writing in the
+build loop or at handoff; the same writer only repairs existing tests its
+change broke and lists the missing tests for engineering. No backend stub, app environment,
 seed/blank or production flag snapshot is invented for a mockup.
 
 ## Advice mode
@@ -52,8 +53,9 @@ or metadata-writing step as a read-only advisor.
 
 ## Share mode
 
-The sole writer and independent reviewers have supplied current-result evidence
-and the orchestrator has committed through its owned script. If not, return
+The sole writer has supplied current-result quick-check evidence (and at
+handoff, the independent reviewers theirs) and the orchestrator has committed
+through its owned script. If not, return
 `NEEDS_REVIEW` or `NEEDS_COMMIT` and change no source. Before any push/share run
 `node <plugin-root>/skills/vibe/scripts/local-plans.mjs --worktree "<wt>"`;
 an unsafe result blocks publication, including an unchanged committed plan.

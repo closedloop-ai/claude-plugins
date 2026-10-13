@@ -60,11 +60,14 @@ Backend, built by that same writer using canonical backend guidance, each under 
   backend-only. Handoff attaches it to the live ticket so the reviewing
   engineer sees whole-session behavior and actual coverage evidence.
 
-Quality checks and implementation reviews run before handoff through
-`quality-loop.md`. Handoff adds final integrated verification (the whole test
-suite and two review passes when backend code changed), drives the running web
-app and Desktop with the repo's control skill, and lists the tests engineering
-still has to write (Tests, below).
+The build loop stays lean (`quality-loop.md`, "Lean build loop"): quick
+prep, the build, the quick checks the commit hooks need, the orchestrator's
+commit, deploy, and showing the person. Reviews and heavy validation run only
+at handoff: the guardrails and adversarial reviews, browser E2E, visual QA,
+logical QA, Metal Andrew, the existing tests (the whole suite and two review
+passes when backend code changed), the running web app and Desktop driven with
+the repo's control skill, and the list of tests engineering still has to write
+(Tests, below).
 
 One exception under `scripts/`: the source-gate allowlist
 (`scripts/lint/source-gate-allowlist.json`) is shrink-only, so when the
@@ -108,7 +111,7 @@ decision recorded on ISS-12017. Build in Storybook and app code directly.
   child. The domain wiring stays in the owning feature package, and each
   child opts in instead of reimplementing it. Never copy an existing shared
   component. `design-pass.md` has the owner rules, the build loop's
-  prep step, and what the quality reviewers check before handoff.
+  prep step, and what the quality reviewers check at handoff.
 
 ## Reuse first
 
@@ -244,14 +247,42 @@ it.
 
 ## Tests
 
-No worker writes or edits a test in vibe or handoff: no new or changed
-`*.test.*` or `*.spec.*` file, nothing under `__tests__/` or `e2e/`, no
-snapshot or fixture a test reads. This holds in the build loop and at handoff
-alike (Daniel Ochoa's ruling, 2026-10-13). Existing tests run, and stories
-remain part of component work.
+No worker authors a test in vibe or handoff: no new `*.test.*` or `*.spec.*`
+file, nothing new under `__tests__/` or `e2e/`, no new case, assertion,
+snapshot or fixture, and no deleted test. This holds in the build loop and at
+handoff alike (Daniel Ochoa's ruling, 2026-10-13). The one edit allowed is a
+repair, below. Existing tests run at handoff, and stories remain part of
+component work.
+
+### Repair, don't author
+
+When the session's own change breaks an EXISTING test or test fixture (an
+import, a renamed or retired symbol, setup, a type error), the SAME persistent
+`vibe-change-worker` mechanically updates that existing file so the tree
+compiles and the commit hooks pass, in the build loop or at handoff (Daniel
+Ochoa's ruling, 2026-10-13, after the PRD-720 live test). A repair never
+changes what any test asserts: no weakened or deleted assertion, no changed
+expected value or snapshot, no new skip, no loosened matcher, tolerance or
+timeout. It adds no test file, no case and no coverage; new tests still go on
+Missing tests. The writer records each repaired file in the session change log
+as a repair, with the symbol or setup it followed. The handoff inventory lists
+repairs under `testRepairs` and reports an added or deleted test file, or a
+changed snapshot, as outside the allowed paths; `vibe-guardrails-reviewer`
+checks that every repair left each assertion unchanged.
+
+When the only way to make a test compile would change what it asserts (it
+covers behavior the session retired), that is not a repair: the test stays
+unedited, goes on Missing tests with the ruling that retired the behavior, and
+the blocked commit goes to engineering.
+
+Never ask the person about tests or any other engineering choice. These rules
+decide it, or it goes to engineering, never to the person.
+
+### Running and missing tests
 
 Handoff runs the existing affected tests. When one fails, the SAME persistent
-`vibe-change-worker` fixes the session's own code, never the test. Coverage
+`vibe-change-worker` fixes the session's own code, never what the test asserts
+(a broken import or setup is a repair, above). Coverage
 the session still needs is recorded internally as it is found and, at
 handoff, listed on the live ticket under Missing tests as engineering's scope
 of work: each behavior and stable row ID that needs a test, and the files to
@@ -278,8 +309,9 @@ Test Modification Guardrail asks for makes an expectation obsolete, the test
 stays unedited: record that ruling and list the test under Missing tests for
 engineering to update, retaining coverage of every still-live contract.
 Never loosen, skip or remove a valid test, edit a fixture or harness to mask a
-failure, or raise timeouts/tolerances to get green. Neither vibe nor handoff
-opens a pull request on its own.
+failure, or raise timeouts/tolerances to get green; a repair only keeps an
+existing test compiling. Neither vibe nor handoff opens a pull request on its
+own.
 
 ## Checks
 
@@ -287,8 +319,9 @@ Never make a failing check pass by changing the check: test assertions and
 expected values, snapshots, tolerances, skips, timeouts, coverage or size
 thresholds, lint and type suppressions (`biome-ignore`, `@ts-expect-error`, a
 cast that only quiets the compiler), a raised allowlist count, or the harness.
-Fix the code. The shrink-only allowlist edit above and the repo's explicitly
-human-directed behavior-change rule in Tests are not ways to hide a failure.
+Fix the code. The shrink-only allowlist edit above, a test repair that leaves
+every assertion unchanged and the repo's explicitly human-directed
+behavior-change rule in Tests are not ways to hide a failure.
 If an expectation looks wrong without that evidence, keep it and report it.
 
 ## Repo rules that bite most often
