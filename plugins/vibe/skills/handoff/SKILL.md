@@ -239,8 +239,9 @@ worker in step 8.
 
 Read-only guardrails review treats every test the session added, deleted or
 changed as a finding, except the inventory's `testRepairs` whose diffs it
-confirms changed no assertion and the change log records as repairs, and a
-requested pull request's recorded tests. Reject other test edits and never
+confirms changed no assertion and the change log records as repairs, its
+`retiredTests` whose deleted files or cases it confirms covered only code the
+request retires, and a requested pull request's recorded tests. Reject other test edits and never
 retrospectively relabel them. Preserve valid evidence
 when resuming interrupted handoff.
 
@@ -306,8 +307,8 @@ edits with the rest of the diff.
 
 Exclude exactly `.closedloop-ai/vibe-plans/` and historical `localFixes` from
 deliverable review, not other artifacts. Reviewers may read the local plans
-for context. Pass phase handoff, the inventory's `testRepairs` and the
-writer's missing tests list.
+for context. Pass phase handoff, the inventory's `testRepairs` and
+`retiredTests`, and the writer's missing tests list.
 Pass the whole session decision table and actual row/test evidence to each
 reviewer. They read the actual artifact and use named core decision-table's
 consistency, review-prevention and applicable adversarial rules. Missing source,
@@ -538,7 +539,8 @@ confirmed summary and the person's corrections, the footprint, check, and
 review summaries, the Design blocks from build and handoff fixes, the required session decision table
 at `.closedloop-ai/decision-tables/<session-slug>.md` with whole-table alignment,
 row/test evidence and its Frozen Behavior row IDs, the writer's feature docs
-record, the missing tests list, the running app verification's artifact paths
+record, the missing tests list, the inventory's `retiredTests` with each deleted
+file or case, the running app verification's artifact paths
 with what each proves and any surface it could not drive with its command and
 reason, the detailed Design Review evidence packet/report paths,
 including Production impact, Flag changes and gates, and researched Open

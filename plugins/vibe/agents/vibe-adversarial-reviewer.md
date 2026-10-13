@@ -60,9 +60,11 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
 5. Tests: no test is authored in the build loop or at handoff; writing is
    permitted only in a `pull-request` turn the person's explicit request
    opened (`guardrails.md`, "Tests"). A repair of an existing test the
-   session's change broke is allowed when it changes no assertion. Any other
-   changed test, a repair that changes what a test asserts and any weakened
-   assertion is a finding. Needed new-test coverage recorded in the local plan
+   session's change broke is allowed when it changes no assertion, and so is a
+   recorded deletion of a test that covered only code the request retires. Any
+   other changed or deleted test, a repair that changes what a test asserts, a
+   deleted test that still covered live behavior and any weakened assertion is
+   a finding. Needed new-test coverage recorded in the local plan
    during building is not an instruction to author tests early; it goes on
    the missing tests list for engineering, which you check for every behavior
    that lacks an existing test. Still report

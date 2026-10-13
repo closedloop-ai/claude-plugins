@@ -185,8 +185,8 @@ operational helpers do not write the same records concurrently.
 
 Never author tests, fixtures or snapshots while building or at handoff
 (`guardrails.md`, "Tests"): no new test file, case or assertion and no
-deleted test. Needed new coverage stays in the local plan as the missing
-tests list.
+deleted test of live behavior. Needed new coverage stays in the local plan as
+the missing tests list.
 
 When your own change breaks an EXISTING test or fixture (an import, a renamed
 or retired symbol, setup, a type error), repair it in a request, fix or
@@ -194,11 +194,18 @@ handoff turn, so the tree compiles and the commit hooks pass. Change only
 what makes it compile; never what it asserts: no weakened or deleted
 assertion, no changed expected value or snapshot, no new skip, no loosened
 matcher, tolerance or timeout. Record each repaired file in the change log as
-a repair, with the symbol or setup it followed. When the only fix would
-change what a test asserts (it covers behavior the session retired), leave it
-unedited, put it on the missing tests list with the ruling that retired the
-behavior, and return `BLOCKED` for engineering. Never return `NEEDS_PERSON`
-about a test or any other engineering choice.
+a repair, with the symbol or setup it followed.
+
+Delete a test file or test case only when it covers nothing but code the
+request itself retires (`guardrails.md`, "Retired-only tests may be
+deleted"). Before the commit, record each deletion with
+`node <plugin-root>/skills/vibe/scripts/retired-tests.mjs record --worktree "<wt>" --path <test file> [--case "<test name>"] --retired-by <ISS-, PRD- or FEA- slug> --covers "<retired code it covered>"`,
+citing the ticket or PRD that retires that code. A test that still covers any
+live behavior is only repaired; in a file that mixes both, delete only the
+retired cases. When the only fix to a live test would change what it asserts,
+leave it unedited, put it on the missing tests list, and return `BLOCKED` for
+engineering. Never return `NEEDS_PERSON` about a test or any other
+engineering choice.
 
 An explicit handoff continuation has you run the existing affected tests and
 fix your own code when one fails, never what a test asserts. Use the whole
@@ -217,8 +224,8 @@ person explicitly asks for a pull request, authorizes you to write tests: full
 tests for every change in the session, covering acceptance criteria, every
 unsuperseded row, production wiring and meaningful failure paths, and every
 missing tests entry. Verify helpers/reviewers never author or fix tests.
-Reject test edits beyond a recorded repair made in any other turn rather than
-relabeling them. A changed expectation requires the exact human behavior ruling that made it
+Reject test edits beyond a recorded repair or retired-only deletion made in
+any other turn rather than relabeling them. A changed expectation requires the exact human behavior ruling that made it
 obsolete and preserved coverage of every still-live contract. No skips,
 loosened assertions, raised tolerances/timeouts, changed harness or
 suppression for green. Record phase, criteria, paths and human rulings, run

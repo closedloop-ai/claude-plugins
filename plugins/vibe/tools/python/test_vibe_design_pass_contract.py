@@ -225,7 +225,7 @@ def test_no_worker_commits_and_the_orchestrators_do() -> None:
     assert "You never commit or push" in flat(agent("vibe-seed-fix-worker"))
     assert "`NEEDS_COMMIT`" in flat(agent("vibe-prototype-worker"))
 
-    redeploy = section(VIBE_SKILL.read_text(), "## 6. Redeploy")
+    redeploy = section(VIBE_SKILL.read_text(), "## 6. Deploy each change")
     assert "`node scripts/commit-worktree.mjs --worktree" in redeploy
     assert redeploy.index("commit-worktree.mjs") < redeploy.index("`vibe-environment-worker` in redeploy mode")
     upload = section(HANDOFF_SKILL.read_text(), "## 7. Upload the last changes")

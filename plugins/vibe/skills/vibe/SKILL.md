@@ -8,7 +8,7 @@ description: Start or resume a vibe-coding session in symphony-alpha for a non-e
 You are the orchestrator of a vibe session. You pair with a person who is not
 an engineer and does not use git. They describe what they want in chat or by
 annotating the app on their Vercel environment; workers you dispatch make the
-change in code, and the person sees it when they ask you to redeploy.
+change in code, and each change deploys on its own so the person can look at it.
 Everything produced is handed to design and then engineering, so it must
 already look like code the team would write.
 
@@ -149,7 +149,8 @@ must pass before commit or share; independent review waits for handoff.
 
 No worker authors a test in vibe or handoff (`references/guardrails.md`,
 "Tests"). The SAME writer only repairs an existing test or fixture its own
-change broke, without changing what any test asserts; handoff lists the
+change broke, without changing what any test asserts, or deletes a recorded
+test that covered only code the request retires; handoff lists the
 missing tests for engineering, and tests are written only when the person
 explicitly asks for a pull request. This skill opens no PR. Never ask the
 person about tests or any other engineering choice: those rules decide it, or
@@ -299,7 +300,7 @@ new conversation is recorded too. Starting new or resuming stops any other
 session's local Storybook or Desktop (dispatch `vibe-setup-worker` to stop
 what that session's `stack` lists) but never touches its files. You commit
 only through `scripts/commit-worktree.mjs` and never push, stash, or rebase;
-only `vibe-environment-worker` pushes, when the person asks to redeploy.
+only `vibe-environment-worker` pushes, when a change deploys (section 6).
 
 Desktop's screens reload live from the worktree, so merging main into it, or
 any other swap of its commit, while Desktop runs crashes the Desktop tab
@@ -415,8 +416,8 @@ asks how to make changes, use the existing guidance:
   click or drag over what you want changed, type the comment, and press
   Enter to send it now, or Cmd + Enter to queue it and send several together.
 - You can also just describe the change in chat.
-- Say "redeploy" whenever you want to see the changes in the app; it takes a
-  few minutes each time.
+- Each change goes to your app on its own once it's built, and I'll tell you
+  when it's ready to look at; it takes a few minutes each time.
 
 If the Annotate control is missing (a known Codex Desktop issue on some macOS
 builds), say so and continue with chat.
@@ -435,7 +436,8 @@ this same writer context. Researchers may be read-only and parallel.
 
 The loop is lean (`references/quality-loop.md`, "Lean build loop"): quick
 prep, build, the quick checks the commit hooks need, the orchestrator's
-commit, deploy, and showing the person. Browser E2E, visual QA, logical QA,
+commit, deploy, and showing the person; each finished change deploys without
+being asked (section 6). Browser E2E, visual QA, logical QA,
 Metal Andrew, the guardrails and adversarial reviews and other heavy
 validation run only at handoff, never here.
 
@@ -503,8 +505,10 @@ evidence, never by replacing the writer.
    checks. The orchestrator alone commits through its owned script.
 7. A `DONE` must mean the whole requested feature is built and passes the
    quick checks; independent reviews come at handoff. Then finish that
-   request and tell the person only the completed feature and next work, in
-   their own terms. The next queued
+   request and deploy it under section 6 without being asked (requests that
+   waited through a running deploy go out together after the last of them);
+   when the deploy is done, tell the person only the completed feature, that it's ready to
+   look at, and the next work, in their own terms. The next queued
    request goes to the SAME ID/context. Update the session summary through
    the existing session script in a serial record turn.
    This is per-request implementation evidence, not final session coverage.
@@ -543,10 +547,20 @@ the person only types `$vibe` and `$handoff`. Initial session creation chooses
 one app or prototype branch. Never add a second worktree/branch for a sub-unit.
 Local Storybook remains available and product design approvals stay intact.
 
-## 6. Redeploy
+## 6. Deploy each change
 
-When the person says "redeploy", "redeploy to Vercel", "push it up", "put it
-on Vercel", "let me see it live", or anything meaning the same:
+The orchestrator deploys every change in the build loop without being asked
+(Daniel Ochoa's ruling, 2026-10-13): as soon as the writer finishes a request
+(section 5, step 7), commit and deploy it to the session's Vercel preview with
+the steps below, then tell the person it's ready to look at. The person no
+longer has to say "redeploy"; when they do say "redeploy", "redeploy to
+Vercel", "push it up", "put it on Vercel", "let me see it live", or anything
+meaning the same, run these same steps.
+
+One deploy runs at a time. Requests that arrive while a deploy is running wait
+in the writer's queue until it finishes; then the writer builds every request
+that waited, and one deploy after the last of them carries them all. A
+"redeploy" said during a running deploy joins that next deploy.
 
 1. Run `node scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"` so
    the ticket lists every subagent so far.
@@ -572,8 +586,8 @@ on Vercel", "let me see it live", or anything meaning the same:
    resume the SAME persistent writer in fix mode with the error, then commit
    again. An existing test or fixture the change broke is repaired there
    (`references/guardrails.md`, "Repair, don't author"). When the writer
-   returns `BLOCKED` because only engineering can settle it (a test of
-   behavior the session retired), tell the person in one plain line that this
+   returns `BLOCKED` because only engineering can settle it (a test of live
+   behavior whose assertions would have to change), tell the person in one plain line that this
    part needs engineering and suggest they message Daniel Ochoa with the
    session slug, as section 3 does; never ask them to decide it.
 4. Dispatch `vibe-environment-worker` in redeploy mode with the worktree, the
@@ -585,7 +599,7 @@ on Vercel", "let me see it live", or anything meaning the same:
    deployed, and updates the ticket. The quick checks have run in the
    loop; no tests are authored.
 5. On `DONE`, reload the app tab (and the Desktop and Storybook tabs if
-   open), look at it yourself, and tell them it is live. Whenever you open
+   open), look at it yourself, and tell them it's ready to look at. Whenever you open
    the Vercel `storybookUrl` and the tab lands on `vercel.com` (a Vercel sign-in or
    `sso-api` page) instead of Storybook, tell the person plainly: "Storybook
    on Vercel needs you to sign in to Vercel with your team account first."
@@ -594,7 +608,7 @@ on Vercel", "let me see it live", or anything meaning the same:
    the SAME persistent writer in fix mode with the failure, then rerun its
    quick checks before committing and redeploying again (steps 3 and 4). Keep the repair details internal.
 
-Never redeploy unless the person asked.
+Never deploy a change before the writer's quick checks pass.
 
 ## 7. Feature flags
 

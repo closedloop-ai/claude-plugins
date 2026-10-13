@@ -93,7 +93,12 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    change) is allowed. Read each repair's diff against its base: it may only
    follow an import, a renamed or retired symbol, setup or a type; any changed
    assertion, expected value, matcher, case, skip, tolerance or timeout is
-   blocking, and so is a repair the change log does not record as one. Inspect `mainSync.featureTestHistory` against the original
+   blocking, and so is a repair the change log does not record as one. A
+   retired-only deletion (the inventory's `retiredTests`) is allowed: read
+   each deleted file or case at its base and confirm everything it exercised
+   is code this session removed and the cited ticket or PRD retires. A
+   deletion that covered any live behavior is blocking (it is repaired
+   instead), and so is a deleted test or case with no entry there. Inspect `mainSync.featureTestHistory` against the original
    base, actual commit parents and phase/test-authoring records as well as the
    current diff. Main later absorbing identical bytes cannot erase an earlier
    feature-authored violation. History entries are authorship evidence, not

@@ -8,6 +8,7 @@ import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fi
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INVENTORY = path.join(HERE, "handoff-inventory.mjs");
 const SESSIONS = path.join(HERE, "..", "..", "vibe", "scripts", "vibe-sessions.mjs");
+const RETIRED = path.join(HERE, "..", "..", "vibe", "scripts", "retired-tests.mjs");
 const ALLOWLIST = "scripts/lint/source-gate-allowlist.json";
 const FOCUS_RING = { rule: "no-hand-rolled-focus-ring", file: "packages/app/a.tsx", fingerprint: "packages/app/a.tsx", count: 1, reason: "seeded" };
 const HEX = { rule: "no-hex-color-in-jsx-styling", file: "apps/app/b.tsx", fingerprint: "apps/app/b.tsx", count: 3, reason: "seeded" };
@@ -134,6 +135,37 @@ test("existing tests and fixtures may be repaired in every phase; only a pull re
   const pullRequest = runNode(INVENTORY, ["--worktree", worktree, "--phase", "pull-request"], home);
   assert.deepEqual(pullRequest.json.testRepairs, repairs);
   assert.deepEqual(pullRequest.json.outsideAllowed, []);
+});
+
+test("a deleted test is allowed outside a pull request only when recorded as covering retired code", (t) => {
+  const { home, worktree } = setup(t, "retired-tests", {
+    "packages/app/sessions/grouped-list.test.tsx": "expect(renderGrouped()).toBeTruthy();\n",
+    "packages/app/sessions/live.test.tsx": "expect(renderLive()).toBeTruthy();\n",
+    "packages/app/sessions/list.test.tsx": "it('flat', () => {});\nit('grouped', () => {});\n",
+  });
+  git(worktree, ["rm", "-q", "packages/app/sessions/grouped-list.test.tsx", "packages/app/sessions/live.test.tsx"], home);
+  write(worktree, "packages/app/sessions/list.test.tsx", "it('flat', () => {});\n");
+  const recorded = [
+    ["--path", "packages/app/sessions/grouped-list.test.tsx", "--retired-by", "PRD-720", "--covers", "GroupedListRenderer"],
+    ["--path", "packages/app/sessions/list.test.tsx", "--case", "grouped", "--retired-by", "PRD-720", "--covers", "the grouped mode"],
+  ];
+  for (const args of recorded) {
+    assert.equal(runNode(RETIRED, ["record", "--worktree", worktree, ...args], home).status, 0);
+  }
+  for (const phase of ["build", "handoff"]) {
+    const result = runNode(INVENTORY, ["--worktree", worktree, "--phase", phase], home);
+    assert.deepEqual(result.json.outsideAllowed, [{ path: "packages/app/sessions/live.test.tsx", status: "D" }], phase);
+    assert.deepEqual(result.json.testRepairs, [{ path: "packages/app/sessions/list.test.tsx", status: "M" }], phase);
+    assert.deepEqual(result.json.retiredTests, [
+      { path: "packages/app/sessions/grouped-list.test.tsx", retiredBy: "PRD-720", covers: "GroupedListRenderer", status: "D" },
+      { path: "packages/app/sessions/list.test.tsx", case: "grouped", retiredBy: "PRD-720", covers: "the grouped mode", status: "M" },
+    ], phase);
+  }
+  const caseOnly = runNode(RETIRED, ["record", "--worktree", worktree, "--path", "packages/app/sessions/live.test.tsx",
+    "--case", "renders", "--retired-by", "PRD-720", "--covers", "nothing retired"], home);
+  assert.equal(caseOnly.status, 0);
+  const stillOutside = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
+  assert.deepEqual(stillOutside.json.outsideAllowed, [{ path: "packages/app/sessions/live.test.tsx", status: "D" }]);
 });
 
 test("a test repair never admits a harness or a path the session may not edit", (t) => {

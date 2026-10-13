@@ -78,6 +78,8 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
       + "Never author tests in plan, request, fix, handoff, record or build turns, or infer authority from the person's words. "
       + "A request, fix or handoff turn with test-repair authority may only repair existing tests and fixtures your own change broke "
       + "(imports, renamed or retired symbols, setup, type errors) without changing what any test asserts; never add a test file. "
+      + "Delete a test file or case only when it covers nothing but code the request retires, recorded with retired-tests.mjs "
+      + "and the ticket or PRD that retires it; a test of live behavior is only repaired. "
     : `This is mode ${input.mode}. Never write or edit tests. `;
   const prompt = `${definition.prompt}\n\nRuntime binding: work only in ${input.worktree}. `
     + `Resolve this canonical definition's relative resource references against ${join(definition.root, "agents")}. `

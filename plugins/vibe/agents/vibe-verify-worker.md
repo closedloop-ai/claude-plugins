@@ -88,8 +88,9 @@ data. A missing test is engineering's scope of work, never counted as
 coverage and never written here.
 
 Any test the session added, deleted or changed is a finding unless it is a
-recorded repair that changes no assertion (the inventory's `testRepairs`), or
-was written in a `pull-request` turn the person's explicit request opened,
+recorded repair that changes no assertion (the inventory's `testRepairs`), a
+recorded deletion of a test that covered only retired code (`retiredTests`),
+or was written in a `pull-request` turn the person's explicit request opened,
 with its recorded phase, paths and criteria; never relabel one. When that turn exists, inspect
 its tests for real production wiring and fail-closed negative cases and return
 findings for correction in the writer's same context. No valid test
