@@ -60,7 +60,7 @@ describe("production main-sync publication CLIs", () => {
     if (failure === "missing-owner") {
       rmSync(join(value.worktree, "lint-staged.config.js")); value.git(["add", "lint-staged.config.js"]);
       value.git(["commit", "-m", "Missing committed producer"]);
-      expectedError = /could not verify.*canonical generated/i;
+      expectedError = /could not verify.*canonical generated biome input \(subprocess git show exited 128 at main-sync\.mjs:\d+\)/i;
     }
     if (failure === "pure-throw") {
       value.write("biome.jsonc", '{"linter":{"rules":{"first":"error"}}}\n');
@@ -138,7 +138,8 @@ describe("production main-sync publication CLIs", () => {
       const denied = invokeSync(value, "prepare", turn.context);
       expect(denied.status, denied.stdout).toBe(1);
       expect(denied.json?.status).toBe("NEEDS_CHANGE");
-      expect(String(denied.json?.error)).toMatch(failure === "changed-source" ? /committed validation inputs differ.*probe.ts/i : /canonical generated/i);
+      expect(String(denied.json?.error)).toMatch(failure === "changed-source" ? /committed validation inputs differ.*probe.ts/i
+        : failure === "malformed" ? /could not verify.*canonical generated biome input \(malformed JSON at main-sync\.mjs:\d+\)/i : /canonical generated/i);
       expect(`${denied.stdout}${denied.stderr}`).not.toContain("RAW_LOADER_SECRET");
       expect(existsSync(join(value.metadata, "FETCH_HEAD"))).toBe(false);
       expect(existsSync(join(value.metadata, "vibe-main-sync.json"))).toBe(false);

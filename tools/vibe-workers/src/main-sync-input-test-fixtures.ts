@@ -213,18 +213,18 @@ export function pureInputFixture(value: ReturnType<typeof syncFixture>, kind: "m
     value.write("packages/design-system/package.json", JSON.stringify({ name: "@repo/design-system", dependencies: { geist: "1.7.2" } }));
     value.write("packages/design-system/styles/globals.css", ":root {\n color: red;\n}\n.dark {\n color: blue;\n}\n");
     for (const theme of ["light", "dark"]) value.write(`packages/design-system/brand/logos/Horizontal/closedloop-logo-horizontal-on-${theme}.svg`, "<svg/>\n");
-    value.write("scripts/fixture-font.cjs", "const fs=require('node:fs');fs.mkdirSync('node_modules/geist/dist/fonts/geist-sans',{recursive:true});fs.writeFileSync('node_modules/geist/package.json',JSON.stringify({name:'geist',version:'1.7.2'}));fs.writeFileSync('node_modules/geist/dist/fonts/geist-sans/Geist-Regular.woff2','synthetic font bytes');\n");
+    value.write("scripts/fixture-font.cjs", "const fs=require('node:fs');fs.mkdirSync('node_modules/geist/dist/fonts/geist-sans',{recursive:true});fs.writeFileSync('node_modules/geist/package.json',JSON.stringify({name:'geist',version:'1.7.2',type:'module',exports:{'./font/sans':'./dist/sans.js'}}));fs.writeFileSync('node_modules/geist/dist/fonts/geist-sans/Geist-Regular.woff2','synthetic font bytes');\n");
     value.write(".closedloop-ai/loops-setup.sh", "#!/bin/sh\nset -eu\nnode scripts/fixture-font.cjs\n");
     const font = spawnSync(process.execPath, ["scripts/fixture-font.cjs"], { cwd: value.worktree, encoding: "utf8", timeout: 10000 });
     if (font.error || font.status !== 0) throw new Error("Synthetic font setup failed");
     derive = "import{buildAuthHandoffAssets,renderAuthHandoffAssetsModule}from'./apps/desktop/scripts/generate-auth-handoff-assets-lib.mjs';import{readFileSync}from'node:fs';import{join}from'node:path';process.stdout.write(renderAuthHandoffAssetsModule(buildAuthHandoffAssets(path=>readFileSync(join('packages/design-system',path)))));";
     // The synthetic workspace resolves the same installed package through its normal link.
-    value.write("packages/design-system/node_modules/geist/package.json", JSON.stringify({ name: "geist", version: "1.7.2" }));
+    value.write("packages/design-system/node_modules/geist/package.json", JSON.stringify({ name: "geist", version: "1.7.2", type: "module", exports: { "./font/sans": "./dist/sans.js" } }));
     value.write("packages/design-system/node_modules/geist/dist/fonts/geist-sans/Geist-Regular.woff2", "synthetic font bytes");
     const original = readFileSync(join(value.bin, "pnpm"), "utf8");
     value.write("../bin/pnpm", original.replace("path.join(process.cwd(), '.git', 'validation-calls.jsonl')",
       "path.join(require('node:child_process').execFileSync('git',['rev-parse','--absolute-git-dir'],{cwd:process.cwd(),encoding:'utf8'}).trim(),'validation-calls.jsonl')"));
-    value.write("scripts/fixture-font.cjs", `${readFileSync(join(value.worktree, "scripts/fixture-font.cjs"), "utf8")}fs.mkdirSync('packages/design-system/node_modules/geist/dist/fonts/geist-sans',{recursive:true});fs.writeFileSync('packages/design-system/node_modules/geist/package.json',JSON.stringify({name:'geist',version:'1.7.2'}));fs.writeFileSync('packages/design-system/node_modules/geist/dist/fonts/geist-sans/Geist-Regular.woff2','synthetic font bytes');\n`);
+    value.write("scripts/fixture-font.cjs", `${readFileSync(join(value.worktree, "scripts/fixture-font.cjs"), "utf8")}fs.mkdirSync('packages/design-system/node_modules/geist/dist/fonts/geist-sans',{recursive:true});fs.writeFileSync('packages/design-system/node_modules/geist/package.json',JSON.stringify({name:'geist',version:'1.7.2',type:'module',exports:{'./font/sans':'./dist/sans.js'}}));fs.writeFileSync('packages/design-system/node_modules/geist/dist/fonts/geist-sans/Geist-Regular.woff2','synthetic font bytes');\n`);
   }
   value.git(["add", "."]); value.git(["add", "-f", ".closedloop-ai/loops-setup.sh"]);
   value.git(["commit", "-m", "Actual opaque pure owners with synthetic immutable inputs"]);
@@ -263,7 +263,7 @@ export function huskyInputFixture(value: ReturnType<typeof syncFixture>) {
   const output = ".husky/_/husky.sh";
   const body = "echo 'synthetic deprecated support'\n";
   const module = `throw new Error('installer module must never execute');\nconst msg=${JSON.stringify(body)};\nexport default()=>{};\n`;
-  const setup = `const fs=require('node:fs');fs.mkdirSync('node_modules/husky',{recursive:true});fs.writeFileSync('node_modules/husky/package.json',JSON.stringify({name:'husky',version:'9.1.7',type:'module'}));fs.writeFileSync('node_modules/husky/index.js',${JSON.stringify(module)});\n`;
+  const setup = `const fs=require('node:fs');fs.mkdirSync('node_modules/husky',{recursive:true});fs.writeFileSync('node_modules/husky/package.json',JSON.stringify({name:'husky',version:'9.1.7',type:'module',exports:'./index.js'}));fs.writeFileSync('node_modules/husky/index.js',${JSON.stringify(module)});\n`;
   value.write(".gitignore", `${readFileSync(join(value.worktree, ".gitignore"), "utf8")}\n.husky/_/\n`);
   value.write("scripts/fixture-husky.cjs", setup);
   value.write(".closedloop-ai/loops-setup.sh", "#!/bin/sh\nset -eu\nnode scripts/fixture-husky.cjs\n");

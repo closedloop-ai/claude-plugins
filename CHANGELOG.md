@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.18
+
+#### Fixed
+- Canonical input readiness no longer refuses a worktree with the generic "Main-sync context or private evidence is invalid" once it reaches the `desktop-auth` and `husky` producers. The installed producer package is now located through Node's `node_modules` lookup instead of resolving `<name>/package.json`, which `geist` and `husky` refuse because their `exports` maps do not expose that subpath (`ERR_PACKAGE_PATH_NOT_EXPORTED`). The package boundary, version contract and pristine owner comparison are unchanged.
+- `mainSyncFailure` no longer reports every non-canonical exception as invalid context or evidence. A schema-invalid context or private record still gets that refusal, now naming the failing key paths and issue codes; malformed private JSON names its read site. Any other exception reports a secret-free operational cause: an authored error's first line (for example a missing `--worktree`), a Node error's code, syscall and file name, or a subprocess's command words and exit status, each with the plugin source line. Stdin context, leases, command output and private file contents are never echoed.
+- The generated Biome input refusal ("Could not verify the exact bounded canonical generated Biome input") now names the same secret-free cause instead of hiding it.
+
+#### Added
+- Readiness fixtures for `geist` and `husky` carry their real `exports` maps, so the auth and Husky readiness tests fail on the old resolver; unit tests for each failure class, including a lease-bearing schema error, malformed JSON, a missing private file, a package resolution error and a failed subprocess whose stderr carries a lease; a CLI test for a missing `--worktree`.
+
 ### vibe v1.0.17
 
 #### Changed
