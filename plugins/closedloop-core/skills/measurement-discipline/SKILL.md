@@ -1,6 +1,6 @@
 ---
 name: measurement-discipline
-description: Use when optimizing, benchmarking, profiling, or running a performance experiment; when evaluating whether a change actually helped; or when recording or checking past optimization attempts. Enforces one-variable experiments, noise floors measured from repeated runs, a required mechanism behind any claimed win, and writing refutations down so failed attempts are not re-litigated.
+description: Use when optimizing, benchmarking, profiling, or running a performance experiment; when evaluating whether a change actually helped; or when recording or checking past optimization attempts. Prioritizes the largest credible gains against experiment cost, then enforces one-variable experiments, repeated-run noise floors, a required mechanism behind any claimed win, and recorded refutations so failed attempts are not re-litigated.
 ---
 
 # Measure One Thing, Then Write It Down
@@ -8,8 +8,9 @@ description: Use when optimizing, benchmarking, profiling, or running a performa
 ## When invoked
 
 Apply the rules below to the measurement or optimization task at hand:
-baseline before touching anything, change one variable, keep a control where
-the harness could drift, require a mechanism for any claimed win, and record
+prioritize credible impact before expensive experiments, baseline before touching anything,
+change one variable, keep a control where the harness could drift, require a mechanism
+for any claimed win, and record
 a loss as REFUTED rather than letting it go unwritten. If the project keeps a
 measurement log, search it by symptom before proposing or diagnosing
 anything, then append the resulting entry, success or refutation, as part of
@@ -20,6 +21,31 @@ instructions either way. It applies to anything measurable: query latency, cache
 build times, bundle size, model parameters, cost per request. Its purpose is to make every
 optimization question cost one search instead of one rediscovery, and to make sure the
 answer you find was honestly obtained.
+
+## Choose the experiment before paying for it
+
+Map the measured contributors to the whole target metric first, using existing profiles,
+telemetry, or a cheap, bounded diagnostic. Start with the largest contributors in the
+requested scope. Rank plausible mechanisms by attainable impact on that whole metric,
+supporting evidence, and experiment cost in time and compute. A contributor's measured
+share and the fraction a change could remove bound its credible ceiling; label that
+ceiling as a projection, not a promised result.
+
+Test the mechanism and ceiling cheaply before paying for full repeated comparisons.
+Do not spend six-run experiments on a mechanism whose credible whole-target ceiling is
+below the established noise floor or too small to materially advance the operator's
+target, unless the operator explicitly requested that smaller scope or evidence shows
+the gains compound into material impact. A diagnostic or helper microbenchmark can
+justify the next experiment; it cannot establish a product improvement.
+
+Be creative in pursuing substantial performance improvements, whether the requested
+target is latency, throughput, memory, cost, or another metric. Challenge assumptions
+about work, resources, and lifetimes: architecture and lifecycle changes may offer more
+than wrapper or parsing changes when measurements show they dominate.
+Follow those measured contributors instead of repeatedly polishing the easiest helper.
+Creativity stays within the requested scope and preserves required functionality, data,
+and responsiveness; a larger opportunity across a boundary is recorded, not silently
+implemented. Change one variable at a time and prove the effect with the rules below.
 
 ## The rules
 
@@ -87,17 +113,19 @@ reasoning and flip it back.
 **11. Do not stop after the first measured win; stop at the floor.**
 A performance task is not complete merely because one change helped. After an adopted
 improvement, re-measure the target path, identify the next dominant bottleneck or absence of
-one, and run the next in-scope one-variable experiment when a credible mechanism remains. Stop
+one, and rank the remaining mechanisms by impact, evidence, and cost again. Run the next
+in-scope one-variable experiment when its credible ceiling warrants the comparison. Stop
 when consecutive in-scope experiments land within noise, the remaining opportunity is
-negligible against the measured latency budget, or the next plausible mechanism would cross an
+negligible against the measured target budget, or the next plausible mechanism would cross an
 explicit scope, safety, product, or requirements boundary. Record that stopping condition.
 
 ## What an entry contains
 
 Date and a one-line title with the verdict in it. The single variable. Baseline with the
 exact command and every run. The change. The after numbers. The control. The mechanism. The
-verdict against the noise floor. The decision, plus proof that temporary scaffolding was
-removed. A closing block separating measured from not measured, with the re-check trigger.
+impact ceiling and why this experiment was worth its time and compute. The verdict against
+the noise floor. The decision, plus proof that temporary scaffolding was removed. A closing
+block separating measured from not measured, with the re-check trigger.
 
 ## Worked example: a success
 
@@ -143,7 +171,8 @@ scale. Re-check trigger: if either table grows 10x, re-run rather than citing th
 
 Before proposing or diagnosing, search the log for the symptom and for the mechanism you are
 about to name, and say what you searched for. Claim nothing without a number, and never
-present an estimate in the shape of a measurement. Run the baseline before the first edit.
+present an estimate in the shape of a measurement. Identify the dominant contributors and
+screen the impact ceiling cheaply before full comparisons. Run the baseline before the first edit.
 Change one thing. Report every run, not the best one. If the result is within noise, say
 "within noise" and write the refutation; a refutation is a completed piece of work, not a
 failure to report. Remove your scaffolding and prove it is gone. Append the entry the same

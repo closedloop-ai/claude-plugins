@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.2.4
+
+#### Changed
+- `measurement-discipline` prioritizes the largest measured contributors and ranks mechanisms by credible whole-target impact, evidence, and experiment cost. Bounded diagnostics screen mechanisms before expensive repeated comparisons; explicitly requested small scopes and evidence of compounding gains remain valid. Encourages creative architecture and lifecycle experiments within scope while preserving functionality, data, responsiveness, repeated controls, and product-level proof. Measurement entries record the impact ceiling and experiment cost, and remaining opportunities are ranked again after each adopted improvement.
+
 ### vibe v1.0.19
 
 #### Changed
