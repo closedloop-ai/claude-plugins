@@ -463,6 +463,23 @@ describe("receiver-bound production private references", () => {
     }
     expect(readFileSync(join(value.worktree, ".vitest/blob/blob.json"), "utf8")).toBe("{\"retainedFailure\":true}\n");
   }, 30000);
+
+  it.each(["href", "url"] as const)("reads a %s-named local whose initializer ends in a .href property access", (name) => {
+    // symphony-alpha scripts/lint/affected-test-lanes.ts: `const href = pathToFileURL(path.join(repoRoot, configPath)).href;`.
+    // The `.href` member name is not a reference to the local `href`, so it is not a cycle.
+    const file = "apps/app/native-member-name.test.ts";
+    const value = setup(file, `import path from 'node:path';import{pathToFileURL}from'node:url';const ${name}=pathToFileURL(path.join(process.argv[2],'vitest.config.ts')).href;const target=${name};\n`);
+    const constraint = { kind: "path" as const, value: "__VIBE_UNKNOWN_PATH__", base: "runtime" as const,
+      possibleOnly: true, unknownPrefix: true, uncertainTerms: [join(value.worktree, "apps/app")] };
+    const source = readInputModule(value.worktree, file, { cwd: value.worktree, argv: ["node", file, { constraint }] });
+    const result = inputExpressionReference(value.worktree, file, targetInitializer(source));
+    expect(result).toMatchObject({ kind: "path", possibleOnly: true });
+    const control = setup(file, "import path from 'node:path';import{pathToFileURL}from'node:url';const location=pathToFileURL(path.join(process.argv[2],'vitest.config.ts')).href;const target=location;\n");
+    const controlSource = readInputModule(control.worktree, file, { cwd: control.worktree, argv: ["node", file,
+      { constraint: { ...constraint, uncertainTerms: [join(control.worktree, "apps/app")] } }] });
+    const expected = inputExpressionReference(control.worktree, file, targetInitializer(controlSource));
+    expect(JSON.stringify(result).replaceAll(value.worktree, "<root>")).toBe(JSON.stringify(expected).replaceAll(control.worktree, "<root>"));
+  }, 30000);
 });
 
 function expectNoReportCheck(value: ReturnType<typeof syncFixture>) {

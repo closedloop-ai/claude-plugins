@@ -224491,6 +224491,7 @@ var sessionSchema = external_exports.object({
   lastRequestId: external_exports.string().nullable().optional(),
   prototype: external_exports.object({ deployedCommit: commitSchema, verifiedAt: external_exports.string(), previewUrl: external_exports.string() }).passthrough().optional()
 }).passthrough();
+var MAX_CHECK_MS = 15 * 60 * 1e3;
 var MainSyncError = class extends Error {
   constructor(message, status = "BLOCKED") {
     super(message);
@@ -225065,6 +225066,7 @@ function importedName(identifier) {
   return void 0;
 }
 function localDeclaration(identifier) {
+  if (import_typescript.default.isPropertyAccessExpression(identifier.parent) && identifier.parent.name === identifier) return void 0;
   for (let scope = identifier.parent; scope; scope = scope.parent) {
     if (import_typescript.default.isFunctionLike(scope)) {
       const parameter = scope.parameters.find((item) => import_typescript.default.isIdentifier(item.name) && item.name.text === identifier.text);
@@ -226803,6 +226805,7 @@ var laneSchema = external_exports.object({
   script: external_exports.string().min(1),
   dir: external_exports.string().optional(),
   suites: external_exports.string().optional(),
+  widenReason: external_exports.string().optional(),
   env: external_exports.record(external_exports.string()).optional()
 }).strict();
 var discoverySchema = external_exports.object({
@@ -226847,7 +226850,7 @@ function discoverCheckLanes(root, receipt) {
   const run = spawnSync3(discovery.argv[0], discovery.argv.slice(1), {
     cwd: root,
     encoding: "utf8",
-    timeout: 12e4,
+    timeout: MAX_CHECK_MS,
     maxBuffer: 16 * 1024 * 1024
   });
   if (run.error || run.status !== 0) throw new MainSyncError("Structured owning test-lane discovery failed; no test lane was spawned");
@@ -227439,7 +227442,6 @@ function selectedRecoveryReserve(root, commands) {
 // src/main-sync-checks.ts
 import { performance as performance2 } from "node:perf_hooks";
 import { relative as relative8 } from "node:path";
-var MAX_CHECK_MS = 15 * 60 * 1e3;
 var EXECUTABLE_INPUT = /(?:\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss|html|sql|prisma)$|(?:^|\/)\.(?:npmrc|nvmrc)|(?:^|\/)(?:package-lock|pnpm-lock))/;
 var SOURCE_PATH = /\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss)$/;
 var PRIVATE_ARTIFACT = /\.(?:md|json|log|txt|png|webp)$/;
@@ -227592,6 +227594,13 @@ function checkRecipe(value, receipt) {
   const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync9(join14(root, file)));
   const commands = [];
   const e2eLimitations = [];
+  if (value.purpose === "build") {
+    if (paths.length) commands.push({ argv: ["pnpm", "exec", "biome", "check", ...paths] });
+    commands.push({ argv: ["pnpm", "typecheck:affected"] });
+    verifyReportRecipe(commands);
+    const bound2 = bindCheckBudgets(root, receipt, commands);
+    return { commands: bound2, e2eLimitations, recovery: selectedRecoveryReserve(root, bound2) };
+  }
   if (prototype) {
     commands.push(
       { argv: ["pnpm", "--filter", "prototypes", "generate:registry"] },
@@ -227610,7 +227619,7 @@ function checkRecipe(value, receipt) {
       { argv: ["pnpm", "test:affected", "--continue"] },
       ...lanes.commands
     );
-    if (backend && value.purpose === "handoff") commands.push(
+    if (backend) commands.push(
       { argv: ["pnpm", "verify"] },
       { argv: ["pnpm", "test"] },
       { argv: ["pnpm", "test:lint"] },
@@ -227628,7 +227637,7 @@ function checkRecipe(value, receipt) {
   if (files.some((file) => file.includes(".stories.") || file.startsWith("apps/storybook/") || file.startsWith("packages/design-system/"))) {
     commands.push({ argv: ["pnpm", "--filter", "storybook", "test"] }, { argv: ["pnpm", "--filter", "storybook", "validate:catalog"] });
   }
-  if (value.purpose === "handoff") commands.push({ argv: ["pnpm", "vibe", "storybook-diff"] });
+  commands.push({ argv: ["pnpm", "vibe", "storybook-diff"] });
   verifyReportRecipe(commands);
   const bound = bindCheckBudgets(root, receipt, commands);
   return { commands: bound, e2eLimitations, recovery: selectedRecoveryReserve(root, bound) };

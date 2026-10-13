@@ -211,9 +211,10 @@ every conflict/source problem. Do not run a raw merge/commit/push yourself.
    its source continuation. Protected localFix code is not a validation
    exemption: preserve dirty code/records and BLOCK through the same-writer
    workaround/exclusion/restore flow, never stash/copy/delete them.
+   A build-loop deploy runs only what the commit hooks run: the affected
+   typecheck and Biome on the changed source, no test suites. At handoff only:
    Run the existing affected tests before pushing through that SAME writer's
-   executor,
-   from the worktree:
+   executor, from the worktree:
    `TURBO_CONCURRENCY=2 pnpm turbo test --filter="...[<since>]" --continue`,
    where `<since>` is the session's `vercel.lastDeployedCommit`, or its
    `baseCommit` before the first deploy. That is the tests of every package

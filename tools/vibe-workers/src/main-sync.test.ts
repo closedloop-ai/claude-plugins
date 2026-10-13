@@ -622,6 +622,33 @@ describe("production main-sync publication CLIs", () => {
     try { expect(invokeSync(value, "push", publication.context).status).toBe(1); } finally { publication.finish(); }
     expect(value.git(["ls-remote", "origin", "refs/heads/vibe/test"])).toBe("");
   }, 60000);
+  it("runs only the commit-hook checks for a build-loop deploy and the full matrix at handoff", () => {
+    const value = setup();
+    value.write("apps/app/feature.ts", "export const feature = 1;\n");
+    value.write("scripts/lint/owned-change.ts", "export {};\n");
+    value.git(["add", "."]); value.git(["commit", "-m", "Feature and scripts change"]);
+    const calls = () => value.calls().trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]);
+    const executed = (list: string[][]) => list.filter((call) => !call.includes("--dry=json") && call[1] !== "node");
+    const build = validateFixture(value, "build");
+    expect(build.json?.mainSync).toMatchObject({ status: "DONE", requiredE2eComplete: true, commandCount: 2 });
+    expect(executed(calls())).toEqual([["exec", "biome", "check", "apps/app/feature.ts", "scripts/lint/owned-change.ts"], ["typecheck:affected"]]);
+    writeFileSync(join(value.metadata, "validation-calls.jsonl"), "");
+    validateFixture(value, "handoff");
+    const handoff = executed(calls());
+    for (const command of [["check:source-gates"], ["typecheck:affected"], ["test:affected", "--continue"], ["test:lanes"], ["test:skills"],
+      ["vibe", "storybook-diff"]]) expect(handoff).toContainEqual(command);
+    expect(handoff.some((call) => call[0] === "turbo" && call[1] === "test")).toBe(true);
+  }, 60000);
+  it("runs a lane the owning reporter widened to its whole suite and explains why", () => {
+    // symphony-alpha LaneCiCommand carries widenReason when a changed package.json makes the selector run a lane whole.
+    const value = setup();
+    value.write("scripts/lint/report-test-lanes.ts", "export function laneCiCommand(script) {return {script, widenReason: 'package.json can change how any suite in this lane resolves or runs'};}\nexport function execPlan(_, commands) {return commands;}\n");
+    value.git(["add", "."]); value.git(["commit", "-m", "Reporter widens the selected lane"]);
+    const result = validateFixture(value, "handoff");
+    expect(result.status, result.stdout).toBe(0);
+    const calls = value.calls().trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    expect(calls).toContainEqual(["test:skills"]);
+  }, 60000);
   it("preserves symlink evidence and rejects stale operator provenance before preparing or requesting", () => {
     const value = setup();
     validateFixture(value);

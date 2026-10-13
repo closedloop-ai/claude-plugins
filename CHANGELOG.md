@@ -9,6 +9,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - `measurement-discipline` prioritizes the largest measured contributors and ranks mechanisms by credible whole-target impact, evidence, and experiment cost. Bounded diagnostics screen mechanisms before expensive repeated comparisons; explicitly requested small scopes and evidence of compounding gains remain valid. Encourages creative architecture and lifecycle experiments within scope while preserving functionality, data, responsiveness, repeated controls, and product-level proof. Measurement entries record the impact ceiling and experiment cost, and remaining opportunities are ranked again after each adopted improvement.
 
+### vibe v1.0.21
+
+#### Changed
+- Build-loop deploys run only what the commit hooks run (Daniel Ochoa's ruling, 2026-10-13): the publish-time validation recipe for `build` purpose is Biome on the changed source plus `pnpm typecheck:affected`. Source gates, `test:affected`, the owning test lanes, the pinned Turbo typecheck and test matrix, the Desktop renderer and Storybook suites run only for `handoff` purpose, which keeps its full matrix. `vibe-environment-worker` says so.
+
+#### Fixed
+- Canonical input readiness no longer refuses a worktree with the generic "Main-sync context or private evidence is invalid" once it reaches the `desktop-auth` and `husky` producers. The installed producer package is located through Node's `node_modules` lookup instead of resolving `<name>/package.json`, which `geist` and `husky` refuse because their `exports` maps omit that subpath (`ERR_PACKAGE_PATH_NOT_EXPORTED`). The package boundary, version contract and pristine owner comparison are unchanged.
+- `mainSyncFailure` no longer reports every non-canonical exception as invalid context or evidence. A schema-invalid context or private record still gets that refusal, now naming the failing key paths and issue codes; malformed private JSON names its read site. Any other exception reports a secret-free operational cause: an authored error's first line (for example a missing `--worktree`), a Node error's code, syscall and file name, or a subprocess's command words and exit status, each with the plugin source line. Stdin context, leases, command output and private file contents are never echoed. The generated Biome input refusal names the same cause.
+- Native expression discovery no longer treats a member name as a reference to a same-named local: `const href = pathToFileURL(...).href` in symphony-alpha's `scripts/lint/affected-test-lanes.ts` was read as a self-cycle and refused the validation recipe with "Native expression discovery is unproved".
+- Owning test-lane discovery accepts the reporter's `widenReason` field, which it emits when a changed `package.json` widens a lane to its whole suite; the strict schema refused the whole discovery.
+- Owning test-lane discovery is bounded by the fixed 15-minute check budget it later runs under as a selected command, instead of 2 minutes. After a main import the reporter runs one `git grep` per changed path; on the ISS-12305 acceptance copy 2,178 paths took 141 s to 8.5 min. The Claude validation envelope counts the same bound.
+
+#### Added
+- Tests: `geist` and `husky` fixtures carry their real `exports` maps; unit tests per failure class with lease-bearing inputs and a CLI test for a missing `--worktree`; a `.href`-named local; a widened lane; the discovery bound; build-loop versus handoff recipes.
+
 ### vibe v1.0.19
 
 #### Changed

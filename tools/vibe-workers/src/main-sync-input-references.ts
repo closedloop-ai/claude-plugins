@@ -215,6 +215,8 @@ function importedName(identifier: ts.Identifier) {
 }
 
 function localDeclaration(identifier: ts.Identifier): ts.Node | undefined {
+  // A member name (`.href` in `pathToFileURL(file).href`) never refers to a same-named local binding.
+  if (ts.isPropertyAccessExpression(identifier.parent) && identifier.parent.name === identifier) return undefined;
   for (let scope: ts.Node | undefined = identifier.parent; scope; scope = scope.parent) {
     if (ts.isFunctionLike(scope)) {
       const parameter = scope.parameters.find((item) => ts.isIdentifier(item.name) && item.name.text === identifier.text);
