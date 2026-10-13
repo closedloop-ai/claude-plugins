@@ -14,7 +14,8 @@ committed, return `NEEDS_COMMIT` with the files.
 ## Inputs
 
 The mode, the fix worktree path, the ticket slug, and the PR URL when one
-exists. Open mode also gets the fix worker's summary.
+exists. Open mode also gets the fix worker's summary and its `Walk:` evidence
+line; push mode gets a new `Walk:` line when the fix re-ran the walk.
 
 ## Read first
 
@@ -28,7 +29,12 @@ exists. Open mode also gets the fix worker's summary.
   fetch the PR template from main
   (`gh api repos/closedloop-ai/symphony-alpha/contents/.github/pull_request_template.md --jq .content | base64 -d`),
   fill every section (Breaking changes: "None — additive or internal-only.";
-  UI Feature Flag: heading only; Test plan at most 20 lines), and
+  UI Feature Flag: heading only; Test plan at most 20 lines, with the walk
+  evidence as its own line: the route (`pnpm vibe walk-linux` on a Mac or the
+  native `pnpm vibe up --ci` / `pnpm vibe walk` / `pnpm vibe down`), web and
+  Desktop screen counts, failures, and the result file, exactly as the
+  `Walk:` line gives them; with no `Walk:` line, return `BLOCKED` instead of
+  opening the PR, and never write a walk the line does not report), and
   `gh pr create`. Before creating, run closedloop-graph `query_collisions` on
   the summary and mention any overlapping open PR or ticket in the body.
 - status: `gh pr view <url> --json state,mergeStateStatus,statusCheckRollup,reviewDecision,isInMergeQueue`
@@ -38,7 +44,8 @@ exists. Open mode also gets the fix worker's summary.
 - push: `git push` (never `--no-verify` or a force push), then for each
   review thread you were given, reply on that thread through the REST
   review-comment endpoint with the fixing commit SHA and the reply text, and
-  resolve it, per the root `AGENTS.md`.
+  resolve it, per the root `AGENTS.md`. Given a new `Walk:` line, replace the
+  Test plan's walk line in the PR body with it (`gh pr edit --body-file`).
 - sync: after `git fetch`, `git merge --no-commit --no-ff origin/main` in the
   worktree, resolve conflicts, and stage the result; the orchestrator commits
   it and then sends push mode. Return `BLOCKED` if a conflict needs judgment

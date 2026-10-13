@@ -4,6 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.22
+
+#### Changed
+- The seed refresh runs its required full screen walk itself on a Mac. On macOS `vibe-seed-fix-worker` runs `pnpm vibe walk-linux --out .control/vibe/seed-walk-result.json` from the fix worktree (symphony-alpha #8792: `vibe up --ci`, the full web and Desktop walk and `vibe down` in a Linux container on the local Docker) instead of the native up, walk and down sequence, whose Desktop half needs a displayless Linux harness; Linux keeps the native sequence. Only exit 0 with `"ok":true` passes, and the walk keeps its own timeouts and assertions. A refused run (Docker not running or its VM too small, the `cl-ai-stage` AWS sign-in expired, another run active) is `BLOCKED` with the tool's exact message, never a pass and never worked around.
+- Walk evidence. The fix worker returns a `Walk:` line (route, web and Desktop screen counts, failures, result file). The vibe-seed-refresh skill keeps it in state, posts it as a loop event and in the completed loop, and `vibe-seed-pr-worker` puts it in the seed PR's Test plan, refuses to open the PR without it, and updates it when a follow-up re-runs the walk.
+- Contract tests for both rules.
+
 ### vibe v1.0.20
 
 #### Changed

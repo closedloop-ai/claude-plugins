@@ -192,7 +192,9 @@ person's explicit OK.
 Checks symphony-alpha's vibe seed against fresh main and the latest Vibe Seed
 Walk. When drift exists, coordinates workers to create a live ticket, fix the
 seed in a fresh worktree, validate it, open and monitor a pull request, merge
-through the queue, and mark the ticket Done.
+through the queue, and mark the ticket Done. The fix worker runs the full web
+and Desktop screen walk itself, on a Mac through `pnpm vibe walk-linux`, and
+its counts and result file go into the PR's Test plan and the ticket's loop.
 
 ### ClosedLoop Ticket Skills
 
