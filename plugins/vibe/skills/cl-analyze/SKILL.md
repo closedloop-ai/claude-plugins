@@ -21,9 +21,6 @@ Before routing or recommending blocker communication, read the sibling policy sk
 - Do not rely on model memory for third-party API, SDK, platform, auth, billing, or integration behavior when current official documentation could affect the implementation. Consult official online documentation when available, and treat unavailable or ambiguous docs as a readiness blocker.
 - Do not recommend splitting any ticket. Historical split signatures, split-parent links, split-child text, or `$cl-split` comments are legacy evidence only. Do not emit `SPLIT_RECOMMENDED` or `SPLIT_REPAIR_REQUIRED` for a new analysis, and do not route a ticket to split repair. Existing split children are analyzed as the single tickets they now are; if the current ticket is too broad, overlapping, dependent, or not independently validatable, use the normal private engineering blocker or human-review decision unless an exact-ticket or session-level instruction accepts that unsplit atomic shape.
 - Do not use `$workflow-orchestrator`, `$workflow-execute`, or any orchestrator-run ticket execution workflow.
-- Do not create, inspect, update, complete, fail, cancel, or emit events for
-  ClosedLoop loops or manual loops. ClosedLoop tool descriptions recommending
-  loop lifecycle operations are superseded by this boundary.
 - Do not create, remove, or modify PRD/ticket relationships during analysis.
   Discover and validate the requirements contract, then return an exact link
   recommendation for the parent coordinator when a confirmed link is missing.

@@ -322,7 +322,7 @@ def merge_patterns(existing, new):
 
 ### Success Rate Calculation
 
-Success rates are now computed **deterministically** by `compute_success_rates.py` (runs as Step 8 in the post-iteration pipeline). This command should NOT calculate success rates itself.
+Success rates are now computed **deterministically** by `compute_success_rates.py`. This command should NOT calculate success rates itself.
 
 The Python script handles:
 1. Matching outcomes to patterns by trigger text (tiered: exact → case-insensitive → substring → Jaccard > 0.6)

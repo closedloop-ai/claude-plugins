@@ -352,15 +352,18 @@ fi
 
 mkdir -p "$WORKDIR/$CLOSEDLOOP_STATE_DIR"
 
-# Preserve run-loop-managed keys before truncating config.env. run-loop.sh
-# writes CLOSEDLOOP_START_SHA and CLOSEDLOOP_SELF_LEARNING during create_state_file;
-# setup-closedloop.sh runs every /code:code iteration and previously clobbered
-# them with the truncating heredoc below.
-EXISTING_START_SHA=""
-EXISTING_SELF_LEARNING=""
-if [[ -f "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env" ]]; then
-    EXISTING_START_SHA=$(grep '^CLOSEDLOOP_START_SHA=' "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env" 2>/dev/null | head -n1 | cut -d= -f2-)
-    EXISTING_SELF_LEARNING=$(grep '^CLOSEDLOOP_SELF_LEARNING=' "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env" 2>/dev/null | head -n1 | cut -d= -f2-)
+# One start SHA per run, kept across resumes of that run: reuse the value already
+# in config.env while state.json holds a single object whose status is not
+# COMPLETED. A new run, a completed run, or an unreadable or malformed state.json
+# records the current HEAD instead. The truncating write below would otherwise
+# drop the kept value.
+START_SHA=""
+RUN_STATUS=$(jq -r -s 'if length == 1 and (.[0] | type) == "object" then (.[0].status // "") else "" end' "$WORKDIR/state.json" 2>/dev/null || true)
+if [[ -n "$RUN_STATUS" && "$RUN_STATUS" != "COMPLETED" && -f "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env" ]]; then
+    START_SHA=$(grep '^CLOSEDLOOP_START_SHA=' "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env" 2>/dev/null | head -n1 | cut -d= -f2- || true)
+fi
+if [[ -z "$START_SHA" ]]; then
+    START_SHA=$(git -C "$WORKDIR" rev-parse --verify --quiet HEAD 2>/dev/null || true)
 fi
 
 # Write full config to WORKDIR
@@ -394,20 +397,14 @@ CLOSEDLOOP_ADD_DIRS="$add_dirs_joined"
 CLOSEDLOOP_ADD_DIR_NAMES="$add_dir_names_joined"
 CLOSEDLOOP_REPO_MAP="$repo_map_joined"
 EOF
+if [[ -n "$START_SHA" ]]; then
+    echo "CLOSEDLOOP_START_SHA=$START_SHA" >> "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
+fi
 
 # NOTE: --review-cycles is parsed above only to consume the flag+value (so it is
 # not mistaken for the WORKDIR positional). The slash-command orchestrator reads
 # --review-cycles directly from the command arguments (see prompts/execute-prompt.md
-# Phase 6.5); it is intentionally NOT persisted to config.env. The legacy
-# run-loop.sh post-loop path keeps its own POST_LOOP_REVIEW_CYCLES env default.
-
-# Re-append run-loop-managed keys captured above.
-if [[ -n "$EXISTING_START_SHA" ]]; then
-    echo "CLOSEDLOOP_START_SHA=$EXISTING_START_SHA" >> "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
-fi
-if [[ -n "$EXISTING_SELF_LEARNING" ]]; then
-    echo "CLOSEDLOOP_SELF_LEARNING=$EXISTING_SELF_LEARNING" >> "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
-fi
+# Phase 6.5); it is intentionally NOT persisted to config.env.
 
 echo "ClosedLoop config written to $WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"
 cat "$WORKDIR/$CLOSEDLOOP_STATE_DIR/config.env"

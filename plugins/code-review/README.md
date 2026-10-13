@@ -217,7 +217,7 @@ The orchestrator executes these steps in order:
 11. **Cache update** (if caching is active) — writes validated findings to the cache for future incremental runs
 12. **Present results** — local mode: prints findings by severity in the terminal; GitHub mode: writes `.closedloop-ai/code-review-findings.json`, `.closedloop-ai/code-review-threads.json`, and `.closedloop-ai/code-review-summary.md` for the CI workflow to post
 13. **Review state write** — persists the current diff tip so future `--since-last-review` runs can narrow the scope
-14. **Footer** — prints elapsed time, token usage stats, and the checkout and commit the review read (`reviewed_line`), and writes the deterministic verdict JSON to `<CR_DIR>/verdict.json` (consumed by the `code` plugin's `run-loop.sh`)
+14. **Footer**: prints elapsed time, token usage stats, and the checkout and commit the review read (`reviewed_line`), and writes the deterministic verdict JSON to `<CR_DIR>/verdict.json`
 
 (Step numbers in this list are illustrative; the canonical 30-stage ordering lives in `prepare-run`'s `run_plan.json`. Steps 2–8 — the deterministic prefix through routing and partitioning — run in a single process via the `run-prefix` helper; the orchestrator walks the reviewer/validation/presentation tail from step 9 onward.)
 

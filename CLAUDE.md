@@ -50,9 +50,9 @@ Always use `plugin-name:skill-name` format (e.g., `self-learning:learning-qualit
 
 `code` depends on `closedloop-core`, `judges`, and `self-learning`. `judges` depends back on `code` (circular). `bootstrap` depends on `code`. `vibe` and `platform` depend on `closedloop-core`. `closedloop-core`, `code-review`, and `self-learning` are standalone. See `docs/dependencies.md` for the full dependency map.
 
-### Closed Loop (run-loop.sh)
+### Orchestrator
 
-The core orchestration loop in `plugins/code/scripts/run-loop.sh`. Drives fresh-context Claude iterations — each `claude -p` invocation gets a clean context window. The orchestrator prompt at `plugins/code/prompts/prompt.md` coordinates 8 workflow phases via subagent delegation. Post-iteration, `run-loop.sh` runs an 11-step pipeline calling Python scripts from `self-learning/tools/python/`. Multi-repo behavior lives in the agents themselves (`pre-explorer`, `plan-draft-writer`, `cross-repo-coordinator`, `cross-repo-prd-writer`), which read `CLOSEDLOOP_REPO_MAP`, `CLOSEDLOOP_ADD_DIRS`, and the `local` flag on peers — no orchestrator-level branching is required.
+The orchestrator prompt at `plugins/code/prompts/prompt.md` coordinates 8 workflow phases via subagent delegation. Multi-repo behavior lives in the agents themselves (`pre-explorer`, `plan-draft-writer`, `cross-repo-coordinator`, `cross-repo-prd-writer`), which read `CLOSEDLOOP_REPO_MAP`, `CLOSEDLOOP_ADD_DIRS`, and the `local` flag on peers; no orchestrator-level branching is required.
 
 ### Hooks
 
@@ -107,7 +107,7 @@ All commits MUST follow the conventions in `CONTRIBUTING.md`. Specifically:
 - **[mistake]**: When narrowing an `Any`-typed value with `isinstance`, bind it to a local first; calling the source twice in one expression (e.g. `d.get(k) if isinstance(d.get(k), dict) else {}`) makes pyright treat the two calls as separate evaluations so the narrowing doesn't carry to downstream `.get()` accesses — `reportOptionalMemberAccess` fires under stricter CI pyright settings even when local pyright misses it. (context: pyright|narrowing|ci-divergence)
 
 ### Orchestration & State
-- **[mistake]**: When changing run-loop or self-learning resume/rate-limit logic, preserve persisted state contracts: iteration rows, session IDs, success counts, and terminal statuses. (context: run-loop|resume|state|rate-limit)
+- **[mistake]**: When changing self-learning resume/rate-limit logic, preserve persisted state contracts: iteration rows, session IDs, success counts, and terminal statuses. (context: resume|state|rate-limit)
 
 ### Correctness & Data Invariants
 - **[mistake]**: Guard boundary data before narrowing filters or status checks; failed reads, malformed entries, and defaulted fields can invert success/failure handling. (context: invariants|filters|error-handling)

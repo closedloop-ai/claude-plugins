@@ -22,7 +22,7 @@ set -euo pipefail
 # Claude binary path. When spawned by the closedloop-electron desktop app,
 # CLAUDE_BIN is set to the absolute path that the desktop validated in its
 # pre-flight check. Falls back to bare `claude` for manual/interactive runs
-# where PATH is trusted. See run-loop.sh for the same pattern.
+# where PATH is trusted.
 CLAUDE="${CLAUDE_BIN:-claude}"
 
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

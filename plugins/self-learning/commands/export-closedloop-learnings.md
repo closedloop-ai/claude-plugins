@@ -77,8 +77,7 @@ Global file at `~/.closedloop-ai/learnings/closedloop-learnings.json`:
 ## Usage
 
 ```bash
-# Typically invoked automatically by run-loop.sh after each iteration
-# Can also be invoked manually:
+# Invoke manually:
 claude -p "/self-learning:export-closedloop-learnings $WORKDIR"
 ```
 

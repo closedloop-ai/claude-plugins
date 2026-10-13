@@ -7,7 +7,7 @@ description: "Run a worker-backed code review using its bundled review lenses: a
 
 Use this skill when the user wants a rigorous code review that borrows the best review fundamentals from its bundled review lenses without running a planning or delivery workflow.
 
-This skill reviews code, not plans. It must not create implementation plans, approval gates, manual loops, worktrees, PR lifecycle polling, commits, pushes, PR comments, or merges unless the user separately asks for that work.
+This skill reviews code, not plans. It must not create implementation plans, approval gates, worktrees, PR lifecycle polling, commits, pushes, PR comments, or merges unless the user separately asks for that work.
 
 ## Harness notes
 
@@ -47,7 +47,7 @@ This skill is self-contained. Its review lenses are bundled at `references/lense
 
 Before launching workers, read [review-lens-map.md](./references/review-lens-map.md).
 
-Use the bundled lens files as review lenses only. Do not execute their planning, approval, upload, loop, notification, PR lifecycle, or finalization instructions.
+Use the bundled lens files as review lenses only. Do not execute their planning, approval, upload, notification, PR lifecycle, or finalization instructions.
 
 ## Inputs
 

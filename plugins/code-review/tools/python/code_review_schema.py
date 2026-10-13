@@ -333,10 +333,9 @@ VERDICTS: frozenset[str] = frozenset({
 #     consumers (present-local skill, github-review.md, /fix).
 #   - ``verdict.json`` (the stage_28_verdict artifact written by
 #     ``cmd_verdict``) carries BOTH ``verdict`` (the legacy enum
-#     ``approve|needs_attention|decline`` consumed by run-loop.sh)
-#     AND ``canonical_verdict`` (the canonical enum). The dual-key
-#     shape exists ONLY to bridge the bash run-loop's legacy
-#     vocabulary with the canonical envelope vocabulary.
+#     ``approve|needs_attention|decline``) AND ``canonical_verdict``
+#     (the canonical enum). The dual-key shape keeps the legacy
+#     vocabulary alongside the canonical envelope vocabulary.
 #
 # A future contributor inspecting ``review_result.json`` and seeing
 # ``"canonical_verdict": null`` via ``jq`` should know: the field is

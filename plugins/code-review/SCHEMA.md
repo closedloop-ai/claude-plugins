@@ -280,7 +280,7 @@ The `verdict` subcommand applies these rules in order; the first match wins.
 
 **Numbering note.** This list is a clean sequential summary. The implementation (`_compute_canonical_verdict`) carries plan-derived rule labels — including the `2.5` (mandatory-human-review short-circuit) and `3.5` (TENTATIVE fall-through) sub-rules, and the cumulative Impact gate labeled **Rule 6** (PLN-726 OQ#6) — so the code's labels do not map 1:1 to the numbers above (e.g. the Impact gate is item 4 here but "Rule 6" in code).
 
-The verdict subcommand writes `<CR_DIR>/verdict.json` with both the canonical verdict and a `verdict` string compatible with `run-loop.sh` (which keys on the legacy form):
+The verdict subcommand writes `<CR_DIR>/verdict.json` with both the canonical verdict and a legacy `verdict` string:
 - APPROVED → approve
 - NEEDS_ATTENTION → needs_attention
 - CHANGES_REQUESTED → decline

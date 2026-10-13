@@ -1,6 +1,6 @@
 # Review Lens Map
 
-Use these lens files, bundled with this skill under `references/lenses/`, as reusable review lenses only. Do not execute their orchestration, planning, approval, upload, notification, manual-loop, finalization, PR lifecycle polling, test, validation, visual-check, commit, push, or merge instructions.
+Use these lens files, bundled with this skill under `references/lenses/`, as reusable review lenses only. Do not execute their orchestration, planning, approval, upload, notification, finalization, PR lifecycle polling, test, validation, visual-check, commit, push, or merge instructions.
 
 Paths below such as `lenses/planning-phase.md` resolve relative to this skill's `references/` folder. Read only these bundled files; never read a lens from another location.
 

@@ -39,7 +39,7 @@ Build the union of git diffs since `$START_SHA`:
   git diff --name-only --cached 2>/dev/null; } | sort -u
 ```
 
-Mirrors run-loop.sh's union form, but live so it captures unstaged and staged changes during the current Claude session.
+The union captures unstaged and staged changes during the current Claude session.
 
 ## Step 3: Activate decision-table in verification-only mode
 

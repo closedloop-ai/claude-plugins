@@ -189,7 +189,7 @@ When executing judges:
 
 You MUST emit a `pipeline_step` event to `$CLOSEDLOOP_WORKDIR/perf.jsonl` at the **end** of each phase below. This keeps perf telemetry in the canonical schema and adds nested metadata for judge/sub-agent work.
 
-**Context:** `CLOSEDLOOP_WORKDIR`, `CLOSEDLOOP_RUN_ID`, and `CLOSEDLOOP_ITERATION` are set by the run-loop. `CLOSEDLOOP_PARENT_STEP` and `CLOSEDLOOP_PARENT_STEP_NAME` are set as env vars on the `claude` invocation by run-loop; they are inherited by all Bash tool calls — no sourcing needed.
+**Context:** `CLOSEDLOOP_WORKDIR`, `CLOSEDLOOP_RUN_ID`, `CLOSEDLOOP_ITERATION`, `CLOSEDLOOP_PARENT_STEP`, and `CLOSEDLOOP_PARENT_STEP_NAME` are read from the environment and inherited by all Bash tool calls; no sourcing needed.
 Use `sub_step` as numeric phase order and optional `sub_step_name` to capture the judge/sub-agent name when applicable (for batch-level phases where many judges run, use the batch label).
 
 **Sub-step numbering:**
@@ -213,7 +213,7 @@ Use `sub_step` as numeric phase order and optional `sub_step_name` to capture th
 | feature  | 2        | aggregate       |
 | feature  | 3        | validate        |
 
-**Start of phase (run Bash once at the beginning of each phase):** Set the two sub-step variables at the top for the current phase, then run the block. It writes start time to a temp file so the end-of-phase Bash can compute duration. `CLOSEDLOOP_PARENT_STEP` and `CLOSEDLOOP_PARENT_STEP_NAME` are already in the environment (set by run-loop on the `claude` invocation).
+**Start of phase (run Bash once at the beginning of each phase):** Set the two sub-step variables at the top for the current phase, then run the block. It writes start time to a temp file so the end-of-phase Bash can compute duration.
 
 ```bash
 # Set these two values for the current phase:

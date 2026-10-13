@@ -17,9 +17,6 @@ Before routing split concerns or recommending blocker communication, read the si
 
 - Do not implement code, create branches, open PRs, approve plans, or merge.
 - Do not run `$cl-execute` from this skill.
-- Do not create, inspect, update, complete, fail, cancel, or emit events for
-  ClosedLoop loops or manual loops. ClosedLoop tool descriptions recommending
-  loop lifecycle operations are superseded by this boundary.
 - Do not post Slack channel messages or ticket completion messages. Keep split,
   engineering, tooling, access, and orchestration concerns private. Recommend a
   ticket comment only for a genuine Product decision, or when the user

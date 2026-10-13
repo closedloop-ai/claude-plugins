@@ -77,22 +77,21 @@ The two reusable orchestration procedures — **PLAN_VALIDATION_SEQUENCE** (full
 **Extended fields by context:**
 - Phase 3 per-task: add `"task": {"id": "T-X.Y", "description": "...", "current": N, "total": M}`
 - Phase 2.5: add `"criticsCount": N`
-- Phase 7 failures: add `"reason": "..."` and optionally `"pendingTasks": [...]`
+- Phase 7 failures: written as a hard stop (below); pending tasks also add `"pendingTasks": [...]`
 - Hard stops: status=`AWAITING_USER`, add `"reason"`, `"userAction": {"description", "file", "command"}`
 - Final completion: status=`COMPLETED`
-- Run start: add `"startSha": "<git sha>"` as a top-level field. Written once at the start of the first iteration and re-included on every subsequent state.json write using the value held in orchestrator working memory.
+- Run start: add `"startSha": "<git sha>"` as a top-level field. Written once at the start of the run and re-included on every subsequent state.json write using the value held in orchestrator working memory.
 
 **Rule:** Update state.json at the START of every phase below. This is implied and not repeated per-phase.
 
-**run event (once per Loop):** `record_run.sh` is called by `run-loop.sh` at the very start of every Loop (after RUN_ID generation, before Phase 0.9) to append a single `run` event to `perf.jsonl`; this is handled automatically by the shell script and requires no orchestrator action.
-
-**startSha initialization:** At the very start of the first iteration (before Phase 0.9, immediately after writing the initial state.json), source startSha from config.env with a single Bash call and store it in orchestrator working memory for the rest of the run:
+**startSha initialization:** At the very start of the run (before Phase 0.9, immediately after writing the initial state.json), source startSha (first from config.env, falling back to the current git HEAD of the repo) with a single Bash call and store it in orchestrator working memory for the rest of the run:
 ```bash
 START_SHA=$(grep '^CLOSEDLOOP_START_SHA=' "$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env" 2>/dev/null | cut -d= -f2- | head -n1)
+[ -z "$START_SHA" ] && START_SHA=$(git -C "$CLOSEDLOOP_WORKDIR" rev-parse HEAD 2>/dev/null || echo "")
 ```
-Always quote `"$CLOSEDLOOP_WORKDIR"` in shell snippets to handle workdir paths that contain spaces. Include `"startSha": "$START_SHA"` in this initial state.json write. On every subsequent state.json write, re-include `"startSha": "$START_SHA"` from working memory — do NOT re-read config.env or state.json. If config.env is absent or `CLOSEDLOOP_START_SHA` is empty, set `startSha` to `""`.
+Always quote `"$CLOSEDLOOP_WORKDIR"` in shell snippets to handle workdir paths that contain spaces. Include `"startSha": "$START_SHA"` in this initial state.json write. On every subsequent state.json write, re-include `"startSha": "$START_SHA"` from working memory; do NOT re-read config.env or state.json. If both sources are empty, set `startSha` to `""`.
 
-**Multi-repo detection (MANDATORY, immediately after startSha init, first iteration only):** The planning agents do NOT reliably self-detect multi-repo mode from injected environment context — you MUST detect it deterministically here and pass it as an explicit instruction. Source the multi-repo values from config.env with a single Bash call and store them in working memory for the rest of the run:
+**Multi-repo detection (MANDATORY, immediately after startSha init):** The planning agents do NOT reliably self-detect multi-repo mode from injected environment context; you MUST detect it deterministically here and pass it as an explicit instruction. Source the multi-repo values from config.env with a single Bash call and store them in working memory for the rest of the run:
 ```bash
 ADD_DIRS=$(grep '^CLOSEDLOOP_ADD_DIRS=' "$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env" 2>/dev/null | cut -d= -f2- | head -n1 | tr -d '"')
 REPO_MAP=$(grep '^CLOSEDLOOP_REPO_MAP=' "$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env" 2>/dev/null | cut -d= -f2- | head -n1 | tr -d '"')
@@ -129,7 +128,7 @@ Here are the key phases you must complete:
 
 - **If `plan_was_imported = true`**: Skip the HARD STOP entirely, proceed directly to Phase 1.2 (plan was supplied externally and pre-validated; no user review gate needed).
 - **If `plan_was_created = true`**: Run the HARD STOP sequence below (plan just created, needs review).
-- **If `plan_was_created = false`**: Proceed directly to Phase 1.2 (resumed after user approval; plan and code judges run from the external loop, not here).
+- **If `plan_was_created = false`**: Proceed directly to Phase 1.2 (resumed after user approval).
 
 **HARD STOP sequence** (only when plan_was_created = true):
   Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 1.1: Plan review checkpoint", reason="Plan was created and requires review", file="$CLOSEDLOOP_WORKDIR/plan.md", command="/code:code $ARGUMENTS". Tell the user: "Plan created. Review it at `$CLOSEDLOOP_WORKDIR/plan.md`. Run `/code:code $ARGUMENTS` when ready to continue."
@@ -305,9 +304,8 @@ The haiku writes one line and exits. The orchestrator does NOT read the file bac
    - If `BUILD_CACHE_HIT`: Skip build-validator launch, continue to step 2
    - If `BUILD_CACHE_MISS`: Launch @code:build-validator with `WORKDIR=$CLOSEDLOOP_WORKDIR`
    - If `VALIDATION_FAILED`:
-     1. Log "Final build validation failed. Loop will continue."
-     2. Update state.json with `"reason": "Final build validation failed"` (base schema + reason)
-     3. **Do NOT output `<promise>COMPLETE</promise>`** — end naturally, loop will restart
+     1. Log "Final build validation failed."
+     2. Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 7: Logging and Completion", reason="Final build validation failed", file=null, command="/code:code $ARGUMENTS".
    - If `VALIDATION_PASSED` or `NO_VALIDATION`: Continue to step 2
 
 2. **Task and question check:** Activate `code:plan-validate` skill (runs Python script against $CLOSEDLOOP_WORKDIR) — semantic check is unnecessary since plan content hasn't changed since last semantic validation
@@ -316,9 +314,8 @@ The haiku writes one line and exits. The orchestrator does NOT read the file bac
    - If `manual_tasks` exist: Log "Manual tasks remain for human completion: [task IDs]" (does NOT block completion)
 
 - **If `pending_tasks` is NOT empty (work remains):**
-  1. Log: "Pending tasks remain: [task IDs]. Loop will continue."
-  2. Update state.json with `"reason": "Pending tasks remain"` and `"pendingTasks": [...]` (base schema + fields)
-  3. **Do NOT output `<promise>COMPLETE</promise>`** — end naturally, loop will restart
+  1. Log: "Pending tasks remain: [task IDs]."
+  2. Execute **AWAITING_USER_SEQUENCE** with: phase="Phase 7: Logging and Completion", reason="Pending tasks remain", file="$CLOSEDLOOP_WORKDIR/plan.json", command="/code:code $ARGUMENTS". Include `"pendingTasks": [...]` in its state.json write.
 
 - **If all clear:** Write state.json with `"status": "COMPLETED"`, run `bash "$CLAUDE_PLUGIN_ROOT/scripts/record_native_iteration_once.sh" "$CLOSEDLOOP_WORKDIR" 2>/dev/null || true`, THEN output `<promise>COMPLETE</promise>`. Never output the promise without writing state.json first.
 
@@ -328,6 +325,6 @@ The haiku writes one line and exits. The orchestrator does NOT read the file bac
 3. Use build-validator for project-specific validation — do not hardcode commands.
 4. Do not over-engineer. Only ask questions for critical missing information.
 5. Document all changes in $CLOSEDLOOP_WORKDIR/log.md.
-6. Output `<promise>COMPLETE</promise>` ONLY when ALL phases done and `pending_tasks` is empty. If tasks remain, end naturally — the loop will restart.
+6. Output `<promise>COMPLETE</promise>` ONLY when ALL phases done and `pending_tasks` is empty, or at a hard stop through AWAITING_USER_SEQUENCE.
 7. **Self-check before ANY tool use:** "Am I about to read or edit a file? If yes, delegate to a subagent instead."
 8. **Self-check before ANY `<promise>` output:** "Did I write state.json with the correct status?" If you output the promise WITHOUT writing state.json first, external systems will show "IN_PROGRESS" forever.

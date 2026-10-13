@@ -87,7 +87,3 @@ Return findings ordered by severity with:
 - required correction
 - whether it blocks execution
 - affected adversarial pass, if applicable
-
-## Loop Events
-
-If the orchestrator provides a `planning_loop_id`, plan-review, revision, and targeted re-check subagents must use ClosedLoop MCP `add_loop_event` for major review starts, review outcomes, blockers, revisions, and re-check results. They must not create, complete, fail, or cancel manual loops.

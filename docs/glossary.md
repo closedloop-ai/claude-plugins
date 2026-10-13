@@ -4,17 +4,8 @@ A comprehensive guide to ClosedLoop terminology and concepts.
 
 ## Orchestration
 
-**Closed Loop**
-The external bash loop (`run-loop.sh`) that drives fresh-context Claude iterations. Each iteration launches `claude -p` with a clean context window, preventing context exhaustion on long tasks. State persists between iterations in `.closedloop-ai/closedloop-loop.local.md`.
-
 **Orchestrator**
-The `prompt.md` system prompt loaded by `run-loop.sh` at the start of each iteration. Coordinates 8 workflow phases (discovery, planning, judge review, plan refinement, implementation, verification, build validation, and learning capture) entirely through subagent delegation. The orchestrator never reads project files directly.
-
-**Loop Step**
-A single `claude -p` invocation within the Closed Loop. Each step gets a fresh 200k token context window purely for the current phase of work.
-
-**run-loop.sh**
-The core bash script (~1100 lines) that drives the Closed Loop. Manages lock files, agent snapshots, goal configuration, and runs an 11-step post-iteration pipeline including pattern relevance scoring, goal evaluation, citation verification, learning processing, and judge execution.
+The `prompt.md` system prompt loaded by `/code`. Coordinates 8 workflow phases (discovery, planning, judge review, plan refinement, implementation, verification, build validation, and learning capture) entirely through subagent delegation. The orchestrator never reads project files directly.
 
 ## Agents
 
@@ -53,7 +44,7 @@ Lightweight agent (haiku model) that investigates the codebase before planning b
 ## Learning System
 
 **Self-Learning System**
-The feedback loop that captures patterns from runs and injects them into future contexts. The `learning-capture` agent records patterns after each run. Hooks re-inject relevant patterns into future subagent contexts. Success rates are computed deterministically against configurable goals. This is the "closed loop" that gives the project its name.
+The feedback loop that captures patterns from runs and injects them into future contexts. The `learning-capture` agent records patterns. Hooks re-inject relevant patterns into future subagent contexts. This is the "closed loop" that gives the project its name.
 
 **org-patterns.toon**
 The primary learning store — a TOON-format file containing extracted patterns indexed by context. Each pattern has fields: `id`, `category`, `summary`, `confidence`, `seen_count`, `success_rate`, `flags`, `applies_to`, `context`, `repo`. Capped at 50 patterns.
@@ -100,9 +91,7 @@ Hook that fires before a `Bash`, `Write`, or `Edit` tool call. Provides just-in-
 
 ## Commands
 
-**`/code`** — Bootstraps the Closed Loop. Sets up the environment, reads the orchestrator prompt, and begins the phase-based workflow.
-
-**`/cancel-code`** — Stops the running Closed Loop by removing the state file.
+**`/code`**: Sets up the environment, reads the orchestrator prompt, and begins the phase-based workflow.
 
 **`/code-review`** — Multi-agent code review with modes: local (default) and `--github`. Flags: `--hygiene-only` (zero-LLM fast checks), `--since-last-review` (auto-incremental), `--full-review`, `--base <ref>`. Uses a V2 content-addressed cache for cross-PR reuse.
 

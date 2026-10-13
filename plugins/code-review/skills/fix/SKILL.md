@@ -147,7 +147,7 @@ Interactive mode: prompt `Proceed? [y/N]` with no timeout (the prior auto-yes-af
 
 ### 3a. Auto-fix bucket
 
-Group surviving auto-fix findings by file. Apply **sequentially** within file (later fixes see earlier results); files run sequentially overall to keep the run-loop reproducible.
+Group surviving auto-fix findings by file. Apply **sequentially** within file (later fixes see earlier results); files run sequentially overall to keep the run reproducible.
 
 For each finding, perform the mandatory drift check first.
 
@@ -294,7 +294,7 @@ Print the structured summary:
 
 ### Write the structured result file
 
-After printing the summary, write `<CR_DIR>/fix_result.json` so non-interactive callers (`run-loop.sh`, future automation) can act on the outcome without parsing stdout:
+After printing the summary, write `<CR_DIR>/fix_result.json` so non-interactive callers can act on the outcome without parsing stdout:
 
 ```json
 {
@@ -312,7 +312,7 @@ After printing the summary, write `<CR_DIR>/fix_result.json` so non-interactive 
 }
 ```
 
-`manual_action_required` is `true` when `auto_fixed == 0 AND manual_surface > 0` — i.e., this run made no automated progress and the remaining findings can only be resolved by an operator. This is the signal `run-loop.sh` reads to halt the review-fix cycle (see below).
+`manual_action_required` is `true` when `auto_fixed == 0 AND manual_surface > 0`, i.e., this run made no automated progress and the remaining findings can only be resolved by an operator. This is the signal callers read to halt a review-fix cycle (see below).
 
 ### Pick the exit code
 
@@ -328,9 +328,9 @@ Mark all todos `completed`.
 
 ---
 
-## Notes for run-loop.sh and other callers
+## Notes for callers
 
-The default mode is **dry-run when no TTY**. `run-loop.sh` must invoke this skill with `--apply` to retain the auto-apply behavior:
+The default mode is **dry-run when no TTY**. Non-interactive callers must invoke this skill with `--apply` to retain the auto-apply behavior:
 
 ```bash
 "$CLAUDE" -p "/code-review:fix $cr_dir --apply"
@@ -340,7 +340,7 @@ The default mode is **dry-run when no TTY**. `run-loop.sh` must invoke this skil
 
 ### Closed-loop callers: read `fix_result.json` AND the exit code
 
-Automation that calls `/code-review:fix` in a loop (notably `plugins/code/scripts/run-loop.sh`'s `post_loop_review_fix`) must distinguish three cases:
+Automation that calls `/code-review:fix` in a loop must distinguish three cases:
 
 | Exit code | Meaning | Recommended caller action |
 |---|---|---|

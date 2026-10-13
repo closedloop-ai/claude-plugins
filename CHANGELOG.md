@@ -4,6 +4,51 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.2.4
+
+#### Removed
+- `workflow-code-review` lens files no longer tell planning, plan-review, implementation-review, fix and re-check subagents to post ClosedLoop loop events (`add_loop_event` with a `planning_loop_id` or `execution_loop_id`). `plan-review-lanes/common.md` drops its `Loop Events` section, and the numbered steps in `planning-phase.md` and `implementation-quality-gate.md` are renumbered.
+
+#### Changed
+- `workflow-code-review` `SKILL.md` and `review-lens-map.md` no longer list manual loops or loop instructions among the things the skill must not create or execute.
+
+### code v2.0.0
+
+#### Removed
+- `scripts/run-loop.sh`, the external runner that relaunched `/code:code` with fresh context on each iteration, with the tests that existed only for it (`test_loop_contract_*.py`, `test_run_loop_*.py`, `test_self_learning_flag.py`, `scripts/tests/test_spurious_complete.sh`, `tools/python/fixtures/loop_contracts/`) and its README section.
+- `/code:cancel-code`, which only read and deleted the state file `run-loop.sh` wrote, with its README sections.
+- `/code:code` no longer records a perf `run` event in `perf.jsonl`; `run-loop.sh` recorded it, and the prompt-expansion hook that records it for `/code:create-plan` and `/code:execute-implementation` does not match `/code:code`.
+- `setup-closedloop.sh` no longer carries `CLOSEDLOOP_SELF_LEARNING` from an existing `config.env` into the rewritten one; `run-loop.sh` was its only writer. The self-learning hooks still run when `CLOSEDLOOP_SELF_LEARNING=true` is set in the environment.
+
+#### Changed
+- `/code:code` runs as a single in-session pass. The command, the orchestrator prompt and the README no longer say an external runner relaunches it. When the final gate finds a failed build or pending tasks, the orchestrator runs `AWAITING_USER_SEQUENCE` with `/code:code` as the resume command (pending tasks keep `pendingTasks` in `state.json`). The prompt drops the note that `run-loop.sh` calls `record_run.sh`.
+- `setup-closedloop.sh` writes one `CLOSEDLOOP_START_SHA` per run: it keeps the value already in `config.env` while the workdir's `state.json` holds a status other than `COMPLETED`, so a resumed `/code:code` run keeps its baseline for Phase 5.5 and Phase 6.5, and otherwise (no `state.json`, a completed run, or an unreadable `state.json`) writes the current git HEAD when there is one. Tests cover each case and a workdir outside git.
+- `prompts/prompt.md` and `prompts/plan-prompt.md` fall back to the current git HEAD when `config.env` has no `CLOSEDLOOP_START_SHA`, as `execute-prompt.md` already did, so Phase 5.5 behavioral verification has a baseline for committed changes.
+- `/code:create-plan`, `/code:execute-implementation`, their prompts, `plan-prompt.md`'s closing instructions and the `orchestrator-sequences` skill no longer contrast themselves with an external loop. The README drops the runner as the `stream_formatter.py` consumer and says runs instead of iterations for caches and answered questions.
+- The README self-learning bullet says the hooks are enabled by setting `CLOSEDLOOP_SELF_LEARNING=true` in the environment, and `record_run.sh` and its README entry describe one `run` event per run instead of per Loop.
+- Comments and docstrings in `harness/types.py`, `test_harness_types.py`, `subagent-stop-hook.sh`, `test_subagent_stop_hook.py`, `debate-loop.sh`, `behavior-verifier.md`, `execute-prompt.md` and `test_setup_closedloop.py` no longer cite `run-loop.sh`. `TerminalFailure` validation is unchanged.
+
+### code-review v3.10.5
+
+#### Changed
+- Docs and comments for the legacy `verdict` string in `verdict.json` and for `fix_result.json` no longer name `run-loop.sh` as their consumer (`SCHEMA.md`, `README.md`, `commands/start.md`, `skills/fix/SKILL.md`, `code_review_schema.py`, `code_review_helpers.py`). Both artifacts and their fields are unchanged.
+
+### judges v1.7.2
+
+#### Changed
+- `run-judges` perf instrumentation says its `CLOSEDLOOP_*` context variables are read from the environment instead of naming the run-loop as their source.
+
+### self-learning v1.2.6
+
+#### Changed
+- The `export-closedloop-learnings` usage example and the `process-chat-learnings.sh` header no longer refer to `run-loop.sh`, and `process-learnings` no longer says `compute_success_rates.py` runs as a step of the post-iteration pipeline.
+
+### vibe v1.0.17
+
+#### Removed
+- `vibe-seed-refresh` no longer creates a ClosedLoop loop, posts loop events or completes a loop. Its state file drops `loopId`, and the done step goes straight to `update-document`. `vibe-seed-fix-worker` returns its summary for the PR body only.
+- The "do not create loops" boundary lines in `cl-analyze`, `cl-execute`, `cl-split`, `cl-sweep`, `cl-find-related-tickets` and `cl-work-report`. `cl-execute` keeps its rule that ticket status, linked plan, pull request, validation evidence, structured result and workflow repo memory are the execution record.
+
 ### vibe v1.0.16
 
 #### Added

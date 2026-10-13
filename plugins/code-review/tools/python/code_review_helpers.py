@@ -10232,8 +10232,7 @@ def cmd_re_assert(args: argparse.Namespace) -> int:
 _VERDICT_REASON_MAX = 80
 
 # Mapping between canonical envelope verdicts and the legacy verdict
-# strings consumed by run-loop.sh (`approve` / `needs_attention` /
-# `decline`).
+# strings (`approve` / `needs_attention` / `decline`).
 _CANONICAL_TO_LEGACY_VERDICT: dict[str, str] = {
     "APPROVED": "approve",
     "NEEDS_ATTENTION": "needs_attention",
@@ -10651,7 +10650,7 @@ def cmd_verdict(args: argparse.Namespace) -> int:
 
     Reads ``review_result.json`` (canonical envelope) when available; falls
     back to ``findings_validated.json`` otherwise. Emits a JSON object with
-    the canonical verdict, the run-loop-compatible legacy verdict string,
+    the canonical verdict, the legacy verdict string,
     and a reason.
     """
     findings_validated_path: str = args.findings_validated

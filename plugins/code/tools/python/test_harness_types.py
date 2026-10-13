@@ -214,21 +214,20 @@ def test_terminal_failure_field_access() -> None:
     assert tf.message == "Loop failed."
 
 
-# Mirrors the ``case "$code"`` allowlist in run-loop.sh:70-77.
 VALID_STATUSES = ["RUNNER_ERROR", "PRE_RUN_VALIDATION_FAILED", "PLAN_STATE_UNAVAILABLE"]
 INVALID_STATUSES = ["", "EXIT", "TIMEOUT", "error", "runner_error", "RUNNER ERROR"]
 
 
 @pytest.mark.parametrize("status", VALID_STATUSES)
 def test_terminal_failure_valid_status_accepted(status: str) -> None:
-    """TerminalFailure accepts every status in the run-loop.sh allowlist."""
+    """TerminalFailure accepts every status in the allowlist."""
     tf = TerminalFailure(status=status, subcode="NON_ZERO_EXIT", message="msg")
     assert tf.status == status
 
 
 @pytest.mark.parametrize("status", INVALID_STATUSES)
 def test_terminal_failure_invalid_status_rejected(status: str) -> None:
-    """TerminalFailure rejects any status outside the run-loop.sh allowlist."""
+    """TerminalFailure rejects any status outside the allowlist."""
     with pytest.raises(ValueError, match="status"):
         TerminalFailure(status=status, subcode="NON_ZERO_EXIT", message="msg")
 
@@ -241,7 +240,7 @@ def test_terminal_failure_max_length_message_accepted() -> None:
 
 @pytest.mark.parametrize("message", ["", "x" * 1001])
 def test_terminal_failure_invalid_message_rejected(message: str) -> None:
-    """TerminalFailure rejects empty and over-1000-char messages (run-loop.sh:84-87)."""
+    """TerminalFailure rejects empty and over-1000-char messages."""
     with pytest.raises(ValueError, match="message"):
         TerminalFailure(status="RUNNER_ERROR", subcode="NON_ZERO_EXIT", message=message)
 

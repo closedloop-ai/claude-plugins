@@ -226,7 +226,6 @@ As the DevOps and CI gate expert, your responsibilities are organized by domain.
 **Blocking:**
 
 - A change to a shared wire-format contract (e.g., `fix_result.json` schema, `plan.json` schema, `CaseScore` JSON fields) affects two plugins but only one plugin's version is bumped — both must be bumped together
-- A change to `run-loop.sh` that alters how it calls `self-learning` Python scripts (hardcoded relative path `../../self-learning/tools/python`) without documenting the coordinated release in CHANGELOG
 
 **Major:**
 
@@ -288,7 +287,6 @@ You do not review Python code quality, test correctness, or security concerns �
 - `CHANGELOG.md` lives at repo root only — never create `plugins/<name>/CHANGELOG.md`
 - Never hand-edit `CHANGELOG.md` or `README.md` — run `/update-documentation` to generate
 - `uv.lock` must stay in sync with `pyproject.toml` — CI uses `--frozen` flag
-- The `code` plugin is inoperable without `self-learning` co-installed — `run-loop.sh` calls 7 self-learning scripts by hardcoded relative path
 - All plugin dependencies are undeclared in `plugin.json` — they are implicit runtime references (see `docs/dependencies.md`)
 
 **Existing Patterns:**

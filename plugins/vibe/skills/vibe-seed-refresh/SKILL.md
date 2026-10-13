@@ -22,7 +22,7 @@ This thread can live for days across monitor wake-ups, so its context is for
 state and decisions only. Under all circumstances you never read source,
 search the codebase, edit files, read logs or diffs, or run seeds, builds,
 tests, git, or `gh` yourself. You read and write the state file, call the
-ClosedLoop MCP for the ticket and loop, start and stop `gh-monitor-pr`,
+ClosedLoop MCP for the ticket, start and stop `gh-monitor-pr`,
 commit, and dispatch workers with short briefs. Committing is yours alone,
 because a commit runs the repository's commit hooks: use
 `node ../vibe/scripts/commit-worktree.mjs --worktree "<fix worktree>" --subject "<subject>" [--body "<text>"]`,
@@ -45,7 +45,7 @@ subagent with the file's body as its instructions, in Claude Code use
 ## State
 
 Keep state in `~/.codex/vibe-seed-refresh/state.json`:
-`{ "phase", "ticket", "loopId", "branch", "worktree", "pr", "lastCheck", "drift" }`.
+`{ "phase", "ticket", "branch", "worktree", "pr", "lastCheck", "drift" }`.
 Read it first on every run and every wake-up. Phases, in order:
 `checking`, `fixing`, `pr-open`, `queued`, `merged`, `done`. A missing file
 means `checking`.
@@ -71,7 +71,7 @@ On `DRIFT`:
    is open.
 2. Otherwise `create-document` (`type: ISSUE`, `status: IN_PROGRESS`, assigned
    to you, title "Vibe seed refresh: <short drift summary>", body listing every
-   drift item), then `create-loop` on it.
+   drift item).
 3. Save state with phase `fixing` and the drift list.
 
 ## 3. Fix
@@ -79,8 +79,8 @@ On `DRIFT`:
 Dispatch `vibe-seed-fix-worker` with the checkout path, the ticket slug, and
 the drift list. It creates the fix worktree from fresh main
 (`fix/<iss-slug>-vibe-seed`), fixes the seed, and runs every check until they
-pass. Save its worktree and branch in state and post a loop event with its
-summary. On `BLOCKED`, post the reason as a loop event, tell Daniel, and stop.
+pass. Save its worktree and branch in state. On `BLOCKED`, tell Daniel the
+reason and stop.
 
 ## 4. Pull request
 
@@ -90,7 +90,7 @@ it stays within 72 once GitHub appends ` (#NNNN)`; no mention of AI tools).
 Then dispatch `vibe-seed-pr-worker` in open mode with the worktree, ticket,
 and the fix worker's summary. It pushes and returns the PR URL. Link it (ClosedLoop `create_branch_artifact` with the ticket's project UUID as
 `projectId`, the branch as `branchName`, and the ticket's UUID as
-`sourceArtifactId`; then a loop event),
+`sourceArtifactId`),
 start the monitor per the `gh-monitor-pr` skill with the PR URL and
 `--stall-after 1800`, save phase `pr-open`, and end the turn.
 
@@ -105,7 +105,7 @@ state, then act on it:
   `<ISS-slug>: <what the fix changed>`, then dispatch `vibe-seed-pr-worker`
   in push mode with those threads and replies; it pushes, replies on each
   thread with the fixing commit, and resolves them. A failure unrelated to
-  the diff gets one re-run; a second failure gets a loop event and a note to
+  the diff gets one re-run; a second failure gets a note to
   Daniel instead of more re-runs.
 - Merge conflict: `vibe-seed-pr-worker` in sync mode (stage a merge of main
   without committing, re-run the fix worker's checks through it). Commit with
@@ -122,8 +122,7 @@ End every wake-up turn after acting; the monitor wakes the thread again.
 
 ## 6. Done
 
-1. ClosedLoop: `complete-loop` with the PR URL and branch, then
-   `update-document` to `DONE`.
+1. ClosedLoop: `update-document` to `DONE`.
 2. Stop the PR monitor per `gh-monitor-pr`.
 3. Dispatch `vibe-seed-pr-worker` in cleanup mode (remove the fix worktree
    without forcing, delete the local branch).

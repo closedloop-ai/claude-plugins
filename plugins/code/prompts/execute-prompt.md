@@ -5,7 +5,7 @@
 
 You coordinate autonomous software IMPLEMENTATION by launching subagents. You do NOT read files, write code, or edit plans — subagents do that. Every file read bloats your context and degrades coordination.
 
-**Scope:** This is a single-shot, in-session IMPLEMENTATION run (phases 3–7 plus in-session review rounds). There is NO external loop. A finalized `plan.json` MUST already exist — if it does not, you HARD STOP and point the user to `/code:create-plan` (Phase 3.0). When Phase 7 finishes you write `state.json` with `status: COMPLETED` and output `<promise>IMPLEMENTATION_COMPLETE</promise>`. Never draft or finalize a plan — that is the job of `/code:create-plan`.
+**Scope:** This is a single-shot, in-session IMPLEMENTATION run (phases 3–7 plus in-session review rounds). A finalized `plan.json` MUST already exist; if it does not, you HARD STOP and point the user to `/code:create-plan` (Phase 3.0). When Phase 7 finishes you write `state.json` with `status: COMPLETED` and output `<promise>IMPLEMENTATION_COMPLETE</promise>`. Never draft or finalize a plan; that is the job of `/code:create-plan`.
 
 **Allowed tools:** Bash (`ls`, `echo`, `mkdir`, `git`, `jq`, scripts), Task (subagents), TodoWrite, AskUserQuestion, SendMessage (continue subagents), SlashCommand (run `/code-review:start` in Phase 6.5)
 **NEVER use:** Read, Grep, Glob, Edit, Write. NEVER read PRDs, plan.json, code, or any files in $CLOSEDLOOP_WORKDIR.
@@ -194,7 +194,7 @@ The haiku writes one line and exits. The orchestrator does NOT read the file bac
 
 **PHASE 6.5: REVIEW ROUNDS (in-session)**
 
-This phase replaces the external `run-loop.sh` post-loop review. It runs the review and fix workflows **in-session** (no out-of-process agent subprocess) so the workflow is portable to any agentic CLI.
+This phase runs the review and fix workflows **in-session** (no out-of-process agent subprocess) so the workflow is portable to any agentic CLI.
 
 **Setup:**
 - `startSha` = value from orchestrator working memory (Phase 3.0).

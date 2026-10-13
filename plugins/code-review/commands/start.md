@@ -503,7 +503,7 @@ Never hand-author or drop `reviewed_line`. It names `PR #N head` instead of a pa
 
 ## PR Verdict (stage_28_verdict — printed last)
 
-`stage_28_verdict` runs as a normal helper in the walker. It writes `<CR_DIR>/verdict.json` with three fields: `verdict` (legacy string for `run-loop.sh`: `approve` | `needs_attention` | `decline`), `canonical_verdict` (envelope form: `APPROVED` | `NEEDS_ATTENTION` | `CHANGES_REQUESTED`), and `reason`. After the footer prints, do not output any additional line — the verdict artifact is the contract; consumers read `verdict.json` directly.
+`stage_28_verdict` runs as a normal helper in the walker. It writes `<CR_DIR>/verdict.json` with three fields: `verdict` (legacy string: `approve` | `needs_attention` | `decline`), `canonical_verdict` (envelope form: `APPROVED` | `NEEDS_ATTENTION` | `CHANGES_REQUESTED`), and `reason`. After the footer prints, do not output any additional line; the verdict artifact is the contract; consumers read `verdict.json` directly.
 
 ---
 

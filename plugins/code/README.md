@@ -17,8 +17,8 @@ Install and enable both `code` and `closedloop-core` from the ClosedLoop marketp
 - **Plan-first workflow**: Generates a structured `plan.json` from a PRD, pauses for human review, then proceeds to implementation
 - **Multi-phase orchestration**: Sequenced phases covering pre-exploration, planning, critic review, implementation, code review, visual QA, and validation
 - **Loop agents**: Key agents (plan-draft-writer, implementation-subagent, etc.) self-validate and iterate until quality gates pass
-- **Caching layer**: Skills for critic, build, and cross-repo caches eliminate redundant expensive agent calls between iterations
-- **Self-learning system**: Agents capture learnings into pending JSON files; hooks inject relevant past patterns into new agent contexts
+- **Caching layer**: Skills for critic, build, and cross-repo caches eliminate redundant expensive agent calls
+- **Self-learning system**: Agents capture learnings into pending JSON files; hooks inject relevant past patterns into new agent contexts. The hooks are enabled by setting `CLOSEDLOOP_SELF_LEARNING=true` in the environment.
 - **Cross-repo coordination**: Discovers peer repositories, identifies missing capabilities, and generates cross-repo PRDs
 - **Visual QA**: Playwright-based browser automation agent validates UI changes against documented requirements
 - **Plan amendment**: The `/code:amend-plan` command supports natural conversation to modify an approved plan after implementation has started
@@ -80,8 +80,6 @@ State is maintained in `$CLOSEDLOOP_WORKDIR/state.json` at each phase transition
 2. Loads the orchestrator prompt specified by `CLOSEDLOOP_PROMPT_FILE`
 3. The orchestrator coordinates all phases until completion or a hard stop requiring user input
 
-The command runs inside a ClosedLoop loop — the external loop runner (`run-loop.sh`) relaunches it with fresh context on each iteration until `<promise>COMPLETE</promise>` is output.
-
 ### `/code:create-plan`
 
 **Description:** Create an implementation plan (planning only).
@@ -98,7 +96,7 @@ The command runs inside a ClosedLoop loop — the external loop runner (`run-loo
 
 **What it does:**
 
-Runs `setup-closedloop.sh` with the `plan-prompt` orchestrator prompt (`prompts/plan-prompt.md`) for a single-shot, in-session planning run — there is no external loop. The orchestrator runs PLAN ONLY (phases 0.9–2.8), delegating all project file reading to subagents. When the plan is finalized (`plan.json` + `plan.md` ready and validated), it writes `state.json` with `status: COMPLETED`, outputs `<promise>PLAN_COMPLETE</promise>`, and stops without proceeding to implementation.
+Runs `setup-closedloop.sh` with the `plan-prompt` orchestrator prompt (`prompts/plan-prompt.md`) for a single-shot, in-session planning run. The orchestrator runs PLAN ONLY (phases 0.9–2.8), delegating all project file reading to subagents. When the plan is finalized (`plan.json` + `plan.md` ready and validated), it writes `state.json` with `status: COMPLETED`, outputs `<promise>PLAN_COMPLETE</promise>`, and stops without proceeding to implementation.
 
 ### `/code:execute-implementation`
 
@@ -139,12 +137,6 @@ Supports four intent types:
 - **Unstructured input**: Meeting notes or Slack threads — delegates to `amend-extractor` agent to extract structured changes
 
 Conversation state is persisted across GitHub workflow runs via `amend_state.py`. After applying changes, records an amendment entry in `plan.json` and deletes the session file.
-
-### `/code:cancel-code`
-
-**Description:** Cancel an active ClosedLoop loop.
-
-Checks for `.closedloop-ai/closedloop-loop.local.md`, reads the current iteration, removes the file, and reports the cancellation. Hidden from the slash command picker.
 
 ### `/code:plan-with-codex`
 
@@ -350,7 +342,7 @@ Cleans up session-level artifacts: removes the session workdir mapping file, cle
 
 ### `user-prompt-expansion-hook.sh` (UserPromptExpansion, matches create-plan/execute-implementation)
 
-Initializes native PLAN/EXECUTE perf metadata for the `/code:create-plan` and `/code:execute-implementation` commands (which run in-session without the external `run-loop.sh`). Resolves the session `config.env` from the command's workdir, documented `command_args`, legacy argument fields, or `cwd`; derives a `CLOSEDLOOP_COMMAND` value (`PLAN` or `EXECUTE`); assigns or reuses a `CLOSEDLOOP_RUN_ID`; sets `CLOSEDLOOP_ITERATION=0`; persists those values back into `config.env`; and invokes `record_run.sh` so the in-session run is attributable in `perf.jsonl`. It parses `config.env` as data rather than sourcing shell, and fails open on every error so prompt expansion never blocks the user command.
+Initializes native PLAN/EXECUTE perf metadata for the `/code:create-plan` and `/code:execute-implementation` commands. Resolves the session `config.env` from the command's workdir, documented `command_args`, legacy argument fields, or `cwd`; derives a `CLOSEDLOOP_COMMAND` value (`PLAN` or `EXECUTE`); assigns or reuses a `CLOSEDLOOP_RUN_ID`; sets `CLOSEDLOOP_ITERATION=0`; persists those values back into `config.env`; and invokes `record_run.sh` so the in-session run is attributable in `perf.jsonl`. It parses `config.env` as data rather than sourcing shell, and fails open on every error so prompt expansion never blocks the user command.
 
 ### `subagent-start-hook.sh` (SubagentStart)
 
@@ -436,10 +428,6 @@ Defines the structure of `code-map.json` produced by the `pre-explorer` agent. R
 
 Initializes a ClosedLoop session. Parses arguments (`--prd`, `--max-iterations`, `--prompt`, positional workdir), auto-detects the PRD file by checking common patterns (`prd.md`, `prd.pdf`, `requirements.md`, etc.), establishes the session-to-workdir mapping, validates the prompt name, and writes `{WORKDIR}/.closedloop-ai/config.env` with all environment variables.
 
-### `run-loop.sh`
-
-External loop runner. Launches `claude -p` in a loop, maintaining state in `.closedloop-ai/closedloop-loop.local.md`. Integrates with the self-learning system. Tracks run ID, start SHA, iteration count, and progress log. Continues until the orchestrator outputs `<promise>COMPLETE</promise>` or max iterations are reached.
-
 ### `setup-loop.sh`
 
 Sets up a ClosedLoop loop with initial configuration and state.
@@ -458,11 +446,11 @@ Shell harness for the Codex debate loop used by the `plan-with-codex` command. D
 
 ### `stamp_critic_cache.sh`
 
-Stamps the critic cache after Phase 2.5 reviews complete. Hashes `plan.json` (and `critic-gates.json` when present) and writes the hash to `{WORKDIR}/reviews/.plan-hash` so subsequent iterations can skip critics via the `code:critic-cache` skill.
+Stamps the critic cache after Phase 2.5 reviews complete. Hashes `plan.json` (and `critic-gates.json` when present) and writes the hash to `{WORKDIR}/reviews/.plan-hash` so subsequent runs can skip critics via the `code:critic-cache` skill.
 
 ### `stamp_cross_repo_cache.sh`
 
-Stamps the cross-repo cache after Phase 1.4 coordinator completes. Hashes peer-repo HEADs from `.workspace-repos.json` (falling back to `.cross-repo-needs.json`) and writes to `{WORKDIR}/.cross-repo-hash` so subsequent iterations skip cross-repo discovery via the `code:cross-repo-cache` skill.
+Stamps the cross-repo cache after Phase 1.4 coordinator completes. Hashes peer-repo HEADs from `.workspace-repos.json` (falling back to `.cross-repo-needs.json`) and writes to `{WORKDIR}/.cross-repo-hash` so subsequent runs skip cross-repo discovery via the `code:cross-repo-cache` skill.
 
 ### `closedloop_env.sh`
 
@@ -470,7 +458,7 @@ Shared library (sourced, not executed) that hydrates `CLOSEDLOOP_*` environment 
 
 ### `record_iteration.sh`
 
-Appends a single synthetic `iteration` event to `perf.jsonl` for native (in-session) command runs that lack the external loop's per-iteration accounting. Hydrates run context via `closedloop_env.sh`, derives `status`/`claude_exit_code` from `state.json` (`error`/`1` when `state.json` is missing or has not reached `COMPLETED`, otherwise `ok`/`0`), computes duration from the matching `run` event's `started_at`, and emits a JSON line with `event`, `run_id`, `iteration`, `started_at`, `ended_at`, `duration_s`, `claude_exit_code`, `status`, and `command` fields.
+Appends a single synthetic `iteration` event to `perf.jsonl` for native (in-session) command runs. Hydrates run context via `closedloop_env.sh`, derives `status`/`claude_exit_code` from `state.json` (`error`/`1` when `state.json` is missing or has not reached `COMPLETED`, otherwise `ok`/`0`), computes duration from the matching `run` event's `started_at`, and emits a JSON line with `event`, `run_id`, `iteration`, `started_at`, `ended_at`, `duration_s`, `claude_exit_code`, `status`, and `command` fields.
 
 ### `record_native_iteration_once.sh`
 
@@ -482,7 +470,7 @@ Appends a phase event to `perf.jsonl` from the current `state.json`. Called by t
 
 ### `record_run.sh`
 
-Appends a single `run` event to `perf.jsonl` once per Loop, capturing `command`, `repo`, `branch`, `run_id`, and `started_at` so every perf event can be attributed to the slash command that launched the Loop. Emitted unconditionally and fails open (exits 0) on any error so the caller loop is unaffected. Reads `CLOSEDLOOP_COMMAND` and `CLOSEDLOOP_RUN_ID` from the environment.
+Appends a single `run` event to `perf.jsonl` once per run, capturing `command`, `repo`, `branch`, `run_id`, and `started_at` so every perf event can be attributed to the slash command that launched the run. Emitted unconditionally and fails open (exits 0) on any error so the caller is unaffected. Reads `CLOSEDLOOP_COMMAND` and `CLOSEDLOOP_RUN_ID` from the environment.
 
 ### `loop-agents.json`
 
@@ -511,7 +499,7 @@ Counts tokens in a file or stdin using the Anthropic API's token counting endpoi
 
 ### `stream_formatter.py`
 
-Formats Claude stream-JSON output (from `claude --output-format stream-json`) into human-readable terminal output with ANSI colors. Accumulates per-model token usage from assistant events and prints a summary at exit in the format the harness expects. Used in pipeline with the external loop runner to display progress and report token consumption.
+Formats Claude stream-JSON output (from `claude --output-format stream-json`) into human-readable terminal output with ANSI colors. Accumulates per-model token usage from assistant events and prints a summary at exit in the format the harness expects.
 
 ### `requirements.txt`
 
@@ -548,18 +536,12 @@ Python dependencies: `pyyaml>=6.0`, `tree-sitter>=0.20.0` (optional, for AST par
 
 ### Answering open questions
 
-Edit `plan.json` and change `openQuestions` entries to `answeredQuestions` with an `answer` field. The orchestrator processes them at Phase 1.2 on the next iteration.
+Edit `plan.json` and change `openQuestions` entries to `answeredQuestions` with an `answer` field. The orchestrator processes them at Phase 1.2 on the next run.
 
 ### Amending the plan during implementation
 
 ```
 /code:amend-plan --message "for T-1.2, don't remove the legacy compatibility check"
-```
-
-### Cancelling a session
-
-```
-/code:cancel-code
 ```
 
 ### Session state file

@@ -100,10 +100,8 @@ hardcode a personal name for the engineering attention contact.
 - Use the standalone `workflow-memory` CLI for repo-memory root resolution,
   queries, writes, validation, and attachments. Do not route memory access
   through workflow-orchestrator.
-- Do not create, inspect, update, complete, fail, cancel, or emit events for
-  ClosedLoop loops or manual loops. ClosedLoop MCP loop guidance is superseded
-  by this boundary. Use ticket status, linked plan, pull request, validation
-  evidence, structured result, and workflow repo memory as the execution record.
+- Use ticket status, linked plan, pull request, validation evidence,
+  structured result, and workflow repo memory as the execution record.
 - Do not skip the single independent plan review, the required two-pass
   coordinated code-review sequence, PR comment handling, or current-head CI
   evidence. A plan gets exactly one review; never run a second plan-review
@@ -298,7 +296,7 @@ hardcode a personal name for the engineering attention contact.
 9. If the gate is not `GO`, or is `GO_WITH_UI_PLAN_APPROVAL` without explicit
    approval for the current plan, stop at the matching planning/blocker result.
 10. Confirm every included feature is `IN_PROGRESS` before returning a planning
-   wait or starting execution. Do not create ClosedLoop loops.
+   wait or starting execution.
 11. Check repo memory before choosing the approach. Re-check memory before
    writing or revising the plan, before runtime launch, before validation/E2E/
    visual QA, when debugging setup failures, and before PR finalization.

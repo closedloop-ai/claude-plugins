@@ -13,7 +13,7 @@ The report is private. Create a local HTML report by default and return its link
 
 ## Boundaries
 
-- This skill is read-only. Never reassign tickets, update statuses or relationships, post comments, send messages, create loops or goals, acquire leases, launch workers, implement work, or change PRs.
+- This skill is read-only. Never reassign tickets, update statuses or relationships, post comments, send messages, create goals, acquire leases, launch workers, implement work, or change PRs.
 - Read `../cl-policy/SKILL.md` for ClosedLoop access and fallback rules. A private report does not require configured Product or engineering contact names and must not stop merely because communication policy is unavailable.
 - Load `closedloop-intel` by name (`$closedloop-intel` in Codex or `/closedloop-core:closedloop-intel` in Claude Code). Discover the read-only `closedloop-graph` server by capability, call its `get_routing_protocol` first, and follow the live route and evidence rules it returns. Never hardcode an MCP server prefix.
 - Graph results are discovery evidence. Live ClosedLoop is authoritative for the current user, project, assignment, status, and relationship direction.

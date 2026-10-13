@@ -1,6 +1,6 @@
 ---
 name: cl-find-related-tickets
-description: Inspect the relevant code first to map the implementation blast area, then find ClosedLoop issue tickets related to a product area, behavior, requirement, incident, ticket, or pull request and give a brief evidence-based reason for each match. Use when auditing scope, finding potentially conflicting or missing work across projects and assignees, checking whether a freeze covers every relevant ticket, comparing discoveries with an approved ticket set, or looking for direct changes, dependencies, shared contracts, tests, and open-PR collisions. This is a read-only discovery skill and does not update tickets, comments, statuses, loops, code, or pull requests.
+description: Inspect the relevant code first to map the implementation blast area, then find ClosedLoop issue tickets related to a product area, behavior, requirement, incident, ticket, or pull request and give a brief evidence-based reason for each match. Use when auditing scope, finding potentially conflicting or missing work across projects and assignees, checking whether a freeze covers every relevant ticket, comparing discoveries with an approved ticket set, or looking for direct changes, dependencies, shared contracts, tests, and open-PR collisions. This is a read-only discovery skill and does not update tickets, comments, statuses, code, or pull requests.
 ---
 
 # Find Related ClosedLoop Tickets
@@ -25,7 +25,7 @@ Ask one concise clarification when the implementation repository or area cannot 
 
 Remain read-only.
 
-- Do not create or update documents, comments, relationships, statuses, goals, loops, branches, code, or PRs.
+- Do not create or update documents, comments, relationships, statuses, goals, branches, code, or PRs.
 - Do not invoke execution, split, or blocker-routing workflows.
 - Do not write workflow repo memory unless the user separately requests persistence.
 - Never hardcode a ClosedLoop MCP tool prefix. The prefix depends on the user's local MCP connection name.

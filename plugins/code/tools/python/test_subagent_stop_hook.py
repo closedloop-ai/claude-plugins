@@ -470,7 +470,7 @@ class TestAgentEventModelAndMetadata:
         self, session_env: tuple[Path, Path, str]
     ) -> None:
         """When CLOSEDLOOP_COMMAND is not set, command defaults to "interactive" —
-        matching record_phase.sh and run-loop.sh's emit_perf_event helper, so agent
+        matching record_phase.sh, so agent
         rows can be joined with phase/iteration rows by command in Datadog."""
         cwd, workdir, session_id = session_env
 

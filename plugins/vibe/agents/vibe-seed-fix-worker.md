@@ -57,6 +57,6 @@ reply saying what changed.
 ## Return (under 150 words)
 
 `DONE` with the worktree path, the branch, a one-paragraph summary for the PR
-body and loop event (models fixed and how, checks run), and in follow-up mode
+body (models fixed and how, checks run), and in follow-up mode
 each addressed review thread's id with its one-line reply; or `BLOCKED` with
 the reason in one or two lines.
