@@ -26,7 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `prompts/prompt.md` and `prompts/plan-prompt.md` fall back to the current git HEAD when `config.env` has no `CLOSEDLOOP_START_SHA`, as `execute-prompt.md` already did, so Phase 5.5 behavioral verification has a baseline for committed changes.
 - `/code:create-plan`, `/code:execute-implementation`, their prompts, `plan-prompt.md`'s closing instructions and the `orchestrator-sequences` skill no longer contrast themselves with an external loop. The README drops the runner as the `stream_formatter.py` consumer and says runs instead of iterations for caches and answered questions.
 - The README self-learning bullet says the hooks are enabled by setting `CLOSEDLOOP_SELF_LEARNING=true` in the environment, and `record_run.sh` and its README entry describe one `run` event per run instead of per Loop.
-- Comments and docstrings in `harness/types.py`, `test_harness_types.py`, `subagent-stop-hook.sh`, `test_subagent_stop_hook.py`, `debate-loop.sh`, `behavior-verifier.md`, `execute-prompt.md` and `test_setup_closedloop.py` no longer cite `run-loop.sh`. `TerminalFailure` validation is unchanged.
+- Comments and docstrings in `harness/types.py`, `test_harness_types.py`, `subagent-stop-hook.sh`, `test_subagent_stop_hook.py`, `debate-loop.sh`, `behavior-verifier.md`, `execute-prompt.md` and `test_setup_closedloop.py` no longer cite `run-loop.sh`. `test_subagent_stop_hook.py` also stops calling the parent session a Loop. `TerminalFailure` validation is unchanged.
 
 ### code-review v3.10.5
 
@@ -41,7 +41,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### self-learning v1.2.6
 
 #### Changed
-- The `export-closedloop-learnings` usage example and the `process-chat-learnings.sh` header no longer refer to `run-loop.sh`, and `process-learnings` no longer says `compute_success_rates.py` runs as a step of the post-iteration pipeline.
+- The `export-closedloop-learnings` usage example, the `process-chat-learnings.sh` header and the `perf_summary.py` output-path docstring no longer refer to `run-loop.sh` or Loop runs, and `process-learnings` no longer says `compute_success_rates.py` runs as a step of the post-iteration pipeline.
 
 ### vibe v1.0.18
 

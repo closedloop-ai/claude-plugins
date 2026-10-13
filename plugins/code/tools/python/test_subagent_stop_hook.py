@@ -322,7 +322,7 @@ class TestAgentEventMissingTranscript:
         """When the transcript file exists but isn't valid JSONL (jq fails), the hook
         must still exit 0 and emit an agent event with zero token fields. Regression
         guard for the fail-open contract: a transcript-parser bug must never break the
-        SubagentStop hook or the parent Loop."""
+        SubagentStop hook or the parent run."""
         cwd, workdir, session_id = session_env
 
         # Write garbage that is NOT valid JSONL
