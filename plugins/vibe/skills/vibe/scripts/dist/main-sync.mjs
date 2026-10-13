@@ -226572,8 +226572,7 @@ function resolveImport(root, importer, specifier, tracked, mode) {
     const path2 = resolve4(dirname6(join8(root, importer)), specifier);
     if (!path2.startsWith(`${root}/`)) throw unproved("selected import escapes owned root");
     const stem = relative4(root, path2);
-    for (const candidate of moduleCandidates(stem)) if (tracked.has(candidate) && isInputModulePath(candidate)) return [candidate];
-    return [];
+    return trackedModule(stem, tracked);
   }
   if (specifier.startsWith("@repo/") || specifier.startsWith("@closedloop-ai/")) {
     return workspaceImport(root, specifier, tracked, mode);
@@ -226596,12 +226595,7 @@ function workspaceImport(root, specifier, tracked, mode) {
     }
     const absolute = resolve4(root, base, target);
     if (!absolute.startsWith(`${join8(root, base)}/`)) throw unproved("workspace export escapes committed owner");
-    for (const candidate of moduleCandidates(relative4(root, absolute))) {
-      if (tracked.has(candidate) && isInputModulePath(candidate)) {
-        selected.push(candidate);
-        break;
-      }
-    }
+    selected.push(...trackedModule(relative4(root, absolute), tracked));
   }
   return [...new Set(selected)];
 }
@@ -226610,6 +226604,10 @@ function moduleCandidates(path2) {
   if (path2.endsWith(".js")) candidates.push(path2.slice(0, -3) + ".ts", path2.slice(0, -3) + ".tsx");
   if (path2.endsWith(".mjs")) candidates.push(path2.slice(0, -4) + ".mts");
   return candidates;
+}
+function trackedModule(path2, tracked) {
+  const candidate = moduleCandidates(path2).find((file) => tracked.has(file) && (isInputModulePath(file) || isLocalPlanPath(file)));
+  return candidate ? [candidate] : [];
 }
 function unproved(reason) {
   return new MainSyncError(`Selected report execution provenance is unproved: ${reason}; no retained-input admission`, "NEEDS_CHANGE");

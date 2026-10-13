@@ -126,8 +126,7 @@ function resolveImport(root: string, importer: string, specifier: string, tracke
     const path = resolve(dirname(join(root, importer)), specifier);
     if (!path.startsWith(`${root}/`)) throw unproved("selected import escapes owned root");
     const stem = relative(root, path);
-    for (const candidate of moduleCandidates(stem)) if (tracked.has(candidate) && isInputModulePath(candidate)) return [candidate];
-    return [];
+    return trackedModule(stem, tracked);
   }
   if (specifier.startsWith("@repo/") || specifier.startsWith("@closedloop-ai/")) {
     return workspaceImport(root, specifier, tracked, mode);
@@ -152,9 +151,7 @@ function workspaceImport(root: string, specifier: string, tracked: ReadonlySet<s
     }
     const absolute = resolve(root, base, target);
     if (!absolute.startsWith(`${join(root, base)}/`)) throw unproved("workspace export escapes committed owner");
-    for (const candidate of moduleCandidates(relative(root, absolute))) {
-      if (tracked.has(candidate) && isInputModulePath(candidate)) { selected.push(candidate); break; }
-    }
+    selected.push(...trackedModule(relative(root, absolute), tracked));
   }
   return [...new Set(selected)];
 }
@@ -164,6 +161,12 @@ function moduleCandidates(path: string) {
   if (path.endsWith(".js")) candidates.push(path.slice(0, -3) + ".ts", path.slice(0, -3) + ".tsx");
   if (path.endsWith(".mjs")) candidates.push(path.slice(0, -4) + ".mts");
   return candidates;
+}
+
+/** Public data imports such as stylesheets stay unparsed; private planning paths still reach the entry refusal. */
+function trackedModule(path: string, tracked: ReadonlySet<string>) {
+  const candidate = moduleCandidates(path).find(file => tracked.has(file) && (isInputModulePath(file) || isLocalPlanPath(file)));
+  return candidate ? [candidate] : [];
 }
 
 function unproved(reason: string) {

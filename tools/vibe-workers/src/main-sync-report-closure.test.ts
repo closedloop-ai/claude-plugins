@@ -66,6 +66,16 @@ describe("selected closure scale and evidence boundaries", () => {
     expect(() => verifyReportProducerInputs(value.worktree, value.worktree, "origin-producer", ["selected.ts"])).not.toThrow();
   });
 
+  it.each([".closedloop-ai/vibe-plans/plan.md", ".closedloop-ai/vibe-plans/plan.mjs"])(
+    "still refuses a selected import of committed private planning evidence: %s", plan => {
+      const value = setup();
+      value.write("selected.ts", `import './${plan}'; export const value = 1;\n`);
+      value.write(plan, "export {};\n");
+      value.commit();
+      expect(() => verifyReportProducerInputs(value.worktree, value.worktree, "origin-producer", ["selected.ts"]))
+        .toThrow(/selected entry is not public committed source/);
+    });
+
   it("accepts 3,339 initial inputs expanding to 4,239 legitimate committed modules", () => {
     const value = largeSelection(false);
     expect(() => verifyReportProducerInputs(value.worktree, value.worktree, "origin-producer",
