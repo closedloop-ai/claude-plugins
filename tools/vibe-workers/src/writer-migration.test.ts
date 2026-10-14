@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { acquireRecordTurn, changeWriter, markClaudeStarted, migrateWriter, readWriterSummary, registerWriter } from "./ledger.js";
 import { runWorker } from "./claude-worker.js";
+import { acquireNativeRecord, verifyStrandedRecordGrant } from "./native-record.js";
 import { bundleDirectory, fixture, graph, readProof, writeAgent } from "./test-fixtures.js";
 
 const fixtures: ReturnType<typeof fixture>[] = [];
@@ -173,4 +174,158 @@ describe("recorded writer migration", () => {
       expect(value.read().migrations).toHaveLength(1);
     } finally { process.env.PATH = originalPath; }
   });
+});
+
+type Setup = ReturnType<typeof setup>;
+const requestId = "stranded-request";
+
+/** A Codex writer whose record continuation completed and stopped while its pinned plugin cache was removed. */
+function strand(value: Setup, options: { finish?: "BLOCKED" | "NEEDS_REVIEW" | false; blockReason?: "recorded-definition-removed";
+  legacy?: boolean; helperGrant?: boolean; foreignRoot?: boolean } = {}) {
+  const owner = { worktree: value.worktree, workerId: value.registered.workerId, requestId };
+  changeWriter("enqueue", { ...owner, input: "Restore the section" });
+  const sourceLease = changeWriter("claim", owner).turn!.lease!;
+  const foreignRoot = join(value.base, "cache", "vibe", "1.0.11");
+  if (options.foreignRoot) cpSync(value.oldRoot, foreignRoot, { recursive: true });
+  const grant = options.helperGrant
+    ? { worktree: value.worktree, agentRoot: value.oldRoot, agentName: "vibe-ticket-worker", workerId: "native-helper",
+      requestId: "ticket-progress", mode: "record", recordAction: "create", exclusiveRecordTurn: true }
+    : { worktree: value.worktree, agentRoot: options.foreignRoot ? foreignRoot : value.oldRoot, agentName: "vibe-change-worker", workerId: owner.workerId,
+      requestId, mode: "record", recordAction: "progress", exclusiveRecordTurn: true,
+      primaryOwner: { workerId: owner.workerId, lease: sourceLease } };
+  if (options.helperGrant) {
+    changeWriter("finish", { ...owner, lease: sourceLease, status: "NEEDS_REVIEW", stoppedTurn: { runtime: "codex",
+      workerId: owner.workerId, requestId, lease: sourceLease, state: "completed" } });
+  }
+  const { lease } = acquireNativeRecord(grant);
+  rmSync(value.oldRoot, { recursive: true });
+  rmSync(foreignRoot, { recursive: true, force: true });
+  if (!options.helperGrant && options.finish !== false) {
+    changeWriter("finish", { ...owner, lease: sourceLease, status: options.finish ?? "BLOCKED", stoppedTurn: { runtime: "codex",
+      workerId: owner.workerId, requestId, lease: sourceLease, state: "completed" },
+      resultSummary: "Recorded definition removed", ...(options.blockReason ? { blockReason: options.blockReason } : {}) });
+  }
+  if (options.legacy) {
+    const ledger = value.read();
+    delete ledger.active.blockReason;
+    writeFileSync(value.ledgerFile, JSON.stringify(ledger));
+  }
+  const stoppedTurn = { runtime: "codex" as const, workerId: grant.workerId, requestId: grant.requestId, lease, state: "completed" as const };
+  const lock = join(value.metadata, "vibe-record-turn.lock");
+  return { owner, lease, lock, retainedRecord: { lease, stoppedTurn } };
+}
+function snapshot(value: Setup, lock: string) {
+  return { ledger: readFileSync(value.ledgerFile, "utf8"),
+    grant: existsSync(lock) ? readFileSync(join(lock, "native-owner.json"), "utf8") : undefined };
+}
+
+describe("stranded writer recovery", () => {
+  it("releases a pre-reason BLOCKED writer's own stranded grant and migrates it through the shipped command", () => {
+    const value = setup();
+    const stranded = strand(value, { legacy: true });
+    const before = value.read();
+    expect(before.active).toMatchObject({ id: requestId, status: "BLOCKED" });
+    expect(before.active.blockReason).toBeUndefined();
+    const currentRoot = resolve(bundleDirectory, "../../../..");
+    const output = execFileSync(process.execPath, [join(bundleDirectory, "writer-state.mjs"), "migrate"], {
+      input: JSON.stringify({ ...value.input, agentRoot: currentRoot, retainedRecord: stranded.retainedRecord }), encoding: "utf8" });
+    expect(JSON.parse(output)).toMatchObject({ workerId: "new-native", activeRequestId: requestId, running: false, migrationCount: 1 });
+    expect(existsSync(stranded.lock)).toBe(false);
+    const after = value.read();
+    const { migrations: ignored, ...previous } = before;
+    expect(after.migrations[0]).toMatchObject({ reason: "definition-missing", observedDigest: null,
+      workerId: "new-native", releasedRecord: { requestId, recordAction: "progress", state: "completed" } });
+    expect(after.migrations[0].previous).toEqual(previous);
+    expect(JSON.stringify(after.migrations[0])).not.toContain(stranded.lease);
+    for (const key of ["pending", "completed", "worktree", "branch"]) expect(after[key]).toEqual(before[key]);
+    expect(after.active).toEqual({ ...before.active, blockReason: "recorded-definition-removed" });
+    const resumed = changeWriter("claim", { ...stranded.owner, workerId: "new-native", continuation: "Resume from checkpoint" });
+    expect(resumed.turn?.input).toBe("Restore the section");
+  });
+
+  it("migrates a writer that finished BLOCKED with the machine-readable removed-definition reason", () => {
+    const value = setup();
+    const stranded = strand(value, { blockReason: "recorded-definition-removed" });
+    expect(value.read().active.blockReason).toBe("recorded-definition-removed");
+    const result = migrateWriter({ ...value.input, retainedRecord: stranded.retainedRecord }, value.currentRoot, verifyStrandedRecordGrant);
+    expect(result.status).toBe("BLOCKED");
+    expect(existsSync(stranded.lock)).toBe(false);
+  });
+
+  it("migrates a removed-definition BLOCKED writer that holds no record grant", () => {
+    const value = setup();
+    const owner = { worktree: value.worktree, workerId: value.registered.workerId, requestId };
+    changeWriter("enqueue", { ...owner, input: "Restore the section" });
+    const lease = changeWriter("claim", owner).turn!.lease!;
+    rmSync(value.oldRoot, { recursive: true });
+    changeWriter("finish", { ...owner, lease, status: "BLOCKED", blockReason: "recorded-definition-removed",
+      stoppedTurn: { runtime: "codex", workerId: owner.workerId, requestId, lease, state: "completed" } });
+    expect(migrateWriter(value.input, value.currentRoot).lastMigration?.reason).toBe("definition-missing");
+  });
+
+  it("releases a stranded grant left behind by an otherwise finished turn", () => {
+    const value = setup();
+    const stranded = strand(value, { finish: "NEEDS_REVIEW" });
+    const result = migrateWriter({ ...value.input, retainedRecord: stranded.retainedRecord }, value.currentRoot, verifyStrandedRecordGrant);
+    expect(result).toMatchObject({ status: "NEEDS_REVIEW", workerId: "new-native" });
+    expect(value.read().active.blockReason).toBeUndefined();
+    expect(existsSync(stranded.lock)).toBe(false);
+  });
+
+  it("records a removed-definition block reason only for a BLOCKED finish whose recorded definition is absent", () => {
+    const value = setup();
+    const owner = { worktree: value.worktree, workerId: value.registered.workerId, requestId };
+    changeWriter("enqueue", { ...owner, input: "Restore the section" });
+    const lease = changeWriter("claim", owner).turn!.lease!;
+    const finish = { ...owner, lease, status: "BLOCKED", blockReason: "recorded-definition-removed",
+      stoppedTurn: { runtime: "codex", workerId: owner.workerId, requestId, lease, state: "completed" } };
+    const before = readFileSync(value.ledgerFile, "utf8");
+    expect(() => changeWriter("finish", finish)).toThrow(/present/);
+    rmSync(value.oldRoot, { recursive: true });
+    expect(() => changeWriter("finish", { ...finish, status: "NEEDS_REVIEW" })).toThrow(/Only a BLOCKED/);
+    expect(readFileSync(value.ledgerFile, "utf8")).toBe(before);
+    changeWriter("finish", { ...finish, blockReason: undefined });
+    expect(value.read().active.blockReason).toBe("other");
+  });
+
+  const refusal = /bypass a writer refusal/;
+  const stopped = /Wait for owned source and record turns/;
+  const evidence = /own record grant and its exact stopped-turn evidence/;
+  it.each([["other-block", refusal], ["legacy-without-grant", refusal], ["running-lease", stopped], ["no-evidence", stopped],
+    ["wrong-lease", evidence], ["wrong-request", evidence], ["wrong-worker", evidence], ["helper-grant", evidence], ["foreign-root", evidence],
+    ["matching-definition", /present and matching/], ["grant-definition-present", /release it with release-record/],
+    ["stale-id", /exact recorded writer/], ["stale-digest", /exact recorded writer/], ["no-verifier", stopped]] as const)(
+    "refuses stranded recovery without changing the ledger or grant: %s", (failure, expected) => {
+      const value = setup();
+      const options: Parameters<typeof strand>[1] = { legacy: true };
+      if (failure === "other-block") options.legacy = false;
+      if (failure === "running-lease") options.finish = false;
+      if (failure === "helper-grant") options.helperGrant = true;
+      if (failure === "foreign-root") options.foreignRoot = true;
+      const preserved = join(value.base, "preserved-old-root");
+      if (failure === "matching-definition" || failure === "grant-definition-present") cpSync(value.oldRoot, preserved, { recursive: true });
+      const stranded = strand(value, options);
+      if (failure === "matching-definition") cpSync(preserved, value.oldRoot, { recursive: true });
+      if (failure === "grant-definition-present") {
+        cpSync(preserved, value.oldRoot, { recursive: true });
+        writeAgent(value.oldRoot, "vibe-change-worker", "Read, Write, Edit");
+      }
+      let retainedRecord: unknown = stranded.retainedRecord;
+      const stoppedTurn = stranded.retainedRecord.stoppedTurn;
+      if (failure === "no-evidence") retainedRecord = undefined;
+      if (failure === "wrong-lease") retainedRecord = { lease: stranded.lease,
+        stoppedTurn: { ...stoppedTurn, lease: "11111111-1111-4111-8111-111111111111" } };
+      if (failure === "wrong-request") retainedRecord = { lease: stranded.lease, stoppedTurn: { ...stoppedTurn, requestId: "other-request" } };
+      if (failure === "wrong-worker") retainedRecord = { lease: stranded.lease, stoppedTurn: { ...stoppedTurn, workerId: "other-writer" } };
+      if (failure === "legacy-without-grant") {
+        rmSync(stranded.lock, { recursive: true });
+        retainedRecord = undefined;
+      }
+      const input = { ...value.input, ...(retainedRecord ? { retainedRecord } : {}) };
+      if (failure === "stale-id") input.previousWorkerId = "wrong-writer";
+      if (failure === "stale-digest") input.previousDigest = "0".repeat(64);
+      const before = snapshot(value, stranded.lock);
+      expect(() => migrateWriter(input, value.currentRoot, failure === "no-verifier" ? undefined : verifyStrandedRecordGrant)).toThrow(expected);
+      expect(snapshot(value, stranded.lock)).toEqual(before);
+    });
 });

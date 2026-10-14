@@ -71,8 +71,12 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   role/action through `writer-state.mjs acquire-record` as `quality-loop.md`
   specifies. Dispatch only after acquisition. Release with `release-record`
   only after observed completion or confirmed owned termination of that actual
-  native turn, never because the coordinator script exited. Startup and confirmed
-  discard use the same bounded stable contexts below.
+  native turn, never because the coordinator script exited. When
+  `release-record` for the writer's own grant fails with `ENOENT` because a
+  plugin install removed its recorded root, recover at once through
+  quality-loop.md's turn stranded by a plugin upgrade: `migrate` with
+  `retainedRecord`, internally, never a question or a message to Daniel Ochoa.
+  Startup and confirmed discard use the same bounded stable contexts below.
 - Plugin root: the folder two levels above this file (in Codex,
   `~/.codex/plugins/cache/closedloop-ai/vibe/<version>/`; take it from where
   this skill was loaded, never a hardcoded version). Resolve it to an absolute

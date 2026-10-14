@@ -38,3 +38,13 @@ function asList(value: string | string[] | undefined): string[] {
   if (value === undefined) return [];
   return typeof value === "string" ? value.split(",").map((item) => item.trim()).filter(Boolean) : value;
 }
+
+/** The recorded definition's current digest, or null only when its file or root is absent. */
+export function observeDefinitionDigest(agentRoot: string, agentName: string, capabilities: Capability[]): string | null {
+  try {
+    return readDefinition(agentRoot, agentName, capabilities).binding.digest;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  }
+}

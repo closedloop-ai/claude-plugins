@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { identifierSchema } from "./contracts.js";
-import { readDefinition } from "./definition.js";
+import { identifierSchema, type Ledger, type RetainedRecord } from "./contracts.js";
+import { observeDefinitionDigest, readDefinition } from "./definition.js";
 import { acquireRecordTurnAt, checkoutLocation, location, readWriterSummary, releaseRecordTurnAt } from "./ledger.js";
 import { recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 
@@ -68,4 +68,27 @@ export function releaseNativeRecord(input: unknown) {
     if (owner.targetDir) rmSync(join(owner.targetDir, "vibe-record-turn.lock"), { recursive: true, force: true });
   });
   return { workerId: grant.workerId, requestId: grant.requestId, released: true };
+}
+
+/**
+ * Accepts a retained grant for migration only when it is the registered writer's own record continuation for
+ * its current or just-completed request, the parent proves that exact turn stopped, and the grant's recorded
+ * definition is absent, so release-record can never verify it again.
+ */
+export function verifyStrandedRecordGrant(lock: string, ledger: Ledger, retained: RetainedRecord) {
+  const owner = nativeRecordOwnerSchema.parse(JSON.parse(readFileSync(join(lock, ownerFile), "utf8")));
+  const { grant } = owner;
+  const { stoppedTurn } = retained;
+  const ownRequest = ledger.active ? ledger.active.id === grant.requestId : ledger.completed.includes(grant.requestId);
+  if (ledger.runtime !== "codex" || grant.agentName !== ledger.binding.agentName || grant.workerId !== ledger.workerId
+    || grant.primaryOwner?.workerId !== ledger.workerId || grant.agentRoot !== ledger.binding.agentRoot
+    || grant.worktree !== ledger.worktree || owner.branch !== ledger.branch || owner.targetDir !== undefined
+    || !grant.recordAction || !ownRequest || owner.lease !== retained.lease || stoppedTurn.workerId !== grant.workerId
+    || stoppedTurn.requestId !== grant.requestId || stoppedTurn.lease !== owner.lease) {
+    throw new Error("Stranded recovery requires the registered writer's own record grant and its exact stopped-turn evidence");
+  }
+  if (observeDefinitionDigest(grant.agentRoot, grant.agentName, []) !== null) {
+    throw new Error("The grant's recorded definition is present; release it with release-record");
+  }
+  return { requestId: grant.requestId, recordAction: grant.recordAction, state: stoppedTurn.state };
 }

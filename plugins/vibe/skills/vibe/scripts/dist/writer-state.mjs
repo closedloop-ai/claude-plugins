@@ -11527,6 +11527,14 @@ var registerSchema = external_exports.object({
   agentName: identifierSchema,
   capabilities: capabilitiesSchema.default([])
 }).strict();
+var stoppedTurnSchema = external_exports.object({
+  runtime: external_exports.literal("codex"),
+  workerId: identifierSchema,
+  requestId: identifierSchema,
+  lease: external_exports.string().uuid(),
+  state: external_exports.enum(["completed", "failed", "canceled"])
+}).strict();
+var blockReasonSchema = external_exports.enum(["recorded-definition-removed", "other"]);
 var actionSchema = external_exports.object({
   worktree: external_exports.string().min(1),
   workerId: identifierSchema.optional(),
@@ -11536,13 +11544,8 @@ var actionSchema = external_exports.object({
   lease: external_exports.string().uuid().optional(),
   status: statusSchema.optional(),
   resultSummary: external_exports.string().max(4096).optional(),
-  stoppedTurn: external_exports.object({
-    runtime: external_exports.literal("codex"),
-    workerId: identifierSchema,
-    requestId: identifierSchema,
-    lease: external_exports.string().uuid(),
-    state: external_exports.enum(["completed", "failed", "canceled"])
-  }).strict().optional()
+  blockReason: blockReasonSchema.optional(),
+  stoppedTurn: stoppedTurnSchema.optional()
 }).strict();
 var bindingSchema = external_exports.object({
   agentRoot: external_exports.string(),
@@ -11550,9 +11553,11 @@ var bindingSchema = external_exports.object({
   digest: external_exports.string().length(64),
   capabilities: capabilitiesSchema
 }).strict();
+var retainedRecordSchema = external_exports.object({ lease: external_exports.string().uuid(), stoppedTurn: stoppedTurnSchema }).strict();
 var migrateSchema = registerSchema.extend({
   previousWorkerId: identifierSchema,
-  previousDigest: external_exports.string().regex(/^[a-f0-9]{64}$/)
+  previousDigest: external_exports.string().regex(/^[a-f0-9]{64}$/),
+  retainedRecord: retainedRecordSchema.optional()
 }).strict();
 var requestSchema = external_exports.object({ id: identifierSchema, input: external_exports.string().min(1).max(64 * 1024) }).strict();
 var ledgerStateSchema = external_exports.object({
@@ -11570,7 +11575,8 @@ var ledgerStateSchema = external_exports.object({
     lease: external_exports.string().uuid().optional(),
     ownerPid: external_exports.number().int().positive().optional(),
     processGroupId: external_exports.number().int().positive().optional(),
-    resultSummary: external_exports.string().max(4096).optional()
+    resultSummary: external_exports.string().max(4096).optional(),
+    blockReason: blockReasonSchema.optional()
   }).strict().optional(),
   completed: external_exports.array(identifierSchema).max(64)
 }).strict();
@@ -11581,7 +11587,12 @@ var migrationSchema = external_exports.object({
   observedDigest: external_exports.string().length(64).nullable(),
   previous: ledgerStateSchema,
   workerId: identifierSchema,
-  binding: bindingSchema
+  binding: bindingSchema,
+  releasedRecord: external_exports.object({
+    requestId: identifierSchema,
+    recordAction: identifierSchema,
+    state: stoppedTurnSchema.shape.state
+  }).strict().optional()
 }).strict();
 var ledgerSchema = ledgerStateSchema.extend({ migrations: external_exports.array(migrationSchema).default([]) }).strict();
 async function readInput(stream = process.stdin) {
@@ -11647,6 +11658,14 @@ function readDefinition(agentRoot, agentName, capabilityInput) {
 function asList(value) {
   if (value === void 0) return [];
   return typeof value === "string" ? value.split(",").map((item) => item.trim()).filter(Boolean) : value;
+}
+function observeDefinitionDigest(agentRoot, agentName, capabilities) {
+  try {
+    return readDefinition(agentRoot, agentName, capabilities).binding.digest;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 // src/ledger.ts
@@ -11716,7 +11735,7 @@ function registerWriter(input) {
     return summary(ledger);
   });
 }
-function migrateWriter(input, currentPluginRoot) {
+function migrateWriter(input, currentPluginRoot, verifyRetained) {
   const data = migrateSchema.parse(input);
   const definition = readDefinition(currentPluginRoot, "vibe-change-worker", data.capabilities);
   if (realpathSync3(data.agentRoot) !== definition.root || data.agentName !== "vibe-change-worker") {
@@ -11728,31 +11747,22 @@ function migrateWriter(input, currentPluginRoot) {
   return locked(place, () => {
     const ledger = readLedger(place);
     if (ledger.runtime !== data.runtime || ledger.workerId !== data.previousWorkerId || ledger.binding.digest !== data.previousDigest) throw new Error("Migration requires the exact recorded writer and digest");
-    if (ledger.active?.lease || existsSync(join2(place.dir, "vibe-record-turn.lock"))) {
+    const lock = join2(place.dir, "vibe-record-turn.lock");
+    const retained = existsSync(lock);
+    if (ledger.active?.lease || retained && !(data.retainedRecord && verifyRetained)) {
       throw new Error("Wait for owned source and record turns to stop before migration");
     }
-    if (ledger.active?.status === "BLOCKED") throw new Error("Migration cannot bypass a writer refusal; resolve the blocked request first");
-    let observedDigest = null;
-    let reason;
-    try {
-      observedDigest = readDefinition(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities).binding.digest;
-    } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-    }
-    if (observedDigest === ledger.binding.digest) throw new Error("Recorded definition is present and matching; resume the existing writer");
-    if (observedDigest === null) reason = "definition-missing";
-    else {
-      const oldVersion = basename(dirname(ledger.binding.agentRoot)) === "vibe" ? basename(ledger.binding.agentRoot) : void 0;
-      if (!oldVersion || !isNewerRelease(currentVersion, oldVersion)) {
-        throw new Error("Digest mismatch has no proven plugin version upgrade; retain the original writer");
-      }
-      reason = "definition-upgraded";
-    }
+    if (!retained && data.retainedRecord) throw new Error("No retained record grant exists to release");
+    const observedDigest = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
+    const reason = provenDefinitionChange(ledger, observedDigest, currentVersion);
+    const releasedRecord = retained && data.retainedRecord && verifyRetained ? verifyRetained(lock, ledger, data.retainedRecord) : void 0;
+    const block = migratableBlock(ledger, observedDigest, releasedRecord);
     const workerId = data.runtime === "claude" ? randomUUID() : data.workerId;
     if (!workerId) throw new Error("Native migration requires the new read-only held worker's actual ID");
     const oldIds = [ledger.workerId, ...ledger.migrations.map((item) => item.previous.workerId)];
     if (oldIds.includes(workerId)) throw new Error("Migration requires a new writer identity");
-    const { migrations, ...previous } = ledger;
+    const { migrations, ...current } = ledger;
+    const previous = structuredClone(current);
     ledger.migrations = [...migrations, {
       id: randomUUID(),
       at: (/* @__PURE__ */ new Date()).toISOString(),
@@ -11760,14 +11770,42 @@ function migrateWriter(input, currentPluginRoot) {
       observedDigest,
       previous,
       workerId,
-      binding: definition.binding
+      binding: definition.binding,
+      ...releasedRecord ? { releasedRecord } : {}
     }];
     ledger.workerId = workerId;
     ledger.binding = definition.binding;
     ledger.started = false;
-    save(place, ledger);
+    if (block === "proven-legacy" && ledger.active) ledger.active.blockReason = "recorded-definition-removed";
+    if (!releasedRecord) save(place, ledger);
+    else {
+      const parked = `${lock}.${randomUUID()}.released`;
+      renameSync(lock, parked);
+      try {
+        save(place, ledger);
+      } catch (error) {
+        renameSync(parked, lock);
+        throw error;
+      }
+      rmSync(parked, { recursive: true, force: true });
+    }
     return summary(ledger);
   });
+}
+function provenDefinitionChange(ledger, observedDigest, currentVersion) {
+  if (observedDigest === ledger.binding.digest) throw new Error("Recorded definition is present and matching; resume the existing writer");
+  if (observedDigest === null) return "definition-missing";
+  const oldVersion = basename(dirname(ledger.binding.agentRoot)) === "vibe" ? basename(ledger.binding.agentRoot) : void 0;
+  if (!oldVersion || !isNewerRelease(currentVersion, oldVersion)) {
+    throw new Error("Digest mismatch has no proven plugin version upgrade; retain the original writer");
+  }
+  return "definition-upgraded";
+}
+function migratableBlock(ledger, observedDigest, releasedRecord) {
+  const active = ledger.active;
+  if (active?.status !== "BLOCKED" || active.blockReason === "recorded-definition-removed") return "migratable";
+  if (active.blockReason === void 0 && observedDigest === null && releasedRecord?.requestId === active.id) return "proven-legacy";
+  throw new Error("Migration cannot bypass a writer refusal; resolve the blocked request first");
 }
 function isNewerRelease(current, previous) {
   if (!/^\d+\.\d+\.\d+$/.test(previous)) return false;
@@ -11815,8 +11853,18 @@ function changeWriter(action, input) {
         throw new Error("Native finish requires the exact registered writer's stopped-turn completion evidence");
       }
       if (ledger.runtime === "claude" && ledger.active.processGroupId) proveGroupStopped(ledger.active.processGroupId);
+      if (data.blockReason && data.status !== "BLOCKED") throw new Error("Only a BLOCKED finish carries a block reason");
+      if (data.blockReason === "recorded-definition-removed" && observeDefinitionDigest(
+        ledger.binding.agentRoot,
+        ledger.binding.agentName,
+        ledger.binding.capabilities
+      ) !== null) {
+        throw new Error("The recorded definition is present; record the block's actual cause");
+      }
       ledger.active.status = data.status;
       ledger.active.resultSummary = data.resultSummary;
+      if (data.status === "BLOCKED") ledger.active.blockReason = data.blockReason ?? "other";
+      else delete ledger.active.blockReason;
       delete ledger.active.lease;
       delete ledger.active.ownerPid;
       delete ledger.active.processGroupId;
@@ -12145,6 +12193,19 @@ function releaseNativeRecord(input) {
   });
   return { workerId: grant.workerId, requestId: grant.requestId, released: true };
 }
+function verifyStrandedRecordGrant(lock, ledger, retained) {
+  const owner = nativeRecordOwnerSchema.parse(JSON.parse(readFileSync4(join4(lock, ownerFile), "utf8")));
+  const { grant } = owner;
+  const { stoppedTurn } = retained;
+  const ownRequest = ledger.active ? ledger.active.id === grant.requestId : ledger.completed.includes(grant.requestId);
+  if (ledger.runtime !== "codex" || grant.agentName !== ledger.binding.agentName || grant.workerId !== ledger.workerId || grant.primaryOwner?.workerId !== ledger.workerId || grant.agentRoot !== ledger.binding.agentRoot || grant.worktree !== ledger.worktree || owner.branch !== ledger.branch || owner.targetDir !== void 0 || !grant.recordAction || !ownRequest || owner.lease !== retained.lease || stoppedTurn.workerId !== grant.workerId || stoppedTurn.requestId !== grant.requestId || stoppedTurn.lease !== owner.lease) {
+    throw new Error("Stranded recovery requires the registered writer's own record grant and its exact stopped-turn evidence");
+  }
+  if (observeDefinitionDigest(grant.agentRoot, grant.agentName, []) !== null) {
+    throw new Error("The grant's recorded definition is present; release it with release-record");
+  }
+  return { requestId: grant.requestId, recordAction: grant.recordAction, state: stoppedTurn.state };
+}
 
 // src/writer-state.ts
 async function main(argv) {
@@ -12154,8 +12215,9 @@ async function main(argv) {
   const input = await readInput();
   let result;
   if (action === "register") result = registerWriter(input);
-  else if (action === "migrate") result = migrateWriter(input, resolve(dirname2(fileURLToPath2(import.meta.url)), "../../../.."));
-  else if (action === "acquire-record") result = acquireNativeRecord(input);
+  else if (action === "migrate") {
+    result = migrateWriter(input, resolve(dirname2(fileURLToPath2(import.meta.url)), "../../../.."), verifyStrandedRecordGrant);
+  } else if (action === "acquire-record") result = acquireNativeRecord(input);
   else if (action === "release-record") result = releaseNativeRecord(input);
   else if (action === "take-input") result = takeWriterInput(input);
   else if (action === "status") result = readWriterSummary(external_exports.object({ worktree: external_exports.string() }).strict().parse(input).worktree) ?? null;

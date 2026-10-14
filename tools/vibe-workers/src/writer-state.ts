@@ -5,7 +5,7 @@ import { z } from "zod";
 import { runFromCanonicalEntry } from "./cli.js";
 import { readInput } from "./contracts.js";
 import { changeWriter, migrateWriter, readWriterSummary, registerWriter, takeWriterInput } from "./ledger.js";
-import { acquireNativeRecord, releaseNativeRecord } from "./native-record.js";
+import { acquireNativeRecord, releaseNativeRecord, verifyStrandedRecordGrant } from "./native-record.js";
 export { readWriterSummary } from "./ledger.js";
 
 export async function main(argv: string[]): Promise<number> {
@@ -15,7 +15,9 @@ export async function main(argv: string[]): Promise<number> {
   const input = await readInput();
   let result;
   if (action === "register") result = registerWriter(input);
-  else if (action === "migrate") result = migrateWriter(input, resolve(dirname(fileURLToPath(import.meta.url)), "../../../.."));
+  else if (action === "migrate") {
+    result = migrateWriter(input, resolve(dirname(fileURLToPath(import.meta.url)), "../../../.."), verifyStrandedRecordGrant);
+  }
   else if (action === "acquire-record") result = acquireNativeRecord(input);
   else if (action === "release-record") result = releaseNativeRecord(input);
   else if (action === "take-input") result = takeWriterInput(input);

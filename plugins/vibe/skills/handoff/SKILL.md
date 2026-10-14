@@ -81,7 +81,12 @@ recorded definition migration through the current `writer-state.mjs migrate`
 command in either harness. Resume the returned current writer with the same
 plan, decision table, checkpoint and change log; refresh old-actor validation
 proof. Never copy definitions, replace via registration or bypass a refusal.
-This recovery is internal; never ask Andy about it.
+A writer turn stranded by a plugin upgrade (its own record grant retained
+because `release-record` fails with `ENOENT` for the removed root, or `BLOCKED`
+with `blockReason` `recorded-definition-removed`) uses the same command with
+`retainedRecord`; then publication, the ticket update and assignment take
+fresh grants and fresh validation, never the old ones.
+This recovery is internal; never ask Andy about it or send them to Daniel Ochoa.
 
 ## Answers from the person
 

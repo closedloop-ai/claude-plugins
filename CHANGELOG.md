@@ -43,11 +43,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - The `export-closedloop-learnings` usage example, the `process-chat-learnings.sh` header and the `perf_summary.py` output-path docstring no longer refer to `run-loop.sh` or Loop runs, and `process-learnings` no longer says `compute_success_rates.py` runs as a step of the post-iteration pipeline.
 
-### vibe v1.0.28
+### vibe v1.0.29
 
 #### Removed
 - `vibe-seed-refresh` no longer creates a ClosedLoop loop, posts loop events or completes a loop. Its state file drops `loopId`, the `Walk:` evidence line is kept in state and the PR's Test plan only, and the done step goes straight to `update-document`. `vibe-seed-fix-worker` returns its summary for the PR body only. The walk-linux contract test asserts the state and Test plan halves instead of the loop events.
 - The "do not create loops" boundary lines in `cl-analyze`, `cl-execute`, `cl-split`, `cl-sweep`, `cl-find-related-tickets` and `cl-work-report`. `cl-execute` keeps its rule that ticket status, linked plan, pull request, validation evidence, structured result and workflow repo memory are the execution record.
+
+### vibe v1.0.28
+
+#### Fixed
+- A writer turn stranded by a plugin install can be recovered. When a human installs a vibe release while a Codex writer turn runs, the cache root the writer was registered with disappears; the turn stops, but `release-record` for the writer's own record continuation fails with `ENOENT`, so the grant stays retained and `migrate` refused both the lock and the `BLOCKED` request, leaving no supported recovery. `writer-state.mjs migrate` now accepts an optional `retainedRecord` (`lease` plus `stoppedTurn` evidence). Under the writer mutex it accepts only the registered writer's own record continuation for its current or just completed request, issued under the exact recorded `binding.agentRoot` whose definition is absent, with matching stopped-turn evidence, then releases that grant and migrates in one atomic ledger update. The migration entry records `releasedRecord` (request, action, stopped state; never the lease) and keeps every existing history field. Another actor's grant, any other root, a present definition, a running lease, missing or mismatched evidence and stale identity are refused with the ledger and grant unchanged.
+- `finish` records a machine-readable block reason. `"blockReason": "recorded-definition-removed"` is accepted only for a `BLOCKED` finish whose recorded definition is actually absent; every other `BLOCKED` is stored as `other` and stays unmigratable. A writer blocked before this release carries no reason and migrates only with its retained grant under an absent definition, which then records the proven reason.
+- Root recovers a stranded turn itself, internally and without asking the person or sending them to Daniel Ochoa (`quality-loop.md`, "Recorded definition migration"; `guardrails.md`, "Plugins and tooling"; the vibe and handoff skills; the change worker). The recovered writer and helpers take fresh grants from the current plugin root and rerun source readiness and validation; old grants, leases and validation witnesses are never reused.
+- Vitest coverage for the new path, each refusal with its exact guard, and a native handoff session that is stranded mid-turn, recovered through the shipped command, revalidated by the new writer, published, and recorded with fresh ticket grants. Contract tests for the prose.
 
 ### vibe v1.0.27
 

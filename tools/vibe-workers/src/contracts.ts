@@ -41,20 +41,27 @@ export const registerSchema = z.object({
   agentRoot: z.string().min(1), agentName: identifierSchema,
   capabilities: capabilitiesSchema.default([]),
 }).strict();
+export const stoppedTurnSchema = z.object({ runtime: z.literal("codex"), workerId: identifierSchema,
+  requestId: identifierSchema, lease: z.string().uuid(), state: z.enum(["completed", "failed", "canceled"]) }).strict();
+/** Only the removed recorded definition is a migratable block; every other block stays a refusal. */
+export const blockReasonSchema = z.enum(["recorded-definition-removed", "other"]);
 export const actionSchema = z.object({
   worktree: z.string().min(1), workerId: identifierSchema.optional(), requestId: identifierSchema.optional(),
   input: z.string().min(1).max(64 * 1024).optional(), continuation: z.string().min(1).max(64 * 1024).optional(),
   lease: z.string().uuid().optional(), status: statusSchema.optional(), resultSummary: z.string().max(4096).optional(),
-  stoppedTurn: z.object({ runtime: z.literal("codex"), workerId: identifierSchema,
-    requestId: identifierSchema, lease: z.string().uuid(), state: z.enum(["completed", "failed", "canceled"]) }).strict().optional(),
+  blockReason: blockReasonSchema.optional(), stoppedTurn: stoppedTurnSchema.optional(),
 }).strict();
 export const bindingSchema = z.object({
   agentRoot: z.string(), agentName: identifierSchema, digest: z.string().length(64),
   capabilities: capabilitiesSchema,
 }).strict();
+/** The writer's own record grant that only its removed definition could release. */
+export const retainedRecordSchema = z.object({ lease: z.string().uuid(), stoppedTurn: stoppedTurnSchema }).strict();
+export type RetainedRecord = z.infer<typeof retainedRecordSchema>;
 /** Migration is a parent-owned operation, separate from ordinary registration. */
 export const migrateSchema = registerSchema.extend({
   previousWorkerId: identifierSchema, previousDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  retainedRecord: retainedRecordSchema.optional(),
 }).strict();
 const requestSchema = z.object({ id: identifierSchema, input: z.string().min(1).max(64 * 1024) }).strict();
 const ledgerStateSchema = z.object({
@@ -64,7 +71,7 @@ const ledgerStateSchema = z.object({
   active: requestSchema.extend({ status: statusSchema, continuation: z.string().max(64 * 1024).optional(),
     lease: z.string().uuid().optional(), ownerPid: z.number().int().positive().optional(),
     processGroupId: z.number().int().positive().optional(),
-    resultSummary: z.string().max(4096).optional() }).strict().optional(),
+    resultSummary: z.string().max(4096).optional(), blockReason: blockReasonSchema.optional() }).strict().optional(),
   completed: z.array(identifierSchema).max(64),
 }).strict();
 /** Retains the full prior writer state without recursively copying migration history. */
@@ -73,6 +80,8 @@ export const migrationSchema = z.object({
   reason: z.enum(["definition-missing", "definition-upgraded"]),
   observedDigest: z.string().length(64).nullable(),
   previous: ledgerStateSchema, workerId: identifierSchema, binding: bindingSchema,
+  releasedRecord: z.object({ requestId: identifierSchema, recordAction: identifierSchema,
+    state: stoppedTurnSchema.shape.state }).strict().optional(),
 }).strict();
 export const ledgerSchema = ledgerStateSchema.extend({ migrations: z.array(migrationSchema).default([]) }).strict();
 export type Ledger = z.infer<typeof ledgerSchema>;

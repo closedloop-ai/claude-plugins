@@ -108,7 +108,11 @@ uses the same `writer-state.mjs migrate` command in Codex and Claude Code.
 ROOT records the old/new IDs, bindings, digests, reason and time, preserves all
 migration history and queued requests, and continues from the same worktree,
 plan, decision table, checkpoint and change log. Running turns, matching
-definitions, unproven upgrades and writer refusals block migration. Recovery
+definitions, unproven upgrades and writer refusals block migration. A turn
+stranded by a plugin upgrade (its own record grant left behind because the
+removed root makes `release-record` fail, or `BLOCKED` with the machine-readable
+`recorded-definition-removed` reason) migrates through the same command with
+`retainedRecord`, which releases that exact grant atomically. Recovery
 stays internal and never asks Andy; ordinary registration cannot replace writers.
 
 Native Codex helpers acquire a coordinator-owned record lease before their
