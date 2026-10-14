@@ -52,6 +52,15 @@ or its budget cannot resolve the gap; record the evidence gap or screening decis
 re-check conditions. Refute a mechanism when evidence rules it out, not merely because
 attribution is unavailable. A stopped probe does not mean the performance target was met.
 
+Set a harness-investment budget before building, repairing, or elaborating one: name the
+decision it must unlock, the maximum elapsed time, and the attempt limit. Use the minimum
+instrumentation that can rank contributors or decide the next material experiment, and stop
+adding detail once that decision is possible. Pivot to another attribution route or contributor
+when the budget is spent, harness defects repeat, or existing tools already answer the decision.
+A broken or unvalidated harness supplies no positive evidence; preserve the one-variable
+comparison and fail closed on any result whose setup, control, or measurement path is not
+trustworthy.
+
 Be creative in pursuing substantial performance improvements, whether the requested
 target is latency, throughput, memory, cost, or another metric. Challenge assumptions
 about work, resources, and lifetimes: architecture and lifecycle changes may offer more
