@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join, resolve } from "node:path";
 import { acquireNativeRecord, releaseNativeRecord } from "./native-record.js";
 import { changeWriter, registerWriter } from "./ledger.js";
-import { bundleDirectory, fixture, graph, writeAgent } from "./test-fixtures.js";
+import { bundleDirectory, fixture, graph, keepFixtureMaintenanceForeground, writeAgent } from "./test-fixtures.js";
 import type { RequestContinuation } from "./record-context.js";
 import { z } from "zod";
 
@@ -66,6 +66,7 @@ export function referencedLanes() {return [];}
   git(["branch", "main"]);
   const origin = join(value.base, "origin.git");
   git(["init", "--bare", "--initial-branch=main", origin]);
+  keepFixtureMaintenanceForeground(origin);
   git(["remote", "add", "origin", origin]);
   git(["push", "origin", "main"]);
   const baseCommit = git(["rev-parse", "HEAD"]);

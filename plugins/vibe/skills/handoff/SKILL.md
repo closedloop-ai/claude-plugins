@@ -108,7 +108,9 @@ step 6 on the result (lighter: both reviewers; backend: one
 `workflow-code-review` pass), step 7 (the redeploy) and step 8's running app
 verification. Only then does the answer go to `vibe-ticket-worker`.
 Before code, extend the same session decision table with the answer's source,
-row IDs, cross-request interactions and explicit Superseded decisions. Preserve
+row IDs, cross-request interactions and explicit Superseded decisions, and add
+the answer to its `## Acceptance Criteria` list
+(`../vibe/references/quality-loop.md`, "Acceptance criteria before ready"). Preserve
 earlier frozen targets. Handoff reruns use the whole table, not just this answer.
 
 A wording answer goes straight to `vibe-ticket-worker`.
@@ -127,7 +129,7 @@ change worker has not handled; it refuses one with `NEEDS_CHANGE`.
 | ALL source fixes, behavior answers, the missing tests list, product docs drafts and the frozen behavior rows (tests only for a requested pull request) | the SAME persistent `vibe-change-worker` context |
 | Judgment guardrails, shared-owner placement, and red flags | `vibe-guardrails-reviewer` |
 | Commits | you, with `../vibe/scripts/commit-worktree.mjs` |
-| Storybook advice only | read-only `vibe-storybook-decomposer`; the SAME writer applies it |
+| Storybook placement and advice only | read-only `vibe-storybook-decomposer`; the SAME writer applies it |
 | Existing code checks, coverage advice, suite and footprint | read-only `vibe-verify-worker` |
 | Running app checks with `pnpm control` | read-only `vibe-verify-worker` (control mode) |
 | Lighter: tough review | repo `review-soul` and `vibe-adversarial-reviewer`, in parallel |
@@ -258,7 +260,13 @@ checks. Keep the writer's Design blocks for the ticket.
 ## 4. Storybook
 
 Read-only `vibe-storybook-decomposer` advises on components/stories/catalog
-gaps. Resume the SAME writer to perform every extraction, story and catalog
+gaps in handoff mode: its precedent search covers every story or shared
+component the session added, retitled or moved, checked against the Placement
+blocks in the writer's local plan, and each placement and Conflict goes on the
+live ticket's Storybook placement line for engineering and design, never to
+the person. Every new or touched story follows the repo's `apps/storybook/TAXONOMY.md`
+(`../vibe/references/guardrails.md`, "Storybook taxonomy"); the inventory's
+`v1Stories` blocks handoff. Resume the SAME writer to perform every extraction, story and catalog
 source change. Read-only verify footprint mode measures the sidebar and
 reports remaining problems; they return to the writer, never another author.
 Collect Design Review evidence from the verified final diff and existing
@@ -270,8 +278,12 @@ Source inspection alone does not clear a compiled warning or prove appearance.
 
 ## 5. Checks and the missing tests list
 
-Resume the SAME writer with an explicit handoff continuation, acceptance
-criteria, inventory, private local coverage plan and the whole session decision table.
+Resume the SAME writer with an explicit handoff continuation, inventory,
+private local coverage plan and the whole session decision table, including
+its `## Acceptance Criteria` list and checks log. It first checks every
+unsuperseded criterion against the final code
+(`../vibe/references/quality-loop.md`, "Acceptance criteria before ready"),
+and that list is where its whole-table alignment starts.
 Read all requests, stable row IDs, cross-request interactions and its
 `Required Tests`, including positive, negative and mixed-state production-boundary
 cases. It authors no tests. It runs the existing affected tests, fixes the
@@ -314,7 +326,10 @@ deliverable review, not other artifacts. Reviewers may read the local plans
 for context. Pass phase handoff, the inventory's `testRepairs` and
 `retiredTests`, and the writer's missing tests list.
 Pass the whole session decision table and actual row/test evidence to each
-reviewer. They read the actual artifact and use named core decision-table's
+reviewer. The alignment below starts from the table's Acceptance Criteria
+list and the writer's latest check of each criterion; a criterion not met is
+a source gap for the SAME writer or a product question under "Answers from
+the person", never counted as met. They read the actual artifact and use named core decision-table's
 consistency, review-prevention and applicable adversarial rules. Missing source,
 existing-test run or independent-review evidence blocks final handoff; a test
 that does not exist yet is listed under Missing tests instead. Require defensible
@@ -438,7 +453,9 @@ reason, never as verified. A console error, page error, failed request or
 broken screen this session caused resumes the SAME writer in fix mode, then
 steps 3 to 7 and this check again. Owned prototype sessions skip this check
 and record why: a mockup changes no web app or Desktop screen. The build loop
-has no control step; this check runs only here. Its evidence goes into the
+has no control step; this check runs only here. The writer's single control
+read for an acceptance criterion (`../vibe/references/quality-loop.md`,
+"Acceptance criteria before ready") is not this check. Its evidence goes into the
 Design Review's Visual evidence and the Handoff Running app checks line,
 separated from source-only claims.
 
@@ -482,7 +499,9 @@ grade the finished code and its appearance/Storybook implementation:
   not an invented app or Storybook environment.
 - Requested scope/screens and relevant hosts/states, with actual inspection
   separated from source-only and unverified coverage.
-- Added/changed/removed components/stories with IDs/direct links, controls,
+- Added/changed/removed components/stories with IDs/direct links (full
+  Storybook UI links, never the bare `iframe.html` canvas;
+  `../vibe/references/environment.md`, "Storybook links"), controls,
   Docs and plays, intentional ID/category moves/sidebar folds and retained
   state access; removed/unavailable historical links are identified honestly.
 - Actual footprint/canonical catalog commands, baseline/current commits and
@@ -589,7 +608,8 @@ runs.
 
 Tell them, in a few lines: the ticket link, the app link as
 `<appUrl>/sign-in` (the app's root sends a signed-out visitor to account
-creation), the Storybook link, the
+creation), the Storybook link (the full Storybook UI per
+`../vibe/references/environment.md`, "Storybook links"), the
 branch name, and what happens next: the next owner, by name, picks it up
 from the ticket (usually design reviews the components in Storybook and
 comments on the ticket on sign-off, then engineering finishes it). Say that the Storybook link opens only after

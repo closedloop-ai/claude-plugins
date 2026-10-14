@@ -32,8 +32,11 @@ re-ask settled scope, or produce an upfront summary for the person.
 
 1. Ticket: `ticket_detail` for the ticket and its lineage (the PRD or plan that
    produced it), then the full text through the ClosedLoop MCP
-   (`get-document`, `get-document-comments`). Extract the acceptance criteria,
-   any design or prototype links, and any decisions in comments.
+   (`get-document`, `get-document-comments`). Extract the acceptance criteria
+   of the ticket AND of its PRD, each quoted exactly with its source slug,
+   any design or prototype links, and any decisions in comments. These seed
+   the session's acceptance criteria list (`quality-loop.md`, "Acceptance
+   criteria before ready").
 2. Description: `query_collisions` and `search_nodes` with the description,
    and `fts_search` on its key terms, to find an existing ticket or PRD that
    already covers it.
@@ -61,12 +64,13 @@ list to the person and keeps building without waiting, so the list is never a
 question. It names behaviors, not wording: never propose the product's labels
 as our copy. End with the Graph block.
 
-## Return (under 200 words)
+## Return (under 200 words, not counting the quoted acceptance criteria)
 
 `DONE` with: a two or three sentence summary in plain words, which the
 orchestrator keeps internal and which never names a screen to start
 on; the requirements as a short list quoted from their source (never
-invented); the route and FEATURE_MAP id where the relevant code lives, for
+invented); every acceptance criterion of the ticket and its PRD, quoted
+exactly with its source slug, or "none stated"; the route and FEATURE_MAP id where the relevant code lives, for
 change workers (not shown to the person); overlapping or in-flight tickets
 (slug and title); and whether this is a change to an existing screen or a
 net-new screen. Or

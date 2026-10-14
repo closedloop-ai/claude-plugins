@@ -65,7 +65,19 @@ not a design session: no second design, no questions, no approval.
    (with `--env-file ~/.workflow/.env` when that file exists). One query;
    treat what it returns as hints to verify. Skip it when the command is not
    installed.
-5. The owner, by the rules above.
+5. Precedent: where the same capability already exists for a sibling
+   entity (another entity's list or detail surface): the component that
+   provides it, how its hosts consume it, and where its stories live
+   (`code_symbols` on the capability's names, `code_importers` on that
+   component). Where the owner rules, the repo's `AGENTS.md` ("Shared behavior
+   belongs in the shared parent (ISS-12135)") and its docs already say how,
+   follow them; where they do not, mirror the precedent's ownership,
+   component and Storybook placement (Daniel Ochoa's ruling, 2026-10-14).
+6. Placement: before a story is created, retitled or moved or a shared
+   component is added, the writer returns `NEEDS_STORYBOOK` and
+   `vibe-storybook-decomposer` answers with its Placement block (`SKILL.md`,
+   section 5).
+7. The owner, by the rules above and the precedent.
 
 A copy, color, or spacing edit on one element reports `Prep: trivial` and
 skips the rest of this bounded lookup, but does not waive the session decision table
@@ -81,8 +93,10 @@ Prep:
 - Existing components: <catalog or packages/app components and helpers to reuse, or none>
 - Earlier work: <what this session already built for it, or none>
 - Memory: <pitfalls found, none found, or not installed>
+- Precedent: <the sibling entity, providing component and how hosts consume it, or none found>
+- Placement: <the decomposer's Owner, Stories and Conflict lines, or no story or shared component>
 - Owner: <path where the behavior goes>
-- Rule: <the owner rule number that decided it>
+- Rule: <the owner rule number that decided it, or `precedent`>
 Graph:
 - <one line per required call and what it established>
 ```

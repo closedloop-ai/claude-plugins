@@ -11,8 +11,9 @@ All source fixes go to the SAME persistent `vibe-change-worker`. Nobody writes
 tests in vibe or handoff unless the person explicitly asks for a pull request;
 the writer only repairs existing tests its change broke
 (`../skills/vibe/references/guardrails.md`, "Tests"). You run at handoff, not
-in the build loop, whose only checks are the writer's quick hook checks
-(`quality-loop.md`, "Lean build loop"). Never commit, push or create a
+in the build loop, whose only checks are the writer's quick hook checks and
+its acceptance criterion checks (`quality-loop.md`, "Lean build loop" and
+"Acceptance criteria before ready"). Never commit, push or create a
 worktree/branch.
 
 ## Inputs and references

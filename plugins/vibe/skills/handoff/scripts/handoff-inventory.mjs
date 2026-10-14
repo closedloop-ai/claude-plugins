@@ -30,6 +30,10 @@
 // every recorded deletion, file or case, is listed under `retiredTests` with
 // its status so the reviewer can verify it and the ticket can list it.
 //
+// New and touched story files belong in the v2.0 Storybook taxonomy
+// (symphony-alpha's apps/storybook/TAXONOMY.md); one titled under or tagged
+// for a frozen v1.0 root is listed under `v1Stories` and blocks.
+//
 // `backendChanged` says whether the work touched backend code
 // (`backendFiles`). Handoff runs its lighter checks when it did not, and the
 // full suite with two workflow-code-review passes when it did.
@@ -83,6 +87,10 @@ const BACKEND_SEGMENTS = ["/prisma/", "/migrations/"];
 
 const STORY_PATTERN = /\.stories\.tsx?$/;
 const COMPONENT_PATTERN = /\/components\/.+\.tsx$/;
+// v1.0 is the frozen baseline; new work goes under `<Level> v2.0/`
+// (apps/storybook/TAXONOMY.md; Daniel Ochoa's ruling, 2026-10-14).
+const V1_STORY_TITLE = /\btitle:\s*["'`](?:Foundations|Primitives|Composites|Surfaces)\//;
+const V1_STORY_TAG = /\btags:\s*\[[^\]]*["'`]v1\.0["'`]/;
 // Tests are written only when the person explicitly asks for a pull request
 // (Daniel Ochoa's ruling, 2026-10-13); earlier phases may only repair existing
 // tests and fixtures the session's change broke (Daniel Ochoa's ruling,
@@ -144,10 +152,12 @@ const outsideAllowed = changedFiles.filter(
 );
 const backendFiles = changedFiles.filter((file) => isBackend(file.path));
 const componentsWithoutStories = findComponentsWithoutStories(changedFiles);
+const v1Stories = findV1Stories(changedFiles);
 
 const blocking = {
   forbiddenPaths: forbidden.length === 0,
   hasChanges: changedFiles.length > 0,
+  storiesInV2Taxonomy: v1Stories.length === 0,
   ...(trackedLocalPlans.length ? { localPlansUntracked: false } : {}),
   ...(prototype ? { prototypePublicationCurrent: publicationProblem === undefined } : {}),
   ...(mainSync?.pendingMerge ? { mainSyncMergeCommitted: false } : {}),
@@ -178,6 +188,7 @@ const result = {
   backendChanged: backendFiles.length > 0,
   backendFiles,
   componentsWithoutStories,
+  v1Stories,
 };
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 process.exit(result.ok ? 0 : 1);
@@ -328,4 +339,22 @@ function isBackend(filePath) {
     BACKEND_PREFIXES.some((prefix) => filePath.startsWith(prefix)) ||
     BACKEND_SEGMENTS.some((segment) => `/${filePath}`.includes(segment))
   );
+}
+
+/** Added or modified story files whose meta title sits in a v1.0 root or whose tags include v1.0. */
+function findV1Stories(files) {
+  return files
+    .filter((file) => file.status !== "D" && STORY_PATTERN.test(file.path))
+    .flatMap((file) => {
+      const absolute = path.join(worktree, file.path);
+      if (!existsSync(absolute)) {
+        return [];
+      }
+      const source = readFileSync(absolute, "utf8");
+      const reasons = [
+        ...(V1_STORY_TITLE.test(source) ? ["title"] : []),
+        ...(V1_STORY_TAG.test(source) ? ["tag"] : []),
+      ];
+      return reasons.length ? [{ ...file, reasons }] : [];
+    });
 }

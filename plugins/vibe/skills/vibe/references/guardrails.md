@@ -86,7 +86,10 @@ at handoff: the guardrails and adversarial reviews, browser E2E, visual QA,
 logical QA, Metal Andrew, the existing tests (the whole suite and two review
 passes when backend code changed), the running web app and Desktop driven with
 the repo's control skill, and the list of tests engineering still has to write
-(Tests, below).
+(Tests, below). Beyond the quick checks, the loop's only other check is the
+writer's acceptance check before a change is called ready (`quality-loop.md`, "Acceptance criteria
+before ready"): one cheap existing test, script, control read or source trace
+per touched criterion, never a suite or QA pass.
 
 One exception under `scripts/`: the source-gate allowlist
 (`scripts/lint/source-gate-allowlist.json`) is shrink-only, so when the
@@ -169,6 +172,8 @@ When nothing in the catalog fits:
    (`apps/storybook/AGENTS.md`, `packages/design-system/AGENTS.md`), using the
    repo skill `.claude/skills/storybook` (`workflows/author-stories.md`,
    `workflows/design-controls.md`):
+   - Stories follow "Storybook taxonomy" below: a v2.0 root and the page
+     tree, never a v1.0 root.
    - Stories go where Storybook collects them. For `packages/design-system`
      that is `apps/storybook/stories/` (a story next to the component is
      never picked up); `packages/app/*/components/` stories may sit beside the
@@ -186,6 +191,32 @@ When nothing in the catalog fits:
    plain message and does not wait (`SKILL.md`, section 5, "Notices that never
    wait"); the person may interrupt to change it.
 6. Use it in the screen without waiting for a reply.
+
+## Storybook taxonomy
+
+Read the repo's `apps/storybook/TAXONOMY.md` and follow it for every story
+the session adds, moves, renames or touches; that doc is the authority, so its
+rules are not copied here (Daniel Ochoa's ruling, 2026-10-14, after the
+PRD-720 session titled its new stories under v1.0 roots). The bare minimum:
+
+- New and touched stories go in a v2.0 root, titled under `<Level> v2.0/`,
+  never in the frozen v1.0 roots (`Foundations/`, `Primitives/`,
+  `Composites/`, `Surfaces/`).
+- Composites, Patterns and Surfaces v2.0 are placed in the page tree the doc
+  describes.
+- Each story file carries the `v2.0` version tag.
+- Adding, moving or renaming stories is a Storybook release: the version bump
+  and Version History entry the doc names, in the same change.
+
+The handoff inventory blocks a new or touched story file titled under or
+tagged for a v1.0 root (`v1Stories`, `storiesInV2Taxonomy`), and
+`vibe-guardrails-reviewer` checks the placement. Where in that tree a story
+goes, and which component owns it, is `vibe-storybook-decomposer`'s Placement
+block: the repo docs where they say how, otherwise the precedent a sibling
+entity set. The "existing story files in the same area" that the repo
+skill's `workflows/author-stories.md` step 1 says to match are the stories
+for the same capability that block reports, read with
+`apps/storybook/TAXONOMY.md`, never the neighbors in the same folder.
 
 ## Tokens and styling
 

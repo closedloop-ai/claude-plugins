@@ -46,7 +46,8 @@ work itself. Under all circumstances:
 Follow `references/quality-loop.md` for the one persistent writer, serial
 queue, internal planning/review and communication. The person never sees a technical plan or
 technical question, and needs no upfront summary. Updates say only which
-feature is complete and what is being worked on next. The two notices in
+feature is complete, which of its acceptance criteria are not done yet, and
+what is being worked on next. The two notices in
 section 5, "Notices that never wait" (a reference product's behavior list and
 new Storybook components), are the only other messages, and neither waits.
 Research product questions through closedloop-graph and live evidence first;
@@ -132,6 +133,7 @@ stops until core is explicitly installed and enabled.
 | `vibe-change-worker` | the SAME persistent writer for all planning, source implementation, backend/primitive/prototype/Storybook work, fixes, repairs of existing tests its change broke and the handoff missing tests list (tests only for a requested pull request) |
 | `vibe-backend-worker` | read-only backend/contract advice for that writer |
 | `vibe-primitive-worker` | read-only component/spec advice for that writer |
+| `vibe-storybook-decomposer` | read-only Storybook placement owner: before the writer creates, retitles or moves a story or adds a shared component, the precedent search and Placement block it records in its local plan |
 | `vibe-prototype-worker` | read-only canonical guidance or operational sharing of the writer's checked committed result, never another source author |
 | `vibe-adversarial-reviewer` | challenge the implemented session at handoff, never during the build loop |
 | `vibe-guardrails-reviewer` | review ownership, reuse, repo constraints and test repairs at handoff, never during the build loop |
@@ -139,8 +141,8 @@ stops until core is explicitly installed and enabled.
 
 Every worker result starts with a status: `DONE`, `NEEDS_PERSON` (a question
 or action only the person can answer or take, already phrased for them),
-`NEEDS_PRIMITIVE` or `NEEDS_BACKEND` can request read-only guidance only;
-all implementation resumes in the SAME writer. `STORIES_READY` (the writer
+`NEEDS_PRIMITIVE`, `NEEDS_BACKEND` or `NEEDS_STORYBOOK` can request read-only
+guidance only; all implementation resumes in the SAME writer. `STORIES_READY` (the writer
 built the request's new Storybook components first; section 5, "Notices that
 never wait"). `NEEDS_DESKTOP_STOP` (the worker must merge
 main into the worktree or otherwise swap its commit while Desktop runs),
@@ -241,6 +243,9 @@ Starting new:
    covering it. Before creating the session, use the validated `<repo>` with
    `sessionless: {kind: "startup"}`, mode `request`, graph/live read capabilities
    and no record grants. Keep its brief internal; no upfront summary or plan approval.
+   Keep its quoted acceptance criteria from the ticket and its PRD for the
+   writer's first request (`references/quality-loop.md`, "Acceptance criteria
+   before ready").
    The route and FEATURE_MAP id it returns say where the relevant code lives
    and are for workers; never present them as a screen the session starts on
    (the app opens on its default page after sign-in), and never promise a
@@ -468,7 +473,8 @@ evidence, never by replacing the writer.
 ### One request through completion
 
 1. Forward the person's request/annotation verbatim, session/branch, live
-   ticket, known rulings and supplied copy to the SAME writer. It performs
+   ticket, known rulings and supplied copy to the SAME writer, plus, with the
+   first request, the requirements worker's quoted acceptance criteria. It performs
    graph/owner prep and writes the canonical core-template plan locally.
    It always creates or extends the one session decision table at
    `.closedloop-ai/decision-tables/<session-slug>.md` before any code, using
@@ -485,6 +491,13 @@ evidence, never by replacing the writer.
    backend, primitive, prototype and Storybook guidance from its own plugin,
    but no new source writer/worktree/branch. Read-only specialists advise;
    their findings return to this writer. Preserve real visual/product approvals.
+   Before it creates, retitles or moves a story or adds a shared component,
+   it returns `NEEDS_STORYBOOK` with the capability and planned files;
+   dispatch read-only `vibe-storybook-decomposer` in placement mode and resume
+   the SAME writer with its Placement block, which the writer records in its
+   local plan before writing. That block is a read-only lookup in quick prep,
+   not a review. A Conflict in it is recorded for engineering and design,
+   never a question for the person (Daniel Ochoa's ruling, 2026-10-14).
    When its plan needs NEW Storybook components, it builds them first and
    returns `STORIES_READY`; send the new-components notice below and resume
    it at once to build the feature.
@@ -496,7 +509,9 @@ evidence, never by replacing the writer.
    handoff runs them. The writer still verifies affected and interacting prior
    table rows against actual code and fixes source gaps. Planned tests remain
    distinct from executed coverage; they never justify premature core Final
-   Aligned or a source-gap waiver.
+   Aligned or a source-gap waiver. Then it checks every acceptance criterion
+   the change touches and records each result, under
+   `references/quality-loop.md`, "Acceptance criteria before ready".
 5. Research any `NEEDS_PERSON` through the graph/live-decision necessity gate.
    Ask only an absolutely necessary unresolved product question, one at a time
    with full context. Its answer continues this active request in the SAME
@@ -508,11 +523,15 @@ evidence, never by replacing the writer.
    execute no implementation edits, and sharing waits for the writer's quick
    checks. The orchestrator alone commits through its owned script.
 7. A `DONE` must mean the whole requested feature is built and passes the
-   quick checks; independent reviews come at handoff. Then finish that
+   quick checks, and must carry the Acceptance criteria block with a checked
+   result for every criterion the change touches; one without it is
+   incomplete, so resume the SAME writer to finish it before committing;
+   independent reviews come at handoff. Then finish that
    request and deploy it under section 6 without being asked (requests that
    waited through a running deploy go out together after the last of them);
    when the deploy is done, tell the person only the completed feature, that it's ready to
-   look at, and the next work, in their own terms. The next queued
+   look at, and the next work, in their own terms, plus, plainly, each
+   criterion the writer reported `not met yet` as not done yet; never claim it. The next queued
    request goes to the SAME ID/context. Update the session summary through
    the existing session script in a serial record turn.
    This is per-request implementation evidence, not final session coverage.
@@ -543,7 +562,8 @@ what it already built, like any other request about it.
   `storybookUrl` from the session's stack (`vibe-sessions.mjs show`); if none
   is running, dispatch `vibe-setup-worker` to start it. Send one plain message
   pointing the person to `<storybookUrl>/?path=/story/<id>` for each new
-  story, then resume the SAME writer to build the feature with them. A change
+  story (never the bare `iframe.html` canvas; `references/environment.md`,
+  "Storybook links"), then resume the SAME writer to build the feature with them. A change
   that only reuses existing components skips this step.
 
 Pure mockups still use canonical `$prototype` guidance through this writer;
@@ -603,7 +623,8 @@ that waited, and one deploy after the last of them carries them all. A
    deployed, and updates the ticket. The quick checks have run in the
    loop; no tests are authored.
 5. On `DONE`, reload the app tab (and the Desktop and Storybook tabs if
-   open), look at it yourself, and tell them it's ready to look at. Whenever you open
+   open), look at it yourself, and tell them it's ready to look at, naming
+   plainly any acceptance criterion still `not met yet` (section 5, step 7). Whenever you open
    the Vercel `storybookUrl` and the tab lands on `vercel.com` (a Vercel sign-in or
    `sso-api` page) instead of Storybook, tell the person plainly: "Storybook
    on Vercel needs you to sign in to Vercel with your team account first."

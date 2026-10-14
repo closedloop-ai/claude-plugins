@@ -134,6 +134,11 @@ subagent that worked on this.>
   copy, color, or spacing changed"
 - Storybook footprint: <components added and changed with story counts, net
   sidebar rows, governance problems left>
+- Storybook placement: <each story or shared component added, retitled or
+  moved: its placement and the doc section or precedent it follows, from the
+  writer's Placement blocks; each Conflict between a precedent and the repo
+  docs, or between precedents, and how it was decided, for engineering and
+  design>, or "None: no story or shared component placed"
 - Checks: <lint, source gates, typecheck, existing tests (every lane when the
   session changed backend code), each pass or fail>
 - Running app checks: <for each screen the session touched, on web and
@@ -186,7 +191,8 @@ surfaces; never invent a preview or inspection.>
   Reference the Handoff Production impact and Flag changes and gates evidence,
   keeping conditional production effects separate from this Storybook inventory.>
 - Storybook inventory: <added/changed/removed components and stories with paths,
-  IDs and direct links; controls, Docs and plays as declared versus actually
+  IDs and direct links, each `<storybook-base>/?path=/story/<story-id>` and
+  never the bare `iframe.html` canvas (`environment.md`, "Storybook links"); controls, Docs and plays as declared versus actually
   inspected/executed; intentional ID/category moves and sidebar folds with
   old/new IDs and retained state access. Removed/unavailable links are identified
   honestly, never fabricated.>

@@ -1,6 +1,6 @@
 {
   "name": "closedloop-core",
   "description": "Shared ClosedLoop planning, intelligence, review, QA, measurement, and PR monitoring",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "author": {"name": "ClosedLoop", "email": "support@closedloop.ai"}
 }

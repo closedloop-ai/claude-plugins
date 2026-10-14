@@ -145,6 +145,9 @@ surfaces. Never fabricate links, counts, protection or inspection, assert looks
 good/Storybook correct without evidence, include credentials/bridge URLs, or
 seek technical approval from the Vibe coder. This is metadata, not a technical
 plan; never upload private plans or their review drafts.
+Every Storybook link opens the full Storybook UI,
+`<storybook-base>/?path=/story/<story-id>`, never the bare `iframe.html`
+canvas (`../skills/vibe/references/environment.md`, "Storybook links").
 
 Read detailed artifact contents rather than omit inventory for a short summary.
 Include accessible evidence links or attach actual QA reports/screenshots with

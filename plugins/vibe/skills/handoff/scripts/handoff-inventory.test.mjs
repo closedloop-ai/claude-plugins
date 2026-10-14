@@ -380,3 +380,29 @@ test("a migration outside the backend packages and a local-fix backend file coun
   assert.deepEqual(result.json.backendFiles, [{ path: "apps/mcp/prisma/migrations/2_x/migration.sql", status: "A" }]);
   assert.deepEqual(result.json.outsideAllowed, [{ path: "apps/mcp/prisma/migrations/2_x/migration.sql", status: "A" }]);
 });
+
+test("a new or touched story titled under or tagged for a v1.0 root blocks; v2.0 stories pass", (t) => {
+  const v1Meta = (title, tags) => `export default { title: "${title}", tags: [${tags.map((tag) => `"${tag}"`).join(", ")}] };\n`;
+  const { home, worktree } = setup(t, "story-taxonomy", {
+    "apps/storybook/stories/composites/sortable-subtree.stories.tsx": v1Meta("Primitives/Data Display/Sortable Subtree", ["autodocs"]),
+    "apps/storybook/stories/composites/legacy-tagged.stories.tsx": v1Meta("Composites/Legacy", ["v1.0"]),
+  });
+  write(worktree, "apps/storybook/stories/composites/sortable-subtree.stories.tsx", v1Meta("Primitives/Data Display/Sortable Subtree", ["autodocs", "touched"]));
+  write(worktree, "apps/storybook/stories/composites/legacy-tagged.stories.tsx", `export default {\n  title: "Composites v2.0/Artifacts/Legacy",\n  tags: [\n    "autodocs",\n    "v1.0",\n  ],\n};\n`);
+  write(worktree, "packages/app/documents/components/documents-grid-groups-body.stories.tsx", v1Meta("Composites/Documents/Documents Grid Groups Body", ["v1.0"]));
+  write(worktree, "apps/storybook/stories/composites-v2/documents-grid-groups-body.stories.tsx", v1Meta("Composites v2.0/Artifacts/Documents/Grid Groups Body", ["v2.0"]));
+  const result = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
+  assert.equal(result.status, 1);
+  assert.equal(result.json.blocking.storiesInV2Taxonomy, false);
+  assert.deepEqual(result.json.v1Stories, [
+    { path: "apps/storybook/stories/composites/legacy-tagged.stories.tsx", status: "M", reasons: ["tag"] },
+    { path: "apps/storybook/stories/composites/sortable-subtree.stories.tsx", status: "M", reasons: ["title"] },
+    { path: "packages/app/documents/components/documents-grid-groups-body.stories.tsx", status: "A", reasons: ["title", "tag"] },
+  ]);
+  git(worktree, ["checkout", "-q", "--", "apps/storybook/stories/composites"], home);
+  git(worktree, ["clean", "-qfd", "packages/app"], home);
+  const clean = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
+  assert.equal(clean.json.blocking.storiesInV2Taxonomy, true, JSON.stringify(clean.json.v1Stories));
+  assert.deepEqual(clean.json.v1Stories, []);
+  assert.equal(clean.status, 0, JSON.stringify(clean.json));
+});

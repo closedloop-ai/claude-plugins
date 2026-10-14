@@ -17,6 +17,7 @@ export function fixture() {
   execFileSync("git", ["init", "-b", "vibe/test"], { cwd: worktree, stdio: "ignore" });
   execFileSync("git", ["config", "user.name", "Fixture"], { cwd: worktree, stdio: "ignore" });
   execFileSync("git", ["config", "user.email", "fixture@example.invalid"], { cwd: worktree, stdio: "ignore" });
+  keepFixtureMaintenanceForeground(worktree);
   execFileSync("git", ["commit", "--allow-empty", "-m", "Fixture initial state"], { cwd: worktree, stdio: "ignore" });
   const metadata = join(worktree, ".git");
   writeFileSync(join(metadata, "vibe-session.json"), JSON.stringify({ worktree, branch: "vibe/test" }));
@@ -70,6 +71,7 @@ process.stdin.on('end', () => {
   let status = 'DONE';
   if (payload.input.includes('PLAN_FIRST')) status = 'PLAN';
   if (payload.input.includes('STORIES_FIRST')) status = 'STORIES_READY';
+  if (payload.input.includes('PLACEMENT_FIRST')) status = 'NEEDS_STORYBOOK';
   let mainSyncResult;
   if (payload.input.startsWith('MAIN_SYNC_')) {
     const cp = require('node:child_process');
@@ -114,4 +116,9 @@ export function readProof(metadata: string) {
     .map((line) => JSON.parse(line) as { args: string[]; payload: { input: string; mode: string;
       authority: { testAuthoringAuthorized: boolean; testRepairAuthorized: boolean } }; pid: number;
       definition: Record<string, { model: string; tools: string[]; prompt: string }> });
+}
+
+/** Maintenance must finish with its Git command before synchronous fixture teardown. */
+export function keepFixtureMaintenanceForeground(directory: string): void {
+  execFileSync("git", ["config", "maintenance.autoDetach", "false"], { cwd: directory, stdio: "ignore" });
 }
