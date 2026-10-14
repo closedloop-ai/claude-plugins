@@ -206,7 +206,12 @@ historical inspections accurately. Preserve the existing grading block.
    Design Review's Visual evidence carry the control artifact paths with what
    each proves, kept apart from source-only claims, and name the exact command
    and reason for any surface control could not drive; upload the cited
-   screenshots with the granted upload action. Fill Grading with the
+   screenshots with the granted upload action. Place each `Conflict` entry in
+   the change log once, by its audience (`../skills/vibe/references/ticket-template.md`,
+   "Conflicts"): `design` on Design Review's Design conflicts line; anything
+   else, or no clear audience, as an unchecked item at the end of the
+   Engineering checklist. Never in the Handoff section, never in both, and
+   never to the person. Fill Grading with the
    template's Grading section copied unchanged, adding the section after
    Handoff when the ticket has none.
 7. Write the body back with `create-document-version`, then save it to

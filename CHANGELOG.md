@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.27
+
+#### Changed
+- Conflicts go on the live ticket by audience. Each conflict the session records (the Storybook decomposer's Placement block Conflict line, or a precedent that disagrees with the owner rules in owner prep) carries an audience, `design` or `engineering`. The decomposer's Conflict field and the change worker's change log entry (`Conflict (design|engineering): what disagreed; decided: how; evidence: doc section or precedent paths`) name it. `ticket-template.md` gains one "Conflicts" rule: design conflicts (Storybook sidebar placement, taxonomy and story granularity, visual or UX choices) go on a new Design Review "Design conflicts" line; everything else (code ownership, which package or shared parent owns behavior, duplication) and any entry without a clear audience goes at the end of the Engineering checklist as an unchecked item to resolve. Each entry states the conflict, how the session decided it, and its evidence. The Handoff section's Storybook placement line now records placements only. `vibe-ticket-worker` (handoff mode) and the handoff skill place each entry once, by audience; none goes to the person running the session.
+- Precedent mirroring copies structure only, never location or version: the component that carries the stories, their granularity and which states get variants. The root, version tag and v2.0 tree position always come from `apps/storybook/TAXONOMY.md`, so a precedent in a v1.0 root never puts new work in v1.0. The decomposer's Stories line takes root and tag from that doc; `design-pass.md`, `guardrails.md`, the change worker and the README say "structure, never its root or version".
+- Disagreeing precedents, where the docs say nothing, are broken in one stated order in `vibe-storybook-decomposer`: built on the same providing component, then already in the v2.0 tree, then most recently changed (the latest commit on main to its story file).
+- Contract tests for audience routing in the template, the Handoff section no longer collecting conflicts, producers carrying the audience, consumers placing each conflict once, mirroring never setting root or version, and the tiebreak order stated once.
+
 ### vibe v1.0.26
 
 #### Changed

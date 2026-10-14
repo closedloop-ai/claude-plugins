@@ -7,9 +7,13 @@
 2. Its precedent search finds every place a sibling entity already has the
    capability, through the graph and the built Storybook index, and reports
    all of it. The repo's Storybook docs decide where they say how; otherwise
-   the precedent is mirrored. Placement never invents a location.
-3. A conflict is recorded for engineering and design; placement has no path
-   that asks the person running the session.
+   the precedent's structure is mirrored, never its root or version, and
+   disagreeing precedents are broken by one stated tiebreak order.
+   Placement never invents a location.
+3. A conflict carries an audience and goes on the live ticket once: design
+   conflicts under Design Review, everything else (or unclear) on the
+   Engineering checklist, never in the Handoff section. Placement has no
+   path that asks the person running the session.
 4. The writer's owner prep looks for the precedent first and points at the
    repo's AGENTS.md shared-parent rule rather than restating it.
 5. The page-scoped story check stays judgment-only in the guardrails
@@ -177,7 +181,7 @@ def test_placement_has_no_ask_the_person_path() -> None:
     assert "never a question for the person" in passages["vibe skill"]
     assert "it is never a `NEEDS_PERSON` question" in passages["writer"]
     assert "never to the person" in passages["handoff"]
-    assert "for engineering and design" in passages["ticket"]
+    assert "Never route one to the person running the session." in flat(TICKET_TEMPLATE.read_text())
     assert "never to the person" in passages["readme"]
 
 
@@ -215,7 +219,7 @@ def test_owner_prep_looks_for_the_precedent_first_and_points_at_the_repo_rule() 
         "where the same capability already exists for a sibling entity",
         "how its hosts consume it, and where its stories live",
         'the repo\'s `AGENTS.md` ("Shared behavior belongs in the shared parent (ISS-12135)")',
-        "mirror the precedent's ownership, component and Storybook placement",
+        "mirror the precedent's ownership, component and Storybook structure, never its root or version",
         "Daniel Ochoa's ruling, 2026-10-14",
     ):
         assert required in precedent, required
@@ -233,7 +237,7 @@ def test_handoff_and_ticket_record_the_placement() -> None:
     assert "checked against the Placement blocks in the writer's local plan" in storybook
     assert "the live ticket's Storybook placement line" in storybook
     ticket = paragraph(TICKET_TEMPLATE.read_text(), "- Storybook placement:")
-    assert "each Conflict between a precedent and the repo docs, or between precedents" in ticket
+    assert "its placement and the doc section or precedent it follows, from the writer's Placement blocks" in ticket
 
 
 def test_page_scoped_story_check_is_judgment_only() -> None:
@@ -284,3 +288,97 @@ def test_same_area_means_same_capability_not_same_folder() -> None:
     assert "The story files you match are the same capability's, not the same folder's (same section)." in writer
     holders = [path.name for path in sorted(PLUGIN_ROOT.rglob("*.md")) if "never the neighbors in the same folder" in flat(path.read_text())]
     assert holders == ["guardrails.md"]
+
+
+MIRROR_STRUCTURE_ONLY = (
+    "Mirroring copies structure only, never location or version: the root, version tag and v2.0 "
+    f"tree position always come from {TAXONOMY_DOC}, and a precedent in a v1.0 root never puts new work in v1.0."
+)
+TIEBREAK = (
+    "mirror one precedent, chosen in this order: built on the same providing component, then already in the "
+    "v2.0 tree, then most recently changed (the latest commit on main to its story file)"
+)
+CONFLICTS_RULE = '("Conflicts")'
+
+
+def test_mirroring_copies_structure_never_root_or_version() -> None:
+    search = section(agent("vibe-storybook-decomposer"), "## Precedent search")
+    assert MIRROR_STRUCTURE_ONLY in search
+    assert (
+        "mirror the precedent: the same owner, the same way of consuming it, the component that carries its "
+        "stories, how granular they are and which states get variants."
+    ) in search
+    assert "stories where its stories for that capability live" not in search
+    assert "root and tag per <TAXONOMY.md section>, structure per <doc section> or mirroring <precedent>" in search
+    assert "Storybook structure, never its root or version" in flat(DESIGN_PASS.read_text())
+    assert "Storybook structure, never its root or version" in flat(agent("vibe-change-worker"))
+    assert "the structure a sibling entity's precedent set, never its root or version" in flat(GUARDRAILS.read_text())
+    for path in sorted(PLUGIN_ROOT.rglob("*.md")):
+        assert "ownership, component and Storybook placement" not in flat(path.read_text()), path.name
+
+
+def test_the_precedent_tiebreak_order_is_stated_once() -> None:
+    conflict = paragraph(agent("vibe-storybook-decomposer"), "5. A precedent that disagrees")
+    assert TIEBREAK in conflict
+    assert conflict.index("same providing component") < conflict.index("v2.0 tree") < conflict.index("most recently changed")
+    holders = [
+        path.name
+        for path in sorted(PLUGIN_ROOT.rglob("*.md"))
+        if any(phrase in flat(path.read_text()) for phrase in ("same providing component", "most recently changed"))
+    ]
+    assert holders == ["vibe-storybook-decomposer.md"]
+
+
+def test_the_template_routes_design_conflicts_to_design_review_and_the_rest_to_engineering() -> None:
+    template = TICKET_TEMPLATE.read_text()
+    rule = paragraph(template, "- Conflicts:")
+    for required in (
+        "goes in exactly one section, by its audience",
+        "`design` (Storybook sidebar placement, taxonomy and story granularity, visual or UX choices) goes on Design Review's Design conflicts line",
+        "`engineering` (everything else, including code ownership, which package or shared parent owns behavior, and duplication), and any entry without a clear audience, goes at the end of the Engineering checklist as",
+        "`- [ ] Resolve conflict: <what disagreed>; decided: <how>; evidence: <doc section or precedent paths>`",
+        "Each states the conflict, how the session decided it, and its evidence.",
+    ):
+        assert required in rule, required
+    review = section(template, "## Design Review")
+    assert "- Design conflicts: <each `design` conflict from the change log: what disagreed, how the session decided it, and the evidence (doc section or precedent paths)>" in review
+    assert "| Engineering checklist | `vibe-ticket-worker` | session start; handoff appends engineering conflicts |" in template
+
+
+def test_the_handoff_section_no_longer_collects_conflicts() -> None:
+    handoff = section(TICKET_TEMPLATE.read_text(), "## Handoff")
+    assert "conflict" not in handoff.lower()
+    assert "for engineering and design" not in handoff
+    storybook = section(HANDOFF_SKILL.read_text(), "## 4. Storybook")
+    assert "each placement and Conflict goes on the live ticket's Storybook placement line" not in storybook
+
+
+def test_producers_carry_the_audience() -> None:
+    decomposer = agent("vibe-storybook-decomposer")
+    assert "- Conflict: <each disagreement: audience `design` or `engineering`, both sides quoted" in decomposer
+    conflict = paragraph(decomposer, "5. A precedent that disagrees")
+    assert f"its audience, `design` or `engineering`, by `../skills/vibe/references/ticket-template.md` {CONFLICTS_RULE}" in conflict
+    assert "when unsure it is `engineering`" in conflict
+    writer = paragraph(agent("vibe-change-worker"), "return `NEEDS_STORYBOOK` with the capability")
+    for required in (
+        "Log each Conflict (the block's Conflict line, or a precedent that disagrees with the owner rules in Prep step 5)",
+        "`Conflict (design|engineering): <what disagreed>; decided: <how>; evidence: <doc section or precedent paths>`",
+        f"`../skills/vibe/references/ticket-template.md` {CONFLICTS_RULE}, `engineering` when unsure",
+    ):
+        assert required in writer, required
+    skill = paragraph(VIBE_SKILL.read_text(), "returns `NEEDS_STORYBOOK` with the capability")
+    assert "logs a Conflict in it with its audience, `design` or `engineering`" in skill
+
+
+def test_consumers_place_each_conflict_once_by_audience() -> None:
+    ticket = flat(agent("vibe-ticket-worker"))
+    for required in (
+        "Place each `Conflict` entry in the change log once, by its audience (`../skills/vibe/references/ticket-template.md`, \"Conflicts\")",
+        "`design` on Design Review's Design conflicts line; anything else, or no clear audience, as an unchecked item at the end of the Engineering checklist",
+        "Never in the Handoff section, never in both, and never to the person.",
+    ):
+        assert required in ticket, required
+    storybook = section(HANDOFF_SKILL.read_text(), "## 4. Storybook")
+    assert "the ticket worker places it by that audience (`../vibe/references/ticket-template.md`, \"Conflicts\")" in storybook
+    readme = paragraph(README.read_text(), "the read-only `vibe-storybook-decomposer` places it")
+    assert "design conflicts under Design Review and everything else on the Engineering checklist" in readme

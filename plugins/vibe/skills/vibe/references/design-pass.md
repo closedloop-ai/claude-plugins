@@ -72,7 +72,8 @@ not a design session: no second design, no questions, no approval.
    component). Where the owner rules, the repo's `AGENTS.md` ("Shared behavior
    belongs in the shared parent (ISS-12135)") and its docs already say how,
    follow them; where they do not, mirror the precedent's ownership,
-   component and Storybook placement (Daniel Ochoa's ruling, 2026-10-14).
+   component and Storybook structure, never its root or version (Daniel
+   Ochoa's ruling, 2026-10-14).
 6. Placement: before a story is created, retitled or moved or a shared
    component is added, the writer returns `NEEDS_STORYBOOK` and
    `vibe-storybook-decomposer` answers with its Placement block (`SKILL.md`,
