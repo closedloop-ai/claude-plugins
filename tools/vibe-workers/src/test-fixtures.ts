@@ -70,6 +70,7 @@ process.stdin.on('end', () => {
   let status = 'DONE';
   if (payload.input.includes('PLAN_FIRST')) status = 'PLAN';
   if (payload.input.includes('STORIES_FIRST')) status = 'STORIES_READY';
+  if (payload.input.includes('PLACEMENT_FIRST')) status = 'NEEDS_STORYBOOK';
   let mainSyncResult;
   if (payload.input.startsWith('MAIN_SYNC_')) {
     const cp = require('node:child_process');

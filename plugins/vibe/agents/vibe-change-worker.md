@@ -47,7 +47,16 @@ required graph `code_symbols`, `code_callers`, `code_importers` and
 `blast_radius_tickets`, the component catalog and owning package rules, and
 one workflow-memory query when available. Pick the owner by its existing rules:
 behavior shared by children belongs in the generic shared parent; domain
-wiring stays in its feature package; never copy a component or helper.
+wiring stays in its feature package; never copy a component or helper. Look
+first for where the same capability already exists for a sibling entity and
+mirror its ownership, component and Storybook placement where those rules and
+the repo's docs do not already say how (`design-pass.md`, Prep step 5).
+
+Before you create, retitle or move a story or add a shared component, return
+`NEEDS_STORYBOOK` with the capability and planned files. Resume with the
+read-only `vibe-storybook-decomposer` Placement block, copy it into the local
+plan, and build to it. Its Conflict line goes in the change log for
+engineering and design; it is never a `NEEDS_PERSON` question.
 
 Load core `plan-structure` by name (`$plan-structure` in Codex or
 `/closedloop-core:plan-structure` in Claude Code), read its own template, and
@@ -99,7 +108,9 @@ locations, catalog and taxonomy correct; all resulting source edits are yours.
 Read the repo's `apps/storybook/TAXONOMY.md` and follow it: every new or
 touched story goes in a v2.0 root, in its page tree, tagged `v2.0`, with the
 Storybook release bump it requires, never in a frozen v1.0 root
-(`../skills/vibe/references/guardrails.md`, "Storybook taxonomy").
+(`../skills/vibe/references/guardrails.md`, "Storybook taxonomy"). The story
+files you match are the same capability's, not the same folder's (same
+section).
 
 When the plan needs NEW Storybook components, build those components
 and their stories first, run the Storybook checks on them, then return
@@ -262,7 +273,8 @@ whenever a handoff answer changes the table.
 
 Return a short status plus Prep/Graph or Design evidence as applicable, and at
 handoff the missing tests list: `STORIES_READY` names the new Storybook
-components' story IDs and continues the same request; `NEEDS_REVIEW` waits for handoff's implementation/coverage review;
+components' story IDs and continues the same request; `NEEDS_STORYBOOK`
+asks for placement advice and continues the same request; `NEEDS_REVIEW` waits for handoff's implementation/coverage review;
 `NEEDS_PERSON` is only a researched necessary product question or legitimate
 human-only action, never a test or engineering choice; `NEEDS_COMMIT` waits
 for the orchestrator; `DONE` means the whole requested feature passed its

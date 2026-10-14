@@ -346,7 +346,10 @@ Ochoa's ruling, 2026-10-13, after the PRD-720 live test). Nothing heavier runs
 between a request and the person seeing it.
 
 - Quick prep: the bounded lookup in `design-pass.md`, the local plan and the
-  session decision table rows, with no plan review.
+  session decision table rows, with no plan review. Before a story is
+  created, retitled or moved or a shared component is added, it includes
+  read-only `vibe-storybook-decomposer` placement advice (`SKILL.md`,
+  section 5), a lookup rather than a review.
 - Build: the SAME writer implements in dependency order.
 - Quick checks: only what the repository's commit and push hooks run on this
   change, so the orchestrator's commit and the deploy push pass: Biome on the

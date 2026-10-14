@@ -134,6 +134,18 @@ person gets one message with their local Storybook links, and the writer goes
 straight on to the feature. The person may interrupt either to change it;
 neither is an approval gate, and reuse-only changes send no Storybook notice.
 
+Before the writer creates, retitles or moves a story or adds a shared
+component, the read-only `vibe-storybook-decomposer` places it: it finds where
+the same capability already exists for sibling entities and returns the owner
+and story placement, following symphony-alpha's `apps/storybook/TAXONOMY.md`
+and Storybook skill (`.claude/skills/storybook/`, whose placement workflows
+and index scripts it uses) where they say how and mirroring that precedent
+where they do not; the story files the writer matches are the same
+capability's, not the same folder's. Stories cover the components consumers
+render, not internal render pieces. The writer records it in its local plan;
+a conflict goes on the live ticket for engineering and design, never to the
+person.
+
 ### `handoff`
 
 Checks and reviews the session's work, verifies its current app environment or
@@ -217,9 +229,9 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 | `vibe-backend-worker` | opus | Read-only decision-table and backend guidance for that writer |
 | `vibe-primitive-worker` | sonnet | Read-only reusable-component and steward-specification guidance for that writer |
 | `vibe-prototype-worker` | sonnet | Read-only canonical prototype guidance or operational immutable Vercel sharing of the writer's reviewed committed result |
-| `vibe-storybook-decomposer` | sonnet | Read-only component extraction, placement, story and control guidance for that writer |
+| `vibe-storybook-decomposer` | sonnet | Read-only Storybook placement owner (precedent search on sibling entities before any story or shared component is placed) and component extraction, story and control guidance for that writer |
 | `vibe-verify-worker` | sonnet | Read-only existing checks, handoff coverage review, full backend suite, Storybook footprint and handoff running app checks with `pnpm control` |
-| `vibe-guardrails-reviewer` | sonnet | Read-only judgment-based review of reuse, placement, copy provenance, accessibility, and tests |
+| `vibe-guardrails-reviewer` | sonnet | Read-only judgment-based review of reuse, placement (including Storybook precedent placement), copy provenance, accessibility, and tests |
 | `vibe-adversarial-reviewer` | opus | Separate read-only handoff review of ownership, dependencies, contracts, regressions, and web/Desktop behavior |
 | `vibe-handoff-summarizer` | sonnet | Read-only plain-language summary of the session inventory, changes, and overlaps |
 | `vibe-seed-check-worker` | sonnet | Fresh-main seed checks and latest Vibe Seed Walk inspection |

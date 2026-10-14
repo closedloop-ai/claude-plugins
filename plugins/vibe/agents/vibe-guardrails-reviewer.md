@@ -1,6 +1,6 @@
 ---
 name: vibe-guardrails-reviewer
-description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, Storybook taxonomy placement, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
+description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, Storybook taxonomy placement and precedent placement, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
 model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
 ---
@@ -112,6 +112,20 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
     under or tagged for a frozen v1.0 root (the inventory's `v1Stories`) is
     blocking; so is a v2.0 story outside its page tree, without the `v2.0`
     tag, or added, moved or renamed without the release bump the doc names.
+11. Storybook placement (judgment only; every finding here is advisory):
+    read the Placement blocks in the local plan and the change log. Flag for
+    review a story or shared component added, retitled or moved without a
+    Placement block or placed differently from it; a new page-scoped story
+    or page-specific composite for a capability a shared
+    `packages/design-system` component already provides, naming the
+    precedent stories its Placement block reported; a story for an internal
+    render piece instead of the component consumers render, or a page-level
+    story repeating a shared component's generic mechanics instead of only
+    its domain-specific configuration (`vibe-storybook-decomposer.md`,
+    "Precedent search" step 4); and a Conflict missing from the change log.
+    This is not a mechanical check: stories for one shared capability can
+    live both beside the shared component and in page sections, so only the
+    reported precedents tell whether a page-scoped story mirrors them.
 
 For publication, verify the SAME source actor's `main-sync-inputs` evidence
 before capture and after the committed merge. Canonical private diagnostics

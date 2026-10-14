@@ -11513,6 +11513,7 @@ var statusSchema = external_exports.enum([
   "NEEDS_CHANGE",
   "NEEDS_PRIMITIVE",
   "NEEDS_BACKEND",
+  "NEEDS_STORYBOOK",
   "NEEDS_DESKTOP_STOP",
   "DONE",
   "BLOCKED",

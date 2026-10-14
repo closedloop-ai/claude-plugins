@@ -134,6 +134,11 @@ subagent that worked on this.>
   copy, color, or spacing changed"
 - Storybook footprint: <components added and changed with story counts, net
   sidebar rows, governance problems left>
+- Storybook placement: <each story or shared component added, retitled or
+  moved: its placement and the doc section or precedent it follows, from the
+  writer's Placement blocks; each Conflict between a precedent and the repo
+  docs, or between precedents, and how it was decided, for engineering and
+  design>, or "None: no story or shared component placed"
 - Checks: <lint, source gates, typecheck, existing tests (every lane when the
   session changed backend code), each pass or fail>
 - Running app checks: <for each screen the session touched, on web and

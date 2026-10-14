@@ -116,6 +116,23 @@ describe("production Claude CLI adapter", () => {
     const schema = JSON.parse(proof[0]!.args[proof[0]!.args.indexOf("--json-schema") + 1]!);
     expect(schema.properties.status.enum).toContain("STORIES_READY");
   });
+  it("keeps a request active after NEEDS_STORYBOOK so the same writer places stories with the advice", () => {
+    const value = setup();
+    const placement = run(value, { input: "PLACEMENT_FIRST" });
+    expect(placement.status, placement.stderr).toBe(0);
+    expect(JSON.parse(placement.stdout).status).toBe("NEEDS_STORYBOOK");
+    expect(readWriterSummary(value.worktree)?.status).toBe("NEEDS_STORYBOOK");
+    expect(run(value, { requestId: "second", input: "SECRET_SECOND" }).status).toBe(1);
+    const advised = run(value, { continuation: "Placement advice for the planned stories" });
+    expect(advised.status, advised.stderr).toBe(0);
+    expect(JSON.parse(advised.stdout).status).toBe("DONE");
+    expect(JSON.parse(advised.stdout).sessionId).toBe(JSON.parse(placement.stdout).sessionId);
+    const proof = readProof(value.metadata);
+    expect(proof.map((item) => item.payload.input)).toEqual(["PLACEMENT_FIRST", "Placement advice for the planned stories"]);
+    expect(proof[1]?.args).toContain("--resume");
+    const schema = JSON.parse(proof[0]!.args[proof[0]!.args.indexOf("--json-schema") + 1]!);
+    expect(schema.properties.status.enum).toContain("NEEDS_STORYBOOK");
+  });
   it("binds web research only for a role that declares it and still rejects undeclared built-ins", () => {
     const value = setup();
     writeAgent(value.agentRoot, "vibe-requirements-worker", "Read, Grep, Glob, Bash, WebSearch, WebFetch");

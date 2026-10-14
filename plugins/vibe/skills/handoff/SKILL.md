@@ -129,7 +129,7 @@ change worker has not handled; it refuses one with `NEEDS_CHANGE`.
 | ALL source fixes, behavior answers, the missing tests list, product docs drafts and the frozen behavior rows (tests only for a requested pull request) | the SAME persistent `vibe-change-worker` context |
 | Judgment guardrails, shared-owner placement, and red flags | `vibe-guardrails-reviewer` |
 | Commits | you, with `../vibe/scripts/commit-worktree.mjs` |
-| Storybook advice only | read-only `vibe-storybook-decomposer`; the SAME writer applies it |
+| Storybook placement and advice only | read-only `vibe-storybook-decomposer`; the SAME writer applies it |
 | Existing code checks, coverage advice, suite and footprint | read-only `vibe-verify-worker` |
 | Running app checks with `pnpm control` | read-only `vibe-verify-worker` (control mode) |
 | Lighter: tough review | repo `review-soul` and `vibe-adversarial-reviewer`, in parallel |
@@ -260,7 +260,11 @@ checks. Keep the writer's Design blocks for the ticket.
 ## 4. Storybook
 
 Read-only `vibe-storybook-decomposer` advises on components/stories/catalog
-gaps. Every new or touched story follows the repo's `apps/storybook/TAXONOMY.md`
+gaps in handoff mode: its precedent search covers every story or shared
+component the session added, retitled or moved, checked against the Placement
+blocks in the writer's local plan, and each placement and Conflict goes on the
+live ticket's Storybook placement line for engineering and design, never to
+the person. Every new or touched story follows the repo's `apps/storybook/TAXONOMY.md`
 (`../vibe/references/guardrails.md`, "Storybook taxonomy"); the inventory's
 `v1Stories` blocks handoff. Resume the SAME writer to perform every extraction, story and catalog
 source change. Read-only verify footprint mode measures the sidebar and

@@ -92,7 +92,7 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
     + "Return one JSON object with status, summary (at most 4096 characters), and optional data. "
     + "Finish by calling the native StructuredOutput tool exactly once with that compact object. "
     + "Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. "
-    + "Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. "
+    + "Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. "
     + "DONE means the whole current request is complete; intermediate units keep the request active.";
   const agent = { description: definition.metadata.description, prompt, model: definition.metadata.model, tools,
     ...(definition.skills.length ? { skills: definition.skills } : {}) };

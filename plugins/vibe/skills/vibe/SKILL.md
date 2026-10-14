@@ -133,6 +133,7 @@ stops until core is explicitly installed and enabled.
 | `vibe-change-worker` | the SAME persistent writer for all planning, source implementation, backend/primitive/prototype/Storybook work, fixes, repairs of existing tests its change broke and the handoff missing tests list (tests only for a requested pull request) |
 | `vibe-backend-worker` | read-only backend/contract advice for that writer |
 | `vibe-primitive-worker` | read-only component/spec advice for that writer |
+| `vibe-storybook-decomposer` | read-only Storybook placement owner: before the writer creates, retitles or moves a story or adds a shared component, the precedent search and Placement block it records in its local plan |
 | `vibe-prototype-worker` | read-only canonical guidance or operational sharing of the writer's checked committed result, never another source author |
 | `vibe-adversarial-reviewer` | challenge the implemented session at handoff, never during the build loop |
 | `vibe-guardrails-reviewer` | review ownership, reuse, repo constraints and test repairs at handoff, never during the build loop |
@@ -140,8 +141,8 @@ stops until core is explicitly installed and enabled.
 
 Every worker result starts with a status: `DONE`, `NEEDS_PERSON` (a question
 or action only the person can answer or take, already phrased for them),
-`NEEDS_PRIMITIVE` or `NEEDS_BACKEND` can request read-only guidance only;
-all implementation resumes in the SAME writer. `STORIES_READY` (the writer
+`NEEDS_PRIMITIVE`, `NEEDS_BACKEND` or `NEEDS_STORYBOOK` can request read-only
+guidance only; all implementation resumes in the SAME writer. `STORIES_READY` (the writer
 built the request's new Storybook components first; section 5, "Notices that
 never wait"). `NEEDS_DESKTOP_STOP` (the worker must merge
 main into the worktree or otherwise swap its commit while Desktop runs),
@@ -490,6 +491,13 @@ evidence, never by replacing the writer.
    backend, primitive, prototype and Storybook guidance from its own plugin,
    but no new source writer/worktree/branch. Read-only specialists advise;
    their findings return to this writer. Preserve real visual/product approvals.
+   Before it creates, retitles or moves a story or adds a shared component,
+   it returns `NEEDS_STORYBOOK` with the capability and planned files;
+   dispatch read-only `vibe-storybook-decomposer` in placement mode and resume
+   the SAME writer with its Placement block, which the writer records in its
+   local plan before writing. That block is a read-only lookup in quick prep,
+   not a review. A Conflict in it is recorded for engineering and design,
+   never a question for the person (Daniel Ochoa's ruling, 2026-10-14).
    When its plan needs NEW Storybook components, it builds them first and
    returns `STORIES_READY`; send the new-components notice below and resume
    it at once to build the feature.

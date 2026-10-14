@@ -39,7 +39,7 @@ one element), at least:
 | `vibe-backend-worker` (read-only advice) | `code_symbols` on the closest route, service, and model, `code_callers` and `blast_radius_tickets` on the planned files |
 | `vibe-guardrails-reviewer` | `code_symbols` and `search_nodes` for an existing component a hand-rolled one duplicates, and `code_callers` and `code_importers` on each changed shared component |
 | `vibe-adversarial-reviewer` | `code_callers` and `code_importers` on each changed component or hook, `code_tests_for` on changed files, and `blast_radius_tickets` on them |
-| `vibe-storybook-decomposer` | `code_symbols` for existing stories and similar components, and `code_callers` before extracting anything |
+| `vibe-storybook-decomposer` | `code_symbols` for existing stories, similar components and the capability's precedent on sibling entities, `code_importers` on the precedent's providing component, and `code_callers` before extracting anything |
 | `vibe-handoff-summarizer` | `code_symbols` and `code_callers` to name the screens each changed component appears on, and `blast_radius_tickets` on the changed files |
 | `vibe-verify-worker` (read-only checks, full-suite and coverage) | `code_tests_for` on the changed files |
 | `vibe-primitive-worker` | `code_symbols` and `search_nodes` for an existing component under another name |
