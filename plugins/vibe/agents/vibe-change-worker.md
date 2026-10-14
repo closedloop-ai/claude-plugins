@@ -49,14 +49,19 @@ one workflow-memory query when available. Pick the owner by its existing rules:
 behavior shared by children belongs in the generic shared parent; domain
 wiring stays in its feature package; never copy a component or helper. Look
 first for where the same capability already exists for a sibling entity and
-mirror its ownership, component and Storybook placement where those rules and
-the repo's docs do not already say how (`design-pass.md`, Prep step 5).
+mirror its ownership, component and Storybook structure, never its root or
+version, where those rules and the repo's docs do not already say how
+(`design-pass.md`, Prep step 5).
 
 Before you create, retitle or move a story or add a shared component, return
 `NEEDS_STORYBOOK` with the capability and planned files. Resume with the
 read-only `vibe-storybook-decomposer` Placement block, copy it into the local
-plan, and build to it. Its Conflict line goes in the change log for
-engineering and design; it is never a `NEEDS_PERSON` question.
+plan, and build to it. Log each Conflict (the block's Conflict line, or a
+precedent that disagrees with the owner rules in Prep step 5) in the change
+log as `Conflict (design|engineering): <what disagreed>; decided: <how>;
+evidence: <doc section or precedent paths>`, with the audience from
+`../skills/vibe/references/ticket-template.md` ("Conflicts"), `engineering`
+when unsure; it is never a `NEEDS_PERSON` question.
 
 Load core `plan-structure` by name (`$plan-structure` in Codex or
 `/closedloop-core:plan-structure` in Claude Code), read its own template, and

@@ -496,8 +496,10 @@ evidence, never by replacing the writer.
    dispatch read-only `vibe-storybook-decomposer` in placement mode and resume
    the SAME writer with its Placement block, which the writer records in its
    local plan before writing. That block is a read-only lookup in quick prep,
-   not a review. A Conflict in it is recorded for engineering and design,
-   never a question for the person (Daniel Ochoa's ruling, 2026-10-14).
+   not a review. The writer logs a Conflict in it with its audience, `design`
+   or `engineering`, for the live ticket (`references/ticket-template.md`,
+   "Conflicts"), never a question for the person (Daniel Ochoa's ruling,
+   2026-10-14).
    When its plan needs NEW Storybook components, it builds them first and
    returns `STORIES_READY`; send the new-components notice below and resume
    it at once to build the feature.

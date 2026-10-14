@@ -80,20 +80,27 @@ Do this first, in both modes.
 4. Decide in this order (Daniel Ochoa's ruling, 2026-10-14): where the repo's
    `apps/storybook/TAXONOMY.md` or `.claude/skills/storybook/` already say
    how, follow them; where they do not, mirror the precedent: the same owner,
-   the same way of consuming it, and stories where its stories for that
-   capability live. Either way, stories document the components consumers
-   actually render, one story per state, never internal render pieces: a
-   shared capability's generic mechanics stay in the shared component's
-   existing stories, and the page-level component consumers render gets
-   variants showing only its domain-specific configuration (its dimensions,
-   labels, icons). It fits the doc's v2.0 Composites row, "a section of a
-   page".
+   the same way of consuming it, the component that carries its stories, how
+   granular they are and which states get variants. Mirroring copies
+   structure only, never location or version: the root, version tag and v2.0
+   tree position always come from `apps/storybook/TAXONOMY.md`, and a
+   precedent in a v1.0 root never puts new work in v1.0. Either way, stories
+   document the components consumers actually render, one story per state,
+   never internal render pieces: a shared capability's generic mechanics stay
+   in the shared component's existing stories, and the page-level component
+   consumers render gets variants showing only its domain-specific
+   configuration (its dimensions, labels, icons). It fits the doc's v2.0
+   Composites row, "a section of a page".
 5. A precedent that disagrees with those docs, or precedents that disagree
-   with each other, is a Conflict. Decide it by the same order (where the
-   docs say nothing, mirror the precedent built on the same providing
-   component, and name the others), and report each side with its paths and
-   titles. The writer records it for engineering and design; it is never a
-   question for the person running the session.
+   with each other, is a Conflict. Decide it by the same order. Where the
+   docs say nothing, mirror one precedent, chosen in this order: built on
+   the same providing component, then already in the v2.0 tree, then most
+   recently changed (the latest commit on main to its story file); name the
+   others.
+   Report each side with its paths and titles, and its audience, `design` or
+   `engineering`, by `../skills/vibe/references/ticket-template.md`
+   ("Conflicts"); when unsure it is `engineering`. The writer logs it for the
+   live ticket; it is never a question for the person running the session.
 
 Never invent a placement: every Owner and Stories line cites the
 `apps/storybook/TAXONOMY.md` or `.claude/skills/storybook/` section, or the
@@ -104,8 +111,8 @@ Placement:
 - Capability: <named without the entity>
 - Precedents: <each: entity, providing component path, how hosts consume it, each story title, story names, tag and file>, or none found
 - Owner: <path to build or extend>, per <doc section> or mirroring <precedent path>
-- Stories: <each story to add or extend: title, tag, file>, per <doc section> or mirroring <precedent>
-- Conflict: <each disagreement, both sides quoted with paths, and how it was decided>, or none
+- Stories: <each story to add or extend: title, tag, file>, root and tag per <TAXONOMY.md section>, structure per <doc section> or mirroring <precedent>
+- Conflict: <each disagreement: audience `design` or `engineering`, both sides quoted with paths, and how it was decided>, or none
 ```
 
 ## Implementation guidance (sole writer only)

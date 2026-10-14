@@ -42,6 +42,16 @@ publication, and the same ticket worker verifies completeness and assignment.
 - Technical plans in `.closedloop-ai/vibe-plans/` stay local to the worktree:
   never upload them, paste their body into this ticket or add a plan-approval
   milestone. Product scope and truthful delivery/review history remain here.
+- Conflicts: each `Conflict` the change log records (Placement blocks and
+  owner prep) goes in exactly one section, by its audience. `design`
+  (Storybook sidebar placement, taxonomy and story granularity, visual or UX
+  choices) goes on Design Review's Design conflicts line. `engineering`
+  (everything else, including code ownership, which package or shared parent
+  owns behavior, and duplication), and any entry without a clear audience,
+  goes at the end of the Engineering checklist as
+  `- [ ] Resolve conflict: <what disagreed>; decided: <how>; evidence: <doc section or precedent paths>`.
+  Each states the conflict, how the session decided it, and its evidence.
+  Never route one to the person running the session.
 
 | Section | Written by | When |
 |---|---|---|
@@ -55,7 +65,7 @@ publication, and the same ticket worker verifies completeness and assignment.
 | Handoff | `vibe-ticket-worker` | handoff |
 | Design Review | `vibe-ticket-worker` | handoff, from verified final code/publication and actual design evidence |
 | Grading | `vibe-ticket-worker` | handoff, copied unchanged from this template |
-| Engineering checklist | `vibe-ticket-worker` | session start |
+| Engineering checklist | `vibe-ticket-worker` | session start; handoff appends engineering conflicts |
 
 ## Body
 
@@ -136,9 +146,7 @@ subagent that worked on this.>
   sidebar rows, governance problems left>
 - Storybook placement: <each story or shared component added, retitled or
   moved: its placement and the doc section or precedent it follows, from the
-  writer's Placement blocks; each Conflict between a precedent and the repo
-  docs, or between precedents, and how it was decided, for engineering and
-  design>, or "None: no story or shared component placed"
+  writer's Placement blocks>, or "None: no story or shared component placed"
 - Checks: <lint, source gates, typecheck, existing tests (every lane when the
   session changed backend code), each pass or fail>
 - Running app checks: <for each screen the session touched, on web and
@@ -212,6 +220,9 @@ surfaces; never invent a preview or inspection.>
 - Limits and decisions: <known gaps, remaining design decisions and owners;
   do not say looks good or Storybook correct without actual inspection/check
   evidence. Preserve existing required visual/product approval gates.>
+- Design conflicts: <each `design` conflict from the change log: what
+  disagreed, how the session decided it, and the evidence (doc section or
+  precedent paths)>, or "None"
 
 ## Grading
 

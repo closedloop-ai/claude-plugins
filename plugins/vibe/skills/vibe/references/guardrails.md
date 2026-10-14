@@ -212,10 +212,10 @@ The handoff inventory blocks a new or touched story file titled under or
 tagged for a v1.0 root (`v1Stories`, `storiesInV2Taxonomy`), and
 `vibe-guardrails-reviewer` checks the placement. Where in that tree a story
 goes, and which component owns it, is `vibe-storybook-decomposer`'s Placement
-block: the repo docs where they say how, otherwise the precedent a sibling
-entity set. The "existing story files in the same area" that the repo
-skill's `workflows/author-stories.md` step 1 says to match are the stories
-for the same capability that block reports, read with
+block: the repo docs where they say how, otherwise the structure a sibling
+entity's precedent set, never its root or version. The "existing story files
+in the same area" that the repo skill's `workflows/author-stories.md` step 1
+says to match are the stories for the same capability that block reports, read with
 `apps/storybook/TAXONOMY.md`, never the neighbors in the same folder.
 
 ## Tokens and styling

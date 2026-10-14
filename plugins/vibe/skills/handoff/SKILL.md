@@ -262,9 +262,11 @@ checks. Keep the writer's Design blocks for the ticket.
 Read-only `vibe-storybook-decomposer` advises on components/stories/catalog
 gaps in handoff mode: its precedent search covers every story or shared
 component the session added, retitled or moved, checked against the Placement
-blocks in the writer's local plan, and each placement and Conflict goes on the
-live ticket's Storybook placement line for engineering and design, never to
-the person. Every new or touched story follows the repo's `apps/storybook/TAXONOMY.md`
+blocks in the writer's local plan. Each placement goes on the live ticket's
+Storybook placement line; the SAME writer logs each Conflict with its
+audience, and the ticket worker places it by that audience
+(`../vibe/references/ticket-template.md`, "Conflicts"), never to the person.
+Every new or touched story follows the repo's `apps/storybook/TAXONOMY.md`
 (`../vibe/references/guardrails.md`, "Storybook taxonomy"); the inventory's
 `v1Stories` blocks handoff. Resume the SAME writer to perform every extraction, story and catalog
 source change. Read-only verify footprint mode measures the sidebar and
