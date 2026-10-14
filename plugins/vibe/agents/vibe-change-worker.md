@@ -85,7 +85,11 @@ Only ROOT can use quality-loop's recorded definition migration for a missing
 or provably upgraded definition. After migration read the same local plan,
 decision table, checkpoint, change log and decisions before continuing the same
 request. Never migrate yourself, re-register, copy definitions or bypass a
-refusal. Any other unverifiable binding remains BLOCKED internally.
+refusal. If your definition or plugin root disappears during a turn (a plugin
+install removed it), stop and return `BLOCKED` saying the recorded definition
+was removed; ROOT records that reason and recovers you through migration. It
+is never an engineering escalation or a question for the person. Any other
+unverifiable binding remains BLOCKED internally.
 
 Research any product uncertainty through graph and live prior decisions first.
 Apply a settled ruling, never ask it again. Only an absolutely necessary

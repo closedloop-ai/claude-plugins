@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { actionSchema, ledgerSchema, migrateSchema, registerSchema, type Ledger } from "./contracts.js";
-import { readDefinition } from "./definition.js";
+import { actionSchema, ledgerSchema, migrateSchema, registerSchema, type Ledger, type RetainedRecord } from "./contracts.js";
+import { observeDefinitionDigest, readDefinition } from "./definition.js";
 
 /** Resolves an exact existing checkout for pre-session operations or a parent-authorized cancellation. */
 export function checkoutLocation(worktree: string) {
@@ -85,8 +85,16 @@ export function registerWriter(input: unknown) {
   });
 }
 
-/** Rebinds only a stopped writer with proven definition loss or upgrade, retaining every prior state. */
-export function migrateWriter(input: unknown, currentPluginRoot: string) {
+/** Proves a retained record grant is the writer's own stranded continuation; returns what migration history keeps. */
+export type StrandedRecordVerifier = (lock: string, ledger: Ledger, retained: RetainedRecord) => NonNullable<
+  Ledger["migrations"][number]["releasedRecord"]>;
+
+/**
+ * Rebinds only a stopped writer with proven definition loss or upgrade, retaining every prior state.
+ * With a verifier and the parent's stopped-turn evidence, it also releases the writer's own record grant
+ * that only the removed definition could have released, in the same atomic ledger update.
+ */
+export function migrateWriter(input: unknown, currentPluginRoot: string, verifyRetained?: StrandedRecordVerifier) {
   const data = migrateSchema.parse(input);
   const definition = readDefinition(currentPluginRoot, "vibe-change-worker", data.capabilities);
   if (realpathSync(data.agentRoot) !== definition.root || data.agentName !== "vibe-change-worker") {
@@ -99,41 +107,64 @@ export function migrateWriter(input: unknown, currentPluginRoot: string) {
     const ledger = readLedger(place);
     if (ledger.runtime !== data.runtime || ledger.workerId !== data.previousWorkerId
       || ledger.binding.digest !== data.previousDigest) throw new Error("Migration requires the exact recorded writer and digest");
-    if (ledger.active?.lease || existsSync(join(place.dir, "vibe-record-turn.lock"))) {
+    const lock = join(place.dir, "vibe-record-turn.lock");
+    const retained = existsSync(lock);
+    if (ledger.active?.lease || (retained && !(data.retainedRecord && verifyRetained))) {
       throw new Error("Wait for owned source and record turns to stop before migration");
     }
-    if (ledger.active?.status === "BLOCKED") throw new Error("Migration cannot bypass a writer refusal; resolve the blocked request first");
-    let observedDigest: string | null = null;
-    let reason: "definition-missing" | "definition-upgraded";
-    try {
-      observedDigest = readDefinition(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities).binding.digest;
-    } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-    }
-    if (observedDigest === ledger.binding.digest) throw new Error("Recorded definition is present and matching; resume the existing writer");
-    if (observedDigest === null) reason = "definition-missing";
-    else {
-      // A recorded vibe/<semver> cache root supplies the original release, even after an in-place upgrade.
-      const oldVersion = basename(dirname(ledger.binding.agentRoot)) === "vibe"
-        ? basename(ledger.binding.agentRoot) : undefined;
-      if (!oldVersion || !isNewerRelease(currentVersion, oldVersion)) {
-        throw new Error("Digest mismatch has no proven plugin version upgrade; retain the original writer");
-      }
-      reason = "definition-upgraded";
-    }
+    if (!retained && data.retainedRecord) throw new Error("No retained record grant exists to release");
+    const observedDigest = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
+    const reason = provenDefinitionChange(ledger, observedDigest, currentVersion);
+    const releasedRecord = retained && data.retainedRecord && verifyRetained
+      ? verifyRetained(lock, ledger, data.retainedRecord) : undefined;
+    const block = migratableBlock(ledger, observedDigest, releasedRecord);
     const workerId = data.runtime === "claude" ? randomUUID() : data.workerId;
     if (!workerId) throw new Error("Native migration requires the new read-only held worker's actual ID");
     const oldIds = [ledger.workerId, ...ledger.migrations.map((item) => item.previous.workerId)];
     if (oldIds.includes(workerId)) throw new Error("Migration requires a new writer identity");
-    const { migrations, ...previous } = ledger;
+    const { migrations, ...current } = ledger;
+    const previous = structuredClone(current);
     ledger.migrations = [...migrations, { id: randomUUID(), at: new Date().toISOString(), reason,
-      observedDigest, previous, workerId, binding: definition.binding }];
+      observedDigest, previous, workerId, binding: definition.binding, ...(releasedRecord ? { releasedRecord } : {}) }];
     ledger.workerId = workerId;
     ledger.binding = definition.binding;
     ledger.started = false;
-    save(place, ledger);
+    if (block === "proven-legacy" && ledger.active) ledger.active.blockReason = "recorded-definition-removed";
+    if (!releasedRecord) save(place, ledger);
+    else {
+      // Park the grant first so a failed ledger write restores it; the record mutex never vanishes without migration.
+      const parked = `${lock}.${randomUUID()}.released`;
+      renameSync(lock, parked);
+      try { save(place, ledger); } catch (error) { renameSync(parked, lock); throw error; }
+      rmSync(parked, { recursive: true, force: true });
+    }
     return summary(ledger);
   });
+}
+
+/** Only a missing definition or a proven newer release replaces the recorded writer. */
+function provenDefinitionChange(ledger: Ledger, observedDigest: string | null, currentVersion: string) {
+  if (observedDigest === ledger.binding.digest) throw new Error("Recorded definition is present and matching; resume the existing writer");
+  if (observedDigest === null) return "definition-missing" as const;
+  // A recorded vibe/<semver> cache root supplies the original release, even after an in-place upgrade.
+  const oldVersion = basename(dirname(ledger.binding.agentRoot)) === "vibe" ? basename(ledger.binding.agentRoot) : undefined;
+  if (!oldVersion || !isNewerRelease(currentVersion, oldVersion)) {
+    throw new Error("Digest mismatch has no proven plugin version upgrade; retain the original writer");
+  }
+  return "definition-upgraded" as const;
+}
+
+/**
+ * A BLOCKED request migrates only when its recorded cause is the removed definition. A ledger written before
+ * block reasons existed carries none; there the writer's own unreleasable grant for that request, under an
+ * absent definition, is the mechanical proof of that cause.
+ */
+function migratableBlock(ledger: Ledger, observedDigest: string | null,
+  releasedRecord: ReturnType<StrandedRecordVerifier> | undefined) {
+  const active = ledger.active;
+  if (active?.status !== "BLOCKED" || active.blockReason === "recorded-definition-removed") return "migratable";
+  if (active.blockReason === undefined && observedDigest === null && releasedRecord?.requestId === active.id) return "proven-legacy";
+  throw new Error("Migration cannot bypass a writer refusal; resolve the blocked request first");
 }
 
 /** Compare numeric release tuples; unknown release provenance fails closed. */
@@ -186,8 +217,15 @@ export function changeWriter(action: "enqueue" | "claim" | "finish", input: unkn
         throw new Error("Native finish requires the exact registered writer's stopped-turn completion evidence");
       }
       if (ledger.runtime === "claude" && ledger.active.processGroupId) proveGroupStopped(ledger.active.processGroupId);
+      if (data.blockReason && data.status !== "BLOCKED") throw new Error("Only a BLOCKED finish carries a block reason");
+      if (data.blockReason === "recorded-definition-removed" && observeDefinitionDigest(ledger.binding.agentRoot,
+        ledger.binding.agentName, ledger.binding.capabilities) !== null) {
+        throw new Error("The recorded definition is present; record the block's actual cause");
+      }
       ledger.active.status = data.status;
       ledger.active.resultSummary = data.resultSummary;
+      if (data.status === "BLOCKED") ledger.active.blockReason = data.blockReason ?? "other";
+      else delete ledger.active.blockReason;
       delete ledger.active.lease;
       delete ledger.active.ownerPid;
       delete ledger.active.processGroupId;

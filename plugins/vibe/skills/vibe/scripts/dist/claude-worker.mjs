@@ -11529,6 +11529,14 @@ var registerSchema = external_exports.object({
   agentName: identifierSchema,
   capabilities: capabilitiesSchema.default([])
 }).strict();
+var stoppedTurnSchema = external_exports.object({
+  runtime: external_exports.literal("codex"),
+  workerId: identifierSchema,
+  requestId: identifierSchema,
+  lease: external_exports.string().uuid(),
+  state: external_exports.enum(["completed", "failed", "canceled"])
+}).strict();
+var blockReasonSchema = external_exports.enum(["recorded-definition-removed", "other"]);
 var actionSchema = external_exports.object({
   worktree: external_exports.string().min(1),
   workerId: identifierSchema.optional(),
@@ -11538,13 +11546,8 @@ var actionSchema = external_exports.object({
   lease: external_exports.string().uuid().optional(),
   status: statusSchema.optional(),
   resultSummary: external_exports.string().max(4096).optional(),
-  stoppedTurn: external_exports.object({
-    runtime: external_exports.literal("codex"),
-    workerId: identifierSchema,
-    requestId: identifierSchema,
-    lease: external_exports.string().uuid(),
-    state: external_exports.enum(["completed", "failed", "canceled"])
-  }).strict().optional()
+  blockReason: blockReasonSchema.optional(),
+  stoppedTurn: stoppedTurnSchema.optional()
 }).strict();
 var bindingSchema = external_exports.object({
   agentRoot: external_exports.string(),
@@ -11552,9 +11555,11 @@ var bindingSchema = external_exports.object({
   digest: external_exports.string().length(64),
   capabilities: capabilitiesSchema
 }).strict();
+var retainedRecordSchema = external_exports.object({ lease: external_exports.string().uuid(), stoppedTurn: stoppedTurnSchema }).strict();
 var migrateSchema = registerSchema.extend({
   previousWorkerId: identifierSchema,
-  previousDigest: external_exports.string().regex(/^[a-f0-9]{64}$/)
+  previousDigest: external_exports.string().regex(/^[a-f0-9]{64}$/),
+  retainedRecord: retainedRecordSchema.optional()
 }).strict();
 var requestSchema = external_exports.object({ id: identifierSchema, input: external_exports.string().min(1).max(64 * 1024) }).strict();
 var ledgerStateSchema = external_exports.object({
@@ -11572,7 +11577,8 @@ var ledgerStateSchema = external_exports.object({
     lease: external_exports.string().uuid().optional(),
     ownerPid: external_exports.number().int().positive().optional(),
     processGroupId: external_exports.number().int().positive().optional(),
-    resultSummary: external_exports.string().max(4096).optional()
+    resultSummary: external_exports.string().max(4096).optional(),
+    blockReason: blockReasonSchema.optional()
   }).strict().optional(),
   completed: external_exports.array(identifierSchema).max(64)
 }).strict();
@@ -11583,7 +11589,12 @@ var migrationSchema = external_exports.object({
   observedDigest: external_exports.string().length(64).nullable(),
   previous: ledgerStateSchema,
   workerId: identifierSchema,
-  binding: bindingSchema
+  binding: bindingSchema,
+  releasedRecord: external_exports.object({
+    requestId: identifierSchema,
+    recordAction: identifierSchema,
+    state: stoppedTurnSchema.shape.state
+  }).strict().optional()
 }).strict();
 var ledgerSchema = ledgerStateSchema.extend({ migrations: external_exports.array(migrationSchema).default([]) }).strict();
 async function readInput(stream = process.stdin) {
@@ -11643,6 +11654,14 @@ function readDefinition(agentRoot, agentName, capabilityInput) {
 function asList(value) {
   if (value === void 0) return [];
   return typeof value === "string" ? value.split(",").map((item) => item.trim()).filter(Boolean) : value;
+}
+function observeDefinitionDigest(agentRoot, agentName, capabilities) {
+  try {
+    return readDefinition(agentRoot, agentName, capabilities).binding.digest;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 // src/ledger.ts
@@ -11739,8 +11758,18 @@ function changeWriter(action, input) {
         throw new Error("Native finish requires the exact registered writer's stopped-turn completion evidence");
       }
       if (ledger.runtime === "claude" && ledger.active.processGroupId) proveGroupStopped(ledger.active.processGroupId);
+      if (data.blockReason && data.status !== "BLOCKED") throw new Error("Only a BLOCKED finish carries a block reason");
+      if (data.blockReason === "recorded-definition-removed" && observeDefinitionDigest(
+        ledger.binding.agentRoot,
+        ledger.binding.agentName,
+        ledger.binding.capabilities
+      ) !== null) {
+        throw new Error("The recorded definition is present; record the block's actual cause");
+      }
       ledger.active.status = data.status;
       ledger.active.resultSummary = data.resultSummary;
+      if (data.status === "BLOCKED") ledger.active.blockReason = data.blockReason ?? "other";
+      else delete ledger.active.blockReason;
       delete ledger.active.lease;
       delete ledger.active.ownerPid;
       delete ledger.active.processGroupId;

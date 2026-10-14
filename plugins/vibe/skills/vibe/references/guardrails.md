@@ -22,8 +22,10 @@ canonical statement:
   person in one plain line that this needs engineering and to message Daniel
   Ochoa with the session slug. It is never a question for the person.
 - Writer migration through `writer-state.mjs migrate` (`quality-loop.md`,
-  "Recorded definition migration") stays allowed, but only after a human or
-  the engineering orchestrator installed the new release.
+  "Recorded definition migration"), including a turn stranded by a plugin
+  upgrade, stays allowed, but only after a human or
+  the engineering orchestrator installed the new release. It is recovery, not
+  a tooling fix: never stop or send the person to Daniel Ochoa for it.
 
 ## What may change
 
