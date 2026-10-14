@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.2.5
+
+#### Changed
+- `measurement-discipline` separates measured bottlenecks from unmeasured hypotheses and quantifies attributable cost, removable fraction, and whole-target saving bounds before optimization comparisons. Missing attribution calls for bounded observation; a large process or module alone does not establish removable cost. Discovery follows profile evidence into relevant code, with distinct ownership for authorized parallel read-only questions, proportional time and compute budgets, and recorded screening decisions or evidence gaps. Exploratory diagnostics can obtain attribution without exact accounting first; unavailable attribution is not a refutation or proof that the performance target was met.
+
 ### vibe v1.0.25
 
 #### Changed
