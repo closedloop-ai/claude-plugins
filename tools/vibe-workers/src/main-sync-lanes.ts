@@ -1,6 +1,5 @@
 import { spawnSync } from "node:child_process";
 import { z } from "zod";
-import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
 import { MAX_CHECK_MS, MainSyncError, type MainSyncReceipt, type e2eLimitationSchema } from "./main-sync-contracts.js";
 import { verifyReportExecution, verifyReportProducerInputs } from "./main-sync-report-inputs.js";
 import { ReportExecutionOwner } from "./main-sync-report-execution.js";
@@ -13,12 +12,18 @@ const discoverySchema = z.object({ commands: z.array(laneSchema).max(128),
   desktopHarness: z.object({ run: z.string().min(1), dir: z.literal("apps/desktop") }).strict().optional() }).strict();
 const DISCOVERY_MODULES = ["scripts/lint/affected-test-lanes.ts", "scripts/lint/report-test-lanes.ts",
   "scripts/lint/desktop-e2e-lane.ts", "scripts/lint/workflow-shell-harness.ts"] as const;
+// The changed-path set is derived in the child from validationSince and the recipe's bound HEAD, so the
+// recorded argv stays one commit id however large a main import is (a set inline in argv exceeded the stored bound).
 const DISCOVERY_SOURCE = String.raw`
+import {execFileSync} from 'node:child_process';
 import {loadOutOfGraphLanes, lanesCoveringPaths, referencedLanes} from './${DISCOVERY_MODULES[0]}';
 import {laneCiCommand, execPlan} from './${DISCOVERY_MODULES[1]}';
 import {desktopE2eLane} from './${DISCOVERY_MODULES[2]}';
 import {loadWorkflowOrThrow} from './${DISCOVERY_MODULES[3]}';
-const paths = JSON.parse(process.argv[1]);
+const since = process.argv[1];
+if (!/^[a-f0-9]{40}$/.test(since ?? '')) throw new Error('Lane discovery requires the validationSince commit');
+const paths = execFileSync('git', ['diff', '--name-only', since, 'HEAD'], {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+  stdio: ['ignore', 'pipe', 'pipe']}).trim().split('\n').filter(Boolean);
 const lanes = await loadOutOfGraphLanes();
 const direct = lanesCoveringPaths(paths, lanes);
 const claimed = new Set(direct.flatMap(match => match.paths));
@@ -40,8 +45,7 @@ const BROWSER_SCRIPT = /^(?:test:e2e(?::.*)?|test:web-smoke)$/;
 /** Reuses structured owning exports; the report's prose and blind --exec are never launch instructions. */
 export function discoverCheckLanes(root: string, receipt: MainSyncReceipt) {
   if (process.env.PWDEBUG) throw new MainSyncError("Headless/displayless validation cannot run with ambient PWDEBUG; no test lane was spawned");
-  const paths = git(root, ["diff", "--name-only", receipt.validationSince, "HEAD"]).split("\n").filter(Boolean);
-  const discovery = { argv: ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", DISCOVERY_SOURCE, JSON.stringify(paths)] };
+  const discovery = { argv: ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", DISCOVERY_SOURCE, receipt.validationSince] };
   verifyReportProducerInputs(root, root, ReportExecutionOwner.Discovery, DISCOVERY_MODULES);
   verifyReportExecution(root, root, ReportExecutionOwner.Discovery, discovery.argv);
   // The owner runs one git grep per changed path, so a handoff after a large main import takes minutes, not seconds.

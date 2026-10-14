@@ -226831,11 +226831,15 @@ var DISCOVERY_MODULES = [
   "scripts/lint/workflow-shell-harness.ts"
 ];
 var DISCOVERY_SOURCE = String.raw`
+import {execFileSync} from 'node:child_process';
 import {loadOutOfGraphLanes, lanesCoveringPaths, referencedLanes} from './${DISCOVERY_MODULES[0]}';
 import {laneCiCommand, execPlan} from './${DISCOVERY_MODULES[1]}';
 import {desktopE2eLane} from './${DISCOVERY_MODULES[2]}';
 import {loadWorkflowOrThrow} from './${DISCOVERY_MODULES[3]}';
-const paths = JSON.parse(process.argv[1]);
+const since = process.argv[1];
+if (!/^[a-f0-9]{40}$/.test(since ?? '')) throw new Error('Lane discovery requires the validationSince commit');
+const paths = execFileSync('git', ['diff', '--name-only', since, 'HEAD'], {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+  stdio: ['ignore', 'pipe', 'pipe']}).trim().split('\n').filter(Boolean);
 const lanes = await loadOutOfGraphLanes();
 const direct = lanesCoveringPaths(paths, lanes);
 const claimed = new Set(direct.flatMap(match => match.paths));
@@ -226855,8 +226859,7 @@ console.log(JSON.stringify({commands: execPlan([], [...commands.values()]), ...(
 var BROWSER_SCRIPT = /^(?:test:e2e(?::.*)?|test:web-smoke)$/;
 function discoverCheckLanes(root, receipt) {
   if (process.env.PWDEBUG) throw new MainSyncError("Headless/displayless validation cannot run with ambient PWDEBUG; no test lane was spawned");
-  const paths = git(root, ["diff", "--name-only", receipt.validationSince, "HEAD"]).split("\n").filter(Boolean);
-  const discovery = { argv: ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", DISCOVERY_SOURCE, JSON.stringify(paths)] };
+  const discovery = { argv: ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", DISCOVERY_SOURCE, receipt.validationSince] };
   verifyReportProducerInputs(root, root, ReportExecutionOwner.Discovery, DISCOVERY_MODULES);
   verifyReportExecution(root, root, ReportExecutionOwner.Discovery, discovery.argv);
   const run = spawnSync3(discovery.argv[0], discovery.argv.slice(1), {

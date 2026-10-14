@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.30
+
+#### Fixed
+- Handoff readiness no longer fails when a main import brings in thousands of changed paths. Structured lane discovery put the whole changed-path list since `validationSince` into one argv element as JSON (2,549 paths, 159,526 characters on the ISS-12305 handoff), and the stored validation recipe caps each argument at 8,192 characters, so readiness stopped before any recipe or validation witness existed. Discovery now passes only the `validationSince` commit and derives the same `git diff --name-only <validationSince> HEAD` set in its own child, against the HEAD the recipe already binds. The 8,192-character bound on recorded arguments is unchanged.
+- Vitest coverage: a 2,549-path main import produces a discovery command whose recorded argument is the commit id, the owner still sees the whole changed set, and the stored recipe parses. The test fails on 1.0.29 with the schema's 8,192 error.
+
 ### closedloop-core v1.2.7
 
 #### Removed
