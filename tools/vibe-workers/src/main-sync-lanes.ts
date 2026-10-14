@@ -1,13 +1,14 @@
 import { spawnSync } from "node:child_process";
 import { z } from "zod";
 import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
-import { MainSyncError, type MainSyncReceipt, type e2eLimitationSchema } from "./main-sync-contracts.js";
+import { MAX_CHECK_MS, MainSyncError, type MainSyncReceipt, type e2eLimitationSchema } from "./main-sync-contracts.js";
 import { verifyReportExecution, verifyReportProducerInputs } from "./main-sync-report-inputs.js";
 import { ReportExecutionOwner } from "./main-sync-report-execution.js";
 
 export type CheckCommand = { argv: string[]; bindings?: Record<string, string>; cwd?: string; timeoutMs?: number };
+// Mirrors the owner's emitted LaneCiCommand (scripts/lint/report-test-lanes.ts); `laneless` entries never leave execPlan.
 const laneSchema = z.object({ script: z.string().min(1), dir: z.string().optional(),
-  suites: z.string().optional(), env: z.record(z.string()).optional() }).strict();
+  suites: z.string().optional(), widenReason: z.string().optional(), env: z.record(z.string()).optional() }).strict();
 const discoverySchema = z.object({ commands: z.array(laneSchema).max(128),
   desktopHarness: z.object({ run: z.string().min(1), dir: z.literal("apps/desktop") }).strict().optional() }).strict();
 const DISCOVERY_MODULES = ["scripts/lint/affected-test-lanes.ts", "scripts/lint/report-test-lanes.ts",
@@ -43,8 +44,9 @@ export function discoverCheckLanes(root: string, receipt: MainSyncReceipt) {
   const discovery = { argv: ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", DISCOVERY_SOURCE, JSON.stringify(paths)] };
   verifyReportProducerInputs(root, root, ReportExecutionOwner.Discovery, DISCOVERY_MODULES);
   verifyReportExecution(root, root, ReportExecutionOwner.Discovery, discovery.argv);
+  // The owner runs one git grep per changed path, so a handoff after a large main import takes minutes, not seconds.
   const run = spawnSync(discovery.argv[0]!, discovery.argv.slice(1), { cwd: root, encoding: "utf8",
-    timeout: 120000, maxBuffer: 16 * 1024 * 1024 });
+    timeout: MAX_CHECK_MS, maxBuffer: 16 * 1024 * 1024 });
   if (run.error || run.status !== 0) throw new MainSyncError("Structured owning test-lane discovery failed; no test lane was spawned");
   const selected = discoverySchema.parse(JSON.parse(run.stdout));
   const commands: CheckCommand[] = [discovery, { argv: ["pnpm", "test:lanes"] }];

@@ -52,6 +52,9 @@ comes from handoff.
 `node ../skills/vibe/scripts/vibe-sessions.mjs show --worktree "<wt>"` (mode,
 branch, `vercel`, `flagSnapshot`, `localFixes`). Quote every path; the
 checkout can live in a folder with spaces.
+Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
+off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
+a needed vibe tooling fix returns `BLOCKED`.
 
 Use closedloop-graph first when you need to find something in symphony-alpha
 (`code_grep` for an env key or workflow name, `code_symbols` for a function),
@@ -211,9 +214,10 @@ every conflict/source problem. Do not run a raw merge/commit/push yourself.
    its source continuation. Protected localFix code is not a validation
    exemption: preserve dirty code/records and BLOCK through the same-writer
    workaround/exclusion/restore flow, never stash/copy/delete them.
+   A build-loop deploy runs only what the commit hooks run: the affected
+   typecheck and Biome on the changed source, no test suites. At handoff only:
    Run the existing affected tests before pushing through that SAME writer's
-   executor,
-   from the worktree:
+   executor, from the worktree:
    `TURBO_CONCURRENCY=2 pnpm turbo test --filter="...[<since>]" --continue`,
    where `<since>` is the session's `vercel.lastDeployedCommit`, or its
    `baseCommit` before the first deploy. That is the tests of every package

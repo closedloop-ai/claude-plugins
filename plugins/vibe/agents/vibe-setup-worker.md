@@ -47,6 +47,9 @@ operator and live ticket against the parent-held preview before deletion.
 and `../skills/vibe/references/closedloop-graph.md`. Use closedloop-graph
 first: `fts_search` for an unfamiliar error to find known setup problems and
 open tickets, and `blast_radius_tickets` on a file you suspect.
+Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
+off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
+a needed vibe tooling fix returns `BLOCKED`.
 
 Quote every path in every command; the checkout can live in a folder with
 spaces (for example `~/Documents/Closedloop.ai - Active Work/symphony-alpha`).

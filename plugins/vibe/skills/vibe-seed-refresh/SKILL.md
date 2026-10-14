@@ -45,7 +45,8 @@ subagent with the file's body as its instructions, in Claude Code use
 ## State
 
 Keep state in `~/.codex/vibe-seed-refresh/state.json`:
-`{ "phase", "ticket", "branch", "worktree", "pr", "lastCheck", "drift" }`.
+`{ "phase", "ticket", "branch", "worktree", "pr", "lastCheck", "drift", "walk" }`,
+where `walk` is the fix worker's latest `Walk:` evidence line.
 Read it first on every run and every wake-up. Phases, in order:
 `checking`, `fixing`, `pr-open`, `queued`, `merged`, `done`. A missing file
 means `checking`.
@@ -79,8 +80,16 @@ On `DRIFT`:
 Dispatch `vibe-seed-fix-worker` with the checkout path, the ticket slug, and
 the drift list. It creates the fix worktree from fresh main
 (`fix/<iss-slug>-vibe-seed`), fixes the seed, and runs every check until they
-pass. Save its worktree and branch in state. On `BLOCKED`, tell Daniel the
-reason and stop.
+pass, including the full web and Desktop screen walk, which it runs itself:
+on a Mac through `pnpm vibe walk-linux` (a Linux container on the local
+Docker), on Linux through the native `pnpm vibe up --ci`, `pnpm vibe walk`,
+`pnpm vibe down` sequence. Save its worktree, branch and `Walk:` evidence line
+(route, web and Desktop screen counts, failures, result file) in state. A
+`DONE` without a `Walk:` line is not done: send it back to the fix worker. On
+`BLOCKED`, tell Daniel the reason and stop; a refused walk (Docker VM too
+small, the `cl-ai-stage` AWS sign-in expired, another walk-linux run active)
+is reported with the tool's exact message, never as a pass and never worked
+around.
 
 ## 4. Pull request
 
@@ -88,7 +97,8 @@ Commit the fix worker's changes with the subject
 `<ISS-slug>: Refresh the vibe seed for <summary>` (64 characters or fewer, so
 it stays within 72 once GitHub appends ` (#NNNN)`; no mention of AI tools).
 Then dispatch `vibe-seed-pr-worker` in open mode with the worktree, ticket,
-and the fix worker's summary. It pushes and returns the PR URL. Link it (ClosedLoop `create_branch_artifact` with the ticket's project UUID as
+the fix worker's summary, and the `Walk:` evidence line, which goes into the
+PR's Test plan. It pushes and returns the PR URL. Link it (ClosedLoop `create_branch_artifact` with the ticket's project UUID as
 `projectId`, the branch as `branchName`, and the ticket's UUID as
 `sourceArtifactId`),
 start the monitor per the `gh-monitor-pr` skill with the PR URL and
@@ -104,7 +114,9 @@ state, then act on it:
   addressed with a one-line reply for each. Commit with the subject
   `<ISS-slug>: <what the fix changed>`, then dispatch `vibe-seed-pr-worker`
   in push mode with those threads and replies; it pushes, replies on each
-  thread with the fixing commit, and resolves them. A failure unrelated to
+  thread with the fixing commit, and resolves them. When the fix worker
+  re-ran the walk, save its new `Walk:` line in state and pass it to push
+  mode, which updates the Test plan's walk line. A failure unrelated to
   the diff gets one re-run; a second failure gets a note to
   Daniel instead of more re-runs.
 - Merge conflict: `vibe-seed-pr-worker` in sync mode (stage a merge of main

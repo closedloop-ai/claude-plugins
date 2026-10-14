@@ -39,7 +39,11 @@ Graph block. A result without one, or with one that lists no calls, is
 incomplete; dispatch the worker again saying so. A Graph block that says
 `unreachable` keeps that step moving; dispatch `vibe-setup-worker` to restore
 the connection before the next step. Every worker that edits the live ticket
-follows `../vibe/references/ticket-template.md`.
+follows `../vibe/references/ticket-template.md`. You and every worker leave
+plugins, plugin marketplaces and plugin caches alone, and never clone the
+plugin's repository to run other tooling (`../vibe/references/guardrails.md`,
+"Plugins and tooling"); a needed tooling fix stops the handoff as that section
+says.
 
 Handoff authors no tests (`../vibe/references/guardrails.md`, "Tests"; Daniel
 Ochoa's ruling, 2026-10-13). It runs the existing affected tests, and when one

@@ -70,7 +70,9 @@ When the recorded definition is missing (`ENOENT`), or its digest differs and
 the current release is provably newer than the recorded `vibe/<version>` cache
 root, ROOT uses the current installed plugin's command in BOTH harnesses:
 `node <current-plugin-root>/skills/vibe/scripts/dist/writer-state.mjs migrate`.
-This is supported recovery, handled internally without asking Andy.
+This is supported recovery, handled internally without asking Andy, and only
+after a human or the engineering orchestrator installed that release
+(`guardrails.md`, "Plugins and tooling").
 Never use `register` to replace a writer or copy old agent definitions.
 
 1. Read `status` and the bounded binding facts from the private ledger. Wait

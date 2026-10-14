@@ -4,6 +4,7 @@ import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { MainSyncError } from "./main-sync-contracts.js";
+import { failureCause } from "./main-sync-failure.js";
 
 export const GENERATED_BIOME_PATH = ".biome-noscan.jsonc";
 export const MAX_INPUT_BYTES = 128 * 1024 * 1024;
@@ -68,7 +69,7 @@ export function verifyGeneratedBiomeInput(root: string, headSha: string) {
     if (!readRegular(root, GENERATED_BIOME_PATH).equals(artifact)) throw new MainSyncError("Generated Biome input changed during the probe", "NEEDS_CHANGE");
   } catch (error) {
     if (error instanceof MainSyncError) throw error;
-    throw new MainSyncError("Could not verify the exact bounded canonical generated Biome input; preserve files and block publication", "NEEDS_CHANGE");
+    throw new MainSyncError(`Could not verify the exact bounded canonical generated Biome input (${failureCause(error)}); preserve files and block publication`, "NEEDS_CHANGE");
   }
 }
 

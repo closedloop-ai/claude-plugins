@@ -27,6 +27,9 @@ and coverage rules; never author a second table or its updates.
 Read `../skills/vibe/references/closedloop-graph.md`, `quality-loop.md`,
 `guardrails.md` and the root/owning AGENTS.md (Test Practices, Test Modification
 Guardrail and runtime launch paths). Graph `code_tests_for` is required.
+Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
+off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
+a needed vibe tooling fix returns `BLOCKED`.
 At handoff read `../skills/vibe/references/ticket-template.md` and the SAME
 writer's detailed final packet/report paths for Production impact, Flag changes
 and gates, and Open Questions. These are metadata checks, not a new validation

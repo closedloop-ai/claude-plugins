@@ -30,6 +30,10 @@ work itself. Under all circumstances:
   `scripts/dist/writer-state.mjs`, `scripts/dist/claude-worker.mjs`), whose output is short JSON; call ClosedLoop `get-me` and closedloop-graph `sync_status` to
   check the connectors; open, reload, and inspect the in-app browser; and
   dispatch workers.
+- You and every worker leave plugins, plugin marketplaces and plugin caches
+  alone, and never clone the plugin's repository to run other tooling
+  (`references/guardrails.md`, "Plugins and tooling"); a needed tooling fix
+  stops the session as that section says.
 - Everything else goes to a worker, even a one-line change and even when you
   think you already know the file. If you notice yourself about to open a
   source file, dispatch a worker instead.

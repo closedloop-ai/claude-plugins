@@ -43,11 +43,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - The `export-closedloop-learnings` usage example, the `process-chat-learnings.sh` header and the `perf_summary.py` output-path docstring no longer refer to `run-loop.sh` or Loop runs, and `process-learnings` no longer says `compute_success_rates.py` runs as a step of the post-iteration pipeline.
 
-### vibe v1.0.21
+### vibe v1.0.24
 
 #### Removed
-- `vibe-seed-refresh` no longer creates a ClosedLoop loop, posts loop events or completes a loop. Its state file drops `loopId`, and the done step goes straight to `update-document`. `vibe-seed-fix-worker` returns its summary for the PR body only.
+- `vibe-seed-refresh` no longer creates a ClosedLoop loop, posts loop events or completes a loop. Its state file drops `loopId`, the `Walk:` evidence line is kept in state and the PR's Test plan only, and the done step goes straight to `update-document`. `vibe-seed-fix-worker` returns its summary for the PR body only. The walk-linux contract test asserts the state and Test plan halves instead of the loop events.
 - The "do not create loops" boundary lines in `cl-analyze`, `cl-execute`, `cl-split`, `cl-sweep`, `cl-find-related-tickets` and `cl-work-report`. `cl-execute` keeps its rule that ticket status, linked plan, pull request, validation evidence, structured result and workflow repo memory are the execution record.
+
+### vibe v1.0.23
+
+#### Changed
+- Sessions never change plugins (Daniel Ochoa's ruling, 2026-10-13). A vibe or handoff session, orchestrator and every worker, never installs, updates, reinstalls, uninstalls or repoints a plugin, changes a plugin marketplace, or modifies a plugin cache, in Codex or Claude Code, and never clones or vendors claude-plugins to run a different version of its tooling. When continuing needs a vibe tooling fix, the session stops, keeps the request `BLOCKED` in its ledger with the reason, adds a Progress line to the live ticket and reports it to engineering; it is never a question for the person. `writer-state.mjs migrate` stays allowed only after a human or the engineering orchestrator installed the new release. The rule lives once in `guardrails.md` ("Plugins and tooling"); both skills, the migration section of `quality-loop.md`, and the setup, environment, change and verify workers point at it.
+- The preflight no longer installs a plugin itself: a missing `closedloop-core` or Codex Browser plugin stops the session for a human to install.
+- Contract test for the rule.
+
+### vibe v1.0.22
+
+#### Changed
+- The seed refresh runs its required full screen walk itself on a Mac. On macOS `vibe-seed-fix-worker` runs `pnpm vibe walk-linux --out .control/vibe/seed-walk-result.json` from the fix worktree (symphony-alpha #8792: `vibe up --ci`, the full web and Desktop walk and `vibe down` in a Linux container on the local Docker) instead of the native up, walk and down sequence, whose Desktop half needs a displayless Linux harness; Linux keeps the native sequence. Only exit 0 with `"ok":true` passes, and the walk keeps its own timeouts and assertions. A refused run (Docker not running or its VM too small, the `cl-ai-stage` AWS sign-in expired, another run active) is `BLOCKED` with the tool's exact message, never a pass and never worked around.
+- Walk evidence. The fix worker returns a `Walk:` line (route, web and Desktop screen counts, failures, result file). The vibe-seed-refresh skill keeps it in state, posts it as a loop event and in the completed loop, and `vibe-seed-pr-worker` puts it in the seed PR's Test plan, refuses to open the PR without it, and updates it when a follow-up re-runs the walk.
+- Contract tests for both rules.
+
+### vibe v1.0.21
+
+#### Changed
+- Build-loop deploys run only what the commit hooks run (Daniel Ochoa's ruling, 2026-10-13): the publish-time validation recipe for `build` purpose is Biome on the changed source plus `pnpm typecheck:affected`. Source gates, `test:affected`, the owning test lanes, the pinned Turbo typecheck and test matrix, the Desktop renderer and Storybook suites run only for `handoff` purpose, which keeps its full matrix. `vibe-environment-worker` says so.
+
+#### Fixed
+- Canonical input readiness no longer refuses a worktree with the generic "Main-sync context or private evidence is invalid" once it reaches the `desktop-auth` and `husky` producers. The installed producer package is located through Node's `node_modules` lookup instead of resolving `<name>/package.json`, which `geist` and `husky` refuse because their `exports` maps omit that subpath (`ERR_PACKAGE_PATH_NOT_EXPORTED`). The package boundary, version contract and pristine owner comparison are unchanged.
+- `mainSyncFailure` no longer reports every non-canonical exception as invalid context or evidence. A schema-invalid context or private record still gets that refusal, now naming the failing key paths and issue codes; malformed private JSON names its read site. Any other exception reports a secret-free operational cause: an authored error's first line (for example a missing `--worktree`), a Node error's code, syscall and file name, or a subprocess's command words and exit status, each with the plugin source line. Stdin context, leases, command output and private file contents are never echoed. The generated Biome input refusal names the same cause.
+- Native expression discovery no longer treats a member name as a reference to a same-named local: `const href = pathToFileURL(...).href` in symphony-alpha's `scripts/lint/affected-test-lanes.ts` was read as a self-cycle and refused the validation recipe with "Native expression discovery is unproved".
+- Owning test-lane discovery accepts the reporter's `widenReason` field, which it emits when a changed `package.json` widens a lane to its whole suite; the strict schema refused the whole discovery.
+- Owning test-lane discovery is bounded by the fixed 15-minute check budget it later runs under as a selected command, instead of 2 minutes. After a main import the reporter runs one `git grep` per changed path; on the ISS-12305 acceptance copy 2,178 paths took 141 s to 8.5 min. The Claude validation envelope counts the same bound.
+
+#### Added
+- Tests: `geist` and `husky` fixtures carry their real `exports` maps; unit tests per failure class with lease-bearing inputs and a CLI test for a missing `--worktree`; a `.href`-named local; a widened lane; the discovery bound; build-loop versus handoff recipes.
 
 ### vibe v1.0.20
 

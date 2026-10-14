@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, sep } from "node:path";
 import { realpathSync } from "node:fs";
@@ -47,11 +47,15 @@ export function producerFiles(root: string, producer: InputProducer, allowed?: R
   return producer.roots.flatMap((path) => originTree(root, path, allowed));
 }
 
-/** Uses the normal locked installed-package boundary; no config evaluation or default installer. */
+/** Uses the normal locked installed-package boundary; no config evaluation or default installer.
+ * Locates the package directory by Node's node_modules lookup rather than resolving `<name>/package.json`,
+ * which a package whose `exports` map omits that subpath (husky, geist) refuses with ERR_PACKAGE_PATH_NOT_EXPORTED. */
 export function producerPackage(root: string, producer: InputProducer) {
   if (!producer.package) return undefined;
   const owner = producer.package;
-  const file = createRequire(join(root, owner.dir, "package.json")).resolve(`${owner.name}/package.json`);
+  const lookup = createRequire(join(root, owner.dir, "package.json")).resolve.paths(owner.name) ?? [];
+  const file = lookup.map((directory) => join(directory, owner.name, "package.json")).find((candidate) => existsSync(candidate));
+  if (!file) throw new MainSyncError(`Canonical installed producer is not installed: ${producer.id}`, "NEEDS_CHANGE");
   const canonical = realpathSync(file);
   if (!canonical.startsWith(`${root}${sep}`) || !lstatSync(canonical).isFile()) {
     throw new MainSyncError(`Canonical installed producer resolves outside the owned validation checkout: ${producer.id}`, "NEEDS_CHANGE");

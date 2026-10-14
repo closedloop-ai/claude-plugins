@@ -1,7 +1,7 @@
 import { storedValidationRecipeSchema, type StoredValidationRecipe, type ValidationWitness, type recoveryReserveSchema } from "./main-sync-validation-contracts.js";
 import type { z } from "zod";
 import { digest } from "./main-sync-state.js";
-import { MainSyncError } from "./main-sync-contracts.js";
+import { MAX_CHECK_MS, MainSyncError } from "./main-sync-contracts.js";
 
 /** Canonical digest binds actual selected commands, budgets and required coverage limitations together. */
 export function recipeIdentity(value: Pick<StoredValidationRecipe, "commands" | "e2eLimitations" | "recovery">) {
@@ -23,7 +23,7 @@ export function verifyRecipeWitness(recipe: StoredValidationRecipe, witness: Val
 
 /** Existing fixed matrix bounds plus existing general overhead; no caller-controlled multiplier or deadline. */
 export function validationEnvelopeMs(recipe: StoredValidationRecipe) {
-  let total = 15 * 60 * 1000 + 120000 + 2000;
+  let total = 15 * 60 * 1000 + MAX_CHECK_MS + 2000;
   if (recipe.recovery) {
     if (recipe.recovery.timeoutMs !== recoveryBudgetMs(recipe.recovery.owners)) throw new MainSyncError("Canonical recovery reserve is not derived from its fixed owners");
     total += recipe.recovery.timeoutMs;

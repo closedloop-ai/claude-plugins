@@ -12189,6 +12189,7 @@ var sessionSchema = external_exports.object({
   lastRequestId: external_exports.string().nullable().optional(),
   prototype: external_exports.object({ deployedCommit: commitSchema, verifiedAt: external_exports.string(), previewUrl: external_exports.string() }).passthrough().optional()
 }).passthrough();
+var MAX_CHECK_MS = 15 * 60 * 1e3;
 var MainSyncError = class extends Error {
   constructor(message, status = "BLOCKED") {
     super(message);
@@ -12226,7 +12227,7 @@ function verifyRecipeWitness(recipe, witness, transactionId) {
   if (witness.transactionId !== transactionId || recipe.headSha !== witness.headSha || recipe.treeSha !== witness.treeSha || recipe.inputSha256 !== witness.inputSha256 || recipe.recipeSha256 !== witness.recipeSha256 || recipeIdentity(recipe) !== recipe.recipeSha256) throw new MainSyncError("Canonical validation recipe/witness identity changed", "NEEDS_CHANGE");
 }
 function validationEnvelopeMs(recipe) {
-  let total = 15 * 60 * 1e3 + 12e4 + 2e3;
+  let total = 15 * 60 * 1e3 + MAX_CHECK_MS + 2e3;
   if (recipe.recovery) {
     if (recipe.recovery.timeoutMs !== recoveryBudgetMs(recipe.recovery.owners)) throw new MainSyncError("Canonical recovery reserve is not derived from its fixed owners");
     total += recipe.recovery.timeoutMs;

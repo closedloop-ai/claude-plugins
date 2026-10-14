@@ -91,6 +91,9 @@ export const sessionSchema = z.object({
 }).passthrough();
 export type MainSyncSession = z.infer<typeof sessionSchema>;
 
+/** One fixed check budget; owning discovery reruns as a selected command under the same bound. */
+export const MAX_CHECK_MS = 15 * 60 * 1000;
+
 /** Errors preserve existing worker outcomes without returning command output or private inputs. */
 export class MainSyncError extends Error {
   constructor(message: string, readonly status: "BLOCKED" | "NEEDS_CHANGE" | "NEEDS_COMMIT" | "NEEDS_DESKTOP_STOP" = "BLOCKED") {

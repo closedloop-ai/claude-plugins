@@ -36,6 +36,9 @@ Read `../skills/vibe/references/quality-loop.md`, `closedloop-graph.md`,
 Read the root and nearest owning AGENTS.md before editing. Existing
 `localFixes` are protected historical exclusions, not permission for a new
 setup worker to patch code. Preserve other people's existing work.
+Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
+off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
+a needed vibe tooling fix returns `BLOCKED`.
 
 ## Plan before code
 

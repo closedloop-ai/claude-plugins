@@ -28,7 +28,7 @@ installing <thing>; type it in the prompt" and wait.
 
 | fix | What to do |
 |---|---|
-| `<Codex CLI> plugin add closedloop-core@closedloop-ai` | Run the exact install command printed in `fix`, then re-run the selected preflight. |
+| `<Codex CLI> plugin add closedloop-core@closedloop-ai` | Stop; never run it (`guardrails.md`, "Plugins and tooling"). A human installs closedloop-core as `INSTALL.md` describes; report the blocker as that section says. |
 | `unsupported-os` | Stop. This flow supports macOS only. Tell the person and Daniel Ochoa. |
 | `install-xcode-clt` | `xcode-select --install`, then wait for the system installer to finish. Computer Use may click Install and Agree in that dialog. |
 | `install-homebrew` | `NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`. It asks for the Mac password through sudo. Afterwards add brew to the shell: `echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile && eval "$(/opt/homebrew/bin/brew shellenv)"`. |
@@ -76,4 +76,4 @@ These are checked by the skill, not the script:
   ClosedLoop connector in Codex Settings; Computer Use may open Settings and
   click Connect, and the person completes sign-in in the browser.
 - Codex Browser plugin: the in-app Browser must be available. If it is not,
-  open Codex Plugins, add Browser, and continue.
+  stop; a human adds it (`guardrails.md`, "Plugins and tooling").
