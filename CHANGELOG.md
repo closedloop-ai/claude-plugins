@@ -14,6 +14,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The guardrails reviewer gains a judgment-only, advisory Storybook placement check: a story or shared component placed without or against its Placement block, a page-scoped story or page-specific composite for a capability a shared design-system component provides, a story for an internal render piece or a page-level story repeating shared mechanics, and a conflict missing from the change log. It stays out of `handoff-inventory.mjs` because stories for one shared capability can legitimately live both beside the shared component and in page sections.
 - `NEEDS_STORYBOOK` joins the worker status contract in `tools/vibe-workers` and the rebuilt `claude-worker.mjs`, `writer-state.mjs` and `main-sync.mjs` bundles; a vitest case proves the request stays active and the same writer resumes after it. Contract tests for the placement owner, the precedent search, the decision order, the consumed-components story rule, the no-ask-the-person rule and the judgment-only check.
 
+### closedloop-core v1.2.5
+
+#### Changed
+- `measurement-discipline` separates measured bottlenecks from unmeasured hypotheses and quantifies attributable cost, removable fraction, and whole-target saving bounds before optimization comparisons. Missing attribution calls for bounded observation; a large process or module alone does not establish removable cost. Discovery follows profile evidence into relevant code, with distinct ownership for authorized parallel read-only questions, proportional time and compute budgets, and recorded screening decisions or evidence gaps. Exploratory diagnostics can obtain attribution without exact accounting first; unavailable attribution is not a refutation or proof that the performance target was met.
+
 ### vibe v1.0.25
 
 #### Changed

@@ -8,7 +8,7 @@ description: Use when optimizing, benchmarking, profiling, or running a performa
 ## When invoked
 
 Apply the rules below to the measurement or optimization task at hand:
-prioritize credible impact before expensive experiments, baseline before touching anything,
+prioritize credible impact before expensive experiments, baseline before optimization edits,
 change one variable, keep a control where the harness could drift, require a mechanism
 for any claimed win, and record
 a loss as REFUTED rather than letting it go unwritten. If the project keeps a
@@ -24,19 +24,33 @@ answer you find was honestly obtained.
 
 ## Choose the experiment before paying for it
 
-Map the measured contributors to the whole target metric first, using existing profiles,
-telemetry, or a cheap, bounded diagnostic. Start with the largest contributors in the
-requested scope. Rank plausible mechanisms by attainable impact on that whole metric,
-supporting evidence, and experiment cost in time and compute. A contributor's measured
-share and the fraction a change could remove bound its credible ceiling; label that
-ceiling as a projection, not a promised result.
+Start from profiles, traces, or telemetry of the requested workload and rank measured
+contributors to the whole target metric before proposing fixes. Separate measured
+bottlenecks from unmeasured hypotheses. A large process or module does not establish how
+much cost a candidate owns or could remove. When attribution is missing, the next work is
+a bounded observation that resolves it, not an optimization chosen from size alone.
 
-Test the mechanism and ceiling cheaply before paying for full repeated comparisons.
-Do not spend six-run experiments on a mechanism whose credible whole-target ceiling is
-below the established noise floor or too small to materially advance the operator's
-target, unless the operator explicitly requested that smaller scope or evidence shows
-the gains compound into material impact. A diagnostic or helper microbenchmark can
-justify the next experiment; it cannot establish a product improvement.
+Before paying for an optimization comparison, quantify the candidate's attributable cost,
+the fraction its mechanism could remove, and a credible whole-target saving bound. Label
+that bound as a projection and state its uncertainty. Exploratory profiling and cheap
+diagnostics obtain this evidence; they do not need exact accounting before the first probe
+and do not establish a performance win. Rank mechanisms by attainable whole-target impact,
+supporting evidence, and experiment cost in time and compute; test high-impact areas first.
+Leave low-ceiling, non-dominant candidates behind while larger credible opportunities remain.
+Do not spend six-run comparisons on ceilings below the established noise floor or too small to
+materially advance the operator's target, unless the operator explicitly requested that
+smaller scope or evidence shows the gains compound into material impact. A helper
+microbenchmark remains support evidence, never product acceptance.
+
+Keep discovery targeted at the highest-ranked contributor and a named attribution question.
+Follow profile evidence into the relevant code instead of random repository searches or
+speculative changes. When useful and authorized, divide independent read-only attribution
+questions among workers with distinct ownership; share evidence rather than duplicate
+scans, and keep their work from disturbing a measured run. Set a proportional time and
+compute budget for discovery and comparison. Stop a probe when its question is answered
+or its budget cannot resolve the gap; record the evidence gap or screening decision and
+re-check conditions. Refute a mechanism when evidence rules it out, not merely because
+attribution is unavailable. A stopped probe does not mean the performance target was met.
 
 Be creative in pursuing substantial performance improvements, whether the requested
 target is latency, throughput, memory, cost, or another metric. Challenge assumptions
@@ -49,7 +63,7 @@ implemented. Change one variable at a time and prove the effect with the rules b
 
 ## The rules
 
-**1. Baseline before you touch anything, and get the noise floor from repeated runs.**
+**1. Baseline before optimization edits, and get the noise floor from repeated runs.**
 One before-number and one after-number cannot tell a real effect from a slow afternoon.
 Discard the first run as warmup, take at least five or six more, record every one, and state
 the median and the spread. The spread is your noise floor; nothing smaller is a result.
@@ -172,7 +186,8 @@ scale. Re-check trigger: if either table grows 10x, re-run rather than citing th
 Before proposing or diagnosing, search the log for the symptom and for the mechanism you are
 about to name, and say what you searched for. Claim nothing without a number, and never
 present an estimate in the shape of a measurement. Identify the dominant contributors and
-screen the impact ceiling cheaply before full comparisons. Run the baseline before the first edit.
+screen the impact ceiling cheaply before full comparisons. Run the baseline before the first
+optimization edit.
 Change one thing. Report every run, not the best one. If the result is within noise, say
 "within noise" and write the refutation; a refutation is a completed piece of work, not a
 failure to report. Remove your scaffolding and prove it is gone. Append the entry the same
