@@ -4,6 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.23
+
+#### Changed
+- Sessions never change plugins (Daniel Ochoa's ruling, 2026-10-13). A vibe or handoff session, orchestrator and every worker, never installs, updates, reinstalls, uninstalls or repoints a plugin, changes a plugin marketplace, or modifies a plugin cache, in Codex or Claude Code, and never clones or vendors claude-plugins to run a different version of its tooling. When continuing needs a vibe tooling fix, the session stops, keeps the request `BLOCKED` in its ledger with the reason, adds a Progress line to the live ticket and reports it to engineering; it is never a question for the person. `writer-state.mjs migrate` stays allowed only after a human or the engineering orchestrator installed the new release. The rule lives once in `guardrails.md` ("Plugins and tooling"); both skills, the migration section of `quality-loop.md`, and the setup, environment, change and verify workers point at it.
+- The preflight no longer installs a plugin itself: a missing `closedloop-core` or Codex Browser plugin stops the session for a human to install.
+- Contract test for the rule.
+
 ### vibe v1.0.22
 
 #### Changed

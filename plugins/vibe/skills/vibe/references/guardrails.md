@@ -6,6 +6,25 @@ rather than rewrite it. The repo's `AGENTS.md` files are the contract; read
 the nearest one before editing a directory. This file adds the rules specific
 to vibe sessions and points at the repo rules that matter most here.
 
+## Plugins and tooling
+
+Daniel Ochoa's ruling, 2026-10-13. It binds the vibe and handoff orchestrators
+and every worker, in Codex and Claude Code, and this section is its one
+canonical statement:
+
+- Never install, update, reinstall, uninstall or repoint a plugin, change a
+  plugin marketplace, or modify a plugin cache.
+- Never clone or vendor the plugin's own repository (claude-plugins) to run a
+  different version of its tooling.
+- When continuing needs a fix to the vibe tooling, stop. Record the blocker:
+  the request stays `BLOCKED` in the session ledger with the reason, and a line
+  in the live ticket's Progress names it. Report it to engineering: tell the
+  person in one plain line that this needs engineering and to message Daniel
+  Ochoa with the session slug. It is never a question for the person.
+- Writer migration through `writer-state.mjs migrate` (`quality-loop.md`,
+  "Recorded definition migration") stays allowed, but only after a human or
+  the engineering orchestrator installed the new release.
+
 ## What may change
 
 For an owned `prototype/<slug>` mockup session, the repository's canonical

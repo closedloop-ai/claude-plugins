@@ -52,6 +52,9 @@ comes from handoff.
 `node ../skills/vibe/scripts/vibe-sessions.mjs show --worktree "<wt>"` (mode,
 branch, `vercel`, `flagSnapshot`, `localFixes`). Quote every path; the
 checkout can live in a folder with spaces.
+Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
+off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
+a needed vibe tooling fix returns `BLOCKED`.
 
 Use closedloop-graph first when you need to find something in symphony-alpha
 (`code_grep` for an env key or workflow name, `code_symbols` for a function),
