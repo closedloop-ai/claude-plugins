@@ -11,7 +11,9 @@ migration below. After migration, SAME writer means the ledger's current writer.
 
 Do not show or ask the person to approve a technical plan, ask a technical
 question, or give an upfront summary. Updates say only which requested feature
-is complete and what is being worked on next, using the person's own words.
+is complete, which of its acceptance criteria are not done yet ("Acceptance
+criteria before ready"), and what is being worked on next, using the person's
+own words.
 Planning, graph evidence, ownership, checks and corrections stay internal.
 
 Before any product question, research `ticket_detail`, `fts_search` and
@@ -351,6 +353,9 @@ between a request and the person seeing it.
   changed files, the affected typecheck and the source gates. When they fail
   on an existing test or fixture the change broke, the writer repairs it
   (`guardrails.md`, "Repair, don't author").
+- Acceptance check: before `DONE`, the writer checks every acceptance
+  criterion the change touches with concrete, cheap evidence and records the
+  result ("Acceptance criteria before ready" below).
 - Commit, deploy and show: after each finished change the orchestrator
   commits with its script and deploys through the existing publication gate
   without being asked (`SKILL.md`, section 6), batching changes that arrive
@@ -362,9 +367,82 @@ Browser E2E, visual QA, logical QA, Metal Andrew, the guardrails and
 adversarial reviews, `workflow-code-review`, the existing test suite,
 Storybook footprint, running app checks and any other heavy validation run
 only at `$handoff`, never during the loop, even where a repository protocol
-asks for them before a change is done: handoff runs them. The reference-product
+asks for them before a change is done: handoff runs them. The acceptance
+check's single test, script or control read per criterion is not one of them.
+The reference-product
 and new Storybook components notices (`SKILL.md`, section 5, "Notices that
 never wait") stay as they are.
+
+## Acceptance criteria before ready
+
+Nothing is called ready until every acceptance criterion the change touches
+has been checked against the code (Daniel Ochoa's ruling, 2026-10-14, after
+the PRD-720 live test: a session said ISS-12462 was ready while "A deep link
+to a grouped view restores the same collapse state for the recipient" held
+on Branches and was never built on Documents). Heavy QA still waits for
+handoff. This section is the rule's one canonical statement; the skills and
+workers point at it.
+
+The list lives in the session decision table, not a new artifact: one
+`## Acceptance Criteria` section, authored only by the SAME writer. Each
+criterion has a stable ID (`AC-1`, `AC-2`, ...), its exact words quoted, its
+source and the row IDs that implement it. The sources are every acceptance
+criterion of the linked ticket and its PRD, which `vibe-requirements-worker`
+quotes and the orchestrator forwards with the first request; each concrete
+requirement in the person's requests and annotations, in their own words,
+added when the request arrives (source: the request ID); and each behavior
+answer at handoff. Never invent a criterion or narrow its words. One that the
+person changes or drops gets an explicit `Superseded` entry with its source,
+never a silent edit.
+
+After each build or fix and its quick checks, before returning `DONE`, the
+writer checks every unsuperseded criterion the change touches, including
+earlier requests' criteria its files or rows could break; when unsure whether
+one is touched, check it. Use the cheapest honest evidence:
+
+- an existing test that exercises it, run alone by file or test name, never
+  the suite;
+- a quick script or check against the real code path, kept outside the
+  worktree and deleted afterwards; it is not a test, is never committed and
+  never becomes one;
+- one bounded `pnpm control` read against the running app under the control
+  skill's own rules (hidden, read-only, `pnpm control down` for every session
+  it started), only where that is the honest way to check it, such as URL
+  state surviving a reload or a copied link opened fresh;
+- a source trace that follows the behavior end to end, with file and line,
+  through every surface the criterion names: each view, and web and Desktop
+  where their adapters differ. A trace through one view does not check a
+  criterion that covers several.
+
+Append one line per check to the section's `### Checks` log: request ID,
+criterion ID, the check (test name, command or trace) and the result, `met`
+or `not met yet`, with its evidence. The newest line per criterion is its
+current result; earlier lines stay.
+
+A criterion not met yet is fixed in the same request and checked again.
+When it cannot be finished now (it waits on a product answer through the
+research gate above, or on backend or engineering work), its result stays
+`not met yet` with the reason, and the orchestrator's ready message says
+plainly, in the person's terms, that this part is not done yet. It is never
+claimed, silently dropped or turned into an engineering question for the
+person, and no test is authored for it (`guardrails.md`, "Tests").
+
+`DONE` carries an Acceptance criteria block: each touched criterion's ID,
+quoted words, check and current result. A `DONE` without that block, or with
+a touched criterion that has no check, is incomplete: the orchestrator
+resumes the SAME writer to finish it before committing, deploying or saying
+ready.
+
+Keep it light. It is not a QA pass: no browser E2E, test suite, visual or
+logical QA, Metal Andrew or review runs for it, and no long-running command
+joins the loop.
+
+At handoff the whole-table alignment above starts from this list: the SAME
+writer first checks every unsuperseded criterion against the final code the
+same way, and the verify worker and reviewers start from those results. A
+criterion still not met is a source gap the writer fixes or a product
+question routed through the handoff skill's "Answers from the person"; it
+never counts as met.
 
 ## Tests: repair, don't author
 

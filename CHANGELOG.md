@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.25
+
+#### Changed
+- Nothing is called ready before its acceptance criteria are checked (Daniel Ochoa's ruling, 2026-10-14, after the PRD-720 live test, where ISS-12462 was reported ready while a deep link never restored the Documents grouped view's collapse state). The session decision table gains one `## Acceptance Criteria` list, authored by the same writer: every criterion of the linked ticket and its PRD, which `vibe-requirements-worker` now quotes with its source, each concrete requirement in the person's own words, and handoff behavior answers. After each build or fix and before `DONE`, the writer checks every criterion the change touches with cheap concrete evidence (an existing test run alone, a throwaway script, one bounded `pnpm control` read, or an end-to-end source trace across every view the criterion names) and appends criterion, check and result to the list's checks log. A criterion not met is fixed, or the ready message tells the person plainly it is not done yet; it is never claimed, never an engineering question, and no test is authored for it. A `DONE` without the Acceptance criteria block is incomplete. No QA pass, suite or long-running command joins the loop. Handoff's checks and whole-table alignment start from the list. The rule lives once in `quality-loop.md` ("Acceptance criteria before ready"); both skills, `guardrails.md`, the README and the change, requirements and verify workers point at it.
+- Contract test for the rule; the control contract test now allows that one acceptance read in the build loop and nothing else.
+
 ### vibe v1.0.23
 
 #### Changed

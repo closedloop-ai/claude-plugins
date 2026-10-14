@@ -178,6 +178,16 @@ harness or records the precise local limitation, never a visible fallback.
 A partial unit is not a completed feature. Preserve the request and its local
 plan while waiting for a product answer.
 
+Keep the session decision table's `## Acceptance Criteria` section and, after
+each build or fix and its quick checks, check every criterion the change
+touches before returning `DONE`, under `quality-loop.md`, "Acceptance criteria
+before ready": the criteria from the ticket, its PRD and the person's own
+words, each checked with an existing test run alone, a throwaway script, one
+bounded control read or an end-to-end source trace, and each result recorded.
+Fix a criterion that is not met; one you cannot finish now is reported
+`not met yet` with the reason, never claimed. At handoff, start the
+whole-table alignment from that list.
+
 Append the request, Owner/Rule, files, review/validation and overlap evidence
 to the existing private change log. Keep the live ticket's scope, progress and
 backend facts truthful under `ticket-template.md`, without technical-plan
@@ -252,6 +262,8 @@ components' story IDs and continues the same request; `NEEDS_REVIEW` waits for h
 `NEEDS_PERSON` is only a researched necessary product question or legitimate
 human-only action, never a test or engineering choice; `NEEDS_COMMIT` waits
 for the orchestrator; `DONE` means the whole requested feature passed its
-quick checks in the loop, or its checks and reviews at handoff. `BLOCKED` gives
+quick checks in the loop, or its checks and reviews at handoff, and always
+carries the Acceptance criteria block: each touched criterion's ID, quoted
+words, check and result (`met` or `not met yet`). `BLOCKED` gives
 evidence without a technical question or silent downscope. Every non-trivial
 result ends with the required Graph block.

@@ -38,7 +38,12 @@ session's Vercel preview without the person asking ("redeploy" still works),
 and changes that arrive during a deploy go out together in the next one.
 The plan gets no review, and browser
 E2E, visual QA, logical QA, Metal Andrew, the guardrails and adversarial
-reviews and other heavy validation run only at handoff.
+reviews and other heavy validation run only at handoff. Before saying a
+change is ready, the writer checks every acceptance criterion it touches
+(from the linked ticket, its PRD and the person's own words, kept in the
+session decision table) with an existing test, a quick script, one control
+read or a source trace; a criterion not met yet is fixed or reported to the
+person as not done, and handoff's alignment starts from that list.
 
 Every request also uses `$decision-table` or `/closedloop-core:decision-table`
 before code, including frontend-only, prototype and trivial edits. One living

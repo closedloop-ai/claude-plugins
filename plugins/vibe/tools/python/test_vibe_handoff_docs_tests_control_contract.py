@@ -9,7 +9,8 @@
    for a pull request authorizes tests, and then full tests come first.
 3. Handoff drives the running web app and Desktop with symphony-alpha's control
    skill for each touched screen and records that evidence apart from
-   source-only claims. The build loop has no control step.
+   source-only claims. The build loop has no control step; its only control
+   use is the writer's single read for an acceptance criterion (2026-10-14).
 """
 
 from __future__ import annotations
@@ -232,10 +233,14 @@ def test_control_evidence_lands_in_design_review_and_validation_records() -> Non
     assert "Running app checks and Design Review's Visual evidence carry the control artifact paths" in ticket
 
 
-def test_the_build_loop_has_no_control_step() -> None:
+def test_the_build_loop_uses_control_only_for_an_acceptance_criterion_read() -> None:
     assert "pnpm control" not in section(VIBE_SKILL.read_text(), "## 5. Build loop")
-    assert "pnpm control" not in QUALITY.read_text()
     assert "pnpm control" not in flat(agent("vibe-change-worker"))
+    heading = "## Acceptance criteria before ready"
+    before, _, after = QUALITY.read_text().partition(heading)
+    acceptance, _, rest = after.partition("\n## ")
+    assert "one bounded `pnpm control` read" in flat(acceptance)
+    assert "pnpm control" not in before + rest
 
 
 def test_new_text_uses_no_emdashes_or_double_hyphen_dashes() -> None:

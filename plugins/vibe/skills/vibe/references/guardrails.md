@@ -86,7 +86,10 @@ at handoff: the guardrails and adversarial reviews, browser E2E, visual QA,
 logical QA, Metal Andrew, the existing tests (the whole suite and two review
 passes when backend code changed), the running web app and Desktop driven with
 the repo's control skill, and the list of tests engineering still has to write
-(Tests, below).
+(Tests, below). Beyond the quick checks, the loop's only other check is the
+writer's acceptance check before a change is called ready (`quality-loop.md`, "Acceptance criteria
+before ready"): one cheap existing test, script, control read or source trace
+per touched criterion, never a suite or QA pass.
 
 One exception under `scripts/`: the source-gate allowlist
 (`scripts/lint/source-gate-allowlist.json`) is shrink-only, so when the
