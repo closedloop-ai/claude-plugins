@@ -260,7 +260,9 @@ checks. Keep the writer's Design blocks for the ticket.
 ## 4. Storybook
 
 Read-only `vibe-storybook-decomposer` advises on components/stories/catalog
-gaps. Resume the SAME writer to perform every extraction, story and catalog
+gaps. Every new or touched story follows the repo's `apps/storybook/TAXONOMY.md`
+(`../vibe/references/guardrails.md`, "Storybook taxonomy"); the inventory's
+`v1Stories` blocks handoff. Resume the SAME writer to perform every extraction, story and catalog
 source change. Read-only verify footprint mode measures the sidebar and
 reports remaining problems; they return to the writer, never another author.
 Collect Design Review evidence from the verified final diff and existing
@@ -493,7 +495,9 @@ grade the finished code and its appearance/Storybook implementation:
   not an invented app or Storybook environment.
 - Requested scope/screens and relevant hosts/states, with actual inspection
   separated from source-only and unverified coverage.
-- Added/changed/removed components/stories with IDs/direct links, controls,
+- Added/changed/removed components/stories with IDs/direct links (full
+  Storybook UI links, never the bare `iframe.html` canvas;
+  `../vibe/references/environment.md`, "Storybook links"), controls,
   Docs and plays, intentional ID/category moves/sidebar folds and retained
   state access; removed/unavailable historical links are identified honestly.
 - Actual footprint/canonical catalog commands, baseline/current commits and
@@ -600,7 +604,8 @@ runs.
 
 Tell them, in a few lines: the ticket link, the app link as
 `<appUrl>/sign-in` (the app's root sends a signed-out visitor to account
-creation), the Storybook link, the
+creation), the Storybook link (the full Storybook UI per
+`../vibe/references/environment.md`, "Storybook links"), the
 branch name, and what happens next: the next owner, by name, picks it up
 from the ticket (usually design reviews the components in Storybook and
 comments on the ticket on sign-off, then engineering finishes it). Say that the Storybook link opens only after

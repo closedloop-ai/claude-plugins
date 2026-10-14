@@ -554,7 +554,8 @@ what it already built, like any other request about it.
   `storybookUrl` from the session's stack (`vibe-sessions.mjs show`); if none
   is running, dispatch `vibe-setup-worker` to start it. Send one plain message
   pointing the person to `<storybookUrl>/?path=/story/<id>` for each new
-  story, then resume the SAME writer to build the feature with them. A change
+  story (never the bare `iframe.html` canvas; `references/environment.md`,
+  "Storybook links"), then resume the SAME writer to build the feature with them. A change
   that only reuses existing components skips this step.
 
 Pure mockups still use canonical `$prototype` guidance through this writer;

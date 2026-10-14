@@ -71,6 +71,19 @@ once `environment-result` has recorded a verified result:
 | `apiUrl` | The API behind it (`api-stage-git-vibe-<slug>`); the app finds it by hostname. |
 | `storybookUrl` | Storybook (`prototypes-git-vibe-<slug>`, under `/storybook`), where design reviews the components. It sits behind Vercel's sign-in: a viewer not signed in to Vercel with a team account is sent to `vercel.com` (`sso-api`) instead. |
 
+## Storybook links
+
+Every Storybook link given to the person or written on the live ticket opens
+the full Storybook UI, with its sidebar and controls: the Storybook base
+alone, or `<storybook-base>/?path=/story/<story-id>` for one story. The base
+is the verified Vercel `storybookUrl` or the local `storybookUrl` in the
+session's stack. Never give the bare canvas,
+`<storybook-base>/iframe.html?id=<story-id>&viewMode=story`, which shows the
+story without the sidebar or controls (Daniel Ochoa's ruling, 2026-10-14,
+after the PRD-720 session sent that form). This section is the rule's one
+canonical statement; the skills, the ticket template and the workers point at
+it.
+
 ## The production flag snapshot
 
 Taken once, when the environment is created (ISS-12048): every feature flag's

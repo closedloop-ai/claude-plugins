@@ -18,7 +18,10 @@ The worktree path and a list of component files (new or changed). Before any
 story work, read the repo skill `.claude/skills/storybook/SKILL.md` and
 `references/gotchas.md`, then follow `workflows/author-stories.md` and
 `workflows/design-controls.md` exactly. Read `apps/storybook/AGENTS.md` for
-where stories must live to be collected.
+where stories must live to be collected, and the repo's
+`apps/storybook/TAXONOMY.md`, which places every new or touched story: a v2.0
+root, its page tree, the `v2.0` tag and the release bump, never a frozen v1.0
+root (`../skills/vibe/references/guardrails.md`, "Storybook taxonomy").
 Read the same session decision table and affected/interacting row IDs. Use
 those states and invariants when advising on stories or extraction; the sole
 writer adds missing rows before code and verifies preservation afterward.
@@ -68,3 +71,6 @@ actual footprint report references plus unresolved advisories. Keep source-only
 and unverified states distinct from actual appearance/interaction inspection;
 no looks-good/Storybook-correct claim without evidence. Return existing detailed
 evidence paths for the same writer/ticket helper; never author or fix source.
+Every Storybook link opens the full Storybook UI,
+`<storybook-base>/?path=/story/<story-id>`, never the bare `iframe.html`
+canvas (`../skills/vibe/references/environment.md`, "Storybook links").

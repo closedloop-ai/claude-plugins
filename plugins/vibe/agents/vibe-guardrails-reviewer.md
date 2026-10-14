@@ -1,6 +1,6 @@
 ---
 name: vibe-guardrails-reviewer
-description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
+description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, Storybook taxonomy placement, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
 model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
 ---
@@ -107,6 +107,11 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    unedited and must be on the missing tests list with that exact ruling. A
    lint or type suppression or a raised allowlist count added to make a check
    pass (`guardrails.md`, "Checks") is blocking too.
+10. Storybook taxonomy (`guardrails.md`, "Storybook taxonomy"): read the
+    repo's `apps/storybook/TAXONOMY.md`. A new or touched story file titled
+    under or tagged for a frozen v1.0 root (the inventory's `v1Stories`) is
+    blocking; so is a v2.0 story outside its page tree, without the `v2.0`
+    tag, or added, moved or renamed without the release bump the doc names.
 
 For publication, verify the SAME source actor's `main-sync-inputs` evidence
 before capture and after the committed merge. Canonical private diagnostics

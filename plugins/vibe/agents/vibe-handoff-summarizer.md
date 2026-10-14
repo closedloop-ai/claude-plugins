@@ -70,3 +70,6 @@ and advisories, actual QA reports/screenshots/viewports/hosts/states versus
 source-only/unverified, known gaps and remaining design decisions. Never
 claim looks good or Storybook correct without actual inspection/check evidence.
 No invented copy or technical approval request to the Vibe coder; no source edits.
+Every Storybook link opens the full Storybook UI,
+`<storybook-base>/?path=/story/<story-id>`, never the bare `iframe.html`
+canvas (`../skills/vibe/references/environment.md`, "Storybook links").

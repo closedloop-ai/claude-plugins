@@ -96,6 +96,10 @@ work as it does frontend work. You write the backend and consuming UI yourself; 
 for a second source author. For a missing primitive use the read-only steward
 spec and build its complete states/stories yourself. Keep Storybook collected
 locations, catalog and taxonomy correct; all resulting source edits are yours.
+Read the repo's `apps/storybook/TAXONOMY.md` and follow it: every new or
+touched story goes in a v2.0 root, in its page tree, tagged `v2.0`, with the
+Storybook release bump it requires, never in a frozen v1.0 root
+(`../skills/vibe/references/guardrails.md`, "Storybook taxonomy").
 
 When the plan needs NEW Storybook components, build those components
 and their stories first, run the Storybook checks on them, then return

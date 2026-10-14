@@ -186,7 +186,8 @@ surfaces; never invent a preview or inspection.>
   Reference the Handoff Production impact and Flag changes and gates evidence,
   keeping conditional production effects separate from this Storybook inventory.>
 - Storybook inventory: <added/changed/removed components and stories with paths,
-  IDs and direct links; controls, Docs and plays as declared versus actually
+  IDs and direct links, each `<storybook-base>/?path=/story/<story-id>` and
+  never the bare `iframe.html` canvas (`environment.md`, "Storybook links"); controls, Docs and plays as declared versus actually
   inspected/executed; intentional ID/category moves and sidebar folds with
   old/new IDs and retained state access. Removed/unavailable links are identified
   honestly, never fabricated.>
