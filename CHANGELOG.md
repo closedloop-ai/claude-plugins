@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.2.6
+
+#### Changed
+- `measurement-discipline` bounds measurement harness work. Before building, repairing, or elaborating a harness, name the decision it must unlock, the maximum elapsed time, and the attempt limit; use the minimum instrumentation that can rank contributors or decide the next material experiment. Pivot to another attribution route or contributor when the budget is spent, harness defects repeat, or existing tools already answer the decision. A broken or unvalidated harness supplies no positive evidence: the one-variable comparison is preserved and any result whose setup, control, or measurement path is not trustworthy fails closed.
+- Contract tests (`test_measurement_discipline_skill_contract.py`) check that the harness budget follows contributor ranking and precedes the comparison rules, and that the harness exit keeps the fail-closed and one-variable requirements.
+
 ### vibe v1.0.28
 
 #### Fixed
