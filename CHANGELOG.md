@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.0.34
+### vibe v1.0.35
 
 #### Fixed
 - The plugin no longer names people (operator ruling, 2026-10-14). Skills, agents, references, scripts, tests, comments, the README and this plugin's CHANGELOG entries state each rule on its own; a ruling is cited as "operator ruling, <date>". The person running a vibe session is "the person running the session" (the `vibe` skill description now reads "for a non-engineer (such as a CEO)"), the contact for blocked sessions and setup failures is "engineering", and in the `cl-*` skills the human who approves plans, grants exceptions and merges UI PRs is "the operator". The cl-sweep summary heading is now `Needs you:`.
