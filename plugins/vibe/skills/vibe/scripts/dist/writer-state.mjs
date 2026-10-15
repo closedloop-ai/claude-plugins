@@ -7372,8 +7372,8 @@ var require_dist = __commonJS({
 
 // src/writer-state.ts
 import { parseArgs } from "node:util";
-import { dirname as dirname2, resolve } from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { dirname as dirname3, resolve as resolve2 } from "node:path";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // node_modules/zod/v3/external.js
 var external_exports = {};
@@ -11691,6 +11691,14 @@ function readWriterSummary(worktree) {
   if (!existsSync(place.file)) return void 0;
   return summary(readLedger(place));
 }
+function recordedWriterRoot(worktree) {
+  try {
+    const place = location(worktree);
+    return existsSync(place.file) ? readLedger(place).binding.agentRoot : void 0;
+  } catch {
+    return void 0;
+  }
+}
 function takeWriterInput(input) {
   const data = actionSchema.parse(input);
   const place = location(data.worktree);
@@ -12207,6 +12215,62 @@ function verifyStrandedRecordGrant(lock, ledger, retained) {
   return { requestId: grant.requestId, recordAction: grant.recordAction, state: stoppedTurn.state };
 }
 
+// src/plugin-root.ts
+import { existsSync as existsSync3, readFileSync as readFileSync5, realpathSync as realpathSync5 } from "node:fs";
+import { basename as basename2, dirname as dirname2, join as join5, resolve } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+var AgentRootError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+  code;
+};
+function installedPluginRoot(metaUrl) {
+  return realpathSync5(resolve(dirname2(fileURLToPath2(metaUrl)), "../../../.."));
+}
+function resolveAgentRoot(supplied, installed, recorded) {
+  const fallback = recorded && existsSync3(recorded) ? recorded : installed;
+  if (supplied === void 0) return fallback;
+  let root;
+  try {
+    root = realpathSync5(supplied);
+  } catch {
+    throw new AgentRootError("AGENT_ROOT_INVALID", "The supplied agent root does not exist; omit agentRoot to use the installed plugin");
+  }
+  if (basename2(root) === "agents" && isPluginRoot(dirname2(root))) root = dirname2(root);
+  if (!isPluginRoot(root)) {
+    throw new AgentRootError("AGENT_ROOT_INVALID", "The supplied agent root is not a vibe plugin root; omit agentRoot to use the installed plugin");
+  }
+  if (root === installed || root === recorded) return root;
+  const suppliedVersion = pluginVersion(root);
+  const installedVersion = pluginVersion(installed);
+  if (suppliedVersion && installedVersion && suppliedVersion !== installedVersion) {
+    throw new AgentRootError(
+      "STALE_PLUGIN_ROOT",
+      `The supplied agent root is vibe ${suppliedVersion}, but this launcher belongs to vibe ${installedVersion}; omit agentRoot`
+    );
+  }
+  return root;
+}
+function isPluginRoot(root) {
+  const manifest = join5(root, ".claude-plugin", "plugin.json");
+  if (!existsSync3(manifest) || !existsSync3(join5(root, "agents"))) return false;
+  try {
+    return JSON.parse(readFileSync5(manifest, "utf8")).name === "vibe";
+  } catch {
+    return false;
+  }
+}
+function pluginVersion(root) {
+  try {
+    const version = JSON.parse(readFileSync5(join5(root, ".claude-plugin", "plugin.json"), "utf8")).version;
+    return typeof version === "string" ? version : void 0;
+  } catch {
+    return void 0;
+  }
+}
+
 // src/writer-state.ts
 async function main(argv) {
   const { positionals } = parseArgs({ args: argv, allowPositionals: true, options: {} });
@@ -12214,10 +12278,10 @@ async function main(argv) {
   if (positionals.length !== 1) throw new Error("Only the action belongs in argv; send private input on stdin");
   const input = await readInput();
   let result;
-  if (action === "register") result = registerWriter(input);
+  if (action === "register") result = registerWriter(withInstalledRoot(input));
   else if (action === "migrate") {
-    result = migrateWriter(input, resolve(dirname2(fileURLToPath2(import.meta.url)), "../../../.."), verifyStrandedRecordGrant);
-  } else if (action === "acquire-record") result = acquireNativeRecord(input);
+    result = migrateWriter(input, resolve2(dirname3(fileURLToPath3(import.meta.url)), "../../../.."), verifyStrandedRecordGrant);
+  } else if (action === "acquire-record") result = acquireNativeRecord(withInstalledRoot(input));
   else if (action === "release-record") result = releaseNativeRecord(input);
   else if (action === "take-input") result = takeWriterInput(input);
   else if (action === "status") result = readWriterSummary(external_exports.object({ worktree: external_exports.string() }).strict().parse(input).worktree) ?? null;
@@ -12232,6 +12296,13 @@ async function main(argv) {
   return 0;
 }
 runFromCanonicalEntry(import.meta.url, main);
+function withInstalledRoot(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const { agentRoot: supplied, agentName, worktree } = input;
+  if (supplied !== void 0 && typeof supplied !== "string") return input;
+  const recorded = agentName === "vibe-change-worker" && typeof worktree === "string" ? recordedWriterRoot(worktree) : void 0;
+  return { ...input, agentRoot: resolveAgentRoot(supplied, installedPluginRoot(import.meta.url), recorded) };
+}
 export {
   main,
   readWriterSummary

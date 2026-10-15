@@ -266,3 +266,17 @@ test("prototype preflight keeps common prerequisites and omits only the app Post
   const app = runPreflight(env, ["--repo", checkout]);
   assert.equal(app.checks["posthog-key"].ok, false, "app sessions still require the real key");
 });
+
+test("Claude preflight reports a signed-out claude command before any worker launches, asking from the home folder", (t) => {
+  const env = setup(t);
+  const asked = path.join(env.root, "claude-asked-from");
+  writeExecutable(path.join(env.bin, "claude"),
+    `pwd > "${asked}"; [ "$1 $2" = "auth status" ] && echo '{"loggedIn":false}' && exit 1; exit 2`);
+  const signedOut = runPreflight(env, ["--runtime", "claude", "--prototype"]);
+  assert.equal(signedOut.checks["claude-login"].ok, false);
+  assert.equal(signedOut.checks["claude-login"].fix, "claude-auth-login");
+  assert.equal(readFileSync(asked, "utf8").trim(), env.home);
+  writeExecutable(path.join(env.bin, "claude"), `echo '{"loggedIn":true}'`);
+  assert.equal(runPreflight(env, ["--runtime", "claude", "--prototype"]).checks["claude-login"].ok, true);
+  assert.equal(runPreflight(env, ["--prototype"]).checks["claude-login"], undefined);
+});

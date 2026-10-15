@@ -51,6 +51,13 @@ Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
 off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
 a needed vibe tooling fix returns `BLOCKED`.
 
+macOS has no `timeout` or `gtimeout`; bound a slow command with your tool's
+own timeout setting or `node ../skills/vibe/scripts/run-bounded.mjs <seconds> <command>` (exit 124 on time out). Never start an interactive `claude`
+session (such as `claude /login`): it prints the project's permission rules
+and asks about project connections in the person's Terminal. The Claude
+sign-in step is `claude auth login`, given to the person as `preflight.md`
+says.
+
 Quote every path in every command; the checkout can live in a folder with
 spaces (for example `~/Documents/Closedloop.ai - Active Work/symphony-alpha`).
 The checkout is the one the preflight remembered
@@ -72,8 +79,12 @@ The checkout is the one the preflight remembered
   recorded session; if still ambiguous, return `BLOCKED`, not a technical question.
 - closedloop-graph unreachable (preflight's `sync_status` failed, or a
   worker's Graph block said `unreachable`): this is a setup problem, not a
-  normal state. Check that Codex lists the server (`mcp list` on the Codex
-  CLI that `../skills/vibe/INSTALL.md` uses) and that it answers. When it is listed
+  normal state. Check that the harness lists the server and that it answers:
+  in Codex, `mcp list` on the Codex CLI that `../skills/vibe/INSTALL.md` uses;
+  in Claude Code, `claude mcp get <server>` run from the home folder, whose
+  `Status:` line says whether it is connected. A launch the Claude worker
+  launcher refused with `MCP_TOOLS_MISSING` names the connection that did not
+  load. When it is listed
   but not answering, reconnect it the way `preflight.md` reconnects the
   ClosedLoop connector (Computer Use may open Settings; the person completes
   any sign-in), or have the person quit and reopen the ChatGPT app, returned
@@ -173,6 +184,8 @@ not change the main checkout.
 
 `DONE` with the operational prerequisite/process started (and its URL).
 Repo defects return diagnosis and ticket evidence without an applied-fix claim. Or
-`NEEDS_PERSON` with one plain instruction for the person (for example "Your
-Mac is asking for your password to finish installing Node; type it in the
-prompt"). Or `BLOCKED` with the error in one or two lines and "message engineering with the session slug".
+`NEEDS_PERSON` with one plain instruction for the person in the words of
+`../skills/vibe/references/plain-words.md` (for example "Your Mac is asking
+for your password to finish installing Node; type it in the prompt"). Or
+`BLOCKED` with the error in one or two lines and "message engineering, naming
+this work by its summary".

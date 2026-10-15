@@ -4,17 +4,22 @@ import { closeSync, openSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod";
+import { checkClaudeSignIn, checkRoleCapabilities, isAuthFailure, LaunchPrecheckError, missingMcpTools, missingServers,
+  SIGN_IN_PERSON_ACTION } from "./claude-preflight.js";
 import { runFromCanonicalEntry } from "./cli.js";
 import { capabilitiesSchema, identifierSchema, readInput, statusSchema, type WorkerStatus } from "./contracts.js";
 import { readDefinition } from "./definition.js";
-import { acquireRecordTurnAt, attachClaudeProcess, changeWriter, markClaudeStarted, readWriterSummary, registerWriter } from "./ledger.js";
+import { acquireRecordTurnAt, attachClaudeProcess, changeWriter, markClaudeStarted, readWriterSummary, recordedWriterRoot,
+  registerWriter } from "./ledger.js";
+import { AgentRootError, installedPluginRoot, resolveAgentRoot } from "./plugin-root.js";
 import { isPublisherContext, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
 import type { OperationContext } from "./main-sync-contracts.js";
 import { deriveValidationEnvelope } from "./main-sync-validation-envelope.js";
 
 const launchSchema = recordContextSchema.extend({
-  agentRoot: z.string().min(1),
+  /** Optional: the launcher binds its own installed plugin root (or a resumed writer's recorded root) when omitted. */
+  agentRoot: z.string().min(1).optional(),
   requestId: identifierSchema, input: z.string().min(1).max(64 * 1024).optional(),
   continuation: z.string().min(1).max(64 * 1024).optional(), capabilities: capabilitiesSchema,
   timeoutMs: z.number().int().min(1000).max(30 * 60 * 1000).default(15 * 60 * 1000),
@@ -25,6 +30,7 @@ const resultSchema = z.object({ type: z.literal("result"), session_id: z.string(
   is_error: z.boolean().optional(), result: z.string().max(256 * 1024).optional(),
   structured_output: z.unknown().optional(),
 }).passthrough();
+const initSchema = z.object({ type: z.literal("system"), subtype: z.literal("init"), tools: z.array(z.string()) }).passthrough();
 const workerResultSchema = z.object({ status: statusSchema, summary: z.string().max(4096),
   data: z.record(z.unknown()).optional() }).strict().refine((value) => JSON.stringify(value).length <= 16 * 1024,
     "Worker status data exceeds the compact response limit");
@@ -106,8 +112,12 @@ export async function runWorker(rawInput: unknown) {
     throw new Error("Canonical validation derives its own envelope; caller timeout overrides are not allowed");
   }
   if (process.platform === "win32") throw new Error("Owned descendant cleanup requires a supported POSIX process-group harness");
-  const definition = readDefinition(input.agentRoot, input.agentName, input.capabilities);
+  const recorded = input.agentName === "vibe-change-worker" && !input.sessionless ? recordedWriterRoot(input.worktree) : undefined;
+  const agentRoot = resolveAgentRoot(input.agentRoot, installedPluginRoot(import.meta.url), recorded);
+  const definition = readDefinition(agentRoot, input.agentName, input.capabilities);
   const bound = boundDefinition(definition, input);
+  checkRoleCapabilities(input.agentName, input.capabilities);
+  checkClaudeSignIn();
   const { place, target: discardPlace } = resolveRecordContext(input);
   const persistent = input.agentName === "vibe-change-worker";
   let workerId: string = randomUUID();
@@ -171,7 +181,7 @@ export async function runWorker(rawInput: unknown) {
       "--permission-mode", "default",
       "--allowedTools", bound.tools.join(","),
       resume ? "--resume" : "--session-id", workerId];
-    const launch = launchProcess(args, place.root, JSON.stringify({ requestId: input.requestId,
+    const launch = launchProcess(args, bound.tools, place.root, JSON.stringify({ requestId: input.requestId,
       mode: input.mode, authority: { testAuthoringAuthorized: persistent && input.mode === "pull-request",
         testRepairAuthorized: persistent && TEST_REPAIR_MODES.has(input.mode) },
       ...(input.sessionless ? { sessionless: input.sessionless } : {}),
@@ -212,7 +222,7 @@ export async function runWorker(rawInput: unknown) {
 }
 
 /** Owns only the spawned child and its streams; bounded failure never falls back to another session. */
-async function launchProcess(args: string[], cwd: string, input: string, timeoutMs: number, trace: number,
+async function launchProcess(args: string[], granted: readonly string[], cwd: string, input: string, timeoutMs: number, trace: number,
   attach: (pid: number) => void) {
   return await new Promise<{ status: WorkerStatus; summary: string; data?: Record<string, unknown>; sessionId: string }>((resolve, reject) => {
     const child: ChildProcessWithoutNullStreams = spawn("claude", args, { cwd, detached: process.platform !== "win32",
@@ -221,6 +231,7 @@ async function launchProcess(args: string[], cwd: string, input: string, timeout
     let lines = "";
     let bytes = 0;
     let final: z.infer<typeof resultSchema> | undefined;
+    let authFailed = false;
     const decoder = new StringDecoder("utf8");
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     const stop = (reason: Error) => {
@@ -229,6 +240,16 @@ async function launchProcess(args: string[], cwd: string, input: string, timeout
       killTimer ??= setTimeout(() => signalOwnedChild(child, "SIGKILL"), 1000);
     };
     const onSignal = () => stop(new Error("Owned worker turn canceled"));
+    // The init event lists the tools the worker really has; a granted connection that did not load stops it before work.
+    const checkInit = (event: unknown) => {
+      const init = initSchema.safeParse(event);
+      if (!init.success) return;
+      const missing = missingMcpTools(init.data.tools, granted);
+      if (missing.length) {
+        stop(new LaunchPrecheckError("MCP_TOOLS_MISSING",
+          `The worker started without its granted connections: ${missingServers(missing).join(", ")}`));
+      }
+    };
     process.once("SIGTERM", onSignal);
     process.once("SIGINT", onSignal);
     const deadline = setTimeout(() => stop(new Error("Owned worker turn exceeded its deadline")), timeoutMs);
@@ -248,13 +269,21 @@ async function launchProcess(args: string[], cwd: string, input: string, timeout
       while (end >= 0) {
         const line = lines.slice(0, end);
         lines = lines.slice(end + 1);
-        try { const parsed = resultSchema.safeParse(JSON.parse(line)); if (parsed.success) final = parsed.data; }
-        catch { stop(new Error("Claude emitted malformed structured output")); }
+        try {
+          const event: unknown = JSON.parse(line);
+          checkInit(event);
+          const parsed = resultSchema.safeParse(event);
+          if (parsed.success) {
+            final = parsed.data;
+            if (final.is_error && isAuthFailure(final.result ?? "")) authFailed = true;
+          }
+        } catch { stop(new Error("Claude emitted malformed structured output")); }
         end = lines.indexOf("\n");
       }
     });
     child.stderr.on("data", (chunk: Buffer) => {
       bytes += chunk.length;
+      if (isAuthFailure(chunk.toString("utf8"))) authFailed = true;
       if (bytes > 8 * 1024 * 1024) stop(new Error("Worker trace exceeds its bounded limit"));
       else {
         try { writeSync(trace, `${JSON.stringify({ type: "stderr", text: chunk.toString("utf8") })}\n`); }
@@ -267,6 +296,10 @@ async function launchProcess(args: string[], cwd: string, input: string, timeout
       process.removeListener("SIGTERM", onSignal);
       process.removeListener("SIGINT", onSignal);
       finishOwnedGroup(child).then(() => {
+        if (authFailed && !(failed instanceof LaunchPrecheckError)) {
+          reject(new LaunchPrecheckError("CLAUDE_SIGN_IN_NEEDED", "Claude refused the stored sign-in", SIGN_IN_PERSON_ACTION));
+          return;
+        }
         if (failed) { reject(failed); return; }
         if (code !== 0 || !final || final.is_error || (final.structured_output === undefined && !final.result)) { reject(new Error("Claude failed or returned no successful structured result")); return; }
         try {
@@ -282,14 +315,22 @@ async function launchProcess(args: string[], cwd: string, input: string, timeout
 
 class OwnedCleanupError extends Error {}
 class WorkerLaunchError extends Error {
-  constructor(readonly result: { status: "BLOCKED"; code: string; summary: string; workerId: string;
+  constructor(readonly result: { status: "BLOCKED"; code: string; summary: string; personAction?: string; workerId: string;
     sessionId: string; requestId: string; tracePath: string; leaseRetained: boolean; recordLeaseRetained: boolean }) {
     super(result.summary);
   }
 }
 
-function safeFailure(error: unknown) {
+function safeFailure(error: unknown): { code: string; summary: string; personAction?: string } {
   const message = error instanceof Error ? error.message : "";
+  if (error instanceof LaunchPrecheckError) {
+    return { code: error.code, summary: error.message, ...(error.personAction ? { personAction: error.personAction } : {}) };
+  }
+  if (error instanceof AgentRootError) return { code: error.code, summary: error.message };
+  if (error instanceof Error && "code" in error && error.code === "ENOENT" && "syscall" in error
+    && String(error.syscall).startsWith("spawn")) {
+    return { code: "CLAUDE_CLI_MISSING", summary: "The claude command is not on this shell's PATH" };
+  }
   if (error instanceof z.ZodError) return { code: "INVALID_REQUEST", summary: "The worker request or capability binding does not match the supported contract." };
   if (error instanceof OwnedCleanupError) return { code: "OWNED_PROCESS_NOT_STOPPED", summary: "Owned process cleanup is unproven; the unsafe turn remains locked." };
   if (message.includes("deadline")) return { code: "TURN_TIMEOUT", summary: "The owned worker turn exceeded its deadline." };

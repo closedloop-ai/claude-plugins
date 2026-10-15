@@ -36,6 +36,14 @@ export function readWriterSummary(worktree: string) {
   return summary(readLedger(place));
 }
 
+/** The persistent writer's recorded definition root, so a resumed writer keeps its binding; undefined without one. */
+export function recordedWriterRoot(worktree: string): string | undefined {
+  try {
+    const place = location(worktree);
+    return existsSync(place.file) ? readLedger(place).binding.agentRoot : undefined;
+  } catch { return undefined; }
+}
+
 /** Checks the existing active source lease atomically without returning private request text. */
 export function verifySourceTurn(worktree: string, workerId: string, requestId: string, lease: string) {
   const place = location(worktree);

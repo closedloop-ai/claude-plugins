@@ -389,6 +389,25 @@ else
   emit gh false "not installed" "brew-install-gh"
 fi
 
+# Claude Code workers run as separate `claude` processes on the CLI's own
+# stored sign-in, which can be signed out while the chat itself still works.
+# Asked from the home folder so no project settings or project MCP servers
+# load. The worker launcher also catches a sign-in that expired since.
+if [[ "$RUNTIME" == "claude" ]] && have claude; then
+  claude_status="$(cd "$HOME" && claude auth status --json 2>/dev/null </dev/null)"
+  if printf '%s' "$claude_status" | node -e '
+      let input = "";
+      process.stdin.on("data", chunk => { input += chunk; });
+      process.stdin.on("end", () => {
+        try { process.exit(JSON.parse(input).loggedIn === false ? 1 : 0); } catch { process.exit(0); }
+      });
+    ' 2>/dev/null; then
+    emit claude-login true "signed in" ""
+  else
+    emit claude-login false "the claude command on this Mac is signed out" "claude-auth-login"
+  fi
+fi
+
 if [[ -n "$repo" ]]; then
   emit repo true "$repo" ""
   if [[ -d "$repo/node_modules" ]]; then

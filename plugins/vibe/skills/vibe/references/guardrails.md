@@ -19,7 +19,7 @@ canonical statement:
 - When continuing needs a fix to the vibe tooling, stop. Record the blocker:
   the request stays `BLOCKED` in the session ledger with the reason, and a line
   in the live ticket's Progress names it. Report it to engineering: tell the
-  person in one plain line that this needs engineering and to message engineering with the session slug. It is never a question for the person.
+  person in one plain line that this needs engineering and to message engineering, naming this work by its summary (`plain-words.md`). It is never a question for the person.
 - Writer migration through `writer-state.mjs migrate` (`quality-loop.md`,
   "Recorded definition migration"), including a turn stranded by a plugin
   upgrade, stays allowed, but only after a human or

@@ -30,7 +30,10 @@ short status (`DONE`, `NEEDS_PERSON`, `NEEDS_REVIEW`, `BLOCKED`). Apply
 `../vibe/references/quality-loop.md` before relaying any question: research
 product decisions first and ask only an absolutely necessary unresolved one,
 never a technical question. Route the answer as "Answers from the person"
-below says. Updates mention only completed features and next work; planning,
+below says. Every word the person sees follows
+`../vibe/references/plain-words.md`, and every question goes through
+`../vibe/scripts/session-questions.mjs` as the vibe skill's "Questions are
+asked once" says, so nothing settled in the session is asked again. Updates mention only completed features and next work; planning,
 reviews and the checklist stay internal. Every
 worker brief says closedloop-graph is required
 (`../vibe/references/closedloop-graph.md`): each worker that locates,
