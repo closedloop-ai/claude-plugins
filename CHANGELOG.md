@@ -4,6 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.33
+
+#### Fixed
+- v1.0 story files are frozen again (design ruling, 2026-10-15). 1.0.31 let a session add stories for an existing component's new states to its v1.0 story file; a v1.0 file is now never edited, retitled, re-tagged or given new stories. The new states go in a new v2.0 entry for that component holding only the new states, named descriptively and permanently per `apps/storybook/TAXONOMY.md` with no version number in the name, and the v1.0 stories stay where they are so their links keep working. `vibe-storybook-decomposer` decides it first in its placement order; the 1.0.31 rule of extra stories in the existing file now covers only non-v1.0 files. `guardrails.md`, `design-pass.md`, the writer, handoff, the README and `vibe-guardrails-reviewer` check 10 carry the same rule.
+- `handoff-inventory.mjs` lists every modified or moved story file that was v1.0 at the base under `v1Stories` with the reason `frozen`, blocking on `storiesInV2Taxonomy`. The `retitledStories` / `existingStoryTitlesKept` check stays for non-v1.0 files.
+- Coverage: the node test that let a story be added to an existing v1.0 file now expects a block (an edit and a move) and passes once the new state sits in a new v2.0 entry; the retitle test's fixtures are now v2.0 files. Contract tests updated for the new wording. The changed node test and the updated contract tests fail on 1.0.32.
+
 ### vibe v1.0.32
 
 #### Fixed

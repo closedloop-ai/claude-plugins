@@ -78,7 +78,8 @@ def test_the_guardrails_reviewer_blocks_v1_placement() -> None:
     reviewer = agent("vibe-guardrails-reviewer")
     for required in (
         f"10. Storybook taxonomy (`guardrails.md`, {POINTER})",
-        "titled under or tagged for a frozen v1.0 root (the inventory's `v1Stories`) is blocking",
+        "titled under or tagged for a frozen v1.0 root, or any edit or move of a story file that is v1.0 on main "
+        "(the inventory's `v1Stories`, reason `frozen`), is blocking",
         "without the `v2.0` tag",
         "without the release bump the doc names",
     ):

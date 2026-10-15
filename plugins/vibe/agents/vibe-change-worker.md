@@ -125,7 +125,9 @@ locations, catalog and taxonomy correct; all resulting source edits are yours.
 Read the repo's `apps/storybook/TAXONOMY.md` and follow it: every new story
 goes in a v2.0 root, in its page tree, tagged `v2.0`, with the Storybook
 release bump it requires, never in a frozen v1.0 root; new states of an
-existing component go in its existing story file, title and tag unchanged
+existing component go in a new v2.0 entry holding only them when its story
+file is v1.0, which you never edit, and otherwise in its existing story file,
+title and tag unchanged
 (`../skills/vibe/references/guardrails.md`, "Storybook taxonomy"). The story
 files you match are the same capability's, not the same folder's (same
 section).

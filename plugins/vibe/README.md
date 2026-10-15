@@ -146,10 +146,12 @@ and Storybook skill (`.claude/skills/storybook/`, whose placement workflows
 and index scripts it uses) where they say how and mirroring that precedent's
 structure, never its root or version, where they do not; the story files the
 writer matches are the same capability's, not the same folder's. Stories cover the components consumers
-render, not internal render pieces. New states of an existing component go in
-its existing story file under the same title and tag, since a retitle breaks
-every link to its stories; handoff blocks one unless it is a sibling
-replacement's entry. The writer records it in its local plan;
+render, not internal render pieces. A v1.0 story file is never edited, so new
+states of its component go in a new v2.0 entry holding only them. New states
+of any other existing component go in its existing story file under the same
+title and tag, since a retitle breaks every link to its stories; handoff
+blocks an edited v1.0 file, and a retitle unless it is a sibling replacement's
+entry. The writer records it in its local plan;
 a conflict goes on the live ticket by audience, design conflicts under
 Design Review and everything else on the Engineering checklist, never to the
 person.

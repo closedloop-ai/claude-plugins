@@ -81,11 +81,16 @@ Do this first, in both modes.
    its title, story names, version tag and file.
 4. Decide in this order. First (design ruling, 2026-10-15): a change to an
    existing component (new states or variants, an extra column action, a new
-   footer) never retitles, re-tags or moves its existing story file, even in
-   a v1.0 root; the new states go in as extra stories in that file, its
-   title, tag and existing story names unchanged. Storybook builds story IDs
-   from the title path, so a retitle breaks every link to those stories.
-   Only a new component, or a sibling replacement such as a V3, gets a new
+   footer) never retitles, re-tags or moves its existing story file.
+   Storybook builds story IDs from the title path, so a retitle breaks every
+   link to those stories. A v1.0 story file is frozen and never edited, not
+   even to add a story: the new states go in a new v2.0 entry for that
+   component holding only the new states, its name descriptive, permanent,
+   per `apps/storybook/TAXONOMY.md` and without a version number, and the
+   v1.0 stories stay where they are. Any other existing story file takes the
+   new states as extra stories, its title, tag and existing story names
+   unchanged. Otherwise only a new component, or a sibling replacement such
+   as a V3, gets a new
    entry and v2.0 placement. This outranks reading a touched story file as
    taking the v2.0 version. Then (Daniel Ochoa's ruling, 2026-10-14): where
    the repo's `apps/storybook/TAXONOMY.md` or `.claude/skills/storybook/`
@@ -121,7 +126,7 @@ Placement:
 - Capability: <named without the entity>
 - Precedents: <each: entity, providing component path, how hosts consume it, each story title, story names, tag and file>, or none found
 - Owner: <path to build or extend>, per <doc section> or mirroring <precedent path>
-- Stories: <each story to add or extend: title, tag, file>, root and tag per <TAXONOMY.md section>, structure per <doc section> or mirroring <precedent>; an existing file's title and tag unchanged (step 4)
+- Stories: <each story to add or extend: title, tag, file>, root and tag per <TAXONOMY.md section>, structure per <doc section> or mirroring <precedent>; an existing file's title and tag unchanged, a v1.0 file not edited at all (step 4)
 - Conflict: <each disagreement: audience `design` or `engineering`, both sides quoted with paths, and how it was decided>, or none
 ```
 

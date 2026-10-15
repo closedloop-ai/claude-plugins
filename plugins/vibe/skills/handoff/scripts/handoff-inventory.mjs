@@ -33,10 +33,13 @@
 // New story files belong in the v2.0 Storybook taxonomy (symphony-alpha's
 // apps/storybook/TAXONOMY.md); one titled under or tagged for a frozen v1.0
 // root, or an existing one newly given either, is listed under `v1Stories` and
-// blocks. An existing story file keeps its meta title, because Storybook
-// builds story IDs from it: a title changed from the base, moves included, is
-// listed under `retitledStories` and blocks unless the session record lists
-// the file as a replacement's entry (`vibe-sessions.mjs story-replacement`).
+// blocks. A story file that was v1.0 at the base is frozen: any edit or move
+// of it is listed under `v1Stories` with the reason `frozen` and blocks, so new
+// states of its component go in a new v2.0 entry instead. Any other existing
+// story file keeps its meta title, because Storybook builds story IDs from it:
+// a title changed from the base, moves included, is listed under
+// `retitledStories` and blocks unless the session record lists the file as a
+// replacement's entry (`vibe-sessions.mjs story-replacement`).
 //
 // `backendChanged` says whether the work touched backend code
 // (`backendFiles`). Handoff runs its lighter checks when it did not, and the
@@ -93,6 +96,7 @@ const STORY_PATTERN = /\.stories\.tsx?$/;
 const COMPONENT_PATTERN = /\/components\/.+\.tsx$/;
 // v1.0 is the frozen baseline; new work goes under `<Level> v2.0/`
 // (apps/storybook/TAXONOMY.md; Daniel Ochoa's ruling, 2026-10-14).
+// A v1.0 story file is never edited (design ruling, 2026-10-15).
 const V1_STORY_TITLE = /\btitle:\s*["'`](?:Foundations|Primitives|Composites|Surfaces)\//;
 const V1_STORY_TAG = /\btags:\s*\[[^\]]*["'`]v1\.0["'`]/;
 // The meta object's title, not a `title:` arg or prop elsewhere in the file.
@@ -160,6 +164,7 @@ const outsideAllowed = changedFiles.filter(
 );
 const backendFiles = changedFiles.filter((file) => isBackend(file.path));
 const componentsWithoutStories = findComponentsWithoutStories(changedFiles);
+const movedStories = findMovedStories();
 const v1Stories = findV1Stories(changedFiles);
 const retitledStories = findRetitledStories(changedFiles);
 
@@ -353,10 +358,12 @@ function isBackend(filePath) {
 }
 
 /**
- * Added story files whose meta title sits in a v1.0 root or whose tags include
- * v1.0, and modified ones that gained either; an existing v1.0 file keeps both.
+ * Story files whose meta title sits in a v1.0 root or whose tags include v1.0
+ * where the base had neither, and every modified or moved story file that was
+ * v1.0 at the base (`frozen`).
  */
 function findV1Stories(files) {
+  const movedFrom = new Map(movedStories.map((story) => [story.path, story.from]));
   return files
     .filter((file) => file.status !== "D" && STORY_PATTERN.test(file.path))
     .flatMap((file) => {
@@ -364,14 +371,21 @@ function findV1Stories(files) {
       if (source === undefined) {
         return [];
       }
-      const base = file.status === "M" ? readBaseFile(file.path) : undefined;
+      const from = movedFrom.get(file.path);
+      const basePath = file.status === "M" ? file.path : from;
+      const base = basePath === undefined ? undefined : readBaseFile(basePath);
       const gained = (pattern) => pattern.test(source) && !(base !== undefined && pattern.test(base));
       const reasons = [
         ...(gained(V1_STORY_TITLE) ? ["title"] : []),
         ...(gained(V1_STORY_TAG) ? ["tag"] : []),
+        ...(base !== undefined && isV1Story(base) ? ["frozen"] : []),
       ];
-      return reasons.length ? [{ ...file, reasons }] : [];
+      return reasons.length ? [{ ...file, ...(from === undefined ? {} : { from }), reasons }] : [];
     });
+}
+
+function isV1Story(source) {
+  return V1_STORY_TITLE.test(source) || V1_STORY_TAG.test(source);
 }
 
 /**
@@ -387,7 +401,7 @@ function findRetitledStories(files) {
       .filter((entry) => typeof entry?.path === "string")
       .map((entry) => [entry.path, entry.replacement ?? null])
   );
-  return [...modified, ...findMovedStories()].flatMap(({ path: filePath, from }) => {
+  return [...modified, ...movedStories].flatMap(({ path: filePath, from }) => {
     const source = readWorktreeFile(filePath);
     const base = readBaseFile(from);
     if (source === undefined || base === undefined) {

@@ -109,10 +109,12 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    pass (`guardrails.md`, "Checks") is blocking too.
 10. Storybook taxonomy (`guardrails.md`, "Storybook taxonomy"): read the
     repo's `apps/storybook/TAXONOMY.md`. A new story file titled
-    under or tagged for a frozen v1.0 root (the inventory's `v1Stories`) is
-    blocking; so is a v2.0 story outside its page tree, without the `v2.0`
+    under or tagged for a frozen v1.0 root, or any edit or move of a story
+    file that is v1.0 on main (the inventory's `v1Stories`, reason `frozen`),
+    is blocking; that component's new states belong in a new v2.0 entry
+    holding only them, with no version number in its name. So is a v2.0 story outside its page tree, without the `v2.0`
     tag, or added, moved or renamed without the release bump the doc names.
-    An existing story file (on main) retitled, re-tagged or moved breaks every
+    An existing non-v1.0 story file (on main) retitled, re-tagged or moved breaks every
     link to its stories and is blocking (the inventory's `retitledStories`
     for a title) unless recorded as a sibling replacement's entry; confirm the
     recorded `replacement` is one, not new states of the same component.
