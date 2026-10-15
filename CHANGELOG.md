@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.36
+
+#### Changed
+- `cl-work-report` protects one owner from ownership transfer instead of two (operator ruling, 2026-10-15). The other user id was removed because that person is no longer with the company, so their remaining tickets are eligible for reassignment recommendations under the normal evidence and authorization gates.
+
 ### vibe v1.0.35
 
 #### Fixed

@@ -101,7 +101,7 @@ Resolve priority meaning from the live schema before sorting. The current domain
 
 ## Protected owners
 
-Treat every ticket currently assigned to either protected owner, ClosedLoop user id `01a044d1-f33e-7072-a3ca-d4e5fa58c609` or `01a014c4-ad3f-76de-9f2d-742f6079fccf`, as protected from ownership transfer. Fully page the live user lookup, confirm each id belongs to a current user, and match assignments by that verified id. Do not use fuzzy, partial, or guessed identity matches. If either id cannot be confirmed, disclose the data gap and do not make a recommendation that depends on it.
+Treat every ticket currently assigned to the protected owner, ClosedLoop user id `01a014c4-ad3f-76de-9f2d-742f6079fccf`, as protected from ownership transfer. Fully page the live user lookup, confirm the id belongs to a current user, and match assignments by that verified id. Do not use fuzzy, partial, or guessed identity matches. If the id cannot be confirmed, disclose the data gap and do not make a recommendation that depends on it.
 
 Never include a protected ticket in an incoming or outgoing reassignment recommendation, transfer suggestion, optional scope-choice transfer, or broader ownership redesign. This prohibition applies even when the ticket looks like engineering work, is a same-PR member, blocks the selected feature, belongs to another project, or a generic scope or transfer approval would otherwise permit consideration. Only a later explicit user revision to this protected-owner policy may change it.
 
