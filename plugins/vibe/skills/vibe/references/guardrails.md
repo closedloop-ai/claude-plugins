@@ -201,17 +201,25 @@ the session adds, moves, renames or touches; that doc is the authority, so its
 rules are not copied here (Daniel Ochoa's ruling, 2026-10-14, after the
 PRD-720 session titled its new stories under v1.0 roots). The bare minimum:
 
-- New and touched stories go in a v2.0 root, titled under `<Level> v2.0/`,
-  never in the frozen v1.0 roots (`Foundations/`, `Primitives/`,
-  `Composites/`, `Surfaces/`).
+- New stories go in a v2.0 root, titled under `<Level> v2.0/`, never in the
+  frozen v1.0 roots (`Foundations/`, `Primitives/`, `Composites/`,
+  `Surfaces/`).
+- New states or variants of an existing component go in as extra stories in
+  its existing story file, never retitling, re-tagging or moving it, since
+  story IDs come from the title; only a new component or a sibling
+  replacement (a V3) gets a new entry (design ruling, 2026-10-15;
+  `vibe-storybook-decomposer.md`, "Precedent search" step 4).
 - Composites, Patterns and Surfaces v2.0 are placed in the page tree the doc
   describes.
 - Each story file carries the `v2.0` version tag.
 - Adding, moving or renaming stories is a Storybook release: the version bump
   and Version History entry the doc names, in the same change.
 
-The handoff inventory blocks a new or touched story file titled under or
-tagged for a v1.0 root (`v1Stories`, `storiesInV2Taxonomy`), and
+The handoff inventory blocks a new story file titled under or tagged for a
+v1.0 root (`v1Stories`, `storiesInV2Taxonomy`) and an existing one whose
+title changed (`retitledStories`, `existingStoryTitlesKept`) unless the writer
+recorded it as a replacement's entry with
+`vibe-sessions.mjs story-replacement --worktree <wt> --path <story file> --replacement <component>`, and
 `vibe-guardrails-reviewer` checks the placement. Where in that tree a story
 goes, and which component owns it, is `vibe-storybook-decomposer`'s Placement
 block: the repo docs where they say how, otherwise the structure a sibling

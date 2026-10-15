@@ -30,12 +30,16 @@
 //   vibe-sessions.mjs environment-result --worktree <path> --file <vibe-environment-result.json>
 //                                     --request-id <id>
 //   vibe-sessions.mjs local-fix       --worktree <path> --ticket ISS-123 --path <file> [--path <file> ...]
+//   vibe-sessions.mjs story-replacement --worktree <path> --path <story file> --replacement <component>
 //   vibe-sessions.mjs discard         --worktree <path> [--confirm]
 //
 // `--repo` defaults to the checkout vibe-preflight.sh remembered in
 // ~/.codex/vibe/config.json; `repo` prints it. `local-fix` records files the
 // sole implementation writer changed to work around a symphony-alpha bug (filed as the
-// ticket), so no redeploy or handoff commits them.
+// ticket), so no redeploy or handoff commits them. `story-replacement` records
+// an existing story file whose title changed because it became the entry of a
+// sibling replacement component (such as a V3); handoff blocks any other
+// retitled existing story file (design ruling, 2026-10-15).
 //
 // `operator` is the person running the session, from ClosedLoop `get-me`
 // (`--operator-*`, required on `new`; `touch` sets it on an older record):
@@ -114,6 +118,8 @@ const TICKET_PATTERN = /^[A-Z]+-\d+$/;
 const THREAD_PATTERN = /^[A-Za-z0-9-]{8,100}$/;
 const CLERK_ORG_PATTERN = /^org_[A-Za-z0-9]+$/;
 const PID_PATTERN = /^[1-9]\d{0,9}$/;
+const STORY_FILE_PATTERN = /\.stories\.tsx?$/;
+const MAX_REPLACEMENT_LENGTH = 200;
 // What symphony-alpha's Desktop main process logs once its window is shown.
 const DESKTOP_WINDOW_VISIBLE = /Desktop window visible/;
 
@@ -156,6 +162,7 @@ const { positionals, values } = parseArgs({
     pid: { type: "string" },
     log: { type: "string" },
     path: { type: "string", multiple: true },
+    replacement: { type: "string" },
     confirm: { type: "boolean", default: false },
   },
 });
@@ -213,11 +220,13 @@ async function run(command) {
       return { session: recordEnvironmentResult() };
     case "local-fix":
       return { session: recordLocalFix() };
+    case "story-replacement":
+      return { session: recordStoryReplacement() };
     case "discard":
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, ticket-sections, environment-result, local-fix, discard."
+        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, ticket-sections, environment-result, local-fix, story-replacement, discard."
       );
   }
 }
@@ -902,4 +911,26 @@ function isRunning(pid) {
   } catch {
     return false;
   }
+}
+
+/** Records an existing story file retitled as a sibling replacement's own entry, replacing an earlier entry for it. */
+function recordStoryReplacement() {
+  const worktree = requireOption("worktree");
+  const paths = (values.path ?? []).map(normalizeRepoPath);
+  if (paths.length !== 1 || !STORY_FILE_PATTERN.test(paths[0])) {
+    throw new Error("--path is required once and must name a story file.");
+  }
+  const replacement = requireOption("replacement").trim();
+  if (!replacement || replacement.length > MAX_REPLACEMENT_LENGTH) {
+    throw new Error(`--replacement must name the replacing component in at most ${MAX_REPLACEMENT_LENGTH} characters.`);
+  }
+  const record = requireRecord(worktree);
+  const now = new Date().toISOString();
+  const storyReplacements = [
+    ...(record.storyReplacements ?? []).filter((entry) => entry.path !== paths[0]),
+    { path: paths[0], replacement, recordedAt: now },
+  ];
+  const updated = { ...record, storyReplacements, lastActiveAt: now };
+  writeRecord(worktree, updated);
+  return { worktree, ...updated };
 }

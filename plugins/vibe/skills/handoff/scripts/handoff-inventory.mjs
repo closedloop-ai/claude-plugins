@@ -30,9 +30,13 @@
 // every recorded deletion, file or case, is listed under `retiredTests` with
 // its status so the reviewer can verify it and the ticket can list it.
 //
-// New and touched story files belong in the v2.0 Storybook taxonomy
-// (symphony-alpha's apps/storybook/TAXONOMY.md); one titled under or tagged
-// for a frozen v1.0 root is listed under `v1Stories` and blocks.
+// New story files belong in the v2.0 Storybook taxonomy (symphony-alpha's
+// apps/storybook/TAXONOMY.md); one titled under or tagged for a frozen v1.0
+// root, or an existing one newly given either, is listed under `v1Stories` and
+// blocks. An existing story file keeps its meta title, because Storybook
+// builds story IDs from it: a title changed from the base, moves included, is
+// listed under `retitledStories` and blocks unless the session record lists
+// the file as a replacement's entry (`vibe-sessions.mjs story-replacement`).
 //
 // `backendChanged` says whether the work touched backend code
 // (`backendFiles`). Handoff runs its lighter checks when it did not, and the
@@ -91,6 +95,10 @@ const COMPONENT_PATTERN = /\/components\/.+\.tsx$/;
 // (apps/storybook/TAXONOMY.md; Daniel Ochoa's ruling, 2026-10-14).
 const V1_STORY_TITLE = /\btitle:\s*["'`](?:Foundations|Primitives|Composites|Surfaces)\//;
 const V1_STORY_TAG = /\btags:\s*\[[^\]]*["'`]v1\.0["'`]/;
+// The meta object's title, not a `title:` arg or prop elsewhere in the file.
+const STORY_META_START = /\b(?:const\s+meta\b[^=]*=|export\s+default)\s*\{/;
+const STORY_META_TITLE = /\btitle:\s*(["'`])((?:(?!\1).)+)\1/;
+const STORY_PATHSPECS = ["*.stories.ts", "*.stories.tsx"];
 // Tests are written only when the person explicitly asks for a pull request
 // (Daniel Ochoa's ruling, 2026-10-13); earlier phases may only repair existing
 // tests and fixtures the session's change broke (Daniel Ochoa's ruling,
@@ -153,11 +161,13 @@ const outsideAllowed = changedFiles.filter(
 const backendFiles = changedFiles.filter((file) => isBackend(file.path));
 const componentsWithoutStories = findComponentsWithoutStories(changedFiles);
 const v1Stories = findV1Stories(changedFiles);
+const retitledStories = findRetitledStories(changedFiles);
 
 const blocking = {
   forbiddenPaths: forbidden.length === 0,
   hasChanges: changedFiles.length > 0,
   storiesInV2Taxonomy: v1Stories.length === 0,
+  existingStoryTitlesKept: retitledStories.every((story) => story.replacement !== null),
   ...(trackedLocalPlans.length ? { localPlansUntracked: false } : {}),
   ...(prototype ? { prototypePublicationCurrent: publicationProblem === undefined } : {}),
   ...(mainSync?.pendingMerge ? { mainSyncMergeCommitted: false } : {}),
@@ -189,6 +199,7 @@ const result = {
   backendFiles,
   componentsWithoutStories,
   v1Stories,
+  retitledStories,
 };
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 process.exit(result.ok ? 0 : 1);
@@ -341,20 +352,85 @@ function isBackend(filePath) {
   );
 }
 
-/** Added or modified story files whose meta title sits in a v1.0 root or whose tags include v1.0. */
+/**
+ * Added story files whose meta title sits in a v1.0 root or whose tags include
+ * v1.0, and modified ones that gained either; an existing v1.0 file keeps both.
+ */
 function findV1Stories(files) {
   return files
     .filter((file) => file.status !== "D" && STORY_PATTERN.test(file.path))
     .flatMap((file) => {
-      const absolute = path.join(worktree, file.path);
-      if (!existsSync(absolute)) {
+      const source = readWorktreeFile(file.path);
+      if (source === undefined) {
         return [];
       }
-      const source = readFileSync(absolute, "utf8");
+      const base = file.status === "M" ? readBaseFile(file.path) : undefined;
+      const gained = (pattern) => pattern.test(source) && !(base !== undefined && pattern.test(base));
       const reasons = [
-        ...(V1_STORY_TITLE.test(source) ? ["title"] : []),
-        ...(V1_STORY_TAG.test(source) ? ["tag"] : []),
+        ...(gained(V1_STORY_TITLE) ? ["title"] : []),
+        ...(gained(V1_STORY_TAG) ? ["tag"] : []),
       ];
       return reasons.length ? [{ ...file, reasons }] : [];
     });
+}
+
+/**
+ * Story files present at the base whose meta title changed, in place or moved
+ * to another path, each with the replacement it was recorded for or null.
+ */
+function findRetitledStories(files) {
+  const modified = files
+    .filter((file) => file.status === "M" && STORY_PATTERN.test(file.path))
+    .map((file) => ({ path: file.path, from: file.path }));
+  const replacements = new Map(
+    (Array.isArray(record?.storyReplacements) ? record.storyReplacements : [])
+      .filter((entry) => typeof entry?.path === "string")
+      .map((entry) => [entry.path, entry.replacement ?? null])
+  );
+  return [...modified, ...findMovedStories()].flatMap(({ path: filePath, from }) => {
+    const source = readWorktreeFile(filePath);
+    const base = readBaseFile(from);
+    if (source === undefined || base === undefined) {
+      return [];
+    }
+    const baseTitle = storyMetaTitle(base);
+    const title = storyMetaTitle(source);
+    if (baseTitle === title) {
+      return [];
+    }
+    return [{
+      path: filePath,
+      ...(from === filePath ? {} : { from }),
+      baseTitle,
+      title,
+      replacement: replacements.get(filePath) ?? replacements.get(from) ?? null,
+    }];
+  });
+}
+
+/** Story files git sees as renamed since the base, tracked changes only. */
+function findMovedStories() {
+  const renames = git(["diff", "--name-status", "-M", "--diff-filter=R", baseCommit, "--", ...STORY_PATHSPECS]);
+  return renames.split("\n").filter(Boolean).map((line) => {
+    const [, from, to] = line.split("\t");
+    return { path: to, from };
+  });
+}
+
+function storyMetaTitle(source) {
+  const start = source.search(STORY_META_START);
+  return STORY_META_TITLE.exec(start === -1 ? source : source.slice(start))?.[2] ?? null;
+}
+
+function readWorktreeFile(filePath) {
+  const absolute = path.join(worktree, filePath);
+  return existsSync(absolute) ? readFileSync(absolute, "utf8") : undefined;
+}
+
+function readBaseFile(filePath) {
+  try {
+    return git(["show", `${baseCommit}:${filePath}`]);
+  } catch {
+    return undefined;
+  }
 }

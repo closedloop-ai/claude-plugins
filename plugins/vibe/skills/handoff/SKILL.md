@@ -271,9 +271,10 @@ blocks in the writer's local plan. Each placement goes on the live ticket's
 Storybook placement line; the SAME writer logs each Conflict with its
 audience, and the ticket worker places it by that audience
 (`../vibe/references/ticket-template.md`, "Conflicts"), never to the person.
-Every new or touched story follows the repo's `apps/storybook/TAXONOMY.md`
+Every new story follows the repo's `apps/storybook/TAXONOMY.md` and an
+existing story file keeps its title and tag
 (`../vibe/references/guardrails.md`, "Storybook taxonomy"); the inventory's
-`v1Stories` blocks handoff. Resume the SAME writer to perform every extraction, story and catalog
+`v1Stories` and `retitledStories` block handoff. Resume the SAME writer to perform every extraction, story and catalog
 source change. Read-only verify footprint mode measures the sidebar and
 reports remaining problems; they return to the writer, never another author.
 Collect Design Review evidence from the verified final diff and existing

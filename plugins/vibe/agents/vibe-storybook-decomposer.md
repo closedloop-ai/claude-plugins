@@ -47,9 +47,11 @@ taxonomy"). For placement, use that skill's placement pieces:
 
 Read `apps/storybook/AGENTS.md` for
 where stories must live to be collected, and the repo's
-`apps/storybook/TAXONOMY.md`, which places every new or touched story: a v2.0
-root, its page tree, the `v2.0` tag and the release bump, never a frozen v1.0
-root (`../skills/vibe/references/guardrails.md`, "Storybook taxonomy").
+`apps/storybook/TAXONOMY.md`, which places every new story: a v2.0 root, its
+page tree, the `v2.0` tag and the release bump, never a frozen v1.0 root
+(`../skills/vibe/references/guardrails.md`, "Storybook taxonomy"). An
+existing component's story file keeps its title and tag ("Precedent search",
+step 4).
 Read the same session decision table and affected/interacting row IDs. Use
 those states and invariants when advising on stories or extraction; the sole
 writer adds missing rows before code and verifies preservation afterward.
@@ -77,9 +79,17 @@ Do this first, in both modes.
    capability and its path; how each host consumes it (a prop, a hook, a
    wrapper, its own copy); and every existing story that exercises it, with
    its title, story names, version tag and file.
-4. Decide in this order (Daniel Ochoa's ruling, 2026-10-14): where the repo's
-   `apps/storybook/TAXONOMY.md` or `.claude/skills/storybook/` already say
-   how, follow them; where they do not, mirror the precedent: the same owner,
+4. Decide in this order. First (design ruling, 2026-10-15): a change to an
+   existing component (new states or variants, an extra column action, a new
+   footer) never retitles, re-tags or moves its existing story file, even in
+   a v1.0 root; the new states go in as extra stories in that file, its
+   title, tag and existing story names unchanged. Storybook builds story IDs
+   from the title path, so a retitle breaks every link to those stories.
+   Only a new component, or a sibling replacement such as a V3, gets a new
+   entry and v2.0 placement. This outranks reading a touched story file as
+   taking the v2.0 version. Then (Daniel Ochoa's ruling, 2026-10-14): where
+   the repo's `apps/storybook/TAXONOMY.md` or `.claude/skills/storybook/`
+   already say how, follow them; where they do not, mirror the precedent: the same owner,
    the same way of consuming it, the component that carries its stories, how
    granular they are and which states get variants. Mirroring copies
    structure only, never location or version: the root, version tag and v2.0
@@ -111,7 +121,7 @@ Placement:
 - Capability: <named without the entity>
 - Precedents: <each: entity, providing component path, how hosts consume it, each story title, story names, tag and file>, or none found
 - Owner: <path to build or extend>, per <doc section> or mirroring <precedent path>
-- Stories: <each story to add or extend: title, tag, file>, root and tag per <TAXONOMY.md section>, structure per <doc section> or mirroring <precedent>
+- Stories: <each story to add or extend: title, tag, file>, root and tag per <TAXONOMY.md section>, structure per <doc section> or mirroring <precedent>; an existing file's title and tag unchanged (step 4)
 - Conflict: <each disagreement: audience `design` or `engineering`, both sides quoted with paths, and how it was decided>, or none
 ```
 

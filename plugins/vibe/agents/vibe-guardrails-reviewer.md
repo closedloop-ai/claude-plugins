@@ -108,10 +108,14 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    lint or type suppression or a raised allowlist count added to make a check
    pass (`guardrails.md`, "Checks") is blocking too.
 10. Storybook taxonomy (`guardrails.md`, "Storybook taxonomy"): read the
-    repo's `apps/storybook/TAXONOMY.md`. A new or touched story file titled
+    repo's `apps/storybook/TAXONOMY.md`. A new story file titled
     under or tagged for a frozen v1.0 root (the inventory's `v1Stories`) is
     blocking; so is a v2.0 story outside its page tree, without the `v2.0`
     tag, or added, moved or renamed without the release bump the doc names.
+    An existing story file (on main) retitled, re-tagged or moved breaks every
+    link to its stories and is blocking (the inventory's `retitledStories`
+    for a title) unless recorded as a sibling replacement's entry; confirm the
+    recorded `replacement` is one, not new states of the same component.
 11. Storybook placement (judgment only; every finding here is advisory):
     read the Placement blocks in the local plan and the change log. Flag for
     review a story or shared component added, retitled or moved without a

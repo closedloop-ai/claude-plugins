@@ -4,6 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.31
+
+#### Fixed
+- New states of an existing component no longer move its story file. The PRD-720 session added grouping states to GridTableV2 and the placement owner retitled its whole existing story file from the v1.0 "Composites/Data Display/Tables/Grid Table V2" to a v2.0 title, which changes every story ID and breaks every link to those stories. Per the design ruling of 2026-10-15, `vibe-storybook-decomposer` now decides that case first: a change to an existing component (new states or variants, a column action, a footer) goes in as extra stories in its existing file, with its title, tag and story names unchanged; only a new component or a sibling replacement such as a V3 gets a new entry and v2.0 placement. `guardrails.md`, `design-pass.md`, the writer and handoff carry the same rule, and touched stories are no longer sent to v2.0.
+- The handoff inventory compares each existing story file's meta title against the base, in place or moved, and lists a change under `retitledStories`, blocking on `existingStoryTitlesKept` unless the writer recorded the file as a replacement's entry with the new `vibe-sessions.mjs story-replacement` command. `v1Stories` now flags only new story files, or existing ones that gain a v1.0 title or tag, so adding a story to an existing v1.0 file passes. `vibe-guardrails-reviewer` blocks a retitled, re-tagged or moved existing story file unless it is a recorded replacement.
+- Coverage: node tests for the retitle check (in place, moved, a `title` arg that is not the meta title, a recorded replacement) and the narrowed v1.0 check, both failing on 1.0.30; a new contract test file plus updated taxonomy and placement contract tests, failing on 1.0.30's wording.
+
 ### closedloop-core v1.4.0
 
 #### Added

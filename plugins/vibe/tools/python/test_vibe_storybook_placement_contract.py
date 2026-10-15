@@ -145,7 +145,7 @@ def test_precedent_search_reports_everything_from_the_graph_and_the_built_index(
 def test_repo_docs_decide_first_then_the_precedent() -> None:
     search = section(agent("vibe-storybook-decomposer"), "## Precedent search")
     order = (
-        "Decide in this order (Daniel Ochoa's ruling, 2026-10-14): where the repo's "
+        "Then (Daniel Ochoa's ruling, 2026-10-14): where the repo's "
         f"{TAXONOMY_DOC} or {STORYBOOK_SKILL} already say how, follow them; "
         "where they do not, mirror the precedent"
     )

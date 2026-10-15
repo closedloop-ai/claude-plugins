@@ -381,28 +381,74 @@ test("a migration outside the backend packages and a local-fix backend file coun
   assert.deepEqual(result.json.outsideAllowed, [{ path: "apps/mcp/prisma/migrations/2_x/migration.sql", status: "A" }]);
 });
 
-test("a new or touched story titled under or tagged for a v1.0 root blocks; v2.0 stories pass", (t) => {
+test("a new story titled under or tagged for a v1.0 root blocks; an existing v1.0 file keeps its title and tag", (t) => {
   const v1Meta = (title, tags) => `export default { title: "${title}", tags: [${tags.map((tag) => `"${tag}"`).join(", ")}] };\n`;
   const { home, worktree } = setup(t, "story-taxonomy", {
     "apps/storybook/stories/composites/sortable-subtree.stories.tsx": v1Meta("Primitives/Data Display/Sortable Subtree", ["autodocs"]),
-    "apps/storybook/stories/composites/legacy-tagged.stories.tsx": v1Meta("Composites/Legacy", ["v1.0"]),
+    "apps/storybook/stories/composites-v2/grid-groups.stories.tsx": v1Meta("Composites v2.0/Artifacts/Grid Groups", ["v2.0"]),
   });
-  write(worktree, "apps/storybook/stories/composites/sortable-subtree.stories.tsx", v1Meta("Primitives/Data Display/Sortable Subtree", ["autodocs", "touched"]));
-  write(worktree, "apps/storybook/stories/composites/legacy-tagged.stories.tsx", `export default {\n  title: "Composites v2.0/Artifacts/Legacy",\n  tags: [\n    "autodocs",\n    "v1.0",\n  ],\n};\n`);
+  write(worktree, "apps/storybook/stories/composites/sortable-subtree.stories.tsx", `${v1Meta("Primitives/Data Display/Sortable Subtree", ["autodocs"])}export const Grouped = {};\n`);
+  write(worktree, "apps/storybook/stories/composites-v2/grid-groups.stories.tsx", v1Meta("Composites v2.0/Artifacts/Grid Groups", ["v2.0", "v1.0"]));
   write(worktree, "packages/app/documents/components/documents-grid-groups-body.stories.tsx", v1Meta("Composites/Documents/Documents Grid Groups Body", ["v1.0"]));
   write(worktree, "apps/storybook/stories/composites-v2/documents-grid-groups-body.stories.tsx", v1Meta("Composites v2.0/Artifacts/Documents/Grid Groups Body", ["v2.0"]));
   const result = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
   assert.equal(result.status, 1);
   assert.equal(result.json.blocking.storiesInV2Taxonomy, false);
   assert.deepEqual(result.json.v1Stories, [
-    { path: "apps/storybook/stories/composites/legacy-tagged.stories.tsx", status: "M", reasons: ["tag"] },
-    { path: "apps/storybook/stories/composites/sortable-subtree.stories.tsx", status: "M", reasons: ["title"] },
+    { path: "apps/storybook/stories/composites-v2/grid-groups.stories.tsx", status: "M", reasons: ["tag"] },
     { path: "packages/app/documents/components/documents-grid-groups-body.stories.tsx", status: "A", reasons: ["title", "tag"] },
   ]);
-  git(worktree, ["checkout", "-q", "--", "apps/storybook/stories/composites"], home);
+  assert.deepEqual(result.json.retitledStories, []);
+  git(worktree, ["checkout", "-q", "--", "apps/storybook/stories/composites-v2/grid-groups.stories.tsx"], home);
   git(worktree, ["clean", "-qfd", "packages/app"], home);
   const clean = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
   assert.equal(clean.json.blocking.storiesInV2Taxonomy, true, JSON.stringify(clean.json.v1Stories));
   assert.deepEqual(clean.json.v1Stories, []);
   assert.equal(clean.status, 0, JSON.stringify(clean.json));
+});
+
+test("an existing story file whose meta title changed blocks unless recorded as a replacement's entry", (t) => {
+  const meta = (title, tags) => `const meta = {\n  title: "${title}",\n  tags: [${tags.map((tag) => `"${tag}"`).join(", ")}],\n};\nexport default meta;\n`;
+  const table = "apps/storybook/stories/grid-table-v2.stories.tsx";
+  const toolbar = "apps/storybook/stories/grid-table-toolbar.stories.tsx";
+  const footer = "apps/storybook/stories/grid-table-footer.stories.tsx";
+  const card = "apps/storybook/stories/grid-table-card.stories.tsx";
+  const { home, worktree } = setup(t, "story-retitle", {
+    [table]: meta("Composites/Data Display/Tables/Grid Table V2", ["v1.0"]),
+    [toolbar]: meta("Composites/Data Display/Tables/Grid Table Toolbar", ["v1.0"]),
+    [footer]: `${meta("Composites/Data Display/Tables/Grid Table Footer", ["v1.0"])}export const Default = { args: { label: "Rows" } };\n`,
+    [card]: `${meta("Composites/Data Display/Tables/Grid Table Card", ["v1.0"])}export const Default = { args: { label: "Card" } };\n`,
+  });
+  write(worktree, table, `${meta("Composites v2.0/Data Display/Tables/Grid Table V2", ["v2.0"])}export const Grouped = {};\n`);
+  write(worktree, toolbar, `${meta("Composites/Data Display/Tables/Grid Table Toolbar", ["v1.0"])}export const Grouped = { args: { title: "Composites v2.0/Not a meta title" } };\n`);
+  mkdirSync(path.join(worktree, "apps/storybook/stories/tables"), { recursive: true });
+  git(worktree, ["mv", footer, "apps/storybook/stories/tables/grid-table-footer.stories.tsx"], home);
+  write(worktree, "apps/storybook/stories/tables/grid-table-footer.stories.tsx", `${meta("Composites v2.0/Tables/Grid Table Footer", ["v2.0"])}export const Default = { args: { label: "Rows" } };\n`);
+  git(worktree, ["mv", card, "apps/storybook/stories/tables/grid-table-card.stories.tsx"], home);
+  git(worktree, ["commit", "--quiet", "-m", "redeploy 1"], home);
+
+  const result = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
+  assert.equal(result.status, 1);
+  assert.equal(result.json.blocking.existingStoryTitlesKept, false);
+  assert.deepEqual(result.json.retitledStories, [
+    { path: table, baseTitle: "Composites/Data Display/Tables/Grid Table V2", title: "Composites v2.0/Data Display/Tables/Grid Table V2", replacement: null },
+    {
+      path: "apps/storybook/stories/tables/grid-table-footer.stories.tsx",
+      from: footer,
+      baseTitle: "Composites/Data Display/Tables/Grid Table Footer",
+      title: "Composites v2.0/Tables/Grid Table Footer",
+      replacement: null,
+    },
+  ]);
+
+  const rejected = runNode(SESSIONS, ["story-replacement", "--worktree", worktree, "--path", "apps/app/page.tsx", "--replacement", "GridTableV3"], home);
+  assert.equal(rejected.status, 1);
+  assert.match(rejected.json.error, /must name a story file/);
+  for (const story of [table, footer]) {
+    const recorded = runNode(SESSIONS, ["story-replacement", "--worktree", worktree, "--path", story, "--replacement", "GridTableV3"], home);
+    assert.equal(recorded.status, 0, JSON.stringify(recorded.json));
+  }
+  const replaced = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
+  assert.equal(replaced.json.blocking.existingStoryTitlesKept, true, JSON.stringify(replaced.json.retitledStories));
+  assert.deepEqual(replaced.json.retitledStories.map((story) => story.replacement), ["GridTableV3", "GridTableV3"]);
 });
