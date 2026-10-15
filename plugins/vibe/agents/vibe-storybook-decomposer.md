@@ -92,7 +92,7 @@ Do this first, in both modes.
    unchanged. Otherwise only a new component, or a sibling replacement such
    as a V3, gets a new
    entry and v2.0 placement. This outranks reading a touched story file as
-   taking the v2.0 version. Then (Daniel Ochoa's ruling, 2026-10-14): where
+   taking the v2.0 version. Then (operator ruling, 2026-10-14): where
    the repo's `apps/storybook/TAXONOMY.md` or `.claude/skills/storybook/`
    already say how, follow them; where they do not, mirror the precedent: the same owner,
    the same way of consuming it, the component that carries its stories, how

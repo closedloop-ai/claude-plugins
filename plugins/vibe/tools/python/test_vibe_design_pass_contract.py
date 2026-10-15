@@ -5,7 +5,7 @@ The prep step picks the owner by rule (behavior the
 children of a shared parent share goes in that parent as a generic slot, and
 each child keeps only what is specific to it)
 and the quality loop uses internal local plans and independent reviews before
-handoff. Daniel's ISS-12135 ruling keeps technical communication internal, and
+handoff. The ISS-12135 operator ruling keeps technical communication internal, and
 his 2026-10-13 rulings remove test authoring from vibe and handoff (the writer
 only repairs existing tests its change broke) and keep the build loop lean with
 reviews at handoff: existing tests run there, handoff lists the missing tests
@@ -388,7 +388,7 @@ def test_one_persistent_writer_keeps_a_serial_queue_and_serial_record_owners() -
         assert "Write" not in allowed and "Edit" not in allowed, name
 
 
-def test_questions_are_researched_and_technical_updates_never_reach_andy() -> None:
+def test_questions_are_researched_and_technical_updates_never_reach_the_person() -> None:
     communication = section(QUALITY.read_text(), "## Communication and product questions")
     for route in ("ticket_detail", "fts_search", "search_memory_facts"):
         assert route in communication
@@ -483,7 +483,7 @@ def test_resume_uses_recorded_migration_only_for_definition_loss_or_upgrade() ->
     for required in ("binding.agentRoot", "binding.capabilities", "recorded writer ID",
                      "original definition", "BLOCKED", "present and", "matching",
                      "writer-state.mjs migrate", "previousWorkerId", "previousDigest",
-                     "migrations", "observed old", "stopped-turn evidence", "without asking Andy",
+                     "migrations", "observed old", "stopped-turn evidence", "without asking the person running the session",
                      "Never use `register` to replace", "Never migrate around a refusal"):
         assert required in queue, required
     for path in (VIBE_SKILL, HANDOFF_SKILL):

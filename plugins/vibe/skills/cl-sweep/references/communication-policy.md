@@ -30,7 +30,7 @@ Allowed automatic communications are limited to:
 - If the Product contact is unavailable or out-of-office according to current
   user/session context, first search for existing authoritative answers. If no
   answer exists, set ClosedLoop comment target to `none` by default and surface
-  exact missing decisions privately to Daniel/current user or the engineering
+  exact missing decisions privately to the current user or the engineering
   attention route unless the user explicitly authorizes that exact Product
   comment.
 - Completion updates: do not post ticket completion messages in Slack or

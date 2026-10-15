@@ -1,4 +1,4 @@
-"""Contract checks for Daniel Ochoa's 2026-10-14 ruling that nothing is called ready before its acceptance criteria are checked.
+"""Contract checks for the 2026-10-14 operator ruling that nothing is called ready before its acceptance criteria are checked.
 
 1. Each session keeps one acceptance criteria list inside its session decision
    table (no new artifact type): the linked ticket's and its PRD's criteria,
@@ -56,7 +56,7 @@ def agent(name: str) -> str:
 
 def test_the_rule_is_dated_and_canonical() -> None:
     text = rule()
-    assert "Daniel Ochoa's ruling, 2026-10-14" in text
+    assert "operator ruling, 2026-10-14" in text
     assert "This section is the rule's one canonical statement" in text
     assert "Heavy QA still waits for handoff." in text
 

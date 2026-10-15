@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Records tests the session's writer deleted because they covered only code the
-// request itself retires (Daniel Ochoa's ruling, 2026-10-13). Each entry cites
+// request itself retires (operator ruling, 2026-10-13). Each entry cites
 // the ticket or PRD that retires that code. The handoff inventory admits a
 // deleted test file outside a pull request only with a whole-file entry here,
 // and the live ticket lists every entry next to Missing tests.

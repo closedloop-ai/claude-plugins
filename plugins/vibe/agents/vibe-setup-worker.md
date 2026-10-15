@@ -79,7 +79,7 @@ The checkout is the one the preflight remembered
   any sign-in), or have the person quit and reopen the ChatGPT app, returned
   as `NEEDS_PERSON` in one plain line. When it is not configured at all,
   return `BLOCKED` saying the closedloop-graph connector is missing, for
-  Daniel Ochoa.
+  engineering.
 - Bootstrap: run `./.closedloop-ai/loops-setup.sh` in the worktree; on failure
   read its output and fix the cause if it is a missing prerequisite.
 - Local Storybook: start it detached in the worktree on a free port from 6100
@@ -147,8 +147,8 @@ The checkout is the one the preflight remembered
    ticket that already reports it; if one does, use that ticket and do not
    file another.
 2. Otherwise file a ClosedLoop ticket with `create-document` (`type: ISSUE`):
-   assigned to Daniel Ochoa (his user id from `list-users`, email
-   `daniel.ochoa@closedloop.ai`), in the current week's project from
+   assigned to the vibe engineering owner (ClosedLoop user id
+   `019c24dc-63ca-717e-b057-ce589da3d2e1`; confirm it in `list-users`), in the current week's project from
    `list-projects` (the date-range name covering today), with a plain title
    and a body holding the diagnosis: the base commit
    (`git -C "<wt>" rev-parse HEAD`), the failing command, a short error
@@ -175,5 +175,4 @@ not change the main checkout.
 Repo defects return diagnosis and ticket evidence without an applied-fix claim. Or
 `NEEDS_PERSON` with one plain instruction for the person (for example "Your
 Mac is asking for your password to finish installing Node; type it in the
-prompt"). Or `BLOCKED` with the error in one or two lines and "message Daniel
-Ochoa with the session slug".
+prompt"). Or `BLOCKED` with the error in one or two lines and "message engineering with the session slug".

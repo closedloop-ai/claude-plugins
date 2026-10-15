@@ -1,4 +1,4 @@
-"""Contract checks for Daniel Ochoa's 2026-10-13 ruling that a vibe or handoff session never changes plugins.
+"""Contract checks for the 2026-10-13 operator ruling that a vibe or handoff session never changes plugins.
 
 1. The orchestrators and every worker never install, update, reinstall,
    uninstall or repoint a plugin, change a plugin marketplace, or modify a
@@ -55,7 +55,7 @@ def rule() -> str:
 
 def test_the_rule_binds_both_orchestrators_and_every_worker_in_both_harnesses() -> None:
     text = rule()
-    assert "Daniel Ochoa's ruling, 2026-10-13" in text
+    assert "Operator ruling, 2026-10-13" in text
     assert "binds the vibe and handoff orchestrators and every worker, in Codex and Claude Code" in text
     assert "this section is its one canonical statement" in text
 
@@ -79,7 +79,7 @@ def test_a_needed_tooling_fix_stops_and_is_recorded_and_reported_never_asked() -
         "the request stays `BLOCKED` in the session ledger with the reason",
         "a line in the live ticket's Progress names it",
         "Report it to engineering",
-        "message Daniel Ochoa with the session slug",
+        "message engineering with the session slug",
         "It is never a question for the person.",
     ):
         assert required in text, required

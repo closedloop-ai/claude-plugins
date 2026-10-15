@@ -1,6 +1,6 @@
 ---
 name: vibe
-description: Start or resume a vibe-coding session in symphony-alpha for a non-engineer (built for Andy, the CEO) working in the Codex Desktop in-app browser. For a pure mockup or fake-data exploration, invokes the repository's canonical prototype skill itself in an owned prototype session, always shares on Vercel, and returns the immutable preview URL, full deployed commit SHA, and slug; handoff preserves the same live ticket and next-owner assignment without opening a PR. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
+description: Start or resume a vibe-coding session in symphony-alpha for a non-engineer (such as a CEO) working in the Codex Desktop in-app browser. For a pure mockup or fake-data exploration, invokes the repository's canonical prototype skill itself in an owned prototype session, always shares on Vercel, and returns the immutable preview URL, full deployed commit SHA, and slug; handoff preserves the same live ticket and next-owner assignment without opening a PR. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
 ---
 
 # Vibe
@@ -75,7 +75,7 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   `release-record` for the writer's own grant fails with `ENOENT` because a
   plugin install removed its recorded root, recover at once through
   quality-loop.md's turn stranded by a plugin upgrade: `migrate` with
-  `retainedRecord`, internally, never a question or a message to Daniel Ochoa.
+  `retainedRecord`, internally, never a question or a message to engineering.
   Startup and confirmed discard use the same bounded stable contexts below.
 - Plugin root: the folder two levels above this file (in Codex,
   `~/.codex/plugins/cache/closedloop-ai/vibe/<version>/`; take it from where
@@ -98,7 +98,7 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   through the current installed `writer-state.mjs migrate` command. Never
   replace via ordinary registration, copy definitions or bypass a refusal.
   The returned writer carries the same session artifacts and request queue;
-  no technical question goes to Andy.
+  no technical question goes to the person running the session.
   Before a session exists, requirements and setup run in the validated remembered
   checkout with `sessionless: {kind: "startup"}`; never fabricate a session.
   Requirements use mode `request` with only graph/live read capabilities. Setup
@@ -360,7 +360,7 @@ id the worker mapped to their answer with
 and dispatch it again. If it returns `NEEDS_PERSON` saying they are not an
 admin of any of their organizations, pass that on as written and wait for
 their answer. If it returns `BLOCKED`, tell the person in one or two
-plain lines what failed and suggest they message Daniel Ochoa with the
+plain lines what failed and suggest they message engineering with the
 session slug. Never open or give the person a URL after `BLOCKED`: any
 preview address without its own deployment shows the stage production app.
 
@@ -451,7 +451,7 @@ The loop is lean (`references/quality-loop.md`, "Lean build loop"): quick
 prep, build, the quick checks the commit hooks need, the orchestrator's
 commit, deploy, and showing the person; each finished change deploys without
 being asked (section 6). Browser E2E, visual QA, logical QA,
-Metal Andrew, the guardrails and adversarial reviews and other heavy
+product-contract QA, the guardrails and adversarial reviews and other heavy
 validation run only at handoff, never here.
 
 ### Register once, then resume
@@ -502,7 +502,7 @@ evidence, never by replacing the writer.
    local plan before writing. That block is a read-only lookup in quick prep,
    not a review. The writer logs a Conflict in it with its audience, `design`
    or `engineering`, for the live ticket (`references/ticket-template.md`,
-   "Conflicts"), never a question for the person (Daniel Ochoa's ruling,
+   "Conflicts"), never a question for the person (operator ruling,
    2026-10-14).
    A part that needs a path the writer may never edit is logged as
    `Engineering needed (forbidden path)` for the live ticket's Engineering
@@ -516,7 +516,7 @@ evidence, never by replacing the writer.
    changed files, the affected typecheck, the source gates) and repairs any
    existing test or fixture its change broke without changing what it
    asserts; none are authored. No reviewer, browser E2E, visual QA, logical
-   QA, Metal Andrew, `workflow-code-review` or existing test suite runs here;
+   QA, product-contract QA, `workflow-code-review` or existing test suite runs here;
    handoff runs them. The writer still verifies affected and interacting prior
    table rows against actual code and fixes source gaps. Planned tests remain
    distinct from executed coverage; they never justify premature core Final
@@ -585,7 +585,7 @@ Local Storybook remains available and product design approvals stay intact.
 ## 6. Deploy each change
 
 The orchestrator deploys every change in the build loop without being asked
-(Daniel Ochoa's ruling, 2026-10-13): as soon as the writer finishes a request
+(operator ruling, 2026-10-13): as soon as the writer finishes a request
 (section 5, step 7), commit and deploy it to the session's Vercel preview with
 the steps below, then tell the person it's ready to look at. The person no
 longer has to say "redeploy"; when they do say "redeploy", "redeploy to
@@ -623,7 +623,7 @@ that waited, and one deploy after the last of them carries them all. A
    (`references/guardrails.md`, "Repair, don't author"). When the writer
    returns `BLOCKED` because only engineering can settle it (a test of live
    behavior whose assertions would have to change), tell the person in one plain line that this
-   part needs engineering and suggest they message Daniel Ochoa with the
+   part needs engineering and suggest they message engineering with the
    session slug, as section 3 does; never ask them to decide it.
 4. Dispatch `vibe-environment-worker` in redeploy mode with the worktree, the
    live ticket slug, the session summary, and the session's `localFixes`

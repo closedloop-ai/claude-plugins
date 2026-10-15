@@ -202,7 +202,7 @@ for the post-PR manual-QA contract. The live PR author owns one manual-QA plan
 comment for the integrated feature and updates that comment in place. Record
 its URL and evidence through the existing result artifact, handoff, durable
 member records, and parent summary. Posting the plan does not open a browser or
-start interactive QA. Parker visual QA and automated headless/displayless
+start interactive QA. design visual QA and automated headless/displayless
 browser and Electron gates remain separate and unchanged.
 
 Manual QA is required for UI and non-UI features. A pending, failed, blocked,

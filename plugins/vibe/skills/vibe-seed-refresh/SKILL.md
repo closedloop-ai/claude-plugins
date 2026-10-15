@@ -86,7 +86,7 @@ Docker), on Linux through the native `pnpm vibe up --ci`, `pnpm vibe walk`,
 `pnpm vibe down` sequence. Save its worktree, branch and `Walk:` evidence line
 (route, web and Desktop screen counts, failures, result file) in state. A
 `DONE` without a `Walk:` line is not done: send it back to the fix worker. On
-`BLOCKED`, tell Daniel the reason and stop; a refused walk (Docker VM too
+`BLOCKED`, tell the operator the reason and stop; a refused walk (Docker VM too
 small, the `cl-ai-stage` AWS sign-in expired, another walk-linux run active)
 is reported with the tool's exact message, never as a pass and never worked
 around.
@@ -118,7 +118,7 @@ state, then act on it:
   re-ran the walk, save its new `Walk:` line in state and pass it to push
   mode, which updates the Test plan's walk line. A failure unrelated to
   the diff gets one re-run; a second failure gets a note to
-  Daniel instead of more re-runs.
+  the operator instead of more re-runs.
 - Merge conflict: `vibe-seed-pr-worker` in sync mode (stage a merge of main
   without committing, re-run the fix worker's checks through it). Commit with
   the subject `Merge origin/main into <branch>`, then `vibe-seed-pr-worker`

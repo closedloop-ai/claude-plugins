@@ -1,4 +1,4 @@
-"""Contract checks for Daniel Ochoa's 2026-10-14 ruling on Storybook taxonomy.
+"""Contract checks for the 2026-10-14 operator ruling on Storybook taxonomy.
 
 1. The writer follows symphony-alpha's `apps/storybook/TAXONOMY.md` for every
    new story: a v2.0 root under `<Level> v2.0/`, the page tree, the
@@ -47,7 +47,7 @@ def test_the_rule_defers_to_the_repo_taxonomy_doc_and_states_only_the_minimum() 
     for required in (
         f"Read the repo's {TAXONOMY_DOC} and follow it",
         "that doc is the authority, so its rules are not copied here",
-        "Daniel Ochoa's ruling, 2026-10-14",
+        "operator ruling, 2026-10-14",
         "New stories go in a v2.0 root, titled under `<Level> v2.0/`",
         "never in the frozen v1.0 roots (`Foundations/`, `Primitives/`, `Composites/`, `Surfaces/`)",
         "placed in the page tree the doc describes",

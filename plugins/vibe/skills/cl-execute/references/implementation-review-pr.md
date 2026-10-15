@@ -162,7 +162,7 @@ on leaving implementation using the [display reporter](../../cl-sweep/references
    `control` skill), reproduce the ticket's user-visible behavior with it before
    editing and capture the same evidence after the fix; record the before/after
    artifact references as `Repo verification evidence`. This evidence supports,
-   and never replaces, Parker visual QA, E2E, or human manual QA.
+   and never replaces, design visual QA, E2E, or human manual QA.
    Repo verification evidence rule: in `symphony-alpha`, which declares the
    `control` skill (`.claude/skills/control/SKILL.md`, Control Protocol), a
    ticket with `UI work: YES` or any runtime behavior change must record before
@@ -206,24 +206,23 @@ on leaving implementation using the [display reporter](../../cl-sweep/references
    mode`.
 5. For performance tickets, enforce the Performance Measurement Contract in
    [planning-and-gates.md](planning-and-gates.md).
-6. For UI, UI-impacting contract, or workflow changes, run the Parker
-   Visual-QA Gate below before first push/open PR.
+6. For UI, UI-impacting contract, or workflow changes, run the Design Visual-QA Gate below before first push/open PR.
 7. If desktop E2E runs locally, use a fresh temporary `CODEX_HOME` unless the
    scenario explicitly requires the operator's real Codex history.
 8. If visual QA, desktop launch, or a validation command cannot run, document the
    concrete blocker, fallback evidence, and residual risk.
 
-## Parker Visual-QA Gate
+## Design Visual-QA Gate
 
-This section is the one full statement of the Parker rule. Every other mention
+This section is the one full statement of the design visual-QA rule. Every other mention
 in cl-execute points here.
 
-1. Scope: UI, UI-impacting contract, and workflow changes. Parker visual QA is
+1. Scope: UI, UI-impacting contract, and workflow changes. Design visual QA is
    a required author-side defect gate before PR churn, not a cleanup task after
    a PR is treated as merge-ready. Shared UI normally needs both web and
    desktop coverage, including contract-only-looking changes that can affect
    rendered behavior.
-2. Timing: run exactly one dedicated Parker pass after implementation is
+2. Timing: run exactly one dedicated visual-QA pass after implementation is
    stable, after the required coordinated review sequence's valid source fixes
    are applied when review happens before PR creation, and after relevant local
    validation is green, before first push/open PR or any action that raises PR
@@ -234,38 +233,38 @@ in cl-execute points here.
    passed` with pre-PR artifact ids/hashes, `not_applicable` with a
    production-consumer proof (identify every production consumer checked and
    prove no rendered output or reachability can change), or
-   `explicit_exception` with Daniel's exact exception.
+   `explicit_exception` with the operator's exact exception.
 4. Missing or blocked: if none of those exists before first push/open PR,
    immediately start the visual-QA support lane when possible. If the pre-PR
    pass cannot run, stop before PR creation and return
    `MANUAL_INTERVENTION_REQUIRED` with the exact supported-path blocker, or
-   obtain Daniel's explicit exception. Never silently open a PR and defer
-   Parker to post-PR monitoring. `blocked` or `missing` visual QA is an active
+   obtain the operator's explicit exception. Never silently open a PR and defer
+   visual QA to post-PR monitoring. `blocked` or `missing` visual QA is an active
    blocker: never report it as ready, queued, `WAITING_HUMAN_MERGE`, or waiting
    only on human merge.
 5. Already-open PR without pre-PR evidence: do not invent a current-head
-   refresh gate. Produce the existing pre-PR evidence, obtain Daniel's explicit
+   refresh gate. Produce the existing pre-PR evidence, obtain the operator's explicit
    exception for that already-open PR, or return the exact blocker.
-6. Head changes: after the one pre-PR pass or Daniel's explicit exception
+6. Head changes: after the one pre-PR pass or the operator's explicit exception
    exists, later PR comments, test fixes, rebases, conflict repairs, source head
-   changes, and CI remediation do not require another Parker pass unless Daniel
+   changes, and CI remediation do not require another visual-QA pass unless the operator
    explicitly asks.
 7. Substitutes: green CI, Storybook, a11y, screenshots attached to tests, and
    displayless E2E are supporting evidence, not substitutes for the pre-PR pass.
    One exception: when no stack may run (the user has stopped test
-   environments, or the machine cannot host one), the Parker pass may review
+   environments, or the machine cannot host one), the visual-QA pass may review
    captured before/after screenshots of the real app surfaces instead of a live
    drive. The result must say so: `UI visual QA: passed (screenshots only, no
    live stack)` with the capture artifact ids/hashes and the reason no stack
    could run.
 8. Handoffs: a `PR_MONITORING_HANDOFF`, `WAITING_HUMAN_MERGE`, ready-to-merge
    summary, or merge-queue request for a UI PR is invalid without the step 3
-   evidence. For UI PRs the merge-handoff order is: pre-PR Parker evidence or
-   Daniel exception, review threads resolved, CI green, mergeability clean,
-   then PR evidence and Daniel's manual merge handoff. A parent coordinator
+   evidence. For UI PRs the merge-handoff order is: pre-PR visual-QA evidence or
+   operator exception, review threads resolved, CI green, mergeability clean,
+   then PR evidence and the operator's manual merge handoff. A parent coordinator
    rejects a UI handoff that lacks the evidence and resumes the same worker to
    provide it, obtain the exception, or return the blocker, without asking for a
-   current-head Parker refresh.
+   current-head visual-QA refresh.
 
 ## Required Review
 
@@ -489,7 +488,7 @@ Record the assumption and its evidence in the decision log and under
    live flag.
 3. Create a branch and commit with repo commit-message conventions.
 4. Run the Per-Branch Push Gate before first push/open-PR. For UI work, the
-   Parker Visual-QA Gate must already be satisfied; if it is not, stop before
+   Design Visual-QA Gate must already be satisfied; if it is not, stop before
    opening the PR as that gate says.
 5. Push and open a PR.
 6. Resolve the exact PR head and live PR author, then follow
@@ -558,8 +557,7 @@ Record the assumption and its evidence in the decision log and under
     unavailable or required coverage remains pending, return
     `WAITING_MANUAL_QA` through the existing `WAITING_HUMAN` callback kind; do
     not claim readiness or functionality.
-15. Before merge disposition, record `UI work` and `UI visual QA` as the Parker
-    Visual-QA Gate defines them. UI PRs wait for Daniel's manual merge after
+15. Before merge disposition, record `UI work` and `UI visual QA` as the Design Visual-QA Gate defines them. UI PRs wait for the operator's manual merge after
     that gate's evidence exists, feature manual QA passes, review threads are
     resolved, CI is green, and mergeability is clean. Non-UI PRs enqueue
     directly in the protected queue when feature manual QA passes and all other

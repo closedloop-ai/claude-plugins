@@ -1,4 +1,4 @@
-"""Contract checks for Daniel Ochoa's 2026-10-13 follow-up rulings to the lean build loop.
+"""Contract checks for the 2026-10-13 operator follow-up rulings to the lean build loop.
 
 1. Retired-only tests may be deleted. The writer may delete a test file or case
    that covers only code the request itself retires, citing the ticket or PRD

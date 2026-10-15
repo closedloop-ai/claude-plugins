@@ -37,7 +37,7 @@ commit, deploy, and showing the person. Each finished change deploys to the
 session's Vercel preview without the person asking ("redeploy" still works),
 and changes that arrive during a deploy go out together in the next one.
 The plan gets no review, and browser
-E2E, visual QA, logical QA, Metal Andrew, the guardrails and adversarial
+E2E, visual QA, logical QA, product-contract QA, the guardrails and adversarial
 reviews and other heavy validation run only at handoff. Before saying a
 change is ready, the writer checks every acceptance criterion it touches
 (from the linked ticket, its PRD and the person's own words, kept in the
@@ -113,7 +113,7 @@ stranded by a plugin upgrade (its own record grant left behind because the
 removed root makes `release-record` fail, or `BLOCKED` with the machine-readable
 `recorded-definition-removed` reason) migrates through the same command with
 `retainedRecord`, which releases that exact grant atomically. Recovery
-stays internal and never asks Andy; ordinary registration cannot replace writers.
+stays internal and never asks the person running the session; ordinary registration cannot replace writers.
 
 Native Codex helpers acquire a coordinator-owned record lease before their
 mutation turn and release it only after observed completion or owned termination.

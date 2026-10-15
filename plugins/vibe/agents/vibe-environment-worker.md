@@ -72,7 +72,7 @@ then plain search.
    valid key, otherwise the public production app's page. It never needs a
    Vercel sign-in. If it prints `"ok":false`, return `BLOCKED` with "I couldn't
    find the product's analytics key, so I can't copy your feature flags yet."
-   and its error for Daniel Ochoa. POST `{ "api_key": <key>, "distinct_id":
+   and its error for engineering. POST `{ "api_key": <key>, "distinct_id":
    <clerkId> }` to `<host>/flags?v=2` and read every flag in the response: a
    flag with a variant takes the variant name, otherwise its `enabled`
    boolean. Never use a personal or project API key other than `phc_`, and
@@ -161,13 +161,13 @@ then plain search.
    record it with
    `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --clerk-org-id <org_id>`
    and request the environment again, once; if that run refuses the same way,
-   return `BLOCKED` with its message for Daniel Ochoa. If two or more remain,
+   return `BLOCKED` with its message for engineering. If two or more remain,
    return `NEEDS_PERSON` with the question "Which one should own <email> Co:
    <names>?", plus a mapping from each name to its `org_` id (the orchestrator
    records the answer with `touch --clerk-org-id` and dispatches you again,
    which sends `clerk_org_id`). If none remain, do step 6 instead. If the run
    lists no orgs, return `BLOCKED` saying the run did not say which orgs the
-   person belongs to, for Daniel Ochoa. Never ask the person for an id, never
+   person belongs to, for engineering. Never ask the person for an id, never
    add words about organizations or Clerk to that question, and never pass on
    the run's wording (such as "pass clerk_org_id").
 6. Seeded, and the person is an admin of none of their orgs (the
@@ -175,14 +175,13 @@ then plain search.
    return `NEEDS_PERSON` with "<email> Co needs an organization on the test site
    where you are an admin, and you are not an admin of <names>. Ask an admin
    there to make you one, then tell me, or start a new session with an empty
-   copy of the app." Put the run's own message in a separate line for Daniel
-   Ochoa.
+   copy of the app." Put the run's own message in a separate line for engineering.
 7. Any other refusal about the person's identity (no stage account for their
    email, more than one, or no org): return `NEEDS_PERSON` in plain words the
    person can act on, for example "Sign in once at https://app.closedloop-stage.ai
    with your work account, then tell me." or "You don't have an organization
    on the test site yet; sign in there and create one, then tell me." Put the
-   run's own message in a separate line for Daniel Ochoa.
+   run's own message in a separate line for engineering.
 8. Seeded: read `personOrgAdmin` from the `vibe-environment.yml` run (its job
    summary or log). If it is not `true`, return `BLOCKED` saying the person is
    not an admin of `<email> Co`.
@@ -313,7 +312,7 @@ redeploy, flags, and desktop.
    records them.
 3. A missing artifact, or `environment-result` refusing it: return `BLOCKED`
    with "Your copy of the app could not be confirmed as ready, so I haven't
-   opened it." and, for Daniel Ochoa, the script's error in one line. Never
+   opened it." and, for engineering, the script's error in one line. Never
    return a URL in that case; the orchestrator opens only URLs you return
    with `DONE`.
 4. A run that failed on a Vercel build: read the build's log with the Vercel

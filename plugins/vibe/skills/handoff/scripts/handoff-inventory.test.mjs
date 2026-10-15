@@ -37,7 +37,7 @@ function setup(t, slug, extraFiles = {}) {
   });
   const created = runNode(
     SESSIONS,
-    ["new", "--repo", checkout, "--slug", slug, "--summary", slug, "--mode", "seeded", "--operator-id", "user-andy", "--operator-email", "andy@example.com"],
+    ["new", "--repo", checkout, "--slug", slug, "--summary", slug, "--mode", "seeded", "--operator-id", "user-operator", "--operator-email", "operator@example.com"],
     fixture.home
   );
   assert.equal(created.status, 0, created.stderr);

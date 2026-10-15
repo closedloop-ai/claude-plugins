@@ -11,7 +11,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SESSIONS = path.join(HERE, "vibe-sessions.mjs");
 const INVENTORY = path.join(HERE, "../../handoff/scripts/handoff-inventory.mjs");
 const CHECK = path.join(HERE, "../../handoff/scripts/live-ticket-check.mjs");
-const OPERATOR = ["--operator-id", "user-andy", "--operator-email", "andy@example.com"];
+const OPERATOR = ["--operator-id", "user-operator", "--operator-email", "operator@example.com"];
 
 function setup(t, files = {}) {
   const fixture = makeHome("vibe-prototype-");

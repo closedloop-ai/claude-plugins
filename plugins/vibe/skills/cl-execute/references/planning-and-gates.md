@@ -44,7 +44,7 @@ Before planning or execution, classify the ticket:
   section decisions, or requirements mapping. If the Product contact is
   unavailable or out-of-office in current user/session context, first use
   existing answers and otherwise route exact missing decisions privately to
-  Daniel/current user or engineering unless the user explicitly authorizes that
+  the current user or engineering unless the user explicitly authorizes that
   exact Product comment.
 - Latency, staleness, and disclosure contracts: verify exact ratified PRD,
   decision record, or linked owner before approving a plan that promises
@@ -310,7 +310,7 @@ through the [Discovery Routes](../SKILL.md#discovery-routes).
    detached at the base commit, never in the ticket worktree or on the ticket
    branch, observe the result, and remove the scratch worktree. Cite the
    command and output in the plan's Risks & Constraints or Test Plan and log it
-   in the decision log. Do not return an engineering blocker, or ask Daniel to
+   in the decision log. Do not return an engineering blocker, or ask the operator to
    choose between approaches, when one bounded prototype can decide it; if it
    cannot, block as before and include what the prototype showed. Questions
    `$cl-analyze` recorded under `Technical questions for planning` are settled
@@ -399,7 +399,7 @@ through the [Discovery Routes](../SKILL.md#discovery-routes).
     `resources/plan_template.md` from that skill's own folder immediately
     before drafting or revising.
 16. Use the `mermaid-visualizer` skill before drafting or revising the plan.
-    Include at least one Mermaid flowchart code fence that helps Daniel
+    Include at least one Mermaid flowchart code fence that helps the operator
     understand the implementation scope. Default to paired before/after
     flowcharts when the work changes architecture, control flow, data flow,
     lifecycle states, retry/recovery behavior, persistence, API/wire movement,

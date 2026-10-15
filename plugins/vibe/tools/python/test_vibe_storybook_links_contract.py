@@ -1,4 +1,4 @@
-"""Contract checks for Daniel Ochoa's 2026-10-14 ruling on Storybook links.
+"""Contract checks for the 2026-10-14 operator ruling on Storybook links.
 
 1. Every Storybook link vibe or handoff gives the person, or writes on the live
    ticket, opens the full Storybook UI with its sidebar and controls:
@@ -63,7 +63,7 @@ def test_the_rule_requires_the_full_storybook_ui() -> None:
         f"the Storybook base alone, or {FULL_UI} for one story",
         "the verified Vercel `storybookUrl` or the local `storybookUrl` in the session's stack",
         f"Never give the bare canvas, {CANVAS}, which shows the story without the sidebar or controls",
-        "Daniel Ochoa's ruling, 2026-10-14",
+        "operator ruling, 2026-10-14",
         "This section is the rule's one canonical statement",
     ):
         assert required in text, required

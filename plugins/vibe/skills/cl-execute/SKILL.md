@@ -205,10 +205,10 @@ hardcode a personal name for the engineering attention contact.
   instead of repeating the stale blocker.
 - Do not ask for separate approval to approve the plan once gates are satisfied,
   except for UI work without a clear ticket design, screenshot, or prototype, or
-  when the current sweep/session instruction requires Daniel's personal approval
+  when the current sweep/session instruction requires the operator's personal approval
   for every implementation plan.
 - Every implementation plan draft or revision must use the `mermaid-visualizer`
-  skill and include Mermaid flowchart code fences that help Daniel understand
+  skill and include Mermaid flowchart code fences that help the operator understand
   the scope of change. Default to before/after flowcharts for architecture,
   control-flow, data-flow, lifecycle, retry, persistence, or UI flow changes.
   If a different flowchart shape explains the scope better, use that shape, but
@@ -230,14 +230,14 @@ hardcode a personal name for the engineering attention contact.
   checkpoint captures dirty state, and standalone the note records
   `git status`. Write a resume note to the ticket's workflow-memory execution
   record using repo-relative paths only: intent, current phase, what is
-  verified with evidence pointers, review generations and Parker pass used,
+  verified with evidence pointers, review generations and visual-QA pass used,
   the next action, and gotchas. Then return the current status with
   `Blocker: paused by user instruction`.
-- UI PRs require Daniel's human/manual merge by default. Ready non-UI PRs use
+- UI PRs require the operator's human/manual merge by default. Ready non-UI PRs use
   standing direct protected-queue authorization. UI, UI-impacting contract, or
-  workflow changes require exactly one dedicated pre-PR Parker visual-QA pass
+  workflow changes require exactly one dedicated pre-PR design visual-QA pass
   before first push/open PR. The
-  [Parker Visual-QA Gate](references/implementation-review-pr.md#parker-visual-qa-gate)
+  [Design Visual-QA Gate](references/implementation-review-pr.md#design-visual-qa-gate)
   is the one owner of its timing, blockers, exceptions, handoff evidence, and
   head-change rules; read it before any UI push, PR, handoff, or ready claim.
 - Preserve compatibility shims unless the user explicitly approves removal in
@@ -279,10 +279,10 @@ hardcode a personal name for the engineering attention contact.
    `start` row, then read the latest result and memory record (including any
    pause note), the linked plan, the PR head, checks, and unresolved threads,
    the manual-QA comment, and `git log` plus `git diff` against the merge base.
-   Record which phases are done: review generations used, the pre-PR Parker
+   Record which phases are done: review generations used, the pre-PR visual-QA
    pass, the ordinary review-remediation push, and manual-QA scenarios with
    their tested heads and patch-ids. Name the resume point and do not redo a
-   finished phase; never start a third review generation or a second Parker
+   finished phase; never start a third review generation or a second visual-QA
    pass. Verify each inherited claim the next step depends on against live
    state (the PR head matches, checks are as reported, the named focused tests
    pass at the head) instead of trusting prior prose, and redo only what live
@@ -372,7 +372,7 @@ the evidence.
 - `PRODUCT_BLOCKED`: route only a concise first-person Product-decision comment
   through cl-policy after Product Answer Discovery proves no existing
   authoritative answer and the Product contact is available; otherwise surface
-  exact missing decisions privately to Daniel/current user or the engineering
+  exact missing decisions privately to the current user or the engineering
   attention route.
 - `ENGINEERING_BLOCKED`, `ALREADY_DONE_OR_DUPLICATE`, or
   `HUMAN_REVIEW_REQUIRED`: keep engineering/operational detail private and

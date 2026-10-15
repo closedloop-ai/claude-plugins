@@ -79,7 +79,7 @@ alone, or `<storybook-base>/?path=/story/<story-id>` for one story. The base
 is the verified Vercel `storybookUrl` or the local `storybookUrl` in the
 session's stack. Never give the bare canvas,
 `<storybook-base>/iframe.html?id=<story-id>&viewMode=story`, which shows the
-story without the sidebar or controls (Daniel Ochoa's ruling, 2026-10-14,
+story without the sidebar or controls (operator ruling, 2026-10-14,
 after the PRD-720 session sent that form). This section is the rule's one
 canonical statement; the skills, the ticket template and the workers point at
 it.
@@ -382,5 +382,5 @@ main repeatedly while CI waits. Changed source/new preparation invalidates proof
   commits these files. Setup retries only after the writer supplies the fix;
   the permanent correction remains with the bug's ticket owner.
 - Anything else: tell the person the environment did not start, show the error
-  in one or two lines, and suggest they message Daniel Ochoa with the session
+  in one or two lines, and suggest they message engineering with the session
   slug.

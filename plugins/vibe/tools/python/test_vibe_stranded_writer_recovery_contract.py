@@ -49,8 +49,8 @@ def test_root_recovers_a_stranded_turn_internally_without_sending_the_person_to_
         "**A turn stranded by a plugin upgrade.**",
         "`release-record` for the writer's own record continuation then fails with `ENOENT`",
         "same supported migration, not a tooling fix",
-        "ROOT recovers it immediately, internally and without asking Andy",
-        "never tells the person to message Daniel Ochoa about it",
+        "ROOT recovers it immediately, internally and without asking the person running the session",
+        "never tells the person to message engineering about it",
     ):
         assert required in text, required
 
@@ -93,19 +93,19 @@ def test_recovered_writer_uses_fresh_grants_and_validation_never_old_witnesses()
     handoff = flat(HANDOFF_SKILL.read_text())
     assert "uses the same command with `retainedRecord`" in handoff
     assert "publication, the ticket update and assignment take fresh grants and fresh validation" in handoff
-    assert "never ask Andy about it or send them to Daniel Ochoa" in handoff
+    assert "never ask the person running the session about it or send them to engineering" in handoff
 
 
 def test_the_guardrail_keeps_stranded_recovery_inside_allowed_migration() -> None:
     rule = section(GUARDRAILS.read_text(), "## Plugins and tooling")
     assert "including a turn stranded by a plugin upgrade" in rule
-    assert "It is recovery, not a tooling fix: never stop or send the person to Daniel Ochoa for it." in rule
+    assert "It is recovery, not a tooling fix: never stop or send the person to engineering for it." in rule
 
 
 def test_codex_release_failure_and_the_writer_point_at_the_recovery() -> None:
     vibe = flat(VIBE_SKILL.read_text())
     assert "fails with `ENOENT` because a plugin install removed its recorded root" in vibe
-    assert "`migrate` with `retainedRecord`, internally, never a question or a message to Daniel Ochoa" in vibe
+    assert "`migrate` with `retainedRecord`, internally, never a question or a message to engineering" in vibe
     worker = flat(CHANGE_WORKER.read_text())
     assert "return `BLOCKED` saying the recorded definition was removed" in worker
     assert "never an engineering escalation or a question for the person" in worker

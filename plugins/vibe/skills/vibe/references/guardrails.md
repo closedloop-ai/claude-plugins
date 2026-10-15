@@ -8,7 +8,7 @@ to vibe sessions and points at the repo rules that matter most here.
 
 ## Plugins and tooling
 
-Daniel Ochoa's ruling, 2026-10-13. It binds the vibe and handoff orchestrators
+Operator ruling, 2026-10-13. It binds the vibe and handoff orchestrators
 and every worker, in Codex and Claude Code, and this section is its one
 canonical statement:
 
@@ -19,13 +19,12 @@ canonical statement:
 - When continuing needs a fix to the vibe tooling, stop. Record the blocker:
   the request stays `BLOCKED` in the session ledger with the reason, and a line
   in the live ticket's Progress names it. Report it to engineering: tell the
-  person in one plain line that this needs engineering and to message Daniel
-  Ochoa with the session slug. It is never a question for the person.
+  person in one plain line that this needs engineering and to message engineering with the session slug. It is never a question for the person.
 - Writer migration through `writer-state.mjs migrate` (`quality-loop.md`,
   "Recorded definition migration"), including a turn stranded by a plugin
   upgrade, stays allowed, but only after a human or
   the engineering orchestrator installed the new release. It is recovery, not
-  a tooling fix: never stop or send the person to Daniel Ochoa for it.
+  a tooling fix: never stop or send the person to engineering for it.
 
 ## What may change
 
@@ -94,7 +93,7 @@ The build loop stays lean (`quality-loop.md`, "Lean build loop"): quick
 prep, the build, the quick checks the commit hooks need, the orchestrator's
 commit, deploy, and showing the person. Reviews and heavy validation run only
 at handoff: the guardrails and adversarial reviews, browser E2E, visual QA,
-logical QA, Metal Andrew, the existing tests (the whole suite and two review
+logical QA, product-contract QA, the existing tests (the whole suite and two review
 passes when backend code changed), the running web app and Desktop driven with
 the repo's control skill, and the list of tests engineering still has to write
 (Tests, below). Beyond the quick checks, the loop's only other check is the
@@ -220,7 +219,7 @@ When nothing in the catalog fits:
 
 Read the repo's `apps/storybook/TAXONOMY.md` and follow it for every story
 the session adds, moves, renames or touches; that doc is the authority, so its
-rules are not copied here (Daniel Ochoa's ruling, 2026-10-14, after the
+rules are not copied here (operator ruling, 2026-10-14, after the
 PRD-720 session titled its new stories under v1.0 roots). The bare minimum:
 
 - New stories go in a v2.0 root, titled under `<Level> v2.0/`, never in the
@@ -275,7 +274,7 @@ reuse an existing string or label map. Never compose a label, button, empty
 state, tooltip, error, or helper text yourself. Before asking for missing words,
 apply `quality-loop.md`'s graph-first product research and necessity gate.
 
-One explicit, scoped exception, granted by Daniel Ochoa on 2026-10-13: at
+One explicit, scoped exception, granted by operator ruling on 2026-10-13: at
 handoff the same writer drafts edits to existing product docs pages for the
 features the session changed, under "Feature docs at handoff" below. It covers
 only those marked drafts, which design or engineering approves before merge.
@@ -293,7 +292,7 @@ handoff continuation. Nothing here runs during building.
   for the changed screens, routes, components, flags and FEATURE_MAP ids.
 - Never edit the repo's internal engineering `docs/` folder (PRDs, runbooks,
   schema and design notes). Internal engineering docs belong to engineering's
-  pull request (Daniel Ochoa's ruling, 2026-10-13).
+  pull request (operator ruling, 2026-10-13).
 - Never create a page, add one to navigation (`meta.json`), or edit a
   generated page such as `apps/web/content/docs/api-reference/`. When no
   existing page covers a changed feature, record that and create nothing.
@@ -334,7 +333,7 @@ it.
 No worker authors a test in vibe or handoff: no new `*.test.*` or `*.spec.*`
 file, nothing new under `__tests__/` or `e2e/`, no new case, assertion,
 snapshot or fixture, and no deleted test of live behavior. This holds in the
-build loop and at handoff alike (Daniel Ochoa's ruling, 2026-10-13). The edits
+build loop and at handoff alike (operator ruling, 2026-10-13). The edits
 allowed are a repair and a retired-only deletion, below. Existing tests run
 at handoff, and stories remain part of component work.
 
@@ -346,8 +345,7 @@ decide it, or it goes to engineering, never to the person.
 When the session's own change breaks an EXISTING test or test fixture (an
 import, a renamed or retired symbol, setup, a type error), the SAME persistent
 `vibe-change-worker` mechanically updates that existing file so the tree
-compiles and the commit hooks pass, in the build loop or at handoff (Daniel
-Ochoa's ruling, 2026-10-13, after the PRD-720 live test). A repair never
+compiles and the commit hooks pass, in the build loop or at handoff (operator ruling, 2026-10-13, after the PRD-720 live test). A repair never
 changes what any test asserts: no weakened or deleted assertion, no changed
 expected value or snapshot, no new skip, no loosened matcher, tolerance or
 timeout. It adds no test file, no case and no coverage; new tests still go on
@@ -366,7 +364,7 @@ blocked commit goes to engineering.
 
 The SAME writer may delete a test file or test case that covers ONLY code the
 request itself retires, citing the ticket or PRD that retires that code
-(Daniel Ochoa's ruling, 2026-10-13; the root `AGENTS.md`: "When the contract
+(operator ruling, 2026-10-13; the root `AGENTS.md`: "When the contract
 under test is deliberately retired, deleting its test is the complete and
 correct outcome"). A test that still covers any live behavior is only
 repaired, never deleted; when one file mixes both, delete only the retired

@@ -38,7 +38,7 @@ report callback failure; never silently idle or invite polling.
   create a new callback kind, enqueue the PR, or report it as waiting only for
   human merge.
 - Every handoff for `UI work: YES` must also include `UI visual QA` as the
-  [Parker Visual-QA Gate](implementation-review-pr.md#parker-visual-qa-gate)
+  [Design Visual-QA Gate](implementation-review-pr.md#design-visual-qa-gate)
   defines it. `blocked` or `missing` is an active blocker under that gate, not
   a waiting-on-merge state.
 - When standalone, launch exactly one `$gh-monitor-pr` detached monitor for the

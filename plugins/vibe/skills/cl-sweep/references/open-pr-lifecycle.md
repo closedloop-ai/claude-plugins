@@ -174,7 +174,7 @@ Use this mapping for sweep-owned PRs:
 | Material event | Parent action |
 |---|---|
 | New actionable feedback, failed current-head check, head change, confirmed source PR conflict, or dequeue/ejection before merge | Write `ACTIVE_EXECUTING`; resume the worker with exact evidence. Coverage remains worker-owned until green. |
-| Current head becomes green/review-ready | Require canonical integrated-feature manual QA on the applicable head for every PR. For UI PRs, also require one pre-PR Parker pass, a not-applicable proof, or Daniel's explicit exception; if absent, resume the worker for that evidence/exception/blocker. If manual QA is pending or stale, keep the same owner in `WAITING_MANUAL_QA` through existing `WAITING_HUMAN`. Otherwise resume the worker to run the bounded conformance/merge action, or record `WAITING_HUMAN_MERGE` when policy requires a human. |
+| Current head becomes green/review-ready | Require canonical integrated-feature manual QA on the applicable head for every PR. For UI PRs, also require one pre-PR visual-QA pass, a not-applicable proof, or the operator's explicit exception; if absent, resume the worker for that evidence/exception/blocker. If manual QA is pending or stale, keep the same owner in `WAITING_MANUAL_QA` through existing `WAITING_HUMAN`. Otherwise resume the worker to run the bounded conformance/merge action, or record `WAITING_HUMAN_MERGE` when policy requires a human. |
 | Merge-queue check failure, opaque queue `UNMERGEABLE`, or queue generation change while still queued | Do not wake the worker or diagnose. Keep or recover the detached monitor for the same PR/head/queue generation and wait for ejection, merge, closure, current-head failure, concrete source conflict, head change, or review feedback. |
 | Merged | Stop the monitor and resume the worker for terminal ticket, plan, legacy split-parent if present, workflow-memory, and structured-result reconciliation. |
 | Closed unmerged | Stop the monitor, write `ACTIVE_EXECUTING` with `reason: closed_unmerged_reconciliation`, and resume the worker. Never infer `DONE` or `CANCELED`. |
@@ -200,7 +200,7 @@ the sweep-owned PR's actual diff and affected runtime surfaces as `ui_work: YES`
 or `ui_work: NO`. `UNKNOWN` blocks disposition. Any user-perceivable UI change
 makes a mixed PR UI work.
 
-UI PRs require Daniel's human/manual merge by default. Green,
+UI PRs require the operator's human/manual merge by default. Green,
 review-complete, requirements-conformant, mergeable non-UI PRs must be resumed
 to the child for immediate direct enqueue through the ordinary protected GitHub
 merge queue under `$cl-execute`/`$cl-sweep` standing authorization. Do not use
@@ -215,19 +215,19 @@ or a monitor state file alone.
 
 Before a UI PR enters `PR_MONITORING_HANDOFF`, `WAITING_HUMAN_MERGE`, a
 ready-to-merge summary, or any queue/manual-merge path, require one dedicated
-pre-PR Parker visual-QA pass, a precise not-applicable production-consumer
-proof, or Daniel's explicit exception for an already-open PR. If an already-open
+pre-PR design visual-QA pass, a precise not-applicable production-consumer
+proof, or the operator's explicit exception for an already-open PR. If an already-open
 UI PR lacks that evidence or exception, resume the exact child to provide the
-existing pre-PR evidence, obtain Daniel's exception, or return the exact
+existing pre-PR evidence, obtain the operator's exception, or return the exact
 blocker; do not present it as waiting only on CI or manual merge. Later PR head
-changes after the pre-PR pass or Daniel exception do not require another Parker
-pass unless Daniel explicitly asks.
+changes after the pre-PR pass or operator exception do not require another visual-QA
+pass unless the operator explicitly asks.
 
 Standing non-UI queue authorization never applies to external-owner PRs. Those
 stay read-only until the user explicitly transfers that exact PR or owner lane
 into the sweep.
 
-Ticket-specific or older workflow-memory instructions requiring Daniel's manual
+Ticket-specific or older workflow-memory instructions requiring the operator's manual
 merge for every Branches PR are obsolete and must not override this standing
 UI/non-UI policy. Treat them as historical evidence only. Do not convert a ready
 non-UI PR to `WAITING_HUMAN_MERGE` because of such a record; only a newer
@@ -415,9 +415,9 @@ packet verbatim or as an equivalent self-contained artifact whenever PR work can
 occur:
 
 ```text
-For a feature unit, create exactly one PR covering every executable shipping member. After the PR exists, read and follow ../../cl-execute/references/feature-manual-qa.md. As the live PR author, own one manual-QA plan comment and update it in place. If the PR author is a bot, name the explicit responsible human. Map every member acceptance criterion to scenarios and include the full shipping-surface workflow. Record the exact current/tested heads; a head change makes impacted scenarios stale until rerun, with prior-head carry-forward allowed only under the canonical justification. Return WAITING_MANUAL_QA through the existing WAITING_HUMAN event while evidence is pending, failed, blocked, missing, stale, or not author-owned. Posting the plan does not open UI and does not replace Parker visual QA or automated headless/displayless E2E.
-Before merge disposition, classify and record the actual sweep-owned PR as UI or non-UI. UI PRs wait for Daniel's human/manual merge by default. Green, mergeable non-UI PRs owned by this sweep must be directly enqueued immediately through the ordinary protected GitHub merge queue under standing authorization. Do not use autoMergeRequest or gh-stack unless separately authorized for that exact mechanism. Ignore older ticket-specific or Branches-wide workflow-memory instructions requiring manual merge for all PRs; only a newer exact user instruction may override this default. This standing authorization never applies to external-owner PRs; those remain read-only context until the user explicitly transfers that exact PR or owner lane into the sweep.
-For UI, UI-impacting contract, or workflow changes, satisfy the Parker Visual-QA Gate in ../../cl-execute/references/implementation-review-pr.md before first push/open PR or any action that raises PR review/CI. The parent does not ask for a later current-head Parker refresh unless Daniel explicitly asks.
+For a feature unit, create exactly one PR covering every executable shipping member. After the PR exists, read and follow ../../cl-execute/references/feature-manual-qa.md. As the live PR author, own one manual-QA plan comment and update it in place. If the PR author is a bot, name the explicit responsible human. Map every member acceptance criterion to scenarios and include the full shipping-surface workflow. Record the exact current/tested heads; a head change makes impacted scenarios stale until rerun, with prior-head carry-forward allowed only under the canonical justification. Return WAITING_MANUAL_QA through the existing WAITING_HUMAN event while evidence is pending, failed, blocked, missing, stale, or not author-owned. Posting the plan does not open UI and does not replace design visual QA or automated headless/displayless E2E.
+Before merge disposition, classify and record the actual sweep-owned PR as UI or non-UI. UI PRs wait for the operator's human/manual merge by default. Green, mergeable non-UI PRs owned by this sweep must be directly enqueued immediately through the ordinary protected GitHub merge queue under standing authorization. Do not use autoMergeRequest or gh-stack unless separately authorized for that exact mechanism. Ignore older ticket-specific or Branches-wide workflow-memory instructions requiring manual merge for all PRs; only a newer exact user instruction may override this default. This standing authorization never applies to external-owner PRs; those remain read-only context until the user explicitly transfers that exact PR or owner lane into the sweep.
+For UI, UI-impacting contract, or workflow changes, satisfy the Design Visual-QA Gate in ../../cl-execute/references/implementation-review-pr.md before first push/open PR or any action that raises PR review/CI. The parent does not ask for a later current-head visual-QA refresh unless the operator explicitly asks.
 Follow the code-review and PR-comment rules in ../../cl-execute/references/implementation-review-pr.md for review generations, comment triage, the one ordinary review-remediation push, and bundling valid comment fixes into an independently required repair commit. Never manually trigger or retrigger review or CI. Later comments alone never justify a push. Without an independently required repair commit, classify unresolved findings into one DEFERRED_REVIEW_FINDINGS block with the PR/comment URLs, severity, concise defect/risk, applicable PRD boundary, likely code surface, and duplicate-search evidence. For genuinely out-of-scope work, the parent may create one consolidated follow-up ticket and return its URL; then link and resolve those threads without changing current-PR code. If a deferred finding proves the current PR violates its own acceptance or governing contract, return MANUAL_INTERVENTION_REQUIRED and do not merge. Before any replacement ticket or PR re-delivers that unmerged feature, stop for the separate plain-language operator approval in the Cross-Ticket Replacement Gate; plan approval alone does not authorize the transfer. Revalidate in-PR fixes and establish the current PR/head/check/review/queue state. Then return PR_MONITORING_HANDOFF to the parent thread and stop passive polling. Do not launch a child-targeted monitor. The parent will run exactly one detached $gh-monitor-pr monitor for this sweep-owned PR and resume this same child with exact material event evidence. On each resume, perform only bounded event handling; do not reopen code review. Fix CI/conflict/queue/validation failures, process deferred-comment linkage as directed by the parent, enqueue or re-enqueue as applicable, and return a fresh handoff. On merge evidence, reconcile ticket, plan, split-parent, workflow-memory, and structured result state. When the decision-table skill is available, use it once and keep it bounded to the meaningful state/edge-case surface; do not loop it. Persist and query-verify any qualifying generalized review lesson required by $cl-execute.
 Do not merge or rebase current main merely because it advanced or as a final-integration precaution. When the PR head is green and GitHub reports it mergeable, enqueue that unchanged validated head and let the protected merge queue perform speculative integration. Integrate main only for a confirmed source conflict, a proven unlanded dependency, or concrete queue/base failure evidence.
 ```

@@ -8,7 +8,7 @@ import { git, mainSyncAdmission, mainSyncRecipeFiles, makeCheckout, makeHome, ru
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "vibe-sessions.mjs");
 const SPACED_CHECKOUT = ["Documents", "Closedloop.ai - Active Work", "symphony-alpha"];
-const OPERATOR_ARGS = ["--operator-id", "user-andy", "--operator-email", "andy@example.com", "--operator-name", "Andy Example"];
+const OPERATOR_ARGS = ["--operator-id", "user-operator", "--operator-email", "operator@example.com", "--operator-name", "Sample Operator"];
 
 function rememberRepo(home, repo) {
   const dir = path.join(home, ".codex", "vibe");
@@ -207,12 +207,12 @@ test("new records the person running the session and refuses to start without th
   const missing = runNode(SCRIPT, [...base, "--slug", "no-operator"], home);
   assert.equal(missing.status, 1);
   assert.match(missing.json.error, /--operator-id and --operator-email are required/);
-  const noEmail = runNode(SCRIPT, [...base, "--slug", "no-email", "--operator-id", "user-andy"], home);
+  const noEmail = runNode(SCRIPT, [...base, "--slug", "no-email", "--operator-id", "user-operator"], home);
   assert.equal(noEmail.status, 1);
   assert.match(noEmail.json.error, /--operator-email/);
   const badId = runNode(
     SCRIPT,
-    [...base, "--slug", "bad-id", "--operator-id", "Andy Example", "--operator-email", "andy@example.com"],
+    [...base, "--slug", "bad-id", "--operator-id", "Sample Operator", "--operator-email", "operator@example.com"],
     home
   );
   assert.equal(badId.status, 1);
@@ -221,7 +221,7 @@ test("new records the person running the session and refuses to start without th
 
   const created = runNode(SCRIPT, [...base, "--slug", "with-operator", ...OPERATOR_ARGS], home);
   assert.equal(created.status, 0, created.stderr);
-  const expected = { id: "user-andy", email: "andy@example.com", name: "Andy Example" };
+  const expected = { id: "user-operator", email: "operator@example.com", name: "Sample Operator" };
   assert.deepEqual(created.json.session.operator, expected);
   assert.deepEqual(JSON.parse(readFileSync(recordFile(created.json.session.worktree, home), "utf8")).operator, expected);
   const listed = runNode(SCRIPT, ["list"], home);
@@ -229,10 +229,10 @@ test("new records the person running the session and refuses to start without th
 
   const nameless = runNode(
     SCRIPT,
-    [...base, "--slug", "nameless", "--operator-id", "user-dan", "--operator-email", "dan+08252026@example.com"],
+    [...base, "--slug", "nameless", "--operator-id", "user-second", "--operator-email", "second+08252026@example.com"],
     home
   );
-  assert.deepEqual(nameless.json.session.operator, { id: "user-dan", email: "dan+08252026@example.com", name: null });
+  assert.deepEqual(nameless.json.session.operator, { id: "user-second", email: "second+08252026@example.com", name: null });
 });
 
 test("touch sets the operator on a record written before it existed and keeps it otherwise", (t) => {
@@ -246,17 +246,17 @@ test("touch sets the operator on a record written before it existed and keeps it
 
   const kept = runNode(SCRIPT, ["touch", "--worktree", worktree, "--summary", "again"], home);
   assert.equal(kept.json.session.operator, null);
-  const partial = runNode(SCRIPT, ["touch", "--worktree", worktree, "--operator-email", "andy@example.com"], home);
+  const partial = runNode(SCRIPT, ["touch", "--worktree", worktree, "--operator-email", "operator@example.com"], home);
   assert.equal(partial.status, 1);
   assert.match(partial.json.error, /--operator-id/);
   const set = runNode(
     SCRIPT,
-    ["touch", "--worktree", worktree, "--operator-id", "user-andy", "--operator-email", "andy@example.com"],
+    ["touch", "--worktree", worktree, "--operator-id", "user-operator", "--operator-email", "operator@example.com"],
     home
   );
-  assert.deepEqual(set.json.session.operator, { id: "user-andy", email: "andy@example.com", name: null });
+  assert.deepEqual(set.json.session.operator, { id: "user-operator", email: "operator@example.com", name: null });
   const later = runNode(SCRIPT, ["touch", "--worktree", worktree, "--live-ticket", "ISS-20"], home);
-  assert.deepEqual(later.json.session.operator, { id: "user-andy", email: "andy@example.com", name: null });
+  assert.deepEqual(later.json.session.operator, { id: "user-operator", email: "operator@example.com", name: null });
 });
 
 test("touch records the live ticket, accepts the old --handoff-ticket name, and reads old records", (t) => {
@@ -559,7 +559,7 @@ test("dispatch-inputs writes the request workflow's inputs with a fresh request 
   assert.equal(badKeep.status, 1);
   assert.match(badKeep.json.error, /--keep-flag-snapshot must be true or false/);
 
-  const blankWithEmail = request(["--person-email", "andy@example.com"]);
+  const blankWithEmail = request(["--person-email", "operator@example.com"]);
   assert.equal(blankWithEmail.status, 1);
   assert.match(blankWithEmail.json.error, /only with a Desktop auth claim/);
 
@@ -568,18 +568,18 @@ test("dispatch-inputs writes the request workflow's inputs with a fresh request 
   assert.equal(noEmail.status, 1);
   assert.match(noEmail.json.error, /--person-email/);
 
-  const seeded = request(["--person-email", "andy@example.com"]);
+  const seeded = request(["--person-email", "operator@example.com"]);
   assert.equal(seeded.status, 0, seeded.stderr);
   const seededInputs = JSON.parse(readFileSync(out, "utf8"));
   assert.equal(seededInputs.mode, "seeded");
-  assert.equal(seededInputs.person_email, "andy@example.com");
+  assert.equal(seededInputs.person_email, "operator@example.com");
   assert.equal("clerk_org_id" in seededInputs, false);
 
   const badOrgChoice = runNode(SCRIPT, ["touch", "--worktree", worktree, "--clerk-org-id", "Acme"], home);
   assert.equal(badOrgChoice.status, 1);
   assert.match(badOrgChoice.json.error, /org_/);
   runNode(SCRIPT, ["touch", "--worktree", worktree, "--clerk-org-id", "org_2abc"], home);
-  const chosenOrg = request(["--person-email", "andy@example.com"]);
+  const chosenOrg = request(["--person-email", "operator@example.com"]);
   assert.equal(chosenOrg.status, 0, chosenOrg.stderr);
   const chosenInputs = JSON.parse(readFileSync(out, "utf8"));
   assert.equal(chosenInputs.clerk_org_id, "org_2abc");
@@ -618,7 +618,7 @@ test("desktop-auth saves the profile's auth claim and every later request sends 
   assert.equal(blankNoEmail.status, 1);
   assert.match(blankNoEmail.json.error, /Desktop auth claim needs --person-email/);
 
-  const blank = request(["--person-email", "andy@example.com"]);
+  const blank = request(["--person-email", "operator@example.com"]);
   assert.equal(blank.status, 0, blank.stderr);
   const blankInputs = JSON.parse(readFileSync(out, "utf8"));
   assert.deepEqual(Object.keys(blankInputs).sort(), [
@@ -630,7 +630,7 @@ test("desktop-auth saves the profile's auth claim and every later request sends 
     "request_id",
   ]);
   assert.equal(blankInputs.mode, "blank");
-  assert.equal(blankInputs.person_email, "andy@example.com");
+  assert.equal(blankInputs.person_email, "operator@example.com");
   assert.deepEqual(JSON.parse(blankInputs.desktop_auth), {
     refreshTokenHash: "abc123",
     publicKeySpki: "MIIB",
@@ -638,15 +638,15 @@ test("desktop-auth saves the profile's auth claim and every later request sends 
   });
 
   runNode(SCRIPT, ["touch", "--worktree", worktree, "--clerk-org-id", "org_2abc"], home);
-  const blankOrg = request(["--person-email", "andy@example.com"]);
+  const blankOrg = request(["--person-email", "operator@example.com"]);
   assert.equal(blankOrg.status, 1);
   assert.match(blankOrg.json.error, /Clerk org is only sent for a seeded session/);
 
   runNode(SCRIPT, ["touch", "--worktree", worktree, "--mode", "seeded"], home);
-  const seeded = request(["--person-email", "andy@example.com"]);
+  const seeded = request(["--person-email", "operator@example.com"]);
   assert.equal(seeded.status, 0, seeded.stderr);
   const seededInputs = JSON.parse(readFileSync(out, "utf8"));
-  assert.equal(seededInputs.person_email, "andy@example.com");
+  assert.equal(seededInputs.person_email, "operator@example.com");
   assert.equal(seededInputs.clerk_org_id, "org_2abc");
   assert.ok("desktop_auth" in seededInputs);
 });
@@ -664,7 +664,7 @@ test("discard reports what would be lost, then requests the schema drop and dele
   assert.equal(preview.json.discarded, false);
   assert.equal(preview.json.wouldLose.pushed, true);
   assert.equal(preview.json.wouldLose.liveTicket, "ISS-30");
-  assert.deepEqual(preview.json.wouldLose.operator, { id: "user-andy", email: "andy@example.com", name: "Andy Example" });
+  assert.deepEqual(preview.json.wouldLose.operator, { id: "user-operator", email: "operator@example.com", name: "Sample Operator" });
   assert.deepEqual(preview.json.wouldLose.uncommittedFiles, ["draft.txt"]);
   assert.notEqual(git(checkout, ["ls-remote", "--heads", "origin", "vibe/throw-away"], home), "");
 
@@ -678,7 +678,7 @@ test("discard reports what would be lost, then requests the schema drop and dele
   ]);
   assert.equal(done.json.wouldLose.liveTicket, "ISS-30");
   assert.deepEqual(done.json.cancelEvidence, { discarded: true, branch: "vibe/throw-away", liveTicket: "ISS-30",
-    operatorId: "user-andy", operatorEmail: "andy@example.com" });
+    operatorId: "user-operator", operatorEmail: "operator@example.com" });
   assert.equal(git(checkout, ["ls-remote", "--heads", "origin", "vibe/throw-away"], home), "");
   assert.equal(git(checkout, ["branch", "--list", "vibe/throw-away"], home), "");
   assert.deepEqual(runNode(SCRIPT, ["list"], home).json.sessions, []);

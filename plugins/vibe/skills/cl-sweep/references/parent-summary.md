@@ -8,7 +8,7 @@ narrative:
   or closed, new blockers, and cleared blockers, each with its ticket slug, or
   `none`. Compare against the digest saved at the previous report, then save
   the new digest in the root as a private mode-`0600` file.
-- `Needs Daniel:` only the decisions or approvals the root cannot advance on
+- `Needs you:` only the decisions or approvals the root cannot advance on
   its own, each with the exact ask, or `none`.
 
 Give the full table below at checkpoints, in the final response, or on

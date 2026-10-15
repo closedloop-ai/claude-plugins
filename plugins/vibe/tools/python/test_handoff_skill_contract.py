@@ -18,6 +18,8 @@ TICKET_TEMPLATE = PLUGIN_ROOT / "skills" / "vibe" / "references" / "ticket-templ
 TICKET_WORKER = PLUGIN_ROOT / "agents" / "vibe-ticket-worker.md"
 CHANGE_WORKER = PLUGIN_ROOT / "agents" / "vibe-change-worker.md"
 VIBE_SKILL = PLUGIN_ROOT / "skills" / "vibe" / "SKILL.md"
+# A built-in default owner reads as an assignment to a capitalized full name.
+FIXED_ASSIGNEE = re.compile(r"\bassign(?:s|ed)?\b[^.\n]{0,40}?\bto [A-Z][a-z]+ [A-Z][a-z]+\b")
 
 
 def test_final_publication_keeps_input_readiness_distinct_from_coverage() -> None:
@@ -122,7 +124,7 @@ def test_lookup_matches_through_the_script_and_assign_uses_its_user() -> None:
 def test_no_next_owner_is_hardcoded() -> None:
     next_line = section(TICKET_TEMPLATE.read_text(), "## Handoff")
     for text in (HANDOFF_SKILL.read_text(), TICKET_WORKER.read_text(), next_line):
-        assert "Nenad" not in text
+        assert not FIXED_ASSIGNEE.search(text), FIXED_ASSIGNEE.search(text)
     assert "- Next: <the next owner the person chose at handoff, by full name>" in next_line
 
 
@@ -143,7 +145,7 @@ def test_template_grading_block_follows_handoff_with_the_seven_item_checklist() 
         "7. What we had to fix before merge.",
     ):
         assert item in grading, item
-    assert "Nenad" not in grading
+    assert not FIXED_ASSIGNEE.search(grading), FIXED_ASSIGNEE.search(grading)
 
 
 def test_ticket_worker_fills_grading_at_handoff_and_never_rederives_it() -> None:
@@ -188,7 +190,7 @@ def test_vibe_sends_pure_mockups_to_prototype() -> None:
     starting_new = section(VIBE_SKILL.read_text(), "## 2. Start or resume")
     build_loop = section(VIBE_SKILL.read_text(), "## 5. Build loop")
 
-    # Daniel ruled that vibe invokes the canonical workflow itself.
+    # Operator ruling: vibe invokes the canonical workflow itself.
     assert "`new-prototype`" in starting_new
     assert "without an app data mode" in starting_new
     assert "`<repo-root>/.claude/skills/prototype/SKILL.md`" in starting_new

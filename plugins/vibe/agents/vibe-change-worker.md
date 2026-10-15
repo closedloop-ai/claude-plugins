@@ -70,7 +70,7 @@ Never upload it, paste it into the ticket, commit it or deploy it. Name scope,
 owners, dependencies and checks, including every NEW Storybook component the
 request needs (or none). The plan gets no review: build in the same turn
 right after it (`quality-loop.md`, "Lean build loop"). No technical plan goes
-to Andy for approval.
+to the person running the session for approval.
 
 Always load named core decision-table (`$decision-table` in Codex or
 `/closedloop-core:decision-table` in Claude Code) and create or extend the
@@ -203,7 +203,7 @@ the changed files, the affected typecheck and the source gates
 (`quality-loop.md`, "Lean build loop"). When they fail on an existing test or
 fixture your change broke, repair it under "Tests: repair, don't author"
 below. Fix your implementation, never suppress or weaken a check. Browser E2E,
-visual QA, logical QA, Metal Andrew, existing test suites, Storybook footprint
+visual QA, logical QA, product-contract QA, existing test suites, Storybook footprint
 and independent guardrails, adversarial and core workflow reviews run only at
 handoff; do not run or request them in the loop. The publication gate's own
 fixed validation (`environment.md`) is separate and unchanged. At handoff apply their

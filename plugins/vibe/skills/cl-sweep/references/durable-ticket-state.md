@@ -112,7 +112,7 @@ expected_surfaces: <repo/package/files/routes/contracts likely touched>
 external_docs: <not_applicable | official docs URLs/date/version | blocked/unknown reason>
 ui_work: <YES | NO | UNKNOWN>
 ui_design_source: <not_applicable | design | screenshot | prototype | missing>
-ui_visual_qa: <passed with pre-PR artifact ids/hashes | not_applicable with production-consumer proof | explicit_exception with Daniel's exact exception | blocked with exact blocker | missing>
+ui_visual_qa: <passed with pre-PR artifact ids/hashes | not_applicable with production-consumer proof | explicit_exception with the operator's exact exception | blocked with exact blocker | missing>
 human_ui_plan_approval: <not_required | required | approved | blocked>
 ui_plan_url_or_id: <ClosedLoop plan URL/id when waiting for approval, or none>
 manual_qa_plan_comment_url: <single author-owned PR comment URL or none>
@@ -179,7 +179,7 @@ implementation, mutate source or external state, or consume an active-work slot
 after the callback parks the owner.
 
 Use `WAITING_UI_PLAN_APPROVAL` for an exact implementation-plan approval gate,
-including a plan-authored Daniel-approval gate on a non-UI ticket. For the
+including a plan-authored operator-approval gate on a non-UI ticket. For the
 non-UI case record `ui_work: NO`, `ui_design_source: not_applicable`, and the
 exact plan/version and approval condition so the state name cannot imply UI
 scope that does not exist.
@@ -264,7 +264,7 @@ write `ACTIVE_ANALYZING` with the child thread id.
 
 Do not send `$cl-split` or write new `ACTIVE_SPLITTING` records. When sending
 `$cl-execute` for `GO_WITH_UI_PLAN_APPROVAL`, or for any current session where
-Daniel must personally approve every implementation plan before code starts,
+The operator must personally approve every implementation plan before code starts,
 write `ACTIVE_PLANNING`. When sending `$cl-execute` for normal `GO` with no
 additional plan-only gate, write `ACTIVE_EXECUTING`.
 

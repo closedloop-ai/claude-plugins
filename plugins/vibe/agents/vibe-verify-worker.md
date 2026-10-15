@@ -192,4 +192,4 @@ build loop.
 `DONE` with check/footprint/coverage/control evidence and failures or gaps
 requiring the writer; never claim you fixed them. `BLOCKED` names a precise validation
 limitation. All modes involving code or coverage end with the required Graph
-block. Technical diagnostics remain internal, not questions for Andy.
+block. Technical diagnostics remain internal, not questions for the person running the session.

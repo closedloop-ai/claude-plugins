@@ -6,7 +6,7 @@ In every free-text field (`Blocker`, `Validation`, `Per-ticket result`,
 readiness reasons, and the rest), each causal or state claim carries its
 evidence in the same sentence: the command and its output, the artifact path,
 or the live URL. Label a claim you did not observe `inferred` (from reading
-code) or `unverified`. Never hand Daniel a check you could run: do not return a
+code) or `unverified`. Never hand the operator a check you could run: do not return a
 blocker, wait, or manual-intervention status that asks a human to run a
 command, open a page, or read a log you can reach yourself; run it and report
 the result. Write these fields by [writing.md](writing.md).
@@ -47,7 +47,7 @@ Readiness:
 - Safety fact: <PASS | BLOCKED | UNKNOWN | NOT_APPLICABLE> - <the one fact the change is safe because of and its planned runnable proof, or reason>
 
 Next action:
-- <proceed to execution | create plan and wait for human approval | add Product-decision comment | surface exact missing decisions privately to Daniel/current user or engineering | surface engineering blocker privately to user | manual intervention>
+- <proceed to execution | create plan and wait for human approval | add Product-decision comment | surface exact missing decisions privately to the current user or engineering | surface engineering blocker privately to user | manual intervention>
 ```
 
 If this gate blocks execution, end with the normal `CL Execute Result` using
@@ -93,12 +93,12 @@ Repo verification evidence: <before/after artifact paths captured with the repo-
 Correction events: <artifact ref for emitted correction events | none | no repo intake declared>
 Plan lint: <check-plan.mjs command and exit status at the last plan upload or revision | not_applicable before planning>
 Decision log: <private log path, SHA-256, and row count | not_applicable - reason>
-Attention: <none | up to five items Daniel should check first, each with its evidence pointer: decision-log flags from `review_generation_2`'s Guardrail / Validation lane, lone security or correctness findings rejected, manual-QA carry-forwards, scope exclusions, and translated or inconclusive evidence>
+Attention: <none | up to five items the operator should check first, each with its evidence pointer: decision-log flags from `review_generation_2`'s Guardrail / Validation lane, lone security or correctness findings rejected, manual-QA carry-forwards, scope exclusions, and translated or inconclusive evidence>
 Process feedback: <none | one line per item: cl-* skill file and section; the observed failure with an evidence pointer; the proposed one-line change>
 External docs: <not_applicable | official docs URLs/date/version and facts used | blocked/unknown reason>
 UI work: <YES | NO | UNKNOWN>
 UI design source: <not_applicable | design | screenshot | prototype | missing>
-UI visual QA: <passed with pre-PR artifact ids/hashes | not_applicable with production-consumer proof | explicit_exception with Daniel's exact exception | blocked with exact blocker | missing>
+UI visual QA: <passed with pre-PR artifact ids/hashes | not_applicable with production-consumer proof | explicit_exception with the operator's exact exception | blocked with exact blocker | missing>
 Human UI plan approval: <not_required | required | approved | blocked>
 CI: <green with every automatic current-head check green or correctly skipped | failing, including any coverage failure | pending | throttled | not_started>
 Review state: <approved | changes_requested | pending | not_started>
@@ -114,13 +114,13 @@ ClosedLoop blocker comment: <product_comment_posted | explicitly_user_authorized
 ClosedLoop comment id/url: <id/url or none>
 Engineering attention DM: <not_required | explicitly_user_authorized | sent | blocked>
 Blocker: <none or concrete blocker>
-Next parent action: <none | start or refresh one detached PR monitor | resume worker with exact material event evidence | wait for human UI plan approval | continue after human UI plan approval | wait for Daniel's human/manual UI merge | add ClosedLoop comment tagging product contact | surface exact missing decisions privately to Daniel/current user or engineering | surface engineering blocker privately to user | manual intervention>
+Next parent action: <none | start or refresh one detached PR monitor | resume worker with exact material event evidence | wait for human UI plan approval | continue after human UI plan approval | wait for the operator's human/manual UI merge | add ClosedLoop comment tagging product contact | surface exact missing decisions privately to the current user or engineering | surface engineering blocker privately to user | manual intervention>
 ```
 
 For `UI work: YES`, `UI visual QA: blocked` or `missing` is never a ready or
 waiting-human state; pairing it with `WAITING_HUMAN_MERGE`, ready-to-merge, or
 queue-ready language is a malformed handoff. The
-[Parker Visual-QA Gate](implementation-review-pr.md#parker-visual-qa-gate) says
+[Design Visual-QA Gate](implementation-review-pr.md#design-visual-qa-gate) says
 what to return instead.
 
 `Process feedback` records only gaps in the cl-* skills that would change a

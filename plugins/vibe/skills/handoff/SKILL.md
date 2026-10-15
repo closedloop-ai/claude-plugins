@@ -45,8 +45,7 @@ plugin's repository to run other tooling (`../vibe/references/guardrails.md`,
 "Plugins and tooling"); a needed tooling fix stops the handoff as that section
 says.
 
-Handoff authors no tests (`../vibe/references/guardrails.md`, "Tests"; Daniel
-Ochoa's ruling, 2026-10-13). It runs the existing affected tests, and when one
+Handoff authors no tests (`../vibe/references/guardrails.md`, "Tests"; operator ruling, 2026-10-13). It runs the existing affected tests, and when one
 fails the SAME persistent `vibe-change-worker` fixes the session's own code,
 never what the test asserts; it only repairs an existing test or fixture the
 session's change broke ("Repair, don't author"). The tests the session still
@@ -59,7 +58,7 @@ it goes to engineering.
 The build loop is lean (`../vibe/references/quality-loop.md`, "Lean build
 loop"), so handoff is where the session's reviews and heavy validation run:
 the guardrails and adversarial reviews, browser E2E, visual QA, logical QA,
-Metal Andrew, the existing tests, Storybook footprint and the running app
+product-contract QA, the existing tests, Storybook footprint and the running app
 checks. Handoff opens no pull request; "A requested pull request" below is the
 one exception to the no-tests rule.
 
@@ -86,7 +85,7 @@ because `release-record` fails with `ENOENT` for the removed root, or `BLOCKED`
 with `blockReason` `recorded-definition-removed`) uses the same command with
 `retainedRecord`; then publication, the ticket update and assignment take
 fresh grants and fresh validation, never the old ones.
-This recovery is internal; never ask Andy about it or send them to Daniel Ochoa.
+This recovery is internal; never ask the person running the session about it or send them to engineering.
 
 ## Answers from the person
 
@@ -138,7 +137,7 @@ change worker has not handled; it refuses one with `NEEDS_CHANGE`.
 | Existing code checks, coverage advice, suite and footprint | read-only `vibe-verify-worker` |
 | Running app checks with `pnpm control` | read-only `vibe-verify-worker` (control mode) |
 | Lighter: tough review | repo `review-soul` and `vibe-adversarial-reviewer`, in parallel |
-| Visual QA, logical QA and Metal Andrew | the repository's own read-only skills (step 6) |
+| Visual QA, logical QA and product-contract QA | the repository's own read-only skills (step 6) |
 | Backend: two review passes | the `workflow-code-review` skill (itself orchestrator-only) |
 | Last push and Vercel check | `vibe-environment-worker` (redeploy mode) |
 | Next owner, ticket check, and assignment | `vibe-ticket-worker` (lookup mode, then handoff mode, then assign mode) |
@@ -324,8 +323,7 @@ session changed, on this branch, under `../vibe/references/guardrails.md`,
 "Feature docs at handoff". It never edits the internal engineering `docs/`
 folder; those docs belong to engineering's pull request. It edits existing
 pages only and never creates one; every edit is marked as
-an agent draft that design or engineering approves before merge. This is
-Daniel Ochoa's explicit, scoped exception to the rule that agents do not
+an agent draft that design or engineering approves before merge. This is the operator's explicit, scoped exception to the rule that agents do not
 author user-visible words. It covers only those marked drafts and gives no
 license for product copy or any other words. The writer records each edited page, or
 that no existing page covers the changed features, for the ticket's Feature
@@ -360,13 +358,13 @@ test here.
 
 ### Browser E2E and the repository's QA passes
 
-These run here and never in the build loop (Daniel Ochoa's ruling,
+These run here and never in the build loop (operator ruling,
 2026-10-13). Browser E2E runs headless in step 5's checks and step 7's
 validation. For the screens the session touched, run the repository's own
 read-only passes where its root `AGENTS.md` calls for them on this change:
 visual QA (`/visual-qa` in Claude Code, `$visual-qa` in Codex) for a UI
 change, logical QA (`/logical-qa`, `$logical-qa`) for a data or metric
-surface, then Metal Andrew (`/metal-andrew`, `$metal-andrew`) once that
+surface, then product-contract QA (`/metal-andrew`, `$metal-andrew`) once that
 evidence is visible. Each skill dispatches its own read-only agents. Confirmed
 findings resume the SAME writer in fix mode, then steps 3 to 6 run again on
 the result. Their reports feed the Design Review evidence in step 8. Owned

@@ -1,4 +1,4 @@
-"""Contract checks for Daniel Ochoa's 2026-10-13 decisions from the 2026-10-09 Andy meeting.
+"""Contract checks for the 2026-10-13 operator decisions from the 2026-10-09 stakeholder meeting.
 
 1. New Storybook components are built first and the person is pointed to their
    stories without waiting; reuse-only changes skip the notice.
@@ -143,7 +143,7 @@ def test_feature_docs_edit_only_existing_pages_as_marked_drafts_at_handoff() -> 
 
 def test_the_docs_exception_is_scoped_wherever_the_copy_rule_is_referenced() -> None:
     copy = section(GUARDRAILS.read_text(), "## Copy")
-    for required in ("One explicit, scoped exception", "Daniel Ochoa", "2026-10-13",
+    for required in ("One explicit, scoped exception", "granted by operator ruling", "2026-10-13",
                      "existing product docs pages", "approves before merge",
                      "not a general license", "no product UI copy", "no new page"):
         assert required in copy, required

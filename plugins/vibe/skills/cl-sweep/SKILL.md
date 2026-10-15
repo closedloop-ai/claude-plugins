@@ -132,7 +132,7 @@ identity and callback ownership, not ticket-domain policy or surface selection.
   parent-turn reconciliation must read durable worker/monitor state, not
   re-query GitHub.
 - Do not implement ticket work in the parent thread.
-- Do not run `$cl-execute` for tickets whose `$cl-analyze` decision is anything other than `GO` or `GO_WITH_UI_PLAN_APPROVAL`. A ticket worker that begins evaluation, requirements discovery, or plan creation must mark the feature `IN_PROGRESS`; this records that planning work has started and is not implementation approval. For `GO_WITH_UI_PLAN_APPROVAL`, `$cl-execute` may create and upload the plan but must stop before plan approval, branch creation, code changes, PR work, or merge work until explicit human approval is present. When the current sweep or session instruction requires Daniel's personal approval for every implementation plan, pass that requirement to `$cl-execute` and stop at `WAITING_UI_PLAN_APPROVAL` for every created plan until Daniel personally approves that exact plan.
+- Do not run `$cl-execute` for tickets whose `$cl-analyze` decision is anything other than `GO` or `GO_WITH_UI_PLAN_APPROVAL`. A ticket worker that begins evaluation, requirements discovery, or plan creation must mark the feature `IN_PROGRESS`; this records that planning work has started and is not implementation approval. For `GO_WITH_UI_PLAN_APPROVAL`, `$cl-execute` may create and upload the plan but must stop before plan approval, branch creation, code changes, PR work, or merge work until explicit human approval is present. When the current sweep or session instruction requires the operator's personal approval for every implementation plan, pass that requirement to `$cl-execute` and stop at `WAITING_UI_PLAN_APPROVAL` for every created plan until the operator personally approves that exact plan.
 - Do not run `$cl-execute` for `EXTREME` risk tickets. `HIGH` complexity remains blocked by default, and the sweep must not route high-complexity work to `$cl-split`. An exact named ticket may proceed only when the user directs execution and accepts or requires its atomic unsplit shape, or a current session-level instruction explicitly accepts the unsplit atomic ticket shape for that ticket set. Apply cl-policy's natural-language rule: “proceed with ISS-1234, do not split it” or equivalent is an approved override in the context of that known `HIGH` ticket; never require a magic phrase or force the user to repeat `HIGH`/risk wording. Before blocking, search the current user thread plus latest exact-ticket memory/comments, preferring the newest direct instruction. Persist/query-verify an accepted override and pass it to all later workers; never ask again unless the implementation materially expands beyond the authorized shape or becomes `EXTREME`, and then name the delta. Never infer this exception from assignment, priority, an approved PRD, or a generic request to make progress; every other readiness, requirements, design, ownership, validation, safety, plan-approval, and merge gate must still pass. Without that narrow override, route high-complexity tickets to single-ticket human review or a private engineering block. With that narrow override, `$cl-execute` may be used only for plan creation/upload until the required human plan approval gate is satisfied.
 - Do not split any ticket. Historical split lineage, split signatures, split children, `SPLIT_CREATED`, `SPLIT_PROPOSED`, and `SPLIT_REPAIR_REQUIRED` records may be read only as legacy evidence for queue reconciliation. Do not launch `$cl-split`, do not create child tickets, do not repair an old split by invoking split tooling, and do not route a current ticket away from itself because an older split shape was defective. Keep every issue as the single ticket it already is. If historical split evidence makes a ticket too broad, overlapping, dependent, or unclear, use normal private engineering blocker or human-review routing unless an exact-ticket or session-level instruction accepts the current unsplit atomic ticket shape.
 - Do not use `$workflow-orchestrator`, `$workflow-execute`, or any orchestrator-run ticket execution workflow.
@@ -244,7 +244,7 @@ identity and callback ownership, not ticket-domain policy or surface selection.
 - Do not accept a worker-reported `PR_MONITORING_HANDOFF`,
   `WAITING_HUMAN_MERGE`, ready-to-merge state, or queue-ready state on trust.
   Before recording the state, starting or refreshing the parent monitor, telling
-  Daniel a PR is ready, or taking any queue/manual-merge action, the parent must
+  the operator a PR is ready, or taking any queue/manual-merge action, the parent must
   live-fetch the exact PR/head and unresolved review-thread count (one
   `gh-monitor-pr` `monitor-pr.mjs snapshot <pr-url>` read returns both). If any current
   unresolved PR review thread exists, reject the handoff and resume the same
@@ -252,14 +252,14 @@ identity and callback ownership, not ticket-domain policy or surface selection.
   ready state.
 - For UI, UI-impacting contract, or workflow PRs, reject any handoff,
   monitoring state, ready state, queue action, or `WAITING_HUMAN_MERGE` state
-  that lacks one dedicated pre-PR Parker visual-QA pass, a precise
-  not-applicable production-consumer proof, or Daniel's explicit exception for
+  that lacks one dedicated pre-PR design visual-QA pass, a precise
+  not-applicable production-consumer proof, or the operator's explicit exception for
   an already-open PR. For already-open UI PRs with no evidence or exception,
   resume the owning worker to provide the existing pre-PR evidence, obtain
-  Daniel's exception, or return the exact blocker; do not present the PR as
-  waiting only on CI or manual merge. Once the pre-PR pass or Daniel exception
+  the operator's exception, or return the exact blocker; do not present the PR as
+  waiting only on CI or manual merge. Once the pre-PR pass or operator exception
   exists, later PR comments, test fixes, rebases, conflict repairs, source head
-  changes, and CI remediation do not require another Parker pass unless Daniel
+  changes, and CI remediation do not require another visual-QA pass unless the operator
   explicitly asks.
 - The one ordinary review-remediation push is the default review-driven code cutoff
   for parent escalation too. Later comments alone never justify a push:

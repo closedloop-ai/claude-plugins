@@ -41,9 +41,9 @@ class RenderReportTests(unittest.TestCase):
 
 | Ticket | Current owner | Disposition |
 | --- | --- | --- |
-| [ISS-1](https://example.com/issues/ISS-1) | Matt | **Protected owner — no reassignment.** Infrastructure policy. |
-| [ISS-2](https://example.com/issues/ISS-2) | Kris | **Keep owner; coordinate.** Shared dependency. |
-| [ISS-3](https://example.com/issues/ISS-3) | Nenad | **Protected owner — no reassignment** Security policy. |
+| [ISS-1](https://example.com/issues/ISS-1) | Owner A | **Protected owner — no reassignment.** Infrastructure policy. |
+| [ISS-2](https://example.com/issues/ISS-2) | Owner B | **Keep owner; coordinate.** Shared dependency. |
+| [ISS-3](https://example.com/issues/ISS-3) | Owner C | **Protected owner — no reassignment** Security policy. |
 """,
             set(),
         )

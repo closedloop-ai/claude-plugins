@@ -184,7 +184,7 @@ export function checkRecipe(value: ReturnType<typeof syncContext>, receipt: Main
   const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync(join(root, file)));
   const commands: CheckCommand[] = [];
   const e2eLimitations: z.infer<typeof e2eLimitationSchema>[] = [];
-  // Daniel Ochoa's ruling, 2026-10-13: a build-loop deploy runs only what the commit hooks run
+  // operator ruling, 2026-10-13: a build-loop deploy runs only what the commit hooks run
   // (affected typecheck and Biome on the changed source); the test suites run at handoff.
   if (value.purpose === "build") {
     if (paths.length) commands.push({ argv: ["pnpm", "exec", "biome", "check", ...paths] });

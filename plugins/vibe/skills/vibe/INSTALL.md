@@ -1,6 +1,6 @@
 # Installing vibe on a new Mac
 
-For setting up a vibe user's laptop (for example Andy's). About ten minutes of
+For setting up a vibe user's laptop (for example a non-engineer's). About ten minutes of
 hands-on time; the `vibe` skill installs everything else on its first run.
 
 ## Before you start

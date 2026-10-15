@@ -352,6 +352,6 @@ export async function main(argv: string[]): Promise<number> {
   }
 }
 
-/** Writer turns that may mechanically repair existing tests the session's change broke (Daniel Ochoa's ruling, 2026-10-13). */
+/** Writer turns that may mechanically repair existing tests the session's change broke (operator ruling, 2026-10-13). */
 const TEST_REPAIR_MODES: ReadonlySet<string> = new Set(["request", "fix", "handoff", "pull-request"]);
 runFromCanonicalEntry(import.meta.url, main);

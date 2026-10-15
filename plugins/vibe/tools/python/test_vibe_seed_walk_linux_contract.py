@@ -1,4 +1,4 @@
-"""Contract checks for Daniel Ochoa's 2026-10-13 ruling that the seed refresh runs its own full screen walk on a Mac.
+"""Contract checks for the 2026-10-13 operator ruling that the seed refresh runs its own full screen walk on a Mac.
 
 1. On macOS the seed-fix worker runs the full web and Desktop walk with
    `pnpm vibe walk-linux --out <file in the fix worktree's private area>`

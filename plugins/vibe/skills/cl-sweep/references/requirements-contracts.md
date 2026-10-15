@@ -120,8 +120,7 @@ Use a bounded but serious search:
 If current user/session context says the Product contact is unavailable or
 out-of-office, do not reflexively tag that contact. First use existing
 authoritative answers. If none exists, set ClosedLoop comment target to `none`
-by default and surface the exact missing decisions privately to Daniel/current
-user or the engineering attention route unless the user explicitly authorizes
+by default and surface the exact missing decisions privately to the current user or the engineering attention route unless the user explicitly authorizes
 that exact Product comment.
 
 `PRODUCT_BLOCKED` is valid only when this discovery has been recorded and the

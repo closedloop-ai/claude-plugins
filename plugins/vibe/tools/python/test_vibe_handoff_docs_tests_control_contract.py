@@ -1,4 +1,4 @@
-"""Contract checks for Daniel Ochoa's 2026-10-13 handoff follow-ups.
+"""Contract checks for the 2026-10-13 operator handoff follow-ups.
 
 1. Handoff docs drafts cover only existing product docs pages under
    apps/web/content/docs/; the internal engineering docs/ folder belongs to
@@ -103,7 +103,7 @@ def test_the_inventory_has_no_internal_docs_allowance() -> None:
 def test_no_worker_writes_tests_in_vibe_or_handoff() -> None:
     rule = section(GUARDRAILS.read_text(), "## Tests")
     for required in ("No worker authors a test in vibe or handoff",
-                     "in the build loop and at handoff alike", "Daniel Ochoa's ruling, 2026-10-13",
+                     "in the build loop and at handoff alike", "operator ruling, 2026-10-13",
                      "Handoff runs the existing affected tests",
                      "fixes the session's own code, never what the test asserts",
                      "listed on the live ticket under Missing tests as engineering's scope of work",

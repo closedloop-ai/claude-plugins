@@ -72,7 +72,7 @@ When the recorded definition is missing (`ENOENT`), or its digest differs and
 the current release is provably newer than the recorded `vibe/<version>` cache
 root, ROOT uses the current installed plugin's command in BOTH harnesses:
 `node <current-plugin-root>/skills/vibe/scripts/dist/writer-state.mjs migrate`.
-This is supported recovery, handled internally without asking Andy, and only
+This is supported recovery, handled internally without asking the person running the session, and only
 after a human or the engineering orchestrator installed that release
 (`guardrails.md`, "Plugins and tooling").
 Never use `register` to replace a writer or copy old agent definitions.
@@ -117,8 +117,8 @@ writer turn runs can remove the recorded `binding.agentRoot` under it. The
 turn stops, but `release-record` for the writer's own record continuation then
 fails with `ENOENT` for that root, so the grant stays retained. This is the
 same supported migration, not a tooling fix: ROOT recovers it immediately,
-internally and without asking Andy, and never tells the person to message
-Daniel Ochoa about it.
+internally and without asking the person running the session, and never tells the person to message
+engineering about it.
 
 1. Keep the record lease and the observed stopped-turn evidence (completed,
    failed or canceled). Never retry `release-record` under another root;
@@ -325,7 +325,8 @@ technical plan or its review drafts as table evidence.
 
 ### Frozen behavior at handoff
 
-Andy does not re-test after design and engineering, so the behavior he
+The person running the session does not re-test after design and engineering,
+so the behavior they
 accepted travels with the ticket. At handoff, once the whole table is
 `Aligned`, the SAME writer adds a `## Frozen Behavior` section to the table
 listing the stable row ID of every row the person accepted, each with its
@@ -364,7 +365,7 @@ this exact folder from deliverable files.
 
 The plan gets no review: the writer writes it and builds in the same turn. A
 material approach change found later is corrected in the plan at outline level
-by the same writer. Andy never reviews or approves the technical plan.
+by the same writer. The person running the session never reviews or approves the technical plan.
 
 ## Implementation and corrections
 
@@ -381,8 +382,7 @@ and handoff open no PR. Operational publishing uses this same session branch.
 ## Lean build loop
 
 The build loop is quick prep, the build, the quick checks the commit hooks
-need, the orchestrator's commit, deploy, and showing the person (Daniel
-Ochoa's ruling, 2026-10-13, after the PRD-720 live test). Nothing heavier runs
+need, the orchestrator's commit, deploy, and showing the person (operator ruling, 2026-10-13, after the PRD-720 live test). Nothing heavier runs
 between a request and the person seeing it.
 
 - Quick prep: the bounded lookup in `design-pass.md`, the local plan and the
@@ -406,7 +406,7 @@ between a request and the person seeing it.
   look at. That gate's own fixed validation
   (`environment.md`, "Main-sync before publication") is unchanged.
 
-Browser E2E, visual QA, logical QA, Metal Andrew, the guardrails and
+Browser E2E, visual QA, logical QA, product-contract QA, the guardrails and
 adversarial reviews, `workflow-code-review`, the existing test suite,
 Storybook footprint, running app checks and any other heavy validation run
 only at `$handoff`, never during the loop, even where a repository protocol
@@ -419,7 +419,7 @@ never wait") stay as they are.
 ## Acceptance criteria before ready
 
 Nothing is called ready until every acceptance criterion the change touches
-has been checked against the code (Daniel Ochoa's ruling, 2026-10-14, after
+has been checked against the code (operator ruling, 2026-10-14, after
 the PRD-720 live test: a session said ISS-12462 was ready while "A deep link
 to a grouped view restores the same collapse state for the recipient" held
 on Branches and was never built on Documents). Heavy QA still waits for
@@ -477,7 +477,7 @@ resumes the SAME writer to finish it before committing, deploying or saying
 ready.
 
 Keep it light. It is not a QA pass: no browser E2E, test suite, visual or
-logical QA, Metal Andrew or review runs for it, and no long-running command
+logical QA, product-contract QA or review runs for it, and no long-running command
 joins the loop.
 
 At handoff the whole-table alignment above starts from this list: the SAME
@@ -490,7 +490,7 @@ never counts as met.
 ## Tests: repair, don't author
 
 No test authoring in the build loop or at handoff, including new
-fixtures/snapshots (Daniel Ochoa's ruling, 2026-10-13; `guardrails.md`,
+fixtures/snapshots (operator ruling, 2026-10-13; `guardrails.md`,
 "Tests"). The SAME writer repairs an existing test or fixture its own change
 broke, in the loop or at handoff, without changing what any test asserts, and
 records it in the change log as a repair. It may delete a test file or case

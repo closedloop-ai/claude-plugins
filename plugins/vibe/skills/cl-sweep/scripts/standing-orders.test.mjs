@@ -17,12 +17,12 @@ test('an absent register renders as none', () => {
 
 test('adds numbered orders with the user words, mode 0600, and renders them verbatim', () => {
   const dir = root();
-  addOrder(dir, { sweepId: 's1', projectId: 'p1', order: 'Daniel approves every implementation plan.', userWords: 'I want to approve every plan', now: new Date('2026-09-29T10:00:00Z') });
+  addOrder(dir, { sweepId: 's1', projectId: 'p1', order: 'The operator approves every implementation plan.', userWords: 'I want to approve every plan', now: new Date('2026-09-29T10:00:00Z') });
   addOrder(dir, { sweepId: 's1', projectId: 'p1', order: 'Do not touch apps/desktop.', userWords: 'leave desktop alone', now: new Date('2026-09-29T11:00:00Z') });
   assert.equal(statSync(join(dir, FILE_NAME)).mode & 0o777, 0o600);
   const text = render(load(dir));
   assert.match(text, /^Operator standing orders for this sweep\. They bind this worker/);
-  assert.match(text, /\n1\. Daniel approves every implementation plan\. \(user, 2026-09-29: "I want to approve every plan"\)/);
+  assert.match(text, /\n1\. The operator approves every implementation plan\. \(user, 2026-09-29: "I want to approve every plan"\)/);
   assert.match(text, /\n2\. Do not touch apps\/desktop\./);
 });
 

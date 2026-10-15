@@ -1,4 +1,4 @@
-"""Contract checks for Daniel Ochoa's 2026-10-13 rulings after the PRD-720 live test.
+"""Contract checks for the 2026-10-13 operator rulings after the PRD-720 live test.
 
 1. Repair, don't author. When the session's own change breaks existing tests or
    fixtures, the writer may mechanically update them so the tree compiles and
@@ -7,7 +7,7 @@
    repairs, and the person is never asked about tests or engineering choices.
 2. Lean build loop. Quick prep, build, the quick checks the commit hooks need,
    the orchestrator's commit, deploy, show the person. Browser E2E, visual QA,
-   logical QA, Metal Andrew, the adversarial and guardrails reviews and other
+   logical QA, product-contract QA, the adversarial and guardrails reviews and other
    heavy validation run only at handoff. The two notices stay as they are.
 """
 
@@ -30,7 +30,7 @@ INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.
 WORKERS_SRC = PLUGIN_ROOT.parents[1] / "tools" / "vibe-workers" / "src"
 LAUNCHER_BUNDLE = VIBE / "scripts" / "dist" / "claude-worker.mjs"
 NO_ENGINEERING_QUESTIONS = "Never ask the person about tests or any other engineering choice"
-HEAVY_VALIDATION = ("Browser E2E", "visual QA", "logical QA", "Metal Andrew")
+HEAVY_VALIDATION = ("Browser E2E", "visual QA", "logical QA", "product-contract QA")
 QA_SKILLS = ("/visual-qa", "/logical-qa", "/metal-andrew")
 
 
@@ -182,7 +182,7 @@ def test_handoff_runs_the_heavy_validation_the_loop_skips() -> None:
         assert f"`{skill_name}`" in qa, skill_name
     assert "Confirmed findings resume the SAME writer" in qa
     intro = flat(skill[: skill.index("## Answers from the person")])
-    for heavy in ("the guardrails and adversarial reviews", "browser E2E", "visual QA", "logical QA", "Metal Andrew"):
+    for heavy in ("the guardrails and adversarial reviews", "browser E2E", "visual QA", "logical QA", "product-contract QA"):
         assert heavy in intro, heavy
 
 

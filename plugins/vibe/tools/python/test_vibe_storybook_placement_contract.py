@@ -1,4 +1,4 @@
-"""Contract checks for Daniel Ochoa's 2026-10-14 ruling on Storybook placement.
+"""Contract checks for the 2026-10-14 operator ruling on Storybook placement.
 
 1. `vibe-storybook-decomposer` owns Storybook placement. It stays read-only
    and runs during `$vibe` (the writer's `NEEDS_STORYBOOK`) before a story is
@@ -145,7 +145,7 @@ def test_precedent_search_reports_everything_from_the_graph_and_the_built_index(
 def test_repo_docs_decide_first_then_the_precedent() -> None:
     search = section(agent("vibe-storybook-decomposer"), "## Precedent search")
     order = (
-        "Then (Daniel Ochoa's ruling, 2026-10-14): where the repo's "
+        "Then (operator ruling, 2026-10-14): where the repo's "
         f"{TAXONOMY_DOC} or {STORYBOOK_SKILL} already say how, follow them; "
         "where they do not, mirror the precedent"
     )
@@ -220,7 +220,7 @@ def test_owner_prep_looks_for_the_precedent_first_and_points_at_the_repo_rule() 
         "how its hosts consume it, and where its stories live",
         'the repo\'s `AGENTS.md` ("Shared behavior belongs in the shared parent (ISS-12135)")',
         "mirror the precedent's ownership, component and Storybook structure, never its root or version",
-        "Daniel Ochoa's ruling, 2026-10-14",
+        "operator ruling, 2026-10-14",
     ):
         assert required in precedent, required
     assert "review-owned, no gate" not in text
