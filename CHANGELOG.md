@@ -4,6 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.3.0
+
+#### Added
+- `prd-dependency-graph` skill: an interactive HTML graph of ClosedLoop tickets and their BLOCKS links for a document or project scope, written as a standalone page or embedded in an existing report. `scripts/refresh_server.py` builds the graph from the ClosedLoop REST API and serves the page's refresh button on `127.0.0.1` with a per-graph token; `scripts/render_graph.py` draws it; `scripts/check_graph.cjs` checks a rendered page in a headless browser.
+- A document scope is drawn as a root box with dotted PRODUCES arrows to its tickets, counted separately from BLOCKS links. BLOCKS arrows are red while the blocker is still open. Tickets outside the scope keep their status colors under a dashed border. The graph opens zoomed to fit its frame, and the zoom reset fits it again.
+- `refresh_server.py --new` and `--once` start the refresh helper in the background when it is not running and replace a helper running from another install; `--ensure` does only that. Each run writes a `~/.local/bin/prd-graph-helper` launcher pointing at the installed script, and the page's "helper not running" dialog shows that command.
+
 ### vibe v1.0.30
 
 #### Fixed

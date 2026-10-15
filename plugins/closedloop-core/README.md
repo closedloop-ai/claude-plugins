@@ -119,3 +119,23 @@ pipes for daemon and native-client operations. Caller inputs stay out of
 process arguments and diagnostic logs. The named-skill adapter resolves the
 actual enabled installation and stops on missing or incompatible core rather
 than substituting a copied transport.
+
+### `prd-dependency-graph`
+
+Builds an interactive HTML dependency graph of ClosedLoop tickets for a PRD or
+other document (`PRD-751`, `ISS-123`) or a whole project (`PRO-67`), as a
+standalone page or embedded in an existing report between `depgraph` markers.
+Solid arrows are live BLOCKS links, red while the blocker is still open; a
+document scope is drawn as a root box with dotted PRODUCES arrows to its
+tickets; tickets outside the scope are dashed and keep their status colors.
+Hover and click highlight upstream and downstream chains, and the graph opens
+zoomed to fit its frame.
+
+`scripts/refresh_server.py` builds the graph from the ClosedLoop REST API
+(`CLOSEDLOOP_API_KEY`) and is also the local helper behind the page's refresh
+button, listening on `127.0.0.1` only with a per-graph token. Creating or
+refreshing a graph starts the helper in the background and replaces one left
+running from another install. It also writes a `~/.local/bin/prd-graph-helper`
+launcher that follows plugin updates, which the page shows when the helper is
+not running. `scripts/check_graph.cjs` is a headless browser check of a
+rendered graph.
