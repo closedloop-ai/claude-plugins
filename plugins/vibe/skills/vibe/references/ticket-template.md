@@ -192,7 +192,10 @@ subagent that worked on this.>
   this up. Usually design reviews the components in the Storybook above (it
   opens after signing in to Vercel with a team account) and comments here on
   sign-off, then engineering finishes it through analysis, a pull request,
-  and merge.
+  and merge. On a requested pull request (the handoff skill's "A requested
+  pull request"), it reads instead: "Next: <the person who ran the session, by full name> takes this
+  through review and merge in the pull request handoff opens from this
+  branch." The ticket stays assigned to them.
 
 ## Design Review
 

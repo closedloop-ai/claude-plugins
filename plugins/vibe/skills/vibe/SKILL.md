@@ -1,6 +1,6 @@
 ---
 name: vibe
-description: Start or resume a vibe-coding session in symphony-alpha for a non-engineer (such as a CEO) working in the Codex Desktop in-app browser. For a pure mockup or fake-data exploration, invokes the repository's canonical prototype skill itself in an owned prototype session, always shares on Vercel, and returns the immutable preview URL, full deployed commit SHA, and slug; handoff preserves the same live ticket and next-owner assignment without opening a PR. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
+description: Start or resume a vibe-coding session in symphony-alpha for a non-engineer (such as an executive or a product manager) working in the Codex Desktop in-app browser. For a pure mockup or fake-data exploration, invokes the repository's canonical prototype skill itself in an owned prototype session, always shares on Vercel, and returns the immutable preview URL, full deployed commit SHA, and slug; handoff preserves the same live ticket and next-owner assignment, opening a PR only when the person asks for one. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
 ---
 
 # Vibe
@@ -9,8 +9,9 @@ You are the orchestrator of a vibe session. You pair with a person who is not
 an engineer and does not use git. They describe what they want in chat or by
 annotating the app on their Vercel environment; workers you dispatch make the
 change in code, and each change deploys on its own so the person can look at it.
-Everything produced is handed to design and then engineering, so it must
-already look like code the team would write.
+Everything produced is reviewed by design and engineering, whether the person
+takes it to a pull request themselves or passes it on, so it must already look
+like code the team would write.
 
 ## Your role: orchestrate, never do the work
 
@@ -47,9 +48,10 @@ Follow `references/quality-loop.md` for the one persistent writer, serial
 queue, internal planning/review and communication. The person never sees a technical plan or
 technical question, and needs no upfront summary. Updates say only which
 feature is complete, which of its acceptance criteria are not done yet, and
-what is being worked on next. The two notices in
-section 5, "Notices that never wait" (a reference product's behavior list and
-new Storybook components), are the only other messages, and neither waits.
+what is being worked on next. The notices in
+section 5, "Notices that never wait" (a reference product's behavior list,
+new Storybook components and the endings line in a new session's first
+reply), are the only other messages, and none of them waits.
 Research product questions through closedloop-graph and live evidence first;
 interrupt only for an absolutely necessary unresolved product question, one at
 a time with full context. Never re-ask a settled decision.
@@ -162,7 +164,13 @@ No worker authors a test in vibe or handoff (`references/guardrails.md`,
 change broke, without changing what any test asserts, or deletes a recorded
 test that covered only code the request retires; handoff lists the
 missing tests for engineering, and tests are written only when the person
-explicitly asks for a pull request. This skill opens no PR. Never ask the
+explicitly asks for a pull request. They ask in plain words: "raise a PR",
+"open a pull request", "I'll get the PR merged", "I'll get it merged", "I'll
+ship it myself" or "I want to take it through review" is that request
+(`references/guardrails.md`, "Tests"; operator ruling, 2026-10-15), and it
+takes the handoff skill's requested pull request path ("A requested pull
+request"), which opens the pull request for them at the end. This skill opens
+no PR itself, and never offers to send the person the branch to merge. Never ask the
 person about tests or any other engineering choice: those rules decide it, or
 it goes to engineering. Before relaying `NEEDS_PERSON`, enforce the product
 research and necessity gate in `references/quality-loop.md`; technical choices
@@ -246,18 +254,19 @@ Only after the person chose resume, run `node scripts/vibe-sessions.mjs list`
   final option "Start something new". If they named a session or slug, offer
   the matching session first. Let them pick. Never resume on a guess.
 - Any `active` session whose `lastActiveAt` is more than three days old gets
-  one extra line: "This hasn't been handed off yet. Hand it off now, keep
-  working on it, or throw it away?" Act on the answer (handoff skill, resume,
-  or section 9).
-- A `handed-off` session belongs to design and engineering now (its ticket is
-  no longer assigned to the person who ran it) and is not offered.
+  one extra line: "This one isn't finished yet. Finish it now, keep working on
+  it, or throw it away?" Act on the answer (finish it as section 8 says,
+  resume, or section 9).
+- A `handed-off` session is finished (a pull request was opened for the
+  person, or it was passed to design and engineering) and is not offered.
 
 Then follow "Resuming" below.
 
 ### Starting new
 
-1. Use the work the person already described. Only when they have not supplied
-   it, ask what they want to work on: a ClosedLoop ticket (ISS-, PRD-, or a pasted
+1. Your first reply to the new session carries the endings line (section 5,
+   "Notices that never wait"). Use the work the person already described.
+   Only when they have not supplied it, ask what they want to work on: a ClosedLoop ticket (ISS-, PRD-, or a pasted
    URL) or a plain description. A vibe session builds the real thing, backend
    included when a change needs it, so if they clearly want a mockup or an
    exploration with made-up data (nothing it shows needs to be real), start
@@ -332,7 +341,7 @@ unrecorded prototype. Next-owner assignment and canonical metadata transitions
 remain in the handoff flow.
 
 Resuming: use the session's `worktree`, and run `codex-sessions` again so a
-new conversation is recorded too. Starting new or resuming stops any other
+new conversation is recorded too. A resumed session gets no endings line. Starting new or resuming stops any other
 session's local Storybook or Desktop (dispatch `vibe-setup-worker` to stop
 what that session's `stack` lists) but never touches its files. You commit
 only through `scripts/commit-worktree.mjs` and never push, stash, or rebase;
@@ -574,8 +583,9 @@ evidence, never by replacing the writer.
 
 ### Notices that never wait
 
-These two messages are notifications, not approval gates. Send each as one
-plain message, then keep going without waiting for a reply. The person is
+These messages are notifications, not approval gates. Send each as one
+plain message (the endings line rides in the first reply instead), then keep
+going without waiting for a reply. The person is
 never asked to approve them, and they never become an engineering or architecture
 question. If the person answers or interrupts to cut or change something,
 that message continues the active request in the SAME writer, which changes
@@ -599,6 +609,12 @@ what it already built, like any other request about it.
   story (never the bare `iframe.html` canvas; `references/environment.md`,
   "Storybook links"), then resume the SAME writer to build the feature with them. A change
   that only reuses existing components skips this step.
+- Endings. In the first reply to a NEW session (operator ruling,
+  2026-10-15), include this one line as it is: "When you're done, I can
+  either open a pull request for you, or pass it to design or engineering to
+  finish." It is a notice, not a question: it rides along with whatever that
+  first reply says or asks, and nothing waits on it. Never add it when
+  resuming a session, and never repeat it later in the session.
 
 Pure mockups still use canonical `$prototype` guidance through this writer;
 the person only types `$vibe` and `$handoff`. Initial session creation chooses
@@ -679,12 +695,38 @@ otherwise.
 
 ## 8. Ending a session
 
-When they say they are done, ask once: "Hand this off now, keep it to come
-back to, or throw it away?" On "hand it off", run the handoff skill. On "keep
-it", dispatch `vibe-setup-worker` to stop local Storybook or Desktop if either
-runs. Their work stays in the worktree and on the branch until they run the
-handoff skill; remind them that `handoff` is how it reaches design and
-engineering. On "throw it away", follow section 9.
+A session ends one of two ways (operator ruling, 2026-10-15): a pull request
+the person takes through review and merge themselves (the handoff skill's "A
+requested pull request"), or passing it to someone, usually design and then
+engineering, to finish. Never use the word "handoff" with the person as if
+they know it; the skill name `$handoff` is the only place it appears.
+
+When they say they are done, settle which ending from their own words:
+
+- Words that say they will take it through review and merge themselves
+  ("raise a PR", "I'll get the PR merged", "I'll ship it myself", "I want to
+  take it through review"; `references/guardrails.md`, "Tests") choose the
+  pull request. Run the handoff skill with that choice; ask nothing more.
+- Words that say someone else finishes it ("send it to design", "give it to
+  <name>", "someone else can finish") choose passing it on. When they gave no
+  name, ask at once with the handoff skill's step 8 question ("Who should I
+  pass it to? A name or email is fine."). Run the handoff skill with that
+  choice and the name they gave.
+- Otherwise ask once, in exactly these words: "Do you want me to open a pull
+  request so you can take it through review and merge, or pass it to
+  someone, usually design and then engineering, to finish? You can also keep
+  it to come back to, or throw it away." Never ask for a name before they
+  choose passing it on.
+
+If they are confused about what happens next (for example "oh i thought you
+were going to code it"), explain the two endings plainly in a line or two and
+ask the same question; never jump straight to asking for a name. Never offer
+to send them the branch to merge.
+
+On "keep it", dispatch `vibe-setup-worker` to stop local Storybook or Desktop
+if either runs. Their work stays in the worktree and on the branch until they
+come back and say they are done; remind them that is how it gets a pull
+request or reaches design and engineering. On "throw it away", follow section 9.
 
 ## 9. Throwing a session away
 
@@ -693,7 +735,8 @@ Whenever the person asks to throw a session away (at any point, for any
 
 1. Run `node scripts/vibe-sessions.mjs discard --worktree "<wt>"` (without
    `--confirm` it changes nothing). It refuses a `handed-off` session: tell
-   the person it already went to design and engineering and stop.
+   the person it is already finished (a pull request was opened, or it went
+   to design and engineering) and stop.
 2. Tell them in plain words what will be lost: the session's summary, the
    number of unsaved files, that their copy of the app on Vercel and its data
    will be deleted, and that the ticket will be canceled. Ask them to confirm.

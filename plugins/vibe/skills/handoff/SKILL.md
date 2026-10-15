@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Finish a vibe session in symphony-alpha and hand it to whoever picks it up next, usually design and then engineering. Through workers, completes internal scope and Storybook checks, runs lint, typecheck and the existing tests without writing any (it lists the missing tests for engineering), drafts marked edits to existing product docs pages, reviews the integrated result and fixes confirmed findings, and verifies each touched screen in the running web app and Desktop with the repo's control skill. Asks who should pick the work up next, checks the live ticket is complete, publishes the final app environment or canonical prototype preview, and assigns the ticket with status left In Progress. It ends at the branch; no pull request is opened. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
+description: Finish a vibe session in symphony-alpha and hand it to whoever picks it up next, usually design and then engineering. Through workers, completes internal scope and Storybook checks, runs lint, typecheck and the existing tests without writing any (it lists the missing tests for engineering), drafts marked edits to existing product docs pages, reviews the integrated result and fixes confirmed findings, and verifies each touched screen in the running web app and Desktop with the repo's control skill. Settles in plain words how the session ends: a pull request the person takes through review and merge (plain-language intent such as "I'll get the PR merged" counts as asking for one), or passing it to someone, asking for a name or email only then. Checks the live ticket is complete, publishes the final app environment or canonical prototype preview, then either opens the requested pull request as its last step with the ticket left with the person, or assigns the ticket to the next owner, status left In Progress either way. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
 ---
 
 # Handoff
@@ -9,13 +9,17 @@ The person ran `vibe` and built something they are happy with. You
 orchestrate making it safe and complete for the next people, without asking
 them to understand any of the engineering. The session's live ClosedLoop
 ticket was created when the session started and the workers kept it current;
-handoff checks it is complete rather than writing it. The person says who
-picks the work up next, and the ticket is assigned to them. Usually that is
-design, who reviews the components in the branch's Vercel Storybook and
-comments on the ticket on sign-off, then engineering, who finishes the work
-through analysis, a pull request, and merge; sometimes it goes straight to
-engineering. The ticket stays In Progress throughout, and no pull request is
-opened here.
+handoff checks it is complete rather than writing it. The session ends one
+of two ways (operator ruling, 2026-10-15). The person can ask for a pull
+request they take through review and merge themselves ("A requested pull
+request"): handoff opens it as its last step and the ticket stays with them.
+Or they pass it to someone, and the ticket is assigned to whoever they name.
+Usually that is design, who reviews the components in the branch's Vercel
+Storybook and comments on the ticket on sign-off, then engineering, who
+finishes the work through analysis, a pull request, and merge; sometimes it
+goes straight to engineering. The ticket stays In Progress throughout. Never
+say "handoff" to the person as if they know the word, and never offer to send
+them the branch to merge.
 
 ## Your role: orchestrate, never do the work
 
@@ -59,8 +63,9 @@ The build loop is lean (`../vibe/references/quality-loop.md`, "Lean build
 loop"), so handoff is where the session's reviews and heavy validation run:
 the guardrails and adversarial reviews, browser E2E, visual QA, logical QA,
 product-contract QA, the existing tests, Storybook footprint and the running app
-checks. Handoff opens no pull request; "A requested pull request" below is the
-one exception to the no-tests rule.
+checks. Handoff opens a pull request only when the person asks for one ("A
+requested pull request" below), which is also the one exception to the
+no-tests rule.
 
 Harness notes match the `vibe` skill: in Codex invoke as `$handoff` and spawn
 plugin agents from `../../agents/<name>.md` with the file's body as the
@@ -91,8 +96,9 @@ This recovery is internal; never ask the person running the session about it or 
 
 Every answer the person gives during handoff (to a worker's `NEEDS_PERSON`,
 or as a correction to the summary in step 2) is one of two kinds, and the
-worker that asked says which (`behavior` or `wording`). The one exception is
-who picks the work up next, which step 8 asks and routes itself.
+worker that asked says which (`behavior` or `wording`). The exceptions are
+how the session ends, which step 0 settles, and who picks the work up next,
+which step 8 asks and routes itself.
 
 - **Behavior**: it decides what the product does. A rule, a permission (who
   may do something), what happens in a case, an acceptance criterion, or a
@@ -140,12 +146,22 @@ change worker has not handled; it refuses one with `NEEDS_CHANGE`.
 | Visual QA, logical QA and product-contract QA | the repository's own read-only skills (step 6) |
 | Backend: two review passes | the `workflow-code-review` skill (itself orchestrator-only) |
 | Last push and Vercel check | `vibe-environment-worker` (redeploy mode) |
-| Next owner, ticket check, and assignment | `vibe-ticket-worker` (lookup mode, then handoff mode, then assign mode) |
+| Opening a requested pull request | `vibe-environment-worker` (`pull-request` mode) |
+| Next owner, ticket check, and assignment | `vibe-ticket-worker` (lookup mode, then handoff mode, then assign mode; a requested pull request skips lookup and assign) |
 
 ## A requested pull request
 
 Without the person's explicit request for a pull request, nothing in vibe or
-handoff writes a test. When the person explicitly asks for a pull request to
+handoff writes a test. The person asks in plain words, and plain-language
+intent to take the work through review and merge themselves IS that request
+(`../vibe/references/guardrails.md`, "Tests"; operator ruling, 2026-10-15):
+"raise a PR", "open a pull request", "I'll get the PR merged", "I'll get it
+merged", "I'll ship it myself", "I want to take it through review", or
+choosing the pull request in step 0's question. Words like these take this
+path wherever they come, during the session or at any step here, and are
+never answered with a branch to merge.
+
+When the person explicitly asks for a pull request to
 be raised, full tests for every change in the session are required before it
 opens. Resume the SAME writer in `pull-request` mode, the only turn whose
 envelope authorizes tests, to write them: every acceptance criterion and
@@ -153,24 +169,62 @@ unsuperseded row, production wiring and failure paths, on web and Desktop
 where their adapters differ, and every entry on the missing tests list. Run
 `node scripts/handoff-inventory.mjs --worktree "<wt>" --phase pull-request`,
 then step 3's guardrail check, step 5's checks with the new tests included and
-step 6's review on the result, then step 7's commit. The pull request does not
-open until those tests pass and their independent review is clean. Handoff
-itself still opens none.
+step 6's review on the result, then step 7's commit and its push and
+publication through `vibe-environment-worker` in redeploy mode. The pull
+request does not open until those tests pass and their independent review is
+clean.
+
+From the request on, every brief in this handoff (the writer, the reviewers,
+the verify and environment workers, the ticket worker) carries the
+`pull-request` phase. No brief may say both that the person takes the work to
+a pull request and that no tests are authored: a requested pull request is the
+one case where the SAME writer authors them.
+
+On this path the ticket stays with the person: step 8 skips the next-owner
+question and lookup and gives the ticket worker the session's operator as the
+next owner, and step 9 skips assign mode. Handoff opens the pull request as
+its last step (step 9) through `vibe-environment-worker` in `pull-request`
+mode, and the person gets its link, never a branch to merge.
 
 ## 0. Pick the session
 
 Run `node ../vibe/scripts/vibe-sessions.mjs list` (it uses the checkout the
 vibe preflight remembered). Use the session whose worktree you are in. If you
 are not in one and more than one session is `active`, list them in plain
-words and ask which one to hand off. Read its `liveTicket` and `localFixes`.
+words and ask which one they want to finish. Read its `liveTicket` and `localFixes`.
 
 If the session has no `liveTicket` (it started before live tickets existed),
 dispatch `vibe-ticket-worker` in create mode first; it records the slug on
-the session. If it is `handed-off`, tell the person it was already
-handed off and stop.
+the session. If it is `handed-off`, tell the person it is already
+finished (a pull request was opened, or it was passed on) and stop.
 
 Then run `node ../vibe/scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"`
 so this conversation is recorded on the session too.
+
+### Settle how it ends
+
+Settle the ending before the checks, because a requested pull request changes
+what they run. Use the ending the person already chose (in the vibe skill's
+section 8 or in their own words here); never re-ask it.
+
+- Words that say they will take it through review and merge themselves (the
+  list in "A requested pull request") choose the pull request: follow that
+  section. Ask nothing more.
+- Words that say someone else finishes it ("send it to design", "give it to
+  <name>", "someone else can finish") choose passing it on. When they gave no
+  name, ask step 8's question for a name or email now, so the lookup in step 8
+  has it; never ask it again there.
+- Otherwise ask one plain question, in exactly these words:
+
+```
+Do you want me to open a pull request so you can take it through review and merge, or pass it to someone, usually design and then engineering, to finish?
+```
+
+Never ask for a name before they choose passing it on; once they choose it
+without naming anyone, ask step 8's question right away. If they are confused
+about what happens next (for example "oh i thought you were going to code
+it"), explain the two endings plainly in a line or two and ask the same
+question; never jump straight to asking for a name.
 
 ### Owned prototype sessions
 
@@ -206,7 +260,8 @@ publication, before completing or assigning the ticket. Never give a stale
 preview as current. Shared story/footprint rules, next-owner lookup and ticket
 assignment stay intact. The final links truthfully name the immutable prototype
 preview, full SHA, slug and resolved next owner, not fabricated app/API fields.
-Neither vibe nor handoff opens a PR.
+Neither vibe nor handoff opens a PR unless the person asks for one ("A
+requested pull request").
 
 ## 1. Internal checklist
 
@@ -432,7 +487,8 @@ that artifact or claims missing final evidence is a successful handoff.
 Publication readiness may precede external E2E completion for this FINAL
 handoff snapshot: retain exact named limitations, safely publish the committed
 SHA for existing CI/live QA, and keep final coverage/assignment incomplete.
-No feature PR or automatic manual-CI trigger is added. ROOT routes CI permission
+No automatic manual-CI trigger is added, and no feature PR opens here; a
+requested one opens in step 9. ROOT routes CI permission
 internally; never ask the vibe coder for technical-plan approval.
 For actual authorized/completed evidence, ROOT binds `mainSyncCiRun: {runId, attempt}`
 in the SAME writer's actual source progress/handoff grant, then resumes
@@ -537,14 +593,18 @@ packet and distinguish historical evidence from the actual delivered result.
 Unavailable evidence is a truthful gap, not a fabricated pass. This section is
 finished-work metadata, never a technical plan uploaded for approval.
 
-Use a next owner the person already named for this handoff; never re-ask that
-settled choice or infer an owner from a company default. If nobody was named,
-have the ticket worker check the current session's prior decisions first.
-Only if the necessary choice remains unresolved, ask one plain question in
-exactly these words:
+On a requested pull request (step 0), skip the question and the lookup: the
+next owner is the session's operator, the person who ran it, and the ticket
+stays with them.
+
+When they chose passing it on, use a next owner the person already named for
+this handoff; never re-ask that settled choice or infer an owner from a
+company default. If nobody was named, have the ticket worker check the
+current session's prior decisions first. Only if the necessary choice remains
+unresolved, ask one plain question in exactly these words:
 
 ```
-Who should pick this up next? A name or email is fine.
+Who should I pass it to? A name or email is fine.
 ```
 
 Dispatch `vibe-ticket-worker` in lookup mode with the worktree and their
@@ -572,7 +632,8 @@ handoff"). Have it refresh that section after any behavior answer that changes
 the table, before the ticket worker sees the table again.
 
 Then dispatch `vibe-ticket-worker` in handoff mode with: the worktree, the live
-ticket slug, the next owner (full name and email), the inventory path, the
+ticket slug, the next owner (full name and email), whether the person asked
+for a pull request, the inventory path, the
 confirmed summary and the person's corrections, the footprint, check, and
 review summaries, the Design blocks from build and handoff fixes, the required session decision table
 at `.closedloop-ai/decision-tables/<session-slug>.md` with whole-table alignment,
@@ -604,12 +665,25 @@ runs
 
 Repeat until it returns `DONE`. Never go on to step 9 while a behavior answer
 has not been through the change worker, while its re-run checks, reviews,
-or redeploy are unfinished, or without a next owner the lookup resolved to
-exactly one user.
+or redeploy are unfinished, or, when passing it on, without a next owner the
+lookup resolved to exactly one user.
 
 ## 9. Hand it over
 
-Dispatch `vibe-ticket-worker` in assign mode with the worktree, the live
+On a requested pull request, skip assign mode: the ticket stays with the
+person, In Progress. As handoff's last step, dispatch
+`vibe-environment-worker` in `pull-request` mode (its own `pull-request`
+record action, an exclusive record turn with no record writes) with the
+worktree, the live ticket slug, the confirmed summary, the final verified
+published commit from step 7, the tests the `pull-request` turn wrote and
+step 5's check results, and the ticket's Production impact and Flag changes
+and gates fields. It opens the pull request on the already pushed branch and
+returns its URL; it never enqueues or merges it. On `BLOCKED`, tell the
+person in one plain line that the pull request could not be opened and
+suggest they message engineering with the session slug; never give them the
+branch to merge instead. Then mark the session handed off as below.
+
+When they chose passing it on, dispatch `vibe-ticket-worker` in assign mode with the worktree, the live
 ticket slug, and the next owner's user id and email from step 8. It confirms
 the ticket is still assigned to the session's operator, the person who ran it
 (if engineering or design already took it, it returns `BLOCKED` and you stop:
@@ -624,8 +698,10 @@ runs.
 Tell them, in a few lines: the ticket link, the app link as
 `<appUrl>/sign-in` (the app's root sends a signed-out visitor to account
 creation), the Storybook link (the full Storybook UI per
-`../vibe/references/environment.md`, "Storybook links"), the
-branch name, and what happens next: the next owner, by name, picks it up
+`../vibe/references/environment.md`, "Storybook links"), and what happens
+next. On a requested pull request: the pull request link, and that they take
+it through review and merge from there; never the branch to merge. When
+passing it on: the branch name, and that the next owner, by name, picks it up
 from the ticket (usually design reviews the components in Storybook and
 comments on the ticket on sign-off, then engineering finishes it). Say that the Storybook link opens only after
 signing in to Vercel with a team account. If you open it and land on a

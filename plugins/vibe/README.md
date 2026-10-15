@@ -170,10 +170,15 @@ checklist.
 ### `handoff`
 
 Checks and reviews the session's work, verifies its current app environment or
-canonical prototype publication, and completes the same live ticket. Resolves
-the next owner named by the person and assigns the ticket with status In
-Progress. Canonical prototype review and metadata transitions are preserved;
-handoff ends at the branch without opening a pull request.
+canonical prototype publication, and completes the same live ticket. A session
+ends one of two ways, settled from the person's words or one plain question:
+a pull request they take through review and merge, which handoff opens as its
+last step with the ticket left with them, or passing it on, where handoff
+resolves the next owner they name and assigns the ticket. The status stays In
+Progress either way. Plain words such as "I'll get the PR merged" or "I'll
+ship it myself" count as asking for a pull request, and the person is never
+offered a branch to merge. Canonical prototype review and metadata
+transitions are preserved.
 Nobody authors tests in vibe or handoff. The same implementation writer only
 repairs existing tests and fixtures the session's change broke (imports,
 renamed or retired symbols, setup, type errors) without changing any
@@ -245,7 +250,7 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 | `vibe-setup-worker` | sonnet | Machine preflight, worktree bootstrap, owned local processes, and confirmed session discard |
 | `vibe-requirements-worker` | sonnet | Read-only ticket, requirements, overlap, and owning-route discovery |
 | `vibe-ticket-worker` | sonnet | Live ticket creation, next-owner lookup, handoff grading, assignment, and cancellation |
-| `vibe-environment-worker` | sonnet | Vercel environment creation, redeploy, flag snapshots, Desktop setup, and deployment records |
+| `vibe-environment-worker` | sonnet | Vercel environment creation, redeploy, flag snapshots, Desktop setup, deployment records, and opening a pull request the person asked for at handoff |
 | `vibe-change-worker` | sonnet | Sole persistent implementation writer for local planning, full-stack changes, stories, fixes, the handoff missing tests list and serialized recording |
 | `vibe-backend-worker` | opus | Read-only decision-table and backend guidance for that writer |
 | `vibe-primitive-worker` | sonnet | Read-only reusable-component and steward-specification guidance for that writer |
@@ -258,6 +263,25 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 | `vibe-seed-check-worker` | sonnet | Fresh-main seed checks and latest Vibe Seed Walk inspection |
 | `vibe-seed-fix-worker` | sonnet | Seed drift fixes, validation, and follow-up PR-check and review-comment fixes |
 | `vibe-seed-pr-worker` | sonnet | Seed PR push, status, main sync, merge queue, review replies, and owned worktree cleanup |
+
+## Evals
+
+`evals/` holds a `claude plugin eval` suite for how a session ends: plain
+words asking for a pull request, passing the work on, an unclear "I'm done",
+the endings line in a new session's first reply, and the closing pull request
+link. Each case is a one-turn rehearsal with the session state in the prompt,
+so it needs no symphony-alpha checkout, and it is named by persona (`exec-`
+for someone who describes the work and passes it on, `pm-` for someone who
+iterates from reference screenshots and may take it to a pull request
+themselves). The cases load `closedloop-core` too, which sits outside this
+plugin, so run the suite from the repository's `plugins/` folder:
+
+```bash
+cd plugins
+claude plugin eval . --eval-dir vibe/evals --model sonnet -j 2 --max-cost-usd 5 --no-publish
+```
+
+Add `--ablation none` to skip the no-plugin baseline arm. CI does not run it.
 
 ## Runtime Files
 

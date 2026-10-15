@@ -12029,11 +12029,24 @@ var recordModes = {
     create: ["create_document_version"],
     redeploy: ["create_document_version"],
     flags: ["create_document_version"],
-    desktop: ["create_document_version"]
+    desktop: ["create_document_version"],
+    "pull-request": []
   },
   "vibe-prototype-worker": { share: ["create_document_version"] }
 };
-var recordActionSchema = external_exports.enum(["progress", "create", "handoff", "assign", "cancel", "redeploy", "flags", "desktop", "share", "discard"]);
+var recordActionSchema = external_exports.enum([
+  "progress",
+  "create",
+  "handoff",
+  "assign",
+  "cancel",
+  "redeploy",
+  "flags",
+  "desktop",
+  "share",
+  "discard",
+  "pull-request"
+]);
 var requestContinuationSchema = external_exports.object({
   runtime: external_exports.enum(["codex", "claude"]),
   requestId: identifierSchema,

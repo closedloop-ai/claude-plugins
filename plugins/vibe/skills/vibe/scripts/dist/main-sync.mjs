@@ -224299,7 +224299,19 @@ var storedValidationRecipeSchema = external_exports.object({
 }).strict();
 
 // src/record-context.ts
-var recordActionSchema = external_exports.enum(["progress", "create", "handoff", "assign", "cancel", "redeploy", "flags", "desktop", "share", "discard"]);
+var recordActionSchema = external_exports.enum([
+  "progress",
+  "create",
+  "handoff",
+  "assign",
+  "cancel",
+  "redeploy",
+  "flags",
+  "desktop",
+  "share",
+  "discard",
+  "pull-request"
+]);
 var requestContinuationSchema = external_exports.object({
   runtime: external_exports.enum(["codex", "claude"]),
   requestId: identifierSchema,
