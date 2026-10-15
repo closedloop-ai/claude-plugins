@@ -4,6 +4,7 @@
 // symphony-alpha checkout as the default source of playwright-core:
 //   PLAYWRIGHT_CORE  path to the playwright-core package directory
 //   CHROME_PATH      path to the Chrome executable
+const fs = require('fs');
 const path = require('path');
 const assert = require('node:assert/strict');
 
@@ -127,10 +128,36 @@ const { chromium } = require(PW);
     assert.equal(await block.locator('.dg-zoom-reset').innerText(), fitLabel, 'Refreshed controls must remain live');
   }
 
+  // Save menu: one toolbar menu open at a time, Save Image downloads a PNG, Copy Image puts one on the clipboard.
+  let saved = null;
+  if (await block.locator('.dg-save').count()) {
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    const saveMenu = block.locator('.dg-save-menu');
+    await block.locator('.dg-save').click();
+    assert(await saveMenu.isVisible(), 'The save button must open its menu');
+    if (await block.locator('.dg-gear').count()) {
+      await block.locator('.dg-gear').click();
+      assert(await saveMenu.isHidden(), 'Opening the gear menu must close the save menu');
+      await block.locator('.dg-save').click();
+    }
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      block.locator('.dg-save-menu [data-action="save"]').click(),
+    ]);
+    const png = fs.readFileSync(await download.path());
+    assert.equal(png.subarray(1, 4).toString(), 'PNG', 'Save Image must download a PNG');
+    await block.locator('.dg-save').click();
+    await block.locator('.dg-save-menu [data-action="copy"]').click();
+    await block.locator('.dg-status', { hasText: 'copied' }).waitFor();
+    const clipboard = await page.evaluate(async () => (await navigator.clipboard.read())[0].types);
+    assert(clipboard.includes('image/png'), 'Copy Image must put a PNG on the clipboard');
+    saved = { file: download.suggestedFilename(), width: png.readUInt32BE(16), height: png.readUInt32BE(20), clipboard };
+  }
+
   const ok = structure.danglingEdges === 0 && errors.length === 0 &&
     hover.up === expected.up && hover.down === expected.down &&
     pinned.up >= expected.up && pinned.down >= expected.down && !cleared.dimmed;
-  console.log(JSON.stringify({ ok, structure, expected, hover, pinned, cleared, zoom: { fit: fitLabel, original, enlarged, refreshZoom }, errors }, null, 1));
+  console.log(JSON.stringify({ ok, structure, expected, hover, pinned, cleared, zoom: { fit: fitLabel, original, enlarged, refreshZoom }, saved, errors }, null, 1));
   await browser.close();
   process.exit(ok ? 0 : 1);
 })().catch((error) => { console.error(error); process.exit(1); });

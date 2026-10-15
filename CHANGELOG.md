@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.4.0
+
+#### Added
+- `prd-dependency-graph` pages have a save button with a menu: Save Image downloads the whole graph (legend included, as currently shown) as a 2x PNG named after the graph's title, and Copy Image puts the same PNG on the clipboard. The status line confirms each, and a failure opens a dialog. `check_graph.cjs` now checks both actions.
+
+#### Fixed
+- The `prd-dependency-graph` gear button finds its options menu by `aria-controls` instead of taking the first menu in the graph, and opening either toolbar menu closes the other.
+
 ### closedloop-core v1.3.0
 
 #### Added

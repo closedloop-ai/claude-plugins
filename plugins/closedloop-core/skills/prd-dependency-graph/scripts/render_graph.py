@@ -16,6 +16,7 @@ import hashlib
 import html
 import json
 import os
+import re
 import shlex
 import sys
 from collections import defaultdict
@@ -355,6 +356,10 @@ CSS = """
 .dg-zoom .dg-zoom-reset{width:54px;font-size:12px;font-variant-numeric:tabular-nums}
 .dg-zoom .dg-refresh:disabled{opacity:.45;cursor:default}
 .dg-menu-wrap{position:relative}
+.dg-save-menu{min-width:150px;padding:4px}
+.dg-menu-item{display:block;width:100%;text-align:left;padding:6px 10px;border:0;border-radius:6px;background:none;color:inherit;font:inherit;cursor:pointer}
+.dg-menu-item:hover,.dg-menu-item:focus-visible{background:#f2f0ec;outline:none}
+@media (prefers-color-scheme: dark){.dg-menu-item:hover,.dg-menu-item:focus-visible{background:#2f3238}}
 .dg-menu{position:absolute;top:34px;right:0;min-width:250px;padding:10px 12px;border-radius:8px;border:1px solid #d6d3cc;background:#ffffff;color:#1d1d1f;box-shadow:0 6px 20px rgba(0,0,0,.15);font:13px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
 .dg-menu label{display:flex;gap:8px;align-items:flex-start;cursor:pointer}
 .dg-menu input{margin:2px 0 0}
@@ -518,18 +523,135 @@ JS_SRC = """
     if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open', '');
   }
 
+  // Only one toolbar menu is open at a time; the toggles stop propagation, so close the others here.
+  function closeOtherMenus(block, keep) {
+    block.querySelectorAll('.dg-menu').forEach(function (m) {
+      if (m === keep || m.hidden) return;
+      m.hidden = true;
+      var owner = block.querySelector('[aria-controls="' + m.id + '"]');
+      if (owner) owner.setAttribute('aria-expanded', 'false');
+    });
+  }
+
+  // Draw the graph exactly as shown (legend, colors, any pinned chain) into a PNG.
+  var STYLE_PROPS = ['fill', 'fill-opacity', 'stroke', 'stroke-width', 'stroke-dasharray', 'stroke-opacity',
+    'opacity', 'font-family', 'font-size', 'font-weight', 'marker-end', 'visibility'];
+  function graphPng(block) {
+    return new Promise(function (resolve, reject) {
+      var svg = block.querySelector('.depgraph svg');
+      var box = svg.viewBox.baseVal;
+      var clone = svg.cloneNode(true);
+      var from = svg.querySelectorAll('*'), to = clone.querySelectorAll('*');
+      for (var i = 0; i < from.length; i++) {
+        var cs = getComputedStyle(from[i]);
+        to[i].setAttribute('style', STYLE_PROPS.map(function (p) { return p + ':' + cs.getPropertyValue(p); }).join(';'));
+      }
+      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      clone.setAttribute('width', box.width);
+      clone.setAttribute('height', box.height);
+      clone.removeAttribute('style');
+      var bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bg.setAttribute('width', box.width);
+      bg.setAttribute('height', box.height);
+      bg.setAttribute('fill', getComputedStyle(block.querySelector('.depgraph')).backgroundColor);
+      clone.insertBefore(bg, clone.firstChild);
+      // 2x for sharp text, capped so very large graphs stay within canvas limits.
+      var scale = Math.min(2, 8000 / Math.max(box.width, box.height));
+      var img = new Image();
+      img.onload = function () {
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.round(box.width * scale);
+        canvas.height = Math.round(box.height * scale);
+        var ctx = canvas.getContext('2d');
+        ctx.scale(scale, scale);
+        ctx.drawImage(img, 0, 0, box.width, box.height);
+        canvas.toBlob(function (blob) {
+          if (blob) resolve(blob); else reject(new Error('The browser could not encode the image.'));
+        }, 'image/png');
+      };
+      img.onerror = function () { reject(new Error('The browser could not draw the graph.')); };
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(clone));
+    });
+  }
+
+  function initSave(block) {
+    if (block.__dgs) return;
+    var btn = block.querySelector('.dg-save');
+    var menu = block.querySelector('.dg-save-menu');
+    if (!btn || !menu) return;
+    block.__dgs = true;
+    var status = block.querySelector('.dg-status');
+    var items = Array.prototype.slice.call(menu.querySelectorAll('[role="menuitem"]'));
+    function setMenu(open) {
+      if (open) closeOtherMenus(block, menu);
+      menu.hidden = !open;
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (open && items[0]) items[0].focus();
+    }
+    function flash(text) {
+      if (!status) return;
+      if (!status.hasAttribute('data-dg-text')) status.setAttribute('data-dg-text', status.textContent);
+      status.textContent = text;
+      clearTimeout(block.__dgFlash);
+      block.__dgFlash = setTimeout(function () {
+        status.textContent = status.getAttribute('data-dg-text');
+        status.removeAttribute('data-dg-text');
+      }, 3000);
+    }
+    function fail(title) {
+      return function (e) { showDialog(block, title, '<p>' + escText(e && e.message ? e.message : e) + '</p>'); };
+    }
+    btn.addEventListener('click', function (ev) { ev.stopPropagation(); setMenu(menu.hidden); });
+    menu.addEventListener('click', function (ev) { ev.stopPropagation(); });
+    document.addEventListener('click', function () { if (!menu.hidden) setMenu(false); });
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape' && !menu.hidden) { setMenu(false); btn.focus(); }
+    });
+    menu.addEventListener('keydown', function (ev) {
+      var at = items.indexOf(document.activeElement);
+      if (ev.key === 'ArrowDown') { ev.preventDefault(); items[(at + 1) % items.length].focus(); }
+      else if (ev.key === 'ArrowUp') { ev.preventDefault(); items[(at - 1 + items.length) % items.length].focus(); }
+    });
+    menu.querySelector('[data-action="save"]').addEventListener('click', function () {
+      setMenu(false);
+      graphPng(block).then(function (blob) {
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = (block.getAttribute('data-dg-name') || 'dependency-graph') + '.png';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+        flash('Image saved as ' + a.download);
+      }).catch(fail('Could not save the image'));
+    });
+    menu.querySelector('[data-action="copy"]').addEventListener('click', function () {
+      setMenu(false);
+      if (!navigator.clipboard || !navigator.clipboard.write || !window.ClipboardItem) {
+        fail('Could not copy the image')(new Error('This browser does not allow pages to copy images. Use Save Image instead.'));
+        return;
+      }
+      // The PNG is passed as a promise so the write starts inside the click (Safari requires that).
+      navigator.clipboard.write([new ClipboardItem({ 'image/png': graphPng(block) })])
+        .then(function () { flash('Image copied to the clipboard'); })
+        .catch(fail('Could not copy the image'));
+    });
+  }
+
   function initRefresh(block) {
     if (block.__dgr) return;
     block.__dgr = true;
     var btn = block.querySelector('.dg-reload');
     var gear = block.querySelector('.dg-gear');
-    var menu = block.querySelector('.dg-menu');
+    var menu = gear ? document.getElementById(gear.getAttribute('aria-controls')) : null;
     var outside = block.querySelector('.dg-opt-outside');
     var status = block.querySelector('.dg-status');
     if (!btn) return;
 
     function setMenu(open) {
       if (!menu) return;
+      if (open) closeOtherMenus(block, menu);
       menu.hidden = !open;
       gear.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
@@ -606,6 +728,7 @@ JS_SRC = """
     document.querySelectorAll('.depgraph svg').forEach(initGraph);
     document.querySelectorAll('.depgraph-block').forEach(initZoom);
     document.querySelectorAll('.depgraph-block').forEach(initRefresh);
+    document.querySelectorAll('.depgraph-block').forEach(initSave);
   }
 
   document.addEventListener('keydown', function (ev) {
@@ -781,6 +904,26 @@ def embed_markers(graph_id):
     return (f"<!-- depgraph:{graph_id}:start -->", f"<!-- depgraph:{graph_id}:end -->")
 
 
+SAVE_ICON = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+             'stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>'
+             '<path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>')
+
+
+def save_controls(menu_key):
+    menu_id = f"dg-save-menu-{esc(menu_key)}"
+    return ('<div class="dg-menu-wrap">'
+            f'<button class="dg-refresh dg-save" type="button" aria-label="Save or copy the graph as an image" '
+            f'title="Save or copy image" aria-haspopup="menu" aria-expanded="false" aria-controls="{menu_id}">{SAVE_ICON}</button>'
+            f'<div class="dg-menu dg-save-menu" id="{menu_id}" role="menu" hidden>'
+            '<button class="dg-menu-item" type="button" role="menuitem" data-action="save">Save Image</button>'
+            '<button class="dg-menu-item" type="button" role="menuitem" data-action="copy">Copy Image</button>'
+            '</div></div>')
+
+
+def file_stem(title):
+    return re.sub(r"[^a-z0-9]+", "-", str(title).lower()).strip("-") or "dependency-graph"
+
+
 def render_block(data):
     """The graph plus its toolbar, wrapped in one element the refresh swaps in place."""
     svg, n_nodes, n_edges = build_svg(data)
@@ -812,7 +955,9 @@ def render_block(data):
                   '<form method="dialog"><button type="submit">Close</button></form></dialog>')
     else:
         button = dialog = ""
-    button = '<div class="dg-controls">' + ZOOM_CONTROLS + button + '</div>'
+    stem = file_stem(data.get("title") or refresh.get("graph_id") or "dependency-graph")
+    attrs += f' data-dg-name="{esc(stem)}"'
+    button = '<div class="dg-controls">' + ZOOM_CONTROLS + save_controls(refresh.get("graph_id") or stem) + button + '</div>'
     toolbar = f'<div class="dg-toolbar"><span class="dg-status">{status}</span></div>'
     block = (f'<div class="depgraph-block"{attrs}><style>{CSS}</style>{toolbar}'
              f'<div class="dg-frame"><div class="depgraph">{svg}</div>{button}</div>'

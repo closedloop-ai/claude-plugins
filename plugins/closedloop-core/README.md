@@ -129,7 +129,8 @@ Solid arrows are live BLOCKS links, red while the blocker is still open; a
 document scope is drawn as a root box with dotted PRODUCES arrows to its
 tickets; tickets outside the scope are dashed and keep their status colors.
 Hover and click highlight upstream and downstream chains, and the graph opens
-zoomed to fit its frame.
+zoomed to fit its frame. A save menu downloads the whole graph as a PNG or copies
+it to the clipboard for sharing.
 
 `scripts/refresh_server.py` builds the graph from the ClosedLoop REST API
 (`CLOSEDLOOP_API_KEY`) and is also the local helper behind the page's refresh

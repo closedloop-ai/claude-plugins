@@ -65,7 +65,7 @@ Your job is to pick the scope and options, run them, name the columns, and check
 
 6. **Verify.**
    - The printed counts must match what the API holds. Never drop edges to make a picture cleaner.
-   - Headless browser check: `node scripts/check_graph.cjs <file.html> <a ticket with many links> <screenshot.png>`. It confirms there are no script errors, hover highlights exactly the ticket's incoming and outgoing links, click pins the chain, Esc clears, and zoom changes the graph size without disturbing a pinned chain. It needs `playwright-core` and Chrome; set `PLAYWRIGHT_CORE` and `CHROME_PATH` if the defaults do not exist. Look at the screenshot.
+   - Headless browser check: `node scripts/check_graph.cjs <file.html> <a ticket with many links> <screenshot.png>`. It confirms there are no script errors, hover highlights exactly the ticket's incoming and outgoing links, click pins the chain, Esc clears, zoom changes the graph size without disturbing a pinned chain, only one toolbar menu is open at a time, Save Image downloads a PNG, and Copy Image puts a PNG on the clipboard. It needs `playwright-core` and Chrome; set `PLAYWRIGHT_CORE` and `CHROME_PATH` if the defaults do not exist. Look at the screenshot.
 
 7. **Report back** with:
    - the file path;
@@ -158,6 +158,7 @@ The graph's top-right corner has zoom controls, a gear (options), and a refresh 
   - connected tickets are outlined, and everything else fades.
 - Click, or Enter on a focused ticket, pins the highlight and follows the whole chain upstream and downstream. Click empty space or press Esc to clear. Holding Shift while hovering also shows the whole chain.
 - Double-click opens the ticket in ClosedLoop.
+- The save button (download icon, top right) opens a menu with **Save Image**, which downloads `<title>.png`, and **Copy Image**, which puts the PNG on the clipboard for pasting into Slack or a doc. The image is the whole graph with its legend, as currently shown (a pinned chain stays highlighted), at 2x in the viewer's light or dark colors. The status line confirms each; a failure opens a dialog. It works without the helper.
 - Works in light and dark mode.
 
 ## Rules
