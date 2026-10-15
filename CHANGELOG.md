@@ -4,6 +4,21 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.41
+
+#### Fixed
+- Setup no longer stalls a session on the Claude worker launcher (operator ruling, 2026-10-15). In the product-manager session that prompted this, about 15 of the 19 minutes before the first preview were setup. `claude-worker.mjs` now binds its own installed plugin root when `agentRoot` is left out, reads a supplied `<root>/agents` as `<root>` (the session passed that and every launch failed with a generic `WORKER_TURN_FAILED`), keeps a resumed writer on its recorded root, and refuses another release's root as `STALE_PLUGIN_ROOT`. `writer-state.mjs register` and `acquire-record` resolve the root the same way for Codex.
+- The launcher checks the standalone Claude sign-in (`claude auth status`, from the home folder) before any writer state changes, and classifies a sign-in the CLI only rejects at start. Both return `CLAUDE_SIGN_IN_NEEDED` with one plain step for the person: `claude auth login` in the Terminal app. The Claude preflight reports the same as `claude-login`. Nothing tells the person to run `claude /login` any more, which opened a full Claude session that printed the project's permission rules and asked about its MCP servers.
+- Claude Code workers launch only through the launcher. A plugin agent dispatched through the native Agent tool has none of the ClosedLoop or closedloop-graph tools, which is why the ticket worker came back `BLOCKED` and the verify worker could not reach the graph. The launcher refuses a requirements or ticket launch without its ClosedLoop reads (`MISSING_CAPABILITIES`) and stops a worker whose granted connection did not load, from its own start event, before it reads its brief (`MCP_TOOLS_MISSING`).
+- macOS has no GNU `timeout`, and workers that bounded a check with it failed with "command not found". The new `scripts/run-bounded.mjs <seconds> <command>` stops the command and everything it started and exits 124; the skill, setup and verify workers point to it, and no plugin file uses `timeout <n>`.
+
+#### Changed
+- Questions are asked once. `scripts/session-questions.mjs` records every question and answer on the session (before the session exists, in a startup file that `vibe-sessions.mjs new` moves onto it), and the skill asks only when a key was never asked, never repeats one that is waiting, and gives recorded answers to every brief, relaunch and resumed conversation. The page-wording question had gone out three times while it waited for one answer.
+- The sample-data question goes through the existing necessity gate: it is asked only for a request about what a new, empty account looks like, in plain words, and never names a company after the person's email. Elsewhere the session starts with example data and asks nothing.
+- One list of banned person-facing terms with plain replacements, `references/plain-words.md`, referenced by both skills and the setup worker. Setup, progress, the component-gallery notice, sample-data and error messages use it; "message engineering with the session slug" becomes naming the work by its summary, and organization questions no longer say "<email> Co".
+- Not changed here: the stage seed itself names the example organization "<email> Co" (symphony-alpha `seed-load.ts`), and the dark-mode preview in that session was an improvised static copy shown in the host's browser pane, not a plugin preview; the page's own theme follows `prefers-color-scheme`.
+- Coverage: launcher tests for the root resolution, sign-in, connection and capability checks, and the Codex `register` root; node tests for `run-bounded.mjs`, `session-questions.mjs` and the Claude preflight check; a contract test file for the prose; and seven `claude plugin eval` cases (`exec-` and `pm-`, tags `setup`, `sample-data` and `questions`). On 1.0.39 the seven contract tests and nine of the ten launcher tests fail (the tenth unit-tests the new root resolver, which 1.0.39 lacks), the preflight test fails, and the `run-bounded` and `session-questions` tests have no script to run.
+
 ### vibe v1.0.39
 
 #### Changed

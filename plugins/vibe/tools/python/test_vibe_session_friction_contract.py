@@ -141,8 +141,6 @@ def test_no_plugin_file_bounds_a_command_with_gnu_timeout() -> None:
         assert "macOS has no `timeout` or `gtimeout`" in text
         assert "run-bounded.mjs" in text
 
-
-def test_the_timeout_guard_catches_the_commands_the_session_ran() -> None:
     for seen in ("timeout 60 claude mcp list", "F=x; timeout 560 bash -c \"until ...\"", "gtimeout 5 pnpm test"):
         assert GNU_TIMEOUT.search(seen), seen
     for allowed in ("raise a timeout or update a snapshot", "`timeout` or `gtimeout` command", "timeout: 30_000"):

@@ -13,8 +13,8 @@ say what it means for the person, or leave it out.
 
 | Never say to the person | Say instead |
 |---|---|
+| branch, the branch to merge | your changes |
 | handoff, hand off | pass it on to design or engineering |
-| branch, the branch to merge, merge | your changes; add it to the product |
 | commit, push, deploy, redeploy | save; update your copy of the app |
 | worktree, checkout, repo, repository | (leave it out) |
 | session slug | the name of this work (the session summary) |
@@ -30,9 +30,12 @@ say what it means for the person, or leave it out.
 | feature flag, flag snapshot | the settings that switch features on and off |
 
 A product or app name the person signs in to (Vercel, GitHub, ClosedLoop)
-stays, and so does "pull request" when the person used it first. A command the
-person must type, such as `claude auth login`, is quoted exactly once, with
-where to type it.
+stays. "Pull request", "review", "merge", "design" and "engineering" are the
+approved plain names for how a session ends (`SKILL.md`, section 8). Names the
+person passes on at the end, such as the ticket link, the branch name and the
+component gallery's Storybook link in handoff's closing message, are given as
+names for the next owner, not explained. A command the person must type, such
+as `claude auth login`, is quoted exactly once, with where to type it.
 
 Two more rules:
 

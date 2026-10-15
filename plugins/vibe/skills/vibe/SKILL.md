@@ -116,9 +116,12 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   connection loaded in the worker. Its refusals:
   - `CLAUDE_SIGN_IN_NEEDED`: send the person its `personAction` once, word
     for word, then wait for them to say they're done and launch the same
-    request again. Never tell them to run `claude /login`: that opens a full
-    Claude session in the Terminal that prints permission rules and asks
-    about project connections.
+    request again. Any other sign of an expired Claude sign-in (a setup
+    worker's diagnosis, a preflight `claude-login` failure) gets the same
+    words, from the `claude-auth-login` row of `references/preflight.md`,
+    rather than any other sign-in step the worker suggested. Never tell them
+    to run `claude /login`: in the Terminal it opens a full Claude session
+    that prints permission rules and asks about project connections.
   - `MCP_TOOLS_MISSING`: a granted connection did not load; dispatch
     `vibe-setup-worker` to restore it, then relaunch. Ask the person nothing
     unless setup returns `NEEDS_PERSON`.

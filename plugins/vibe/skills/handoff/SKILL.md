@@ -683,7 +683,7 @@ step 5's check results, and the ticket's Production impact and Flag changes
 and gates fields. It opens the pull request on the already pushed branch and
 returns its URL; it never enqueues or merges it. On `BLOCKED`, tell the
 person in one plain line that the pull request could not be opened and
-suggest they message engineering with the session slug; never give them the
+suggest they message engineering, naming this work by its summary; never give them the
 branch to merge instead. Then mark the session handed off as below.
 
 When they chose passing it on, dispatch `vibe-ticket-worker` in assign mode with the worktree, the live
