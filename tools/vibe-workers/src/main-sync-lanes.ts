@@ -12,8 +12,8 @@ const discoverySchema = z.object({ commands: z.array(laneSchema).max(128),
   desktopHarness: z.object({ run: z.string().min(1), dir: z.literal("apps/desktop") }).strict().optional() }).strict();
 const DISCOVERY_MODULES = ["scripts/lint/affected-test-lanes.ts", "scripts/lint/report-test-lanes.ts",
   "scripts/lint/desktop-e2e-lane.ts", "scripts/lint/workflow-shell-harness.ts"] as const;
-// The changed-path set is derived in the child from validationSince and the recipe's bound HEAD, so the
-// recorded argv stays one commit id however large a main import is (a set inline in argv exceeded the stored bound).
+// The changed-path set is derived in the child from the captured main and the recipe's bound HEAD, so the
+// recorded argv stays one commit id, and a main import the session merged is not rediscovered path by path.
 const DISCOVERY_SOURCE = String.raw`
 import {execFileSync} from 'node:child_process';
 import {loadOutOfGraphLanes, lanesCoveringPaths, referencedLanes} from './${DISCOVERY_MODULES[0]}';
@@ -21,7 +21,7 @@ import {laneCiCommand, execPlan} from './${DISCOVERY_MODULES[1]}';
 import {desktopE2eLane} from './${DISCOVERY_MODULES[2]}';
 import {loadWorkflowOrThrow} from './${DISCOVERY_MODULES[3]}';
 const since = process.argv[1];
-if (!/^[a-f0-9]{40}$/.test(since ?? '')) throw new Error('Lane discovery requires the validationSince commit');
+if (!/^[a-f0-9]{40}$/.test(since ?? '')) throw new Error('Lane discovery requires the captured main commit');
 const paths = execFileSync('git', ['diff', '--name-only', since, 'HEAD'], {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
   stdio: ['ignore', 'pipe', 'pipe']}).trim().split('\n').filter(Boolean);
 const lanes = await loadOutOfGraphLanes();
@@ -45,10 +45,10 @@ const BROWSER_SCRIPT = /^(?:test:e2e(?::.*)?|test:web-smoke)$/;
 /** Reuses structured owning exports; the report's prose and blind --exec are never launch instructions. */
 export function discoverCheckLanes(root: string, receipt: MainSyncReceipt) {
   if (process.env.PWDEBUG) throw new MainSyncError("Headless/displayless validation cannot run with ambient PWDEBUG; no test lane was spawned");
-  const discovery = { argv: ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", DISCOVERY_SOURCE, receipt.validationSince] };
+  const discovery = { argv: ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", DISCOVERY_SOURCE, receipt.mainSha] };
   verifyReportProducerInputs(root, root, ReportExecutionOwner.Discovery, DISCOVERY_MODULES);
   verifyReportExecution(root, root, ReportExecutionOwner.Discovery, discovery.argv);
-  // The owner runs one git grep per changed path, so a handoff after a large main import takes minutes, not seconds.
+  // The owner runs one git grep per changed path; diffing from the captured main keeps that to the session's own changes.
   const run = spawnSync(discovery.argv[0]!, discovery.argv.slice(1), { cwd: root, encoding: "utf8",
     timeout: MAX_CHECK_MS, maxBuffer: 16 * 1024 * 1024 });
   if (run.error || run.status !== 0) throw new MainSyncError("Structured owning test-lane discovery failed; no test lane was spawned");

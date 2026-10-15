@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
 import { MainSyncError, type OriginProof } from "./main-sync-contracts.js";
 import { digest, type syncContext } from "./main-sync-state.js";
-import { trackedInputs } from "./main-sync-checks.js";
+import { trackedInputs, verifyOriginProof, type inspectInputInventory } from "./main-sync-checks.js";
 import { producerFiles, producerPackage, producerOwnerInputs, verifyProducerInputs, type InputProducer } from "./main-sync-input-catalog.js";
 import { originIdentity, sameOriginFiles, type OriginFile } from "./main-sync-input-files.js";
 import { pureOriginFiles } from "./main-sync-input-pure.js";
@@ -137,4 +137,17 @@ function assertTracked(root: string, before: SourceIdentity) {
   if (after.headSha !== before.headSha || after.treeSha !== before.treeSha || after.inputSha256 !== before.inputSha256) {
     throw new MainSyncError("Canonical input preparation changed committed source or lock identity", "NEEDS_CHANGE");
   }
+}
+
+/** A stored proof for the same HEAD, tree and tracked inputs is reused only while it still verifies in full. */
+export function reusableInputOrigin(value: ReturnType<typeof syncContext>, before: ReturnType<typeof inspectInputInventory>,
+  stored: OriginProof | undefined) {
+  if (!stored || !before.producers.length || stored.headSha !== before.headSha || stored.treeSha !== before.treeSha
+    || stored.trackedInputSha256 !== before.inputSha256) return undefined;
+  try { verifyOriginProof(value.place.root, value.place.dir, before, stored); }
+  catch (error) {
+    if (error instanceof MainSyncError) return undefined;
+    throw error;
+  }
+  return stored;
 }
