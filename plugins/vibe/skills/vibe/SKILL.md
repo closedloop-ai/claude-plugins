@@ -217,24 +217,45 @@ the person to set anything up beyond what that worker reports as
 
 ## 2. Start or resume
 
-Run `node scripts/vibe-sessions.mjs list` (it uses the remembered checkout).
+Starting `$vibe` never searches for previous sessions up front: that search
+is slow, so it runs only for someone who chose to resume (operator ruling,
+2026-10-15). First settle whether the person is resuming or starting new:
 
-- No sessions with status `active`: start new (below).
+- Their own words already say resume: "pick up where I left off", "resume",
+  or a named session or slug. Go to "Finding a session to resume" without
+  asking.
+- Their own words already say new: a ClosedLoop ticket, or a description of
+  new work. Go to "Starting new" below without asking.
+- Only when it is genuinely unclear (for example they typed only `$vibe`),
+  ask exactly: "Do you want to pick up something you worked on before, or
+  start something new?" Never mention worktrees, branches or ledgers.
+
+A new session skips the search entirely; never run `vibe-sessions.mjs list`
+for it.
+
+### Finding a session to resume
+
+Only after the person chose resume, run `node scripts/vibe-sessions.mjs list`
+(it uses the remembered checkout).
+
+- No sessions with status `active`: tell them in one plain line there is
+  nothing to pick up, then start new (below).
 - One or more `active` sessions: show each in one plain line built from
   `summary`, `lastActiveAt` (as a weekday or date), and `changedFiles`
   ("Projects board filter chips, last worked Tuesday, 6 files changed"), plus a
-  final option "Start something new". Let them pick. Never resume on a guess.
+  final option "Start something new". If they named a session or slug, offer
+  the matching session first. Let them pick. Never resume on a guess.
 - Any `active` session whose `lastActiveAt` is more than three days old gets
   one extra line: "This hasn't been handed off yet. Hand it off now, keep
   working on it, or throw it away?" Act on the answer (handoff skill, resume,
   or section 9).
-- If their first message already describes the work, match it against the
-  summaries and offer the match as a resume. If nothing matches, start new and
-  mention the open sessions in one line.
 - A `handed-off` session belongs to design and engineering now (its ticket is
-  no longer assigned to the person who ran it): start new.
+  no longer assigned to the person who ran it) and is not offered.
 
-Starting new:
+Then follow "Resuming" below.
+
+### Starting new
+
 1. Use the work the person already described. Only when they have not supplied
    it, ask what they want to work on: a ClosedLoop ticket (ISS-, PRD-, or a pasted
    URL) or a plain description. A vibe session builds the real thing, backend
@@ -266,7 +287,9 @@ Starting new:
    with the operator from the `get-me` call in section 1 (the person running
    this session; leave out `--operator-name` when `get-me` has no name). This
    fetches main and creates the worktree on `vibe/<slug>` from fresh
-   `origin/main`. The live ticket is assigned to that person.
+   `origin/main`. The live ticket is assigned to that person. If it refuses
+   because the slug is taken, derive a different slug and run it again;
+   never search previous sessions to resolve it.
 5. Record this conversation as the session's orchestrator:
    `node scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"` (it reads
    `CODEX_THREAD_ID`; outside Codex, pass `--thread <id>` if you have one, or

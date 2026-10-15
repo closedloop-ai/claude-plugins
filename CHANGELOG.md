@@ -9,6 +9,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Fixed
 - `prevent-recurrence` now activates when correcting an issue or failure reveals a reusable prevention lesson across code, setup, measurement, validation, or workflow work. Its frontmatter keeps ordinary feature work, rejected findings, and external outages or flaky infrastructure with no agent or system mistake out of scope, and its contract test pins both the broader triggers and those exclusions.
 
+### vibe v1.0.38
+
+#### Changed
+- `$vibe` no longer searches for previous sessions when it starts (operator ruling, 2026-10-15). It first settles whether the person is resuming or starting new, asking one plain question only when their own words do not already say. A new session skips the search entirely; the session list runs only after the person chose to resume, and what it finds is offered then. Handoff's use of the list is unchanged.
+
 ### vibe v1.0.36
 
 #### Changed
