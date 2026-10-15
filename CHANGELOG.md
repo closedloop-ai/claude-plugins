@@ -4,15 +4,23 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### closedloop-core v1.4.1
-
-#### Fixed
-- `prevent-recurrence` now activates when correcting an issue or failure reveals a reusable prevention lesson across code, setup, measurement, validation, or workflow work. Its frontmatter keeps ordinary feature work, rejected findings, and external outages or flaky infrastructure with no agent or system mistake out of scope, and its contract test pins both the broader triggers and those exclusions.
-
 ### vibe v1.0.38
 
 #### Changed
 - `$vibe` no longer searches for previous sessions when it starts (operator ruling, 2026-10-15). It first settles whether the person is resuming or starting new, asking one plain question only when their own words do not already say. A new session skips the search entirely; the session list runs only after the person chose to resume, and what it finds is offered then. Handoff's use of the list is unchanged.
+- The plugin README's v1.0 freeze sentence now matches `guardrails.md`: handoff blocks any other edit of a v1.0 story file except a compile-only repair, and story files under the `Start Here/` root are exempt from the freeze.
+
+### vibe v1.0.37
+
+#### Fixed
+- Story files under the Storybook's `Start Here/` root are exempt from the v1.0 freeze (design ruling, 2026-10-06). 1.0.33 froze every story file that was v1.0 at the base, which included `Start Here/Version History`. symphony-alpha's `apps/storybook/TAXONOMY.md` makes adding, moving or removing stories a Storybook release with a Version History entry in the same change, so the freeze blocked every Storybook-changing handoff. Start Here is unversioned (`.storybook/manager.ts` shows no version under that root), so a tag there is not a version claim.
+- `handoff-inventory.mjs` leaves a story file whose meta title's first segment is `Start Here`, at the base or now, out of `v1Stories` (the freeze and the title and tag checks) and `retitledStories`. The exemption follows the title root, not a file name. Every other v1.0 story file stays frozen with the compile-only exception. `guardrails.md`, `vibe-storybook-decomposer`'s v1.0 rule and the handoff Storybook paragraph each state it in one line.
+- Coverage: a node test where editing the Version History page's content and changing its tag from v1.0 to v2.0, and retitling another Start Here page, pass while an edit to a v1.0 file outside Start Here still blocks as `frozen`; a new contract test file for the prose and the inventory's title-root check. Both fail on 1.0.36.
+
+### closedloop-core v1.4.1
+
+#### Fixed
+- `prevent-recurrence` now activates when correcting an issue or failure reveals a reusable prevention lesson across code, setup, measurement, validation, or workflow work. Its frontmatter keeps ordinary feature work, rejected findings, and external outages or flaky infrastructure with no agent or system mistake out of scope, and its contract test pins both the broader triggers and those exclusions.
 
 ### vibe v1.0.36
 

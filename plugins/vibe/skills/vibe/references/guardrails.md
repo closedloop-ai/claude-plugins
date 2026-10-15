@@ -233,6 +233,10 @@ PRD-720 session titled its new stories under v1.0 roots). The bare minimum:
   stories. Otherwise only a new component or a sibling replacement (a V3)
   gets a new entry (design ruling, 2026-10-15;
   `vibe-storybook-decomposer.md`, "Precedent search" step 4).
+- Story files under the `Start Here/` root are exempt from the v1.0 freeze
+  and the title, tag and retitle checks (design ruling, 2026-10-06): Start
+  Here is unversioned and its Version History is edited by every Storybook
+  release.
 - Composites, Patterns and Surfaces v2.0 are placed in the page tree the doc
   describes.
 - Each story file carries the `v2.0` version tag.

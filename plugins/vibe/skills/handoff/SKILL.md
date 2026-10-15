@@ -279,7 +279,10 @@ story file is never edited beyond a compile-only repair and any other existing
 story file keeps its title and tag
 (`../vibe/references/guardrails.md`, "Storybook taxonomy"); the inventory's
 `v1Stories` and `retitledStories` block handoff. Its `compileOnlyV1Repairs`
-do not; the ticket worker puts each on the Engineering checklist. Resume the SAME writer to perform every extraction, story and catalog
+do not; the ticket worker puts each on the Engineering checklist. Story files
+under the `Start Here/` root are exempt from the v1.0 freeze and the title,
+tag and retitle checks (design ruling, 2026-10-06): Start Here is unversioned
+and its Version History is edited by every Storybook release. Resume the SAME writer to perform every extraction, story and catalog
 source change. Read-only verify footprint mode measures the sidebar and
 reports remaining problems; they return to the writer, never another author.
 Collect Design Review evidence from the verified final diff and existing

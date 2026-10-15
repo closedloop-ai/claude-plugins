@@ -45,6 +45,12 @@
 // `retitledStories` and blocks unless the session record lists the file as a
 // replacement's entry (`vibe-sessions.mjs story-replacement`).
 //
+// A story file whose meta title is under the `Start Here/` root, at the base
+// or now, is exempt from the freeze, the v1.0 title and tag checks and the
+// retitle check (design ruling, 2026-10-06): Start Here is unversioned, as
+// symphony-alpha's .storybook/manager.ts treats it, and its Version History
+// page is edited by every Storybook release, so a tag there is not a version.
+//
 // `backendChanged` says whether the work touched backend code
 // (`backendFiles`). Handoff runs its lighter checks when it did not, and the
 // full suite with two workflow-code-review passes when it did.
@@ -104,6 +110,8 @@ const COMPONENT_PATTERN = /\/components\/.+\.tsx$/;
 // (design ruling, 2026-10-15).
 const V1_STORY_TITLE = /\btitle:\s*["'`](?:Foundations|Primitives|Composites|Surfaces)\//;
 const V1_STORY_TAG = /\btags:\s*\[[^\]]*["'`]v1\.0["'`]/;
+// The first title segment, as the sidebar root manager.ts leaves unversioned.
+const UNVERSIONED_STORY_ROOT = "Start Here";
 // The meta object's title, not a `title:` arg or prop elsewhere in the file.
 const STORY_META_START = /\b(?:const\s+meta\b[^=]*=|export\s+default)\s*\{/;
 const STORY_META_TITLE = /\btitle:\s*(["'`])((?:(?!\1).)+)\1/;
@@ -371,8 +379,9 @@ function isBackend(filePath) {
 /**
  * `v1Stories`: story files whose meta title sits in a v1.0 root or whose tags
  * include v1.0 where the base had neither, and every modified or moved story
- * file that was v1.0 at the base (`frozen`). `compileOnlyV1Repairs`: the
- * in-place edits of a v1.0 file that keep its story IDs and tags.
+ * file that was v1.0 at the base (`frozen`), except under the unversioned
+ * Start Here root. `compileOnlyV1Repairs`: the in-place edits of a v1.0 file
+ * that keep its story IDs and tags.
  */
 function findV1Stories(files) {
   const movedFrom = new Map(movedStories.map((story) => [story.path, story.from]));
@@ -389,6 +398,9 @@ function findV1Stories(files) {
     const from = movedFrom.get(file.path);
     const basePath = file.status === "M" ? file.path : from;
     const base = basePath === undefined ? undefined : readBaseFile(basePath);
+    if (isUnversionedStory(base) || isUnversionedStory(source)) {
+      continue;
+    }
     const gained = (pattern) => pattern.test(source) && !(base !== undefined && pattern.test(base));
     const reasons = [
       ...(gained(V1_STORY_TITLE) ? ["title"] : []),
@@ -417,9 +429,15 @@ function isV1Story(source) {
   return V1_STORY_TITLE.test(source) || V1_STORY_TAG.test(source);
 }
 
+/** A story file whose meta title's root is Start Here, which carries no version. */
+function isUnversionedStory(source) {
+  return source !== undefined && storyMetaTitle(source)?.split("/")[0].trim() === UNVERSIONED_STORY_ROOT;
+}
+
 /**
  * Story files present at the base whose meta title changed, in place or moved
  * to another path, each with the replacement it was recorded for or null.
+ * Start Here is unversioned, so a retitle into, out of or within it is not listed.
  */
 function findRetitledStories(files) {
   const modified = files
@@ -433,7 +451,7 @@ function findRetitledStories(files) {
   return [...modified, ...movedStories].flatMap(({ path: filePath, from }) => {
     const source = readWorktreeFile(filePath);
     const base = readBaseFile(from);
-    if (source === undefined || base === undefined) {
+    if (source === undefined || base === undefined || isUnversionedStory(base) || isUnversionedStory(source)) {
       return [];
     }
     const baseTitle = storyMetaTitle(base);

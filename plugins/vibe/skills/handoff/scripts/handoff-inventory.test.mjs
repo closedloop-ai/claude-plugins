@@ -482,6 +482,50 @@ test("a compile-only repair of a v1.0 story file passes for engineering review; 
   assert.deepEqual(repairOnly.json.compileOnlyV1Repairs, [{ path: file("propRename"), status: "M" }]);
 });
 
+test("Start Here is unversioned: its Version History and other pages may be edited, re-tagged and retitled while other v1.0 files stay frozen", (t) => {
+  const page = (title, tags, releases) =>
+    [
+      `import type { Meta } from "@storybook/react";`,
+      `import packageJson from "../package.json";`,
+      `const RELEASES = [${releases.map((version) => `{ version: "${version}" }`).join(", ")}];`,
+      "const meta = {",
+      `  title: "${title}",`,
+      `  tags: [${tags.map((tag) => `"${tag}"`).join(", ")}],`,
+      "} satisfies Meta;",
+      "export default meta;",
+      "export const Page = { args: { releases: RELEASES, version: packageJson.version } };",
+      "",
+    ].join("\n");
+  const history = "apps/storybook/stories/start-here-version-history.stories.tsx";
+  const catalog = "apps/storybook/stories/start-here-catalog.stories.tsx";
+  const treeRow = "apps/storybook/stories/composites/tree-row.stories.tsx";
+  const treeRowMeta = `export default { title: "Composites/Data Display/Tree Row", tags: ["v1.0"] };\nexport const Default = {};\n`;
+  const { home, worktree } = setup(t, "start-here-unversioned", {
+    [history]: page("Start Here/Version History", ["v1.0"], ["2.0.30"]),
+    [catalog]: page("Start Here/Catalog", ["v1.0"], []),
+    [treeRow]: treeRowMeta,
+  });
+  write(worktree, history, page("Start Here/Version History", ["v2.0"], ["2.0.31", "2.0.30"]));
+  write(worktree, catalog, page("Start Here/Component Catalog", ["v1.0"], []));
+  write(worktree, treeRow, `${treeRowMeta}export const Selected = {};\n`);
+
+  const result = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
+  assert.equal(result.status, 1);
+  assert.equal(result.json.blocking.storiesInV2Taxonomy, false);
+  assert.deepEqual(result.json.v1Stories, [{ path: treeRow, status: "M", reasons: ["frozen"] }]);
+  assert.deepEqual(result.json.compileOnlyV1Repairs, []);
+  assert.equal(result.json.blocking.existingStoryTitlesKept, true);
+  assert.deepEqual(result.json.retitledStories, []);
+
+  git(worktree, ["checkout", "-q", "--", treeRow], home);
+  const startHereOnly = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
+  assert.equal(startHereOnly.status, 0, JSON.stringify(startHereOnly.json));
+  assert.equal(startHereOnly.json.blocking.storiesInV2Taxonomy, true);
+  assert.deepEqual(startHereOnly.json.v1Stories, []);
+  assert.deepEqual(startHereOnly.json.retitledStories, []);
+  assert.deepEqual(startHereOnly.json.changedFiles.map((file) => file.path), [catalog, history]);
+});
+
 test("an existing non-v1.0 story file whose meta title changed blocks unless recorded as a replacement's entry", (t) => {
   const meta = (title, tags) => `const meta = {\n  title: "${title}",\n  tags: [${tags.map((tag) => `"${tag}"`).join(", ")}],\n};\nexport default meta;\n`;
   const table = "apps/storybook/stories/grid-table-v2.stories.tsx";

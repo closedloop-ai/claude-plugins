@@ -91,7 +91,10 @@ Do this first, in both modes.
    repair after a rename elsewhere: only mechanical changes (prop renames,
    imports, types), no story added or removed, no title, story ID or tag
    change and no visual change, since the freeze protects what its stories
-   show and their links, not the code wording. Any other existing story file takes the
+   show and their links, not the code wording. Story files under the
+   `Start Here/` root are exempt from the v1.0 freeze and the title, tag and
+   retitle checks (design ruling, 2026-10-06): Start Here is unversioned and
+   its Version History is edited by every Storybook release. Any other existing story file takes the
    new states as extra stories, its title, tag and existing story names
    unchanged. Otherwise only a new component, or a sibling replacement such
    as a V3, gets a new
