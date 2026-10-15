@@ -34,7 +34,10 @@ short status (`DONE`, `NEEDS_PERSON`, `NEEDS_REVIEW`, `BLOCKED`). Apply
 `../vibe/references/quality-loop.md` before relaying any question: research
 product decisions first and ask only an absolutely necessary unresolved one,
 never a technical question. Route the answer as "Answers from the person"
-below says. Updates mention only completed features and next work; planning,
+below says. Every word the person sees follows
+`../vibe/references/plain-words.md`, and every question goes through
+`../vibe/scripts/session-questions.mjs` as the vibe skill's "Questions are
+asked once" says, so nothing settled in the session is asked again. Updates mention only completed features and next work; planning,
 reviews and the checklist stay internal. Every
 worker brief says closedloop-graph is required
 (`../vibe/references/closedloop-graph.md`): each worker that locates,
@@ -688,7 +691,7 @@ step 5's check results, and the ticket's Production impact and Flag changes
 and gates fields. It opens the pull request on the already pushed branch and
 returns its URL; it never enqueues or merges it. On `BLOCKED`, tell the
 person in one plain line that the pull request could not be opened and
-suggest they message engineering with the session slug; never give them the
+suggest they message engineering, naming this work by its summary; never give them the
 branch to merge instead. Then mark the session handed off as below.
 
 When they chose passing it on, dispatch `vibe-ticket-worker` in assign mode with the worktree, the live

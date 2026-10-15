@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { bundleDirectory, fixture, graph } from "./test-fixtures.js";
+import { bundleDirectory, fixture, graph, liveReads } from "./test-fixtures.js";
 
 // A 1x1 PNG: the person's attached reference, already in the harness transcript.
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -23,8 +23,9 @@ function attachReference(value: ReturnType<typeof fixture>) {
 }
 
 function launch(value: ReturnType<typeof fixture>, agentName: string, requestId: string) {
+  const capabilities = agentName === "vibe-requirements-worker" ? [...graph, ...liveReads] : graph;
   return spawnSync(process.execPath, [join(bundleDirectory, "claude-worker.mjs")], {
-    input: JSON.stringify({ worktree: value.worktree, agentRoot: value.agentRoot, agentName, capabilities: graph,
+    input: JSON.stringify({ worktree: value.worktree, agentRoot: value.agentRoot, agentName, capabilities,
       mode: "request", requestId, input: "Build the card from the reference" }),
     encoding: "utf8", env: { ...process.env, PATH: `${value.bin}:${process.env.PATH}` }, timeout: 10000,
   });

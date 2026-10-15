@@ -162,8 +162,8 @@ then plain search.
    `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --clerk-org-id <org_id>`
    and request the environment again, once; if that run refuses the same way,
    return `BLOCKED` with its message for engineering. If two or more remain,
-   return `NEEDS_PERSON` with the question "Which one should own <email> Co:
-   <names>?", plus a mapping from each name to its `org_` id (the orchestrator
+   return `NEEDS_PERSON` with the question "Which of your organizations should
+   hold the example company: <names>?", plus a mapping from each name to its `org_` id (the orchestrator
    records the answer with `touch --clerk-org-id` and dispatches you again,
    which sends `clerk_org_id`). If none remain, do step 6 instead. If the run
    lists no orgs, return `BLOCKED` saying the run did not say which orgs the
@@ -172,8 +172,8 @@ then plain search.
    the run's wording (such as "pass clerk_org_id").
 6. Seeded, and the person is an admin of none of their orgs (the
    `clerk_org_refusal=` line is `clerk_org_no_admin`, or step 5 kept no org):
-   return `NEEDS_PERSON` with "<email> Co needs an organization on the test site
-   where you are an admin, and you are not an admin of <names>. Ask an admin
+   return `NEEDS_PERSON` with "The example company needs an organization on the test site
+   where you can manage settings, and you can't manage <names>. Ask an admin
    there to make you one, then tell me, or start a new session with an empty
    copy of the app." Put the run's own message in a separate line for engineering.
 7. Any other refusal about the person's identity (no stage account for their
@@ -184,7 +184,7 @@ then plain search.
    run's own message in a separate line for engineering.
 8. Seeded: read `personOrgAdmin` from the `vibe-environment.yml` run (its job
    summary or log). If it is not `true`, return `BLOCKED` saying the person is
-   not an admin of `<email> Co`.
+   not an admin of the example company.
 
 ## Redeploy mode
 

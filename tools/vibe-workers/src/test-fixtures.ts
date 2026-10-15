@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import type { Capability } from "./contracts.js";
 
 export const graph: Capability[] = [{ name: "mcp__custom_graph__sync_status", service: "graph", operation: "sync_status", access: "read" }];
+export const liveReads: Capability[] = ["get_document", "get_me"].map((operation) => ({
+  name: `mcp__live_workspace__${operation}`, service: "closedloop", operation, access: "read" }));
 export const recordWrite: Capability = { name: "mcp__live_workspace__create_document_version", service: "closedloop", operation: "create_document_version", access: "write" };
 export const bundleDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "../../../plugins/vibe/skills/vibe/scripts/dist");
 
@@ -38,8 +40,15 @@ export function fixture() {
 const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
+if (args[0] === 'auth' && args[1] === 'status') {
+  process.stdout.write(JSON.stringify({ loggedIn: process.env.FAKE_CLAUDE_SIGNED_OUT !== '1' }) + '\n');
+  process.exit(process.env.FAKE_CLAUDE_SIGNED_OUT === '1' ? 1 : 0);
+}
 const option = key => args[args.indexOf(key) + 1];
 const id = option(args.includes('--resume') ? '--resume' : '--session-id');
+const dropped = (process.env.FAKE_CLAUDE_DROP_SERVER || '').split(',').filter(Boolean);
+const initTools = (option('--tools') || '').split(',').filter(tool => !dropped.some(server => tool.startsWith('mcp__' + server + '__')));
+process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_id: id, tools: initTools }) + '\n');
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', chunk => input += chunk);
@@ -66,6 +75,10 @@ process.stdin.on('end', () => {
       { cwd: process.cwd(), encoding: 'utf8' }));
   }
   if (payload.input.includes('STARTUP_FAILURE')) process.exit(2);
+  if (payload.input.includes('AUTH_EXPIRED')) {
+    process.stderr.write('Failed to authenticate: OAuth session expired and could not be refreshed\n');
+    process.exit(1);
+  }
   if (payload.input.includes('WAIT_FOR_CANCEL')) { setInterval(() => {}, 1000); return; }
   if (payload.input.includes('INVALID_OUTPUT')) { process.stdout.write('invalid\n'); process.exit(0); }
   let status = 'DONE';

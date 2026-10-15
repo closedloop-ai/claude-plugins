@@ -41,6 +41,9 @@
 // sibling replacement component (such as a V3); handoff blocks any other
 // retitled existing story file (design ruling, 2026-10-15).
 //
+// `new` also moves the questions session-questions.mjs kept before the
+// session existed onto the new record, so none of them is asked again.
+//
 // `operator` is the person running the session, from ClosedLoop `get-me`
 // (`--operator-*`, required on `new`; `touch` sets it on an older record):
 // the live ticket is assigned to them and handoff checks it still is.
@@ -85,6 +88,7 @@ import { readWriterSummary } from "./dist/writer-state.mjs";
 import { admitMainSyncRequest, admitMainSyncShare, MainSyncError, mainSyncFailure, pushMainSync,
   readMainSyncInput, readMainSyncProvenance, prepareMainSyncInputs, validateMainSync } from "./dist/main-sync.mjs";
 import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublication } from "./prototype-session.mjs";
+import { adoptStartupQuestions } from "./session-questions.mjs";
 import { git, readSessionRecord, sessionLiveTicket, writeSessionRecord as writeRecord } from "./session-record.mjs";
 import {
   buildDispatchInputs,
@@ -374,7 +378,8 @@ function newSession({ prototype = false } = {}) {
     localFixes: [],
   };
   writeRecord(worktree, record);
-  return { worktree, ...record };
+  const questions = adoptStartupQuestions(worktree);
+  return { worktree, ...record, ...(questions.length ? { questions } : {}) };
 }
 
 function touchSession() {

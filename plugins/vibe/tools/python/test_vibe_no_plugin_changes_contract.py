@@ -79,7 +79,7 @@ def test_a_needed_tooling_fix_stops_and_is_recorded_and_reported_never_asked() -
         "the request stays `BLOCKED` in the session ledger with the reason",
         "a line in the live ticket's Progress names it",
         "Report it to engineering",
-        "message engineering with the session slug",
+        "message engineering, naming this work by its summary",
         "It is never a question for the person.",
     ):
         assert required in text, required

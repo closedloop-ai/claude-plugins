@@ -28,6 +28,7 @@ work itself. Under all circumstances:
 - You may: talk to the person; run this skill's own scripts
   (`scripts/vibe-preflight.sh`, `scripts/vibe-sessions.mjs`,
   `scripts/commit-worktree.mjs`, `scripts/local-plans.mjs`,
+  `scripts/session-questions.mjs`, `scripts/run-bounded.mjs`,
   `scripts/dist/writer-state.mjs`, `scripts/dist/claude-worker.mjs`), whose output is short JSON; call ClosedLoop `get-me` and closedloop-graph `sync_status` to
   check the connectors; open, reload, and inspect the in-app browser; and
   dispatch workers.
@@ -43,6 +44,10 @@ work itself. Under all circumstances:
   words, and for an annotation the comment text, the element context, and the
   page route. Workers return a short result; do not ask them for file
   contents.
+
+Every word the person sees follows `references/plain-words.md`: its table
+of engineering terms and their plain replacements is the one list, for your
+own messages and for any worker text you relay.
 
 Follow `references/quality-loop.md` for the one persistent writer, serial
 queue, internal planning/review and communication. The person never sees a technical plan or
@@ -71,7 +76,9 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   ID, acquire the grant, then resume that SAME helper for the operation.
   Before any native helper's session/ticket mutation, acquire its exact canonical
   role/action through `writer-state.mjs acquire-record` as `quality-loop.md`
-  specifies. Dispatch only after acquisition. Release with `release-record`
+  specifies. `register` and `acquire-record` bind the installed plugin root
+  that runs them when `agentRoot` is left out, and refuse another release's
+  root, so leave it out unless a recorded binding says otherwise. Dispatch only after acquisition. Release with `release-record`
   only after observed completion or confirmed owned termination of that actual
   native turn, never because the coordinator script exited. When
   `release-record` for the writer's own grant fails with `ENOENT` because a
@@ -88,10 +95,40 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   is `<root>/skills/vibe/scripts/vibe-sessions.mjs`)." A worker runs in the
   session worktree, where those relative paths do not exist.
 - Claude Code: invoke as `/vibe:vibe`; plugin agents are available as
-  `vibe:<name>`.
-  Graph-dependent calls use `scripts/dist/claude-worker.mjs` with the canonical
-  own-plugin scoped definition and exact capabilities discovered/verified in
-  the parent. It uses supported launch-time binding, not an invented per-call
+  `vibe:<name>`. Launch every worker through `scripts/dist/claude-worker.mjs`,
+  never through the native Agent tool: a plugin agent dispatched natively gets
+  only the built-in tools its file lists, with no ClosedLoop or closedloop-graph
+  tools (the 2026-10-15 session's ticket worker came back `BLOCKED` and its
+  verify worker could not reach the graph for exactly this reason). The only
+  native dispatch is the bootstrap in section 1. Send the launcher one JSON
+  object on stdin: `{"worktree", "agentName", "mode", "requestId", "input"
+  (or "continuation"), "capabilities"}` plus the record and sessionless fields
+  below when they apply. Leave `agentRoot` out: the launcher binds its own
+  installed plugin root, or a resumed writer's recorded root, so a guessed or
+  remembered path can never point it at the wrong place (a supplied
+  `<root>/agents` is read as `<root>`; another release's root is refused as
+  `STALE_PLUGIN_ROOT`). `capabilities` lists every closedloop-graph read and
+  every ClosedLoop read the parent can see (`{name, service: "graph" |
+  "closedloop", operation, access: "read"}`), plus only the writes the
+  record action allows; the requirements and ticket workers are refused
+  (`MISSING_CAPABILITIES`) without the ClosedLoop reads they need. Before any
+  work the launcher checks the Claude sign-in and that every granted
+  connection loaded in the worker. Its refusals:
+  - `CLAUDE_SIGN_IN_NEEDED`: send the person its `personAction` once, word
+    for word, then wait for them to say they're done and launch the same
+    request again. Any other sign of an expired Claude sign-in (a setup
+    worker's diagnosis, a preflight `claude-login` failure) gets the same
+    words, from the `claude-auth-login` row of `references/preflight.md`,
+    rather than any other sign-in step the worker suggested. Never tell them
+    to run `claude /login`: in the Terminal it opens a full Claude session
+    that prints permission rules and asks about project connections.
+  - `MCP_TOOLS_MISSING`: a granted connection did not load; dispatch
+    `vibe-setup-worker` to restore it, then relaunch. Ask the person nothing
+    unless setup returns `NEEDS_PERSON`.
+  - `CLAUDE_CLI_MISSING`, `AGENT_ROOT_INVALID`, `STALE_PLUGIN_ROOT`: internal;
+    fix the call (leave `agentRoot` out) or dispatch setup.
+  Use the canonical own-plugin scoped definition and exact capabilities
+  discovered/verified in the parent. It uses supported launch-time binding, not an invented per-call
   Agent override. Briefs/capability metadata are JSON on stdin. The implementation
   writer's actual Claude session ID is persisted and explicitly resumed.
   On an existing session preserve its original recorded binding and actual
@@ -131,6 +168,11 @@ stops until core is explicitly installed and enabled.
   attached image with `scripts/reference-images.mjs` and pass its path; the
   worker opens it with `Read` in Claude Code or `view_image` in Codex
   (`references/quality-loop.md`, "Visual references").
+- macOS has no `timeout` or `gtimeout` command, so a check bounded with it
+  fails with "command not found" (the 2026-10-15 verify worker hit this).
+  Bound a slow command with the tool's own timeout setting or
+  `node <root>/skills/vibe/scripts/run-bounded.mjs <seconds> <command>`
+  (exit 124 on time out). Say so in every worker brief that runs commands.
 
 ## Workers
 
@@ -200,7 +242,8 @@ owned session once it exists. Serialize any existing bug-ticket creation/progres
 through that setup action's exclusive record turn; setup never patches code. The
 only things the person ever does are type their Mac password into an
 installer prompt, finish a browser sign-in, allow Codex into a folder when
-macOS asks; the worker reports those actions as `NEEDS_PERSON`. Checkout and
+macOS asks, and sign in to Claude again with the one Terminal step the
+`claude-login` fix gives; the worker reports those actions as `NEEDS_PERSON`. Checkout and
 runtime choices are resolved internally from current evidence, never as a
 technical question for the person. You and the
 workers never type or ask for credentials. Re-run the preflight until it
@@ -288,10 +331,17 @@ Then follow "Resuming" below.
    and are for workers; never present them as a screen the session starts on
    (the app opens on its default page after sign-in), and never promise a
    screen for a broad request such as "look for visual bugs".
-2. Use a mode the person already supplied; never ask again. Otherwise ask once: "Should your copy of the app start with sample data (a company
-   called <email> Co with people and work in it), or empty so you set it up
-   yourself?" Record `seeded` or `blank` as the mode. If they are unsure, use
-   `seeded`.
+2. Choose the app's starting data. Use what the person already said. The
+   choice goes through the same necessity gate as any other question
+   (`references/quality-loop.md`, "Communication and product questions"): it
+   matters only when the request is about what a new, empty account looks
+   like (first-run screens, empty states, setting up an organization). In
+   every other case record `seeded` and ask nothing. When it does matter,
+   ask once, in these words: "Should your copy of the app start with an
+   example company that already has people and work in it, or start empty so
+   you can set it up yourself?" Record `seeded` or `blank`; if they are
+   unsure, use `seeded`. Never name the example company after the person's
+   email or anything else of theirs; call it "the example company".
 3. Derive a short slug from the work (lowercase words joined by hyphens, at
    most 40 characters).
 4. `node scripts/vibe-sessions.mjs new --slug <slug> --summary "<one line>"
@@ -389,15 +439,15 @@ A resumed session whose `vercel.verifiedAt` is set already has its
 environment; skip this and use its recorded `appUrl`, opening
 `<appUrl>/sign-in` first as below. A resumed session
 without it (one started before environments were verified) goes through
-create mode again; the worker keeps its flag snapshot. If the worker returns `NEEDS_PERSON` asking which
-one should own `<email> Co`, ask the person exactly its question, record the org
+create mode again; the worker keeps its flag snapshot. If the worker returns `NEEDS_PERSON` asking which of
+the person's organizations should hold the example company, ask the person exactly its question, record the org
 id the worker mapped to their answer with
 `node scripts/vibe-sessions.mjs touch --worktree "<wt>" --clerk-org-id <org_...>`,
 and dispatch it again. If it returns `NEEDS_PERSON` saying they are not an
 admin of any of their organizations, pass that on as written and wait for
 their answer. If it returns `BLOCKED`, tell the person in one or two
-plain lines what failed and suggest they message engineering with the
-session slug. Never open or give the person a URL after `BLOCKED`: any
+plain lines what failed and suggest they message engineering, naming this
+work by its summary. Never open or give the person a URL after `BLOCKED`: any
 preview address without its own deployment shows the stage production app.
 
 When it returns `DONE`:
@@ -407,7 +457,7 @@ When it returns `DONE`:
   signed-out visitor to account creation, and the person already has an
   account. After this first sign-in, use the plain `appUrl`; if a tab ever
   lands on account creation instead, open `<appUrl>/sign-in`. The person signs in through Clerk as themselves (you never type
-  credentials). Seeded: they land in `<email> Co` as an admin. Blank: they create
+  credentials). Seeded: they land in the example company as an admin. Blank: they create
   their own org.
 - Confirm the tab shows the app (with seeded data when seeded), not an error
   page or an empty shell, before saying it is ready.
@@ -631,7 +681,9 @@ what it already built, like any other request about it.
   is running, dispatch `vibe-setup-worker` to start it. Send one plain message
   pointing the person to `<storybookUrl>/?path=/story/<id>` for each new
   story (never the bare `iframe.html` canvas; `references/environment.md`,
-  "Storybook links"), then resume the SAME writer to build the feature with them. A change
+  "Storybook links"), in words like "I built the new pieces first; you can
+  look at each one in the component gallery: <link>", with no mention of a
+  server, a story or Storybook, then resume the SAME writer to build the feature with them. A change
   that only reuses existing components skips this step.
 - Endings. In the first reply to a NEW session (operator ruling,
   2026-10-15), include this one line as it is: "When you're done, I can
@@ -644,6 +696,30 @@ Pure mockups still use canonical `$prototype` guidance through this writer;
 the person only types `$vibe` and `$handoff`. Initial session creation chooses
 one app or prototype branch. Never add a second worktree/branch for a sub-unit.
 Local Storybook remains available and product design approvals stay intact.
+
+### Questions are asked once
+
+No question reaches the person twice (operator ruling, 2026-10-15). In the
+session that prompted this rule the page-wording question went out in three
+messages while it waited for one answer. Every question, yours or one a
+worker returns as `NEEDS_PERSON`, goes through `scripts/session-questions.mjs`:
+
+1. Before asking, run `node scripts/session-questions.mjs ask --key <topic>
+   --question "<exact words>" [--worktree "<wt>"]`, with a short stable key
+   for the topic (`sample-data`, `page-wording`, `button-label`). Before the
+   session exists leave `--worktree` out; `vibe-sessions.mjs new` moves those
+   questions onto the session. In "Starting new", run
+   `node scripts/session-questions.mjs reset` before the first question.
+2. Ask only when it returns `"ask": true`. With `"ask": false` and an
+   `answer`, the question is settled: use the answer. With `"ask": false` and
+   no answer, it is already waiting: do not repeat it, remind the person of
+   it, or add it to another message, such as a sign-in step.
+3. Record the person's answer as soon as it arrives:
+   `node scripts/session-questions.mjs answer --key <topic> --answer "<their words>" [--worktree "<wt>"]`.
+4. Give every worker brief, relaunch, migration and resumed conversation the
+   recorded answers (`session-questions.mjs list --worktree "<wt>"`) as
+   settled decisions. A worker that asks one again gets it back with the
+   recorded answer, never relayed.
 
 ## 6. Deploy each change
 
@@ -686,8 +762,8 @@ that waited, and one deploy after the last of them carries them all. A
    (`references/guardrails.md`, "Repair, don't author"). When the writer
    returns `BLOCKED` because only engineering can settle it (a test of live
    behavior whose assertions would have to change), tell the person in one plain line that this
-   part needs engineering and suggest they message engineering with the
-   session slug, as section 3 does; never ask them to decide it.
+   part needs engineering and suggest they message engineering, naming this
+   work by its summary, as section 3 does; never ask them to decide it.
 4. Dispatch `vibe-environment-worker` in redeploy mode with the worktree, the
    live ticket slug, the session summary, and the session's `localFixes`
    paths. First resume that SAME writer's source-owned `progress` continuation
@@ -706,8 +782,8 @@ that waited, and one deploy after the last of them carries them all. A
    (`references/quality-loop.md`, "The reference check before ready" and
    "What the orchestrator says"). Whenever you open
    the Vercel `storybookUrl` and the tab lands on `vercel.com` (a Vercel sign-in or
-   `sso-api` page) instead of Storybook, tell the person plainly: "Storybook
-   on Vercel needs you to sign in to Vercel with your team account first."
+   `sso-api` page) instead of Storybook, tell the person plainly: "The
+   component gallery needs you to sign in to Vercel with your team account first."
    Do not try to get around it. On `BLOCKED` because the repo's checks
    refused the push or a build failed in the session's own change, dispatch
    the SAME persistent writer in fix mode with the failure, then rerun its

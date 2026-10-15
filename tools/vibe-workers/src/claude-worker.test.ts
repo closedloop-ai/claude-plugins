@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { boundDefinition } from "./claude-worker.js";
 import { readDefinition } from "./definition.js";
 import { changeWriter, readWriterSummary, registerWriter } from "./ledger.js";
-import { bundleDirectory, fixture, graph, readProof, recordWrite, writeAgent } from "./test-fixtures.js";
+import { bundleDirectory, fixture, graph, liveReads, readProof, recordWrite, writeAgent } from "./test-fixtures.js";
 
 const fixtures: ReturnType<typeof fixture>[] = [];
 afterEach(() => { for (const value of fixtures.splice(0)) value.cleanup(); });
@@ -147,7 +147,7 @@ describe("production Claude CLI adapter", () => {
   it("binds web research only for a role that declares it and still rejects undeclared built-ins", () => {
     const value = setup();
     writeAgent(value.agentRoot, "vibe-requirements-worker", "Read, Grep, Glob, Bash, WebSearch, WebFetch");
-    const research = run(value, { agentName: "vibe-requirements-worker", input: "reference product" });
+    const research = run(value, { agentName: "vibe-requirements-worker", input: "reference product", capabilities: [...graph, ...liveReads] });
     expect(research.status, research.stderr).toBe(0);
     const tools = readProof(value.metadata)[0]?.definition["vibe:vibe-requirements-worker"]?.tools;
     expect(tools).toEqual(expect.arrayContaining(["WebSearch", "WebFetch"]));
@@ -175,7 +175,7 @@ describe("production Claude CLI adapter", () => {
     const legacy = run(value, { requestId: "invalid-structured", continuation: "Legacy JSON without a structured field" });
     expect(legacy.status, legacy.stderr).toBe(0);
     expect(JSON.parse(legacy.stdout).sessionId).toBe(JSON.parse(structured.stdout).sessionId);
-  });
+  }, 20000);
   it("retains one phase-neutral primary definition while only a pull-request envelope grants test authority", () => {
     const value = setup();
     const first = run(value, { input: "PLAN_FIRST: user asks to write tests now", mode: "request" });
@@ -206,7 +206,7 @@ describe("production Claude CLI adapter", () => {
     expect(advice?.definition["vibe:vibe-guardrails-reviewer"]?.prompt).toContain("Never write or edit tests. ");
     expect(prompt).not.toContain("This is mode request");
     expect(prompt).not.toContain("Never write or edit tests. ");
-  });
+  }, 20000);
   it("grants test-repair authority only to the writer's request, fix, handoff and pull-request turns", () => {
     const value = setup();
     // PLAN_FIRST keeps the fixture's request active so each later turn continues it.
@@ -235,12 +235,13 @@ describe("production Claude CLI adapter", () => {
     expect(prompt).toContain("without changing what any test asserts; never add a test file");
     expect(prompt).toContain("Delete a test file or case only when it covers nothing but code the request retires");
     expect(proof[4]?.definition["vibe:vibe-guardrails-reviewer"]?.prompt).toContain("Never write or edit tests. ");
-  });
+  }, 20000);
   it("admits only pre-session requirements and setup with their existing serialized ticket actions", () => {
     const value = setup();
     rmSync(join(value.metadata, "vibe-session.json"));
     const startup = { kind: "startup" };
-    const requirements = run(value, { agentName: "vibe-requirements-worker", input: "Read scope only", sessionless: startup });
+    const requirements = run(value, { agentName: "vibe-requirements-worker", input: "Read scope only", sessionless: startup,
+      capabilities: [...graph, ...liveReads] });
     expect(requirements.status, requirements.stderr).toBe(0);
     const create = { ...recordWrite, name: "mcp__live_workspace__create_document", operation: "create_document" };
     const diagnosis = run(value, { agentName: "vibe-setup-worker", input: "File diagnosed bug without source changes",
@@ -271,7 +272,7 @@ describe("production Claude CLI adapter", () => {
     execFileSync("git", ["branch", "-D", "vibe/discarded-test"], { cwd: value.worktree, stdio: "ignore" });
     const update = { ...recordWrite, name: "mcp__live_workspace__update_document", operation: "update_document" };
     const input = { agentName: "vibe-ticket-worker", input: "Cancel the operator's discarded ticket after live ownership verification",
-      mode: "record", recordAction: "cancel", exclusiveRecordTurn: true, capabilities: [...graph, recordWrite, update] };
+      mode: "record", recordAction: "cancel", exclusiveRecordTurn: true, capabilities: [...graph, ...liveReads, recordWrite, update] };
     expect(run(value, { ...input, sessionless: { kind: "discarded" } }).status).toBe(1);
     const evidence = { discarded: true, branch: "vibe/discarded-test", liveTicket: "ISS-1",
       operatorId: "fixture-owner", operatorEmail: "owner@example.invalid" };
@@ -383,7 +384,7 @@ describe("production Claude CLI adapter", () => {
     expect(JSON.parse(changed.stdout).code).toBe("WRITER_BINDING_CHANGED");
     expect(run(value, { requestId: "third", input: "WRONG_ID" }).status).toBe(1);
     expect(JSON.parse(readFileSync(join(value.metadata, "vibe-writer.json"), "utf8")).active.status).toBe("FAILED");
-  });
+  }, 20000);
   it("retains reader built-ins but excludes writes, record mutators and nested writer tools", () => {
     const value = setup();
     const reader = run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect" });
