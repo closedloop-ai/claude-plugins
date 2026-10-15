@@ -12,6 +12,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Routing that used a name now uses the stable ClosedLoop user id it already resolved to: `vibe-setup-worker` assigns a symphony-alpha bug ticket to the vibe engineering owner by id, and `cl-work-report` matches its two protected owners by id. The legacy repo-memory keys `cl-policy` reads from older records are unchanged.
 - Coverage: contract tests assert the new wording, test fixtures use neutral operators and owners, and a new contract test (`test_vibe_no_person_names_contract.py`) fails when a known person's name appears anywhere under `plugins/vibe/`. It fails on 1.0.33 with 331 hits.
 
+### vibe v1.0.34
+
+#### Changed
+- Compile-only repairs to frozen v1.0 story files are allowed (design ruling, 2026-10-15). The freeze protects what a story shows and its link, not the code wording, so a rename elsewhere may repair a v1.0 story file with only mechanical changes (prop renames, imports, types): no story added or removed, no title, story ID or tag change and no visual change. Sessions no longer avoid a rename to protect a v1.0 story file.
+- `handoff-inventory.mjs` lists an in-place edit of a v1.0 story file whose meta title, meta tags and set of exported story names (and so its story IDs) match the base under a new non-blocking `compileOnlyV1Repairs`. Any change to the title, tags or exported stories, or a move, stays in `v1Stories` with the reason `frozen` and blocks. A visual change cannot be proven mechanically and is left to the reviewer and the engineer.
+- The ticket worker puts each `compileOnlyV1Repairs` file on the live ticket's Engineering checklist as `- [ ] Check compile-only repair to v1.0: <file>; confirm only prop, import or type changes and no visual change` (`ticket-template.md`, "Compile-only v1.0 repairs"). `vibe-storybook-decomposer` states the exception; `guardrails.md`, `design-pass.md`, handoff and the README carry it; the writer repairs and logs it; `vibe-guardrails-reviewer` check 10 confirms each repair is purely mechanical with no visual change and blocks anything else.
+- Coverage: a node test for a v1.0 file where a prop rename passes into `compileOnlyV1Repairs` while an added, removed or renamed story export, a title change, a tag change and a move each block; a new contract test file for the prose and the ticket placement. Both fail on 1.0.33.
+
 ### vibe v1.0.33
 
 #### Fixed

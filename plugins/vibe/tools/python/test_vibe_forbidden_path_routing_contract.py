@@ -106,7 +106,7 @@ def test_the_template_places_each_need_once_as_an_unchecked_engineering_item() -
         "Never in the Handoff section, and never routed to the person running the session.",
     ):
         assert required in rule, required
-    assert "| Engineering checklist | `vibe-ticket-worker` | session start; handoff appends engineering conflicts and forbidden-path needs |" in template
+    assert "| Engineering checklist | `vibe-ticket-worker` | session start; handoff appends engineering conflicts, forbidden-path needs and compile-only v1.0 repairs |" in template
     assert "Engineering needed" not in section(template, "## Handoff")
 
 

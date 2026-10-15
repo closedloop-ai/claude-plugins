@@ -126,9 +126,13 @@ Read the repo's `apps/storybook/TAXONOMY.md` and follow it: every new story
 goes in a v2.0 root, in its page tree, tagged `v2.0`, with the Storybook
 release bump it requires, never in a frozen v1.0 root; new states of an
 existing component go in a new v2.0 entry holding only them when its story
-file is v1.0, which you never edit, and otherwise in its existing story file,
-title and tag unchanged
-(`../skills/vibe/references/guardrails.md`, "Storybook taxonomy"). The story
+file is v1.0, which you never edit beyond a compile-only repair, and otherwise
+in its existing story file, title and tag unchanged
+(`../skills/vibe/references/guardrails.md`, "Storybook taxonomy"). Never avoid
+a rename to protect a v1.0 story file; when a rename breaks one, repair it with
+only prop renames, imports and types, no story added or removed and no title,
+story ID, tag or visual change, and log `Compile-only repair to v1.0: <file>`
+in the change log (design ruling, 2026-10-15). The story
 files you match are the same capability's, not the same folder's (same
 section).
 
