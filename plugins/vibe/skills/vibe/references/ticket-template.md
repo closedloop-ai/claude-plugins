@@ -52,6 +52,12 @@ publication, and the same ticket worker verifies completeness and assignment.
   `- [ ] Resolve conflict: <what disagreed>; decided: <how>; evidence: <doc section or precedent paths>`.
   Each states the conflict, how the session decided it, and its evidence.
   Never route one to the person running the session.
+- Engineering needed: each `Engineering needed (forbidden path)` entry the
+  change log records (`guardrails.md`, "What may change") goes once at the
+  end of the Engineering checklist as
+  `- [ ] Engineering needed (forbidden path): <path or area>; why: <need>`;
+  the same path or area logged again is the same item. Never in the Handoff
+  section, and never routed to the person running the session.
 
 | Section | Written by | When |
 |---|---|---|
@@ -65,7 +71,7 @@ publication, and the same ticket worker verifies completeness and assignment.
 | Handoff | `vibe-ticket-worker` | handoff |
 | Design Review | `vibe-ticket-worker` | handoff, from verified final code/publication and actual design evidence |
 | Grading | `vibe-ticket-worker` | handoff, copied unchanged from this template |
-| Engineering checklist | `vibe-ticket-worker` | session start; handoff appends engineering conflicts |
+| Engineering checklist | `vibe-ticket-worker` | session start; handoff appends engineering conflicts and forbidden-path needs |
 
 ## Body
 

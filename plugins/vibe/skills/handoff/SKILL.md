@@ -259,7 +259,11 @@ when resuming interrupted handoff.
 Non-publication inventory failures, outside-allowed paths, owner/duplicate
 findings and other confirmed source defects resume the SAME persistent writer
 in fix mode. It verifies and applies corrections; no backend/guardrails/setup
-helper edits source. Re-run inventory and independent read-only guardrails
+helper edits source. A `forbidden` or outside-allowed path the request
+genuinely needed is removed and logged as
+`Engineering needed (forbidden path)` (`../vibe/references/guardrails.md`,
+"What may change"), and the ticket worker puts it on the Engineering
+checklist. Re-run inventory and independent read-only guardrails
 checks. Keep the writer's Design blocks for the ticket.
 
 ## 4. Storybook

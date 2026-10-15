@@ -53,7 +53,16 @@ before it merges.
 | `packages/app/**` (shared web and Desktop UI) | `packages/golden-sessions/**`, `.github/**` |
 | `packages/design-system/**` (primitives, tokens, stories) | `scripts/**` (one exception below) |
 | `apps/desktop/src/renderer/**` (Desktop UI) | any `AGENTS.md` or `CLAUDE.md` |
-| `*.stories.tsx` anywhere above, `apps/storybook/**` story wiring | |
+| `*.stories.tsx` anywhere above, and all of `apps/storybook/**` (below) | |
+
+All of `apps/storybook/**` is Storybook wiring the writer may edit: story
+files, the `.storybook/` config (`main.ts`, `preview.tsx`, `manager.ts`,
+decorators, toolbar globals), `TAXONOMY.md`, and `apps/storybook/scripts/`
+(catalog sync and the taxonomy classification sets "Missing primitives"
+below has the writer edit). Its `AGENTS.md` and `CLAUDE.md` stay off limits
+like every other, its story validators are checks ("Checks", below), and its
+test files follow "Tests". The `scripts/**` in the Never column is the
+repo-root `scripts/` folder, never `apps/storybook/scripts/`.
 
 At handoff only, the same writer may also edit existing product docs pages in
 `apps/web/content/docs/`, as "Feature docs at handoff" below says; it never
@@ -106,6 +115,19 @@ example "pins count 1, but only 0 remain") for a file the session changed,
 delete the entry (0 remain) or lower its count to what remains, and run the
 gate again. Never add an entry or raise a count; a new violation is fixed in
 the code.
+
+When a request genuinely needs a change in a Never path beyond that one
+exception (a source gate under `scripts/**`, a workflow under `.github/**`, a
+rule in an `AGENTS.md`), that part is engineering's. The writer never edits
+the path and never builds a substitute for it in an allowed path, such as a
+copied gate or a workflow step moved into a package script. It logs the need
+in the session change log as
+`Engineering needed (forbidden path): <path or area>; why: <need>` and keeps
+building every allowed part of the request. The need is not `BLOCKED`, not a
+question for the person, and never stops the session; the ticket worker
+carries each one to the live ticket's Engineering checklist
+(`ticket-template.md`, "Engineering needed"). A fix to vibe's own tooling is
+different and still stops the session ("Plugins and tooling", above).
 
 Vibe work is headed for `main`, so the closed-by-default UI policy applies: a
 net-new screen, surface, or navigation item ships behind a default-off PostHog

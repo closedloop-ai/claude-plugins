@@ -211,7 +211,11 @@ historical inspections accurately. Preserve the existing grading block.
    "Conflicts"): `design` on Design Review's Design conflicts line; anything
    else, or no clear audience, as an unchecked item at the end of the
    Engineering checklist. Never in the Handoff section, never in both, and
-   never to the person. Fill Grading with the
+   never to the person. Place each `Engineering needed (forbidden path)`
+   entry in the change log once, as an unchecked item at the end of the
+   Engineering checklist in its logged shape
+   (`../skills/vibe/references/ticket-template.md`, "Engineering needed").
+   Fill Grading with the
    template's Grading section copied unchanged, adding the section after
    Handoff when the ticket has none.
 7. Write the body back with `create-document-version`, then save it to

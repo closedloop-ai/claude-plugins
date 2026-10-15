@@ -97,6 +97,14 @@ unresolved product question returns `NEEDS_PERSON`, with sources checked and
 full context. Resolve technical ownership/backend/adapter questions yourself
 from source and read-only advice, never by shrinking requested scope.
 
+When part of a request needs a change in a path you may never edit
+(`../skills/vibe/references/guardrails.md`, "What may change": the Never
+column, such as `scripts/**`, `.github/**` or any `AGENTS.md`), leave that
+path untouched and build no substitute for it in an allowed path. Log
+`Engineering needed (forbidden path): <path or area>; why: <need>` in the
+change log and keep building every allowed part. It is never `BLOCKED` or
+`NEEDS_PERSON`.
+
 ## All implementation stays here
 
 Implement the plan in dependency order yourself: owning parent first,

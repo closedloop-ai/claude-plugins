@@ -154,6 +154,14 @@ a conflict goes on the live ticket by audience, design conflicts under
 Design Review and everything else on the Engineering checklist, never to the
 person.
 
+The writer may edit all of `apps/storybook/**`, including its `.storybook/`
+config, `TAXONOMY.md` and `apps/storybook/scripts/`. When a request needs a
+change in a path vibe never edits, such as the repo-root `scripts/**`,
+`.github/**` or an `AGENTS.md`, the writer leaves it alone, builds no
+substitute elsewhere, logs it as `Engineering needed (forbidden path)` and
+builds the rest; handoff puts each one on the live ticket's Engineering
+checklist.
+
 ### `handoff`
 
 Checks and reviews the session's work, verifies its current app environment or

@@ -452,3 +452,39 @@ test("an existing story file whose meta title changed blocks unless recorded as 
   assert.equal(replaced.json.blocking.existingStoryTitlesKept, true, JSON.stringify(replaced.json.retitledStories));
   assert.deepEqual(replaced.json.retitledStories.map((story) => story.replacement), ["GridTableV3", "GridTableV3"]);
 });
+
+test("all of apps/storybook is allowed while root scripts, .github and AGENTS.md stay out", (t) => {
+  const { home, worktree } = setup(t, "storybook-wiring", {
+    "apps/storybook/.storybook/main.ts": "export default {};\n",
+    "apps/storybook/.storybook/preview.tsx": "export default {};\n",
+    "apps/storybook/TAXONOMY.md": "# Taxonomy\n",
+    "apps/storybook/scripts/taxonomy-classification.mjs": "export const DS_PRIMITIVES = [];\n",
+    "apps/storybook/AGENTS.md": "# Storybook\n",
+  });
+  const storybook = [
+    "apps/storybook/.storybook/decorators/flag-decorator.tsx",
+    "apps/storybook/.storybook/main.ts",
+    "apps/storybook/.storybook/manager.ts",
+    "apps/storybook/.storybook/preview.tsx",
+    "apps/storybook/scripts/taxonomy-classification.mjs",
+    "apps/storybook/TAXONOMY.md",
+  ];
+  for (const file of storybook) write(worktree, file, "export const changed = true;\n");
+  const allowed = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(allowed.status, 0, JSON.stringify(allowed.json));
+  assert.deepEqual(allowed.json.changedFiles.map((file) => file.path), storybook);
+  assert.deepEqual(allowed.json.outsideAllowed, []);
+  assert.deepEqual(allowed.json.forbidden, []);
+
+  write(worktree, "scripts/lint/rules/no-threaded-feature-flag.ts", "export {};\n");
+  write(worktree, ".github/workflows/storybook-release.yml", "on: release\n");
+  write(worktree, "apps/storybook/AGENTS.md", "# Storybook, changed\n");
+  const refused = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(refused.status, 1);
+  assert.equal(refused.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(refused.json.forbidden, [
+    { path: ".github/workflows/storybook-release.yml", status: "A" },
+    { path: "apps/storybook/AGENTS.md", status: "M" },
+  ]);
+  assert.deepEqual(refused.json.outsideAllowed, [{ path: "scripts/lint/rules/no-threaded-feature-flag.ts", status: "A" }]);
+});

@@ -342,7 +342,7 @@ def test_the_template_routes_design_conflicts_to_design_review_and_the_rest_to_e
         assert required in rule, required
     review = section(template, "## Design Review")
     assert "- Design conflicts: <each `design` conflict from the change log: what disagreed, how the session decided it, and the evidence (doc section or precedent paths)>" in review
-    assert "| Engineering checklist | `vibe-ticket-worker` | session start; handoff appends engineering conflicts |" in template
+    assert "| Engineering checklist | `vibe-ticket-worker` | session start; handoff appends engineering conflicts and forbidden-path needs |" in template
 
 
 def test_the_handoff_section_no_longer_collects_conflicts() -> None:

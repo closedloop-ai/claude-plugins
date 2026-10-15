@@ -504,6 +504,11 @@ evidence, never by replacing the writer.
    or `engineering`, for the live ticket (`references/ticket-template.md`,
    "Conflicts"), never a question for the person (Daniel Ochoa's ruling,
    2026-10-14).
+   A part that needs a path the writer may never edit is logged as
+   `Engineering needed (forbidden path)` for the live ticket's Engineering
+   checklist while the writer builds the rest (`references/guardrails.md`,
+   "What may change"); it never stops the request and is never a question
+   for the person.
    When its plan needs NEW Storybook components, it builds them first and
    returns `STORIES_READY`; send the new-components notice below and resume
    it at once to build the feature.

@@ -4,6 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.32
+
+#### Fixed
+- A vibe request that needs a change in a path the session may never edit (a source gate under the repo-root `scripts/**`, a workflow under `.github/**`, a rule in an `AGENTS.md`) is now routed to engineering instead of dropped, worked around or left to stop the session. `guardrails.md` ("What may change") has the writer leave the path untouched, build no substitute for it in an allowed path, log `Engineering needed (forbidden path): <path or area>; why: <need>` in the change log and keep building every allowed part; it is never `BLOCKED` or a question for the person. `ticket-template.md` gets an "Engineering needed" rule, and the ticket worker places each logged need once as an unchecked item at the end of the live ticket's Engineering checklist. Handoff's guardrail check removes a forbidden or outside-allowed edit the request needed and logs it the same way. A needed fix to vibe's own tooling still stops the session ("Plugins and tooling").
+- The "What may change" table now allows all of `apps/storybook/**` explicitly, including the `.storybook/` config (`main.ts`, `preview.tsx`, `manager.ts`, decorators, toolbar globals), `TAXONOMY.md` and `apps/storybook/scripts/` (catalog sync and the taxonomy classification sets the placement rules already have the writer edit), instead of only "story wiring". The Never column's `scripts/**` is the repo-root folder; `apps/storybook/AGENTS.md` stays off limits and its story validators stay checks. This matches what `handoff-inventory.mjs` already allowed.
+- Coverage: a new contract test file for both rules, failing on 1.0.31's wording, and a node test pinning that the inventory admits `.storybook/` config, `TAXONOMY.md` and `apps/storybook/scripts/` while root `scripts/**` stays outside the allowed paths and `.github/**` and `apps/storybook/AGENTS.md` block.
+
 ### vibe v1.0.31
 
 #### Fixed
