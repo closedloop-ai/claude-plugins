@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.0.42
+### vibe v1.0.43
 
 #### Fixed
 - A reference image now reaches the writer as an image it reads (operator ruling, 2026-10-15: "we're missing visual cues"). In a product-manager session built from two screenshots, one of another product, the session missed a drop shadow, a larger text size and bold type. The writer got the saved path beside the orchestrator's own description and did not read the image before its first build, reference mode was scoped to behaviors, every criterion was "met by source trace", and the first ready message said it matched.
@@ -13,6 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The reference check before ready (operator ruling, 2026-10-15), the one exception to the lean loop's no-visual-QA rule and only when there is a reference image: before `DONE` on a UI change the writer screenshots each touched screen at the reference's viewport, compares the properties the reference shows plus regressions on the touched element (such as a lost tap-target minimum height), fixes each difference with tokens and screenshots again. The result gates the ready message, and the orchestrator never says the result matches when it has seen a gap. It is not a design review. With no reference image there is no render or compare. `environment.md` gains "Capturing a reference" and "Capturing for the reference check" for both harnesses.
 - A visible change the person already saw is never reverted silently. A path outside the allowed table is not edited in the loop either, its criterion stays `not met yet` and the ready message says engineering must make it; when handoff removes such a path it tells the person in one plain line, puts the criterion back to `not met yet` and renders the screen again.
 - Coverage: a new contract test file (`test_vibe_visual_cues_contract.py`, 13 cases, all failing on 1.0.41), node tests for `reference-images.mjs` on Claude Code and Codex transcripts, vitest cases showing the saved path reaches the Claude writer and requirements turns and Codex `take-input` (all three failing on the 1.0.41 bundles), and four `claude plugin eval` cases tagged `visual-cues` (`pm-reference-card`, `pm-outside-product-cards`, `pm-two-screenshot-page`, `exec-described-change-no-reference`) that build in a stand-in repository with a Pillow screenshot tool, since the eval sandbox has no browser.
+
+### vibe v1.0.42
+
+#### Fixed
+- `cl-execute` no longer marks a ticket `IN_PROGRESS` before its readiness gate. Intake step 7 said to set the status when evaluation started, while a gate that blocks returns `BLOCKED_BEFORE_START` with the status unchanged, so a run blocked at the gate got both instructions. Step 7 now leaves the status alone through intake and the gate, and step 10 sets `IN_PROGRESS` only after the gate returns `GO`, or `GO_WITH_UI_PLAN_APPROVAL` and planning proceeds. `cl-sweep` states the same rule for its ticket workers.
 
 ### vibe v1.0.41
 

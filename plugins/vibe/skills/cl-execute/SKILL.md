@@ -287,17 +287,20 @@ hardcode a personal name for the engineering attention contact.
    state (the PR head matches, checks are as reported, the named focused tests
    pass at the head) instead of trusting prior prose, and redo only what live
    state contradicts.
-7. Mark each included non-terminal, non-currently-blocked feature
-   `IN_PROGRESS` when evaluation or planning starts. This status does not
-   authorize branch creation, source edits, PR work, or merge work.
+7. Do not mark any included feature `IN_PROGRESS` during intake or the
+   readiness gate. A gate that ends in `BLOCKED_BEFORE_START`, including
+   `HUMAN_REVIEW_REQUIRED`, leaves every feature status unchanged.
 8. Run the readiness gate in
    [references/planning-and-gates.md](references/planning-and-gates.md) before
    creating a branch, editing code, or opening a PR. Emit the `CL Execute Gate
    Result` from [references/result-formats.md](references/result-formats.md).
 9. If the gate is not `GO`, or is `GO_WITH_UI_PLAN_APPROVAL` without explicit
    approval for the current plan, stop at the matching planning/blocker result.
-10. Confirm every included feature is `IN_PROGRESS` before returning a planning
-   wait or starting execution.
+10. Only after the gate returns `GO`, or `GO_WITH_UI_PLAN_APPROVAL` and planning
+   proceeds, mark each included non-terminal, non-currently-blocked feature
+   `IN_PROGRESS`. This status does not authorize branch creation, source
+   edits, PR work, or merge work. Confirm every included feature is
+   `IN_PROGRESS` before returning a planning wait or starting execution.
 11. Check repo memory before choosing the approach. Re-check memory before
    writing or revising the plan, before runtime launch, before validation/E2E/
    visual QA, when debugging setup failures, and before PR finalization.
