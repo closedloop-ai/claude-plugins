@@ -125,6 +125,54 @@ commit; nothing is squashed or amended later.
   Desktop window opens too). Its database is a local file, so Docker is not
   needed. See "Desktop" below.
 
+## Capturing a reference
+
+How a reference reaches the writer as an image (`quality-loop.md`, "Visual
+references").
+
+- **Looking at an image.** Both harnesses can: `Read` on the path in Claude
+  Code, `view_image` on the path in Codex. A reference the person attached is
+  already a saved file (`scripts/reference-images.mjs`).
+- **A reference link.** A prototype preview, a Storybook story, an existing
+  page in our product or a public page of another product: a throwaway
+  headless Playwright script kept outside the worktree and deleted
+  afterwards (the acceptance check's quick-script rule), which opens the URL
+  and saves a screenshot, or the control skill's `screenshot` for a screen
+  in our product under its own rules (hidden, never `--allow-write`, `eval`
+  or `eval-main`, `pnpm control down` for every session it started). Never
+  sign in to another product or type a credential. Save the image with
+  `reference-images.mjs save --file`, then read it like any other reference.
+
+## Capturing for the reference check
+
+Only when the session has a reference image (`quality-loop.md`, "The
+reference check before ready"); with none, nothing here runs. One screenshot
+of each touched screen or component, hidden, from the session worktree,
+leaving no tracked file behind.
+
+- **Before the deploy.** A component with a story: the story in local
+  Storybook (the `storybookUrl` on the session's stack; `vibe-setup-worker`
+  starts it when none runs), which shows the worktree's code as it changes,
+  captured from the story's canvas URL with the throwaway script above (a
+  capture may use the canvas; a link given to the person still follows
+  "Storybook links"). A screen Desktop shows: the control skill under its own
+  rules (`pnpm -C apps/desktop build`, then `pnpm control up desktop --mode
+  e2e`, `goto <id>`, `wait --settled`, `screenshot --locator <L>`, and
+  `pnpm control down` for every session it started), never `--headed`,
+  `--allow-write`, `eval` or `eval-main`. A page rendered outside both (a
+  generated static page, say) is opened by the throwaway script. The local
+  web app does not run on this Mac, so a web-only screen with no story is
+  compared after the deploy instead.
+- **Same viewport.** The control skill's browser is 1440 by 900. When the
+  reference has another width, take the screenshot with the throwaway script
+  at the reference image's width.
+- **After the deploy.** The orchestrator's own browser tab is signed in as
+  the person: in Codex, the in-app browser's screenshot of the app tab; in
+  Claude Code, the Chrome extension's screenshot when it is connected. A
+  Claude Code session without it has no preview screenshot, so the writer's
+  local screenshot is the only comparison, and a touched screen it could not
+  capture keeps its visual criteria `not met yet` with that reason.
+
 ## Desktop
 
 The one place these commands live; `vibe-setup-worker` runs them from the

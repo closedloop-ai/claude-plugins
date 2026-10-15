@@ -45,6 +45,15 @@ session decision table) with an existing test, a quick script, one control
 read or a source trace; a criterion not met yet is fixed or reported to the
 person as not done, and handoff's alignment starts from that list.
 
+A reference image the person attaches is saved with
+`scripts/reference-images.mjs` and recorded on the session; the writer opens
+it as an image (`Read` in Claude Code, `view_image` in Codex) and records what
+it read before building, and every visual and UX property it shows becomes an
+acceptance criterion mapped to a design token or catalog component. Only when
+there is a reference image, the writer screenshots each touched screen before
+saying it's ready and fixes every difference from the reference, the one
+exception to the lean loop's no-visual-QA rule (operator ruling, 2026-10-15).
+
 Every request also uses `$decision-table` or `/closedloop-core:decision-table`
 before code, including frontend-only, prototype and trivial edits. One living
 artifact at `.closedloop-ai/decision-tables/<session-slug>.md` keeps stable row
@@ -130,9 +139,10 @@ when an unresolved answer is absolutely necessary. Existing product and design
 approvals remain intact.
 
 Two notices reach the person without waiting for a reply. When a request names
-an outside product as its reference, the requirements worker researches that
-product's public documentation and the person sees a bulleted list of the
-behaviors to build while the writer builds them. When a request needs new
+an outside product as its reference, or gives a screenshot of one, the
+requirements worker researches that product's public documentation, reads the
+screenshot itself, and the person sees a bulleted list of the behaviors to
+build while the writer builds them. When a request needs new
 Storybook components, the writer builds them and their stories first, the
 person gets one message with their local Storybook links, and the writer goes
 straight on to the feature. The person may interrupt either to change it;

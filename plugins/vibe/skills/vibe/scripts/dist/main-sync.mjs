@@ -224185,6 +224185,14 @@ var metadataSchema = external_exports.object({
   skills: external_exports.union([external_exports.string(), external_exports.array(external_exports.string())]).optional()
 }).passthrough();
 
+// src/reference-images.ts
+var referenceSchema = external_exports.object({
+  path: external_exports.string().min(1),
+  mediaType: external_exports.string().regex(/^image\/[a-z+.-]+$/),
+  requestId: external_exports.string().optional()
+}).passthrough();
+var recordSchema = external_exports.object({ referenceImages: external_exports.array(external_exports.unknown()).optional() }).passthrough();
+
 // src/ledger.ts
 function checkoutLocation(worktree) {
   const root = realpathSync(git2(worktree, ["rev-parse", "--show-toplevel"]));
