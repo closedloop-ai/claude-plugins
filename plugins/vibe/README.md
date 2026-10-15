@@ -151,8 +151,10 @@ a compile-only repair, so new states of its component go in a new v2.0 entry
 holding only them. New states
 of any other existing component go in its existing story file under the same
 title and tag, since a retitle breaks every link to its stories; handoff
-blocks any other edit of a v1.0 file, and a retitle unless it is a sibling replacement's
-entry. The writer records it in its local plan;
+blocks any other edit of a v1.0 story file except a compile-only repair, and a
+retitle unless it is a sibling replacement's entry. Story files under the
+`Start Here/` root are exempt from the v1.0 freeze and the title, tag and
+retitle checks (design ruling, 2026-10-06). The writer records it in its local plan;
 a conflict goes on the live ticket by audience, design conflicts under
 Design Review and everything else on the Engineering checklist, never to the
 person.

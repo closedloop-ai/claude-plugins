@@ -93,7 +93,8 @@ def test_guardrails_design_pass_handoff_and_readme_carry_the_one_liner() -> None
     ) in storybook
     readme = flat(README.read_text())
     assert "A v1.0 story file is never edited beyond a compile-only repair" in readme
-    assert "handoff blocks any other edit of a v1.0 file" in readme
+    assert "handoff blocks any other edit of a v1.0 story file except a compile-only repair" in readme
+    assert "handoff blocks any other edit of a v1.0 file," not in readme
 
 
 def test_the_writer_never_avoids_a_rename_and_logs_the_repair() -> None:

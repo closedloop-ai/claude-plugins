@@ -162,7 +162,10 @@ def test_the_inventory_freezes_v1_files_and_admits_only_recorded_replacements_fo
         "A v1.0 story file is never edited beyond a compile-only repair, so new states of its component go in a "
         "new v2.0 entry holding only them.",
         "New states of any other existing component go in its existing story file under the same title and tag",
-        "handoff blocks any other edit of a v1.0 file, and a retitle unless it is a sibling replacement's entry",
+        "handoff blocks any other edit of a v1.0 story file except a compile-only repair, and a retitle unless it "
+        "is a sibling replacement's entry",
+        "Story files under the `Start Here/` root are exempt from the v1.0 freeze and the title, tag and retitle "
+        "checks (design ruling, 2026-10-06).",
     ):
         assert required in readme, required
 
