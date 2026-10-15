@@ -110,14 +110,15 @@ describe("launcher sign-in and connection prechecks (operator ruling, 2026-10-15
     const retried = launch(value, { agentRoot: value.agentRoot, continuation: "Continue after sign-in" });
     expect(retried.status, JSON.stringify(retried.json)).toBe(0);
   }, 20000);
-  it("stops a worker whose granted connection did not load before it reads its brief", () => {
+  it("stops a worker at its start event when a granted connection did not load", () => {
     const value = setup();
     const result = launch(value, { agentRoot: value.agentRoot, agentName: "vibe-guardrails-reviewer", input: "WAIT_FOR_CANCEL" },
       { FAKE_CLAUDE_DROP_SERVER: "custom_graph" });
     expect(result.status).toBe(1);
     expect(result.json.code).toBe("MCP_TOOLS_MISSING");
     expect(String(result.json.summary)).toContain("custom_graph");
-    expect(proofCount(value)).toBe(0);
+    // The brief is already piped at spawn, so the fixture may have recorded it; the process itself must be gone.
+    for (const proof of proofCount(value) ? readProof(value.metadata) : []) expect(() => process.kill(proof.pid, 0)).toThrow();
   }, 20000);
   it("refuses a requirements or ticket launch without the ClosedLoop reads it needs", () => {
     const value = setup();
