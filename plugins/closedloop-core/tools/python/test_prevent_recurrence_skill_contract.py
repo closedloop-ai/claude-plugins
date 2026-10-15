@@ -45,9 +45,37 @@ def test_frontmatter_names_the_skill_and_its_triggers() -> None:
     description = next(
         line for line in frontmatter.splitlines() if line.startswith("description: ")
     )
-    for trigger in ("code-review finding", "keeps happening", "post-incident"):
+    for trigger in (
+        "correcting an issue or failure",
+        "code",
+        "setup",
+        "measurement",
+        "validation",
+        "workflow",
+        "accepted code-review findings",
+        "keeps happening",
+        "post-incident",
+    ):
         assert trigger in description, trigger
-    assert "Not for ordinary feature work" in description
+    for exclusion in (
+        "ordinary feature work",
+        "rejected findings",
+        "external outages",
+        "flaky infrastructure",
+        "no agent or system mistake",
+    ):
+        assert exclusion in description, exclusion
+
+
+def test_opening_covers_non_product_corrections_and_exclusions() -> None:
+    skill = (SKILL_ROOT / "SKILL.md").read_text()
+    opening = " ".join(skill.split("## 1. Fix the instance", 1)[0].split())
+    assert "correcting an issue or failure reveals a reusable lesson" in opening
+    assert "code, setup, measurement, validation, workflow" in opening
+    assert "ordinary feature work" in opening
+    assert "rejected review findings" in opening
+    assert "external outages or flaky infrastructure" in opening
+    assert "no agent or system mistake" in opening
 
 
 def test_trust_ladder_table_lists_the_highest_rung_first() -> None:

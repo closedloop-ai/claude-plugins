@@ -1,18 +1,19 @@
 ---
 name: prevent-recurrence
-description: Use when fixing a bug or an accepted code-review finding caused by an agent's mistake or by a pattern agents repeat; when a reviewer catches an agent error; when someone says "this keeps happening" or asks how to stop it; or in post-incident follow-up. Fixes the instance (failing-first test where practical), finds and fixes the same mistake elsewhere, then adds the strongest prevention the repository supports (types or architecture, static checks, a guard test, an owning AGENTS.md rule, advisory notes). Not for ordinary feature work.
+description: Use when correcting an issue or failure reveals a reusable prevention lesson, including code, setup, measurement, validation, workflow, agent mistakes, or accepted code-review findings; when someone says "this keeps happening" or asks how to stop it; or in post-incident follow-up. Fixes the instance (failing-first test where practical), finds and fixes the same mistake elsewhere, then adds the strongest prevention the repository supports (types or architecture, static checks, a guard test, an owning AGENTS.md rule, advisory notes). Not for ordinary feature work, rejected findings, or external outages/flaky infrastructure with no agent or system mistake.
 ---
 
 # Prevent Recurrence
 
-A fixed instance is not a fixed mistake. Use this procedure whenever a bug or an
-accepted review finding was caused by an agent's mistake, or by a pattern agents keep
-repeating, so the same class of mistake cannot come back unnoticed. It works in any
-repository and any workflow; it assumes nothing about the repository beyond what you
-find in step 3.
+A fixed instance is not a fixed mistake. Use this procedure whenever correcting an
+issue or failure reveals a reusable lesson that can prevent the same class from
+recurring. The correction may involve code, setup, measurement, validation, workflow,
+or another agent or system mistake. It works in any repository and any workflow; it
+assumes nothing about the repository beyond what you find in step 3.
 
-Skip it for ordinary feature work, rejected review findings, and failures with no
-mistake behind them (an outage, a flaky runner) unless they expose a missing guard.
+Skip it for ordinary feature work, rejected review findings, and external outages or
+flaky infrastructure with no agent or system mistake, unless they expose a missing
+guard.
 
 ## 1. Fix the instance
 

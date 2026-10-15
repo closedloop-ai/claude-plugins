@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.4.1
+
+#### Fixed
+- `prevent-recurrence` now activates when correcting an issue or failure reveals a reusable prevention lesson across code, setup, measurement, validation, or workflow work. Its frontmatter keeps ordinary feature work, rejected findings, and external outages or flaky infrastructure with no agent or system mistake out of scope, and its contract test pins both the broader triggers and those exclusions.
+
 ### vibe v1.0.36
 
 #### Changed
