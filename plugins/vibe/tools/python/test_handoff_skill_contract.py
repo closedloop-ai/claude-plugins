@@ -95,9 +95,9 @@ def test_change_worker_checks_a_handoff_answer_against_the_code() -> None:
 def test_step_eight_reuses_a_named_owner_or_asks_without_defaulting() -> None:
     step_eight = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
 
-    assert "Who should pick this up next? A name or email is fine." in step_eight
+    assert "Who should I pass it to? A name or email is fine." in step_eight
     assert "`vibe-ticket-worker` in lookup mode" in step_eight
-    assert "Use a next owner the person already named" in step_eight
+    assert "use a next owner the person already named" in step_eight
     assert "never re-ask that settled choice" in step_eight
     assert "Keep the assignment progress internal" in step_eight
     assert "report the next owner at completion" in step_eight

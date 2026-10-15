@@ -1,7 +1,7 @@
 # Guardrails
 
-Vibe work is handed to design and then engineering, who review it and open
-the pull request. It must already follow the team's patterns so they extend it
+Vibe work is reviewed by design and engineering, whether the person takes it
+to a pull request themselves or passes it on for them to open one. It must already follow the team's patterns so they extend it
 rather than rewrite it. The repo's `AGENTS.md` files are the contract; read
 the nearest one before editing a directory. This file adds the rules specific
 to vibe sessions and points at the repo rules that matter most here.
@@ -42,9 +42,11 @@ rules still apply.
 Every session builds the real thing, frontend and backend: a screen that needs
 data or an action the API does not provide gets that backend built by the SAME
 persistent `vibe-change-worker`, using read-only backend guidance. A session that needs no new
-data changes only frontend paths. It still ends on the session's branch:
-design reviews it, then an engineer opens the pull request and reviews it
-before it merges.
+data changes only frontend paths. Unless the person asks for a pull request,
+it ends on the session's branch: design reviews it, then an engineer opens
+the pull request and reviews it before it merges. When the person asks for
+one ("Tests"), handoff opens the pull request for them to take through review
+and merge.
 
 | Frontend (the sole persistent `vibe-change-worker`) | Never |
 |---|---|
@@ -401,6 +403,16 @@ the SAME persistent writer writes them, in an explicit `pull-request` turn.
 Verify, backend, primitive, prototype and Storybook helpers never author
 tests. Record phase, criteria and test paths in the session change log so
 reviewers can tell those tests from forbidden test changes.
+
+The person asks in plain words, and plain-language intent to take the work
+through review and merge themselves IS that explicit request (operator ruling,
+2026-10-15). Words such as "raise a PR", "open a pull request", "I'll get the
+PR merged", "I'll get it merged", "I'll ship it myself" and "I want to take it
+through review" all ask for a pull request and take handoff's requested pull
+request path, as does choosing the pull request in handoff's question about
+how the session ends. Nothing else does: the rule that tests are written only
+on that request is unchanged. Never offer to send the person the branch to
+merge; a bare branch is not something they can act on.
 
 Do not create source writers per unit, specialty or fix, or additional feature
 worktrees/branches. Setup helpers never patch implementation code or add a new

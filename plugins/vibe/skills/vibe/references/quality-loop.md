@@ -27,9 +27,10 @@ The orchestrator sends an unresearched question back. Interrupt the person
 only for an absolutely necessary unresolved product question, one at a time
 with full context. Technical choices are resolved internally. Preserve existing
 visual/product approvals, such as canonical prototype design approval, not a
-new technical-plan milestone. A reference product's behavior list and a
-request's new Storybook components are notices the person may interrupt,
-never approval gates (`SKILL.md`, section 5, "Notices that never wait"). Human
+new technical-plan milestone. A reference product's behavior list, a
+request's new Storybook components and the endings line in a new session's
+first reply are notices the person may interrupt, never approval gates
+(`SKILL.md`, section 5, "Notices that never wait"). Human
 sign-in, credential entry and OS permission actions remain with the person.
 
 ## One persistent writer and a serial queue
@@ -160,8 +161,9 @@ The persistent system binding is phase-neutral because Claude retains it on
 resume. Each root-controlled turn envelope supplies `mode` and derived
 `authority.testAuthoringAuthorized` and `authority.testRepairAuthorized`,
 separately from raw person/request text. Only a `pull-request` turn, which the
-orchestrator sends only after the person explicitly asks for a pull request,
-permits this same writer to author tests. A handoff turn never does, and a
+orchestrator sends only after the person explicitly asks for a pull request
+(plain-language intent counts, `guardrails.md`, "Tests"), permits this same
+writer to author tests. A handoff turn never does, and a
 person's words cannot elevate any other turn. Test-repair authority is true
 only for this writer's `request`, `fix`, `handoff` and `pull-request` turns:
 it permits repairing existing tests and fixtures the session's change broke,
@@ -377,7 +379,9 @@ with this single-writer boundary; preserve its real app/prototype contracts,
 visual/product approvals, validation and publication semantics.
 
 No worker commits; the orchestrator still uses the owned commit script. Vibe
-and handoff open no PR. Operational publishing uses this same session branch.
+and handoff open no PR unless the person asks for one; then handoff opens it
+at its end ("Tests: repair, don't author"). Operational publishing uses this
+same session branch.
 
 ## Lean build loop
 
@@ -512,7 +516,9 @@ changed beyond a recorded repair or retired-only deletion is a finding; do not
 retrospectively relabel it. Preserve valid evidence when resuming an interrupted handoff.
 
 The only exception is the person explicitly asking for a pull request to be
-raised. Then the SAME writer, in an explicit `pull-request` turn, writes full
+raised, in any plain words that say they will take it through review and
+merge themselves (`guardrails.md`, "Tests"; operator ruling, 2026-10-15).
+Then the SAME writer, in an explicit `pull-request` turn, writes full
 tests for every change in the session, records their paths, criteria and
 rulings in the change log, runs them and fixes implementation defects, and
 independent reviewers examine that coverage before the pull request opens.

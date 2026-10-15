@@ -12,11 +12,12 @@ export const recordModes: Record<string, Record<string, readonly string[]>> = {
   "vibe-ticket-worker": { create: ["create_document"], handoff: ["create_document_version", "upload_attachment"],
     assign: ["update_document"], cancel: ["create_document_version", "update_document"] },
   "vibe-environment-worker": { create: ["create_document_version"], redeploy: ["create_document_version"],
-    flags: ["create_document_version"], desktop: ["create_document_version"] },
+    flags: ["create_document_version"], desktop: ["create_document_version"], "pull-request": [] },
   "vibe-prototype-worker": { share: ["create_document_version"] },
 };
 
-export const recordActionSchema = z.enum(["progress", "create", "handoff", "assign", "cancel", "redeploy", "flags", "desktop", "share", "discard"]);
+export const recordActionSchema = z.enum(["progress", "create", "handoff", "assign", "cancel", "redeploy", "flags", "desktop", "share", "discard",
+  "pull-request"]);
 export const requestContinuationSchema = z.object({ runtime: z.enum(["codex", "claude"]),
   requestId: identifierSchema, recordAction: z.enum(["flags", "desktop"]) }).strict();
 export type RequestContinuation = z.infer<typeof requestContinuationSchema>;

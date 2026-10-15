@@ -1,6 +1,6 @@
 {
   "name": "vibe",
-  "version": "1.0.38",
+  "version": "1.0.39",
   "description": "Vibe sessions, handoff, seed refresh, and ClosedLoop ticket workflows",
   "author": {"name": "ClosedLoop", "email": "support@closedloop.ai"},
   "homepage": "https://github.com/closedloop-ai/claude-plugins",
@@ -11,7 +11,7 @@
   "interface": {
     "displayName": "ClosedLoop Vibe",
     "shortDescription": "Vibe sessions and ClosedLoop ticket workflows.",
-    "longDescription": "Vibe sessions let a non-engineer build product UI in the in-app browser on their own Vercel copy of symphony-alpha, kept on a live ClosedLoop ticket, and hand the work to design and then engineering.",
+    "longDescription": "Vibe sessions let a non-engineer build product UI in the in-app browser on their own Vercel copy of symphony-alpha, kept on a live ClosedLoop ticket, and finish it as a pull request they take through review or pass it to design and engineering.",
     "developerName": "ClosedLoop",
     "category": "Development",
     "capabilities": ["Write", "Analyze"],
