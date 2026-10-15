@@ -118,6 +118,8 @@ def test_the_relay_carries_the_saved_paths_in_both_harnesses() -> None:
 def test_reading_the_reference_is_a_required_recorded_step() -> None:
     assert_all(rule(), (
         "Reading the reference is a required step with a recorded result.",
+        "including a correction such as \"it still doesn't look like it\"",
+        "A correction adds each property the reference shows that the list still lacks, before it fixes anything.",
         "appends a `Reference read` line per image to the `### Checks` log",
         "A plan or criterion written before that line exists is incomplete",
         "The orchestrator's text description of an image never stands in for that read",
@@ -202,7 +204,7 @@ def test_the_check_is_not_a_design_review() -> None:
     assert_all(check(), (
         "It is not a design review: no critique of craft or hierarchy beyond the reference, and no full design pass; those stay at handoff.",
         "Never ask the person to confirm the comparison",
-        "never show them the screenshots unless a real difference cannot be resolved",
+        "never show them the screenshots or their paths unless a real difference cannot be resolved",
     ))
 
 

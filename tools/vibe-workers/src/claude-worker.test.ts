@@ -53,6 +53,17 @@ describe("production Claude CLI adapter", () => {
       expect(bound.agent.prompt).toContain("Never start another implementation writer, commit, or push.");
     }
   });
+  it("admits the environment pull-request action with no record writes and the no-push footer", () => {
+    const value = setup();
+    const item = { agentName: "vibe-environment-worker", mode: "record" as const,
+      recordAction: "pull-request" as const, exclusiveRecordTurn: true as const };
+    const launch = (capabilities: typeof graph) => boundDefinition(
+      readDefinition(value.agentRoot, item.agentName, capabilities),
+      { worktree: value.worktree, agentRoot: value.agentRoot, requestId: "open-pr", input: "open the requested PR",
+        timeoutMs: 1000, capabilities, ...item });
+    expect(launch(graph).agent.prompt).toContain("Never start another implementation writer, commit, or push.");
+    expect(() => launch([...graph, recordWrite])).toThrow(/outside this canonical action/);
+  });
   it("selects the canonical scoped agent directly and resumes the same underlying ID across two requests", () => {
     const value = setup();
     const entry = join(value.base, "claude-worker-link.mjs");

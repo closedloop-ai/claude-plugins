@@ -166,7 +166,7 @@ def test_only_an_explicit_pull_request_request_authorizes_full_tests() -> None:
     for required in ("explicitly asks for a pull request to be raised", "`pull-request` mode",
                      "the only turn whose envelope authorizes tests", "every entry on the missing tests list",
                      "--phase pull-request", "does not open until those tests pass",
-                     "Handoff itself still opens none"):
+                     "Handoff opens the pull request as its last step"):
         assert required in requested, required
     writer = section(agent("vibe-change-worker"), "## Tests: repair, don't author")
     assert "Only a `pull-request` continuation" in writer

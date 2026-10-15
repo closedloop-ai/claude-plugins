@@ -56,6 +56,16 @@ describe("native helper record CLI", () => {
       workerId: "different-primary" }).status).toBe(1);
     expect(run("acquire-record", { ...input, recordAction: "cancel" }).status).toBe(0);
   }, 10000);
+  it("grants the Codex environment helper its pull-request action and refuses it to other roles", () => {
+    const value = setup();
+    const input = { ...grant(value), agentName: "vibe-environment-worker", requestId: "open-pr", recordAction: "pull-request" };
+    expect(run("acquire-record", { ...input, agentName: "vibe-ticket-worker" }).status).toBe(1);
+    const acquired = run("acquire-record", input);
+    expect(acquired.status, acquired.stderr).toBe(0);
+    const { lease, recordAction } = JSON.parse(acquired.stdout);
+    expect(recordAction).toBe("pull-request");
+    expect(run("release-record", release(input, lease)).status).toBe(0);
+  }, 10000);
   it("admits only one native helper acquisition or primary claim in a simultaneous production CLI race", async () => {
     const value = setup(); const helper = grant(value);
     const primary = { worktree: value.worktree, workerId: "native-primary", requestId: "primary-request" };

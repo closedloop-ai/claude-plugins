@@ -183,11 +183,19 @@ def render(html_path: Path, out: Path, width: int, state: str | None) -> None:
         face = font(size, style.get("font-weight"))
         if tag == "button":
             text_w = draw.textlength(text, font=face)
-            button = (shape[0] + pad, y, shape[0] + pad + int(text_w) + 40, y + height)
+            left_x = shape[0] + pad
+            if (style.get("text-align") or box.get("text-align")) == "center" or box.get("text-align") == "center":
+                left_x = (shape[0] + shape[2] - int(text_w) - 40) // 2
+            button = (left_x, y, left_x + int(text_w) + 40, y + height)
             draw.rounded_rectangle(button, px(style.get("border-radius"), 6), fill=color(style.get("background"), "#111827"))
             draw.text((button[0] + 20, y + (height - size) // 2), text, font=face, fill=color(style.get("color"), "#ffffff"))
         else:
-            draw.multiline_text((shape[0] + pad, y), text, font=face, fill=color(style.get("color"), "#111827"), spacing=8)
+            centered = (style.get("text-align") or box.get("text-align")) == "center"
+            x = shape[0] + pad
+            if centered:
+                x = (shape[0] + shape[2] - max(face.getlength(line) for line in text.split("\n"))) // 2
+            draw.multiline_text((x, y), text, font=face, fill=color(style.get("color"), "#111827"), spacing=8,
+                                align="center" if centered else "left")
         y += height + 10
     out.parent.mkdir(parents=True, exist_ok=True)
     image.save(out)

@@ -27,9 +27,10 @@ The orchestrator sends an unresearched question back. Interrupt the person
 only for an absolutely necessary unresolved product question, one at a time
 with full context. Technical choices are resolved internally. Preserve existing
 visual/product approvals, such as canonical prototype design approval, not a
-new technical-plan milestone. A reference product's behavior list and a
-request's new Storybook components are notices the person may interrupt,
-never approval gates (`SKILL.md`, section 5, "Notices that never wait"). Human
+new technical-plan milestone. A reference product's behavior list, a
+request's new Storybook components and the endings line in a new session's
+first reply are notices the person may interrupt, never approval gates
+(`SKILL.md`, section 5, "Notices that never wait"). Human
 sign-in, credential entry and OS permission actions remain with the person.
 
 ## One persistent writer and a serial queue
@@ -160,8 +161,9 @@ The persistent system binding is phase-neutral because Claude retains it on
 resume. Each root-controlled turn envelope supplies `mode` and derived
 `authority.testAuthoringAuthorized` and `authority.testRepairAuthorized`,
 separately from raw person/request text. Only a `pull-request` turn, which the
-orchestrator sends only after the person explicitly asks for a pull request,
-permits this same writer to author tests. A handoff turn never does, and a
+orchestrator sends only after the person explicitly asks for a pull request
+(plain-language intent counts, `guardrails.md`, "Tests"), permits this same
+writer to author tests. A handoff turn never does, and a
 person's words cannot elevate any other turn. Test-repair authority is true
 only for this writer's `request`, `fix`, `handoff` and `pull-request` turns:
 it permits repairing existing tests and fixtures the session's change broke,
@@ -377,7 +379,9 @@ with this single-writer boundary; preserve its real app/prototype contracts,
 visual/product approvals, validation and publication semantics.
 
 No worker commits; the orchestrator still uses the owned commit script. Vibe
-and handoff open no PR. Operational publishing uses this same session branch.
+and handoff open no PR unless the person asks for one; then handoff opens it
+at its end ("Tests: repair, don't author"). Operational publishing uses this
+same session branch.
 
 ## Lean build loop
 
@@ -540,7 +544,8 @@ X" (a screen in our own product) is captured as an image before building
 (`environment.md`, "Capturing a reference") and saved with `save --file`.
 
 Reading the reference is a required step with a recorded result. Before it
-plans or builds, the writer opens every reference image and appends a
+plans or builds, including a correction such as "it still doesn't look like
+it", the writer opens every reference image and appends a
 `Reference read` line per image to the `### Checks` log: the path and what it
 shows (shadow and elevation, type sizes and weights, colors, spacing, radius,
 borders, alignment, icons, and the visible states). A plan or criterion
@@ -580,7 +585,8 @@ copy the outside product's words; user copy follows `guardrails.md`, "Copy".
 
 The writer adds each requirement to the session's `## Acceptance Criteria`
 as a criterion (source: the request ID and the reference image path), naming
-its token or component. The same applies to a reference in our own product:
+its token or component. A correction adds each property the reference shows
+that the list still lacks, before it fixes anything. The same applies to a reference in our own product:
 each visible property becomes a criterion. A visual criterion with a
 reference image is met by the reference check below, never by a source trace
 alone. UX criteria, and visual criteria with no reference image, are checked
@@ -617,8 +623,8 @@ first.
 
 It is not a design review: no critique of craft or hierarchy beyond the
 reference, and no full design pass; those stay at handoff. Never ask the
-person to confirm the comparison, and never show them the screenshots unless
-a real difference cannot be resolved: a product choice becomes one plain
+person to confirm the comparison, and never show them the screenshots or
+their paths unless a real difference cannot be resolved: a product choice becomes one plain
 question through the research gate above, and anything else is logged as an
 engineering note under the existing rules.
 
@@ -655,7 +661,9 @@ changed beyond a recorded repair or retired-only deletion is a finding; do not
 retrospectively relabel it. Preserve valid evidence when resuming an interrupted handoff.
 
 The only exception is the person explicitly asking for a pull request to be
-raised. Then the SAME writer, in an explicit `pull-request` turn, writes full
+raised, in any plain words that say they will take it through review and
+merge themselves (`guardrails.md`, "Tests"; operator ruling, 2026-10-15).
+Then the SAME writer, in an explicit `pull-request` turn, writes full
 tests for every change in the session, records their paths, criteria and
 rulings in the change log, runs them and fixes implementation defects, and
 independent reviewers examine that coverage before the pull request opens.

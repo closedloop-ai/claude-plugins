@@ -194,7 +194,9 @@ historical inspections accurately. Preserve the existing grading block.
    table file stays in this worktree.
 6. Fill Handoff and Design Review from the verified final packet/evidence you
    were given, per the template; its
-   Next line names the next owner you were given. The Session decision table
+   Next line names the next owner you were given; when the person asked for a
+   pull request, that owner is the session's operator and the line takes the
+   template's pull request form. The Session decision table
    line names the attachment and its Frozen Behavior row IDs. The Feature docs
    line lists the edited pages from the writer's record and never claims a
    page that is not in the diff (`git -C "<wt>" diff --stat <inventory baseCommit>`).
