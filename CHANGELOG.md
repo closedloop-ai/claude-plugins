@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.42
+
+#### Fixed
+- `cl-execute` no longer marks a ticket `IN_PROGRESS` before its readiness gate. Intake step 7 said to set the status when evaluation started, while a gate that blocks returns `BLOCKED_BEFORE_START` with the status unchanged, so a run blocked at the gate got both instructions. Step 7 now leaves the status alone through intake and the gate, and step 10 sets `IN_PROGRESS` only after the gate returns `GO`, or `GO_WITH_UI_PLAN_APPROVAL` and planning proceeds. `cl-sweep` states the same rule for its ticket workers.
+
 ### vibe v1.0.41
 
 #### Fixed
