@@ -276,10 +276,11 @@ Storybook placement line; the SAME writer logs each Conflict with its
 audience, and the ticket worker places it by that audience
 (`../vibe/references/ticket-template.md`, "Conflicts"), never to the person.
 Every new story follows the repo's `apps/storybook/TAXONOMY.md`, a v1.0
-story file is never edited and any other existing story file keeps its title
-and tag
+story file is never edited beyond a compile-only repair and any other existing
+story file keeps its title and tag
 (`../vibe/references/guardrails.md`, "Storybook taxonomy"); the inventory's
-`v1Stories` and `retitledStories` block handoff. Resume the SAME writer to perform every extraction, story and catalog
+`v1Stories` and `retitledStories` block handoff. Its `compileOnlyV1Repairs`
+do not; the ticket worker puts each on the Engineering checklist. Resume the SAME writer to perform every extraction, story and catalog
 source change. Read-only verify footprint mode measures the sidebar and
 reports remaining problems; they return to the writer, never another author.
 Collect Design Review evidence from the verified final diff and existing

@@ -87,7 +87,11 @@ Do this first, in both modes.
    even to add a story: the new states go in a new v2.0 entry for that
    component holding only the new states, its name descriptive, permanent,
    per `apps/storybook/TAXONOMY.md` and without a version number, and the
-   v1.0 stories stay where they are. Any other existing story file takes the
+   v1.0 stories stay where they are. The one exception is a compile-only
+   repair after a rename elsewhere: only mechanical changes (prop renames,
+   imports, types), no story added or removed, no title, story ID or tag
+   change and no visual change, since the freeze protects what its stories
+   show and their links, not the code wording. Any other existing story file takes the
    new states as extra stories, its title, tag and existing story names
    unchanged. Otherwise only a new component, or a sibling replacement such
    as a V3, gets a new
@@ -126,7 +130,7 @@ Placement:
 - Capability: <named without the entity>
 - Precedents: <each: entity, providing component path, how hosts consume it, each story title, story names, tag and file>, or none found
 - Owner: <path to build or extend>, per <doc section> or mirroring <precedent path>
-- Stories: <each story to add or extend: title, tag, file>, root and tag per <TAXONOMY.md section>, structure per <doc section> or mirroring <precedent>; an existing file's title and tag unchanged, a v1.0 file not edited at all (step 4)
+- Stories: <each story to add or extend: title, tag, file>, root and tag per <TAXONOMY.md section>, structure per <doc section> or mirroring <precedent>; an existing file's title and tag unchanged, a v1.0 file not edited beyond a compile-only repair (step 4)
 - Conflict: <each disagreement: audience `design` or `engineering`, both sides quoted with paths, and how it was decided>, or none
 ```
 

@@ -35,7 +35,11 @@
 // root, or an existing one newly given either, is listed under `v1Stories` and
 // blocks. A story file that was v1.0 at the base is frozen: any edit or move
 // of it is listed under `v1Stories` with the reason `frozen` and blocks, so new
-// states of its component go in a new v2.0 entry instead. Any other existing
+// states of its component go in a new v2.0 entry instead. The one exception is
+// a compile-only repair (design ruling, 2026-10-15): an in-place edit that
+// keeps the meta title, the meta tags and the set of exported story names, and
+// so every story ID, is listed under `compileOnlyV1Repairs` and does not block;
+// the ticket asks engineering to confirm it changed no visuals. Any other existing
 // story file keeps its meta title, because Storybook builds story IDs from it:
 // a title changed from the base, moves included, is listed under
 // `retitledStories` and blocks unless the session record lists the file as a
@@ -96,12 +100,18 @@ const STORY_PATTERN = /\.stories\.tsx?$/;
 const COMPONENT_PATTERN = /\/components\/.+\.tsx$/;
 // v1.0 is the frozen baseline; new work goes under `<Level> v2.0/`
 // (apps/storybook/TAXONOMY.md; Daniel Ochoa's ruling, 2026-10-14).
-// A v1.0 story file is never edited (design ruling, 2026-10-15).
+// A v1.0 story file is never edited except for a compile-only repair
+// (design ruling, 2026-10-15).
 const V1_STORY_TITLE = /\btitle:\s*["'`](?:Foundations|Primitives|Composites|Surfaces)\//;
 const V1_STORY_TAG = /\btags:\s*\[[^\]]*["'`]v1\.0["'`]/;
 // The meta object's title, not a `title:` arg or prop elsewhere in the file.
 const STORY_META_START = /\b(?:const\s+meta\b[^=]*=|export\s+default)\s*\{/;
 const STORY_META_TITLE = /\btitle:\s*(["'`])((?:(?!\1).)+)\1/;
+const STORY_META_TAGS = /\btags:\s*\[([^\]]*)\]/;
+const STRING_LITERAL = /(["'`])((?:(?!\1).)*)\1/g;
+const NAMED_EXPORT = /\bexport\s+(?:const|let|var|function\*?|class)\s+([\w$]+)/g;
+const EXPORT_LIST = /\bexport\s*\{([^}]*)\}/g;
+const EXPORT_ALIAS = /\s+as\s+/;
 const STORY_PATHSPECS = ["*.stories.ts", "*.stories.tsx"];
 // Tests are written only when the person explicitly asks for a pull request
 // (Daniel Ochoa's ruling, 2026-10-13); earlier phases may only repair existing
@@ -165,7 +175,7 @@ const outsideAllowed = changedFiles.filter(
 const backendFiles = changedFiles.filter((file) => isBackend(file.path));
 const componentsWithoutStories = findComponentsWithoutStories(changedFiles);
 const movedStories = findMovedStories();
-const v1Stories = findV1Stories(changedFiles);
+const { v1Stories, compileOnlyV1Repairs } = findV1Stories(changedFiles);
 const retitledStories = findRetitledStories(changedFiles);
 
 const blocking = {
@@ -204,6 +214,7 @@ const result = {
   backendFiles,
   componentsWithoutStories,
   v1Stories,
+  compileOnlyV1Repairs,
   retitledStories,
 };
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
@@ -358,30 +369,48 @@ function isBackend(filePath) {
 }
 
 /**
- * Story files whose meta title sits in a v1.0 root or whose tags include v1.0
- * where the base had neither, and every modified or moved story file that was
- * v1.0 at the base (`frozen`).
+ * `v1Stories`: story files whose meta title sits in a v1.0 root or whose tags
+ * include v1.0 where the base had neither, and every modified or moved story
+ * file that was v1.0 at the base (`frozen`). `compileOnlyV1Repairs`: the
+ * in-place edits of a v1.0 file that keep its story IDs and tags.
  */
 function findV1Stories(files) {
   const movedFrom = new Map(movedStories.map((story) => [story.path, story.from]));
-  return files
-    .filter((file) => file.status !== "D" && STORY_PATTERN.test(file.path))
-    .flatMap((file) => {
-      const source = readWorktreeFile(file.path);
-      if (source === undefined) {
-        return [];
-      }
-      const from = movedFrom.get(file.path);
-      const basePath = file.status === "M" ? file.path : from;
-      const base = basePath === undefined ? undefined : readBaseFile(basePath);
-      const gained = (pattern) => pattern.test(source) && !(base !== undefined && pattern.test(base));
-      const reasons = [
-        ...(gained(V1_STORY_TITLE) ? ["title"] : []),
-        ...(gained(V1_STORY_TAG) ? ["tag"] : []),
-        ...(base !== undefined && isV1Story(base) ? ["frozen"] : []),
-      ];
-      return reasons.length ? [{ ...file, ...(from === undefined ? {} : { from }), reasons }] : [];
-    });
+  const v1 = [];
+  const compileOnly = [];
+  for (const file of files) {
+    if (file.status === "D" || !STORY_PATTERN.test(file.path)) {
+      continue;
+    }
+    const source = readWorktreeFile(file.path);
+    if (source === undefined) {
+      continue;
+    }
+    const from = movedFrom.get(file.path);
+    const basePath = file.status === "M" ? file.path : from;
+    const base = basePath === undefined ? undefined : readBaseFile(basePath);
+    const gained = (pattern) => pattern.test(source) && !(base !== undefined && pattern.test(base));
+    const reasons = [
+      ...(gained(V1_STORY_TITLE) ? ["title"] : []),
+      ...(gained(V1_STORY_TAG) ? ["tag"] : []),
+      ...(base !== undefined && isV1Story(base) ? ["frozen"] : []),
+    ];
+    if (reasons.length === 1 && reasons[0] === "frozen" && file.status === "M" && keepsStoryIdentity(base, source)) {
+      compileOnly.push(file);
+    } else if (reasons.length) {
+      v1.push({ ...file, ...(from === undefined ? {} : { from }), reasons });
+    }
+  }
+  return { v1Stories: v1, compileOnlyV1Repairs: compileOnly };
+}
+
+/** Same meta title, same meta tags and same exported story names, so the same story IDs. */
+function keepsStoryIdentity(base, source) {
+  return (
+    storyMetaTitle(base) === storyMetaTitle(source) &&
+    JSON.stringify(storyMetaTags(base)) === JSON.stringify(storyMetaTags(source)) &&
+    JSON.stringify(storyExportNames(base)) === JSON.stringify(storyExportNames(source))
+  );
 }
 
 function isV1Story(source) {
@@ -434,6 +463,25 @@ function findMovedStories() {
 function storyMetaTitle(source) {
   const start = source.search(STORY_META_START);
   return STORY_META_TITLE.exec(start === -1 ? source : source.slice(start))?.[2] ?? null;
+}
+
+function storyMetaTags(source) {
+  const start = source.search(STORY_META_START);
+  const tags = STORY_META_TAGS.exec(start === -1 ? source : source.slice(start))?.[1];
+  return tags === undefined ? null : [...tags.matchAll(STRING_LITERAL)].map((match) => match[2]);
+}
+
+function storyExportNames(source) {
+  const names = new Set([...source.matchAll(NAMED_EXPORT)].map((match) => match[1]));
+  for (const [, list] of source.matchAll(EXPORT_LIST)) {
+    for (const entry of list.split(",")) {
+      const name = entry.trim().split(EXPORT_ALIAS).at(-1);
+      if (name && name !== "default") {
+        names.add(name);
+      }
+    }
+  }
+  return [...names].sort();
 }
 
 function readWorktreeFile(filePath) {

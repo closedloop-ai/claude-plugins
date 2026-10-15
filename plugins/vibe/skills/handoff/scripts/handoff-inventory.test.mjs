@@ -418,6 +418,70 @@ test("a v1.0 story file is frozen: an edit or move blocks, and new states go in 
   assert.equal(clean.status, 0, JSON.stringify(clean.json));
 });
 
+test("a compile-only repair of a v1.0 story file passes for engineering review; a story, title, tag or move change still blocks", (t) => {
+  const dir = "apps/storybook/stories/composites";
+  const v1File = (name, { title = `Composites/Data Display/${name}`, tags = ["v1.0", "autodocs"], prop = "label", from = "@repo/design-system/tree-row", stories = ["Default", "Selected"] } = {}) =>
+    [
+      `import type { Meta } from "@storybook/react";`,
+      `import { TreeRow } from "${from}";`,
+      "const meta = {",
+      `  title: "${title}",`,
+      "  component: TreeRow,",
+      `  tags: [${tags.map((tag) => `"${tag}"`).join(", ")}],`,
+      "} satisfies Meta<typeof TreeRow>;",
+      "export default meta;",
+      ...stories.map((story) => `export const ${story} = { args: { ${prop}: "${story}" } };`),
+      "",
+    ].join("\n");
+  const cases = {
+    propRename: "Prop Rename",
+    addedStory: "Added Story",
+    removedStory: "Removed Story",
+    renamedStory: "Renamed Story",
+    retitled: "Retitled",
+    retagged: "Retagged",
+    moved: "Moved",
+  };
+  const file = (key) => `${dir}/${key}.stories.tsx`;
+  const movedTo = "apps/storybook/stories/tree/moved.stories.tsx";
+  const { home, worktree } = setup(
+    t,
+    "story-compile-only",
+    Object.fromEntries(Object.entries(cases).map(([key, name]) => [file(key), v1File(name)]))
+  );
+  const repaired = { prop: "text", from: "@repo/design-system/tree/tree-row" };
+  write(worktree, file("propRename"), v1File(cases.propRename, repaired));
+  write(worktree, file("addedStory"), v1File(cases.addedStory, { ...repaired, stories: ["Default", "Selected", "Disabled"] }));
+  write(worktree, file("removedStory"), v1File(cases.removedStory, { ...repaired, stories: ["Default"] }));
+  write(worktree, file("renamedStory"), v1File(cases.renamedStory, { ...repaired, stories: ["Default", "Active"] }));
+  write(worktree, file("retitled"), v1File(cases.retitled, { ...repaired, title: "Composites/Data Display/Retitled Row" }));
+  write(worktree, file("retagged"), v1File(cases.retagged, { ...repaired, tags: ["v1.0"] }));
+  mkdirSync(path.join(worktree, "apps/storybook/stories/tree"), { recursive: true });
+  git(worktree, ["mv", file("moved"), movedTo], home);
+  write(worktree, movedTo, v1File(cases.moved, repaired));
+
+  const result = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
+  assert.equal(result.status, 1);
+  assert.equal(result.json.blocking.storiesInV2Taxonomy, false);
+  assert.deepEqual(result.json.compileOnlyV1Repairs, [{ path: file("propRename"), status: "M" }]);
+  assert.deepEqual(result.json.v1Stories, [
+    { path: file("addedStory"), status: "M", reasons: ["frozen"] },
+    { path: file("removedStory"), status: "M", reasons: ["frozen"] },
+    { path: file("renamedStory"), status: "M", reasons: ["frozen"] },
+    { path: file("retagged"), status: "M", reasons: ["frozen"] },
+    { path: file("retitled"), status: "M", reasons: ["frozen"] },
+    { path: movedTo, status: "A", from: file("moved"), reasons: ["frozen"] },
+  ]);
+
+  git(worktree, ["mv", movedTo, file("moved")], home);
+  git(worktree, ["checkout", "-q", "--", ...["addedStory", "removedStory", "renamedStory", "retitled", "retagged", "moved"].map(file)], home);
+  const repairOnly = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
+  assert.equal(repairOnly.status, 0, JSON.stringify(repairOnly.json));
+  assert.equal(repairOnly.json.blocking.storiesInV2Taxonomy, true);
+  assert.deepEqual(repairOnly.json.v1Stories, []);
+  assert.deepEqual(repairOnly.json.compileOnlyV1Repairs, [{ path: file("propRename"), status: "M" }]);
+});
+
 test("an existing non-v1.0 story file whose meta title changed blocks unless recorded as a replacement's entry", (t) => {
   const meta = (title, tags) => `const meta = {\n  title: "${title}",\n  tags: [${tags.map((tag) => `"${tag}"`).join(", ")}],\n};\nexport default meta;\n`;
   const table = "apps/storybook/stories/grid-table-v2.stories.tsx";

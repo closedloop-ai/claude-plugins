@@ -112,7 +112,10 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
     under or tagged for a frozen v1.0 root, or any edit or move of a story
     file that is v1.0 on main (the inventory's `v1Stories`, reason `frozen`),
     is blocking; that component's new states belong in a new v2.0 entry
-    holding only them, with no version number in its name. So is a v2.0 story outside its page tree, without the `v2.0`
+    holding only them, with no version number in its name. Confirm each of
+    the inventory's `compileOnlyV1Repairs` is purely mechanical (prop
+    renames, imports, types) with no visual change; anything else in one is
+    blocking. So is a v2.0 story outside its page tree, without the `v2.0`
     tag, or added, moved or renamed without the release bump the doc names.
     An existing non-v1.0 story file (on main) retitled, re-tagged or moved breaks every
     link to its stories and is blocking (the inventory's `retitledStories`
