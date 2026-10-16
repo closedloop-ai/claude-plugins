@@ -15,10 +15,10 @@ Graph evidence, worker commit ownership and shared-owner rules remain unchanged.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import yaml
+from vibe_contract_text import flat
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -62,10 +62,6 @@ CODE_WORKERS = (
 # Every agent that the vibe, handoff, or vibe-seed-refresh skills dispatch.
 VIBE_AGENTS = sorted(path.stem for path in AGENTS.glob("vibe-*.md"))
 NON_GENERIC_NAMES = ("Sessions", "Branches", "GridTableListSurface", "bulk select", "ISS-12137")
-
-
-def flat(text: str) -> str:
-    return re.sub(r"\s+", " ", text)
 
 
 def section(text: str, heading: str) -> str:

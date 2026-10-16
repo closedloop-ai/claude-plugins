@@ -19,7 +19,7 @@ SPEC.loader.exec_module(runner)
 
 def test_one_case_per_claude_prompt_and_role_names() -> None:
     found = runner.cases()
-    assert len(found) == 26
+    assert len(found) == 29
     assert len({c["name"] for c in found}) == len(found)
     assert all(c["name"].startswith(("executive-", "product-manager-")) for c in found)
     for case in found:
@@ -42,6 +42,7 @@ def test_every_model_grader_has_a_deterministic_or_wording_route() -> None:
         "criteria-recorded",
         "criteria-mapped",
         "compared-before-ready",
+        "rendered-light-and-dark",
     }
     for case in runner.cases():
         for path in (case["source"] / "graders").glob("*.md"):
@@ -244,3 +245,29 @@ def test_wording_model_only_runs_after_deterministic_pass(
     assert result["usage"]["input_tokens"] == (20 if valid else 10)
     assert all("allow_login_shell=false" in args for args in calls)
     assert all(args[-2] == "--" for args in calls)
+
+
+def test_light_and_dark_need_fresh_renders_views_and_logged_checks(tmp_path: Path) -> None:
+    case = next(
+        c for c in runner.cases() if c["name"] == "product-manager-static-page-light-and-dark"
+    )
+    table = tmp_path / "session/.closedloop-ai/decision-tables/session.md"
+    table.parent.mkdir(parents=True)
+    logged = "## Acceptance Criteria\n### Checks\nR-1, AC-1: reference check (light), compared light.png: met\nR-1, AC-1: reference check (dark), compared dark.png: met\n"
+    table.write_text(logged)
+    edit = {"name": "apply_patch", "input": "Update File: session/src/return-page.css"}
+    light = {"name": "exec_command", "arguments": "python3 tools/screenshot.py src/return-page.html light.png"}
+    dark = {"name": "exec_command", "arguments": "python3 tools/screenshot.py src/return-page.html dark.png --theme dark"}
+    view = {"name": "view_image", "arguments": "out.png"}
+
+    def grade(trace, reply="Ready to look at."):
+        return runner.semantic_check("rendered-light-and-dark", case, reply, tmp_path, trace)
+
+    assert grade([edit, light, view, dark, view])
+    assert not grade([edit, light, view])
+    assert not grade([edit, dark, view])
+    assert not grade([light, dark, view, edit])
+    assert not grade([edit, light, dark])
+    assert not grade([edit, light, view, dark, view], "Could you compare the screenshots?")
+    table.write_text(logged.split("R-1, AC-1: reference check (dark)")[0])
+    assert not grade([edit, light, view, dark, view])

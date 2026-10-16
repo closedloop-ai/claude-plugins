@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from vibe_contract_text import flat
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
@@ -43,10 +44,6 @@ DIST = VIBE / "scripts" / "dist"
 HEADING = "## Visual references"
 CHECK = "### The reference check before ready"
 PROPERTIES = "shadow and elevation, font size, weight, color, spacing, radius, borders, alignment and icons"
-
-
-def flat(text: str) -> str:
-    return re.sub(r"\s+", " ", text)
 
 
 def section(text: str, heading: str) -> str:
@@ -192,10 +189,11 @@ def test_the_check_compares_the_reference_properties_and_regressions_then_recapt
         f"looks only at the properties the reference shows ({PROPERTIES}",
         "plus regressions on the touched element: properties that were right before this change and are not now",
         "a removed tap-target minimum height",
-        "fixes each difference with design tokens, never arbitrary values, and takes the screenshot again until no difference remains",
+        # operator ruling, 2026-10-16: the recapture and the DONE lines now cover each theme.
+        "fixes each difference with design tokens, never arbitrary values, and takes the screenshots again until no difference remains",
         "Each comparison is a line in the `### Checks` log",
         "`DONE` on such a change carries a Reference check line per touched screen",
-        "without it the `DONE` is incomplete",
+        "without them the `DONE` is incomplete",
     ))
     assert "plus regressions on the touched element (properties that were right before this change)" in agent("vibe-change-worker")
 
@@ -235,10 +233,11 @@ def test_capture_works_in_both_harnesses_with_named_fallbacks() -> None:
     assert "When the session recorded reference images (`referenceImages`), open each as an image" in agent("vibe-verify-worker")
 
 
-def test_a_surface_without_tokens_is_logged_for_engineering_not_invented() -> None:
+def test_a_token_the_surface_lacks_is_logged_for_engineering_not_invented() -> None:
+    # operator ruling, 2026-10-16: the all-or-nothing "tokens not bundled" note became per token.
     assert_all(rule(), (
-        "does not bundle the design-system tokens",
-        "`Engineering needed (tokens not bundled): <surface>; uses <token> values`",
+        "Only a token the surface genuinely lacks",
+        "`Engineering needed (token not bundled): <surface>; <token>; checked <each stylesheet and block searched>; uses <the token's exact value>`",
         "it never invents a value no token defines",
     ))
 

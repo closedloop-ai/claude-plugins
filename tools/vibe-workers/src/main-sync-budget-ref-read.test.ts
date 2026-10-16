@@ -1,13 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { z } from "zod";
 import { readBudgetRefs, type BudgetRefCapture, type UnprovedBudgetFallback, type ProvedBudgetCompletion } from "./main-sync-budget-ref-read.js";
 import { bindCheckBudgets, affectedTestReportSelection } from "./main-sync-budget.js";
 import { checkRecipe } from "./main-sync-checks.js";
 import { mainSyncReceiptSchema, type MainSyncReceipt } from "./main-sync-contracts.js";
 import { syncContext } from "./main-sync-state.js";
-import { syncFixture, invokeSync } from "./main-sync-test-fixtures.js";
+import { syncFixture, invokeSync, installAffectedTestWrapper } from "./main-sync-test-fixtures.js";
 
 const control=vi.hoisted(()=>({calls:[] as string[][],reply:undefined as undefined|((root:string,args:string[])=>string|undefined)}));
 vi.mock("../../../plugins/vibe/skills/vibe/scripts/session-record.mjs",async importOriginal=>{
@@ -50,19 +49,35 @@ describe("fixed budget refs and actual budget caller",()=>{
     expect(bound.map(x=>x.timeoutMs)).toEqual([66*60*1000,66*60*1000,66*60*1000]);
     expect(control.calls.filter(x=>same(x,pair))).toHaveLength(2);
     expect(control.calls.filter(x=>same(x,head))).toHaveLength(2);
-    expect(control.calls.filter(x=>same(x,main))).toHaveLength(2);
+    // operator ruling, 2026-10-16: no post-selection origin/main read; the selection is pinned to the captured mainSha.
+    expect(control.calls.filter(x=>same(x,main))).toHaveLength(0);
     expect(value.calls().split("\n").filter(Boolean).map(x=>JSON.parse(x)).filter(x=>x.includes("--dry=json"))).toHaveLength(2);
     expect(affectedTestReportSelection(value.worktree,bound[0]!)).toEqual(affectedTestReportSelection(value.worktree,bound[1]!));
+    expect(affectedTestReportSelection(value.worktree,bound[0]!)?.tasks).toHaveLength(1);
+    const advanced=value.git(["commit-tree",`${value.baseCommit}^{tree}`,"-p",value.baseCommit,"-m","Main advanced after selection"]);
+    value.git(["update-ref","refs/remotes/origin/main",advanced]);
     expect(affectedTestReportSelection(value.worktree,bound[0]!)?.tasks).toHaveLength(1);
     value.git(["commit","--allow-empty","-m","Owned after-selection drift"]);
     expect(()=>affectedTestReportSelection(value.worktree,bound[0]!)).toThrow("Affected test selection owner changed");
   },30000);
-  it.each(["post-head","post-main","proved-B-later-A"])("real bind refuses %s with original short circuit",kind=>{
+  it("refuses an affected selection the wrapper did not pin to the captured main",()=>{
+    const value=setup();withPath(value);installAffectedWrapper(value);
+    const receipt={...syntheticReceipt(value),mainSha:value.git(["rev-parse","HEAD"])};
+    expect(()=>bindCheckBudgets(value.worktree,receipt,[{argv:["pnpm","test:affected"]}])).toThrow("Affected test selection is not pinned to the captured main");
+    expect(existsSync(join(value.metadata,"validation-calls.jsonl"))).toBe(false);
+  },30000);
+  it("accepts origin/main advancing during the selection child",()=>{
+    const value=setup();withPath(value);const receipt=syntheticReceipt(value);
+    install((_,args)=>{if(same(args,pair))return `${a}\n${m}`;if(same(args,head))return a;if(same(args,main))return b;return undefined;});
+    expect(bindCheckBudgets(value.worktree,receipt,[{argv:["pnpm","turbo","test"]}]).map(x=>x.timeoutMs)).toEqual([66*60*1000]);
+    expect(control.calls.filter(x=>same(x,pair)||same(x,head)||same(x,main))).toEqual([pair,head]);
+  },30000);
+  it.each(["post-head","proved-B-later-A"])("real bind refuses %s with original short circuit",kind=>{
     const value=setup();withPath(value);const receipt=syntheticReceipt(value);let first=true;
     install((_,args)=>{if(same(args,pair)){if(kind==="proved-B-later-A")throw failed(`${b}\n`);return `${a}\n${m}`;}if(same(args,head))return kind==="post-head"?b:a;if(same(args,main)){if(kind==="proved-B-later-A"&&first){first=false;return m;}return b;}return undefined;});
     expect(()=>bindCheckBudgets(value.worktree,receipt,[{argv:["pnpm","turbo","test"]}])).toThrow("Test selection refs changed during the owning budget child");
     const refs=control.calls.filter(x=>same(x,pair)||same(x,head)||same(x,main));
-    expect(refs).toEqual(kind==="post-head"?[pair,head]:kind==="post-main"?[pair,head,main]:[pair,main,head]);
+    expect(refs).toEqual(kind==="post-head"?[pair,head]:[pair,main,head]);
   },30000);
   it("non-test and full lint budgets add no ref reader",()=>{
     const value=setup(),receipt=syntheticReceipt(value);control.calls.length=0;
@@ -105,9 +120,7 @@ function failed(stdout:string){const stderr="fatal: synthetic missing main\n";re
 function withPath(value:ReturnType<typeof syncFixture>){const old=process.env.PATH;process.env.PATH=`${value.bin}:${old??""}`;restorers.push(()=>{if(old===undefined)Reflect.deleteProperty(process.env,"PATH");else process.env.PATH=old;});}
 function syntheticReceipt(value:ReturnType<typeof syncFixture>):MainSyncReceipt{return mainSyncReceiptSchema.parse({version:1,transactionId:"10000000-0000-4000-8000-000000000001",worktree:value.worktree,branch:"vibe/test",operator:{id:"fixture-owner",email:"owner@example.invalid"},purpose:"build",mainSha:value.baseCommit,startingHead:value.baseCommit,originalBase:value.baseCommit,validationSince:value.baseCommit,fetchedAt:"2026-10-09T00:00:00Z",importedFiles:[]});}
 function installAffectedWrapper(value:ReturnType<typeof syncFixture>){
-  const wrapper=z.object({content:z.string(),sha256:z.string()}).passthrough().parse(JSON.parse(readFileSync(new URL("./fixtures/symphony-affected-test.json",import.meta.url),"utf8")));
-  const pkg=z.object({scripts:z.record(z.string())}).passthrough().parse(JSON.parse(readFileSync(join(value.worktree,"package.json"),"utf8")));
-  pkg.scripts["test:affected"]="sh scripts/test-affected.sh";value.write("package.json",JSON.stringify(pkg));value.write("scripts/test-affected.sh",wrapper.content);
+  installAffectedTestWrapper(value);
   value.git(["add","."]);value.git(["commit","-m","Owned canonical wrapper fixture"]);
 }
 function compilerNegative(fallback:UnprovedBudgetFallback,complete:ProvedBudgetCompletion,proved:Extract<BudgetRefCapture,{kind:"proved-first-incomplete"}>,unproved:Extract<BudgetRefCapture,{kind:"unproved"}>){

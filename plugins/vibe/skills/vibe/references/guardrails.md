@@ -54,7 +54,7 @@ and merge.
 | `packages/app/**` (shared web and Desktop UI) | `packages/golden-sessions/**`, `.github/**` |
 | `packages/design-system/**` (primitives, tokens, stories) | `scripts/**` (one exception below) |
 | `apps/desktop/src/renderer/**` (Desktop UI) | any `AGENTS.md` or `CLAUDE.md` |
-| `*.stories.tsx` anywhere above, and all of `apps/storybook/**` (below) | |
+| `*.stories.tsx` anywhere above, and all of `apps/storybook/**` (below) | `apps/desktop/scripts/**` (Desktop's build and asset generators) |
 
 All of `apps/storybook/**` is Storybook wiring the writer may edit: story
 files, the `.storybook/` config (`main.ts`, `preview.tsx`, `manager.ts`,
@@ -64,6 +64,13 @@ below has the writer edit). Its `AGENTS.md` and `CLAUDE.md` stay off limits
 like every other, its story validators are checks ("Checks", below), and its
 test files follow "Tests". The `scripts/**` in the Never column is the
 repo-root `scripts/` folder, never `apps/storybook/scripts/`.
+
+`apps/desktop/scripts/**` is in the Never column explicitly (operator ruling,
+2026-10-16): no column listed it, so it already fell outside the allowed
+paths, and a static Desktop page's asset generator lives there. Nothing about
+it changes: the handoff inventory still reports it under `outsideAllowed`,
+and a request that needs it takes the forbidden-path route below
+(`Engineering needed (forbidden path)`), never an edit in the session.
 
 At handoff only, the same writer may also edit existing product docs pages in
 `apps/web/content/docs/`, as "Feature docs at handoff" below says; it never
@@ -271,6 +278,38 @@ No hardcoded colors, arbitrary pixel values, or ad-hoc dark-mode overrides.
 Annotation "Adjust" values arrive as raw CSS (a hex color, a pixel size); map
 each one to the nearest existing token or spacing step internally. If no token
 is close, raise it as a missing primitive.
+
+### Check the bundled tokens first
+
+Operator ruling, 2026-10-16. A product manager's static Desktop sign-in
+return page gave its button a page-local `--button-shadow` with hardcoded
+`rgb()` values and its own dark-mode override, and the pull request said no
+bundled elevation token existed, while `--shadow-inset` sat in the `:root`
+and `.dark` blocks of `packages/design-system/styles/globals.css`. This
+section is the rule's one canonical statement; the writer and the guardrails
+reviewer point at it.
+
+- Before writing or accepting any hardcoded color, shadow or dark-mode
+  override, read the tokens the touched surface actually bundles: each
+  stylesheet it loads or inlines (for app and Desktop screens,
+  `packages/design-system/styles/globals.css`; for a static or generated page,
+  the CSS its generator writes or inlines) and, in each, its `:root` block and
+  its `.dark` (or `prefers-color-scheme: dark`) block. Search them for the
+  property's token family (`--shadow-`, `--color-`, `--radius`, and so on).
+- A bundled token that delivers the property is used as `var(--token)`.
+  Where such a token exists, a raw `rgb()`, hex or pixel value, a page-local
+  custom property re-declaring its value, or a dark override of a value its
+  `.dark` block already defines is blocking at handoff, never advisory.
+- "Not bundled" is recorded per token, never per surface. Only a token the
+  surface genuinely lacks may be logged as missing, with the evidence of the
+  check: `Engineering needed (token not bundled): <surface>; <token>; checked
+  <each stylesheet and block searched>; uses <the token's exact value>`. That
+  property then uses the token's exact value with the token cited beside it,
+  never a value no token defines, and every other property on the surface
+  keeps its bundled token. A missing-token line without the stylesheets and
+  blocks searched, or for a token that check finds, is a finding, and so is a
+  wider claim such as "this page bundles no tokens" or "no elevation token
+  exists".
 No icon-in-a-colored-box chips, no borders on everything, no badge where a
 plain string works.
 

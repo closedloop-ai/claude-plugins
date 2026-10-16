@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { syncFixture, validateFixture, invokeSync } from "./main-sync-test-fixtures.js";
+import { installAffectedTestWrapper, syncFixture, validateFixture, invokeSync } from "./main-sync-test-fixtures.js";
 
 const fixtures: ReturnType<typeof syncFixture>[] = [];
 afterEach(() => { for (const value of fixtures.splice(0)) value.cleanup(); });
@@ -77,3 +77,63 @@ if (args.includes('--dry=json')) {`));
     expect(full.timeoutMs).toBe(30 * 60 * 1000);
   }, 30000);
 });
+
+// operator ruling, 2026-10-16: symphony-alpha's main moves every few minutes, so the affected
+// test selection is pinned to the transaction's captured main rather than the live origin/main.
+describe("affected test selection pinned to the captured main", () => {
+  it.each(["affected-selection", "check:source-gates"] as const)("passes while origin/main advances during %s", (step) => {
+    const value = movingMainFixture();
+    const advanced = value.advancedMain();
+    value.moveMainDuring(step, advanced);
+    const publisher = value.start("redeploy", "handoff");
+    try { expect(invokeSync(value, "prepare", publisher.context).status).toBe(0); } finally { publisher.finish(); }
+    const source = value.sourceTurn("handoff");
+    try {
+      const result = invokeSync(value, "validate", source.context);
+      expect(result.status, result.stdout).toBe(0);
+      expect(result.json?.mainSync).toMatchObject({ status: "DONE", publicationReady: true });
+    } finally { source.finish(); }
+    expect(value.git(["rev-parse", "origin/main"])).toBe(advanced);
+    const receipt = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8"));
+    expect(receipt.mainSha).toBe(value.baseCommit);
+    const affected = receipt.validation.commands.find((item: { argv: string[] }) => item.argv[1] === "test:affected");
+    expect(JSON.parse(readFileSync(`${affected.log}.selection.json`, "utf8")).tasks).toHaveLength(1);
+  }, 30000);
+
+  it("refuses when origin/main is rewound so the wrapper would select another base", () => {
+    const value = movingMainFixture();
+    const advanced = value.advancedMain();
+    value.git(["push", "-q", "origin", `${advanced}:refs/heads/main`]);
+    value.moveMainDuring("check:source-gates", value.baseCommit);
+    const publisher = value.start("redeploy", "handoff");
+    try { expect(invokeSync(value, "prepare", publisher.context).status).toBe(0); } finally { publisher.finish(); }
+    value.git(["commit", "-q", "--allow-empty", "-m", "Captured main merged"]);
+    const source = value.sourceTurn("handoff");
+    try {
+      const result = invokeSync(value, "validate", source.context);
+      expect(result.status, result.stdout).toBe(1);
+      expect(String(result.json?.error)).toMatch(/Affected test selection/);
+    } finally { source.finish(); }
+    expect(JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8")).mainSha).toBe(advanced);
+  }, 30000);
+});
+
+function movingMainFixture() {
+  const value = syncFixture(); fixtures.push(value);
+  installAffectedTestWrapper(value);
+  value.git(["add", "."]); value.git(["commit", "-m", "Canonical affected wrapper"]);
+  const advancedMain = () => value.git(["commit-tree", `${value.baseCommit}^{tree}`, "-p", value.baseCommit, "-m", "Main advanced"]);
+  const moveMainDuring = (step: "affected-selection" | "check:source-gates", target: string) => {
+    const when = step === "affected-selection"
+      ? "args[0]==='turbo'&&args[1]==='test'&&args.includes('--dry=json')"
+      : "args[0]==='check:source-gates'";
+    const original = readFileSync(join(value.bin, "pnpm"), "utf8");
+    value.write("../bin/pnpm", original.replace("const args = process.argv.slice(2);", `const args = process.argv.slice(2);
+if (${when}) {
+  const cp = require('node:child_process');
+  cp.execFileSync('git', ['push', '-q', '--force', 'origin', ${JSON.stringify(target)} + ':refs/heads/main'], {stdio:'ignore'});
+  cp.execFileSync('git', ['fetch', '-q', 'origin', '+refs/heads/main:refs/remotes/origin/main'], {stdio:'ignore'});
+}`));
+  };
+  return { ...value, advancedMain, moveMainDuring };
+}

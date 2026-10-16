@@ -26,8 +26,8 @@ four cases.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
+from vibe_contract_text import flat
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VIBE_SKILL = PLUGIN_ROOT / "skills" / "vibe" / "SKILL.md"
@@ -38,10 +38,6 @@ RECORDING = "### Recording it in the table"
 # A single Codex read of SKILL.md kept roughly its first 19,000 characters;
 # stay well inside that so the note itself is never the part that drops.
 KEPT_HEAD_CHARACTERS = 12_000
-
-
-def flat(text: str) -> str:
-    return re.sub(r"\s+", " ", text)
 
 
 def harness_notes() -> str:
@@ -106,7 +102,8 @@ def test_the_table_records_each_reference_read_criterion_and_check_in_one_shape(
         "`AC-n (source: <request ID>, reference <image path>): <one property as the reference shows it>; <the design token or catalog component that delivers it>`",
         'a shadow, a type size and a type weight are three criteria, never one "match the reference"',
         'A correction ("it still doesn\'t look like it") adds a criterion for each property the reference shows that no criterion names yet, even when a broad one such as "make ours like the second one" exists, before it fixes anything',
-        "reference check, compared <screenshot path> with <image path> after the last edit",
+        # operator ruling, 2026-10-16: one reference check line per theme the surface supports.
+        "reference check (<light|dark>), compared <screenshot path> with <image path> after the last edit",
         "Criterion lines sit under `## Acceptance Criteria`, above `### Checks`; only check lines go below it",
     ):
         assert phrase in section, phrase

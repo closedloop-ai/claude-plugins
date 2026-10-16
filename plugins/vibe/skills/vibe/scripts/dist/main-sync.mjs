@@ -227119,7 +227119,7 @@ function bindCheckBudgets(root, receipt, commands) {
       }
       const bound = { ...command, timeoutMs: budget.timeoutMs };
       if (key === "affected" && canonicalTestWrapper(root)) {
-        testSelections.set(bound, { root, head: budget.head, main: budget.main, command: JSON.stringify(bound), wrapperSha: testWrapperIdentity(root), selection: budget.selection });
+        testSelections.set(bound, { root, head: budget.head, mainSha: receipt.mainSha, command: JSON.stringify(bound), wrapperSha: testWrapperIdentity(root), selection: budget.selection });
       }
       return bound;
     }
@@ -227127,11 +227127,14 @@ function bindCheckBudgets(root, receipt, commands) {
   });
 }
 function selectedTestBudget(root, receipt, affected) {
-  const { head, main } = readBudgetRefs(root);
+  const { head } = readBudgetRefs(root);
   const workflow = workflowSchema2.parse((0, import_yaml4.parse)(readFileSync11(join11(root, ".github/workflows/pr-test.yml"), "utf8")));
   let filter = `...[${receipt.validationSince}]`;
   if (affected) {
     filter = affectedFilter(root);
+    if (filter !== `...[${receipt.mainSha}]`) {
+      throw new MainSyncError("Affected test selection is not pinned to the captured main", "NEEDS_CHANGE");
+    }
   }
   verifyReportExecution(root, root, ReportExecutionOwner.TurboSelection, ["pnpm", "turbo", "test", `--filter=${filter}`, "--dry=json"]);
   const run = spawnSync4("pnpm", ["turbo", "test", `--filter=${filter}`, "--dry=json"], {
@@ -227142,7 +227145,7 @@ function selectedTestBudget(root, receipt, affected) {
   });
   if (run.error || run.status !== 0) throw new MainSyncError("Could not derive fixed test budget from actual selected Turbo tasks");
   const selection = tasksSchema.parse(JSON.parse(run.stdout));
-  if (head !== git(root, ["rev-parse", "HEAD"]) || main !== git(root, ["rev-parse", "origin/main"])) {
+  if (head !== git(root, ["rev-parse", "HEAD"])) {
     throw new MainSyncError("Test selection refs changed during the owning budget child", "NEEDS_CHANGE");
   }
   const tasks = selection.tasks;
@@ -227154,13 +227157,20 @@ function selectedTestBudget(root, receipt, affected) {
   if (packages.has("desktop")) {
     minutes += workflow.jobs["desktop-node"]["timeout-minutes"] * workflow.jobs["desktop-node"].strategy.matrix.shard.length + workflow.jobs["desktop-renderer"]["timeout-minutes"];
   }
-  return { timeoutMs: minutes ? minutes * 60 * 1e3 : GENERAL_CHECK_MS, selection, head, main };
+  return { timeoutMs: minutes ? minutes * 60 * 1e3 : GENERAL_CHECK_MS, selection, head };
 }
 function affectedTestReportSelection(root, command) {
   const record = testSelections.get(command);
   if (!record) return void 0;
-  if (record.root !== root || record.head !== git(root, ["rev-parse", "HEAD"]) || record.main !== git(root, ["rev-parse", "origin/main"]) || record.command !== JSON.stringify(command) || record.wrapperSha !== testWrapperIdentity(root) || !canonicalTestWrapper(root)) throw new MainSyncError("Affected test selection owner changed before its report assessment", "NEEDS_CHANGE");
+  if (record.root !== root || record.head !== git(root, ["rev-parse", "HEAD"]) || wrapperBase(root) !== record.mainSha || record.command !== JSON.stringify(command) || record.wrapperSha !== testWrapperIdentity(root) || !canonicalTestWrapper(root)) throw new MainSyncError("Affected test selection owner changed before its report assessment", "NEEDS_CHANGE");
   return record.selection;
+}
+function wrapperBase(root) {
+  try {
+    return git(root, ["merge-base", "origin/main", "HEAD"]);
+  } catch {
+    return void 0;
+  }
 }
 function testWrapperIdentity(root) {
   return createHash3("sha256").update(readFileSync11(join11(root, "scripts/test-affected.sh"))).digest("hex");

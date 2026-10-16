@@ -147,8 +147,8 @@ references").
 
 Only when the session has a reference image (`quality-loop.md`, "The
 reference check before ready"); with none, nothing here runs. One screenshot
-of each touched screen or component, hidden, from the session worktree,
-leaving no tracked file behind.
+of each touched screen or component in each theme it supports, hidden, from
+the session worktree, leaving no tracked file behind.
 
 - **Before the deploy.** A component with a story: the story in local
   Storybook (the `storybookUrl` on the session's stack; `vibe-setup-worker`
@@ -166,6 +166,17 @@ leaving no tracked file behind.
 - **Same viewport.** The control skill's browser is 1440 by 900. When the
   reference has another width, take the screenshot with the throwaway script
   at the reference image's width.
+- **Light and dark.** The final state is captured in both themes wherever the
+  surface supports both (operator ruling, 2026-10-16): it renders inside the
+  app or Desktop shell, or its stylesheet has a `.dark` or
+  `prefers-color-scheme: dark` block. A story: its canvas URL once with
+  `&globals=theme:light` and once with `&globals=theme:dark` (the Storybook
+  theme toolbar). A static or generated page: the throwaway script once with
+  Playwright's `colorScheme: "light"` and once with `colorScheme: "dark"`,
+  adding the `dark` class on `<html>` when the page keys on it. A Desktop
+  screen control cannot switch: the story of the touched component in both
+  themes. Only a surface with a single theme gets one capture, and its Checks
+  line says so.
 - **After the deploy.** The orchestrator's own browser tab is signed in as
   the person: in Codex, the in-app browser's screenshot of the app tab; in
   Claude Code, the Chrome extension's screenshot when it is connected. A
@@ -316,6 +327,12 @@ main capture, test authority, validation PASS or permission to publish.
    It runs `node <plugin-root>/skills/vibe/scripts/vibe-sessions.mjs main-sync-validate --worktree "<wt>"`
    with the granted context on stdin. The shared executor runs the existing
    scope/phase command matrix and records actual results at committed HEAD.
+   Its affected test selection is pinned to the transaction's captured
+   `mainSha` (operator ruling, 2026-10-16), so `origin/main` advancing during
+   validation, which on symphony-alpha happens every few minutes, never
+   invalidates it. The guards that remain are the session's own HEAD or tree
+   changing and a rewritten `origin/main` that would make the affected wrapper
+   select from another base.
    A source-generating check that changes source returns to this writer/root
    commit/recheck sequence, never an operational publisher repair.
    Known selected generated-output changes require canonical re-verification

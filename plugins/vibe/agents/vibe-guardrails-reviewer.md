@@ -44,7 +44,20 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    state where `packages/design-system/storybook/component-catalog.ts` or a
    `packages/app` paved path already provides one. Name the existing one.
 2. Tokens: hardcoded colors, arbitrary pixel values, inline styles, ad-hoc
-   dark-mode overrides. Name the token to use.
+   dark-mode overrides. Name the token to use. Before accepting any hardcoded
+   color, shadow or dark override, read which tokens the touched surface
+   actually bundles: each stylesheet it loads or inlines and, in each, its
+   `:root` and `.dark` (or `prefers-color-scheme: dark`) blocks
+   (`guardrails.md`, "Check the bundled tokens first"; operator ruling,
+   2026-10-16). A raw value, a page-local custom property re-declaring a
+   bundled token's value, or a dark override of a value the token's `.dark`
+   block already defines, where that bundled token exists, is blocking, never
+   advisory; quote the token's `:root` and `.dark` lines as evidence. Check
+   every `Engineering needed (token not bundled)` line in the change log, and
+   any "not bundled" or "no token exists" claim in the change log or a pull
+   request body, against those blocks: a claim about a token the surface
+   bundles, a line without the stylesheets and blocks searched, or a claim
+   about a whole surface or token family is blocking.
 3. Placement: domain code in `packages/design-system`; generic primitives
    buried in a feature slice or route file; `packages/app` importing a
    forbidden module (`next/*`, `@clerk/*`, `@repo/database`, `@repo/analytics`,

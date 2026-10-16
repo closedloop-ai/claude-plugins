@@ -41,11 +41,13 @@ plain-language wording uses `gpt-6-luna`, and only after deterministic checks
 pass. Override models with `--model` and `--grader-model` for account availability.
 The cheap grader never decides routing, file correctness or reference evidence.
 
-Visual cases use the same stand-in repository and Pillow renderer as Claude.
-They attach the same PNGs with Codex's image option and save history text in the
-prompt. No browser, Electron window, actual app or external ticket is started.
-The 22 other cases rehearse one reply from supplied session state in read-only
-mode. This is behavior coverage, not a substitute for live app validation.
+Visual cases (tag `visual-cues`) use the same stand-in repository and Pillow
+renderer as Claude, which renders light and dark (`--theme dark`) from the
+stand-in tokens' `:root` and `.dark` blocks. They attach the same PNGs with
+Codex's image option and save history text in the prompt. No browser, Electron
+window, actual app or external ticket is started. The 23 other cases rehearse
+one reply from supplied session state in read-only mode. This is behavior
+coverage, not a substitute for live app validation.
 
 The console reports each case and failure. Private artifacts include input,
 reply, events, rollout tool calls, the modified fixture, usage and `results.json`.

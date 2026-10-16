@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from vibe_contract_text import flat
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -28,10 +29,6 @@ LAUNCHER_SOURCE = PLUGIN_ROOT.parents[1] / "tools" / "vibe-workers" / "src" / "c
 AGENTS = PLUGIN_ROOT / "agents"
 SESSION_TERMS = ("handoff", "the branch to merge", "branch", "MCP", "storybook server", "seeded")
 GNU_TIMEOUT = re.compile(r"(?:^|[\s;&|(`$])g?timeout\s+(?:-[A-Za-z]+\s+\S+\s+)*\d")
-
-
-def flat(text: str) -> str:
-    return re.sub(r"\s+", " ", text)
 
 
 def section(text: str, heading: str, level: str = "## ") -> str:

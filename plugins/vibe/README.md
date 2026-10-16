@@ -300,14 +300,24 @@ Run the matching Codex suite from the repository root with
 `uv run --with Pillow==12.3.0 python plugins/vibe/evals/codex/run.py`;
 see [Codex evals](evals/codex/README.md) for caps, selection and results.
 
+`pm-review-comments-fix-the-pr` (tag `post-pr`) rehearses a person asking for
+review fixes on the pull request vibe opened for her: the session resumes and
+the fixes go through the same writer, the guardrails review and checks, a push
+to the same branch, a refreshed pull request body and thread replies.
+
 The cases tagged `visual-cues` check reference images (operator ruling,
 2026-10-15): three `pm-` cases attach a reference screenshot (a card, another
 product's cards with hover and selected states, and a two-screenshot page whose
 first draft broke a tap target) and the `exec-` case describes a change in
-words with no reference. They build in a small stand-in repository their
-scaffold writes, with design tokens and a Pillow screenshot tool standing in
-for Storybook, because the eval sandbox has no browser. Run them with the
-scaffold and write tools:
+words with no reference. Two more come from a product manager's pull request
+review (operator ruling, 2026-10-16): `pm-static-page-light-and-dark` builds a
+static page from a reference and must render it in light and dark before
+ready, and `pm-hardcoded-shadow-blocked-at-review` runs the handoff guardrails
+review on a page-local hardcoded shadow where the surface bundles a token,
+which must be blocking. They build in a small stand-in repository their
+scaffold writes, with design tokens (light in `:root`, dark in `.dark`) and a
+Pillow screenshot tool standing in for Storybook, because the eval sandbox has
+no browser. Run them with the scaffold and write tools:
 
 ```bash
 cd plugins

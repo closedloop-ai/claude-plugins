@@ -248,3 +248,14 @@ export function generatedBiomeFixture(value: ReturnType<typeof syncFixture>) {
   writeFileSync(artifact, output);
   return { artifact, config, output, derive };
 }
+
+/** Installs symphony-alpha's canonical `test:affected` wrapper (opaque reviewed bytes); the caller commits it. */
+export function installAffectedTestWrapper(value: Pick<ReturnType<typeof syncFixture>, "worktree" | "write">) {
+  const wrapper = z.object({ content: z.string(), sha256: z.string() }).passthrough().parse(
+    JSON.parse(readFileSync(new URL("./fixtures/symphony-affected-test.json", import.meta.url), "utf8")));
+  if (createHash("sha256").update(wrapper.content).digest("hex") !== wrapper.sha256) throw new Error("Opaque affected test wrapper fixture changed");
+  const pkg = z.object({ scripts: z.record(z.string()) }).passthrough().parse(JSON.parse(readFileSync(join(value.worktree, "package.json"), "utf8")));
+  pkg.scripts["test:affected"] = "sh scripts/test-affected.sh";
+  value.write("package.json", JSON.stringify(pkg));
+  value.write("scripts/test-affected.sh", wrapper.content);
+}
