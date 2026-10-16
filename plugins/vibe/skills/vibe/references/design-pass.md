@@ -76,8 +76,9 @@ not a design session: no second design, no questions, no approval.
 6. Placement: before a story is created, retitled or moved or a shared
    component is added, the writer returns `NEEDS_STORYBOOK` and
    `vibe-storybook-decomposer` answers with its Placement block (`SKILL.md`,
-   section 5). New states of an existing component go in a new v2.0 entry
-   holding only them when its story file is v1.0, which is never edited
+   section 5). New states of an existing component go in a new entry in the
+   current root holding only them when its story file is v1.0 (under a
+   `<Level> v1.0/` root or tagged `deprecated`), which is never edited
    beyond a compile-only repair, and
    otherwise in its existing story file, title and tag unchanged; only a new
    component or a sibling replacement otherwise gets a new entry (design

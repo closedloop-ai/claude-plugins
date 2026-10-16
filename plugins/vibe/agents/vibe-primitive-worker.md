@@ -49,8 +49,8 @@ skill (`.claude/skills/storybook/SKILL.md`, `references/gotchas.md`,
    case the screen needs, with one story per variant, size, and state.
 3. Stories in a collected location with controls, and a `DS_*` taxonomy
    entry for a new `packages/design-system/components/ui/*.tsx`. No tests.
-   Place them per the repo's `apps/storybook/TAXONOMY.md`: a v2.0 root, the
-   `v2.0` tag and the release bump, never a frozen v1.0 root
+   Place them per the repo's `apps/storybook/TAXONOMY.md`: a current root,
+   one lifecycle tag and the release bump, never a frozen v1.0 root
    (`guardrails.md`, "Storybook taxonomy").
 4. `pnpm --filter storybook catalog:sync`, `pnpm --filter storybook validate:catalog`,
    `pnpm --filter storybook test`, and Biome on your files, until all pass.

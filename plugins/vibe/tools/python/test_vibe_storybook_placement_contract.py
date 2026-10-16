@@ -132,7 +132,7 @@ def test_precedent_search_reports_everything_from_the_graph_and_the_built_index(
         "Leave out the session's own stories.",
         "Report everything found, not a pick",
         "how each host consumes it",
-        "every existing story that exercises it, with its title, story names, version tag and file",
+        "every existing story that exercises it, with its title, story names, lifecycle tag and file",
         "Never invent a placement",
     ):
         assert required in search, required
@@ -161,7 +161,7 @@ def test_stories_document_consumed_components_not_internal_pieces() -> None:
         "Either way, stories document the components consumers actually render, one story per state, never internal render pieces",
         "a shared capability's generic mechanics stay in the shared component's existing stories",
         "the page-level component consumers render gets variants showing only its domain-specific configuration",
-        "the doc's v2.0 Composites row, \"a section of a page\"",
+        "the doc's Composites row, \"a section of a page\"",
     ):
         assert required in order, required
     stories = paragraph(text, "2. Stories.")
@@ -291,12 +291,12 @@ def test_same_area_means_same_capability_not_same_folder() -> None:
 
 
 MIRROR_STRUCTURE_ONLY = (
-    "Mirroring copies structure only, never location or version: the root, version tag and v2.0 "
+    "Mirroring copies structure only, never location or lifecycle: the root, lifecycle tag and "
     f"tree position always come from {TAXONOMY_DOC}, and a precedent in a v1.0 root never puts new work in v1.0."
 )
 TIEBREAK = (
     "mirror one precedent, chosen in this order: built on the same providing component, then already in the "
-    "v2.0 tree, then most recently changed (the latest commit on main to its story file)"
+    "current roots, then most recently changed (the latest commit on main to its story file)"
 )
 CONFLICTS_RULE = '("Conflicts")'
 
@@ -320,7 +320,7 @@ def test_mirroring_copies_structure_never_root_or_version() -> None:
 def test_the_precedent_tiebreak_order_is_stated_once() -> None:
     conflict = paragraph(agent("vibe-storybook-decomposer"), "5. A precedent that disagrees")
     assert TIEBREAK in conflict
-    assert conflict.index("same providing component") < conflict.index("v2.0 tree") < conflict.index("most recently changed")
+    assert conflict.index("same providing component") < conflict.index("current roots") < conflict.index("most recently changed")
     holders = [
         path.name
         for path in sorted(PLUGIN_ROOT.rglob("*.md"))

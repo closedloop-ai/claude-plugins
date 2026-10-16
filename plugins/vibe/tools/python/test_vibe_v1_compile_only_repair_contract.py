@@ -69,7 +69,7 @@ def agent(name: str) -> str:
 def test_the_placement_owner_states_the_exception_in_full_once() -> None:
     order = paragraph(agent("vibe-storybook-decomposer"), "4. Decide in this order")
     assert EXCEPTION in order
-    assert order.index("A v1.0 story file is frozen and never edited") < order.index(EXCEPTION)
+    assert order.index("is frozen and never edited, not even to add a story") < order.index(EXCEPTION)
     assert f"First ({RULING})" in order
     holders = [path.name for path in sorted(PLUGIN_ROOT.rglob("*.md")) if EXCEPTION in flat(path.read_text())]
     assert holders == ["vibe-storybook-decomposer.md"]
@@ -78,8 +78,8 @@ def test_the_placement_owner_states_the_exception_in_full_once() -> None:
 def test_guardrails_design_pass_handoff_and_readme_carry_the_one_liner() -> None:
     guardrails = flat(GUARDRAILS.read_text())
     assert (
-        "A v1.0 story file is never edited beyond a compile-only repair (prop renames, imports, types; no story, "
-        "title, tag or visual change)"
+        "A v1.0 story file (under a `<Level> v1.0/` root or tagged `deprecated`) is never edited beyond a "
+        "compile-only repair (prop renames, imports, types; no story, title, tag or visual change)"
     ) in guardrails
     assert (
         "A compile-only repair of a v1.0 file does not block; it is listed under `compileOnlyV1Repairs` for the "
@@ -92,7 +92,7 @@ def test_guardrails_design_pass_handoff_and_readme_carry_the_one_liner() -> None
         "Its `compileOnlyV1Repairs` do not; the ticket worker puts each on the Engineering checklist."
     ) in storybook
     readme = flat(README.read_text())
-    assert "A v1.0 story file is never edited beyond a compile-only repair" in readme
+    assert "A v1.0 story file (under a `<Level> v1.0/` root or tagged `deprecated`) is never edited beyond a compile-only repair" in readme
     assert "handoff blocks any other edit of a v1.0 story file except a compile-only repair" in readme
     assert "handoff blocks any other edit of a v1.0 file," not in readme
 

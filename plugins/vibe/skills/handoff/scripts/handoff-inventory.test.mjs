@@ -381,6 +381,9 @@ test("a migration outside the backend packages and a local-fix backend file coun
   assert.deepEqual(result.json.outsideAllowed, [{ path: "apps/mcp/prisma/migrations/2_x/migration.sql", status: "A" }]);
 });
 
+// The story cases below run on a base with no story-group-order.ts, so the
+// version scheme (pre-#8867) applies; handoff-inventory-storybook-scheme.test.mjs
+// covers the lifecycle scheme and the move between them.
 test("a v1.0 story file is frozen: an edit or move blocks, and new states go in a new v2.0 entry", (t) => {
   const v1Meta = (title, tags) => `export default { title: "${title}", tags: [${tags.map((tag) => `"${tag}"`).join(", ")}] };\n`;
   const subtree = "apps/storybook/stories/composites/sortable-subtree.stories.tsx";

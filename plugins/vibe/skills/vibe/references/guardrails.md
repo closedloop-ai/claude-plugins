@@ -202,8 +202,8 @@ When nothing in the catalog fits:
    (`apps/storybook/AGENTS.md`, `packages/design-system/AGENTS.md`), using the
    repo skill `.claude/skills/storybook` (`workflows/author-stories.md`,
    `workflows/design-controls.md`):
-   - Stories follow "Storybook taxonomy" below: a v2.0 root and the page
-     tree, never a v1.0 root.
+   - Stories follow "Storybook taxonomy" below: a current root, the page
+     tree and a lifecycle tag, never a v1.0 root.
    - Stories go where Storybook collects them. For `packages/design-system`
      that is `apps/storybook/stories/` (a story next to the component is
      never picked up); `packages/app/*/components/` stories may sit beside the
@@ -229,33 +229,52 @@ the session adds, moves, renames or touches; that doc is the authority, so its
 rules are not copied here (operator ruling, 2026-10-14, after the
 PRD-720 session titled its new stories under v1.0 roots). The bare minimum:
 
-- New stories go in a v2.0 root, titled under `<Level> v2.0/`, never in the
-  frozen v1.0 roots (`Foundations/`, `Primitives/`, `Composites/`,
-  `Surfaces/`).
+- New stories go in the current roots, titled under the plain level
+  (`Foundations/`, `Primitives/`, `Composites/`, `Patterns/`, `Surfaces/`),
+  never in the frozen v1.0 roots (`Foundations v1.0/`, `Primitives v1.0/`,
+  `Composites v1.0/`, `Surfaces v1.0/`), whose story files are all tagged
+  `deprecated`.
 - New states or variants of an existing component never retitle, re-tag or
   move its existing story file, since story IDs come from the title. A v1.0
-  story file is never edited beyond a compile-only repair (prop renames,
-  imports, types; no story, title, tag or visual change): its component's new
-  states go in a new v2.0 entry holding only them. Any other existing file takes them as extra
-  stories. Otherwise only a new component or a sibling replacement (a V3)
-  gets a new entry (design ruling, 2026-10-15;
-  `vibe-storybook-decomposer.md`, "Precedent search" step 4).
+  story file (under a `<Level> v1.0/` root or tagged `deprecated`) is never
+  edited beyond a compile-only repair (prop renames, imports, types; no
+  story, title, tag or visual change): its component's new states go in a new
+  entry in the current root holding only them, its name descriptive,
+  permanent and without a version number. Any other existing file takes them
+  as extra stories, its title and tag unchanged. Otherwise only a new
+  component or a sibling replacement (a V3) gets a new entry (design ruling,
+  2026-10-15; `vibe-storybook-decomposer.md`, "Precedent search" step 4).
 - Story files under the `Start Here/` root are exempt from the v1.0 freeze
   and the title, tag and retitle checks (design ruling, 2026-10-06): Start
   Here is unversioned and its Version History is edited by every Storybook
   release.
-- Composites, Patterns and Surfaces v2.0 are placed in the page tree the doc
+- Composites, Patterns and Surfaces are placed in the page tree the doc
   describes.
-- Each story file carries the `v2.0` version tag.
+- Each story file carries exactly one lifecycle tag in its own meta, per the
+  doc's "Lifecycle": `stable` for a shipped surface, `preview` for anything
+  under `Labs`, `experimental` for a design-only preview or anything under
+  `Not In The Live App`; never `deprecated`, which only the v1.0 roots carry.
+  A story that differs from its file overrides it per story
+  (`tags: ["!stable", "experimental"]`).
 - Adding, moving or renaming stories is a Storybook release: the version bump
   and Version History entry the doc names, in the same change.
+- A session whose base predates this scheme (symphony-alpha #8867,
+  Storybook 3.0.0) follows that base's own `TAXONOMY.md`: there the plain
+  roots and the `v1.0` tag are v1.0, and new work goes under `<Level> v2.0/`
+  tagged `v2.0`. Syncing main moves it to this scheme: its own new entries
+  then take the plain root and a lifecycle tag (design ruling, 2026-10-16).
 
-The handoff inventory blocks a new story file titled under or tagged for a
-v1.0 root and any other edit or move of a v1.0 story file (`v1Stories`,
-`storiesInV2Taxonomy`), and an existing non-v1.0 one whose title changed (`retitledStories`, `existingStoryTitlesKept`) unless the writer
+The handoff inventory judges story files by the scheme of the session's base
+(`storybookScheme`, read from that base's own Storybook sources). It blocks a
+new story file titled under or tagged for a v1.0 root and any other edit or
+move of a v1.0 story file (`v1Stories`, `storiesInV2Taxonomy`), and an
+existing non-v1.0 one whose title changed (`retitledStories`,
+`existingStoryTitlesKept`) unless the writer
 recorded it as a replacement's entry with
 `vibe-sessions.mjs story-replacement --worktree <wt> --path <story file> --replacement <component>`, and
-`vibe-guardrails-reviewer` checks the placement. A compile-only repair of a
+`vibe-guardrails-reviewer` checks the placement. The base is the main the
+session last synced, so the retitles a main import brought are never the
+session's own. A compile-only repair of a
 v1.0 file does not block; it is listed under `compileOnlyV1Repairs` for the
 Engineering checklist. Where in that tree a story
 goes, and which component owns it, is `vibe-storybook-decomposer`'s Placement

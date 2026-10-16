@@ -21,6 +21,7 @@ GUARDRAILS = PLUGIN_ROOT / "skills" / "vibe" / "references" / "guardrails.md"
 DECOMPOSER = PLUGIN_ROOT / "agents" / "vibe-storybook-decomposer.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
+TAXONOMY_SCRIPT = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "storybook-taxonomy.mjs"
 EXEMPTION = (
     "Story files under the `Start Here/` root are exempt from the v1.0 freeze and the title, tag and retitle "
     "checks (design ruling, 2026-10-06): Start Here is unversioned and its Version History is edited by every "
@@ -52,13 +53,15 @@ def paragraph(text: str, marker: str) -> str:
 def test_guardrails_state_the_exemption_beside_the_freeze() -> None:
     taxonomy = section(GUARDRAILS.read_text(), "## Storybook taxonomy")
     assert EXEMPTION in taxonomy
-    assert taxonomy.index("A v1.0 story file is never edited beyond a compile-only repair") < taxonomy.index(EXEMPTION)
+    assert taxonomy.index("A v1.0 story file (under a `<Level> v1.0/` root or tagged `deprecated`) is never edited") < taxonomy.index(
+        EXEMPTION
+    )
 
 
 def test_the_placement_owner_states_the_exemption_in_its_v1_rule() -> None:
     order = paragraph(DECOMPOSER.read_text(), "4. Decide in this order")
     assert EXEMPTION in order
-    assert order.index("A v1.0 story file is frozen and never edited") < order.index(EXEMPTION)
+    assert order.index("is frozen and never edited, not even to add a story") < order.index(EXEMPTION)
 
 
 def test_the_handoff_storybook_paragraph_states_the_exemption() -> None:
@@ -84,9 +87,12 @@ def test_each_holder_states_the_exemption_once() -> None:
 
 def test_the_inventory_exempts_the_start_here_title_root_from_both_checks() -> None:
     inventory = INVENTORY.read_text()
-    assert 'const UNVERSIONED_STORY_ROOT = "Start Here";' in inventory
-    assert "storyMetaTitle(source)?.split(\"/\")[0].trim() === UNVERSIONED_STORY_ROOT" in inventory
-    assert "start-here-version-history" not in inventory
+    taxonomy = TAXONOMY_SCRIPT.read_text()
+    assert 'export const UNVERSIONED_STORY_ROOT = "Start Here";' in taxonomy
+    assert "storyTitleRoot(source) === UNVERSIONED_STORY_ROOT" in taxonomy
+    assert 'return storyMetaTitle(source)?.split("/")[0].trim();' in taxonomy
+    for script in (inventory, taxonomy):
+        assert "start-here-version-history" not in script
     for check in ("function findV1Stories(files)", "function findRetitledStories(files)"):
         start = inventory.index(check)
         body = inventory[start : inventory.index("\n}\n", start)]

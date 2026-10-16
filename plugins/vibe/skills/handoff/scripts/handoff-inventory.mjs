@@ -30,20 +30,30 @@
 // every recorded deletion, file or case, is listed under `retiredTests` with
 // its status so the reviewer can verify it and the ticket can list it.
 //
-// New story files belong in the v2.0 Storybook taxonomy (symphony-alpha's
-// apps/storybook/TAXONOMY.md); one titled under or tagged for a frozen v1.0
-// root, or an existing one newly given either, is listed under `v1Stories` and
-// blocks. A story file that was v1.0 at the base is frozen: any edit or move
-// of it is listed under `v1Stories` with the reason `frozen` and blocks, so new
-// states of its component go in a new v2.0 entry instead. The one exception is
-// a compile-only repair (design ruling, 2026-10-15): an in-place edit that
+// Story files are judged by the Storybook scheme the session's base uses
+// (storybook-taxonomy.mjs), reported as `storybookScheme`. From symphony-alpha
+// #8867 on (the lifecycle scheme) the v1.0 baseline is every story file titled
+// under a `<Level> v1.0/` root or tagged `deprecated`, and new work goes under
+// the plain current roots with one lifecycle tag; on an older base (the
+// version scheme) it is the plain roots and the `v1.0` tag, and new work goes
+// under `<Level> v2.0/`. A story file newly titled under or tagged for the
+// v1.0 baseline is listed under `v1Stories` and blocks. A story file that was
+// v1.0 at the base is frozen: any edit or move of it is listed under
+// `v1Stories` with the reason `frozen` and blocks, so new states of its
+// component go in a new entry under the current roots instead. The one
+// exception is a compile-only repair (design ruling, 2026-10-15): an in-place edit that
 // keeps the meta title, the meta tags and the set of exported story names, and
 // so every story ID, is listed under `compileOnlyV1Repairs` and does not block;
 // the ticket asks engineering to confirm it changed no visuals. Any other existing
 // story file keeps its meta title, because Storybook builds story IDs from it:
 // a title changed from the base, moves included, is listed under
 // `retitledStories` and blocks unless the session record lists the file as a
-// replacement's entry (`vibe-sessions.mjs story-replacement`).
+// replacement's entry (`vibe-sessions.mjs story-replacement`). The base is the
+// main the session last synced, so the retitles a main import brought (#8867
+// renamed every root) are in the base and never counted as the session's. A
+// base whose story-group-order.ts exports `StorybookLifecycle` in a shape
+// storybook-taxonomy.mjs cannot read blocks a session that changed a story
+// file (`storybookSchemeRecognized`) instead of guessing its rules.
 //
 // A story file whose meta title is under the `Start Here/` root, at the base
 // or now, is exempt from the freeze, the v1.0 title and tag checks and the
@@ -69,6 +79,15 @@ import { isRootTest, isSnapshot, isTestFile, TEST_SPEC_PATTERN } from "../../vib
 import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
 import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-shrink.mjs";
 import { isPortableSurfaceAllowlistEdit, PORTABLE_SURFACE_CHECKER } from "./prototype-allowlist.mjs";
+import {
+  isUnversionedStory,
+  STORY_GROUP_ORDER_PATH,
+  StorybookScheme,
+  storybookSchemeOf,
+  storyExportNames,
+  storyMetaTags,
+  storyMetaTitle,
+} from "./storybook-taxonomy.mjs";
 
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 const BRANCH_PREFIX = "vibe/";
@@ -104,22 +123,6 @@ const BACKEND_SEGMENTS = ["/prisma/", "/migrations/"];
 
 const STORY_PATTERN = /\.stories\.tsx?$/;
 const COMPONENT_PATTERN = /\/components\/.+\.tsx$/;
-// v1.0 is the frozen baseline; new work goes under `<Level> v2.0/`
-// (apps/storybook/TAXONOMY.md; operator ruling, 2026-10-14).
-// A v1.0 story file is never edited except for a compile-only repair
-// (design ruling, 2026-10-15).
-const V1_STORY_TITLE = /\btitle:\s*["'`](?:Foundations|Primitives|Composites|Surfaces)\//;
-const V1_STORY_TAG = /\btags:\s*\[[^\]]*["'`]v1\.0["'`]/;
-// The first title segment, as the sidebar root manager.ts leaves unversioned.
-const UNVERSIONED_STORY_ROOT = "Start Here";
-// The meta object's title, not a `title:` arg or prop elsewhere in the file.
-const STORY_META_START = /\b(?:const\s+meta\b[^=]*=|export\s+default)\s*\{/;
-const STORY_META_TITLE = /\btitle:\s*(["'`])((?:(?!\1).)+)\1/;
-const STORY_META_TAGS = /\btags:\s*\[([^\]]*)\]/;
-const STRING_LITERAL = /(["'`])((?:(?!\1).)*)\1/g;
-const NAMED_EXPORT = /\bexport\s+(?:const|let|var|function\*?|class)\s+([\w$]+)/g;
-const EXPORT_LIST = /\bexport\s*\{([^}]*)\}/g;
-const EXPORT_ALIAS = /\s+as\s+/;
 const STORY_PATHSPECS = ["*.stories.ts", "*.stories.tsx"];
 // Tests are written only when the person explicitly asks for a pull request
 // (operator ruling, 2026-10-13); earlier phases may only repair existing
@@ -183,6 +186,9 @@ const outsideAllowed = changedFiles.filter(
 const backendFiles = changedFiles.filter((file) => isBackend(file.path));
 const componentsWithoutStories = findComponentsWithoutStories(changedFiles);
 const movedStories = findMovedStories();
+const storybookScheme = storybookSchemeOf(readBaseFile(STORY_GROUP_ORDER_PATH));
+const storybookSchemeUnreadable = storybookScheme.summary.name === StorybookScheme.Unrecognized &&
+  changedFiles.some((file) => STORY_PATTERN.test(file.path));
 const { v1Stories, compileOnlyV1Repairs } = findV1Stories(changedFiles);
 const retitledStories = findRetitledStories(changedFiles);
 
@@ -191,6 +197,7 @@ const blocking = {
   hasChanges: changedFiles.length > 0,
   storiesInV2Taxonomy: v1Stories.length === 0,
   existingStoryTitlesKept: retitledStories.every((story) => story.replacement !== null),
+  ...(storybookSchemeUnreadable ? { storybookSchemeRecognized: false } : {}),
   ...(trackedLocalPlans.length ? { localPlansUntracked: false } : {}),
   ...(prototype ? { prototypePublicationCurrent: publicationProblem === undefined } : {}),
   ...(mainSync?.pendingMerge ? { mainSyncMergeCommitted: false } : {}),
@@ -221,6 +228,7 @@ const result = {
   backendChanged: backendFiles.length > 0,
   backendFiles,
   componentsWithoutStories,
+  storybookScheme: storybookScheme.summary,
   v1Stories,
   compileOnlyV1Repairs,
   retitledStories,
@@ -378,9 +386,9 @@ function isBackend(filePath) {
 
 /**
  * `v1Stories`: story files whose meta title sits in a v1.0 root or whose tags
- * include v1.0 where the base had neither, and every modified or moved story
- * file that was v1.0 at the base (`frozen`), except under the unversioned
- * Start Here root. `compileOnlyV1Repairs`: the in-place edits of a v1.0 file
+ * mark the v1.0 baseline, by the base's scheme, where the base had neither,
+ * and every modified or moved story file that was v1.0 at the base
+ * (`frozen`), except under the unversioned Start Here root. `compileOnlyV1Repairs`: the in-place edits of a v1.0 file
  * that keep its story IDs and tags.
  */
 function findV1Stories(files) {
@@ -401,10 +409,10 @@ function findV1Stories(files) {
     if (isUnversionedStory(base) || isUnversionedStory(source)) {
       continue;
     }
-    const gained = (pattern) => pattern.test(source) && !(base !== undefined && pattern.test(base));
+    const gained = (isV1) => isV1(source) && !(base !== undefined && isV1(base));
     const reasons = [
-      ...(gained(V1_STORY_TITLE) ? ["title"] : []),
-      ...(gained(V1_STORY_TAG) ? ["tag"] : []),
+      ...(gained(storybookScheme.frozenTitle) ? ["title"] : []),
+      ...(gained(storybookScheme.frozenTag) ? ["tag"] : []),
       ...(base !== undefined && isV1Story(base) ? ["frozen"] : []),
     ];
     if (reasons.length === 1 && reasons[0] === "frozen" && file.status === "M" && keepsStoryIdentity(base, source)) {
@@ -426,12 +434,7 @@ function keepsStoryIdentity(base, source) {
 }
 
 function isV1Story(source) {
-  return V1_STORY_TITLE.test(source) || V1_STORY_TAG.test(source);
-}
-
-/** A story file whose meta title's root is Start Here, which carries no version. */
-function isUnversionedStory(source) {
-  return source !== undefined && storyMetaTitle(source)?.split("/")[0].trim() === UNVERSIONED_STORY_ROOT;
+  return storybookScheme.frozenTitle(source) || storybookScheme.frozenTag(source);
 }
 
 /**
@@ -476,30 +479,6 @@ function findMovedStories() {
     const [, from, to] = line.split("\t");
     return { path: to, from };
   });
-}
-
-function storyMetaTitle(source) {
-  const start = source.search(STORY_META_START);
-  return STORY_META_TITLE.exec(start === -1 ? source : source.slice(start))?.[2] ?? null;
-}
-
-function storyMetaTags(source) {
-  const start = source.search(STORY_META_START);
-  const tags = STORY_META_TAGS.exec(start === -1 ? source : source.slice(start))?.[1];
-  return tags === undefined ? null : [...tags.matchAll(STRING_LITERAL)].map((match) => match[2]);
-}
-
-function storyExportNames(source) {
-  const names = new Set([...source.matchAll(NAMED_EXPORT)].map((match) => match[1]));
-  for (const [, list] of source.matchAll(EXPORT_LIST)) {
-    for (const entry of list.split(",")) {
-      const name = entry.trim().split(EXPORT_ALIAS).at(-1);
-      if (name && name !== "default") {
-        names.add(name);
-      }
-    }
-  }
-  return [...names].sort();
 }
 
 function readWorktreeFile(filePath) {

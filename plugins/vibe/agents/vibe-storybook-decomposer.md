@@ -47,9 +47,11 @@ taxonomy"). For placement, use that skill's placement pieces:
 
 Read `apps/storybook/AGENTS.md` for
 where stories must live to be collected, and the repo's
-`apps/storybook/TAXONOMY.md`, which places every new story: a v2.0 root, its
-page tree, the `v2.0` tag and the release bump, never a frozen v1.0 root
-(`../skills/vibe/references/guardrails.md`, "Storybook taxonomy"). An
+`apps/storybook/TAXONOMY.md`, which places every new story: a current root,
+its page tree, one lifecycle tag and the release bump, never a frozen v1.0
+root (`../skills/vibe/references/guardrails.md`, "Storybook taxonomy"). Read
+that doc as the session's base has it: on a base older than the lifecycle
+scheme it still places new work under `<Level> v2.0/` with the `v2.0` tag. An
 existing component's story file keeps its title and tag ("Precedent search",
 step 4).
 Read the same session decision table and affected/interacting row IDs. Use
@@ -78,16 +80,18 @@ Do this first, in both modes.
 3. Report everything found, not a pick: the component that provides the
    capability and its path; how each host consumes it (a prop, a hook, a
    wrapper, its own copy); and every existing story that exercises it, with
-   its title, story names, version tag and file.
+   its title, story names, lifecycle tag and file.
 4. Decide in this order. First (design ruling, 2026-10-15): a change to an
    existing component (new states or variants, an extra column action, a new
    footer) never retitles, re-tags or moves its existing story file.
    Storybook builds story IDs from the title path, so a retitle breaks every
-   link to those stories. A v1.0 story file is frozen and never edited, not
-   even to add a story: the new states go in a new v2.0 entry for that
-   component holding only the new states, its name descriptive, permanent,
-   per `apps/storybook/TAXONOMY.md` and without a version number, and the
-   v1.0 stories stay where they are. The one exception is a compile-only
+   link to those stories. A v1.0 story file (under a `<Level> v1.0/` root or
+   tagged `deprecated`) is frozen and never edited, not even to add a story:
+   the new states go in a new entry for that component in the current root
+   holding only the new states, its name descriptive, permanent, per
+   `apps/storybook/TAXONOMY.md` and without a version number, with the
+   lifecycle tag its place in the tree takes, and the v1.0 stories stay where
+   they are. The one exception is a compile-only
    repair after a rename elsewhere: only mechanical changes (prop renames,
    imports, types), no story added or removed, no title, story ID or tag
    change and no visual change, since the freeze protects what its stories
@@ -98,25 +102,26 @@ Do this first, in both modes.
    new states as extra stories, its title, tag and existing story names
    unchanged. Otherwise only a new component, or a sibling replacement such
    as a V3, gets a new
-   entry and v2.0 placement. This outranks reading a touched story file as
-   taking the v2.0 version. Then (operator ruling, 2026-10-14): where
+   entry and a place in the current roots. This outranks reading a touched
+   story file as moving to the current roots or taking a new lifecycle tag.
+   Then (operator ruling, 2026-10-14): where
    the repo's `apps/storybook/TAXONOMY.md` or `.claude/skills/storybook/`
    already say how, follow them; where they do not, mirror the precedent: the same owner,
    the same way of consuming it, the component that carries its stories, how
    granular they are and which states get variants. Mirroring copies
-   structure only, never location or version: the root, version tag and v2.0
+   structure only, never location or lifecycle: the root, lifecycle tag and
    tree position always come from `apps/storybook/TAXONOMY.md`, and a
    precedent in a v1.0 root never puts new work in v1.0. Either way, stories
    document the components consumers actually render, one story per state,
    never internal render pieces: a shared capability's generic mechanics stay
    in the shared component's existing stories, and the page-level component
    consumers render gets variants showing only its domain-specific
-   configuration (its dimensions, labels, icons). It fits the doc's v2.0
+   configuration (its dimensions, labels, icons). It fits the doc's
    Composites row, "a section of a page".
 5. A precedent that disagrees with those docs, or precedents that disagree
    with each other, is a Conflict. Decide it by the same order. Where the
    docs say nothing, mirror one precedent, chosen in this order: built on
-   the same providing component, then already in the v2.0 tree, then most
+   the same providing component, then already in the current roots, then most
    recently changed (the latest commit on main to its story file); name the
    others.
    Report each side with its paths and titles, and its audience, `design` or
@@ -131,9 +136,9 @@ precedent path, it follows.
 ```
 Placement:
 - Capability: <named without the entity>
-- Precedents: <each: entity, providing component path, how hosts consume it, each story title, story names, tag and file>, or none found
+- Precedents: <each: entity, providing component path, how hosts consume it, each story title, story names, lifecycle tag and file>, or none found
 - Owner: <path to build or extend>, per <doc section> or mirroring <precedent path>
-- Stories: <each story to add or extend: title, tag, file>, root and tag per <TAXONOMY.md section>, structure per <doc section> or mirroring <precedent>; an existing file's title and tag unchanged, a v1.0 file not edited beyond a compile-only repair (step 4)
+- Stories: <each story to add or extend: title, lifecycle tag, file>, root and tag per <TAXONOMY.md section>, structure per <doc section> or mirroring <precedent>; an existing file's title and tag unchanged, a v1.0 file not edited beyond a compile-only repair (step 4)
 - Conflict: <each disagreement: audience `design` or `engineering`, both sides quoted with paths, and how it was decided>, or none
 ```
 

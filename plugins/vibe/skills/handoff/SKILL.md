@@ -344,7 +344,9 @@ Every new story follows the repo's `apps/storybook/TAXONOMY.md`, a v1.0
 story file is never edited beyond a compile-only repair and any other existing
 story file keeps its title and tag
 (`../vibe/references/guardrails.md`, "Storybook taxonomy"); the inventory's
-`v1Stories` and `retitledStories` block handoff. Its `compileOnlyV1Repairs`
+`v1Stories` and `retitledStories` block handoff, judged by the scheme of the
+session's base (`storybookScheme`: from symphony-alpha #8867 on, the
+`<Level> v1.0/` roots and the `deprecated` tag are v1.0). Its `compileOnlyV1Repairs`
 do not; the ticket worker puts each on the Engineering checklist. Story files
 under the `Start Here/` root are exempt from the v1.0 freeze and the title,
 tag and retitle checks (design ruling, 2026-10-06): Start Here is unversioned

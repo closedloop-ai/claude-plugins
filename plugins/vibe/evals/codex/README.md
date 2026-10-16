@@ -44,7 +44,7 @@ The cheap grader never decides routing, file correctness or reference evidence.
 Visual cases use the same stand-in repository and Pillow renderer as Claude.
 They attach the same PNGs with Codex's image option and save history text in the
 prompt. No browser, Electron window, actual app or external ticket is started.
-The 22 other cases rehearse one reply from supplied session state in read-only
+The 24 other cases rehearse one reply or decision from supplied session state in read-only
 mode. This is behavior coverage, not a substitute for live app validation.
 
 The console reports each case and failure. Private artifacts include input,

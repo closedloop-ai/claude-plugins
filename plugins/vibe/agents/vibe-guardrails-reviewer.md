@@ -108,15 +108,23 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    lint or type suppression or a raised allowlist count added to make a check
    pass (`guardrails.md`, "Checks") is blocking too.
 10. Storybook taxonomy (`guardrails.md`, "Storybook taxonomy"): read the
-    repo's `apps/storybook/TAXONOMY.md`. A new story file titled
-    under or tagged for a frozen v1.0 root, or any edit or move of a story
-    file that is v1.0 on main (the inventory's `v1Stories`, reason `frozen`),
-    is blocking; that component's new states belong in a new v2.0 entry
-    holding only them, with no version number in its name. Confirm each of
+    repo's `apps/storybook/TAXONOMY.md` as the session's base has it; the
+    inventory's `storybookScheme` names that base's scheme. A new story file
+    titled under or tagged for a frozen v1.0 root (a `<Level> v1.0/` root or
+    the `deprecated` tag; on a version-scheme base, a plain root or the
+    `v1.0` tag), or any edit or move of a story file that is v1.0 on main
+    (the inventory's `v1Stories`, reason `frozen`), is blocking; that
+    component's new states belong in a new entry in the current root holding
+    only them, with no version number in its name. Confirm each of
     the inventory's `compileOnlyV1Repairs` is purely mechanical (prop
     renames, imports, types) with no visual change; anything else in one is
-    blocking. So is a v2.0 story outside its page tree, without the `v2.0`
-    tag, or added, moved or renamed without the release bump the doc names.
+    blocking. So is a new story outside the current roots' page tree (on a
+    lifecycle-scheme base, a title still under a `<Level> v2.0/` root), a
+    story file without exactly one lifecycle tag in its meta or with the
+    wrong one for its place (`stable` shipped, `preview` under `Labs`,
+    `experimental` design-only or under `Not In The Live App`; on a
+    version-scheme base, without the `v2.0` tag), or one added, moved or
+    renamed without the release bump the doc names.
     An existing non-v1.0 story file (on main) retitled, re-tagged or moved breaks every
     link to its stories and is blocking (the inventory's `retitledStories`
     for a title) unless recorded as a sibling replacement's entry; confirm the

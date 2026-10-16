@@ -156,15 +156,22 @@ and Storybook skill (`.claude/skills/storybook/`, whose placement workflows
 and index scripts it uses) where they say how and mirroring that precedent's
 structure, never its root or version, where they do not; the story files the
 writer matches are the same capability's, not the same folder's. Stories cover the components consumers
-render, not internal render pieces. A v1.0 story file is never edited beyond
-a compile-only repair, so new states of its component go in a new v2.0 entry
-holding only them. New states
+render, not internal render pieces. New stories go in the current roots
+(`Composites/`, `Surfaces/` and the other plain levels) with one lifecycle
+tag: `stable`, `preview` under Labs, or `experimental` for design-only work.
+A v1.0 story file (under a `<Level> v1.0/` root or tagged `deprecated`) is
+never edited beyond a compile-only repair, so new states of its component go
+in a new entry in the current root holding only them. New states
 of any other existing component go in its existing story file under the same
 title and tag, since a retitle breaks every link to its stories; handoff
 blocks any other edit of a v1.0 story file except a compile-only repair, and a
 retitle unless it is a sibling replacement's entry. Story files under the
 `Start Here/` root are exempt from the v1.0 freeze and the title, tag and
-retitle checks (design ruling, 2026-10-06). The writer records it in its local plan;
+retitle checks (design ruling, 2026-10-06). Handoff judges story files by
+the scheme of the session's base, read from that base's
+`apps/storybook/story-group-order.ts`, so a session still based before
+symphony-alpha #8867 keeps the `v1.0`/`v2.0` rules until it syncs main, and a
+sync is never blamed for the renames it imported. The writer records it in its local plan;
 a conflict goes on the live ticket by audience, design conflicts under
 Design Review and everything else on the Engineering checklist, never to the
 person.
@@ -313,6 +320,12 @@ scaffold and write tools:
 cd plugins
 claude plugin eval . --eval-dir vibe/evals --tag visual-cues --scaffold --allow-tools Bash Write Edit --model opus --runs 3 -j 4 --no-publish --ablation none
 ```
+
+The two cases tagged `storybook` rehearse placement on symphony-alpha's
+lifecycle scheme (#8867): new states for a component whose story file is
+deprecated go in a new entry in a current root, and after a main sync a
+session's own `<Level> v2.0/` entry moves to the plain root with a lifecycle
+tag without counting as a retitle.
 
 ## Runtime Files
 
