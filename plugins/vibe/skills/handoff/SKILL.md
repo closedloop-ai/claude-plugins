@@ -785,9 +785,10 @@ resumes and every fix goes through this path, never around it:
    fixing commit and the writer's per-thread results. On the existing pull
    request it refreshes the body from the session record so it matches the
    diff, with the same template and rules as opening one, then replies on
-   every thread through the REST review-comment reply endpoint: a fixed
-   thread gets the fixing commit SHA and is resolved; a thread answered with
-   a reason gets that reason and stays open for its reviewer.
+   every thread through the REST review-comment reply endpoint and resolves
+   each thread it fixed: a fixed thread gets the fixing commit SHA and is
+   resolved; a thread answered with a reason gets that reason and stays open
+   for its reviewer.
 8. `touch --status handed-off` again, stop local Storybook or Desktop if
    either runs, and tell the person in a line or two what changed and that the
    pull request is updated, with its link. Never a branch to merge.
