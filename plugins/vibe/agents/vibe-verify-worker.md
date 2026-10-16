@@ -62,7 +62,25 @@ Run Biome WITHOUT write/fix flags, source gates, `pnpm typecheck:affected`,
 `pnpm test:affected --continue`, and the relevant existing lanes named by
 `pnpm test:lanes`. Shared app changes also run the Desktop renderer lane
 directly when the repo requires it. Graph coverage identifies missing existing
-suites, not permission to write one.
+suites, not permission to write one. Three more, from the reviews of
+symphony-alpha #8885 and #8886 (operator ruling, 2026-10-16):
+
+- When the diff touches Storybook sidebar order (`apps/storybook/story-group-order.ts`,
+  `apps/storybook/.storybook/preview.tsx` or `manager.ts`) or adds, moves or
+  retitles a story, run the preview sort-order tests:
+  `pnpm --filter storybook exec vitest run __tests__/preview-story-sort-order.test.ts __tests__/story-group-order.test.ts`.
+  The sidebar order is copied into `preview.tsx` and only that test catches
+  the copy drifting.
+- Every e2e spec the session touched, and every spec that covers a touched
+  screen (`code_tests_for`, and `rg` of the screen's route and test IDs under
+  `e2e/`), runs at handoff through the repo's containerized path (the
+  `local-ci` skill, `dagger call e-2-e`), never natively on the person's Mac.
+  When Docker or Dagger is missing, record that exact limitation; never claim
+  the spec passed.
+- Before you claim that CI runs, or ran, a check or test, read
+  `.github/pr-test-event-tiers.md` and cite the tier of the job that runs
+  it. A `batch-only` job does not run on the pull request, and its `skipped`
+  conclusion there means admission, not validation.
 
 Browser automation is headless. Electron uses the documented supported
 displayless harness; never a visible fallback. If no supported local path
@@ -92,7 +110,16 @@ the files that need coverage (both web and Desktop consumers where shared
 adapters differ) and, for an existing test a human behavior ruling made
 obsolete, that exact ruling. Prototype coverage stays truthful about mock
 data. A missing test is engineering's scope of work, never counted as
-coverage and never written here.
+coverage and never written here. Each entry also names the acceptance
+criterion IDs it covers, so every criterion traces to a test, and the suite
+or lane that owns it (`pnpm test:lanes`). An entry for URL-synced state names
+the real web and Desktop host adapters and the same-route link and Back
+cases. A test still named or placed after a module the session deleted or
+moved is listed as a rename. In a `pull-request` turn, every entry must
+have been written, in a lane CI runs for its path, with literal or
+spec-derived expected values, never values computed by production code
+(`vibe-change-worker.md`, "Tests: repair, don't author"); an entry still
+listed as missing there is a finding.
 
 Any test the session added, deleted or changed is a finding unless it is a
 recorded repair that changes no assertion (the inventory's `testRepairs`), a

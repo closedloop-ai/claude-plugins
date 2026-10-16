@@ -1,8 +1,8 @@
 """Contract checks for the 2026-10-13 operator handoff follow-ups.
 
-1. Handoff docs drafts cover only existing product docs pages under
-   apps/web/content/docs/; the internal engineering docs/ folder belongs to
-   engineering's pull request.
+1. The internal engineering docs/ folder belongs to engineering's pull
+   request. Since the 2026-10-16 operator ruling no worker edits product docs
+   pages either; handoff only lists the ones a human needs to update.
 2. No worker writes or edits tests in vibe or handoff. Handoff runs the
    existing tests, fixes the session's own code, and lists the missing tests on
    the ticket as engineering's scope of work. Only the person's explicit request
@@ -56,31 +56,26 @@ def plugin_prose() -> dict[str, str]:
     return {str(path.relative_to(PLUGIN_ROOT)): path.read_text() for path in paths}
 
 
-def test_handoff_docs_drafts_cover_only_existing_product_docs_pages() -> None:
+def test_handoff_lists_docs_pages_and_leaves_internal_docs_to_engineering() -> None:
     docs = section(GUARDRAILS.read_text(), "## Feature docs at handoff")
-    assert "only existing product docs pages under `apps/web/content/docs/`" in docs
-    assert "Never edit the repo's internal engineering `docs/` folder" in docs
-    assert "Internal engineering docs belong to engineering's pull request" in docs
-    assert "or any `docs/` edit, as outside the allowed paths" in docs
-    assert "`docs/` (`.md`)" not in docs
+    assert "Nothing agent-written goes into public docs (operator ruling, 2026-10-16)" in docs
+    assert "the repo's internal engineering `docs/` folder" in docs
+    assert "only records which existing product docs pages describe a changed feature" in docs
     step = section(HANDOFF_SKILL.read_text(), "### Existing feature docs")
-    assert "product docs pages under `apps/web/content/docs/`" in step
-    assert "never edits the internal engineering `docs/` folder" in step
-    assert "belong to engineering's pull request" in step
+    assert "internal engineering `docs/` folder" in step
+    assert "edits, creates and drafts nothing there" in step
     writer = flat(agent("vibe-change-worker"))
-    assert "never edit the internal engineering `docs/` folder, which belongs to engineering's pull request" in writer
-    assert "any edit under the internal engineering `docs/` folder is blocking" in flat(agent("vibe-guardrails-reviewer"))
+    assert "records, never edits, the existing product docs pages under `apps/web/content/docs/`" in writer
     feature_docs = section(TICKET_TEMPLATE.read_text(), "## Handoff")
-    assert "existing product docs page under `apps/web/content/docs/`" in feature_docs
+    assert "existing product docs page under `apps/web/content/docs/` that describes a changed feature" in feature_docs
     assert "Internal engineering docs under `docs/` are left to engineering's pull request" in feature_docs
     for name, text in plugin_prose().items():
         assert "or `docs/`" not in text, name
         assert "internal docs under `docs/`" not in text, name
 
-
 def test_the_inventory_has_no_internal_docs_allowance() -> None:
     inventory = INVENTORY.read_text()
-    assert 'const PRODUCT_DOCS_PREFIX = "apps/web/content/docs/";' in inventory
+    assert "Nothing agent-written goes into public docs (operator ruling, 2026-10-16)" in inventory
     assert '{ prefix: "docs/"' not in inventory
     assert "HANDOFF_DOCS" not in inventory
 

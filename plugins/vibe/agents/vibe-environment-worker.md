@@ -376,7 +376,13 @@ changes and gates fields.
    characters including the ` (#NNNN)` GitHub appends, with no mention of AI
    tools. Create it with
    `gh pr create --repo closedloop-ai/symphony-alpha --base main --head <branch> --title "<title>" --body-file <file>`,
-   the body file in the session's private git directory.
+   the body file in the session's private git directory and named for the
+   live ticket (`pr-body-<live ticket slug>.md`), never a shared name such as
+   `pr-body.md`. Read the file back right before the `gh` command and confirm
+   it names this ticket's slug and summary; parallel workers share scratch
+   space, and one pull request's body has overwritten another's (operator
+   ruling, 2026-10-16). The same holds for every body or payload file this
+   mode writes.
 5. Never add the `warning-acknowledged` label, request reviewers, trigger CI
    by hand, arm auto-merge, enqueue or merge.
 
@@ -402,7 +408,8 @@ or `--body-file`).
      it exactly as step 3 does from the refreshed confirmed summary,
      Production impact, Flag changes and gates, tests and check results, and
      apply it with
-     `gh pr edit <number> --repo closedloop-ai/symphony-alpha --body-file <file>`.
+     `gh pr edit <number> --repo closedloop-ai/symphony-alpha --body-file <file>`,
+     the file named and re-read as step 4 says.
      Keep the title unless the summary it names changed.
   3. For each thread, reply through the REST review-comment reply endpoint,
      `gh api -X POST repos/closedloop-ai/symphony-alpha/pulls/<number>/comments/<comment databaseId>/replies --input <payload.json>`,

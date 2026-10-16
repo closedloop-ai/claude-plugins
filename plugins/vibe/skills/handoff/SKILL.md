@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Finish a vibe session in symphony-alpha and hand it to whoever picks it up next, usually design and then engineering. Through workers, completes internal scope and Storybook checks, runs lint, typecheck and the existing tests without writing any (it lists the missing tests for engineering), drafts marked edits to existing product docs pages, reviews the integrated result and fixes confirmed findings, and verifies each touched screen in the running web app and Desktop with the repo's control skill. Settles in plain words how the session ends: a pull request the person takes through review and merge (plain-language intent such as "I'll get the PR merged" counts as asking for one), or passing it to someone, asking for a name or email only then. Checks the live ticket is complete, publishes the final app environment or canonical prototype preview, then either opens the requested pull request as its last step with the ticket left with the person, or assigns the ticket to the next owner, status left In Progress either way. When the person later asks for changes on that pull request, resumes the session so the same writer fixes it, reruns the guardrails review and checks, pushes to the same branch, refreshes the pull request body and answers each review thread with the fixing commit. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
+description: Finish a vibe session in symphony-alpha and hand it to whoever picks it up next, usually design and then engineering. Through workers, completes internal scope and Storybook checks, runs lint, typecheck and the existing tests without writing any (it lists the missing tests for engineering), lists the existing product docs pages a human needs to update without editing any, reviews the integrated result and fixes confirmed findings, and verifies each touched screen in the running web app and Desktop with the repo's control skill. Settles in plain words how the session ends: a pull request the person takes through review and merge (plain-language intent such as "I'll get the PR merged" counts as asking for one), or passing it to someone, asking for a name or email only then. Checks the live ticket is complete, publishes the final app environment or canonical prototype preview, then either opens the requested pull request as its last step with the ticket left with the person, or assigns the ticket to the next owner, status left In Progress either way. When the person later asks for changes on that pull request, resumes the session so the same writer fixes it, reruns the guardrails review and checks, pushes to the same branch, refreshes the pull request body and answers each review thread with the fixing commit. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
 ---
 
 # Handoff
@@ -142,7 +142,7 @@ change worker has not handled; it refuses one with `NEEDS_CHANGE`.
 | Step | Worker |
 |---|---|
 | Summary | `vibe-handoff-summarizer` |
-| ALL source fixes, behavior answers, the missing tests list, product docs drafts and the frozen behavior rows (tests only for a requested pull request) | the SAME persistent `vibe-change-worker` context |
+| ALL source fixes, behavior answers, the missing tests list, the feature docs record and the frozen behavior rows (tests only for a requested pull request) | the SAME persistent `vibe-change-worker` context |
 | Judgment guardrails, shared-owner placement, and red flags | `vibe-guardrails-reviewer` |
 | Commits | you, with `../vibe/scripts/commit-worktree.mjs` |
 | Storybook placement and advice only | read-only `vibe-storybook-decomposer`; the SAME writer applies it |
@@ -354,7 +354,13 @@ story file keeps its title and tag
 `v1Stories` and `retitledStories` block handoff, judged by the scheme of the
 session's base (`storybookScheme`: from symphony-alpha #8867 on, the
 `<Level> v1.0/` roots and the `deprecated` tag are v1.0). Its `compileOnlyV1Repairs`
-do not; the ticket worker puts each on the Engineering checklist. Story files
+do not; the ticket worker puts each on the Engineering checklist. Every story
+ID the base has and the session's built index lost, and every reference to a
+removed or renamed ID still found in `e2e/`, the tests, `docs/`,
+`apps/web/content/docs/`, `.claude/` or the story files, blocks handoff too
+(operator ruling, 2026-10-16, after a stale ID from symphony-alpha #8886
+broke an e2e spec): the decomposer and the guardrails reviewer (check 10)
+report them and the SAME writer fixes them. Story files
 under the `Start Here/` root are exempt from the v1.0 freeze and the title,
 tag and retitle checks (design ruling, 2026-10-06): Start Here is unversioned
 and its Version History is edited by every Storybook release. Resume the SAME writer to perform every extraction, story and catalog
@@ -397,18 +403,18 @@ browser/Electron windows. Record exact unsupported local limitations.
 
 ### Existing feature docs
 
-In the same handoff continuation, the SAME writer updates the product docs
-pages under `apps/web/content/docs/` that already exist for the features this
-session changed, on this branch, under `../vibe/references/guardrails.md`,
-"Feature docs at handoff". It never edits the internal engineering `docs/`
-folder; those docs belong to engineering's pull request. It edits existing
-pages only and never creates one; every edit is marked as
-an agent draft that design or engineering approves before merge. This is the operator's explicit, scoped exception to the rule that agents do not
-author user-visible words. It covers only those marked drafts and gives no
-license for product copy or any other words. The writer records each edited page, or
-that no existing page covers the changed features, for the ticket's Feature
-docs line. Owned prototype sessions skip this step. Step 6 reviews these
-edits with the rest of the diff.
+Nothing agent-written goes into public docs (`../vibe/references/guardrails.md`,
+"Feature docs at handoff"; operator ruling, 2026-10-16, after an
+agent-drafted paragraph was committed to a product docs page in
+symphony-alpha #8885). In the same handoff continuation the SAME writer only
+records which existing product docs pages under `apps/web/content/docs/`
+describe a feature this session changed, with the passage that no longer
+matches, or that no page covers them, for the ticket's Feature docs line. It
+edits, creates and drafts nothing there or in the internal engineering
+`docs/` folder; design or engineering updates those pages. The inventory
+reports any change under either folder as outside the allowed paths in every
+phase, and step 3 sends it back to the writer to remove. Owned prototype
+sessions skip this step.
 
 ## 6. Independent integrated review
 
@@ -458,7 +464,13 @@ push, until its rerun on the corrected tests is clean.
 
 These run here and never in the build loop (operator ruling,
 2026-10-13). Browser E2E runs headless in step 5's checks and step 7's
-validation. For the screens the session touched, run the repository's own
+validation. Every e2e spec the session touched, and every spec covering a
+touched screen, runs through the repo's containerized path (the `local-ci`
+skill's `dagger call e-2-e`) in the verify worker's checks mode, never
+natively on the person's Mac; a missing Docker or Dagger is recorded as that
+exact limitation, never a pass (operator ruling, 2026-10-16). No worker
+claims what CI runs or ran without first reading
+`.github/pr-test-event-tiers.md` and citing the job's tier. For the screens the session touched, run the repository's own
 read-only passes where its root `AGENTS.md` calls for them on this change:
 visual QA (`/visual-qa` in Claude Code, `$visual-qa` in Codex) for a UI
 change, logical QA (`/logical-qa`, `$logical-qa`) for a data or metric
@@ -472,7 +484,7 @@ prototype sessions keep their canonical single design review instead.
 
 ROOT commits the reviewed deliverable LOCALLY through the existing commit
 script/normal hooks, still unpushed, before `commit-worktree.mjs --prepare-main-sync`.
-This includes the SAME writer's reviewed handoff fixes and docs drafts, not
+This includes the SAME writer's reviewed handoff fixes, not
 private plans or protected localFix source. No change needs no extra local commit.
 
 Resume the same actor for source-owned `main-sync-inputs` before preparation
@@ -498,7 +510,12 @@ commit (nothing is squashed or amended):
 `node ../vibe/scripts/commit-worktree.mjs --worktree "<wt>" --subject "<live ticket slug>: <plain imperative summary of the handoff fixes>" --body "<what was fixed, one per line>"`
 (under 72 characters, no mention of AI tools). `committed: false` means
 nothing changed. A commit the hook refused goes back to step 5's fixing, then
-this step again. Resume the SAME writer's source-owned `progress` continuation
+this step again. Every main sync is checked for capability removal, this one
+included (operator ruling, 2026-10-16, after a main sync in symphony-alpha
+#8886 made a shipped editable Desktop control read-only): once the merge is
+committed, dispatch `vibe-guardrails-reviewer` for its check 13 on that
+merge; a blocking finding goes back to the SAME writer, then this step again.
+Resume the SAME writer's source-owned `progress` continuation
 with parent-controlled handoff purpose/transaction to execute
 `main-sync-validate` against committed input. Dirty tracked localFix source is
 NOT a check exception: preserve/block through its same-writer workaround flow,

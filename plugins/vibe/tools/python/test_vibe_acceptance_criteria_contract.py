@@ -81,9 +81,9 @@ def test_each_touched_criterion_is_checked_with_cheap_concrete_evidence_before_d
 def test_each_check_records_criterion_check_and_result() -> None:
     text = rule()
     assert "Append one line per check to the section's `### Checks` log" in text
-    assert "request ID, criterion ID, the check (test name, command or trace) and the result" in text
+    assert "request ID, criterion ID, the surface from its `Surfaces:` line, the check (test name, command or trace) and the result" in text
     assert "`met` or `not met yet`, with its evidence" in text
-    assert "earlier lines stay" in text
+    assert "The newest line per criterion and surface is its current result; earlier lines stay" in text
 
 
 def test_an_unmet_criterion_is_fixed_or_reported_never_claimed() -> None:

@@ -190,10 +190,11 @@ subagent that worked on this.>
   accepted, which engineering keeps passing with tests in its pull request and
   changes only with that person's explicit OK>
 - Feature docs: <each existing product docs page under
-  `apps/web/content/docs/` edited on this branch for the changed features,
-  with what changed; every edit is marked as an agent draft that design or
-  engineering approves before merge, and no page is created. Internal
-  engineering docs under `docs/` are left to engineering's pull request>, or
+  `apps/web/content/docs/` that describes a changed feature, with the passage
+  that no longer matches what was built, for design or engineering to update.
+  Nothing agent-written goes into public docs, so no page is edited on this
+  branch. Internal engineering docs under `docs/` are left to engineering's
+  pull request>, or
   "None: no existing product docs page describes the changed features"
 - Missing tests (engineering scope): <every test the session still needs,
   which engineering writes in its pull request: the behavior and stable row
@@ -276,7 +277,7 @@ Yes / no, plus one line when it's a no:
 3. Storybook is right. Every new or changed component has stories in the right place, and the controls are usable. (Design)
 4. Extended the existing pattern. For example, behavior the children of a shared parent share built once in that parent so each gets it, not one copy per child.
 5. Backend is wired correctly. Route, service, shared types, Zod and migration follow our layering, and nothing is left on a stub. (Eng)
-6. No invented copy. Every user-visible string came from a person or an existing label. The only exception is the marked agent drafts in existing product docs pages, which need approval before merge.
+6. No invented copy. Every user-visible string came from a person or an existing label, and nothing agent-written went into product docs pages.
 7. What we had to fix before merge. A count and a short list. (Eng, filled in at merge)
 ```
 

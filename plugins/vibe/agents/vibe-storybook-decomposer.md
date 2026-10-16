@@ -117,7 +117,11 @@ Do this first, in both modes.
    in the shared component's existing stories, and the page-level component
    consumers render gets variants showing only its domain-specific
    configuration (its dimensions, labels, icons). It fits the doc's
-   Composites row, "a section of a page".
+   Composites row, "a section of a page". A whole-page flow (the page a
+   route renders, or several sections composed into one flow) is never a
+   Composite entry: it goes in named `Surfaces/` stories for that page, per
+   the doc's Surfaces row (operator ruling, 2026-10-16, after
+   symphony-alpha #8886 composed a whole page as a Composite).
 5. A precedent that disagrees with those docs, or precedents that disagree
    with each other, is a Conflict. Decide it by the same order. Where the
    docs say nothing, mirror one precedent, chosen in this order: built on
@@ -157,7 +161,15 @@ Placement:
    long content, and each visible variant. Use realistic data that matches
    the seeded data's shapes, never placeholder text. Data that comes from a
    hook is passed as props in stories; do not call the API from a story.
-   Titles and files follow the Placement block's Stories line.
+   Titles and files follow the Placement block's Stories line. Every state
+   the ticket, its PRD or an acceptance criterion names (a collapsed group, a
+   windowed count, an ineligible row) gets a story on the component consumers
+   render, not only on an internal piece or a sibling. A windowed or paged
+   fixture is built by calling the repo's real paging helper, never a
+   hand-shaped page object. A story's name says only what its args and play
+   function show and assert; a name that claims a state the story does not
+   render or check is renamed or completed. Args are typed through the
+   story's `Meta`, never cast.
 3. Controls. Every prop gets a control decision per `design-controls.md`.
 4. Catalog and taxonomy. A new `packages/design-system/components/ui/*.tsx`
    is added to the right `DS_*` set in
@@ -178,6 +190,25 @@ extracted, stories added or updated (path and story names), each story or
 shared component placed differently from the recorded Placement block or
 without one, and any component not yet covered with the reason. Do not claim
 advice was applied.
+
+In handoff mode also run these checks and report each result with its
+evidence (operator ruling, 2026-10-16, after symphony-alpha #8885 and #8886):
+
+- States: for each state the ticket, PRD or acceptance criteria name, the
+  story on the consumed component that shows it, or the missing state.
+- Names: each new or changed story whose name claims more than its args and
+  play function show and assert, quoting the name and the story body.
+- Fixtures: each windowed or paged story fixture not built with the repo's
+  paging helper.
+- Story IDs: `scripts/index-diff.mjs` of the session's built index against
+  the base's; every story ID the base has and the session lost, and for each
+  removed or renamed ID, the `rg` hits for the old ID in `e2e/`, the test
+  files, `docs/`, `apps/web/content/docs/`, `.claude/` and the story files
+  (`../skills/vibe/references/guardrails.md`, "Storybook taxonomy"). A lost
+  ID with no recorded replacement, or a hit still naming one, is a finding.
+- Version History: the session's new entries in `Start Here/Version History`
+  against the base's `apps/storybook/package.json` `version`; anything but
+  one entry at the next version is a finding.
 
 Design Review evidence comes from the verified final diff and existing
 Storybook tooling, not invented copy or a technical plan. Report the detailed

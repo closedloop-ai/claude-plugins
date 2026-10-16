@@ -45,7 +45,9 @@ line; push mode gets a new `Walk:` line when the fix re-ran the walk.
   review thread you were given, reply on that thread through the REST
   review-comment endpoint with the fixing commit SHA and the reply text, and
   resolve it, per the root `AGENTS.md`. Given a new `Walk:` line, replace the
-  Test plan's walk line in the PR body with it (`gh pr edit --body-file`).
+  Test plan's walk line in the PR body with it (`gh pr edit --body-file`,
+  the file named for the seed ticket and read back right before the command,
+  so a parallel worker's body never replaces this one).
 - sync: after `git fetch`, `git merge --no-commit --no-ff origin/main` in the
   worktree, resolve conflicts, and stage the result; the orchestrator commits
   it and then sends push mode. Return `BLOCKED` if a conflict needs judgment

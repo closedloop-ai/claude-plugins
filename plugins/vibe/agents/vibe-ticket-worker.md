@@ -30,8 +30,9 @@ Handoff also receives the SAME writer's detailed final packet/report paths for
 Production impact, Flag changes and gates, and researched Open Questions under
 the existing ticket template; compact helper responses are references, not the
 complete evidence inventory. It also receives the table's Frozen Behavior row
-IDs, the writer's feature docs record (each existing product docs page edited
-as a marked agent draft, or that none covers the changed features), the
+IDs, the writer's feature docs record (each existing product docs page that
+describes a changed feature and needs a human update, or that none covers the
+changed features), the
 writer's missing tests list, every `mainPreexistingFailures` entry the final
 validation returned with its main run's log, and the running app verification's control
 artifact paths with what each proves and any surface it could not drive.
@@ -199,8 +200,10 @@ historical inspections accurately. Preserve the existing grading block.
    pull request, that owner is the session's operator and the line takes the
    template's pull request form. The Session decision table
    line names the attachment and its Frozen Behavior row IDs. The Feature docs
-   line lists the edited pages from the writer's record and never claims a
-   page that is not in the diff (`git -C "<wt>" diff --stat <inventory baseCommit>`).
+   line lists the pages from the writer's record for a human to update and
+   never claims the branch edited one: a docs page in the diff
+   (`git -C "<wt>" diff --stat <inventory baseCommit> apps/web/content/docs docs`)
+   returns `NEEDS_CHANGE`, because nothing agent-written goes into public docs.
    Missing tests lists every entry of the writer's missing tests list, each
    with its behavior, row ID and files to cover. Retired tests deleted lists
    every `retiredTests` entry the inventory reports as deleted (`D`) or

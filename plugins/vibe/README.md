@@ -245,12 +245,12 @@ production values and local QA settings separate from each other and from the
 unchanged machine-generated snapshot. Researched Product/Design/Scope Open
 Questions carry sources and decision context, exclude settled answers and
 engineering limitations, and state None when none remain.
-The same writer edits existing product docs pages for the changed features
-(`apps/web/content/docs/` only) on the branch, marked as agent drafts that
-design or engineering approves before merge, and never creates a page; the
-ticket lists them under Feature docs. Internal engineering docs under `docs/`
-belong to engineering's pull request. This is a scoped exception to the
-rule that agents do not author user-visible words. The writer also marks the
+Nothing agent-written goes into public docs (operator ruling, 2026-10-16):
+the writer edits nothing under `apps/web/content/docs/` nor the internal `docs/` folder and only
+lists, under the ticket's Feature docs, the existing product docs pages that
+describe a changed feature, for design or engineering to update; the handoff
+inventory reports any docs change as outside the allowed paths in every
+phase. The writer also marks the
 rows the person accepted as Frozen Behavior in the session decision table that
 the ticket attaches; `cl-execute` reads that attachment, keeps every frozen row
 passing with tests in its pull request, and changes one only with that
@@ -350,6 +350,15 @@ The two cases tagged `main-failures` rehearse handoff's validation step: a
 check that also fails on the captured main is recorded on the ticket's
 Engineering checklist and the handoff goes on, and a session-caused failure
 goes back to the writer.
+
+The seven cases tagged `review-lessons` come from the reviews of two vibe
+feature pull requests (operator ruling, 2026-10-16). Each rehearses one
+handoff review decision from supplied session state: a main sync that turned
+a shipped editable control read-only, an invented Version History entry and a
+reworded compile-only repair, a stale story ID left in an e2e spec, two
+children each wiring their own selection behind a shared slot, a criterion
+checked on one view but not the board it names, an agent-drafted product docs
+paragraph, and a flag retired while a linked ticket held it.
 
 ## Runtime Files
 

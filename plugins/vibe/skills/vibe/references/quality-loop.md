@@ -464,6 +464,15 @@ answer at handoff. Never invent a criterion or narrow its words. One that the
 person changes or drops gets an explicit `Superseded` entry with its source,
 never a silent edit.
 
+Each criterion also carries a `Surfaces:` line mapping it to every surface it
+names: each view (a list and a board are two), web and Desktop where their
+adapters differ, and the mechanism its words require (a URL, a saved view, a
+reload, a shared link, Back). A criterion is met only when every surface on
+that line has its own `met` check; a check on one surface never stands in for
+another (operator ruling, 2026-10-16, after symphony-alpha #8885 kept a
+board's collapse state out of the URL its criterion required while the list
+view had it).
+
 After each build or fix and its quick checks, before returning `DONE`, the
 writer checks every unsuperseded criterion the change touches, including
 earlier requests' criteria its files or rows could break; when unsure whether
@@ -484,9 +493,10 @@ one is touched, check it. Use the cheapest honest evidence:
   criterion that covers several.
 
 Append one line per check to the section's `### Checks` log: request ID,
-criterion ID, the check (test name, command or trace) and the result, `met`
-or `not met yet`, with its evidence. The newest line per criterion is its
-current result; earlier lines stay.
+criterion ID, the surface from its `Surfaces:` line, the check (test name,
+command or trace) and the result, `met` or `not met yet`, with its evidence.
+The newest line per criterion and surface is its current result; earlier
+lines stay.
 
 A criterion not met yet is fixed in the same request and checked again.
 When it cannot be finished now (it waits on a product answer through the

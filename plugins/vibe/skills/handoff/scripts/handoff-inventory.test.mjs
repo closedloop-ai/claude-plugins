@@ -185,31 +185,24 @@ test("a test repair never admits a harness or a path the session may not edit", 
   }
 });
 
-test("existing product docs pages may be edited only at handoff, never created, generated or internal", (t) => {
+test("no docs page is ever an allowed change, in any phase", (t) => {
   const { home, worktree } = setup(t, "feature-docs");
-  write(worktree, "apps/web/content/docs/concepts/bulk-actions.mdx", "Bulk actions, updated draft.\n");
+  write(worktree, "apps/web/content/docs/concepts/bulk-actions.mdx", "Bulk actions, agent draft.\n");
   write(worktree, "docs/runbooks/bulk-actions.md", "Runbook, updated draft.\n");
   write(worktree, "apps/web/content/docs/api-reference/projects/listProjects.mdx", "generated, hand edited\n");
   write(worktree, "apps/web/content/docs/meta.json", "{\"pages\":[\"new\"]}\n");
   write(worktree, "apps/web/content/docs/concepts/new-page.mdx", "A page nobody asked for.\n");
-  const build = runNode(INVENTORY, ["--worktree", worktree], home);
-  assert.deepEqual(build.json.outsideAllowed.map(file => file.path), [
-    "apps/web/content/docs/api-reference/projects/listProjects.mdx",
-    "apps/web/content/docs/concepts/bulk-actions.mdx",
-    "apps/web/content/docs/concepts/new-page.mdx",
-    "apps/web/content/docs/meta.json",
-    "docs/runbooks/bulk-actions.md",
-  ]);
-  const outsideAtHandoff = [
+  const outside = [
     { path: "apps/web/content/docs/api-reference/projects/listProjects.mdx", status: "M" },
+    { path: "apps/web/content/docs/concepts/bulk-actions.mdx", status: "M" },
     { path: "apps/web/content/docs/concepts/new-page.mdx", status: "A" },
     { path: "apps/web/content/docs/meta.json", status: "M" },
     { path: "docs/runbooks/bulk-actions.md", status: "M" },
   ];
-  const handoff = runNode(INVENTORY, ["--worktree", worktree, "--phase", "handoff"], home);
-  assert.deepEqual(handoff.json.outsideAllowed, outsideAtHandoff);
-  const pullRequest = runNode(INVENTORY, ["--worktree", worktree, "--phase", "pull-request"], home);
-  assert.deepEqual(pullRequest.json.outsideAllowed, outsideAtHandoff);
+  for (const phase of ["build", "handoff", "pull-request"]) {
+    const result = runNode(INVENTORY, ["--worktree", worktree, "--phase", phase], home);
+    assert.deepEqual(result.json.outsideAllowed, outside, phase);
+  }
 });
 
 test("local fixes are listed on their own and kept out of every guardrail check", (t) => {

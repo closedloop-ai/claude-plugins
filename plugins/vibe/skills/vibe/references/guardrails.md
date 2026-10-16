@@ -55,7 +55,7 @@ and merge.
 | Frontend (the sole persistent `vibe-change-worker`) | Never |
 |---|---|
 | `apps/app/**` (web pages and route shells) | `apps/mcp/**`, `apps/relay/**`, `apps/realtime/**` |
-| `packages/app/**` (shared web and Desktop UI) | `packages/golden-sessions/**`, `.github/**` |
+| `packages/app/**` (shared web and Desktop UI) | `packages/golden-sessions/**`, `.github/**`, `apps/web/content/docs/**`, `docs/**` |
 | `packages/design-system/**` (primitives, tokens, stories) | `scripts/**` (one exception below) |
 | `apps/desktop/src/renderer/**` (Desktop UI) | any `AGENTS.md` or `CLAUDE.md` |
 | `*.stories.tsx` anywhere above, and all of `apps/storybook/**` (below) | `apps/desktop/scripts/**` (Desktop's build and asset generators) |
@@ -76,9 +76,11 @@ it changes: the handoff inventory still reports it under `outsideAllowed`,
 and a request that needs it takes the forbidden-path route below
 (`Engineering needed (forbidden path)`), never an edit in the session.
 
-At handoff only, the same writer may also edit existing product docs pages in
-`apps/web/content/docs/`, as "Feature docs at handoff" below says; it never
-creates one.
+Nothing agent-written goes into public docs (operator ruling, 2026-10-16,
+after an agent-drafted paragraph was committed to a product docs page in
+symphony-alpha #8885; it retires the 2026-10-13 docs-draft exception). No
+worker edits `apps/web/content/docs/` or the internal `docs/` folder, in any
+phase; "Feature docs at handoff" below says what handoff records instead.
 
 Backend, built by that same writer using canonical backend guidance, each under its owning
 `AGENTS.md`:
@@ -251,7 +253,11 @@ PRD-720 session titled its new stories under v1.0 roots). The bare minimum:
   edited beyond a compile-only repair (prop renames, imports, types; no
   story, title, tag or visual change): its component's new states go in a new
   entry in the current root holding only them, its name descriptive,
-  permanent and without a version number. Any other existing file takes them
+  permanent and without a version number. A compile-only repair rewords no
+  comment, description, docs parameter or story text either: a renamed
+  identifier inside prose is its only prose change (operator ruling,
+  2026-10-16, after a repair in symphony-alpha #8885 rewrote prose). Any
+  other existing file takes them
   as extra stories, its title and tag unchanged. Otherwise only a new
   component or a sibling replacement (a V3) gets a new entry (design ruling,
   2026-10-15; `vibe-storybook-decomposer.md`, "Precedent search" step 4).
@@ -268,7 +274,23 @@ PRD-720 session titled its new stories under v1.0 roots). The bare minimum:
   A story that differs from its file overrides it per story
   (`tags: ["!stable", "experimental"]`).
 - Adding, moving or renaming stories is a Storybook release: the version bump
-  and Version History entry the doc names, in the same change.
+  and Version History entry the doc names, in the same change. A session is
+  one release: exactly one new Version History entry, at the next version
+  after the `version` in `apps/storybook/package.json` on the main it last
+  synced, describing only what the session changed, with `package.json` bumped
+  to match. Never add an entry for a version main does not have beyond that
+  one, renumber or reword main's entries, or special-case a validator, test or
+  key (a duplicate-key exception) so two entries can coexist (operator ruling,
+  2026-10-16, after symphony-alpha #8885 invented three entries and a
+  duplicate-key special case). After a main sync, the session's entry moves to
+  the next version after main's.
+- Moving or retitling a story changes its ID. Every removed or renamed story ID
+  is searched for (`rg`) across `e2e/`, every test, `docs/`,
+  `apps/web/content/docs/`, `.claude/` and the other story files (operator
+  ruling, 2026-10-16, after a stale ID from symphony-alpha #8886 broke an e2e
+  spec). A reference in a test or e2e spec is repaired in the same change (a
+  renamed symbol, "Repair, don't author"); one in a path the writer may not
+  edit is logged as `Engineering needed (forbidden path)`.
 - A session whose base predates this scheme (symphony-alpha #8867,
   Storybook 3.0.0) follows that base's own `TAXONOMY.md`: there the plain
   roots and the `v1.0` tag are v1.0, and new work goes under `<Level> v2.0/`
@@ -349,45 +371,36 @@ The person is the author of user-visible words. Use their words verbatim, or
 reuse an existing string or label map. Never compose a label, button, empty
 state, tooltip, error, or helper text yourself. Before asking for missing words,
 apply `quality-loop.md`'s graph-first product research and necessity gate.
+There is no exception: product docs pages are user-visible words too ("Feature
+docs at handoff").
 
-One explicit, scoped exception, granted by operator ruling on 2026-10-13: at
-handoff the same writer drafts edits to existing product docs pages for the
-features the session changed, under "Feature docs at handoff" below. It covers
-only those marked drafts, which design or engineering approves before merge.
-It is not a general license: no product UI copy, no new page, and no words
-anywhere else come from it. Every other rule in this section still applies.
+Wording the product already renders is reused through its helper, never
+retyped. Before writing any label, count or selection wording (for example
+"3 selected"), `rg` the words and the helpers that build them in
+`packages/app/shared` and the owning feature package; a second spelling of a
+string a shared helper already produces is a copy (`design-pass.md`, "Red
+flags"), even when the words match.
 
 ## Feature docs at handoff
 
-Handoff has the same writer update the product docs that already exist for
-the features this session changed, on the session's branch, in its explicit
-handoff continuation. Nothing here runs during building.
+Nothing agent-written goes into public docs (operator ruling, 2026-10-16).
+This section is the rule's one canonical statement; the writer, the guardrails
+reviewer, the ticket worker and the handoff skill point at it.
 
-- Pages: only existing product docs pages under `apps/web/content/docs/`
-  (`.mdx`) that describe a changed feature. Find them by searching that folder
-  for the changed screens, routes, components, flags and FEATURE_MAP ids.
-- Never edit the repo's internal engineering `docs/` folder (PRDs, runbooks,
-  schema and design notes). Internal engineering docs belong to engineering's
-  pull request (operator ruling, 2026-10-13).
-- Never create a page, add one to navigation (`meta.json`), or edit a
-  generated page such as `apps/web/content/docs/api-reference/`. When no
-  existing page covers a changed feature, record that and create nothing.
-- Edit only passages that describe behavior this session changed, so they
-  match what was built and accepted. Prefer the person's words and existing
-  labels, and never claim a stronger guarantee than the code makes
-  (`apps/web/AGENTS.md`).
-- Mark every edited passage as an agent draft for design or engineering to
-  approve before merge: put
-  `{/* Agent draft (<live ticket slug>): approve before merge */}` before it
-  and `{/* End agent draft */}` after it. Whoever approves the draft removes
-  the markers.
-- Record each edited page and what changed in the session change log; the
-  ticket's Handoff section lists them under Feature docs.
-- Owned prototype sessions skip this: a mockup changes no shipped feature.
-
-The handoff inventory accepts modified existing pages in that folder only in
-the handoff phase, and reports a new or generated page, or any `docs/` edit,
-as outside the allowed paths.
+- No worker edits, creates or drafts anything under `apps/web/content/docs/`
+  (product docs pages, `meta.json`, generated pages) or the repo's internal
+  engineering `docs/` folder, in the build loop, at handoff or in a requested
+  pull request. Docs belong to the humans who review and finish the work.
+- At handoff the same writer only records which existing product docs pages
+  describe a changed feature, found by searching that folder for the changed
+  screens, routes, components, flags and FEATURE_MAP ids, with the passage
+  that no longer matches what was built. The ticket's Feature docs line lists
+  them for design or engineering to update; it never carries drafted words.
+  When no page covers a changed feature, record that.
+- The handoff inventory reports any change under either folder as outside the
+  allowed paths in every phase. An edit found there is removed by the same
+  writer and recorded on the Feature docs line instead, never kept as a
+  draft.
 
 ## Accessibility
 
@@ -499,6 +512,13 @@ test whose code the request retired. Neither vibe nor handoff opens a pull
 request on its own.
 
 ## Checks
+
+Never add a check nobody asked for: a new gate, validator, lint rule, CI
+step or repo-wide test, or a shared test helper widened to support one, that
+the ticket, its PRD or the person did not ask for is instruction inflation
+(operator ruling, 2026-10-16, after symphony-alpha #8886 added a repo-wide
+Storybook gate and widened a shared test helper for it). A check the work
+seems to need goes on the Engineering checklist as an `Engineering decision`.
 
 Never make a failing check pass by changing the check: test assertions and
 expected values, snapshots, tolerances, skips, timeouts, coverage or size

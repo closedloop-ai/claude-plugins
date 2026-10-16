@@ -13,10 +13,9 @@
 // edit that only removes entries or lowers counts (allowlist-shrink.mjs);
 // those are listed under `shrinkOnlyAllowlists`.
 //
-// In the handoff and pull-request phases only, an app session may modify
-// (never add) existing product docs pages under apps/web/content/docs/; a new,
-// generated or build-phase docs edit, and any edit under the internal docs/
-// folder, stays in `outsideAllowed`.
+// Nothing agent-written goes into public docs (operator ruling, 2026-10-16):
+// any change under apps/web/content/docs/ or the internal docs/ folder stays
+// in `outsideAllowed` in every phase.
 //
 // Root web and Desktop test specs are admitted only in the pull-request phase,
 // which only the person's explicit request for a pull request opens.
@@ -129,13 +128,7 @@ const STORY_PATHSPECS = ["*.stories.ts", "*.stories.tsx"];
 // tests and fixtures the session's change broke (operator ruling,
 // 2026-10-13, after the PRD-720 live test) or delete a recorded retired-only
 // test (operator ruling, 2026-10-13).
-// Handoff may edit, never create, existing product docs pages as marked agent
-// drafts (scoped operator exception, 2026-10-13); generated pages and
-// the internal docs/ folder stay out.
-const PRODUCT_DOCS_PREFIX = "apps/web/content/docs/";
-const PRODUCT_DOCS_EXTENSION = ".mdx";
 const PHASES = ["build", "handoff", "pull-request"];
-const GENERATED_DOCS_PREFIX = "apps/web/content/docs/api-reference/";
 
 const { values } = parseArgs({ options: { worktree: { type: "string" }, phase: { type: "string", default: "build" } } });
 if (!values.worktree) {
@@ -144,7 +137,6 @@ if (!values.worktree) {
 if (!PHASES.includes(values.phase)) {
   fail("--phase must be build, handoff or pull-request.");
 }
-const handoffPhase = values.phase !== "build";
 const worktree = path.resolve(values.worktree);
 
 const branch = git(["rev-parse", "--abbrev-ref", "HEAD"]);
@@ -299,9 +291,6 @@ function isAllowed(file) {
 
 function isAllowedPath(file) {
   const filePath = file.path;
-  if (handoffPhase && !prototype && isExistingDocsEdit(file)) {
-    return true;
-  }
   if (prototype && (filePath.startsWith(`apps/prototypes/app/p/${record.slug}/`) ||
     filePath === "apps/prototypes/lib/registry.generated.ts")) {
     return true;
@@ -332,11 +321,6 @@ function isTestRepair(file) {
 /** A deleted test file the writer recorded as covering only code the request retires. */
 function isRetiredDeletion(file) {
   return file.status === "D" && retiredFiles.has(file.path) && (isRootTest(file.path) || isAllowedPath(file));
-}
-
-function isExistingDocsEdit(file) {
-  return file.status === "M" && !file.path.startsWith(GENERATED_DOCS_PREFIX) &&
-    file.path.startsWith(PRODUCT_DOCS_PREFIX) && file.path.endsWith(PRODUCT_DOCS_EXTENSION);
 }
 
 function findComponentsWithoutStories(files) {

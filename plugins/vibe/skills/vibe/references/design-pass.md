@@ -25,7 +25,13 @@ review follows `quality-loop.md` internally.
    `@repo/database`. The domain wiring (data hooks, API calls, nouns, labels)
    stays in the owning feature package in `packages/app`, or
    `packages/app/shared` when more than one feature uses it, and is passed
-   in.
+   in. A slot alone is not an owner: the shared state and its handlers
+   (selection, grouping, collapse, paging) live in the parent or in one
+   shared hook the parent calls, and a child passes only its domain wiring.
+   Two children that each keep their own copy of that state behind the
+   parent's slot is the red flag the root `AGENTS.md` names under shared
+   behavior in the shared parent, even when the slot exists (operator ruling,
+   2026-10-16).
 2. A child asking for what this session already built into a sibling (another
    child of the same parent) is rule 1: move it into the parent and have both
    opt in, never copy it.
@@ -128,7 +134,18 @@ worker fixes what it confirms in fix mode, without asking the person.
 - Pass-through: a layer that forwards props or calls unchanged and adds
   nothing.
 - Copy: a near line-for-line copy of a component, hook, or helper that
-  already exists.
+  already exists, including a private local version of what a shared owner
+  now provides (a local partition or group builder, a duplicated icon map, a
+  helper the shared module exports, wording a shared helper renders).
+- Hard-coded host keys: a URL search-param key, storage key or route segment
+  spelled as a literal in a host adapter or child when a shared constant
+  exists, or spelled separately on web and Desktop.
+- Leftovers: what an extraction, move or deletion leaves behind (operator
+  ruling, 2026-10-16, after symphony-alpha #8885 and #8886): a pass-through
+  file or wrapper that only forwards to the new owner, a re-export alias, an
+  orphaned helper, type or constant, an unused prop, a loop or `each` table
+  over the one arm left after a matrix arm was deleted, and a test still named
+  or placed after a module that was deleted or moved.
 
 ### Restructuring
 

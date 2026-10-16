@@ -490,7 +490,11 @@ Record the assumption and its evidence in the decision log and under
 4. Run the Per-Branch Push Gate before first push/open-PR. For UI work, the
    Design Visual-QA Gate must already be satisfied; if it is not, stop before
    opening the PR as that gate says.
-5. Push and open a PR.
+5. Push and open a PR. Write the body to a file named for the ticket
+   (`pr-body-<ticket slug>.md`, never a shared name such as `pr-body.md`) and
+   read it back right before `gh pr create` or `gh pr edit --body-file`,
+   confirming it names this ticket's slugs: parallel workers share scratch
+   space, and one PR's body has overwritten another's.
 6. Resolve the exact PR head and live PR author, then follow
    [feature-manual-qa.md](feature-manual-qa.md): create or update the one owned
    feature-wide manual-QA plan comment and verify its URL and full body before

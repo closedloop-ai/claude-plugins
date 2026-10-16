@@ -61,7 +61,28 @@ wiring stays in its feature package; never copy a component or helper. Look
 first for where the same capability already exists for a sibling entity and
 mirror its ownership, component and Storybook structure, never its root or
 version, where those rules and the repo's docs do not already say how
-(`design-pass.md`, Prep step 5).
+(`design-pass.md`, Prep step 5). Before you write a new hook, helper, query
+key or inline query, `rg` `packages/app/shared` (`shared/auth` included) and
+the existing `use-*` hooks (such as `use-tags`) for its endpoint, query key
+and subject, and use what exists. URL, storage and route keys come from the
+shared constant both hosts import, never a literal in a host adapter.
+
+Before you delete a feature flag's read, key constant or gate, read the
+comments on every ticket linked to it (the live ticket, its PRD, and the
+tickets `fts_search` finds for the key) with the ClosedLoop MCP
+`get-document-comments`. A recorded hold, rollout pause or parity list with
+no later human answer allowing the retirement means the flag stays: build
+the rest, and log `Engineering decision: retire <key> despite the hold on
+<ticket>?; built: <flag kept>; evidence: <the comment>`, even when an
+acceptance criterion asks for the old path to go (operator ruling,
+2026-10-16, after symphony-alpha #8885 retired a held flag). It is never
+`NEEDS_PERSON`.
+
+An action over selected rows accounts for every selected row, the ineligible
+ones included: none is silently dropped, and the count the person sees
+matches the selection. When the ticket and PRD do not say how ineligible rows
+appear, settle it through the product research path in `quality-loop.md`,
+"Communication and product questions", before building, never by guessing.
 
 Before you create, retitle or move a story or add a shared component, return
 `NEEDS_STORYBOOK` with the capability and planned files. Resume with the
@@ -173,7 +194,16 @@ repair, and otherwise in its existing story file, title and tag unchanged
 a rename to protect a v1.0 story file; when a rename breaks one, repair it with
 only prop renames, imports and types, no story added or removed and no title,
 story ID, tag or visual change, and log `Compile-only repair to v1.0: <file>`
-in the change log (design ruling, 2026-10-15). On a base older than the
+in the change log (design ruling, 2026-10-15). A compile-only repair rewords
+no comment, description, docs parameter or story text; a renamed identifier
+inside prose is its only prose change. A session adds exactly one Version
+History entry, at the next version after `apps/storybook/package.json` on the
+main it last synced, and moves it after each main sync; never an entry for
+another version, a reworded main entry or a validator, test or key
+special-cased so two entries coexist (`guardrails.md`, "Storybook taxonomy").
+After moving or retitling any story, `rg` every old story ID across `e2e/`,
+the tests, `docs/`, `apps/web/content/docs/`, `.claude/` and the story files,
+and repair or log each reference (same section). On a base older than the
 lifecycle scheme, the doc on that base still sends new work to
 `<Level> v2.0/` tagged `v2.0`; after a main sync your own new entries move to
 the plain root with a lifecycle tag, which is not a retitle. The story
@@ -195,13 +225,23 @@ local metadata/registry changes yourself; canonical visual/product approvals
 and publication contracts remain. Operational sharing may publish only the
 checked committed result, never silently generate or fix source.
 
-Use supplied copy verbatim or the existing matching string/label map. Do not
-invent product text. The one scoped exception is the marked feature docs drafts
-at handoff (`guardrails.md`, "Copy" and "Feature docs at handoff"); it never
-covers product copy. Read-only specialists may advise on uncertainties; their
+Use supplied copy verbatim or the existing matching string/label map or
+helper, never a retyped copy of wording a shared helper renders. Do not
+invent product text, and never edit `apps/web/content/docs/` nor the internal `docs/` folder:
+nothing agent-written goes into public docs (`guardrails.md`, "Copy" and
+"Feature docs at handoff"; operator ruling, 2026-10-16). Read-only
+specialists may advise on uncertainties; their
 findings return here for you to verify and correct. Fix all confirmed issues
 before completion, including shared-owner restructuring and its sibling sweep
 from `design-pass.md`. Never revert another person's changes.
+
+An extraction, move or deletion is finished only when nothing it orphaned is
+left (`design-pass.md`, "Red flags", leftovers): import the new owner at
+every site instead of keeping a pass-through file, wrapper or re-export
+alias; delete helpers, types, constants and props nothing uses any more;
+collapse a loop or `each` table left with one arm; and record each test still
+named or placed after the old module for engineering (a rename on the missing
+tests list, or done in a `pull-request` turn).
 
 ## Checks, review and recording
 
@@ -210,7 +250,13 @@ publication". Keep your current ID and registration metadata;
 only ROOT's recorded definition migration can change the writer binding.
 After migration refresh source-owned readiness and validation proof. Compare
 captured main/imports against the same session table before fixes. Only you resolve conflicts/generators/code;
-ROOT alone commits. Your exact source-owned `progress` continuation then
+ROOT alone commits. A conflict is never resolved by taking away what main
+ships: a control, action, route, prop or state that is editable, enabled or
+reachable on main's side stays so after the merge, and no test is changed to
+pin a reduced behavior (operator ruling, 2026-10-16, after a main sync in
+symphony-alpha #8886 made a shipped editable Desktop control read-only). When
+the session's change and main's capability cannot both stand, keep main's and
+log an `Engineering decision`. Your exact source-owned `progress` continuation then
 runs `vibe-sessions.mjs main-sync-inputs` before publisher capture and again
 after the Root-owned committed merge/fix result, following environment.md.
 Stay the current registered actor with its recorded binding. Only this source
@@ -401,6 +447,28 @@ suppression for green. Two more rules bind every test you write there
   change does) over raw CSS or style-string pins such as a copied
   `box-shadow` value or a regex over a whole stylesheet.
 
+More rules from the reviews of symphony-alpha #8885 and #8886 (operator
+ruling, 2026-10-16):
+
+- Every entry on the missing tests list is written in this turn. None stays
+  listed as missing once the person asked for a pull request.
+- Each test goes in the suite and lane that owns its subject: the owning
+  package's test config, the e2e or Desktop lane the repo's `AGENTS.md` files
+  name for it, confirmed with `pnpm test:lanes`. A test that no lane CI runs
+  for its path does not count.
+- Expected values are literals or the spec's words, never computed by calling
+  production code (the helper under test or a sibling helper): an oracle
+  built from the code agrees with it. Inputs may use real helpers: a windowed
+  or paged fixture is built with the repo's real paging helper.
+- Lineage: every acceptance criterion has at least one test whose name or
+  `describe` title carries its ID (`AC-3`), so each criterion traces to a
+  test.
+- A URL-synced hook or state is tested through the real web and Desktop
+  host adapters, not a stub router, including a same-route link that changes
+  only the query and the Back button.
+- A test moves and renames with the module it covers; none stays named or
+  placed after a deleted or moved module.
+
 Record phase, criteria, paths and human rulings, run the tests, fix defects
 yourself and send the result for independent coverage review; the repo's
 `review-soul` critic reviews them before the pull request opens (handoff,
@@ -417,11 +485,13 @@ or a concrete reason you made no change. A product question in a thread is
 `NEEDS_PERSON` through the research gate; a fix needing a path you may never
 edit is logged as `Engineering needed (forbidden path)` and is the reason.
 
-The same handoff continuation also drafts edits to existing product docs pages
-under `apps/web/content/docs/`, per `guardrails.md`, "Feature docs at handoff":
-existing pages only, every edit marked as an agent draft, each page recorded in
-the change log. Never create a page and never edit the internal engineering
-`docs/` folder, which belongs to engineering's pull request. Once the table is
+The same handoff continuation records, never edits, the existing product docs
+pages under `apps/web/content/docs/` that describe a changed feature, per
+`guardrails.md`, "Feature docs at handoff": each page and the passage that no
+longer matches what was built, or that none covers the changed features, in
+the change log for the ticket's Feature docs line. Nothing agent-written goes
+into public docs or the internal engineering `docs/` folder; an edit found
+there is removed and recorded instead. Once the table is
 aligned, add its `## Frozen Behavior` section with the row IDs the person
 accepted (`quality-loop.md`, "Frozen behavior at handoff"), and refresh it
 whenever a handoff answer changes the table.
