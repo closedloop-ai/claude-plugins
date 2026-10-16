@@ -13,7 +13,7 @@ import { reportChildEntries, reportLoaderEntries, reportRelativeCwd, reportShell
 import type { ReportExecution } from "./main-sync-report-execution.js";
 import { rejectReportReplay } from "./main-sync-report-execution.js";
 import { isolatedReportArgument } from "./main-sync-report-fixture.js";
-import { committedSet } from "./main-sync-committed-tree.js";
+import { committedSet, withCommittedTree } from "./main-sync-committed-tree.js";
 
 const MODULE_EXTENSIONS = ["", ".ts", ".tsx", ".mjs", ".js", ".cts", ".mts", "/index.ts", "/index.js"];
 const BUILTINS = new Set(builtinModules.flatMap(name => [name, `node:${name}`]));
@@ -24,6 +24,10 @@ const packageSchema = z.object({ name: z.string(), dependencies: z.record(z.stri
 
 /** Only the actual selected entry closure is an execution claim; unrelated capable code stays capability evidence. */
 export function verifyReportClosure(execution: ReportExecution, entries: readonly ReportCommandEntry[]) {
+  withCommittedTree(execution.root, () => walkReportClosure(execution, entries));
+}
+
+function walkReportClosure(execution: ReportExecution, entries: readonly ReportCommandEntry[]) {
   const tracked = committedSet(execution.root);
   const pending = [...entries];
   const seen = new Set<string>();
