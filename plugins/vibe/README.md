@@ -296,6 +296,10 @@ claude plugin eval . --eval-dir vibe/evals --model sonnet -j 2 --max-cost-usd 5 
 
 Add `--ablation none` to skip the no-plugin baseline arm. CI does not run it.
 
+Run the matching Codex suite from the repository root with
+`uv run --with Pillow==12.3.0 python plugins/vibe/evals/codex/run.py`;
+see [Codex evals](evals/codex/README.md) for caps, selection and results.
+
 The cases tagged `visual-cues` check reference images (operator ruling,
 2026-10-15): three `pm-` cases attach a reference screenshot (a card, another
 product's cards with hover and selected states, and a two-screenshot page whose

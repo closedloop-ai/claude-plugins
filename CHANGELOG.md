@@ -4,6 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.44
+
+#### Added
+- A manual Codex eval runner mirrors all 26 Claude cases with executive and product-manager IDs, shared prompts, histories, images, scaffolds and regex graders. Each run installs worktree snapshots in a private local marketplace, caps concurrency at two and total wall time, and records per-case failures, tokens and elapsed time.
+- Deterministic route, wording-presence, file, tool-use and reference-evidence checks run before the cheap model grader, which judges plain-language wording only. Runner regression tests cover case parity, grading, deadlines, process cleanup and the image argument boundary. Neither model suite is added to CI.
+- The plugin README links the Codex run command beside the Claude suite; the Codex eval README explains setup, limits and artifacts. A recorded main `642d235` baseline lists all 26 results: 22 passed and four scaffolded build cases failed, with per-grader reasons and usage.
+
 ### vibe v1.0.43
 
 #### Fixed
