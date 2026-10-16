@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.46
+
+#### Added
+- `cl-execute` ships its plan-review prompt as `references/plan-review-prompt.md`. Planning step 20 gives the single independent plan reviewer that prompt verbatim, followed by the plan path, ticket, PRD slugs, and a private path for the review file. The prompt checks scope exclusions and mechanisms equally hard, scores cost by what it scales with at 10x and 100x plus the per-device idle term, requires decision provenance, and ends with numbered HUMAN DECISIONS. Its worker section gives both the Claude Code and the Codex (`spawn_agent`, `send_input`) forms.
+- Plans that introduce periodic or cross-surface work carry a `### Cost Scaling` table (Option, Cost scales with, Per-device idle cost, At 10x / 100x, Existing mechanism reused) with at least two rows, one naming an existing mechanism. `scripts/check-plan.mjs` requires it when prose outside code fences names polling, intervals, cron, heartbeats, background lanes, sockets, subscriptions, feeds, or watchers, and `--no-periodic` waives it on the record.
+- A readiness item, Decision provenance: each recorded decision needs a traceable human statement, a newer ticket supersedes an earlier ruling only by addressing it, and conflicting records go to the human instead of being settled by recency.
+- A Discovery Routes row for existing channels between two surfaces (socket emit and subscribe calls, signal emitters, command dispatchers, interval lanes).
+
+#### Changed
+- Planning step 13 treats only the outcome a ticket asks for as binding. A mechanism the ticket names is held to the same test as one the plan invents; a dominated one keeps the outcome and goes to the human as one numbered decision, and raising it is stated to be neither instruction inflation nor manufactured ambiguity.
+- Planning step 20: a finding the plan reviewer lists under HUMAN DECISIONS is never resolved, downgraded, or absorbed by the worker; each becomes a numbered decision returned with `MANUAL_INTERVENTION_REQUIRED`, with the worker's view beside it.
+
 ### vibe v1.0.45
 
 #### Fixed

@@ -49,6 +49,7 @@ function plan({
   testPlan = '- [ ] Unit: `uploader.test.ts` covers AC-001 and AC-002',
   summary = 'Uploads retry once before failing.',
   extraTop = '',
+  architecture = '',
 } = {}) {
   return `${title}
 
@@ -67,7 +68,7 @@ ${acceptance}
 The uploader owns retries.
 
 ${diagrams}
-
+${architecture}
 ## Tasks
 
 ${tasks}
@@ -152,11 +153,48 @@ test('--safety-fact and --bug require a named, backticked proof in the Test Plan
   assert.deepEqual(messages(red, { bug: true }), []);
 });
 
+const costHeader = '| Option | Cost scales with | Per-device idle cost | At 10x / 100x | Existing mechanism reused |\n| --- | --- | --- | --- | --- |';
+const pollRow = '| Poll the list every 60 s | connected clients | one wakeup and one request per minute | linear in installs | none |';
+const relayRow = '| Hint over the relay socket | renames | none | linear in renames | relay socket |';
+const costTable = (...rows) => `\n### Cost Scaling\n\n${[costHeader, ...rows].join('\n')}\n`;
+const polling = 'Desktop polls the rename feed every 60 s.';
+
+test('periodic or cross-surface work needs a Cost Scaling table', () => {
+  assert.deepEqual(messages(plan({ summary: polling, architecture: costTable(pollRow, relayRow) })), []);
+
+  const missing = lintPlan(plan({ summary: polling }), template);
+  assert.equal(missing.length, 1);
+  assert.equal(missing[0].line, 5);
+  assert.match(missing[0].message, /^"polls" names periodic or cross-surface work; add a ### Cost Scaling table/);
+
+  assert.deepEqual(messages(plan({ summary: polling, architecture: costTable(relayRow) })), [
+    '### Cost Scaling table needs at least two option rows',
+  ]);
+  const nothingReused = relayRow.replace(/relay socket \|$/, 'none |');
+  assert.deepEqual(messages(plan({ summary: polling, architecture: costTable(pollRow, nothingReused) })), [
+    '### Cost Scaling table needs a row that names an existing mechanism under "Existing mechanism reused"',
+  ]);
+  const noIdleColumn = costTable(pollRow, relayRow).replace(' Per-device idle cost |', '');
+  assert.deepEqual(messages(plan({ summary: polling, architecture: noIdleColumn })), [
+    '### Cost Scaling table is missing column(s): Per-device idle cost',
+  ]);
+});
+
+test('plans without periodic work, or waived with --no-periodic, need no Cost Scaling table', () => {
+  assert.deepEqual(messages(plan()), []);
+  assert.deepEqual(messages(plan({ summary: '```text\nsetInterval(poll, 5000)\n```' })), []);
+  for (const line of ['A watcher re-reads the file.', 'Open a websocket per tab.', 'Run it from cron.', 'A heartbeat every 30s.']) {
+    assert.ok(messages(plan({ summary: line })).some((m) => /Cost Scaling/.test(m)), line);
+  }
+  assert.deepEqual(messages(plan({ summary: polling }), { noPeriodic: true }), []);
+});
+
 test('parses flags and rejects bad arguments', () => {
   assert.deepEqual(parseArgs(['p.md', '--bug', '--narrow', '--template', 't.md']), {
     file: 'p.md',
-    options: { bug: true, safetyFact: false, narrow: true, template: 't.md' },
+    options: { bug: true, safetyFact: false, narrow: true, noPeriodic: false, template: 't.md' },
   });
+  assert.equal(parseArgs(['p.md', '--no-periodic', '--template', 't.md']).options.noPeriodic, true);
   assert.throws(() => parseArgs([]), /exactly one plan file/);
   assert.throws(() => parseArgs(['p.md', '--nope']), /unknown flag/);
   assert.throws(() => parseArgs(['p.md']), /pass --template/);

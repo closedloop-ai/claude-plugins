@@ -47,9 +47,11 @@ When invoked within a sweep, follow [display events](../cl-sweep/references/disp
 Read only the references relevant to the current phase:
 
 - Intake, readiness, requirements, a vibe ticket's frozen behavior, plan
-  drafting, contract audits, performance work, UI plan approval, or the
-  one-off cleanup-tooling churn guard:
+  drafting, contract audits, cost scaling, performance work, UI plan approval,
+  or the one-off cleanup-tooling churn guard:
   [references/planning-and-gates.md](references/planning-and-gates.md).
+- The plan reviewer's prompt, passed verbatim:
+  [references/plan-review-prompt.md](references/plan-review-prompt.md).
 - CLI sweep context, support lanes, App Server worker continuity, callback
   protocol, or macOS GitHub transport fallback:
   [references/support-lanes-and-sweeps.md](references/support-lanes-and-sweeps.md).
@@ -318,6 +320,7 @@ are never in it. Call `sync_status` when freshness could change the answer.
 | Callers and importers of a symbol or file | `code_symbols` to turn a bare name into a repo-qualified path, then `code_callers` (it drops test rows) and `code_importers` | `rg` in the worktree |
 | Tests to rerun for a file | repo related-test tooling when you hold the checkout; otherwise `code_tests_for` | `rg` over the test tree |
 | A string that is not a symbol (route, config key, flag, event, JSON field, IPC channel, error text) | `code_grep` with its literal fragments joined in one regex alternation | `rg` |
+| Existing channels between two surfaces (push, pull, sockets, lanes, commands) | `code_grep` for the repo's channel primitives (for example socket emit and subscribe calls, signal emitters, command dispatchers, `setInterval`-based lanes) joined in one regex alternation | `rg` |
 | Blast radius | the code half above plus `blast_radius_tickets` on the repo-qualified path | `git log --follow` |
 | Tickets that touched a file | `blast_radius_tickets` | `git log -S`/`-L`, `git blame` |
 | One ticket's lineage, branches, PRs, changed files | `ticket_detail` | live ClosedLoop, `gh pr view` |

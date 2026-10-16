@@ -2,7 +2,8 @@
 
 Use this reference for readiness classification, requirements contracts, a
 vibe ticket's frozen behavior, plan drafting/review, proposal contract audits,
-performance work, UI plan approval, and cleanup-tooling churn control.
+cost scaling, performance work, UI plan approval, and cleanup-tooling churn
+control.
 
 ## Readiness Gate
 
@@ -46,6 +47,12 @@ Before planning or execution, classify the ticket:
   existing answers and otherwise route exact missing decisions privately to
   the current user or engineering unless the user explicitly authorizes that
   exact Product comment.
+- Decision provenance: for each decision a ticket or plan records, including a
+  `Decisions` section, establish who made it, where, and which question it
+  answered. A record with no traceable human statement is unratified. A newer
+  ticket does not supersede an earlier explicit ruling unless it addresses
+  that ruling. When records disagree, report the conflict as a human decision;
+  never resolve it by recency or by assuming one author meant to change it.
 - Latency, staleness, and disclosure contracts: verify exact ratified PRD,
   decision record, or linked owner before approving a plan that promises
   freshness ceilings, analytics lag, stale-but-shown behavior, disclosure, or
@@ -207,6 +214,32 @@ If the audit fails, narrow the plan, defer invalid work, or return the normal
 blocker. Do not split the ticket, and do not encode unresolved behavior as an
 implementation detail.
 
+## Cost Scaling
+
+When a plan introduces periodic or cross-surface work (a poller, interval,
+cron, heartbeat, background lane, socket, subscription, feed, or watcher), its
+Architecture Fit carries a `### Cost Scaling` table with these columns:
+
+| Option | Cost scales with | Per-device idle cost | At 10x / 100x | Existing mechanism reused |
+| --- | --- | --- | --- | --- |
+
+It has at least two rows, and at least one names an existing mechanism. Find
+the existing channels through the
+[Discovery Routes](../SKILL.md#discovery-routes).
+
+- Write each recurring cost as a function of populations: installs, connected
+  clients, active sessions, events.
+- Evaluate it at 10x and 100x.
+- State the per-device idle term separately: timer wakeups, network, and disk
+  while nothing is active, on battery.
+- Prefer activity-scaled designs with a zero idle term.
+- Reuse an existing connection before opening one.
+- Never justify a design by current fleet size; it is unknown and growing.
+
+`scripts/check-plan.mjs` requires the table when plan prose outside code
+fences names periodic or cross-surface work. When a keyword fires on a plan
+that adds no such work, pass `--no-periodic` and log why in the decision log.
+
 ## Ephemeral Cleanup Tooling Guard
 
 Before approving a plan that adds one-off migration, cleanup, backfill, audit,
@@ -367,9 +400,20 @@ through the [Discovery Routes](../SKILL.md#discovery-routes).
     state machine over independent booleans, a table or registry over
     branching, one typed model over repeated shape checks), and the strongest
     alternative you rejected with the concrete reason, grounded in code or
-    requirements. Skip this for established patterns, bug fixes, and choices
-    the ticket or PRD already makes, and never turn the alternative into a
-    question for the operator.
+    requirements. Skip this for established patterns and bug fixes. Only the
+    outcome a ticket or PRD asks for is binding. A mechanism it names (a
+    poller, feed, lane, socket, new route, table, cursor, or a write into
+    another tool's data) is a proposal held to the same test as one the plan
+    invents. If the named mechanism is dominated (for example its cost scales
+    with installs or idle time while an alternative scales with activity, or
+    a supported interface exists for a write into another tool's data), keep
+    the outcome and bring the mechanism choice to the human as one numbered
+    decision; never silently swap it and never silently build it. Raising that
+    decision is neither instruction inflation nor manufactured ambiguity:
+    those rules protect settled rulings, and a mechanism a ticket names is not
+    one. Otherwise never turn the alternative into a
+    question for the operator. Periodic or cross-surface work also gets the
+    [Cost Scaling](#cost-scaling) table.
 14. One-way-door plans (Proposal Contract Audit `REQUIRED`, a new shared module
     or ownership boundary, or `High-complexity execution override: APPROVED`)
     get more design before drafting:
@@ -427,23 +471,31 @@ through the [Discovery Routes](../SKILL.md#discovery-routes).
     [writing.md](writing.md).
 19. Lint the draft before independent plan review and again before every
     upload or revision with this installed skill's `scripts/check-plan.mjs`:
-    `node <cl-execute-skill-dir>/scripts/check-plan.mjs <plan.md> --template "<plan-structure-skill-dir>/resources/plan_template.md" [--bug] [--safety-fact] [--narrow]`.
+    `node <cl-execute-skill-dir>/scripts/check-plan.mjs <plan.md> --template "<plan-structure-skill-dir>/resources/plan_template.md" [--bug] [--safety-fact] [--narrow] [--no-periodic]`.
     Pass `--bug` on a bug ticket, `--safety-fact` when the plan carries a
-    Safety fact, and `--narrow` only for simple or narrow work where step 16
-    allows one flowchart. It checks the template's headings in order, left-over
-    template placeholders, Mermaid flowcharts (before and after unless
-    `--narrow`), that every `AC-` id maps to a task or test, revision narration
-    and sweep internals, and the Safety fact and red-first entries when
-    flagged. Fix every line it prints; a nonzero exit is an actionable plan
-    defect. Record the command and exit status as `Plan lint`. The plan
+    Safety fact, `--narrow` only for simple or narrow work where step 16
+    allows one flowchart, and `--no-periodic` only when a periodic-work
+    keyword fired on a plan that adds no periodic or cross-surface work. It
+    checks the template's headings in order, left-over template placeholders,
+    Mermaid flowcharts (before and after unless `--narrow`), that every `AC-`
+    id maps to a task or test, revision narration and sweep internals, the
+    `### Cost Scaling` table when the prose names periodic or cross-surface
+    work, and the Safety fact and red-first entries when flagged. Fix every
+    line it prints; a nonzero exit is an actionable plan defect. Record the command and exit status as `Plan lint`. The plan
     reviewer no longer checks these mechanically and judges substance: whether
     the diagrams explain the scope, the approach is sound, and the evidence
     holds.
 20. A plan gets exactly one independent plan review. The reviewer is a
     read-only same-family reviewer with a fresh context: a Codex worker uses a
     Codex sub-agent and a Claude Code worker uses a Claude Code sub-agent;
-    never call another harness's CLI for plan review. Two review generations
-    are for finished code before the PR, not for plans. After the single plan
+    never call another harness's CLI for plan review. Give the reviewer
+    [plan-review-prompt.md](plan-review-prompt.md) verbatim, followed by the
+    plan's path, the ticket slug and URL, the applicable PRD slugs, and the
+    private path for its review file (the ticket's private evidence directory
+    from Execution step 12 in
+    [implementation-review-pr.md](implementation-review-pr.md)).
+    Two review generations are for finished code before the PR, not for plans.
+    After the single plan
     review, verify each finding against the code before acting on it. Fix
     outline-level findings in the plan: a wrong premise or root cause, a
     missing outcome or acceptance criterion, an unjustified scope exclusion, a
@@ -453,7 +505,11 @@ through the [Discovery Routes](../SKILL.md#discovery-routes).
     after fixing findings. Bring any finding that needs a product or scope
     call to the human as a numbered decision with the plan: return
     `MANUAL_INTERVENTION_REQUIRED` with the plan URL and the numbered
-    decisions instead of approving the plan. Never edit skill files from a ticket worker. When a cl-* skill
+    decisions instead of approving the plan. A finding the reviewer lists
+    under HUMAN DECISIONS is never the worker's to resolve, downgrade, or
+    absorb, including after verification: each one becomes one of those
+    numbered decisions, with the worker's own view beside it when it has
+    one. Never edit skill files from a ticket worker. When a cl-* skill
     instruction was missing, wrong, contradictory, or did not fire when it
     should have, record it in the result's `Process feedback` field: the skill
     file and section, the observed failure with an evidence pointer, and the

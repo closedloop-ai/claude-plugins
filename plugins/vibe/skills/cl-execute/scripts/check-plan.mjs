@@ -2,7 +2,7 @@
 // Mechanical linter for cl-execute implementation plans. It checks only rules
 // a script can decide; the plan reviewer still judges substance.
 //
-// Usage: check-plan.mjs <plan.md> --template <path> [--bug] [--safety-fact] [--narrow]
+// Usage: check-plan.mjs <plan.md> --template <path> [--bug] [--safety-fact] [--narrow] [--no-periodic]
 // Exit 0 when clean, 1 when it printed problems, 2 on a usage or input error.
 //
 // The approach (a plan linter run before hand-back) follows pstack's
@@ -28,6 +28,33 @@ const SWEEP_INTERNALS = [
   /\$cl-(?:sweep|execute|analyze)\b/,
   /\bsupport lanes?\b/i,
 ];
+
+// Prose that names periodic or cross-surface work. Kept conservative: each
+// hit asks for a Cost Scaling table, and --no-periodic waives it on the record.
+const PERIODIC_WORK = [
+  /\bpoll(?:s|ed|ing|ers?)?\b/i,
+  /\bintervals?\b/i,
+  /\bsetInterval\b/,
+  /\bevery\s+(?:\d+|N)\s*(?:ms|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)\b/i,
+  /\bcron(?:tab)?s?\b/i,
+  /\bheartbeats?\b/i,
+  /\bbackground lanes?\b/i,
+  /\b(?:web)?sockets?\b/i,
+  /\bsubscri(?:be|bes|bed|bing|ptions?)\b/i,
+  /\bfeeds?\b/i,
+  /\bwatchers?\b/i,
+];
+
+const COST_SCALING_COLUMNS = [
+  'Option',
+  'Cost scales with',
+  'Per-device idle cost',
+  'At 10x / 100x',
+  'Existing mechanism reused',
+];
+
+// A cell that claims no existing mechanism.
+const NO_MECHANISM = /^(?:|-+|none|n\/a|na|no|not applicable)$/i;
 
 const FENCE = /^\s*(```|~~~)/;
 
@@ -114,6 +141,45 @@ function mermaidFlowcharts(info) {
       return { ...fence, isFlowchart: /^\s*(?:flowchart|graph)\b/i.test(first) };
     })
     .filter((fence) => fence.isFlowchart);
+}
+
+function tableCells(line) {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim());
+}
+
+function costScaling(plan, add) {
+  const trigger = plan.findIndex((entry) => !entry.inFence && PERIODIC_WORK.some((re) => re.test(entry.line)));
+  const heading = headings(plan, 3).find((h) => h.title === 'Cost Scaling');
+  if (!heading) {
+    if (trigger >= 0) {
+      const word = PERIODIC_WORK.map((re) => plan[trigger].line.match(re)).find(Boolean)[0];
+      add(
+        trigger + 1,
+        `"${word}" names periodic or cross-surface work; add a ### Cost Scaling table (${COST_SCALING_COLUMNS.join(' | ')}), or pass --no-periodic when the plan adds none`,
+      );
+    }
+    return;
+  }
+  const rows = [];
+  for (let n = heading.line; n < plan.length; n += 1) {
+    const entry = plan[n];
+    if (!entry.inFence && /^#{1,3} /.test(entry.line)) break;
+    if (!entry.inFence && entry.line.trim().startsWith('|')) rows.push(tableCells(entry.line));
+    else if (rows.length) break;
+  }
+  const normalize = (cell) => cell.toLowerCase().replace(/\s+/g, ' ');
+  const header = (rows[0] ?? []).map(normalize);
+  const missing = COST_SCALING_COLUMNS.filter((column) => !header.includes(normalize(column)));
+  if (missing.length) {
+    add(heading.line, `### Cost Scaling table is missing column(s): ${missing.join(', ')}`);
+    return;
+  }
+  const optionRows = rows.slice(1).filter((cells) => !cells.every((cell) => /^:?-+:?$/.test(cell)));
+  if (optionRows.length < 2) add(heading.line, '### Cost Scaling table needs at least two option rows');
+  const reused = header.indexOf(normalize('Existing mechanism reused'));
+  if (!optionRows.some((cells) => !NO_MECHANISM.test(cells[reused] ?? ''))) {
+    add(heading.line, '### Cost Scaling table needs a row that names an existing mechanism under "Existing mechanism reused"');
+  }
 }
 
 export function lintPlan(planText, templateText, options = {}) {
@@ -217,17 +283,21 @@ export function lintPlan(planText, templateText, options = {}) {
     flagged('--bug', /red-first/i, 'name the red-first test in backticks');
   }
 
+  // 7. Periodic or cross-surface work carries a Cost Scaling table.
+  if (!options.noPeriodic) costScaling(plan, add);
+
   return problems.sort((a, b) => a.line - b.line);
 }
 
 export function parseArgs(argv) {
-  const options = { bug: false, safetyFact: false, narrow: false, template: '' };
+  const options = { bug: false, safetyFact: false, narrow: false, noPeriodic: false, template: '' };
   const files = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--bug') options.bug = true;
     else if (arg === '--safety-fact') options.safetyFact = true;
     else if (arg === '--narrow') options.narrow = true;
+    else if (arg === '--no-periodic') options.noPeriodic = true;
     else if (arg === '--template') {
       options.template = argv[i + 1];
       i += 1;
@@ -246,7 +316,7 @@ function main(argv) {
     parsed = parseArgs(argv);
   } catch (error) {
     process.stderr.write(
-      `check-plan: ${error.message}\nusage: check-plan.mjs <plan.md> --template <path> [--bug] [--safety-fact] [--narrow]\n`,
+      `check-plan: ${error.message}\nusage: check-plan.mjs <plan.md> --template <path> [--bug] [--safety-fact] [--narrow] [--no-periodic]\n`,
     );
     return 2;
   }
