@@ -4,6 +4,22 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.48
+
+#### Added
+- The handoff guardrails reviewer checks each new poller, interval, background lane, socket, cross-process channel, route, table, cursor, or write into another tool's files: the existing mechanism that could do the job and why it was not used, what its cost scales with at 10x and 100x, and its per-device idle cost. Idle-scaled cost when an activity-scaled design meets the outcome, or a write into another tool's data with no cited human decision, is blocking; a ticket's Decisions section counts as that decision only when it traces to a human statement, and an untraced one is an `engineering decision` finding. It checks the session plan's Cost Scaling table against the diff.
+- An `Engineering decision: <question>; built: <...>; evidence: <...>` item on the live ticket's Engineering checklist, with placement rules in the ticket template and the ticket worker.
+- A closedloop-graph route for channels that already connect two surfaces, with an existing-channels `code_grep` in the change and backend workers' required calls when the work is periodic or cross-surface.
+- `test_vibe_mechanism_provenance_contract.py` pins these rules.
+- `tools/python/vibe_contract_text.py` holds the `flat`, `section`, `paragraph`, and `agent` helpers every vibe contract test now imports instead of keeping its own copy. `section` stops at the next heading of the same or a higher level and matches its heading at the start of a line, preferring an exact line; `paragraph` also splits list items; `agent` returns the raw text.
+
+#### Changed
+- The change worker treats a mechanism a ticket or PRD names as a proposal: when it is dominated, it builds the better option that meets the outcome and logs the swap as an `Engineering decision`, never as a question for the person. Plans that add periodic or cross-surface work carry a Cost Scaling table per cl-execute's `planning-and-gates.md`.
+- The requirements worker tags ticket text that names a mechanism `mechanism (proposal)` instead of an acceptance criterion.
+- A handoff finding that a mechanism, a one-way door, or an unratified or conflicting decision needs a human decision is never resolved, downgraded, or absorbed by the writer; it goes on the Engineering checklist.
+- `quality-loop.md` defines a settled decision as one that traces to a human statement (who, where, which question). An unratified or conflicting one goes through the product necessity gate or becomes an `Engineering decision`, and conflicts are never resolved by recency. Every "never re-ask a settled decision" points to this definition.
+- Frozen rows describe user-visible behavior, never mechanism.
+
 ### vibe v1.0.47
 
 #### Added

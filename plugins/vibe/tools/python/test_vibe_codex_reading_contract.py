@@ -26,8 +26,9 @@ four cases.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
+
+from vibe_contract_text import flat
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VIBE_SKILL = PLUGIN_ROOT / "skills" / "vibe" / "SKILL.md"
@@ -38,10 +39,6 @@ RECORDING = "### Recording it in the table"
 # A single Codex read of SKILL.md kept roughly its first 19,000 characters;
 # stay well inside that so the note itself is never the part that drops.
 KEPT_HEAD_CHARACTERS = 12_000
-
-
-def flat(text: str) -> str:
-    return re.sub(r"\s+", " ", text)
 
 
 def harness_notes() -> str:

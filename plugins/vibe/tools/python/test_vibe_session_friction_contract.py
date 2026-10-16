@@ -16,6 +16,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from vibe_contract_text import flat, section
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
@@ -28,17 +30,6 @@ LAUNCHER_SOURCE = PLUGIN_ROOT.parents[1] / "tools" / "vibe-workers" / "src" / "c
 AGENTS = PLUGIN_ROOT / "agents"
 SESSION_TERMS = ("handoff", "the branch to merge", "branch", "MCP", "storybook server", "seeded")
 GNU_TIMEOUT = re.compile(r"(?:^|[\s;&|(`$])g?timeout\s+(?:-[A-Za-z]+\s+\S+\s+)*\d")
-
-
-def flat(text: str) -> str:
-    return re.sub(r"\s+", " ", text)
-
-
-def section(text: str, heading: str, level: str = "## ") -> str:
-    start = text.index(heading)
-    rest = text[start + len(heading) :]
-    end = rest.find(f"\n{level}")
-    return flat(rest if end == -1 else rest[:end])
 
 
 def banned_terms() -> list[str]:
@@ -63,7 +54,7 @@ def test_both_skills_and_the_person_facing_workers_reference_the_list() -> None:
 
 
 def test_every_question_is_recorded_and_never_asked_twice() -> None:
-    rule = section(VIBE_SKILL.read_text(), "### Questions are asked once", level="#")
+    rule = section(VIBE_SKILL.read_text(), "### Questions are asked once")
     for required in (
         "No question reaches the person twice (operator ruling, 2026-10-15).",
         "node scripts/session-questions.mjs ask --key <topic>",
@@ -80,7 +71,7 @@ def test_every_question_is_recorded_and_never_asked_twice() -> None:
 
 def test_the_sample_data_question_is_plain_gated_and_never_uses_the_email() -> None:
     skill = VIBE_SKILL.read_text()
-    starting = section(skill, "### Starting new", level="#")
+    starting = section(skill, "### Starting new")
     assert "same necessity gate as any other question" in starting
     assert "In every other case record `seeded` and ask nothing." in starting
     assert ("\"Should your copy of the app start with an example company that already has people and "

@@ -217,6 +217,9 @@ historical inspections accurately. Preserve the existing grading block.
    entry in the change log once, as an unchecked item at the end of the
    Engineering checklist in its logged shape
    (`../skills/vibe/references/ticket-template.md`, "Engineering needed").
+   Place each `Engineering decision` entry in the change log once, as an
+   unchecked item at the end of the Engineering checklist in its logged shape
+   (`../skills/vibe/references/ticket-template.md`, "Engineering decisions").
    Place each file in the inventory's `compileOnlyV1Repairs` once, as an
    unchecked item at the end of the Engineering checklist in the template's
    shape (`../skills/vibe/references/ticket-template.md`, "Compile-only v1.0

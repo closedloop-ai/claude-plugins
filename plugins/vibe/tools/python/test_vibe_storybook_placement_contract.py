@@ -25,6 +25,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from vibe_contract_text import agent, flat, paragraph, section
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 REPO_ROOT = PLUGIN_ROOT.parents[1]
@@ -51,31 +53,6 @@ ASK_THE_PERSON = (
     re.compile(r"\bsurfaces?\b[^.]*\bperson\b", re.IGNORECASE),
     re.compile(r"\bperson (decides|chooses|picks)\b", re.IGNORECASE),
 )
-
-
-def flat(text: str) -> str:
-    return re.sub(r"\s+", " ", text)
-
-
-def section(text: str, heading: str) -> str:
-    """The section under `heading`, up to the next heading of the same or a higher level, flattened."""
-    level = len(heading.split(" ", 1)[0])
-    start = text.index(heading)
-    rest = text[start + len(heading) :]
-    ends = [match.start() for match in re.finditer(r"\n(#{1,%d}) " % level, rest)]
-    return flat(rest[: ends[0]] if ends else rest)
-
-
-def paragraph(text: str, marker: str) -> str:
-    """The blank-line-delimited paragraph or list item block containing `marker`, flattened."""
-    for block in re.split(r"\n\s*\n|\n(?=\d+\. )", text):
-        if marker in flat(block):
-            return flat(block)
-    raise AssertionError(marker)
-
-
-def agent(name: str) -> str:
-    return (AGENTS / f"{name}.md").read_text()
 
 
 def frontmatter(text: str) -> str:
@@ -342,7 +319,7 @@ def test_the_template_routes_design_conflicts_to_design_review_and_the_rest_to_e
         assert required in rule, required
     review = section(template, "## Design Review")
     assert "- Design conflicts: <each `design` conflict from the change log: what disagreed, how the session decided it, and the evidence (doc section or precedent paths)>" in review
-    assert "| Engineering checklist | `vibe-ticket-worker` | session start; handoff appends engineering conflicts, forbidden-path needs and compile-only v1.0 repairs |" in template
+    assert "| Engineering checklist | `vibe-ticket-worker` | session start; handoff appends engineering conflicts, forbidden-path needs, compile-only v1.0 repairs and engineering decisions |" in template
 
 
 def test_the_handoff_section_no_longer_collects_conflicts() -> None:

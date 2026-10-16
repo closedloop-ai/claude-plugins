@@ -13,8 +13,9 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
+
+from vibe_contract_text import section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -22,19 +23,6 @@ FIX_WORKER = PLUGIN_ROOT / "agents" / "vibe-seed-fix-worker.md"
 PR_WORKER = PLUGIN_ROOT / "agents" / "vibe-seed-pr-worker.md"
 SKILL = PLUGIN_ROOT / "skills" / "vibe-seed-refresh" / "SKILL.md"
 RESULT_FILE = ".control/vibe/seed-walk-result.json"
-
-
-def flat(text: str) -> str:
-    return re.sub(r"\s+", " ", text)
-
-
-def section(text: str, heading: str) -> str:
-    """The section under `heading`, up to the next heading of the same or a higher level, flattened."""
-    level = len(heading.split(" ", 1)[0])
-    start = text.index(heading)
-    rest = text[start + len(heading) :]
-    ends = [match.start() for match in re.finditer(r"\n(#{1,%d}) " % level, rest)]
-    return flat(rest[: ends[0]] if ends else rest)
 
 
 def walk_rule() -> str:

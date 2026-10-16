@@ -23,6 +23,15 @@ when relevant. An empty graph result is not proof that nobody answered it.
 Apply settled decisions; never ask them again. Return the sources checked and
 why an unresolved answer is absolutely necessary.
 
+A ticket's or plan's Decisions section is a record, not a ruling. A decision
+is settled only when it traces to a human statement: who made it, where, and
+which question it answered. An unratified or conflicting decision is not
+settled: a product one goes through this section's research and necessity
+gate, and a technical one becomes an `Engineering decision` item
+(`ticket-template.md`, "Engineering decisions"). Never resolve a conflict by
+recency or by assuming one author meant to change an earlier record. Every
+"settled" in this skill means this.
+
 The orchestrator sends an unresearched question back. Interrupt the person
 only for an absolutely necessary unresolved product question, one at a time
 with full context. Technical choices are resolved internally. Preserve existing
@@ -295,6 +304,11 @@ fix source gaps now, append findings/fixes and reverify. At handoff,
 independent reviewers read the same table and source evidence. A reviewer
 proposal is not a product ruling: verify it, record its disposition, and never
 expand scope or remove a live capability because a hypothetical fix suggests it.
+A finding that a mechanism, a one-way door, or an unratified or conflicting
+decision needs a human decision is never the writer's to resolve, downgrade
+or absorb: it becomes an `Engineering decision` item on the live ticket's
+Engineering checklist (`ticket-template.md`, "Engineering decisions"), never
+a question for the person.
 
 Keep implementation evidence, executed existing-test evidence and missing
 tests separate: planned tests are not coverage. `Required Tests` maps stable
@@ -335,7 +349,9 @@ listing the stable row ID of every row the person accepted, each with its
 request provenance. A row is accepted when it describes behavior the person
 saw delivered in this session and is handing off, or behavior a handoff
 behavior answer settled (`built` or `already met`). Superseded rows and rows
-behind a remaining Open Question are not frozen. The writer rewrites this one
+behind a remaining Open Question are not frozen. Frozen rows describe
+user-visible behavior, never mechanism: no intervals, transports or storage
+choices. The writer rewrites this one
 section whenever a later handoff answer changes the table, so it always names
 the final accepted set; every other section keeps the rules above.
 

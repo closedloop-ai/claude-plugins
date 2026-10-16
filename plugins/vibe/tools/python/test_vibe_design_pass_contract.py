@@ -15,10 +15,11 @@ Graph evidence, worker commit ownership and shared-owner rules remain unchanged.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import yaml
+
+from vibe_contract_text import agent, flat, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -62,23 +63,6 @@ CODE_WORKERS = (
 # Every agent that the vibe, handoff, or vibe-seed-refresh skills dispatch.
 VIBE_AGENTS = sorted(path.stem for path in AGENTS.glob("vibe-*.md"))
 NON_GENERIC_NAMES = ("Sessions", "Branches", "GridTableListSurface", "bulk select", "ISS-12137")
-
-
-def flat(text: str) -> str:
-    return re.sub(r"\s+", " ", text)
-
-
-def section(text: str, heading: str) -> str:
-    """The section under `heading`, up to the next heading of the same level, flattened."""
-    level = heading.split(" ", 1)[0]
-    start = text.index(heading)
-    rest = text[start + len(heading) :]
-    end = rest.find(f"\n{level} ")
-    return flat(rest if end == -1 else rest[:end])
-
-
-def agent(name: str) -> str:
-    return (AGENTS / f"{name}.md").read_text()
 
 
 def fenced_block(text: str, first_line: str) -> str:

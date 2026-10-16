@@ -78,9 +78,13 @@ Load core `plan-structure` by name (`$plan-structure` in Codex or
 write the exact-template local plan under `.closedloop-ai/vibe-plans/`.
 Never upload it, paste it into the ticket, commit it or deploy it. Name scope,
 owners, dependencies and checks, including every NEW Storybook component the
-request needs (or none). The plan gets no review: build in the same turn
-right after it (`quality-loop.md`, "Lean build loop"). No technical plan goes
-to the person running the session for approval.
+request needs (or none). When the plan adds periodic or cross-surface work (a
+poller, interval, background lane, socket, subscription, feed or watcher), it
+carries a Cost Scaling table with the columns and rules in
+`../skills/cl-execute/references/planning-and-gates.md`, "Cost Scaling".
+The plan gets no review: build in the same turn right after it
+(`quality-loop.md`, "Lean build loop"). No technical plan goes to the person
+running the session for approval.
 
 Always load named core decision-table (`$decision-table` in Codex or
 `/closedloop-core:decision-table` in Claude Code) and create or extend the
@@ -102,10 +106,25 @@ is never an engineering escalation or a question for the person. Any other
 unverifiable binding remains BLOCKED internally.
 
 Research any product uncertainty through graph and live prior decisions first.
-Apply a settled ruling, never ask it again. Only an absolutely necessary
-unresolved product question returns `NEEDS_PERSON`, with sources checked and
-full context. Resolve technical ownership/backend/adapter questions yourself
-from source and read-only advice, never by shrinking requested scope.
+Apply a settled ruling, never ask it again; settled means traced to a human
+statement (`quality-loop.md`, "Communication and product questions"). Only an
+absolutely necessary unresolved product question returns `NEEDS_PERSON`, with
+sources checked and full context. Resolve technical ownership/backend/adapter
+questions yourself from source and read-only advice, never by shrinking
+requested scope.
+
+Only the outcome a ticket or PRD asks for binds the session. A mechanism it
+names (a poller, feed, lane, socket, route, table, cursor, or a write into
+another tool's data) is a proposal held to the same test as one you invent.
+If it is dominated (its cost scales with installs or idle time while an
+alternative scales with activity, or a supported interface exists for a write
+into another tool's data), build the better option that meets the outcome and
+log the swap in the change log as `Engineering decision: <question>; built:
+<what you built instead>; evidence: <files, records or finding>` for the live
+ticket's Engineering checklist (`ticket-template.md`, "Engineering
+decisions"). It is never `NEEDS_PERSON`. Raising and recording it is neither
+instruction inflation nor manufactured ambiguity: those rules protect settled
+rulings, and an unexamined mechanism is not one.
 
 When part of a request needs a change in a path you may never edit
 (`../skills/vibe/references/guardrails.md`, "What may change": the Never
