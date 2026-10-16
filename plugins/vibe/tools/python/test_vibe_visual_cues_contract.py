@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from vibe_contract_text import flat
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
@@ -44,6 +43,10 @@ DIST = VIBE / "scripts" / "dist"
 HEADING = "## Visual references"
 CHECK = "### The reference check before ready"
 PROPERTIES = "shadow and elevation, font size, weight, color, spacing, radius, borders, alignment and icons"
+
+
+def flat(text: str) -> str:
+    return re.sub(r"\s+", " ", text)
 
 
 def section(text: str, heading: str) -> str:

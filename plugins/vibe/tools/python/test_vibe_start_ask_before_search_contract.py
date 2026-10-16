@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from vibe_contract_text import flat
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -28,6 +27,10 @@ START = "## 2. Start or resume"
 RESUME = "### Finding a session to resume"
 QUESTION = "Do you want to pick up something you worked on before, or start something new?"
 SEARCH = "vibe-sessions.mjs list"
+
+
+def flat(text: str) -> str:
+    return re.sub(r"\s+", " ", text)
 
 
 def section(text: str, heading: str, level: str = "## ") -> str:
