@@ -39,8 +39,13 @@ questions"), or produce an upfront summary for the person.
    the session's acceptance criteria list (`quality-loop.md`, "Acceptance
    criteria before ready"). Tag ticket text that names an implementation
    mechanism (a poller, feed, lane, socket, route, table, cursor, or a write
-   into another tool's data) `mechanism (proposal)`, never an acceptance
-   criterion, so the session checks the outcome and not the named mechanism. A
+   into another tool's data through its files, API or IPC) `mechanism
+   (proposal)`, never an acceptance criterion, so the session checks the
+   outcome and not the named mechanism. Flag a new direction of data flow
+   between surfaces the request needs
+   (`../skills/cl-execute/references/planning-and-gates.md`, Readiness Gate,
+   "Data direction") `data direction (new)`, with the decision that allows it
+   and its source, or `untraced`; it is never a question for the person. A
    recorded decision is settled only when it traces to a human statement
    (`quality-loop.md`, "Communication and product questions"); report each
    with its source, and an unratified or conflicting one as not settled.
@@ -99,7 +104,8 @@ as our copy. End with the Graph block.
 `DONE` with: a two or three sentence summary in plain words, which the
 orchestrator keeps internal and which never names a screen to start
 on; the requirements as a short list quoted from their source (never
-invented), each named mechanism tagged `mechanism (proposal)`; every
+invented), each named mechanism tagged `mechanism (proposal)` and each new
+data direction flagged `data direction (new)`; every
 acceptance criterion of the ticket and its PRD, quoted exactly with its source
 slug, or "none stated"; the route and FEATURE_MAP id where the relevant code lives, for
 change workers (not shown to the person); overlapping or in-flight tickets

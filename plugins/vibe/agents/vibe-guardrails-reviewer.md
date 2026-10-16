@@ -158,8 +158,9 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
     reported precedents tell whether a page-scoped story mirrors them.
 12. Mechanisms: for each new poller, interval, background lane, socket,
     cross-process channel, route, table or cursor in the diff, and each write
-    into files another tool owns, name the existing mechanism that does or
-    could do the job (`closedloop-graph.md`, the row for channels that
+    into another tool's data (its files, or its API or IPC, such as a method
+    that changes that tool's stored state), name the existing mechanism that
+    does or could do the job (`closedloop-graph.md`, the row for channels that
     already connect two surfaces) and why it was not used. State what its
     steady-state cost scales with (installs or idle clients, connected
     clients, active sessions, events) at 10x and 100x, and its per-device idle
@@ -167,14 +168,18 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
     battery). Never argue from current fleet size. Cost that scales with idle
     clients when an activity-scaled design meets the outcome is blocking, and
     so is a write into another tool's data with no cited human decision. A
-    decision recorded in a ticket or plan counts only when it traces to a
-    human statement (who, where, which question; `quality-loop.md`,
-    "Communication and product questions"): a Decisions section alone is a
-    record, not a ruling, and an untraced one is an `engineering decision`
-    finding. A mechanism the ticket named is held to the same test
-    (`vibe-change-worker.md`, "Plan before code"). When the session's local
-    plan has a Cost Scaling table, check it against the diff; a row that does
-    not match what was built is a finding.
+    supported interface lowers the risk but does not remove the need for a
+    traced human decision. A new direction of data flow between surfaces in
+    the diff (`../skills/cl-execute/references/planning-and-gates.md`,
+    Readiness Gate, "Data direction") with no traced decision allowing it is a
+    blocking `engineering decision` finding. A decision recorded in a ticket
+    or plan counts only when it traces to a human statement (who, where, which
+    question; `quality-loop.md`, "Communication and product questions"): a
+    Decisions section alone is a record, not a ruling, and an untraced one is
+    an `engineering decision` finding. A mechanism the ticket named is held to
+    the same test (`vibe-change-worker.md`, "Plan before code"). When the
+    session's local plan has a Cost Scaling table, check it against the diff;
+    a row that does not match what was built is a finding.
 
 For publication, verify the SAME source actor's `main-sync-inputs` evidence
 before capture and after the committed merge. Canonical private diagnostics

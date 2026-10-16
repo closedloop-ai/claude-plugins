@@ -43,6 +43,8 @@ Readiness:
 - Residual contract testability: <PASS | BLOCKED | UNKNOWN | NOT_APPLICABLE> - <failing-main proof or reason>
 - Validation path: <PASS | BLOCKED | UNKNOWN> - <reason>
 - Runtime validation command proof: <PASS | BLOCKED | UNKNOWN> - <repo-pinned command proof or limitation>
+- Decision provenance: <PASS | BLOCKED | UNKNOWN | NOT_APPLICABLE> - <each recorded decision with who, where, and which question it answered, or the unratified or conflicting one>
+- Data direction: <PASS | BLOCKED | UNKNOWN | NOT_APPLICABLE> - <each new data direction between surfaces and the traced decision that allows it, or none introduced>
 - Safety/risk: <PASS | BLOCKED | UNKNOWN> - <reason>
 - Safety fact: <PASS | BLOCKED | UNKNOWN | NOT_APPLICABLE> - <the one fact the change is safe because of and its planned runnable proof, or reason>
 

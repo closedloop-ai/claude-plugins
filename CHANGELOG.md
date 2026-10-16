@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.0.51
+### vibe v1.0.52
 
 #### Fixed
 - A handoff check that is already red on main no longer stops the handoff (operator ruling, 2026-10-16). Three times in two days a handoff stopped on a check that failed on main itself, not because of the session: the API path filter, the e2e volume guard and a capability-parity fixture. Each time the session ended with "a needed fix stops the handoff".
@@ -19,6 +19,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `main-sync-main-comparison.test.ts` (7 cases): checks failing on both (including `typecheck:affected` and the pinned Turbo filter, run on main over the session's selected package), publication then pushing; a check failing only on the session commit, blocked with all three runs recorded; a flaky check passing on its one rerun; a check that cannot run on main because its bootstrap fails, blocked with no rerun; a build-loop failure still blocking with no comparison; plus the pinned main command and the recipe-bound Claude envelope reserve. The four classification cases fail on 1.0.50's bundle. The checkout is removed in every case.
 - `test_vibe_main_only_failures_contract.py` (6 cases) pins the prose and the ticket placement in quality-loop, guardrails, handoff, the ticket template and the change, environment and ticket workers; all six fail on 1.0.50. Three contract tests and one budget test that pin the Engineering checklist row and the handoff recipe's keys follow the new row and the `comparison` reserve.
 - Two eval cases tagged `main-failures` (Claude, and Codex through the runner): a check that also fails on the captured main after the writer reported it as "a needed fix", and a session-caused failure. One run each: both pass on both harnesses here. On 1.0.50 the main-only case fails on both harnesses (Claude Sonnet 0.67, Codex fail: neither placed it as a Known main failure); the session-caused case passes on 1.0.50 too, as expected, since 1.0.50 blocks every failure.
+
+### vibe v1.0.51
+
+#### Added
+- A Data direction readiness item in cl-execute's `planning-and-gates.md`: a new direction of data flow between surfaces (cloud to an installed client, a client into another tool's data, one service writing into another's store) needs a cited human decision or approved document traced per Decision provenance; an earlier document that restricts the direction is a conflict, and with no traced decision it is a numbered human decision. The plan-review prompt mirrors it in one DECISIONS line.
+- `cl-analyze` gains Decision provenance and Data direction readiness checks that point to those cl-execute definitions, and both items in its result's Readiness list.
+- cl-execute's `CL Execute Gate Result` Readiness list reports Decision provenance and Data direction, so the gate reports the items it checks.
+- In vibe, the requirements worker flags a new data direction in its brief as `data direction (new)` with its source or `untraced`; the change worker builds only along directions already allowed and logs an untraced one as an `Engineering decision`, never a question for the person; the guardrails reviewer treats an untraced new direction in the diff as a blocking `engineering decision` finding.
+- `test_vibe_data_direction_contract.py` and a `skill-contract.test.mjs` case pin these rules; both fail on 1.0.50.
+
+#### Changed
+- A write into another tool's data covers its files and its API or IPC (for example a method that changes that tool's stored state). A supported interface lowers the risk but does not remove the need for a traced human decision. The guardrails reviewer's Mechanisms check (item 12) and cl-execute's Data direction item state both, the plan-review prompt names API and IPC writes as mechanisms and says a supported interface is not the decision, the change and requirements workers name API and IPC writes, and planning step 13 adds that moving such a write to a supported interface does not settle whether the write is allowed.
+- `cl-analyze` counts a decision as documented for the `EXTREME` risk rule only when it traces to a human statement (who, where, which question); a ticket's or plan's Decisions section alone is a record, not a ruling.
 
 ### vibe v1.0.50
 

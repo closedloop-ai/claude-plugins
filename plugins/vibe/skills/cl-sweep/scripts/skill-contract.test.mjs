@@ -1123,3 +1123,41 @@ test('PR snapshot callers load the core monitor by name', () => {
   assert.match(implementation, /\/closedloop-core:gh-monitor-pr/);
   assert.match(implementation, /`scripts\/monitor-pr\.mjs` from that loaded skill's own folder\s+and record its verdict/);
 });
+
+test('a new data direction needs a traced decision in cl-execute and cl-analyze', () => {
+  const gates = read('cl-execute/references/planning-and-gates.md');
+  const prompt = read('cl-execute/references/plan-review-prompt.md');
+  const analyze = read('cl-analyze/SKILL.md');
+  const formats = read('cl-execute/references/result-formats.md');
+  const readiness = gates.slice(gates.indexOf('## Readiness Gate'), gates.indexOf('## Requirements Contract'));
+
+  // One definition, in the Readiness Gate after Decision provenance.
+  assert.equal(gates.match(/^- Data direction:/gm)?.length, 1);
+  assert.ok(readiness.indexOf('- Decision provenance:') < readiness.indexOf('- Data direction:'));
+  assert.match(readiness, /- Data direction: does the work introduce a new direction of data flow between\s+surfaces \(for example cloud to an installed client, a client into another\s+tool's data, or one service writing into another's store\)\?/);
+  assert.match(readiness, /A write into\s+another tool's data covers its files and its API or IPC \(for example a\s+method that changes that tool's stored state\); a supported interface lowers\s+the risk but does not remove the need for a traced human decision\./);
+  assert.match(readiness, /cite the human decision or approved document that allows it:\s+who, where, and which question it answered, per Decision provenance\./);
+  assert.match(readiness, /An\s+earlier document that restricts the direction is a conflict\./);
+  assert.match(readiness, /With no traced\s+decision, the direction is a numbered human decision, not an implementation\s+detail\./);
+  assert.match(gates, /Moving a write into another tool's data to a\s+supported interface does not settle whether the write is allowed; that\s+stays the \[Readiness Gate\]\(#readiness-gate\)'s Data direction item\./);
+
+  // The plan-review prompt mirrors it in one DECISIONS line and counts API writes as mechanisms.
+  const decisions = prompt.slice(prompt.indexOf('DECISIONS'), prompt.indexOf('SUBAGENTS'));
+  assert.match(decisions, /- A new data direction between surfaces is allowed only by a traced human\s+decision or approved document; an earlier one restricting it is a conflict\./);
+  assert.match(prompt, /writes into another tool's data\s+through its files, API or IPC\)/);
+  assert.match(prompt, /A supported\s+interface for that write lowers the risk but is not the decision\./);
+  assert.doesNotMatch(prompt, /writes into files another tool\s+owns/);
+
+  // cl-analyze points at those definitions and reports both items.
+  assert.match(analyze, /requires product\/architecture decisions that are not already documented\. A decision counts as documented only when it traces to a human statement \(who made it, where, and which question it answered\); a ticket's or plan's Decisions section alone is a record, not a ruling\./);
+  assert.match(analyze, /^- Decision provenance: Apply `\$cl-execute`'s Decision provenance readiness item \(`\.\.\/cl-execute\/references\/planning-and-gates\.md`, Readiness Gate\)/m);
+  assert.match(analyze, /^- Data direction: Apply `\$cl-execute`'s Data direction readiness item \(`\.\.\/cl-execute\/references\/planning-and-gates\.md`, Readiness Gate\)/m);
+  assert.match(analyze, /with no traced decision allowing it is `BLOCKED`, a human decision rather than an implementation detail/);
+  assert.match(analyze, /^- Decision provenance: <PASS \| BLOCKED \| UNKNOWN \| NOT_APPLICABLE> - </m);
+  assert.match(analyze, /^- Data direction: <PASS \| BLOCKED \| UNKNOWN \| NOT_APPLICABLE> - </m);
+
+  // The cl-execute gate reports both items it checks.
+  const gateResult = formats.slice(formats.indexOf('## CL Execute Gate Result'), formats.indexOf('## CL Execute Result'));
+  assert.match(gateResult, /^- Decision provenance: <PASS \| BLOCKED \| UNKNOWN \| NOT_APPLICABLE> - </m);
+  assert.match(gateResult, /^- Data direction: <PASS \| BLOCKED \| UNKNOWN \| NOT_APPLICABLE> - </m);
+});
