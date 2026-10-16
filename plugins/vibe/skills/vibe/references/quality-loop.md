@@ -628,6 +628,34 @@ their paths unless a real difference cannot be resolved: a product choice become
 question through the research gate above, and anything else is logged as an
 engineering note under the existing rules.
 
+### Recording it in the table
+
+The rules above leave their evidence in the session decision table, one line
+each, in these shapes. Criterion lines sit under `## Acceptance Criteria`,
+above `### Checks`; only check lines go below it.
+
+- `### Checks`: `Reference read <request ID>: <image path>: <what it shows>`,
+  one per reference image on the session, every one the person gave and not
+  only the one the latest request names (a screenshot of our page as it is
+  now included), before any criterion or code for that request, a correction
+  included.
+- `## Acceptance Criteria`: `AC-n (source: <request ID>, reference <image
+  path>): <one property as the reference shows it>; <the design token or
+  catalog component that delivers it>`. One property per criterion: a shadow,
+  a type size and a type weight are three criteria, never one "match the
+  reference". A correction ("it still doesn't look like it") adds a criterion
+  for each property the reference shows that no criterion names yet, even
+  when a broad one such as "make ours like the second one" exists, before it
+  fixes anything.
+- `### Checks`: `<request ID>, AC-n, AC-m: reference check, compared
+  <screenshot path> with <image path> after the last edit: <differences found
+  and fixed>; met`, or `not met yet` with the difference that remains.
+
+With no reference image, a criterion from the person's words quotes them,
+`AC-n (source: <request ID>): "<their words>"`, and is checked with the
+cheapest honest evidence ("Acceptance criteria before ready"), never a
+render.
+
 ### What the orchestrator says
 
 The orchestrator never tells the person the result matches the reference,
