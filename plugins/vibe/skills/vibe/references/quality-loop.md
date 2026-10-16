@@ -403,6 +403,10 @@ between a request and the person seeing it.
 - Acceptance check: before `DONE`, the writer checks every acceptance
   criterion the change touches with concrete, cheap evidence and records the
   result ("Acceptance criteria before ready" below).
+- Reference check: only when the person gave a reference image, before
+  `DONE` on a UI change the writer screenshots the touched screen and
+  compares it with that image ("Visual references", "The reference check
+  before ready" below).
 - Commit, deploy and show: after each finished change the orchestrator
   commits with its script and deploys through the existing publication gate
   without being asked (`SKILL.md`, section 6), batching changes that arrive
@@ -416,6 +420,8 @@ Storybook footprint, running app checks and any other heavy validation run
 only at `$handoff`, never during the loop, even where a repository protocol
 asks for them before a change is done: handoff runs them. The acceptance
 check's single test, script or control read per criterion is not one of them.
+The reference check before ready is the one exception to this rule (operator
+ruling, 2026-10-15), and it runs only with a reference image.
 The reference-product
 and new Storybook components notices (`SKILL.md`, section 5, "Notices that
 never wait") stay as they are.
@@ -490,6 +496,145 @@ same way, and the verify worker and reviewers start from those results. A
 criterion still not met is a source gap the writer fixes or a product
 question routed through the handoff skill's "Answers from the person"; it
 never counts as met.
+
+## Visual references
+
+A reference the person gives reaches the writer as an image it reads, and
+every visual and UX property it shows becomes an acceptance criterion
+(operator ruling, 2026-10-15: "we're missing visual cues"). A person built UI
+from two screenshots, one of another product; the session missed a drop
+shadow, a larger text size and bold type, and fixed each once she pointed it
+out. The writer received the saved path beside the orchestrator's own text
+description, never read the image before its first build, and reference mode
+was scoped to behaviors, so those properties never became criteria. This
+section is the rule's one canonical statement; the skills and workers point
+at it. The build loop stays lean: the reference check below is the one
+exception to its no-automated-visual-QA rule, and it runs only when there is
+a reference image.
+
+It serves every person running a session, and nobody is asked which kind
+they are. Someone who works from references (a screenshot or image, a
+prototype or Storybook link, an existing page or screen, "make it look like
+X") gets the reference saved, read, turned into criteria and checked against
+a screenshot before ready. Someone who describes what they want in words gets
+criteria from their words, checked as before, with no render or compare.
+
+### Saving the reference
+
+The writer is a separate context that receives text, so an image the person
+attaches in chat reaches it only as a saved file it opens itself. When the
+person attaches an image, before forwarding the request the orchestrator runs
+`node scripts/reference-images.mjs attached --worktree "<wt>" --request-id <id>`,
+which decodes the images on their latest message from this harness's own
+transcript, or `save --file <path>` for an image they gave as a file path or
+one the harness already saved to a file.
+Both store the image in the session's private Git metadata and record it on
+the session as `referenceImages`, so later turns and handoff reuse it. The
+request to the writer names every saved path. The orchestrator never
+replaces the image with its own description as the only reference; its words
+may go alongside the path, never instead of it.
+
+Claude Code's owned launcher adds the recorded `referenceImages` to every
+writer, requirements and verify turn. In Codex, `writer-state.mjs take-input`
+returns them with the claimed input; forward each path with it, also as a
+`local_image` input item when the native follow-up accepts input items. The
+writer opens each path as an image: `Read` in Claude Code, `view_image` in
+Codex. A reference given as a link, a page or screen, or "make it look like
+X" (a screen in our own product) is captured as an image before building
+(`environment.md`, "Capturing a reference") and saved with `save --file`.
+
+Reading the reference is a required step with a recorded result. Before it
+plans or builds, including a correction such as "it still doesn't look like
+it", the writer opens every reference image and appends a
+`Reference read` line per image to the `### Checks` log: the path and what it
+shows (shadow and elevation, type sizes and weights, colors, spacing, radius,
+borders, alignment, icons, and the visible states). A plan or criterion
+written before that line exists is incomplete, and so is a `DONE` whose
+request had a reference image and no `Reference read` line for it. The
+orchestrator's text description of an image never stands in for that read,
+however detailed.
+
+### Requirements from a reference
+
+A reference image of an outside product goes through the reference-product
+notice (`SKILL.md`, section 5, "Notices that never wait") with its saved
+paths, whether or not the person named the product. `vibe-requirements-worker`
+reads the image itself and researches the product when it is named or
+identifiable. It returns two lists:
+
+- Visual: elevation and shadow, type hierarchy (size and weight), color roles,
+  spacing, radius, borders, iconography and density.
+- UX: layout and hierarchy, what is emphasized, the interactive affordances
+  and states visible or implied (hover, selected, disabled, empty, loading,
+  overflow), grouping, labels, and the behavior a user would expect from that
+  pattern.
+
+The orchestrator never scopes the visual list out: a brief that asks only for
+layout, behaviors or hierarchy still gets the visual requirements, and
+"behaviors, not wording" is about copy only. Each requirement is mapped to
+the existing catalog component and design token that delivers it. Build to
+the design system; never copy pixel values or another product's markup. A
+requirement with no design-system equivalent goes to the existing
+missing-primitive path (`NEEDS_PRIMITIVE`, built by the writer from the
+read-only design-system steward's spec). A surface that does not bundle the
+design-system tokens (a page generated outside the app shell, say) gets the
+exact value of the named token, with that token cited beside it, and the
+writer logs `Engineering needed (tokens not bundled): <surface>; uses <token>
+values` in the change log; it never invents a value no token defines. Never
+copy the outside product's words; user copy follows `guardrails.md`, "Copy".
+
+The writer adds each requirement to the session's `## Acceptance Criteria`
+as a criterion (source: the request ID and the reference image path), naming
+its token or component. A correction adds each property the reference shows
+that the list still lacks, before it fixes anything. The same applies to a reference in our own product:
+each visible property becomes a criterion. A visual criterion with a
+reference image is met by the reference check below, never by a source trace
+alone. UX criteria, and visual criteria with no reference image, are checked
+like every other criterion ("Acceptance criteria before ready"), with the
+cheapest honest evidence that list allows, a source trace included.
+
+### The reference check before ready
+
+Only when the person gave a reference image (a screenshot or image, or a
+link or page captured as one) and the change renders UI (operator ruling,
+2026-10-15). With no reference image there is no render and no compare.
+
+Before returning `DONE`, the writer takes one screenshot of each touched
+screen or component at the reference's viewport (`environment.md`,
+"Capturing for the reference check") and opens it beside the reference
+image. It looks only at the properties the reference shows (shadow and
+elevation, font size, weight, color, spacing, radius, borders, alignment and
+icons, as the reference shows them), plus regressions on the touched
+element: properties that were right before this change and are not now, such
+as a removed tap-target minimum height or button text turned too bold by a
+font change. It fixes each difference with design tokens, never arbitrary
+values, and takes the screenshot again until no difference remains. Each
+comparison is a line in the `### Checks` log: request ID, criterion IDs, both
+image paths and the result. `DONE` on such a change carries a Reference check
+line per touched screen (the screenshot path, the reference path and the
+differences found and fixed); without it the `DONE` is incomplete. When the
+writer cannot screenshot a touched screen locally, it says so in that line
+and the orchestrator's look after the deploy is the comparison (`SKILL.md`,
+section 6, step 5).
+
+The result gates the ready message. A difference still visible is not ready:
+it goes back to the SAME writer in the same request and is deployed again
+first.
+
+It is not a design review: no critique of craft or hierarchy beyond the
+reference, and no full design pass; those stay at handoff. Never ask the
+person to confirm the comparison, and never show them the screenshots or
+their paths unless a real difference cannot be resolved: a product choice becomes one plain
+question through the research gate above, and anything else is logged as an
+engineering note under the existing rules.
+
+### What the orchestrator says
+
+The orchestrator never tells the person the result matches the reference,
+or that a visible property is done, when it has seen a gap, in a screenshot
+or anywhere else. A gap it sees goes back to the SAME writer in the same
+request; the ready message names it plainly as not done yet until the writer
+has fixed it.
 
 ## Tests: repair, don't author
 

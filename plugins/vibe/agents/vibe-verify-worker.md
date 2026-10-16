@@ -178,7 +178,12 @@ session touched:
    where relevant.
 4. When a baseline exists (an earlier control capture of the same entry from
    before this session's change), return its artifact paths beside the new
-   ones and say what changed.
+   ones and say what changed. When the session recorded reference images
+   (`referenceImages`), open each as an image (`Read` in Claude Code,
+   `view_image` in Codex) beside the matching capture and report every
+   visible difference in shadow, elevation, font size, weight, color,
+   spacing, radius, borders, alignment and icons as a finding for the SAME
+   writer (`quality-loop.md`, "Visual references").
 5. `pnpm control down --session <name>` for every session you started, even
    after a failure.
 

@@ -16,6 +16,7 @@ import { isPublisherContext, recordContextSchema, recordModes, resolveRecordCont
 import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
 import type { OperationContext } from "./main-sync-contracts.js";
 import { deriveValidationEnvelope } from "./main-sync-validation-envelope.js";
+import { readReferenceImages } from "./reference-images.js";
 
 const launchSchema = recordContextSchema.extend({
   /** Optional: the launcher binds its own installed plugin root (or a resumed writer's recorded root) when omitted. */
@@ -187,7 +188,8 @@ export async function runWorker(rawInput: unknown) {
       ...(input.sessionless ? { sessionless: input.sessionless } : {}),
       ...(input.discardTarget ? { discardTarget: input.discardTarget } : {}),
       ...(input.recordAction ? { recordAction: input.recordAction } : {}),
-      ...(operationContext ? { operationContext } : {}), input: turnInput }), timeoutMs, trace, (processGroupId) => {
+      ...(operationContext ? { operationContext } : {}), ...referenceImagesFor(input.agentName, place.dir),
+      input: turnInput }), timeoutMs, trace, (processGroupId) => {
         if (persistent && lease) attachClaudeProcess(input.worktree, workerId, lease, processGroupId);
       });
     process.removeListener("SIGTERM", cancelBeforeLaunch);
@@ -391,6 +393,16 @@ export async function main(argv: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return 1;
   }
+}
+
+/** Roles that look at the person's visual references: the writer builds to them, requirements and verify read them. */
+const REFERENCE_IMAGE_ROLES: ReadonlySet<string> = new Set(["vibe-change-worker", "vibe-requirements-worker", "vibe-verify-worker"]);
+
+/** Names the session's saved reference images in the turn envelope; the role opens each path as an image. */
+function referenceImagesFor(agentName: string, metadataDir: string) {
+  if (!REFERENCE_IMAGE_ROLES.has(agentName)) return {};
+  const referenceImages = readReferenceImages(metadataDir);
+  return referenceImages.length ? { referenceImages } : {};
 }
 
 /** Writer turns that may mechanically repair existing tests the session's change broke (operator ruling, 2026-10-13). */

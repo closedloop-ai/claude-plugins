@@ -320,7 +320,15 @@ helper edits source. A `forbidden` or outside-allowed path the request
 genuinely needed is removed and logged as
 `Engineering needed (forbidden path)` (`../vibe/references/guardrails.md`,
 "What may change"), and the ticket worker puts it on the Engineering
-checklist. Re-run inventory and independent read-only guardrails
+checklist. A removal never silently undoes a visible change the person
+already saw (operator ruling, 2026-10-15: an approved bold heading needed a
+font generator outside the allowed paths and handoff reverted it without a
+word). When it does, tell the person in one plain line which part will
+look different until engineering makes it, the affected criterion goes back
+to `not met yet` with that reason, and the touched screen is rendered again
+in the verify worker's control mode on the final commit, never left as last
+seen. Re-run
+inventory and independent read-only guardrails
 checks. Keep the writer's Design blocks for the ticket.
 
 ## 4. Storybook

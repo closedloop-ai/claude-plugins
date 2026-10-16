@@ -45,6 +45,15 @@ session decision table) with an existing test, a quick script, one control
 read or a source trace; a criterion not met yet is fixed or reported to the
 person as not done, and handoff's alignment starts from that list.
 
+A reference image the person attaches is saved with
+`scripts/reference-images.mjs` and recorded on the session; the writer opens
+it as an image (`Read` in Claude Code, `view_image` in Codex) and records what
+it read before building, and every visual and UX property it shows becomes an
+acceptance criterion mapped to a design token or catalog component. Only when
+there is a reference image, the writer screenshots each touched screen before
+saying it's ready and fixes every difference from the reference, the one
+exception to the lean loop's no-visual-QA rule (operator ruling, 2026-10-15).
+
 Every request also uses `$decision-table` or `/closedloop-core:decision-table`
 before code, including frontend-only, prototype and trivial edits. One living
 artifact at `.closedloop-ai/decision-tables/<session-slug>.md` keeps stable row
@@ -130,9 +139,10 @@ when an unresolved answer is absolutely necessary. Existing product and design
 approvals remain intact.
 
 Two notices reach the person without waiting for a reply. When a request names
-an outside product as its reference, the requirements worker researches that
-product's public documentation and the person sees a bulleted list of the
-behaviors to build while the writer builds them. When a request needs new
+an outside product as its reference, or gives a screenshot of one, the
+requirements worker researches that product's public documentation, reads the
+screenshot itself, and the person sees a bulleted list of the behaviors to
+build while the writer builds them. When a request needs new
 Storybook components, the writer builds them and their stories first, the
 person gets one message with their local Storybook links, and the writer goes
 straight on to the feature. The person may interrupt either to change it;
@@ -285,6 +295,24 @@ claude plugin eval . --eval-dir vibe/evals --model sonnet -j 2 --max-cost-usd 5 
 ```
 
 Add `--ablation none` to skip the no-plugin baseline arm. CI does not run it.
+
+Run the matching Codex suite from the repository root with
+`uv run --with Pillow==12.3.0 python plugins/vibe/evals/codex/run.py`;
+see [Codex evals](evals/codex/README.md) for caps, selection and results.
+
+The cases tagged `visual-cues` check reference images (operator ruling,
+2026-10-15): three `pm-` cases attach a reference screenshot (a card, another
+product's cards with hover and selected states, and a two-screenshot page whose
+first draft broke a tap target) and the `exec-` case describes a change in
+words with no reference. They build in a small stand-in repository their
+scaffold writes, with design tokens and a Pillow screenshot tool standing in
+for Storybook, because the eval sandbox has no browser. Run them with the
+scaffold and write tools:
+
+```bash
+cd plugins
+claude plugin eval . --eval-dir vibe/evals --tag visual-cues --scaffold --allow-tools Bash Write Edit --model opus --runs 3 -j 4 --no-publish --ablation none
+```
 
 ## Runtime Files
 

@@ -7374,7 +7374,7 @@ var require_dist = __commonJS({
 import { spawn } from "node:child_process";
 import { randomUUID as randomUUID3 } from "node:crypto";
 import { closeSync, openSync, rmSync as rmSync2, writeFileSync as writeFileSync2, writeSync } from "node:fs";
-import { join as join6 } from "node:path";
+import { join as join7 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
 // node_modules/zod/v3/external.js
@@ -11725,8 +11725,37 @@ function observeDefinitionDigest(agentRoot, agentName, capabilities) {
 // src/ledger.ts
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync as readFileSync2, realpathSync as realpathSync3, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join as join2 } from "node:path";
+import { existsSync as existsSync2, mkdirSync, readFileSync as readFileSync3, realpathSync as realpathSync3, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname as dirname2, isAbsolute, join as join3 } from "node:path";
+
+// src/reference-images.ts
+import { existsSync, readFileSync as readFileSync2, statSync } from "node:fs";
+import { dirname, join as join2, resolve } from "node:path";
+var REFERENCE_DIR = "vibe-reference-images";
+var referenceSchema = external_exports.object({
+  path: external_exports.string().min(1),
+  mediaType: external_exports.string().regex(/^image\/[a-z+.-]+$/),
+  requestId: external_exports.string().optional()
+}).passthrough();
+var recordSchema = external_exports.object({ referenceImages: external_exports.array(external_exports.unknown()).optional() }).passthrough();
+function readReferenceImages(metadataDir) {
+  const file = join2(metadataDir, "vibe-session.json");
+  if (!existsSync(file)) return [];
+  const record = recordSchema.safeParse(JSON.parse(readFileSync2(file, "utf8")));
+  if (!record.success) return [];
+  const owned = join2(metadataDir, REFERENCE_DIR);
+  const images = [];
+  for (const raw of record.data.referenceImages ?? []) {
+    const entry = referenceSchema.safeParse(raw);
+    if (!entry.success) continue;
+    const path = resolve(entry.data.path);
+    if (dirname(path) !== owned || !existsSync(path) || !statSync(path).isFile()) continue;
+    images.push({ path, mediaType: entry.data.mediaType, ...entry.data.requestId ? { requestId: entry.data.requestId } : {} });
+  }
+  return images;
+}
+
+// src/ledger.ts
 function checkoutLocation(worktree) {
   const root = realpathSync3(git(worktree, ["rev-parse", "--show-toplevel"]));
   if (realpathSync3(worktree) !== root) throw new Error("Use the session's exact worktree root");
@@ -11734,25 +11763,25 @@ function checkoutLocation(worktree) {
   const separator = metadata.lastIndexOf("\n");
   if (separator < 0) throw new Error("Missing native checkout metadata boundary");
   const [dir, branch] = external_exports.tuple([external_exports.string().min(1).refine(isAbsolute), external_exports.string().min(1)]).parse([metadata.slice(0, separator).trim(), metadata.slice(separator + 1).trim()]);
-  return { root, dir, branch, file: join2(dir, "vibe-writer.json"), lock: join2(dir, "vibe-writer.lock") };
+  return { root, dir, branch, file: join3(dir, "vibe-writer.json"), lock: join3(dir, "vibe-writer.lock") };
 }
 function location(worktree) {
   const place = checkoutLocation(worktree);
   const record = external_exports.object({ worktree: external_exports.string().optional(), branch: external_exports.string() }).passthrough().parse(
-    JSON.parse(readFileSync2(join2(place.dir, "vibe-session.json"), "utf8"))
+    JSON.parse(readFileSync3(join3(place.dir, "vibe-session.json"), "utf8"))
   );
   if (record.worktree && realpathSync3(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Session worktree or branch changed");
   return place;
 }
 function readWriterSummary(worktree) {
   const place = location(worktree);
-  if (!existsSync(place.file)) return void 0;
+  if (!existsSync2(place.file)) return void 0;
   return summary(readLedger(place));
 }
 function recordedWriterRoot(worktree) {
   try {
     const place = location(worktree);
-    return existsSync(place.file) ? readLedger(place).binding.agentRoot : void 0;
+    return existsSync2(place.file) ? readLedger(place).binding.agentRoot : void 0;
   } catch {
     return void 0;
   }
@@ -11764,7 +11793,7 @@ function registerWriter(input) {
   if (data.runtime === "codex" && !data.workerId) throw new Error("Native writer registration requires its worker ID");
   const place = location(data.worktree);
   return locked(place, () => {
-    if (existsSync(place.file)) {
+    if (existsSync2(place.file)) {
       const ledger2 = readLedger(place);
       if (ledger2.runtime !== data.runtime || data.workerId && ledger2.workerId !== data.workerId || JSON.stringify(ledger2.binding) !== JSON.stringify(definition.binding)) {
         throw new Error("Persistent writer identity or capability binding changed");
@@ -11803,7 +11832,7 @@ function changeWriter(action, input) {
       if (ledger.pending.length >= 32) throw new Error("Pending queue is full; keep the new input with the parent");
       ledger.pending.push({ id: requestId, input: data.input });
     } else if (action === "claim") {
-      if (existsSync(join2(place.dir, "vibe-record-turn.lock"))) throw new Error("A record turn is already running; retain the queued writer request");
+      if (existsSync2(join3(place.dir, "vibe-record-turn.lock"))) throw new Error("A record turn is already running; retain the queued writer request");
       if (ledger.active?.lease) throw new Error("Writer already has an owned running turn");
       if (ledger.active) {
         if (ledger.active.id !== requestId || !data.continuation) throw new Error("Continue the active request before the next queued request");
@@ -11851,8 +11880,8 @@ function changeWriter(action, input) {
 }
 function acquireRecordTurnAt(place, owner) {
   return locked(place, () => {
-    const file = join2(place.dir, "vibe-record-turn.lock");
-    if (existsSync(place.file)) {
+    const file = join3(place.dir, "vibe-record-turn.lock");
+    if (existsSync2(place.file)) {
       const ledger = readLedger(place);
       if (owner && !ledger.active?.lease) {
         throw new Error("Record continuation requires the exact current source lease");
@@ -11898,7 +11927,7 @@ function git(cwd, args) {
   }).trim();
 }
 function readLedger(place) {
-  const ledger = ledgerSchema.parse(JSON.parse(readFileSync2(place.file, "utf8")));
+  const ledger = ledgerSchema.parse(JSON.parse(readFileSync3(place.file, "utf8")));
   if (ledger.worktree !== place.root || ledger.branch !== place.branch) throw new Error("Writer ledger does not belong to this session");
   return ledger;
 }
@@ -11954,8 +11983,8 @@ function proveGroupStopped(processGroupId) {
 }
 
 // src/plugin-root.ts
-import { existsSync as existsSync2, readFileSync as readFileSync3, realpathSync as realpathSync4 } from "node:fs";
-import { basename as basename2, dirname as dirname2, join as join3, resolve } from "node:path";
+import { existsSync as existsSync3, readFileSync as readFileSync4, realpathSync as realpathSync4 } from "node:fs";
+import { basename as basename2, dirname as dirname3, join as join4, resolve as resolve2 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 var AgentRootError = class extends Error {
   constructor(code, message) {
@@ -11965,10 +11994,10 @@ var AgentRootError = class extends Error {
   code;
 };
 function installedPluginRoot(metaUrl) {
-  return realpathSync4(resolve(dirname2(fileURLToPath2(metaUrl)), "../../../.."));
+  return realpathSync4(resolve2(dirname3(fileURLToPath2(metaUrl)), "../../../.."));
 }
 function resolveAgentRoot(supplied, installed, recorded) {
-  const fallback = recorded && existsSync2(recorded) ? recorded : installed;
+  const fallback = recorded && existsSync3(recorded) ? recorded : installed;
   if (supplied === void 0) return fallback;
   let root;
   try {
@@ -11976,7 +12005,7 @@ function resolveAgentRoot(supplied, installed, recorded) {
   } catch {
     throw new AgentRootError("AGENT_ROOT_INVALID", "The supplied agent root does not exist; omit agentRoot to use the installed plugin");
   }
-  if (basename2(root) === "agents" && isPluginRoot(dirname2(root))) root = dirname2(root);
+  if (basename2(root) === "agents" && isPluginRoot(dirname3(root))) root = dirname3(root);
   if (!isPluginRoot(root)) {
     throw new AgentRootError("AGENT_ROOT_INVALID", "The supplied agent root is not a vibe plugin root; omit agentRoot to use the installed plugin");
   }
@@ -11992,17 +12021,17 @@ function resolveAgentRoot(supplied, installed, recorded) {
   return root;
 }
 function isPluginRoot(root) {
-  const manifest = join3(root, ".claude-plugin", "plugin.json");
-  if (!existsSync2(manifest) || !existsSync2(join3(root, "agents"))) return false;
+  const manifest = join4(root, ".claude-plugin", "plugin.json");
+  if (!existsSync3(manifest) || !existsSync3(join4(root, "agents"))) return false;
   try {
-    return JSON.parse(readFileSync3(manifest, "utf8")).name === "vibe";
+    return JSON.parse(readFileSync4(manifest, "utf8")).name === "vibe";
   } catch {
     return false;
   }
 }
 function pluginVersion(root) {
   try {
-    const version = JSON.parse(readFileSync3(join3(root, ".claude-plugin", "plugin.json"), "utf8")).version;
+    const version = JSON.parse(readFileSync4(join4(root, ".claude-plugin", "plugin.json"), "utf8")).version;
     return typeof version === "string" ? version : void 0;
   } catch {
     return void 0;
@@ -12010,8 +12039,8 @@ function pluginVersion(root) {
 }
 
 // src/record-context.ts
-import { existsSync as existsSync3, readFileSync as readFileSync4, realpathSync as realpathSync5 } from "node:fs";
-import { join as join4, sep } from "node:path";
+import { existsSync as existsSync4, readFileSync as readFileSync5, realpathSync as realpathSync5 } from "node:fs";
+import { join as join5, sep } from "node:path";
 
 // ../../plugins/vibe/skills/vibe/scripts/session-record.mjs
 function sessionLiveTicket(record) {
@@ -12152,7 +12181,7 @@ function resolveRecordContext(input) {
     const cancel = input.sessionless.kind === "discarded" && input.agentName === "vibe-ticket-worker" && input.mode === "record" && input.recordAction === "cancel" && input.exclusiveRecordTurn;
     if (!startup && !cancel) throw new Error("This role/action has no sessionless operation");
     place = checkoutLocation(input.worktree);
-    if (existsSync3(join4(place.dir, "vibe-session.json"))) throw new Error("A private session exists; use its strict owned operation");
+    if (existsSync4(join5(place.dir, "vibe-session.json"))) throw new Error("A private session exists; use its strict owned operation");
   } else place = location(input.worktree);
   return { place, target: discardLocation(input, place) };
 }
@@ -12167,12 +12196,12 @@ function discardLocation(input, stable) {
     handoffTicket: external_exports.string().nullable().optional(),
     operator: external_exports.object({ id: external_exports.string().min(1), email: external_exports.string().email() }).passthrough()
   }).passthrough().parse(
-    JSON.parse(readFileSync4(join4(target.dir, "vibe-session.json"), "utf8"))
+    JSON.parse(readFileSync5(join5(target.dir, "vibe-session.json"), "utf8"))
   );
-  if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`) || !existsSync3(join4(target.dir, "commondir"))) throw new Error("Discard must retain its execution checkout");
-  const common = readFileSync4(join4(target.dir, "commondir"), "utf8").trim();
-  const stableCommon = existsSync3(join4(stable.dir, "commondir")) ? realpathSync5(join4(stable.dir, readFileSync4(join4(stable.dir, "commondir"), "utf8").trim())) : realpathSync5(stable.dir);
-  if (realpathSync5(join4(target.dir, common)) !== stableCommon || record.branch !== evidence.branch || record.operator.id !== evidence.operatorId || record.operator.email !== evidence.operatorEmail || (sessionLiveTicket(record) ?? void 0) !== evidence.liveTicket) {
+  if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`) || !existsSync4(join5(target.dir, "commondir"))) throw new Error("Discard must retain its execution checkout");
+  const common = readFileSync5(join5(target.dir, "commondir"), "utf8").trim();
+  const stableCommon = existsSync4(join5(stable.dir, "commondir")) ? realpathSync5(join5(stable.dir, readFileSync5(join5(stable.dir, "commondir"), "utf8").trim())) : realpathSync5(stable.dir);
+  if (realpathSync5(join5(target.dir, common)) !== stableCommon || record.branch !== evidence.branch || record.operator.id !== evidence.operatorId || record.operator.email !== evidence.operatorEmail || (sessionLiveTicket(record) ?? void 0) !== evidence.liveTicket) {
     throw new Error("Discard target does not match the parent's owned session evidence");
   }
   return target;
@@ -12378,7 +12407,7 @@ function digest(text) {
 // src/main-sync-validation-envelope.ts
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
-import { join as join5 } from "node:path";
+import { join as join6 } from "node:path";
 
 // src/main-sync-validation-recipe.ts
 function recipeIdentity(value) {
@@ -12422,9 +12451,9 @@ async function deriveValidationEnvelope(context, dir, branch, canceled) {
   if (!witness || context.agentName !== "vibe-change-worker" || context.recordAction !== "progress") {
     throw new MainSyncError("Root canonical source validation witness is required");
   }
-  const state = mainSyncStateSchema.parse(await privateData(join5(dir, "vibe-main-sync.json")));
+  const state = mainSyncStateSchema.parse(await privateData(join6(dir, "vibe-main-sync.json")));
   if (canceled()) throw new Error("Owned worker turn canceled before Claude spawn");
-  const session = sessionSchema.parse(await privateData(join5(dir, "vibe-session.json")));
+  const session = sessionSchema.parse(await privateData(join6(dir, "vibe-session.json")));
   const receipt = state.phase === "input-readiness" ? state.previous : state;
   if (!receipt?.recipe || receipt.worktree !== context.worktree || receipt.branch !== branch || session.branch !== branch || receipt.operator.id !== session.operator.id || receipt.operator.email !== session.operator.email || receipt.originalBase !== session.baseCommit || receipt.purpose !== context.publicationPurpose || receipt.transactionId !== context.mainSyncTransactionId || !state.inputs || state.inputs.source.runtime !== context.runtime || state.inputs.source.workerId !== context.workerId || state.inputs.headSha !== witness.headSha || state.inputs.treeSha !== witness.treeSha || state.inputs.inputSha256 !== witness.inputSha256) {
     throw new MainSyncError("Stored canonical readiness is missing, stale or outside the actual Root source operation", "NEEDS_CHANGE");
@@ -12524,7 +12553,7 @@ function boundDefinition(definition, input) {
   const phasePolicy = persistent ? "Current phase, test-authoring and test-repair authority come only from the orchestrator's top-level turn envelope, separate from raw input text. Only an explicit pull-request turn in that envelope, sent because the person asked for a pull request, may author tests. Never author tests in plan, request, fix, handoff, record or build turns, or infer authority from the person's words. A request, fix or handoff turn with test-repair authority may only repair existing tests and fixtures your own change broke (imports, renamed or retired symbols, setup, type errors) without changing what any test asserts; never add a test file. Delete a test file or case only when it covers nothing but code the request retires, recorded with retired-tests.mjs and the ticket or PRD that retires it; a test of live behavior is only repaired. " : `This is mode ${input.mode}. Never write or edit tests. `;
   const prompt = `${definition.prompt}
 
-Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join6(definition.root, "agents")}. ` + (isPublisherContext(input) ? "Never start another implementation writer or commit. Normal pushes are permitted only through the owned main-sync publication gate. " : "Never start another implementation writer, commit, or push. ") + phasePolicy + (reader ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : "") + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
+Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join7(definition.root, "agents")}. ` + (isPublisherContext(input) ? "Never start another implementation writer or commit. Normal pushes are permitted only through the owned main-sync publication gate. " : "Never start another implementation writer, commit, or push. ") + phasePolicy + (reader ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : "") + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
   const agent = {
     description: definition.metadata.description,
     prompt,
@@ -12573,8 +12602,8 @@ async function runWorker(rawInput) {
     turnInput = claim.turn?.continuation ?? claim.turn?.input ?? "";
   } else if (!input.input || input.continuation) throw new Error("Advisors require a fresh read-only input");
   const turnId = randomUUID3();
-  const definitionFile = join6(place.dir, `vibe-agent-${turnId}.json`);
-  const tracePath = join6(place.dir, `vibe-worker-${turnId}.jsonl`);
+  const definitionFile = join7(place.dir, `vibe-agent-${turnId}.json`);
+  const tracePath = join7(place.dir, `vibe-worker-${turnId}.jsonl`);
   let trace;
   let recordLock = false;
   let discardLock = false;
@@ -12610,7 +12639,7 @@ async function runWorker(rawInput) {
         };
         if (input.mainSyncCiRun) operationContext.mainSyncCiRun = input.mainSyncCiRun;
         if (input.mainSyncValidation) operationContext.mainSyncValidation = input.mainSyncValidation;
-        writeFileSync2(join6(place.dir, "vibe-record-turn.lock", CLAUDE_OPERATION_OWNER), JSON.stringify({
+        writeFileSync2(join7(place.dir, "vibe-record-turn.lock", CLAUDE_OPERATION_OWNER), JSON.stringify({
           context: operationContext,
           branch: place.branch,
           ...persistent && lease ? { primaryOwner: { workerId, lease } } : {}
@@ -12657,6 +12686,7 @@ async function runWorker(rawInput) {
       ...input.discardTarget ? { discardTarget: input.discardTarget } : {},
       ...input.recordAction ? { recordAction: input.recordAction } : {},
       ...operationContext ? { operationContext } : {},
+      ...referenceImagesFor(input.agentName, place.dir),
       input: turnInput
     }), timeoutMs, trace, (processGroupId) => {
       if (persistent && lease) attachClaudeProcess(input.worktree, workerId, lease, processGroupId);
@@ -12714,12 +12744,12 @@ async function runWorker(rawInput) {
     process.removeListener("SIGINT", cancelBeforeLaunch);
     if (trace !== void 0) closeSync(trace);
     rmSync2(definitionFile, { force: true });
-    if (recordLock && !cleanupBlocked) rmSync2(join6(place.dir, "vibe-record-turn.lock"), { recursive: true });
-    if (discardLock && !cleanupBlocked && discardPlace) rmSync2(join6(discardPlace.dir, "vibe-record-turn.lock"), { recursive: true, force: true });
+    if (recordLock && !cleanupBlocked) rmSync2(join7(place.dir, "vibe-record-turn.lock"), { recursive: true });
+    if (discardLock && !cleanupBlocked && discardPlace) rmSync2(join7(discardPlace.dir, "vibe-record-turn.lock"), { recursive: true, force: true });
   }
 }
 async function launchProcess(args, granted, cwd, input, timeoutMs, trace, attach) {
-  return await new Promise((resolve2, reject) => {
+  return await new Promise((resolve3, reject) => {
     const child = spawn("claude", args, {
       cwd,
       detached: process.platform !== "win32",
@@ -12827,7 +12857,7 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, attach
         }
         try {
           const result = workerResultSchema.parse(final.structured_output !== void 0 ? final.structured_output : JSON.parse(final.result));
-          resolve2({ ...result, sessionId: final.session_id });
+          resolve3({ ...result, sessionId: final.session_id });
         } catch {
           reject(new Error("Worker returned no valid compact status object"));
         }
@@ -12880,7 +12910,7 @@ async function finishOwnedGroup(child) {
       throw new OwnedCleanupError("Unable to prove the owned process group stopped; writer lease retained");
     }
     if (attempt === 5) signalOwnedChild(child, "SIGKILL");
-    await new Promise((resolve2) => setTimeout(resolve2, 20));
+    await new Promise((resolve3) => setTimeout(resolve3, 20));
   }
   throw new OwnedCleanupError("Owned process group is still present; writer lease retained for stopped-turn proof");
 }
@@ -12922,6 +12952,12 @@ async function main(argv) {
 `);
     return 1;
   }
+}
+var REFERENCE_IMAGE_ROLES = /* @__PURE__ */ new Set(["vibe-change-worker", "vibe-requirements-worker", "vibe-verify-worker"]);
+function referenceImagesFor(agentName, metadataDir) {
+  if (!REFERENCE_IMAGE_ROLES.has(agentName)) return {};
+  const referenceImages = readReferenceImages(metadataDir);
+  return referenceImages.length ? { referenceImages } : {};
 }
 var TEST_REPAIR_MODES = /* @__PURE__ */ new Set(["request", "fix", "handoff", "pull-request"]);
 runFromCanonicalEntry(import.meta.url, main);

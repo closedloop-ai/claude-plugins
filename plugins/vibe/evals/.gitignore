@@ -1,1 +1,3 @@
 results/
+# Session transcripts the eval harness writes beside a case that resumes a history file.
+/*/[0-9a-f]*-*-*-*-*.jsonl

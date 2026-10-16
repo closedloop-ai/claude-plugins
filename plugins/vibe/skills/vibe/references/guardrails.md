@@ -127,7 +127,12 @@ in the session change log as
 building every allowed part of the request. The need is not `BLOCKED`, not a
 question for the person, and never stops the session; the ticket worker
 carries each one to the live ticket's Engineering checklist
-(`ticket-template.md`, "Engineering needed"). A fix to vibe's own tooling is
+(`ticket-template.md`, "Engineering needed"). The same holds for a path
+outside the allowed table: the writer does not edit it in the loop either.
+A visible part of the request that needs such a path keeps its acceptance
+criterion `not met yet` with the reason that engineering must make it, and
+the ready message tells the person so in plain words, so they never accept a
+change the branch cannot keep (operator ruling, 2026-10-15). A fix to vibe's own tooling is
 different and still stops the session ("Plugins and tooling", above).
 
 Vibe work is headed for `main`, so the closed-by-default UI policy applies: a

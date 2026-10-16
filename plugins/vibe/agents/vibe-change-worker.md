@@ -17,9 +17,15 @@ and reviewers are read-only.
 The owned worktree/branch, session summary, live ticket, request ID and the
 person's words, annotation context, mode (`plan`, `request`, `fix`, `handoff`,
 `pull-request`, or `record`), the session decision table path and affected/interacting row IDs,
-and the local plan, any handoff findings or product answer. A request that named an
-outside product as its reference arrives with the researched list of
-behaviors to build; build those, as cut or changed by the person. A
+and the local plan, any handoff findings or product answer, and the session's
+saved reference image paths (`referenceImages` in the turn, or named in the
+request). Open every reference image path as an image before planning: `Read`
+in Claude Code, `view_image` in Codex. Never build from a description of a
+reference in place of the image. A request that named an
+outside product as its reference, or gave a screenshot of one, arrives with
+the researched list of behaviors to build, plus the visual and UX
+requirements read from the reference; build those, as cut or changed by the
+person. A
 continuation belongs to the same active request and writer ID. Finish it before the next
 queued request. Never commit, push or stash; the orchestrator commits through
 its script and operational publishing follows the same branch.
@@ -227,6 +233,36 @@ Fix a criterion that is not met; one you cannot finish now is reported
 `not met yet` with the reason, never claimed. At handoff, start the
 whole-table alignment from that list.
 
+Read every reference (`quality-loop.md`, "Visual references"). A reference
+given as a link, a page or screen, or "make it look like X" is captured as an
+image before you build and saved with
+`node <plugin-root>/skills/vibe/scripts/reference-images.mjs save --worktree "<wt>" --file <capture>`;
+an image the person gave is used as is. Before you plan or build, open every
+reference image and append a `Reference read` line per image to the
+`### Checks` log with what it shows; the orchestrator's description of an
+image never stands in for that read. A correction ("it still doesn't look
+like it") reads the reference again the same way. Add each visual and UX property the
+reference shows (shadow and elevation, type size and weight, color, spacing,
+radius, borders, alignment, icons and visible states) to the
+`## Acceptance Criteria` section, with the design token or catalog component
+that delivers it, and check it like any other criterion. On a surface that
+does not bundle the design-system tokens, use the named token's exact value,
+cite the token, and log
+`Engineering needed (tokens not bundled): <surface>; uses <token> values`;
+never invent a value no token defines.
+
+Only when the person gave a reference image, before `DONE` on a change that
+renders UI, run the reference check (`quality-loop.md`, "The reference check
+before ready"): one screenshot of each touched screen or component at the
+reference's viewport (`environment.md`, "Capturing for the reference
+check"), opened beside the reference image. Look only at the properties the
+reference shows, plus regressions on the touched element (properties that
+were right before this change). Fix each difference with design tokens,
+never arbitrary values, and screenshot again until none remains. A visual
+criterion with a reference image is met by this check, never by a source
+trace alone. With no reference image there is no render or compare. It is
+not a design review, and never a question to the person.
+
 Append the request, Owner/Rule, files, review/validation and overlap evidence
 to the existing private change log. Keep the live ticket's scope, progress and
 backend facts truthful under `ticket-template.md`, without technical-plan
@@ -311,6 +347,9 @@ human-only action, never a test or engineering choice; `NEEDS_COMMIT` waits
 for the orchestrator; `DONE` means the whole requested feature passed its
 quick checks in the loop, or its checks and reviews at handoff, and always
 carries the Acceptance criteria block: each touched criterion's ID, quoted
-words, check and result (`met` or `not met yet`). `BLOCKED` gives
+words, check and result (`met` or `not met yet`), and, with a reference image
+on a UI change, a Reference check line per touched screen: the screenshot
+path, the reference path and the differences found and fixed, or that it
+could not be captured locally and why. `BLOCKED` gives
 evidence without a technical question or silent downscope. Every non-trivial
 result ends with the required Graph block.

@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { actionSchema, ledgerSchema, migrateSchema, registerSchema, type Ledger, type RetainedRecord } from "./contracts.js";
 import { observeDefinitionDigest, readDefinition } from "./definition.js";
+import { readReferenceImages } from "./reference-images.js";
 
 /** Resolves an exact existing checkout for pre-session operations or a parent-authorized cancellation. */
 export function checkoutLocation(worktree: string) {
@@ -64,8 +65,10 @@ export function takeWriterInput(input: unknown) {
     const ledger = readLedger(place);
     if (!ledger.active || data.workerId !== ledger.workerId || data.requestId !== ledger.active.id
       || !data.lease || ledger.active.lease !== data.lease) throw new Error("Input recovery requires the active turn lease");
+    const referenceImages = readReferenceImages(place.dir);
     return { workerId: ledger.workerId, requestId: ledger.active.id,
-      originalInput: ledger.active.input, input: ledger.active.continuation ?? ledger.active.input };
+      originalInput: ledger.active.input, input: ledger.active.continuation ?? ledger.active.input,
+      ...(referenceImages.length ? { referenceImages } : {}) };
   });
 }
 

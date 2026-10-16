@@ -164,6 +164,10 @@ stops until core is explicitly installed and enabled.
   closedloop-graph connection before the next change.
 - Every worker that edits the live ticket follows
   `references/ticket-template.md`. Say so in the brief and give the slug.
+- Images: a worker never sees what the person attached in chat. Save every
+  attached image with `scripts/reference-images.mjs` and pass its path; the
+  worker opens it with `Read` in Claude Code or `view_image` in Codex
+  (`references/quality-loop.md`, "Visual references").
 - macOS has no `timeout` or `gtimeout` command, so a check bounded with it
   fails with "command not found" (the 2026-10-15 verify worker hit this).
   Bound a slow command with the tool's own timeout setting or
@@ -558,9 +562,14 @@ evidence, never by replacing the writer.
 
 ### One request through completion
 
-1. Forward the person's request/annotation verbatim, session/branch, live
+1. When the person attached an image or gave one as a file path, first save
+   it: `node scripts/reference-images.mjs attached --worktree "<wt>"
+   --request-id <id>` (or `save --file <path>`), which records it on the
+   session. Forward the person's request/annotation verbatim, session/branch, live
    ticket, known rulings and supplied copy to the SAME writer, plus, with the
-   first request, the requirements worker's quoted acceptance criteria. It performs
+   first request, the requirements worker's quoted acceptance criteria, and
+   every saved reference image path. Never send your own description of an
+   image in place of its path. It performs
    graph/owner prep and writes the canonical core-template plan locally.
    It always creates or extends the one session decision table at
    `.closedloop-ai/decision-tables/<session-slug>.md` before any code, using
@@ -568,9 +577,9 @@ evidence, never by replacing the writer.
    interacting row IDs in every applicable worker brief. Later requests append
    to this same artifact with provenance; no per-request table or history reset.
    No upfront summary, technical question or plan approval reaches the person.
-   When the request names an outside product as its reference, the
-   reference-product notice below runs first and its list goes to the writer
-   with the request.
+   When the request names an outside product as its reference, or gives a
+   screenshot of one, the reference-product notice below runs first and its
+   list goes to the writer with the request.
 2. There is no plan review. The writer builds right after its plan and table
    rows, in the same request.
 3. The writer implements in dependency order. It can load canonical
@@ -604,7 +613,13 @@ evidence, never by replacing the writer.
    distinct from executed coverage; they never justify premature core Final
    Aligned or a source-gap waiver. Then it checks every acceptance criterion
    the change touches and records each result, under
-   `references/quality-loop.md`, "Acceptance criteria before ready".
+   `references/quality-loop.md`, "Acceptance criteria before ready". With a
+   reference image, that includes each visual and UX property it shows,
+   read from the image itself before building, and on a UI change the
+   reference check: one screenshot of each touched screen compared with the
+   reference image, its differences fixed before `DONE`. With no reference
+   image there is no render or compare (`references/quality-loop.md`,
+   "Visual references").
 5. Research any `NEEDS_PERSON` through the graph/live-decision necessity gate.
    Ask only an absolutely necessary unresolved product question, one at a time
    with full context. Its answer continues this active request in the SAME
@@ -618,8 +633,10 @@ evidence, never by replacing the writer.
 7. A `DONE` must mean the whole requested feature is built and passes the
    quick checks, and must carry the Acceptance criteria block with a checked
    result for every criterion the change touches; one without it is
-   incomplete, so resume the SAME writer to finish it before committing;
-   independent reviews come at handoff. Then finish that
+   incomplete, so resume the SAME writer to finish it before committing.
+   With a reference image, a UI change's `DONE` also carries a Reference
+   check line per touched screen, and one without it is incomplete the same
+   way; independent reviews come at handoff. Then finish that
    request and deploy it under section 6 without being asked (requests that
    waited through a running deploy go out together after the last of them);
    when the deploy is done, tell the person only the completed feature, that it's ready to
@@ -643,11 +660,18 @@ what it already built, like any other request about it.
 
 - Reference product. When the person names an outside product as the
   reference for how something should work (for example "make bulk labels work
-  like Asana"), dispatch `vibe-requirements-worker` in reference mode with the
-  product and the person's words, before forwarding the request. Show the
+  like Asana"), or gives a screenshot of another product whether or not they
+  name it, dispatch `vibe-requirements-worker` in reference mode with the
+  product if known, the saved reference image paths and the person's words,
+  before forwarding the request. It reads the image itself and adds the
+  visual and UX requirements mapped to our design system
+  (`references/quality-loop.md`, "Requirements from a reference"). Show the
   person the bulleted list of behaviors it returns, saying in one line that
   this is what will be built, based on that product. Then forward the request
-  with that list to the SAME writer as the behaviors to build, and keep going.
+  with that list to the SAME writer as the behaviors to build, with the saved
+  reference image paths, and keep going. Never narrow the brief to behaviors
+  or layout alone when an image is the reference: the visual requirements
+  are always extracted, and "behaviors, not wording" is about copy only.
   The list names behaviors, not wording: user-visible copy still follows
   `references/guardrails.md`, "Copy".
 - New Storybook components. When the plan needs NEW Storybook
@@ -749,8 +773,14 @@ that waited, and one deploy after the last of them carries them all. A
    deployed, and updates the ticket. The quick checks have run in the
    loop; no tests are authored.
 5. On `DONE`, reload the app tab (and the Desktop and Storybook tabs if
-   open), look at it yourself, and tell them it's ready to look at, naming
-   plainly any acceptance criterion still `not met yet` (section 5, step 7). Whenever you open
+   open), look at it yourself, and tell them it's ready to look at,
+   naming plainly any acceptance criterion still `not met yet` (section 5,
+   step 7). When the session has a reference image, look at each touched
+   screen beside it first: a visible difference is not ready, so resume the
+   SAME writer with it and redeploy before saying ready. Never say it
+   matches the reference when you have seen a gap
+   (`references/quality-loop.md`, "The reference check before ready" and
+   "What the orchestrator says"). Whenever you open
    the Vercel `storybookUrl` and the tab lands on `vercel.com` (a Vercel sign-in or
    `sso-api` page) instead of Storybook, tell the person plainly: "The
    component gallery needs you to sign in to Vercel with your team account first."
@@ -843,7 +873,7 @@ Whenever the person asks to throw a session away (at any point, for any
 ## References
 
 - `references/closedloop-graph.md`: how every worker uses closedloop-graph.
-- `references/quality-loop.md`: one persistent writer/queue, local plans, the lean build loop, researched product questions and the repair-only test rule.
+- `references/quality-loop.md`: one persistent writer/queue, local plans, the lean build loop, researched product questions, visual references and the reference check before ready, and the repair-only test rule.
 - `references/preflight.md`: fixes for every preflight check (setup worker).
 - `references/environment.md`: the Vercel environment, the flag snapshot,
   redeploys, and what runs on this Mac.
