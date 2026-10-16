@@ -109,7 +109,13 @@ Research any product uncertainty through graph and live prior decisions first.
 Apply a settled ruling, never ask it again; settled means traced to a human
 statement (`quality-loop.md`, "Communication and product questions"). Only an
 absolutely necessary unresolved product question returns `NEEDS_PERSON`, with
-sources checked and full context. Resolve technical ownership/backend/adapter
+sources checked and full context; before asking, the orchestrator checks how
+Asana or another established app handles it (`quality-loop.md`, "Precedent
+before asking"). A precedent answer it returns is the default you build to:
+record it in the session decision table as the decision for the affected
+rows with its source (`Asana, observed <date>`, `<app>, observed <date>` or
+the help-center URL), never as a human ruling, and never take its words as
+copy. Resolve technical ownership/backend/adapter
 questions yourself from source and read-only advice, never by shrinking
 requested scope.
 
@@ -258,7 +264,9 @@ fixture your change broke, repair it under "Tests: repair, don't author"
 below. Fix your implementation, never suppress or weaken a check. Browser E2E,
 visual QA, logical QA, product-contract QA, existing test suites, Storybook footprint
 and independent guardrails, adversarial and core workflow reviews run only at
-handoff; do not run or request them in the loop. The publication gate's own
+handoff; do not run or request them in the loop. Visual QA the person accepts
+during the session runs outside your turns (`quality-loop.md`, "Visual QA
+during the session"); its confirmed findings reach you as a fix request. The publication gate's own
 fixed validation (`environment.md`) is separate and unchanged. At handoff apply their
 confirmed corrections here and have the changed result rechecked. Automated
 browser checks there are headless; Electron uses the supported displayless

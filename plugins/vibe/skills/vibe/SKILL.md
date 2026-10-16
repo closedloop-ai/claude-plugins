@@ -29,13 +29,21 @@ work itself. Under all circumstances:
   (`scripts/vibe-preflight.sh`, `scripts/vibe-sessions.mjs`,
   `scripts/commit-worktree.mjs`, `scripts/local-plans.mjs`,
   `scripts/session-questions.mjs`, `scripts/run-bounded.mjs`,
-  `scripts/dist/writer-state.mjs`, `scripts/dist/claude-worker.mjs`), whose output is short JSON; call ClosedLoop `get-me` and closedloop-graph `sync_status` to
-  check the connectors; open, reload, and inspect the in-app browser; and
+  `scripts/dist/writer-state.mjs`, `scripts/dist/claude-worker.mjs`,
+  `scripts/plugin-version.mjs`, `scripts/precedent-check.mjs`), whose output
+  is short JSON; run the update commands `plugin-version.mjs` prints, only
+  when the person chose to update (section 1, "Plugin version"); call
+  ClosedLoop `get-me` and closedloop-graph `sync_status` to check the
+  connectors; open, reload, and inspect the in-app browser, including the
+  precedent check in another app (`references/quality-loop.md`, "Precedent
+  before asking"); run the visual QA the person accepts
+  (`references/quality-loop.md`, "Visual QA during the session"); and
   dispatch workers.
 - You and every worker leave plugins, plugin marketplaces and plugin caches
-  alone, and never clone the plugin's repository to run other tooling
-  (`references/guardrails.md`, "Plugins and tooling"); a needed tooling fix
-  stops the session as that section says.
+  alone, apart from the update the person chooses at startup (section 1,
+  "Plugin version"), and never clone the plugin's repository to run other
+  tooling (`references/guardrails.md`, "Plugins and tooling"); a needed
+  tooling fix stops the session as that section says.
 - Everything else goes to a worker, even a one-line change and even when you
   think you already know the file. If you notice yourself about to open a
   source file, dispatch a worker instead.
@@ -56,10 +64,14 @@ feature is complete, which of its acceptance criteria are not done yet, and
 what is being worked on next. The notices in
 section 5, "Notices that never wait" (a reference product's behavior list,
 new Storybook components and the endings line in a new session's first
-reply), are the only other messages, and none of them waits.
-Research product questions through closedloop-graph and live evidence first;
-interrupt only for an absolutely necessary unresolved product question, one at
-a time with full context. Never re-ask a settled decision; a decision is
+reply), none of which waits, the startup version check (section 1, "Plugin
+version") and the visual QA offer and its results (section 6, step 5) are the
+only other messages.
+Research product questions through closedloop-graph and live evidence first,
+then through how Asana, or another established app with the same flow,
+handles the same situation; interrupt only for an absolutely necessary
+unresolved product question that neither settles, one at a time with full
+context. Never re-ask a settled decision; a decision is
 settled only when it traces to a human statement
 (`references/quality-loop.md`, "Communication and product questions").
 
@@ -238,6 +250,35 @@ research and necessity gate in `references/quality-loop.md`; technical choices
 stay with the workers.
 
 ## 1. Preflight
+
+### Plugin version
+
+Every `$vibe` start, new or resume, first checks whether this plugin is the
+latest release (operator ruling, 2026-10-16): run
+`node scripts/plugin-version.mjs --runtime codex` in Codex, or
+`--runtime claude` in Claude Code. It runs once per conversation, so its
+question is never repeated and does not go through `session-questions.mjs`.
+
+- `current`: say nothing about it and continue.
+- `unknown`, or the command could not run at all (no Node yet on a first
+  run): the check never blocks. Tell the person in one line, as part of your
+  first reply, "I couldn't check whether vibe is up to date, so I'm carrying
+  on with the version you have." and continue.
+- `outdated`: before anything else, ask exactly: "A newer version of vibe is
+  available (you have <installed>, the latest is <latest>). Do you want to
+  keep going with this one, or update now?" On "keep going", continue with
+  this version. On "update", run each command in its `update` list in order
+  yourself; this is the one plugin change you make, and only on the person's
+  choice (`references/guardrails.md`, "Plugins and tooling"). When they all
+  succeed, tell the person, in Codex: "vibe is updated. Quit the ChatGPT app
+  completely (press Cmd and Q), open it again, start a new chat and type
+  $vibe." In Claude Code: "vibe is updated. Close this Claude Code session,
+  start a new one and type /vibe:vibe." Then stop: the update is used only
+  from a new session. When a command fails, tell them in one plain line that
+  the update could not finish, so you are carrying on with the version they
+  have and they can message engineering about it; never retry it another way.
+
+### Prerequisites
 
 Run `scripts/vibe-preflight.sh --prototype` for the common prerequisites
 before choosing a session. This defers the app's PostHog key check until
@@ -561,9 +602,11 @@ this same writer context. Researchers may be read-only and parallel.
 The loop is lean (`references/quality-loop.md`, "Lean build loop"): quick
 prep, build, the quick checks the commit hooks need, the orchestrator's
 commit, deploy, and showing the person; each finished change deploys without
-being asked (section 6). Browser E2E, visual QA, logical QA,
-product-contract QA, the guardrails and adversarial reviews and other heavy
-validation run only at handoff, never here.
+being asked (section 6). Browser E2E, logical QA, product-contract QA, the
+guardrails and adversarial reviews and other heavy validation run only at
+handoff, never here. Visual QA runs at handoff too, and during the session
+only when the person accepts the offer or asks for polish: between requests,
+after a deploy (section 6, step 5), never inside a request's build.
 
 ### Register once, then resume
 
@@ -646,9 +689,10 @@ evidence, never by replacing the writer.
    differences fixed before `DONE`. With no reference
    image there is no render or compare (`references/quality-loop.md`,
    "Visual references").
-5. Research any `NEEDS_PERSON` through the graph/live-decision necessity gate.
-   Ask only an absolutely necessary unresolved product question, one at a time
-   with full context. Its answer continues this active request in the SAME
+5. Research any `NEEDS_PERSON` through the graph/live-decision necessity gate
+   and the precedent check (`references/quality-loop.md`, "Communication and
+   product questions"). Ask only an absolutely necessary unresolved product
+   question, one at a time with full context. Its answer continues this active request in the SAME
    writer, not a new source author. Technical blockers stay internal, and a
    test or other engineering choice is never a question for the person.
 6. Record scope/progress/backend facts through the writer's explicit serial
@@ -728,7 +772,9 @@ Local Storybook remains available and product design approvals stay intact.
 No question reaches the person twice (operator ruling, 2026-10-15). In the
 session that prompted this rule the page-wording question went out in three
 messages while it waited for one answer. Every question, yours or one a
-worker returns as `NEEDS_PERSON`, goes through `scripts/session-questions.mjs`:
+worker returns as `NEEDS_PERSON`, goes through `scripts/session-questions.mjs`,
+except the startup version question, which runs once per conversation
+(section 1, "Plugin version"):
 
 1. Before asking, run `node scripts/session-questions.mjs ask --key <topic>
    --question "<exact words>" [--worktree "<wt>"]`, with a short stable key
@@ -810,7 +856,16 @@ that waited, and one deploy after the last of them carries them all. A
    the Vercel `storybookUrl` and the tab lands on `vercel.com` (a Vercel sign-in or
    `sso-api` page) instead of Storybook, tell the person plainly: "The
    component gallery needs you to sign in to Vercel with your team account first."
-   Do not try to get around it. On `BLOCKED` because the repo's checks
+   Do not try to get around it. When this deploy is a visible milestone
+   (the first user-visible change ready to look at, or a later major visible
+   change; never a small edit), the ready message also offers visual QA,
+   without waiting for the person to think of it; on yes, run it. When the
+   person says it looks good and wants it polished, run visual QA before
+   handoff without asking, unless the change shows nothing visible or they
+   already declined it for this version. The offer's words, its
+   `session-questions.mjs` key, what the check compares against and where
+   its findings go are in `references/quality-loop.md`, "Visual QA during the
+   session" (operator ruling, 2026-10-16). On `BLOCKED` because the repo's checks
    refused the push or a build failed in the session's own change, dispatch
    the SAME persistent writer in fix mode with the failure, then rerun its
    quick checks before committing and redeploying again (steps 3 and 4). Keep the repair details internal.
@@ -899,7 +954,7 @@ Whenever the person asks to throw a session away (at any point, for any
 ## References
 
 - `references/closedloop-graph.md`: how every worker uses closedloop-graph.
-- `references/quality-loop.md`: one persistent writer/queue, local plans, the lean build loop, researched product questions, visual references and the reference check before ready, and the repair-only test rule.
+- `references/quality-loop.md`: one persistent writer/queue, local plans, the lean build loop, researched product questions and the precedent check, visual references and the reference check before ready, visual QA during the session, and the repair-only test rule.
 - `references/preflight.md`: fixes for every preflight check (setup worker).
 - `references/environment.md`: the Vercel environment, the flag snapshot,
   redeploys, and what runs on this Mac.

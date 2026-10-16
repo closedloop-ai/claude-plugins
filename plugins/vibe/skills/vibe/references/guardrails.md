@@ -13,7 +13,11 @@ and every worker, in Codex and Claude Code, and this section is its one
 canonical statement:
 
 - Never install, update, reinstall, uninstall or repoint a plugin, change a
-  plugin marketplace, or modify a plugin cache.
+  plugin marketplace, or modify a plugin cache. The one exception is the
+  vibe update the person chooses when the startup version check finds a
+  newer release (operator ruling, 2026-10-16; `SKILL.md`, section 1,
+  "Plugin version"): the orchestrator runs exactly the update commands
+  `plugin-version.mjs` printed, and nothing else.
 - Never clone or vendor the plugin's own repository (claude-plugins) to run a
   different version of its tooling.
 - When continuing needs a fix to the vibe tooling, stop. Record the blocker:
@@ -104,7 +108,7 @@ Backend, built by that same writer using canonical backend guidance, each under 
 
 The build loop stays lean (`quality-loop.md`, "Lean build loop"): quick
 prep, the build, the quick checks the commit hooks need, the orchestrator's
-commit, deploy, and showing the person. Reviews and heavy validation run only
+commit, deploy, and showing the person. Reviews and heavy validation run
 at handoff: the guardrails and adversarial reviews, browser E2E, visual QA,
 logical QA, product-contract QA, the existing tests (the whole suite and two review
 passes when backend code changed), the running web app and Desktop driven with
@@ -112,7 +116,9 @@ the repo's control skill, and the list of tests engineering still has to write
 (Tests, below). Beyond the quick checks, the loop's only other check is the
 writer's acceptance check before a change is called ready (`quality-loop.md`, "Acceptance criteria
 before ready"): one cheap existing test, script, control read or source trace
-per touched criterion, never a suite or QA pass.
+per touched criterion, never a suite or QA pass. Outside the loop, visual QA
+also runs during the session when the person accepts it or asks for polish
+(`quality-loop.md`, "Visual QA during the session").
 
 One exception under `scripts/`: the source-gate allowlist
 (`scripts/lint/source-gate-allowlist.json`) is shrink-only, so when the

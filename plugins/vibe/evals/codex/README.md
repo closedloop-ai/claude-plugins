@@ -45,7 +45,7 @@ Visual cases (tag `visual-cues`) use the same stand-in repository and Pillow
 renderer as Claude, which renders light and dark (`--theme dark`) from the
 stand-in tokens' `:root` and `.dark` blocks. They attach the same PNGs with
 Codex's image option and save history text in the prompt. No browser, Electron
-window, actual app or external ticket is started. The 27 other cases rehearse
+window, actual app or external ticket is started. The 42 other cases rehearse
 one reply or decision from supplied session state in read-only mode. This is
 behavior coverage, not a substitute for live app validation.
 

@@ -32,8 +32,9 @@ workers. You commit, through `../vibe/scripts/commit-worktree.mjs`; no worker
 ever commits, because a commit runs the repository's commit hooks. Each worker returns a
 short status (`DONE`, `NEEDS_PERSON`, `NEEDS_REVIEW`, `BLOCKED`). Apply
 `../vibe/references/quality-loop.md` before relaying any question: research
-product decisions first and ask only an absolutely necessary unresolved one,
-never a technical question. Route the answer as "Answers from the person"
+product decisions first, then the precedent check ("Precedent before
+asking"), and ask only an absolutely necessary unresolved one, never a
+technical question. Route the answer as "Answers from the person"
 below says. Every word the person sees follows
 `../vibe/references/plain-words.md`, and every question goes through
 `../vibe/scripts/session-questions.mjs` as the vibe skill's "Questions are
@@ -461,7 +462,10 @@ These run here and never in the build loop (operator ruling,
 validation. For the screens the session touched, run the repository's own
 read-only passes where its root `AGENTS.md` calls for them on this change:
 visual QA (`/visual-qa` in Claude Code, `$visual-qa` in Codex) for a UI
-change, logical QA (`/logical-qa`, `$logical-qa`) for a data or metric
+change, against the session's acceptance criteria when the ticket or its PRD
+has them and otherwise as the design pack's best-practice review
+(`../vibe/references/quality-loop.md`, "Visual QA during the session",
+"What it checks"), logical QA (`/logical-qa`, `$logical-qa`) for a data or metric
 surface, then product-contract QA (`/metal-andrew`, `$metal-andrew`) once that
 evidence is visible. Each skill dispatches its own read-only agents. Confirmed
 findings resume the SAME writer in fix mode, then steps 3 to 6 run again on

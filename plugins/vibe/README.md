@@ -37,8 +37,18 @@ commit, deploy, and showing the person. Each finished change deploys to the
 session's Vercel preview without the person asking ("redeploy" still works),
 and changes that arrive during a deploy go out together in the next one.
 The plan gets no review, and browser
-E2E, visual QA, logical QA, product-contract QA, the guardrails and adversarial
-reviews and other heavy validation run only at handoff. Before saying a
+E2E, logical QA, product-contract QA, the guardrails and adversarial
+reviews and other heavy validation run only at handoff. Visual QA runs at
+handoff too, and during the session only when the person wants it (operator
+ruling, 2026-10-16): at each visible milestone (a user-visible change first
+ready to look at, or a later major visible change, never a small edit) the
+ready message offers it, and "looks good, make it polished" runs it before
+handoff unless the change shows nothing visible or the person already
+declined it for that version. It runs between requests after a deploy,
+through the repository's design pack (`/visual-qa`, `$visual-qa`):
+against the acceptance criteria when the ticket or its PRD has them, and as
+the design pack's best-practice review against `.claude/design/soul.md`
+otherwise. Its findings go to the same writer as a fix. Before saying a
 change is ready, the writer checks every acceptance criterion it touches
 (from the linked ticket, its PRD and the person's own words, kept in the
 session decision table) with an existing test, a quick script, one control
@@ -52,7 +62,8 @@ it read before building, and every visual and UX property it shows becomes an
 acceptance criterion mapped to a design token or catalog component. Only when
 there is a reference image, the writer screenshots each touched screen before
 saying it's ready and fixes every difference from the reference, the one
-exception to the lean loop's no-visual-QA rule (operator ruling, 2026-10-15).
+exception inside the lean loop to its no-visual-QA rule (operator ruling,
+2026-10-15).
 
 Every request also uses `$decision-table` or `/closedloop-core:decision-table`
 before code, including frontend-only, prototype and trivial edits. One living
@@ -143,9 +154,28 @@ only from the successful discard receipt.
 Technical plans, questions, and upfront summaries remain internal. Updates
 identify only completed requested features and next work in the person's own
 words. Product questions are researched through closedloop-graph and live
-decision evidence first, then raised one at a time with full context only
-when an unresolved answer is absolutely necessary. Existing product and design
-approvals remain intact.
+decision evidence first, then through how a mature app handles the same
+situation (operator ruling, 2026-10-16): Asana first, then another
+established app with the same flow (Linear, or GitHub's own screens), then
+their public help centers when no browser can look. `scripts/precedent-check.mjs`
+holds the research brief and its safety rules: a separate headless
+`claude -p --chrome` run in Claude Code, the orchestrator's own in-app Browser
+or Computer Use in Codex; nothing that exists is touched, test data lives
+only in a `zz vibe precedent check (temp)` private project that is deleted
+afterwards, and every state is verified before it is recorded. The answer
+and its source (`Asana, observed <date>`, a help-center URL, or the ticket
+slug) go into the session decision table. A question is raised, one at a
+time with full context, only when none of these settles it and the answer
+is absolutely necessary. Existing product and design approvals remain intact.
+
+Every `$vibe` start checks the installed vibe against the version on
+claude-plugins `main` (`scripts/plugin-version.mjs`). When it is older, the
+person chooses to keep going or update now; on update the orchestrator runs
+the harness's update commands (`claude plugin marketplace update` and
+`claude plugin update` in Claude Code, `codex plugin marketplace upgrade`
+and `codex plugin add` for vibe and closedloop-core in Codex) and asks them
+to reopen the app. When the check cannot reach GitHub the session carries
+on and says so.
 
 Two notices reach the person without waiting for a reply. When a request names
 an outside product as its reference, or gives a screenshot of one, the
@@ -274,7 +304,7 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 | Agent | Model | Responsibility |
 |---|---|---|
 | `vibe-setup-worker` | sonnet | Machine preflight, worktree bootstrap, owned local processes, and confirmed session discard |
-| `vibe-requirements-worker` | sonnet | Read-only ticket, requirements, overlap, and owning-route discovery |
+| `vibe-requirements-worker` | sonnet | Read-only ticket, requirements, overlap, and owning-route discovery, reference-product research and help-center precedent research |
 | `vibe-ticket-worker` | sonnet | Live ticket creation, next-owner lookup, handoff grading, assignment, and cancellation |
 | `vibe-environment-worker` | sonnet | Vercel environment creation, redeploy, flag snapshots, Desktop setup, deployment records, and opening a pull request the person asked for at handoff |
 | `vibe-change-worker` | sonnet | Sole persistent implementation writer for local planning, full-stack changes, stories, fixes, the handoff missing tests list and serialized recording |
@@ -350,6 +380,16 @@ The two cases tagged `main-failures` rehearse handoff's validation step: a
 check that also fails on the captured main is recorded on the ticket's
 Engineering checklist and the handoff goes on, and a session-caused failure
 goes back to the writer.
+
+The cases tagged `precedent`, `visual-qa` and `version-check` rehearse the
+2026-10-16 operator rulings: a product question the graph or a precedent
+already answers is not asked, Asana is checked before another app and a
+question is asked only when neither settles it; visual QA is offered at a
+visible milestone and not on a small edit, a polish request runs it before
+handoff (against the criteria, or the design pack's review without them)
+and skips it after the person declined; and the startup version check asks
+"keep going or update" when outdated, says nothing when current, carries on
+when GitHub cannot be reached, and asks for a reopen after updating.
 
 ## Runtime Files
 

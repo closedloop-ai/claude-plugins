@@ -13,7 +13,8 @@ Do not show or ask the person to approve a technical plan, ask a technical
 question, or give an upfront summary. Updates say only which requested feature
 is complete, which of its acceptance criteria are not done yet ("Acceptance
 criteria before ready"), and what is being worked on next, using the person's
-own words.
+own words; after visual QA they also say what it found and changed ("Visual QA
+during the session").
 Planning, graph evidence, ownership, checks and corrections stay internal.
 
 Before any product question, research `ticket_detail`, `fts_search` and
@@ -32,7 +33,8 @@ gate, and a technical one becomes an `Engineering decision` item
 recency or by assuming one author meant to change an earlier record. Every
 "settled" in this skill means this.
 
-The orchestrator sends an unresearched question back. Interrupt the person
+The orchestrator sends an unresearched question back, and runs the precedent
+check below before asking any question it can settle. Interrupt the person
 only for an absolutely necessary unresolved product question, one at a time
 with full context. Technical choices are resolved internally. Preserve existing
 visual/product approvals, such as canonical prototype design approval, not a
@@ -41,6 +43,58 @@ request's new Storybook components and the endings line in a new session's
 first reply are notices the person may interrupt, never approval gates
 (`SKILL.md`, section 5, "Notices that never wait"). Human
 sign-in, credential entry and OS permission actions remain with the person.
+
+### Precedent before asking
+
+Operator ruling, 2026-10-16: walk a fine line on product questions during a
+session. A question is asked only when neither the graph research above nor
+another app's precedent answers it. When the graph and live decisions do not
+settle how the product should behave in a situation (someone cancels a GitHub
+authorization halfway, a list is empty, an action is undone), what a mature
+app does in the same situation is the default answer. The order is Asana, the
+reference app the operator named; then, when Asana does not have the
+situation, another established app with the same flow (for example Linear,
+or GitHub's own authorization screens); then, when no browser can look, those
+apps' public help centers, Asana's first. Only when none of these settles it
+does the question go to the person, under the gate above.
+
+`scripts/precedent-check.mjs` holds the research brief and its safety rules
+once, for both harnesses:
+
+- Claude Code: a session's Claude in Chrome tools are bound when it starts,
+  so the orchestrator runs `node scripts/precedent-check.mjs run --question
+  "<question>" --situation "<what to reproduce>"` in the background. It
+  starts a separate headless `claude -p --chrome` limited to the Chrome
+  tools, web search and fetch, with the brief on stdin, and that run falls
+  back to the help centers itself when Chrome is not available.
+- Codex: `node scripts/precedent-check.mjs prompt --question "<question>"
+  --situation "<what to reproduce>"` prints the brief, and the orchestrator
+  follows it itself, in a tab of its own in the in-app Browser (never the
+  person's app tab) or with the Computer Use plugin. With neither, dispatch
+  read-only `vibe-requirements-worker` in precedent mode for the help
+  centers.
+
+The brief's rules bind every look: the account already signed in is used,
+and nobody signs in, creates an account or types a credential. Nothing that
+already exists is touched. Test data goes only in one new private project
+named `zz vibe precedent check (temp)`, with no members and notifications
+off, every created task prefixed `zz test`; everything created is deleted at
+the end and confirmed gone in the report. A flow that would connect an app,
+invite or notify someone, share, pay or change a setting goes only as far as
+its confirmation step and is canceled there. Every state is verified (reload
+and look again; a hover can look like a completed task) before it is
+recorded, what was observed directly stays separate from help center or
+forum material, on-screen wording is quoted exactly as evidence, and a
+situation nothing settles is reported as `undocumented`, never guessed. A failed run, or an
+`undocumented` answer from every app, leaves the question to the person.
+
+The answer goes to the SAME writer, which records it in the session decision
+table as the decision for the affected rows, with its source: the ticket or
+PRD slug for a graph answer, `Asana, observed <date>` or `<app>, observed
+<date>` for a look in the browser, or the help-center URL. A precedent is the
+default, not a human ruling: it never overrides a settled decision, a later
+human statement supersedes it with an explicit `Superseded` entry, and it
+settles behavior, never user-visible words (`guardrails.md`, "Copy").
 
 ## One persistent writer and a serial queue
 
@@ -433,11 +487,15 @@ between a request and the person seeing it.
 Browser E2E, visual QA, logical QA, product-contract QA, the guardrails and
 adversarial reviews, `workflow-code-review`, the existing test suite,
 Storybook footprint, running app checks and any other heavy validation run
-only at `$handoff`, never during the loop, even where a repository protocol
+at `$handoff`, never during the loop, even where a repository protocol
 asks for them before a change is done: handoff runs them. The acceptance
 check's single test, script or control read per criterion is not one of them.
 The reference check before ready is the one exception to this rule (operator
 ruling, 2026-10-15), and it runs only with a reference image.
+Visual QA can also run between requests, outside the loop, when the person
+accepts the offer at a visible milestone or asks for polish ("Visual QA
+during the session"; operator ruling, 2026-10-16): after a deploy, never
+inside a request's build, and it never holds a deploy back.
 The reference-product
 and new Storybook components notices (`SKILL.md`, section 5, "Notices that
 never wait") stay as they are.
@@ -690,6 +748,78 @@ or that a visible property is done, when it has seen a gap, in a screenshot
 or anywhere else. A gap it sees goes back to the SAME writer in the same
 request; the ready message names it plainly as not done yet until the writer
 has fixed it.
+
+## Visual QA during the session
+
+Operator ruling, 2026-10-16, newer than the lean-loop ruling (2026-10-13,
+after the PRD-720 live test) that left visual QA to handoff alone. It adds an
+opt-in visual QA the orchestrator offers during the session, in Codex and
+Claude Code alike; the build loop above is otherwise unchanged. This section
+is the rule's one canonical statement, and handoff's visual QA compares
+against the same basis.
+
+### What it checks
+
+Visual QA uses the repository's own design pack: its read-only visual
+QA skill (`/visual-qa` in Claude Code, `$visual-qa` in Codex), which `/design`
+and `$design` route production review through.
+
+- When the linked ticket or its PRD has acceptance criteria, visual QA checks
+  the change against them: the run gets the session decision table's
+  `## Acceptance Criteria` list (those criteria, plus any the person's
+  requests added) and reports each visual and UX criterion as met or not,
+  with what it saw.
+- When neither has any, it falls back to the design pack's best-practice
+  review, against `.claude/design/soul.md`, as the skill does when there is
+  no spec.
+
+Run it the way handoff runs its visual QA (the handoff skill, "Browser E2E
+and the repository's QA passes"): the skill dispatches its own read-only
+agents on the session's last deployed commit, with the session's app link
+and the screens the change touched. It changes no code. Its confirmed
+findings go to the SAME writer as one fix request in the queue, under the
+usual rules: design tokens and catalog components,
+never new user-visible words (`guardrails.md`, "Copy"), and a finding that
+needs a product choice goes through the research and necessity gate above.
+That fix deploys like any other request, and the ready message names what
+the check found and changed, in the person's terms. Owned prototype sessions
+keep their canonical single design review at handoff instead.
+
+### When it is offered
+
+At each visible milestone, the ready message offers it, without waiting for
+the person to think of it: when a user-visible change is first ready to look
+at, and again after a major visible change (a new screen or part of one, or
+a reworked layout). Never on a small edit (a spacing, color, wording or
+single-control fix), and never for a change that shows nothing visible. Ask
+it through `scripts/session-questions.mjs` with the key `visual-qa:<request
+ID>` of the milestone's request, so each milestone's offer is asked once, in
+exactly these words when the ticket or its PRD has acceptance criteria:
+
+```
+Want me to check how it looks against the ticket's requirements and fix anything that's off?
+```
+
+and otherwise:
+
+```
+Want me to check how it looks against our design standards and fix anything that's off?
+```
+
+A yes runs it. A no is recorded and declines visual QA for that version of
+the change, until the next visible milestone.
+
+### When the person asks for polish
+
+When the person says it looks good and wants to see it polished ("looks
+good, make it polished", "polish it", "clean it up so it looks finished",
+"make it look production ready", or words meaning the same), run visual QA
+before handoff without asking, and send its findings and the request to the
+SAME writer together. Skip it only when the change shows nothing visible, or
+when the person already declined visual QA for this version of the change
+(the recorded no for the latest milestone, with no major visible change
+since); then the request goes to the writer as an ordinary request under
+`guardrails.md`, "Making something look better".
 
 ## Tests: repair, don't author
 
