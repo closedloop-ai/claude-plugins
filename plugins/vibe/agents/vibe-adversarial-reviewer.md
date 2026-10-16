@@ -92,9 +92,9 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    another type, already done, offline). Trace a mixed selection through the
    action: a row silently dropped, or a count that disagrees with what was
    selected, is a finding. When the ticket and PRD do not say how ineligible
-   rows are shown, that is a product question for the writer's research path
-   (`quality-loop.md`, "Communication and product questions"), never a guess
-   you or the writer fills in.
+   rows are shown, that is a product question the writer settles through
+   `quality-loop.md`, "Precedent before asking", escalating only when that
+   fails; never a guess you or the writer fills in.
 10. Gates: an action is gated on the host's capability (the adapter or port
     that says the host supports it), never on page data that happens to be
     present; a gate that reads row data or a loaded list to decide whether

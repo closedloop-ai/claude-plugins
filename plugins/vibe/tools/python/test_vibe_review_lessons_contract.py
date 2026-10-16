@@ -21,6 +21,7 @@ DESIGN_PASS = REFERENCES / "design-pass.md"
 QUALITY = REFERENCES / "quality-loop.md"
 TICKET_TEMPLATE = REFERENCES / "ticket-template.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
+VIBE_SKILL = PLUGIN_ROOT / "skills" / "vibe" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
 CL_EXECUTE_PR = PLUGIN_ROOT / "skills" / "cl-execute" / "references" / "implementation-review-pr.md"
 RULING = "operator ruling, 2026-10-16"
@@ -236,12 +237,34 @@ def test_adversary_checks_selections_gates_and_per_row_enums() -> None:
     adversary = flat(agent("vibe-adversarial-reviewer"))
     assert_all(adversary, (
         "must account for every selected row, including the ones it cannot act on",
-        "a product question for the writer's research path",
+        "a product question the writer settles through `quality-loop.md`, \"Precedent before asking\"",
         "gated on the host's capability",
         "a gate one host has and the other lacks is a finding",
         "Parse it per row with a safe fallback for an unknown value",
     ))
-    assert "An action over selected rows accounts for every selected row" in flat(agent("vibe-change-worker"))
+    writer = flat(agent("vibe-change-worker"))
+    assert "An action over selected rows accounts for every selected row" in writer
+    assert "settle it through `quality-loop.md`, \"Precedent before asking\", before building; ask the person only when that fails" in writer
+    assert "### Precedent before asking" in QUALITY.read_text()
+
+
+def test_an_outdated_plugin_question_comes_before_the_endings_line() -> None:
+    version = section(VIBE_SKILL.read_text(), "### Plugin version")
+    assert "That question is the whole first reply: the endings line of a new session" in version
+    assert "The next reply is then the new session's first reply, endings line included" in version
+    starting = section(VIBE_SKILL.read_text(), "### Starting new")
+    assert_all(starting, (
+        "after the plugin version check (section 1, \"Plugin version\")",
+        "when the version is current or unknown it goes in the very first reply",
+        "the version question comes first on its own and the endings line goes in the first reply after the person answers it",
+    ))
+    endings = flat(VIBE_SKILL.read_text())
+    assert "The one thing that comes before it is an outdated plugin's version question" in endings
+    order = [
+        endings.index("Every `$vibe` start, new or resume, first checks whether this plugin is the latest release"),
+        endings.index("1. Your first reply to the new session carries the endings line"),
+    ]
+    assert order == sorted(order)
 
 
 def test_reuse_and_wording_checks_grep_shared_owners_first() -> None:

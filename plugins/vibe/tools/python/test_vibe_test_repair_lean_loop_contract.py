@@ -8,7 +8,10 @@
 2. Lean build loop. Quick prep, build, the quick checks the commit hooks need,
    the orchestrator's commit, deploy, show the person. Browser E2E, visual QA,
    logical QA, product-contract QA, the adversarial and guardrails reviews and other
-   heavy validation run only at handoff. The two notices stay as they are.
+   heavy validation run at handoff, never inside the loop. The two notices stay as
+   they are. The 2026-10-16 operator ruling adds visual QA the person accepts or a
+   polish request starts, between requests and outside the loop; its own contract
+   is test_vibe_visual_qa_precedent_version_contract.py.
 """
 
 from __future__ import annotations
@@ -128,7 +131,7 @@ def test_the_build_loop_is_lean() -> None:
                      "deploy, and showing the person", "with no plan review",
                      "Biome on the changed files, the affected typecheck and the source gates",
                      "the guardrails and adversarial reviews", "`workflow-code-review`",
-                     "run only at `$handoff`, never during the loop", "handoff runs them",
+                     "run at `$handoff`, never during the loop", "handoff runs them",
                      "notices (`SKILL.md`, section 5, \"Notices that never wait\") stay as they are"):
         assert required in lean, required
     for heavy in HEAVY_VALIDATION:
@@ -143,7 +146,8 @@ def test_the_build_loop_is_lean() -> None:
         assert retired not in loop, retired
     for skill in QA_SKILLS:
         assert skill not in loop, skill
-        assert skill not in QUALITY.read_text(), skill
+        assert skill not in lean, skill
+    assert "never inside a request's build" in lean
 
 
 def test_reviewers_run_only_at_handoff() -> None:

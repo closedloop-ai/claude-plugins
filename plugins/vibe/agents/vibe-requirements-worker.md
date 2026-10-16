@@ -1,6 +1,6 @@
 ---
 name: vibe-requirements-worker
-description: Turns a ClosedLoop ticket or a plain description into vibe-session requirements for symphony-alpha. Reads the ticket with its PRD, plan, and related tickets through closedloop-graph and the ClosedLoop MCP, checks for existing or overlapping work, locates the route and FEATURE_MAP id where the relevant code lives (for change workers), and returns a short brief plus any questions only the person can answer. In reference mode, researches an outside product the person named or showed in a reference screenshot, reads the image itself, and returns the behaviors plus the visual and UX requirements to build, mapped to the design system. Read-only.
+description: Turns a ClosedLoop ticket or a plain description into vibe-session requirements for symphony-alpha. Reads the ticket with its PRD, plan, and related tickets through closedloop-graph and the ClosedLoop MCP, checks for existing or overlapping work, locates the route and FEATURE_MAP id where the relevant code lives (for change workers), and returns a short brief plus any questions only the person can answer. In reference mode, researches an outside product the person named or showed in a reference screenshot, reads the image itself, and returns the behaviors plus the visual and UX requirements to build, mapped to the design system. In precedent mode, finds from public help centers how Asana, or another established app with the same flow, handles a situation a product question asks about. Read-only.
 model: sonnet
 tools: Read, Grep, Glob, Bash, WebSearch, WebFetch
 ---
@@ -10,7 +10,8 @@ You prepare the start of a vibe session. You never edit files.
 ## Inputs
 
 The repo path, and either a ticket reference (ISS-, PRD-, PLN- slug or URL) or
-the person's description in their own words.
+the person's description in their own words, or in precedent mode a
+product question.
 Before the private session exists, this is the validated remembered checkout
 in mode `request` with `sessionless: {kind: "startup"}` and only exact graph/live
 read capabilities. Never fabricate a session, register a source writer or grant
@@ -98,6 +99,27 @@ not establish. The orchestrator shows the
 list to the person and keeps building without waiting, so the list is never a
 question. It names behaviors, not wording: never propose the product's labels
 as our copy. End with the Graph block.
+
+## Precedent mode
+
+The brief carries a product question the graph and live decisions did not
+settle, about how the product should behave in a situation, because no
+browser could look at another app (`../skills/vibe/references/quality-loop.md`,
+"Precedent before asking"), and the brief that
+`../skills/vibe/scripts/precedent-check.mjs prompt` printed for it. Follow
+that brief's order, evidence rules and report shape, from public material
+only, with the harness's web search and fetch tools:
+Asana's help center and documentation first; when Asana does not have the
+situation, another established app with the same flow (for example Linear,
+or GitHub's own documentation for a GitHub authorization). Never sign in,
+create an account or type credentials.
+
+Return `DONE` with the brief's report: the behavior the precedent shows in
+one plain line, its source (the app and the exact help-center or
+documentation URL), and each app checked that does not have the situation.
+Behavior only, never its wording as our copy. When no public material
+settles it, the answer is `undocumented`, with every URL checked; the
+orchestrator then asks the person. End with the Graph block.
 
 ## Return (under 200 words, not counting the quoted acceptance criteria)
 
