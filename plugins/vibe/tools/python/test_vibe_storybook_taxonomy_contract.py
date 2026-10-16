@@ -115,12 +115,12 @@ def test_the_rule_is_stated_once() -> None:
 
 
 def test_every_role_judges_a_session_by_the_scheme_its_base_uses() -> None:
-    decomposer = agent("vibe-storybook-decomposer")
+    decomposer = flat(agent("vibe-storybook-decomposer"))
     assert (
         "Read that doc as the session's base has it: on a base older than the lifecycle scheme it still places "
         "new work under `<Level> v2.0/` with the `v2.0` tag."
     ) in decomposer
-    writer = agent("vibe-change-worker")
+    writer = flat(agent("vibe-change-worker"))
     assert (
         "after a main sync your own new entries move to the plain root with a lifecycle tag, which is not a retitle"
     ) in writer

@@ -4,6 +4,21 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.49
+
+#### Fixed
+- Handoff no longer reads symphony-alpha's current Storybook roots as frozen v1.0. symphony-alpha #8867 (ISS-12610, Storybook 3.0.0) made the `<Level> v2.0` roots the plain roots, moved the old plain roots to `<Level> v1.0`, and replaced the `v1.0`/`v2.0` tags with one lifecycle tag per story file (`stable`, `preview`, `experimental`, `deprecated`). 1.0.47 still treated every plain-root title as v1.0, so a session that synced main and moved its own entries to `Composites/...` with a `stable` tag was blocked, and an edit of a `Surfaces v1.0/` file went unchecked.
+- `handoff-inventory.mjs` now judges story files by the scheme of the session's base, reported as `storybookScheme`. A new `storybook-taxonomy.mjs` reads the base's own `apps/storybook/story-group-order.ts`: when it exports `StorybookLifecycle`, the frozen tag is its `Deprecated` value and every frozen root ends in `storybookBaselineVersion`, the same test symphony-alpha's `validate:catalog` applies, so the next rename there moves these checks with it. A base without it keeps the version scheme (plain roots and the `v1.0` tag frozen). A lifecycle export this script cannot read blocks a session that changed a story file (`storybookSchemeRecognized`) instead of guessing.
+- Every earlier ruling carries over on both schemes: v1.0 story files stay frozen apart from the compile-only repair (same meta title, tags and story exports as the base), a retitle is judged against the main the session last synced so a sync is never blamed for #8867's renames, and `Start Here/` stays exempt. The inventory's output keys are unchanged.
+
+#### Changed
+- `guardrails.md` ("Storybook taxonomy"), the Storybook decomposer, the change and primitive workers, the guardrails reviewer (check 10), `design-pass.md`, the handoff skill and the README place new stories in the current roots with one lifecycle tag (`stable` shipped, `preview` under Labs, `experimental` design-only or not in the live app), put new states of a deprecated component in a new entry in the current root with a permanent name and no version number, keep an existing non-deprecated file's title and tag, and tell a session on a pre-#8867 base to follow that base's `v2.0` rules until it syncs.
+
+#### Tests
+- `handoff-inventory-storybook-scheme.test.mjs` (5 cases): scheme detection from the real constant shapes and from a renamed scheme; current-root files new and edited on a lifecycle base (the 1.0.47 failure: both edited `stable` files were listed as `frozen`); the v1.0 roots and `deprecated` tag frozen with the compile-only repair kept; a session based before #8867 that syncs main and is not blamed for its renames; an unreadable lifecycle export. Four of the five fail on 1.0.47.
+- The Storybook contract tests follow the new wording, plus one for the base-scheme rule.
+- Two eval cases tagged `storybook` (Claude, and Codex through the runner): new states for a deprecated component, and a synced session's own `v2.0` entry. On this branch both pass on both harnesses; on main before this change Codex failed both and Claude failed the first.
+
 ### vibe v1.0.48
 
 #### Added
