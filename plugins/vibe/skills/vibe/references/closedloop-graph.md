@@ -25,6 +25,7 @@ Its tools appear as `closedloop-graph` server tools (in Claude Code,
 | Which open tickets touch this file (someone else's work in flight)? | `blast_radius_tickets` |
 | Show me the code of one symbol | `code_snippet` |
 | Where does a non-symbol string live (a route, flag, label, event name)? | `code_grep` |
+| Which channels already connect two surfaces (sockets, signals, command dispatchers, interval lanes)? | `code_grep` with the repo's channel primitives (socket emit and subscribe calls, signal emitters, command dispatchers, `setInterval`-based lanes) joined in one regex alternation; `rg` when the server is unreachable |
 | Was this tried before, or reverted? | `blast_radius_tickets` on the files and `fts_search` on the behavior, then `git log -S` |
 
 ## Required calls
@@ -35,8 +36,8 @@ one element), at least:
 | Worker | Calls |
 |---|---|
 | `vibe-requirements-worker` | `code_symbols` on the screen's main component, `blast_radius_tickets` on its route and main component files, and for a description `query_collisions` and `search_nodes` |
-| `vibe-change-worker` (same persistent writer, prep/request/fix/handoff) | `code_symbols` on each component or hook it will edit or extend, then `code_callers` and `code_importers` on each (this is how it finds the shared parent and its other children), and `blast_radius_tickets` on each file it edits |
-| `vibe-backend-worker` (read-only advice) | `code_symbols` on the closest route, service, and model, `code_callers` and `blast_radius_tickets` on the planned files |
+| `vibe-change-worker` (same persistent writer, prep/request/fix/handoff) | `code_symbols` on each component or hook it will edit or extend, then `code_callers` and `code_importers` on each (this is how it finds the shared parent and its other children), and `blast_radius_tickets` on each file it edits; when the plan adds periodic or cross-surface work, the existing-channels `code_grep` |
+| `vibe-backend-worker` (read-only advice) | `code_symbols` on the closest route, service, and model, `code_callers` and `blast_radius_tickets` on the planned files; when the planned work is periodic or cross-surface, the existing-channels `code_grep` |
 | `vibe-guardrails-reviewer` | `code_symbols` and `search_nodes` for an existing component a hand-rolled one duplicates, and `code_callers` and `code_importers` on each changed shared component |
 | `vibe-adversarial-reviewer` | `code_callers` and `code_importers` on each changed component or hook, `code_tests_for` on changed files, and `blast_radius_tickets` on them |
 | `vibe-storybook-decomposer` | `code_symbols` for existing stories, similar components and the capability's precedent on sibling entities, `code_importers` on the precedent's providing component, and `code_callers` before extracting anything |
@@ -82,7 +83,8 @@ connection before the next change.
 Every product question first follows `quality-loop.md`'s graph and live-decision
 research gate. Check whether it was already answered, verify the material ruling
 with current evidence, and ask only an absolutely necessary unresolved question.
-Never send a technical question or re-ask a settled decision.
+Never send a technical question or re-ask a settled decision
+(`quality-loop.md`, "Communication and product questions").
 
 - Start with `code_symbols` for any named component, then `code_callers` and
   `code_importers` before changing anything shared: a change to a component

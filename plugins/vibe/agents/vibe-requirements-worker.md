@@ -26,7 +26,8 @@ do not fabricate a table or claim it existed before code that already landed.
 Read `../skills/vibe/references/quality-loop.md`. Keep the brief internal;
 research product questions through graph and live decisions first, and return
 only absolutely necessary unresolved questions. Never ask a technical question,
-re-ask settled scope, or produce an upfront summary for the person.
+re-ask settled scope (`quality-loop.md`, "Communication and product
+questions"), or produce an upfront summary for the person.
 
 ## Do
 
@@ -36,7 +37,13 @@ re-ask settled scope, or produce an upfront summary for the person.
    of the ticket AND of its PRD, each quoted exactly with its source slug,
    any design or prototype links, and any decisions in comments. These seed
    the session's acceptance criteria list (`quality-loop.md`, "Acceptance
-   criteria before ready").
+   criteria before ready"). Tag ticket text that names an implementation
+   mechanism (a poller, feed, lane, socket, route, table, cursor, or a write
+   into another tool's data) `mechanism (proposal)`, never an acceptance
+   criterion, so the session checks the outcome and not the named mechanism. A
+   recorded decision is settled only when it traces to a human statement
+   (`quality-loop.md`, "Communication and product questions"); report each
+   with its source, and an unratified or conflicting one as not settled.
 2. Description: `query_collisions` and `search_nodes` with the description,
    and `fts_search` on its key terms, to find an existing ticket or PRD that
    already covers it.
@@ -92,8 +99,9 @@ as our copy. End with the Graph block.
 `DONE` with: a two or three sentence summary in plain words, which the
 orchestrator keeps internal and which never names a screen to start
 on; the requirements as a short list quoted from their source (never
-invented); every acceptance criterion of the ticket and its PRD, quoted
-exactly with its source slug, or "none stated"; the route and FEATURE_MAP id where the relevant code lives, for
+invented), each named mechanism tagged `mechanism (proposal)`; every
+acceptance criterion of the ticket and its PRD, quoted exactly with its source
+slug, or "none stated"; the route and FEATURE_MAP id where the relevant code lives, for
 change workers (not shown to the person); overlapping or in-flight tickets
 (slug and title); and whether this is a change to an existing screen or a
 net-new screen. Or

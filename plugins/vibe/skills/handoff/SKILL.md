@@ -320,7 +320,8 @@ helper edits source. A `forbidden` or outside-allowed path the request
 genuinely needed is removed and logged as
 `Engineering needed (forbidden path)` (`../vibe/references/guardrails.md`,
 "What may change"), and the ticket worker puts it on the Engineering
-checklist. A removal never silently undoes a visible change the person
+checklist. A finding marked `engineering decision` follows step 6's rule
+for decisions. A removal never silently undoes a visible change the person
 already saw (operator ruling, 2026-10-15: an approved bold heading needed a
 font generator outside the allowed paths and handoff reverted it without a
 word). When it does, tell the person in one plain line which part will
@@ -425,6 +426,15 @@ Claude Code). ALL confirmed code/story findings resume the SAME writer,
 which verifies and corrects them; recheck its current result and repeat
 validation. A coverage gap goes on the missing tests list; nobody writes a
 test here.
+
+A finding from any handoff reviewer, step 3's guardrails check included,
+that a mechanism, a one-way door, or an unratified or conflicting decision
+needs a human decision is never the writer's to resolve, downgrade or
+absorb, including after verification. The SAME writer logs it in the change
+log as `Engineering decision: <question>; built: <what the session built>;
+evidence: <files, records or finding>`, and the ticket worker puts it on the
+live ticket's Engineering checklist (`../vibe/references/ticket-template.md`,
+"Engineering decisions"), never to the person.
 
 ### Browser E2E and the repository's QA passes
 
