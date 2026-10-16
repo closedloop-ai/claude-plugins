@@ -436,8 +436,10 @@ def deterministic(
                 )
             )
         elif meta["type"] == "tool_used":
+            # Codex code mode can batch several shell commands into one tool
+            # call, so each matching command counts, not each call.
             count = sum(
-                bool(re.search(meta["input_match"], tool_text(t))) for t in trace
+                len(re.findall(meta["input_match"], tool_text(t))) for t in trace
             )
             results.append(
                 check(

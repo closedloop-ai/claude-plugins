@@ -273,3 +273,29 @@ def test_light_and_dark_need_a_logged_check_with_a_result_per_theme(tmp_path: Pa
     )
     assert not next(c for c in case_checks if c["grader"] == "renders-dark")["passed"]
     assert not next(c for c in case_checks if c["grader"] == "renders-both-themes")["passed"]
+
+
+def test_tool_use_counts_each_batched_command(tmp_path: Path) -> None:
+    case = next(
+        c for c in runner.cases() if c["name"] == "product-manager-static-page-light-and-dark"
+    )
+    table = tmp_path / "session/.closedloop-ai/decision-tables/session.md"
+    table.parent.mkdir(parents=True)
+    table.write_text("## Acceptance Criteria\n### Checks\n")
+    batched = {
+        "name": "exec",
+        "input": 'tools.exec_command({cmd:"python3 tools/screenshot.py src/return-page.html light.png --theme light"}),\n'
+        'tools.exec_command({cmd:"python3 tools/screenshot.py src/return-page.html dark.png --theme dark"})',
+    }
+    checks, _ = runner.deterministic(case, "Ready.", tmp_path, [batched])
+    graded = {c["grader"]: c["passed"] for c in checks}
+    assert graded["renders-both-themes"]
+    assert graded["renders-dark"]
+    single = {
+        "name": "exec",
+        "input": 'tools.exec_command({cmd:"python3 tools/screenshot.py src/return-page.html light.png"})',
+    }
+    checks, _ = runner.deterministic(case, "Ready.", tmp_path, [single])
+    graded = {c["grader"]: c["passed"] for c in checks}
+    assert not graded["renders-both-themes"]
+    assert not graded["renders-dark"]
