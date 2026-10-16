@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Added
 - A Data direction readiness item in cl-execute's `planning-and-gates.md`: a new direction of data flow between surfaces (cloud to an installed client, a client into another tool's data, one service writing into another's store) needs a cited human decision or approved document traced per Decision provenance; an earlier document that restricts the direction is a conflict, and with no traced decision it is a numbered human decision. The plan-review prompt mirrors it in one DECISIONS line.
 - `cl-analyze` gains Decision provenance and Data direction readiness checks that point to those cl-execute definitions, and both items in its result's Readiness list.
+- cl-execute's `CL Execute Gate Result` Readiness list reports Decision provenance and Data direction, so the gate reports the items it checks.
 - In vibe, the requirements worker flags a new data direction in its brief as `data direction (new)` with its source or `untraced`; the change worker builds only along directions already allowed and logs an untraced one as an `Engineering decision`, never a question for the person; the guardrails reviewer treats an untraced new direction in the diff as a blocking `engineering decision` finding.
 - `test_vibe_data_direction_contract.py` and a `skill-contract.test.mjs` case pin these rules; both fail on 1.0.50.
 

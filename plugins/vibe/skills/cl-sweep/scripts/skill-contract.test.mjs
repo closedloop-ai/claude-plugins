@@ -1128,6 +1128,7 @@ test('a new data direction needs a traced decision in cl-execute and cl-analyze'
   const gates = read('cl-execute/references/planning-and-gates.md');
   const prompt = read('cl-execute/references/plan-review-prompt.md');
   const analyze = read('cl-analyze/SKILL.md');
+  const formats = read('cl-execute/references/result-formats.md');
   const readiness = gates.slice(gates.indexOf('## Readiness Gate'), gates.indexOf('## Requirements Contract'));
 
   // One definition, in the Readiness Gate after Decision provenance.
@@ -1154,4 +1155,9 @@ test('a new data direction needs a traced decision in cl-execute and cl-analyze'
   assert.match(analyze, /with no traced decision allowing it is `BLOCKED`, a human decision rather than an implementation detail/);
   assert.match(analyze, /^- Decision provenance: <PASS \| BLOCKED \| UNKNOWN \| NOT_APPLICABLE> - </m);
   assert.match(analyze, /^- Data direction: <PASS \| BLOCKED \| UNKNOWN \| NOT_APPLICABLE> - </m);
+
+  // The cl-execute gate reports both items it checks.
+  const gateResult = formats.slice(formats.indexOf('## CL Execute Gate Result'), formats.indexOf('## CL Execute Result'));
+  assert.match(gateResult, /^- Decision provenance: <PASS \| BLOCKED \| UNKNOWN \| NOT_APPLICABLE> - </m);
+  assert.match(gateResult, /^- Data direction: <PASS \| BLOCKED \| UNKNOWN \| NOT_APPLICABLE> - </m);
 });
