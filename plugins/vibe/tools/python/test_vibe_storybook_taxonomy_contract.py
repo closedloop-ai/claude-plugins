@@ -12,8 +12,9 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
+
+from vibe_contract_text import agent, flat, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -23,23 +24,6 @@ HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
 TAXONOMY_DOC = "`apps/storybook/TAXONOMY.md`"
 POINTER = '"Storybook taxonomy"'
-
-
-def flat(text: str) -> str:
-    return re.sub(r"\s+", " ", text)
-
-
-def section(text: str, heading: str) -> str:
-    """The section under `heading`, up to the next heading of the same or a higher level, flattened."""
-    level = len(heading.split(" ", 1)[0])
-    start = text.index(heading)
-    rest = text[start + len(heading) :]
-    ends = [match.start() for match in re.finditer(r"\n(#{1,%d}) " % level, rest)]
-    return flat(rest[: ends[0]] if ends else rest)
-
-
-def agent(name: str) -> str:
-    return flat((AGENTS / f"{name}.md").read_text())
 
 
 def test_the_rule_defers_to_the_repo_taxonomy_doc_and_states_only_the_minimum() -> None:
@@ -61,13 +45,13 @@ def test_the_rule_defers_to_the_repo_taxonomy_doc_and_states_only_the_minimum() 
 
 
 def test_every_story_author_and_advisor_points_at_the_doc_and_the_rule() -> None:
-    writer = agent("vibe-change-worker")
+    writer = flat(agent("vibe-change-worker"))
     assert f"Read the repo's {TAXONOMY_DOC} and follow it" in writer
     assert f"(`../skills/vibe/references/guardrails.md`, {POINTER})" in writer
-    decomposer = agent("vibe-storybook-decomposer")
+    decomposer = flat(agent("vibe-storybook-decomposer"))
     assert TAXONOMY_DOC in decomposer
     assert f"(`../skills/vibe/references/guardrails.md`, {POINTER})" in decomposer
-    primitive = agent("vibe-primitive-worker")
+    primitive = flat(agent("vibe-primitive-worker"))
     assert f"Place them per the repo's {TAXONOMY_DOC}" in primitive
     assert f"(`guardrails.md`, {POINTER})" in primitive
     primitives = section(GUARDRAILS.read_text(), "## Missing primitives")
@@ -75,7 +59,7 @@ def test_every_story_author_and_advisor_points_at_the_doc_and_the_rule() -> None
 
 
 def test_the_guardrails_reviewer_blocks_v1_placement() -> None:
-    reviewer = agent("vibe-guardrails-reviewer")
+    reviewer = flat(agent("vibe-guardrails-reviewer"))
     for required in (
         f"10. Storybook taxonomy (`guardrails.md`, {POINTER})",
         "titled under or tagged for a frozen v1.0 root, or any edit or move of a story file that is v1.0 on main "

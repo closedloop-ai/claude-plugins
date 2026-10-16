@@ -12,8 +12,9 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
+
+from vibe_contract_text import flat, paragraph, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -26,27 +27,6 @@ EXEMPTION = (
     "checks (design ruling, 2026-10-06): Start Here is unversioned and its Version History is edited by every "
     "Storybook release."
 )
-
-
-def flat(text: str) -> str:
-    return re.sub(r"\s+", " ", text)
-
-
-def section(text: str, heading: str) -> str:
-    """The section under `heading`, up to the next heading of the same or a higher level, flattened."""
-    level = len(heading.split(" ", 1)[0])
-    start = text.index(heading)
-    rest = text[start + len(heading) :]
-    ends = [match.start() for match in re.finditer(r"\n(#{1,%d}) " % level, rest)]
-    return flat(rest[: ends[0]] if ends else rest)
-
-
-def paragraph(text: str, marker: str) -> str:
-    """The blank-line-delimited paragraph or list item block containing `marker`, flattened."""
-    for block in re.split(r"\n\s*\n|\n(?=\d+\. )|\n(?=- )", text):
-        if marker in flat(block):
-            return flat(block)
-    raise AssertionError(marker)
 
 
 def test_guardrails_state_the_exemption_beside_the_freeze() -> None:

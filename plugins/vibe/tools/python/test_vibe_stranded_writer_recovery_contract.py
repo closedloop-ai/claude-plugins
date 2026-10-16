@@ -11,8 +11,9 @@ and fresh validation.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
+
+from vibe_contract_text import flat, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -24,19 +25,6 @@ HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 CHANGE_WORKER = PLUGIN_ROOT / "agents" / "vibe-change-worker.md"
 WRITER_STATE = VIBE / "scripts" / "dist" / "writer-state.mjs"
 BLOCK_REASON = "recorded-definition-removed"
-
-
-def flat(text: str) -> str:
-    return re.sub(r"\s+", " ", text)
-
-
-def section(text: str, heading: str) -> str:
-    """The section under `heading`, up to the next heading of the same or a higher level, flattened."""
-    level = len(heading.split(" ", 1)[0])
-    start = text.index(heading)
-    rest = text[start + len(heading) :]
-    ends = [match.start() for match in re.finditer(r"\n(#{1,%d}) " % level, rest)]
-    return flat(rest[: ends[0]] if ends else rest)
 
 
 def migration() -> str:

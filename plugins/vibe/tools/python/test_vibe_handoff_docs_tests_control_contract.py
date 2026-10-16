@@ -18,6 +18,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from vibe_contract_text import agent, flat, section
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 AGENTS = PLUGIN_ROOT / "agents"
@@ -47,23 +49,6 @@ RETIRED_TEST_PHRASES = (
 # Every `pnpm control` subcommand the plugin cites; each is a real command in
 # symphony-alpha's `.claude/skills/control/references/cli.md`.
 CONTROL_COMMANDS = {"feature", "up", "doctor", "goto", "wait", "capture", "console", "network", "api", "ipc", "down"}
-
-
-def flat(text: str) -> str:
-    return re.sub(r"\s+", " ", text)
-
-
-def section(text: str, heading: str) -> str:
-    """The section under `heading`, up to the next heading of the same or a higher level, flattened."""
-    level = len(heading.split(" ", 1)[0])
-    start = text.index(heading)
-    rest = text[start + len(heading) :]
-    ends = [match.start() for match in re.finditer(r"\n(#{1,%d}) " % level, rest)]
-    return flat(rest[: ends[0]] if ends else rest)
-
-
-def agent(name: str) -> str:
-    return (AGENTS / f"{name}.md").read_text()
 
 
 def plugin_prose() -> dict[str, str]:

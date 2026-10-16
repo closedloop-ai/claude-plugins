@@ -18,6 +18,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from vibe_contract_text import flat, section
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VIBE_SKILL = PLUGIN_ROOT / "skills" / "vibe" / "SKILL.md"
@@ -27,17 +29,6 @@ START = "## 2. Start or resume"
 RESUME = "### Finding a session to resume"
 QUESTION = "Do you want to pick up something you worked on before, or start something new?"
 SEARCH = "vibe-sessions.mjs list"
-
-
-def flat(text: str) -> str:
-    return re.sub(r"\s+", " ", text)
-
-
-def section(text: str, heading: str, level: str = "## ") -> str:
-    start = text.index(heading)
-    rest = text[start + len(heading) :]
-    end = rest.find(f"\n{level}")
-    return flat(rest if end == -1 else rest[:end])
 
 
 def start_section() -> str:
@@ -96,7 +87,7 @@ def test_a_new_session_skips_the_search_entirely() -> None:
 
 def test_the_search_runs_only_after_resume_was_chosen() -> None:
     skill = VIBE_SKILL.read_text()
-    resume = section(skill, RESUME, level="#")
+    resume = section(skill, RESUME)
     assert resume.index("Only after the person chose resume") < resume.index(f"run `node scripts/{SEARCH}`")
     assert "Never resume on a guess" in resume
     assert "offer the matching session first" in resume

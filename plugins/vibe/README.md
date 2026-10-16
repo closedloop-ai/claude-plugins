@@ -318,7 +318,8 @@ claude plugin eval . --eval-dir vibe/evals --tag visual-cues --scaffold --allow-
 
 Version `1.0.14` contains 10 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
-`tools/python/`; that directory contains two skill-contract test modules.
+`tools/python/`; that directory contains the skill-contract test modules and
+`vibe_contract_text.py`, the text helpers they share.
 Runtime helpers and tests live alongside their owning skills, including vibe
 session and prototype records, local-plan publication guards, bundled persistent
 writer state, Claude launch/resume and shared main-sync publication helpers,

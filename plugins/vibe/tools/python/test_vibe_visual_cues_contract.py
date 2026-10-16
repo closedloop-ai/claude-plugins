@@ -28,8 +28,9 @@ criterion was "met by source trace", and the ready message said "It matches".
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
+
+from vibe_contract_text import agent, flat, section
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 VIBE = PLUGIN_ROOT / "skills" / "vibe"
@@ -45,29 +46,12 @@ CHECK = "### The reference check before ready"
 PROPERTIES = "shadow and elevation, font size, weight, color, spacing, radius, borders, alignment and icons"
 
 
-def flat(text: str) -> str:
-    return re.sub(r"\s+", " ", text)
-
-
-def section(text: str, heading: str) -> str:
-    """The section under `heading`, up to the next heading of the same or a higher level, flattened."""
-    level = len(heading.split(" ", 1)[0])
-    start = text.index(heading + "\n")
-    rest = text[start + len(heading) :]
-    ends = [match.start() for match in re.finditer(r"\n(#{1,%d}) " % level, rest)]
-    return flat(rest[: ends[0]] if ends else rest)
-
-
 def rule() -> str:
     return section(QUALITY.read_text(), HEADING)
 
 
 def check() -> str:
     return section(QUALITY.read_text(), CHECK)
-
-
-def agent(name: str) -> str:
-    return flat((AGENTS / f"{name}.md").read_text())
 
 
 def assert_all(text: str, required: tuple[str, ...]) -> None:
@@ -124,7 +108,7 @@ def test_reading_the_reference_is_a_required_recorded_step() -> None:
         "A plan or criterion written before that line exists is incomplete",
         "The orchestrator's text description of an image never stands in for that read",
     ))
-    assert_all(agent("vibe-change-worker"), (
+    assert_all(flat(agent("vibe-change-worker")), (
         "Open every reference image path as an image before planning",
         "Never build from a description of a reference in place of the image.",
         "append a `Reference read` line per image",
@@ -177,12 +161,12 @@ def test_the_check_runs_with_a_reference_image_and_never_without_one() -> None:
     assert "The reference check before ready is the one exception to this rule (operator ruling, 2026-10-15), and it runs only with a reference image." in lean
     assert "- Reference check: only when the person gave a reference image" in lean
     assert "the one exception to its no-automated-visual-QA rule" in rule()
-    assert "With no reference image there is no render or compare." in agent("vibe-change-worker")
+    assert "With no reference image there is no render or compare." in flat(agent("vibe-change-worker"))
     assert "With no reference image there is no render or compare" in section(VIBE_SKILL.read_text(), "## 5. Build loop")
     capture = section(ENVIRONMENT.read_text(), "## Capturing for the reference check")
     assert "Only when the session has a reference image" in capture
     assert "with none, nothing here runs" in capture
-    for text in (rule(), agent("vibe-change-worker"), flat(VIBE_SKILL.read_text())):
+    for text in (rule(), flat(agent("vibe-change-worker")), flat(VIBE_SKILL.read_text())):
         assert "sanity look" not in text
 
 
@@ -197,7 +181,7 @@ def test_the_check_compares_the_reference_properties_and_regressions_then_recapt
         "`DONE` on such a change carries a Reference check line per touched screen",
         "without it the `DONE` is incomplete",
     ))
-    assert "plus regressions on the touched element (properties that were right before this change)" in agent("vibe-change-worker")
+    assert "plus regressions on the touched element (properties that were right before this change)" in flat(agent("vibe-change-worker"))
 
 
 def test_the_check_is_not_a_design_review() -> None:
@@ -232,7 +216,7 @@ def test_capture_works_in_both_harnesses_with_named_fallbacks() -> None:
         "in Claude Code, the Chrome extension's screenshot when it is connected",
         "A Claude Code session without it has no preview screenshot",
     ))
-    assert "When the session recorded reference images (`referenceImages`), open each as an image" in agent("vibe-verify-worker")
+    assert "When the session recorded reference images (`referenceImages`), open each as an image" in flat(agent("vibe-verify-worker"))
 
 
 def test_a_surface_without_tokens_is_logged_for_engineering_not_invented() -> None:

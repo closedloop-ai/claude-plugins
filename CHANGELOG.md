@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - An `Engineering decision: <question>; built: <...>; evidence: <...>` item on the live ticket's Engineering checklist, with placement rules in the ticket template and the ticket worker.
 - A closedloop-graph route for channels that already connect two surfaces, with an existing-channels `code_grep` in the change and backend workers' required calls when the work is periodic or cross-surface.
 - `test_vibe_mechanism_provenance_contract.py` pins these rules.
+- `tools/python/vibe_contract_text.py` holds the `flat`, `section`, `paragraph`, and `agent` helpers every vibe contract test now imports instead of keeping its own copy. `section` stops at the next heading of the same or a higher level and matches its heading at the start of a line, preferring an exact line; `paragraph` also splits list items; `agent` returns the raw text.
 
 #### Changed
 - The change worker treats a mechanism a ticket or PRD names as a proposal: when it is dominated, it builds the better option that meets the outcome and logs the swap as an `Engineering decision`, never as a question for the person. Plans that add periodic or cross-surface work carry a Cost Scaling table per cl-execute's `planning-and-gates.md`.

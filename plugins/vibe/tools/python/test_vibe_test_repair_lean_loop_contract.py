@@ -16,6 +16,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from vibe_contract_text import agent, flat, section
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 AGENTS = PLUGIN_ROOT / "agents"
@@ -32,23 +34,6 @@ LAUNCHER_BUNDLE = VIBE / "scripts" / "dist" / "claude-worker.mjs"
 NO_ENGINEERING_QUESTIONS = "Never ask the person about tests or any other engineering choice"
 HEAVY_VALIDATION = ("Browser E2E", "visual QA", "logical QA", "product-contract QA")
 QA_SKILLS = ("/visual-qa", "/logical-qa", "/metal-andrew")
-
-
-def flat(text: str) -> str:
-    return re.sub(r"\s+", " ", text)
-
-
-def section(text: str, heading: str) -> str:
-    """The section under `heading`, up to the next heading of the same or a higher level, flattened."""
-    level = len(heading.split(" ", 1)[0])
-    start = text.index(heading)
-    rest = text[start + len(heading) :]
-    ends = [match.start() for match in re.finditer(r"\n(#{1,%d}) " % level, rest)]
-    return flat(rest[: ends[0]] if ends else rest)
-
-
-def agent(name: str) -> str:
-    return (AGENTS / f"{name}.md").read_text()
 
 
 def repair_modes(source: str) -> set[str]:
