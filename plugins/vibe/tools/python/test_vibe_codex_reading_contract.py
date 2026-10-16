@@ -112,6 +112,14 @@ def test_the_table_records_each_reference_read_criterion_and_check_in_one_shape(
         assert phrase in section, phrase
 
 
+def test_the_record_shapes_come_first_in_visual_references() -> None:
+    # A Codex writer that reads "Visual references" from its first line stops
+    # before the section's end often enough that the shapes must lead it.
+    text = QUALITY.read_text()
+    visual = text.index("## Visual references\n")
+    assert visual < text.index(RECORDING) < text.index("### Saving the reference")
+
+
 def test_with_no_reference_a_criterion_quotes_the_words_and_nothing_renders() -> None:
     section = recording()
     assert '`AC-n (source: <request ID>): "<their words>"`' in section

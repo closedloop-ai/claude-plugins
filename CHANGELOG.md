@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.46
+
+#### Fixed
+- Codex now gets the writer's rules. Codex reads a skill through shell output, which keeps the start and end of a long file and drops the middle; the vibe SKILL.md is about 14,400 tokens, so one read lost the build loop, and a Codex context doing the writer's work never opened `vibe-change-worker.md` or `quality-loop.md`. On main `642d235` that is why all four visual-cues Codex evals failed: a render with no reference image, criteria that paraphrased the person's words with no source or result, and no `Reference read` lines or token-mapped criteria for a reference. A new harness note near the top of SKILL.md tells Codex to read long files to their last line in parts of at most 200 lines, and in both harnesses whatever context does the writer's work reads the writer's definition and the "Acceptance criteria before ready" and "Visual references" sections first. The writer's own definition tells a Codex writer the same.
+- `quality-loop.md`, "Visual references", now opens with "Recording it in the table": the exact line shapes for a `Reference read` (one per reference image on the session, a screenshot of our page as it is now included, on a correction too), a criterion per reference property naming its token or component (a shadow, a type size and a type weight are three criteria), the reference check after the last edit, and, with no reference, a criterion quoting the person's words and never a render. Criterion lines sit above `### Checks`.
+- Eval fixtures: the stand-in screenshot tool read a CSS file's `@import` line as part of the first selector and silently dropped that rule, so a card that imported the tokens rendered with no shadow; it now strips `@import` lines and comments. The stand-in catalog names the selected-state contract the renderer and graders already used (`aria-selected="true"` or `is-selected`). The hover and selected graders accept a grouped selector (`.meeting-card:hover, .meeting-card:focus-visible { ... }`), which applies the same token on hover, and the outside-product criteria grader fails only when one of its four required criteria lacks a token, not when another criterion records something the design system has no token for.
+- Coverage: a new contract test file (`test_vibe_codex_reading_contract.py`, 8 cases, all failing on 1.0.44). Codex evals for the four visual-cues cases, one run each: 0 of 4 on 1.0.44, 4 of 4 here. Claude (`claude plugin eval`, Opus, one run each): 1 of 4 on 1.0.44, 3 of 4 here; `pm-two-screenshot-page` still fails its criteria grader on Claude because in that case Claude opened no plugin file in any run, on 1.0.44 or here.
+
 ### vibe v1.0.45
 
 #### Fixed
