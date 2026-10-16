@@ -261,7 +261,11 @@ stylesheet it loads or inlines and, in each, its `:root` and `.dark` (or
 bundled token that delivers the property as `var(--token)`; never a raw
 `rgb()`, hex or pixel value, a page-local custom property re-declaring a
 bundled token's value, or your own dark override of a value the token's
-`.dark` block defines. Only a token the surface genuinely lacks is logged,
+`.dark` block defines. Dark mode comes from the bundled tokens' `.dark`
+values, so the surface's own CSS adds no `.dark` or `prefers-color-scheme`
+rule (`guardrails.md`, "Tokens and styling": no ad-hoc dark-mode overrides);
+a theme that reads wrong is fixed by choosing the token that delivers it in
+both themes. Only a token the surface genuinely lacks is logged,
 one line per token with the evidence of the check:
 `Engineering needed (token not bundled): <surface>; <token>; checked <each stylesheet and block searched>; uses <the token's exact value>`.
 That property alone uses the token's exact value with the token cited beside

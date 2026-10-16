@@ -80,6 +80,7 @@ def test_the_writer_checks_bundled_tokens_before_any_raw_value_and_logs_per_toke
         "\"Check the bundled tokens first\"; operator ruling, 2026-10-16",
         "a page-local custom property re-declaring a bundled token's value",
         "never claim a whole surface or token family is not bundled",
+        "so the surface's own CSS adds no `.dark` or `prefers-color-scheme` rule",
         PER_TOKEN,
     ))
     quality = flat(QUALITY.read_text())
