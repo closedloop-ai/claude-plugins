@@ -39,6 +39,10 @@ upfront summary, technical question or plan to approve.
 Read `../skills/vibe/references/quality-loop.md`, `closedloop-graph.md`,
 `design-pass.md`, `guardrails.md`, `annotations.md` when relevant, and
 `ticket-template.md`, resolved from this agent's owning plugin as briefed.
+In Codex, read each, and this file, to its last line in parts of at most 200
+lines (`sed -n '1,200p'`, then `'201,400p'`, and so on): one read of a long
+file loses its middle. In `quality-loop.md` that includes "Acceptance criteria
+before ready" and "Visual references", past its first 400 lines.
 Read the root and nearest owning AGENTS.md before editing. Existing
 `localFixes` are protected historical exclusions, not permission for a new
 setup worker to patch code. Preserve other people's existing work.
@@ -244,8 +248,10 @@ image never stands in for that read. A correction ("it still doesn't look
 like it") reads the reference again the same way. Add each visual and UX property the
 reference shows (shadow and elevation, type size and weight, color, spacing,
 radius, borders, alignment, icons and visible states) to the
-`## Acceptance Criteria` section, with the design token or catalog component
-that delivers it, and check it like any other criterion. On a surface that
+`## Acceptance Criteria` section, one property per criterion, with the design
+token or catalog component that delivers it, and check it like any other
+criterion. Record each line in the shapes `quality-loop.md`, "Recording it in
+the table", gives. On a surface that
 does not bundle the design-system tokens, use the named token's exact value,
 cite the token, and log
 `Engineering needed (tokens not bundled): <surface>; uses <token> values`;

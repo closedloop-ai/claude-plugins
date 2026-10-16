@@ -55,7 +55,8 @@ CSS
 
 - `Card`: a surface. Elevation `--shadow-none`, `--shadow-card` (resting) or
   `--shadow-raised` (hover or dragged). Radius `--radius-lg`. Selected state
-  uses `--border-selected` and the `CheckBadge` component.
+  (`aria-selected="true"` or the `is-selected` class) uses `--border-selected`
+  and the `CheckBadge` component.
 - `CheckBadge`: the small accent check shown on a selected item.
 - `Heading`: sizes `--text-md`, `--text-lg`, `--text-xl`; weights
   `--weight-regular`, `--weight-medium`, `--weight-bold`.
@@ -135,7 +136,7 @@ def font(size: int, weight: str | None) -> ImageFont.FreeTypeFont:
 def render(html_path: Path, out: Path, width: int, state: str | None) -> None:
     root = html_path.resolve().parents[1]
     table = tokens(root)
-    css = html_path.with_suffix(".css").read_text()
+    css = re.sub(r"/\*.*?\*/|@import[^;]*;", "", html_path.with_suffix(".css").read_text(), flags=re.S)
     rules = styles(css, table, state)
     elements = ELEMENT.findall(html_path.read_text())
     box = rules.get(elements[0][1].split()[0], {})

@@ -65,6 +65,19 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 
 ## Harness notes
 
+- Codex reads files through shell output, which keeps the start and end of a
+  long file and drops its middle; one read of this file loses the build loop.
+  Read this file, each agent file and each reference to its last line, in
+  parts of at most 200 lines (`sed -n '1,200p'`, then `'201,400p'`, and so
+  on), never with one `cat`. `grep -n '^#'` on a file gives a named
+  section's lines.
+- In both harnesses, whatever context does the writer's work, a spawned
+  `vibe-change-worker` or this one when it is told to do that work itself,
+  reads all of `../../agents/vibe-change-worker.md` and the "Acceptance
+  criteria before ready" and "Visual references" sections of
+  `references/quality-loop.md` (both past its first 400 lines) before it
+  plans or builds, and follows them: they set what the session decision table
+  records and when a render is allowed.
 - Codex: invoke as `$vibe`. Workers are this plugin's agents in `agents/`
   (`../../agents/<name>.md` from this file). Codex cannot load them as
   registered agents, so spawn a subagent with the file's body as its
