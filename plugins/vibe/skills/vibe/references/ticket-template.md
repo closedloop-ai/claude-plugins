@@ -58,6 +58,13 @@ publication, and the same ticket worker verifies completeness and assignment.
   `- [ ] Engineering needed (forbidden path): <path or area>; why: <need>`;
   the same path or area logged again is the same item. Never in the Handoff
   section, and never routed to the person running the session.
+- Engineering decisions: each `Engineering decision` entry the change log
+  records (a named mechanism the session swapped, or a handoff finding that a
+  mechanism, a one-way door, or an unratified or conflicting decision needs a
+  human decision) goes once at the end of the Engineering checklist as
+  `- [ ] Engineering decision: <question>; built: <what the session built>; evidence: <files, records or finding>`.
+  Never in the Handoff section, and never routed to the person running the
+  session.
 - Compile-only v1.0 repairs: each file in the handoff inventory's
   `compileOnlyV1Repairs` goes once at the end of the Engineering checklist as
   `- [ ] Check compile-only repair to v1.0: <file>; confirm only prop, import or type changes and no visual change`
@@ -75,7 +82,7 @@ publication, and the same ticket worker verifies completeness and assignment.
 | Handoff | `vibe-ticket-worker` | handoff |
 | Design Review | `vibe-ticket-worker` | handoff, from verified final code/publication and actual design evidence |
 | Grading | `vibe-ticket-worker` | handoff, copied unchanged from this template |
-| Engineering checklist | `vibe-ticket-worker` | session start; handoff appends engineering conflicts, forbidden-path needs and compile-only v1.0 repairs |
+| Engineering checklist | `vibe-ticket-worker` | session start; handoff appends engineering conflicts, forbidden-path needs, compile-only v1.0 repairs and engineering decisions |
 
 ## Body
 

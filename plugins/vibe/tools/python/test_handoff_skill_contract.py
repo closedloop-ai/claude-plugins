@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from vibe_contract_text import section
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
@@ -27,14 +29,6 @@ def test_final_publication_keeps_input_readiness_distinct_from_coverage() -> Non
     for required in ("main-sync-inputs", "mainSyncValidation", "same actor", "retained reports",
                      "requiredE2eComplete", "not test authority"):
         assert required in upload, required
-
-
-def section(text: str, heading: str) -> str:
-    """The section under `heading`, with line wrapping collapsed to single spaces."""
-    start = text.index(heading)
-    rest = text[start + len(heading) :]
-    end = rest.find("\n## ")
-    return re.sub(r"\s+", " ", rest if end == -1 else rest[:end])
 
 
 def test_behavior_answers_go_to_the_change_worker_before_the_ticket() -> None:

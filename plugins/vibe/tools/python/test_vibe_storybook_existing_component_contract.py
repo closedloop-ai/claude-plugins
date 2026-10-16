@@ -24,6 +24,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from vibe_contract_text import agent, flat, paragraph
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 AGENTS = PLUGIN_ROOT / "agents"
@@ -37,22 +39,6 @@ README = PLUGIN_ROOT / "README.md"
 RULING = "design ruling, 2026-10-15"
 CANONICAL = "never retitles, re-tags or moves its existing story file"
 FROZEN = "A v1.0 story file is frozen and never edited"
-
-
-def flat(text: str) -> str:
-    return re.sub(r"\s+", " ", text)
-
-
-def paragraph(text: str, marker: str) -> str:
-    """The blank-line-delimited paragraph or list item block containing `marker`, flattened."""
-    for block in re.split(r"\n\s*\n|\n(?=\d+\. )|\n(?=- )", text):
-        if marker in flat(block):
-            return flat(block)
-    raise AssertionError(marker)
-
-
-def agent(name: str) -> str:
-    return (AGENTS / f"{name}.md").read_text()
 
 
 def test_existing_components_come_first_in_the_placement_owners_decision_order() -> None:

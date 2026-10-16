@@ -59,7 +59,9 @@ new Storybook components and the endings line in a new session's first
 reply), are the only other messages, and none of them waits.
 Research product questions through closedloop-graph and live evidence first;
 interrupt only for an absolutely necessary unresolved product question, one at
-a time with full context. Never re-ask a settled decision.
+a time with full context. Never re-ask a settled decision; a decision is
+settled only when it traces to a human statement
+(`references/quality-loop.md`, "Communication and product questions").
 
 This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 

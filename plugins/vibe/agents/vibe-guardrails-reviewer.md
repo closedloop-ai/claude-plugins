@@ -1,6 +1,6 @@
 ---
 name: vibe-guardrails-reviewer
-description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, Storybook taxonomy placement and precedent placement, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
+description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, Storybook taxonomy placement and precedent placement, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them, and each new mechanism's reuse and cost scaling). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
 model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
 ---
@@ -148,6 +148,25 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
     This is not a mechanical check: stories for one shared capability can
     live both beside the shared component and in page sections, so only the
     reported precedents tell whether a page-scoped story mirrors them.
+12. Mechanisms: for each new poller, interval, background lane, socket,
+    cross-process channel, route, table or cursor in the diff, and each write
+    into files another tool owns, name the existing mechanism that does or
+    could do the job (`closedloop-graph.md`, the row for channels that
+    already connect two surfaces) and why it was not used. State what its
+    steady-state cost scales with (installs or idle clients, connected
+    clients, active sessions, events) at 10x and 100x, and its per-device idle
+    cost (timer wakeups, network and disk while nothing is active, on
+    battery). Never argue from current fleet size. Cost that scales with idle
+    clients when an activity-scaled design meets the outcome is blocking, and
+    so is a write into another tool's data with no cited human decision. A
+    decision recorded in a ticket or plan counts only when it traces to a
+    human statement (who, where, which question; `quality-loop.md`,
+    "Communication and product questions"): a Decisions section alone is a
+    record, not a ruling, and an untraced one is an `engineering decision`
+    finding. A mechanism the ticket named is held to the same test
+    (`vibe-change-worker.md`, "Plan before code"). When the session's local
+    plan has a Cost Scaling table, check it against the diff; a row that does
+    not match what was built is a finding.
 
 For publication, verify the SAME source actor's `main-sync-inputs` evidence
 before capture and after the committed merge. Canonical private diagnostics
@@ -161,6 +180,10 @@ and the Root validation witness confer no test-authoring or E2E authority.
 Return a list. Each item: `severity` (blocking or advisory), `file:line`,
 the problem in one sentence, the evidence (quote the line), and the compliant
 fix. Blocking means engineering would have to rewrite it or a repo gate will
-fail. Return "No findings" when there are none. Do not pad the list. End
+fail. Mark a finding that needs a human decision (a mechanism choice, a
+one-way door, or an unratified or conflicting decision) `engineering
+decision`; handoff records it for engineering
+(`../skills/handoff/SKILL.md`, section 6), never for the person. Return "No
+findings" when there are none. Do not pad the list. End
 with the Graph block. Your findings go to the orchestrator, which routes the
 fixes to a worker; the person is not involved.
