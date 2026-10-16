@@ -10,7 +10,7 @@ import { readInput } from "./contracts.js";
 import { verifyExternalCi } from "./main-sync-ci.js";
 import { isPublisherContext } from "./record-context.js";
 import { committedInputs, executeChecks, checkRecipe, inspectInputInventory } from "./main-sync-checks.js";
-import { prepareInputOrigins } from "./main-sync-input-origin.js";
+import { prepareInputOrigins, reusableInputOrigin } from "./main-sync-input-origin.js";
 import { storedRecipe, verifyRecipeWitness, recipeIdentity } from "./main-sync-validation-recipe.js";
 import { MainSyncError, mainSyncInputSchema, mainSyncReceiptSchema, mainSyncStateSchema, type MainSyncReceipt } from "./main-sync-contracts.js";
 import { digest, requireSyncReceipt, saveSyncReceipt, syncContext, syncLocation, readPrivateJson, MAIN_SYNC_FILE } from "./main-sync-state.js";
@@ -41,7 +41,7 @@ export function prepareMainSyncInputs(raw: unknown) {
   if (previous && (!value.context.mainSyncTransactionId || previous.transactionId !== value.context.mainSyncTransactionId)) {
     throw new MainSyncError("Input readiness requires the current captured transaction", "NEEDS_CHANGE");
   }
-  const inputs = prepareInputOrigins(value, identity, identity.producers);
+  const inputs = reusableInputOrigin(value, identity, prior?.inputs) ?? prepareInputOrigins(value, identity, identity.producers);
   const state = { version: 1 as const, phase: "input-readiness" as const,
     transactionId: previous?.transactionId ?? prior?.transactionId ?? randomUUID(), worktree: value.place.root,
     branch: value.place.branch, operator: { id: value.place.session.operator.id, email: value.place.session.operator.email },

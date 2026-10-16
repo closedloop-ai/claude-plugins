@@ -7,7 +7,7 @@ import type { ReportExecution } from "./main-sync-report-execution.js";
 import { rejectReportReplay } from "./main-sync-report-execution.js";
 import { referenceMatches, type InputReference, type NativeReferenceEnvironment } from "./main-sync-input-references.js";
 import { isLocalPlanPath } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
-import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
+import { committedFiles, committedWorkspace } from "./main-sync-committed-tree.js";
 
 const packageSchema = z.object({ scripts: z.record(z.string()).optional() }).passthrough();
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -276,8 +276,8 @@ function possibleFiles(root: string, file: string, context: Extract<ReportCwd, {
     ? { ...context.constraints, value: join(context.constraints.value, context.suffix, file), base: "runtime" as const, possibleOnly: true }
     : { kind: "path" as const, value: join(context.suffix, file), base: "runtime" as const,
       possibleOnly: true, unknownPrefix: false, uncertainTerms: [] };
-  const files = git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0")
-    .filter(path => path && accepts(path) && !isLocalPlanPath(path)
+  const files = committedFiles(root)
+    .filter(path => accepts(path) && !isLocalPlanPath(path)
       && referenceMatches(root, "", reference, [path]));
   if (files.length > 4096) throw unresolved("possible committed entry bound");
   return files;
@@ -333,13 +333,7 @@ function selectedConfigs(root: string, argv: readonly string[], context: ReportC
 
 /** Exact package filters and actual Turbo task packages reuse committed manifest identity, not guessed selectors. */
 export function workspaceDirectory(root: string, name: string) {
-  const files = git(root, ["ls-tree", "-r", "--name-only", "HEAD", "--", "apps", "packages", "containers"])
-    .split("\n").filter(file => /^(?:apps|packages|containers)\/[^/]+\/package\.json$/.test(file));
-  const matches = files.filter(file => {
-    const data = z.object({ name: z.string().optional() }).passthrough().parse(JSON.parse(readFileSync(join(root, file), "utf8")));
-    return data.name === name;
-  });
-  return matches.length === 1 ? dirname(matches[0]!) : undefined;
+  return committedWorkspace(root, name);
 }
 
 /** Only actual explicit false options exclude possible lifecycle execution; ambient config never supplies inactivity. */
@@ -387,8 +381,7 @@ function scriptsAt(directory: string) {
 
 /** Current finite workspace patterns use tracked manifests; unsupported selection keeps the bounded possible set. */
 function workspaceDirectories(root: string, workspace: string) {
-  const files = git(root, ["ls-tree", "-r", "--name-only", "HEAD"]).split("\n")
-    .filter(file => file.endsWith("/package.json") || file === "package.json");
+  const files = committedFiles(root).filter(file => file.endsWith("/package.json") || file === "package.json");
   if (files.length > 4096) throw unresolved("workspace manifest bound");
   const config = z.object({ packages: z.array(z.string()).optional() }).passthrough().parse(parse(readFileSync(workspace, "utf8")));
   const patterns = config.packages ?? [];
@@ -470,7 +463,7 @@ export function reportLoaderEntries(execution: ReportExecution, importer: string
   let files: string[];
   if (typeof target === "string") files = targetFiles(execution.root, target, context);
   else {
-    files = git(execution.root, ["ls-tree", "-r", "--name-only", "HEAD"]).split("\n")
+    files = committedFiles(execution.root)
       .filter(file => MODULE.test(file) && !isLocalPlanPath(file)
         && referenceMatches(execution.root, importer, target, [file]));
     if (files.length > 4096) throw unresolved("possible committed loader bound");

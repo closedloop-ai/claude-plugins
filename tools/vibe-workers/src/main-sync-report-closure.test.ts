@@ -7,6 +7,7 @@ import { verifyReportProducerInputs } from "./main-sync-report-inputs.js";
 import { verifyPrivateInput } from "./main-sync-private-inputs.js";
 import type { ReportExecution } from "./main-sync-report-execution.js";
 import { fixture } from "./test-fixtures.js";
+import { probeNativeGit } from "./main-sync-test-fixtures.js";
 
 const fixtures: ReturnType<typeof fixture>[] = [];
 afterEach(() => { for (const value of fixtures.splice(0)) value.cleanup(); });
@@ -124,4 +125,25 @@ describe("selected closure scale and evidence boundaries", () => {
     expect(readFileSync(join(value.worktree, ".closedloop-ai/vibe-plans/checkpoint.md"), "utf8"))
       .toBe("private checkpoint must remain unchanged\n");
   });
+
+  it.each([false, true])("reads the committed tree once for 400 workspace imports (retained reader: %s)", retainedReader => {
+    // ISS-12305 readiness: the next-api walk spawned git 8,822 times (a full ls-tree per @repo import, one per module) and took 615 s.
+    const value = setup();
+    for (let index = 0; index < 400; index++) {
+      value.write(`apps/api/app/route-${String(index).padStart(3, "0")}.ts`, "export { value } from '@repo/shared';\n");
+    }
+    value.write("packages/shared/package.json", JSON.stringify({ name: "@repo/shared", main: "index.ts" }));
+    value.write("packages/other/package.json", JSON.stringify({ name: "@repo/other" }));
+    value.write("packages/shared/index.ts", retainedReader
+      ? "import {readFileSync} from 'node:fs'; export const value = readFileSync('apps/desktop/playwright-report-e2e/results.json','utf8');\n"
+      : "export const value = 1;\n");
+    value.commit();
+    const probe = probeNativeGit(value);
+    try {
+      const walk = () => verifyReportProducerInputs(value.worktree, value.worktree, "origin-producer", ["apps/api/app"]);
+      if (retainedReader) expect(walk).toThrow(/Selected committed reader consumes retained report evidence: packages\/shared\/index.ts/);
+      else expect(walk).not.toThrow();
+      expect(probe.calls().length).toBeLessThanOrEqual(8);
+    } finally { probe.restore(); }
+  }, 120000);
 });

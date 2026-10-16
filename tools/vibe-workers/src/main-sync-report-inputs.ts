@@ -4,6 +4,7 @@ import { rejectReportReplay, reportExecutionSchema, type ReportExecutionOwner as
 import { reportCommandEntries } from "./main-sync-report-command.js";
 import { verifyReportClosure } from "./main-sync-report-closure.js";
 import { committedIdentity } from "./main-sync-state.js";
+import { withCommittedTree } from "./main-sync-committed-tree.js";
 import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
 
 /** Actual structured recipe argv is checked again; caller text cannot authorize replay or retained-result verdicts. */
@@ -20,8 +21,7 @@ export function verifyReportExecution(retainedRoot: string, root: string, owner:
   const execution = reportExecutionSchema.parse({ root, retainedRoot, owner, argv: [...argv], cwd,
     headSha: identity.headSha, treeSha: identity.treeSha, ...(selection ? { tasks: selection.tasks } : {}) });
   rejectReportReplay(execution.argv.join(" "));
-  const entries = reportCommandEntries(execution);
-  verifyReportClosure(execution, entries);
+  withCommittedTree(root, () => verifyReportClosure(execution, reportCommandEntries(execution)));
   const after = committedIdentity(root);
   if (after.headSha !== execution.headSha || after.treeSha !== execution.treeSha) {
     throw new MainSyncError("Selected report execution source changed during assessment", "NEEDS_CHANGE");
@@ -35,7 +35,8 @@ export function verifyReportProducerInputs(retainedRoot: string, root: string, o
     .filter(file => /\.[cm]?[jt]sx?$/.test(file));
   const execution = reportExecutionSchema.parse({ root, retainedRoot, owner, argv: ["declared-producer-inputs"], cwd: root,
     headSha: identity.headSha, treeSha: identity.treeSha });
-  verifyReportClosure(execution, files.map(file => ({ file, context: { kind: "known" as const, path: root }, argv: [] })));
+  withCommittedTree(root, () => verifyReportClosure(execution,
+    files.map(file => ({ file, context: { kind: "known" as const, path: root }, argv: [] }))));
   const after = committedIdentity(root);
   if (after.headSha !== identity.headSha || after.treeSha !== identity.treeSha) {
     throw new MainSyncError("Declared producer inputs changed during report assessment", "NEEDS_CHANGE");

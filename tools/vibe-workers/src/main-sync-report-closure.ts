@@ -3,7 +3,6 @@ import { builtinModules } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import ts from "typescript";
 import { z } from "zod";
-import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
 import { isLocalPlanPath } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
 import { MainSyncError } from "./main-sync-contracts.js";
 import { readInputModule, isInputModulePath, inputModuleReferences, referenceMatches, inputCallName, inputBuiltin,
@@ -14,6 +13,7 @@ import { reportChildEntries, reportLoaderEntries, reportRelativeCwd, reportShell
 import type { ReportExecution } from "./main-sync-report-execution.js";
 import { rejectReportReplay } from "./main-sync-report-execution.js";
 import { isolatedReportArgument } from "./main-sync-report-fixture.js";
+import { committedSet, withCommittedTree } from "./main-sync-committed-tree.js";
 
 const MODULE_EXTENSIONS = ["", ".ts", ".tsx", ".mjs", ".js", ".cts", ".mts", "/index.ts", "/index.js"];
 const BUILTINS = new Set(builtinModules.flatMap(name => [name, `node:${name}`]));
@@ -24,7 +24,11 @@ const packageSchema = z.object({ name: z.string(), dependencies: z.record(z.stri
 
 /** Only the actual selected entry closure is an execution claim; unrelated capable code stays capability evidence. */
 export function verifyReportClosure(execution: ReportExecution, entries: readonly ReportCommandEntry[]) {
-  const tracked = new Set(git(execution.root, ["ls-tree", "-r", "--name-only", "HEAD"]).split("\n").filter(Boolean));
+  withCommittedTree(execution.root, () => walkReportClosure(execution, entries));
+}
+
+function walkReportClosure(execution: ReportExecution, entries: readonly ReportCommandEntry[]) {
+  const tracked = committedSet(execution.root);
   const pending = [...entries];
   const seen = new Set<string>();
   const contexts = new Set<string>();

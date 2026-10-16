@@ -5,6 +5,7 @@ import ts from "typescript";
 import picomatch from "picomatch";
 import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
 import { isLocalPlanPath } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
+import { isCommittedFile } from "./main-sync-committed-tree.js";
 
 const MODULE_PATH = /\.(?:[cm]?[jt]sx?|json)$/;
 const CONFIG_PATH = /(?:^|\/)(?:tsconfig[^/]*\.json|(?:vitest|playwright|storybook|next|source)\.config\.[cm]?[jt]s|\.storybook\/main\.[cm]?[jt]s)$/;
@@ -47,7 +48,7 @@ export function committedInputReferences(root: string, matches: (file: string, r
 /** The global private walk and selected report walk share the same syntax/binding owner. */
 export function readInputModule(root: string, file: string, environment?: NativeReferenceEnvironment) {
   if (!isInputModulePath(file)) throw new Error("Input module is not a public committed source path");
-  if (!git(root, ["ls-tree", "HEAD", "--", file])) throw new Error("Selected input module is not committed");
+  if (!isCommittedFile(root, file)) throw new Error("Selected input module is not committed");
   return parseInputModule(root, file, environment);
 }
 
