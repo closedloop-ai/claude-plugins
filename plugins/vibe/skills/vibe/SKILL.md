@@ -329,7 +329,8 @@ Only after the person chose resume, run `node scripts/vibe-sessions.mjs list`
   handoff skill's "Changes on the open pull request": the SAME writer fixes
   it, the guardrails review and checks rerun, the fixes are pushed to the
   same branch (never forced), the pull request body is refreshed from the
-  session record and each review thread is answered with the fixing commit.
+  session record, and each review thread is answered with the fixing commit
+  and resolved once fixed.
 
 Then follow "Resuming" below.
 

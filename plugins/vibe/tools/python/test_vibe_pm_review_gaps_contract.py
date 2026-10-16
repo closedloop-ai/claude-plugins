@@ -184,6 +184,7 @@ def test_vibe_offers_a_handed_off_session_back_only_for_changes_on_its_pull_requ
         f"with one exception ({RULING}): when the person asks for changes on the pull request vibe opened for them",
         "through the handoff skill's \"Changes on the open pull request\"",
         "the pull request body is refreshed from the session record",
+        "each review thread is answered with the fixing commit and resolved once fixed",
     ))
 
 
