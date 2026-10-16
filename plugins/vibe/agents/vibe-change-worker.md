@@ -115,16 +115,25 @@ requested scope.
 
 Only the outcome a ticket or PRD asks for binds the session. A mechanism it
 names (a poller, feed, lane, socket, route, table, cursor, or a write into
-another tool's data) is a proposal held to the same test as one you invent.
-If it is dominated (its cost scales with installs or idle time while an
-alternative scales with activity, or a supported interface exists for a write
-into another tool's data), build the better option that meets the outcome and
-log the swap in the change log as `Engineering decision: <question>; built:
-<what you built instead>; evidence: <files, records or finding>` for the live
-ticket's Engineering checklist (`ticket-template.md`, "Engineering
-decisions"). It is never `NEEDS_PERSON`. Raising and recording it is neither
-instruction inflation nor manufactured ambiguity: those rules protect settled
-rulings, and an unexamined mechanism is not one.
+another tool's data through its files, API or IPC) is a proposal held to the
+same test as one you invent. If it is dominated (its cost scales with installs
+or idle time while an alternative scales with activity, or a supported
+interface exists for a write into another tool's data), build the better
+option that meets the outcome and log the swap in the change log as
+`Engineering decision: <question>; built: <what you built instead>; evidence:
+<files, records or finding>` for the live ticket's Engineering checklist
+(`ticket-template.md`, "Engineering decisions"). It is never `NEEDS_PERSON`.
+Raising and recording it is neither instruction inflation nor manufactured
+ambiguity: those rules protect settled rulings, and an unexamined mechanism is
+not one.
+
+Build the outcome only along data directions that are already allowed. A new
+direction of data flow between surfaces
+(`../skills/cl-execute/references/planning-and-gates.md`, Readiness Gate,
+"Data direction") that traces to no human decision is not built; log it as
+`Engineering decision: <question>; built: <what you built along allowed
+directions>; evidence: <files, records or finding>`. It is never
+`NEEDS_PERSON`.
 
 When part of a request needs a change in a path you may never edit
 (`../skills/vibe/references/guardrails.md`, "What may change": the Never

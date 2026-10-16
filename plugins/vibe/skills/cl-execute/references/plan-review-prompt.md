@@ -41,10 +41,11 @@ MECHANISMS (check this as hard as scope exclusions)
 - The requirement is the outcome the ticket asks for. A mechanism the ticket
   names is a proposal, held to the same test as one the plan invented.
 - For every new mechanism (API route, table or column, cursor, poller or
-  background lane, cross-process channel, writes into files another tool
-  owns), name the existing mechanism that already does that job, or could,
-  and why the plan does not use it. New is unjustified until existing is
-  ruled out with evidence; reuse a connection before opening one.
+  background lane, cross-process channel, writes into another tool's data
+  through its files, API or IPC), name the existing mechanism that already
+  does that job, or could, and why the plan does not use it. New is
+  unjustified until existing is ruled out with evidence; reuse a connection
+  before opening one.
 - Cost: fleet size is unknown and growing, so never argue from a device
   count. Judge by what steady-state cost scales with (idle installs,
   connected clients, active sessions, events) at 10x and 100x, and by
@@ -54,7 +55,8 @@ MECHANISMS (check this as hard as scope exclusions)
   meets the outcome.
 - One-way doors (a new data direction between surfaces, a contract installed
   clients will depend on, a write into another tool's data) need a cited
-  human decision; without one, list a human decision item.
+  human decision; without one, list a human decision item. A supported
+  interface for that write lowers the risk but is not the decision.
 
 DECISIONS
 - A "Decisions" section in a ticket or plan is a record, not a ruling. For
@@ -63,6 +65,8 @@ DECISIONS
 - A newer ticket does not supersede an earlier explicit ruling by naming a
   different mechanism; only a statement addressing that ruling does. When
   records disagree, report the conflict; never resolve it by recency.
+- A new data direction between surfaces is allowed only by a traced human
+  decision or approved document; an earlier one restricting it is a conflict.
 - A human decision item about a mechanism, consent, or an unratified or
   conflicting decision is neither instruction inflation nor manufactured
   ambiguity: those rules protect settled rulings, and this is not settled.

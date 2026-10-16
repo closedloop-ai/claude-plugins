@@ -174,6 +174,8 @@ question looks product-shaped. At minimum, this search covers linked PRDs, plans
 - Duplication/conflict: The request is not already done, superseded, covered by an active PR, duplicated by another ticket, or contradicted by linked plans/comments.
 - Validation path: There is a realistic way to test the change locally and in CI, including desktop or visual QA when relevant. For a bug ticket, name the cheap test path that can fail on current main before the fix, or say why none exists and which runtime evidence (for example a `pnpm control` capture) stands in for it. For a behavior-preserving ticket (refactor, move, rename, dependency swap), name the existing tests or captures that can pin current behavior on the base, or the gap `$cl-execute` must fill before moving structure.
 - Safety and risk: The work does not require automatic changes to high-risk areas such as auth, permissions, billing, data deletion, migrations, privacy/security boundaries, release automation, or broad cross-package contracts without explicit human review.
+- Decision provenance: Apply `$cl-execute`'s Decision provenance readiness item (`../cl-execute/references/planning-and-gates.md`, Readiness Gate) to every decision the ticket, its PRDs, and its plans record. An unratified or conflicting decision is `BLOCKED`; use `NOT_APPLICABLE` when none of them records a decision.
+- Data direction: Apply `$cl-execute`'s Data direction readiness item (`../cl-execute/references/planning-and-gates.md`, Readiness Gate) to the minimum credible implementation. A new direction of data flow between surfaces with no traced decision allowing it is `BLOCKED`, a human decision rather than an implementation detail; use `NOT_APPLICABLE` when the work introduces no new direction.
 - Safety fact: When the minimum credible implementation touches auth, permissions, data writes, migrations, or a shared contract, name the one fact the change is safe because of (for example, "the new route resolves the same auth context as the old one for every caller type") and the cheapest code that can prove it: a focused test, a script that calls the real code, or a `pnpm control` capture. `$cl-execute` carries the fact into the plan and proves it by running that code; a prose argument is not a proof. Use `NOT_APPLICABLE` when none of those surfaces change and `UNKNOWN` when they do but no single fact explains why the change is safe.
 
 ## Complexity And Risk
@@ -183,7 +185,7 @@ Classify both complexity and risk:
 - `LOW`: Localized, well-scoped change with direct tests and clear acceptance criteria.
 - `MEDIUM`: Multiple files or modules, but ownership, contracts, and validation are clear.
 - `HIGH`: Cross-surface, cross-package, schema, desktop/web, migration, auth, security, release, or large refactor work; or ambiguous ownership with meaningful regression risk.
-- `EXTREME`: Could cause data loss, security/privacy exposure, billing or permission errors, broad production instability, or requires product/architecture decisions that are not already documented.
+- `EXTREME`: Could cause data loss, security/privacy exposure, billing or permission errors, broad production instability, or requires product/architecture decisions that are not already documented. A decision counts as documented only when it traces to a human statement (who made it, where, and which question it answered); a ticket's or plan's Decisions section alone is a record, not a ruling.
 
 Classify complexity from the minimum coherent implementation that satisfies the ticket, not from the breadth of the existing system being inspected. This is an honest complexity boundary, not a scheduling preference for smaller tickets or separate pull requests. Unchanged dependencies, existing agents/skills, current CI workflows, historical PRs, and validation context do not increase implementation complexity by themselves. A harness-activation change that only registers, links, or dispatches to one unchanged canonical implementation is normally `LOW` or `MEDIUM` even when the underlying system is broad. Multiple files under one ownership boundary with one atomic validation path can still be `MEDIUM`.
 
@@ -317,6 +319,8 @@ Readiness:
 - External API/docs freshness: <PASS | BLOCKED | UNKNOWN | NOT_APPLICABLE> - <official docs URLs/date/version or reason>
 - Duplication/conflict: <PASS | BLOCKED | UNKNOWN> - <reason>
 - Validation path: <PASS | BLOCKED | UNKNOWN> - <reason>
+- Decision provenance: <PASS | BLOCKED | UNKNOWN | NOT_APPLICABLE> - <each recorded decision with who, where, and which question it answered, or the unratified or conflicting one>
+- Data direction: <PASS | BLOCKED | UNKNOWN | NOT_APPLICABLE> - <each new data direction between surfaces and the traced decision that allows it, or none introduced>
 - Safety/risk: <PASS | BLOCKED | UNKNOWN> - <reason>
 - Safety fact: <PASS | UNKNOWN | NOT_APPLICABLE> - <named fact and planned runnable proof, or why none can be named>
 

@@ -39,7 +39,7 @@ def test_the_guardrails_reviewer_checks_each_new_mechanism() -> None:
     item = paragraph(agent("vibe-guardrails-reviewer"), "12. Mechanisms:")
     for required in (
         "each new poller, interval, background lane, socket, cross-process channel, route, table or cursor in the diff",
-        "each write into files another tool owns",
+        "each write into another tool's data (its files, or its API or IPC, such as a method that changes that tool's stored state)",
         "name the existing mechanism that does or could do the job",
         "and why it was not used",
         "(installs or idle clients, connected clients, active sessions, events) at 10x and 100x",

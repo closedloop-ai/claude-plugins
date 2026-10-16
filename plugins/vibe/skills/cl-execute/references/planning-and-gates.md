@@ -53,6 +53,17 @@ Before planning or execution, classify the ticket:
   ticket does not supersede an earlier explicit ruling unless it addresses
   that ruling. When records disagree, report the conflict as a human decision;
   never resolve it by recency or by assuming one author meant to change it.
+- Data direction: does the work introduce a new direction of data flow between
+  surfaces (for example cloud to an installed client, a client into another
+  tool's data, or one service writing into another's store)? A write into
+  another tool's data covers its files and its API or IPC (for example a
+  method that changes that tool's stored state); a supported interface lowers
+  the risk but does not remove the need for a traced human decision. For a new
+  direction, cite the human decision or approved document that allows it:
+  who, where, and which question it answered, per Decision provenance. An
+  earlier document that restricts the direction is a conflict. With no traced
+  decision, the direction is a numbered human decision, not an implementation
+  detail.
 - Latency, staleness, and disclosure contracts: verify exact ratified PRD,
   decision record, or linked owner before approving a plan that promises
   freshness ceilings, analytics lag, stale-but-shown behavior, disclosure, or
@@ -412,7 +423,10 @@ through the [Discovery Routes](../SKILL.md#discovery-routes).
     decision is neither instruction inflation nor manufactured ambiguity:
     those rules protect settled rulings, and a mechanism a ticket names is not
     one. Otherwise never turn the alternative into a
-    question for the operator. Periodic or cross-surface work also gets the
+    question for the operator. Moving a write into another tool's data to a
+    supported interface does not settle whether the write is allowed; that
+    stays the [Readiness Gate](#readiness-gate)'s Data direction item.
+    Periodic or cross-surface work also gets the
     [Cost Scaling](#cost-scaling) table.
 14. One-way-door plans (Proposal Contract Audit `REQUIRED`, a new shared module
     or ownership boundary, or `High-complexity execution override: APPROVED`)
