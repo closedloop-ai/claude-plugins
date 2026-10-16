@@ -325,80 +325,56 @@ def semantic_check(
         if "two-screenshot" in case["name"]:
             compared = compared and bool(re.search(r"(button|tap)", checks, re.I))
         return bool(mapped and read and (compared or name == "criteria-mapped"))
-    asked_to_compare = bool(
-        re.search(r"(can you|please|could you).*(compar|screenshot)", low)
-    )
-    if name == "compared-before-ready":
-        edits, renders, views = render_evidence(
-            trace, r"(?:project-card|meeting-card|signed-in-page)"
+    if name == "checks-log-light-and-dark":
+        lines = [line for line in checks.splitlines() if re.search(r"compar|reference check", line, re.I)]
+        return all(
+            any(re.search(r"\b" + theme + r"\b", line, re.I) and re.search(r"\b(met|not met)\b", line, re.I) for line in lines)
+            for theme in ("light", "dark")
         )
+    if name == "compared-before-ready":
+        calls = [tool_text(t) for t in trace]
+        # Coordinates within a call also handle a sequential shell write/render
+        # or multiple image views in one code-mode invocation.
+        css = r"(?:[^\s\"']*/)?(?:project-card|meeting-card|signed-in-page)\.css"
+        mutation = re.compile(
+            r"(?:Update|Add|Delete) File:\s*"
+            + css
+            + r"|cat\s*>\s*"
+            + css
+            + r"|(?:Path|open)\([\"']"
+            + css
+        )
+        edits = [
+            (i, match.end())
+            for i, text in enumerate(calls)
+            if re.search(r"(apply_patch|write_text|write\(|sed\s+-i|cat\s+>)", text)
+            for match in mutation.finditer(text)
+        ]
+        renders = [
+            (i, match.start())
+            for i, text in enumerate(calls)
+            for match in re.finditer(r"python3?\s+\S*screenshot\.py", text)
+        ]
+        views = [
+            (i, match.start())
+            for i, text in enumerate(calls)
+            for match in re.finditer(r"view_image[^}]*", text)
+            if not re.search(r"images/[12]\.png", match.group())
+        ]
         ordered = bool(
             edits
             and renders
             and views
-            and any(
-                r[:2] > max(edits) and any(v > r[:2] for v in views) for r in renders
-            )
+            and any(r > max(edits) and any(v > r for v in views) for r in renders)
         )
         return (
-            ordered and bool(re.search(r"compar", checks, re.I)) and not asked_to_compare
-        )
-    if name == "rendered-light-and-dark":
-        edits, renders, views = render_evidence(trace, r"return-page")
-
-        def fresh(dark: bool) -> bool:
-            return any(
-                r[:2] > max(edits)
-                and bool(re.search(r"--theme[= ]dark", r[2])) == dark
-                and any(v > r[:2] for v in views)
-                for r in renders
+            ordered
+            and bool(re.search(r"compar", checks, re.I))
+            and not bool(
+                re.search(r"(can you|please|could you).*(compar|screenshot)", low)
             )
-
-        logged = all(
-            re.search(theme + r"[^\n]*(compar|reference check)", checks, re.I)
-            or re.search(r"(compar|reference check)[^\n]*" + theme, checks, re.I)
-            for theme in ("light", "dark")
         )
-        return bool(edits) and fresh(False) and fresh(True) and bool(logged) and not asked_to_compare
     raise ValueError("Unmapped Claude grader: " + name)
-
-
-def render_evidence(
-    trace: list[dict[str, Any]], page: str
-) -> tuple[list[tuple[int, int]], list[tuple[int, int, str]], list[tuple[int, int]]]:
-    """Positions of CSS edits, screenshot renders (with their arguments) and image views.
-
-    Coordinates within a call also handle a sequential shell write/render or
-    multiple image views in one code-mode invocation.
-    """
-    calls = [tool_text(t) for t in trace]
-    css = r"(?:[^\s\"']*/)?" + page + r"\.css"
-    mutation = re.compile(
-        r"(?:Update|Add|Delete) File:\s*"
-        + css
-        + r"|cat\s*>\s*"
-        + css
-        + r"|(?:Path|open)\([\"']"
-        + css
-    )
-    edits = [
-        (i, match.end())
-        for i, text in enumerate(calls)
-        if re.search(r"(apply_patch|write_text|write\(|sed\s+-i|cat\s+>)", text)
-        for match in mutation.finditer(text)
-    ]
-    renders = [
-        (i, match.start(), match.group())
-        for i, text in enumerate(calls)
-        for match in re.finditer(r"python3?\s+\S*screenshot\.py[^;&|\n\"]*", text)
-    ]
-    views = [
-        (i, match.start())
-        for i, text in enumerate(calls)
-        for match in re.finditer(r"view_image[^}]*", text)
-        if not re.search(r"images/[12]\.png", match.group())
-    ]
-    return edits, renders, views
 
 
 def deterministic(

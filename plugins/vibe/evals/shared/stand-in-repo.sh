@@ -20,8 +20,9 @@ There is no Storybook, control skill or running app here. To see a component
 as an image, render it the way Storybook would show it:
 `python3 tools/screenshot.py src/<name>.html <out.png> [--width N] [--state hover|selected] [--theme light|dark]`.
 Every surface here supports light and dark: `tokens.css` defines each token in
-`:root` and its dark value in `.dark`, and `--theme dark` renders that theme
-the way the Storybook theme toolbar would.
+`:root` and its dark value in `.dark`, and every page, a generated one
+included, gets the `dark` class from the viewer's system theme. `--theme dark`
+renders that theme the way the Storybook theme toolbar would.
 MD
   cat > session/design-system/tokens.css <<'CSS'
 :root {

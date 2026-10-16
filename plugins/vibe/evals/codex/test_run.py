@@ -42,7 +42,7 @@ def test_every_model_grader_has_a_deterministic_or_wording_route() -> None:
         "criteria-recorded",
         "criteria-mapped",
         "compared-before-ready",
-        "rendered-light-and-dark",
+        "checks-log-light-and-dark",
     }
     for case in runner.cases():
         for path in (case["source"] / "graders").glob("*.md"):
@@ -247,27 +247,29 @@ def test_wording_model_only_runs_after_deterministic_pass(
     assert all(args[-2] == "--" for args in calls)
 
 
-def test_light_and_dark_need_fresh_renders_views_and_logged_checks(tmp_path: Path) -> None:
+def test_light_and_dark_need_a_logged_check_with_a_result_per_theme(tmp_path: Path) -> None:
     case = next(
         c for c in runner.cases() if c["name"] == "product-manager-static-page-light-and-dark"
     )
     table = tmp_path / "session/.closedloop-ai/decision-tables/session.md"
     table.parent.mkdir(parents=True)
-    logged = "## Acceptance Criteria\n### Checks\nR-1, AC-1: reference check (light), compared light.png: met\nR-1, AC-1: reference check (dark), compared dark.png: met\n"
-    table.write_text(logged)
-    edit = {"name": "apply_patch", "input": "Update File: session/src/return-page.css"}
-    light = {"name": "exec_command", "arguments": "python3 tools/screenshot.py src/return-page.html light.png"}
-    dark = {"name": "exec_command", "arguments": "python3 tools/screenshot.py src/return-page.html dark.png --theme dark"}
-    view = {"name": "view_image", "arguments": "out.png"}
 
-    def grade(trace, reply="Ready to look at."):
-        return runner.semantic_check("rendered-light-and-dark", case, reply, tmp_path, trace)
+    def grade(checks: str) -> bool:
+        table.write_text("## Acceptance Criteria\n### Checks\n" + checks)
+        return runner.semantic_check("checks-log-light-and-dark", case, "Ready.", tmp_path, [])
 
-    assert grade([edit, light, view, dark, view])
-    assert not grade([edit, light, view])
-    assert not grade([edit, dark, view])
-    assert not grade([light, dark, view, edit])
-    assert not grade([edit, light, dark])
-    assert not grade([edit, light, view, dark, view], "Could you compare the screenshots?")
-    table.write_text(logged.split("R-1, AC-1: reference check (dark)")[0])
-    assert not grade([edit, light, view, dark, view])
+    light = "R-1, AC-1: reference check (light), compared light.png with images/1.png: met\n"
+    dark = "R-1, AC-1: reference check (dark), compared dark.png with images/1.png: met\n"
+    assert grade(light + dark)
+    assert not grade(light)
+    assert not grade(dark)
+    assert not grade(light + "Dark mode looks fine.\n")
+    assert grade(light + dark.replace(": met", ": not met yet, title too dim"))
+    case_checks, _ = runner.deterministic(
+        case,
+        "Ready.",
+        tmp_path,
+        [{"name": "exec_command", "arguments": "python3 tools/screenshot.py src/return-page.html light.png"}],
+    )
+    assert not next(c for c in case_checks if c["grader"] == "renders-dark")["passed"]
+    assert not next(c for c in case_checks if c["grader"] == "renders-both-themes")["passed"]
