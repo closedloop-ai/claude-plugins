@@ -146,7 +146,11 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
     battery). Never argue from current fleet size. Cost that scales with idle
     clients when an activity-scaled design meets the outcome is blocking, and
     so is a write into another tool's data with no cited human decision. A
-    mechanism the ticket named is held to the same test
+    decision recorded in a ticket or plan counts only when it traces to a
+    human statement (who, where, which question; `quality-loop.md`,
+    "Communication and product questions"): a Decisions section alone is a
+    record, not a ruling, and an untraced one is an `engineering decision`
+    finding. A mechanism the ticket named is held to the same test
     (`vibe-change-worker.md`, "Plan before code"). When the session's local
     plan has a Cost Scaling table, check it against the diff; a row that does
     not match what was built is a finding.

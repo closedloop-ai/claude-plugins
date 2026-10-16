@@ -47,6 +47,8 @@ def test_the_guardrails_reviewer_checks_each_new_mechanism() -> None:
         "Never argue from current fleet size.",
         "Cost that scales with idle clients when an activity-scaled design meets the outcome is blocking",
         "a write into another tool's data with no cited human decision",
+        "A decision recorded in a ticket or plan counts only when it traces to a human statement (who, where, which question;",
+        "a Decisions section alone is a record, not a ruling, and an untraced one is an `engineering decision` finding.",
         "A mechanism the ticket named is held to the same test",
         "When the session's local plan has a Cost Scaling table, check it against the diff",
     ):
