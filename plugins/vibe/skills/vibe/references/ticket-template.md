@@ -65,6 +65,14 @@ publication, and the same ticket worker verifies completeness and assignment.
   `- [ ] Engineering decision: <question>; built: <what the session built>; evidence: <files, records or finding>`.
   Never in the Handoff section, and never routed to the person running the
   session.
+- Known main failures: each entry of handoff's `mainPreexistingFailures` (a
+  check that also fails on the main the session captured; `quality-loop.md`,
+  "Failures already on main"; operator ruling, 2026-10-16) goes once at the
+  end of the Engineering checklist as
+  `- [ ] Known main failure: <check>; fails on captured main <mainSha>; evidence: <first error line of the main run's log>; exit <main exit code> on captured main, <session exit code> on the session commit`.
+  Not on the Handoff section's Pre-existing failures line, never in both, and
+  never routed to the person running the session. It does not block
+  assignment or the pull request.
 - Compile-only v1.0 repairs: each file in the handoff inventory's
   `compileOnlyV1Repairs` goes once at the end of the Engineering checklist as
   `- [ ] Check compile-only repair to v1.0: <file>; confirm only prop, import or type changes and no visual change`
@@ -82,7 +90,7 @@ publication, and the same ticket worker verifies completeness and assignment.
 | Handoff | `vibe-ticket-worker` | handoff |
 | Design Review | `vibe-ticket-worker` | handoff, from verified final code/publication and actual design evidence |
 | Grading | `vibe-ticket-worker` | handoff, copied unchanged from this template |
-| Engineering checklist | `vibe-ticket-worker` | session start; handoff appends engineering conflicts, forbidden-path needs, compile-only v1.0 repairs and engineering decisions |
+| Engineering checklist | `vibe-ticket-worker` | session start; handoff appends engineering conflicts, forbidden-path needs, compile-only v1.0 repairs, engineering decisions and known main failures |
 
 ## Body
 
@@ -165,7 +173,9 @@ subagent that worked on this.>
   moved: its placement and the doc section or precedent it follows, from the
   writer's Placement blocks>, or "None: no story or shared component placed"
 - Checks: <lint, source gates, typecheck, existing tests (every lane when the
-  session changed backend code), each pass or fail>
+  session changed backend code), each pass or fail; a check that also fails
+  on captured main reads "fails on main too, see Engineering checklist", and
+  a flaky one "passed on its one rerun">
 - Running app checks: <for each screen the session touched, on web and
   Desktop, the `pnpm control` commands run at handoff on the final commit and
   each artifact path with what it proves (capture, console errors and page
@@ -194,7 +204,8 @@ subagent that worked on this.>
   it covered only code this session retired, from the handoff inventory's
   `retiredTests`: its path and case, the retired code it covered, and the
   ticket or PRD that retired it>, or "None"
-- Pre-existing failures not touched by this work: <list or "none">
+- Pre-existing failures not touched by this work: <list or "none"; a Known
+  main failure is on the Engineering checklist instead, never here too>
 - Next: <the next owner the person chose at handoff, by full name> picks
   this up. Usually design reviews the components in the Storybook above (it
   opens after signing in to Vercel with a team account) and comments here on

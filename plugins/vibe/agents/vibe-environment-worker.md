@@ -226,8 +226,13 @@ every conflict/source problem. Do not run a raw merge/commit/push yourself.
    timeout override or change any test/assertion/hook deadline. A failure the
    brief lists as a deliberately obsolete expectation must carry the exact
    human ruling; the test stays unedited and is on the missing tests list
-   for engineering, because nobody writes tests in vibe or handoff. Any
-   unexplained failure, or running out of time, returns `BLOCKED` with the failing suites and the first error line of
+   for engineering, because nobody writes tests in vibe or handoff. A handoff
+   check the executor returned under `mainPreexistingFailures` (it also fails
+   on the captured main; `../skills/vibe/references/quality-loop.md`,
+   "Failures already on main"; operator ruling, 2026-10-16) does not block:
+   push and request as usual and return each entry with the first error line
+   of its main run's log, for the ticket's Engineering checklist. Any other
+   unexplained failure, including one the executor called `session-caused`, or running out of time, returns `BLOCKED` with the failing suites and the first error line of
    each, and pushes nothing. Never skip, filter out, or loosen a failing test
    to get a push through. Never write or edit tests in deployment mode.
 4. Consume the exact transaction with `main-sync-push` and parent context

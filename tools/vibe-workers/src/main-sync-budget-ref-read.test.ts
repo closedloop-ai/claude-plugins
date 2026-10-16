@@ -7,6 +7,7 @@ import { checkRecipe } from "./main-sync-checks.js";
 import { mainSyncReceiptSchema, type MainSyncReceipt } from "./main-sync-contracts.js";
 import { syncContext } from "./main-sync-state.js";
 import { syncFixture, invokeSync, installAffectedTestWrapper } from "./main-sync-test-fixtures.js";
+import { comparisonBudgetMs } from "./main-sync-validation-recipe.js";
 
 const control=vi.hoisted(()=>({calls:[] as string[][],reply:undefined as undefined|((root:string,args:string[])=>string|undefined)}));
 vi.mock("../../../plugins/vibe/skills/vibe/scripts/session-record.mjs",async importOriginal=>{
@@ -107,7 +108,9 @@ describe("fixed budget refs and actual budget caller",()=>{
       expect(control.calls.filter(x=>same(x,pair))).toHaveLength(2);
       expect(recipe.commands.some(x=>x.argv[1]==="test:affected")).toBe(true);
       expect(recipe.commands.filter(x=>x.argv[1]==="test:affected"||(x.argv[1]==="turbo"&&x.argv[2]==="test")).map(x=>x.timeoutMs)).toEqual([66*60*1000,66*60*1000]);
-      expect(Object.keys(recipe).sort()).toEqual(["commands","e2eLimitations","recovery"]);
+      // operator ruling, 2026-10-16: the handoff recipe also binds its captured-main comparison reserve.
+      expect(Object.keys(recipe).sort()).toEqual(["commands","comparison","e2eLimitations","recovery"]);
+      expect(recipe.comparison).toEqual({timeoutMs:comparisonBudgetMs(recipe.commands.map(x=>({timeoutMs:x.timeoutMs!})))});
     }finally{source.finish();}
   },30000);
   void compilerNegative;

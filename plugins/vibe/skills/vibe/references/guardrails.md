@@ -20,6 +20,10 @@ canonical statement:
   the request stays `BLOCKED` in the session ledger with the reason, and a line
   in the live ticket's Progress names it. Report it to engineering: tell the
   person in one plain line that this needs engineering and to message engineering, naming this work by its summary (`plain-words.md`). It is never a question for the person.
+- A handoff check that also fails on the main the session captured is not a
+  needed fix and never stops the handoff: it is a Known main failure recorded
+  for engineering (`quality-loop.md`, "Failures already on main"; operator
+  ruling, 2026-10-16).
 - Writer migration through `writer-state.mjs migrate` (`quality-loop.md`,
   "Recorded definition migration"), including a turn stranded by a plugin
   upgrade, stays allowed, but only after a human or

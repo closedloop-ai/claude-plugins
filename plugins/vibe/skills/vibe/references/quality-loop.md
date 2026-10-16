@@ -707,7 +707,9 @@ findings. Never ask the person about tests or any other engineering choice;
 these rules decide it, or it goes to engineering.
 
 At handoff the SAME writer runs the existing affected tests and fixes the
-session's own code when one fails, never what a test asserts. It lists every
+session's own code when one fails, never what a test asserts. A failure
+`main-sync-validate` classifies `main-preexisting` is not the session's to fix:
+it is recorded for engineering ("Failures already on main" below). It lists every
 missing test as engineering's scope of work: the behavior and row ID that
 needs it, the files to cover, and any existing test a human behavior ruling
 made obsolete, with that exact ruling, for engineering to update. Verify
@@ -724,3 +726,40 @@ rulings in the change log, runs them and fixes implementation defects, and
 independent reviewers examine that coverage before the pull request opens.
 Never weaken a valid test/check, skip a case, inflate tolerances/timeouts,
 change a harness or suppress a failure.
+
+## Failures already on main
+
+Operator ruling, 2026-10-16, for handoff in Codex and Claude Code alike. A
+handoff check can fail because it is already red on main, not because of
+anything the session did. `main-sync-validate` settles which, so neither the
+orchestrator nor the writer judges it:
+
+- When a handoff check fails, the executor runs that same check on the main
+  the session captured (the transaction's `mainSha`) in a disposable checkout
+  of that commit. The checkout is bootstrapped once with the repository's own
+  `.closedloop-ai/loops-setup.sh`, the same pristine bootstrap the input
+  readiness uses, shared by every failing check, and removed afterwards. A
+  check whose selection follows the session's diff (the affected wrappers, the
+  pinned Turbo filter) runs the same task over the packages the session
+  selected. A check that passed is never rerun. Each run is bounded by that
+  check's own time limit through `scripts/run-bounded.mjs`.
+- `main-preexisting`: it fails on the captured main too. The session did not
+  cause it, and it blocks neither publication nor assignment. The executor
+  returns it under `mainPreexistingFailures` and its receipt keeps the session
+  run and the main run.
+- `session-caused`: it passes on the captured main and fails again on one
+  rerun of the session's commit. It blocks, and the SAME writer fixes the
+  session's own code as before. The receipt keeps all three runs.
+- `flaky`: it passes on the captured main and on that one rerun. It counts as
+  passed, returned under `flakyChecks` with both session runs kept.
+- A check that cannot run on the captured main (no bootstrap, a failed or
+  timed out bootstrap, a time limit, a checked file main does not have) is
+  `session-caused`, the conservative reading, and blocks.
+- Each `main-preexisting` failure goes once on the live ticket's Engineering
+  checklist as a Known main failure (`ticket-template.md`, "Known main
+  failures"). It is not a needed tooling fix (`guardrails.md`, "Plugins and
+  tooling"), never a reason to stop the handoff and never a question for the
+  person. What the person hears stays in plain words (`plain-words.md`) and
+  never presents it as a stop.
+- The build loop's quick checks are unchanged: a failure there still blocks
+  that deploy.

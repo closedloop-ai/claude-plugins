@@ -4,8 +4,10 @@ import { existsSync, lstatSync, readFileSync, readlinkSync, writeFileSync } from
 import { join } from "node:path";
 import { z } from "zod";
 import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
-import { MAX_CHECK_MS, MainSyncError, mainSyncStateSchema, type MainSyncReceipt, type OriginProof, type e2eLimitationSchema } from "./main-sync-contracts.js";
-import { committedIdentity, digest, syncContext, readPrivateJson, MAIN_SYNC_FILE } from "./main-sync-state.js";
+import { MAX_CHECK_MS, MainSyncError, mainSyncStateSchema, type MainComparison, type MainSyncReceipt, type OriginProof, type e2eLimitationSchema } from "./main-sync-contracts.js";
+import { committedIdentity, digest, syncContext, readPrivateJson, saveSyncReceipt, MAIN_SYNC_FILE } from "./main-sync-state.js";
+import { CapturedMainComparison, comparisonLogs, runBounded } from "./main-sync-main-comparison.js";
+import { comparisonBudgetMs } from "./main-sync-validation-recipe.js";
 import { discoverCheckLanes, type CheckCommand } from "./main-sync-lanes.js";
 import { GENERATED_BIOME_PATH, MAX_INPUT_BYTES, verifyGeneratedBiomeInput } from "./main-sync-generated-input.js";
 import { committedLocalPlans, isLocalPlanPath } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
@@ -220,7 +222,9 @@ export function checkRecipe(value: ReturnType<typeof syncContext>, receipt: Main
   commands.push({ argv: ["pnpm", "vibe", "storybook-diff"] });
   verifyReportRecipe(commands);
   const bound = bindCheckBudgets(root, receipt, commands);
-  return { commands: bound, e2eLimitations, recovery: selectedRecoveryReserve(root, bound) };
+  // operator ruling, 2026-10-16: a handoff failure is compared against the captured main; the reserve bounds that.
+  return { commands: bound, e2eLimitations, recovery: selectedRecoveryReserve(root, bound),
+    comparison: { timeoutMs: comparisonBudgetMs(bound.map((command) => ({ timeoutMs: command.timeoutMs ?? MAX_CHECK_MS }))) } };
 }
 
 /** Runs the fixed matrix; verified producer changes invalidate old evidence and get one bounded clean restart. */
@@ -230,6 +234,8 @@ export function executeChecks(value: ReturnType<typeof syncContext>, receipt: Ma
   const recipe = preparedRecipe ?? checkRecipe(value, receipt);
   const spent = recipe.commands.map(() => 0);
   const drySpent = recipe.commands.map(() => 0);
+  const main = value.purpose === "handoff" ? new CapturedMainComparison(value.place.root, value.place.dir, receipt) : undefined;
+  try {
   for (let attempt = 0; attempt < 2; attempt++) {
    const results = [];
    let restart = false;
@@ -258,9 +264,27 @@ export function executeChecks(value: ReturnType<typeof syncContext>, receipt: Ma
       env });
     spent[index]! += performance.now() - start;
     const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-    const log = join(value.place.dir, `vibe-main-sync-${receipt.transactionId}-${attempt}-${index}.log`);
+    const prefix = join(value.place.dir, `vibe-main-sync-${receipt.transactionId}-${attempt}-${index}`);
+    const log = `${prefix}.log`;
     writeFileSync(log, output, { mode: 0o600 });
-    if (result.error || result.status !== 0) throw new MainSyncError(`Required validation command failed: ${command.argv.join(" ")}; private log ${log}`);
+    let evidence = { exitCode: 0, log, sha256: digest(output) };
+    let comparison: MainComparison | undefined;
+    if (result.error || result.status !== 0) {
+      if (!main) throw new MainSyncError(`Required validation command failed: ${command.argv.join(" ")}; private log ${log}`);
+      const failed = { ...evidence, exitCode: result.status ?? 1 };
+      comparison = main.classify(command, selection, failed, prefix, env, (rerunLog) => {
+        verifyReportExecution(value.place.root, value.place.root, ReportExecutionOwner.Check, command.argv,
+          command.cwd ? join(value.place.root, command.cwd) : value.place.root, selection);
+        const again = runBounded(command.argv, command.cwd ? join(value.place.root, command.cwd) : value.place.root, env,
+          command.timeoutMs ?? MAX_CHECK_MS, rerunLog);
+        return { exitCode: again.exitCode, log: again.log, sha256: again.sha256 };
+      });
+      if (comparison.classification === "session-caused") {
+        recordFailedCheck(value, command, comparison);
+        throw new MainSyncError(sessionCausedMessage(command, comparison));
+      }
+      evidence = comparison.classification === "flaky" ? comparison.sessionRuns[1]! : failed;
+    }
     if (selection) {
       writeFileSync(`${log}.selection.json`, JSON.stringify(selection), { mode: 0o600 });
     }
@@ -274,12 +298,13 @@ export function executeChecks(value: ReturnType<typeof syncContext>, receipt: Ma
     }
     results.push({ argv: command.argv, ...(command.bindings ? { bindings: command.bindings } : {}),
       ...(command.cwd ? { cwd: command.cwd } : {}), timeoutMs: command.timeoutMs ?? MAX_CHECK_MS,
-      exitCode: 0 as const, log, sha256: digest(output) });
+      ...evidence, ...(comparison ? { comparison } : {}) });
    }
    if (restart) continue;
    assertIdentity(value.place.root, before);
    return { ...before, commands: results, checkedAt: new Date().toISOString(), e2eLimitations: recipe.e2eLimitations };
   }
+  } finally { main?.dispose(); }
   throw new MainSyncError("Canonical outputs changed repeatedly; current validation remains incomplete", "NEEDS_CHANGE");
 }
 
@@ -294,4 +319,23 @@ function assertIdentity(root: string, expected: ReturnType<typeof committedInput
   if (current.headSha !== expected.headSha || current.treeSha !== expected.treeSha || current.inputSha256 !== expected.inputSha256) {
     throw new MainSyncError("Committed validation inputs changed during the operation; same-writer recheck required", "NEEDS_CHANGE");
   }
+}
+
+/** A blocked handoff keeps its classification and evidence in the receipt it already owns, beside the phase it is in. */
+function recordFailedCheck(value: ReturnType<typeof syncContext>, command: CheckCommand, comparison: MainComparison) {
+  const state = mainSyncStateSchema.parse(readPrivateJson(join(value.place.dir, MAIN_SYNC_FILE)));
+  const failedChecks = [{ argv: command.argv, ...(command.bindings ? { bindings: command.bindings } : {}),
+    ...(command.cwd ? { cwd: command.cwd } : {}), comparison }];
+  if (state.phase === "input-readiness") {
+    if (state.previous) saveSyncReceipt(value.place.dir, { ...state, previous: { ...state.previous, failedChecks } });
+  } else saveSyncReceipt(value.place.dir, { ...state, failedChecks });
+}
+
+function sessionCausedMessage(command: CheckCommand, comparison: MainComparison) {
+  const check = command.argv.join(" ");
+  const logs = comparisonLogs(comparison).map((item) => item.log).join(", ");
+  if (comparison.main.outcome === "unrunnable") {
+    return `Required validation command failed: ${check}; it could not run on captured main ${comparison.mainSha} (${comparison.main.reason}), so it is treated as session-caused; private logs ${logs}`;
+  }
+  return `Required validation command failed: ${check}; it passes on captured main ${comparison.mainSha} and failed again on a rerun of the session commit, so the session caused it (session-caused); private logs ${logs}`;
 }

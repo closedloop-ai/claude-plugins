@@ -3,14 +3,17 @@ import type { z } from "zod";
 import { digest } from "./main-sync-state.js";
 import { MAX_CHECK_MS, MainSyncError } from "./main-sync-contracts.js";
 
+/** One pristine bootstrap of the disposable captured-main checkout, the same bound the input origin uses. */
+export const MAIN_BOOTSTRAP_MS = 15 * 60 * 1000;
+
 /** Canonical digest binds actual selected commands, budgets and required coverage limitations together. */
-export function recipeIdentity(value: Pick<StoredValidationRecipe, "commands" | "e2eLimitations" | "recovery">) {
+export function recipeIdentity(value: Pick<StoredValidationRecipe, "commands" | "e2eLimitations" | "recovery" | "comparison">) {
   return digest(JSON.stringify({ commands: value.commands, e2eLimitations: value.e2eLimitations,
-    ...(value.recovery ? { recovery: value.recovery } : {}) }));
+    ...(value.recovery ? { recovery: value.recovery } : {}), ...(value.comparison ? { comparison: value.comparison } : {}) }));
 }
 
 export function storedRecipe(identity: { headSha: string; treeSha: string; inputSha256: string },
-  recipe: Pick<StoredValidationRecipe, "commands" | "e2eLimitations" | "recovery">) {
+  recipe: Pick<StoredValidationRecipe, "commands" | "e2eLimitations" | "recovery" | "comparison">) {
   return storedValidationRecipeSchema.parse({ ...identity, ...recipe, recipeSha256: recipeIdentity(recipe) });
 }
 
@@ -27,6 +30,10 @@ export function validationEnvelopeMs(recipe: StoredValidationRecipe) {
   if (recipe.recovery) {
     if (recipe.recovery.timeoutMs !== recoveryBudgetMs(recipe.recovery.owners)) throw new MainSyncError("Canonical recovery reserve is not derived from its fixed owners");
     total += recipe.recovery.timeoutMs;
+  }
+  if (recipe.comparison) {
+    if (recipe.comparison.timeoutMs !== comparisonBudgetMs(recipe.commands)) throw new MainSyncError("Canonical main comparison reserve is not derived from its fixed commands");
+    total += recipe.comparison.timeoutMs;
   }
   for (const command of recipe.commands) {
     total += command.timeoutMs;
@@ -47,4 +54,9 @@ export function recoveryBudgetMs(owners: z.infer<typeof recoveryReserveSchema>["
     else total += 10000;
   }
   return total;
+}
+
+/** Handoff's worst case: one captured-main bootstrap, then every check failing, run once on main and once more on the session. */
+export function comparisonBudgetMs(commands: readonly { timeoutMs: number }[]) {
+  return MAIN_BOOTSTRAP_MS + commands.reduce((total, command) => total + 2 * command.timeoutMs, 0);
 }

@@ -12045,6 +12045,7 @@ var storedValidationRecipeSchema = external_exports.object({
   recipeSha256: validationDigestSchema,
   commands: external_exports.array(fixedCommandSchema).min(1).max(128),
   recovery: recoveryReserveSchema.optional(),
+  comparison: external_exports.object({ timeoutMs: external_exports.number().int().min(0).max(2 ** 31 - 1) }).strict().optional(),
   e2eLimitations: external_exports.array(external_exports.object({
     argv: external_exports.array(external_exports.string()).min(1).max(256),
     bindings: external_exports.record(external_exports.string()).optional(),

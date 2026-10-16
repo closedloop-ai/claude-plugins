@@ -32,7 +32,8 @@ the existing ticket template; compact helper responses are references, not the
 complete evidence inventory. It also receives the table's Frozen Behavior row
 IDs, the writer's feature docs record (each existing product docs page edited
 as a marked agent draft, or that none covers the changed features), the
-writer's missing tests list, and the running app verification's control
+writer's missing tests list, every `mainPreexistingFailures` entry the final
+validation returned with its main run's log, and the running app verification's control
 artifact paths with what each proves and any surface it could not drive.
 
 ## Read first
@@ -224,6 +225,12 @@ historical inspections accurately. Preserve the existing grading block.
    unchecked item at the end of the Engineering checklist in the template's
    shape (`../skills/vibe/references/ticket-template.md`, "Compile-only v1.0
    repairs").
+   Place each `mainPreexistingFailures` entry once, as an unchecked item at
+   the end of the Engineering checklist:
+   `- [ ] Known main failure: <check>; fails on captured main <mainSha>; evidence: <first error line of the main run's log>; exit <main exit code> on captured main, <session exit code> on the session commit`
+   (`../skills/vibe/references/ticket-template.md`, "Known main failures";
+   operator ruling, 2026-10-16). Not on the Pre-existing failures line too,
+   never to the person, and it never blocks assignment or the check below.
    Fill Grading with the
    template's Grading section copied unchanged, adding the section after
    Handoff when the ticket has none.

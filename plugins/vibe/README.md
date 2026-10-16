@@ -111,6 +111,15 @@ retained-report references and global private planning protection remain enforce
 An unrelated capable reader is not selected consumption. Ordinary bootstrap health cannot mint validation proof. Meaningful retained report data,
 default verdicts and replay still block, while proven same-call test fixtures
 remain nonretained inputs and never stand in for required coverage.
+At handoff a failing check runs again on the main the session captured
+(operator ruling, 2026-10-16). One that also fails there is `main-preexisting`:
+it blocks neither publication nor assignment and goes once on the live ticket's
+Engineering checklist as a Known main failure. One that passes there gets one
+rerun on the session commit and blocks as `session-caused` if it fails again
+(`flaky` if it passes); one that cannot run on main counts as session-caused.
+The comparison uses one disposable bootstrapped checkout of the captured main,
+`run-bounded.mjs` time limits and a recipe-bound Claude envelope reserve, and
+never reruns a check that passed. The build loop's checks are unchanged.
 An existing registered writer retains its definition root, exact binding and
 actual ID while the definition matches. A missing definition or proven upgrade
 uses the same `writer-state.mjs migrate` command in Codex and Claude Code.
@@ -336,6 +345,11 @@ lifecycle scheme (#8867): new states for a component whose story file is
 deprecated go in a new entry in a current root, and after a main sync a
 session's own `<Level> v2.0/` entry moves to the plain root with a lifecycle
 tag without counting as a retitle.
+
+The two cases tagged `main-failures` rehearse handoff's validation step: a
+check that also fails on the captured main is recorded on the ticket's
+Engineering checklist and the handoff goes on, and a session-caused failure
+goes back to the writer.
 
 ## Runtime Files
 

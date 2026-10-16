@@ -12076,6 +12076,7 @@ var storedValidationRecipeSchema = external_exports.object({
   recipeSha256: validationDigestSchema,
   commands: external_exports.array(fixedCommandSchema).min(1).max(128),
   recovery: recoveryReserveSchema.optional(),
+  comparison: external_exports.object({ timeoutMs: external_exports.number().int().min(0).max(2 ** 31 - 1) }).strict().optional(),
   e2eLimitations: external_exports.array(external_exports.object({
     argv: external_exports.array(external_exports.string()).min(1).max(256),
     bindings: external_exports.record(external_exports.string()).optional(),
@@ -12285,14 +12286,36 @@ var mainSyncInputSchema = external_exports.object({
   context: operationContextSchema,
   transactionId: external_exports.string().uuid().optional()
 }).strict();
+var runEvidenceSchema = external_exports.object({ exitCode: external_exports.number().int(), log: external_exports.string().min(1), sha256: external_exports.string().length(64) }).strict();
+var capturedMainRunSchema = external_exports.object({
+  outcome: external_exports.enum(["failed", "passed", "unrunnable"]),
+  argv: external_exports.array(external_exports.string()).min(1).max(256).optional(),
+  exitCode: external_exports.number().int().optional(),
+  log: external_exports.string().min(1).optional(),
+  sha256: external_exports.string().length(64).optional(),
+  reason: external_exports.string().min(1).max(512).optional()
+}).strict();
+var mainComparisonSchema = external_exports.object({
+  classification: external_exports.enum(["main-preexisting", "session-caused", "flaky"]),
+  mainSha: commitSchema,
+  sessionRuns: external_exports.array(runEvidenceSchema).min(1).max(2),
+  main: capturedMainRunSchema
+}).strict();
 var commandReceiptSchema = external_exports.object({
   argv: external_exports.array(external_exports.string()).min(1).max(256),
   bindings: external_exports.record(external_exports.string()).optional(),
   cwd: external_exports.string().optional(),
   timeoutMs: external_exports.number().int().min(1e3).max(2 ** 31 - 1).optional(),
-  exitCode: external_exports.literal(0),
+  exitCode: external_exports.number().int(),
   log: external_exports.string().min(1),
-  sha256: external_exports.string().length(64)
+  sha256: external_exports.string().length(64),
+  comparison: mainComparisonSchema.optional()
+}).strict().refine((item) => item.exitCode === 0 === (item.comparison?.classification !== "main-preexisting") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
+var failedCheckSchema = external_exports.object({
+  argv: external_exports.array(external_exports.string()).min(1).max(256),
+  bindings: external_exports.record(external_exports.string()).optional(),
+  cwd: external_exports.string().optional(),
+  comparison: mainComparisonSchema
 }).strict();
 var e2eLimitationSchema = external_exports.object({
   argv: external_exports.array(external_exports.string()).min(1).max(256),
@@ -12347,6 +12370,7 @@ var mainSyncReceiptSchema = external_exports.object({
     e2eLimitations: external_exports.array(e2eLimitationSchema).max(128).default([])
   }).strict().optional(),
   ciEvidence: ciEvidenceSchema.optional(),
+  failedChecks: external_exports.array(failedCheckSchema).min(1).max(128).optional(),
   pushedHead: commitSchema.optional(),
   publicationTurn: publicationTurnSchema.optional(),
   requestContinuations: external_exports.array(requestContinuationSchema.extend({ turn: publicationTurnSchema.optional() })).max(2).default([]),
@@ -12410,11 +12434,13 @@ import { open } from "node:fs/promises";
 import { join as join6 } from "node:path";
 
 // src/main-sync-validation-recipe.ts
+var MAIN_BOOTSTRAP_MS = 15 * 60 * 1e3;
 function recipeIdentity(value) {
   return digest(JSON.stringify({
     commands: value.commands,
     e2eLimitations: value.e2eLimitations,
-    ...value.recovery ? { recovery: value.recovery } : {}
+    ...value.recovery ? { recovery: value.recovery } : {},
+    ...value.comparison ? { comparison: value.comparison } : {}
   }));
 }
 function verifyRecipeWitness(recipe, witness, transactionId) {
@@ -12425,6 +12451,10 @@ function validationEnvelopeMs(recipe) {
   if (recipe.recovery) {
     if (recipe.recovery.timeoutMs !== recoveryBudgetMs(recipe.recovery.owners)) throw new MainSyncError("Canonical recovery reserve is not derived from its fixed owners");
     total += recipe.recovery.timeoutMs;
+  }
+  if (recipe.comparison) {
+    if (recipe.comparison.timeoutMs !== comparisonBudgetMs(recipe.commands)) throw new MainSyncError("Canonical main comparison reserve is not derived from its fixed commands");
+    total += recipe.comparison.timeoutMs;
   }
   for (const command of recipe.commands) {
     total += command.timeoutMs;
@@ -12443,6 +12473,9 @@ function recoveryBudgetMs(owners) {
     else total += 1e4;
   }
   return total;
+}
+function comparisonBudgetMs(commands) {
+  return MAIN_BOOTSTRAP_MS + commands.reduce((total, command) => total + 2 * command.timeoutMs, 0);
 }
 
 // src/main-sync-validation-envelope.ts

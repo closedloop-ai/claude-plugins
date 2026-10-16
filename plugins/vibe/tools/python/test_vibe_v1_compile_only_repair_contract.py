@@ -110,7 +110,7 @@ def test_the_ticket_worker_places_each_repair_once_on_the_engineering_checklist(
     ) in rule
     assert (
         "| Engineering checklist | `vibe-ticket-worker` | session start; handoff appends engineering conflicts, "
-        "forbidden-path needs, compile-only v1.0 repairs and engineering decisions |"
+        "forbidden-path needs, compile-only v1.0 repairs, engineering decisions and known main failures |"
     ) in template
     assert "compile-only" not in section(template, "## Handoff")
     handoff_mode = section(agent("vibe-ticket-worker"), "## Handoff mode")

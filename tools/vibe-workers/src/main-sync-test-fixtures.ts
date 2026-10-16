@@ -83,7 +83,11 @@ export function referencedLanes() {return [];}
 const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
-fs.appendFileSync(path.join(process.cwd(), '.git', 'validation-calls.jsonl'), JSON.stringify(args) + '\n');
+// A linked checkout (the captured-main comparison) logs beside the session's calls in the common Git directory.
+const dotGit = path.join(process.cwd(), '.git');
+const linked = fs.existsSync(dotGit) && fs.statSync(dotGit).isFile();
+const gitDir = linked ? path.resolve(process.cwd(), require('node:child_process').execFileSync('git', ['rev-parse', '--git-common-dir'], {encoding:'utf8'}).trim()) : dotGit;
+fs.appendFileSync(path.join(gitDir, linked ? 'main-checkout-calls.jsonl' : 'validation-calls.jsonl'), JSON.stringify(args) + '\n');
 if (args[0] === 'exec' && args[1] === 'node') {
   const cp = require('node:child_process');
   const run = cp.spawnSync(process.execPath, args.slice(4), {cwd:process.cwd(), encoding:'utf8', input:fs.readFileSync(0,'utf8')});
@@ -98,6 +102,17 @@ if (args.includes('--dry=json')) {
 }
 const command = args[0];
 if (!['exec', 'check:source-gates', 'typecheck:affected', 'test:affected', 'test:lanes', 'turbo', 'verify', 'test', '--filter', 'vibe', 'test:lint', 'test:skills'].includes(command)) process.exit(2);
+// fixture-failures.json maps a check (its first word, or "turbo <task>") to always (every checkout),
+// session (only the session checkout) or once (only its first session run).
+const key = command === 'turbo' ? 'turbo ' + args[1] : command;
+const modes = fs.existsSync('fixture-failures.json') ? JSON.parse(fs.readFileSync('fixture-failures.json', 'utf8')) : {};
+const mode = modes[key];
+const counter = path.join(gitDir, 'fixture-runs-' + key.replace(/[^a-z]/g, '-'));
+const runs = !linked && fs.existsSync(counter) ? Number(fs.readFileSync(counter, 'utf8')) : 0;
+if (!linked) fs.writeFileSync(counter, String(runs + 1));
+if (mode === 'always' || (mode === 'session' && !linked) || (mode === 'once' && !linked && runs === 0)) {
+  process.stderr.write('fixture failure for ' + command + '\n'); process.exit(1);
+}
 if (fs.readFileSync(path.join(process.cwd(), 'apps/app/probe.ts'), 'utf8').includes('committed-bad')) {
   process.stderr.write('committed behavior fails\n'); process.exit(1);
 }

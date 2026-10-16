@@ -213,7 +213,12 @@ resume with the Root-bound `mainSyncValidation` grant; never invent a duration,
 recipe, PASS or source identity. Then run `vibe-sessions.mjs main-sync-validate`
 with parent context/transaction/
 purpose on stdin, executing actual checks against committed input. Publication
-purpose never grants test authoring. Managed localFix commit exclusions MUST
+purpose never grants test authoring. At handoff the executor runs each failing
+check again on the captured `mainSha` (operator ruling, 2026-10-16): return its
+`mainPreexistingFailures` to ROOT unchanged, publication still ready, and never
+fix, skip or weaken such a check; a `session-caused` refusal is yours to fix in
+the session's own code (`../skills/vibe/references/quality-loop.md`, "Failures
+already on main"). Managed localFix commit exclusions MUST
 NOT exclude validation input: preserve interfering bytes/records and BLOCK
 through the existing same-writer workaround/exclusion/restore flow, never
 stash/copy/discard or claim a pass for different pushed source. A generator
@@ -345,7 +350,10 @@ engineering. Never return `NEEDS_PERSON` about a test or any other
 engineering choice.
 
 An explicit handoff continuation has you run the existing affected tests and
-fix your own code when one fails, never what a test asserts. Use the whole
+fix your own code when one fails, never what a test asserts. A test or check
+that also fails on the captured main is not yours to fix: leave it and report
+it, because `main-sync-validate` classifies it (`../skills/vibe/references/quality-loop.md`,
+"Failures already on main"). Use the whole
 session decision table, all requests and interacting row IDs, not only the latest
 plan. Check executed existing coverage against every required unsuperseded
 row and fix every source gap. Each row's planned Required Tests that no

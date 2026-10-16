@@ -219888,11 +219888,11 @@ Additional information: BADCLIENT: Bad error code, ${badCode} not found in range
 });
 
 // src/main-sync.ts
-import { spawnSync as spawnSync8 } from "node:child_process";
+import { spawnSync as spawnSync9 } from "node:child_process";
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { existsSync as existsSync10, lstatSync as lstatSync8, readFileSync as readFileSync16, realpathSync as realpathSync9 } from "node:fs";
-import { join as join16 } from "node:path";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
+import { existsSync as existsSync11, lstatSync as lstatSync8, readFileSync as readFileSync16, realpathSync as realpathSync10 } from "node:fs";
+import { join as join17 } from "node:path";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
 
 // node_modules/zod/v3/external.js
 var external_exports = {};
@@ -224299,6 +224299,7 @@ var storedValidationRecipeSchema = external_exports.object({
   recipeSha256: validationDigestSchema,
   commands: external_exports.array(fixedCommandSchema).min(1).max(128),
   recovery: recoveryReserveSchema.optional(),
+  comparison: external_exports.object({ timeoutMs: external_exports.number().int().min(0).max(2 ** 31 - 1) }).strict().optional(),
   e2eLimitations: external_exports.array(external_exports.object({
     argv: external_exports.array(external_exports.string()).min(1).max(256),
     bindings: external_exports.record(external_exports.string()).optional(),
@@ -224425,14 +224426,36 @@ var mainSyncInputSchema = external_exports.object({
   context: operationContextSchema,
   transactionId: external_exports.string().uuid().optional()
 }).strict();
+var runEvidenceSchema = external_exports.object({ exitCode: external_exports.number().int(), log: external_exports.string().min(1), sha256: external_exports.string().length(64) }).strict();
+var capturedMainRunSchema = external_exports.object({
+  outcome: external_exports.enum(["failed", "passed", "unrunnable"]),
+  argv: external_exports.array(external_exports.string()).min(1).max(256).optional(),
+  exitCode: external_exports.number().int().optional(),
+  log: external_exports.string().min(1).optional(),
+  sha256: external_exports.string().length(64).optional(),
+  reason: external_exports.string().min(1).max(512).optional()
+}).strict();
+var mainComparisonSchema = external_exports.object({
+  classification: external_exports.enum(["main-preexisting", "session-caused", "flaky"]),
+  mainSha: commitSchema,
+  sessionRuns: external_exports.array(runEvidenceSchema).min(1).max(2),
+  main: capturedMainRunSchema
+}).strict();
 var commandReceiptSchema = external_exports.object({
   argv: external_exports.array(external_exports.string()).min(1).max(256),
   bindings: external_exports.record(external_exports.string()).optional(),
   cwd: external_exports.string().optional(),
   timeoutMs: external_exports.number().int().min(1e3).max(2 ** 31 - 1).optional(),
-  exitCode: external_exports.literal(0),
+  exitCode: external_exports.number().int(),
   log: external_exports.string().min(1),
-  sha256: external_exports.string().length(64)
+  sha256: external_exports.string().length(64),
+  comparison: mainComparisonSchema.optional()
+}).strict().refine((item) => item.exitCode === 0 === (item.comparison?.classification !== "main-preexisting") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
+var failedCheckSchema = external_exports.object({
+  argv: external_exports.array(external_exports.string()).min(1).max(256),
+  bindings: external_exports.record(external_exports.string()).optional(),
+  cwd: external_exports.string().optional(),
+  comparison: mainComparisonSchema
 }).strict();
 var e2eLimitationSchema = external_exports.object({
   argv: external_exports.array(external_exports.string()).min(1).max(256),
@@ -224487,6 +224510,7 @@ var mainSyncReceiptSchema = external_exports.object({
     e2eLimitations: external_exports.array(e2eLimitationSchema).max(128).default([])
   }).strict().optional(),
   ciEvidence: ciEvidenceSchema.optional(),
+  failedChecks: external_exports.array(failedCheckSchema).min(1).max(128).optional(),
   pushedHead: commitSchema.optional(),
   publicationTurn: publicationTurnSchema.optional(),
   requestContinuations: external_exports.array(requestContinuationSchema.extend({ turn: publicationTurnSchema.optional() })).max(2).default([]),
@@ -224847,13 +224871,72 @@ function apiText(root, path2, logs = false) {
 }
 
 // src/main-sync-checks.ts
-import { spawnSync as spawnSync7 } from "node:child_process";
+import { spawnSync as spawnSync8 } from "node:child_process";
 import { createHash as createHash4 } from "node:crypto";
-import { existsSync as existsSync9, lstatSync as lstatSync7, readFileSync as readFileSync15, readlinkSync, writeFileSync as writeFileSync5 } from "node:fs";
-import { join as join15 } from "node:path";
+import { existsSync as existsSync10, lstatSync as lstatSync7, readFileSync as readFileSync15, readlinkSync, writeFileSync as writeFileSync6 } from "node:fs";
+import { join as join16 } from "node:path";
 
-// src/main-sync-lanes.ts
+// src/main-sync-main-comparison.ts
 import { spawnSync as spawnSync3 } from "node:child_process";
+import { existsSync as existsSync7, mkdtempSync, realpathSync as realpathSync7, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as join10 } from "node:path";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
+
+// src/main-sync-failure.ts
+import { basename as basename2 } from "node:path";
+var PRESERVE = "preserve the operation and inspect its owned evidence";
+var INVALID2 = "Main-sync context or private evidence is invalid";
+var ERROR_CODE = /^[A-Z][A-Z0-9_]{1,63}$/;
+var SYSCALL = /^[a-z][A-Za-z]{1,31}(?: [A-Za-z0-9._-]{1,64})?$/;
+var FILE_NAME = /^[A-Za-z0-9._@+-]{1,128}$/;
+var COMMAND_WORD = /^[a-z][a-z0-9-]{0,39}$/;
+var FAILED_COMMAND = /^Command failed: (\S+)(?: (\S+))?/;
+var STACK_FRAME = /\(?(?:file:\/\/)?(\/[^():]+\.[cm]?[jt]s):(\d+):\d+\)?$/;
+var MAX_MESSAGE = 240;
+var PATH_SEGMENT = /^[A-Za-z0-9_.@+-]{1,64}$/;
+var MAX_ISSUES = 3;
+function mainSyncFailure(error) {
+  if (error instanceof MainSyncError) return { status: error.status, error: error.message };
+  if (error instanceof external_exports.ZodError || error instanceof SyntaxError) return { status: "BLOCKED", error: `${INVALID2} (${failureCause(error)}); ${PRESERVE}` };
+  return { status: "BLOCKED", error: `Main-sync stopped on an operational error (${failureCause(error)}); ${PRESERVE}` };
+}
+function failureCause(error) {
+  if (error instanceof external_exports.ZodError) return `schema: ${schemaIssues(error)}`;
+  if (error instanceof SyntaxError) return `malformed JSON${sourceFrame(error.stack)}`;
+  return operationalCause(error);
+}
+function operationalCause(error) {
+  if (!(error instanceof Error)) return "non-Error exception";
+  const fields = error;
+  const where = sourceFrame(error.stack);
+  if (Array.isArray(fields.output) || error.message.startsWith("Command failed:")) {
+    const words = (FAILED_COMMAND.exec(error.message)?.slice(1) ?? []).filter((word) => Boolean(word)).map((word, index) => index === 0 ? basename2(word) : word).filter((word) => COMMAND_WORD.test(word));
+    const ended = typeof fields.status === "number" ? `exited ${fields.status}` : typeof fields.signal === "string" && ERROR_CODE.test(fields.signal) ? `stopped by ${fields.signal}` : "failed";
+    return `subprocess ${words.length ? `${words.join(" ")} ` : ""}${ended}${where}`;
+  }
+  if (typeof fields.code === "string" && ERROR_CODE.test(fields.code)) {
+    const syscall = typeof fields.syscall === "string" && SYSCALL.test(fields.syscall) ? ` during ${fields.syscall}` : "";
+    const file = typeof fields.path === "string" && FILE_NAME.test(basename2(fields.path)) ? ` on ${basename2(fields.path)}` : "";
+    return `${error.name} ${fields.code}${syscall}${file}${where}`;
+  }
+  const message = error.message.split("\n", 1)[0].slice(0, MAX_MESSAGE);
+  return `${error.name}: ${message}${where}`;
+}
+function schemaIssues(error) {
+  const issues = error.issues.slice(0, MAX_ISSUES).map((issue) => {
+    const path2 = issue.path.map((segment) => typeof segment === "number" || PATH_SEGMENT.test(segment) ? String(segment) : "*").join(".");
+    return `${path2 || "(root)"} ${issue.code}`;
+  });
+  return `${issues.join(", ")}${error.issues.length > MAX_ISSUES ? ` and ${error.issues.length - MAX_ISSUES} more` : ""}`;
+}
+function sourceFrame(stack) {
+  for (const line of (stack ?? "").split("\n").slice(1)) {
+    const frame = STACK_FRAME.exec(line.trim());
+    if (frame && !frame[1].includes("/node_modules/")) return ` at ${basename2(frame[1])}:${frame[2]}`;
+  }
+  return "";
+}
 
 // src/main-sync-report-execution.ts
 var REPLAY = /(?:^|[\s=])--(?:merge-reports|last-failed)(?:\b|=)|(?:^|[\s/])assert-e2e-results(?:\.mjs)?\b/;
@@ -226087,63 +226170,6 @@ import { execFileSync as execFileSync3, spawnSync as spawnSync2 } from "node:chi
 import { createHash as createHash2 } from "node:crypto";
 import { lstatSync as lstatSync2, readFileSync as readFileSync7, realpathSync as realpathSync4 } from "node:fs";
 import { join as join6 } from "node:path";
-
-// src/main-sync-failure.ts
-import { basename as basename2 } from "node:path";
-var PRESERVE = "preserve the operation and inspect its owned evidence";
-var INVALID2 = "Main-sync context or private evidence is invalid";
-var ERROR_CODE = /^[A-Z][A-Z0-9_]{1,63}$/;
-var SYSCALL = /^[a-z][A-Za-z]{1,31}(?: [A-Za-z0-9._-]{1,64})?$/;
-var FILE_NAME = /^[A-Za-z0-9._@+-]{1,128}$/;
-var COMMAND_WORD = /^[a-z][a-z0-9-]{0,39}$/;
-var FAILED_COMMAND = /^Command failed: (\S+)(?: (\S+))?/;
-var STACK_FRAME = /\(?(?:file:\/\/)?(\/[^():]+\.[cm]?[jt]s):(\d+):\d+\)?$/;
-var MAX_MESSAGE = 240;
-var PATH_SEGMENT = /^[A-Za-z0-9_.@+-]{1,64}$/;
-var MAX_ISSUES = 3;
-function mainSyncFailure(error) {
-  if (error instanceof MainSyncError) return { status: error.status, error: error.message };
-  if (error instanceof external_exports.ZodError || error instanceof SyntaxError) return { status: "BLOCKED", error: `${INVALID2} (${failureCause(error)}); ${PRESERVE}` };
-  return { status: "BLOCKED", error: `Main-sync stopped on an operational error (${failureCause(error)}); ${PRESERVE}` };
-}
-function failureCause(error) {
-  if (error instanceof external_exports.ZodError) return `schema: ${schemaIssues(error)}`;
-  if (error instanceof SyntaxError) return `malformed JSON${sourceFrame(error.stack)}`;
-  return operationalCause(error);
-}
-function operationalCause(error) {
-  if (!(error instanceof Error)) return "non-Error exception";
-  const fields = error;
-  const where = sourceFrame(error.stack);
-  if (Array.isArray(fields.output) || error.message.startsWith("Command failed:")) {
-    const words = (FAILED_COMMAND.exec(error.message)?.slice(1) ?? []).filter((word) => Boolean(word)).map((word, index) => index === 0 ? basename2(word) : word).filter((word) => COMMAND_WORD.test(word));
-    const ended = typeof fields.status === "number" ? `exited ${fields.status}` : typeof fields.signal === "string" && ERROR_CODE.test(fields.signal) ? `stopped by ${fields.signal}` : "failed";
-    return `subprocess ${words.length ? `${words.join(" ")} ` : ""}${ended}${where}`;
-  }
-  if (typeof fields.code === "string" && ERROR_CODE.test(fields.code)) {
-    const syscall = typeof fields.syscall === "string" && SYSCALL.test(fields.syscall) ? ` during ${fields.syscall}` : "";
-    const file = typeof fields.path === "string" && FILE_NAME.test(basename2(fields.path)) ? ` on ${basename2(fields.path)}` : "";
-    return `${error.name} ${fields.code}${syscall}${file}${where}`;
-  }
-  const message = error.message.split("\n", 1)[0].slice(0, MAX_MESSAGE);
-  return `${error.name}: ${message}${where}`;
-}
-function schemaIssues(error) {
-  const issues = error.issues.slice(0, MAX_ISSUES).map((issue) => {
-    const path2 = issue.path.map((segment) => typeof segment === "number" || PATH_SEGMENT.test(segment) ? String(segment) : "*").join(".");
-    return `${path2 || "(root)"} ${issue.code}`;
-  });
-  return `${issues.join(", ")}${error.issues.length > MAX_ISSUES ? ` and ${error.issues.length - MAX_ISSUES} more` : ""}`;
-}
-function sourceFrame(stack) {
-  for (const line of (stack ?? "").split("\n").slice(1)) {
-    const frame = STACK_FRAME.exec(line.trim());
-    if (frame && !frame[1].includes("/node_modules/")) return ` at ${basename2(frame[1])}:${frame[2]}`;
-  }
-  return "";
-}
-
-// src/main-sync-generated-input.ts
 var GENERATED_BIOME_PATH = ".biome-noscan.jsonc";
 var MAX_INPUT_BYTES = 128 * 1024 * 1024;
 var PRODUCER_FILES = [
@@ -226882,7 +226908,212 @@ function verifyReportProducerInputs(retainedRoot, root, owner, inputs) {
   }
 }
 
+// src/main-sync-validation-recipe.ts
+var MAIN_BOOTSTRAP_MS = 15 * 60 * 1e3;
+function recipeIdentity(value) {
+  return digest(JSON.stringify({
+    commands: value.commands,
+    e2eLimitations: value.e2eLimitations,
+    ...value.recovery ? { recovery: value.recovery } : {},
+    ...value.comparison ? { comparison: value.comparison } : {}
+  }));
+}
+function storedRecipe(identity, recipe) {
+  return storedValidationRecipeSchema.parse({ ...identity, ...recipe, recipeSha256: recipeIdentity(recipe) });
+}
+function verifyRecipeWitness(recipe, witness, transactionId) {
+  if (witness.transactionId !== transactionId || recipe.headSha !== witness.headSha || recipe.treeSha !== witness.treeSha || recipe.inputSha256 !== witness.inputSha256 || recipe.recipeSha256 !== witness.recipeSha256 || recipeIdentity(recipe) !== recipe.recipeSha256) throw new MainSyncError("Canonical validation recipe/witness identity changed", "NEEDS_CHANGE");
+}
+function recoveryBudgetMs(owners) {
+  const needsCold = owners.some((id) => id !== "desktop-build" && id !== "desktop-migrations");
+  let total = needsCold ? 3 * 15 * 60 * 1e3 : 0;
+  for (const id of owners) {
+    if (id === "fumadocs") total += 2 * 15 * 60 * 1e3;
+    else if (id.startsWith("next-") || id === "desktop-docs") total += 15 * 60 * 1e3;
+    else total += 1e4;
+  }
+  return total;
+}
+function comparisonBudgetMs(commands) {
+  return MAIN_BOOTSTRAP_MS + commands.reduce((total, command) => total + 2 * command.timeoutMs, 0);
+}
+
+// src/main-sync-main-comparison.ts
+var BOOTSTRAP = ["bash", ".closedloop-ai/loops-setup.sh"];
+var PINNED_FILTER = /^--filter=\.\.\.\[[a-f0-9]{40}\]$/;
+var CLEANUP_MS = 15 * 60 * 1e3;
+var WRAPPER_GRACE_MS = 30 * 1e3;
+var CapturedMainComparison = class {
+  constructor(root, dir, receipt) {
+    this.root = root;
+    this.dir = dir;
+    this.receipt = receipt;
+  }
+  root;
+  dir;
+  receipt;
+  checkout;
+  registered = false;
+  bootstrap;
+  /** Classifies one failing session run; passing checks never reach this. */
+  classify(command, selection, failed, prefix, env, rerun) {
+    const mainSha = this.receipt.mainSha;
+    const main = this.runOnMain(command, selection, prefix, env);
+    if (main.outcome === "failed") return { classification: "main-preexisting", mainSha, sessionRuns: [failed], main };
+    if (main.outcome === "unrunnable") return { classification: "session-caused", mainSha, sessionRuns: [failed], main };
+    const again = rerun(`${prefix}-rerun.log`);
+    return { classification: again.exitCode === 0 ? "flaky" : "session-caused", mainSha, sessionRuns: [failed, again], main };
+  }
+  /** Removes the disposable checkout; an unproven removal keeps the operation's evidence and refuses. */
+  dispose() {
+    if (!this.checkout) return;
+    const target = this.checkout;
+    this.checkout = void 0;
+    if (!this.registered) {
+      rmSync3(target, { recursive: true, force: true });
+      return;
+    }
+    try {
+      git(this.root, ["worktree", "remove", "--force", target], { timeout: CLEANUP_MS });
+    } catch {
+      throw new MainSyncError("Captured-main comparison checkout cleanup is unproven; preserve its operation evidence");
+    }
+  }
+  runOnMain(command, selection, prefix, env) {
+    const scoped = capturedMainArgv(this.root, this.receipt.mainSha, command, selection);
+    if ("reason" in scoped) return { outcome: "unrunnable", reason: scoped.reason };
+    const ready = this.prepare();
+    if (!ready.ok) {
+      return {
+        outcome: "unrunnable",
+        argv: scoped.argv,
+        reason: ready.reason,
+        ...ready.log && ready.sha256 ? { log: ready.log, sha256: ready.sha256 } : {}
+      };
+    }
+    const checkout = this.checkout;
+    const cwd = command.cwd ? join10(checkout, command.cwd) : checkout;
+    try {
+      verifyReportExecution(this.root, checkout, ReportExecutionOwner.Check, scoped.argv, cwd, selection);
+    } catch (error) {
+      return { outcome: "unrunnable", argv: scoped.argv, reason: `report admission refused: ${failureCause(error)}`.slice(0, 512) };
+    }
+    const run = runBounded(scoped.argv, cwd, env, command.timeoutMs ?? MAX_CHECK_MS, `${prefix}-main.log`);
+    if (run.exitCode === 0) return { outcome: "passed", argv: scoped.argv, exitCode: 0, log: run.log, sha256: run.sha256 };
+    if (run.timedOut || run.spawnFailed) {
+      return {
+        outcome: "unrunnable",
+        argv: scoped.argv,
+        exitCode: run.exitCode,
+        log: run.log,
+        sha256: run.sha256,
+        reason: run.timedOut ? "it ran out of its time limit on captured main" : "it could not be started on captured main"
+      };
+    }
+    return { outcome: "failed", argv: scoped.argv, exitCode: run.exitCode, log: run.log, sha256: run.sha256 };
+  }
+  prepare() {
+    if (this.bootstrap) return this.bootstrap;
+    const mainSha = this.receipt.mainSha;
+    try {
+      this.checkout = realpathSync7(mkdtempSync(join10(tmpdir(), "vibe-captured-main-")));
+      git(this.root, ["worktree", "add", "--detach", this.checkout, mainSha], { timeout: CLEANUP_MS });
+      this.registered = true;
+    } catch (error) {
+      if (error instanceof MainSyncError) throw error;
+      this.bootstrap = { ok: false, reason: `a checkout of captured main could not be created: ${failureCause(error)}`.slice(0, 512) };
+      return this.bootstrap;
+    }
+    if (!existsSync7(join10(this.checkout, BOOTSTRAP[1]))) {
+      this.bootstrap = { ok: false, reason: "captured main has no canonical bootstrap (.closedloop-ai/loops-setup.sh)" };
+      return this.bootstrap;
+    }
+    try {
+      verifyReportExecution(this.root, this.checkout, ReportExecutionOwner.Bootstrap, BOOTSTRAP, this.checkout);
+    } catch (error) {
+      this.bootstrap = { ok: false, reason: `bootstrap admission refused: ${failureCause(error)}`.slice(0, 512) };
+      return this.bootstrap;
+    }
+    const log = join10(this.dir, `vibe-main-sync-${this.receipt.transactionId}-main-bootstrap.log`);
+    const run = runBounded(BOOTSTRAP, this.checkout, process.env, MAIN_BOOTSTRAP_MS, log);
+    this.bootstrap = run.exitCode === 0 ? { ok: true } : {
+      ok: false,
+      reason: run.timedOut ? "the captured main bootstrap ran out of its time limit" : `the captured main bootstrap exited ${run.exitCode}`,
+      log: run.log,
+      sha256: run.sha256
+    };
+    return this.bootstrap;
+  }
+};
+function runBounded(argv, cwd, env, timeoutMs, log) {
+  const seconds = Math.max(1, Math.ceil(timeoutMs / 1e3));
+  const result = spawnSync3(process.execPath, [runBoundedScript(), String(seconds), ...argv], {
+    cwd,
+    env,
+    encoding: "utf8",
+    timeout: seconds * 1e3 + WRAPPER_GRACE_MS,
+    maxBuffer: 16 * 1024 * 1024
+  });
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+  writeFileSync4(log, output, { mode: 384 });
+  const exitCode = result.status ?? 1;
+  const stderr = result.stderr ?? "";
+  return {
+    exitCode,
+    log,
+    sha256: digest(output),
+    timedOut: Boolean(result.error) || exitCode === TIMED_OUT_EXIT && stderr.includes(TIMED_OUT_MARKER),
+    spawnFailed: exitCode === WRAPPER_FAILED_EXIT && SPAWN_FAILURE.test(stderr)
+  };
+}
+function comparisonLogs(comparison) {
+  return [
+    ...comparison.sessionRuns.map((run) => ({ log: run.log, sha256: run.sha256 })),
+    ...comparison.main.log && comparison.main.sha256 ? [{ log: comparison.main.log, sha256: comparison.main.sha256 }] : []
+  ];
+}
+function capturedMainArgv(root, mainSha, command, selection) {
+  const words = command.argv;
+  let task;
+  let rest = [];
+  if (words.join(" ") === "pnpm typecheck:affected") {
+    task = "typecheck";
+    rest = ["--concurrency=1"];
+  } else if (words[0] === "pnpm" && words[1] === "test:affected") {
+    task = "test";
+    rest = words.slice(2);
+  } else if (words[0] === "pnpm" && words[1] === "turbo" && words.slice(3).some((word) => PINNED_FILTER.test(word))) {
+    task = words[2];
+    rest = words.slice(3).filter((word) => !PINNED_FILTER.test(word));
+  }
+  if (task) {
+    const packages = [...new Set((selection?.tasks ?? []).filter((item) => item.taskId.endsWith(`#${task}`)).map((item) => item.package ?? item.taskId.slice(0, item.taskId.lastIndexOf("#"))))].sort();
+    if (!packages.length) return { reason: "the session's selected tasks are not available to pin the same check on captured main" };
+    return { argv: ["pnpm", "turbo", task, ...packages.map((name) => `--filter=${name}`), ...rest] };
+  }
+  if (words[0] === "pnpm" && words[1] === "exec" && words[2] === "biome" && words[3] === "check") {
+    for (const path2 of words.slice(4)) {
+      try {
+        git(root, ["cat-file", "-e", `${mainSha}:${path2}`]);
+      } catch {
+        return { reason: `the checked file ${path2} does not exist on captured main` };
+      }
+    }
+  }
+  return { argv: [...words] };
+}
+var TIMED_OUT_EXIT = 124;
+var TIMED_OUT_MARKER = "run-bounded: stopped after";
+var WRAPPER_FAILED_EXIT = 2;
+var SPAWN_FAILURE = /^spawn \S+ E[A-Z]+\s*$/m;
+function runBoundedScript() {
+  const script = fileURLToPath3(new URL("../run-bounded.mjs", import.meta.url));
+  if (!existsSync7(script)) throw new MainSyncError("The plugin's run-bounded.mjs is missing; no comparison was run");
+  return script;
+}
+
 // src/main-sync-lanes.ts
+import { spawnSync as spawnSync4 } from "node:child_process";
 var laneSchema = external_exports.object({
   script: external_exports.string().min(1),
   dir: external_exports.string().optional(),
@@ -226932,7 +227163,7 @@ function discoverCheckLanes(root, receipt) {
   const discovery = { argv: ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", DISCOVERY_SOURCE, receipt.mainSha] };
   verifyReportProducerInputs(root, root, ReportExecutionOwner.Discovery, DISCOVERY_MODULES);
   verifyReportExecution(root, root, ReportExecutionOwner.Discovery, discovery.argv);
-  const run = spawnSync3(discovery.argv[0], discovery.argv.slice(1), {
+  const run = spawnSync4(discovery.argv[0], discovery.argv.slice(1), {
     cwd: root,
     encoding: "utf8",
     timeout: MAX_CHECK_MS,
@@ -226975,7 +227206,7 @@ function discoverCheckLanes(root, receipt) {
   return { commands, limitations };
 }
 function displaylessPrerequisites(root) {
-  const result = spawnSync3(
+  const result = spawnSync4(
     "sh",
     ["-c", "command -v dbus-run-session && command -v xvfb-run && command -v gnome-keyring-daemon"],
     { cwd: root, encoding: "utf8", timeout: 1e4, maxBuffer: 1024 * 1024 }
@@ -226984,8 +227215,8 @@ function displaylessPrerequisites(root) {
 }
 
 // src/main-sync-private-inputs.ts
-import { existsSync as existsSync7, lstatSync as lstatSync5, realpathSync as realpathSync7 } from "node:fs";
-import { dirname as dirname8, join as join10, relative as relative5, resolve as resolve5, sep as sep3 } from "node:path";
+import { existsSync as existsSync8, lstatSync as lstatSync5, realpathSync as realpathSync8 } from "node:fs";
+import { dirname as dirname8, join as join11, relative as relative5, resolve as resolve5, sep as sep3 } from "node:path";
 var analyzed;
 function verifyPrivateInput(root, file, head) {
   verifyEvidencePath(root, file);
@@ -227000,20 +227231,20 @@ function verifyPrivateInput(root, file, head) {
 }
 function verifyPrivateRoot(root) {
   for (const path2 of [".closedloop-ai", ".closedloop-ai/vibe-plans"]) {
-    const stat = lstatSync5(join10(root, path2), { throwIfNoEntry: false });
-    if (stat && (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync7(join10(root, path2)) !== join10(root, path2))) {
+    const stat = lstatSync5(join11(root, path2), { throwIfNoEntry: false });
+    if (stat && (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync8(join11(root, path2)) !== join11(root, path2))) {
       throw new MainSyncError("Private planning evidence requires its canonical owned directory; no symlink or alias is accepted", "NEEDS_CHANGE");
     }
   }
 }
 function verifyEvidencePath(root, file, label = "Private planning evidence") {
-  const target = join10(root, file);
+  const target = join11(root, file);
   const stat = lstatSync5(target);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_INPUT_BYTES || realpathSync7(target) !== target) {
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_INPUT_BYTES || realpathSync8(target) !== target) {
     throw new MainSyncError(`${label} requires a bounded canonical regular file`, "NEEDS_CHANGE");
   }
   for (let parent = dirname8(target); parent !== root; parent = dirname8(parent)) {
-    if (!parent.startsWith(`${root}${sep3}`) || lstatSync5(parent).isSymbolicLink() || realpathSync7(parent) !== parent) {
+    if (!parent.startsWith(`${root}${sep3}`) || lstatSync5(parent).isSymbolicLink() || realpathSync8(parent) !== parent) {
       throw new MainSyncError(`${label} cannot use a symlinked or escaping parent`, "NEEDS_CHANGE");
     }
   }
@@ -227022,16 +227253,16 @@ function referencesPrivateInputs(root, privatePaths) {
   return committedInputReferences(root, (file, reference) => {
     if (explicitPlanningReference(root, file, reference) || referenceMatches(root, file, reference, privatePaths)) return true;
     if (reference.kind !== "path") return false;
-    const path2 = resolve5(reference.base === "module" ? dirname8(join10(root, file)) : root, reference.value);
-    return existsSync7(path2) && isLocalPlanPath(relative5(root, realpathSync7(path2)));
+    const path2 = resolve5(reference.base === "module" ? dirname8(join11(root, file)) : root, reference.value);
+    return existsSync8(path2) && isLocalPlanPath(relative5(root, realpathSync8(path2)));
   });
 }
 
 // src/main-sync-budget.ts
 var import_yaml4 = __toESM(require_dist(), 1);
-import { spawnSync as spawnSync4 } from "node:child_process";
+import { spawnSync as spawnSync5 } from "node:child_process";
 import { readFileSync as readFileSync11 } from "node:fs";
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 import { createHash as createHash3 } from "node:crypto";
 
 // src/main-sync-budget-ref-read.ts
@@ -227087,20 +227318,20 @@ function commandSelection(root, command, timeoutMs = GENERAL_CHECK_MS) {
   let argv;
   if (command.argv[0] === "pnpm" && command.argv[1] === "turbo") argv = [...command.argv.slice(1), "--dry=json"];
   else if (command.argv.join(" ") === "pnpm typecheck:affected") {
-    const pkg = wrapperSchema.parse(JSON.parse(readFileSync11(join11(root, "package.json"), "utf8")));
-    if (pkg.scripts["typecheck:affected"] !== "sh scripts/typecheck-affected.sh" || createHash3("sha256").update(readFileSync11(join11(root, "scripts/typecheck-affected.sh"))).digest("hex") !== AFFECTED_TYPECHECK_SHA) {
+    const pkg = wrapperSchema.parse(JSON.parse(readFileSync11(join12(root, "package.json"), "utf8")));
+    if (pkg.scripts["typecheck:affected"] !== "sh scripts/typecheck-affected.sh" || createHash3("sha256").update(readFileSync11(join12(root, "scripts/typecheck-affected.sh"))).digest("hex") !== AFFECTED_TYPECHECK_SHA) {
       throw new MainSyncError("Affected typecheck wrapper owner changed; no selected producer authority", "NEEDS_CHANGE");
     }
     argv = ["turbo", "typecheck", `--filter=${affectedFilter(root)}`, "--concurrency=1", "--dry=json"];
   } else return void 0;
   verifyReportExecution(root, root, ReportExecutionOwner.TurboSelection, ["pnpm", ...argv]);
-  const run = spawnSync4("pnpm", argv, { cwd: root, encoding: "utf8", timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 });
+  const run = spawnSync5("pnpm", argv, { cwd: root, encoding: "utf8", timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 });
   if (run.error || run.status !== 0) throw new MainSyncError("Could not bind the actual canonical Turbo task selection");
   return tasksSchema.parse(JSON.parse(run.stdout));
 }
 function affectedFilter(root) {
   verifyReportExecution(root, root, ReportExecutionOwner.AffectedFilter, ["sh", "scripts/affected-filter.sh"]);
-  const selected = spawnSync4("sh", ["scripts/affected-filter.sh"], { cwd: root, encoding: "utf8", timeout: 1e4, maxBuffer: 1024 * 1024 });
+  const selected = spawnSync5("sh", ["scripts/affected-filter.sh"], { cwd: root, encoding: "utf8", timeout: 1e4, maxBuffer: 1024 * 1024 });
   if (selected.error || selected.status !== 0) throw new MainSyncError("Existing affected-filter owner failed; no selection was derived");
   return affectedFilterSchema.parse(selected.stdout.trim());
 }
@@ -227128,7 +227359,7 @@ function bindCheckBudgets(root, receipt, commands) {
 }
 function selectedTestBudget(root, receipt, affected) {
   const { head } = readBudgetRefs(root);
-  const workflow = workflowSchema2.parse((0, import_yaml4.parse)(readFileSync11(join11(root, ".github/workflows/pr-test.yml"), "utf8")));
+  const workflow = workflowSchema2.parse((0, import_yaml4.parse)(readFileSync11(join12(root, ".github/workflows/pr-test.yml"), "utf8")));
   let filter = `...[${receipt.validationSince}]`;
   if (affected) {
     filter = affectedFilter(root);
@@ -227137,7 +227368,7 @@ function selectedTestBudget(root, receipt, affected) {
     }
   }
   verifyReportExecution(root, root, ReportExecutionOwner.TurboSelection, ["pnpm", "turbo", "test", `--filter=${filter}`, "--dry=json"]);
-  const run = spawnSync4("pnpm", ["turbo", "test", `--filter=${filter}`, "--dry=json"], {
+  const run = spawnSync5("pnpm", ["turbo", "test", `--filter=${filter}`, "--dry=json"], {
     cwd: root,
     encoding: "utf8",
     timeout: 12e4,
@@ -227173,30 +227404,30 @@ function wrapperBase(root) {
   }
 }
 function testWrapperIdentity(root) {
-  return createHash3("sha256").update(readFileSync11(join11(root, "scripts/test-affected.sh"))).digest("hex");
+  return createHash3("sha256").update(readFileSync11(join12(root, "scripts/test-affected.sh"))).digest("hex");
 }
 function canonicalTestWrapper(root) {
-  const pkg = wrapperSchema.parse(JSON.parse(readFileSync11(join11(root, "package.json"), "utf8")));
+  const pkg = wrapperSchema.parse(JSON.parse(readFileSync11(join12(root, "package.json"), "utf8")));
   if (pkg.scripts["test:affected"] !== "sh scripts/test-affected.sh") return false;
   return testWrapperIdentity(root) === AFFECTED_TEST_SHA;
 }
 
 // src/main-sync-check-production.ts
 import { readFileSync as readFileSync14 } from "node:fs";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 
 // src/main-sync-input-origin.ts
-import { spawnSync as spawnSync6 } from "node:child_process";
+import { spawnSync as spawnSync7 } from "node:child_process";
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { lstatSync as lstatSync6, mkdtempSync, readFileSync as readFileSync13, realpathSync as realpathSync8, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
-import { tmpdir } from "node:os";
-import { join as join13 } from "node:path";
+import { lstatSync as lstatSync6, mkdtempSync as mkdtempSync2, readFileSync as readFileSync13, realpathSync as realpathSync9, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { tmpdir as tmpdir2 } from "node:os";
+import { join as join14 } from "node:path";
 
 // src/main-sync-input-pure.ts
 var import_typescript4 = __toESM(require_typescript(), 1);
-import { spawnSync as spawnSync5 } from "node:child_process";
+import { spawnSync as spawnSync6 } from "node:child_process";
 import { readFileSync as readFileSync12 } from "node:fs";
-import { join as join12, relative as relative6 } from "node:path";
+import { join as join13, relative as relative6 } from "node:path";
 var PURE_OWNER_PROBE = String.raw`
 import {readFileSync,lstatSync,realpathSync} from 'node:fs';
 import {join} from 'node:path';
@@ -227240,7 +227471,7 @@ function pureOriginFiles(root, producer, head) {
     ReportExecutionOwner.Pure,
     ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", PURE_OWNER_PROBE]
   );
-  const result = spawnSync5("pnpm", ["exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", PURE_OWNER_PROBE], {
+  const result = spawnSync6("pnpm", ["exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", PURE_OWNER_PROBE], {
     cwd: root,
     encoding: "utf8",
     input: JSON.stringify({ id: producer.id, head, output: producer.roots[0] }),
@@ -227253,7 +227484,7 @@ function pureOriginFiles(root, producer, head) {
 function huskyBody(root, producer) {
   const owner = producerPackage(root, producer);
   if (!owner) throw new MainSyncError("Locked Husky owner is unavailable", "NEEDS_CHANGE");
-  const file = join12(owner.directory, "index.js");
+  const file = join13(owner.directory, "index.js");
   const source = import_typescript4.default.createSourceFile(relative6(root, file), readFileSync12(file, "utf8"), import_typescript4.default.ScriptTarget.Latest, true);
   const candidates = [];
   const inspect = (node) => {
@@ -227325,10 +227556,10 @@ function prepareInputOrigins(value, before, producers) {
   const packages = [];
   if (!producers.length) return proof();
   const needsCold = producers.some((producer) => producer.argv || producer.package);
-  const cold = needsCold ? realpathSync8(mkdtempSync(join13(tmpdir(), "vibe-input-origin-"))) : void 0;
+  const cold = needsCold ? realpathSync9(mkdtempSync2(join14(tmpdir2(), "vibe-input-origin-"))) : void 0;
   let registered = false;
   const commands = [];
-  const log = join13(value.place.dir, `vibe-input-origin-${attempt}.json`);
+  const log = join14(value.place.dir, `vibe-input-origin-${attempt}.json`);
   try {
     verifyProducerInputs(root, before.headSha, producers);
     verifyReportProducerInputs(root, root, ReportExecutionOwner.Producer, producers.flatMap((producer) => producer.inputs));
@@ -227337,11 +227568,11 @@ function prepareInputOrigins(value, before, producers) {
       registered = true;
       assertTracked(cold, before);
       for (const producer of producers) {
-        for (const path2 of producer.roots) if (lstatSync6(join13(cold, path2), { throwIfNoEntry: false })) {
+        for (const path2 of producer.roots) if (lstatSync6(join14(cold, path2), { throwIfNoEntry: false })) {
           throw new MainSyncError(`Pristine output origin was not empty: ${path2}`, "NEEDS_CHANGE");
         }
       }
-      if (lstatSync6(join13(cold, "node_modules"), { throwIfNoEntry: false }) || lstatSync6(join13(cold, "apps/desktop/src/main/database/migrations-manifest.ts"), { throwIfNoEntry: false })) {
+      if (lstatSync6(join14(cold, "node_modules"), { throwIfNoEntry: false }) || lstatSync6(join14(cold, "apps/desktop/src/main/database/migrations-manifest.ts"), { throwIfNoEntry: false })) {
         throw new MainSyncError("Pristine bootstrap prerequisites are not empty or contain a legacy migration artifact", "NEEDS_CHANGE");
       }
       run(cold, ["bash", ".closedloop-ai/loops-setup.sh"]);
@@ -227408,7 +227639,7 @@ function prepareInputOrigins(value, before, producers) {
       } catch {
         throw new MainSyncError("Owned validation checkout cleanup is unproven; preserve its operation evidence");
       }
-    } else if (cold) rmSync3(cold, { recursive: true });
+    } else if (cold) rmSync4(cold, { recursive: true });
   }
   function proof() {
     return {
@@ -227424,13 +227655,13 @@ function prepareInputOrigins(value, before, producers) {
     };
   }
   function writeLog() {
-    writeFileSync4(log, JSON.stringify({ headSha: before.headSha, treeSha: before.treeSha, ...cold ? { scratch: cold } : {}, commands }), { mode: 384 });
+    writeFileSync5(log, JSON.stringify({ headSha: before.headSha, treeSha: before.treeSha, ...cold ? { scratch: cold } : {}, commands }), { mode: 384 });
   }
   function run(cwd, argv) {
     const owner = argv[0] === "bash" ? ReportExecutionOwner.Bootstrap : ReportExecutionOwner.Producer;
     verifyReportExecution(root, cwd, owner, argv, cwd);
     const executable = argv[0] === "node" ? process.execPath : argv[0];
-    const result = spawnSync6(executable, argv.slice(1), { cwd, encoding: "utf8", timeout: OWNER_MS, maxBuffer: 16 * 1024 * 1024 });
+    const result = spawnSync7(executable, argv.slice(1), { cwd, encoding: "utf8", timeout: OWNER_MS, maxBuffer: 16 * 1024 * 1024 });
     commands.push({ argv, exitCode: result.status, stdoutSha256: digest(result.stdout ?? ""), stderrSha256: digest(result.stderr ?? "") });
     if (result.error || result.status !== 0) throw new MainSyncError(`Canonical generated-input producer failed: ${argv.slice(0, 4).join(" ")}; preserve private operation evidence`, "NEEDS_CHANGE");
   }
@@ -227450,31 +227681,6 @@ function reusableInputOrigin(value, before, stored) {
     throw error;
   }
   return stored;
-}
-
-// src/main-sync-validation-recipe.ts
-function recipeIdentity(value) {
-  return digest(JSON.stringify({
-    commands: value.commands,
-    e2eLimitations: value.e2eLimitations,
-    ...value.recovery ? { recovery: value.recovery } : {}
-  }));
-}
-function storedRecipe(identity, recipe) {
-  return storedValidationRecipeSchema.parse({ ...identity, ...recipe, recipeSha256: recipeIdentity(recipe) });
-}
-function verifyRecipeWitness(recipe, witness, transactionId) {
-  if (witness.transactionId !== transactionId || recipe.headSha !== witness.headSha || recipe.treeSha !== witness.treeSha || recipe.inputSha256 !== witness.inputSha256 || recipe.recipeSha256 !== witness.recipeSha256 || recipeIdentity(recipe) !== recipe.recipeSha256) throw new MainSyncError("Canonical validation recipe/witness identity changed", "NEEDS_CHANGE");
-}
-function recoveryBudgetMs(owners) {
-  const needsCold = owners.some((id) => id !== "desktop-build" && id !== "desktop-migrations");
-  let total = needsCold ? 3 * 15 * 60 * 1e3 : 0;
-  for (const id of owners) {
-    if (id === "fumadocs") total += 2 * 15 * 60 * 1e3;
-    else if (id.startsWith("next-") || id === "desktop-docs") total += 15 * 60 * 1e3;
-    else total += 1e4;
-  }
-  return total;
 }
 
 // src/main-sync-check-production.ts
@@ -227526,7 +227732,7 @@ function selectedProducer(root, id, command, selection) {
   if (!direct && command.argv.join(" ") !== "pnpm typecheck:affected" || !selection) return false;
   const owner = id === "fumadocs" ? "web" : id === "next-api" ? "api" : id === "next-app" ? "app" : id.startsWith("desktop-") ? "desktop" : void 0;
   if (!owner || !selection.tasks.some((task) => task.package === owner && task.taskId.endsWith("#typecheck"))) return false;
-  const script = packageSchema4.parse(JSON.parse(readFileSync14(join14(root, "apps", owner, "package.json"), "utf8"))).scripts?.typecheck;
+  const script = packageSchema4.parse(JSON.parse(readFileSync14(join15(root, "apps", owner, "package.json"), "utf8"))).scripts?.typecheck;
   const first = script?.split("&&")[0]?.trim();
   if (owner === "web") return first === "fumadocs-mdx";
   if (owner === "app" || owner === "api") return first === "next typegen";
@@ -227568,8 +227774,8 @@ function committedInputs(root) {
   const before = inspected.inventory;
   if (!before.producers.length) return { headSha: before.headSha, treeSha: before.treeSha, inputSha256: before.inputSha256 };
   const metadata = inspected.metadata;
-  const file = join15(metadata, MAIN_SYNC_FILE);
-  if (!existsSync9(file)) throw new MainSyncError("Canonical source input readiness is required before generated dependencies can be consumed", "NEEDS_CHANGE");
+  const file = join16(metadata, MAIN_SYNC_FILE);
+  if (!existsSync10(file)) throw new MainSyncError("Canonical source input readiness is required before generated dependencies can be consumed", "NEEDS_CHANGE");
   const state = mainSyncStateSchema.parse(readPrivateJson(file));
   if (state.worktree !== root) throw new MainSyncError("Generated input origin belongs to another worktree", "NEEDS_CHANGE");
   const proof = state.inputs;
@@ -227584,9 +227790,9 @@ function inspectInventory(root, completion) {
   const before = trackedInputs(root);
   verifyPrivateRoot(root);
   for (const path2 of reportOutputs) {
-    if (lstatSync7(join15(root, path2), { throwIfNoEntry: false })) verifyEvidencePath(root, path2, "Retained report");
+    if (lstatSync7(join16(root, path2), { throwIfNoEntry: false })) verifyEvidencePath(root, path2, "Retained report");
   }
-  const generated = lstatSync7(join15(root, GENERATED_BIOME_PATH), { throwIfNoEntry: false });
+  const generated = lstatSync7(join16(root, GENERATED_BIOME_PATH), { throwIfNoEntry: false });
   if (generated && !generated.isFile()) {
     throw new MainSyncError(`Generated-input verification requires a bounded canonical regular file: ${GENERATED_BIOME_PATH}`, "NEEDS_CHANGE");
   }
@@ -227608,7 +227814,7 @@ function inspectInventory(root, completion) {
         continue;
       }
       if (ignored && reportOutputs.has(file)) {
-        const stat = lstatSync7(join15(root, file));
+        const stat = lstatSync7(join16(root, file));
         if (!stat.isFile() || stat.isSymbolicLink()) throw new MainSyncError(`Retained report must be a regular owned output: ${file}`, "NEEDS_CHANGE");
         continue;
       }
@@ -227677,8 +227883,8 @@ function trackedInputs(root) {
     const tab = entry.indexOf("	");
     const [mode, kind, object] = entry.slice(0, tab).split(" ");
     const file = entry.slice(tab + 1);
-    const target = join15(root, file);
-    if (kind !== "blob" || !existsSync9(target)) throw new MainSyncError(`Committed validation inputs differ from HEAD: ${file}`, "NEEDS_CHANGE");
+    const target = join16(root, file);
+    if (kind !== "blob" || !existsSync10(target)) throw new MainSyncError(`Committed validation inputs differ from HEAD: ${file}`, "NEEDS_CHANGE");
     const stat = lstatSync7(target);
     if (stat.size > MAX_INPUT_BYTES) throw new MainSyncError(`Validation input exceeds the bounded file limit: ${file}`);
     const content = mode === "120000" && stat.isSymbolicLink() ? Buffer.from(readlinkSync(target)) : stat.isFile() ? readFileSync15(target) : void 0;
@@ -227696,7 +227902,7 @@ function checkRecipe(value, receipt) {
   const files = git(root, ["diff", "--name-only", "--no-renames", receipt.mainSha, "HEAD"]).split("\n").filter(Boolean);
   const prototype = value.place.branch.startsWith("prototype/");
   const backend = files.some((file) => BACKEND_PREFIXES.some((prefix) => file.startsWith(prefix)) || /\/(?:prisma|migrations)\//.test(`/${file}`));
-  const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync9(join15(root, file)));
+  const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync10(join16(root, file)));
   const commands = [];
   const e2eLimitations = [];
   if (value.purpose === "build") {
@@ -227745,77 +227951,115 @@ function checkRecipe(value, receipt) {
   commands.push({ argv: ["pnpm", "vibe", "storybook-diff"] });
   verifyReportRecipe(commands);
   const bound = bindCheckBudgets(root, receipt, commands);
-  return { commands: bound, e2eLimitations, recovery: selectedRecoveryReserve(root, bound) };
+  return {
+    commands: bound,
+    e2eLimitations,
+    recovery: selectedRecoveryReserve(root, bound),
+    comparison: { timeoutMs: comparisonBudgetMs(bound.map((command) => ({ timeoutMs: command.timeoutMs ?? MAX_CHECK_MS }))) }
+  };
 }
 function executeChecks(value, receipt, preparedRecipe) {
   let before = committedInputs(value.place.root);
   const recipe = preparedRecipe ?? checkRecipe(value, receipt);
   const spent = recipe.commands.map(() => 0);
   const drySpent = recipe.commands.map(() => 0);
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const results = [];
-    let restart = false;
-    for (const [index, command] of recipe.commands.entries()) {
-      assertIdentity(value.place.root, before);
-      let selection = affectedTestReportSelection(value.place.root, command);
-      if (command.argv[1] === "turbo" || command.argv.join(" ") === "pnpm typecheck:affected") {
-        const start2 = performance2.now();
-        selection = commandSelection(value.place.root, command, remainingBudget(MAX_CHECK_MS, drySpent[index]));
-        drySpent[index] += performance2.now() - start2;
-        if (command.argv[1] === "turbo" && !selection?.tasks.length && git(value.place.root, ["diff", "--name-only", receipt.validationSince, "HEAD"])) {
-          throw new MainSyncError("Pinned validation selected no tasks for changed inputs; no executed coverage was established");
+  const main = value.purpose === "handoff" ? new CapturedMainComparison(value.place.root, value.place.dir, receipt) : void 0;
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const results = [];
+      let restart = false;
+      for (const [index, command] of recipe.commands.entries()) {
+        assertIdentity(value.place.root, before);
+        let selection = affectedTestReportSelection(value.place.root, command);
+        if (command.argv[1] === "turbo" || command.argv.join(" ") === "pnpm typecheck:affected") {
+          const start2 = performance2.now();
+          selection = commandSelection(value.place.root, command, remainingBudget(MAX_CHECK_MS, drySpent[index]));
+          drySpent[index] += performance2.now() - start2;
+          if (command.argv[1] === "turbo" && !selection?.tasks.length && git(value.place.root, ["diff", "--name-only", receipt.validationSince, "HEAD"])) {
+            throw new MainSyncError("Pinned validation selected no tasks for changed inputs; no executed coverage was established");
+          }
+          assertIdentity(value.place.root, before);
         }
-        assertIdentity(value.place.root, before);
+        const env = { ...process.env, TURBO_CONCURRENCY: "2" };
+        Reflect.deleteProperty(env, "AFFECTED_SCRIPT_SUITES");
+        Object.assign(env, command.bindings);
+        const start = performance2.now();
+        verifyReportExecution(
+          value.place.root,
+          value.place.root,
+          ReportExecutionOwner.Check,
+          command.argv,
+          command.cwd ? join16(value.place.root, command.cwd) : value.place.root,
+          selection
+        );
+        const result = spawnSync8(command.argv[0], command.argv.slice(1), {
+          cwd: command.cwd ? join16(value.place.root, command.cwd) : value.place.root,
+          encoding: "utf8",
+          timeout: remainingBudget(command.timeoutMs ?? MAX_CHECK_MS, spent[index]),
+          maxBuffer: 16 * 1024 * 1024,
+          env
+        });
+        spent[index] += performance2.now() - start;
+        const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+        const prefix = join16(value.place.dir, `vibe-main-sync-${receipt.transactionId}-${attempt}-${index}`);
+        const log = `${prefix}.log`;
+        writeFileSync6(log, output, { mode: 384 });
+        let evidence = { exitCode: 0, log, sha256: digest(output) };
+        let comparison;
+        if (result.error || result.status !== 0) {
+          if (!main) throw new MainSyncError(`Required validation command failed: ${command.argv.join(" ")}; private log ${log}`);
+          const failed = { ...evidence, exitCode: result.status ?? 1 };
+          comparison = main.classify(command, selection, failed, prefix, env, (rerunLog) => {
+            verifyReportExecution(
+              value.place.root,
+              value.place.root,
+              ReportExecutionOwner.Check,
+              command.argv,
+              command.cwd ? join16(value.place.root, command.cwd) : value.place.root,
+              selection
+            );
+            const again = runBounded(
+              command.argv,
+              command.cwd ? join16(value.place.root, command.cwd) : value.place.root,
+              env,
+              command.timeoutMs ?? MAX_CHECK_MS,
+              rerunLog
+            );
+            return { exitCode: again.exitCode, log: again.log, sha256: again.sha256 };
+          });
+          if (comparison.classification === "session-caused") {
+            recordFailedCheck(value, command, comparison);
+            throw new MainSyncError(sessionCausedMessage(command, comparison));
+          }
+          evidence = comparison.classification === "flaky" ? comparison.sessionRuns[1] : failed;
+        }
+        if (selection) {
+          writeFileSync6(`${log}.selection.json`, JSON.stringify(selection), { mode: 384 });
+        }
+        try {
+          assertIdentity(value.place.root, before);
+        } catch (error) {
+          if (!(error instanceof MainSyncError) || error.status !== "NEEDS_CHANGE" || attempt !== 0) throw error;
+          recheckSelectedProduction(value, receipt, command, selection, recipe.recovery.owners);
+          before = committedInputs(value.place.root);
+          restart = true;
+          break;
+        }
+        results.push({
+          argv: command.argv,
+          ...command.bindings ? { bindings: command.bindings } : {},
+          ...command.cwd ? { cwd: command.cwd } : {},
+          timeoutMs: command.timeoutMs ?? MAX_CHECK_MS,
+          ...evidence,
+          ...comparison ? { comparison } : {}
+        });
       }
-      const env = { ...process.env, TURBO_CONCURRENCY: "2" };
-      Reflect.deleteProperty(env, "AFFECTED_SCRIPT_SUITES");
-      Object.assign(env, command.bindings);
-      const start = performance2.now();
-      verifyReportExecution(
-        value.place.root,
-        value.place.root,
-        ReportExecutionOwner.Check,
-        command.argv,
-        command.cwd ? join15(value.place.root, command.cwd) : value.place.root,
-        selection
-      );
-      const result = spawnSync7(command.argv[0], command.argv.slice(1), {
-        cwd: command.cwd ? join15(value.place.root, command.cwd) : value.place.root,
-        encoding: "utf8",
-        timeout: remainingBudget(command.timeoutMs ?? MAX_CHECK_MS, spent[index]),
-        maxBuffer: 16 * 1024 * 1024,
-        env
-      });
-      spent[index] += performance2.now() - start;
-      const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-      const log = join15(value.place.dir, `vibe-main-sync-${receipt.transactionId}-${attempt}-${index}.log`);
-      writeFileSync5(log, output, { mode: 384 });
-      if (result.error || result.status !== 0) throw new MainSyncError(`Required validation command failed: ${command.argv.join(" ")}; private log ${log}`);
-      if (selection) {
-        writeFileSync5(`${log}.selection.json`, JSON.stringify(selection), { mode: 384 });
-      }
-      try {
-        assertIdentity(value.place.root, before);
-      } catch (error) {
-        if (!(error instanceof MainSyncError) || error.status !== "NEEDS_CHANGE" || attempt !== 0) throw error;
-        recheckSelectedProduction(value, receipt, command, selection, recipe.recovery.owners);
-        before = committedInputs(value.place.root);
-        restart = true;
-        break;
-      }
-      results.push({
-        argv: command.argv,
-        ...command.bindings ? { bindings: command.bindings } : {},
-        ...command.cwd ? { cwd: command.cwd } : {},
-        timeoutMs: command.timeoutMs ?? MAX_CHECK_MS,
-        exitCode: 0,
-        log,
-        sha256: digest(output)
-      });
+      if (restart) continue;
+      assertIdentity(value.place.root, before);
+      return { ...before, commands: results, checkedAt: (/* @__PURE__ */ new Date()).toISOString(), e2eLimitations: recipe.e2eLimitations };
     }
-    if (restart) continue;
-    assertIdentity(value.place.root, before);
-    return { ...before, commands: results, checkedAt: (/* @__PURE__ */ new Date()).toISOString(), e2eLimitations: recipe.e2eLimitations };
+  } finally {
+    main?.dispose();
   }
   throw new MainSyncError("Canonical outputs changed repeatedly; current validation remains incomplete", "NEEDS_CHANGE");
 }
@@ -227830,6 +228074,26 @@ function assertIdentity(root, expected) {
     throw new MainSyncError("Committed validation inputs changed during the operation; same-writer recheck required", "NEEDS_CHANGE");
   }
 }
+function recordFailedCheck(value, command, comparison) {
+  const state = mainSyncStateSchema.parse(readPrivateJson(join16(value.place.dir, MAIN_SYNC_FILE)));
+  const failedChecks = [{
+    argv: command.argv,
+    ...command.bindings ? { bindings: command.bindings } : {},
+    ...command.cwd ? { cwd: command.cwd } : {},
+    comparison
+  }];
+  if (state.phase === "input-readiness") {
+    if (state.previous) saveSyncReceipt(value.place.dir, { ...state, previous: { ...state.previous, failedChecks } });
+  } else saveSyncReceipt(value.place.dir, { ...state, failedChecks });
+}
+function sessionCausedMessage(command, comparison) {
+  const check = command.argv.join(" ");
+  const logs = comparisonLogs(comparison).map((item) => item.log).join(", ");
+  if (comparison.main.outcome === "unrunnable") {
+    return `Required validation command failed: ${check}; it could not run on captured main ${comparison.mainSha} (${comparison.main.reason}), so it is treated as session-caused; private logs ${logs}`;
+  }
+  return `Required validation command failed: ${check}; it passes on captured main ${comparison.mainSha} and failed again on a rerun of the session commit, so the session caused it (session-caused); private logs ${logs}`;
+}
 
 // src/main-sync.ts
 var GIT_NETWORK_MS = 15 * 60 * 1e3;
@@ -227837,14 +228101,14 @@ var desktopSchema = external_exports.object({ ok: external_exports.boolean(), ru
 var TEST_HISTORY_PATH = /(?:\.(?:test|spec)\.[cm]?[jt]sx?$|\.snap$|(?:^|\/)(?:__tests__|__fixtures__|__snapshots__|e2e)\/|^apps\/desktop\/test\/)/;
 async function readMainSyncInput(worktree) {
   const input = mainSyncInputSchema.parse(await readInput());
-  if (realpathSync9(input.context.worktree) !== realpathSync9(worktree)) throw new MainSyncError("CLI worktree and owned operation context differ");
+  if (realpathSync10(input.context.worktree) !== realpathSync10(worktree)) throw new MainSyncError("CLI worktree and owned operation context differ");
   return input;
 }
 function prepareMainSyncInputs(raw) {
   const value = syncContext(raw, "inputs");
   const identity = inspectInputInventory(value.place.root);
-  const file = join16(value.place.dir, MAIN_SYNC_FILE);
-  const prior = existsSync10(file) ? mainSyncStateSchema.parse(readPrivateJson(file)) : void 0;
+  const file = join17(value.place.dir, MAIN_SYNC_FILE);
+  const prior = existsSync11(file) ? mainSyncStateSchema.parse(readPrivateJson(file)) : void 0;
   if (prior && (prior.worktree !== value.place.root || prior.branch !== value.place.branch || prior.operator.id !== value.place.session.operator.id || prior.operator.email !== value.place.session.operator.email || prior.originalBase !== value.place.session.baseCommit)) throw new MainSyncError("Input readiness belongs to another owned session");
   const previous = prior?.phase === "input-readiness" ? prior.previous : prior;
   if (previous && (!value.context.mainSyncTransactionId || previous.transactionId !== value.context.mainSyncTransactionId)) {
@@ -227889,14 +228153,14 @@ function prepareMainSync(raw) {
   const value = syncContext(raw, "prepare");
   const root = value.place.root;
   committedInputs(root);
-  const previousFile = join16(value.place.dir, MAIN_SYNC_FILE);
-  const state = existsSync10(previousFile) ? mainSyncStateSchema.parse(readPrivateJson(previousFile)) : void 0;
+  const previousFile = join17(value.place.dir, MAIN_SYNC_FILE);
+  const state = existsSync11(previousFile) ? mainSyncStateSchema.parse(readPrivateJson(previousFile)) : void 0;
   const previous = state?.phase === "input-readiness" ? state.previous : state;
   if (previous && (previous.worktree !== root || previous.branch !== value.place.branch || previous.originalBase !== value.place.session.baseCommit || previous.operator.id !== value.place.session.operator.id || previous.operator.email !== value.place.session.operator.email)) {
     throw new MainSyncError("Previous main-sync provenance belongs to another session; preserve it and inspect the owned evidence");
   }
-  const desktopScript = fileURLToPath3(new URL("../vibe-sessions.mjs", import.meta.url));
-  const desktop = spawnSync8(process.execPath, [desktopScript, "desktop-tab", "--worktree", root], {
+  const desktopScript = fileURLToPath4(new URL("../vibe-sessions.mjs", import.meta.url));
+  const desktop = spawnSync9(process.execPath, [desktopScript, "desktop-tab", "--worktree", root], {
     encoding: "utf8",
     timeout: 3e4,
     maxBuffer: 1024 * 1024
@@ -227947,7 +228211,7 @@ function prepareMainSync(raw) {
       throw new MainSyncError(`Ordinary main merge needs the SAME writer's conflict/source correction${conflicts ? `: ${conflicts}` : ""}; ROOT alone commits`, "NEEDS_CHANGE");
     }
   }
-  const requiresCommit = existsSync10(join16(value.place.dir, "MERGE_HEAD"));
+  const requiresCommit = existsSync11(join17(value.place.dir, "MERGE_HEAD"));
   return {
     status: requiresCommit ? "NEEDS_COMMIT" : "DONE",
     transactionId: receipt.transactionId,
@@ -227995,10 +228259,12 @@ function validateMainSync(raw) {
   }
   syncContext(raw, "validate");
   const next = { ...requireSyncReceipt(value), validation, ...ciEvidence ? { ciEvidence } : {} };
+  delete next.failedChecks;
   if (!ciEvidence) delete next.ciEvidence;
   if (receipt.pushedHead !== identity.headSha) delete next.pushedHead;
   saveSyncReceipt(value.place.dir, next);
   const requiredE2eComplete = validation.e2eLimitations.length === 0 || Boolean(ciEvidence);
+  const { mainPreexistingFailures, flakyChecks } = comparedChecks(validation.commands);
   return {
     status: value.purpose === "handoff" && !requiredE2eComplete ? "NEEDS_REVIEW" : "DONE",
     publicationReady: true,
@@ -228011,6 +228277,8 @@ function validateMainSync(raw) {
     purpose: value.purpose,
     validationScope: "publication-preparation",
     e2eLimitations: validation.e2eLimitations,
+    ...mainPreexistingFailures.length ? { mainPreexistingFailures } : {},
+    ...flakyChecks.length ? { flakyChecks } : {},
     ...ciEvidence ? { ciEvidence } : {}
   };
 }
@@ -228075,14 +228343,14 @@ function admitMainSyncShare(raw) {
 }
 function readMainSyncProvenance(worktree) {
   const place = syncLocation(worktree);
-  const file = join16(place.dir, MAIN_SYNC_FILE);
-  if (!existsSync10(file)) return void 0;
+  const file = join17(place.dir, MAIN_SYNC_FILE);
+  if (!existsSync11(file)) return void 0;
   const state = mainSyncStateSchema.parse(readPrivateJson(file));
   const value = state.phase === "input-readiness" ? state.previous : state;
   if (!value) return void 0;
   if (value.worktree !== place.root || value.branch !== place.branch || value.originalBase !== place.session.baseCommit || value.operator.id !== place.session.operator.id || value.operator.email !== place.session.operator.email) return void 0;
-  const merge = join16(place.dir, "MERGE_HEAD");
-  const pendingMerge = existsSync10(merge) && git(place.root, ["rev-parse", "MERGE_HEAD"]) === value.mainSha;
+  const merge = join17(place.dir, "MERGE_HEAD");
+  const pendingMerge = existsSync11(merge) && git(place.root, ["rev-parse", "MERGE_HEAD"]) === value.mainSha;
   if (!pendingMerge && !isAncestor(place.root, value.mainSha)) return void 0;
   return {
     mainSha: value.mainSha,
@@ -228121,11 +228389,14 @@ function validationMatches(value, receipt, identity) {
   }
   for (const [index, command] of proof.commands.entries()) {
     const prefix = `vibe-main-sync-${receipt.transactionId}-`;
-    const permitted = [`${prefix}${index}.log`, `${prefix}0-${index}.log`, `${prefix}1-${index}.log`].map((name) => join16(value.place.dir, name));
-    if (!permitted.includes(command.log)) throw new MainSyncError("Actual command evidence path changed", "NEEDS_CHANGE");
-    const file = command.log;
-    const stat = lstatSync8(file, { throwIfNoEntry: false });
-    if (!stat || !stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024 || digest(readFileSync16(file)) !== command.sha256) throw new MainSyncError("Actual command evidence changed; validation is required", "NEEDS_CHANGE");
+    const permitted = [`${prefix}${index}.log`, ...[0, 1].flatMap((attempt) => ["", "-rerun", "-main"].map((suffix) => `${prefix}${attempt}-${index}${suffix}.log`)), `${prefix}main-bootstrap.log`].map((name) => join17(value.place.dir, name));
+    const evidence = [{ log: command.log, sha256: command.sha256 }, ...command.comparison ? comparisonLogs(command.comparison) : []];
+    for (const { log: file, sha256: sha2562 } of evidence) {
+      if (!permitted.includes(file)) throw new MainSyncError("Actual command evidence path changed", "NEEDS_CHANGE");
+      const stat = lstatSync8(file, { throwIfNoEntry: false });
+      if (!stat || !stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024 || digest(readFileSync16(file)) !== sha2562) throw new MainSyncError("Actual command evidence changed; validation is required", "NEEDS_CHANGE");
+    }
+    if (command.comparison && command.comparison.mainSha !== receipt.mainSha) throw new MainSyncError("Main comparison names another main", "NEEDS_CHANGE");
   }
   return true;
 }
@@ -228194,6 +228465,32 @@ function featureTestHistory(root, originalBase, startingHead, previous) {
     }
   }
   return [...entries.values()].sort((left, right) => left.commit.localeCompare(right.commit) || left.path.localeCompare(right.path));
+}
+function comparedChecks(commands) {
+  const mainPreexistingFailures = [];
+  const flakyChecks = [];
+  for (const command of commands) {
+    const comparison = command.comparison;
+    if (comparison?.classification === "main-preexisting") {
+      mainPreexistingFailures.push({
+        check: command.argv.join(" "),
+        mainSha: comparison.mainSha,
+        sessionExitCode: command.exitCode,
+        mainExitCode: comparison.main.exitCode,
+        mainArgv: comparison.main.argv,
+        log: command.log,
+        mainLog: comparison.main.log
+      });
+    } else if (comparison?.classification === "flaky") {
+      flakyChecks.push({
+        check: command.argv.join(" "),
+        mainSha: comparison.mainSha,
+        logs: comparison.sessionRuns.map((run) => run.log),
+        mainLog: comparison.main.log
+      });
+    }
+  }
+  return { mainPreexistingFailures, flakyChecks };
 }
 export {
   MainSyncError,

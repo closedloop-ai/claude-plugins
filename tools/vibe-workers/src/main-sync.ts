@@ -13,6 +13,7 @@ import { committedInputs, executeChecks, checkRecipe, inspectInputInventory } fr
 import { prepareInputOrigins, reusableInputOrigin } from "./main-sync-input-origin.js";
 import { storedRecipe, verifyRecipeWitness, recipeIdentity } from "./main-sync-validation-recipe.js";
 import { MainSyncError, mainSyncInputSchema, mainSyncReceiptSchema, mainSyncStateSchema, type MainSyncReceipt } from "./main-sync-contracts.js";
+import { comparisonLogs } from "./main-sync-main-comparison.js";
 import { digest, requireSyncReceipt, saveSyncReceipt, syncContext, syncLocation, readPrivateJson, MAIN_SYNC_FILE } from "./main-sync-state.js";
 
 const GIT_NETWORK_MS = 15 * 60 * 1000;
@@ -156,14 +157,17 @@ export function validateMainSync(raw: unknown) {
   // Recheck the current source owner too: a stopped turn cannot issue a late success receipt.
   syncContext(raw, "validate");
   const next = { ...requireSyncReceipt(value), validation, ...(ciEvidence ? { ciEvidence } : {}) };
+  delete next.failedChecks;
   if (!ciEvidence) delete next.ciEvidence;
   if (receipt.pushedHead !== identity.headSha) delete next.pushedHead;
   saveSyncReceipt(value.place.dir, next);
   const requiredE2eComplete = validation.e2eLimitations.length === 0 || Boolean(ciEvidence);
+  const { mainPreexistingFailures, flakyChecks } = comparedChecks(validation.commands);
   return { status: value.purpose === "handoff" && !requiredE2eComplete ? "NEEDS_REVIEW" : "DONE",
     publicationReady: true, requiredE2eComplete, transactionId: receipt.transactionId, mainSha: receipt.mainSha,
     headSha: validation.headSha, treeSha: validation.treeSha, commandCount: validation.commands.length,
     purpose: value.purpose, validationScope: "publication-preparation", e2eLimitations: validation.e2eLimitations,
+    ...(mainPreexistingFailures.length ? { mainPreexistingFailures } : {}), ...(flakyChecks.length ? { flakyChecks } : {}),
     ...(ciEvidence ? { ciEvidence } : {}) };
 }
 
@@ -257,13 +261,17 @@ function validationMatches(value: ReturnType<typeof syncContext>, receipt: MainS
   }
   for (const [index, command] of proof.commands.entries()) {
     const prefix = `vibe-main-sync-${receipt.transactionId}-`;
-    const permitted = [`${prefix}${index}.log`, `${prefix}0-${index}.log`, `${prefix}1-${index}.log`]
+    const permitted = [`${prefix}${index}.log`, ...[0, 1].flatMap((attempt) => ["", "-rerun", "-main"]
+      .map((suffix) => `${prefix}${attempt}-${index}${suffix}.log`)), `${prefix}main-bootstrap.log`]
       .map((name) => join(value.place.dir, name));
-    if (!permitted.includes(command.log)) throw new MainSyncError("Actual command evidence path changed", "NEEDS_CHANGE");
-    const file = command.log;
-    const stat = lstatSync(file, { throwIfNoEntry: false });
-    if (!stat || !stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024
-      || digest(readFileSync(file)) !== command.sha256) throw new MainSyncError("Actual command evidence changed; validation is required", "NEEDS_CHANGE");
+    const evidence = [{ log: command.log, sha256: command.sha256 }, ...(command.comparison ? comparisonLogs(command.comparison) : [])];
+    for (const { log: file, sha256 } of evidence) {
+      if (!permitted.includes(file)) throw new MainSyncError("Actual command evidence path changed", "NEEDS_CHANGE");
+      const stat = lstatSync(file, { throwIfNoEntry: false });
+      if (!stat || !stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024
+        || digest(readFileSync(file)) !== sha256) throw new MainSyncError("Actual command evidence changed; validation is required", "NEEDS_CHANGE");
+    }
+    if (command.comparison && command.comparison.mainSha !== receipt.mainSha) throw new MainSyncError("Main comparison names another main", "NEEDS_CHANGE");
   }
   return true;
 }
@@ -327,4 +335,22 @@ function featureTestHistory(root: string, originalBase: string, startingHead: st
     }
   }
   return [...entries.values()].sort((left, right) => left.commit.localeCompare(right.commit) || left.path.localeCompare(right.path));
+}
+
+/** Failures that also fail on the captured main go on the ticket for engineering; they never block publication. */
+function comparedChecks(commands: NonNullable<MainSyncReceipt["validation"]>["commands"]) {
+  const mainPreexistingFailures = [];
+  const flakyChecks = [];
+  for (const command of commands) {
+    const comparison = command.comparison;
+    if (comparison?.classification === "main-preexisting") {
+      mainPreexistingFailures.push({ check: command.argv.join(" "), mainSha: comparison.mainSha,
+        sessionExitCode: command.exitCode, mainExitCode: comparison.main.exitCode, mainArgv: comparison.main.argv,
+        log: command.log, mainLog: comparison.main.log });
+    } else if (comparison?.classification === "flaky") {
+      flakyChecks.push({ check: command.argv.join(" "), mainSha: comparison.mainSha,
+        logs: comparison.sessionRuns.map((run) => run.log), mainLog: comparison.main.log });
+    }
+  }
+  return { mainPreexistingFailures, flakyChecks };
 }

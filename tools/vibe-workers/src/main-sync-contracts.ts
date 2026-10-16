@@ -39,10 +39,24 @@ export const operationContextSchema = z.object({
 export type OperationContext = z.infer<typeof operationContextSchema>;
 export const mainSyncInputSchema = z.object({ context: operationContextSchema,
   transactionId: z.string().uuid().optional() }).strict();
+const runEvidenceSchema = z.object({ exitCode: z.number().int(), log: z.string().min(1), sha256: z.string().length(64) }).strict();
+/** The same failing check run once on the captured main in a disposable checkout (operator ruling, 2026-10-16). */
+export const capturedMainRunSchema = z.object({ outcome: z.enum(["failed", "passed", "unrunnable"]),
+  argv: z.array(z.string()).min(1).max(256).optional(), exitCode: z.number().int().optional(),
+  log: z.string().min(1).optional(), sha256: z.string().length(64).optional(), reason: z.string().min(1).max(512).optional() }).strict();
+export const mainComparisonSchema = z.object({ classification: z.enum(["main-preexisting", "session-caused", "flaky"]),
+  mainSha: commitSchema, sessionRuns: z.array(runEvidenceSchema).min(1).max(2), main: capturedMainRunSchema }).strict();
+export type MainComparison = z.infer<typeof mainComparisonSchema>;
 export const commandReceiptSchema = z.object({ argv: z.array(z.string()).min(1).max(256),
   bindings: z.record(z.string()).optional(), cwd: z.string().optional(),
   timeoutMs: z.number().int().min(1000).max(2 ** 31 - 1).optional(),
-  exitCode: z.literal(0), log: z.string().min(1), sha256: z.string().length(64) }).strict();
+  exitCode: z.number().int(), log: z.string().min(1), sha256: z.string().length(64),
+  comparison: mainComparisonSchema.optional() }).strict()
+  // Only a check that also fails on the captured main may stand in a receipt with a failing exit.
+  .refine((item) => (item.exitCode === 0) === (item.comparison?.classification !== "main-preexisting")
+    && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
+const failedCheckSchema = z.object({ argv: z.array(z.string()).min(1).max(256), bindings: z.record(z.string()).optional(),
+  cwd: z.string().optional(), comparison: mainComparisonSchema }).strict();
 export const e2eLimitationSchema = z.object({ argv: z.array(z.string()).min(1).max(256),
   bindings: z.record(z.string()).optional(), reason: z.string().min(1).max(4096) }).strict();
 const fileDeltaSchema = z.object({ path: z.string().min(1), status: z.string().min(1) }).strict();
@@ -64,6 +78,7 @@ export const mainSyncReceiptSchema = z.object({
     commands: z.array(commandReceiptSchema).min(1).max(128), checkedAt: z.string().datetime(),
     e2eLimitations: z.array(e2eLimitationSchema).max(128).default([]) }).strict().optional(),
   ciEvidence: ciEvidenceSchema.optional(),
+  failedChecks: z.array(failedCheckSchema).min(1).max(128).optional(),
   pushedHead: commitSchema.optional(),
   publicationTurn: publicationTurnSchema.optional(),
   requestContinuations: z.array(requestContinuationSchema.extend({ turn: publicationTurnSchema.optional() })).max(2).default([]),

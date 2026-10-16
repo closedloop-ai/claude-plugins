@@ -17,6 +17,7 @@ export const storedValidationRecipeSchema = z.object({ headSha: validationCommit
   inputSha256: validationDigestSchema, recipeSha256: validationDigestSchema,
   commands: z.array(fixedCommandSchema).min(1).max(128),
   recovery: recoveryReserveSchema.optional(),
+  comparison: z.object({ timeoutMs: z.number().int().min(0).max(2 ** 31 - 1) }).strict().optional(),
   e2eLimitations: z.array(z.object({ argv: z.array(z.string()).min(1).max(256), bindings: z.record(z.string()).optional(),
     reason: z.string().min(1).max(4096) }).strict()).max(128) }).strict();
 export type StoredValidationRecipe = z.infer<typeof storedValidationRecipeSchema>;

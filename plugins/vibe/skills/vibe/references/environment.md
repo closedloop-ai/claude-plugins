@@ -333,6 +333,12 @@ main capture, test authority, validation PASS or permission to publish.
    invalidates it. The guards that remain are the session's own HEAD or tree
    changing and a rewritten `origin/main` that would make the affected wrapper
    select from another base.
+   At handoff a failing check is run again on the captured `mainSha` in one
+   disposable bootstrapped checkout, bounded by `run-bounded.mjs`; one that
+   also fails there is `main-preexisting` and does not block publication
+   (`quality-loop.md`, "Failures already on main"; operator ruling,
+   2026-10-16). Its recipe binds that comparison's reserve, so the Claude
+   envelope covers it.
    A source-generating check that changes source returns to this writer/root
    commit/recheck sequence, never an operational publisher repair.
    Known selected generated-output changes require canonical re-verification

@@ -50,7 +50,10 @@ follows `../vibe/references/ticket-template.md`. You and every worker leave
 plugins, plugin marketplaces and plugin caches alone, and never clone the
 plugin's repository to run other tooling (`../vibe/references/guardrails.md`,
 "Plugins and tooling"); a needed tooling fix stops the handoff as that section
-says.
+says. A check that also fails on the main the session captured is not a needed
+fix and never stops the handoff: it is recorded for engineering and the handoff
+goes on (`../vibe/references/quality-loop.md`, "Failures already on main").
+Only a failure the session caused blocks.
 
 Handoff authors no tests (`../vibe/references/guardrails.md`, "Tests"; operator ruling, 2026-10-13). It runs the existing affected tests, and when one
 fails the SAME persistent `vibe-change-worker` fixes the session's own code,
@@ -376,7 +379,8 @@ Read all requests, stable row IDs, cross-request interactions and its
 `Required Tests`, including positive, negative and mixed-state production-boundary
 cases. It authors no tests. It runs the existing affected tests, fixes the
 session's own code when one fails, never what a test asserts (it only repairs
-an existing test the session's change broke), and lists every missing
+an existing test the session's change broke), leaves a failure that also fails
+on the captured main to step 7's comparison and engineering, and lists every missing
 test as engineering's scope of work: the behavior and row ID that needs it,
 the files to cover, and any existing test a recorded human behavior ruling
 made obsolete, with that ruling. The verify worker never writes or fixes tests.
@@ -499,11 +503,23 @@ with parent-controlled handoff purpose/transaction to execute
 `main-sync-validate` against committed input. Dirty tracked localFix source is
 NOT a check exception: preserve/block through its same-writer workaround flow,
 never stash/copy/delete or accept different checked/deployed bytes.
+
+A handoff check that fails is compared against the captured `mainSha` by the
+executor itself (`../vibe/references/quality-loop.md`, "Failures already on
+main"; operator ruling, 2026-10-16). A result that lists
+`mainPreexistingFailures` still has `publicationReady: true`: continue with the
+redeploy below, carry every entry to step 8's ticket worker as a Known main
+failure, never send it to the writer as a fix, never stop and never ask the
+person about it. A refusal whose error says `session-caused` (it passes on the
+captured main and failed again on a rerun, or it could not run on the captured
+main) blocks as before and goes back to the SAME writer to fix the session's
+own code. `flakyChecks` passed on their one rerun; they block nothing.
 Then dispatch `vibe-environment-worker` in redeploy mode
 from handoff with the worktree, the live ticket slug, the confirmed summary,
 the inventory's `localFixes` paths, the missing tests list (including any
-obsolete expectation with its human ruling) and any verified pre-existing
-failures outside this work. It runs the tests, pushes through the repo's pre-push
+obsolete expectation with its human ruling), the `mainPreexistingFailures`
+the validation returned, and any other verified pre-existing failures outside
+this work. It runs the tests, pushes through the repo's pre-push
 checks, requests the environment again so that commit is deployed, and
 updates the ticket. Pass matching `mainSyncTransactionId`, handoff purpose and
 actual new grant context on stdin. `main-sync-push` returns
@@ -680,7 +696,8 @@ review summaries, the Design blocks from build and handoff fixes, the required s
 at `.closedloop-ai/decision-tables/<session-slug>.md` with whole-table alignment,
 row/test evidence and its Frozen Behavior row IDs, the writer's feature docs
 record, the missing tests list, the inventory's `retiredTests` with each deleted
-file or case, the running app verification's artifact paths
+file or case, every `mainPreexistingFailures` entry from step 7 with its main
+run's log, the running app verification's artifact paths
 with what each proves and any surface it could not drive with its command and
 reason, the detailed Design Review evidence packet/report paths,
 including Production impact, Flag changes and gates, and researched Open
