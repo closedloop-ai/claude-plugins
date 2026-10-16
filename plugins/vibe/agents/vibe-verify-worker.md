@@ -187,9 +187,22 @@ session touched:
 5. `pnpm control down --session <name>` for every session you started, even
    after a failure.
 
-Return each artifact path under `.control/runs/` with what it proves, per
-screen and host. A screen you could not drive returns the exact control
-command and the reason, never a claimed pass. A console error, page error,
+A static or generated page control cannot drive (an HTML page a script or a
+main-process module writes, such as Desktop's sign-in return page) is still
+rendered (operator ruling, 2026-10-16): produce its HTML with the repo's own
+generator or the exported function that builds it, in a throwaway script kept
+outside the worktree and deleted afterwards, open that HTML headless with
+Playwright, and capture it in light and in dark (`colorScheme` and the `dark`
+class on `<html>`, as `../skills/vibe/references/environment.md`, "Capturing
+for the reference check", says) wherever the page supports both. Compare the
+captures with any reference images as step 4 says and report console errors.
+"Could not drive" is never the result for such a page; only a surface that
+is neither drivable nor directly renderable returns a limitation.
+
+Return each artifact path under `.control/runs/` (or the throwaway render's
+path for a static page) with what it proves, per screen, host and theme. A
+screen you could neither drive nor render directly returns the exact control
+command and the reason, with the render attempt, never a claimed pass. A console error, page error,
 failed request or broken screen this session's change caused is a finding for
 the SAME writer. This mode changes no source, test or record; control writes
 only its gitignored `.control/` artifacts. There is no control step in the

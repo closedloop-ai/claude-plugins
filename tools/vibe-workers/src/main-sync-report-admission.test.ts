@@ -1,9 +1,7 @@
 import { chmodSync, existsSync, readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { z } from "zod";
-import { invokeSync, syncFixture, selectedReportFixture } from "./main-sync-test-fixtures.js";
+import { installAffectedTestWrapper, invokeSync, syncFixture, selectedReportFixture } from "./main-sync-test-fixtures.js";
 import { buildInfoInputFixture, huskyInputFixture } from "./main-sync-input-test-fixtures.js";
 
 const fixtures: ReturnType<typeof syncFixture>[] = [];
@@ -664,12 +662,7 @@ describe("canonical bootstrap health is not validation proof", () => {
     const runner = readFileSync(join(value.bin, "pnpm"), "utf8");
     value.write("../bin/pnpm", runner.replace("const command = args[0];", `const command = args[0];if(command===${JSON.stringify(`${task}:affected`)})fs.writeFileSync(${JSON.stringify(marker)},'ran');`));
     if (task === "test") {
-      const wrapper = z.object({ content: z.string(), sha256: z.string() }).passthrough().parse(JSON.parse(readFileSync(new URL("./fixtures/symphony-affected-test.json", import.meta.url), "utf8")));
-      expect(createHash("sha256").update(wrapper.content).digest("hex")).toBe(wrapper.sha256);
-      value.write("scripts/test-affected.sh", wrapper.content);
-      const pkg = JSON.parse(readFileSync(join(value.worktree, "package.json"), "utf8"));
-      pkg.scripts["test:affected"] = "sh scripts/test-affected.sh";
-      value.write("package.json", JSON.stringify(pkg));
+      installAffectedTestWrapper(value);
     }
     value.git(["add", "."]); value.git(["commit", "-m", "Synthetic selected task report boundary"]);
     const source = value.sourceTurn("handoff");

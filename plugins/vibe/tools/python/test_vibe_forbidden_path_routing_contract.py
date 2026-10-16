@@ -101,7 +101,8 @@ def test_the_ticket_worker_and_handoff_carry_each_need_to_the_checklist() -> Non
 
 def test_all_of_apps_storybook_is_explicitly_allowed() -> None:
     allowed = section(GUARDRAILS.read_text(), "## What may change")
-    assert "| `*.stories.tsx` anywhere above, and all of `apps/storybook/**` (below) | |" in allowed
+    # operator ruling, 2026-10-16: the row's Never cell now names apps/desktop/scripts/** explicitly.
+    assert "| `*.stories.tsx` anywhere above, and all of `apps/storybook/**` (below) | `apps/desktop/scripts/**`" in allowed
     assert "story wiring |" not in allowed
     wiring = paragraph(GUARDRAILS.read_text(), "All of `apps/storybook/**` is Storybook wiring")
     for required in (

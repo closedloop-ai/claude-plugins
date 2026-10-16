@@ -23,7 +23,7 @@ const affectedFilterSchema = z.string().regex(/^\.\.\.\[[a-f0-9]{40}\]$/);
 const wrapperSchema = z.object({ scripts: z.record(z.string()) }).passthrough();
 const AFFECTED_TYPECHECK_SHA = "01c2c50b267a071fa3ed193612c6d2c94f18fde6d01c78c6c47bfd81b56aad69";
 const AFFECTED_TEST_SHA = "b1d8c482cb012520f93729cb6f760b3e6d4344d191f94d569e7300265e2955b5";
-const testSelections = new WeakMap<CheckCommand, { root: string; head: string; main: string; command: string; wrapperSha: string; selection: z.infer<typeof tasksSchema> }>();
+const testSelections = new WeakMap<CheckCommand, { root: string; head: string; mainSha: string; command: string; wrapperSha: string; selection: z.infer<typeof tasksSchema> }>();
 
 /** The fixed affected owner and pinned direct Turbo have distinct real selectors. */
 export function commandSelection(root: string, command: CheckCommand, timeoutMs = GENERAL_CHECK_MS) {
@@ -67,7 +67,7 @@ export function bindCheckBudgets(root: string, receipt: MainSyncReceipt, command
       }
       const bound = { ...command, timeoutMs: budget.timeoutMs };
       if (key === "affected" && canonicalTestWrapper(root)) {
-        testSelections.set(bound, { root, head: budget.head, main: budget.main, command: JSON.stringify(bound), wrapperSha: testWrapperIdentity(root), selection: budget.selection });
+        testSelections.set(bound, { root, head: budget.head, mainSha: receipt.mainSha, command: JSON.stringify(bound), wrapperSha: testWrapperIdentity(root), selection: budget.selection });
       }
       return bound;
     }
@@ -75,12 +75,18 @@ export function bindCheckBudgets(root: string, receipt: MainSyncReceipt, command
   });
 }
 
+// operator ruling, 2026-10-16: the affected selection is pinned to the transaction's captured
+// mainSha. The live origin/main moves every few minutes and only its merge-base with HEAD reaches
+// the affected wrapper, so a fast-forward of main leaves the selection unchanged; HEAD is the guard.
 function selectedTestBudget(root: string, receipt: MainSyncReceipt, affected: boolean) {
-  const { head, main } = readBudgetRefs(root);
+  const { head } = readBudgetRefs(root);
   const workflow = workflowSchema.parse(parse(readFileSync(join(root, ".github/workflows/pr-test.yml"), "utf8")));
   let filter = `...[${receipt.validationSince}]`;
   if (affected) {
     filter = affectedFilter(root);
+    if (filter !== `...[${receipt.mainSha}]`) {
+      throw new MainSyncError("Affected test selection is not pinned to the captured main", "NEEDS_CHANGE");
+    }
   }
   verifyReportExecution(root, root, ReportExecutionOwner.TurboSelection, ["pnpm", "turbo", "test", `--filter=${filter}`, "--dry=json"]);
   const run = spawnSync("pnpm", ["turbo", "test", `--filter=${filter}`, "--dry=json"], {
@@ -88,7 +94,7 @@ function selectedTestBudget(root: string, receipt: MainSyncReceipt, affected: bo
   });
   if (run.error || run.status !== 0) throw new MainSyncError("Could not derive fixed test budget from actual selected Turbo tasks");
   const selection = tasksSchema.parse(JSON.parse(run.stdout));
-  if (head !== git(root, ["rev-parse", "HEAD"]) || main !== git(root, ["rev-parse", "origin/main"])) {
+  if (head !== git(root, ["rev-parse", "HEAD"])) {
     throw new MainSyncError("Test selection refs changed during the owning budget child", "NEEDS_CHANGE");
   }
   const tasks = selection.tasks;
@@ -101,17 +107,23 @@ function selectedTestBudget(root: string, receipt: MainSyncReceipt, affected: bo
     minutes += workflow.jobs["desktop-node"]["timeout-minutes"] * workflow.jobs["desktop-node"].strategy.matrix.shard.length
       + workflow.jobs["desktop-renderer"]["timeout-minutes"];
   }
-  return { timeoutMs: minutes ? minutes * 60 * 1000 : GENERAL_CHECK_MS, selection, head, main };
+  return { timeoutMs: minutes ? minutes * 60 * 1000 : GENERAL_CHECK_MS, selection, head };
 }
 
 /** Reuses the budget owner's actual task record without accepting caller metadata or another selector child. */
 export function affectedTestReportSelection(root: string, command: CheckCommand) {
   const record = testSelections.get(command);
   if (!record) return undefined;
-  if (record.root !== root || record.head !== git(root, ["rev-parse", "HEAD"]) || record.main !== git(root, ["rev-parse", "origin/main"])
+  if (record.root !== root || record.head !== git(root, ["rev-parse", "HEAD"]) || wrapperBase(root) !== record.mainSha
     || record.command !== JSON.stringify(command) || record.wrapperSha !== testWrapperIdentity(root)
     || !canonicalTestWrapper(root)) throw new MainSyncError("Affected test selection owner changed before its report assessment", "NEEDS_CHANGE");
   return record.selection;
+}
+
+/** The base the affected wrapper selects from when it runs; a moved but descendant origin/main keeps it. */
+function wrapperBase(root: string) {
+  try { return git(root, ["merge-base", "origin/main", "HEAD"]); }
+  catch { return undefined; }
 }
 
 function testWrapperIdentity(root: string) {

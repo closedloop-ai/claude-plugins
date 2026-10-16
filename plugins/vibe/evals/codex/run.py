@@ -325,6 +325,12 @@ def semantic_check(
         if "two-screenshot" in case["name"]:
             compared = compared and bool(re.search(r"(button|tap)", checks, re.I))
         return bool(mapped and read and (compared or name == "criteria-mapped"))
+    if name == "checks-log-light-and-dark":
+        lines = [line for line in checks.splitlines() if re.search(r"compar|reference check", line, re.I)]
+        return all(
+            any(re.search(r"\b" + theme + r"\b", line, re.I) and re.search(r"\b(met|not met)\b", line, re.I) for line in lines)
+            for theme in ("light", "dark")
+        )
     if name == "compared-before-ready":
         calls = [tool_text(t) for t in trace]
         # Coordinates within a call also handle a sequential shell write/render
@@ -430,8 +436,10 @@ def deterministic(
                 )
             )
         elif meta["type"] == "tool_used":
+            # Codex code mode can batch several shell commands into one tool
+            # call, so each matching command counts, not each call.
             count = sum(
-                bool(re.search(meta["input_match"], tool_text(t))) for t in trace
+                len(re.findall(meta["input_match"], tool_text(t))) for t in trace
             )
             results.append(
                 check(

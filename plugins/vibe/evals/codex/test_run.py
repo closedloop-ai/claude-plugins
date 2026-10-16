@@ -19,7 +19,7 @@ SPEC.loader.exec_module(runner)
 
 def test_one_case_per_claude_prompt_and_role_names() -> None:
     found = runner.cases()
-    assert len(found) == 28
+    assert len(found) == 31
     assert len({c["name"] for c in found}) == len(found)
     assert all(c["name"].startswith(("executive-", "product-manager-")) for c in found)
     for case in found:
@@ -42,6 +42,7 @@ def test_every_model_grader_has_a_deterministic_or_wording_route() -> None:
         "criteria-recorded",
         "criteria-mapped",
         "compared-before-ready",
+        "checks-log-light-and-dark",
     }
     for case in runner.cases():
         for path in (case["source"] / "graders").glob("*.md"):
@@ -244,3 +245,57 @@ def test_wording_model_only_runs_after_deterministic_pass(
     assert result["usage"]["input_tokens"] == (20 if valid else 10)
     assert all("allow_login_shell=false" in args for args in calls)
     assert all(args[-2] == "--" for args in calls)
+
+
+def test_light_and_dark_need_a_logged_check_with_a_result_per_theme(tmp_path: Path) -> None:
+    case = next(
+        c for c in runner.cases() if c["name"] == "product-manager-static-page-light-and-dark"
+    )
+    table = tmp_path / "session/.closedloop-ai/decision-tables/session.md"
+    table.parent.mkdir(parents=True)
+
+    def grade(checks: str) -> bool:
+        table.write_text("## Acceptance Criteria\n### Checks\n" + checks)
+        return runner.semantic_check("checks-log-light-and-dark", case, "Ready.", tmp_path, [])
+
+    light = "R-1, AC-1: reference check (light), compared light.png with images/1.png: met\n"
+    dark = "R-1, AC-1: reference check (dark), compared dark.png with images/1.png: met\n"
+    assert grade(light + dark)
+    assert not grade(light)
+    assert not grade(dark)
+    assert not grade(light + "Dark mode looks fine.\n")
+    assert grade(light + dark.replace(": met", ": not met yet, title too dim"))
+    case_checks, _ = runner.deterministic(
+        case,
+        "Ready.",
+        tmp_path,
+        [{"name": "exec_command", "arguments": "python3 tools/screenshot.py src/return-page.html light.png"}],
+    )
+    assert not next(c for c in case_checks if c["grader"] == "renders-dark")["passed"]
+    assert not next(c for c in case_checks if c["grader"] == "renders-both-themes")["passed"]
+
+
+def test_tool_use_counts_each_batched_command(tmp_path: Path) -> None:
+    case = next(
+        c for c in runner.cases() if c["name"] == "product-manager-static-page-light-and-dark"
+    )
+    table = tmp_path / "session/.closedloop-ai/decision-tables/session.md"
+    table.parent.mkdir(parents=True)
+    table.write_text("## Acceptance Criteria\n### Checks\n")
+    batched = {
+        "name": "exec",
+        "input": 'tools.exec_command({cmd:"python3 tools/screenshot.py src/return-page.html light.png --theme light"}),\n'
+        'tools.exec_command({cmd:"python3 tools/screenshot.py src/return-page.html dark.png --theme dark"})',
+    }
+    checks, _ = runner.deterministic(case, "Ready.", tmp_path, [batched])
+    graded = {c["grader"]: c["passed"] for c in checks}
+    assert graded["renders-both-themes"]
+    assert graded["renders-dark"]
+    single = {
+        "name": "exec",
+        "input": 'tools.exec_command({cmd:"python3 tools/screenshot.py src/return-page.html light.png"})',
+    }
+    checks, _ = runner.deterministic(case, "Ready.", tmp_path, [single])
+    graded = {c["grader"]: c["passed"] for c in checks}
+    assert not graded["renders-both-themes"]
+    assert not graded["renders-dark"]

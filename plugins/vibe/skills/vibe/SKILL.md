@@ -293,7 +293,8 @@ is slow, so it runs only for someone who chose to resume (operator ruling,
 
 - Their own words already say resume: "pick up where I left off", "resume",
   or a named session or slug. Go to "Finding a session to resume" without
-  asking.
+  asking. Asking for changes on the pull request vibe opened for them ("please
+  fix the review comments") is a resume too.
 - Their own words already say new: a ClosedLoop ticket, or a description of
   new work. Go to "Starting new" below without asking.
 - Only when it is genuinely unclear (for example they typed only `$vibe`),
@@ -320,7 +321,16 @@ Only after the person chose resume, run `node scripts/vibe-sessions.mjs list`
   it, or throw it away?" Act on the answer (finish it as section 8 says,
   resume, or section 9).
 - A `handed-off` session is finished (a pull request was opened for the
-  person, or it was passed to design and engineering) and is not offered.
+  person, or it was passed to design and engineering) and is not offered,
+  with one exception (operator ruling, 2026-10-16): when the person asks for
+  changes on the pull request vibe opened for them ("please fix the review
+  comments", "engineering asked for changes on my PR", the pull request's
+  link), that session resumes, without asking resume or new, through the
+  handoff skill's "Changes on the open pull request": the SAME writer fixes
+  it, the guardrails review and checks rerun, the fixes are pushed to the
+  same branch (never forced), the pull request body is refreshed from the
+  session record, and each review thread is answered with the fixing commit
+  and resolved once fixed.
 
 Then follow "Resuming" below.
 
@@ -631,8 +641,9 @@ evidence, never by replacing the writer.
    `references/quality-loop.md`, "Acceptance criteria before ready". With a
    reference image, that includes each visual and UX property it shows,
    read from the image itself before building, and on a UI change the
-   reference check: one screenshot of each touched screen compared with the
-   reference image, its differences fixed before `DONE`. With no reference
+   reference check: one screenshot of each touched screen, in light and in
+   dark wherever it supports both, compared with the reference image, its
+   differences fixed before `DONE`. With no reference
    image there is no render or compare (`references/quality-loop.md`,
    "Visual references").
 5. Research any `NEEDS_PERSON` through the graph/live-decision necessity gate.
@@ -650,7 +661,7 @@ evidence, never by replacing the writer.
    result for every criterion the change touches; one without it is
    incomplete, so resume the SAME writer to finish it before committing.
    With a reference image, a UI change's `DONE` also carries a Reference
-   check line per touched screen, and one without it is incomplete the same
+   check line per touched screen and theme, and one without it is incomplete the same
    way; independent reviews come at handoff. Then finish that
    request and deploy it under section 6 without being asked (requests that
    waited through a running deploy go out together after the last of them);

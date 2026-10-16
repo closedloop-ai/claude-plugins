@@ -420,9 +420,9 @@ between a request and the person seeing it.
   criterion the change touches with concrete, cheap evidence and records the
   result ("Acceptance criteria before ready" below).
 - Reference check: only when the person gave a reference image, before
-  `DONE` on a UI change the writer screenshots the touched screen and
-  compares it with that image ("Visual references", "The reference check
-  before ready" below).
+  `DONE` on a UI change the writer screenshots the touched screen, in light
+  and in dark wherever it supports both, and compares it with that image
+  ("Visual references", "The reference check before ready" below).
 - Commit, deploy and show: after each finished change the orchestrator
   commits with its script and deploys through the existing publication gate
   without being asked (`SKILL.md`, section 6), batching changes that arrive
@@ -554,9 +554,10 @@ above `### Checks`; only check lines go below it.
   for each property the reference shows that no criterion names yet, even
   when a broad one such as "make ours like the second one" exists, before it
   fixes anything.
-- `### Checks`: `<request ID>, AC-n, AC-m: reference check, compared
-  <screenshot path> with <image path> after the last edit: <differences found
-  and fixed>; met`, or `not met yet` with the difference that remains.
+- `### Checks`: `<request ID>, AC-n, AC-m: reference check (<light|dark>),
+  compared <screenshot path> with <image path> after the last edit:
+  <differences found and fixed>; met`, or `not met yet` with the difference
+  that remains, one line per theme the surface supports.
 
 With no reference image, a criterion from the person's words quotes them,
 `AC-n (source: <request ID>): "<their words>"`, and is checked with the
@@ -620,12 +621,17 @@ the existing catalog component and design token that delivers it. Build to
 the design system; never copy pixel values or another product's markup. A
 requirement with no design-system equivalent goes to the existing
 missing-primitive path (`NEEDS_PRIMITIVE`, built by the writer from the
-read-only design-system steward's spec). A surface that does not bundle the
-design-system tokens (a page generated outside the app shell, say) gets the
-exact value of the named token, with that token cited beside it, and the
-writer logs `Engineering needed (tokens not bundled): <surface>; uses <token>
-values` in the change log; it never invents a value no token defines. Never
-copy the outside product's words; user copy follows `guardrails.md`, "Copy".
+read-only design-system steward's spec). Before any raw value, the writer
+reads the tokens the touched surface actually bundles, in each stylesheet's
+`:root` and `.dark` blocks (`guardrails.md`, "Check the bundled tokens
+first"; operator ruling, 2026-10-16). A bundled token is always used. Only a
+token the surface genuinely lacks (a page generated outside the app shell can
+lack some) is logged, per token and with the stylesheets and blocks searched,
+as `Engineering needed (token not bundled): <surface>; <token>; checked
+<each stylesheet and block searched>; uses <the token's exact value>`, and
+that property alone uses the token's exact value with the token cited beside
+it; it never invents a value no token defines. Never copy the outside
+product's words; user copy follows `guardrails.md`, "Copy".
 
 The writer adds each requirement to the session's `## Acceptance Criteria`
 as a criterion (source: the request ID and the reference image path), naming
@@ -646,20 +652,25 @@ link or page captured as one) and the change renders UI (operator ruling,
 Before returning `DONE`, the writer takes one screenshot of each touched
 screen or component at the reference's viewport (`environment.md`,
 "Capturing for the reference check") and opens it beside the reference
-image. It looks only at the properties the reference shows (shadow and
-elevation, font size, weight, color, spacing, radius, borders, alignment and
-icons, as the reference shows them), plus regressions on the touched
-element: properties that were right before this change and are not now, such
-as a removed tap-target minimum height or button text turned too bold by a
-font change. It fixes each difference with design tokens, never arbitrary
-values, and takes the screenshot again until no difference remains. Each
-comparison is a line in the `### Checks` log: request ID, criterion IDs, both
-image paths and the result. `DONE` on such a change carries a Reference check
-line per touched screen (the screenshot path, the reference path and the
-differences found and fixed); without it the `DONE` is incomplete. When the
-writer cannot screenshot a touched screen locally, it says so in that line
-and the orchestrator's look after the deploy is the comparison (`SKILL.md`,
-section 6, step 5).
+image. It renders that final state in both light and dark wherever the
+surface supports both (operator ruling, 2026-10-16) and compares each theme's
+screenshot: the reference's properties in the reference's own theme, and in
+the other theme the same properties delivered by the same tokens, none lost,
+unreadable or turned back into a raw value. It looks only at the properties
+the reference shows (shadow and elevation, font size, weight, color,
+spacing, radius, borders, alignment and icons, as the reference shows them),
+plus regressions on the touched element: properties that were right before
+this change and are not now, such as a removed tap-target minimum height or
+button text turned too bold by a font change. It fixes each difference with
+design tokens, never arbitrary values, and takes the screenshots again until
+no difference remains in either theme. Each comparison is a line in the
+`### Checks` log: request ID, criterion IDs, the theme, both image paths and
+the result. `DONE` on such a change carries a Reference check line per
+touched screen and theme (the screenshot path, the reference path and the
+differences found and fixed); without them the `DONE` is incomplete. When
+the writer cannot screenshot a touched screen locally, it says so in that
+line and the orchestrator's look after the deploy is the comparison
+(`SKILL.md`, section 6, step 5).
 
 The result gates the ready message. A difference still visible is not ready:
 it goes back to the SAME writer in the same request and is deployed again

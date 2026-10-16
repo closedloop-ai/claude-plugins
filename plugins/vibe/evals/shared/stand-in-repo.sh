@@ -18,7 +18,11 @@ Components live in `src/<name>.html` with their styles in `src/<name>.css`.
 
 There is no Storybook, control skill or running app here. To see a component
 as an image, render it the way Storybook would show it:
-`python3 tools/screenshot.py src/<name>.html <out.png> [--width N] [--state hover|selected]`.
+`python3 tools/screenshot.py src/<name>.html <out.png> [--width N] [--state hover|selected] [--theme light|dark]`.
+Every surface here supports light and dark: `tokens.css` defines each token in
+`:root` and its dark value in `.dark`, and every page, a generated one
+included, gets the `dark` class from the viewer's system theme. `--theme dark`
+renders that theme the way the Storybook theme toolbar would.
 MD
   cat > session/design-system/tokens.css <<'CSS'
 :root {
@@ -31,6 +35,7 @@ MD
   --shadow-none: none;
   --shadow-card: 0px 8px 24px rgba(15, 23, 42, 0.18);
   --shadow-raised: 0px 12px 28px rgba(0, 0, 0, 0.24);
+  --shadow-inset: inset 0px 1px 2px rgba(15, 23, 42, 0.16);
   --text-sm: 14px;
   --text-md: 16px;
   --text-lg: 20px;
@@ -48,6 +53,19 @@ MD
   --panel-width: 360px;
   --border-subtle: 1px solid #e5e7eb;
   --border-selected: 2px solid #2563eb;
+}
+.dark {
+  --color-page: #0b1220;
+  --color-surface: #111827;
+  --color-surface-hover: #1f2937;
+  --color-text: #f9fafb;
+  --color-text-muted: #9ca3af;
+  --color-accent: #60a5fa;
+  --shadow-card: 0px 8px 24px rgba(0, 0, 0, 0.55);
+  --shadow-raised: 0px 12px 28px rgba(0, 0, 0, 0.65);
+  --shadow-inset: inset 0px 1px 2px rgba(0, 0, 0, 0.5);
+  --border-subtle: 1px solid #374151;
+  --border-selected: 2px solid #60a5fa;
 }
 CSS
   cat > session/design-system/catalog.md <<'MD'
@@ -70,7 +88,7 @@ HTML and CSS with Pillow: a container box (background, border, radius,
 padding, box-shadow) holding text rows and buttons (font size, weight, color,
 min-height). It is a fixture for the eval cases only, never a plugin tool.
 
-Usage: python3 tools/screenshot.py src/<name>.html <out.png> [--width N] [--state hover|selected]
+Usage: python3 tools/screenshot.py src/<name>.html <out.png> [--width N] [--state hover|selected] [--theme light|dark]
 """
 
 from __future__ import annotations
@@ -89,10 +107,11 @@ ELEMENT = re.compile(r'<(\w+)\s+class="([^"]+)"[^>]*>([^<]*)')
 SHADOW = re.compile(r"(-?\d+)px\s+(-?\d+)px\s+(\d+)px\s+rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)")
 
 
-def tokens(root: Path) -> dict[str, str]:
+def tokens(root: Path, theme: str = "light") -> dict[str, str]:
+    blocks = {selector.strip(): body for selector, body in RULE.findall((root / "design-system" / "tokens.css").read_text())}
     values: dict[str, str] = {}
-    for _, body in RULE.findall((root / "design-system" / "tokens.css").read_text()):
-        for name, value in DECL.findall(body):
+    for block in [":root", ".dark"] if theme == "dark" else [":root"]:
+        for name, value in DECL.findall(blocks.get(block, "")):
             values[name] = value.strip()
     return values
 
@@ -133,9 +152,9 @@ def font(size: int, weight: str | None) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(FONT, size, index=1 if bold else 0)
 
 
-def render(html_path: Path, out: Path, width: int, state: str | None) -> None:
+def render(html_path: Path, out: Path, width: int, state: str | None, theme: str = "light") -> None:
     root = html_path.resolve().parents[1]
-    table = tokens(root)
+    table = tokens(root, theme)
     css = re.sub(r"/\*.*?\*/|@import[^;]*;", "", html_path.with_suffix(".css").read_text(), flags=re.S)
     rules = styles(css, table, state)
     elements = ELEMENT.findall(html_path.read_text())
@@ -208,8 +227,9 @@ def main() -> None:
     parser.add_argument("out")
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--state", choices=["hover", "selected"])
+    parser.add_argument("--theme", choices=["light", "dark"], default="light")
     args = parser.parse_args()
-    render(Path(args.html), Path(args.out), args.width, args.state)
+    render(Path(args.html), Path(args.out), args.width, args.state, args.theme)
     print(f"wrote {args.out}")
 
 
