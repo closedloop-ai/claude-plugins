@@ -4,6 +4,23 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.59
+
+#### Added
+- `codex-fleet-monitor` skill: a background event watcher for a fleet of Codex App Server threads (local and one ssh host) plus the pull requests they produce. It exits with a diff on the first change and flags IDLE, STALLED, FAILED, merge conflicts, review and comment counts, check changes and new PRs. Liveness is read from each thread's last turn and item count rather than the turn id alone, so a turn left open by a silent Codex usage limit is reported as STALLED. It needs only the vibe plugin and the `codex` CLI: `liveness.mjs` is a single self-contained file that talks to the managed App Server through `codex app-server proxy`, and `sessions.txt` lists sessions as `local|remote <label> <threadId>` (the two-column `<name>` form that reads a `<name>.json` state file with a `threadId` still works). The skill description tells agents to reach for it whenever two or more Codex or vibe sessions are running.
+
+### vibe v1.0.58
+
+#### Changed
+- PRD starts now treat existing child tickets as scope units: requirements classifies every child, untouched included work is claimed and linked to the session, active work owned elsewhere is reported and excluded, and handoff reconciles delivered, superseded and uncovered children through merge.
+- Handoff now fails closed on every path outside the writer allowlist except a mechanically verified shrink-only source-gate edit, verifies Desktop build output before any Electron launch, and gates pull request creation on real web-host plus WebKit iPhone and Chromium Pixel interaction evidence.
+- Storybook checks now compare every deprecated story's rendered dependency closure and stable output, and recheck release history, version, component and story counts, and in-flight train reservations against the pinned pull request base immediately before creation.
+- Precedent research clears narrow-layout drawers, sidebars, banners and overlays and captures both states. Malformed telemetry tests must assert the existing monitored corruption event, and external dependencies need deployed evidence before acceptance criteria or plan tasks can complete.
+- An outdated version question is asked only once at a fresh start. Resumed sessions and opening instructions that already say to proceed report the installed and latest versions and continue in the same turn.
+
+#### Added
+- Twelve contract tests for the open lesson ledger and four shared Claude Code and Codex eval cases covering PRD child ownership, the Desktop build precondition, explicit proceed instructions and resumed-session version checks.
+
 ### closedloop-core v1.5.1
 
 #### Fixed
@@ -25,11 +42,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Fixed
 - The helper's `/health` and old token endpoint no longer reveal the user's home path to other websites: `/health` shares its details only with file pages and pages from this machine, and the token endpoint's errors name no paths.
-
-### vibe v1.0.57
-
-#### Added
-- `codex-fleet-monitor` skill: a background event watcher for a fleet of Codex App Server threads (local and one ssh host) plus the pull requests they produce. It exits with a diff on the first change and flags IDLE, STALLED, FAILED, merge conflicts, review and comment counts, check changes and new PRs. Liveness is read from each thread's last turn and item count rather than the turn id alone, so a turn left open by a silent Codex usage limit is reported as STALLED. It needs only the vibe plugin and the `codex` CLI: `liveness.mjs` is a single self-contained file that talks to the managed App Server through `codex app-server proxy`, and `sessions.txt` lists sessions as `local|remote <label> <threadId>` (the two-column `<name>` form that reads a `<name>.json` state file with a `threadId` still works). The skill description tells agents to reach for it whenever two or more Codex or vibe sessions are running.
 
 ### vibe v1.0.56
 

@@ -40,6 +40,8 @@ changed features), the
 writer's missing tests list, every `mainPreexistingFailures` entry the final
 validation returned with its main run's log, and the running app verification's control
 artifact paths with what each proves and any surface it could not drive.
+For a session sourced from a PRD it also receives the requirements worker's
+complete child classification and current delivery evidence for every child.
 
 ## Read first
 
@@ -153,6 +155,11 @@ F. Status. The PLN's status follows the work (operator ruling, 2026-10-19):
    write fails instead of overwriting; after a conflict read it again and
    decide again. Never move an `EXECUTED` PLN back. Record what you set:
    `vibe-sessions.mjs touch --worktree "<wt>" --live-plan-status <status>`.
+   Before `APPROVED`, inspect every completed plan task and acceptance
+   criterion that depends on work outside this branch. Each must cite deployed
+   external dependency evidence. A ticket that still says the collector,
+   selector, monitor or other dependency is missing keeps that task open and
+   the PLN `DRAFT`; return `NEEDS_CHANGE` rather than approving it.
 
 ## Create mode
 
@@ -164,7 +171,11 @@ F. Status. The PLN's status follows the work (operator ruling, 2026-10-19):
    person because the current week is absent.
 2. Before creating, run closedloop-graph `query_collisions` and
    `search_nodes` with the summary; mention overlapping open tickets under
-   What this is.
+   What this is. When the source is a PRD, fetch every child and its comments,
+   assignee, status, branch and pull request evidence. Use the requirements
+   brief's classification, but recheck it live before any mutation. A child
+   with real activity by another person is reported and excluded from the
+   build, never claimed, built, canceled or superseded by the session.
 3. Body from the template: What this is, Scope and acceptance criteria
    (quoted from the brief and the originating ticket, never invented; an item
    the person still has to state is `Pending.`), Environment, Production flag
@@ -182,6 +193,14 @@ F. Status. The PLN's status follows the work (operator ruling, 2026-10-19):
    `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --live-ticket <slug>`.
 6. Link the source document to the ticket ("Source link and session plan",
    step A). The session has no plan yet; plan mode publishes it.
+7. For every open source-PRD child classified untouched, reread it and claim
+   it only if it still has no other person's activity: assign it to the
+   session operator, set it `IN_PROGRESS`, create one `RELATES_TO` link with
+   the session live ticket, and add one short comment naming that session
+   ticket as the coordinator. Confirm the assignee, status and link. List
+   untouched children outside the requested outcome as uncovered instead of
+   claiming them. A child may be marked superseded only with a cited human
+   ruling; an agent conclusion or the new session ticket is never authority.
 
 ## Plan mode
 
@@ -196,7 +215,12 @@ With `mergeCheck: true`, change nothing else: run
 `gh pr list --repo closedloop-ai/symphony-alpha --head <session branch> --state merged --json number,url,mergedAt`
 from the worktree. When it lists a merged pull request and the PLN is not
 `EXECUTED`, set `EXECUTED` through step F (with `expectedStatus` the status
-you read) and record it; otherwise change nothing.
+you read) and record it. For a source PRD, reread every child the session
+claimed. Move each delivered child from `IN_REVIEW` to `DONE` only when the
+merged pull request and the child's delivery evidence prove its exact outcome,
+then add the merge URL and commit as evidence. Leave uncovered children and
+children with activity by another person unchanged and list them; otherwise
+change nothing.
 
 ## Handoff mode
 
@@ -207,6 +231,14 @@ ticket claim, except a missing test that is on the writer's missing tests list,
 which goes under Missing tests as engineering's scope of work. The table covers
 the whole session, not just backend/latest work. Never author its rows or treat
 planned or missing tests as executed coverage.
+For a source PRD, reread every child and reconcile it explicitly before any
+complete claim: included and delivered, active by someone else and excluded,
+superseded with the exact human ruling, or uncovered with current owner and
+status. Discovery without one of those outcomes returns `NEEDS_CHANGE`.
+Never supersede a child from agent judgment. For each claimed child whose exact
+outcome this branch delivers, require delivery evidence, move it to
+`IN_REVIEW`, add the pull request URL when one exists, and confirm the status.
+The session ticket's Handoff section lists every uncovered child.
 Populate Design Review only at handoff from the verified final diff,
 current publication receipts and detailed design evidence/report paths.
 Add the section to legacy tickets that lack it before the existing final
@@ -334,7 +366,11 @@ historical inspections accurately. Preserve the existing grading block.
    Handoff when the ticket has none.
    Include the handoff's same-Storybook-version check: the version, every
    other open pull request that claims it, or `None` when no other open pull
-   request does.
+   request does. For a requested pull request, require a fresh check against
+   its pinned base immediately before creation: release history, package
+   version, component and story counts, plus every in-flight train reservation.
+   A stale comparison, duplicate version or conflicting count returns
+   `NEEDS_CHANGE`.
 7. Run "Source link and session plan" A to F. The handoff's code is
    written and checked, so step F leaves the PLN `APPROVED` (an `EXECUTED`
    one stays). The ticket is not complete until the source link (when the
@@ -342,6 +378,9 @@ historical inspections accurately. Preserve the existing grading block.
    the PLN matches the current local plans: repair whatever is missing or
    stale here; it is never a question for the person. A `NEEDS_CHANGE` from
    step B goes back to the same writer like any other.
+   No criterion or plan task depending on external work is complete without
+   deployed evidence for that dependency; an explicitly missing collector,
+   selector or monitor blocks the completion claim and PLN approval.
 8. Write the body back with `create-document-version`, then save it to
    `$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-live-ticket.md` and run
    `node ../skills/handoff/scripts/live-ticket-check.mjs --file "<that file>" --base-commit <inventory baseCommit> --worktree "<wt>"`.

@@ -93,6 +93,9 @@ symphony-alpha #8885 and #8886 (operator ruling, 2026-10-16):
   count. Do not reject the iOS Safari path because the click synthesized from
   a tap reports `pointerType` as `mouse`; prove the user-visible result of the
   tap in both device runs.
+  A requested pull request is blocked until its final evidence names the real
+  web host, WebKit iPhone and Chromium Pixel commands, commit, screen and
+  visible interaction outcome. Missing evidence is not deferred as a test gap.
 
 Browser automation is headless. Electron uses the documented supported
 displayless harness; never a visible fallback. If no supported local path
@@ -139,6 +142,9 @@ adapter and the real Desktop host adapter. A shared unit test, a mocked
 router, source inspection, or coverage on only one host is insufficient. If
 either host adapter lacks executed criterion coverage, name that host, the
 criterion's existing source ID and the owning lane under Missing tests.
+For a touched narrow or touch interaction, `None` additionally requires the
+executed real web-host flow plus WebKit iPhone and Chromium Pixel interaction
+evidence. A run against a component harness or only one device cannot clear it.
 
 Any test the session added, deleted or changed is a finding unless it is a
 recorded repair that changes no assertion (the inventory's `testRepairs`), a
@@ -187,6 +193,11 @@ check or source-only inspection does not prove these facts or visual quality.
 Run `pnpm vibe storybook-diff` into existing private Git metadata and report
 added/changed components, story counts, net rows and governance problems.
 Missing stories/catalog fixes go to the sole writer, never this helper.
+Immediately before pull request creation, rerun footprint mode against the
+pinned pull request base. Compare release history, package version and
+component and story counts, then inspect every in-flight Storybook train pull
+request for its reserved version and counts. A duplicate reservation, stale
+base or count mismatch is blocking evidence, not an advisory.
 
 Design Review needs actual command/report evidence, pinned baseline/current
 commits and unresolved footprint/catalog advisories. Match added/changed/removed
@@ -210,7 +221,12 @@ session touched:
    unmapped, never guessed.
 2. Start the sessions it needs, each under its own `--session <name>`:
    `pnpm control up web --isolated` for web, and for Desktop
-   `pnpm -C apps/desktop build` then `pnpm control up desktop --mode e2e`,
+   run `pnpm -C apps/desktop build` first. Only after it succeeds, verify
+   `apps/desktop/dist` exists and contains the documented Electron entry. If
+   the build fails or that output is absent, return the exact limitation and
+   abort the Desktop scenario without calling any Electron or `control up
+   desktop` launch command. With verified output, run
+   `pnpm control up desktop --mode e2e`,
    adding `--flag <key>=true` for a gated surface. Run `pnpm control doctor`
    when one fails to start. Never pass `--headed`: without it the browser and
    app stay hidden, so no window opens on the person's Mac. On Linux, Desktop

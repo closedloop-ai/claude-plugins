@@ -264,13 +264,19 @@ question is never repeated and does not go through `session-questions.mjs`.
   run): the check never blocks. Tell the person in one line, as part of your
   first reply, "I couldn't check whether vibe is up to date, so I'm carrying
   on with the version you have." and continue.
-- `outdated`: before anything else, ask exactly: "A newer version of vibe is
-  available (you have <installed>, the latest is <latest>). Do you want to
-  keep going with this one, or update now?" That question is the whole first
-  reply: the endings line of a new session (section 5, "Notices that never
-  wait") waits for its answer. On "keep going", continue with this version.
-  The next reply is then the new session's first reply, endings line
-  included. On "update", run each command in its `update` list in order
+- `outdated`: ask only on a fresh start whose opening message does not already
+  say to proceed. Ask exactly: "A newer version of vibe is available (you have
+  <installed>, the latest is <latest>). Do you want to keep going with this
+  one, or update now?" That question is the whole first reply: the endings line
+  of a new session (section 5, "Notices that never wait") waits for its answer.
+  On "keep going", continue with this version. On a resumed session, or when
+  the opening message already says to proceed, report "A newer version of vibe
+  is available (you have <installed>, the latest is <latest>). I'm carrying on
+  with this version as requested." and continue in the same turn. Do not ask
+  the version question or stop orchestration in either case.
+  That applies only after the fresh-start question. The next reply is then the
+  new session's first reply, endings line included. On "update", run each
+  command in its `update` list in order
   yourself; this is the one plugin change you make, and only on the person's
   choice (`references/guardrails.md`, "Plugins and tooling"). When they all
   succeed, tell the person, in Codex: "vibe is updated. Quit the ChatGPT app
@@ -389,9 +395,11 @@ Then follow "Resuming" below.
 1. Your first reply to the new session carries the endings line (section 5,
    "Notices that never wait"), after the plugin version check (section 1,
    "Plugin version"): when the version is current or unknown it goes in the
-   very first reply; when it is outdated, the version question comes first
-   on its own and the endings line goes in the first reply after the person
-   answers it. Use the work the person already described.
+   very first reply; when it is outdated and the fresh start did not already
+   say to proceed, the version question comes first on its own and the endings
+   line goes in the first reply after the person answers it. A resume or an
+   opening instruction to proceed reports the version and continues, so it
+   does not delay this line or the work. Use the work the person already described.
    Only when they have not supplied it, ask what they want to work on: a ClosedLoop ticket (ISS-, PRD-, or a pasted
    URL) or a plain description. A vibe session builds the real thing, backend
    included when a change needs it, so if they clearly want a mockup or an
@@ -405,7 +413,13 @@ Then follow "Resuming" below.
    and no record grants. Keep its brief internal; no upfront summary or plan approval.
    Keep its quoted acceptance criteria from the ticket and its PRD for the
    writer's first request (`references/quality-loop.md`, "Acceptance criteria
-   before ready").
+   before ready"). When the source is a PRD, its existing children are the
+   scope units. The requirements brief lists and classifies every child before
+   the session ticket is created. The ticket worker claims only untouched
+   children covered by the request by assigning them to the session operator,
+   setting them In Progress, linking them `RELATES_TO` the session ticket and
+   leaving a short comment. A child with real activity by another person is
+   reported and excluded from the build. No agent supersedes a child.
    The route and FEATURE_MAP id it returns say where the relevant code lives
    and are for workers; never present them as a screen the session starts on
    (the app opens on its default page after sign-in), and never promise a
@@ -739,6 +753,9 @@ evidence, never by replacing the writer.
    criterion the writer reported `not met yet` as not done yet; never claim it. The next queued
    request goes to the SAME ID/context. Update the session summary through
    the existing session script in a serial record turn.
+   External dependencies are part of this gate: a criterion or plan task that
+   needs a collector, selector, monitor or other deployment outside the branch
+   stays incomplete until that deployed evidence exists.
    This is per-request implementation evidence, not final session coverage.
    Retain whole-table pending test plans and unresolved final evidence until
    the same writer's explicit handoff; do not erase earlier request rows.
@@ -785,9 +802,11 @@ what it already built, like any other request about it.
   either open a pull request for you, or pass it to design or engineering to
   finish." It is a notice, not a question: it rides along with whatever that
   first reply says or asks, and nothing waits on it. The one thing that
-  comes before it is an outdated plugin's version question (section 1,
-  "Plugin version"), which is asked alone; the endings line then rides in the
-  first reply after that answer. Never add it when resuming a session, and
+  comes before it is an outdated plugin's version question when a fresh start
+  did not already say to proceed (section 1, "Plugin version"), which is asked
+  alone; the endings line then rides in the first reply after that answer. An
+  opening instruction to proceed reports the outdated version and includes
+  this line while continuing. Never add it when resuming a session, and
   never repeat it later in the session.
 
 Pure mockups still use canonical `$prototype` guidance through this writer;

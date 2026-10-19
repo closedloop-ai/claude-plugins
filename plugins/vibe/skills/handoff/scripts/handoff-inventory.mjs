@@ -185,7 +185,7 @@ const { v1Stories, compileOnlyV1Repairs } = findV1Stories(changedFiles);
 const retitledStories = findRetitledStories(changedFiles);
 
 const blocking = {
-  forbiddenPaths: forbidden.length === 0,
+  forbiddenPaths: forbidden.length === 0 && outsideAllowed.length === 0,
   hasChanges: changedFiles.length > 0,
   storiesInV2Taxonomy: v1Stories.length === 0,
   existingStoryTitlesKept: retitledStories.every((story) => story.replacement !== null),
