@@ -309,7 +309,8 @@ every watched thread and PR and exits with a diff on the first change: a session
 going idle, stalling, or failing, a merge conflict, new review or comment
 counts, changed checks, or a new PR. Liveness is read from the thread's last
 turn and item count, so a turn left open by a silent Codex usage limit shows as
-`STALLED` instead of running forever.
+`STALLED` instead of running forever. It needs only this plugin and the `codex`
+CLI; sessions are listed by thread id.
 
 ### ClosedLoop Ticket Skills
 

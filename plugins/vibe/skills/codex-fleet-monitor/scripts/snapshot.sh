@@ -3,11 +3,12 @@
 K=${0:A:h}; W=${1:?workDir}; [ -f $W/config.env ] && source $W/config.env
 : ${STALL_SECONDS:=720} ${BOT_LOGIN_REGEX:=vercel|codex|github-actions|copilot|bot} ${REMOTE_SHELL:=zsh -lic}
 : > $W/live.txt
-L=$(awk '$1=="local"{print $2}' $W/sessions.txt 2>/dev/null | tr '\n' ' ')
+# "<where> <name>" reads <stateDir>/<name>.json; "<where> <label> <threadId>" names the thread directly.
+L=$(awk '$1=="local"{print (NF>=3 ? $2"="$3 : $2)}' $W/sessions.txt 2>/dev/null | tr '\n' ' ')
 if [ -n "${L// }" ]; then
   node $K/liveness.mjs ${LOCAL_STATE_DIR:?set LOCAL_STATE_DIR} ${=L} | sed 's/^/local /' >> $W/live.txt
 fi
-R=$(awk '$1=="remote"{print $2}' $W/sessions.txt 2>/dev/null | tr '\n' ' ')
+R=$(awk '$1=="remote"{print (NF>=3 ? $2"="$3 : $2)}' $W/sessions.txt 2>/dev/null | tr '\n' ' ')
 if [ -n "${R// }" ]; then
   rl=$REMOTE_STATE_DIR/.fleet-liveness.mjs
   out=$(ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 ${REMOTE_HOST:?set REMOTE_HOST} \

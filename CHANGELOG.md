@@ -29,7 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### vibe v1.0.57
 
 #### Added
-- `codex-fleet-monitor` skill: a background event watcher for a fleet of Codex App Server threads (local and one ssh host) plus the pull requests they produce. It exits with a diff on the first change and flags IDLE, STALLED, FAILED, merge conflicts, review and comment counts, check changes and new PRs. Liveness is read from each thread's last turn and item count rather than the turn id alone, so a turn left open by a silent Codex usage limit is reported as STALLED. The skill description tells agents to reach for it whenever two or more Codex or vibe sessions are running.
+- `codex-fleet-monitor` skill: a background event watcher for a fleet of Codex App Server threads (local and one ssh host) plus the pull requests they produce. It exits with a diff on the first change and flags IDLE, STALLED, FAILED, merge conflicts, review and comment counts, check changes and new PRs. Liveness is read from each thread's last turn and item count rather than the turn id alone, so a turn left open by a silent Codex usage limit is reported as STALLED. It needs only the vibe plugin and the `codex` CLI: `liveness.mjs` is a single self-contained file that talks to the managed App Server through `codex app-server proxy`, and `sessions.txt` lists sessions as `local|remote <label> <threadId>` (the two-column `<name>` form that reads a `<name>.json` state file with a `threadId` still works). The skill description tells agents to reach for it whenever two or more Codex or vibe sessions are running.
 
 ### vibe v1.0.56
 
