@@ -1,6 +1,6 @@
 ---
 name: codex-fleet-monitor
-description: Event watcher for a fleet of long-running Codex app-server threads (on this machine and/or one ssh host) plus the GitHub PRs they produce. Use when orchestrating several Codex sessions at once and you need to be woken on anything that needs attention - a session going idle, stalling (for example a silent usage limit), failing, a PR getting new comments or reviews, checks changing, a merge conflict, or a new PR opening. Runs as one background command that exits with a diff on the first change.
+description: 'Use PROACTIVELY whenever you start or are already running two or more Codex or vibe sessions (via app-server-orchestrator), or are watching PRs on their behalf, and need to be told when anything needs attention. Replaces hand-rolled polling loops: a Codex turn that hits a usage limit stays "active" and silent, so a watcher that checks only for an open turn misses it. This reads each thread''s progress and flags IDLE, STALLED, FAILED(LIMIT), new PR comments or reviews, check changes, merge conflicts, and new PRs.'
 ---
 
 # codex-fleet-monitor
