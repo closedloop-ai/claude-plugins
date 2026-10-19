@@ -126,11 +126,14 @@ def helper(graph):
     thread.start()
     port = httpd.server_address[1]
 
-    def request(method, path, body=None, origin="null", content_type="application/json", content_length=None):
+    def request(method, path, body=None, origin="null", content_type="application/json", content_length=None,
+                host=None):
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
         headers = {}
         if origin is not None:
             headers["Origin"] = origin
+        if host is not None:
+            headers["Host"] = host
         data = None if body is None else json.dumps(body).encode()
         if data is not None or content_length is not None:
             headers["Content-Type"] = content_type

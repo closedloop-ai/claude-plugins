@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.5.1
+
+#### Fixed
+- The `prd-dependency-graph` helper's `GET /health` no longer reveals the user's home path, and so their username, to websites. 1.5.0 still sent the script path and pid to Origin `null`, which any website can send from a sandboxed frame. Any request with an Origin now gets only `{ok, protocol}`; the script path and pid go only to a local program (no Origin, addressed to loopback), which `--ensure` needs to recognize and replace a helper from another install. Refresh errors name a file as the request gave it, never a symlink's target. New tests in `test_prd_dependency_graph_security.py` cover each origin, a DNS-rebound request, the symlink error, and `--ensure` replacing a running helper from another install.
+
 ### closedloop-core v1.5.0
 
 #### Added

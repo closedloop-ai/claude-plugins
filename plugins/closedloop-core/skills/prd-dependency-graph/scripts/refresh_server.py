@@ -648,21 +648,23 @@ def refresh_file(path, graph_id=None, scope=None, outside=None, replacement=None
     the path checks run before any API call. The command line passes no scope.
     """
     real, text, info = read_target(path)
+    # Errors name the file as the request gave it: a symlink's target name is not the requester's to learn.
+    name = Path(path).name
     importlib.reload(render_graph)
-    graph_id = choose_graph(text, graph_id, real.name)
+    graph_id = choose_graph(text, graph_id, name)
     embedded = render_graph.read_embedded(text, graph_id)
     if scope is not None and (embedded is None or str((embedded.get("refresh") or {}).get("scope")) != scope):
-        raise Refused(404, f"{real.name} holds no graph '{graph_id}' for {scope}.")
+        raise Refused(404, f"{name} holds no graph '{graph_id}' for {scope}.")
     side = legacy_config_for(graph_id, real)
     if side is not None:
         if replacement is not None:
             raise Refused(400, f"This graph still refreshes from {side}; edit that file, then run --once {graph_id}.")
         return dict(refresh(graph_id, outside=outside, gate=gate), written=True, file=str(real))
     if replacement is None and embedded is None:
-        raise Refused(404, f"{real.name} was made by an older version of the skill and its config is not on "
+        raise Refused(404, f"{name} was made by an older version of the skill and its config is not on "
                            "this machine. Ask its author to refresh it once, or create the graph again with --new.")
     if render_graph.graph_region(text, graph_id) is None:
-        raise Refused(404, f"{real.name} has no depgraph markers for '{graph_id}'.")
+        raise Refused(404, f"{name} has no depgraph markers for '{graph_id}'.")
     cfg = sanitize(embedded if replacement is None else replacement, graph_id)
     result, viewer = refresh_embedded(cfg, outside, ("file", str(real)), gate, me)
     fragment, _, _ = render_graph.render_fragment(for_render(cfg, viewer))
@@ -735,12 +737,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Private-Network", "true")
         self.end_headers()
 
+    def _from_local_program(self):
+        """True for --ensure: no Origin, addressed to loopback (a DNS-rebound page sends no Origin on a GET)."""
+        host = urllib.parse.urlsplit("//" + self.headers.get("Host", "")).hostname
+        return origin_kind(self.headers.get("Origin")) == "absent" and host in LOOPBACK_HOSTS
+
     def do_GET(self):
         if urllib.parse.urlparse(self.path).path == "/health":
-            # script and pid let a newer install recognise and replace this helper; protocol lets a page
-            # tell an out-of-date helper from a missing one.
-            self._send(200, {"ok": True, "script": str(SCRIPT), "pid": os.getpid(), "protocol": PROTOCOL},
-                       cors=self._page_origin())
+            # protocol lets a page tell an out-of-date helper from a missing one. script and pid let a
+            # newer install recognise and replace this helper; the script path holds the username, so
+            # no browser gets them, not even a file page (Origin null may be any website's sandboxed frame).
+            health: dict[str, Any] = {"ok": True, "protocol": PROTOCOL}
+            if self._from_local_program():
+                health.update(script=str(SCRIPT), pid=os.getpid())
+            self._send(200, health, cors=self._page_origin())
         else:
             self._send(404, {"ok": False, "error": "not found"})
 

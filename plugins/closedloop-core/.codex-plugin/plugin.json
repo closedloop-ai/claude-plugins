@@ -1,6 +1,6 @@
 {
   "name": "closedloop-core",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Shared ClosedLoop planning, intelligence, review, QA, measurement, and PR monitoring",
   "author": {"name": "ClosedLoop", "email": "support@closedloop.ai"},
   "homepage": "https://github.com/closedloop-ai/claude-plugins",
