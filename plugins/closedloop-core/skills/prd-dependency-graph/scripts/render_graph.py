@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Render an interactive ticket dependency graph (SVG + hover/pin highlighting) as HTML.
 
-Input: a JSON file describing tickets and BLOCKS edges (schema in ../SKILL.md).
+Input: a JSON file describing tickets and BLOCKS edges (schema in ../SKILL.md), or
+an HTML page or report that already holds a refreshable graph (its embedded config).
 Output: a standalone HTML page (default) or an embeddable fragment (--fragment).
 Tickets with no BLOCKS links at all are laid out in a grid below the graph.
 
@@ -17,7 +18,6 @@ import html
 import json
 import os
 import re
-import shlex
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -43,9 +43,18 @@ def esc(text):
     return html.escape(str(text), quote=True)
 
 
-def load(path):
+def load(path, graph_id=None):
     with open(path, encoding="utf-8") as handle:
-        data = json.load(handle)
+        text = handle.read()
+    if Path(path).suffix.lower() in HTML_SUFFIXES:
+        ids = embedded_graph_ids(text)
+        graph_id = graph_id or (ids[0] if len(ids) == 1 else None)
+        data = read_embedded(text, graph_id) if graph_id else None
+        if data is None:
+            sys.exit(f"error: {path} holds no embedded graph config" + (f" for '{graph_id}'" if graph_id else "")
+                     + (f"; it holds {', '.join(ids)} (pick one with --graph)" if len(ids) > 1 and not graph_id else ""))
+    else:
+        data = json.loads(text)
     nodes = data.get("nodes") or []
     edges = data.get("edges") or []
     ids = [n["id"] for n in nodes]
@@ -376,7 +385,7 @@ CSS = """
 @media (prefers-color-scheme: dark){.dg-toolbar{color:#a1a4ab}.dg-refresh{background:#26282d;color:#a1a4ab;border-color:#44474e}.dg-refresh:hover{background:#2f3238;color:#e8e8ea}}
 """
 
-JS_SRC = """
+JS_SRC = r"""
 (function () {
   var VERSION = '__DG_VERSION__';
   if (window.__depgraph && window.__depgraph.version === VERSION) { window.__depgraph.initAll(); return; }
@@ -639,6 +648,55 @@ JS_SRC = """
     });
   }
 
+  // The graph's own config, embedded by the renderer; null on blocks from before configs were embedded.
+  function readConfig(block) {
+    var tpl = block.querySelector('template.dg-config');
+    if (!tpl || !tpl.content) return null;
+    try {
+      var cfg = JSON.parse(tpl.content.textContent);
+      return cfg && cfg.refresh && cfg.refresh.graph_id ? cfg : null;
+    } catch (e) { return null; }
+  }
+
+  // A file:// page sends its own path; the helper rewrites that file and the page reloads from it.
+  function filePath() {
+    if (location.protocol !== 'file:' || location.host) return null;
+    var path = decodeURIComponent(location.pathname);
+    return /^\/[A-Za-z]:\//.test(path) ? path.slice(1) : path;
+  }
+
+  var PENDING = 'dg-refresh:';
+  function storage() { try { return window.sessionStorage; } catch (e) { return null; } }
+
+  // After a refresh reloads the page, pick up the zoom and the change report the helper wrote into the file.
+  function takePending(block) {
+    if (block.__dgPendingChecked) return;
+    block.__dgPendingChecked = true;
+    var cfg = readConfig(block), store = storage();
+    if (!cfg || !store) return;
+    var key = PENDING + cfg.refresh.graph_id, raw = null, pending = null;
+    try { raw = store.getItem(key); store.removeItem(key); } catch (e) { return; }
+    try { pending = JSON.parse(raw); } catch (e) { return; }
+    var last = cfg.last_refresh || {};
+    if (!pending || !last.id || pending.id !== last.id) return;
+    if (pending.zoom) block.setAttribute('data-dg-zoom', pending.zoom);
+    block.__dgPending = { report: pending.report, summary: last.summary || '', changes: last.changes || [] };
+  }
+
+  function report(block, summary, changes, reportChanges, note) {
+    if (!reportChanges) {
+      var s2 = block.querySelector('.dg-status');
+      if (s2) s2.textContent = summary.replace(/ \d+ change\(s\)\.| No changes\./, '') + (note ? ' ' + note : '');
+      return;
+    }
+    var body = '<p>' + escText(summary) + '</p>';
+    if (changes.length) {
+      body += '<ul>' + changes.map(function (c) { return '<li>' + escText(c) + '</li>'; }).join('') + '</ul>';
+    }
+    if (note) body += '<p>' + escText(note) + '</p>';
+    showDialog(block, changes.length ? 'Changed since the last refresh' : 'No changes since the last refresh', body);
+  }
+
   function initRefresh(block) {
     if (block.__dgr) return;
     block.__dgr = true;
@@ -647,7 +705,15 @@ JS_SRC = """
     var menu = gear ? document.getElementById(gear.getAttribute('aria-controls')) : null;
     var outside = block.querySelector('.dg-opt-outside');
     var status = block.querySelector('.dg-status');
+    if (block.__dgPending) {
+      var done = block.__dgPending;
+      block.__dgPending = null;
+      report(block, done.summary, done.changes, done.report, '');
+    }
     if (!btn) return;
+    var cfg = readConfig(block);
+    var port = cfg && Number(cfg.refresh.port) || 8765;
+    var startCmd = block.getAttribute('data-start-cmd') || 'prd-graph-helper';
 
     function setMenu(open) {
       if (!menu) return;
@@ -656,17 +722,57 @@ JS_SRC = """
       gear.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
 
-    function run(extra, reportChanges) {
-      var url = block.getAttribute('data-refresh-url') + (extra || '');
+    function request(depth) {
+      if (!cfg) {
+        // A block rendered before configs were embedded still refreshes through its token URL.
+        return fetch(block.getAttribute('data-refresh-url') + (depth ? '&outside=' + depth : ''), { method: 'POST' });
+      }
+      var body = { graph: cfg.refresh.graph_id, scope: cfg.refresh.scope };
+      if (depth) body.outside = depth;
+      var path = filePath();
+      if (path) body.path = path; else body.config = cfg;
+      return fetch('http://127.0.0.1:' + port + '/v2/refresh', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+    }
+
+    // A helper from before portable pages refuses this page's request at the CORS check, which looks
+    // the same as no helper; its /health still answers, so tell the two apart.
+    function unreachable() {
+      return fetch('http://127.0.0.1:' + port + '/health')
+        .then(function (r) { return r.json(); })
+        .then(function (h) {
+          if (h && h.protocol >= 2) throw new Error('The refresh helper did not accept the request.');
+          showDialog(block, 'The refresh helper is out of date',
+            '<p>Restart it in a terminal, then try again:</p><code>' + escText(startCmd + ' --ensure') + '</code>');
+        }, function () {
+          showDialog(block, 'The refresh helper is not running',
+            '<p>Start it in a terminal, then try again:</p><code>' + escText(startCmd) + '</code>' +
+            '<p>The command is installed the first time the prd-dependency-graph skill runs on this machine.</p>');
+        });
+    }
+
+    function run(depth, reportChanges) {
       var before = status ? status.textContent : '';
       btn.disabled = true;
       if (gear) gear.disabled = true;
       if (outside) outside.disabled = true;
       if (status) status.textContent = 'Refreshing from ClosedLoop...';
-      fetch(url, { method: 'POST' })
+      request(depth)
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
         .then(function (res) {
           if (!res.ok || !res.j.ok) throw new Error(res.j.error || 'refresh failed');
+          if (res.j.written) {
+            // The helper rewrote this file and sends no ticket data back; reload to show it.
+            var store = storage();
+            try {
+              if (store) store.setItem(PENDING + cfg.refresh.graph_id, JSON.stringify({
+                id: res.j.refresh_id, report: reportChanges, zoom: block.__dgZoom ? block.__dgZoom.zoom : null,
+              }));
+            } catch (e) { /* the page still reloads, just without the change report */ }
+            location.reload();
+            return;
+          }
           var tmp = document.createElement('div');
           tmp.innerHTML = res.j.html;
           var fresh = tmp.querySelector('.depgraph-block');
@@ -680,17 +786,8 @@ JS_SRC = """
             old.replaceWith(run2);
           });
           window.__depgraph.initAll();
-          if (!reportChanges) {
-            var s2 = fresh.querySelector('.dg-status');
-            if (s2) s2.textContent = res.j.summary.replace(/ \\d+ change\\(s\\)\\.| No changes\\./, '');
-            return;
-          }
-          var changes = res.j.changes || [];
-          var body = '<p>' + escText(res.j.summary) + '</p>';
-          if (changes.length) {
-            body += '<ul>' + changes.map(function (c) { return '<li>' + escText(c) + '</li>'; }).join('') + '</ul>';
-          }
-          showDialog(fresh, changes.length ? 'Changed since the last refresh' : 'No changes since the last refresh', body);
+          var note = cfg ? 'Only this view was updated: the page was not opened from a file, so no file on disk changed.' : '';
+          report(fresh, res.j.summary, res.j.changes || [], reportChanges, note);
         })
         .catch(function (e) {
           btn.disabled = false;
@@ -698,9 +795,7 @@ JS_SRC = """
           if (outside) { outside.disabled = false; if (!reportChanges) outside.checked = !outside.checked; }
           if (status) status.textContent = before;
           if (e instanceof TypeError) {
-            showDialog(block, 'The refresh helper is not running',
-              '<p>Start it in a terminal, then try again:</p><code>' +
-              escText(block.getAttribute('data-start-cmd') || '') + '</code>');
+            unreachable().catch(function (e2) { showDialog(block, 'Refresh failed', '<p>' + escText(e2.message) + '</p>'); });
           } else {
             showDialog(block, 'Refresh failed', '<p>' + escText(e.message) + '</p>');
           }
@@ -717,15 +812,14 @@ JS_SRC = """
       });
     }
     if (outside) {
-      outside.addEventListener('change', function () {
-        run('&outside=' + (outside.checked ? 'all' : '1'), false);
-      });
+      outside.addEventListener('change', function () { run(outside.checked ? 'all' : '1', false); });
     }
   }
 
   function initAll() {
     states = states.filter(function (s) { return document.contains(s.svg); });
     document.querySelectorAll('.depgraph svg').forEach(initGraph);
+    document.querySelectorAll('.depgraph-block').forEach(takePending);
     document.querySelectorAll('.depgraph-block').forEach(initZoom);
     document.querySelectorAll('.depgraph-block').forEach(initRefresh);
     document.querySelectorAll('.depgraph-block').forEach(initSave);
@@ -891,13 +985,14 @@ LAUNCHER = Path.home() / ".local" / "bin" / "prd-graph-helper"
 def start_cmd():
     """The command the "helper not running" dialog shows, chosen so it works as pasted.
 
-    The launcher has a stable path across plugin updates (the installed script's path
-    changes with every version), so prefer it, and its bare name when its folder is on PATH.
+    The launcher has a stable path across plugin updates and every run of the skill writes
+    it, so the page names it rather than an installed script. It is written relative to
+    the home directory, because the page may be opened on someone else's machine.
     """
-    if LAUNCHER.exists():
-        on_path = str(LAUNCHER.parent) in os.environ.get("PATH", "").split(os.pathsep)
-        return LAUNCHER.name if on_path else shlex.quote(str(LAUNCHER))
-    return f"python3 {shlex.quote(str(Path(__file__).resolve().with_name('refresh_server.py')))}"
+    on_path = str(LAUNCHER.parent) in os.environ.get("PATH", "").split(os.pathsep)
+    if on_path or not LAUNCHER.is_relative_to(Path.home()):
+        return LAUNCHER.name
+    return f"~/{LAUNCHER.relative_to(Path.home()).as_posix()}"
 
 
 def embed_markers(graph_id):
@@ -931,11 +1026,11 @@ def render_block(data):
     status = f"Data as of {esc(stamp)}. {n_nodes} tickets, {n_edges} BLOCKS links."
     refresh = data.get("refresh") or {}
     attrs = ""
-    if refresh.get("graph_id") and refresh.get("token"):
-        port = int(refresh.get("port") or DEFAULT_PORT)
-        url = (f"http://127.0.0.1:{port}/refresh?graph={refresh['graph_id']}"
-               f"&token={refresh['token']}")
-        attrs = f' data-refresh-url="{esc(url)}" data-start-cmd="{esc(start_cmd())}"'
+    config = ""
+    if refreshable(refresh):
+        # The page carries its own config, so any machine with the skill can refresh it.
+        attrs = f' data-start-cmd="{esc(start_cmd())}"'
+        config = config_html(data)
         full_chain = str(refresh.get("outside_blockers_depth", 1)) == "all"
         menu_id = f"dg-menu-{esc(refresh['graph_id'])}"
         button = ('<div class="dg-menu-wrap">'
@@ -959,7 +1054,7 @@ def render_block(data):
     attrs += f' data-dg-name="{esc(stem)}"'
     button = '<div class="dg-controls">' + ZOOM_CONTROLS + save_controls(refresh.get("graph_id") or stem) + button + '</div>'
     toolbar = f'<div class="dg-toolbar"><span class="dg-status">{status}</span></div>'
-    block = (f'<div class="depgraph-block"{attrs}><style>{CSS}</style>{toolbar}'
+    block = (f'<div class="depgraph-block"{attrs}>{config}<style>{CSS}</style>{toolbar}'
              f'<div class="dg-frame"><div class="depgraph">{svg}</div>{button}</div>'
              f'{HELP}{dialog}<script>{JS}</script></div>')
     return block, n_nodes, n_edges
@@ -972,6 +1067,11 @@ def render_fragment(data):
 
 def render_page(data):
     block, n_nodes, n_edges = render_block(data)
+    graph_id = (data.get("refresh") or {}).get("graph_id")
+    if refreshable(data.get("refresh") or {}):
+        # Markers let a refresh replace only the graph, the same way as in a report.
+        start, end = embed_markers(graph_id)
+        block = f"{start}\n{block}\n{end}"
     title = esc(data.get("title", "Dependency graph"))
     subtitle = esc(data.get("subtitle", ""))
     doc = ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
@@ -989,21 +1089,17 @@ def render_page(data):
 
 def embed_into(path, graph_id, fragment):
     """Replace the fragment between this graph's markers in an existing HTML file."""
-    start, end = embed_markers(graph_id)
     with open(path, encoding="utf-8") as handle:
         text = handle.read()
-    a = text.find(start)
-    b = text.find(end)
-    if a < 0 or b < a:
-        raise ValueError(f"markers for graph '{graph_id}' not found in {path}")
-    text = text[: a + len(start)] + "\n" + fragment + text[b:]
+    text = replace_region(text, graph_id, fragment, path)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(text)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", help="graph JSON file")
+    parser.add_argument("input", help="graph JSON file, or an HTML page or report holding a refreshable graph")
+    parser.add_argument("--graph", help="with an HTML input holding several graphs: the graph id to read")
     parser.add_argument("-o", "--output", help="output .html path")
     parser.add_argument("--print-columns", action="store_true",
                         help="print the automatic column assignment as JSON and exit (use it to write column_labels)")
@@ -1013,7 +1109,7 @@ def main():
                         help="replace the graph between <!-- depgraph:<id>:start/end --> markers in this HTML file")
     args = parser.parse_args()
 
-    data = load(args.input)
+    data = load(args.input, args.graph)
     if args.print_columns:
         all_edges = data["edges"] + [e for e in data["produces"] if e not in data["edges"]]
         linked_ids = {x for e in all_edges for x in e}
@@ -1039,6 +1135,107 @@ def main():
     with open(args.output, "w", encoding="utf-8") as handle:
         handle.write(doc)
     print(json.dumps({"output": args.output, "nodes": n_nodes, "edges": n_edges}))
+
+
+
+HTML_SUFFIXES = {".html", ".htm"}
+GRAPH_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+MARKER_START = re.compile(r"<!-- depgraph:([a-z0-9][a-z0-9-]{0,63}):start -->")
+CONFIG_TAG = re.compile(r'<template class="dg-config" data-dg-graph="([a-z0-9][a-z0-9-]{0,63})">([^<]*)</template>')
+LEGACY_URL = re.compile(r'data-refresh-url="http://127\.0\.0\.1:\d+/refresh\?graph=([a-z0-9][a-z0-9-]{0,63})&amp;')
+CONFIG_VERSION = 2
+PORTABLE_NODE_KEYS = ("id", "label", "title", "owner", "status", "url", "external", "root", "column")
+PORTABLE_REFRESH_KEYS = ("graph_id", "scope", "port", "app_issue_base", "include_plans", "outside_blockers_depth")
+
+
+def refreshable(refresh):
+    return bool(GRAPH_ID.match(str(refresh.get("graph_id") or "")) and (refresh.get("scope") or refresh.get("prd")))
+
+
+def edge_dicts(edges):
+    return [{"from": e["from"], "to": e["to"]} if isinstance(e, dict) else {"from": e[0], "to": e[1]}
+            for e in edges or []]
+
+
+def portable_config(data):
+    """Everything a refresh needs, minus what belongs to one machine or person.
+
+    No token, no output paths, no API base and no `me`: whoever refreshes the page
+    supplies their own key, and the helper looks up who they are.
+    """
+    refresh = data.get("refresh") or {}
+    source = dict(refresh, scope=refresh.get("scope") or refresh.get("prd"))
+    config = {
+        "version": CONFIG_VERSION,
+        "title": data.get("title") or "",
+        "subtitle": data.get("subtitle") or "",
+        "generated_at": data.get("generated_at") or "",
+        "column_labels": list(data.get("column_labels") or []),
+        "nodes": [{k: n[k] for k in PORTABLE_NODE_KEYS if kept(n.get(k))} for n in data.get("nodes") or []],
+        "edges": edge_dicts(data.get("edges")),
+        "produces": edge_dicts(data.get("produces")),
+        "refresh": {k: source[k] for k in PORTABLE_REFRESH_KEYS if kept(source.get(k))},
+    }
+    if data.get("last_refresh"):
+        config["last_refresh"] = data["last_refresh"]
+    return config
+
+
+def kept(value):
+    return value is not None and value != "" and value is not False
+
+
+def config_html(data):
+    # HTML-escaped JSON in a <template>: inert, never executed, and the JSON comes back unchanged
+    # from template.content.textContent in the page or html.unescape in the helper.
+    text = json.dumps(portable_config(data), ensure_ascii=False, separators=(",", ":"))
+    graph_id = esc(data["refresh"]["graph_id"])
+    return f'<template class="dg-config" data-dg-graph="{graph_id}">{html.escape(text, quote=False)}</template>'
+
+
+def graph_region(text, graph_id):
+    """(start, end) of the text between this graph's markers, or None."""
+    start, end = embed_markers(graph_id)
+    a = text.find(start)
+    b = text.find(end, a + len(start)) if a >= 0 else -1
+    return (a + len(start), b) if a >= 0 and b >= 0 else None
+
+
+def replace_region(text, graph_id, fragment, where="the file"):
+    region = graph_region(text, graph_id)
+    if region is None:
+        raise ValueError(f"markers for graph '{graph_id}' not found in {where}")
+    return text[: region[0]] + "\n" + fragment + text[region[1]:]
+
+
+def embedded_graph_ids(text):
+    """Graph ids that have markers and an embedded config inside them, in page order."""
+    ids = []
+    for match in MARKER_START.finditer(text):
+        graph_id = match.group(1)
+        if graph_id not in ids and read_embedded(text, graph_id) is not None:
+            ids.append(graph_id)
+    return ids
+
+
+def legacy_graph_ids(text):
+    """Graph ids of blocks rendered before configs were embedded (they carry a token URL instead)."""
+    return list(dict.fromkeys(LEGACY_URL.findall(text)))
+
+
+def read_embedded(text, graph_id):
+    """The config embedded between this graph's markers, or None."""
+    region = graph_region(text, graph_id)
+    if region is None:
+        return None
+    for match in CONFIG_TAG.finditer(text, region[0], region[1]):
+        if match.group(1) == graph_id:
+            try:
+                data = json.loads(html.unescape(match.group(2)))
+            except ValueError:
+                return None
+            return data if isinstance(data, dict) else None
+    return None
 
 
 if __name__ == "__main__":

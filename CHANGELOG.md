@@ -4,6 +4,23 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.5.0
+
+#### Added
+- `prd-dependency-graph` pages are portable. Each graph block carries its own config (scope, options, labels, columns, nodes and links, and the last refresh's changes) in an inert `<template class="dg-config">`, with no token, output paths, API base or viewer. A copied page or report refreshes in place on any machine with the skill and its own `CLOSEDLOOP_API_KEY`; nothing is saved outside the page.
+- The helper's `POST /v2/refresh` takes the page's graph id and scope plus, for a page opened from a file, the file's own path. It rewrites only that graph's block in the file and answers `{ok, written, refresh_id}` with no ticket data; the page reloads from disk, keeps its zoom, and shows the change dialog from its embedded config. A page served from `http://localhost` gets the graph back, swaps it in place, and says no file on disk changed.
+- "Yours" follows whoever refreshes: the helper looks up the API key's owner with `GET /me`, so `--me` is now only a fallback.
+- `--once <page.html>` refreshes a page or report directly (`--graph` picks one graph), `--export-config <page.html>` prints a page's config, and `--once <page.html> --apply-config <json>` refreshes from an edited one. `render_graph.py --print-columns` reads a page too. Standalone pages now have depgraph markers like reports.
+- A threat model in `SKILL.md`, enforced in code: ticket data goes back only to pages served from this machine (never to Origin `null` or other websites); writes go only to an existing `.html` file of the user that holds the graph's markers and config for the requested scope, atomically and only between the markers; requests must be JSON (so browsers preflight them, granted only to file pages and pages from this machine), name a strictly formatted scope the file holds, and are rate limited (3 seconds per target, two at once); the API key is only ever sent to `https://api.closedloop.ai`, whatever a page says.
+- `tools/python/test_prd_dependency_graph_security.py` and `test_prd_dependency_graph_portable.py`, with a stubbed ClosedLoop API, cover each security rule, a copied page refreshing from another folder with no config, reports with several graphs, the CLI paths, and older graphs. `check_graph.cjs` now runs on a copy and checks the file refresh with reload and the served-page swap.
+
+#### Changed
+- Graphs made by earlier versions keep working: old pages' token URLs, `--once <graph-id>`, and any file an older config lists still refresh from `~/.local/share/prd-dependency-graph/<graph-id>.json`, and each refresh writes the portable format into those files, removing the token from the page. A page whose helper is older than the page says so and shows `prd-graph-helper --ensure`.
+- The "helper not running" dialog names `prd-graph-helper` or `~/.local/bin/prd-graph-helper` instead of an absolute path from the machine that rendered the page.
+
+#### Fixed
+- The helper's `/health` and old token endpoint no longer reveal the user's home path to other websites: `/health` shares its details only with file pages and pages from this machine, and the token endpoint's errors name no paths.
+
 ### vibe v1.0.56
 
 #### Changed

@@ -137,9 +137,16 @@ it to the clipboard for sharing.
 
 `scripts/refresh_server.py` builds the graph from the ClosedLoop REST API
 (`CLOSEDLOOP_API_KEY`) and is also the local helper behind the page's refresh
-button, listening on `127.0.0.1` only with a per-graph token. Creating or
-refreshing a graph starts the helper in the background and replaces one left
-running from another install. It also writes a `~/.local/bin/prd-graph-helper`
-launcher that follows plugin updates, which the page shows when the helper is
-not running. `scripts/check_graph.cjs` is a headless browser check of a
-rendered graph.
+button, listening on `127.0.0.1` only. Each graph carries its own config inside
+the page (no token, paths or viewer), so a copied page or report refreshes in
+place on any machine with the skill and its own API key, and "yours" follows
+whoever refreshes. A page opened from a file sends its own path; the helper
+validates the file, rewrites only that graph, and answers without ticket data
+so the page reloads from disk. The threat model is in the skill's `SKILL.md`.
+Graphs made by earlier versions keep refreshing from their configs in
+`~/.local/share/prd-dependency-graph/` and move to the portable format on their
+next refresh. Creating or refreshing a graph starts the helper in the background
+and replaces one left running from another install. It also writes a
+`~/.local/bin/prd-graph-helper` launcher that follows plugin updates, which the
+page shows when the helper is not running. `scripts/check_graph.cjs` is a
+headless browser check of a rendered graph.
