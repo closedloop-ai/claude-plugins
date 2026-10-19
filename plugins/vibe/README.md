@@ -407,15 +407,22 @@ children each wiring their own selection behind a shared slot, a criterion
 checked on one view but not the board it names, an agent-drafted product docs
 paragraph, and a flag retired while a linked ticket held it.
 
-The five cases tagged `qa-lessons` rehearse real-browser Storybook play
+The six cases tagged `qa-lessons` rehearse real-browser Storybook play
 execution, WebKit iPhone and Chromium Pixel touch coverage, overlap research
 that includes shipped work and open pull requests, web and Desktop host-adapter
 coverage before reporting no missing tests, and weekly-project fallback. The
 same prompt and graders run in the Claude Code and Codex harnesses.
 
+The cases tagged `ticket-lessons` rehearse source PRD child ownership: an
+untouched included child is claimed, an active child owned elsewhere is
+reported and excluded, an untouched out-of-scope child remains uncovered, and
+no child is superseded without a human ruling. Version-check cases also cover
+explicit proceed instructions and resumed sessions continuing after reporting
+an available update.
+
 ## Runtime Files
 
-Version `1.0.56` contains 10 skills and 16 agents. It has no standalone
+Version `1.0.58` contains 10 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains the skill-contract test modules and
 `vibe_contract_text.py`, the text helpers they share.

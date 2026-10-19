@@ -40,6 +40,13 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
 
 ## Check, for added or changed lines only
 
+Before the numbered review, require the inventory's `forbiddenPaths` gate to
+be true. Any entry under `forbidden` or `outsideAllowed` is blocking in every
+phase, including repo-root scripts, plugin or skill files, and agent instruction
+files. The sole exception is a file listed under `shrinkOnlyAllowlists` after
+the inventory proved it only removed entries or lowered counts. Never accept a
+path merely because another rule describes how its content should look.
+
 1. Reuse: a hand-rolled control, table, dialog, badge, date format, or empty
    state where `packages/design-system/storybook/component-catalog.ts` or a
    `packages/app` paved path already provides one. Name the existing one.
@@ -179,7 +186,12 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
     `v1.0` tag), or any edit or move of a story file that is v1.0 on main
     (the inventory's `v1Stories`, reason `frozen`), is blocking; that
     component's new states belong in a new entry in the current root holding
-    only them, with no version number in its name. Confirm each of
+    only them, with no version number in its name. Confirm those frozen stories
+    through the decomposer's dependency-closure report: compare the complete
+    transitive rendered dependency closure on the pinned base and branch, then
+    compare stable renders of the same story IDs with fixed args, globals and
+    viewport. A changed dependency or rendered output is blocking even when
+    the deprecated story file itself is byte-identical. Confirm each of
     the inventory's `compileOnlyV1Repairs` is purely mechanical (prop
     renames, imports, types) with no visual change; anything else in one is
     blocking. Read each such repair with
@@ -286,6 +298,13 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
     If its only source is an agent's own rationale, it is a blocking
     `engineering decision` finding. A detailed explanation written by an
     agent is still not a product source.
+16. PRD child reconciliation: when the source is a PRD, compare its current
+    children with the requirements classification, session ticket and diff.
+    Every live child whose exact outcome the branch implements must be included
+    and claimed, excluded because another person has real activity, superseded
+    by a cited human ruling, or listed uncovered with current owner and status.
+    A session-created supersession, a "not reused" label, or a delivered child
+    left `TODO` is blocking.
 
 For publication, verify the SAME source actor's `main-sync-inputs` evidence
 before capture and after the committed merge. Canonical private diagnostics

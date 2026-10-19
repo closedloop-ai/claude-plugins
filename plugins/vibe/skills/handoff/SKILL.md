@@ -180,7 +180,11 @@ then step 3's guardrail check, step 5's checks with the new tests included and
 step 6's review on the result, with the repo's `review-soul` critic required
 on those tests, then step 7's commit and its push and publication through
 `vibe-environment-worker` in redeploy mode. The pull request does not open
-until those tests pass and their independent review is clean.
+until those tests pass and their independent review is clean. It is also hard
+gated on executed interaction evidence through the real web host, WebKit's
+iPhone device descriptor and Chromium's Pixel device descriptor for every
+touched narrow or touch flow. A mocked host, keyboard-only run or Chromium
+`hasTouch` run cannot satisfy this gate.
 
 From the request on, every brief in this handoff (the writer, the reviewers,
 the verify and environment workers, the ticket worker) carries the
@@ -285,6 +289,11 @@ as `apps/api`, `packages/api`, `packages/database`, Desktop's main process,
 and any migration), the backend checks when it did. If a later inventory run
 reports `backendChanged` true (a fix or a behavior answer added backend code),
 use the backend checks from then on and update the internal checklist.
+The checklist stops immediately when `blocking.forbiddenPaths` is false. That
+gate covers both `forbidden` and `outsideAllowed`, so repo-root scripts, skill
+tests, agent instructions and every other path outside the Never table cannot
+pass by being merely reported. Only inventory-proven `shrinkOnlyAllowlists`
+entries are exempt.
 
 Keep the remaining checklist internal: inventory and shared-owner checks,
 Storybook coverage and footprint, existing tests and the missing tests list,
@@ -440,6 +449,9 @@ The missing tests list may say `None` only when every acceptance criterion has
 executed coverage through both the real web host adapter and the real Desktop
 host adapter. Coverage on one host, a shared unit test or a mocked router
 leaves a named missing test for the uncovered host.
+No criterion or PLN task that depends on external work is complete until the
+deployed collector, selector, monitor or other dependency evidence is present.
+An explicitly missing dependency keeps final alignment open.
 
 Lighter: repo `review-soul` and `vibe-adversarial-reviewer`
 may review independently in parallel, read-only. Backend: named core
@@ -499,6 +511,9 @@ real touch using Playwright's WebKit iPhone and Chromium Pixel device
 descriptors. Keyboard input and Chromium `hasTouch` alone are insufficient;
 the WebKit result is judged by the visible tap outcome even when its click
 reports `pointerType` as `mouse`.
+For a requested pull request these are opening gates, not missing-test notes:
+record the real web-host run and both named touch-device runs with commands,
+commit, screen and outcome before step 9.
 
 ## 7. Upload the last changes
 
@@ -693,6 +708,12 @@ Storybook version in each one. Record the version and matching pull request
 numbers, or `None`, in the live ticket and, when opening one, the pull request
 packet. A matching claim is coordination evidence to note, not permission to
 silently choose a different version.
+Immediately before a requested pull request is created, repeat this check
+against the pinned pull request base. Compare its release history entry,
+package version and component and story counts with the branch, then inspect
+every in-flight train pull request for a reserved next version and counts.
+Any stale base, duplicate reservation or inconsistent count returns to the
+same writer and blocks creation.
 
 On a requested pull request (step 0), skip the question and the lookup: the
 next owner is the session's operator, the person who ran it, and the ticket
@@ -746,8 +767,12 @@ with what each proves and any surface it could not drive with its command and
 reason, the detailed Design Review evidence packet/report paths,
 including Production impact, Flag changes and gates, and researched Open
 Questions per `../vibe/references/ticket-template.md`,
-and every answer from the person so far with how it was handled. Never
-include a plan's body in this dispatch: the plans under
+and every answer from the person so far with how it was handled. For a source
+PRD, also pass every child classification and its current
+ownership, status, activity and delivery evidence. The ticket worker moves
+delivered claimed children to In Review, lists uncovered children, and never
+supersedes one without a cited human ruling. Never include a plan's body in
+this dispatch: the plans under
 `.closedloop-ai/vibe-plans/` reach ClosedLoop only as the session's PLN. It
 refreshes the record sections (the Environment base commit from the current
 inventory), re-derives every section an answer touches, fills the Handoff and
@@ -778,7 +803,9 @@ lookup resolved to exactly one user.
 ## 9. Hand it over
 
 On a requested pull request, skip assign mode: the ticket stays with the
-person, In Progress. As handoff's last step, dispatch
+person, In Progress. Before dispatch, require the refreshed pinned-base
+Storybook train check, the real web-host evidence and both named touch-device
+results. Then dispatch
 `vibe-environment-worker` in `pull-request` mode (its own `pull-request`
 record action, an exclusive record turn with no record writes) with the
 worktree, the live ticket slug, the confirmed summary, the final verified
@@ -789,6 +816,9 @@ returns its URL; it never enqueues or merges it. On `BLOCKED`, tell the
 person in one plain line that the pull request could not be opened and
 suggest they message engineering, naming this work by its summary; never give them the
 branch to merge instead. Then mark the session handed off as below.
+After it returns the URL, dispatch the ticket worker to attach that URL to
+every delivered claimed PRD child already in review. A later resume's merge
+check moves only proven delivered children to Done with the merge SHA.
 
 When they chose passing it on, dispatch `vibe-ticket-worker` in assign mode with the worktree, the live
 ticket slug, and the next owner's user id and email from step 8. It confirms

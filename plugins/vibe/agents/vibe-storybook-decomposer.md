@@ -202,6 +202,12 @@ advice was applied.
 In handoff mode also run these checks and report each result with its
 evidence (operator ruling, 2026-10-16, after symphony-alpha #8885 and #8886):
 
+- Frozen rendered baseline: for every story deprecated on the pinned base,
+  compute its transitive rendered dependency closure on the base and current
+  branch. Diff the closure, not only the story file. Render the same story IDs
+  from both commits with fixed args, globals and viewport, and compare the
+  stable output. Any closure or output change is a finding unless it is a
+  recorded compile-only repair whose rendered output is identical.
 - States: for each state the ticket, PRD or acceptance criteria name, the
   story on the consumed component that shows it, or the missing state.
 - Names: each new or changed story whose name claims more than its args and

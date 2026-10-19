@@ -60,6 +60,7 @@ Safety, in every app:
 
 Evidence:
 - Verify every state before you record it: reload or reopen and look again. A hover can look like a completed task.
+- For a narrow-layout judgment, first capture the app as found. Then close every navigation sidebar or drawer, dismiss banners and overlays, and capture the same viewport again. Judge support from the cleared state and report both captures.
 - Keep what you observed directly separate from what a help center or forum says.
 - Quote on-screen wording exactly, as evidence only.
 - When nothing settles it, write "undocumented"; never guess.

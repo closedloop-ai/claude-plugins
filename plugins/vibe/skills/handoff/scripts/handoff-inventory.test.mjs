@@ -50,13 +50,14 @@ function write(worktree, file, content) {
   writeFileSync(absolute, content);
 }
 
-test("worktree-local plans are not deliverables and neighboring artifacts stay visible", (t) => {
+test("worktree-local plans are not deliverables and neighboring artifacts fail closed", (t) => {
   const { home, worktree } = setup(t, "private-plan");
   write(worktree, ".closedloop-ai/vibe-plans/request-1.md", "private plan\n");
   write(worktree, ".closedloop-ai/vibe-plans-other.md", "not a local plan\n");
   write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
   const result = runNode(INVENTORY, ["--worktree", worktree], home);
-  assert.equal(result.status, 0, JSON.stringify(result.json));
+  assert.equal(result.status, 1, JSON.stringify(result.json));
+  assert.equal(result.json.blocking.forbiddenPaths, false);
   assert.deepEqual(result.json.localPlans, [{ path: ".closedloop-ai/vibe-plans/request-1.md", status: "A" }]);
   assert.deepEqual(result.json.trackedLocalPlans, []);
   assert.deepEqual(result.json.changedFiles.map(file => file.path), [".closedloop-ai/vibe-plans-other.md", "apps/app/page.tsx"]);
@@ -242,6 +243,23 @@ test("the same forbidden change is still blocked when it is not a recorded local
   assert.deepEqual(result.json.localFixes, []);
 });
 
+test("every path outside the allowed table blocks except a shrink-only allowlist", (t) => {
+  const { home, worktree } = setup(t, "outside-allowed-blocks", {
+    "plugins/product/skills/example/SKILL.md": "# Existing skill\n",
+  });
+  write(worktree, "scripts/release.mjs", "export const release = true;\n");
+  write(worktree, "plugins/product/skills/example/SKILL.md", "# Changed skill\n");
+  write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
+
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.status, 1);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(result.json.outsideAllowed, [
+    { path: "plugins/product/skills/example/SKILL.md", status: "M" },
+    { path: "scripts/release.mjs", status: "A" },
+  ]);
+});
+
 test("a session whose only changes are local fixes has nothing to hand off", (t) => {
   const { home, worktree } = setup(t, "only-fixes");
   write(worktree, "scripts/loops-setup.sh", "echo fixed\n");
@@ -311,12 +329,16 @@ test("a session may only shrink the source-gate allowlist under scripts/", (t) =
     const refused = runNode(INVENTORY, ["--worktree", worktree], home);
     assert.deepEqual(refused.json.outsideAllowed, [{ path: ALLOWLIST, status: "M" }], JSON.stringify(entries));
     assert.deepEqual(refused.json.shrinkOnlyAllowlists, []);
+    assert.equal(refused.json.blocking.forbiddenPaths, false);
+    assert.equal(refused.status, 1);
   }
 
   write(worktree, ALLOWLIST, allowlist([HEX]));
   write(worktree, "scripts/loops-setup.sh", "echo fixed\n");
   const other = runNode(INVENTORY, ["--worktree", worktree], home);
   assert.deepEqual(other.json.outsideAllowed, [{ path: "scripts/loops-setup.sh", status: "M" }]);
+  assert.equal(other.json.blocking.forbiddenPaths, false);
+  assert.equal(other.status, 1);
 });
 
 test("frontend-only work reports no backend change", (t) => {

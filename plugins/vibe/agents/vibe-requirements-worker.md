@@ -50,11 +50,20 @@ questions"), or produce an upfront summary for the person.
    recorded decision is settled only when it traces to a human statement
    (`quality-loop.md`, "Communication and product questions"); report each
    with its source, and an unratified or conflicting one as not settled.
+   When the source is a PRD, load every child before defining scope. List each
+   open child as a scope unit and classify it as untouched, active by someone
+   else, delivered, superseded by a cited human ruling, or uncovered. Untouched
+   means no implementation branch, pull request, progress comment or other
+   person's active ownership. Existing children are never declared "not
+   reused" and no agent decides that one is superseded.
 2. Overlap: for a ticket or a description, run `query_collisions` with the
    title and request text, then `search_nodes` and `fts_search` on its key
    terms. Inspect every matching PRD even when it is `EXECUTED`: report its
    `DONE` children and the shipped rules they established so the session does
-   not reclaim delivered work.
+   not reclaim delivered work. For every overlapping live child whose stated
+   outcome matches the request, return the required reconciliation: include
+   it, cite a human supersession ruling, or leave it uncovered with its current
+   status and owner. Discovery alone is incomplete.
 3. Locate the relevant code: `.claude/skills/control/FEATURE_MAP.md`
    (`pnpm control feature list`, `feature show <id>`), confirmed with
    closedloop-graph `code_symbols` on the screen's main component.
@@ -117,6 +126,9 @@ Asana's help center and documentation first; when Asana does not have the
 situation, another established app with the same flow (for example Linear,
 or GitHub's own documentation for a GitHub authorization). Never sign in,
 create an account or type credentials.
+For a narrow-layout judgment, capture the app as found, then close navigation
+sidebars and drawers, dismiss banners and overlays, and capture the same
+viewport again. Judge support from the cleared state and report both states.
 
 Return `DONE` with the brief's report: the behavior the precedent shows in
 one plain line, its source (the app and the exact help-center or
@@ -136,7 +148,9 @@ acceptance criterion of the ticket and its PRD, quoted exactly with its source
 slug, or "none stated"; the route and FEATURE_MAP id where the relevant code lives, for
 change workers (not shown to the person); overlapping or in-flight tickets
 (slug and title), open pull requests touching the same files, and each matched
-`EXECUTED` PRD with its `DONE` children and shipped rules; and whether this is a change to an existing screen or a
+`EXECUTED` PRD with its `DONE` children and shipped rules; for a source PRD,
+every child with its scope classification, current status, owner and activity
+evidence; and whether this is a change to an existing screen or a
 net-new screen. Or
 `NEEDS_PERSON` with questions only the person can answer (scope, which of two
 existing tickets they mean), with decision-research evidence and why the answer

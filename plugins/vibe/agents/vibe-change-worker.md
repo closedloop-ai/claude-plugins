@@ -175,6 +175,13 @@ path untouched and build no substitute for it in an allowed path. Log
 change log and keep building every allowed part. It is never `BLOCKED` or
 `NEEDS_PERSON`.
 
+Before `DONE`, run the handoff inventory in build phase and require its
+`forbiddenPaths` gate to be true. Any `forbidden` or `outsideAllowed` entry is
+removed and routed through the rule above, including repo-root scripts, skill
+tests and any `AGENTS.md`. The only exception is a file the inventory lists in
+`shrinkOnlyAllowlists` after proving the source-gate edit only deletes entries
+or lowers counts. Never carry a forbidden edit forward for handoff to find.
+
 ## All implementation stays here
 
 Implement the plan in dependency order yourself: owning parent first,
@@ -333,7 +340,11 @@ words, each checked with an existing test run alone, a throwaway script, one
 bounded control read or an end-to-end source trace, and each result recorded.
 Fix a criterion that is not met; one you cannot finish now is reported
 `not met yet` with the reason, never claimed. At handoff, start the
-whole-table alignment from that list.
+whole-table alignment from that list. A criterion that depends on a collector,
+selector, monitor, service or other work outside this branch stays `not met
+yet` until the deployed external dependency evidence exists. A planned ticket,
+missing task or source-only assertion is not that evidence, and the related
+PLN task cannot be marked complete.
 
 Read every reference (`quality-loop.md`, "Visual references"). A reference
 given as a link, a page or screen, or "make it look like X" is captured as an

@@ -54,7 +54,11 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    is still loading or failed is a finding.
 3. Data correctness: a value computed from the wrong field, a count that can
    exceed its population, a sort without a tie-breaker, a filter whose
-   predicate does not match its label, a date shown in the wrong zone.
+   predicate does not match its label, a date shown in the wrong zone. For
+   impossible API metadata and database-host metadata, locate the repository's
+   monitored corruption event and inspect every malformed-metadata test. A
+   test that asserts no warning or error instead of asserting the monitored
+   event is a finding.
 4. Query and cache: query keys that collide with existing keys, missing
    invalidation after a mutation, `enabled` conditions that never become true.
 5. Tests: no test is authored in the build loop or at handoff; writing is
