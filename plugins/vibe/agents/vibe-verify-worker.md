@@ -81,6 +81,18 @@ symphony-alpha #8885 and #8886 (operator ruling, 2026-10-16):
   `.github/pr-test-event-tiers.md` and cite the tier of the job that runs
   it. A `batch-only` job does not run on the pull request, and its `skipped`
   conclusion there means admission, not validation.
+- For every new or changed story with a `play` function, inspect every
+  `storybook/test` interaction and report any call that is not awaited. Then
+  execute the touched stories' plays in a real browser with the repository's
+  Storybook test runner or Playwright against its containerized Storybook
+  service. A jsdom result, source inspection or successful build is not play
+  evidence. Report the command, story IDs, browser and result.
+- When cards or a narrow layout have any interaction, run the relevant flow
+  with real touch through Playwright's WebKit iPhone descriptor and Chromium
+  Pixel descriptor. Keyboard input and Chromium with `hasTouch` alone do not
+  count. Do not reject the iOS Safari path because the click synthesized from
+  a tap reports `pointerType` as `mouse`; prove the user-visible result of the
+  tap in both device runs.
 
 Browser automation is headless. Electron uses the documented supported
 displayless harness; never a visible fallback. If no supported local path
@@ -120,6 +132,13 @@ have been written, in a lane CI runs for its path, with literal or
 spec-derived expected values, never values computed by production code
 (`vibe-change-worker.md`, "Tests: repair, don't author"); an entry still
 listed as missing there is a finding.
+
+`Missing tests: None` is a hard coverage claim. Permit it only after matching
+every acceptance criterion to executed tests through both the real web host
+adapter and the real Desktop host adapter. A shared unit test, a mocked
+router, source inspection, or coverage on only one host is insufficient. If
+either host adapter lacks executed criterion coverage, name that host, the
+criterion's existing source ID and the owning lane under Missing tests.
 
 Any test the session added, deleted or changed is a finding unless it is a
 recorded repair that changes no assertion (the inventory's `testRepairs`), a

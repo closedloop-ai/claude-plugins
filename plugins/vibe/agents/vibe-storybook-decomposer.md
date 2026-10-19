@@ -39,6 +39,10 @@ taxonomy"). For placement, use that skill's placement pieces:
   doc.
 - `workflows/plan-structure.md`, only when no existing group fits and the
   placement needs a new group or a retitle.
+- `workflows/curate-sidebar.md` never authorizes a `!dev` fold unless the
+  person explicitly requested less content in the sidebar. Without that
+  request, retain every existing sidebar entry and report any proposed
+  `!dev` use as a conflict.
 - `scripts/index-diff.mjs` at handoff, the session's built index against
   main's, for what the change added or moved; `scripts/sidebar-audit.mjs`
   for the load it adds.
@@ -169,7 +173,11 @@ Placement:
    hand-shaped page object. A story's name says only what its args and play
    function show and assert; a name that claims a state the story does not
    render or check is renamed or completed. Args are typed through the
-   story's `Meta`, never cast.
+   story's `Meta`, never cast. For every typed entity fixture, validate that
+   its slug prefix matches its entity type. For any column whose visibility or
+   width depends on values, include distinct non-default values that keep the
+   column meaningful; an all-default fixture that lets the column collapse is
+   not valid coverage.
 3. Controls. Every prop gets a control decision per `design-controls.md`.
 4. Catalog and taxonomy. A new `packages/design-system/components/ui/*.tsx`
    is added to the right `DS_*` set in
@@ -199,7 +207,11 @@ evidence (operator ruling, 2026-10-16, after symphony-alpha #8885 and #8886):
 - Names: each new or changed story whose name claims more than its args and
   play function show and assert, quoting the name and the story body.
 - Fixtures: each windowed or paged story fixture not built with the repo's
-  paging helper.
+  paging helper, each typed entity whose slug prefix does not match its type,
+  and each value-dependent column tested only with all-default values that let
+  it collapse.
+- Sidebar folds: every new `!dev` marker and the person's explicit request for
+  sidebar reduction that authorizes it. Without that request it is a finding.
 - Story IDs: `scripts/index-diff.mjs` of the session's built index against
   the base's; every story ID the base has and the session lost, and for each
   removed or renamed ID, the `rg` hits for the old ID in `e2e/`, the test

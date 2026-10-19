@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.56
+
+#### Changed
+- Handoff verification now executes touched Storybook plays in a real browser with awaited interactions, requires WebKit iPhone and Chromium Pixel touch runs for cards and narrow layouts, compares narrow layout geometry with main, and permits `Missing tests: None` only with executed web and Desktop host-adapter coverage for every acceptance criterion.
+- Storybook review now validates fixture slug and type consistency, uses distinct non-default values for value-dependent columns, and forbids `!dev` sidebar folds unless the person explicitly requested sidebar reduction. Guardrails also preserve acceptance-criterion provenance and reject exemptions or product rules sourced only from agent rationale.
+- Requirements research now runs collision and file blast-radius checks for every request, reports open pull requests touching the same files, and includes shipped rules from matched executed PRDs and their done children. Handoff records other open pull requests claiming the same Storybook version, and ticket creation falls back to the latest weekly project when none covers the current date.
+
+#### Added
+- Contract coverage for all 11 QA lessons and five shared Claude Code and Codex eval cases for real-browser story plays, real touch devices, overlap research, host-adapter test coverage, and weekly-project fallback.
+
 ### vibe v1.0.55
 
 #### Added

@@ -157,9 +157,11 @@ F. Status. The PLN's status follows the work (operator ruling, 2026-10-19):
 ## Create mode
 
 1. Assignee: the session's `operator` (its `id` is the `assigneeId`).
-   Project: the current week's project from `list-projects` (the date-range
-   name covering today); return `BLOCKED` internally if none matches rather
-   than asking the person a technical project-setup question.
+   Project: the current week's project from `list-projects`, using the
+   date-range name covering today. If no weekly project covers today, select
+   the latest weekly project by its ending date and continue. Note that
+   fallback and the selected project under What this is; never stop or ask the
+   person because the current week is absent.
 2. Before creating, run closedloop-graph `query_collisions` and
    `search_nodes` with the summary; mention overlapping open tickets under
    What this is.
@@ -330,6 +332,9 @@ historical inspections accurately. Preserve the existing grading block.
    Fill Grading with the
    template's Grading section copied unchanged, adding the section after
    Handoff when the ticket has none.
+   Include the handoff's same-Storybook-version check: the version, every
+   other open pull request that claims it, or `None` when no other open pull
+   request does.
 7. Run "Source link and session plan" A to F. The handoff's code is
    written and checked, so step F leaves the PLN `APPROVED` (an `EXECUTED`
    one stays). The ticket is not complete until the source link (when the

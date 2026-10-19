@@ -50,14 +50,18 @@ questions"), or produce an upfront summary for the person.
    recorded decision is settled only when it traces to a human statement
    (`quality-loop.md`, "Communication and product questions"); report each
    with its source, and an unratified or conflicting one as not settled.
-2. Description: `query_collisions` and `search_nodes` with the description,
-   and `fts_search` on its key terms, to find an existing ticket or PRD that
-   already covers it.
+2. Overlap: for a ticket or a description, run `query_collisions` with the
+   title and request text, then `search_nodes` and `fts_search` on its key
+   terms. Inspect every matching PRD even when it is `EXECUTED`: report its
+   `DONE` children and the shipped rules they established so the session does
+   not reclaim delivered work.
 3. Locate the relevant code: `.claude/skills/control/FEATURE_MAP.md`
    (`pnpm control feature list`, `feature show <id>`), confirmed with
    closedloop-graph `code_symbols` on the screen's main component.
-4. Note in-flight work on that code: `blast_radius_tickets` on its route and
-   main component files.
+4. Note in-flight work on that code: run `blast_radius_tickets` on its route
+   and main component files. List open GitHub pull requests and inspect their
+   changed files, reporting every open pull request that touches any of those
+   same files. A ticket-only collision result is incomplete.
 
 ## Reference mode
 
@@ -131,7 +135,8 @@ data direction flagged `data direction (new)`; every
 acceptance criterion of the ticket and its PRD, quoted exactly with its source
 slug, or "none stated"; the route and FEATURE_MAP id where the relevant code lives, for
 change workers (not shown to the person); overlapping or in-flight tickets
-(slug and title); and whether this is a change to an existing screen or a
+(slug and title), open pull requests touching the same files, and each matched
+`EXECUTED` PRD with its `DONE` children and shipped rules; and whether this is a change to an existing screen or a
 net-new screen. Or
 `NEEDS_PERSON` with questions only the person can answer (scope, which of two
 existing tickets they mean), with decision-research evidence and why the answer

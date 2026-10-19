@@ -166,6 +166,11 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    test or a sibling production helper) instead of a literal or the spec's
    words is blocking, because it agrees with the code it should check
    (`vibe-change-worker.md`, "Tests: repair, don't author").
+   Extract every acceptance criterion ID used by a test name or `describe`
+   title and match it exactly to the ID and source already recorded from the
+   ticket, PRD or session table. An invented ID, renumbered criterion or test
+   name that drops the recorded source provenance is blocking; preserve the
+   source's existing identifier instead of creating one for the test.
 10. Storybook taxonomy (`guardrails.md`, "Storybook taxonomy"): read the
     repo's `apps/storybook/TAXONOMY.md` as the session's base has it; the
     inventory's `storybookScheme` names that base's scheme. A new story file
@@ -209,6 +214,10 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
     link to its stories and is blocking (the inventory's `retitledStories`
     for a title) unless recorded as a sibling replacement's entry; confirm the
     recorded `replacement` is one, not new states of the same component.
+    For each new or changed story fixture, validate that a typed entity's slug
+    prefix matches its entity type and that a value-dependent column has distinct
+    non-default values. A prefix mismatch or an all-default fixture that lets
+    the column collapse is blocking.
 11. Storybook placement (judgment only; every finding here is advisory):
     read the Placement blocks in the local plan and the change log. Flag for
     review a story or shared component added, retitled or moved without a
@@ -271,6 +280,12 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
     path to go (operator ruling, 2026-10-16, after symphony-alpha #8885
     retired a flag a linked ticket held). A deletion with no evidence of that
     read is blocking until the comments are read.
+15. Rule provenance: list every exemption and product rule the diff, plan,
+    change log or ticket claims. Match each to the person's words, a ticket or
+    PRD statement, a human comment, or a shipped rule found through the graph.
+    If its only source is an agent's own rationale, it is a blocking
+    `engineering decision` finding. A detailed explanation written by an
+    agent is still not a product source.
 
 For publication, verify the SAME source actor's `main-sync-inputs` evidence
 before capture and after the committed merge. Canonical private diagnostics

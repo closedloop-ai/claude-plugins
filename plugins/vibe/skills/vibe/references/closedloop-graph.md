@@ -35,7 +35,7 @@ one element), at least:
 
 | Worker | Calls |
 |---|---|
-| `vibe-requirements-worker` | `code_symbols` on the screen's main component, `blast_radius_tickets` on its route and main component files, and for a description `query_collisions` and `search_nodes` |
+| `vibe-requirements-worker` | `query_collisions` for every ticket or description, `code_symbols` on the screen's main component, `blast_radius_tickets` on its route and main component files, `search_nodes` for related work, and shipped lineage for matched `EXECUTED` PRDs and their `DONE` children |
 | `vibe-change-worker` (same persistent writer, prep/request/fix/handoff) | `code_symbols` on each component or hook it will edit or extend, then `code_callers` and `code_importers` on each (this is how it finds the shared parent and its other children), and `blast_radius_tickets` on each file it edits; when the plan adds periodic or cross-surface work, the existing-channels `code_grep` |
 | `vibe-backend-worker` (read-only advice) | `code_symbols` on the closest route, service, and model, `code_callers` and `blast_radius_tickets` on the planned files; when the planned work is periodic or cross-surface, the existing-channels `code_grep` |
 | `vibe-guardrails-reviewer` | `code_symbols` and `search_nodes` for an existing component a hand-rolled one duplicates, and `code_callers` and `code_importers` on each changed shared component |
@@ -90,9 +90,11 @@ Never send a technical question or re-ask a settled decision
   `code_importers` before changing anything shared: a change to a component
   every list screen uses is a different change from one used on a single
   screen.
-- Before building a net-new screen or capability, run `query_collisions` /
-  `search_nodes` on the request. If an open ticket already covers it, report
-  that ticket so the person can decide whether to build on it.
+- Before building a net-new screen or capability, run `query_collisions` and
+  `search_nodes` on the request. Include matched `EXECUTED` PRDs, their `DONE`
+  children and shipped rules, because delivered work still constrains scope.
+  If an open ticket already covers it, report that ticket so the person can
+  decide whether to build on it.
 - Before editing a file, run `blast_radius_tickets` on it. An in-progress
   ticket touching the same file is not a blocker, but report it so handoff can
   mention it to engineering.

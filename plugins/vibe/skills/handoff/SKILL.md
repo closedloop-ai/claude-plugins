@@ -436,6 +436,10 @@ existing-test run or independent-review evidence blocks final handoff; a test
 that does not exist yet is listed under Missing tests instead. Require defensible
 `Final Alignment Status: Aligned` for the whole table before step 7 or final
 ticket completion; Not aligned is a stop, not a success with a test-later note.
+The missing tests list may say `None` only when every acceptance criterion has
+executed coverage through both the real web host adapter and the real Desktop
+host adapter. Coverage on one host, a shared unit test or a mocked router
+leaves a named missing test for the uncovered host.
 
 Lighter: repo `review-soul` and `vibe-adversarial-reviewer`
 may review independently in parallel, read-only. Backend: named core
@@ -486,6 +490,15 @@ evidence is visible. Each skill dispatches its own read-only agents. Confirmed
 findings resume the SAME writer in fix mode, then steps 3 to 6 run again on
 the result. Their reports feed the Design Review evidence in step 8. Owned
 prototype sessions keep their canonical single design review instead.
+
+Every new or changed Storybook `play` runs in a real browser through the
+repository's Storybook test runner or Playwright against the containerized
+Storybook service, with every `storybook/test` interaction awaited. jsdom is
+not final play evidence. Any card or narrow-layout interaction also runs with
+real touch using Playwright's WebKit iPhone and Chromium Pixel device
+descriptors. Keyboard input and Chromium `hasTouch` alone are insufficient;
+the WebKit result is judged by the visible tap outcome even when its click
+reports `pointerType` as `mouse`.
 
 ## 7. Upload the last changes
 
@@ -673,6 +686,13 @@ evidence. If the source or deployment changed after collection, refresh the
 packet and distinguish historical evidence from the actual delivered result.
 Unavailable evidence is a truthful gap, not a fabricated pass. This section is
 finished-work metadata, never a technical plan uploaded for approval.
+
+For every handoff, read the Storybook package version on the final branch,
+list every other open pull request, and inspect the files and claimed
+Storybook version in each one. Record the version and matching pull request
+numbers, or `None`, in the live ticket and, when opening one, the pull request
+packet. A matching claim is coordination evidence to note, not permission to
+silently choose a different version.
 
 On a requested pull request (step 0), skip the question and the lookup: the
 next owner is the session's operator, the person who ran it, and the ticket

@@ -71,7 +71,15 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    failures of existing live contracts; review a requested pull request's
    tests for production-path coverage without removing them as a fix.
 6. Accessibility and interaction: keyboard traps, focus lost after an action,
-   controls that do nothing.
+   controls that do nothing. For any interaction on cards or a narrow layout,
+   inspect evidence from real touch runs using Playwright's WebKit iPhone and
+   Chromium Pixel device descriptors. Keyboard coverage and Chromium with
+   `hasTouch` alone are not touch evidence. An iOS Safari tap may synthesize a
+   click whose `pointerType` is `mouse`, so judge the resulting behavior, not
+   that field alone. Missing either device run is a finding. Also compare the
+   narrow-width DOM geometry and captures with the same width on main. A
+   control that floats over the list on main but becomes an in-flow band that
+   reduces the list viewport is a regression and a finding.
 7. Copies: where the diff repeats a rule, wiring, or component at more than
    one site (`../skills/vibe/references/design-pass.md`, "Red flags"), find an
    input on which the copies already behave differently. That divergence is

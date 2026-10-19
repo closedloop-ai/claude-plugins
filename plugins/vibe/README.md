@@ -407,9 +407,15 @@ children each wiring their own selection behind a shared slot, a criterion
 checked on one view but not the board it names, an agent-drafted product docs
 paragraph, and a flag retired while a linked ticket held it.
 
+The five cases tagged `qa-lessons` rehearse real-browser Storybook play
+execution, WebKit iPhone and Chromium Pixel touch coverage, overlap research
+that includes shipped work and open pull requests, web and Desktop host-adapter
+coverage before reporting no missing tests, and weekly-project fallback. The
+same prompt and graders run in the Claude Code and Codex harnesses.
+
 ## Runtime Files
 
-Version `1.0.14` contains 10 skills and 16 agents. It has no standalone
+Version `1.0.56` contains 10 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains the skill-contract test modules and
 `vibe_contract_text.py`, the text helpers they share.
