@@ -31,7 +31,13 @@ App and owned prototype changes use an internal quality loop. The same writer
 loads `$plan-structure` in Codex or `/closedloop-core:plan-structure`
 in Claude Code and uses that skill's own template. Plans and review drafts
 stay in the session worktree's `.closedloop-ai/vibe-plans/` folder, outside
-commits, publications, and ticket uploads. The build loop is lean: quick
+commits and publications. The ticket worker links the document the session
+started from to the live ticket (source PRODUCES ticket) and publishes the
+plans as the session's one implementation plan document (PLN), linked ticket
+PRODUCES PLN, versioned when the plan changes materially and moved from Draft
+to Approved to Executed as the work does; `session-plan.mjs` applies the
+ticket's safety rules first. Handoff verifies and repairs both links and the
+PLN. The build loop is lean: quick
 prep, the build, the quick checks the commit hooks need, the orchestrator's
 commit, deploy, and showing the person. Each finished change deploys to the
 session's Vercel preview without the person asking ("redeploy" still works),
@@ -151,7 +157,7 @@ and setup can run before session creation from the validated checkout; confirmed
 discard keeps execution state in a retained checkout and cancels a live ticket
 only from the successful discard receipt.
 
-Technical plans, questions, and upfront summaries remain internal. Updates
+Technical plans, questions, and upfront summaries never go to the person running the session. Updates
 identify only completed requested features and next work in the person's own
 words. Product questions are researched through closedloop-graph and live
 decision evidence first, then through how a mature app handles the same
@@ -258,7 +264,7 @@ with symphony-alpha's control skill (`pnpm control`, hidden and read-only),
 and records the artifact paths and what each proves in Design Review and the
 ticket's Running app checks, apart from source-only claims. The build loop has
 no control step.
-The existing table attachment remains separate from private technical plans.
+The existing table attachment remains separate from the session's PLN.
 The live ticket also receives Design Review metadata from verified final work:
 exact previews/deployed commit and access protection, scope/host states,
 added/changed/removed Storybook components/stories with IDs and links,
@@ -305,7 +311,7 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 |---|---|---|
 | `vibe-setup-worker` | sonnet | Machine preflight, worktree bootstrap, owned local processes, and confirmed session discard |
 | `vibe-requirements-worker` | sonnet | Read-only ticket, requirements, overlap, and owning-route discovery, reference-product research and help-center precedent research |
-| `vibe-ticket-worker` | sonnet | Live ticket creation, next-owner lookup, handoff grading, assignment, and cancellation |
+| `vibe-ticket-worker` | sonnet | Live ticket creation and source link, the session plan as a linked PLN, next-owner lookup, handoff grading, assignment, and cancellation |
 | `vibe-environment-worker` | sonnet | Vercel environment creation, redeploy, flag snapshots, Desktop setup, deployment records, and opening a pull request the person asked for at handoff |
 | `vibe-change-worker` | sonnet | Sole persistent implementation writer for local planning, full-stack changes, stories, fixes, the handoff missing tests list and serialized recording |
 | `vibe-backend-worker` | opus | Read-only decision-table and backend guidance for that writer |

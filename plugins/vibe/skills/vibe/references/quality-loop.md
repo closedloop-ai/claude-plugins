@@ -389,9 +389,10 @@ whose only gap is a listed missing test does not block it. Any other
 unresolved required row keeps `Final Alignment Status: Not aligned` and blocks
 final handoff/session completion. No soft final status.
 
-Technical plans stay private under `.closedloop-ai/vibe-plans/`. The existing
-behavior-table attachment at handoff remains separate; never upload the local
-technical plan or its review drafts as table evidence.
+The local plans under `.closedloop-ai/vibe-plans/` reach ClosedLoop only as
+the session's PLN ("Local plan" below). The behavior-table attachment at
+handoff remains separate; a plan or its review drafts are never attached as
+table evidence.
 
 ### Frozen behavior at handoff
 
@@ -424,10 +425,23 @@ headings and order. Never copy the template between plugins.
 
 Write the technical plan inside the session worktree at
 `.closedloop-ai/vibe-plans/<request-id>.md`, with revisions/review evidence in
-that exact folder. Keep it local: never commit, deploy, paste it into the ticket
-or upload it as an attachment/implementation-plan document. The live ticket
-still records scope, delivered changes and truthful outcomes, not technical
-plans or approval milestones.
+subfolders of that exact folder, which stay local. Never commit, deploy or
+paste it into the ticket, and never attach it. The ticket worker publishes the
+folder's top-level plans as the session's ONE implementation plan document
+(PLN): in the live ticket's project, assigned to its assignee, linked ticket
+PRODUCES PLN, and given a new version only when the plan changed materially
+(operator ruling, 2026-10-19; `../../../agents/vibe-ticket-worker.md`, "Source
+link and session plan"). The PLN is `DRAFT` while its latest plan is not built,
+`APPROVED` once the session wrote and checked the code, and `EXECUTED` once the
+pull request merged. So write every plan for an engineer who never saw the
+session, under the live ticket's safety rules: repo-relative paths only, and
+no local absolute paths, usernames, personal emails, secrets, credentials or
+private session inputs (the session record, the writer's queued requests,
+flag or sign-in files). `scripts/session-plan.mjs` makes the session's own
+checkout paths repo-relative and refuses anything else; a refusal comes back
+to this same writer to fix in its local plan. The live ticket still records
+scope, delivered changes and truthful outcomes, not technical plans or
+approval milestones.
 
 The commit script excludes this exact folder and refuses a plan already in
 HEAD. Every publisher also runs `scripts/local-plans.mjs --worktree "<wt>"`

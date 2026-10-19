@@ -14,6 +14,7 @@
 //   vibe-sessions.mjs prototype-result --worktree <path> --file <canonical result.json>
 //   vibe-sessions.mjs touch           --worktree <path> [--summary <text>] [--ticket ISS-123]
 //                                     [--status active|handed-off] [--live-ticket ISS-123]
+//                                     [--live-plan PLN-123] [--live-plan-status DRAFT|APPROVED|EXECUTED]
 //                                     [--mode seeded|blank] [--stack <json>]
 //                                     [--clerk-org-id org_...]
 //                                     [--operator-id <id> --operator-email <email> [--operator-name <name>]]
@@ -49,7 +50,10 @@
 // the live ticket is assigned to them and handoff checks it still is.
 // The live ticket (ISS-12057) is `liveTicket`; `--handoff-ticket` and a
 // record's `handoffTicket` are read as the same field for sessions started
-// before it. `flag-snapshot` validates and saves the production flag snapshot
+// before it. `livePlan` is the session plan's implementation plan document
+// (PLN) that the ticket worker publishes from the local plans and links from
+// the live ticket, and `livePlanStatus` the status it last set on it
+// (operator ruling, 2026-10-19). `flag-snapshot` validates and saves the production flag snapshot
 // (ISS-12048) next to the record; `codex-sessions` records this Codex thread
 // (`--thread`, else CODEX_THREAD_ID) and every subagent thread it spawned;
 // `ticket-sections` prints the live ticket's Environment, Production flag
@@ -119,6 +123,16 @@ const MAX_SLUG_LENGTH = 40;
 // Written by vibe-preflight.sh; holds {"repo": "<symphony-alpha checkout>"}.
 const CONFIG_FILE = path.join(os.homedir(), ".codex", "vibe", "config.json");
 const TICKET_PATTERN = /^[A-Z]+-\d+$/;
+const PLAN_PATTERN = /^PLN-\d+$/;
+// The PLN's status follows the work (operator ruling, 2026-10-19): DRAFT while
+// its plan is not built yet, APPROVED once the session wrote and checked the
+// code (at the latest when handoff opens the pull request), EXECUTED once the
+// pull request merged.
+const PlanStatus = {
+  Draft: "DRAFT",
+  Approved: "APPROVED",
+  Executed: "EXECUTED",
+};
 const THREAD_PATTERN = /^[A-Za-z0-9-]{8,100}$/;
 const CLERK_ORG_PATTERN = /^org_[A-Za-z0-9]+$/;
 const PID_PATTERN = /^[1-9]\d{0,9}$/;
@@ -151,6 +165,8 @@ const { positionals, values } = parseArgs({
     mode: { type: "string" },
     "live-ticket": { type: "string" },
     "handoff-ticket": { type: "string" },
+    "live-plan": { type: "string" },
+    "live-plan-status": { type: "string" },
     file: { type: "string" },
     thread: { type: "string" },
     out: { type: "string" },
@@ -299,6 +315,8 @@ function listSessions(repo) {
         mode: record?.mode ?? null,
         operator: record?.operator ?? null,
         liveTicket: record?.liveTicket ?? null,
+        livePlan: record?.livePlan ?? null,
+        livePlanStatus: record?.livePlanStatus ?? null,
         createdAt: record?.createdAt ?? null,
         lastActiveAt: record?.lastActiveAt ?? null,
         vercel: isOwnedPrototypeSession(record) ? null : record?.vercel ?? vercelDefaults(entry.branch),
@@ -366,6 +384,8 @@ function newSession({ prototype = false } = {}) {
     mode,
     operator,
     liveTicket: null,
+    livePlan: null,
+    livePlanStatus: null,
     baseCommit: git(worktree, ["rev-parse", "HEAD"]),
     createdAt: now,
     lastActiveAt: now,
@@ -395,6 +415,17 @@ function touchSession() {
   if (liveTicket !== undefined && !TICKET_PATTERN.test(liveTicket)) {
     throw new Error("--live-ticket must be a ClosedLoop slug such as ISS-123.");
   }
+  const livePlan = values["live-plan"];
+  if (livePlan !== undefined && !PLAN_PATTERN.test(livePlan)) {
+    throw new Error("--live-plan must be an implementation plan slug such as PLN-123.");
+  }
+  const livePlanStatus = values["live-plan-status"];
+  if (livePlanStatus !== undefined && !Object.values(PlanStatus).includes(livePlanStatus)) {
+    throw new Error(`--live-plan-status must be one of: ${Object.values(PlanStatus).join(", ")}.`);
+  }
+  if (livePlanStatus !== undefined && !(livePlan ?? record.livePlan)) {
+    throw new Error("--live-plan-status needs a recorded --live-plan.");
+  }
   const now = new Date().toISOString();
   const updated = {
     ...record,
@@ -404,6 +435,8 @@ function touchSession() {
     mode: values.mode ? requireMode(values.mode) : record.mode,
     operator: operatorFromArgs({ required: false }) ?? record.operator,
     liveTicket: liveTicket ?? record.liveTicket,
+    livePlan: livePlan ?? record.livePlan,
+    livePlanStatus: livePlanStatus ?? record.livePlanStatus,
     clerkOrgId: values["clerk-org-id"] ? requireClerkOrgId(values["clerk-org-id"]) : record.clerkOrgId,
     stack: values.stack ? JSON.parse(values.stack) : record.stack,
     lastActiveAt: now,
@@ -607,6 +640,8 @@ function withDefaults(record) {
     mode: rest.mode ?? null,
     operator: rest.operator ?? null,
     liveTicket: sessionLiveTicket(record),
+    livePlan: rest.livePlan ?? null,
+    livePlanStatus: rest.livePlanStatus ?? null,
     vercel: vercelWithDefaults(rest),
     flagSnapshot: rest.flagSnapshot ?? null,
     clerkOrgId: rest.clerkOrgId ?? null,

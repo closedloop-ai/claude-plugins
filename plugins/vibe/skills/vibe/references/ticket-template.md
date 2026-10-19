@@ -39,9 +39,18 @@ publication, and the same ticket worker verifies completeness and assignment.
   `<tag>`) must go in a code span or it disappears.
 - Keep the headings exactly as below; the handoff check finds sections by
   heading.
-- Technical plans in `.closedloop-ai/vibe-plans/` stay local to the worktree:
-  never upload them, paste their body into this ticket or add a plan-approval
-  milestone. Product scope and truthful delivery/review history remain here.
+- Technical plans in `.closedloop-ai/vibe-plans/` never go into this body
+  and never get a plan-approval milestone. They reach ClosedLoop only as the
+  session's one implementation plan document (PLN), which the ticket worker
+  publishes from them, links from this ticket (ticket PRODUCES PLN), keeps
+  current and moves from `DRAFT` to `APPROVED` to `EXECUTED` as the work does;
+  the document the session started from is linked to this ticket (source
+  PRODUCES ticket) (operator ruling, 2026-10-19;
+  `../../../agents/vibe-ticket-worker.md`, "Source link and session plan").
+  This body and the PLN follow the same safety rules: no local absolute
+  paths, usernames, personal emails, secrets or credentials, and no private
+  session inputs. Product scope and truthful delivery/review history remain
+  here.
 - Conflicts: each `Conflict` the change log records (Placement blocks and
   owner prep) goes in exactly one section, by its audience. `design`
   (Storybook sidebar placement, taxonomy and story granularity, visual or UX

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { checkLiveTicket, parseSections, TICKET_SECTIONS } from "./live-ticket-check.mjs";
 import { renderRecordSections, vercelAliases } from "../../vibe/scripts/vibe-session-data.mjs";
-import { runNode } from "../../vibe/scripts/test-fixtures.mjs";
+import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, "live-ticket-check.mjs");
@@ -205,4 +205,39 @@ test("with --base-commit, the Environment section must name the branch's current
   const cli = runNode(SCRIPT, ["--file", file, "--base-commit", "a55ebc7cfb"], dir);
   assert.equal(cli.status, 1);
   assert.deepEqual(cli.json.problems.map(({ section }) => section), ["Environment"]);
+});
+
+test("a session with local plans needs its PLN recorded and APPROVED before the ticket is complete", () => {
+  const ticket = completeTicket();
+  const record = { branch: "vibe/tags", livePlan: null, livePlanStatus: null };
+  assert.deepEqual(checkLiveTicket(ticket, { record, planCount: 0 }).problems, []);
+  assert.deepEqual(checkLiveTicket(ticket, { record, planCount: 1 }).problems, [
+    { section: "Session plan", problem: "the session has a local plan but no PLN is recorded" },
+  ]);
+  assert.deepEqual(checkLiveTicket(ticket, { record: { ...record, livePlan: "PLN-7", livePlanStatus: "DRAFT" }, planCount: 1 })
+    .problems, [{ section: "Session plan", problem: "PLN-7 is DRAFT, not APPROVED" }]);
+  for (const status of ["APPROVED", "EXECUTED"]) {
+    assert.deepEqual(checkLiveTicket(ticket, { record: { ...record, livePlan: "PLN-7", livePlanStatus: status }, planCount: 1 })
+      .problems, [], status);
+  }
+});
+
+test("the CLI reads the worktree's plans and record for the session plan check", (t) => {
+  const fixture = makeHome("live-ticket-plan-");
+  t.after(fixture.cleanup);
+  const checkout = path.join(fixture.root, "symphony-alpha");
+  makeCheckout({ root: fixture.root, home: fixture.home, checkout });
+  const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], fixture.home);
+  const recordFile = path.join(gitDir, "vibe-session.json");
+  writeFileSync(recordFile, JSON.stringify({ branch: "main", livePlan: "PLN-7", livePlanStatus: "DRAFT" }));
+  mkdirSync(path.join(checkout, ".closedloop-ai/vibe-plans"), { recursive: true });
+  writeFileSync(path.join(checkout, ".closedloop-ai/vibe-plans/request-1.md"), "# Plan\n");
+  const file = path.join(gitDir, "vibe-live-ticket.md");
+  writeFileSync(file, completeTicket());
+  const draft = runNode(SCRIPT, ["--file", file, "--worktree", checkout], fixture.home);
+  assert.equal(draft.status, 1);
+  assert.deepEqual(draft.json.problems, [{ section: "Session plan", problem: "PLN-7 is DRAFT, not APPROVED" }]);
+  writeFileSync(recordFile, JSON.stringify({ branch: "main", livePlan: "PLN-7", livePlanStatus: "APPROVED" }));
+  const approved = runNode(SCRIPT, ["--file", file, "--worktree", checkout], fixture.home);
+  assert.equal(approved.status, 0, JSON.stringify(approved.json));
 });

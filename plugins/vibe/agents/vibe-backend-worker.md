@@ -107,8 +107,9 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
 
 ## Return (under 150 words)
 
-The advisor never performs the writing/recording steps above. Never upload a
-technical plan or put its body in a ticket.
+The advisor never performs the writing/recording steps above. Never publish a
+technical plan or put its body in a ticket; only the ticket worker publishes
+the session's plan, as its PLN.
 
 `DONE` with existing or needed endpoint/type contracts, `Owner: <path>`,
 migration/seed considerations and evidence for the sole writer. Never claim

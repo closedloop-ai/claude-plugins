@@ -312,7 +312,7 @@ def test_new_files_use_no_emdashes_or_double_hyphen_dashes() -> None:
         assert " -- " not in text, path.name
 
 
-def test_local_plan_uses_core_by_name_and_never_becomes_a_ticket_or_deployment() -> None:
+def test_local_plan_uses_core_by_name_and_is_never_committed_deployed_or_pasted_into_the_ticket() -> None:
     planning = section(QUALITY.read_text(), "## Local plan")
     assert "`$plan-structure` in Codex" in planning
     assert "`/closedloop-core:plan-structure` in Claude Code" in planning
@@ -320,7 +320,7 @@ def test_local_plan_uses_core_by_name_and_never_becomes_a_ticket_or_deployment()
     assert "use its exact headings and order" in planning
     assert "`.closedloop-ai/vibe-plans/<request-id>.md`" in planning
     assert "Never copy the template between plugins" in planning
-    assert "never commit, deploy, paste it into the ticket or upload it" in planning
+    assert "Never commit, deploy or paste it into the ticket, and never attach it" in planning
     assert "refuses a plan already in HEAD" in planning
     for name in ("vibe-environment-worker", "vibe-prototype-worker"):
         worker = flat(agent(name))

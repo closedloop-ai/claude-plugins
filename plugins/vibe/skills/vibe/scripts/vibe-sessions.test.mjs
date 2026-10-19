@@ -285,6 +285,37 @@ test("touch records the live ticket, accepts the old --handoff-ticket name, and 
   assert.equal("handoffTicket" in JSON.parse(readFileSync(file, "utf8")), false);
 });
 
+test("the session plan's PLN and its status sit next to the live ticket, and old records read as none", (t) => {
+  const { home, worktree } = newSession(t, "live-plan");
+  const created = runNode(SCRIPT, ["show", "--worktree", worktree], home);
+  assert.equal(created.json.session.livePlan, null);
+  assert.equal(created.json.session.livePlanStatus, null);
+  const noPlan = runNode(SCRIPT, ["touch", "--worktree", worktree, "--live-plan-status", "DRAFT"], home);
+  assert.equal(noPlan.status, 1);
+  const set = runNode(SCRIPT, ["touch", "--worktree", worktree, "--live-ticket", "ISS-40", "--live-plan", "PLN-7",
+    "--live-plan-status", "DRAFT"], home);
+  assert.equal(set.json.session.liveTicket, "ISS-40");
+  assert.equal(set.json.session.livePlan, "PLN-7");
+  assert.equal(set.json.session.livePlanStatus, "DRAFT");
+  const approved = runNode(SCRIPT, ["touch", "--worktree", worktree, "--live-plan-status", "APPROVED"], home);
+  assert.equal(approved.json.session.livePlan, "PLN-7");
+  assert.equal(approved.json.session.livePlanStatus, "APPROVED");
+  assert.equal(runNode(SCRIPT, ["touch", "--worktree", worktree, "--live-plan", "ISS-41"], home).status, 1);
+  assert.equal(runNode(SCRIPT, ["touch", "--worktree", worktree, "--live-plan-status", "IN_REVIEW"], home).status, 1);
+  const listed = runNode(SCRIPT, ["list"], home);
+  assert.equal(listed.json.sessions[0].livePlan, "PLN-7");
+  assert.equal(listed.json.sessions[0].livePlanStatus, "APPROVED");
+
+  const file = recordFile(worktree, home);
+  const legacy = JSON.parse(readFileSync(file, "utf8"));
+  delete legacy.livePlan;
+  delete legacy.livePlanStatus;
+  writeFileSync(file, JSON.stringify(legacy));
+  const old = runNode(SCRIPT, ["show", "--worktree", worktree], home);
+  assert.equal(old.json.session.livePlan, null);
+  assert.equal(old.json.session.livePlanStatus, null);
+});
+
 function environmentResult(worktree, home, overrides = {}) {
   return {
     requestId: "req-12345678",

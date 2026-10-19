@@ -89,8 +89,9 @@ record a failed/pending deployment or report an old preview as current.
 Refresh the truthful owned ticket through its authorized serial record helper:
 prototype publication replaces app/API/Storybook fields, flag snapshot is
 `None.`, and Backend built is `None.` for mock data. Keep canonical review
-evidence and unresolved real promotion work. Never upload a local technical
-plan or fabricate endpoints. The ticket helper owns next-owner assignment.
+evidence and unresolved real promotion work. Never publish a local technical
+plan (the ticket helper publishes the session's PLN) or fabricate endpoints.
+The ticket helper owns next-owner assignment.
 
 ## Return
 

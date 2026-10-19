@@ -7,10 +7,10 @@ export const graphOperations = new Set([
   "readonly_sql", "search_memory_facts", "search_nodes", "sync_status", "ticket_detail",
 ]);
 export const recordOperations = new Set([
-  "create_document", "create_document_version", "update_document", "upload_attachment",
+  "create_document", "create_document_version", "update_document", "upload_attachment", "create_artifact_link",
 ]);
 export const liveReadOperations = new Set([
-  "get_document", "get_document_version", "get_document_comments", "search", "list_documents", "list_document_versions", "list_users",
+  "get_document", "get_document_version", "get_document_content", "get_document_comments", "search", "list_documents", "list_document_versions", "list_users",
   "get_me", "list_projects", "get_project", "list_artifact_links", "list_templates", "get_template",
 ]);
 const capabilityName = /^mcp__[A-Za-z0-9_.:-]+__[A-Za-z0-9_]+$/;

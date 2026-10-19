@@ -64,6 +64,25 @@ describe("production Claude CLI adapter", () => {
     expect(launch(graph).agent.prompt).toContain("Never start another implementation writer, commit, or push.");
     expect(() => launch([...graph, recordWrite])).toThrow(/outside this canonical action/);
   });
+  it("grants the ticket worker artifact links and the session plan only in its create, plan and handoff actions", () => {
+    const value = setup();
+    const write = (operation: string) => ({ ...recordWrite, name: `mcp__live_workspace__${operation}`, operation });
+    const link = write("create_artifact_link");
+    const launch = (recordAction: "create" | "plan" | "handoff" | "assign" | "cancel", capabilities: typeof graph) => boundDefinition(
+      readDefinition(value.agentRoot, "vibe-ticket-worker", capabilities),
+      { worktree: value.worktree, agentRoot: value.agentRoot, requestId: `ticket-${recordAction}`, input: "ticket record turn",
+        timeoutMs: 1000, capabilities, agentName: "vibe-ticket-worker", mode: "record", recordAction, exclusiveRecordTurn: true });
+    expect(launch("create", [...graph, write("create_document"), link]).tools).toContain(link.name);
+    const plan = launch("plan", [...graph, write("create_document"), recordWrite, link, write("update_document")]).tools;
+    expect(plan).toEqual(expect.arrayContaining([write("create_document").name, recordWrite.name, link.name,
+      write("update_document").name]));
+    expect(launch("handoff", [...graph, write("create_document"), recordWrite, link, write("update_document")]).tools)
+      .toEqual(expect.arrayContaining([link.name, write("update_document").name]));
+    expect(() => launch("plan", [...graph, write("upload_attachment")])).toThrow(/outside this canonical action/);
+    expect(() => launch("create", [...graph, write("update_document")])).toThrow(/outside this canonical action/);
+    expect(() => launch("assign", [...graph, link])).toThrow(/outside this canonical action/);
+    expect(() => launch("cancel", [...graph, link])).toThrow(/outside this canonical action/);
+  });
   it("selects the canonical scoped agent directly and resumes the same underlying ID across two requests", () => {
     const value = setup();
     const entry = join(value.base, "claude-worker-link.mjs");

@@ -97,7 +97,12 @@ when unsure; it is never a `NEEDS_PERSON` question.
 Load core `plan-structure` by name (`$plan-structure` in Codex or
 `/closedloop-core:plan-structure` in Claude Code), read its own template, and
 write the exact-template local plan under `.closedloop-ai/vibe-plans/`.
-Never upload it, paste it into the ticket, commit it or deploy it. Name scope,
+Never commit it, deploy it or paste it into the ticket: the ticket worker
+publishes it as the session's PLN (`quality-loop.md`, "Local plan"), so write
+it for an engineer who never saw the session, with repo-relative paths and no
+local absolute paths, usernames, personal emails, secrets, credentials or
+private session inputs. A plan problem the ticket worker returns is yours to
+fix in the local plan. Name scope,
 owners, dependencies and checks, including every NEW Storybook component the
 request needs (or none). When the plan adds periodic or cross-surface work (a
 poller, interval, background lane, socket, subscription, feed or watcher), it

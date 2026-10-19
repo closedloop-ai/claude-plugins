@@ -224029,11 +224029,13 @@ var recordOperations = /* @__PURE__ */ new Set([
   "create_document",
   "create_document_version",
   "update_document",
-  "upload_attachment"
+  "upload_attachment",
+  "create_artifact_link"
 ]);
 var liveReadOperations = /* @__PURE__ */ new Set([
   "get_document",
   "get_document_version",
+  "get_document_content",
   "get_document_comments",
   "search",
   "list_documents",
@@ -224311,6 +224313,7 @@ var storedValidationRecipeSchema = external_exports.object({
 var recordActionSchema = external_exports.enum([
   "progress",
   "create",
+  "plan",
   "handoff",
   "assign",
   "cancel",

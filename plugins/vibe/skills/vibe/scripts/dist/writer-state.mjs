@@ -11470,11 +11470,13 @@ var recordOperations = /* @__PURE__ */ new Set([
   "create_document",
   "create_document_version",
   "update_document",
-  "upload_attachment"
+  "upload_attachment",
+  "create_artifact_link"
 ]);
 var liveReadOperations = /* @__PURE__ */ new Set([
   "get_document",
   "get_document_version",
+  "get_document_content",
   "get_document_comments",
   "search",
   "list_documents",
@@ -12058,8 +12060,9 @@ var recordModes = {
   "vibe-setup-worker": { create: ["create_document"], progress: ["create_document_version"], discard: [] },
   "vibe-change-worker": { progress: ["create_document_version"] },
   "vibe-ticket-worker": {
-    create: ["create_document"],
-    handoff: ["create_document_version", "upload_attachment"],
+    create: ["create_document", "create_artifact_link"],
+    plan: ["create_document", "create_document_version", "create_artifact_link", "update_document"],
+    handoff: ["create_document", "create_document_version", "create_artifact_link", "update_document", "upload_attachment"],
     assign: ["update_document"],
     cancel: ["create_document_version", "update_document"]
   },
@@ -12075,6 +12078,7 @@ var recordModes = {
 var recordActionSchema = external_exports.enum([
   "progress",
   "create",
+  "plan",
   "handoff",
   "assign",
   "cancel",

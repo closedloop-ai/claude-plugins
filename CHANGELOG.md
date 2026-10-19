@@ -4,6 +4,23 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.55
+
+#### Added
+- Operator ruling, 2026-10-19: a vibe session's live ticket links back to the document it was started from, and the session's plan is published as one implementation plan document (PLN) the ticket produces. `vibe-ticket-worker` gains a "Source link and session plan" procedure (list before every write, so a resumed session or a rerun never duplicates a link or a PLN): the record's originating document PRODUCES the live ticket; the local plans render to one PLN in the ticket's project, assigned to the ticket's assignee, linked ticket PRODUCES PLN, and given a new version only when the plan changed materially.
+- `vibe-ticket-worker` plan mode, dispatched by the vibe skill after each request's plan in its own record turn. The PLN's status follows the work: DRAFT while its latest plan is not built, APPROVED once the code is written and checked (at the latest when handoff opens the pull request), EXECUTED once the pull request merged (plan mode with `mergeCheck: true`, run when a handed-off session with an APPROVED PLN is looked at again). Every `update-document` carries `expectedStatus`.
+- `scripts/session-plan.mjs` renders the session's top-level local plans in request ID order and reports whether the published PLN is current, ignoring whitespace-only edits. `scripts/publishable-text.mjs` applies the live ticket's safety rules to it: paths in the session's checkout become repo-relative and bare angle-bracketed names become code spans; a local absolute path, the local username, a personal email, a secret or credential, or a private session input is refused with its file and line, nothing is published, and the same writer fixes its local plan.
+- The session record keeps `livePlan` and `livePlanStatus` next to `liveTicket` (`vibe-sessions.mjs touch --live-plan PLN-123 --live-plan-status DRAFT|APPROVED|EXECUTED`; `list` and `show` report them; older records read them as null).
+- The owned worker launcher grants `create_artifact_link` to the ticket worker's create, plan and handoff actions, `create_document`, `create_document_version` and `update_document` to the new plan action, `create_document` and `update_document` to handoff, and `get_document_content` as a live read.
+
+#### Changed
+- Handoff mode verifies the source link, the PLN, its ticket link and that the PLN matches the current local plans, repairs whatever is missing or stale, and leaves the PLN APPROVED before the ticket is complete; `live-ticket-check.mjs --worktree` refuses a session with local plans and no APPROVED or EXECUTED PLN recorded. Assign mode hands the PLN to the next owner with the ticket.
+- The rule that a technical plan is never uploaded is retired in the ticket worker, the vibe and handoff skills, `quality-loop.md`, `ticket-template.md`, the change, backend and prototype workers and the README. Plans are still never committed, deployed, attached or pasted into the ticket body, and the person running the session still never sees or approves one. Revisions and review evidence go in subfolders of `.closedloop-ai/vibe-plans/` and stay local.
+
+#### Tests
+- `test_vibe_plan_links_contract.py` (9 cases, all failing on 1.0.54) pins the retired rule's absence, the source and plan links with listing first, the single PLN, the safety rules, the status transitions with `expectedStatus`, handoff repair and APPROVED, assign, the vibe skill dispatch, and the session record's PLN field. `session-plan.test.mjs` covers rendering, order, currency, refusals and symlinks; `live-ticket-check.test.mjs` the APPROVED gate; `vibe-sessions.test.mjs` the record fields; `claude-worker.test.ts` the per-action grants.
+- Five eval cases tagged `plan-links` (Claude, and Codex through the runner): a PRD-started session links PRD to ticket and ticket to PLN and approves it once built, a resumed session duplicates nothing, handoff repairs a missing link, a plan with a local path is refused without quoting it, and handoff moves a DRAFT PLN to APPROVED before the pull request opens.
+
 ### vibe v1.0.54
 
 #### Changed

@@ -207,7 +207,7 @@ stops until core is explicitly installed and enabled.
 |---|---|
 | `vibe-setup-worker` | operational preflight/bootstrap/services only; diagnose code defects, never patch them |
 | `vibe-requirements-worker` | read a ClosedLoop ticket (and its PRD, plan, related tickets) or a description and turn it into a brief, plus the route and FEATURE_MAP id where the relevant code lives, for change workers; in reference mode, research an outside product the person named and list the behaviors to build |
-| `vibe-ticket-worker` | create the session's live ticket, and fill its record sections when you ask |
+| `vibe-ticket-worker` | create the session's live ticket and link the document it started from, publish the session's plan as its PLN after each request, and fill its record sections when you ask |
 | `vibe-environment-worker` | stand up the session's Vercel environment, redeploy it, or refresh its flag snapshot |
 | `vibe-change-worker` | the SAME persistent writer for all planning, source implementation, backend/primitive/prototype/Storybook work, fixes, repairs of existing tests its change broke and the handoff missing tests list (tests only for a requested pull request) |
 | `vibe-backend-worker` | read-only backend/contract advice for that writer |
@@ -376,6 +376,12 @@ Only after the person chose resume, run `node scripts/vibe-sessions.mjs list`
   session record, and each review thread is answered with the fixing commit
   and resolved once fixed.
 
+Before offering anything, for each `handed-off` session whose
+`livePlanStatus` is `APPROVED`, dispatch `vibe-ticket-worker` in plan mode
+with `mergeCheck: true` (its own record turn): when the session's pull
+request has merged it moves the PLN to `EXECUTED` (operator ruling,
+2026-10-19). This is internal; never mention it to the person.
+
 Then follow "Resuming" below.
 
 ### Starting new
@@ -433,7 +439,9 @@ Then follow "Resuming" below.
 6. Dispatch `vibe-setup-worker` to bootstrap the new worktree, then
    `vibe-ticket-worker` in create mode with the worktree, the
    requirements worker's brief, the originating ticket if any, and the mode.
-   It records the ticket's slug on the session itself.
+   It records the ticket's slug on the session itself and links the
+   originating document (a PRD, an ISS or another document) to the ticket
+   (source PRODUCES ticket; operator ruling, 2026-10-19).
    Keep the ticket link in the session record for completion and handoff.
 7. Stand up the environment (section 3).
 
@@ -704,7 +712,17 @@ evidence, never by replacing the writer.
    test or other engineering choice is never a question for the person.
 6. Record scope/progress/backend facts through the writer's explicit serial
    record continuation or the authorized ticket helper, never simultaneously.
-   Keep technical plans private. Operational bootstrap/build/deploy helpers
+   Once the writer's turn ends with a plan written for the request (`DONE`,
+   or a stop such as `NEEDS_PERSON` or `BLOCKED` before the build finished),
+   dispatch `vibe-ticket-worker` in plan mode in its own record turn, with
+   `built: true` when the request is `DONE` and `built: false` otherwise. It
+   publishes the session's plan as its one PLN, linked from the live ticket,
+   appends a version only when the plan changed materially, and sets the
+   PLN's status (operator ruling, 2026-10-19). Its `NEEDS_CHANGE` (a plan line
+   that would publish a local path, a username, a secret or a private input)
+   goes to the SAME writer to fix its local plan, then plan mode runs again.
+   None of it waits on or reaches the person, and it never delays the deploy.
+   A plan's body never goes into the ticket. Operational bootstrap/build/deploy helpers
    execute no implementation edits, and sharing waits for the writer's quick
    checks. The orchestrator alone commits through its owned script.
 7. A `DONE` must mean the whole requested feature is built and passes the

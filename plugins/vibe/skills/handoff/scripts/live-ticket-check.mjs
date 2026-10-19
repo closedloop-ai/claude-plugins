@@ -6,6 +6,9 @@
 // `--base-commit` (the handoff inventory's `baseCommit`), the Environment
 // section must name that commit as the branch's base, so a branch that merged
 // main since the session started is not handed off with its old base.
+// With `--worktree`, a session that has local plans must have its PLN
+// recorded, and handoff must have left it APPROVED (operator ruling,
+// 2026-10-19); the ticket worker checks its links on ClosedLoop before this.
 // Prints one JSON object; exits 0 when complete and 1 otherwise. Changes
 // nothing. The sections are the headings of ../../vibe/references/ticket-template.md.
 //
@@ -16,6 +19,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe/scripts/prototype-session.mjs";
+import { localPlanFiles } from "../../vibe/scripts/session-plan.mjs";
 import { git, readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 
 /** Every section of the live ticket, in template order. */
@@ -71,7 +75,7 @@ export function parseSections(body) {
   return sections;
 }
 
-export function checkLiveTicket(body, { baseCommit, record, headSha, branch } = {}) {
+export function checkLiveTicket(body, { baseCommit, record, headSha, branch, planCount = 0 } = {}) {
   const sections = parseSections(body);
   const problems = [];
   const prototype = isOwnedPrototypeSession(record);
@@ -105,7 +109,22 @@ export function checkLiveTicket(body, { baseCommit, record, headSha, branch } = 
       problems.push(...checkBaseCommit(content, baseCommit));
     }
   }
+  problems.push(...checkSessionPlan(record, planCount));
   return { ok: problems.length === 0, problems };
+}
+
+/** The session plan is published as a PLN and, once handoff runs, APPROVED (or EXECUTED after the merge). */
+function checkSessionPlan(record, planCount) {
+  if (!record || planCount === 0) {
+    return [];
+  }
+  if (!record.livePlan) {
+    return [{ section: "Session plan", problem: "the session has a local plan but no PLN is recorded" }];
+  }
+  if (record.livePlanStatus !== "APPROVED" && record.livePlanStatus !== "EXECUTED") {
+    return [{ section: "Session plan", problem: `${record.livePlan} is ${record.livePlanStatus ?? "unrecorded"}, not APPROVED` }];
+  }
+  return [];
 }
 
 function checkSection(heading, content, prototype) {
@@ -157,6 +176,7 @@ function main() {
       record: values.worktree ? readSessionRecord(values.worktree) : undefined,
       branch: values.worktree ? git(values.worktree, ["rev-parse", "--abbrev-ref", "HEAD"]) : undefined,
       headSha: values.worktree ? git(values.worktree, ["rev-parse", "HEAD"]) : undefined,
+      planCount: values.worktree ? localPlanFiles(path.resolve(values.worktree)).length : 0,
     });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     process.exit(result.ok ? 0 : 1);

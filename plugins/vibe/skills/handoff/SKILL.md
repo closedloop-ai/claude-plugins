@@ -203,7 +203,10 @@ words and ask which one they want to finish. Read its `liveTicket` and `localFix
 
 If the session has no `liveTicket` (it started before live tickets existed),
 dispatch `vibe-ticket-worker` in create mode first; it records the slug on
-the session. If it is `handed-off`, tell the person it is already
+the session. If it is `handed-off`, first dispatch `vibe-ticket-worker` in
+plan mode with `mergeCheck: true` when its `livePlanStatus` is `APPROVED`, so
+a merged pull request moves the PLN to `EXECUTED` (operator ruling,
+2026-10-19). Then tell the person it is already
 finished (a pull request was opened, or it was passed on) and stop, unless
 they are asking for changes on the pull request it opened: then follow
 section 10, "Changes on the open pull request".
@@ -723,14 +726,18 @@ with what each proves and any surface it could not drive with its command and
 reason, the detailed Design Review evidence packet/report paths,
 including Production impact, Flag changes and gates, and researched Open
 Questions per `../vibe/references/ticket-template.md`,
-and every answer from the person so far with how it was handled. Keep
-technical plans under `.closedloop-ai/vibe-plans/` local: never upload them or
-include their body in this ticket dispatch. It
+and every answer from the person so far with how it was handled. Never
+include a plan's body in this dispatch: the plans under
+`.closedloop-ai/vibe-plans/` reach ClosedLoop only as the session's PLN. It
 refreshes the record sections (the Environment base commit from the current
 inventory), re-derives every section an answer touches, fills the Handoff and
-Grading sections, reconciles the backend sections, attaches the files, and
-runs
-`scripts/live-ticket-check.mjs`. It returns:
+Grading sections, reconciles the backend sections, attaches the files,
+verifies the source link (source PRODUCES ticket), the PLN, its link (ticket
+PRODUCES PLN) and that the PLN matches the current local plans, repairs any
+that is missing or stale, and leaves the PLN `APPROVED` before a pull request
+opens (operator ruling, 2026-10-19), then runs
+`scripts/live-ticket-check.mjs`, which refuses a session with local plans and
+no `APPROVED` PLN recorded. It returns:
 
 - `DONE` when the ticket is complete.
 - `NEEDS_PERSON` with what only the person can supply (for example acceptance
@@ -739,8 +746,9 @@ runs
   answer goes through the change worker, the checks, the reviews, and the
   redeploy before the ticket worker sees it again.
 - `NEEDS_CHANGE` with an answer or criterion the code has not been checked
-  against. Resume the SAME persistent writer in fix mode and continue the same
-  way.
+  against, or with plan lines that would publish a local path, a username, a
+  secret or a private input. Resume the SAME persistent writer in fix mode
+  (for plan lines, to fix its local plan) and continue the same way.
 
 Repeat until it returns `DONE`. Never go on to step 9 while a behavior answer
 has not been through the change worker, while its re-run checks, reviews,
@@ -766,8 +774,8 @@ When they chose passing it on, dispatch `vibe-ticket-worker` in assign mode with
 ticket slug, and the next owner's user id and email from step 8. It confirms
 the ticket is still assigned to the session's operator, the person who ran it
 (if engineering or design already took it, it returns `BLOCKED` and you stop:
-that branch is theirs now), assigns it to the next owner, and leaves the
-status In Progress.
+that branch is theirs now), assigns it and its PLN to the next owner, and
+leaves the ticket status In Progress.
 
 Then mark the session handed off:
 `node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --status handed-off`,
