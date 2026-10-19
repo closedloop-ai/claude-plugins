@@ -26,6 +26,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Fixed
 - The helper's `/health` and old token endpoint no longer reveal the user's home path to other websites: `/health` shares its details only with file pages and pages from this machine, and the token endpoint's errors name no paths.
 
+### vibe v1.0.57
+
+#### Added
+- `codex-fleet-monitor` skill: a background event watcher for a fleet of Codex App Server threads (local and one ssh host) plus the pull requests they produce. It exits with a diff on the first change and flags IDLE, STALLED, FAILED, merge conflicts, review and comment counts, check changes and new PRs. Liveness is read from each thread's last turn and item count rather than the turn id alone, so a turn left open by a silent Codex usage limit is reported as STALLED.
+
 ### vibe v1.0.56
 
 #### Changed
