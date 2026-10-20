@@ -14517,6 +14517,15 @@ def _stats_from_findings(
     for f in coverage_gaps:
         _bump(f, "verified")
 
+    # ``tentative`` / ``tentative_count`` are subsets of ``verified`` /
+    # ``verified_count``: a TENTATIVE finding stays in verified[].
+    for f in verified:
+        if f.get("verifier_verdict") == "TENTATIVE":
+            by_reviewer[str(f.get("reviewer", "unknown"))]["tentative"] += 1
+
+    def _count_verdict(verdict: str | None) -> int:
+        return sum(1 for f in verified if f.get("verifier_verdict") == verdict)
+
     return {
         "by_severity": by_severity,
         "by_category": by_category,
@@ -14525,8 +14534,11 @@ def _stats_from_findings(
         "verification": {
             "verified_count": len(verified),
             "rejected_count": len(rejected),
-            "tentative_count": 0,
-            "downgrade_count": 0,
+            "tentative_count": _count_verdict("TENTATIVE"),
+            # cmd_verify_consolidate overwrites ``severity`` with the
+            # verifier's tier on DOWNGRADE, so the verdict is the only
+            # surviving downgrade marker.
+            "downgrade_count": _count_verdict("DOWNGRADE"),
             "justified_valid_count": len(justified),
             # PLN-721: JUSTIFIED-INVALID lands in verified[] (the
             # justification was audited and refuted, original finding
@@ -14536,7 +14548,11 @@ def _stats_from_findings(
                 1 for f in verified
                 if f.get("verifier_verdict") == "JUSTIFIED-INVALID"
             ),
-            "skipped_count": 0,
+            # Findings in verified[] no verifier ruled on: tier-skipped by
+            # verify-prepare (``skipped_no_verification``), unkeyed, or the
+            # whole bucket when verify-consolidate did not run. Deferred and
+            # missing-output findings go to pending_verification[] instead.
+            "skipped_count": _count_verdict(None),
             "false_positive_rate": 0.0,
             # PLN-773 Phase 2 — per-reviewer FP rate + override counter.
             "by_reviewer": _verification_by_reviewer(verified, rejected),

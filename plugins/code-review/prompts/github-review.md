@@ -286,9 +286,10 @@ Read `$CR_DIR/review_result.json` → `stats.verification`. If the block is not 
 <summary>{verified_count} verified · {rejected_count} dismissed · {justified_valid_count + justified_invalid_count} justified</summary>
 
 **Verifier outcomes**
-- CONFIRMED + DOWNGRADE: {verified_count - tentative_count - re_asserted}
+- CONFIRMED + DOWNGRADE: {verified_count - tentative_count - re_asserted - justified_invalid_count - skipped_count}
 - TENTATIVE: {tentative_count}
 - RE_ASSERTED: {sum over by_reviewer[].re_asserted}
+- Not verified (skipped): {skipped_count}
 - REJECTED: {rejected_count}
 
 **Justification (PLN-721)** — read from `stats.verification`

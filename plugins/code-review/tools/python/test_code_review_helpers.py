@@ -25953,3 +25953,56 @@ class TestSingletonDispatchTaxonomyContract:
         name = self._taxonomy_snapshot_name(tmp_path)
         assert f"`{name}`" in prompt
         assert "`signal_taxonomy.json`" not in prompt
+
+
+class TestVerificationStatsCounts:
+    """``stats.verification`` tentative/downgrade/skipped counts and the
+    ``by_reviewer`` tentative bucket are derived from the verifier verdicts
+    on verified[], not hard-coded to zero.
+    """
+
+    def _verified(self) -> list[dict[str, Any]]:
+        from code_review_helpers import _merge_verifier_fields
+        downgraded = minimal_diff_finding(id="bha_p0_f2", severity="HIGH")
+        _merge_verifier_fields(downgraded, {
+            "verifier_verdict": "DOWNGRADE", "verifier_severity": "MEDIUM",
+        })
+        return [
+            minimal_diff_finding(id="bha_p0_f0", verifier_verdict="CONFIRMED"),
+            minimal_diff_finding(id="bha_p0_f1", verifier_verdict="TENTATIVE"),
+            downgraded,
+            minimal_diff_finding(
+                id="bhb_f0", reviewer="bhb", verifier_verdict="TENTATIVE",
+            ),
+            minimal_diff_finding(id="bhb_f1", reviewer="bhb", verifier_verdict=None),
+            minimal_diff_finding(
+                id="bhb_f2", reviewer="bhb", verifier_verdict="RE_ASSERTED",
+            ),
+        ]
+
+    def test_verification_counts_follow_verdicts(self) -> None:
+        from code_review_helpers import _stats_from_findings
+        verification = _stats_from_findings(self._verified(), [], [], [])["verification"]
+        assert verification["verified_count"] == 6
+        assert verification["tentative_count"] == 2
+        assert verification["downgrade_count"] == 1
+        assert verification["skipped_count"] == 1
+
+    def test_by_reviewer_tentative_bucket_counts_tentative_findings(self) -> None:
+        from code_review_helpers import _stats_from_findings
+        by_reviewer = _stats_from_findings(self._verified(), [], [], [])["by_reviewer"]
+        assert by_reviewer["bha_p0"]["verified"] == 3
+        assert by_reviewer["bha_p0"]["tentative"] == 1
+        assert by_reviewer["bhb"]["tentative"] == 1
+
+    def test_presenter_formulas_subtract_every_non_confirmed_bucket(self) -> None:
+        root = Path(__file__).parents[2]
+        formula = (
+            "{verified_count - tentative_count - re_asserted"
+            " - justified_invalid_count - skipped_count}"
+        )
+        for doc in (
+            root / "skills" / "present-local" / "SKILL.md",
+            root / "prompts" / "github-review.md",
+        ):
+            assert formula in doc.read_text(), doc.name

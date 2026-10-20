@@ -201,11 +201,11 @@ The terminal artifact of every review run.
     "verification": {
       "verified_count": <int>,
       "rejected_count": <int>,
-      "tentative_count": <int>,
-      "downgrade_count": <int>,
+      "tentative_count": <int>,         // verified[] with verifier_verdict TENTATIVE (subset of verified_count)
+      "downgrade_count": <int>,         // verified[] with verifier_verdict DOWNGRADE
       "justified_valid_count": <int>,
       "justified_invalid_count": <int>,
-      "skipped_count": <int>,
+      "skipped_count": <int>,           // verified[] no verifier ruled on (verifier_verdict null: tier-skipped, or no verify run)
       "false_positive_rate": <float>
     },
     "impact_cumulative_count": <int>,
