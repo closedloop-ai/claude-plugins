@@ -4,6 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.62
+
+#### Changed
+- Claimed PRD children reach In Review only through `handoff/scripts/child-evidence.mjs`. The adversarial reviewer (attack 12, in either handoff weight) maps every acceptance criterion and work item of each claimed child to evidence the script verifies: an added line in the diff, a tracked file the branch changed, a merged pull request whose merge commit is in history, or a report produced on the final commit. A writer-authored map, a pending item, a gitignored ledger, an evidence path the child names but nothing covers, "active elsewhere" without an open pull request, a recent branch commit or another owner's IN_PROGRESS, and a supersession citing the session's own ticket, plan or table all fail. The ticket worker moves exactly the slugs the gate passes and lists the rest uncovered.
+- Requirements research quotes PRD and ticket flag, rollout, rollback, parity, boundary and non-goal clauses as acceptance criteria, never narrows the targets a PRD names, and calls a child active elsewhere only with real activity evidence.
+- Text the session wrote (its live ticket, PLN, local plan, decision table and change log) is never a source for user-visible behavior. Criteria are never strengthened by the session's restatement, an operator clause naming visible content is met only where each surface renders it, and a precedent never overrides a stated requirement in a DONE or open sibling ticket.
+- Guardrails rule provenance now lists new refusal rules, state presentations, numeric limits, strengthened criteria, shared-module edits with outside callers and changed accessibility behavior, each blocking without a human source. The adversarial reviewer treats an unfilled seam and a still-live fallback render branch as an unmet criterion.
+
+#### Added
+- `child-evidence.mjs` with node tests, a contract test module, and two shared Claude Code and Codex eval cases tagged `ledger-lessons`.
+
 ### vibe v1.0.58
 
 #### Changed

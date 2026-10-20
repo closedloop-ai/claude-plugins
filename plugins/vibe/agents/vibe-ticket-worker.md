@@ -41,7 +41,8 @@ writer's missing tests list, every `mainPreexistingFailures` entry the final
 validation returned with its main run's log, and the running app verification's control
 artifact paths with what each proves and any surface it could not drive.
 For a session sourced from a PRD it also receives the requirements worker's
-complete child classification and current delivery evidence for every child.
+complete child classification and the adversarial reviewer's child evidence
+map path (`../skills/handoff/SKILL.md`, step 6).
 
 ## Read first
 
@@ -235,10 +236,19 @@ For a source PRD, reread every child and reconcile it explicitly before any
 complete claim: included and delivered, active by someone else and excluded,
 superseded with the exact human ruling, or uncovered with current owner and
 status. Discovery without one of those outcomes returns `NEEDS_CHANGE`.
-Never supersede a child from agent judgment. For each claimed child whose exact
-outcome this branch delivers, require delivery evidence, move it to
-`IN_REVIEW`, add the pull request URL when one exists, and confirm the status.
-The session ticket's Handoff section lists every uncovered child.
+Never supersede a child from agent judgment. A child moves to `IN_REVIEW` only
+through the child evidence gate: run
+`node ../skills/handoff/scripts/child-evidence.mjs --worktree "<wt>" --base <inventory baseCommit> --map <the adversarial reviewer's child evidence map> --live-ticket <slug> --live-plan <PLN slug> --operator <operator email>`
+and move exactly the slugs it returns under `inReview`, add the pull request URL
+when one exists, and confirm the status. The map is the independent reviewer's,
+never the writer's own audit or yours. `ok: false` moves nothing it names: a
+child with any acceptance criterion or work item not met (a design review,
+hosted URL, device run, ledger or named evidence path still pending) stays
+where it is and is listed uncovered with that item, and a problem with the map
+itself returns `NEEDS_CHANGE`. A child the map calls active elsewhere passes
+only with an open pull request, a branch commit in the last 7 days or another
+owner's `IN_PROGRESS`; otherwise it is uncovered. The session ticket's Handoff
+section lists every uncovered child.
 Populate Design Review only at handoff from the verified final diff,
 current publication receipts and detailed design evidence/report paths.
 Add the section to legacy tickets that lack it before the existing final

@@ -747,6 +747,12 @@ Never pick the person yourself and never fall back to anyone by default: the
 ticket goes only to the user the person named. Design reviewing first and
 engineering finishing is the usual route, but the person decides.
 
+For a session sourced from a PRD, dispatch read-only
+`vibe-adversarial-reviewer` for its attack 12 on the final commit, in either
+weight, before the handoff-mode dispatch below. It writes the child evidence
+map and runs `scripts/child-evidence.mjs` on it; that map, never the writer's
+audit, is the only way a claimed child reaches `IN_REVIEW`.
+
 Before the handoff-mode dispatch below, resume the SAME writer to add the
 session decision table's `## Frozen Behavior` section, listing the rows the
 person accepted (`../vibe/references/quality-loop.md`, "Frozen behavior at
@@ -769,8 +775,9 @@ including Production impact, Flag changes and gates, and researched Open
 Questions per `../vibe/references/ticket-template.md`,
 and every answer from the person so far with how it was handled. For a source
 PRD, also pass every child classification and its current
-ownership, status, activity and delivery evidence. The ticket worker moves
-delivered claimed children to In Review, lists uncovered children, and never
+ownership, status and activity, and the child evidence map path. The ticket
+worker moves to In Review only the slugs `scripts/child-evidence.mjs` passes,
+lists every other child as uncovered with its unmet items, and never
 supersedes one without a cited human ruling. Never include a plan's body in
 this dispatch: the plans under
 `.closedloop-ai/vibe-plans/` reach ClosedLoop only as the session's PLN. It

@@ -36,7 +36,13 @@ questions"), or produce an upfront summary for the person.
    produced it), then the full text through the ClosedLoop MCP
    (`get-document`, `get-document-comments`). Extract the acceptance criteria
    of the ticket AND of its PRD, each quoted exactly with its source slug,
-   any design or prototype links, and any decisions in comments. These seed
+   any design or prototype links, and any decisions in comments. A PRD's or
+   ticket's flag, rollout, rollback, parity, boundary and non-goal clauses
+   (for example "closed by default behind a flag") are acceptance criteria
+   too, quoted verbatim; a child whose title or criteria name a flag is not
+   delivered without that flag or a recorded human waiver (vibe ledger:
+   symphony-alpha #8957, #8959, #8962 and #8965 each shipped a change
+   ungated that its PRD or ticket required behind a closed-by-default flag). These seed
    the session's acceptance criteria list (`quality-loop.md`, "Acceptance
    criteria before ready"). Tag ticket text that names an implementation
    mechanism (a poller, feed, lane, socket, route, table, cursor, or a write
@@ -55,7 +61,15 @@ questions"), or produce an upfront summary for the person.
    else, delivered, superseded by a cited human ruling, or uncovered. Untouched
    means no implementation branch, pull request, progress comment or other
    person's active ownership. Existing children are never declared "not
-   reused" and no agent decides that one is superseded.
+   reused" and no agent decides that one is superseded. Active by someone
+   else needs an open pull request, a branch commit in the last 7 days or
+   another owner's `IN_PROGRESS`, quoted as its evidence; a `TODO`, `BLOCKED`
+   or `BACKLOG` child with none of these is untouched or uncovered, never
+   "active elsewhere". Never narrow the targets a PRD or ticket names (its
+   surfaces, consumers, hosts or production targets) in the brief or the
+   session ticket: list every target, and one the request will not build is
+   reported as unadopted with the source's words. Narrowing it is a product
+   question for `quality-loop.md`'s gate, never a session decision.
 2. Overlap: for a ticket or a description, run `query_collisions` with the
    title and request text, then `search_nodes` and `fts_search` on its key
    terms. Inspect every matching PRD even when it is `EXECUTED`: report its

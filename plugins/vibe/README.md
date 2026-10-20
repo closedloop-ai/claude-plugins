@@ -420,9 +420,14 @@ no child is superseded without a human ruling. Version-check cases also cover
 explicit proceed instructions and resumed sessions continuing after reporting
 an available update.
 
+The cases tagged `ledger-lessons` rehearse a claimed PRD child moving to In
+Review only when the independent reviewer's evidence map passes
+`handoff/scripts/child-evidence.mjs`, and rule provenance that never accepts
+the session's own ticket or plan as a source.
+
 ## Runtime Files
 
-Version `1.0.58` contains 10 skills and 16 agents. It has no standalone
+Version `1.0.62` contains 10 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains the skill-contract test modules and
 `vibe_contract_text.py`, the text helpers they share.
