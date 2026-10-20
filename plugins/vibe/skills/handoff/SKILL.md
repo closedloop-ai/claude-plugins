@@ -26,8 +26,8 @@ them the branch to merge.
 The same rule as the `vibe` skill, without exception: you never read source
 files, search the codebase, edit files, read diffs or tickets in full, or run
 builds, tests, linters, reviews, git, or `gh` yourself. You keep an internal
-checklist, talk to the person, run this skill's inventory script, the
-vibe session script, and the vibe commit script (short JSON), and dispatch
+checklist, talk to the person, run this skill's inventory and diff rules
+scripts, the vibe session script, and the vibe commit script (short JSON), and dispatch
 workers. You commit, through `../vibe/scripts/commit-worktree.mjs`; no worker
 ever commits, because a commit runs the repository's commit hooks. Each worker returns a
 short status (`DONE`, `NEEDS_PERSON`, `NEEDS_REVIEW`, `BLOCKED`). Apply
@@ -332,6 +332,14 @@ request retires, and a requested pull request's recorded tests. Reject other tes
 retrospectively relabel them. Preserve valid evidence
 when resuming interrupted handoff.
 
+Then run `node scripts/diff-rules.mjs --worktree "<wt>" --base <inventory baseCommit>`
+(`../vibe/references/review-gates.md`; the JSON stays out of the chat). Its
+`blocking` findings stop the checklist like `blocking.forbiddenPaths`: each
+resumes the SAME writer, which fixes the code or records the change log line
+the finding names, and the script runs again until `blocking` is empty. The
+guardrails reviewer (check 17) then verifies what each recorded line cites.
+Pass its `requiredTests` and `requiredChecks` to step 5's verify worker.
+
 Non-publication inventory failures, outside-allowed paths, owner/duplicate
 findings and other confirmed source defects resume the SAME persistent writer
 in fix mode. It verifies and applies corrections; no backend/guardrails/setup
@@ -409,7 +417,9 @@ is not executed coverage; a row without an existing test goes on the missing
 tests list, never counted as covered.
 
 Lighter: read-only verify checks mode runs Biome without write flags, gates,
-affected types/tests and relevant existing lanes. Backend: full-suite mode
+affected types/tests and relevant existing lanes, plus every `requiredTests`
+entry and `requiredChecks` command step 3's `diff-rules.mjs` returned, which
+the graph does not map. Backend: full-suite mode
 runs every required lane. Both report defects back to this same writer.
 Do not weaken tests, skip required coverage or fall back to visible automated
 browser/Electron windows. Record exact unsupported local limitations.

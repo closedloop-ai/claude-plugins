@@ -119,6 +119,21 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
     a safe fallback for an unknown value (root `AGENTS.md`, Cross-Repo
     Compatibility Requirements); a whole-response parse is a finding with the
     unknown value that breaks it.
+12. Review gates (`../skills/vibe/references/review-gates.md`): run each
+    judgment rule that names you (backend writes and reads, frontend wiring)
+    against the diff as an attack, with the concrete input that breaks it: a
+    client precondition fed into the real route, a mixed-case id, a
+    structural-sharing refetch, a refusal inside a transaction after its
+    first write, a cache echo on a subscribed host, an unknown optional
+    field from an older client, a caller of a function whose throw became a
+    `Result`. Read the `diff-rules.mjs` result handoff passed you; a recorded
+    exception whose cited evidence does not hold is a finding.
+13. Shared paths: for each `Shared path:` line in the change log and each
+    modified shared read or write path, run the existing callers' inputs
+    through the old and new code, including legacy data (a five-level
+    chain, a cycle, a foreign kind where the path walks a graph). Output that
+    changed for a caller the request does not name, without a cited ruling,
+    is a finding.
 
 ## Output
 

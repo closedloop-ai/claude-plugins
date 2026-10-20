@@ -1,6 +1,6 @@
 ---
 name: vibe-guardrails-reviewer
-description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, Storybook taxonomy placement and precedent placement, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them or added unasked, leftovers after an extraction, capability removed by a main sync, flag retirement against a recorded hold, and each new mechanism's reuse and cost scaling). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
+description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, Storybook taxonomy placement and precedent placement, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them or added unasked, leftovers after an extraction, capability removed by a main sync, flag retirement against a recorded hold, each new mechanism's reuse and cost scaling, and the review-gates script's findings with the evidence behind each recorded exception). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
 model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
 ---
@@ -305,6 +305,23 @@ path merely because another rule describes how its content should look.
     by a cited human ruling, or listed uncovered with current owner and status.
     A session-created supersession, a "not reused" label, or a delivered child
     left `TODO` is blocking.
+17. Review gates (`../skills/vibe/references/review-gates.md`): run
+    `node ../skills/handoff/scripts/diff-rules.mjs --worktree "<wt>" --base <base>`
+    and quote its result. Every `blocking` entry is a blocking finding. For
+    each change log line written to clear one (`Migration precedent:`,
+    `Activity capture:`, `Synchronizing-susan:`, `Comment removed:`,
+    `Shared path:`, `Story outcome unchanged:`, `Story entry:`), open what it
+    cites: the three migrations, the covering capture call, the Susan
+    verdict, the comment the change made false, the parity test or missing
+    test entry with legacy fixtures (a five-level chain, a cycle, a foreign
+    kind where the path walks a graph), the human ruling, the unchanged
+    assertion, the Placement block. A line whose citation does not hold is
+    blocking. Then apply the judgment rules that name you there (frontend
+    wiring, tests through real paths and Storybook), quoting `file:line`.
+    In check 9, a repaired or rewritten expected value computed by calling
+    production code is blocking as it is in a new test, and deleting the tests
+    of a component that was replaced rather than removed needs each case the
+    successor still enforces ported or retired by a cited ruling.
 
 For publication, verify the SAME source actor's `main-sync-inputs` evidence
 before capture and after the committed merge. Canonical private diagnostics

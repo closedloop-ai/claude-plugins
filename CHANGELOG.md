@@ -4,6 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.64
+
+#### Added
+- `skills/handoff/scripts/diff-rules.mjs` blocks handoff on defects that repeated in vibe pull requests: a migration not newer than the base's newest, one that changes an existing table without a recorded lock-strategy precedent or runs a full-table backfill, a raw write of a captured artifact field with no canonical activity capture, an error returned inside `withDb.tx` after a write, a new Desktop sync lane without the shared give-up and backoff modules and a recorded synchronizing-susan pass, an artifact link delete not scoped to the exact edge, a removed ticketed comment whose code survives, an unrecorded change to a shared service or data source, a changed story assertion without a Storybook release, and a new story entry beside a component's current one. Each finding names the fix or the change log line that records why not; the guardrails reviewer verifies what each line cites. It also lists tests the graph does not map (the GridTableV2 surface and host capability parity tests, e2e specs naming a changed endpoint) and the repo's migration gates.
+- `skills/vibe/references/review-gates.md` documents the script's rules and 30 judgment rules for backend writes and reads, frontend wiring, tests through real paths and Storybook placement, each owned by the agent that applies it.
+- Node tests for the script, a contract test for the wiring, and two shared Claude Code and Codex eval cases tagged `review-gates`.
+
+#### Changed
+- The writer runs the script before `DONE`; handoff step 3 refuses to continue while it blocks, and step 5 runs its required tests and checks alongside the targeted set.
+- The backend worker, adversarial reviewer, guardrails reviewer (check 17), verify worker and Storybook decomposer apply their review-gate rules; moved symbols keep their why-comments, a story whose asserted outcome flipped is renamed as a release, and a surface behind a default-off flag is never tagged `stable`.
+
 ### vibe v1.0.58
 
 #### Changed

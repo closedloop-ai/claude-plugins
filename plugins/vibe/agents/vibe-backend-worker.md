@@ -40,6 +40,8 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
 - `../skills/vibe/references/closedloop-graph.md`,
   `../skills/vibe/references/quality-loop.md` (internal plan, lean build loop, graph-first product questions),
   `../skills/vibe/references/design-pass.md` (Owner rules),
+  `../skills/vibe/references/review-gates.md` (the backend rows of its
+  script table and judgment rules 1 to 15, which you own),
   `../skills/vibe/references/guardrails.md` (What may change, Tests, and
   Checks), and `../skills/vibe/references/ticket-template.md`.
 - The `decision-table` skill, loaded by name (`$decision-table` in Codex or
@@ -81,11 +83,23 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
    --script` into a new migration folder named the way
    `packages/database/AGENTS.md` describes. Never connect to the stage or a
    shared developer database, and never edit a migration that has landed on
-   main. The API's Vercel build applies it to the session's own data on the
+   main. Its timestamp is after the newest migration on fresh main, and
+   for a table that already exists, read the last three migrations touching
+   it and copy their lock strategy (`CREATE INDEX CONCURRENTLY` where they
+   used it); a full-table backfill does not ride in a schema migration
+   unless that precedent did the same (`review-gates.md`, `migration-*`).
+   The API's Vercel build applies it to the session's own data on the
    next redeploy. The clean-workflow proof `packages/database/AGENTS.md` asks
    for needs a throwaway local database, which this Mac does not have, so add
    a Backend still missing line on the ticket saying that proof is still owed
    for the migration.
+   Before any write to a captured artifact field, grep how that field's
+   existing write path captures activity and call the same canonical capture
+   on the same transaction; inside `withDb.tx`, refuse before the first
+   write or throw; a link delete names the exact edge it replaces. A new
+   Desktop sync lane uses the shared give-up and backoff modules and gets a
+   `synchronizing-susan` pass (`review-gates.md`, script table). Check each
+   applicable judgment rule (1 to 15) against the guidance you return.
 4. New models: add the seed coverage file
    (`packages/database/prisma/seeds/coverage/<Model>.json`) and seed data in the
    owning vibe seed stage (`apps/api/scripts/vibe-seed/stages/`), through the

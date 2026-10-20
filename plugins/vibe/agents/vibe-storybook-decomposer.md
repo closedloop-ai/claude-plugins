@@ -126,6 +126,13 @@ Do this first, in both modes.
    Composite entry: it goes in named `Surfaces/` stories for that page, per
    the doc's Surfaces row (operator ruling, 2026-10-16, after
    symphony-alpha #8886 composed a whole page as a Composite).
+   The Placement block's Owner for new states of a component consumers
+   already render is that component's existing current entry: an adapter, a
+   harness or a preview never gets an entry of its own, and the
+   `diff-rules.mjs` `story-entry` rule blocks one at handoff
+   (`../skills/vibe/references/review-gates.md`, rule 28). The lifecycle tag
+   follows rollout: a surface reachable only behind a default-off flag does
+   not match the live app, so it is never `stable` (rule 29).
 5. A precedent that disagrees with those docs, or precedents that disagree
    with each other, is a Conflict. Decide it by the same order. Where the
    docs say nothing, mirror one precedent, chosen in this order: built on
@@ -216,6 +223,16 @@ evidence (operator ruling, 2026-10-16, after symphony-alpha #8885 and #8886):
   paging helper, each typed entity whose slug prefix does not match its type,
   and each value-dependent column tested only with all-default values that let
   it collapse.
+- Emitters: for each story state, the production code that emits it (the
+  server path that returns that error or permission, the client branch that
+  renders it). A state no production path produces is a finding to remove
+  (`review-gates.md`, rule 30).
+- Placement and lifecycle: each new entry for a component that already had
+  a current entry, each adapter, harness or preview entry, and each `stable`
+  tag on a surface behind a default-off flag (rules 28 and 29). A story whose
+  asserted outcome flipped keeps its name only with a recorded
+  `Story outcome unchanged:` reason; otherwise it is renamed, which is a
+  release (`apps/storybook/TAXONOMY.md`).
 - Sidebar folds: every new `!dev` marker and the person's explicit request for
   sidebar reduction that authorizes it. Without that request it is a finding.
 - Story IDs: `scripts/index-diff.mjs` of the session's built index against

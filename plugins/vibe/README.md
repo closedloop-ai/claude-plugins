@@ -259,6 +259,17 @@ Coverage is planned and independently verified from the whole session
 decision table, including earlier requests and real-boundary negative cases.
 Required source, existing-test or review gaps block final alignment and
 handoff; a listed missing test does not.
+Handoff also runs `diff-rules.mjs`, the mechanical half of
+`references/review-gates.md`: an out-of-order migration or one without its
+table's lock-strategy precedent, a raw write of a captured artifact field, an
+error returned inside a transaction after a write, a Desktop sync lane without
+the shared give-up, backoff and a synchronizing-susan pass, an unscoped
+artifact link delete, a dropped ticketed comment, an unrecorded change to a
+shared service, a story assertion changed without a release and a new story
+entry beside a component's current one each block until the writer fixes the
+code or records the reason the guardrails reviewer then verifies. It also
+names the tests the graph does not map, such as the GridTableV2 parity tests
+and the e2e specs naming a changed endpoint, which the verify worker runs.
 Handoff also drives the running web app and Desktop for each touched screen
 with symphony-alpha's control skill (`pnpm control`, hidden and read-only),
 and records the artifact paths and what each proves in Design Review and the
@@ -420,9 +431,15 @@ no child is superseded without a human ruling. Version-check cases also cover
 explicit proceed instructions and resumed sessions continuing after reporting
 an available update.
 
+The two cases tagged `review-gates` rehearse a blocking review gate: handoff
+stops and the same writer adds the canonical activity capture instead of a
+placeholder change log line while the unmapped parity test still runs, and a
+new Desktop sync lane uses the shared give-up and backoff and gets a
+synchronizing-susan pass.
+
 ## Runtime Files
 
-Version `1.0.58` contains 10 skills and 16 agents. It has no standalone
+Version `1.0.64` contains 10 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains the skill-contract test modules and
 `vibe_contract_text.py`, the text helpers they share.

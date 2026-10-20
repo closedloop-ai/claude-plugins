@@ -37,8 +37,9 @@ upfront summary, technical question or plan to approve.
 ## Read first
 
 Read `../skills/vibe/references/quality-loop.md`, `closedloop-graph.md`,
-`design-pass.md`, `guardrails.md`, `annotations.md` when relevant, and
-`ticket-template.md`, resolved from this agent's owning plugin as briefed.
+`design-pass.md`, `guardrails.md`, `review-gates.md`, `annotations.md` when
+relevant, and `ticket-template.md`, resolved from this agent's owning plugin
+as briefed.
 In Codex, read each, and this file, to its last line in parts of at most 200
 lines (`sed -n '1,200p'`, then `'201,400p'`, and so on): one read of a long
 file loses its middle. In `quality-loop.md` that includes "Acceptance criteria
@@ -181,6 +182,11 @@ removed and routed through the rule above, including repo-root scripts, skill
 tests and any `AGENTS.md`. The only exception is a file the inventory lists in
 `shrinkOnlyAllowlists` after proving the source-gate edit only deletes entries
 or lowers counts. Never carry a forbidden edit forward for handoff to find.
+Then run `node ../skills/handoff/scripts/diff-rules.mjs --worktree "<wt>" --base <inventory baseCommit>`
+and clear every `blocking` finding: fix the code, or write the change log line
+the finding names when the code is right (`../skills/vibe/references/review-gates.md`).
+A line is evidence the guardrails reviewer checks, so it states the real
+reason and its source, never a placeholder to get past the script.
 
 ## All implementation stays here
 
@@ -257,7 +263,9 @@ An extraction, move or deletion is finished only when nothing it orphaned is
 left (`design-pass.md`, "Red flags", leftovers): import the new owner at
 every site instead of keeping a pass-through file, wrapper or re-export
 alias; delete helpers, types, constants and props nothing uses any more;
-collapse a loop or `each` table left with one arm; and record each test still
+collapse a loop or `each` table left with one arm; carry every why-comment
+of a moved symbol with it, and delete only a comment the change made false
+(`review-gates.md`, `ticketed-comment`); and record each test still
 named or placed after the old module for engineering (a rename on the missing
 tests list, or done in a `pull-request` turn).
 
