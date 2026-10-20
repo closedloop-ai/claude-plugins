@@ -875,9 +875,8 @@ it is recorded for engineering ("Failures already on main" below). It lists ever
 missing test as engineering's scope of work: the behavior and row ID that
 needs it, the files to cover, and any existing test a human behavior ruling
 made obsolete, with that exact ruling, for engineering to update. Verify
-helpers and reviewers remain read-only. A test the session added, deleted or
-changed beyond a recorded repair or retired-only deletion is a finding; do not
-retrospectively relabel it. Preserve valid evidence when resuming an interrupted handoff.
+helpers and reviewers remain read-only. Preserve valid evidence when resuming
+an interrupted handoff.
 
 The only exception is the person explicitly asking for a pull request to be
 raised, in any plain words that say they will take it through review and
@@ -886,8 +885,9 @@ Then the SAME writer, in an explicit `pull-request` turn, writes full
 tests for every change in the session, records their paths, criteria and
 rulings in the change log, runs them and fixes implementation defects, and
 independent reviewers examine that coverage before the pull request opens.
-Never weaken a valid test/check, skip a case, inflate tolerances/timeouts,
-change a harness or suppress a failure.
+Its own test expecting behavior no ticket, PRD or request names is a wrong
+test, never a reason to build that behavior (symphony-alpha #8953 wired an
+ungated status write to pass its own e2e).
 
 ## Failures already on main
 

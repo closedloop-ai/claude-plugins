@@ -298,7 +298,8 @@ path merely because another rule describes how its content should look.
     If its only source is an agent's own rationale, it is a blocking
     `engineering decision` finding. A detailed explanation written by an
     agent is still not a product source, and neither is the session's own
-    ticket, PLN, plan, table or change log. This covers every refusal rule (a
+    ticket, PLN, plan, table or change log. This covers every new user-reachable
+    capability (a write path, action or control), refusal rule (a
     PRD display cap is not one), new visual element or state presentation (held
     to the copy rule),
     numeric limit, criterion worded more strongly than its source and removed

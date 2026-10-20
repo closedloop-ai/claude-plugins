@@ -153,6 +153,7 @@ def test_session_text_is_never_provenance() -> None:
     assert "Never strengthen them either" in section(quality, "## Acceptance criteria before ready")
     assert "a stated requirement there wins" in section(quality, "### Precedent before asking")
     check = flat(agent("vibe-guardrails-reviewer"))
-    for phrase in ("a PRD display cap is not one", "numeric limit", "criterion worded more strongly than its source"):
+    assert "never a reason to build that behavior" in section(quality, "## Tests: repair, don't author")
+    for phrase in ("new user-reachable capability (a write path, action or control)", "a PRD display cap is not one", "numeric limit", "criterion worded more strongly than its source"):
         assert phrase in check, phrase
     assert "flag, rollout, rollback, parity, boundary and non-goal clauses are criteria too" in flat(agent("vibe-requirements-worker"))
