@@ -1,0 +1,11 @@
+{
+  "cache_key": "<CACHE_KEY>",
+  "input_path": "<CR_DIR>/extract_signals_input.json",
+  "model": "haiku",
+  "output_path": "<CR_DIR>/extract_signals.json",
+  "prompt_hash": "<PROMPT_HASH>",
+  "prompt_path": "<PLUGIN_ROOT>/tools/prompts/signal_extraction_prompt.txt",
+  "status": "needs_agent",
+  "taxonomy_hash": "<TAXONOMY_HASH>",
+  "taxonomy_path": "<CR_DIR>/extract_signals_taxonomy.json"
+}
