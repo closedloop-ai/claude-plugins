@@ -70,17 +70,9 @@ questions"), or produce an upfront summary for the person.
 4. Note in-flight work on that code: run `blast_radius_tickets` on its route
    and main component files. List open GitHub pull requests and inspect their
    changed files, reporting every open pull request that touches any of those
-   same files. A ticket-only collision result is incomplete. Run
-   `node ../skills/handoff/scripts/pr-facts.mjs overlap --worktree <repo path> --files <the located files, comma separated>`:
-   it also reports open pull requests that change a module those files
-   import, such as a shared type the screen consumes.
-5. Dependencies and write paths: resolve every dependency the ticket or PRD
-   names (a "Dependencies:" line, "Roadmap N", "after" or "blocked by") to its
-   PRD, that PRD's children and their open pull requests, and report each.
-   When the request needs a new or changed route, service, table or write
-   path, run the same `overlap` on that service's files before any plan
-   designs it, and report every open pull request or dependency PRD that
-   builds over them for coordination.
+   same files or a module they import; resolve each named dependency ("Roadmap
+   N", "Dependencies:") to its PRD and open pull requests. A ticket-only
+   collision result is incomplete.
 
 ## Reference mode
 
@@ -158,9 +150,7 @@ acceptance criterion of the ticket and its PRD, quoted exactly with its source
 slug, or "none stated"; the route and FEATURE_MAP id where the relevant code lives, for
 change workers (not shown to the person); overlapping or in-flight tickets
 (slug and title), open pull requests touching the same files, and each matched
-`EXECUTED` PRD with its `DONE` children and shipped rules; each resolved
-dependency with its PRD and open pull requests, and the `overlap` result
-(shared and imported files per pull request); for a source PRD,
+`EXECUTED` PRD with its `DONE` children and shipped rules; for a source PRD,
 every child with its scope classification, current status, owner and activity
 evidence; and whether this is a change to an existing screen or a
 net-new screen. Or

@@ -355,30 +355,20 @@ changes and gates fields.
    create nothing. On the first dispatch return `DONE` with its URL. A
    dispatch from handoff's "Changes on the open pull request" (section 10)
    updates it instead, as "Updating an open pull request" below says.
-3. Compute the facts the body must state, from the diff rather than any
-   summary:
-   `node ../skills/handoff/scripts/pr-facts.mjs facts --worktree "<wt>" --pr-base <the base branch> --ticket "$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-live-ticket.md"`.
-   Fetch the current PR template from main
+3. Run `node ../skills/handoff/scripts/handoff-inventory.mjs --worktree "<wt>" --phase pull-request --overlap --ticket "<gitdir>/vibe-live-ticket.md"`
+   and fetch the current PR template from main
    (`gh api repos/closedloop-ai/symphony-alpha/contents/.github/pull_request_template.md --jq .content | base64 -d`)
-   and fill every section from the session's own record and those facts,
-   never from invention:
-   - Summary: the confirmed summary, with the live ticket's slug. Then every
-     `overlap` pull request by number with its shared and imported files,
-     every `assertions` entry (flipped, removed, skip added, deleted test
-     file) with its `file:line`, and every `contracts` entry by name with its
-     `file:line`. Each ticket `asks` sentence is quoted verbatim with its
-     answer from the record, or with "not answered by the session record"
-     for the reviewer. Copy each `requiredStatements` sentence verbatim.
-   - Breaking changes: an honest answer from Production impact, listing every
-     `refusals` entry (`file:line` and status) as a new refusal on an existing
-     route. Write the root `AGENTS.md`'s "none" answer only when Production
-     impact supports it (no API response field, database column or
-     cross-process wire shape changed) and `refusals` and `contracts` are
-     empty.
+   and fill every section from the session's own record, never from
+   invention:
+   - Summary: the confirmed summary with the live ticket's slug, then every
+     `overlap`, `assertionChanges`, `contractChanges` and answered `asks` entry.
+   - Breaking changes: from Production impact and every `refusals` entry;
+     "none" only when Production impact supports it and `refusals` is empty.
    - UI Feature Flag: the heading alone, unless the change adds a net-new
      surface, screen or navigation item or a new flag primitive; then attest
      `[ui-flag:gated] <key>` or `[ui-flag:N/A] <reason>` only from the Flag
-     changes and gates field.
+     changes and gates field, marking `(flag-pending)` only a key a fresh
+     PostHog evaluation (Flag snapshot step 2) does not return.
    - Test plan: at most 20 lines: the tests written and the checks run, with
      their results.
    When the record cannot support a required answer, say so in that section
@@ -393,17 +383,12 @@ changes and gates fields.
    it names this ticket's slug and summary; parallel workers share scratch
    space, and one pull request's body has overwritten another's (operator
    ruling, 2026-10-16). The same holds for every body or payload file this
-   mode writes. Right before `gh pr create`, run
-   `node ../skills/handoff/scripts/pr-facts.mjs check --worktree "<wt>" --pr-base <the base branch> --body <file> --ticket <the live ticket file> --runs "<gitdir>/vibe-pr-evidence.json" --commit <the verified published commit>`.
-   Exit 1 creates nothing: return `NEEDS_CHANGE` with its `problems`. Never
-   drop a cited fact, a `file:line` or an overlap from the body to make the
-   check pass; a citation to a line the diff did not change is fixed by
-   citing the line that did.
+   mode writes. Rerun step 3 with `--body <file> --runs "<gitdir>/vibe-pr-evidence.json" --commit <published commit>`:
+   `blocking.prBody` or `blocking.prEvidence` false creates nothing (`NEEDS_CHANGE`).
 5. Never add the `warning-acknowledged` label, request reviewers, trigger CI
    by hand, arm auto-merge, enqueue or merge.
 
-Return `DONE` with the pull request URL, `NEEDS_CHANGE` with the failing
-`pr-facts.mjs check` problems, or `BLOCKED` with why.
+Return `DONE` with the pull request URL, `NEEDS_CHANGE`, or `BLOCKED` with why.
 
 ### Updating an open pull request
 
@@ -424,8 +409,7 @@ or `--body-file`).
   2. Refresh the body from the session record so it matches the diff: build
      it exactly as step 3 does from the refreshed confirmed summary,
      Production impact, Flag changes and gates, tests and check results,
-     with the `pr-facts.mjs check` passing on the refreshed body, and
-     apply it with
+     gated as in step 4, and apply it with
      `gh pr edit <number> --repo closedloop-ai/symphony-alpha --body-file <file>`,
      the file named and re-read as step 4 says.
      Keep the title unless the summary it names changed.
@@ -446,7 +430,5 @@ or `BLOCKED` with why.
 `environment-result` recorded them, the commit SHA, and one plain sentence
 for the person. Or `NEEDS_PERSON` with one plain instruction. Or
 `NEEDS_DESKTOP_STOP` with the step that must merge main or swap the
-worktree's commit. Or `NEEDS_COMMIT` with the uncommitted files. Or, in
-pull-request mode, `NEEDS_CHANGE` with the failing `pr-facts.mjs check`
-problems. Or `BLOCKED` with the cause in one or two lines and
+worktree's commit. Or `NEEDS_COMMIT` with the uncommitted files. Or `BLOCKED` with the cause in one or two lines and
 whether it is in the session's own change.

@@ -93,20 +93,10 @@ symphony-alpha #8885 and #8886 (operator ruling, 2026-10-16):
   count. Do not reject the iOS Safari path because the click synthesized from
   a tap reports `pointerType` as `mouse`; prove the user-visible result of the
   tap in both device runs.
-  A requested pull request is blocked until its final evidence names the real
-  web host, WebKit iPhone and Chromium Pixel commands, commit, screen and
-  visible interaction outcome. Missing evidence is not deferred as a test gap.
-- Record every lane you ran in `<gitdir>/vibe-pr-evidence.json` (private git
-  metadata, `$(git -C <wt> rev-parse --absolute-git-dir)`, never a tracked
-  file) as `{"touchFlows": [...], "touchFlowsReason": "...", "runs": [{"lane",
-  "status", "command", "commit", "outcome"}]}`, and return it too. Lanes are
-  `web-host`, `desktop-host`, `webkit-iphone`, `chromium-pixel`,
-  `storybook-plays` and `e2e`; `touchFlows` names every touched card, narrow
-  or touch flow (empty only with a `touchFlowsReason`). A run is `passed`
-  only when it finished and passed on that commit; write `pending` or
-  `running` while it has not. `../skills/handoff/scripts/pr-facts.mjs
-  evidence` decides which lanes the diff needs, and handoff opens no pull
-  request until it passes.
+  Record runs of the inventory's `requiredLanes` (with `webkit-iphone` and
+  `chromium-pixel` for `touchFlows`) as `{lane, status, command, commit,
+  outcome}` in `<gitdir>/vibe-pr-evidence.json`; the pull request stays
+  blocked until `blocking.prEvidence` passes.
 
 Browser automation is headless. Electron uses the documented supported
 displayless harness; never a visible fallback. If no supported local path

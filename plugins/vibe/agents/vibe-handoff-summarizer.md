@@ -39,35 +39,20 @@ open tickets touching them.
 
 ## Return (under 260 words)
 
-`DONE` with two blocks, plus a third when a pull request is being opened or
-refreshed:
+`DONE` with two blocks:
 1. For the person, only the completed feature and what is being worked on next,
    in their own terms. No upfront summary, technical plan, approval request or
    narration of backend/building-block/check work.
 2. For the ticket, as short lists: screens (route or FEATURE_MAP id), production
    components added/changed/removed (paths and effects if merged, shared-parent
    consumers and relevant web/Desktop effects, not already shipped), backend
-   files (paths), exact new/existing modified/removed flag keys with gate/evidence
+   files (paths), every removed or changed guard or gate predicate with
+   `file:line`, exact new/existing modified/removed flag keys with gate/evidence
    references, researched Open Questions or None, open tickets
    touching the same files (slug and title), and design decisions for
    engineering: one line per non-trivial request from the change log (the
    owner it was built in and the owner rule that chose it), or "none: only
    copy, color, or spacing changed".
-3. For a pull request body (exempt from the word limit): the output of
-   `node ../skills/handoff/scripts/pr-facts.mjs facts --worktree <wt>`,
-   every overlapping open pull request with its shared or imported files,
-   every flipped or removed assertion, added skip and deleted test file, every
-   changed or removed export (registry entries and exported contracts) and
-   every new refusal, each with `file:line`. From reading the diff, add every
-   removed or changed guard, short-circuit, gesture, selection or gate
-   predicate, under a flag too, with `file:line`. Every behavior or test
-   expectation change you attribute cites a line `pr-facts.mjs cite-check`
-   accepts, never a file whose diff does not make that change. Every ruling
-   you cite resolves to an approved artifact (an `APPROVED` or `EXECUTED` PRD
-   or plan, a `DONE` ticket, a human comment) or a quoted operator message
-   with where it was said; a `TRIAGE` or draft ticket is not a ruling. Never
-   call the change additive, presentation-only or non-breaking while any of
-   these lists is non-empty.
 End with the Graph block.
 
 For Design Review, return compact evidence/path references to the SAME writer
@@ -77,7 +62,9 @@ private metadata. This also preserves the full Production impact and Flag
 changes and gates evidence plus Open Questions sources/context/decision needed;
 No new flags does not omit existing gates. Never substitute source defaults or
 local QA settings for timestamped verified production values; report unavailable
-or stale evidence honestly. Keep answered decisions out of Open Questions and
+or stale evidence honestly. Cite only rulings from an approved artifact or a
+quoted operator message, never a `TRIAGE` or draft ticket. Keep answered
+decisions out of Open Questions and
 engineering limitations in known gaps, not technical approval questions.
 Include exact previews/deployed commit/protection status,
 scope/screens/host states, added/changed/removed components/stories and IDs/

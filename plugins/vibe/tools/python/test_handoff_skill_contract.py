@@ -324,3 +324,13 @@ def test_handoff_metadata_preserves_snapshot_headings_and_phase() -> None:
     assert "Filled at handoff" in handoff
     create = section(TICKET_WORKER.read_text(), "## Create mode")
     assert "Handoff, Design Review, and Grading" in create and "Pending." in create
+
+
+def test_pull_request_body_and_evidence_are_gated_by_the_inventory() -> None:
+    hand_over = section(HANDOFF_SKILL.read_text(), "## 9. Hand it over")
+    assert "`blocking.prBody` and `blocking.prEvidence`" in hand_over
+    mode = section((PLUGIN_ROOT / "agents" / "vibe-environment-worker.md").read_text(), "## Pull-request mode")
+    for required in ("--phase pull-request --overlap --ticket", "`assertionChanges`", "`refusals`",
+                     "false creates nothing (`NEEDS_CHANGE`)", "fresh PostHog evaluation"):
+        assert required in mode, required
+    assert "`serverOnly` true skips step 4" in section(HANDOFF_SKILL.read_text(), "## 1. Internal checklist")

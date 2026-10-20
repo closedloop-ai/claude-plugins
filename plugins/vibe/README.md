@@ -291,15 +291,8 @@ rows the person accepted as Frozen Behavior in the session decision table that
 the ticket attaches; `cl-execute` reads that attachment, keeps every frozen row
 passing with tests in its pull request, and changes one only with that
 person's explicit OK.
-A pull request body is built from facts computed from the diff
-(`pr-facts.mjs`): overlapping open pull requests by shared or imported file,
-flipped and removed assertions and deleted test files, changed exports and new
-refusals, and every ticket sentence asking for something to be said in the
-pull request. The pull request is created or its body refreshed only when the
-body cites changed lines and states every fact, and when every required
-web-host, Desktop-host, touch-device, Storybook play and e2e run passed on the
-published commit. A server-only diff skips Storybook, Desktop and visual QA
-and records one line saying so.
+The handoff inventory also reports what a pull request body must state, and
+blocks creating one that misses a fact or lacks passing runs.
 
 ### `vibe-seed-refresh`
 
@@ -429,10 +422,7 @@ no child is superseded without a human ruling. Version-check cases also cover
 explicit proceed instructions and resumed sessions continuing after reporting
 an available update.
 
-The two cases tagged `pr-facts` rehearse the pull request facts gate: a
-drafted body that misses a computed overlap and a flipped assertion is not
-created, and pending device or Storybook play runs block a requested pull
-request instead of becoming a later test note.
+The `pr-facts` case checks that a body missing computed facts is not created.
 
 ## Runtime Files
 
