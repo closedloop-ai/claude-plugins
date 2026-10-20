@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.12.1
+
+#### Fixed
+- A file moved and heavily edited (below git's default 50% rename similarity) no longer reaches Bug Hunter A without its old version. `parse-diff` runs `git diff --name-status -M30%` over the same range and records `moved_from` (`{added path: deleted path}`) for each rename whose new path is `added` and old path `removed`; `files_to_review` and `file_statuses` are unchanged. `partition` writes the deleted file's patch to `patches_p<N>_context.txt` for each partition holding a paired file and adds `moved_from` and `context_patch` to that partition's entry; `uncached_diff_data.json` keeps the pairs whose added file missed the cache.
+- The reviewer prompt template gains a `<moved_from_context>` element for Bug Hunter A when its partition has a context patch: the old version is reference only, the pairing is heuristic and the old file may be unrelated, and findings on behavior dropped in the move point at the new file.
+- The BHA cache key for a paired added file folds in the paired deleted file's patch, so editing the old file invalidates the entry. Unpaired files keep their existing key.
+- `SCHEMA.md` documents `moved_from`, the context patch and the cache-key change.
+
 ### code-review v3.12.0
 
 #### Changed
