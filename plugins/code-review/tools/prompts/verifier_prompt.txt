@@ -23,7 +23,7 @@ The input file is JSON with shape:
     "verifier_prompt_path": "<this file>",
     "output_path": "<where to write your verdict>",
     "review_root": "<absolute dir to read source from — always populated>",
-    "patches_path": "<full-diff patch file — present only when finding.out_of_diff is true>"
+    "patches_path": "<full-diff patch file — present only when finding.out_of_diff is true, or when the finding or an evidence[] entry cites a file this diff deleted outright>"
   }
 
 Read the input file. The `finding` field contains the full canonical
@@ -157,9 +157,12 @@ Look at `finding.file` and `finding.line`. Read the file. Compare
       multiline snippet text). A hash match wins regardless of line drift.
 
 If `finding.code_snippet` is multiline, hash the full multiline text
-verbatim and compare against the stored hash. If the finding targets a
-removed line (the snippet is no longer present at HEAD), look at the
-pre-change content via the patch hunks.
+verbatim and compare against the stored hash. If `finding.file` was
+deleted outright by this diff (it no longer exists under `<review_root>`
+and its patch shows `deleted file mode`), `finding.line` is numbered in
+the old file: look at the pre-change content via that file's patch
+hunks in `patches_path`. On a file that still exists, `finding.line` is a new-file line;
+do not match it against removed lines.
 
   - NO match anywhere AND no snippet_hash match → REJECTED,
     `rejection_class: "evidence_not_found"`.
@@ -172,7 +175,9 @@ pre-change content via the patch hunks.
 For each entry in `finding.evidence[]`:
   - If the entry has a `snippet_hash`, hash-match wins.
   - Else, read the cited `file:line ± 20` and verify the content matches
-    what the entry claims.
+    what the entry claims. For a file this diff deleted outright, read
+    the old content from its patch hunks in `patches_path` instead
+    (old-file numbering).
 
   - Any one entry whose content contradicts what's actually at the cited
     location → REJECTED, `rejection_class: "evidence_contradicted"`.
