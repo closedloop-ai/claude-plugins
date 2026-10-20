@@ -19,6 +19,7 @@
 //                                     [--clerk-org-id org_...]
 //                                     [--operator-id <id> --operator-email <email> [--operator-name <name>]]
 //   vibe-sessions.mjs flag-snapshot   --worktree <path> --file <snapshot.json> [--replace]
+//   vibe-sessions.mjs flag-keys       --worktree <path> --file <flag-keys.json>
 //   vibe-sessions.mjs desktop-auth    --worktree <path> --file <auth-claim.json>
 //   vibe-sessions.mjs desktop-launched --worktree <path> --pid <launch pid> --log <launch log>
 //   vibe-sessions.mjs desktop-tab     --worktree <path>
@@ -54,7 +55,10 @@
 // (PLN) that the ticket worker publishes from the local plans and links from
 // the live ticket, and `livePlanStatus` the status it last set on it
 // (operator ruling, 2026-10-19). `flag-snapshot` validates and saves the production flag snapshot
-// (ISS-12048) next to the record; `codex-sessions` records this Codex thread
+// (ISS-12048) next to the record; `flag-keys` validates and saves, replacing
+// any earlier set, the keys that must be on to see the work per surface and
+// the justification for each key or read the session added (flag-keys.mjs),
+// which `list` shows for every session and `ticket-sections` renders; `codex-sessions` records this Codex thread
 // (`--thread`, else CODEX_THREAD_ID) and every subagent thread it spawned;
 // `ticket-sections` prints the live ticket's Environment, Production flag
 // snapshot, and Sessions sections from the record, with the branch's current
@@ -91,6 +95,7 @@ import { parseArgs } from "node:util";
 import { readWriterSummary } from "./dist/writer-state.mjs";
 import { admitMainSyncRequest, admitMainSyncShare, MainSyncError, mainSyncFailure, pushMainSync,
   readMainSyncInput, readMainSyncProvenance, prepareMainSyncInputs, validateMainSync } from "./dist/main-sync.mjs";
+import { listedFlagKeys, saveFlagKeys } from "./flag-keys.mjs";
 import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublication } from "./prototype-session.mjs";
 import { adoptStartupQuestions } from "./session-questions.mjs";
 import { git, readSessionRecord, sessionLiveTicket, writeSessionRecord as writeRecord } from "./session-record.mjs";
@@ -216,6 +221,8 @@ async function run(command) {
       return { session: touchSession() };
     case "flag-snapshot":
       return { session: saveFlagSnapshot() };
+    case "flag-keys":
+      return { session: saveFlagKeys(requireOption("worktree"), requireOption("file")) };
     case "desktop-auth":
       return { session: saveDesktopAuth() };
     case "desktop-launched":
@@ -246,7 +253,7 @@ async function run(command) {
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, ticket-sections, environment-result, local-fix, story-replacement, discard."
+        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, flag-keys, desktop-auth, desktop-launched, desktop-tab, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, ticket-sections, environment-result, local-fix, story-replacement, discard."
       );
   }
 }
@@ -322,6 +329,7 @@ function listSessions(repo) {
         vercel: isOwnedPrototypeSession(record) ? null : record?.vercel ?? vercelDefaults(entry.branch),
         ...(isOwnedPrototypeSession(record) && record.prototype ? { prototype: record.prototype } : {}),
         flagSnapshotTakenAt: record?.flagSnapshot?.takenAt ?? null,
+        flagKeys: listedFlagKeys(record?.flagKeys ?? null),
         stack: record?.stack ?? null,
         localFixes: record?.localFixes ?? [],
         ...changeSummary(entry.worktree),
@@ -644,6 +652,7 @@ function withDefaults(record) {
     livePlanStatus: rest.livePlanStatus ?? null,
     vercel: vercelWithDefaults(rest),
     flagSnapshot: rest.flagSnapshot ?? null,
+    flagKeys: rest.flagKeys ?? null,
     clerkOrgId: rest.clerkOrgId ?? null,
     desktopAuthSavedAt: rest.desktopAuthSavedAt ?? null,
     codexSessions: rest.codexSessions ?? { orchestrators: [], subagents: [] },

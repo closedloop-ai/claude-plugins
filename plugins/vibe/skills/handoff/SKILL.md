@@ -351,6 +351,13 @@ seen. Re-run
 inventory and independent read-only guardrails
 checks. Keep the writer's Design blocks for the ticket.
 
+A flag key finding (the reviewer's check 17; `../vibe/references/guardrails.md`,
+"Feature flags", operator ruling, 2026-10-20) resumes the SAME writer like any
+other source defect: it builds the change ungated or reuses the existing key,
+and saves the session's set again with `vibe-sessions.mjs flag-keys`. It is
+never a question for the person, and the review reruns until no flag key
+finding remains.
+
 ## 4. Storybook
 
 Read-only `vibe-storybook-decomposer` advises on components/stories/catalog
@@ -657,8 +664,12 @@ Production impact is production-only added/changed/removed paths and effects
 effects; it is not already shipped. Keep story/test/prototype-only inventory
 separate. The flag evidence covers exact new/existing modified/removed keys
 and relevant entry/read/mutation/host gates, including existing gates when
-there are no new flags. Keep source defaults, timestamped actually verified
-production values and local QA toggles distinct; unavailable/stale verification
+there are no new flags, plus each new key's or new read's justification from
+the record's `flagKeys`; the writer saves that set with `flag-keys` before
+the ticket fill, so `ticket-sections` renders the keys to see the work and the
+live ticket check refuses a ticket without them. Keep source defaults,
+timestamped actually verified production values and local QA toggles
+distinct; unavailable/stale verification
 is not permission to guess or overwrite/refresh the machine snapshot.
 For Open Questions, reuse quality-loop's graph plus live answered-decision
 research; include sources, context and the necessary Product/Design/Scope
@@ -810,9 +821,9 @@ results. Then dispatch
 record action, an exclusive record turn with no record writes) with the
 worktree, the live ticket slug, the confirmed summary, the final verified
 published commit from step 7, the tests the `pull-request` turn wrote and
-step 5's check results, and the ticket's Production impact and Flag changes
-and gates fields. It opens the pull request on the already pushed branch and
-returns its URL; it never enqueues or merges it. On `BLOCKED`, tell the
+step 5's check results, the ticket's Production impact and Flag changes
+and gates fields, and its "Keys to see this work" block. It opens the pull
+request on the already pushed branch and returns its URL; it never enqueues or merges it. On `BLOCKED`, tell the
 person in one plain line that the pull request could not be opened and
 suggest they message engineering, naming this work by its summary; never give them the
 branch to merge instead. Then mark the session handed off as below.
@@ -835,7 +846,10 @@ runs.
 Tell them, in a few lines: the ticket link, the app link as
 `<appUrl>/sign-in` (the app's root sends a signed-out visitor to account
 creation), the Storybook link (the full Storybook UI per
-`../vibe/references/environment.md`, "Storybook links"), and what happens
+`../vibe/references/environment.md`, "Storybook links"), the keys to see
+the work from the ticket's "Keys to see this work" (each surface and host
+with every key that must be on, named exactly, and which of them are off in
+their snapshot, or that no key is needed), and what happens
 next. On a requested pull request: the pull request link, and that they take
 it through review and merge from there; never the branch to merge. When
 passing it on: the branch name, and that the next owner, by name, picks it up

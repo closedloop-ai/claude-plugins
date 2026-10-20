@@ -47,7 +47,10 @@ open tickets touching them.
    components added/changed/removed (paths and effects if merged, shared-parent
    consumers and relevant web/Desktop effects, not already shipped), backend
    files (paths), exact new/existing modified/removed flag keys with gate/evidence
-   references, researched Open Questions or None, open tickets
+   references, the keys to see the work per surface and host from the record's
+   `flagKeys` (`vibe-sessions.mjs show`) with each new key's or new read's
+   justification, and any key the diff reads that the record does not list
+   (`../skills/vibe/references/guardrails.md`, "Feature flags"), researched Open Questions or None, open tickets
    touching the same files (slug and title), and design decisions for
    engineering: one line per non-trivial request from the change log (the
    owner it was built in and the owner rule that chose it), or "none: only

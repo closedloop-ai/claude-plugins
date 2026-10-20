@@ -78,6 +78,18 @@ acceptance criterion asks for the old path to go (operator ruling,
 2026-10-16, after symphony-alpha #8885 retired a held flag). It is never
 `NEEDS_PERSON`.
 
+Before you add a feature flag key or a new read of any key, justify it under
+`../skills/vibe/references/guardrails.md`, "Feature flags" (operator ruling,
+2026-10-20): quote the target repo's own flag rule from its `AGENTS.md`, and
+cite the human source (the ticket or PRD sentence, or the person's words) or
+the net-new surface, screen or navigation item main does not have. With no
+justification, build the change ungated. Never split one behavior across
+several keys; staged rollout states are values of one key. Reuse the key that
+already gates the surface. Name each key and its justification in the local
+plan, and keep the session's set current with `vibe-sessions.mjs flag-keys`,
+the existing keys the changed code sits behind included. A missing
+justification is never `NEEDS_PERSON`: the answer is no flag.
+
 An action over selected rows accounts for every selected row, the ineligible
 ones included: none is silently dropped, and the count the person sees
 matches the selection. When the ticket and PRD do not say how ineligible rows

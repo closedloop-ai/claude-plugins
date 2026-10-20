@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.61
+
+#### Added
+- `vibe-sessions.mjs flag-keys --worktree <wt> --file <flag-keys.json>` records, per surface and host, every feature flag key that must be on to see the session's work, new and existing, with the files that read each key. A new key or a new read of an existing key must carry a reason (net-new surface, screen or navigation item, or a spec-requested rollout), the target repo's flag rule sentence quoted from its `AGENTS.md`, and a human source; a spec rollout must name its ticket or spec slug. The script refuses a key without them and refuses a second new key on one surface, so staged rollout states cannot become separate keys. `list` shows each session's keys, and `ticket-sections` renders them under "Keys to see this work" in the Production flag snapshot section with each key's value in the person's snapshot.
+- `live-ticket-check.mjs` fails a ticket whose Production flag snapshot section has no "Keys to see this work" block, or still shows it as pending.
+- A `pm-flag-key-sprawl-blocked` eval case and `test_vibe_flag_keys_contract.py` covering the flag key rule in each owner.
+
+#### Changed
+- `guardrails.md` has a canonical "Feature flags" section: the target repo's own flag rule decides, read from the checkout rather than restated by the plugin; no justification means no flag; one behavior gets one key; an existing key on the same surface, on main or recorded by another session, is reused; whatever the repo rule ships directly is built ungated.
+- The implementation writer justifies each new key or read before building it and keeps the session's set current with `flag-keys`. The guardrails reviewer gains check 17, which compares every key the diff adds, newly reads or depends on with the record and the repo rule and reports unjustified keys, split keys, gates on shipped-surface edits, duplicate keys for one surface and keys missing from the record as blocking findings.
+- Handoff routes flag key findings to the same writer, and its final message, the ticket's Flag changes and gates field, the summarizer's ticket block and a requested pull request's summary list the keys to see the work and each new key's justification.
+
 ### vibe v1.0.58
 
 #### Changed

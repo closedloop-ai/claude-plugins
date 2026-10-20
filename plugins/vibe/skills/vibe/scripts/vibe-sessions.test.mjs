@@ -438,6 +438,46 @@ function writeRollout(codexHome, day, id, meta) {
   writeJson(file, `${JSON.stringify({ type: "session_meta", payload })}\n${JSON.stringify({ type: "event" })}\n`);
 }
 
+test("flag-keys saves a justified set, replaces it on the next call, refuses an unjustified key, and list shows it per session", (t) => {
+  const { root, home, worktree } = newSession(t, "flag-keys");
+  const file = path.join(root, "flag-keys.json");
+  const newKey = (key) => ({
+    key,
+    origin: "new",
+    readAt: ["packages/app/branches/components/branches-list.tsx"],
+    reason: "net-new-screen",
+    repoRule: "A flag is required for exactly four things: a net-new surface, a net-new screen, a net-new navigation item, or a gated rollout the author or a spec asks for.",
+    source: "PRD-729: the redesigned Branches list is a new screen",
+  });
+  writeJson(file, { surfaces: [{ surface: "Branches list", hosts: ["web", "desktop"], keys: [newKey("branches-list-v2")] }] });
+  const saved = runNode(SCRIPT, ["flag-keys", "--worktree", worktree, "--file", file], home);
+  assert.equal(saved.status, 0, saved.stderr);
+  const record = JSON.parse(readFileSync(recordFile(worktree, home), "utf8"));
+  assert.equal(record.flagKeys.surfaces[0].keys[0].source, "PRD-729: the redesigned Branches list is a new screen");
+  assert.ok(record.flagKeys.recordedAt);
+
+  writeJson(file, { surfaces: [{ surface: "Branches list", hosts: ["web"], keys: [newKey("branches-list-adapter-connected"), newKey("branches-list-adapter-rollback")] }] });
+  const split = runNode(SCRIPT, ["flag-keys", "--worktree", worktree, "--file", file], home);
+  assert.equal(split.status, 1);
+  assert.match(split.json.error, /one behavior gets one key/);
+  const unjustified = { ...newKey("branches-list-v3"), reason: undefined };
+  writeJson(file, { surfaces: [{ surface: "Branches list", hosts: ["web"], keys: [unjustified] }] });
+  const refused = runNode(SCRIPT, ["flag-keys", "--worktree", worktree, "--file", file], home);
+  assert.equal(refused.status, 1);
+  assert.match(refused.json.error, /has no justification/);
+  assert.equal(JSON.parse(readFileSync(recordFile(worktree, home), "utf8")).flagKeys.surfaces[0].keys[0].key, "branches-list-v2");
+
+  writeJson(file, { surfaces: [{ surface: "Branches list", hosts: ["web"], keys: [{ key: "labs-nav-section", origin: "existing", readAt: ["apps/app/page.tsx"] }] }] });
+  runNode(SCRIPT, ["flag-keys", "--worktree", worktree, "--file", file], home);
+  const listed = runNode(SCRIPT, ["list"], home);
+  assert.deepEqual(listed.json.sessions.find((session) => session.slug === "flag-keys").flagKeys, [
+    { surface: "Branches list", hosts: ["web"], keys: [{ key: "labs-nav-section", origin: "existing" }] },
+  ]);
+  const missing = runNode(SCRIPT, ["flag-keys", "--worktree", worktree, "--file", path.join(root, "absent.json")], home);
+  assert.equal(missing.status, 1);
+  assert.match(missing.json.error, /Could not read a JSON flag keys file/);
+});
+
 test("codex-sessions records this thread and every subagent it spawned, nested ones included", (t) => {
   const { root, home, worktree } = newSession(t, "sessions");
   const codexHome = path.join(root, "codex-home");
@@ -505,8 +545,14 @@ test("ticket-sections renders the record's sections and marks what is still pend
     home
   );
   assert.equal(recorded.status, 0, recorded.stderr);
+  const keysPending = runNode(SCRIPT, ["ticket-sections", "--worktree", worktree], home);
+  assert.match(keysPending.json.markdown, /### Keys to see this work\n\nPending\./);
+  const keysFile = path.join(root, "flag-keys.json");
+  writeJson(keysFile, { surfaces: [{ surface: "Sections", hosts: ["web"], keys: [{ key: "a-flag", origin: "existing", readAt: ["apps/app/a.tsx"] }] }] });
+  runNode(SCRIPT, ["flag-keys", "--worktree", worktree, "--file", keysFile], home);
   const filled = runNode(SCRIPT, ["ticket-sections", "--worktree", worktree], home);
   assert.doesNotMatch(filled.json.markdown, /Pending\./);
+  assert.match(filled.json.markdown, /\| Sections \| web \| `a-flag` \| existing key \| false \|/);
   assert.match(filled.json.markdown, /\| `a-flag` \| false \|\n\| `b-flag` \| `test` \|/);
   assert.match(filled.json.markdown, /as PostHog user `user_abc`\. 2 flags\./);
   assert.match(filled.json.markdown, /- Codex session \(orchestrator\): `thread-12345678`/);

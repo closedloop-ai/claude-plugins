@@ -2,7 +2,7 @@
 // Checks a vibe session's live ticket body (ISS-12057) is complete before
 // handoff: every section is present and filled, no template placeholder or
 // `Pending.` marker is left, and the sections rendered from the session
-// record carry their URLs, flag table, and session ids. With
+// record carry their URLs, flag table, keys to see the work, and session ids. With
 // `--base-commit` (the handoff inventory's `baseCommit`), the Environment
 // section must name that commit as the branch's base, so a branch that merged
 // main since the session started is not handed off with its old base.
@@ -51,7 +51,11 @@ const REQUIRED_CONTENT = {
     [/^- API: https:\/\/\S+/m, "has no API URL"],
     [/^- Storybook: https:\/\/\S+/m, "has no Storybook URL"],
   ],
-  "Production flag snapshot": [[/^\| Flag \| Value \|$/m, "has no flag table"]],
+  "Production flag snapshot": [
+    [/^\| Flag \| Value \|$/m, "has no flag table"],
+    // The keys a person must turn on to see the work (operator ruling, 2026-10-20).
+    [/^### Keys to see this work$/m, "lists no keys to see the work"],
+  ],
   Sessions: [[/\(orchestrator\): `[^`]+`/, "lists no orchestrator session id"]],
 };
 

@@ -927,6 +927,12 @@ the flags or to match production again, dispatch `vibe-environment-worker` in
 flags mode with the worktree and the live ticket slug. Never refresh them
 otherwise.
 
+Every key the work adds or reads, and the keys a person must turn on to see
+it, follow `references/guardrails.md`, "Feature flags" (operator ruling,
+2026-10-20): the writer justifies each new key or read against the target
+repo's own flag rule before building it, never splits one behavior across
+keys, and keeps the set current with `vibe-sessions.mjs flag-keys`.
+
 ## 8. Ending a session
 
 A session ends one of two ways (operator ruling, 2026-10-15): a pull request

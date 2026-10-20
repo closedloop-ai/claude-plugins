@@ -154,11 +154,11 @@ the ready message tells the person so in plain words, so they never accept a
 change the branch cannot keep (operator ruling, 2026-10-15). A fix to vibe's own tooling is
 different and still stops the session ("Plugins and tooling", above).
 
-Vibe work is headed for `main`, so the closed-by-default UI policy applies: a
-net-new screen, surface, or navigation item ships behind a default-off PostHog
-flag (one key for web and Desktop, read where it gates). If the person chose
-Labs, the Labs pattern is that flag. Tell them in one line that the new screen
-stays hidden on their environment until that flag is turned on for them.
+Vibe work is headed for `main`, so the target repo's own flag rule decides
+which keys the work may add or read ("Feature flags", below). If the person
+chose Labs, the Labs pattern is that flag. When a key does gate the work, tell
+them in one line that it stays hidden on their environment until that key is
+turned on for them.
 
 The prototype-first rule in the root `AGENTS.md` (net-new screens start in
 `apps/prototypes`) does not apply to vibe sessions. That is an operator
@@ -408,6 +408,61 @@ reviewer, the ticket worker and the handoff skill point at it.
   writer and recorded on the Feature docs line instead, never kept as a
   draft.
 
+## Feature flags
+
+Operator ruling, 2026-10-20: about 14 symphony-alpha sessions each added
+their own PostHog keys and nothing challenged them. One session gated a single
+Branches list redesign behind three keys (`branches-list-adapter-connected`,
+`-disconnected`, `-rollback`); stacked with other sessions' keys, a person had
+to turn on many keys to see one screen. Writers also gated edits to shipped
+surfaces that the repo's rule says ship directly, and no handoff said which
+keys to turn on. This section is the rule's one canonical statement; the
+writer, the guardrails reviewer, the summarizer, the ticket worker and the
+handoff skill point at it.
+
+- The target repo's rule decides, never this file. Before adding a new flag
+  key or a new read of any key (an existing key read in a new place counts),
+  read the rule from the checkout:
+  `rg -n -i 'feature flag|closed-by-default|ui-flag' "<wt>/AGENTS.md"` plus
+  the nearest `AGENTS.md` of each directory the read lands in. Quote the
+  sentence the key relies on; do not paraphrase it from memory or from this
+  file.
+- No justification means no flag. A new key or new read is justified only by
+  what that rule allows (in symphony-alpha today: a net-new surface, screen or
+  navigation item, or a rollout the author or a spec asks for), with its
+  human source: the ticket or PRD slug and its sentence, or the person's
+  words. A net-new reason names what main does not have. An agent-written
+  plan, PLN, decision table or change log is never the source
+  (`quality-loop.md`, "Communication and product questions"). Whatever the
+  rule says ships directly (in symphony-alpha: edits to a shipped surface,
+  corrections and removals) is built ungated; a default-off flag on it keeps
+  the old behavior for everyone.
+- One behavior, one key. Staged rollout states (connected and disconnected,
+  on and off, rollback, phase one and two) are the values or the rollout
+  percentage of that one key, never more keys. One key gates every host the
+  surface exists on, web and Desktop, read where it gates.
+- Reuse first. Before naming a new key, `rg` the repo's flag key constants
+  (symphony-alpha: `packages/app/shared/lib/feature-flags.ts`), `code_grep`
+  the surface's entry points for keys that already gate them, and read
+  `vibe-sessions.mjs list` for keys other sessions recorded on the same
+  surface. A key that already gates the surface is reused.
+- Record the keys to see the work. Whenever the session adds, reuses or
+  removes a key or read, and at handoff, the writer saves the full set with
+  `vibe-sessions.mjs flag-keys --worktree <wt> --file <flag-keys.json>`:
+  per surface, its hosts (`web`, `desktop`) and every key that must be on to
+  see the work there, the existing keys the changed code already sits behind
+  included. Each key is `new` (created by this work), `new-read` (an existing
+  key this work reads in a new place) or `existing` (a read on main that
+  gates the changed code), with the files that read it. `new` and `new-read`
+  also carry `reason` (`net-new-surface`, `net-new-screen`,
+  `net-new-navigation-item` or `spec-requested-rollout`), `repoRule` (the
+  quoted sentence) and `source`; the script refuses a key without them, a
+  spec rollout whose source names no slug, and a second new key on one
+  surface. A surface no key gates is listed with no keys. The live ticket's
+  Production flag snapshot section renders the set as "Keys to see this work"
+  with each key's value in the person's snapshot, and `list` shows it for
+  every session.
+
 ## Accessibility
 
 Icon-only controls get accessible names, disclosures get `aria-expanded`, one
@@ -420,8 +475,8 @@ destination pattern: the route checks the `labs-nav-section` container flag
 plus its own PostHog key (see `apps/app/app/(authenticated)/[orgSlug]/help/page.tsx`
 and `packages/app/shared/lib/feature-flags.ts`). One key gates web and Desktop.
 Tell them the Labs entry shows on their environment only if those flags are
-on for them, and record the key in the session summary so handoff can list
-it.
+on for them, and record both keys with `flag-keys` ("Feature flags") so
+handoff can list them.
 
 ## Tests
 

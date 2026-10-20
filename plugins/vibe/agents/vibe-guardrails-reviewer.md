@@ -1,6 +1,6 @@
 ---
 name: vibe-guardrails-reviewer
-description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, Storybook taxonomy placement and precedent placement, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them or added unasked, leftovers after an extraction, capability removed by a main sync, flag retirement against a recorded hold, and each new mechanism's reuse and cost scaling). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
+description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, Storybook taxonomy placement and precedent placement, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them or added unasked, leftovers after an extraction, capability removed by a main sync, flag retirement against a recorded hold, every flag key the session adds or depends on against the target repo's flag rule and its human source, and each new mechanism's reuse and cost scaling). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
 model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
 ---
@@ -305,6 +305,27 @@ path merely because another rule describes how its content should look.
     by a cited human ruling, or listed uncovered with current owner and status.
     A session-created supersession, a "not reused" label, or a delivered child
     left `TODO` is blocking.
+17. Flag keys (`guardrails.md`, "Feature flags"; operator ruling,
+    2026-10-20, after one session gated a single Branches list behind
+    `branches-list-adapter-connected`, `-disconnected` and `-rollback`):
+    read the target repo's flag rule from the checkout's `AGENTS.md` files
+    yourself, then list every flag key the diff adds, every key it reads in a
+    new place, and every existing key the changed code sits behind (`rg` the
+    diff for the repo's flag read helpers and key constants, and
+    `code_grep` each changed screen's entry points). Compare that list with
+    the record's `flagKeys` (`vibe-sessions.mjs show --worktree <wt>`). Each
+    of these is blocking, quoted with `file:line`: a new key or new read
+    whose justification is missing, cites only an agent-written plan, PLN,
+    decision table or change log, or does not match the repo rule's quoted
+    sentence; a gate on a change the repo rule says ships directly (in
+    symphony-alpha: an edit to a shipped surface, a correction or a
+    removal), checked against main; more than one key for one behavior,
+    staged rollout states as separate keys included; a new key where an
+    existing key on main, or one another session's `list` entry records,
+    already gates the same surface; one surface gated by different keys on
+    web and Desktop; and a key the diff reads that the record does not list,
+    or a record entry the diff does not read. The compliant fix for an
+    unjustified key is the change built ungated, or the reused key.
 
 For publication, verify the SAME source actor's `main-sync-inputs` evidence
 before capture and after the committed merge. Canonical private diagnostics

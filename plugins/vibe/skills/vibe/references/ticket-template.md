@@ -94,7 +94,7 @@ publication, and the same ticket worker verifies completeness and assignment.
 | Environment | `ticket-sections` (via `vibe-environment-worker`) | environment start, every redeploy |
 | Progress | the SAME persistent writer; operational environment/ticket helper in a serial record turn | after each change and each redeploy |
 | Backend built, Backend still missing | the SAME persistent writer | as backend work is built or found missing |
-| Production flag snapshot | `ticket-sections` (via `vibe-environment-worker`) | environment start, a refresh the person asked for |
+| Production flag snapshot | `ticket-sections` (via `vibe-environment-worker`, `vibe-ticket-worker`) | environment start, a refresh the person asked for, handoff (the keys to see the work) |
 | Sessions | `ticket-sections` (via `vibe-environment-worker`, `vibe-ticket-worker`) | every redeploy, handoff |
 | Handoff | `vibe-ticket-worker` | handoff |
 | Design Review | `vibe-ticket-worker` | handoff, from verified final code/publication and actual design evidence |
@@ -140,7 +140,9 @@ path and decision table, or "None: every screen uses existing API endpoints.">
 ## Production flag snapshot
 
 <From ticket-sections: when it was taken, for which PostHog user, and every
-flag with its value.>
+flag with its value; then "Keys to see this work": per surface and host, every
+key that must be on to see the work, new and existing, with its value in that
+snapshot (`guardrails.md`, "Feature flags").>
 
 ## Sessions
 
@@ -158,7 +160,9 @@ subagent that worked on this.>
   production component changes.>
 - Flag changes and gates: <exact keys classified as new, existing modified or
   removed, with owning source paths and the changed code's gated entry points,
-  reads, mutations and host gates. Include relevant existing gates, not only
+  reads, mutations and host gates. For each new key and new read, its
+  justification from the session record's `flagKeys`: the reason, the quoted
+  repo rule and the human source (`guardrails.md`, "Feature flags"). Include relevant existing gates, not only
   Labs flags. Say "No new flags" when the verified diff establishes that, but
   still list existing modified/removed keys and gates around changed code.
   Separate source defaults (source evidence), actually verified production
