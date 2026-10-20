@@ -2283,6 +2283,87 @@ def _normalize_findings(
     return normalized, warnings, non_standard
 
 
+def _snippet_anchor(code_snippet: object) -> str:
+    """First non-blank line of a finding's ``code_snippet``, stripped."""
+    if not isinstance(code_snippet, str):
+        return ""
+    for raw in code_snippet.splitlines():
+        stripped = raw.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+def _reanchor_out_of_range_lines(
+    findings: list[dict[str, Any]],
+    file_statuses: dict[str, str],
+    patch_lines: dict[str, dict[str, dict[str, str]]],
+    review_root: str,
+) -> None:
+    """Re-anchor diff-scope findings whose ``line`` is past the end of the file.
+
+    A reviewer can cite a line from the wrong numbering (e.g. its position
+    in ``patches_all.txt``). Such a line is checked against the file it
+    names: the old file, rebuilt from the patch's removed lines, for a file
+    deleted outright (``file_statuses`` value ``"removed"``); otherwise the
+    new file under ``review_root``, whether or not it is in the diff. When
+    the first non-blank line of ``code_snippet`` occurs on exactly one line
+    of that file, ``line`` moves there and the original is kept in
+    ``line_reanchored_from``. Otherwise the finding is kept and tagged
+    ``line_out_of_range: True``. Runs before range filtering and duplicate
+    merging, so a re-anchored finding is range-checked and merged at its real
+    line.
+
+    The validator OWNS both fields: any reviewer-supplied value is stripped.
+    A file that cannot be read (no proven ``review_root``, or missing on
+    disk) is left unjudged.
+    """
+    for finding in findings:
+        finding.pop("line_out_of_range", None)
+        finding.pop("line_reanchored_from", None)
+        if (finding.get("finding_scope") or "diff") != "diff":
+            continue
+        filepath = finding.get("file")
+        raw_line = finding.get("line")
+        if not isinstance(filepath, str) or not filepath:
+            continue
+        if isinstance(raw_line, str) and raw_line.strip().isdigit():
+            line = int(raw_line)
+        elif isinstance(raw_line, int) and not isinstance(raw_line, bool):
+            line = raw_line
+        else:
+            continue
+        if line < 1:
+            continue
+
+        file_lines: list[str] | None = None
+        if file_statuses.get(filepath) == "removed":
+            removed = (patch_lines.get(filepath) or {}).get("removed_lines") or {}
+            numbered = {int(k): v for k, v in removed.items() if str(k).isdigit()}
+            if numbered:
+                file_lines = [numbered.get(n, "") for n in range(1, max(numbered) + 1)]
+        elif review_root:
+            try:
+                file_lines = (Path(review_root) / filepath).read_text(
+                    errors="replace",
+                ).splitlines()
+            except OSError:
+                file_lines = None
+        if file_lines is None or line <= len(file_lines):
+            continue
+
+        anchor = _snippet_anchor(finding.get("code_snippet"))
+        matches = (
+            [n for n, text in enumerate(file_lines, start=1) if anchor in text]
+            if anchor else []
+        )
+        if len(matches) == 1:
+            finding["line_reanchored_from"] = line
+            finding["line"] = matches[0]
+        else:
+            finding["line_out_of_range"] = True
+
+
 def _filter_scope_and_range(
     findings: list[dict[str, Any]],
     files_to_review: set[str],
@@ -2398,6 +2479,18 @@ def _filter_scope_and_range(
 
         finding.pop("out_of_diff", None)
         line = int(finding.get("line", 0))
+
+        # A line past the end of its file (``_reanchor_out_of_range_lines``
+        # found no unique re-anchor) has no position to range-check. Where a
+        # finding points is never by itself a reason to discard it, so only
+        # the normal confidence rule applies.
+        if finding.get("line_out_of_range") is True:
+            finding.pop("out_of_hunk_kept", None)
+            if priority > 1 and confidence < CONFIDENCE_DISCARD_THRESHOLD:
+                discarded.append({"finding": finding, "reason": "DISCARD_LOW_CONFIDENCE"})
+                continue
+            result.append(finding)
+            continue
 
         file_ranges = changed_ranges.get(filepath, {})
         if (file_statuses or {}).get(filepath) == "removed":
@@ -2643,6 +2736,23 @@ def cmd_validate(args: argparse.Namespace) -> int:
     normalized, normalization_warnings, non_standard_values = _normalize_findings(
         raw_findings, discarded
     )
+    # New-file contents are read from the review root, the tree the reviewers
+    # read. Without a proven root, lines on surviving files are left unjudged
+    # rather than checked against some other checkout.
+    review_root = ""
+    cr_dir_arg = getattr(args, "cr_dir", None)
+    if cr_dir_arg:
+        scope_meta = _read_optional_json(Path(cr_dir_arg) / "scope.json", {})
+        try:
+            review_root = _require_review_root(cr_dir_arg, scope_meta)
+        except ReviewRootError as exc:
+            print(
+                f"Warning: line-range re-anchoring skipped for surviving files — {exc}",
+                file=sys.stderr,
+            )
+    _reanchor_out_of_range_lines(
+        normalized, file_statuses, diff_data.get("patch_lines", {}) or {}, review_root,
+    )
     filtered = _filter_scope_and_range(
         normalized, files_to_review, changed_ranges, discarded,
         out_of_hunk_confidence_floor=out_of_hunk_floor,
@@ -2660,6 +2770,12 @@ def cmd_validate(args: argparse.Namespace) -> int:
     kept_out_of_diff = sum(
         1 for f in filtered if f.get("out_of_diff") is True
     )
+    lines_reanchored = sum(
+        1 for f in filtered if "line_reanchored_from" in f
+    )
+    kept_line_out_of_range = sum(
+        1 for f in filtered if f.get("line_out_of_range") is True
+    )
 
     deduped = _merge_duplicates(filtered, discarded)
     validated = _group_cross_file(deduped)
@@ -2674,6 +2790,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
         "cross_file_grouped": cross_file_grouped,
         "kept_out_of_hunk": kept_out_of_hunk,
         "kept_out_of_diff": kept_out_of_diff,
+        "lines_reanchored": lines_reanchored,
+        "kept_line_out_of_range": kept_line_out_of_range,
         "discarded_out_of_hunk_low_confidence": sum(
             1 for d in discarded
             if d["reason"] == "DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE"
@@ -5255,6 +5373,10 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
     summary comment instead (the summary renders all validated findings). They
     are pre-skipped when tagged, and a runtime 422 is treated as a non-inline
     skip rather than a failure to cover parser/GitHub diff disagreements.
+
+    Findings the validator tagged ``line_out_of_range: True`` (line past the
+    end of the file, no unique re-anchor) have no real line to comment on and
+    are never posted inline either; they too surface only in the summary.
     """
     try:
         with open(args.findings) as f:
@@ -5306,6 +5428,7 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
     skipped_no_inline = 0
     skipped_out_of_hunk = 0
     skipped_out_of_diff = 0
+    skipped_out_of_range = 0
     failed = 0
     pr_files: _PrFiles | None = None
 
@@ -5320,6 +5443,14 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
         # post. Surface them in the summary only and skip the API call.
         if finding.get("out_of_hunk_kept") is True:
             skipped_out_of_hunk += 1
+            continue
+
+        # The validator found the line past the end of its file and could not
+        # re-anchor it, so there is no real line to comment on (even through
+        # an out_of_diff evidence anchor, whose body would cite the bogus
+        # line). Summary only.
+        if finding.get("line_out_of_range") is True:
+            skipped_out_of_range += 1
             continue
 
         path = finding.get("file") or ""
@@ -5414,11 +5545,13 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
 
     total_skipped = (
         skipped_dedup + skipped_no_inline + skipped_out_of_hunk + skipped_out_of_diff
+        + skipped_out_of_range
     )
     print(
         f"Posted {posted}, skipped {total_skipped} "
         f"(dedup={skipped_dedup}, non-inline={skipped_no_inline}, "
-        f"out-of-hunk={skipped_out_of_hunk}, out-of-diff={skipped_out_of_diff}), "
+        f"out-of-hunk={skipped_out_of_hunk}, out-of-diff={skipped_out_of_diff}, "
+        f"line-out-of-range={skipped_out_of_range}), "
         f"failed {failed}"
     )
     return 0
@@ -7386,20 +7519,24 @@ def _signal_extraction_prompt_hash(path: Path) -> str:
 
 
 def signal_extraction_cache_key(
-    diff_tip: str, taxonomy_hash: str, prompt_hash: str,
+    input_hash: str, taxonomy_hash: str, prompt_hash: str,
 ) -> str:
     """Cache key for the ``signals`` namespace (PLN-725).
 
-    Tuple ``(diff_tip, taxonomy_hash, prompt_hash)`` is the complete set
-    of inputs the extraction is a pure function of. Both
-    ``taxonomy_hash`` and ``prompt_hash`` are content-addressed hashes of
+    Tuple ``(input_hash, taxonomy_hash, prompt_hash)`` is the complete set
+    of inputs the extraction is a pure function of. Every member is a
+    content hash: ``input_hash`` is ``_stable_json_hash`` of the agent
+    input bundle ``_build_signal_input`` renders (the only view of the diff
+    and intent the agent gets), and ``taxonomy_hash`` / ``prompt_hash`` hash
     the on-disk asset bytes (``_taxonomy_hash`` and
-    ``_signal_extraction_prompt_hash``), computed inside
+    ``_signal_extraction_prompt_hash``). All three are computed inside
     ``cmd_extract_signals_prepare`` rather than taken on faith from
-    caller-supplied flags. Editing either asset flips the key for real.
+    caller-supplied flags. Never key on a ref name: a branch review's diff
+    tip is the literal ``HEAD``, which would let every later review reuse
+    the first run's signals.
     """
     payload = (
-        (diff_tip or "") + "\0"
+        (input_hash or "") + "\0"
         + (taxonomy_hash or "") + "\0"
         + (prompt_hash or "")
     )
@@ -7589,8 +7726,9 @@ def fail_closed_signal_set(taxonomy: dict[str, Any]) -> list[dict[str, Any]]:
 def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
     """PLN-725 Stage 1a: prep the signal-extraction agent input + check cache.
 
-    Reads ``diff_data.json`` and (optionally) an intent summary, computes
-    the ``(diff_tip, taxonomy_hash, prompt_hash)`` cache key, and either:
+    Reads ``diff_data.json`` and (optionally) an intent summary, renders
+    the agent input bundle, computes the ``(input_hash, taxonomy_hash,
+    prompt_hash)`` cache key, and either:
 
       - **Cache hit** — writes the cached extraction directly to
         ``<cr_dir>/extract_signals.json`` and emits a manifest with
@@ -7605,16 +7743,18 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
     Always exits 0; structural failures (no diff_data, malformed
     taxonomy) print to stderr and return 1.
     """
-    cr_dir = Path(args.cr_dir)
+    # Absolute paths: the singleton Task that reads this manifest runs in the
+    # session's checkout, which is not the review root on a worktree run, so a
+    # relative --cr-dir would resolve against the wrong tree.
+    cr_dir = Path(args.cr_dir).resolve()
     diff_data_path = Path(args.diff_data)
     cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
-    diff_tip = str(args.diff_tip)
     taxonomy_path = (
         Path(args.taxonomy) if getattr(args, "taxonomy", None) else _default_signal_taxonomy_path()
     )
     prompt_path = (
         Path(args.prompt) if getattr(args, "prompt", None) else _default_signal_extraction_prompt_path()
-    )
+    ).resolve()
     intent_path = Path(args.intent) if getattr(args, "intent", None) else None
     model = str(getattr(args, "model", None) or SIGNAL_EXTRACTION_MODEL_DEFAULT)
 
@@ -7652,8 +7792,22 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
         print(f"Error reading prompt asset: {exc}", file=sys.stderr)
         return 1
 
+    # Build the bundle before the cache lookup: the key content-addresses it.
+    intent_summary: dict[str, Any] | None = None
+    if intent_path is not None:
+        try:
+            with open(intent_path) as f:
+                intent_summary = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            intent_summary = None
+        if not isinstance(intent_summary, dict):
+            intent_summary = None
+    agent_input = _build_signal_input(diff_data, intent_summary)
+
     taxonomy_hash = _taxonomy_hash(taxonomy_bytes)
-    key = signal_extraction_cache_key(diff_tip, taxonomy_hash, prompt_hash)
+    key = signal_extraction_cache_key(
+        _stable_json_hash(agent_input), taxonomy_hash, prompt_hash,
+    )
 
     output_path = cr_dir / "extract_signals.json"
 
@@ -7677,17 +7831,6 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
             "model": model,
         })
 
-    intent_summary: dict[str, Any] | None = None
-    if intent_path is not None:
-        try:
-            with open(intent_path) as f:
-                intent_summary = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            intent_summary = None
-        if not isinstance(intent_summary, dict):
-            intent_summary = None
-
-    agent_input = _build_signal_input(diff_data, intent_summary)
     input_path = cr_dir / "extract_signals_input.json"
     with open(input_path, "w") as f:
         json.dump(agent_input, f, indent=2)
@@ -7704,6 +7847,9 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
         "prompt_hash": prompt_hash,
         "input_path": str(input_path),
         "taxonomy_path": str(taxonomy_snapshot_path),
+        # Every file the agent reads besides the prompt and input bundle;
+        # singleton-dispatch passes these through verbatim.
+        "extra_inputs": [str(taxonomy_snapshot_path)],
         "prompt_path": str(prompt_path),
         "output_path": str(output_path),
         "model": model,
@@ -8856,16 +9002,20 @@ def _stable_json_hash(payload: Any) -> str:
 def coverage_critic_cache_key(
     coverage_plan_initial_hash: str,
     signals_hash: str,
-    diff_tip: str,
+    diff_summary_hash: str,
     prompt_hash: str,
     available_reviewers_hash: str,
 ) -> str:
     """Cache key for the ``coverage_critic`` namespace (PLN-725).
 
-    Tuple ``(coverage_plan_initial_hash, signals_hash, diff_tip,
+    Tuple ``(coverage_plan_initial_hash, signals_hash, diff_summary_hash,
     prompt_hash, available_reviewers_hash)`` is the complete set of
     inputs the critic is a pure function of. All five are
-    content-addressed.
+    content-addressed: the plan, signals and roster hashes cover the
+    agent's input bundle, and ``diff_summary_hash`` covers the diff
+    summary it is given. Never key on a ref name: a branch review's diff
+    tip is the literal ``HEAD``, which would let every later review with
+    the same plan, signals and roster reuse the first run's plan.
 
     ``available_reviewers_hash`` is the deterministic hash of the
     AVAILABLE roster the agent will actually see (sorted, dedup'd, and
@@ -8878,7 +9028,7 @@ def coverage_critic_cache_key(
     payload = (
         (coverage_plan_initial_hash or "") + "\0"
         + (signals_hash or "") + "\0"
-        + (diff_tip or "") + "\0"
+        + (diff_summary_hash or "") + "\0"
         + (prompt_hash or "") + "\0"
         + (available_reviewers_hash or "")
     )
@@ -9205,7 +9355,7 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     Reads the rule-resolved plan from ``coverage.json``'s ``.initial``
     section, plus ``extract_signals.json``, ``diff_data.json``, and
     ``available_reviewers.json``. Computes the
-    ``(coverage_plan_initial_hash, signals_hash, diff_tip, prompt_hash,
+    ``(coverage_plan_initial_hash, signals_hash, diff_summary_hash, prompt_hash,
     available_reviewers_hash)`` cache key and either:
 
       - **Cache hit** — writes the merged plan into ``coverage.json``'s
@@ -9222,18 +9372,19 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
 
     Always exits 0; structural failures print to stderr and return 1.
     """
-    cr_dir = Path(args.cr_dir)
+    # Absolute: the singleton Task resolves manifest paths from the session's
+    # checkout, not the review root (see cmd_extract_signals_prepare).
+    cr_dir = Path(args.cr_dir).resolve()
     signals_path = (
         Path(args.extract_signals) if getattr(args, "extract_signals", None) else None
     )
     diff_data_path = Path(args.diff_data)
     available_path = Path(args.available_reviewers)
     cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
-    diff_tip = str(args.diff_tip)
     no_critic = bool(getattr(args, "no_critic", False))
     prompt_path = (
         Path(args.prompt) if getattr(args, "prompt", None) else _default_coverage_critic_prompt_path()
-    )
+    ).resolve()
     model = str(getattr(args, "model", None) or COVERAGE_CRITIC_MODEL_DEFAULT)
 
     try:
@@ -9347,9 +9498,14 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     # stale (could propose a now-removed reviewer), so it must key
     # the cache.
     available_reviewers_hash = _available_reviewers_hash(available_reviewers)
+    # Build the bundle before the cache lookup: the key content-addresses
+    # the diff summary the agent is given.
+    main_input, diff_summary = _build_coverage_critic_input(
+        plan_initial, extract_signals, diff_data, available_reviewers,
+    )
     key = coverage_critic_cache_key(
-        plan_initial_hash, signals_hash, diff_tip, prompt_hash,
-        available_reviewers_hash,
+        plan_initial_hash, signals_hash, _stable_json_hash(diff_summary),
+        prompt_hash, available_reviewers_hash,
     )
 
     cached = _read_cached_coverage_critic(cache_dir, key)
@@ -9372,9 +9528,6 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
             return 1
         return _emit_summary(manifest)
 
-    main_input, diff_summary = _build_coverage_critic_input(
-        plan_initial, extract_signals, diff_data, available_reviewers,
-    )
     input_path = cr_dir / "coverage_critic_input.json"
     diff_summary_path = cr_dir / "coverage_critic_diff_summary.json"
     with open(input_path, "w") as f:
@@ -9391,6 +9544,9 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
         "available_reviewers_hash": available_reviewers_hash,
         "input_path": str(input_path),
         "diff_summary_path": str(diff_summary_path),
+        # Every file the agent reads besides the prompt and input bundle;
+        # singleton-dispatch passes these through verbatim.
+        "extra_inputs": [str(diff_summary_path)],
         "prompt_path": str(prompt_path),
         "coverage_state": str(cr_dir / _COVERAGE_STATE_FILENAME),
         "model": model,
@@ -14505,6 +14661,15 @@ def _stats_from_findings(
     for f in coverage_gaps:
         _bump(f, "verified")
 
+    # ``tentative`` / ``tentative_count`` are subsets of ``verified`` /
+    # ``verified_count``: a TENTATIVE finding stays in verified[].
+    for f in verified:
+        if f.get("verifier_verdict") == "TENTATIVE":
+            by_reviewer[str(f.get("reviewer", "unknown"))]["tentative"] += 1
+
+    def _count_verdict(verdict: str | None) -> int:
+        return sum(1 for f in verified if f.get("verifier_verdict") == verdict)
+
     return {
         "by_severity": by_severity,
         "by_category": by_category,
@@ -14513,8 +14678,11 @@ def _stats_from_findings(
         "verification": {
             "verified_count": len(verified),
             "rejected_count": len(rejected),
-            "tentative_count": 0,
-            "downgrade_count": 0,
+            "tentative_count": _count_verdict("TENTATIVE"),
+            # cmd_verify_consolidate overwrites ``severity`` with the
+            # verifier's tier on DOWNGRADE, so the verdict is the only
+            # surviving downgrade marker.
+            "downgrade_count": _count_verdict("DOWNGRADE"),
             "justified_valid_count": len(justified),
             # PLN-721: JUSTIFIED-INVALID lands in verified[] (the
             # justification was audited and refuted, original finding
@@ -14524,7 +14692,11 @@ def _stats_from_findings(
                 1 for f in verified
                 if f.get("verifier_verdict") == "JUSTIFIED-INVALID"
             ),
-            "skipped_count": 0,
+            # Findings in verified[] no verifier ruled on: tier-skipped by
+            # verify-prepare (``skipped_no_verification``), unkeyed, or the
+            # whole bucket when verify-consolidate did not run. Deferred and
+            # missing-output findings go to pending_verification[] instead.
+            "skipped_count": _count_verdict(None),
             "false_positive_rate": 0.0,
             # PLN-773 Phase 2 — per-reviewer FP rate + override counter.
             "by_reviewer": _verification_by_reviewer(verified, rejected),

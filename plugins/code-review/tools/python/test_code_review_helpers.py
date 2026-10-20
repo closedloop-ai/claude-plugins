@@ -3972,6 +3972,40 @@ class TestCmdPostComments:
         assert "out-of-hunk=1" in out
         assert "failed 0" in out
 
+    def test_line_out_of_range_skips_inline_post(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A finding the validator tagged ``line_out_of_range`` has no real
+        line to comment on (it is past the end of its file), so it is never
+        posted inline — not even through an ``out_of_diff`` evidence anchor
+        — and is left for the summary."""
+        findings = [
+            {"file": "src/a.ts", "line": 267, "severity": "HIGH", "category": "Bug",
+             "issue": "bogus line", "line_out_of_range": True},
+            {"file": "src/c.ts", "line": 400, "severity": "HIGH", "category": "Bug",
+             "issue": "bogus line outside the diff", "out_of_diff": True,
+             "line_out_of_range": True,
+             "evidence": [{"file": "src/a.ts", "line": 2, "note": "caller"}]},
+            {"file": "b.ts", "line": 20, "severity": "HIGH", "category": "Bug",
+             "issue": "real inline"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="[]", stderr=""
+            )
+            rc = self._run(path)
+        assert rc == 0
+        posts = [
+            c for c in mock_run.call_args_list
+            if any("body=" in str(a) for a in c.args[0])
+        ]
+        assert [p for p in posts if "path=src/a.ts" in p.args[0] or "path=src/c.ts" in p.args[0]] == []
+        out = capsys.readouterr().out
+        assert "Posted 1" in out
+        assert "line-out-of-range=2" in out
+        assert "failed 0" in out
+
     @staticmethod
     def _pr_files_pages() -> str:
         """``gh api --paginate`` output for ``pulls/{pr}/files``: two pages
@@ -14154,30 +14188,30 @@ class TestSignalTaxonomy:
 
 
 class TestSignalExtractionCacheKey:
-    """Cache key contract: tuple of (diff_tip, taxonomy_hash, prompt_hash)."""
+    """Cache key contract: tuple of (input_hash, taxonomy_hash, prompt_hash)."""
 
     def test_same_inputs_same_key(self) -> None:
         from code_review_helpers import signal_extraction_cache_key
-        a = signal_extraction_cache_key("dt", "tax", "ph")
-        b = signal_extraction_cache_key("dt", "tax", "ph")
+        a = signal_extraction_cache_key("ih", "tax", "ph")
+        b = signal_extraction_cache_key("ih", "tax", "ph")
         assert a == b
 
-    def test_diff_tip_flip_changes_key(self) -> None:
+    def test_input_hash_flip_changes_key(self) -> None:
         from code_review_helpers import signal_extraction_cache_key
-        a = signal_extraction_cache_key("dt1", "tax", "ph")
-        b = signal_extraction_cache_key("dt2", "tax", "ph")
+        a = signal_extraction_cache_key("ih1", "tax", "ph")
+        b = signal_extraction_cache_key("ih2", "tax", "ph")
         assert a != b
 
     def test_taxonomy_hash_flip_changes_key(self) -> None:
         from code_review_helpers import signal_extraction_cache_key
-        a = signal_extraction_cache_key("dt", "tax1", "ph")
-        b = signal_extraction_cache_key("dt", "tax2", "ph")
+        a = signal_extraction_cache_key("ih", "tax1", "ph")
+        b = signal_extraction_cache_key("ih", "tax2", "ph")
         assert a != b
 
     def test_prompt_hash_flip_changes_key(self) -> None:
         from code_review_helpers import signal_extraction_cache_key
-        a = signal_extraction_cache_key("dt", "tax", "ph1")
-        b = signal_extraction_cache_key("dt", "tax", "ph2")
+        a = signal_extraction_cache_key("ih", "tax", "ph1")
+        b = signal_extraction_cache_key("ih", "tax", "ph2")
         assert a != b
 
 
@@ -14349,7 +14383,6 @@ class TestExtractSignalsPrepare:
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="ph0",
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -14374,9 +14407,95 @@ class TestExtractSignalsPrepare:
         ts_entry = next(f for f in agent_input["files"] if f["path"].endswith(".ts"))
         assert ts_entry["language_hint"] == "typescript"
 
+    def test_manifest_paths_are_absolute_for_relative_cr_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The singleton Task resolves manifest paths from the session's
+        checkout, not the review root, so a relative --cr-dir must not leak
+        relative paths into the manifest.
+        """
+        from code_review_helpers import cmd_extract_signals_prepare
+        monkeypatch.chdir(tmp_path)
+        diff_path = _build_diff_data(tmp_path)
+        args = argparse.Namespace(
+            cr_dir="cr",
+            diff_data=str(diff_path),
+            prompt_hash="ph0",
+            cache_dir=None,
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        assert cmd_extract_signals_prepare(args) == 0
+
+        cr_abs = (tmp_path / "cr").resolve()
+        manifest = json.loads((cr_abs / "extract_signals_manifest.json").read_text())
+        assert manifest["status"] == "needs_agent"
+        assert manifest["input_path"] == str(cr_abs / "extract_signals_input.json")
+        assert manifest["taxonomy_path"] == str(cr_abs / "extract_signals_taxonomy.json")
+        assert manifest["output_path"] == str(cr_abs / "extract_signals.json")
+        assert Path(manifest["prompt_path"]).is_absolute()
+
+    def _prepare_in(
+        self, base: Path, cache_dir: Path, diff_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        from code_review_helpers import cmd_extract_signals_prepare
+        base.mkdir(parents=True)
+        diff_path = base / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+        args = argparse.Namespace(
+            cr_dir=str(base / "cr"),
+            diff_data=str(diff_path),
+            prompt_hash="ph0",
+            cache_dir=str(cache_dir),
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        assert cmd_extract_signals_prepare(args) == 0
+        return json.loads((base / "cr" / "extract_signals_manifest.json").read_text())
+
+    def test_changed_diff_misses_a_prior_runs_cache_entry(self, tmp_path: Path) -> None:
+        """Regression: the key used the literal ``HEAD`` diff tip, so a
+        re-review after new commits (or a staged vs working-tree review of
+        the same branch) reused the first run's signals. The key now
+        content-addresses the agent's input bundle.
+        """
+        from code_review_helpers import CACHE_NAMESPACE_SIGNALS
+        cache_dir = tmp_path / "cache"
+        (cache_dir / CACHE_NAMESPACE_SIGNALS).mkdir(parents=True)
+        diff_a = json.loads(_build_diff_data(tmp_path).read_text())
+        first = self._prepare_in(tmp_path / "a", cache_dir, diff_a)
+        assert first["status"] == "needs_agent"
+        (cache_dir / CACHE_NAMESPACE_SIGNALS / f"{first['cache_key']}.json").write_text(
+            json.dumps({
+                "status": "ok", "signals": [], "errors": [],
+                "written_at": datetime.now(timezone.utc).isoformat(),
+            }),
+        )
+
+        # Same files, one changed line: a new commit on the branch, or the
+        # working tree differing from the index.
+        diff_b = json.loads(json.dumps(diff_a))
+        diff_b["patch_lines"]["src/auth/login.ts"]["added_lines"]["42"] = (
+            "const session = await issueToken(user, { mfa: true });"
+        )
+        second = self._prepare_in(tmp_path / "b", cache_dir, diff_b)
+        assert second["status"] == "needs_agent"
+        assert second["cache_key"] != first["cache_key"]
+
+        # Positive control: the unchanged diff still hits.
+        again = self._prepare_in(tmp_path / "c", cache_dir, diff_a)
+        assert again["status"] == "cache_hit"
+        assert again["cache_key"] == first["cache_key"]
+
     def test_cache_hit_serves_directly_without_agent(self, tmp_path: Path) -> None:
         from code_review_helpers import (
             CACHE_NAMESPACE_SIGNALS,
+            _build_signal_input,
+            _stable_json_hash,
             cmd_extract_signals_prepare,
             load_signal_taxonomy,
             signal_extraction_cache_key,
@@ -14390,7 +14509,10 @@ class TestExtractSignalsPrepare:
         _, raw = load_signal_taxonomy()
         import hashlib
         taxonomy_hash = hashlib.sha256(raw).hexdigest()
-        key = signal_extraction_cache_key("abcdef1234", taxonomy_hash, "ph0")
+        input_hash = _stable_json_hash(
+            _build_signal_input(json.loads(diff_path.read_text()), None),
+        )
+        key = signal_extraction_cache_key(input_hash, taxonomy_hash, "ph0")
         cached_payload = {
             "status": "ok",
             "signals": [
@@ -14411,7 +14533,6 @@ class TestExtractSignalsPrepare:
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="ph0",
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -14446,7 +14567,6 @@ class TestExtractSignalsConsolidate:
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="ph0",
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -14736,7 +14856,6 @@ class TestPR121PromptIsContentAddressed:
         return argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="",  # No override — exercise content-addressing.
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -14806,7 +14925,6 @@ class TestPR121AgentInputBundle:
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="",
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -15700,7 +15818,7 @@ class TestCoverageCriticPromptHash:
 
 class TestCoverageCriticCacheKey:
     """Cache key tuple invariants: ``(plan_initial_hash, signals_hash,
-    diff_tip, prompt_hash, available_reviewers_hash)``.
+    diff_summary_hash, prompt_hash, available_reviewers_hash)``.
 
     Every dimension must flip the key — otherwise a stale cache entry
     could be served when one of these inputs changes between runs. The
@@ -15730,11 +15848,11 @@ class TestCoverageCriticCacheKey:
             != coverage_critic_cache_key("p", "s2", "t", "h", "a")
         )
 
-    def test_diff_tip_flip_changes_key(self) -> None:
+    def test_diff_summary_hash_flip_changes_key(self) -> None:
         from code_review_helpers import coverage_critic_cache_key
         assert (
-            coverage_critic_cache_key("p", "s", "t1", "h", "a")
-            != coverage_critic_cache_key("p", "s", "t2", "h", "a")
+            coverage_critic_cache_key("p", "s", "d1", "h", "a")
+            != coverage_critic_cache_key("p", "s", "d2", "h", "a")
         )
 
     def test_prompt_hash_flip_changes_key(self) -> None:
@@ -16194,7 +16312,6 @@ class TestCoverageCriticPrepareCLI:
             "extract_signals": str(inputs["paths"]["signals"]) if inputs["paths"]["signals"].exists() else None,
             "diff_data": str(inputs["paths"]["diff_data"]),
             "available_reviewers": str(inputs["paths"]["available"]),
-            "diff_tip": "abc123",
             "cache_dir": str(cache_dir),
             "prompt": None,
             "model": COVERAGE_CRITIC_MODEL_DEFAULT,
@@ -16221,6 +16338,30 @@ class TestCoverageCriticPrepareCLI:
         bundle = json.loads((cr_dir / "coverage_critic_input.json").read_text())
         assert bundle["available_reviewers"] == inputs["available"]
         assert "coverage_plan_initial" in bundle
+
+    def test_manifest_paths_are_absolute_for_relative_cr_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Same contract as the stage_11 manifest: the singleton Task runs in
+        the session's checkout, so every manifest path must be absolute.
+        """
+        from code_review_helpers import cmd_coverage_critic_prepare
+        inputs = _write_coverage_critic_inputs(
+            tmp_path, signals={"signals": []},
+        )
+        monkeypatch.chdir(tmp_path)
+        args = self._args(tmp_path, inputs, cr_dir="cr")
+        assert cmd_coverage_critic_prepare(args) == 0
+
+        cr_abs = (tmp_path / "cr").resolve()
+        manifest = _read_coverage_section(cr_abs, "critic")
+        assert manifest["status"] == "needs_agent"
+        assert manifest["input_path"] == str(cr_abs / "coverage_critic_input.json")
+        assert manifest["diff_summary_path"] == str(
+            cr_abs / "coverage_critic_diff_summary.json",
+        )
+        assert manifest["coverage_state"] == str(cr_abs / "coverage.json")
+        assert Path(manifest["prompt_path"]).is_absolute()
 
     def test_prepare_filters_existing_reviewers_from_available(self, tmp_path: Path) -> None:
         """If the AVAILABLE list contains a reviewer already in the
@@ -16417,6 +16558,7 @@ class TestCoverageCriticPrepareCLI:
         from code_review_helpers import (
             CACHE_NAMESPACE_COVERAGE_CRITIC,
             _available_reviewers_hash,
+            _build_signal_input,
             _stable_json_hash,
             cmd_coverage_critic_prepare,
             coverage_critic_cache_key,
@@ -16438,8 +16580,11 @@ class TestCoverageCriticPrepareCLI:
         # no-op against the default fixture (which lists
         # accessibility-expert + i18n-expert).
         available_hash = _available_reviewers_hash(inputs["available"])
+        diff_summary_hash = _stable_json_hash(_build_signal_input(
+            json.loads(inputs["paths"]["diff_data"].read_text()), None,
+        ))
         key = coverage_critic_cache_key(
-            plan_hash, signals_hash, "abc123", prompt_hash, available_hash,
+            plan_hash, signals_hash, diff_summary_hash, prompt_hash, available_hash,
         )
         cached_payload = {
             "required": inputs["plan_initial"]["required"],
@@ -16465,6 +16610,42 @@ class TestCoverageCriticPrepareCLI:
         # written_at metadata stripped from canonical output
         assert "written_at" not in final
 
+    def test_changed_diff_misses_a_prior_runs_cache_entry(self, tmp_path: Path) -> None:
+        """Regression: the key used the diff tip, the literal ``HEAD`` on a
+        branch review, so a later review with the same plan, signals and
+        roster reused the first run's plan even though the diff changed.
+        The key now content-addresses the diff summary the critic is given.
+        """
+        from code_review_helpers import (
+            CACHE_NAMESPACE_COVERAGE_CRITIC,
+            cmd_coverage_critic_prepare,
+        )
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        args = self._args(tmp_path, inputs)
+        cache_dir = Path(args.cache_dir)
+        (cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC).mkdir(parents=True)
+        assert cmd_coverage_critic_prepare(args) == 0
+        first = _read_coverage_section(inputs["cr_dir"], "critic")
+        assert first["status"] == "needs_agent"
+        (cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC / f"{first['cache_key']}.json").write_text(
+            json.dumps({
+                "required": inputs["plan_initial"]["required"],
+                "best_effort": [], "warnings": [],
+                "stats": {"required_count": 1, "best_effort_count": 0},
+                "written_at": datetime.now(timezone.utc).isoformat(),
+            }),
+        )
+
+        diff_data = json.loads(inputs["paths"]["diff_data"].read_text())
+        diff_data["patch_lines"]["src/Modal.tsx"]["added_lines"]["42"] = (
+            "<div role='alertdialog'>"
+        )
+        inputs["paths"]["diff_data"].write_text(json.dumps(diff_data))
+        assert cmd_coverage_critic_prepare(args) == 0
+        second = _read_coverage_section(inputs["cr_dir"], "critic")
+        assert second["status"] == "needs_agent"
+        assert second["cache_key"] != first["cache_key"]
+
     def test_roster_shrink_misses_prior_cache(self, tmp_path: Path) -> None:
         """Concrete failure mode the PR comment described: same diff,
         same plan_initial, same signals, same prompt, but the
@@ -16476,6 +16657,7 @@ class TestCoverageCriticPrepareCLI:
         from code_review_helpers import (
             CACHE_NAMESPACE_COVERAGE_CRITIC,
             _available_reviewers_hash,
+            _build_signal_input,
             _stable_json_hash,
             cmd_coverage_critic_prepare,
             coverage_critic_cache_key,
@@ -16498,8 +16680,11 @@ class TestCoverageCriticPrepareCLI:
         prompt_hash = _coverage_critic_prompt_hash(
             _default_coverage_critic_prompt_path(),
         )
+        diff_summary_hash = _stable_json_hash(_build_signal_input(
+            json.loads(inputs["paths"]["diff_data"].read_text()), None,
+        ))
         old_key = coverage_critic_cache_key(
-            plan_hash, signals_hash, "abc123", prompt_hash,
+            plan_hash, signals_hash, diff_summary_hash, prompt_hash,
             _available_reviewers_hash(["accessibility-expert", "i18n-expert"]),
         )
         # Seed a cache entry under the OLD roster that proposes the
@@ -16558,7 +16743,6 @@ class TestCoverageCriticPrepareCrDirDefault:
             "extract_signals": None,
             "diff_data": str(diff_data),
             "available_reviewers": str(available),
-            "diff_tip": "abc123",
             "cache_dir": None,
             "prompt": None,
             "model": COVERAGE_CRITIC_MODEL_DEFAULT,
@@ -16673,7 +16857,6 @@ class TestCoverageCriticConsolidateCLI:
             extract_signals=str(inputs["paths"]["signals"]),
             diff_data=str(inputs["paths"]["diff_data"]),
             available_reviewers=str(inputs["paths"]["available"]),
-            diff_tip="abc123",
             cache_dir=str(cache_dir),
             prompt=None,
             model=COVERAGE_CRITIC_MODEL_DEFAULT,
@@ -16811,7 +16994,6 @@ class TestStage15Alignment:
         assert "--cr-dir" in args
         assert "--available-reviewers" in args
         assert "--diff-data" in args
-        assert "--diff-tip" in args
         # --extract-signals is optional but always wired for the
         # pipeline (no reason to skip when stage_11 produced it).
         assert "--extract-signals" in args
@@ -17045,17 +17227,15 @@ class TestPLN725Phase5PostMergeHardening:
                 f"must not start with `agent_`"
             )
 
-    # --- Fix 2: walker-resolved diff_tip + cache-dir on prepare ------------
+    # --- Fix 2: content-addressed cache keys + cache-dir on prepare --------
 
-    def test_stage_11_prepare_uses_walker_diff_tip_token(self) -> None:
-        # Literal "HEAD" would make the cache key constant across
-        # reviews — every entry written under the same diff_tip,
-        # cache_hit path unreachable through the walker. The walker
-        # substitutes <DIFF_TIP> from scope.json before dispatch.
+    def test_stage_11_prepare_takes_no_diff_tip(self) -> None:
+        # A branch scope's <DIFF_TIP> resolves to the literal "HEAD", so a
+        # key built from it was constant across reviews. stage_11's key
+        # content-addresses the agent input bundle instead, and prepare
+        # no longer accepts a diff tip at all.
         args = self._stage("stage_11_extract_signals")["args"]
-        idx = args.index("--diff-tip")
-        assert args[idx + 1] == "<DIFF_TIP>"
-        assert args[idx + 1] != "HEAD"
+        assert "--diff-tip" not in args
 
     def test_stage_11_prepare_receives_cache_dir(self) -> None:
         # Without --cache-dir, prepare runs cache-blind and the
@@ -17065,11 +17245,11 @@ class TestPLN725Phase5PostMergeHardening:
         assert "--cache-dir" in args
         assert args[args.index("--cache-dir") + 1] == "<CACHE_DIR>"
 
-    def test_stage_15_prepare_uses_walker_diff_tip_token(self) -> None:
+    def test_stage_15_prepare_takes_no_diff_tip(self) -> None:
+        # Same reason as stage_11: the critic key content-addresses the
+        # diff summary instead of the (often literal "HEAD") diff tip.
         args = self._stage("stage_15_coverage_critic")["args"]
-        idx = args.index("--diff-tip")
-        assert args[idx + 1] == "<DIFF_TIP>"
-        assert args[idx + 1] != "HEAD"
+        assert "--diff-tip" not in args
 
     def test_stage_15_prepare_receives_cache_dir(self) -> None:
         args = self._stage("stage_15_coverage_critic")["args"]
@@ -25755,3 +25935,303 @@ class TestRunPrefixRoutePartition:
             json.dumps({"status_message": "1/2 files cached"}),
         )
         assert _rp_cache_status_message(tmp_path) == "1/2 files cached"
+
+
+class TestPluginRootResolutionContract:
+    """Claude Code fills in ``${CLAUDE_PLUGIN_ROOT}`` only in the text of the
+    command or skill being invoked. It is not filled in a file the agent opens
+    with Read, and it is not a Bash environment variable. /code-review:deep and
+    /code-review:shallow reach start.md through Read, so they must bind the
+    resolved root for it; Read-loaded files must not rely on the token.
+    """
+
+    _ROOT = Path(__file__).parents[2]
+
+    def _read_loaded_files(self) -> list[Path]:
+        root = self._ROOT
+        return sorted([
+            root / "README.md",
+            root / "SCHEMA.md",
+            *(root / "prompts").glob("*.md"),
+            *(root / "tools" / "prompts").glob("*.txt"),
+            *(root / "agents").glob("*.md"),
+        ])
+
+    @pytest.mark.parametrize("command", ["deep.md", "shallow.md"])
+    def test_wrapper_commands_bind_plugin_root(self, command: str) -> None:
+        text = (self._ROOT / "commands" / command).read_text()
+        assert "**`PLUGIN_ROOT` = `${CLAUDE_PLUGIN_ROOT}`**" in text
+
+    def test_start_md_uses_the_token_only_as_its_own_candidate(self) -> None:
+        text = _start_command_text()
+        assert text.count("CLAUDE_PLUGIN_ROOT") == 1
+        candidate = _extract_section(text, "2. **This file's own text**", "\n")
+        assert "`${CLAUDE_PLUGIN_ROOT}`" in candidate
+
+    def test_start_md_checks_a_literal_plugin_root_path(self) -> None:
+        stage_0b = _extract_section(
+            _start_command_text(), "**0b. Resolve plugin paths", "**Four resolution outcomes",
+        )
+        assert "test -f <PLUGIN_ROOT>/tools/python/code_review_helpers.py" in stage_0b
+
+    def test_read_loaded_files_do_not_rely_on_the_token(self) -> None:
+        offenders = [
+            str(p.relative_to(self._ROOT)) for p in self._read_loaded_files()
+            if "CLAUDE_PLUGIN_ROOT" in p.read_text()
+        ]
+        assert offenders == []
+
+    def test_skills_use_the_substituted_token_form(self) -> None:
+        offenders = [
+            str(p.relative_to(self._ROOT))
+            for p in (self._ROOT / "skills").glob("*/SKILL.md")
+            if "<CLAUDE_PLUGIN_ROOT>" in p.read_text()
+        ]
+        assert offenders == []
+
+
+class TestSingletonDispatchInputsContract:
+    """Each singleton agent is handed every file its manifest declares in
+    ``extra_inputs`` (stage_11: the taxonomy snapshot; stage_15: the diff
+    summary), and each prompt names the files prepare actually writes.
+    """
+
+    _ROOT = Path(__file__).parents[2]
+
+    def _signals_manifest(self, tmp_path: Path) -> dict[str, Any]:
+        from code_review_helpers import cmd_extract_signals_prepare
+        cr_dir = tmp_path / "cr"
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(_build_diff_data(tmp_path)),
+            prompt_hash="ph0",
+            cache_dir=None,
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        assert cmd_extract_signals_prepare(args) == 0
+        return json.loads((cr_dir / "extract_signals_manifest.json").read_text())
+
+    def _critic_manifest(self, tmp_path: Path) -> dict[str, Any]:
+        from code_review_helpers import (
+            COVERAGE_CRITIC_MODEL_DEFAULT,
+            cmd_coverage_critic_prepare,
+        )
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        args = argparse.Namespace(
+            cr_dir=str(inputs["cr_dir"]),
+            extract_signals=str(inputs["paths"]["signals"]),
+            diff_data=str(inputs["paths"]["diff_data"]),
+            available_reviewers=str(inputs["paths"]["available"]),
+            cache_dir=None,
+            prompt=None,
+            model=COVERAGE_CRITIC_MODEL_DEFAULT,
+            no_critic=False,
+        )
+        assert cmd_coverage_critic_prepare(args) == 0
+        return _read_coverage_section(inputs["cr_dir"], "critic")
+
+    def test_spawn_template_passes_every_declared_extra_input(self) -> None:
+        skill = (self._ROOT / "skills" / "singleton-dispatch" / "SKILL.md").read_text()
+        template = _extract_section(skill, "3. Prompt template:", "4. After the Task returns")
+        assert "{EXTRA_INPUTS}" in template
+        assert "| `{EXTRA_INPUTS}` | `manifest.extra_inputs`" in template
+        assert "[stage_11 only]" not in template
+
+    def test_signal_manifest_declares_the_taxonomy_snapshot(self, tmp_path: Path) -> None:
+        manifest = self._signals_manifest(tmp_path)
+        assert manifest["extra_inputs"] == [manifest["taxonomy_path"]]
+        prompt = (self._ROOT / "tools" / "prompts" / "signal_extraction_prompt.txt").read_text()
+        assert f"`{Path(manifest['taxonomy_path']).name}`" in prompt
+        assert "`signal_taxonomy.json`" not in prompt
+
+    def test_critic_manifest_declares_the_diff_summary(self, tmp_path: Path) -> None:
+        manifest = self._critic_manifest(tmp_path)
+        assert manifest["status"] == "needs_agent"
+        assert manifest["extra_inputs"] == [manifest["diff_summary_path"]]
+        assert Path(manifest["diff_summary_path"]).is_absolute()
+        prompt = (self._ROOT / "tools" / "prompts" / "coverage_critic_prompt.txt").read_text()
+        for path in (manifest["input_path"], *manifest["extra_inputs"]):
+            assert f"`{Path(path).name}`" in prompt
+        assert "`diff_summary.json`" not in prompt
+
+
+class TestVerificationStatsCounts:
+    """``stats.verification`` tentative/downgrade/skipped counts and the
+    ``by_reviewer`` tentative bucket are derived from the verifier verdicts
+    on verified[], not hard-coded to zero.
+    """
+
+    def _verified(self) -> list[dict[str, Any]]:
+        from code_review_helpers import _merge_verifier_fields
+        downgraded = minimal_diff_finding(id="bha_p0_f2", severity="HIGH")
+        _merge_verifier_fields(downgraded, {
+            "verifier_verdict": "DOWNGRADE", "verifier_severity": "MEDIUM",
+        })
+        return [
+            minimal_diff_finding(id="bha_p0_f0", verifier_verdict="CONFIRMED"),
+            minimal_diff_finding(id="bha_p0_f1", verifier_verdict="TENTATIVE"),
+            downgraded,
+            minimal_diff_finding(
+                id="bhb_f0", reviewer="bhb", verifier_verdict="TENTATIVE",
+            ),
+            minimal_diff_finding(id="bhb_f1", reviewer="bhb", verifier_verdict=None),
+            minimal_diff_finding(
+                id="bhb_f2", reviewer="bhb", verifier_verdict="RE_ASSERTED",
+            ),
+        ]
+
+    def test_verification_counts_follow_verdicts(self) -> None:
+        from code_review_helpers import _stats_from_findings
+        verification = _stats_from_findings(self._verified(), [], [], [])["verification"]
+        assert verification["verified_count"] == 6
+        assert verification["tentative_count"] == 2
+        assert verification["downgrade_count"] == 1
+        assert verification["skipped_count"] == 1
+
+    def test_by_reviewer_tentative_bucket_counts_tentative_findings(self) -> None:
+        from code_review_helpers import _stats_from_findings
+        by_reviewer = _stats_from_findings(self._verified(), [], [], [])["by_reviewer"]
+        assert by_reviewer["bha_p0"]["verified"] == 3
+        assert by_reviewer["bha_p0"]["tentative"] == 1
+        assert by_reviewer["bhb"]["tentative"] == 1
+
+    def test_presenter_formulas_subtract_every_non_confirmed_bucket(self) -> None:
+        root = Path(__file__).parents[2]
+        formula = (
+            "{verified_count - tentative_count - re_asserted"
+            " - justified_invalid_count - skipped_count}"
+        )
+        for doc in (
+            root / "skills" / "present-local" / "SKILL.md",
+            root / "prompts" / "github-review.md",
+        ):
+            assert formula in doc.read_text(), doc.name
+
+
+class TestValidateLineReanchor:
+    """A diff-scope line past the end of its file (e.g. a reviewer citing its
+    position in ``patches_all.txt``) is re-anchored on ``code_snippet`` before
+    range filtering and duplicate merging, or kept and tagged
+    ``line_out_of_range``.
+    """
+
+    _FILE = "src/persistence/records.py"
+
+    def _records_source(self) -> str:
+        lines = [f"# line {n}" for n in range(1, 23)]
+        lines[16] = "        return self._rows[key]"
+        lines[19] = "        self._rows.clear()"
+        lines[20] = "        self._rows.clear()"
+        return "\n".join(lines) + "\n"
+
+    def _finding(self, **overrides: Any) -> dict[str, Any]:
+        base: dict[str, Any] = {
+            "file": self._FILE, "line": 17, "severity": "HIGH",
+            "category": "Correctness", "priority": 1, "confidence": 0.95,
+            "issue": "KeyError on a missing record",
+            "recommendation": "Use self._rows.get(key)",
+            "code_snippet": "\n        return self._rows[key]\n",
+        }
+        base.update(overrides)
+        return base
+
+    def _run(
+        self, tmp_path: Path, findings: list[dict[str, Any]],
+        diff_data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        import io
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        root = tmp_path / "root"
+        resolved = _make_review_root(root, {self._FILE: self._records_source()})
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": resolved,
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+        }))
+        diff_data = diff_data or _make_diff_data(
+            files=[self._FILE], ranges={self._FILE: {"added": [[15, 19]], "removed": []}},
+        )
+        (cr_dir / "findings.json").write_text(json.dumps(findings))
+        (cr_dir / "diff_data.json").write_text(json.dumps(diff_data))
+        ns = argparse.Namespace(
+            findings=str(cr_dir / "findings.json"),
+            diff_data=str(cr_dir / "diff_data.json"),
+            settings=None,
+            cr_dir=str(cr_dir),
+        )
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            assert cmd_validate(ns) == 0
+        return json.loads(buf.getvalue())
+
+    def test_reanchored_finding_merges_with_its_duplicate(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path, [
+            self._finding(reviewer="bha_p0"),
+            self._finding(reviewer="unified_auditor", line=267),
+        ])
+        assert result["stats"]["discarded_duplicate"] == 1
+        assert [f["line"] for f in result["validated"]] == [17]
+        reanchored = [
+            d["finding"] for d in result["discarded"] if d["reason"] == "DISCARD_DUPLICATE"
+        ] + result["validated"]
+        assert any(f.get("line_reanchored_from") == 267 for f in reanchored)
+        assert result["stats"]["lines_reanchored"] == 1
+
+    def test_reanchor_sets_line_and_keeps_the_original(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path, [self._finding(line=267)])
+        (finding,) = result["validated"]
+        assert finding["line"] == 17
+        assert finding["line_reanchored_from"] == 267
+        assert "line_out_of_range" not in finding
+        assert "out_of_hunk_kept" not in finding
+
+    def test_unmatched_snippet_is_kept_and_tagged(self, tmp_path: Path) -> None:
+        # P2 at 0.6: the out-of-hunk floor (0.80) would discard it on
+        # location alone; an unanchorable line must not.
+        result = self._run(tmp_path, [self._finding(
+            line=267, priority=2, severity="MEDIUM", confidence=0.6,
+            code_snippet="not in the file",
+        )])
+        (finding,) = result["validated"]
+        assert finding["line"] == 267
+        assert finding["line_out_of_range"] is True
+        assert "line_reanchored_from" not in finding
+        assert "out_of_hunk_kept" not in finding
+        assert result["stats"]["kept_line_out_of_range"] == 1
+
+    def test_ambiguous_snippet_is_tagged_not_moved(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path, [self._finding(
+            line=267, code_snippet="self._rows.clear()",
+        )])
+        (finding,) = result["validated"]
+        assert finding["line"] == 267
+        assert finding["line_out_of_range"] is True
+
+    def test_in_range_line_strips_reviewer_supplied_tags(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path, [self._finding(
+            line_out_of_range=True, line_reanchored_from=3,
+        )])
+        (finding,) = result["validated"]
+        assert finding["line"] == 17
+        assert "line_out_of_range" not in finding
+        assert "line_reanchored_from" not in finding
+
+    def test_deleted_file_is_measured_from_the_patch(self, tmp_path: Path) -> None:
+        gone = "src/old.py"
+        removed = {str(n): f"old {n}" for n in range(1, 6)}
+        removed["3"] = "def legacy_entry():"
+        diff_data = _make_diff_data(
+            files=[gone],
+            statuses={gone: "removed"},
+            ranges={gone: {"added": [], "removed": [[1, 5]]}},
+            patch_lines={gone: {"added_lines": {}, "removed_lines": removed}},
+        )
+        result = self._run(tmp_path, [self._finding(
+            file=gone, line=40, code_snippet="def legacy_entry():",
+        )], diff_data)
+        (finding,) = result["validated"]
+        assert finding["line"] == 3
+        assert finding["line_reanchored_from"] == 40

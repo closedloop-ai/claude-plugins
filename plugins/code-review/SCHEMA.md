@@ -118,11 +118,23 @@ shape. Producers may emit dicts directly; the Python convenience type lives in
   // Present (and true) only when the validator set them; any value a
   // reviewer emits is stripped. Never both on one finding.
   "out_of_hunk_kept": true,  // file is in the diff, line is outside its changed ranges
-  "out_of_diff": true         // file is outside the diff (ISS-12737): kept under the
+  "out_of_diff": true,        // file is outside the diff (ISS-12737): kept under the
                               // normal 0.5 confidence floor, always verified (never
                               // from the verify cache); the verifier rejects it with
                               // rejection_class "not_caused_by_diff" when no change in
                               // the patch caused it
+
+  // Line-range tags (stage_22 validate, before range filtering and duplicate
+  // merging). A diff-scope line past the end of its file (the new file under
+  // review_root, or for a file deleted outright the old file rebuilt from the
+  // patch) is re-anchored to the one line containing the first non-blank
+  // line of code_snippet. Validator-owned like the tags above; at most one of
+  // the two is present.
+  "line_reanchored_from": <int>, // the reviewer's original line; `line` now holds
+                                 // the re-anchored line
+  "line_out_of_range": true      // no single line matched: kept (location is never a
+                                 // discard reason) under the normal 0.5 confidence
+                                 // floor, never posted inline, shown in the summary
 }
 ```
 
@@ -201,11 +213,11 @@ The terminal artifact of every review run.
     "verification": {
       "verified_count": <int>,
       "rejected_count": <int>,
-      "tentative_count": <int>,
-      "downgrade_count": <int>,
+      "tentative_count": <int>,         // verified[] with verifier_verdict TENTATIVE (subset of verified_count)
+      "downgrade_count": <int>,         // verified[] with verifier_verdict DOWNGRADE
       "justified_valid_count": <int>,
       "justified_invalid_count": <int>,
-      "skipped_count": <int>,
+      "skipped_count": <int>,           // verified[] no verifier ruled on (verifier_verdict null: tier-skipped, or no verify run)
       "false_positive_rate": <float>
     },
     "impact_cumulative_count": <int>,
@@ -633,8 +645,8 @@ A MAJOR `schema_version` bump invalidates every cache namespace at once.
 | Namespace           | Path                                              | Key inputs                                                    | TTL    |
 | ------------------- | ------------------------------------------------- | ------------------------------------------------------------- | ------ |
 | BHA findings        | `<CACHE_DIR>/bha/<file_hash>.json`                | file_content_hash + prompt_hash + model_id + schema_version   | 30 d   |
-| Signal extraction   | `<CACHE_DIR>/signals/<diff_tip>.json`             | diff_tip + taxonomy_hash + signal_prompt_hash                 | 7 d    |
-| Coverage critic     | `<CACHE_DIR>/coverage_critic/<diff_tip>.json`     | coverage_plan_initial_hash + signals_hash + critic_prompt_hash | 7 d   |
+| Signal extraction   | `<CACHE_DIR>/signals/<cache_key>.json`            | agent input bundle hash + taxonomy_hash + signal_prompt_hash  | 7 d    |
+| Coverage critic     | `<CACHE_DIR>/coverage_critic/<cache_key>.json`    | coverage_plan_initial_hash + signals_hash + diff_summary_hash + critic_prompt_hash + available_reviewers_hash | 7 d |
 | Verification        | `<CACHE_DIR>/verifications/<finding_id>.json`     | finding_id + file_content_hash + verifier_model + verifier_prompt_hash | 30 d |
 | Overrides           | `<CACHE_DIR>/overrides/<finding_id>.json`         | finding_id (file content change invalidates)                  | 90 d   |
 
