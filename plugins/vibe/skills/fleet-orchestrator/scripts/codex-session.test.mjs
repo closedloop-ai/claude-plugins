@@ -24,7 +24,7 @@ function stubClient(replies) {
 function workDir() {
   const dir = mkdtempSync(join(tmpdir(), 'codex-session-'));
   const promptFile = join(dir, 'prompt.md');
-  writeFileSync(promptFile, 'Fix the failing check.\n');
+  writeFileSync(promptFile, '$vibe resume the session for the ticket.\n');
   return { dir, promptFile };
 }
 
@@ -90,7 +90,7 @@ test('turn on a new session starts a thread in the cwd, starts the turn and save
     {
       method: 'turn/start',
       params: {
-        threadId: 'T1', input: [{ type: 'text', text: 'Fix the failing check.\n', text_elements: [] }],
+        threadId: 'T1', input: [{ type: 'text', text: '$vibe resume the session for the ticket.\n', text_elements: [] }],
         cwd: '/wt', model: 'm', effort: 'high', approvalPolicy: 'never',
       },
     },
@@ -139,7 +139,7 @@ test('steer targets the active turn and refuses when no turn is running', async 
   });
   assert.equal(await run(active, parseCli(['steer', dir, 'w1', '--prompt-file', promptFile])), 'w1 steer T1 U2');
   assert.deepEqual(active.calls[1].params, {
-    threadId: 'T1', expectedTurnId: 'U2', input: [{ type: 'text', text: 'Fix the failing check.\n', text_elements: [] }],
+    threadId: 'T1', expectedTurnId: 'U2', input: [{ type: 'text', text: '$vibe resume the session for the ticket.\n', text_elements: [] }],
   });
   const idle = stubClient({ 'thread/read': { thread: { turns: [{ id: 'U1', status: 'completed' }] } } });
   await assert.rejects(run(idle, parseCli(['steer', dir, 'w1', '--prompt-file', promptFile])), /last turn is completed/);
@@ -161,4 +161,15 @@ test('last prints the monitor status line and the newest agent messages across t
   const client = stubClient({ 'thread/read': { thread } });
   assert.equal(await run(client, parseCli(['last', dir, 'w1'])), 'w1 failed 2 LIMIT\n--- turn U2 failed\nthree');
   assert.deepEqual(client.calls[0].params, { threadId: 'T1', includeTurns: true });
+});
+
+test('a new session refuses a prompt that does not start with $vibe; a saved one takes any prompt', async () => {
+  const { dir } = workDir();
+  const plain = join(dir, 'plain.md');
+  writeFileSync(plain, 'Fix the failing check.\n');
+  const client = stubClient({ 'thread/resume': {}, 'turn/start': { turn: { id: 'U1' } } });
+  await assert.rejects(run(client, parseCli(['turn', dir, 'w1', '--prompt-file', plain, '--cwd', '/wt', '--effort', 'high'])), /must start with \$vibe/);
+  assert.deepEqual(client.calls, []);
+  saveState(dir, 'w1', { threadId: 'T1', cwd: '/wt', effort: 'high', turns: [] });
+  assert.equal(await run(client, parseCli(['turn', dir, 'w1', '--prompt-file', plain])), 'w1 turn T1 U1');
 });

@@ -36,4 +36,4 @@ REMOTE_HEAVY_SLOTS=<concurrent heavy checks that machine can take>
 2. Fill `sessions.txt` and `prs.txt` as codex-fleet-monitor describes; a session started through `fleet.sh` is listed as `local|remote <name>`.
 3. For each other machine: create its orchestration dir the same way, then check ssh and its login shell with `ssh <host> "<REMOTE_SHELL> 'command -v node codex gh'"`, which must print three paths. Install the plugin there in a persistent path if sessions on it should use its skills.
 4. Get a branch to another machine's clone without going through the code host: `git push <host>:<path to its clone> <branch>:<branch>`, then on that machine `git worktree add <worktree path> <branch>` and run the bootstrap the target repo's docs name. Push to a branch that is not checked out there.
-5. Check the transport: `fleet.sh <orchDir> local session last <name>` on an existing session, or start a throwaway session in a scratch worktree with a one-line prompt.
+5. Check the transport with `fleet.sh <orchDir> local|remote session last <name>` on an existing session.

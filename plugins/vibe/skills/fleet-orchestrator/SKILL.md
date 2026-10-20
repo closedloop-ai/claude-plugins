@@ -15,6 +15,8 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 
 ## Roles
 
+- Every writer is a vibe session, and no un-vibed writer ever edits a PR branch: Codex writers start or resume with a `$vibe` prompt naming the ticket or PRD (`fleet.sh` refuses a new session whose prompt does not start with `$vibe`), and Claude writers invoke `vibe:vibe` and follow its resume path. Vibe's scope, guardrails and ticket records only bind work done inside it.
+- Reviews, handoff, ticket, environment and seed work go through vibe's own skills, workers and scripts (`vibe:handoff`, its reviewer and verify workers, `vibe:vibe-seed-refresh`), never ad hoc equivalents. One process keeps one set of records and gates.
 - You never edit a product repo; every change goes through a worker in its own worktree. Keeps one owner per change and your context free for judgment.
 - One writer per branch at a time, Codex or Claude. Two writers on one branch overwrite each other.
 - Reviewers, verifiers, QA prep and visual reviewers are read-only Claude subagents. A reviewer that fixes cannot be the independent check.
@@ -45,18 +47,18 @@ scripts/fleet.sh <orchDir> local|remote session steer <name> --prompt-file <file
 scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 ```
 
-`turn` starts a thread bound to `--cwd` the first time (refusing a different cwd later) and resumes it afterwards, then starts a turn; `--model` and `--effort` default to `CODEX_MODEL` and `CODEX_EFFORT`, and a new session refuses to start without an effort. Model, effort, sandbox and each prompt file sent persist in the session's state file. `steer` adds to the active turn and fails when none is running. `last` prints the monitor's status line and the last agent messages.
+`turn` starts a thread bound to `--cwd` the first time (refusing a different cwd later) and resumes it afterwards, then starts a turn; `--model` and `--effort` default to `CODEX_MODEL` and `CODEX_EFFORT`, and a new session refuses to start without an effort or with a prompt that does not start with `$vibe`. Model, effort, sandbox and each prompt file sent persist in the session's state file. `steer` adds to the active turn and fails when none is running. `last` prints the monitor's status line and the last agent messages.
 
 - Run Codex at the high effort level, not the maximum: the maximum burns the limit far faster for little gain on PR work. Writers and reviewers use `CODEX_MODEL`; tell each session in its prompt to run explorer and read-only sub-agents on `CODEX_EXPLORER_MODEL`.
 - No computer use in Codex: no browser, in-app browser, desktop app UI or screenshots. It is the fastest drain. Code host work goes through its CLI.
 - Visual work is a request file a Codex session drops in the requests dir ([template](./references/templates.md#visual-request)); a Claude worker does it and you steer the findings back as text.
 - Watch the usage rate, not just the level: estimate time to the limit from the trend, and move a machine's busiest sessions to another machine or account as fresh threads with resume prompts before they stop mid-fix.
-- A dead Codex writer (limit, crash) is taken over by a Claude worker in the same worktree, with the [takeover preamble](./references/templates.md#worker-preamble). There is no supported migration of a Codex writer's session to Claude, so the worker never edits the Codex session's records and commits normally.
+- A dead Codex writer (limit, crash) is taken over by a Claude writer in the same worktree, with the [takeover preamble](./references/templates.md#worker-preamble). Vibe has no path yet to move a Codex writer's session to Claude, so the Claude writer still invokes `vibe:vibe` and follows its rules, never edits the Codex session's records, and commits normally; log the gap to the lessons ledger.
 - Fresh and resumed threads may stop to ask about a plugin version update; say "keep the current version" in the resume prompt.
 
 ## Claude workers
 
-- Launch each worker with the [worker preamble](./references/templates.md#worker-preamble) saved to `prompts/`. It carries the worktree, PR, reading, test, git, thread-reply and report rules so no worker improvises them.
+- Launch each Claude writer with the [worker preamble](./references/templates.md#worker-preamble) saved to `prompts/`. It starts with invoking vibe and carries the worktree, PR, reading, test, git, thread-reply and report rules so no writer improvises them.
 - A message to a busy worker arrives only when it goes idle; if it idles without acting on one, resend it shortly.
 - Polling and watch workers run on the cheapest capable model.
 - When CPU is tight, give the next review to an idle reviewer that finished, rather than spawning a new one.

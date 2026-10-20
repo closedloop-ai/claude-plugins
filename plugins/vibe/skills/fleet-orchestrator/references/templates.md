@@ -21,11 +21,12 @@ Requirement: <ticket, PRD or acceptance criterion this proves>
 
 ## Worker preamble
 
-Prepend to every Claude worker prompt; keep the `Takeover` line only when replacing a dead Codex writer.
+Prepend to every Claude writer prompt; keep the `Takeover` line only when replacing a dead Codex writer. A Codex writer's prompt starts with `$vibe <ticket or PRD>` instead of the first line.
 
 ```
+Invoke vibe:vibe first: resume the vibe session for <ticket or PRD>, or start one for it, and follow its rules for all of the work below.
 You are the only writer on <owner/repo>#<number>, worktree <path> on <machine>, branch <branch>.
-Takeover: a Codex session wrote this branch and stopped (<limit|crash>). Continue in the same worktree from its last pushed head <sha>. Do not edit the Codex session's own records; commit normally.
+Takeover: a Codex vibe session wrote this branch and stopped (<limit|crash>). Vibe cannot move that session to you, so run your own vibe session for the same <ticket or PRD> in the same worktree from its last pushed head <sha>. Do not edit the Codex session's records; commit normally.
 Before editing, read the repo docs that own the paths you touch (AGENTS.md files or contributor guide) or the team knowledge base.
 Tests: run only the tests covering what you changed (ask the repo's test graph or lane tool which). Heavy checks go through <fleet.sh slot command for the chosen machine>. Never run e2e that opens windows on the operator's daily machine.
 Git: commit messages per the repo's conventions; regular push only, never force or amend after push.
