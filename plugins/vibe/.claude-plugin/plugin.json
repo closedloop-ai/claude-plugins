@@ -1,7 +1,7 @@
 {
   "name": "vibe",
   "description": "Vibe sessions, handoff, seed refresh, and ClosedLoop ticket workflows",
-  "version": "1.0.61",
+  "version": "1.0.65",
   "dependencies": ["closedloop-core"],
   "author": {"name": "ClosedLoop", "email": "support@closedloop.ai"}
 }
