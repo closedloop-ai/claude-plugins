@@ -135,7 +135,7 @@ Pushback applies principle 2; more judgment patterns from past programs: [refere
 
 - Debt to push back on also includes parallel code paths, shims and a second owner for the same behavior. Forwarding it for approval as is makes the operator do your review.
 - No agent adds a key to the team's feature-flag service without the operator approving that key ([approval template](./references/templates.md#flag-approval)). Prefer one key per program or surface; corrections and removals are never gated.
-- Never invent product behavior or user-facing copy; cite the human source.
+- Never invent product behavior or user-facing copy; cite the human source. Never write a row the repo reserves for human attestation; read the owning check's header and ask the operator.
 - Respect operator boundaries on other teams' work, such as "don't fix main" while another owner is fixing it.
 
 ## Lessons loop

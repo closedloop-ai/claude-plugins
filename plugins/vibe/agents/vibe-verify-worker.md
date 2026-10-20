@@ -98,7 +98,7 @@ from the reviews of symphony-alpha #8885 and #8886 (operator ruling,
   execute the touched stories' plays in a real browser with the repository's
   Storybook test runner or Playwright against its containerized Storybook
   service. A jsdom result, source inspection or successful build is not play
-  evidence. Report the command, story IDs, browser and result, plus axe
+  evidence or a play count to report. Report the command, story IDs, browser and result, plus axe
   `color-contrast` on every new or changed story state; a failing node blocks.
 - When cards or a narrow layout have any interaction, run the relevant flow
   with real touch through Playwright's WebKit iPhone descriptor and Chromium
@@ -232,7 +232,8 @@ session touched:
 2. Start the sessions it needs, each under its own `--session <name>`:
    `pnpm control up web --isolated` for web, and for Desktop
    run `pnpm -C apps/desktop build` first. Only after it succeeds, verify
-   `apps/desktop/dist` exists and contains the documented Electron entry. If
+   `apps/desktop/dist` exists, contains the documented Electron entry and its
+   main bundle's workspace imports resolve. If
    the build fails or that output is absent, return the exact limitation and
    abort the Desktop scenario without calling any Electron or `control up
    desktop` launch command. With verified output, run
@@ -260,7 +261,8 @@ session touched:
    after a failure.
 
 For a shared component, capture every surface it reaches with the flag off
-at 390, 412, 1024 and 1280 px wide; a difference from main is a finding.
+at 390, 412, 1024 and 1280 px wide, rendering the exact shipped story or route
+and main's render of the same one; a difference is a finding.
 
 A static or generated page control cannot drive (an HTML page a script or a
 main-process module writes, such as Desktop's sign-in return page) is still
