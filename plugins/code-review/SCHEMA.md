@@ -104,13 +104,25 @@ shape. Producers may emit dicts directly; the Python convenience type lives in
       "actual_read": "<what verifier read at the cited location>"
     }
   ],
-  "rejection_class": "evidence_not_found | guard_exists | unreachable | out_of_scope | severity_overstated | null",
+  "rejection_class": "evidence_not_found | evidence_contradicted | guard_exists | unreachable | not_caused_by_diff | out_of_scope | severity_overstated | null",
+  // not_caused_by_diff: an out_of_diff finding whose problem the verifier
+  // could not trace to any change in the patch (pre-existing, unrelated).
   "human_review_recommended": <bool>,
 
   // ── Cross-file grouping ───────────────────────────────────
   "other_locations": [
     {"file": "<path>", "line": <int>, "issue": "<short>"}
-  ]
+  ],
+
+  // ── Validator-owned location tags (stage_22 validate) ─────
+  // Present (and true) only when the validator set them; any value a
+  // reviewer emits is stripped. Never both on one finding.
+  "out_of_hunk_kept": true,  // file is in the diff, line is outside its changed ranges
+  "out_of_diff": true         // file is outside the diff (ISS-12737): kept under the
+                              // normal 0.5 confidence floor, always verified (never
+                              // from the verify cache); the verifier rejects it with
+                              // rejection_class "not_caused_by_diff" when no change in
+                              // the patch caused it
 }
 ```
 
