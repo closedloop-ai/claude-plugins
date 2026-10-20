@@ -295,6 +295,13 @@ tests, agent instructions and every other path outside the Never table cannot
 pass by being merely reported. Only inventory-proven `shrinkOnlyAllowlists`
 entries are exempt.
 
+Then run `node scripts/pr-facts.mjs lanes --worktree "<wt>"`. When it reports
+`serverOnly: true` the session changed no UI, Storybook or Desktop surface:
+skip step 4, the Desktop build and Desktop control runs, visual QA, and the
+preview and Storybook evidence in Design Review, and record its `line` once
+in Handoff and Design Review instead. A later run that reports
+`serverOnly: false` puts them back.
+
 Keep the remaining checklist internal: inventory and shared-owner checks,
 Storybook coverage and footprint, existing tests and the missing tests list,
 validation, integrated review and corrections, browser E2E and the
@@ -805,14 +812,25 @@ lookup resolved to exactly one user.
 On a requested pull request, skip assign mode: the ticket stays with the
 person, In Progress. Before dispatch, require the refreshed pinned-base
 Storybook train check, the real web-host evidence and both named touch-device
-results. Then dispatch
+results, recorded by the verify worker in `<gitdir>/vibe-pr-evidence.json`
+(`<gitdir>` is `$(git -C "<wt>" rev-parse --absolute-git-dir)`) and passing
+`node scripts/pr-facts.mjs evidence --worktree "<wt>" --runs "<gitdir>/vibe-pr-evidence.json" --commit <final published commit>`.
+A pending, running or missing lane, or one run on another commit, blocks
+creation and goes back to the verify worker; it is never deferred as a test
+gap. Then dispatch
 `vibe-environment-worker` in `pull-request` mode (its own `pull-request`
 record action, an exclusive record turn with no record writes) with the
 worktree, the live ticket slug, the confirmed summary, the final verified
 published commit from step 7, the tests the `pull-request` turn wrote and
 step 5's check results, and the ticket's Production impact and Flag changes
-and gates fields. It opens the pull request on the already pushed branch and
-returns its URL; it never enqueues or merges it. On `BLOCKED`, tell the
+and gates fields. It builds the body from `scripts/pr-facts.mjs facts` and
+opens the pull request on the already pushed branch only after
+`scripts/pr-facts.mjs check` passes on that body, the live ticket text and
+the evidence file, then returns its URL; it never enqueues or merges it. Its
+`NEEDS_CHANGE` names the failing facts: a body problem goes back to
+`vibe-handoff-summarizer` for a refreshed summary and then this dispatch
+again, an evidence problem to the verify worker, and a defect the facts expose
+to the SAME writer through steps 3 to 7. On `BLOCKED`, tell the
 person in one plain line that the pull request could not be opened and
 suggest they message engineering, naming this work by its summary; never give them the
 branch to merge instead. Then mark the session handed off as below.
@@ -892,7 +910,8 @@ resumes and every fix goes through this path, never around it:
 7. Dispatch `vibe-environment-worker` in `pull-request` mode with the pushed
    fixing commit and the writer's per-thread results. On the existing pull
    request it refreshes the body from the session record so it matches the
-   diff, with the same template and rules as opening one, then replies on
+   diff, with the same template and rules as opening one, including a passing
+   `scripts/pr-facts.mjs check` on the refreshed body, then replies on
    every thread through the REST review-comment reply endpoint and resolves
    each thread it fixed: a fixed thread gets the fixing commit SHA and is
    resolved; a thread answered with a reason gets that reason and stays open

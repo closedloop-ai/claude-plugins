@@ -291,6 +291,15 @@ rows the person accepted as Frozen Behavior in the session decision table that
 the ticket attaches; `cl-execute` reads that attachment, keeps every frozen row
 passing with tests in its pull request, and changes one only with that
 person's explicit OK.
+A pull request body is built from facts computed from the diff
+(`pr-facts.mjs`): overlapping open pull requests by shared or imported file,
+flipped and removed assertions and deleted test files, changed exports and new
+refusals, and every ticket sentence asking for something to be said in the
+pull request. The pull request is created or its body refreshed only when the
+body cites changed lines and states every fact, and when every required
+web-host, Desktop-host, touch-device, Storybook play and e2e run passed on the
+published commit. A server-only diff skips Storybook, Desktop and visual QA
+and records one line saying so.
 
 ### `vibe-seed-refresh`
 
@@ -420,9 +429,14 @@ no child is superseded without a human ruling. Version-check cases also cover
 explicit proceed instructions and resumed sessions continuing after reporting
 an available update.
 
+The two cases tagged `pr-facts` rehearse the pull request facts gate: a
+drafted body that misses a computed overlap and a flipped assertion is not
+created, and pending device or Storybook play runs block a requested pull
+request instead of becoming a later test note.
+
 ## Runtime Files
 
-Version `1.0.58` contains 10 skills and 16 agents. It has no standalone
+Version `1.0.63` contains 10 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains the skill-contract test modules and
 `vibe_contract_text.py`, the text helpers they share.

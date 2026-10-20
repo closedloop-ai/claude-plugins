@@ -39,7 +39,8 @@ open tickets touching them.
 
 ## Return (under 260 words)
 
-`DONE` with two blocks:
+`DONE` with two blocks, plus a third when a pull request is being opened or
+refreshed:
 1. For the person, only the completed feature and what is being worked on next,
    in their own terms. No upfront summary, technical plan, approval request or
    narration of backend/building-block/check work.
@@ -52,6 +53,21 @@ open tickets touching them.
    engineering: one line per non-trivial request from the change log (the
    owner it was built in and the owner rule that chose it), or "none: only
    copy, color, or spacing changed".
+3. For a pull request body (exempt from the word limit): the output of
+   `node ../skills/handoff/scripts/pr-facts.mjs facts --worktree <wt>`,
+   every overlapping open pull request with its shared or imported files,
+   every flipped or removed assertion, added skip and deleted test file, every
+   changed or removed export (registry entries and exported contracts) and
+   every new refusal, each with `file:line`. From reading the diff, add every
+   removed or changed guard, short-circuit, gesture, selection or gate
+   predicate, under a flag too, with `file:line`. Every behavior or test
+   expectation change you attribute cites a line `pr-facts.mjs cite-check`
+   accepts, never a file whose diff does not make that change. Every ruling
+   you cite resolves to an approved artifact (an `APPROVED` or `EXECUTED` PRD
+   or plan, a `DONE` ticket, a human comment) or a quoted operator message
+   with where it was said; a `TRIAGE` or draft ticket is not a ruling. Never
+   call the change additive, presentation-only or non-breaking while any of
+   these lists is non-empty.
 End with the Graph block.
 
 For Design Review, return compact evidence/path references to the SAME writer

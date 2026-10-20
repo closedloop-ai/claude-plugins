@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.63
+
+#### Added
+- `skills/handoff/scripts/pr-facts.mjs` computes what a pull request body must state from the session diff: open pull requests sharing a changed file or a module a changed file imports, flipped and removed assertions, added skips and deleted test files, changed or removed exports and new 4xx refusals in `apps/api`, every ticket sentence asking for something to be said in the pull request, and whether the diff is server-only. `check` refuses a body that cites a line the diff did not change, omits any of those facts or a ticket ask, or targets a base other than main without the stacked-base statement. `evidence` refuses a pull request while a required web-host, Desktop-host, WebKit iPhone, Chromium Pixel, Storybook play or e2e run is pending, running, missing or ran on another commit.
+- Node tests for the script, contract tests pinning its wiring, and two shared Claude Code and Codex eval cases (a body missing computed facts, and pending device and play runs).
+
+#### Changed
+- The environment worker builds the pull request body from those facts and creates or refreshes it only after the check passes, returning `NEEDS_CHANGE` otherwise. Handoff step 9 also requires the verify worker's recorded lane evidence to pass before dispatch, and a server-only diff skips Storybook, Desktop and visual QA with one recorded line.
+- The handoff summarizer lists every overlap, assertion change, contract change, refusal and removed guard with file and line, cites only rulings that resolve to an approved artifact or an operator message, and never calls a change additive while any of those lists is non-empty. Requirements research runs the same overlap on the files it locates, resolves named dependencies to their PRDs and open pull requests, and checks the services a new write path would touch before any plan designs it.
+
 ### vibe v1.0.58
 
 #### Changed
