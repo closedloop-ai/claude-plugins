@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- `codex`, `node` and `gh` (authenticated) on every machine that hosts sessions or checks; `jq` where codex-fleet-monitor runs.
+- `codex`, `node` and `gh` (authenticated) on every machine that hosts sessions or checks, and this plugin installed for Codex and Claude on every machine that hosts writers, since every writer is a vibe session; `jq` where codex-fleet-monitor runs.
 - For more than one machine: ssh key auth from the orchestrating machine to each other machine, so `ssh <host> true` runs with no password prompt. That is the one thing this skill cannot set up for you.
 
 ## config.env
@@ -34,6 +34,6 @@ REMOTE_HEAVY_SLOTS=<concurrent heavy checks that machine can take>
 
 1. Create the orchestration dir in a path that survives a reboot, with `sessions/`, `prompts/`, `requests/` and `findings/` ([layout](./state.md)), and write `config.env`.
 2. Fill `sessions.txt` and `prs.txt` as codex-fleet-monitor describes; a session started through `fleet.sh` is listed as `local|remote <name>`.
-3. For each other machine: create its orchestration dir the same way, then check ssh and its login shell with `ssh <host> "<REMOTE_SHELL> 'command -v node codex gh'"`, which must print three paths. Install the plugin there in a persistent path if sessions on it should use its skills.
+3. For each other machine: create its orchestration dir the same way, then check ssh and its login shell with `ssh <host> "<REMOTE_SHELL> 'command -v node codex gh'"`, which must print three paths. Install this plugin there in a persistent path.
 4. Get a branch to another machine's clone without going through the code host: `git push <host>:<path to its clone> <branch>:<branch>`, then on that machine `git worktree add <worktree path> <branch>` and run the bootstrap the target repo's docs name. Push to a branch that is not checked out there.
 5. Check the transport with `fleet.sh <orchDir> local|remote session last <name>` on an existing session.
