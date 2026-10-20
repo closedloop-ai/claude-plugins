@@ -67,6 +67,8 @@ DECISIONS
   records disagree, report the conflict; never resolve it by recency.
 - A new data direction between surfaces is allowed only by a traced human
   decision or approved document; an earlier one restricting it is a conflict.
+  A new sync mechanism along an existing direction (outbox, replay queue, local
+  optimistic write, conflict reconciliation, sync lane) is one too.
 - A human decision item about a mechanism, consent, or an unratified or
   conflicting decision is neither instruction inflation nor manufactured
   ambiguity: those rules protect settled rulings, and this is not settled.

@@ -124,6 +124,8 @@ Built in a vibe session by <operator name>.
 ## Scope and acceptance criteria
 
 - Scope: <what is in, what is deliberately out>
+- Newest ruling: <slug, date and quoted words of the newest human ruling on
+  this capability, or none found (searched: the searches run)>
 - Acceptance criteria:
   - [ ] <one checkable line each, quoted from the person or the originating
     ticket>

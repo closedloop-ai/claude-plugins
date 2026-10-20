@@ -47,7 +47,19 @@ questions"), or produce an upfront summary for the person.
    between surfaces the request needs
    (`../skills/cl-execute/references/planning-and-gates.md`, Readiness Gate,
    "Data direction") `data direction (new)`, with the decision that allows it
-   and its source, or `untraced`; it is never a question for the person. A
+   and its source, or `untraced`; it is never a question for the person.
+   A new sync mechanism along an existing direction (an offline queue or
+   outbox, a replay or retry queue, a local optimistic write of a cloud-owned
+   field, conflict reconciliation, a new sync lane) is flagged the same way.
+   "Do not ever add offline syncing unless a human explicitly authorizes it."
+   (operator ruling, 2026-10-20.)
+   Newest ruling: before any scope, search for later rulings on the same
+   capability (`fts_search` on its nouns with "only when", "no local",
+   "descoped", "out of scope"; `search_memory_facts`; comments on the ticket
+   and its PRD). Return `Newest ruling: <slug, date, quoted words>` or `none
+   found (searched: <searches>)`; the live ticket check fails without it. A
+   ruling newer than the ticket text it contradicts makes that text a question
+   for the operator, never a build order (#8965). A
    recorded decision is settled only when it traces to a human statement
    (`quality-loop.md`, "Communication and product questions"); report each
    with its source, and an unratified or conflicting one as not settled.
@@ -145,7 +157,7 @@ orchestrator then asks the person. End with the Graph block.
 orchestrator keeps internal and which never names a screen to start
 on; the requirements as a short list quoted from their source (never
 invented), each named mechanism tagged `mechanism (proposal)` and each new
-data direction flagged `data direction (new)`; every
+data direction flagged `data direction (new)`; the Newest ruling line; every
 acceptance criterion of the ticket and its PRD, quoted exactly with its source
 slug, or "none stated"; the route and FEATURE_MAP id where the relevant code lives, for
 change workers (not shown to the person); overlapping or in-flight tickets

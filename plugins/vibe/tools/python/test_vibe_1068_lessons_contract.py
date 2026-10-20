@@ -42,3 +42,31 @@ def test_upgrade_needs_no_restored_cache() -> None:
     assert "deletes every older vibe version's cache" in install
     assert "Nothing needs restoring" in install
     assert "helper's grant under a removed root needs no old cache" in loop
+
+
+OFFLINE_RULE = '"Do not ever add offline syncing unless a human explicitly authorizes it."'
+
+
+def test_offline_sync_rule_is_verbatim_where_requirements_and_writer_read_it_and_gated() -> None:
+    for name in ("vibe-requirements-worker", "vibe-change-worker"):
+        assert OFFLINE_RULE in flat(agent(name))
+    rules = (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
+    assert '"sync-authorization"' in rules
+    assert "Sync authorization:" in flat(agent("vibe-change-worker"))
+    for text in (
+        flat(agent("vibe-requirements-worker")),
+        flat((PLUGIN / "skills" / "cl-execute" / "references" / "planning-and-gates.md").read_text()),
+        flat((PLUGIN / "skills" / "cl-execute" / "references" / "plan-review-prompt.md").read_text()),
+    ):
+        assert "sync mechanism along" in text
+
+
+def test_newest_ruling_is_searched_recorded_and_checked() -> None:
+    requirements = flat(agent("vibe-requirements-worker"))
+    assert "search_memory_facts" in requirements and '"descoped"' in requirements
+    assert "Newest ruling:" in (VIBE / "references" / "ticket-template.md").read_text()
+    assert "Newest ruling" in (HANDOFF / "scripts" / "live-ticket-check.mjs").read_text()
+    assert "Newest ruling line" in flat(agent("vibe-ticket-worker"))
+    fleet = flat((FLEET / "SKILL.md").read_text())
+    assert "newest-ruling search" in fleet and "sync-mechanism check" in fleet
+    assert "written to a file and sent as its path" in fleet

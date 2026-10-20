@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { acquireRecordTurn, changeWriter, markClaudeStarted, migrateWriter, readWriterSummary, registerWriter } from "./ledger.js";
 import { runWorker } from "./claude-worker.js";
-import { acquireNativeRecord, verifyStrandedRecordGrant } from "./native-record.js";
+import { acquireNativeRecord, releaseNativeRecord, verifyStrandedRecordGrant } from "./native-record.js";
 import { bundleDirectory, fixture, graph, readProof, writeAgent } from "./test-fixtures.js";
 
 const fixtures: ReturnType<typeof fixture>[] = [];
@@ -88,6 +88,17 @@ describe("recorded writer migration", () => {
     expect(event.binding.agentRoot).toBe(value.currentRoot);
   });
 
+  it("migrates after an upgrade deleted the recorded version dir once a stopped helper's grant there is released", () => {
+    const value = setup();
+    const helper = { worktree: value.worktree, agentRoot: value.oldRoot, agentName: "vibe-ticket-worker", workerId: "native-helper",
+      requestId: "ticket-publish", mode: "record", recordAction: "create", exclusiveRecordTurn: true };
+    const { lease } = acquireNativeRecord(helper);
+    rmSync(value.oldRoot, { recursive: true });
+    expect(() => migrateWriter(value.input, value.currentRoot)).toThrow(/Wait for owned source and record turns/);
+    releaseNativeRecord({ ...helper, lease, stoppedTurn: { runtime: "codex", workerId: helper.workerId,
+      requestId: helper.requestId, lease, state: "completed" } });
+    expect(migrateWriter(value.input, value.currentRoot).lastMigration?.reason).toBe("definition-missing");
+  });
   it("migrates when the recorded agent file alone is missing", () => {
     const value = setup();
     rmSync(join(value.oldRoot, "agents", "vibe-change-worker.md"));

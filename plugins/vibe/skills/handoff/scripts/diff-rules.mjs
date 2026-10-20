@@ -64,6 +64,13 @@ const COPY_LITERALS = [
 const WORDING = /[A-Z]|\s/;
 const TEMPLATE_PART = /\$\{[^}]*\}/;
 const TEMPLATE_PARTS = /\$\{[^}]*\}/g;
+const SYNC_NAME = /outbox|queue|pending|replay|sync/i;
+const DESKTOP_SCHEMA = "apps/desktop/prisma/schema.prisma";
+const PRISMA_MODEL = /^\s*model\s+(\w+)\s*\{/;
+const AGENT_SYNC_DIR = "apps/desktop/src/main/agent-sync/";
+const DESKTOP_MAIN = /^apps\/desktop\/src\/main\/.*\.ts$/;
+const LANE_FACTORY = /\b(?:new\s+([A-Z]\w*Lane)|(create[A-Z]\w*(?:Lane|Sync)))\(/g;
+const SYNC_AUTHORIZATION = /^\s*(?:[-*]\s+)?Sync authorization:\s*([A-Z][\w'.-]+(?:\s+[A-Z][\w'.-]+)+),\s*(\d{4}-\d{2}-\d{2}),\s*\S/m;
 const NARROW_CONTROLS = "node <vibe plugin>/skills/handoff/scripts/narrow-controls.mjs --worktree <wt> --wide <row.yml> --narrow <row.yml>";
 
 /** Parses `git diff --unified=0` output into per-file added and removed lines. */
@@ -130,6 +137,7 @@ export function evaluateDiff(files, changeLog, repo) {
     checkLinkDeletes(file, head, add);
   }
   checkDesktopLane(live, repo, logged, add);
+  checkSyncAuthorization(live, repo, changeLog, add);
   checkTicketedComments(files, repo, logged, add);
   checkStories(live, files, repo, logged, add);
   checkFrozenRenders(files, repo, logged, add);
@@ -236,6 +244,43 @@ function checkLinkDeletes(file, head, add) {
     if (!LINK_EDGE_KEYS.every((key) => key.test(window))) {
       add("artifact-link-delete", file.path, entry.line, "deletes artifact links not scoped to sourceId, targetId and linkType", "delete only the exact edge the write replaces");
     }
+  }
+}
+
+/**
+ * "Do not ever add offline syncing unless a human explicitly authorizes it." (operator ruling,
+ * 2026-10-20, after symphony-alpha #8965 built a Desktop offline edit outbox from old ticket text.) A new sync
+ * mechanism blocks until the change log names the human who authorized it; a ticket or PRD is not a name.
+ */
+function checkSyncAuthorization(files, repo, changeLog, add) {
+  if (SYNC_AUTHORIZATION.test(changeLog)) {
+    return;
+  }
+  const found = [];
+  for (const file of files) {
+    if (file.status === "A" && DESKTOP_MIGRATION.test(file.path)) {
+      for (const table of [...(repo.head(file.path) ?? "").matchAll(SQL_CREATE_TABLE)].map((match) => match[1]).filter((name) => SYNC_NAME.test(name))) {
+        found.push([file.path, 1, `creates Desktop table ${table}`]);
+      }
+    } else if (file.path === DESKTOP_SCHEMA) {
+      for (const entry of file.added) {
+        const model = PRISMA_MODEL.exec(entry.text)?.[1];
+        if (model && SYNC_NAME.test(model)) found.push([file.path, entry.line, `adds Desktop model ${model}`]);
+      }
+    }
+    if (file.status === "A" && file.path.startsWith(AGENT_SYNC_DIR) && !isTestFile(file.path)) {
+      found.push([file.path, 1, "adds a file under apps/desktop/src/main/agent-sync/"]);
+    } else if (DESKTOP_MAIN.test(file.path) && !isTestFile(file.path)) {
+      for (const entry of file.added) {
+        for (const match of entry.text.matchAll(LANE_FACTORY)) {
+          const name = match[1] ?? match[2];
+          if (!repo.baseContains(name)) found.push([file.path, entry.line, `registers new sync lane ${name}`]);
+        }
+      }
+    }
+  }
+  for (const [file, line, what] of found) {
+    add("sync-authorization", file, line, `${what}, a new sync mechanism, without a named human authorizing it`, "remove it, or record `Sync authorization: <human name>, <YYYY-MM-DD>, <where they said it>`; a ticket or PRD an agent wrote is not an authorization");
   }
 }
 

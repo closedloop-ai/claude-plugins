@@ -163,8 +163,11 @@ Raising and recording it is neither instruction inflation nor manufactured
 ambiguity: those rules protect settled rulings, and an unexamined mechanism is
 not one.
 
-Build the outcome only along data directions that are already allowed. A new
-direction of data flow between surfaces
+Build the outcome only along data directions that are already allowed.
+"Do not ever add offline syncing unless a human explicitly authorizes it."
+(operator ruling, 2026-10-20; `diff-rules.mjs` blocks a new sync mechanism,
+even along an existing direction, without `Sync authorization: <human name>,
+<date>, <where>`.) A new direction of data flow between surfaces
 (`../skills/cl-execute/references/planning-and-gates.md`, Readiness Gate,
 "Data direction") that traces to no human decision is not built; log it as
 `Engineering decision: <question>; built: <what you built along allowed

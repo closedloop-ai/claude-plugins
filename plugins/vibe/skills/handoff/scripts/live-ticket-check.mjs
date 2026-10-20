@@ -69,6 +69,10 @@ const REQUIRED_CONTENT = {
     [/^### Keys to see this work$/m, "lists no keys to see the work"],
   ],
   Sessions: [[/\(orchestrator\): `[^`]+`/, "lists no orchestrator session id"]],
+  // Old ticket text built #8965's offline edits over newer human rulings (operator, 2026-10-20).
+  "Scope and acceptance criteria": [
+    [/^- Newest ruling: (?:none found \(searched: [^)\n]+\)|.*\b\d{4}-\d{2}-\d{2}\b)/m, "has no Newest ruling line (a dated ruling, or none found with the searches run)"],
+  ],
 };
 
 /** Splits a markdown body into its `## ` sections (heading to body text). */

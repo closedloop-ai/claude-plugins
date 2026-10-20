@@ -175,8 +175,9 @@ F. Status. The PLN's status follows the work (operator ruling, 2026-10-19):
    assignee, status, branch and pull request evidence. Use the requirements
    brief's classification, but recheck it live before any mutation.
 3. Body from the template: What this is, Scope and acceptance criteria
-   (quoted from the brief and the originating ticket, never invented; an item
-   the person still has to state is `Pending.`), Environment, Production flag
+   (quoted from the brief and the originating ticket, never invented, with the
+   brief's Newest ruling line; an item the person still has to state is
+   `Pending.`), Environment, Production flag
    snapshot, and Sessions from `vibe-sessions.mjs ticket-sections`, the
    Engineering checklist, and `Pending.` for Progress, the backend sections,
    Handoff, Design Review, and Grading. Design Review stays `Pending.` here;

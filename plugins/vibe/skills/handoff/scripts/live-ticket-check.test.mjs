@@ -33,7 +33,7 @@ const DESIGN_REVIEW = [
 function completeTicket(overrides = {}) {
   const sections = {
     "What this is": "Bulk select with tag editing on Sessions and Branches.",
-    "Scope and acceptance criteria": "- Scope: both lists\n- Acceptance criteria:\n  - [ ] Select several rows and edit their tags",
+    "Scope and acceptance criteria": "- Scope: both lists\n- Newest ruling: ISS-12592, 2026-10-15, \"rename on desktop should only be available when logged in online\"\n- Acceptance criteria:\n  - [ ] Select several rows and edit their tags",
     Environment: ENVIRONMENT,
     Progress: "- 2026-10-06: added bulk select to `<SessionsTable>`",
     "Backend built": "- `PATCH /sessions/tags` in `apps/api/app/sessions/tags/route.ts`",
@@ -186,6 +186,14 @@ test("the sections ticket-sections renders from a finished record pass the check
   const flagKeys = { surfaces: [{ surface: "Tags", hosts: ["web"], keys: [{ key: "a", origin: "existing", readAt: ["apps/app/tags.tsx"] }] }] };
   const filled = parseSections(renderRecordSections({ ...finished, flagKeys }, snapshot));
   assert.deepEqual(checkLiveTicket(completeTicket(Object.fromEntries(filled))).problems, []);
+});
+
+test("the scope must carry the newest ruling on the capability, dated, or the searches that found none", () => {
+  const scope = (line) => checkLiveTicket(completeTicket({ "Scope and acceptance criteria": `- Scope: both lists\n${line}- Acceptance criteria:\n  - [ ] Edit tags` }));
+  for (const line of ["", "- Newest ruling: the ticket\n", "- Newest ruling: none found\n"]) {
+    assert.deepEqual(scope(line).problems.map(({ section }) => section), ["Scope and acceptance criteria"]);
+  }
+  assert.equal(scope("- Newest ruling: none found (searched: fts_search offline rename, search_memory_facts, ISS-9488 comments)\n").ok, true);
 });
 
 test("a flag snapshot without the keys to see the work fails the check", () => {

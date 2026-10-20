@@ -55,6 +55,7 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 The closedloop-graph MCP server is required; decide from it, not from guesses. Tool guide: [vibe's closedloop-graph reference](../vibe/references/closedloop-graph.md).
 
 - Before assigning work or ruling between PRs, check open-PR and ticket overlap with `query_collisions` and `blast_radius_tickets`; read a ticket's PRD lineage and children with `ticket_detail`.
+- Before dispatching a ticket, and in every QA-prep brief, run vibe's newest-ruling search ([requirements worker](../../agents/vibe-requirements-worker.md), Newest ruling) and its sync-mechanism check (an outbox, replay queue, local optimistic write, conflict reconciliation or new sync lane needs a named human's authorization). On a hit, stop and ask the operator. #8965 built offline edits from ticket text a newer ruling had already refused, and that ruling was in the orchestrator's own transcript.
 - Before a shared change, read its callers and importers (`code_callers`, `code_importers`).
 - Which tests to run, or rerun, after any change, fix or merge (a conflict resolution included) is decided by `code_tests_for`, the only route to tests, over the files that change touched: run exactly those and nothing broader by default. Files that map to no tests (changelog, README, version text) run none, and CI confirms.
 - Trace a surprising difference in a before and after comparison to the commit and ticket that introduced it before blaming the PR.
@@ -95,6 +96,7 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 
 - Launch each Claude writer with the [worker preamble](./references/templates.md#worker-preamble) saved to `prompts/`. It starts with invoking vibe and carries the worktree, PR, reading, test, git, thread-reply and report rules so no writer improvises them.
 - A message to a busy worker arrives only when it goes idle; if it idles without acting on one, resend it shortly.
+- A brief or added instruction to a background agent is written to a file and sent as its path; message bodies have reached background agents as their one-line summary only.
 - When CPU is tight, give the next review to an idle reviewer that finished, rather than spawning a new one.
 
 ## Moving work between runtimes and accounts

@@ -90,9 +90,40 @@ test("a new Desktop sync lane needs the shared give-up, the shared backoff, a Su
   assert.equal(bare.found.filter(([rule]) => rule === "desktop-sync-lane").length, 4);
   const done = run(t, {
     head: { [lane]: "import { LaneGiveUpStampDefect } from \"../../shared/lane-give-up.js\";\nexport const delay = (n) => exponentialBackoffMs(n + 1);\n", ...table },
-    changeLog: "Synchronizing-susan: no findings\nEngineering needed (forbidden path): apps/desktop/src/main/sync/AGENTS.md; why: roster\n",
+    changeLog: "Synchronizing-susan: no findings\nEngineering needed (forbidden path): apps/desktop/src/main/sync/AGENTS.md; why: roster\nSync authorization: Pat Example, 2026-10-20, operator message in the session\n",
   });
   assert.deepEqual(done.found, []);
+});
+
+test("a new sync mechanism needs a named human's authorization (#8965 inline edit outbox, #8960 placement outbox)", (t) => {
+  const schema = "apps/desktop/prisma/schema.prisma";
+  const composition = "apps/desktop/src/main/agent-sync/desktop-sync-lane-composition.ts";
+  const base = {
+    [schema]: "model AgentSession {\n  id String @id\n}\n",
+    [composition]: "export function compose(deps) {\n  return { transcript: createTranscriptSyncLane(deps) };\n}\n",
+  };
+  const inlineEdit = {
+    "apps/desktop/prisma/migrations/20261020171727_iss9488_local_inline_edit_outbox/migration.sql": "CREATE TABLE \"local_inline_edit_outbox\" (id TEXT);\n",
+    [schema]: "model AgentSession {\n  id String @id\n}\nmodel LocalInlineEditOutbox {\n  id String @id\n}\n",
+    "apps/desktop/src/main/agent-sync/local-inline-edit-sync-service.ts": "export class LocalInlineEditSyncService {}\n",
+  };
+  const inline = run(t, { base, head: inlineEdit }).blocking.filter((finding) => finding.rule === "sync-authorization");
+  assert.deepEqual(inline.map((finding) => [finding.file, finding.line]), [
+    [schema, 4],
+    ["apps/desktop/prisma/migrations/20261020171727_iss9488_local_inline_edit_outbox/migration.sql", 1],
+    ["apps/desktop/src/main/agent-sync/local-inline-edit-sync-service.ts", 1],
+  ]);
+  const placement = run(t, { base, head: {
+    [schema]: "model AgentSession {\n  id String @id\n}\nmodel ProjectArtifactPlacementOutbox {\n  sourceKey String @id\n}\n",
+    [composition]: "export function compose(deps) {\n  return { transcript: createTranscriptSyncLane(deps), placement: createProjectArtifactPlacementSync(deps) };\n}\n",
+  } }).blocking.filter((finding) => finding.rule === "sync-authorization");
+  assert.deepEqual(placement.map((finding) => finding.problem.split(",")[0]), ["adds Desktop model ProjectArtifactPlacementOutbox", "registers new sync lane createProjectArtifactPlacementSync"]);
+  for (const changeLog of ["Sync authorization: ISS-9488, 2026-09-29, ticket text\n", "Sync authorization: Pat Example\n"]) {
+    assert.equal(run(t, { base, head: inlineEdit, changeLog }).found.some(([rule]) => rule === "sync-authorization"), true);
+  }
+  const named = run(t, { base, head: inlineEdit, changeLog: "Sync authorization: Sam Sample, 2026-10-21, ISS-9488 comment thread\n" });
+  assert.equal(named.found.some(([rule]) => rule === "sync-authorization"), false);
+  assert.deepEqual(run(t, { base, head: { [composition]: base[composition].replace("deps) }", "deps), again: createTranscriptSyncLane(deps) }") } }).found, []);
 });
 
 test("a dropped ticketed comment blocks while its code survives; moved, reworded or deleted with its code it does not", (t) => {
