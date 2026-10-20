@@ -192,7 +192,7 @@ Three tiers select which reviewer fleet runs:
 | Verifier | ✓ | ✓ | ✓ |
 | `fast_path_reviewer` (auto on tiny PRs) | ✓ (auto) | ✓ (auto) | ✓ (auto) |
 | `design_critic` (always-on at deep) | ✗ | ✗ | ✓ |
-| `impact_analyzer` (FEA-1401, on exported-symbol change/deletion) | ✗ | ✗ | ✓ (on signal) |
+| `impact_analyzer` (FEA-1401, on exported-symbol change/deletion or a deleted file) | ✗ | ✗ | ✓ (on signal or file deletion) |
 
 **Standard-mode budget arithmetic.** With PLN-807 Phase 4, `arbitrate-budget` reserves BHA partitions FIRST (from `_max_bha_partitions_by_loc`) and then allocates the remaining budget to critics and best-effort. The total domain-critic count across both required and best-effort buckets is capped uniformly at `DOMAIN_CRITIC_CAP = 3` (by priority asc, reviewer asc) for both standard and deep tiers. Required-bucket critics dropped by the cap emit coverage-gap findings; cap-deferred entries carry `defer_reason: "domain_critic_cap"` in `deferred_for_budget`. PRs with sparse critic-gates rosters see identical fleet to pre-PLN-807.
 
