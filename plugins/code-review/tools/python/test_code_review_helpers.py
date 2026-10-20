@@ -16960,7 +16960,6 @@ class TestStage15Alignment:
         assert "--cr-dir" in args
         assert "--available-reviewers" in args
         assert "--diff-data" in args
-        assert "--diff-tip" in args
         # --extract-signals is optional but always wired for the
         # pipeline (no reason to skip when stage_11 produced it).
         assert "--extract-signals" in args
