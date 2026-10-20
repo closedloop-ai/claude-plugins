@@ -119,13 +119,13 @@ describe("handoff failures compared against the captured main (operator ruling, 
 
 describe("captured-main command and budget", () => {
   it("pins every diff-relative selector to the session's selected packages and refuses a missing file", () => {
-    const tasks = { tasks: [{ taskId: "api#test", package: "api" }, { taskId: "app#test", package: "app" }, { taskId: "db#build", package: "db" }] };
+    const tasks = { tasks: [{ taskId: "api#typecheck", package: "api" }, { taskId: "app#typecheck", package: "app" }, { taskId: "db#build", package: "db" }] };
     const sha = "a".repeat(40);
-    expect(capturedMainArgv("/unused", sha, { argv: ["pnpm", "test:affected", "--continue"] }, tasks))
-      .toEqual({ argv: ["pnpm", "turbo", "test", "--filter=api", "--filter=app", "--continue"] });
-    expect(capturedMainArgv("/unused", sha, { argv: ["pnpm", "turbo", "test", `--filter=...[${sha}]`, "--continue"] }, tasks))
-      .toEqual({ argv: ["pnpm", "turbo", "test", "--filter=api", "--filter=app", "--continue"] });
-    expect(capturedMainArgv("/unused", sha, { argv: ["pnpm", "test:affected", "--continue"] }, undefined))
+    expect(capturedMainArgv("/unused", sha, { argv: ["pnpm", "typecheck:affected"] }, tasks))
+      .toEqual({ argv: ["pnpm", "turbo", "typecheck", "--filter=api", "--filter=app", "--concurrency=1"] });
+    expect(capturedMainArgv("/unused", sha, { argv: ["pnpm", "turbo", "typecheck", `--filter=...[${sha}]`, "--concurrency=1"] }, tasks))
+      .toEqual({ argv: ["pnpm", "turbo", "typecheck", "--filter=api", "--filter=app", "--concurrency=1"] });
+    expect(capturedMainArgv("/unused", sha, { argv: ["pnpm", "typecheck:affected"] }, undefined))
       .toHaveProperty("reason");
     expect(capturedMainArgv("/unused", sha, { argv: ["pnpm", "check:source-gates"] }, undefined))
       .toEqual({ argv: ["pnpm", "check:source-gates"] });

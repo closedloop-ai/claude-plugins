@@ -92,14 +92,18 @@ targets the already-active turn. Preserve `requestedModel`,
 `requestedReasoningEffort`, the generated protocol schema SHA-256 proof, and the
 field-level binding in a pre-existing legacy session. New ticket-owner sessions
 persist `requestedModel: gpt-6-sol`. Pass the exact real worktree and the
-session's exact persisted model to start/resume during recovery; pass ticket-owner
-`effort: xhigh` on turn start unless a later deterministic narrow continuation
-is explicitly classified for medium. Verify returned and read thread id/cwd
+session's exact persisted model to start/resume during recovery; pass the
+session's persisted ticket-owner `requestedReasoningEffort` on turn start
+(`high` for new sessions, `xhigh` only when raised explicitly at session
+start; never rewrite a persisted effort) unless a later deterministic narrow
+continuation is explicitly classified for medium. Verify returned and read thread id/cwd
 before mutation. Keep the App Server thread id and active turn id in the private
 session manifest. Stream notifications until the bounded turn completes, fail
 on any reroute away from that persisted model, validate its callback, append the
 event, and use the same daemon to steer or start the parent root turn with that
-event. Never create a new `gpt-5.5` or `gpt-5.6-*` session. An already-active
+event. Never create a new `gpt-5.5` or `gpt-5.6-*` ticket-owner session
+(read-only explorer support lanes on `gpt-5.6-terra` are not ticket-owner
+sessions). An already-active
 legacy turn is recoverable under its exact stored binding. Once it reaches an
 authoritatively verified idle/no-active-turn boundary, replace its owner/session
 before another turn; never rewrite its model field in place. No implicit
@@ -277,10 +281,13 @@ consume it exactly like the native event: run the one correction for
 
 The ticket worker launches and manages direct read-only support agents with
 `fork_turns: "none"`, an explicit role-bounded model, and an explicit reasoning
-effort. Use `model: "gpt-6-sol"` with `reasoning_effort: "high"` or `"xhigh"`
-for planning review, correctness-sensitive code review or QA, synthesis, and
+effort, taken from `../scripts/model-policy.mjs`. Use `model: "gpt-6-sol"`
+with `reasoning_effort: "high"` (`"xhigh"` only when raised explicitly) for
+planning review, correctness-sensitive code review or QA, synthesis, and
 high-judgment architecture, security/privacy, database/migration, or ambiguous
-correctness work, as well as exploratory code/evidence analysis. Only when work
+correctness work. Use `model: "gpt-5.6-terra"` with `reasoning_effort: "high"`
+for explorer lanes: exploratory code/evidence analysis, graph lookups,
+requirements or precedent research, and read-only search. Only when work
 is actually decomposed into a separate bounded deterministic lower-risk support
 role may it use `model: "gpt-6-luna"` with `reasoning_effort: "low"` for
 search/inventory, status, hashing, or artifact parsing. Support lanes provide

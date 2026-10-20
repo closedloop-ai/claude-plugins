@@ -193,7 +193,8 @@ Placement:
 
 As an advisor, run no writing commands. Inspect the current result and report
 what the sole writer should check: `pnpm exec biome check` and
-`pnpm --filter storybook test` for the changed stories. Report: files
+`pnpm --filter storybook exec vitest run <changed story files>` for the
+changed stories only, never the whole Storybook suite. Report: files
 extracted, stories added or updated (path and story names), each story or
 shared component placed differently from the recorded Placement block or
 without one, and any component not yet covered with the reason. Do not claim

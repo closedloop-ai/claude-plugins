@@ -214,14 +214,15 @@ every conflict/source problem. Do not run a raw merge/commit/push yourself.
    exemption: preserve dirty code/records and BLOCK through the same-writer
    workaround/exclusion/restore flow, never stash/copy/delete them.
    A build-loop deploy runs only what the commit hooks run: the affected
-   typecheck and Biome on the changed source, no test suites. At handoff only:
-   Run the existing affected tests before pushing through that SAME writer's
-   executor, from the worktree:
-   `TURBO_CONCURRENCY=2 pnpm turbo test --filter="...[<since>]" --continue`,
-   where `<since>` is the session's `vercel.lastDeployedCommit`, or its
-   `baseCommit` before the first deploy. That is the tests of every package
-   the session changed since then plus the packages that depend on them
-   (Storybook's story sweep included). The shared executor owns fixed selected
+   typecheck and Biome on the changed source, no test suites. At handoff the
+   matrix adds the source gates, the Storybook catalog check when stories
+   changed, and the typecheck of every package the session changed since
+   `<since>` plus the packages that depend on them
+   (`pnpm turbo typecheck --filter="...[<since>]"`, where `<since>` is the
+   session's `vercel.lastDeployedCommit`, or its `baseCommit` before the
+   first deploy), still no broad or full test suite (operator ruling,
+   2026-10-19): the verify worker runs the tests `code_tests_for` selects for
+   each changed file, and CI runs the broad suites. The shared executor owns fixed selected
    process budgets and the Root-bound validation envelope; never supply a
    timeout override or change any test/assertion/hook deadline. A failure the
    brief lists as a deliberately obsolete expectation must carry the exact

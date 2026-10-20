@@ -82,7 +82,7 @@ function startFakeAppServer(socketPath, cwd) {
       assert.equal(params.threadId, state.threadId);
       assert.equal(params.cwd, cwd);
       assert.equal(params.model, 'gpt-6-sol');
-      assert.equal(params.effort, 'xhigh');
+      assert.equal(params.effort, 'high');
       state.turnStartCount += 1;
       state.materialized = true;
       // Reproduce the defect: App Server accepts a turn id but subsequently
