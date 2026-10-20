@@ -913,6 +913,11 @@ class CanonicalFinding:
     # Cross-file grouping
     other_locations: list[OtherLocation] = field(default_factory=list)
 
+    # Validator-owned location tags (present and True only when the
+    # validator set them; reviewer-supplied values are stripped).
+    out_of_hunk_kept: bool = False  # in a diff file, outside its changed lines
+    out_of_diff: bool = False  # in a file outside the diff (ISS-12737)
+
     # Schema version (per-finding, complements envelope version)
     schema_version: int = SCHEMA_VERSION
 
@@ -1269,6 +1274,8 @@ def finding_json_schema() -> dict[str, Any]:
             "rejection_class": {"type": ["string", "null"]},
             "human_review_recommended": {"type": "boolean"},
             "other_locations": {"type": "array"},
+            "out_of_hunk_kept": {"type": "boolean"},
+            "out_of_diff": {"type": "boolean"},
         },
     }
 
