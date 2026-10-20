@@ -356,20 +356,21 @@ changes and gates fields.
    create nothing. On the first dispatch return `DONE` with its URL. A
    dispatch from handoff's "Changes on the open pull request" (section 10)
    updates it instead, as "Updating an open pull request" below says.
-3. Fetch the current PR template from main
+3. Run `node ../skills/handoff/scripts/handoff-inventory.mjs --worktree "<wt>" --phase pull-request --overlap --ticket "<gitdir>/vibe-live-ticket.md"`
+   and fetch the current PR template from main
    (`gh api repos/closedloop-ai/symphony-alpha/contents/.github/pull_request_template.md --jq .content | base64 -d`)
    and fill every section from the session's own record, never from
    invention:
-   - Summary: the confirmed summary, with the live ticket's slug and its
-     "Keys to see this work".
-   - Breaking changes: an honest answer from Production impact; write the
-     root `AGENTS.md`'s "none" answer only when Production impact supports it
-     (no API response field, database column or cross-process wire shape
-     changed).
+   - Summary: the confirmed summary with the live ticket's slug and its
+     "Keys to see this work", then every `overlap`, `assertionChanges`,
+     `contractChanges` and answered `asks` entry.
+   - Breaking changes: from Production impact and every `refusals` entry;
+     "none" only when Production impact supports it and `refusals` is empty.
    - UI Feature Flag: the heading alone, unless the change adds a net-new
      surface, screen or navigation item or a new flag primitive; then attest
      `[ui-flag:gated] <key>` or `[ui-flag:N/A] <reason>` only from the Flag
-     changes and gates field.
+     changes and gates field, marking `(flag-pending)` only a key a fresh
+     PostHog evaluation (Flag snapshot step 2) does not return.
    - Test plan: at most 20 lines: the tests written and the checks run, with
      their results.
    When the record cannot support a required answer, say so in that section
@@ -384,11 +385,12 @@ changes and gates fields.
    it names this ticket's slug and summary; parallel workers share scratch
    space, and one pull request's body has overwritten another's (operator
    ruling, 2026-10-16). The same holds for every body or payload file this
-   mode writes.
+   mode writes. Rerun step 3 with `--body <file> --runs "<gitdir>/vibe-pr-evidence.json" --commit <published commit>`:
+   `blocking.prBody` or `blocking.prEvidence` false creates nothing (`NEEDS_CHANGE`).
 5. Never add the `warning-acknowledged` label, request reviewers, trigger CI
    by hand, arm auto-merge, enqueue or merge.
 
-Return `DONE` with the pull request URL, or `BLOCKED` with why.
+Return `DONE` with the pull request URL, `NEEDS_CHANGE`, or `BLOCKED` with why.
 
 ### Updating an open pull request
 
@@ -408,8 +410,8 @@ or `--body-file`).
   1. Confirm the branch on `origin` is at that commit (step 1 above).
   2. Refresh the body from the session record so it matches the diff: build
      it exactly as step 3 does from the refreshed confirmed summary,
-     Production impact, Flag changes and gates, tests and check results, and
-     apply it with
+     Production impact, Flag changes and gates, tests and check results,
+     gated as in step 4, and apply it with
      `gh pr edit <number> --repo closedloop-ai/symphony-alpha --body-file <file>`,
      the file named and re-read as step 4 says.
      Keep the title unless the summary it names changed.

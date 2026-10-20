@@ -70,7 +70,9 @@ questions"), or produce an upfront summary for the person.
 4. Note in-flight work on that code: run `blast_radius_tickets` on its route
    and main component files. List open GitHub pull requests and inspect their
    changed files, reporting every open pull request that touches any of those
-   same files. A ticket-only collision result is incomplete.
+   same files or a module they import; resolve each named dependency ("Roadmap
+   N", "Dependencies:") to its PRD and open pull requests. A ticket-only
+   collision result is incomplete.
 
 ## Reference mode
 

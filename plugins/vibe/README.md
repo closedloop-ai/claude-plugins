@@ -321,6 +321,8 @@ rows the person accepted as Frozen Behavior in the session decision table that
 the ticket attaches; `cl-execute` reads that attachment, keeps every frozen row
 passing with tests in its pull request, and changes one only with that
 person's explicit OK.
+The handoff inventory also reports what a pull request body must state, and
+blocks creating one that misses a fact or lacks passing runs.
 
 ### `vibe-seed-refresh`
 
@@ -486,9 +488,11 @@ handoff stops and the same writer adds the canonical activity capture
 instead of a placeholder change log line, while the unmapped parity test
 still runs.
 
+The `pr-facts` case checks that a body missing computed facts is not created.
+
 ## Runtime Files
 
-Version `1.0.68` contains 12 skills and 16 agents. It has no standalone
+Version `1.0.66` contains 12 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains the skill-contract test modules and
 `vibe_contract_text.py`, the text helpers they share.

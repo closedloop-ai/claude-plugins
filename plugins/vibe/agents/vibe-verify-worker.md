@@ -107,9 +107,10 @@ from the reviews of symphony-alpha #8885 and #8886 (operator ruling,
   surface or synthetic `dispatchEvent` pointer events for the gesture under
   test. Judge an iOS tap by its user-visible result in both device runs, even
   when its click reports `pointerType` as `mouse`.
-  A requested pull request is blocked until its final evidence names the real
-  web host, WebKit iPhone and Chromium Pixel commands, commit, screen and
-  visible interaction outcome. Missing evidence is not deferred as a test gap.
+  Record runs of the inventory's `requiredLanes` (with `webkit-iphone` and
+  `chromium-pixel` for `touchFlows`) as `{lane, status, command, commit,
+  outcome}` in `<gitdir>/vibe-pr-evidence.json`; the pull request stays
+  blocked until `blocking.prEvidence` passes.
 
 Browser automation is headless. Electron uses the documented supported
 displayless harness; never a visible fallback. If no supported local path

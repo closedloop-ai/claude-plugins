@@ -14,6 +14,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - Review rules from symphony-alpha #8947 to #8967 are one line each in their owners: the adversarial reviewer's attacks (write paths, cache and preconditions, id case, scope gates, disclosure propagation, narrow selection and target size), the verify worker (real hook coverage, consumed-surface touch runs, flag-off captures of every surface at phone and desktop width, ancestor baselines), and the Storybook decomposer (frozen renders, flag-on states, sibling pull request removals). The verify worker now captures flag-off parity at 390, 412, 1024 and 1280 px and runs axe `color-contrast` on every new or changed story state; the adversarial reviewer flags in-row messages a fixed-height row clips; handoff reruns the migration checks on the merged tree after every main sync. Prose the gate now enforces (the frozen closure procedure, the stale story ID searches in five places, the sort-order test rule, a duplicated backend paragraph, the docs path command) is removed, leaving vibe's instruction length unchanged.
+### vibe v1.0.66
+
+#### Changed
+- The handoff inventory reports the pull request facts from the diff (`pr-facts.mjs`): `serverOnly` and required evidence lanes, assertion and export changes, new `apps/api` refusals, ticket asks and, with `--overlap`, open pull requests sharing a changed or imported file. In the pull-request phase `--body` adds `blocking.prBody` and `--runs` with `--commit` adds `blocking.prEvidence`; the environment worker builds the body from the facts and creates nothing while either fails.
+- A server-only diff skips Storybook, Desktop runs and visual QA. The prose rules the gate replaces were removed, and the PR body re-evaluates PostHog before marking a key `(flag-pending)`.
 ### vibe v1.0.65
 
 #### Added

@@ -182,11 +182,7 @@ then step 3's guardrail check, step 5's checks with the new tests included and
 step 6's review on the result, with the repo's `review-soul` critic required
 on those tests, then step 7's commit and its push and publication through
 `vibe-environment-worker` in redeploy mode. The pull request does not open
-until those tests pass and their independent review is clean. It is also hard
-gated on executed interaction evidence through the real web host, WebKit's
-iPhone device descriptor and Chromium's Pixel device descriptor for every
-touched narrow or touch flow. A mocked host, keyboard-only run or Chromium
-`hasTouch` run cannot satisfy this gate.
+until those tests pass, their independent review is clean and step 9's gate passes.
 
 From the request on, every brief in this handoff (the writer, the reviewers,
 the verify and environment workers, the ticket worker) carries the
@@ -291,6 +287,7 @@ as `apps/api`, `packages/api`, `packages/database`, Desktop's main process,
 and any migration), the backend checks when it did. If a later inventory run
 reports `backendChanged` true (a fix or a behavior answer added backend code),
 use the backend checks from then on and update the internal checklist.
+Its `serverOnly` true skips step 4, Desktop runs and visual QA (record why).
 The checklist stops immediately when `blocking.forbiddenPaths` is false
 (every `forbidden` or `outsideAllowed` path; only inventory-proven
 `shrinkOnlyAllowlists` entries are exempt) or `blocking.diffRulesClear` is
@@ -508,17 +505,10 @@ findings resume the SAME writer in fix mode, then steps 3 to 6 run again on
 the result. Their reports feed the Design Review evidence in step 8. Owned
 prototype sessions keep their canonical single design review instead.
 
-Every new or changed Storybook `play` runs in a real browser through the
-repository's Storybook test runner or Playwright against the containerized
-Storybook service, with every `storybook/test` interaction awaited. jsdom is
-not final play evidence. Any card or narrow-layout interaction also runs with
-real touch using Playwright's WebKit iPhone and Chromium Pixel device
-descriptors. Keyboard input and Chromium `hasTouch` alone are insufficient;
-the WebKit result is judged by the visible tap outcome even when its click
-reports `pointerType` as `mouse`.
-For a requested pull request these are opening gates, not missing-test notes:
-record the real web-host run and both named touch-device runs with commands,
-commit, screen and outcome before step 9.
+Every new or changed Storybook `play` runs awaited in a real browser, and any
+card or narrow-layout interaction on WebKit iPhone and Chromium Pixel, as the
+verify worker's checks mode says and records. For a requested pull request
+these are opening gates (step 9), not missing-test notes.
 
 ## 7. Upload the last changes
 
@@ -810,14 +800,15 @@ lookup resolved to exactly one user.
 
 On a requested pull request, skip assign mode: the ticket stays with the
 person, In Progress. Before dispatch, require the refreshed pinned-base
-Storybook train check, the real web-host evidence and both named touch-device
-results. Then dispatch
+Storybook train check. Then dispatch
 `vibe-environment-worker` in `pull-request` mode (its own `pull-request`
 record action, an exclusive record turn with no record writes) with the
 worktree, the live ticket slug, the confirmed summary, the final verified
 published commit from step 7, the tests the `pull-request` turn wrote and
 step 5's check results, and the ticket's Production impact and Flag changes
-and gates fields. It opens the pull request on the already pushed branch and
+and gates fields. It opens the pull request on the already pushed branch,
+blocked until the inventory's `blocking.prBody` and `blocking.prEvidence` pass
+(`NEEDS_CHANGE`: runs to the verify worker, the rest to the SAME writer), and
 returns its URL; it never enqueues or merges it. On `BLOCKED`, tell the
 person in one plain line that the pull request could not be opened and
 suggest they message engineering, naming this work by its summary; never give them the
