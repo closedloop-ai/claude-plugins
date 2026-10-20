@@ -28,7 +28,7 @@ This stage runs when the walker reaches `stage_20`.
   - When `source == "fast_path"` → Fast Path suffix (only emitted on the fast-path branch; mutually exclusive with the bucket walk).
 - `spec.fast_path: true` → spec emits exactly one agent (`agent_id: "fast"`); skip the standard-flow tables and use the Fast Path suffix below.
 - `spec.gated_by_verify: true` → a BLOCKING verify verdict from stage_15c fired (the canonical finding already lives in `agent_coverage-verify-blocking.json`). The spec has already been sanitized — only `source: "core"` agents will be present in `agents[]`; rule/critic-source reviewers were moved to `skipped[]` with `reason: "gated_by_verify"`. Spawn the (sanitized) spec as-is and surface a one-line warning in the present step that arbitration was bypassed.
-- `spec.skipped[]` → reviewers the spec deliberately did not spawn (e.g. `test_quality` deferred to PLN-723; `bug_hunter_a` skipped because all files cached). Do not re-add them.
+- `spec.skipped[]` → reviewers the spec deliberately did not spawn (e.g. `test_quality` deferred to PLN-723; `bug_hunter_a` skipped because all files cached or only deleted files are left). Do not re-add them.
 
 The static tables, model selection notes, and partition-to-agent mapping below remain authoritative for the **fallback path** (when `spawn.json` is absent, its `spec` section is missing, or it marks `arbitrate_status: "fallback"`) and for human inspection of the canonical fleet shape.
 

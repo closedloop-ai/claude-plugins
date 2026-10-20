@@ -1,5 +1,5 @@
 ---
-description: Deep code review — standard fleet plus the always-on Design Critic and the Impact Analyzer (FEA-1401) when changed exported symbols are detected
+description: Deep code review — standard fleet plus the always-on Design Critic and the Impact Analyzer (FEA-1401) when changed exported symbols are detected or a file is deleted
 argument-hint: "[scope] [--github] [--base <ref>] [--since-last-review] [--full-review]"
 ---
 
@@ -11,7 +11,7 @@ This command is shorthand for `/start --depth deep`. Follow every instruction in
 
 ## What deep does
 
-Deep produces the standard fleet plus two deep-only conditional core reviewers: the always-on **Design Critic** and the signal-gated **Impact Analyzer** (FEA-1401).
+Deep produces the standard fleet plus two deep-only conditional core reviewers: the always-on **Design Critic** and the trigger-gated **Impact Analyzer** (FEA-1401).
 
 The **Design Critic** runs on **every** deep review (no trigger required). It evaluates the change for software-design craftsmanship — module depth and information hiding, SOLID adherence, dependency direction and layer boundaries, and project/package structure — drawing on *A Philosophy of Software Design*, the SOLID principles, and *Clean Architecture*. It flags only design flaws this change introduces or demonstrably worsens (a new shallow module, a wrong-direction dependency, a god-class this PR grew, a type-switch it extended), runs on Sonnet, and is **exempt from the domain-critic cap** (it is a `source: "core"` reviewer, not a project-specific critic). Like the Impact Analyzer it is code-intelligence-aware: when the operator's session provides an MCP server that indexes the repo, it uses that server for module/layer layout and for dependency direction and import cycles, falling back to grep otherwise. The plugin is substrate-agnostic — it names no particular server and works with whichever one is connected. Findings carry `category: "Code Quality"`.
 
