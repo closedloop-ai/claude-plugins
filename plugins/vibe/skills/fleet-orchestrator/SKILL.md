@@ -96,7 +96,7 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 
 - Launch each Claude writer with the [worker preamble](./references/templates.md#worker-preamble) saved to `prompts/`. It starts with invoking vibe and carries the worktree, PR, reading, test, git, thread-reply and report rules so no writer improvises them.
 - A message to a busy worker arrives only when it goes idle; if it idles without acting on one, resend it shortly.
-- A brief or added instruction to a background agent is written to a file and sent as its path; message bodies have reached background agents as their one-line summary only.
+- A pane teammate sees your messages only when its current turn ends. For an urgent redirect, ask the operator to press Esc in the named pane, which ends the turn and delivers them; otherwise expect delivery at the next turn boundary. Keep long briefs in a file and send its path.
 - When CPU is tight, give the next review to an idle reviewer that finished, rather than spawning a new one.
 
 ## Moving work between runtimes and accounts

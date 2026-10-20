@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { parseUnifiedDiff, runDiffRules, transactionBodies } from "./diff-rules.mjs";
@@ -9,17 +9,26 @@ const isFrozenStory = (text) => / v1\.0\//.test(text);
 
 function put(root, files) {
   for (const [file, content] of Object.entries(files)) {
+    if (content === null) {
+      rmSync(path.join(root, file));
+      continue;
+    }
     mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     writeFileSync(path.join(root, file), content);
   }
 }
 
 /** Findings as [rule, file] for a base commit of `base` files and an uncommitted (or committed) `head`. */
-function run(t, { base = {}, head = {}, changeLog = "", commit = false }) {
+function run(t, { history = [], base = {}, head = {}, changeLog = "", commit = false }) {
   const { root, home, cleanup } = makeHome("vibe-diff-rules-");
   t.after(cleanup);
   const checkout = path.join(root, "wt");
   git(root, ["init", "--quiet", "--initial-branch=main", checkout], home);
+  for (const step of history) {
+    put(checkout, step.files);
+    git(checkout, ["add", "-A"], home);
+    git(checkout, ["commit", "--quiet", "--allow-empty", "-m", step.message], home);
+  }
   put(checkout, { "README.md": "seed\n", ...base });
   git(checkout, ["add", "-A"], home);
   git(checkout, ["commit", "--quiet", "-m", "base"], home);
@@ -211,6 +220,38 @@ test("routes, GridTableV2 and story titles require the tests the graph does not 
   assert.deepEqual(result.requiredTests.map((entry) => entry.path), ["e2e/links.spec.ts", ...tests]);
   assert.match(result.requiredChecks.map((check) => check.command).join(), /narrow-controls\.mjs --worktree <wt> --wide <row\.yml> --narrow <row\.yml>/);
   assert.deepEqual(run(t, { head: { "apps/app/x.ts": "export const x = 1;\n" } }).requiredChecks, []);
+});
+
+test("a diagnostic that dumps the whole environment blocks; reading named keys does not", (t) => {
+  const result = run(t, { head: {
+    "scripts/diag.mjs": "writeFileSync(report, JSON.stringify(process.env, null, 2));\nconst child = spawn(cmd, { env: { ...process.env, CI: \"1\" } });\nconsole.log(process.env.NODE_ENV);\n",
+    "scripts/diag.sh": "#!/bin/sh\nenv > /tmp/env.txt\necho \"$HOME\"\n",
+    "tools/diag.py": "import os\nprint(dict(os.environ))\nprint(os.environ.get(\"CI\"))\n",
+  } });
+  assert.deepEqual(result.blocking.filter((finding) => finding.rule === "env-dump").map((finding) => [finding.file, finding.line]),
+    [["scripts/diag.mjs", 1], ["scripts/diag.sh", 2], ["tools/diag.py", 2]]);
+});
+
+test("a component or file a human removed is not brought back without a restore authorization (#8957, ISS-6005)", (t) => {
+  const toolbar = "packages/app/sessions/sessions-toolbar.tsx";
+  const badge = "packages/app/sessions/read-source-badge.tsx";
+  const withPill = "export const Toolbar = () => (\n  <Bar>\n    <ReadSourceBadge source={source} />\n  </Bar>\n);\n";
+  const withoutPill = "export const Toolbar = () => (\n  <Bar>\n  </Bar>\n);\n";
+  const history = [
+    { message: "Add sessions toolbar", files: { [toolbar]: withPill, [badge]: "export const ReadSourceBadge = () => null;\n", "packages/app/sessions/legacy-row.tsx": "export const LegacyRow = 1;\n" } },
+    { message: "ISS-6005: remove the cloud pill on desktop and web", files: { [toolbar]: withoutPill, "packages/app/sessions/legacy-row.tsx": null } },
+  ];
+  const head = { [toolbar]: withPill.replace("<Bar>", "<Bar>\n    <NewFilter />"), "packages/app/sessions/legacy-row.tsx": "export const LegacyRow = 2;\n" };
+  const bare = run(t, { history, head });
+  const restored = bare.blocking.filter((finding) => finding.rule === "restored-removal");
+  assert.deepEqual(restored.map((finding) => [finding.file, finding.line]), [[toolbar, 4], ["packages/app/sessions/legacy-row.tsx", 1]]);
+  assert.match(restored[0].problem, /mounts ReadSourceBadge, removed by commit \w+ ISS-6005: remove the cloud pill/);
+  assert.match(restored[1].problem, /adds back a file deleted by commit \w+ ISS-6005/);
+  const changeLog = "Restore authorization: ReadSourceBadge: operator ruling, 2026-10-21, session thread; overrides ISS-6005\n"
+    + "Restore authorization: packages/app/sessions/legacy-row.tsx: Pat Example, 2026-10-21, ISS-12 comment; overrides ISS-6005\n";
+  assert.deepEqual(run(t, { history, head, changeLog }).found.filter(([rule]) => rule === "restored-removal"), []);
+  const noSlug = "Restore authorization: ReadSourceBadge: operator ruling, 2026-10-21, session thread\n";
+  assert.equal(run(t, { history, head, changeLog: noSlug }).found.some(([rule, file]) => rule === "restored-removal" && file === toolbar), true);
 });
 
 test("copy provenance: a new toast, label or JSX string needs a cited source; existing and moved copy pass", (t) => {

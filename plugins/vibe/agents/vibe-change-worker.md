@@ -167,7 +167,10 @@ Build the outcome only along data directions that are already allowed.
 "Do not ever add offline syncing unless a human explicitly authorizes it."
 (operator ruling, 2026-10-20; `diff-rules.mjs` blocks a new sync mechanism,
 even along an existing direction, without `Sync authorization: <human name>,
-<date>, <where>`.) A new direction of data flow between surfaces
+<date>, <where>`.) Never bring back an element a human removed: before adding
+a user-visible element the ticket does not name verbatim, run the requirements
+worker's Prior removal search; `diff-rules.mjs` blocks a re-mount or re-added
+file without `Restore authorization:`. A new direction of data flow between surfaces
 (`../skills/cl-execute/references/planning-and-gates.md`, Readiness Gate,
 "Data direction") that traces to no human decision is not built; log it as
 `Engineering decision: <question>; built: <what you built along allowed

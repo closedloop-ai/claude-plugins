@@ -71,6 +71,16 @@ const AGENT_SYNC_DIR = "apps/desktop/src/main/agent-sync/";
 const DESKTOP_MAIN = /^apps\/desktop\/src\/main\/.*\.ts$/;
 const LANE_FACTORY = /\b(?:new\s+([A-Z]\w*Lane)|(create[A-Z]\w*(?:Lane|Sync)))\(/g;
 const SYNC_AUTHORIZATION = /^\s*(?:[-*]\s+)?Sync authorization:\s*([A-Z][\w'.-]+(?:\s+[A-Z][\w'.-]+)+),\s*(\d{4}-\d{2}-\d{2}),\s*\S/m;
+const SCRIPT_FILE = /\.(?:[cm]?[jt]sx?|sh|bash|zsh|py)$/;
+const ENV_DUMP = [
+  /JSON\.stringify\(\s*process\.env\s*[,)]/,
+  /Object\.(?:entries|values)\(\s*process\.env\s*\)/,
+  /console\.\w+\([^)]*\bprocess\.env\s*\)/,
+  /^\s*(?:printenv|env|export\s+-p|set)\s*(?:$|[>|])/,
+  /(?:print|json\.dumps)\(\s*(?:dict\()?os\.environ\b(?!\s*[.[])/,
+];
+const JSX_MOUNT = /<([A-Z][A-Za-z0-9]*)\b/g;
+const RESTORE_LIMIT = 40;
 const NARROW_CONTROLS = "node <vibe plugin>/skills/handoff/scripts/narrow-controls.mjs --worktree <wt> --wide <row.yml> --narrow <row.yml>";
 
 /** Parses `git diff --unified=0` output into per-file added and removed lines. */
@@ -130,6 +140,11 @@ export function evaluateDiff(files, changeLog, repo) {
   for (const file of shared.filter((entry) => (importers.get(entry.path) ?? 0) >= 2)) {
     add("shared-path", file.path, file.added[0]?.line ?? 1, "changes a shared read or write path without recorded evidence that existing callers are unchanged", "record `Shared path: <path>: unchanged for existing callers; evidence: <test or missing test entry with legacy fixtures>` or `...: changed; ruling: <human source>`");
   }
+  for (const file of live.filter((entry) => SCRIPT_FILE.test(entry.path) && !isTestFile(entry.path))) {
+    for (const entry of file.added.filter((item) => ENV_DUMP.some((pattern) => pattern.test(item.text)))) {
+      add("env-dump", file.path, entry.line, "prints or serializes the whole environment, which holds credentials (#8960 captured an API key this way)", "read only the named non-secret keys the diagnostic needs; never print, log or write env or config wholesale");
+    }
+  }
   for (const file of live.filter((entry) => SOURCE_FILE.test(entry.path) && !isTestFile(entry.path))) {
     const head = repo.head(file.path) ?? "";
     checkActivityCapture(file, head, logged, add);
@@ -143,6 +158,7 @@ export function evaluateDiff(files, changeLog, repo) {
   checkFrozenRenders(files, repo, logged, add);
   checkLostStoryIds(files, repo, add);
   checkCopyProvenance(live, files, repo, logged, add);
+  checkRestoredRemovals(live, files, repo, changeLog, add);
   requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo), ...sidebarOrderTests(files, repo));
   if (gridTouched(files)) {
     requiredChecks.push({ command: NARROW_CONTROLS, reason: "a GridTableV2 type, adapter or mount changed; run it on one row of each touched surface captured at wide and narrow width (control snapshot or ariaSnapshot), and every wide control it reports without a narrow home blocks" });
@@ -519,6 +535,37 @@ function checkCopyProvenance(files, allFiles, repo, logged, add) {
   }
 }
 
+/**
+ * A component mounted again, or a file added back, that a base commit removed needs a human's restore
+ * authorization naming the removal it overrides (symphony-alpha #8957 re-mounted the toolbar pill ISS-6005
+ * removed as "Strict drop & removal").
+ */
+function checkRestoredRemovals(files, allFiles, repo, changeLog, add) {
+  const authorized = (name) => new RegExp(String.raw`^\s*(?:[-*]\s+)?Restore authorization:\s*${escapeRegExp(name)}:\s*(?:operator ruling|[A-Z][\w'.-]+(?:\s+[A-Z][\w'.-]+)+),\s*\d{4}-\d{2}-\d{2},\s*[^;\n]+;\s*overrides\s+(?:ISS|PRD|PLN|FEA)-\d+`, "m").test(changeLog);
+  const removed = new Set(allFiles.flatMap((file) => file.removed.flatMap((entry) => [...entry.text.matchAll(JSX_MOUNT)].map((match) => match[1]))));
+  let checked = 0;
+  for (const file of files.filter((entry) => COPY_FILE.test(entry.path) && !isTestFile(entry.path) && !STORY_FILE.test(entry.path))) {
+    if (file.status === "A" && !authorized(file.path) && checked++ < RESTORE_LIMIT) {
+      const removal = repo.deletionOf(file.path);
+      if (removal) {
+        add("restored-removal", file.path, 1, `adds back a file deleted by ${removal}`, `remove it, or record \`Restore authorization: ${file.path}: <human name or operator ruling>, <YYYY-MM-DD>, <where>; overrides <removal ticket>\``);
+      }
+    }
+    const before = repo.base(file.path) ?? "";
+    const mounted = new Set(file.added.flatMap((entry) => [...entry.text.matchAll(JSX_MOUNT)].map((match) => match[1])));
+    for (const name of [...mounted].filter((item) => !before.includes(`<${item}`) && !removed.has(item) && !authorized(item))) {
+      if (checked++ >= RESTORE_LIMIT) {
+        return;
+      }
+      const removal = repo.unmountOf(name);
+      if (removal) {
+        const line = file.added.find((entry) => entry.text.includes(`<${name}`))?.line ?? 1;
+        add("restored-removal", file.path, line, `mounts ${name}, removed by ${removal}`, `find that removal's ticket and its human ruling; remove the mount, or record \`Restore authorization: ${name}: <human name or operator ruling>, <YYYY-MM-DD>, <where>; overrides <removal ticket>\``);
+      }
+    }
+  }
+}
+
 export function copyLiterals(line) {
   if (COMMENT_LINE.test(line)) {
     return [];
@@ -573,6 +620,22 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
     baseFiles,
     baseBlobs,
     storyReplacements,
+    deletionOf: (file) => {
+      const hit = lines(() => git(worktree, ["log", "--diff-filter=D", "-n", "1", "--format=%h %s", base, "--", file]))[0];
+      return hit ? `commit ${hit}` : null;
+    },
+    unmountOf: (name) => {
+      const mount = new RegExp(`<${name}\\b`);
+      for (const hit of lines(() => git(worktree, ["log", "-G", `<${name}([^A-Za-z0-9]|$)`, "-n", "20", "--format=%H %h %s", base, "--", "apps/", "packages/"]))) {
+        const [sha, ...summary] = hit.split(" ");
+        const diff = lines(() => git(worktree, ["show", "--format=", "--unified=0", sha, "--", "apps/", "packages/"]));
+        const count = (sign) => diff.filter((text) => text.startsWith(sign) && !text.startsWith(`${sign}${sign}${sign}`) && mount.test(text)).length;
+        if (count("-") > count("+")) {
+          return `commit ${summary.join(" ")}`;
+        }
+      }
+      return null;
+    },
     baseContains: (text) => {
       const parts = text.split(TEMPLATE_PART);
       const search = parts.length > 1 ? ["-E", "-e", parts.map((part) => part.replace(/[.[\]()*+?{}|^$\\]/g, "\\$&")).join(".*")] : ["-F", "-e", text];

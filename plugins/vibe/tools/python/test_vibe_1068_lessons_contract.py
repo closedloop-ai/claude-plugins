@@ -66,7 +66,20 @@ def test_newest_ruling_is_searched_recorded_and_checked() -> None:
     assert "search_memory_facts" in requirements and '"descoped"' in requirements
     assert "Newest ruling:" in (VIBE / "references" / "ticket-template.md").read_text()
     assert "Newest ruling" in (HANDOFF / "scripts" / "live-ticket-check.mjs").read_text()
-    assert "Newest ruling line" in flat(agent("vibe-ticket-worker"))
+    assert "Newest ruling and Prior removal lines" in flat(agent("vibe-ticket-worker"))
     fleet = flat((FLEET / "SKILL.md").read_text())
     assert "newest-ruling search" in fleet and "sync-mechanism check" in fleet
-    assert "written to a file and sent as its path" in fleet
+    assert "press Esc in the named pane" in fleet and "Keep long briefs in a file" in fleet
+
+
+def test_prior_removals_are_searched_recorded_and_gated() -> None:
+    rules = (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
+    assert '"restored-removal"' in rules and "Restore authorization:" in rules
+    assert "Prior removal:" in (VIBE / "references" / "ticket-template.md").read_text()
+    assert "Prior removal" in (HANDOFF / "scripts" / "live-ticket-check.mjs").read_text()
+    for name in ("vibe-requirements-worker", "vibe-change-worker", "vibe-ticket-worker"):
+        assert "Prior removal" in flat(agent(name))
+
+
+def test_whole_environment_dumps_are_a_diff_rule() -> None:
+    assert '"env-dump"' in (HANDOFF / "scripts" / "diff-rules.mjs").read_text()

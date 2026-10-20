@@ -59,7 +59,11 @@ questions"), or produce an upfront summary for the person.
    and its PRD). Return `Newest ruling: <slug, date, quoted words>` or `none
    found (searched: <searches>)`; the live ticket check fails without it. A
    ruling newer than the ticket text it contradicts makes that text a question
-   for the operator, never a build order (#8965). A
+   for the operator, never a build order (#8965). Prior removal: for each
+   user-visible element the work adds that the ticket does not name verbatim,
+   `fts_search` its name with "remove", "drop", "retire" or "delete" and
+   `search_memory_facts`; return `Prior removal: <slug>` or `none found
+   (searched: <searches>)` (#8957 re-mounted a pill ISS-6005 removed). A
    recorded decision is settled only when it traces to a human statement
    (`quality-loop.md`, "Communication and product questions"); report each
    with its source, and an unratified or conflicting one as not settled.
@@ -157,7 +161,7 @@ orchestrator then asks the person. End with the Graph block.
 orchestrator keeps internal and which never names a screen to start
 on; the requirements as a short list quoted from their source (never
 invented), each named mechanism tagged `mechanism (proposal)` and each new
-data direction flagged `data direction (new)`; the Newest ruling line; every
+data direction flagged `data direction (new)`; the Newest ruling and Prior removal lines; every
 acceptance criterion of the ticket and its PRD, quoted exactly with its source
 slug, or "none stated"; the route and FEATURE_MAP id where the relevant code lives, for
 change workers (not shown to the person); overlapping or in-flight tickets

@@ -24,6 +24,7 @@ import { relative } from "node:path";
 import { packageOwnerPaths, packageTupleIdentity } from "./main-sync-package-owner.js";
 
 const EXECUTABLE_INPUT = /(?:\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss|html|sql|prisma)$|(?:^|\/)\.(?:npmrc|nvmrc)|(?:^|\/)(?:package-lock|pnpm-lock))/;
+const BIOME_PATHS_PER_COMMAND = 120;
 const SOURCE_PATH = /\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss)$/;
 const PRIVATE_ARTIFACT = /\.(?:md|json|log|txt|png|webp)$/;
 const CACHE_SEGMENTS = new Set(["node_modules", ".next", ".turbo", "dist", "storybook-static", ".cache"]);
@@ -186,7 +187,7 @@ export function checkRecipe(value: ReturnType<typeof syncContext>, receipt: Main
   // operator ruling, 2026-10-13: a build-loop deploy runs only what the commit hooks run
   // (affected typecheck and Biome on the changed source); the test suites run at handoff.
   if (value.purpose === "build") {
-    if (paths.length) commands.push({ argv: ["pnpm", "exec", "biome", "check", ...paths] });
+    commands.push(...biomeCheckCommands(paths));
     commands.push({ argv: ["pnpm", "typecheck:affected"] });
     verifyReportRecipe(commands);
     const bound = bindCheckBudgets(commands);
@@ -201,7 +202,7 @@ export function checkRecipe(value: ReturnType<typeof syncContext>, receipt: Main
   } else {
     // operator ruling, 2026-10-19: no broad or full local suite runs here. The verify worker runs the tests
     // closedloop-graph's code_tests_for selects per changed file, and CI runs the broad suites on the PR and after merge.
-    if (paths.length) commands.push({ argv: ["pnpm", "exec", "biome", "check", ...paths] });
+    commands.push(...biomeCheckCommands(paths));
     e2eLimitations.push(...discoverRequiredE2eLanes(root, receipt));
     commands.push({ argv: ["pnpm", "check:source-gates"] }, { argv: ["pnpm", "typecheck:affected"] });
   }
@@ -329,4 +330,16 @@ function sessionCausedMessage(command: CheckCommand, comparison: MainComparison)
     return `Required validation command failed: ${check}; it could not run on captured main ${comparison.mainSha} (${comparison.main.reason}), so it is treated as session-caused; private logs ${logs}`;
   }
   return `Required validation command failed: ${check}; it passes on captured main ${comparison.mainSha} and failed again on a rerun of the session commit, so the session caused it (session-caused); private logs ${logs}`;
+}
+
+/**
+ * Biome over the changed source, split so no command's argv passes the report-execution bound of 128 entries
+ * (#8960: one Biome command per change set failed `schema: argv too_big` and forced the plain-push fallback).
+ */
+export function biomeCheckCommands(paths: string[]): CheckCommand[] {
+  const commands: CheckCommand[] = [];
+  for (let start = 0; start < paths.length; start += BIOME_PATHS_PER_COMMAND) {
+    commands.push({ argv: ["pnpm", "exec", "biome", "check", ...paths.slice(start, start + BIOME_PATHS_PER_COMMAND)] });
+  }
+  return commands;
 }

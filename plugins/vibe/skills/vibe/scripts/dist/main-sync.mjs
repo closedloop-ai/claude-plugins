@@ -227638,6 +227638,7 @@ function selectedRecoveryReserve(root, commands) {
 import { performance as performance2 } from "node:perf_hooks";
 import { relative as relative8 } from "node:path";
 var EXECUTABLE_INPUT = /(?:\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss|html|sql|prisma)$|(?:^|\/)\.(?:npmrc|nvmrc)|(?:^|\/)(?:package-lock|pnpm-lock))/;
+var BIOME_PATHS_PER_COMMAND = 120;
 var SOURCE_PATH = /\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss)$/;
 var PRIVATE_ARTIFACT = /\.(?:md|json|log|txt|png|webp)$/;
 var CACHE_SEGMENTS = /* @__PURE__ */ new Set(["node_modules", ".next", ".turbo", "dist", "storybook-static", ".cache"]);
@@ -227778,7 +227779,7 @@ function checkRecipe(value, receipt) {
   const commands = [];
   const e2eLimitations = [];
   if (value.purpose === "build") {
-    if (paths.length) commands.push({ argv: ["pnpm", "exec", "biome", "check", ...paths] });
+    commands.push(...biomeCheckCommands(paths));
     commands.push({ argv: ["pnpm", "typecheck:affected"] });
     verifyReportRecipe(commands);
     const bound2 = bindCheckBudgets(commands);
@@ -227793,7 +227794,7 @@ function checkRecipe(value, receipt) {
       { argv: ["node", ".claude/skills/prototype-approve/scripts/read-decision-log.mjs", `apps/prototypes/app/p/${value.place.session.slug}/decisions.md`] }
     );
   } else {
-    if (paths.length) commands.push({ argv: ["pnpm", "exec", "biome", "check", ...paths] });
+    commands.push(...biomeCheckCommands(paths));
     e2eLimitations.push(...discoverRequiredE2eLanes(root, receipt));
     commands.push({ argv: ["pnpm", "check:source-gates"] }, { argv: ["pnpm", "typecheck:affected"] });
   }
@@ -227947,6 +227948,13 @@ function sessionCausedMessage(command, comparison) {
     return `Required validation command failed: ${check}; it could not run on captured main ${comparison.mainSha} (${comparison.main.reason}), so it is treated as session-caused; private logs ${logs}`;
   }
   return `Required validation command failed: ${check}; it passes on captured main ${comparison.mainSha} and failed again on a rerun of the session commit, so the session caused it (session-caused); private logs ${logs}`;
+}
+function biomeCheckCommands(paths) {
+  const commands = [];
+  for (let start = 0; start < paths.length; start += BIOME_PATHS_PER_COMMAND) {
+    commands.push({ argv: ["pnpm", "exec", "biome", "check", ...paths.slice(start, start + BIOME_PATHS_PER_COMMAND)] });
+  }
+  return commands;
 }
 
 // src/main-sync.ts

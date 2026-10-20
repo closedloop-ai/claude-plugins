@@ -126,6 +126,9 @@ Built in a vibe session by <operator name>.
 - Scope: <what is in, what is deliberately out>
 - Newest ruling: <slug, date and quoted words of the newest human ruling on
   this capability, or none found (searched: the searches run)>
+- Prior removal: <slug of the ruling that removed a user-visible element this
+  work adds and the ticket does not name verbatim, or none found (searched:
+  the searches run)>
 - Acceptance criteria:
   - [ ] <one checkable line each, quoted from the person or the originating
     ticket>

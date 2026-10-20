@@ -289,7 +289,9 @@ artifact link delete, a dropped ticketed comment, an unrecorded change to a
 shared service, a story assertion changed without a release, a new story
 entry beside a component's current one, a change in a frozen v1.0
 story's import closure, a new user-visible string with no cited source, and
-a new sync mechanism without `Sync authorization:` naming a human each block (`blocking.diffRulesClear`) until the
+a new sync mechanism without `Sync authorization:` naming a human, a component
+or file a base commit removed brought back without `Restore authorization:`,
+and a diagnostic that dumps the whole environment each block (`blocking.diffRulesClear`) until the
 writer fixes the code or records the change log line the finding names. It
 also lists tests the graph does not map, which the verify worker runs, and,
 for a GridTableV2 change, `narrow-controls.mjs`, which fails on any wide row

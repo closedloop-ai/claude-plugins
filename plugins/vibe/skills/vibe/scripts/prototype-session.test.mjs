@@ -124,7 +124,7 @@ test("handoff validates owned publication and session ids without weakening app 
     "- Visual inspection: not performed; protection and appearance remain unverified.",
   ].join("\n");
   sections.set("Design Review", designReview);
-  sections.set("Scope and acceptance criteria", "- Newest ruling: none found (searched: fixture ticket comments)");
+  sections.set("Scope and acceptance criteria", "- Newest ruling: none found (searched: fixture ticket comments)\n- Prior removal: none found (searched: fixture element names)");
   const body = TICKET_SECTIONS.map((heading) => `## ${heading}\n\n${sections.get(heading) ?? "None."}\n`).join("\n");
   const file = path.join(fixture.privateDir, "ticket.md");
   writeFileSync(file, body);
