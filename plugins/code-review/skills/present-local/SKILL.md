@@ -202,9 +202,10 @@ Read `<CR_DIR>/review_result.json` → `stats.verification`. Render the footer b
 ```
 === Verifier Stats ===
 Findings verified: {stats.verification.verified_count}
-  - CONFIRMED + DOWNGRADE: {verified_count - tentative_count - re_asserted}
+  - CONFIRMED + DOWNGRADE: {verified_count - tentative_count - re_asserted - justified_invalid_count - skipped_count}
   - TENTATIVE:             {tentative_count}
   - RE_ASSERTED:           sum over by_reviewer[].re_asserted
+  - Not verified (skipped): {skipped_count}
 Findings dismissed: {stats.verification.rejected_count}
 Findings justified: {stats.verification.justified_valid_count + stats.verification.justified_invalid_count}
   - JUSTIFIED-VALID:   {stats.verification.justified_valid_count}

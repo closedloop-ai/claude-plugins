@@ -335,6 +335,20 @@ delegated-work request files sessions drop for Claude workers. A change made
 between a watcher exit and its re-arm is still reported. It needs only this
 plugin and the `codex` CLI; sessions are listed by thread id.
 
+### `fleet-orchestrator`
+
+Playbook for a Claude Code session orchestrating several Codex and Claude
+workers on parallel PRs, on one or more machines, for an operator who does QA
+and merges: roles, orchestration state that survives a reboot or compaction,
+Codex budget rules, a Claude takeover of a dead Codex writer, CPU and shared e2e
+stack slot locks, agent-first QA, pushback on flags and extra code paths, and a
+lessons ledger. `fleet.sh` starts or resumes a Codex thread bound to a
+worktree, starts and steers turns from prompt files and reads the last messages,
+on this machine or over ssh on another, and runs commands in a machine's named
+slots. `request-visual.mjs` files a Codex session's visual-work request only when it names the PR's pushed head. Machine specifics live in the orchestration dir's `config.env`, shared
+with `codex-fleet-monitor`, which watches the fleet. One machine needs no remote
+config; more need ssh key auth plus `codex`, `node` and `gh` on each.
+
 ### ClosedLoop Ticket Skills
 
 The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl-analyze`, `cl-find-related-tickets`, `cl-split`, `cl-work-report`, `cl-sweep`, and `cl-execute`. Together they cover policy-aware ticket analysis, related-ticket discovery, safe one-level split workflows, private project work reports, sweep coordination, and end-to-end ticket execution. The imported sweep scripts use the native managed Codex App Server through bundled helpers rather than depending on a separate `app-server-orchestrator` skill. Runtime access still depends on the operator's normal ClosedLoop, GitHub, `workflow-memory`, and `closedloop-graph` MCP/API configuration.
