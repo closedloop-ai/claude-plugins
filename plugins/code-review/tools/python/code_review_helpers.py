@@ -1321,8 +1321,7 @@ def cmd_parse_diff(args: argparse.Namespace) -> int:
     name_status_raw = _run_git(["diff", "--name-status"] + scope_args, workdir)
     file_statuses = _parse_name_status(name_status_raw)
 
-    # 2b. Moved-and-edited files: the default view above reports them as a
-    # delete plus an add; pair them at a lower similarity floor.
+    # 2b. --name-status at the moved-file similarity floor
     moved_raw = _run_git(
         ["diff", "--name-status", f"-M{MOVED_FROM_SIMILARITY}"] + scope_args, workdir,
     )
