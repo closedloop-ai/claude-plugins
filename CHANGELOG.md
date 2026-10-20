@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.0.65
+### vibe v1.0.66
 
 #### Changed
 - Publication runs source input readiness once per publication instead of twice. `commit-worktree.mjs --prepare-main-sync` now checks only tracked parity and unknown outputs before capturing main, so the writer's `main-sync-inputs` record turn and its pristine bootstrapped checkout no longer run before the merge; the single pass after the committed merge proves generated inputs and returns the validation witness as before. A failing generated-input producer now names its command, its exit code and last error line or its timeout, and its private log, so the cause is fixed instead of the pass being rerun into the same bound.
