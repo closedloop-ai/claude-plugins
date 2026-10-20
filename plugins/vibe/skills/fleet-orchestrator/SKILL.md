@@ -76,7 +76,7 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 
 `turn` starts a thread bound to `--cwd` the first time (refusing a different cwd later) and resumes it afterwards, then starts a turn; `--model` and `--effort` default to `CODEX_MODEL` and `CODEX_EFFORT`, and a new session refuses to start without an effort or with a prompt that does not start with `$vibe`. Model, effort, sandbox and each prompt file sent persist in the session's state file. `steer` adds to the active turn and fails when none is running. `last` prints the monitor's status line and the last agent messages.
 
-- Run Codex at the high effort level, not the maximum: the maximum burns the limit far faster for little gain on PR work. Writers and reviewers use `CODEX_MODEL`; tell each session in its prompt to run explorer and read-only sub-agents on `CODEX_EXPLORER_MODEL`.
+- Run Codex at the high effort level, not the maximum: the maximum burns the limit far faster for little gain on PR work. The thread runs on `CODEX_MODEL`; vibe's own worker-model policy picks each sub-agent's model, so never name one in a prompt.
 - No computer use in Codex: no browser, in-app browser, desktop app UI or screenshots. It is the fastest drain. Code host work goes through its CLI.
 - Visual work is a request file a Codex session writes only through `scripts/request-visual.mjs` ([template](./references/templates.md#visual-request)), which refuses a head that is not the PR's pushed head; a Claude worker does it and you steer the findings back as text.
 

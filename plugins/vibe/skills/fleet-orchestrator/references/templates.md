@@ -51,7 +51,7 @@ Left: <what remains, in order>
 Rulings in force: <operator rulings and merge order that bind this work>
 Research graph-first with closedloop-graph before searching files by hand, as vibe requires: ticket_detail for the ticket and its PRD, query_collisions and blast_radius_tickets for overlapping work, code_callers and code_importers before a shared change.
 Tests: after any change, fix or merge (a conflict resolution included), run exactly the tests code_tests_for maps to the files it touched, nothing broader by default; files that map to no tests (changelog, README, version text) run none and CI confirms.
-Budget: effort <CODEX_EFFORT>; explorer and read-only sub-agents on <CODEX_EXPLORER_MODEL>; no computer use (no browser, in-app browser, desktop app UI or screenshots).
+Budget: effort <CODEX_EFFORT>; no computer use (no browser, in-app browser, desktop app UI or screenshots).
 Visual requests: draft one from the fleet-orchestrator skill's visual request template and file it only with `node <request-visual.mjs on this machine> <requests dir> <draft>` from your worktree; it refuses an unpushed or stale head.
 If asked about a plugin version update, keep the current version.
 ```

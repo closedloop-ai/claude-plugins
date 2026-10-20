@@ -18,8 +18,7 @@ LOCAL_STATE_DIR=<orchDir>/sessions          # Codex session state files on this 
 REQUESTS_DIR=<orchDir>/requests             # visual-work request files from sessions here
 
 # Codex model policy, with names from your Codex account
-CODEX_MODEL=<main model: writers and reviewers>
-CODEX_EXPLORER_MODEL=<cheaper model: explorers and read-only sub-agents>
+CODEX_MODEL=<model for each Codex writer thread>
 CODEX_EFFORT=<the high effort level, not the maximum>
 
 HEAVY_SLOTS=<concurrent heavy checks this machine can take>
@@ -33,7 +32,7 @@ REMOTE_SHELL="zsh -lic"                     # a login shell there that puts node
 REMOTE_HEAVY_SLOTS=<concurrent heavy checks that machine can take>
 ```
 
-`fleet.sh` uses `LOCAL_STATE_DIR` (default `<orchDir>/sessions`), `CODEX_MODEL` and `CODEX_EFFORT` as `turn` defaults, the slot counts, and the `REMOTE_*` keys. `CODEX_EXPLORER_MODEL` goes into each session's prompt, which tells the session which model its own sub-agents use. `MOVE_AT_PERCENT` is for you: compare it with each `codex-usage` line.
+`fleet.sh` uses `LOCAL_STATE_DIR` (default `<orchDir>/sessions`), `CODEX_MODEL` and `CODEX_EFFORT` as `turn` defaults, the slot counts, and the `REMOTE_*` keys. Sub-agent models are not configured here: vibe's worker-model policy owns them. `MOVE_AT_PERCENT` is for you: compare it with each `codex-usage` line.
 
 ## First-run interview
 
@@ -43,7 +42,7 @@ Ask once, in one question set, only for keys `config.env` lacks; offer the defau
 |---|---|---|
 | Machines: this one only, or more (the ssh host of each)? | this one only | `REMOTE_HOST`, `REMOTE_STATE_DIR`, `REMOTE_REQUESTS_DIR`, `REMOTE_SHELL` |
 | Writers: Claude only, Codex only, or both? | Claude only | `WRITERS` |
-| Codex (when chosen): which machine's account has budget, at what usage band to move work, and which models and effort? | this machine; move at 80 | `CODEX_MACHINES`, `MOVE_AT_PERCENT`, `CODEX_MODEL`, `CODEX_EXPLORER_MODEL`, `CODEX_EFFORT` |
+| Codex (when chosen): which machine's account has budget, at what usage band to move work, and which thread model and effort? | this machine; move at 80 | `CODEX_MACHINES`, `MOVE_AT_PERCENT`, `CODEX_MODEL`, `CODEX_EFFORT` |
 | Which product does the team follow for UX precedent? | none; repo siblings only | `UX_PRECEDENT` |
 
 Then set `LOCAL_STATE_DIR`, `REQUESTS_DIR` and the slot counts from this machine's layout and core count, write the file, and run steps 3 and 5 of the checklist below plus a check that this plugin is installed on each machine. Report each check as passed or failed.
