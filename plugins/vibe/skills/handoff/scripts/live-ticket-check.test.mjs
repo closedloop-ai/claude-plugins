@@ -38,7 +38,7 @@ function completeTicket(overrides = {}) {
     Progress: "- 2026-10-06: added bulk select to `<SessionsTable>`",
     "Backend built": "- `PATCH /sessions/tags` in `apps/api/app/sessions/tags/route.ts`",
     "Backend still missing": "None.",
-    "Production flag snapshot": "Taken 2026-10-06T15:00:00Z as PostHog user `user_1`. 1 flags.\n\n| Flag | Value |\n|---|---|\n| `a` | true |",
+    "Production flag snapshot": "Taken 2026-10-06T15:00:00Z as PostHog user `user_1`. 1 flags.\n\n| Flag | Value |\n|---|---|\n| `a` | true |\n\n### Keys to see this work\n\n| Surface | Hosts | Key | Origin | Approval | In this snapshot |\n|---|---|---|---|---|---|\n| Tags | web | `a` | existing key | on main | true |",
     Sessions: "- Codex session (orchestrator): `01a11209-54a0-72c0-8255-68692884c10f`",
     Handoff: "- Checks: all pass",
     "Design Review": DESIGN_REVIEW,
@@ -83,6 +83,7 @@ test("pending markers, placeholders, and missing record fields are each reported
     { section: "Progress", problem: "still has a Pending. marker" },
     { section: "Production flag snapshot", problem: "still has a Pending. marker" },
     { section: "Production flag snapshot", problem: "has no flag table" },
+    { section: "Production flag snapshot", problem: "lists no keys to see the work" },
     { section: "Sessions", problem: "still has a Pending. marker" },
     { section: "Sessions", problem: "lists no orchestrator session id" },
   ]);
@@ -176,8 +177,24 @@ test("the sections ticket-sections renders from a finished record pass the check
     codexSessions: { orchestrators: [{ id: "thread-1" }], subagents: [{ id: "child-1", role: "vibe-change-worker" }] },
   };
   const snapshot = { takenAt: "2026-10-06T15:00:00Z", distinctId: "user_1", flags: { a: true } };
-  const filled = parseSections(renderRecordSections(finished, snapshot));
+  // Operator ruling, 2026-10-20: the keys to see the work stay Pending until recorded.
+  const unrecordedKeys = parseSections(renderRecordSections(finished, snapshot));
+  assert.deepEqual(checkLiveTicket(completeTicket(Object.fromEntries(unrecordedKeys))).problems, [
+    { section: "Production flag snapshot", problem: "still has a Pending. marker" },
+  ]);
+
+  const flagKeys = { surfaces: [{ surface: "Tags", hosts: ["web"], keys: [{ key: "a", origin: "existing", readAt: ["apps/app/tags.tsx"] }] }] };
+  const filled = parseSections(renderRecordSections({ ...finished, flagKeys }, snapshot));
   assert.deepEqual(checkLiveTicket(completeTicket(Object.fromEntries(filled))).problems, []);
+});
+
+test("a flag snapshot without the keys to see the work fails the check", () => {
+  const withoutKeys = completeTicket({
+    "Production flag snapshot": "Taken 2026-10-06T15:00:00Z as PostHog user `user_1`. 1 flags.\n\n| Flag | Value |\n|---|---|\n| `a` | true |",
+  });
+  assert.deepEqual(checkLiveTicket(withoutKeys).problems, [
+    { section: "Production flag snapshot", problem: "lists no keys to see the work" },
+  ]);
 });
 
 test("with --base-commit, the Environment section must name the branch's current base", (t) => {
@@ -209,7 +226,7 @@ test("with --base-commit, the Environment section must name the branch's current
 
 test("a session with local plans needs its PLN recorded and APPROVED before the ticket is complete", () => {
   const ticket = completeTicket();
-  const record = { branch: "vibe/tags", livePlan: null, livePlanStatus: null };
+  const record = { branch: "vibe/tags", livePlan: null, livePlanStatus: null, flagKeys: { surfaces: [] } };
   assert.deepEqual(checkLiveTicket(ticket, { record, planCount: 0 }).problems, []);
   assert.deepEqual(checkLiveTicket(ticket, { record, planCount: 1 }).problems, [
     { section: "Session plan", problem: "the session has a local plan but no PLN is recorded" },
@@ -229,7 +246,7 @@ test("the CLI reads the worktree's plans and record for the session plan check",
   makeCheckout({ root: fixture.root, home: fixture.home, checkout });
   const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], fixture.home);
   const recordFile = path.join(gitDir, "vibe-session.json");
-  writeFileSync(recordFile, JSON.stringify({ branch: "main", livePlan: "PLN-7", livePlanStatus: "DRAFT" }));
+  writeFileSync(recordFile, JSON.stringify({ branch: "main", livePlan: "PLN-7", livePlanStatus: "DRAFT", flagKeys: { surfaces: [] } }));
   mkdirSync(path.join(checkout, ".closedloop-ai/vibe-plans"), { recursive: true });
   writeFileSync(path.join(checkout, ".closedloop-ai/vibe-plans/request-1.md"), "# Plan\n");
   const file = path.join(gitDir, "vibe-live-ticket.md");
@@ -237,7 +254,24 @@ test("the CLI reads the worktree's plans and record for the session plan check",
   const draft = runNode(SCRIPT, ["--file", file, "--worktree", checkout], fixture.home);
   assert.equal(draft.status, 1);
   assert.deepEqual(draft.json.problems, [{ section: "Session plan", problem: "PLN-7 is DRAFT, not APPROVED" }]);
-  writeFileSync(recordFile, JSON.stringify({ branch: "main", livePlan: "PLN-7", livePlanStatus: "APPROVED" }));
+  writeFileSync(recordFile, JSON.stringify({ branch: "main", livePlan: "PLN-7", livePlanStatus: "APPROVED", flagKeys: { surfaces: [] } }));
   const approved = runNode(SCRIPT, ["--file", file, "--worktree", checkout], fixture.home);
   assert.equal(approved.status, 0, JSON.stringify(approved.json));
+});
+
+test("a session's flag keys must be recorded, and every proposed key approved and read, before the ticket is complete", () => {
+  const ticket = completeTicket();
+  const proposed = {
+    key: "branches-list-v2", origin: "new", readAt: ["packages/app/branches/branches-list.tsx"],
+    reason: "net-new-screen", repoRule: "A flag is required for a net-new screen.", source: "PRD-729: a new screen",
+  };
+  const flagKeys = { surfaces: [{ surface: "Branches list", hosts: ["web"], keys: [proposed] }] };
+  const problems = (record) => checkLiveTicket(ticket, { record }).problems;
+  assert.deepEqual(problems({ branch: "vibe/tags" }), [
+    { section: "Flag keys", problem: "no keys to see the work are recorded (flag-keys.mjs record)" },
+  ]);
+  assert.match(problems({ branch: "vibe/tags", flagKeys })[0].problem, /`branches-list-v2` has no approval from the person \(pending\)/);
+  // A cited source is not approval, and an answer given for another proposal does not carry over.
+  const stale = { ...flagKeys, approvals: { "branches-list-v2": { decision: "approved", fingerprint: "000000000000" } } };
+  assert.match(problems({ branch: "vibe/tags", flagKeys: stale })[0].problem, /no approval from the person \(pending\)/);
 });

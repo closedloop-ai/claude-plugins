@@ -351,7 +351,9 @@ to `not met yet` with that reason, and the touched screen is rendered again
 in the verify worker's control mode on the final commit, never left as last
 seen. Re-run
 inventory and independent read-only guardrails
-checks. Keep the writer's Design blocks for the ticket.
+checks. Keep the writer's Design blocks for the ticket. A flag key without
+the person's recorded yes gets its approval question once, as the vibe
+skill's section 7 says; with no yes the writer removes the gate.
 
 ## 4. Storybook
 
@@ -841,8 +843,8 @@ runs.
 Tell them, in a few lines: the ticket link, the app link as
 `<appUrl>/sign-in` (the app's root sends a signed-out visitor to account
 creation), the Storybook link (the full Storybook UI per
-`../vibe/references/environment.md`, "Storybook links"), and what happens
-next. On a requested pull request: the pull request link, and that they take
+`../vibe/references/environment.md`, "Storybook links"), the ticket's
+"Keys to see this work", and what happens next. On a requested pull request: the pull request link, and that they take
 it through review and merge from there; never the branch to merge. When
 passing it on: the branch name, and that the next owner, by name, picks it up
 from the ticket (usually design reviews the components in Storybook and

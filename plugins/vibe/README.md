@@ -432,14 +432,16 @@ and skips it after the person declined; and the startup version check asks
 line waiting for the first reply after that answer), says nothing when current, carries on
 when GitHub cannot be reached, and asks for a reopen after updating.
 
-The seven cases tagged `review-lessons` come from the reviews of two vibe
-feature pull requests (operator ruling, 2026-10-16). Each rehearses one
+The eight cases tagged `review-lessons` come from the reviews of vibe
+feature pull requests (operator rulings, 2026-10-16 and 2026-10-20). Each rehearses one
 handoff review decision from supplied session state: a main sync that turned
 a shipped editable control read-only, an invented Version History entry and a
 reworded compile-only repair, a stale story ID left in an e2e spec, two
 children each wiring their own selection behind a shared slot, a criterion
 checked on one view but not the board it names, an agent-drafted product docs
-paragraph, and a flag retired while a linked ticket held it.
+paragraph, a flag retired while a linked ticket held it, and one redesign
+gated behind three new keys beside a gate on a wording fix to a shipped
+surface.
 
 The six cases tagged `qa-lessons` rehearse real-browser Storybook play
 execution, WebKit iPhone and Chromium Pixel touch coverage, overlap research

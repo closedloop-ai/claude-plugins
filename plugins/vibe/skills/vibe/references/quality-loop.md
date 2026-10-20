@@ -42,7 +42,8 @@ new technical-plan milestone. A reference product's behavior list, a
 request's new Storybook components and the endings line in a new session's
 first reply are notices the person may interrupt, never approval gates
 (`SKILL.md`, section 5, "Notices that never wait"). Human
-sign-in, credential entry and OS permission actions remain with the person.
+sign-in, credential entry and OS permission actions remain with the person,
+and so does each flag key's approval (`guardrails.md`, "Feature flags").
 
 ### Precedent before asking
 

@@ -1,10 +1,12 @@
 // Pure helpers behind vibe-sessions.mjs: the session's Vercel URLs, the
 // production flag snapshot contract (ISS-12048), the Codex session ids that
 // worked on it, the person running it, the environment run's verified result,
-// and the live ticket sections rendered from the session record.
+// and the live ticket sections rendered from the session record (the keys to
+// see the work come from flag-keys.mjs).
 
 import { closeSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
 import path from "node:path";
+import { FLAG_KEYS_HEADING, renderFlagKeys } from "./flag-keys.mjs";
 import { isOwnedPrototypeSession } from "./prototype-session.mjs";
 
 // Vercel mints `<project>-git-<branch>` aliases on this domain for every
@@ -298,8 +300,9 @@ function stringOrNull(value) {
 
 /**
  * The live ticket sections that come straight from the session record:
- * Environment, Production flag snapshot, and Sessions. Workers paste this
- * markdown over those three sections instead of writing them by hand.
+ * Environment, Production flag snapshot (with the keys to see the work), and
+ * Sessions. Workers paste this markdown over those three sections instead of
+ * writing them by hand.
  */
 export function renderRecordSections(record, snapshot) {
   return [
@@ -360,8 +363,9 @@ function renderFlagSnapshot(record, snapshot) {
   if (isOwnedPrototypeSession(record)) {
     return [...heading, "None."].join("\n");
   }
+  const keys = record.flagKeys ? renderFlagKeys(record.flagKeys, snapshot) : [FLAG_KEYS_HEADING, "", PENDING].join("\n");
   if (!record.flagSnapshot || !snapshot) {
-    return [...heading, PENDING].join("\n");
+    return [...heading, PENDING, "", keys].join("\n");
   }
   const org = snapshot.orgId ? ` in org \`${snapshot.orgId}\`` : "";
   const rows = Object.entries(snapshot.flags).map(
@@ -374,6 +378,8 @@ function renderFlagSnapshot(record, snapshot) {
     "| Flag | Value |",
     "|---|---|",
     ...rows,
+    "",
+    keys,
   ].join("\n");
 }
 

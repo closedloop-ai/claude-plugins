@@ -360,7 +360,8 @@ changes and gates fields.
    (`gh api repos/closedloop-ai/symphony-alpha/contents/.github/pull_request_template.md --jq .content | base64 -d`)
    and fill every section from the session's own record, never from
    invention:
-   - Summary: the confirmed summary, with the live ticket's slug.
+   - Summary: the confirmed summary, with the live ticket's slug and its
+     "Keys to see this work".
    - Breaking changes: an honest answer from Production impact; write the
      root `AGENTS.md`'s "none" answer only when Production impact supports it
      (no API response field, database column or cross-process wire shape
