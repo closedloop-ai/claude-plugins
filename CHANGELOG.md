@@ -4,6 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.11.0
+
+#### Changed
+- `validate` no longer discards a finding because its file is outside the diff. Such a finding is kept and tagged `out_of_diff: true` (the validator owns the tag and strips any value a reviewer set), skips the line-range check, and is held only to the normal 0.5 confidence floor for P2 and below, not the 0.80 out-of-hunk floor. The validate stats gain `kept_out_of_diff` and drop `discarded_file_not_changed`. A diff-scope finding with no `file` is now discarded as `DISCARD_MISSING_FILE`.
+- `verify-prepare` always sends `out_of_diff` findings to the verifier, whatever their severity or confidence, ranks them ahead of the verification cap so they are never deferred, never serves them from the verification cache, and passes them the full-diff patch (`patches_path`).
+- The verifier prompt has a causation check for `out_of_diff` findings: find the change in the patch that caused the problem, confirm the cited code depends on it, and otherwise reject with the new `rejection_class: "not_caused_by_diff"`. A missing `evidence[]` citation is not by itself a reason to reject.
+- `cache-update` files a Bug Hunter A finding on a file outside the diff under the first diff file its `evidence[]` cites, or else under every file in the partition that produced it, so a cache hit brings it back; repeated copies collapse in `validate`'s duplicate merge. Both cache paths (per-run and global) do this.
+- `post-comments` posts an `out_of_diff` finding inline at the first `evidence[]` line that lies in the PR diff (read from the PR's files), with a body that opens with the affected `file:line`; otherwise the finding is summary-only. The posting tally adds `out-of-diff=N`.
+- Reviewer prompts (the per-agent template, Bug Hunter B, the fast-path reviewer and the shared FILE SCOPE rules) now say findings on code outside the diff are in scope when this diff caused them, and must cite the causing diff line in `evidence[]`. Pre-existing bugs the diff did not cause stay out of scope.
+- The local and GitHub presenters label `out_of_diff` findings "outside the diff — caused by this change", explain `not_caused_by_diff` dismissals, and show "Kept — outside the diff" in place of "Discarded — file not changed". `SCHEMA.md` and the finding JSON schema document `out_of_diff`, `out_of_hunk_kept` and the new rejection class.
+
 ### vibe v1.0.58
 
 #### Changed
