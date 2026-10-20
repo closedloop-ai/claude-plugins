@@ -326,7 +326,7 @@ stack slot locks, agent-first QA, pushback on flags and extra code paths, and a
 lessons ledger. `fleet.sh` starts or resumes a Codex thread bound to a
 worktree, starts and steers turns from prompt files and reads the last messages,
 on this machine or over ssh on another, and runs commands in a machine's named
-slots. Machine specifics live in the orchestration dir's `config.env`, shared
+slots. `request-visual.mjs` files a Codex session's visual-work request only when it names the PR's pushed head. Machine specifics live in the orchestration dir's `config.env`, shared
 with `codex-fleet-monitor`, which watches the fleet. One machine needs no remote
 config; more need ssh key auth plus `codex`, `node` and `gh` on each.
 

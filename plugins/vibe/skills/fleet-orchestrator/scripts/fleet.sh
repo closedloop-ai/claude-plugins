@@ -27,7 +27,7 @@ case "$where" in
   *) usage ;;
 esac
 
-ship=(codex-fleet-monitor/scripts/liveness.mjs fleet-orchestrator/scripts/codex-session.mjs fleet-orchestrator/scripts/slot-lock.sh)
+ship=(codex-fleet-monitor/scripts/liveness.mjs fleet-orchestrator/scripts/codex-session.mjs fleet-orchestrator/scripts/slot-lock.sh fleet-orchestrator/scripts/request-visual.mjs)
 extra=()
 
 # Runs a shell command line on REMOTE_HOST after unpacking the shipped scripts (and `extra`) into remote_dir.

@@ -4,7 +4,7 @@ Fill every `<field>`; delete a line only when it does not apply.
 
 ## Visual request
 
-A Codex session writes this to the requests dir as `<session>-<yyyymmdd-hhmm>-<slug>.md`. A Claude worker does the work and writes its result to `findings/` under the same name; you steer the result back to the session as text.
+A Codex session drafts this and files it only with `node scripts/request-visual.mjs <requestsDir> <draft> [--worktree <dir>]`, which names it `<session>-<yyyymmdd-hhmm>-<slug>.md`. The script refuses, naming both SHAs, unless `Pushed head` equals the PR's current head (read with `gh`) and the worktree's HEAD, and refuses when `gh` cannot answer or a field is unfilled. On a remote machine `fleet.sh` ships it to `<REMOTE_STATE_DIR>/.fleet-orchestrator/fleet-orchestrator/scripts/`. A Claude worker does the work and writes its result to `findings/` under the same name; you steer the result back to the session as text.
 
 ```
 # Visual request: <short title>
@@ -28,8 +28,9 @@ Invoke vibe:vibe first: resume the vibe session for <ticket or PRD>, or start on
 You are the only writer on <owner/repo>#<number>, worktree <path> on <machine>, branch <branch>.
 Takeover: a Codex vibe session wrote this branch and stopped (<limit|crash>). Vibe cannot move that session to you, so run your own vibe session for the same <ticket or PRD> in the same worktree from its last pushed head <sha>. Do not edit the Codex session's records; commit normally.
 Before editing, read the repo docs that own the paths you touch (AGENTS.md files or contributor guide) or the team knowledge base.
-Research graph-first with closedloop-graph before searching files by hand, as vibe requires: ticket_detail for the ticket and its PRD, query_collisions and blast_radius_tickets for overlapping work, code_callers and code_importers before a shared change, code_tests_for for the tests to run.
-Tests: run only the tests covering what you changed (code_tests_for names them). Heavy checks go through <fleet.sh slot command for the chosen machine>. Never run e2e that opens windows on the operator's daily machine.
+Research graph-first with closedloop-graph before searching files by hand, as vibe requires: ticket_detail for the ticket and its PRD, query_collisions and blast_radius_tickets for overlapping work, code_callers and code_importers before a shared change.
+Tests: after any change, fix or merge (a conflict resolution included), run exactly the tests code_tests_for maps to the files it touched, nothing broader by default; files that map to no tests (changelog, README, version text) run none and CI confirms.
+Heavy checks go through <fleet.sh slot command for the chosen machine>. Never run e2e that opens windows on the operator's daily machine.
 Git: commit messages per the repo's conventions; regular push only, never force or amend after push.
 Review threads: reply on the thread naming the fixing SHA and resolve it only after the fix is verified in code.
 Report when done: pushed head SHA, files changed, tests run and results, open items, anything that needs the operator.
@@ -48,8 +49,10 @@ Worktree <path> on <machine>, branch <branch>, PR <owner/repo>#<number>, pushed 
 Done: <what is finished and pushed>
 Left: <what remains, in order>
 Rulings in force: <operator rulings and merge order that bind this work>
-Research graph-first with closedloop-graph before searching files by hand, as vibe requires: ticket_detail for the ticket and its PRD, query_collisions and blast_radius_tickets for overlapping work, code_callers and code_importers before a shared change, code_tests_for for the tests to run.
-Budget: effort <CODEX_EFFORT>; explorer and read-only sub-agents on <CODEX_EXPLORER_MODEL>; no computer use (no browser, in-app browser, desktop app UI or screenshots); visual work goes in a request file.
+Research graph-first with closedloop-graph before searching files by hand, as vibe requires: ticket_detail for the ticket and its PRD, query_collisions and blast_radius_tickets for overlapping work, code_callers and code_importers before a shared change.
+Tests: after any change, fix or merge (a conflict resolution included), run exactly the tests code_tests_for maps to the files it touched, nothing broader by default; files that map to no tests (changelog, README, version text) run none and CI confirms.
+Budget: effort <CODEX_EFFORT>; explorer and read-only sub-agents on <CODEX_EXPLORER_MODEL>; no computer use (no browser, in-app browser, desktop app UI or screenshots).
+Visual requests: draft one from the fleet-orchestrator skill's visual request template and file it only with `node <request-visual.mjs on this machine> <requests dir> <draft>` from your worktree; it refuses an unpushed or stale head.
 If asked about a plugin version update, keep the current version.
 ```
 

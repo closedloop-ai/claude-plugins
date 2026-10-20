@@ -44,7 +44,8 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 The closedloop-graph MCP server is required; decide from it, not from guesses. Tool guide: [vibe's closedloop-graph reference](../vibe/references/closedloop-graph.md).
 
 - Before assigning work or ruling between PRs, check open-PR and ticket overlap with `query_collisions` and `blast_radius_tickets`; read a ticket's PRD lineage and children with `ticket_detail`.
-- Before a shared change, read its callers and importers (`code_callers`, `code_importers`); for which tests cover a change, use `code_tests_for`, the only route to tests.
+- Before a shared change, read its callers and importers (`code_callers`, `code_importers`).
+- Which tests to run, or rerun, after any change, fix or merge (a conflict resolution included) is decided by `code_tests_for`, the only route to tests, over the files that change touched: run exactly those and nothing broader by default. Files that map to no tests (changelog, README, version text) run none, and CI confirms.
 - Trace a surprising difference in a before and after comparison to the commit and ticket that introduced it before blaming the PR.
 - Every worker prompt requires the same graph-first research (the preamble and resume templates carry it).
 
@@ -77,7 +78,7 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 
 - Run Codex at the high effort level, not the maximum: the maximum burns the limit far faster for little gain on PR work. Writers and reviewers use `CODEX_MODEL`; tell each session in its prompt to run explorer and read-only sub-agents on `CODEX_EXPLORER_MODEL`.
 - No computer use in Codex: no browser, in-app browser, desktop app UI or screenshots. It is the fastest drain. Code host work goes through its CLI.
-- Visual work is a request file a Codex session drops in the requests dir ([template](./references/templates.md#visual-request)); a Claude worker does it and you steer the findings back as text.
+- Visual work is a request file a Codex session writes only through `scripts/request-visual.mjs` ([template](./references/templates.md#visual-request)), which refuses a head that is not the PR's pushed head; a Claude worker does it and you steer the findings back as text.
 
 ## Claude workers
 
@@ -101,7 +102,6 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 - Cap heavy runs per machine at its `HEAVY_SLOTS` or `REMOTE_HEAVY_SLOTS`: `scripts/fleet.sh <orchDir> local|remote slot heavy <owner> <worktree> <command...>`.
 - A shared e2e stack with fixed ports takes a machine-wide single slot: `scripts/fleet.sh <orchDir> local|remote slot e2e-stack <owner> <worktree> <command...>`. Only runs that start that stack take it; tests against a stand-in server, component story runs, unit tests and typecheck run outside it in parallel.
 - `scripts/slot-lock.sh` underneath frees the slot when the command exits or is interrupted and reclaims one whose holder pid died; `scripts/slot-lock.sh --status <lockName>` on that machine lists holders.
-- After a merge, rerun local tests only for code the conflict resolution changed; a conflict confined to text (changelog, README, version files, story version history) is resolved, pushed and confirmed by CI with no local suite rerun. A rerun there spends CPU and proves nothing CI does not.
 - Kill only processes you started, matched by pid or worktree path, never an unscoped `pkill`. Other runs on that machine belong to someone else.
 - Plugin marketplaces and env files on a remote machine live in persistent paths too.
 
