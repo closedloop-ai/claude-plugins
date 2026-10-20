@@ -26,6 +26,7 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 - Write every prompt to `prompts/` before sending it. A restarted orchestrator can then see what each worker was told; `fleet.sh` only accepts prompt files.
 - Keep a dated resume log (rulings, merge order, who owns what, pending items) and read it first after any restart or compaction. Your memory of the program does not survive either.
 - After your own restart, subagents are gone: re-arm the watcher, relaunch Claude workers from their saved prompts, and tell the operator what you restarted.
+- If a remote machine reboots or loses its session state, its Codex threads cannot be reattached: start fresh threads in the same worktrees with resume prompts built from `prompts/` and the resume log, and say "keep the current version" in them.
 
 ## Monitoring
 
@@ -72,6 +73,7 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 ## Quality gates and QA
 
 - QA happens before merge; never call a PR ready to enqueue before its QA is done.
+- Each PR moves through, in order: independent review → writer fixes → verification of the fixes → design or visual review where UI changed → full check at the final head → QA plan (agent-verified plus human-only checkpoints) → operator QA → version-file conflicts resolved → operator enqueues. A head change sends it back to the earliest step the change affects.
 - Agent-first QA: an agent verifies everything it can (e2e on the current head, DOM and accessibility reads, API second views, headless screenshots it reads itself) and records it. The operator gets only checkpoints that need a human: perceptual judgment, real-device feel, assistive tech, product judgment, flows an agent cannot drive; measure the rest (contrast ratios, box geometry, focus targets). A defect an agent already observed goes to the writer with its measurement, not to the human checklist.
 - Every PR gets an independent review, then a verification pass of the fixes, before it is QA-ready. Resolve a thread only after the fix is verified in code, with a reply naming the fixing SHA.
 - Before enqueue, run a containerized or full check wherever PR CI skips suites, and resolve shared version-file conflicts right before each enqueue, in merge order. The queue rebuilds on current main, and a skipped suite is not a pass.
