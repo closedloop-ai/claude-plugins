@@ -4107,6 +4107,36 @@ class TestCmdPostComments:
         assert "side=LEFT" in posts["POST comment src/gone.ts:40"]
         assert "side=RIGHT" in posts["POST comment src/a.ts:2"]
 
+    def test_out_of_diff_anchors_on_deleted_file_old_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """ISS-12737: an ``out_of_diff`` finding whose evidence cites the
+        deleted declaration posts inline at that old-file line, LEFT side."""
+        findings = [{
+            "file": "src/caller.ts", "line": 7, "severity": "HIGH",
+            "category": "Bug", "issue": "imports deleted module", "out_of_diff": True,
+            "evidence": [
+                {"file": "src/gone.ts", "line": 9, "claim": "past the old file"},
+                {"file": "src/gone.ts", "line": 2, "claim": "export deleted"},
+            ],
+        }]
+        path = _make_findings_file(tmp_path, findings)
+        existing = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        pr_files = json.dumps([
+            {"filename": "src/gone.ts", "status": "removed",
+             "patch": "@@ -1,3 +0,0 @@\n-a\n-export b\n-c"},
+        ])
+        files = subprocess.CompletedProcess(args=[], returncode=0, stdout=pr_files, stderr="")
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [existing, files]
+            rc = self._run(path, dry_run=True)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "POST comment src/gone.ts:2" in out
+        assert "side=LEFT" in out
+        assert "Posted 1" in out
+        assert "out-of-diff=0" in out
+
     def test_null_line_does_not_crash(self, tmp_path: Path) -> None:
         """PLN-719: schema permits ``line: int | None`` for system + pr_metadata
         scopes. cmd_post_comments must skip those rather than crash on
@@ -10525,6 +10555,38 @@ class TestVerifyPrepareReviewRoot:
 
         assert rc == 0
 
+    def test_finding_citing_removed_file_gets_patches_path(
+        self, tmp_path: Path,
+    ) -> None:
+        # ISS-12737: a deleted file is readable only from its patch, so an
+        # in-diff finding on it, or one whose evidence cites it, carries the
+        # patch path; a finding touching no deleted file does not.
+        cr_dir = tmp_path / "cr"
+        _seed_scope_review_root(cr_dir, tmp_path / "checkout")
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["src/gone.py"],
+            "file_statuses": {"src/gone.py": "removed"},
+        }))
+        on_deleted = _make_validated_finding("bha_1", file="src/gone.py", line=3)
+        cites_deleted = _make_validated_finding(
+            "bha_2", evidence=[{"file": "src/gone.py", "line": 3, "claim": "removed"}],
+        )
+        plain = _make_validated_finding("bha_3")
+
+        rc, _manifest = _run_verify_prepare(
+            tmp_path, [on_deleted, cites_deleted, plain], cr_dir=cr_dir,
+        )
+
+        assert rc == 0
+        patches = str(cr_dir / "patches_all.txt")
+        inputs = {
+            fid: json.loads((cr_dir / "verifier_inputs" / f"{fid}.json").read_text())
+            for fid in ("bha_1", "bha_2", "bha_3")
+        }
+        assert inputs["bha_1"]["patches_path"] == patches
+        assert inputs["bha_2"]["patches_path"] == patches
+        assert "patches_path" not in inputs["bha_3"]
+
     def test_pr_head_worktree_moved_off_the_resolved_commit_errors(
         self, tmp_path: Path,
     ) -> None:
@@ -13762,6 +13824,8 @@ class TestPartitionExcludesDeletedFiles:
         assert result["partitions"] == []
         assert result["partition_count"] == 0
         assert result["total_changed_loc"] == 0
+
+
 class TestLoadCodeReviewSettings:
     """``_load_code_review_settings`` shape pinning + per-key validation."""
 

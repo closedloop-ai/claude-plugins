@@ -3229,6 +3229,35 @@ def _select_verifier_model(finding: dict[str, Any]) -> str:
     return _VERIFY_MODEL_DEFAULT
 
 
+def _diff_removed_files(cr_dir: Path) -> frozenset[str]:
+    """On-disk names of the files ``diff_data.json`` records as deleted outright."""
+    data = _read_optional_json(cr_dir / "diff_data.json", None)
+    if not isinstance(data, dict):
+        return frozenset()
+    statuses = data.get("file_statuses")
+    if not isinstance(statuses, dict):
+        return frozenset()
+    names = (
+        _git_unquote_path(recorded)
+        for recorded, status in statuses.items()
+        if status == "removed" and isinstance(recorded, str)
+    )
+    return frozenset(name for name in names if name)
+
+
+def _cites_file_in(finding: dict[str, Any], files: frozenset[str]) -> bool:
+    """Whether the finding's own file or any ``evidence[]`` file is in ``files``."""
+    if not files:
+        return False
+    evidence = finding.get("evidence")
+    cited = [finding.get("file")] + [
+        entry.get("file")
+        for entry in (evidence if isinstance(evidence, list) else [])
+        if isinstance(entry, dict)
+    ]
+    return any(isinstance(path, str) and path in files for path in cited)
+
+
 def cmd_verify_prepare(args: argparse.Namespace) -> int:
     """Tier-select findings for verification and emit per-finding inputs.
 
@@ -3342,6 +3371,7 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
     inputs_dir = cr_dir / "verifier_inputs"
     inputs_dir.mkdir(parents=True, exist_ok=True)
     verifier_prompt_path = cr_dir / "verifier_prompt.txt"
+    removed_files = _diff_removed_files(cr_dir)
 
     to_verify: list[dict[str, Any]] = []
     cache_hits: list[str] = []
@@ -3393,15 +3423,17 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
                 pass
 
         input_path = inputs_dir / f"{fid}.json"
+        input_path = inputs_dir / f"{fid}.json"
         verifier_input: dict[str, Any] = {
             "finding": finding,
             "verifier_prompt_path": str(verifier_prompt_path),
             "output_path": str(output_path),
             "review_root": review_root,
         }
-        if entry["_out_of_diff"]:
+        if entry["_out_of_diff"] or _cites_file_in(finding, removed_files):
             # The causation check searches the patch for the change that
-            # broke the cited code; hand the verifier the full-diff patch.
+            # broke the cited code, and a file this diff deleted can only be
+            # read from its patch; hand the verifier the full-diff patch.
             verifier_input["patches_path"] = str(cr_dir / "patches_all.txt")
         with open(input_path, "w") as fh:
             json.dump(verifier_input, fh, indent=2)
@@ -5099,23 +5131,26 @@ def _gh_api(
 _CAUSATION_CONFIRMED_VERDICTS = frozenset({"CONFIRMED", "DOWNGRADE", "RE_ASSERTED"})
 
 
-def _patch_right_side_lines(patch: str) -> set[int]:
-    """New-file line numbers GitHub can anchor a RIGHT-side comment on.
+def _patch_side_lines(patch: str, *, old_side: bool) -> set[int]:
+    """Lines GitHub can anchor an inline comment on, for one side of ``patch``.
 
-    Those are the added and context lines inside each hunk of the
-    unified-diff ``patch`` GitHub returns per PR file.
+    ``patch`` is the unified diff GitHub returns per PR file. The RIGHT side
+    (``old_side=False``) is the new-file numbers of added and context lines;
+    the LEFT side (``old_side=True``) is the old-file numbers of removed and
+    context lines.
     """
     lines: set[int] = set()
-    new_line: int | None = None
+    line_no: int | None = None
+    skipped = "+" if old_side else "-"
     for raw in patch.splitlines():
         header = HUNK_RE.match(raw)
         if header:
-            new_line = int(header.group(3))
+            line_no = int(header.group(1) if old_side else header.group(3))
             continue
-        if new_line is None or raw.startswith(("-", "\\")):
+        if line_no is None or raw.startswith((skipped, "\\")):
             continue
-        lines.add(new_line)
-        new_line += 1
+        lines.add(line_no)
+        line_no += 1
     return lines
 
 
@@ -5137,7 +5172,8 @@ def _parse_paginated_json_arrays(text: str) -> list[Any]:
 class _PrFiles(NamedTuple):
     """What ``pulls/{pr}/files`` says about the PR's files."""
 
-    #: Per file, the new-file lines a RIGHT-side inline comment can anchor on.
+    #: Per file, the lines an inline comment can anchor on: new-file (RIGHT)
+    #: lines, or old-file (LEFT) lines on a file the PR deletes.
     diff_lines: dict[str, set[int]]
     #: Files the PR deletes (``status: "removed"``); comments on them post
     #: on the LEFT side, at old-file line numbers.
@@ -5166,11 +5202,12 @@ def _fetch_pr_files(owner: str, repo_name: str, pr_number: Any) -> _PrFiles:
         filename = entry.get("filename")
         if not isinstance(filename, str):
             continue
-        if entry.get("status") == "removed":
+        is_removed = entry.get("status") == "removed"
+        if is_removed:
             removed.add(filename)
         patch = entry.get("patch")
         if isinstance(patch, str):
-            diff_lines[filename] = _patch_right_side_lines(patch)
+            diff_lines[filename] = _patch_side_lines(patch, old_side=is_removed)
     return _PrFiles(diff_lines, frozenset(removed))
 
 
@@ -5200,8 +5237,9 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
     Findings outside the diff (``out_of_diff: True``) post inline at the
     first ``evidence[]`` location that lies in the PR diff (fetched from
     ``pulls/{pr}/files``), with a body that opens with the affected
-    ``file:line``. With no such location they are summary-only, like
-    out-of-hunk findings.
+    ``file:line``. On a file the PR deletes that location is an old-file
+    line. With no such location they are summary-only, like out-of-hunk
+    findings.
 
     A finding on a file the PR deletes (``status: "removed"`` in the same
     ``pulls/{pr}/files`` lookup, read once before the first inline post)
@@ -13351,7 +13389,8 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
         return _write_spawn_spec(spec, cr_dir, review_root)
 
     # Distinguish missing partitions.json (upstream stage_17 failure)
-    # from valid empty partitions (all files cached). A missing file
+    # from valid empty partitions (all files cached, or only deleted
+    # files left). A missing file
     # means the standard flow can't know if there's nothing to review
     # or if the partitioner crashed; silently skipping BHA in that
     # case would suppress coverage. Treat as a fallback sentinel so
@@ -13612,7 +13651,8 @@ def _build_spawn_required_gap_findings(
 
     Benign reasons (intentional omissions, not coverage gaps): the
     PLN-723 ``deferred_pln723`` placeholder, ``no_partitions``
-    (all files cached — BHA legitimately has nothing to do),
+    (all files cached, or every uncached file was deleted outright — BHA
+    legitimately has nothing to do),
     ``docs_only`` (arbitrate-budget waived the BHA floor for a
     docs-only diff), and ``gated_by_verify`` (BLOCKING sanitization
     already surfaces via agent_coverage-verify-blocking.json).
