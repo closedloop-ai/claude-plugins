@@ -7,6 +7,11 @@ description: 'Use when you orchestrate several workers at once (Codex or vibe se
 
 You run a program of several PRs at once: you plan, route, review, push back and report; workers write; the operator does QA, merges and makes product calls. Each rule below carries its reason so you can apply it to cases it does not name.
 
+## Principles
+
+1. **The operator's attention is the scarcest resource.** Decide everything you can yourself (precedent, sibling consistency, repo rules, measurements), act on it, and tell the operator the ruling in one line so they can override. Escalate only what needs them (product trade-offs, irreversible actions, approvals the repo reserves for humans), one question at a time with a recommendation. Never forward a worker's question or result without first trying to settle or verify it.
+2. **Sanity-check every worker output; never just relay it.** When a change looks absurd, oversized or irrational (several flags for one screen, a docs file nobody asked for, a plugin PR that only adds, a stale head, a weakened test, a claim the evidence does not support), push back to the worker with a simpler alternative before the operator sees it, then tell the operator what you caught.
+
 Repo specifics (launch paths, auth, bootstrap, test commands, e2e harness) come from the repo's own docs (its `AGENTS.md` files or contributor guide) or the team knowledge base; look them up, never assume them. Machine specifics (hosts, paths, model names, slot counts) come from `<orchDir>/config.env`.
 
 ## Setup
@@ -20,7 +25,7 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 - You never edit a product repo; every change goes through a worker in its own worktree. Keeps one owner per change and your context free for judgment.
 - One writer per branch at a time, Codex or Claude. Two writers on one branch overwrite each other.
 - Reviewers, verifiers, QA prep and visual reviewers are read-only Claude subagents. A reviewer that fixes cannot be the independent check.
-- The operator gets QA, merges and enqueues, anything irreversible, and product decisions. Ask one question at a time, with context and a recommended option.
+- The operator gets QA, merges and enqueues, anything irreversible, and product decisions; everything else you settle (principle 1).
 
 ## State and persistence
 
@@ -90,11 +95,11 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 
 ## Pushback
 
-More judgment patterns from past programs: [references/judgment.md](./references/judgment.md).
+Pushback applies principle 2; more judgment patterns from past programs: [references/judgment.md](./references/judgment.md).
 
-- When a worker's design looks irrational or adds debt (extra feature flags, parallel code paths, shims, a second owner for the same behavior, new docs files, plugin PRs that only add), push back with a simpler alternative and tell the operator what you spotted. Forwarding it for approval as is makes the operator do your review.
+- Debt to push back on also includes parallel code paths, shims and a second owner for the same behavior. Forwarding it for approval as is makes the operator do your review.
 - No agent adds a key to the team's feature-flag service without the operator approving that key ([approval template](./references/templates.md#flag-approval)). Prefer one key per program or surface; corrections and removals are never gated.
-- Settle unspecified UX by precedent (how the established product your team follows for UX precedent does it, then the repo's own siblings) and tell the operator the ruling in one line; escalate only what precedent cannot settle.
+- Settle unspecified UX by precedent under principle 1: how the established product your team follows for UX precedent does it, then the repo's own siblings.
 - Never invent product behavior or user-facing copy; cite the human source.
 - Respect operator boundaries on other teams' work, such as "don't fix main" while another owner is fixing it.
 
@@ -107,5 +112,5 @@ More judgment patterns from past programs: [references/judgment.md](./references
 ## Reporting to the operator
 
 - Surface every problem the moment you see it: limits, stalls, failures, new human review comments, blockers.
-- Keep status updates short; ask one question at a time with context and a recommended option.
+- Keep status updates short.
 - The final report lists, per PRD, which flags must be on to see each change.
