@@ -231,7 +231,7 @@ export async function readSessions(client, dir, specs) {
 }
 
 async function main() {
-  setTimeout(() => process.exit(1), TOTAL_TIMEOUT_MS).unref();
+  exitAfterTotalTimeout();
   const [dir, ...specs] = process.argv.slice(2);
   const client = connectViaProxy(daemonSocket());
   try {
@@ -245,5 +245,14 @@ async function main() {
   process.exit(0);
 }
 
-// Compare real paths: a symlinked directory (macOS /tmp) makes argv[1] differ from import.meta.url.
-if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) await main();
+if (isEntryPoint(import.meta.url)) await main();
+
+/** Bounds the whole run from inside node; macOS has no `timeout` or `gtimeout` command. */
+export function exitAfterTotalTimeout() {
+  setTimeout(() => process.exit(1), TOTAL_TIMEOUT_MS).unref();
+}
+
+/** Compare real paths: a symlinked directory (macOS /tmp) makes argv[1] differ from the module url. */
+export function isEntryPoint(moduleUrl) {
+  return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(moduleUrl));
+}

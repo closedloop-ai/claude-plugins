@@ -1,6 +1,6 @@
 ---
 name: codex-fleet-monitor
-description: 'Use PROACTIVELY whenever you start or are already running two or more Codex or vibe sessions, or are watching PRs on their behalf, and need to be told when anything needs attention. Replaces hand-rolled polling loops: a Codex turn that hits a usage limit stays "active" and silent, so a watcher that checks only for an open turn misses it. This reads each thread''s progress and flags IDLE, STALLED, FAILED(LIMIT), new PR comments or reviews, check changes, merge conflicts, and new PRs.'
+description: 'Use PROACTIVELY whenever you start or are already running two or more Codex or vibe sessions, or are watching PRs on their behalf, and need to be told when anything needs attention. Replaces hand-rolled polling loops: a Codex turn that hits a usage limit stays "active" and silent, so a watcher that checks only for an open turn misses it. This reads each thread''s progress and flags IDLE, STALLED, FAILED(LIMIT), new PR comments or reviews, settled check changes, merge conflicts, and new PRs. It also prints a Codex usage line per machine (used-percent band, and whether a reached limit is spending paid credits) and, when configured, the delegated-work request files sessions drop for Claude workers.'
 ---
 
 # codex-fleet-monitor
@@ -13,7 +13,7 @@ A Codex turn that hits a usage limit stays open and simply stops producing items
 
 ## Requirements
 
-- Each Codex session is identified by its thread id. `scripts/liveness.mjs` is self-contained (Node built-ins only): it starts the managed App Server with `codex app-server daemon start`, connects through `codex app-server proxy`, and calls `thread/read`. Nothing outside the vibe plugin and the `codex` CLI is needed.
+- Each Codex session is identified by its thread id. `scripts/liveness.mjs` is self-contained (Node built-ins only): it starts the managed App Server with `codex app-server daemon start`, connects through `codex app-server proxy`, and calls `thread/read`. `scripts/ratelimit.mjs` reuses its client to call `account/rateLimits/read`. Nothing outside the vibe plugin and the `codex` CLI is needed.
 - `codex`, `node`, `jq`, `gh` (authenticated) on this machine; `codex` and `node` on the remote host, reachable through `REMOTE_SHELL`.
 
 ## Set up a work dir
@@ -32,6 +32,8 @@ WATCH_NEW_PR_REPOS="owner/repo"  # optional: list open PRs here to spot new ones
 PR_SEARCH="head:feature/"        # optional: search filter for that list
 BOT_LOGIN_REGEX="vercel|codex|github-actions|copilot|bot"  # authors not counted as human feedback
 # MY_GH_LOGIN=me                 # your own comments are not counted; defaults to `gh api user`
+REQUESTS_DIR=/path/to/requests   # optional: local dir where sessions drop delegated-work request files
+REMOTE_REQUESTS_DIR=/path/on/remote/requests  # optional: the same on REMOTE_HOST
 ```
 
 `sessions.txt`: one line per Codex session, in either form:
@@ -61,13 +63,20 @@ Start it with `run_in_background`. You are notified when it exits. Read its outp
 | `session ... FAILED(LIMIT)` | turn errored on usage or rate limit | tell the user right away; a reset or second account is theirs to do |
 | `session ... FAILED(ERROR)` / `STOPPED(...)` / `READFAIL` | turn errored, was interrupted, or the thread or state file is unreadable | inspect the thread; restart or resume |
 | `session remote <host> UNREACHABLE` | ssh failed | check the host |
+| `codex-usage <local\|remote> <band>% ok resets=<n>` | Codex account usage on that machine, used percent floored to 10; `resets` is the count of available limit resets | none; if the band rises fast, warn the user with the rate |
+| `codex-usage ... LIMIT` / `LIMIT-STOPPED` | usage limit reached; `LIMIT` means ordinary usage is still allowed, `LIMIT-STOPPED` means sessions cannot run | tell the user right away; a reset or second account is theirs to do |
+| `codex-usage ... LIMIT-SPENDING-CREDITS` | limit reached and turns are now consuming paid credits | tell the user at once and stop sending turns unless they approve paid credits |
+| `codex-usage ... unreadable READFAIL` | the App Server or remote host could not be read | check `codex` on that machine |
+| `requests <local\|remote> <count> <newest file>` / `requests ... UNREADABLE` | a session dropped (or you removed) a delegated-work request file | hand the new request to a Claude worker, then steer its result back to the session that asked |
 | `open-prs <repo> <numbers>` | open PR list changed | add the new PR to `prs.txt` and start its review |
-| `pr ... <state> <head> <reviewDecision> <mergeable> comments= reviews= inline= checks=` | any field changed | new head: re-review; count up: read the feedback; `CONFLICTING`: tell the owning session to merge the base branch; checks: act on failures |
+| `pr ... <state> <head> <reviewDecision> <mergeable> comments= reviews= inline= checks=` | any field changed | new head: re-review; count up: read the feedback; `CONFLICTING`: tell the owning session to merge the base branch; checks: act on failures. Check counts change only once settled; while any check is pending the last settled counts show with ` (running)` |
 
-Surface everything that needs a human to the user immediately: limits, stalls, failures, and new human review comments.
+Surface everything that needs a human to the user immediately: limits, paid-credit spending, stalls, failures, and new human review comments.
 
 ## Notes
 
 - `mergeable` keeps its last known value while GitHub reports `UNKNOWN`, so it does not flap.
-- Item history lives in `<workDir>/item-history.txt`; delete it to reset stall timers.
+- Each run compares against `<workDir>/last-snapshot.txt` from the previous run, so a change between a watcher exit and its re-arm is still reported. Delete the file to start from a fresh base.
+- Item history lives in `<workDir>/item-history.txt`; delete it to reset stall timers. Settled check counts live in `<workDir>/checks-*.txt`.
+- On the remote host both scripts are copied to `<REMOTE_STATE_DIR>/.fleet-monitor/` on every snapshot.
 - Don't run two copies on the same work dir.
