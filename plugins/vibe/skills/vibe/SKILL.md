@@ -95,7 +95,12 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 - Codex: invoke as `$vibe`. Workers are this plugin's agents in `agents/`
   (`../../agents/<name>.md` from this file). Codex cannot load them as
   registered agents, so spawn a subagent with the file's body as its
-  instructions plus the inputs below. Spawn `vibe-change-worker` only ONCE per
+  instructions plus the inputs below, and set the spawn's `model` and
+  `reasoning_effort` to what `node scripts/worker-model.mjs codex <name>`
+  prints: explorers (requirements, backend, primitive and Storybook advice,
+  the handoff summary) run on `gpt-5.6-terra`, every writer, reviewer and
+  verifier on `gpt-6-sol`, all at `high`. Never pass `xhigh` unless the person
+  asked for it. Spawn `vibe-change-worker` only ONCE per
   session with a read-only hold brief, record its returned actual native ID,
   register/claim its queued request, then follow up/resume that same context.
   Never make a new source writer per request/unit. Repo agents live in `<repo>/.claude/agents/`.
@@ -113,6 +118,26 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   quality-loop.md's turn stranded by a plugin upgrade: `migrate` with
   `retainedRecord`, internally, never a question or a message to engineering.
   Startup and confirmed discard use the same bounded stable contexts below.
+- Usage limits (both harnesses). In Codex, run
+  `node scripts/codex-usage.mjs check` before spawning a worker or
+  forwarding a request to the writer, and again when a worker turn stalls
+  with no progress. It reads the account's rate limits from the Codex App
+  Server through codex-fleet-monitor's shared reader. On `"status":"stop"`
+  (exit 3) a limit is reached and ordinary usage is no longer allowed, so
+  continuing would draw on paid credits or cannot run at all: spawn and forward
+  nothing, leave the writer's request queued, and tell the person in one plain
+  sentence that the Codex usage limit is reached and when it resets
+  (`resetsAt`), and that the session picks up from there then, or, when
+  `state` is `LIMIT-SPENDING-CREDITS`, now if they say to use paid credits.
+  Pass `--allow-credits` only after the person explicitly said to use credits
+  in this session; `LIMIT-STOPPED` (no credits left) stops even then.
+  `unknown` is not a stop.
+  In Claude Code there is no usage query to call first: the launcher reads
+  each turn's `rate_limit_event`, returns the last one as `rateLimit`, and
+  stops a turn that hits the limit or starts paid extra usage with code
+  `USAGE_LIMIT_REACHED`. Then start no new worker turn and tell the person
+  the same way. Pass `"allowCredits": true` in the launcher input only after
+  the person explicitly allowed paid extra usage.
 - Plugin root: the folder two levels above this file (in Codex,
   `~/.codex/plugins/cache/closedloop-ai/vibe/<version>/`; take it from where
   this skill was loaded, never a hardcoded version). Resolve it to an absolute

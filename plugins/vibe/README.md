@@ -183,6 +183,22 @@ and `codex plugin add` for vibe and closedloop-core in Codex) and asks them
 to reopen the app. When the check cannot reach GitHub the session carries
 on and says so.
 
+Sessions keep Codex and Claude usage down. Each worker's model follows its
+role from one policy per harness: in Codex, `scripts/worker-model.mjs` (backed
+by `cl-sweep/scripts/model-policy.mjs`, which cl-sweep and cl-execute use too)
+puts read-only explorers (requirements, backend, primitive and Storybook
+advice, the handoff summary) on `gpt-5.6-terra` and every writer, reviewer
+and verifier on `gpt-6-sol`, all at reasoning effort `high` unless raised
+explicitly; in Claude Code the agent files' `model:` frontmatter does the
+same with sonnet. Before spawning workers or forwarding a request, and when a
+turn stalls, Codex runs `scripts/codex-usage.mjs check`, which reads the
+account's rate limits from the App Server through codex-fleet-monitor's
+shared reader; the Claude launcher reads each turn's `rate_limit_event`. A
+reached limit that no longer allows ordinary usage, or paid extra usage in
+Claude Code, stops the session with a plain message unless the person explicitly
+allowed credits. Containerized e2e runs only the specs the change needs, one
+stack per machine through `scripts/e2e-lock.mjs`.
+
 Two notices reach the person without waiting for a reply. When a request names
 an outside product as its reference, or gives a screenshot of one, the
 requirements worker researches that product's public documentation, reads the
@@ -249,7 +265,10 @@ request retires, recorded with `retired-tests.mjs` and the retiring ticket or
 PRD, and the live ticket lists those deletions next to Missing tests. The
 handoff inventory lists repairs and recorded deletions and rejects an added or
 unrecorded deleted test file, and the guardrails reviewer checks each one. Handoff
-runs the existing affected tests, the writer fixes the session's own code
+runs only the targeted existing tests (the ones closedloop-graph's
+`code_tests_for` returns for each changed file) with Biome, source gates and
+the affected typecheck, never a broad or full local suite; CI runs those. The
+writer fixes the session's own code
 when one fails, never what a test asserts, and the ticket lists the missing tests as
 engineering's scope of work: the behavior and row each covers and the files
 to cover. Only the person's explicit request for a pull request authorizes
@@ -329,11 +348,11 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 | `vibe-ticket-worker` | sonnet | Live ticket creation and source link, the session plan as a linked PLN, next-owner lookup, handoff grading, assignment, and cancellation |
 | `vibe-environment-worker` | sonnet | Vercel environment creation, redeploy, flag snapshots, Desktop setup, deployment records, and opening a pull request the person asked for at handoff |
 | `vibe-change-worker` | sonnet | Sole persistent implementation writer for local planning, full-stack changes, stories, fixes, the handoff missing tests list and serialized recording |
-| `vibe-backend-worker` | opus | Read-only decision-table and backend guidance for that writer |
+| `vibe-backend-worker` | sonnet | Read-only decision-table and backend guidance for that writer |
 | `vibe-primitive-worker` | sonnet | Read-only reusable-component and steward-specification guidance for that writer |
 | `vibe-prototype-worker` | sonnet | Read-only canonical prototype guidance or operational immutable Vercel sharing of the writer's reviewed committed result |
 | `vibe-storybook-decomposer` | sonnet | Read-only Storybook placement owner (precedent search on sibling entities before any story or shared component is placed) and component extraction, story and control guidance for that writer |
-| `vibe-verify-worker` | sonnet | Read-only existing checks, handoff coverage review, full backend suite, Storybook footprint and handoff running app checks with `pnpm control` |
+| `vibe-verify-worker` | sonnet | Read-only targeted existing checks (`code_tests_for` per changed file), locked containerized e2e for the specs the change needs, handoff coverage review, Storybook footprint and handoff running app checks with `pnpm control` |
 | `vibe-guardrails-reviewer` | sonnet | Read-only judgment-based review of reuse, placement (including Storybook precedent placement), copy provenance, accessibility, and tests |
 | `vibe-adversarial-reviewer` | opus | Separate read-only handoff review of ownership, dependencies, contracts, regressions, and web/Desktop behavior |
 | `vibe-handoff-summarizer` | sonnet | Read-only plain-language summary of the session inventory, changes, and overlaps |
@@ -437,7 +456,7 @@ an available update.
 
 ## Runtime Files
 
-Version `1.0.58` contains 10 skills and 16 agents. It has no standalone
+Version `1.0.60` contains 11 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains the skill-contract test modules and
 `vibe_contract_text.py`, the text helpers they share.

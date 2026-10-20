@@ -82,14 +82,19 @@ and repo-doc constraints discovered by the worker. Do not rely on conversation
 inheritance because `fork_turns: "none"` supplies none.
 
 Every support `spawn_agent` packet must set a role-bounded model and
-`reasoning_effort`. Use `model: "gpt-6-sol"` with `high` or `xhigh` for
-planning review, correctness-sensitive review/QA, synthesis, bounded
-exploratory code/evidence analysis, and other high-judgment work where
-mistakes matter. Only when the ticket owner actually decomposes a separate
-bounded, deterministic lower-risk support role may it use
-`model: "gpt-6-luna"` with `low` for deterministic inventory, artifact
-parsing, hashing, or status mechanics. Luna returns evidence only; it never
-owns orchestration, ticket work, coding/planning, final judgment, or mutation.
+`reasoning_effort`. The bindings come from the plugin's one Codex model
+policy, `../../cl-sweep/scripts/model-policy.mjs`. Use `model: "gpt-6-sol"`
+with `reasoning_effort: "high"` for planning review, correctness-sensitive
+review/QA, synthesis, and other high-judgment work where mistakes matter;
+raise it to `xhigh` only by an explicit choice for that lane. Use
+`model: "gpt-5.6-terra"` with `high` for explorer lanes: bounded exploratory
+code/evidence analysis, codebase exploration, graph lookups, requirements or
+precedent research, and read-only search. Only when the ticket owner actually
+decomposes a separate bounded, deterministic lower-risk support role may it
+use `model: "gpt-6-luna"` with `low` for deterministic inventory, artifact
+parsing, hashing, or status mechanics. Luna and terra return evidence only;
+they never own orchestration, ticket work, coding/planning, final judgment,
+or mutation.
 These are explicit role/model choices, not fallback models. The model names
 here are Codex models for a Codex worker. A Claude Code worker launches the
 same lanes as its own sub-agents on Claude models and never routes a lane
@@ -100,10 +105,10 @@ Model or effort selection alone is not a token-savings claim.
 
 For every path-addressed read-only planning, code-review lens/synthesis,
 logical-QA, visual-QA, audit, search, or status support spawn, use
-`fork_turns: "none"` plus the role-appropriate `gpt-6-sol` or `gpt-6-luna`
-selection above and its matching `reasoning_effort`. If the work has not been
-decomposed into a genuinely bounded deterministic lower-risk support role, use
-`gpt-6-sol`.
+`fork_turns: "none"` plus the role-appropriate `gpt-6-sol`, `gpt-5.6-terra`
+or `gpt-6-luna` selection above and its matching `reasoning_effort`. If the
+work is neither an explorer lane nor a genuinely bounded deterministic
+lower-risk support role, use `gpt-6-sol`.
 
 The self-contained prompt must state the exact absolute input artifact path and
 SHA-256, cwd, requirements reference, expected absolute result path, and bounded

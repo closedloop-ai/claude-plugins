@@ -61,8 +61,8 @@
 // page is edited by every Storybook release, so a tag there is not a version.
 //
 // `backendChanged` says whether the work touched backend code
-// (`backendFiles`). Handoff runs its lighter checks when it did not, and the
-// full suite with two workflow-code-review passes when it did.
+// (`backendFiles`). Handoff adds two workflow-code-review passes when it did;
+// its test run stays targeted either way.
 //
 // Usage: handoff-inventory.mjs --worktree <path> [--phase build|handoff|pull-request]
 

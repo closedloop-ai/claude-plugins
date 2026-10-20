@@ -32,8 +32,9 @@ error, then you commit again. Workers return a short status (`DONE`,
 `BLOCKED`, or `DRIFT` / `CLEAN` from the check worker).
 
 Workers are this plugin's agents (`../../agents/<name>.md`; in Codex spawn a
-subagent with the file's body as its instructions, in Claude Code use
-`vibe:<name>`). Every worker uses closedloop-graph first, per
+subagent with the file's body as its instructions and the `model` and
+`reasoning_effort` that `node ../vibe/scripts/worker-model.mjs codex <name>`
+prints, in Claude Code use `vibe:<name>`). Every worker uses closedloop-graph first, per
 `../vibe/references/closedloop-graph.md`; say so in each brief.
 
 | Worker | Job |

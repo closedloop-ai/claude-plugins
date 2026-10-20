@@ -17,6 +17,7 @@ import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
 import type { OperationContext } from "./main-sync-contracts.js";
 import { deriveValidationEnvelope } from "./main-sync-validation-envelope.js";
 import { readReferenceImages } from "./reference-images.js";
+import { type ClaudeRateLimit, mustStopForUsage, rateLimitFromEvent } from "./claude-usage.js";
 
 const launchSchema = recordContextSchema.extend({
   /** Optional: the launcher binds its own installed plugin root (or a resumed writer's recorded root) when omitted. */
@@ -24,6 +25,8 @@ const launchSchema = recordContextSchema.extend({
   requestId: identifierSchema, input: z.string().min(1).max(64 * 1024).optional(),
   continuation: z.string().min(1).max(64 * 1024).optional(), capabilities: capabilitiesSchema,
   timeoutMs: z.number().int().min(1000).max(30 * 60 * 1000).default(15 * 60 * 1000),
+  /** Set only when the person explicitly allowed paid extra usage; otherwise a reached limit or overage stops the turn. */
+  allowCredits: z.boolean().optional(),
 }).strict().refine((data) => !(data.input && data.continuation), "Supply input or continuation, not both");
 type LaunchInput = z.infer<typeof launchSchema>;
 type Definition = ReturnType<typeof readDefinition>;
@@ -189,7 +192,7 @@ export async function runWorker(rawInput: unknown) {
       ...(input.discardTarget ? { discardTarget: input.discardTarget } : {}),
       ...(input.recordAction ? { recordAction: input.recordAction } : {}),
       ...(operationContext ? { operationContext } : {}), ...referenceImagesFor(input.agentName, place.dir),
-      input: turnInput }), timeoutMs, trace, (processGroupId) => {
+      input: turnInput }), timeoutMs, trace, input.allowCredits === true, (processGroupId) => {
         if (persistent && lease) attachClaudeProcess(input.worktree, workerId, lease, processGroupId);
       });
     process.removeListener("SIGTERM", cancelBeforeLaunch);
@@ -225,8 +228,9 @@ export async function runWorker(rawInput: unknown) {
 
 /** Owns only the spawned child and its streams; bounded failure never falls back to another session. */
 async function launchProcess(args: string[], granted: readonly string[], cwd: string, input: string, timeoutMs: number, trace: number,
-  attach: (pid: number) => void) {
-  return await new Promise<{ status: WorkerStatus; summary: string; data?: Record<string, unknown>; sessionId: string }>((resolve, reject) => {
+  allowCredits: boolean, attach: (pid: number) => void) {
+  return await new Promise<{ status: WorkerStatus; summary: string; data?: Record<string, unknown>; sessionId: string;
+    rateLimit?: ClaudeRateLimit }>((resolve, reject) => {
     const child: ChildProcessWithoutNullStreams = spawn("claude", args, { cwd, detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"] });
     let failed: Error | undefined;
@@ -234,6 +238,7 @@ async function launchProcess(args: string[], granted: readonly string[], cwd: st
     let bytes = 0;
     let final: z.infer<typeof resultSchema> | undefined;
     let authFailed = false;
+    let rateLimit: ClaudeRateLimit | undefined;
     const decoder = new StringDecoder("utf8");
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     const stop = (reason: Error) => {
@@ -274,6 +279,10 @@ async function launchProcess(args: string[], granted: readonly string[], cwd: st
         try {
           const event: unknown = JSON.parse(line);
           checkInit(event);
+          rateLimit = rateLimitFromEvent(event) ?? rateLimit;
+          if (mustStopForUsage(rateLimit, allowCredits)) {
+            stop(new LaunchPrecheckError("USAGE_LIMIT_REACHED", "Claude reported a reached usage limit or paid extra usage"));
+          }
           const parsed = resultSchema.safeParse(event);
           if (parsed.success) {
             final = parsed.data;
@@ -307,7 +316,7 @@ async function launchProcess(args: string[], granted: readonly string[], cwd: st
         try {
           const result = workerResultSchema.parse(final.structured_output !== undefined
             ? final.structured_output : JSON.parse(final.result!));
-          resolve({ ...result, sessionId: final.session_id });
+          resolve({ ...result, sessionId: final.session_id, ...(rateLimit ? { rateLimit } : {}) });
         } catch { reject(new Error("Worker returned no valid compact status object")); }
       }, reject);
     });

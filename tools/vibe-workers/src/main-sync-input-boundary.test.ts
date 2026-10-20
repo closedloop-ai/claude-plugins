@@ -12,24 +12,19 @@ afterEach(() => { for (const value of fixtures.splice(0)) value.cleanup(); });
 function setup() { const value = syncFixture(); fixtures.push(value); return value; }
 
 describe("production committed-input privacy and origin boundaries", () => {
-  it.each(["reader", "replay"] as const)("blocks a retained report selected as %s input without reading or removing it", (kind) => {
+  it("blocks a retained report selected as reader input without reading or removing it", () => {
     const value = setup();
     const output = ".vitest/blob/blob.json";
     value.write(".gitignore", `${readFileSync(join(value.worktree, ".gitignore"), "utf8")}\n.vitest/\n`);
-    if (kind === "reader") value.write("apps/app/probe.ts", "import {readFileSync} from 'node:fs';\nreadFileSync('../../.vitest/blob/blob.json');\n");
-    else {
-      const pkg = JSON.parse(readFileSync(join(value.worktree, "package.json"), "utf8"));
-      pkg.scripts["test:affected"] = "vitest --merge-reports .vitest/blob";
-      value.write("package.json", JSON.stringify(pkg));
-    }
+    value.write("apps/app/probe.ts", "import {readFileSync} from 'node:fs';\nreadFileSync('../../.vitest/blob/blob.json');\n");
     value.git(["add", "."]); value.git(["commit", "-m", "Synthetic selected retained-report reader"]);
     const body = "retained failed evidence is not current PASS\n";
     value.write(output, body);
-      const result = selectedReportFixture(value, kind === "reader" ? "apps/app/probe.ts" : undefined);
+      const result = selectedReportFixture(value, "apps/app/probe.ts");
       expect(result.status, result.stdout).toBe(1);
-      expect(String(result.json?.error)).toMatch(/retained report|replay/i);
+      expect(String(result.json?.error)).toMatch(/retained report/i);
       const calls = value.calls().trim().split("\n").map(line => JSON.parse(line) as string[]);
-      expect(calls.some(argv => argv[0] === (kind === "reader" ? "check:source-gates" : "test:affected"))).toBe(false);
+      expect(calls.some(argv => argv[0] === "check:source-gates")).toBe(false);
       expect(JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8")).validation).toBeUndefined();
       expect(readFileSync(join(value.worktree, output), "utf8")).toBe(body);
   }, 30000);

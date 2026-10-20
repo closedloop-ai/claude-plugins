@@ -132,7 +132,8 @@ export function codexLocalMarketplace(codex) {
   }
 }
 
-function findCodex() {
+/** The codex CLI on PATH, else the one bundled with the ChatGPT app. */
+export function findCodex() {
   for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
     const candidate = path.join(dir, "codex");
     try {

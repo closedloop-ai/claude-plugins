@@ -4,6 +4,22 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.60
+
+#### Changed
+- Codex workers default to reasoning effort `high` instead of `xhigh`: new cl-sweep ticket-owner sessions, cl-execute and cl-sweep support lanes, and the vibe skills' native workers. `xhigh` stays available when raised explicitly, and an existing session's persisted effort is never rewritten.
+- Worker models follow their role from one policy per harness. In Codex, `cl-sweep/scripts/model-policy.mjs` puts explorer and research lanes on `gpt-5.6-terra`, keeps writers, reviewers and verifiers on `gpt-6-sol`, and leaves mechanical lanes on `gpt-6-luna`; the vibe, handoff and seed-refresh skills take each spawn's model and effort from `vibe/scripts/worker-model.mjs`. In Claude Code, `vibe-backend-worker` moves from opus to sonnet like the other read-only explorers.
+- Vibe validation is targeted: the verify worker runs only the tests closedloop-graph's `code_tests_for` returns for each changed file, with Biome, source gates and the affected typecheck. Its full-suite mode is removed, the handoff publication recipe no longer runs `test:affected`, test lanes, `turbo test`, `pnpm verify`, `pnpm test`, `test:lint`, `test:skills`, the Desktop renderer lane or the whole Storybook suite, and Storybook checks run only the new or changed story files. Required browser and Desktop e2e lanes are still recorded for CI evidence.
+- Containerized e2e runs only the specs the change needs, one stack per machine.
+
+#### Added
+- `vibe/scripts/codex-usage.mjs` reads the Codex account's rate limits through the App Server `account/rateLimits/read` method before workers spawn and when a turn stalls; a reached limit that no longer allows ordinary usage stops the session with a plain message unless the person explicitly allowed credits. A reached limit that still allows ordinary usage continues, with `state` `LIMIT` in the output. With no credits left (`LIMIT-STOPPED`) it stops even when credits were allowed. The read and its classification are codex-fleet-monitor's `ratelimit.mjs` (`readRateLimits` and `classifyUsage`), so the gate and the monitor's `codex-usage` line share one reader and one set of states; the check uses its private stdio App Server transport and never starts the managed daemon.
+- The Claude worker launcher reports each turn's last `rate_limit_event` as `rateLimit` and stops a turn that reaches the limit or starts paid extra usage (`USAGE_LIMIT_REACHED`) unless the launch input sets `allowCredits`.
+- `vibe/scripts/e2e-lock.mjs`, a machine-wide lock the verify worker runs every containerized e2e command through, taking over a lock left by a process that no longer exists.
+
+#### Removed
+- The test-selection budgeting and report admission that only the removed handoff test commands used (`main-sync-budget-ref-read.ts`, the affected test wrapper pin, the `test:lint` budget and the captured-main mapping of `test:affected`).
+
 ### code-review v3.12.0
 
 #### Changed
