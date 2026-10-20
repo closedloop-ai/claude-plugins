@@ -385,8 +385,6 @@
         "{cr_dir}/available_reviewers.json",
         "--extract-signals",
         "{cr_dir}/extract_signals.json",
-        "--diff-tip",
-        "<DIFF_TIP>",
         "--cache-dir",
         "<CACHE_DIR>"
       ],

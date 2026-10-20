@@ -502,14 +502,6 @@
         },
         {
           "flags": [
-            "--diff-tip"
-          ],
-          "dest": "diff_tip",
-          "default": null,
-          "required": true
-        },
-        {
-          "flags": [
             "--cache-dir"
           ],
           "dest": "cache_dir",

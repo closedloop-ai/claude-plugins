@@ -7714,6 +7714,9 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
         "prompt_hash": prompt_hash,
         "input_path": str(input_path),
         "taxonomy_path": str(taxonomy_snapshot_path),
+        # Every file the agent reads besides the prompt and input bundle;
+        # singleton-dispatch passes these through verbatim.
+        "extra_inputs": [str(taxonomy_snapshot_path)],
         "prompt_path": str(prompt_path),
         "output_path": str(output_path),
         "model": model,
@@ -8866,16 +8869,20 @@ def _stable_json_hash(payload: Any) -> str:
 def coverage_critic_cache_key(
     coverage_plan_initial_hash: str,
     signals_hash: str,
-    diff_tip: str,
+    diff_summary_hash: str,
     prompt_hash: str,
     available_reviewers_hash: str,
 ) -> str:
     """Cache key for the ``coverage_critic`` namespace (PLN-725).
 
-    Tuple ``(coverage_plan_initial_hash, signals_hash, diff_tip,
+    Tuple ``(coverage_plan_initial_hash, signals_hash, diff_summary_hash,
     prompt_hash, available_reviewers_hash)`` is the complete set of
     inputs the critic is a pure function of. All five are
-    content-addressed.
+    content-addressed: the plan, signals and roster hashes cover the
+    agent's input bundle, and ``diff_summary_hash`` covers the diff
+    summary it is given. Never key on a ref name: a branch review's diff
+    tip is the literal ``HEAD``, which would let every later review with
+    the same plan, signals and roster reuse the first run's plan.
 
     ``available_reviewers_hash`` is the deterministic hash of the
     AVAILABLE roster the agent will actually see (sorted, dedup'd, and
@@ -8888,7 +8895,7 @@ def coverage_critic_cache_key(
     payload = (
         (coverage_plan_initial_hash or "") + "\0"
         + (signals_hash or "") + "\0"
-        + (diff_tip or "") + "\0"
+        + (diff_summary_hash or "") + "\0"
         + (prompt_hash or "") + "\0"
         + (available_reviewers_hash or "")
     )
@@ -9215,7 +9222,7 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     Reads the rule-resolved plan from ``coverage.json``'s ``.initial``
     section, plus ``extract_signals.json``, ``diff_data.json``, and
     ``available_reviewers.json``. Computes the
-    ``(coverage_plan_initial_hash, signals_hash, diff_tip, prompt_hash,
+    ``(coverage_plan_initial_hash, signals_hash, diff_summary_hash, prompt_hash,
     available_reviewers_hash)`` cache key and either:
 
       - **Cache hit** — writes the merged plan into ``coverage.json``'s
@@ -9241,7 +9248,6 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     diff_data_path = Path(args.diff_data)
     available_path = Path(args.available_reviewers)
     cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
-    diff_tip = str(args.diff_tip)
     no_critic = bool(getattr(args, "no_critic", False))
     prompt_path = (
         Path(args.prompt) if getattr(args, "prompt", None) else _default_coverage_critic_prompt_path()
@@ -9359,9 +9365,14 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     # stale (could propose a now-removed reviewer), so it must key
     # the cache.
     available_reviewers_hash = _available_reviewers_hash(available_reviewers)
+    # Build the bundle before the cache lookup: the key content-addresses
+    # the diff summary the agent is given.
+    main_input, diff_summary = _build_coverage_critic_input(
+        plan_initial, extract_signals, diff_data, available_reviewers,
+    )
     key = coverage_critic_cache_key(
-        plan_initial_hash, signals_hash, diff_tip, prompt_hash,
-        available_reviewers_hash,
+        plan_initial_hash, signals_hash, _stable_json_hash(diff_summary),
+        prompt_hash, available_reviewers_hash,
     )
 
     cached = _read_cached_coverage_critic(cache_dir, key)
@@ -9384,9 +9395,6 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
             return 1
         return _emit_summary(manifest)
 
-    main_input, diff_summary = _build_coverage_critic_input(
-        plan_initial, extract_signals, diff_data, available_reviewers,
-    )
     input_path = cr_dir / "coverage_critic_input.json"
     diff_summary_path = cr_dir / "coverage_critic_diff_summary.json"
     with open(input_path, "w") as f:
@@ -9403,6 +9411,9 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
         "available_reviewers_hash": available_reviewers_hash,
         "input_path": str(input_path),
         "diff_summary_path": str(diff_summary_path),
+        # Every file the agent reads besides the prompt and input bundle;
+        # singleton-dispatch passes these through verbatim.
+        "extra_inputs": [str(diff_summary_path)],
         "prompt_path": str(prompt_path),
         "coverage_state": str(cr_dir / _COVERAGE_STATE_FILENAME),
         "model": model,

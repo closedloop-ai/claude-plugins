@@ -460,13 +460,6 @@
         },
         {
           "flags": [
-            "--diff-tip"
-          ],
-          "required": true,
-          "help": "Diff tip SHA for cache key"
-        },
-        {
-          "flags": [
             "--cache-dir"
           ],
           "help": "Optional cache directory; fresh tuples served from coverage_critic/"

@@ -15784,7 +15784,7 @@ class TestCoverageCriticPromptHash:
 
 class TestCoverageCriticCacheKey:
     """Cache key tuple invariants: ``(plan_initial_hash, signals_hash,
-    diff_tip, prompt_hash, available_reviewers_hash)``.
+    diff_summary_hash, prompt_hash, available_reviewers_hash)``.
 
     Every dimension must flip the key — otherwise a stale cache entry
     could be served when one of these inputs changes between runs. The
@@ -15814,11 +15814,11 @@ class TestCoverageCriticCacheKey:
             != coverage_critic_cache_key("p", "s2", "t", "h", "a")
         )
 
-    def test_diff_tip_flip_changes_key(self) -> None:
+    def test_diff_summary_hash_flip_changes_key(self) -> None:
         from code_review_helpers import coverage_critic_cache_key
         assert (
-            coverage_critic_cache_key("p", "s", "t1", "h", "a")
-            != coverage_critic_cache_key("p", "s", "t2", "h", "a")
+            coverage_critic_cache_key("p", "s", "d1", "h", "a")
+            != coverage_critic_cache_key("p", "s", "d2", "h", "a")
         )
 
     def test_prompt_hash_flip_changes_key(self) -> None:
@@ -16278,7 +16278,6 @@ class TestCoverageCriticPrepareCLI:
             "extract_signals": str(inputs["paths"]["signals"]) if inputs["paths"]["signals"].exists() else None,
             "diff_data": str(inputs["paths"]["diff_data"]),
             "available_reviewers": str(inputs["paths"]["available"]),
-            "diff_tip": "abc123",
             "cache_dir": str(cache_dir),
             "prompt": None,
             "model": COVERAGE_CRITIC_MODEL_DEFAULT,
@@ -16525,6 +16524,7 @@ class TestCoverageCriticPrepareCLI:
         from code_review_helpers import (
             CACHE_NAMESPACE_COVERAGE_CRITIC,
             _available_reviewers_hash,
+            _build_signal_input,
             _stable_json_hash,
             cmd_coverage_critic_prepare,
             coverage_critic_cache_key,
@@ -16546,8 +16546,11 @@ class TestCoverageCriticPrepareCLI:
         # no-op against the default fixture (which lists
         # accessibility-expert + i18n-expert).
         available_hash = _available_reviewers_hash(inputs["available"])
+        diff_summary_hash = _stable_json_hash(_build_signal_input(
+            json.loads(inputs["paths"]["diff_data"].read_text()), None,
+        ))
         key = coverage_critic_cache_key(
-            plan_hash, signals_hash, "abc123", prompt_hash, available_hash,
+            plan_hash, signals_hash, diff_summary_hash, prompt_hash, available_hash,
         )
         cached_payload = {
             "required": inputs["plan_initial"]["required"],
@@ -16573,6 +16576,42 @@ class TestCoverageCriticPrepareCLI:
         # written_at metadata stripped from canonical output
         assert "written_at" not in final
 
+    def test_changed_diff_misses_a_prior_runs_cache_entry(self, tmp_path: Path) -> None:
+        """Regression: the key used the diff tip, the literal ``HEAD`` on a
+        branch review, so a later review with the same plan, signals and
+        roster reused the first run's plan even though the diff changed.
+        The key now content-addresses the diff summary the critic is given.
+        """
+        from code_review_helpers import (
+            CACHE_NAMESPACE_COVERAGE_CRITIC,
+            cmd_coverage_critic_prepare,
+        )
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        args = self._args(tmp_path, inputs)
+        cache_dir = Path(args.cache_dir)
+        (cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC).mkdir(parents=True)
+        assert cmd_coverage_critic_prepare(args) == 0
+        first = _read_coverage_section(inputs["cr_dir"], "critic")
+        assert first["status"] == "needs_agent"
+        (cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC / f"{first['cache_key']}.json").write_text(
+            json.dumps({
+                "required": inputs["plan_initial"]["required"],
+                "best_effort": [], "warnings": [],
+                "stats": {"required_count": 1, "best_effort_count": 0},
+                "written_at": datetime.now(timezone.utc).isoformat(),
+            }),
+        )
+
+        diff_data = json.loads(inputs["paths"]["diff_data"].read_text())
+        diff_data["patch_lines"]["src/Modal.tsx"]["added_lines"]["42"] = (
+            "<div role='alertdialog'>"
+        )
+        inputs["paths"]["diff_data"].write_text(json.dumps(diff_data))
+        assert cmd_coverage_critic_prepare(args) == 0
+        second = _read_coverage_section(inputs["cr_dir"], "critic")
+        assert second["status"] == "needs_agent"
+        assert second["cache_key"] != first["cache_key"]
+
     def test_roster_shrink_misses_prior_cache(self, tmp_path: Path) -> None:
         """Concrete failure mode the PR comment described: same diff,
         same plan_initial, same signals, same prompt, but the
@@ -16584,6 +16623,7 @@ class TestCoverageCriticPrepareCLI:
         from code_review_helpers import (
             CACHE_NAMESPACE_COVERAGE_CRITIC,
             _available_reviewers_hash,
+            _build_signal_input,
             _stable_json_hash,
             cmd_coverage_critic_prepare,
             coverage_critic_cache_key,
@@ -16606,8 +16646,11 @@ class TestCoverageCriticPrepareCLI:
         prompt_hash = _coverage_critic_prompt_hash(
             _default_coverage_critic_prompt_path(),
         )
+        diff_summary_hash = _stable_json_hash(_build_signal_input(
+            json.loads(inputs["paths"]["diff_data"].read_text()), None,
+        ))
         old_key = coverage_critic_cache_key(
-            plan_hash, signals_hash, "abc123", prompt_hash,
+            plan_hash, signals_hash, diff_summary_hash, prompt_hash,
             _available_reviewers_hash(["accessibility-expert", "i18n-expert"]),
         )
         # Seed a cache entry under the OLD roster that proposes the
@@ -16666,7 +16709,6 @@ class TestCoverageCriticPrepareCrDirDefault:
             "extract_signals": None,
             "diff_data": str(diff_data),
             "available_reviewers": str(available),
-            "diff_tip": "abc123",
             "cache_dir": None,
             "prompt": None,
             "model": COVERAGE_CRITIC_MODEL_DEFAULT,
@@ -16781,7 +16823,6 @@ class TestCoverageCriticConsolidateCLI:
             extract_signals=str(inputs["paths"]["signals"]),
             diff_data=str(inputs["paths"]["diff_data"]),
             available_reviewers=str(inputs["paths"]["available"]),
-            diff_tip="abc123",
             cache_dir=str(cache_dir),
             prompt=None,
             model=COVERAGE_CRITIC_MODEL_DEFAULT,
@@ -17153,7 +17194,7 @@ class TestPLN725Phase5PostMergeHardening:
                 f"must not start with `agent_`"
             )
 
-    # --- Fix 2: walker-resolved diff_tip + cache-dir on prepare ------------
+    # --- Fix 2: content-addressed cache keys + cache-dir on prepare --------
 
     def test_stage_11_prepare_takes_no_diff_tip(self) -> None:
         # A branch scope's <DIFF_TIP> resolves to the literal "HEAD", so a
@@ -17171,11 +17212,11 @@ class TestPLN725Phase5PostMergeHardening:
         assert "--cache-dir" in args
         assert args[args.index("--cache-dir") + 1] == "<CACHE_DIR>"
 
-    def test_stage_15_prepare_uses_walker_diff_tip_token(self) -> None:
+    def test_stage_15_prepare_takes_no_diff_tip(self) -> None:
+        # Same reason as stage_11: the critic key content-addresses the
+        # diff summary instead of the (often literal "HEAD") diff tip.
         args = self._stage("stage_15_coverage_critic")["args"]
-        idx = args.index("--diff-tip")
-        assert args[idx + 1] == "<DIFF_TIP>"
-        assert args[idx + 1] != "HEAD"
+        assert "--diff-tip" not in args
 
     def test_stage_15_prepare_receives_cache_dir(self) -> None:
         args = self._stage("stage_15_coverage_critic")["args"]
@@ -25916,14 +25957,15 @@ class TestPluginRootResolutionContract:
         assert offenders == []
 
 
-class TestSingletonDispatchTaxonomyContract:
-    """stage_11's agent must be told where the taxonomy snapshot is, and the
-    signal-extraction prompt must name the file prepare actually writes.
+class TestSingletonDispatchInputsContract:
+    """Each singleton agent is handed every file its manifest declares in
+    ``extra_inputs`` (stage_11: the taxonomy snapshot; stage_15: the diff
+    summary), and each prompt names the files prepare actually writes.
     """
 
     _ROOT = Path(__file__).parents[2]
 
-    def _taxonomy_snapshot_name(self, tmp_path: Path) -> str:
+    def _signals_manifest(self, tmp_path: Path) -> dict[str, Any]:
         from code_review_helpers import cmd_extract_signals_prepare
         cr_dir = tmp_path / "cr"
         args = argparse.Namespace(
@@ -25937,20 +25979,50 @@ class TestSingletonDispatchTaxonomyContract:
             model="haiku",
         )
         assert cmd_extract_signals_prepare(args) == 0
-        manifest = json.loads((cr_dir / "extract_signals_manifest.json").read_text())
-        return Path(manifest["taxonomy_path"]).name
+        return json.loads((cr_dir / "extract_signals_manifest.json").read_text())
 
-    def test_spawn_template_passes_the_taxonomy_path(self) -> None:
+    def _critic_manifest(self, tmp_path: Path) -> dict[str, Any]:
+        from code_review_helpers import (
+            COVERAGE_CRITIC_MODEL_DEFAULT,
+            cmd_coverage_critic_prepare,
+        )
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        args = argparse.Namespace(
+            cr_dir=str(inputs["cr_dir"]),
+            extract_signals=str(inputs["paths"]["signals"]),
+            diff_data=str(inputs["paths"]["diff_data"]),
+            available_reviewers=str(inputs["paths"]["available"]),
+            cache_dir=None,
+            prompt=None,
+            model=COVERAGE_CRITIC_MODEL_DEFAULT,
+            no_critic=False,
+        )
+        assert cmd_coverage_critic_prepare(args) == 0
+        return _read_coverage_section(inputs["cr_dir"], "critic")
+
+    def test_spawn_template_passes_every_declared_extra_input(self) -> None:
         skill = (self._ROOT / "skills" / "singleton-dispatch" / "SKILL.md").read_text()
         template = _extract_section(skill, "3. Prompt template:", "4. After the Task returns")
-        assert "{TAXONOMY_PATH}" in template
-        assert "| `{TAXONOMY_PATH}` | stage_11: `manifest.taxonomy_path`." in template
+        assert "{EXTRA_INPUTS}" in template
+        assert "| `{EXTRA_INPUTS}` | `manifest.extra_inputs`" in template
+        assert "[stage_11 only]" not in template
 
-    def test_prompt_names_the_snapshot_prepare_writes(self, tmp_path: Path) -> None:
+    def test_signal_manifest_declares_the_taxonomy_snapshot(self, tmp_path: Path) -> None:
+        manifest = self._signals_manifest(tmp_path)
+        assert manifest["extra_inputs"] == [manifest["taxonomy_path"]]
         prompt = (self._ROOT / "tools" / "prompts" / "signal_extraction_prompt.txt").read_text()
-        name = self._taxonomy_snapshot_name(tmp_path)
-        assert f"`{name}`" in prompt
+        assert f"`{Path(manifest['taxonomy_path']).name}`" in prompt
         assert "`signal_taxonomy.json`" not in prompt
+
+    def test_critic_manifest_declares_the_diff_summary(self, tmp_path: Path) -> None:
+        manifest = self._critic_manifest(tmp_path)
+        assert manifest["status"] == "needs_agent"
+        assert manifest["extra_inputs"] == [manifest["diff_summary_path"]]
+        assert Path(manifest["diff_summary_path"]).is_absolute()
+        prompt = (self._ROOT / "tools" / "prompts" / "coverage_critic_prompt.txt").read_text()
+        for path in (manifest["input_path"], *manifest["extra_inputs"]):
+            assert f"`{Path(path).name}`" in prompt
+        assert "`diff_summary.json`" not in prompt
 
 
 class TestVerificationStatsCounts:
