@@ -1,0 +1,8 @@
+{
+  "intent_context_path": "<CR_DIR>/intent_context.json",
+  "matches": [],
+  "quarantine": false,
+  "redacted_excerpts": [],
+  "score": 0,
+  "severity": "none"
+}

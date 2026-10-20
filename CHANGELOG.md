@@ -4,6 +4,20 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.12.0
+
+#### Changed
+- `partition` no longer assigns files deleted outright (`file_statuses` value `removed`) to Bug Hunter A. Their lines count toward neither `total_changed_loc` (the unified-mode decision) nor the bin-packing, and they are left out of `test_file_paths`. A diff that only deletes files yields zero partitions, and `derive-spawn-spec` skips Bug Hunter A with `no_partitions`. The `spawn-reviewers` skill now skips Bug Hunter A on zero partitions rather than on an empty uncached file list.
+- `parse-diff` records `changed_ranges[<file>].deletion_points`: for each pure-deletion hunk (`+c,0`), the new-file lines `[c, c + 1]` on either side of the removed block.
+- `post-comments` posts a finding on a file the PR deletes with `side=LEFT`, at its old-file line. It learns which files are deleted from the same PR-files lookup it already used for out-of-diff findings, now read once before the first inline post. On a deleted file the lines a comment can anchor on are the old-file (LEFT-side) lines of its patch, so an out-of-diff finding whose evidence cites a deleted file's old line posts inline there instead of falling back to summary-only.
+- Deleting a file selects the Impact Analyzer at deep depth without any signal: `resolve-coverage` adds the new `file_deletion` change class when any file is `removed`, and the Impact Analyzer has a matching `change_class` trigger. It stays best-effort and deep-only.
+- Reviewer prompts give deletions an owner. Removed files are not review targets for single-file reviewers; Bug Hunter B and the fast-path reviewer get a deletions section listing the deleted files and asking what still references them (module path, exported names, string and path references), what relied on them existing, and where to point each finding. The shared FILE SCOPE rules say lines deleted from a surviving file are evidence and a finding points at the surviving line beside them. The Impact Analyzer checks every export and the module path of a deleted file, searches by name and path, and anchors at the deleted declaration in old-file numbering. The verifier reads old-file content only for files the diff deleted, from the patch hunks in `patches_path`; `verify-prepare` now passes `patches_path` whenever the finding's file or an `evidence[]` file was deleted outright, not only for out-of-diff findings.
+- `SCHEMA.md` documents `diff_data.json` line numbering, including `deletion_points`.
+- New `golden_prefix_deleted_file` prefix golden covers a delete-only diff.
+
+#### Fixed
+- `validate` no longer compares a new-file line against `removed` ranges, which are numbered in the old file and accepted lines by numeric coincidence. On an added or modified file a line is in range only within `added` ranges or `deletion_points` (±3 lines); on a deleted file it is checked against `removed` ranges. An out-of-range line takes the existing out-of-hunk path; nothing new is discarded for its location.
+
 ### vibe v1.0.59
 
 #### Added

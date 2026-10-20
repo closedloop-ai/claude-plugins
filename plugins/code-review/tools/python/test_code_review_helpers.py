@@ -257,6 +257,33 @@ class TestParseU0Output:
         assert ranges["f.ts"]["removed"] == [[5, 5]]
         assert ranges["f.ts"]["added"] == [[5, 5]]
 
+    def test_pure_deletion_hunk_records_deletion_point(self) -> None:
+        """ISS-12737: ``@@ -10,3 +9,0 @@`` removes old lines 10-12; the new
+        file's lines 9 and 10 sit on either side of the gap."""
+        raw = (
+            "diff --git a/mod.py b/mod.py\n"
+            "@@ -10,3 +9,0 @@\n"
+            "-if x is None:\n"
+            "-    return\n"
+            "-\n"
+        )
+        ranges, _ = _parse_u0_output(raw)
+        assert ranges["mod.py"]["removed"] == [[10, 12]]
+        assert ranges["mod.py"]["added"] == []
+        assert ranges["mod.py"]["deletion_points"] == [[9, 10]]
+
+    def test_mixed_hunk_records_no_deletion_point(self) -> None:
+        raw = (
+            "diff --git a/mod.py b/mod.py\n"
+            "@@ -5,2 +5,1 @@\n"
+            "-a\n"
+            "-b\n"
+            "+ab\n"
+        )
+        ranges, _ = _parse_u0_output(raw)
+        assert ranges["mod.py"]["added"] == [[5, 5]]
+        assert "deletion_points" not in ranges["mod.py"]
+
 
 # ---------------------------------------------------------------------------
 # Utility functions
@@ -2747,10 +2774,15 @@ class TestValidate:
         result = self._run_validate(findings, diff_data, tmp_path)
         assert len(result["validated"]) == 1
 
-    def test_removed_range_check(self, tmp_path: Path) -> None:
+    def test_modified_file_line_matching_only_removed_range_is_out_of_range(
+        self, tmp_path: Path,
+    ) -> None:
+        """ISS-12737: ``removed`` ranges are old-file numbers. A new-file
+        line that only coincides with one is out of range, so a P2 at 0.8
+        takes the out-of-hunk path (and fails its 0.80 floor)."""
         diff_data = _make_diff_data(
             files=["src/app.ts"],
-            ranges={"src/app.ts": {"added": [], "removed": [[50, 55]]}},
+            ranges={"src/app.ts": {"added": [[10, 12]], "removed": [[50, 55]]}},
         )
         findings = [{
             "file": "src/app.ts",
@@ -2762,7 +2794,59 @@ class TestValidate:
             "confidence": 0.8,
         }]
         result = self._run_validate(findings, diff_data, tmp_path)
+        assert result["validated"] == []
+        assert [d["reason"] for d in result["discarded"]] == [
+            "DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE",
+        ]
+
+    def test_line_at_deletion_point_is_in_range(self, tmp_path: Path) -> None:
+        """A finding on the surviving line beside a pure deletion is in range."""
+        diff_data = _make_diff_data(
+            files=["src/app.ts"],
+            ranges={"src/app.ts": {
+                "added": [], "removed": [[50, 55]], "deletion_points": [[30, 31]],
+            }},
+        )
+        findings = [{
+            "file": "src/app.ts",
+            "line": 31,
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "Guard removed",
+            "priority": 2,
+            "confidence": 0.8,
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
         assert len(result["validated"]) == 1
+        assert "out_of_hunk_kept" not in result["validated"][0]
+        assert result["discarded"] == []
+
+    def test_deleted_file_line_checked_against_old_numbering(
+        self, tmp_path: Path,
+    ) -> None:
+        """A finding on a file deleted outright is numbered in the old file:
+        inside the removed range it is in range, past it it is out of hunk."""
+        diff_data = _make_diff_data(
+            files=["src/gone.ts"],
+            statuses={"src/gone.ts": "removed"},
+            ranges={"src/gone.ts": {
+                "added": [], "removed": [[1, 120]], "deletion_points": [[0, 1]],
+            }},
+        )
+        findings = [
+            {"file": "src/gone.ts", "line": 80, "severity": "MEDIUM",
+             "category": "Correctness", "issue": "Public route removed",
+             "priority": 2, "confidence": 0.8},
+            {"file": "src/gone.ts", "line": 200, "severity": "MEDIUM",
+             "category": "Correctness", "issue": "Past the end",
+             "priority": 2, "confidence": 0.8},
+        ]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert [f["line"] for f in result["validated"]] == [80]
+        assert "out_of_hunk_kept" not in result["validated"][0]
+        assert [d["reason"] for d in result["discarded"]] == [
+            "DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE",
+        ]
 
     def test_low_confidence_discard(self, tmp_path: Path) -> None:
         diff_data = _make_diff_data(
@@ -3769,8 +3853,8 @@ class TestCmdPostComments:
             )
             rc = self._run(path, dry_run=True)
         assert rc == 0
-        # Only the GET call should have been made (dedup fetch), no POSTs
-        assert mock_run.call_count == 1
+        # Only the GETs (dedup fetch + PR files lookup), no POSTs
+        assert mock_run.call_count == 2
 
     def test_posts_each_finding(self, tmp_path: Path) -> None:
         findings = [
@@ -3779,15 +3863,15 @@ class TestCmdPostComments:
         ]
         path = _make_findings_file(tmp_path, findings)
         with patch("code_review_helpers.subprocess.run") as mock_run:
-            # First call: GET existing comments (returns [])
+            # First calls: GET existing comments + GET PR files (both [])
             # Subsequent calls: POST comments (returns success)
             mock_run.return_value = subprocess.CompletedProcess(
                 args=[], returncode=0, stdout="[]", stderr=""
             )
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 2 POSTs
-        assert mock_run.call_count == 3
+        # 2 GETs + 2 POSTs
+        assert mock_run.call_count == 4
 
     def test_dedup_skips_existing(self, tmp_path: Path) -> None:
         findings = [{"file": "a.ts", "line": 10, "severity": "HIGH", "category": "Bug", "issue": "dup"}]
@@ -3811,11 +3895,11 @@ class TestCmdPostComments:
         success = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
         fail_422 = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="422 Validation Failed")
         with patch("code_review_helpers.subprocess.run") as mock_run:
-            # GET returns [], first POST fails 422, second POST succeeds
-            mock_run.side_effect = [success, fail_422, success]
+            # GETs return [], first POST fails 422, second POST succeeds
+            mock_run.side_effect = [success, success, fail_422, success]
             rc = self._run(path)
         assert rc == 0
-        assert mock_run.call_count == 3
+        assert mock_run.call_count == 4
 
     def test_422_counted_as_skip_not_failure(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -3830,11 +3914,11 @@ class TestCmdPostComments:
         success = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
         fail_422 = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="422 Validation Failed")
         with patch("code_review_helpers.subprocess.run") as mock_run:
-            mock_run.side_effect = [success, fail_422]
+            mock_run.side_effect = [success, success, fail_422]
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST (the POST is attempted, then 422'd into the skip bucket).
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST (the POST is attempted, then 422'd into the skip bucket).
+        assert mock_run.call_count == 3
         out = capsys.readouterr().out
         assert "out-of-hunk=1" in out
         assert "failed 0" in out
@@ -3852,11 +3936,11 @@ class TestCmdPostComments:
         success = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
         fail_401 = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="HTTP 401: Bad credentials")
         with patch("code_review_helpers.subprocess.run") as mock_run:
-            mock_run.side_effect = [success, fail_401]
+            mock_run.side_effect = [success, success, fail_401]
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST (the POST is attempted and fails auth).
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST (the POST is attempted and fails auth).
+        assert mock_run.call_count == 3
         out = capsys.readouterr().out
         assert "failed 1" in out
         assert "out-of-hunk=0" in out
@@ -3880,9 +3964,9 @@ class TestCmdPostComments:
             )
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST (only b.ts:20 is posted; the out-of-hunk finding never
+        # 2 GETs + 1 POST (only b.ts:20 is posted; the out-of-hunk finding never
         # reaches the API).
-        assert mock_run.call_count == 2
+        assert mock_run.call_count == 3
         out = capsys.readouterr().out
         assert "Posted 1" in out
         assert "out-of-hunk=1" in out
@@ -3989,6 +4073,70 @@ class TestCmdPostComments:
         assert "out-of-diff=1" in out
         assert "failed 0" in out
 
+    def test_removed_file_posts_on_left_side(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """ISS-12737: a finding on a file the PR deletes posts with
+        ``side=LEFT`` (old-file line); other findings stay on RIGHT."""
+        findings = [
+            {"file": "src/gone.ts", "line": 40, "severity": "HIGH",
+             "category": "Bug", "issue": "public route deleted"},
+            {"file": "src/a.ts", "line": 2, "severity": "HIGH",
+             "category": "Bug", "issue": "real inline"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        existing = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        pr_files = json.dumps([
+            {"filename": "src/gone.ts", "status": "removed",
+             "patch": "@@ -1,2 +0,0 @@\n-a\n-b"},
+            {"filename": "src/a.ts", "status": "modified",
+             "patch": "@@ -1,1 +1,2 @@\n a\n+b"},
+        ])
+        files = subprocess.CompletedProcess(args=[], returncode=0, stdout=pr_files, stderr="")
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [existing, files]
+            rc = self._run(path, dry_run=True)
+        assert rc == 0
+        # Dry-run prints "[dry-run] POST comment <path>:<line>: gh api ...".
+        posts = {
+            seg.split(": gh api", 1)[0]: seg
+            for seg in capsys.readouterr().out.split("[dry-run] ")
+            if seg.startswith("POST comment ")
+        }
+        assert set(posts) == {"POST comment src/gone.ts:40", "POST comment src/a.ts:2"}
+        assert "side=LEFT" in posts["POST comment src/gone.ts:40"]
+        assert "side=RIGHT" in posts["POST comment src/a.ts:2"]
+
+    def test_out_of_diff_anchors_on_deleted_file_old_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """ISS-12737: an ``out_of_diff`` finding whose evidence cites the
+        deleted declaration posts inline at that old-file line, LEFT side."""
+        findings = [{
+            "file": "src/caller.ts", "line": 7, "severity": "HIGH",
+            "category": "Bug", "issue": "imports deleted module", "out_of_diff": True,
+            "evidence": [
+                {"file": "src/gone.ts", "line": 9, "claim": "past the old file"},
+                {"file": "src/gone.ts", "line": 2, "claim": "export deleted"},
+            ],
+        }]
+        path = _make_findings_file(tmp_path, findings)
+        existing = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        pr_files = json.dumps([
+            {"filename": "src/gone.ts", "status": "removed",
+             "patch": "@@ -1,3 +0,0 @@\n-a\n-export b\n-c"},
+        ])
+        files = subprocess.CompletedProcess(args=[], returncode=0, stdout=pr_files, stderr="")
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [existing, files]
+            rc = self._run(path, dry_run=True)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "POST comment src/gone.ts:2" in out
+        assert "side=LEFT" in out
+        assert "Posted 1" in out
+        assert "out-of-diff=0" in out
+
     def test_null_line_does_not_crash(self, tmp_path: Path) -> None:
         """PLN-719: schema permits ``line: int | None`` for system + pr_metadata
         scopes. cmd_post_comments must skip those rather than crash on
@@ -4005,8 +4153,8 @@ class TestCmdPostComments:
             rc = self._run(path)
         # Must succeed; the null-line finding is skipped, the inline finding posts.
         assert rc == 0
-        # 1 GET + 1 POST (null-line finding counted in `failed`, not posted)
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST (null-line finding counted in `failed`, not posted)
+        assert mock_run.call_count == 3
 
     def test_bool_line_does_not_post(self, tmp_path: Path) -> None:
         """`bool` is a subclass of `int` in Python, so a naive `isinstance(x, int)`
@@ -4024,8 +4172,8 @@ class TestCmdPostComments:
             )
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST (only c.ts:5 is a valid inline). True/False both skip.
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST (only c.ts:5 is a valid inline). True/False both skip.
+        assert mock_run.call_count == 3
 
     def test_missing_line_key_does_not_crash(self, tmp_path: Path) -> None:
         """A finding lacking the ``line`` key entirely also skips cleanly."""
@@ -4040,7 +4188,7 @@ class TestCmdPostComments:
             )
             rc = self._run(path)
         assert rc == 0
-        assert mock_run.call_count == 2
+        assert mock_run.call_count == 3
 
     def test_string_line_is_coerced_to_int(self, tmp_path: Path) -> None:
         """The original ``int(finding.get("line", 0))`` coerced legacy
@@ -4062,8 +4210,8 @@ class TestCmdPostComments:
             )
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST — string "42" must coerce to 42 and post inline.
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST — string "42" must coerce to 42 and post inline.
+        assert mock_run.call_count == 3
 
     def test_garbage_string_line_does_not_crash(self, tmp_path: Path) -> None:
         """A non-numeric string ``"line": "abc"`` would have crashed the
@@ -4082,8 +4230,8 @@ class TestCmdPostComments:
             )
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST (garbage skipped, b.ts:10 posts)
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST (garbage skipped, b.ts:10 posts)
+        assert mock_run.call_count == 3
 
     def test_inline_false_skipped(self, tmp_path: Path) -> None:
         findings = [
@@ -10407,6 +10555,38 @@ class TestVerifyPrepareReviewRoot:
 
         assert rc == 0
 
+    def test_finding_citing_removed_file_gets_patches_path(
+        self, tmp_path: Path,
+    ) -> None:
+        # ISS-12737: a deleted file is readable only from its patch, so an
+        # in-diff finding on it, or one whose evidence cites it, carries the
+        # patch path; a finding touching no deleted file does not.
+        cr_dir = tmp_path / "cr"
+        _seed_scope_review_root(cr_dir, tmp_path / "checkout")
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["src/gone.py"],
+            "file_statuses": {"src/gone.py": "removed"},
+        }))
+        on_deleted = _make_validated_finding("bha_1", file="src/gone.py", line=3)
+        cites_deleted = _make_validated_finding(
+            "bha_2", evidence=[{"file": "src/gone.py", "line": 3, "claim": "removed"}],
+        )
+        plain = _make_validated_finding("bha_3")
+
+        rc, _manifest = _run_verify_prepare(
+            tmp_path, [on_deleted, cites_deleted, plain], cr_dir=cr_dir,
+        )
+
+        assert rc == 0
+        patches = str(cr_dir / "patches_all.txt")
+        inputs = {
+            fid: json.loads((cr_dir / "verifier_inputs" / f"{fid}.json").read_text())
+            for fid in ("bha_1", "bha_2", "bha_3")
+        }
+        assert inputs["bha_1"]["patches_path"] == patches
+        assert inputs["bha_2"]["patches_path"] == patches
+        assert "patches_path" not in inputs["bha_3"]
+
     def test_pr_head_worktree_moved_off_the_resolved_commit_errors(
         self, tmp_path: Path,
     ) -> None:
@@ -13588,6 +13768,62 @@ class TestUnifiedPartitionThreshold:
         # state for a no-op review (the test_file_paths / hygiene flow
         # picks up any test-only or hygiene-only signal elsewhere).
         assert result["partition_mode"] == "partitioned"
+
+
+class TestPartitionExcludesDeletedFiles:
+    """ISS-12737: files deleted outright are not partitioned for BHA and do
+    not count toward ``total_changed_loc``; the cross-file reviewers own them.
+    """
+
+    def _run(
+        self, diff_data: dict[str, Any], *, bha_unified_threshold_loc: int = 5000,
+    ) -> dict[str, Any]:
+        return TestPartition()._run_partition(
+            diff_data, bha_unified_threshold_loc=bha_unified_threshold_loc,
+        )
+
+    def test_deleted_files_excluded_from_partitions_and_total_loc(self) -> None:
+        data = _make_diff_data(
+            files=["mod.py", "gone.py", "tests/test_gone.py"],
+            statuses={
+                "mod.py": "modified", "gone.py": "removed",
+                "tests/test_gone.py": "removed",
+            },
+            loc={
+                "mod.py": {"added": 0, "removed": 2},
+                "gone.py": {"added": 0, "removed": 800},
+                "tests/test_gone.py": {"added": 0, "removed": 50},
+            },
+        )
+        result = self._run(data)
+        assert [f["file"] for p in result["partitions"] for f in p["files"]] == ["mod.py"]
+        assert result["total_changed_loc"] == 2
+        assert result["test_file_paths"] == []
+
+    def test_large_deletion_does_not_flip_small_change_to_partitioned(self) -> None:
+        data = _make_diff_data(
+            files=["a.ts", "old/big.ts"],
+            statuses={"a.ts": "modified", "old/big.ts": "removed"},
+            loc={
+                "a.ts": {"added": 300, "removed": 0},
+                "old/big.ts": {"added": 0, "removed": 6000},
+            },
+        )
+        result = self._run(data)
+        assert result["partition_mode"] == "unified"
+        assert result["partition_count"] == 1
+        assert result["total_changed_loc"] == 300
+
+    def test_deletion_only_diff_yields_zero_partitions(self) -> None:
+        data = _make_diff_data(
+            files=["gone.py"],
+            statuses={"gone.py": "removed"},
+            loc={"gone.py": {"added": 0, "removed": 800}},
+        )
+        result = self._run(data)
+        assert result["partitions"] == []
+        assert result["partition_count"] == 0
+        assert result["total_changed_loc"] == 0
 
 
 class TestLoadCodeReviewSettings:
@@ -23776,17 +24012,21 @@ class TestFEA1401CoverageCoreConditional:
         assert impact["min_depth"] == "deep"
         assert impact["source"] == "core"
         assert impact["required"] is False  # PLN-725 determinism enforcement
-        triggers = list(impact["triggers"])
-        assert len(triggers) >= 2
-        names = {t["name"] for t in triggers if isinstance(t, dict)}
+        triggers = [t for t in impact["triggers"] if isinstance(t, dict)]
+        signal_triggers = [t for t in triggers if t["type"] == "signal"]
+        names = {t["name"] for t in signal_triggers}
         assert "exported_symbol_change" in names
         assert "symbol_deletion" in names
-        # The min_confidence on each trigger must be >= the taxonomy floor
-        # so the per-signal floor in the prompt is actually enforced at
-        # coverage-resolution time.
-        for trigger in triggers:
-            assert trigger["type"] == "signal"
+        # The min_confidence on each signal trigger must be >= the taxonomy
+        # floor so the per-signal floor in the prompt is actually enforced
+        # at coverage-resolution time.
+        for trigger in signal_triggers:
             assert isinstance(trigger.get("min_confidence"), (int, float))
+        # ISS-12737: the one non-signal trigger is the deterministic
+        # file_deletion change_class.
+        assert [t for t in triggers if t["type"] != "signal"] == [
+            {"type": "change_class", "class": "file_deletion"},
+        ]
 
 
 class _ConditionalCoreFixtures:
@@ -23907,6 +24147,56 @@ class TestFEA1401ResolveCoverage(_ConditionalCoreFixtures):
             critic_gates=self._empty_critic_gates(),
             diff_data=self._diff(),
             extract_signals=self._signals("exported_symbol_change", 0.95),
+        )
+        assert "impact" not in {e["reviewer"] for e in plan["best_effort"]}
+
+    def _deletion_diff(self, status: str) -> dict[str, Any]:
+        return {
+            "files_to_review": ["src/gone.ts"],
+            "file_statuses": {"src/gone.ts": status},
+            "patch_lines": {},
+        }
+
+    def test_impact_added_at_deep_on_file_deletion_without_signals(self) -> None:
+        """ISS-12737: deleting a file selects the Impact Analyzer at deep
+        depth through the deterministic ``file_deletion`` change_class, with
+        no signal from the extractor."""
+        from code_review_helpers import resolve_coverage
+
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._deletion_diff("removed"),
+            extract_signals={"signals": []},
+            invocation_depth="deep",
+        )
+        impact_entry = next(
+            e for e in plan["best_effort"] if e["reviewer"] == "impact"
+        )
+        assert impact_entry["trigger"] == {
+            "type": "change_class", "class": "file_deletion",
+        }
+        assert "file_deletion" in plan["stats"]["detected_change_classes"]
+
+    def test_file_deletion_does_not_fire_on_modified_file(self) -> None:
+        from code_review_helpers import resolve_coverage
+
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._deletion_diff("modified"),
+            extract_signals={"signals": []},
+            invocation_depth="deep",
+        )
+        assert "file_deletion" not in plan["stats"]["detected_change_classes"]
+        assert "impact" not in {e["reviewer"] for e in plan["best_effort"]}
+
+    def test_file_deletion_does_not_add_impact_below_deep(self) -> None:
+        from code_review_helpers import resolve_coverage
+
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._deletion_diff("removed"),
+            extract_signals={"signals": []},
+            invocation_depth="standard",
         )
         assert "impact" not in {e["reviewer"] for e in plan["best_effort"]}
 
