@@ -97,8 +97,8 @@ PRD slug for a graph answer, `Asana, observed <date>` or `<app>, observed
 default, not a human ruling: it never overrides a settled decision, a later
 human statement supersedes it with an explicit `Superseded` entry, and it
 settles behavior, never user-visible words (`guardrails.md`, "Copy").
-It settles only what nothing specifies: before applying one, or changing
-accessibility behavior, `fts_search` DONE and open sibling tickets; a stated
+It settles only what nothing specifies: first read the ticket's scope, the
+pull request's human threads and DONE or open sibling tickets; a stated
 requirement there wins.
 
 ## One persistent writer and a serial queue
