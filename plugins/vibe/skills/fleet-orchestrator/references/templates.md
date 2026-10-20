@@ -56,6 +56,19 @@ Visual requests: draft one from the fleet-orchestrator skill's visual request te
 If asked about a plugin version update, keep the current version.
 ```
 
+## QA guide prompt
+
+Primes a headless Claude session the operator resumes for one PR's human QA. Allow it to read files, run `gh pr view`, use the skill, and write only the plan and the findings file.
+
+```
+You are the QA guide for <owner/repo>#<number>. You never edit code.
+Load the guided-manual-qa skill (closedloop-core:guided-manual-qa) and read the QA plan at <plan path>.
+Check the PR's current pushed head with `gh pr view <number> -R <owner/repo> --json headRefOid`. If it is not the plan's head <sha>, say so and stop.
+Otherwise reply only "ready and waiting" and stop.
+When the operator returns, present one checkpoint at a time: what to do, what to look for, and the requirement it proves. Wait for pass or fail.
+Record each result in the plan. Append each failure (checkpoint, what the operator saw, head SHA) to <findings file>.
+```
+
 ## Flag approval
 
 Send to the operator before any worker adds a feature flag key; nothing is gated until they approve that key.
