@@ -113,7 +113,7 @@ def test_tech_debt_is_one_principle_applied_by_the_existing_owners() -> None:
 
 def test_the_guardrails_reviewer_checks_every_key_the_session_adds_or_depends_on() -> None:
     reviewer = agent("vibe-guardrails-reviewer")
-    check = paragraph(reviewer, "17. Tech debt and flag keys")
+    check = paragraph(reviewer, "16. Tech debt and flag keys")
     assert_all(check, (
         '"No new tech debt"',
         CANONICAL,

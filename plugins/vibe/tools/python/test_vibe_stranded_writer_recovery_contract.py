@@ -105,3 +105,17 @@ def test_the_prose_names_the_shipped_command_contract() -> None:
     assert f'"{BLOCK_REASON}"' in bundle
     assert "retainedRecord" in bundle
     assert "verifyStrandedRecordGrant" in bundle
+
+
+def test_a_writer_stopped_by_its_usage_limit_moves_harness_through_the_ledger() -> None:
+    text = migration()
+    for required in (
+        "**A writer whose runtime cannot run.**",
+        "never to a worker outside the session records",
+        '`"status": "FAILED"`',
+        '"harnessSwitch": { "to": "claude", "cause": "usage-limit"',
+        "refuses running turns, retained grants, a `BLOCKED` writer and a same-runtime switch",
+    ):
+        assert required in text, required
+    bundle = WRITER_STATE.read_text()
+    assert '"harness-switch"' in bundle and "harnessSwitch" in bundle

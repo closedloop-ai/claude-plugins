@@ -9,6 +9,9 @@
 3. Tools: no plugin file bounds a command with GNU `timeout`, which macOS lacks; workers are told
    to use `run-bounded.mjs`.
 4. Words: one banned-terms list with plain replacements, referenced by both skills.
+5. Processes and state (operator lessons, 2026-10-19): no plugin script stops a process by name or
+   pattern, every instruction naming `pkill` forbids it, session scripts keep no state in the temp
+   folder, and a dependency on an open pull request never idles the session.
 """
 
 from __future__ import annotations
@@ -136,3 +139,44 @@ def test_no_plugin_file_bounds_a_command_with_gnu_timeout() -> None:
         assert GNU_TIMEOUT.search(seen), seen
     for allowed in ("raise a timeout or update a snapshot", "`timeout` or `gtimeout` command", "timeout: 30_000"):
         assert not GNU_TIMEOUT.search(allowed), allowed
+
+
+PROCESS_KILL = re.compile(r"\b(?:pkill|killall)\b")
+NEGATION = re.compile(r"\b(?:never|not|no)\b", re.IGNORECASE)
+
+
+def _plugin_files(*suffixes: str) -> list[Path]:
+    roots = [PLUGIN_ROOT, LAUNCHER_SOURCE.parent]
+    return [path for root in roots for path in root.rglob("*")
+            if path.is_file() and path.suffix in suffixes and "node_modules" not in path.parts]
+
+
+def test_no_script_stops_a_process_by_name_or_pattern() -> None:
+    offenders = [f"{path.name}:{number}" for path in _plugin_files(".mjs", ".js", ".ts", ".sh")
+                 for number, line in enumerate(path.read_text().splitlines(), 1) if PROCESS_KILL.search(line)]
+    assert offenders == []
+    for path in _plugin_files(".md"):
+        for paragraph in re.split(r"\n\s*\n|\n(?=- )", path.read_text()):
+            if PROCESS_KILL.search(paragraph):
+                assert NEGATION.search(paragraph), f"{path.name}: {flat(paragraph)[:160]}"
+    rules = section((VIBE / "references" / "guardrails.md").read_text(), "## Processes and state")
+    assert "Never `pkill`, `killall` or `kill` by name or pattern" in rules
+    assert "never stop a process by name or pattern" in flat((AGENTS / "vibe-setup-worker.md").read_text())
+    assert "never with `pkill`, `killall`" in flat((AGENTS / "vibe-verify-worker.md").read_text())
+
+
+def test_session_scripts_keep_no_state_in_the_temp_folder() -> None:
+    scripts = [path for folder in (VIBE / "scripts", PLUGIN_ROOT / "skills" / "handoff" / "scripts")
+               for path in folder.glob("*.mjs") if not path.name.endswith(".test.mjs") and path.name != "test-fixtures.mjs"]
+    assert [path.name for path in scripts if "tmpdir(" in path.read_text()] == []
+    assert '".codex", "vibe", "precedent"' in (VIBE / "scripts" / "precedent-check.mjs").read_text()
+    rules = section((VIBE / "references" / "guardrails.md").read_text(), "## Processes and state")
+    assert "never `/tmp` or the system temp folder" in rules
+
+
+def test_a_dependency_on_an_open_pull_request_never_idles_the_session() -> None:
+    rule = flat((VIBE / "references" / "quality-loop.md").read_text())
+    assert "**A dependency on an open pull request never idles the session**" in rule
+    assert "Never pause, wait for the merge, or ask the person to restart anything" in rule
+    assert "commits every change that compiles without the unmerged code, so only the dependent import waits" in rule
+    assert "`gh pr view <number> --json state,mergedAt,headRefOid` at every resume" in rule

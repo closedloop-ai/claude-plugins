@@ -46,7 +46,8 @@ open tickets touching them.
 2. For the ticket, as short lists: screens (route or FEATURE_MAP id), production
    components added/changed/removed (paths and effects if merged, shared-parent
    consumers and relevant web/Desktop effects, not already shipped), backend
-   files (paths), exact new/existing modified/removed flag keys with gate/evidence
+   files (paths), every removed or changed guard or gate predicate with
+   `file:line`, exact new/existing modified/removed flag keys with gate/evidence
    references, researched Open Questions or None, open tickets
    touching the same files (slug and title), and design decisions for
    engineering: one line per non-trivial request from the change log (the
@@ -61,7 +62,9 @@ private metadata. This also preserves the full Production impact and Flag
 changes and gates evidence plus Open Questions sources/context/decision needed;
 No new flags does not omit existing gates. Never substitute source defaults or
 local QA settings for timestamped verified production values; report unavailable
-or stale evidence honestly. Keep answered decisions out of Open Questions and
+or stale evidence honestly. Cite only rulings from an approved artifact or a
+quoted operator message, never a `TRIAGE` or draft ticket. Keep answered
+decisions out of Open Questions and
 engineering limitations in known gaps, not technical approval questions.
 Include exact previews/deployed commit/protection status,
 scope/screens/host states, added/changed/removed components/stories and IDs/

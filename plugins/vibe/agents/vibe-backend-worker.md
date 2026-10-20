@@ -69,7 +69,8 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
    apply the shared product research and necessity gate before returning
    `NEEDS_PERSON`; never ask a technical question or invent product behavior.
    Every malformed telemetry-metadata row names the existing monitored
-   corruption event and the test that must assert it. A test that expects no
+   corruption event and the test that must assert it with its stable
+   identifying fields. A test that expects no
    warning or error is not evidence when the repository contract requires that
    monitored event.
 3. Implement to the table: shared types in `packages/api/src/types/`, a thin
@@ -90,6 +91,8 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
    (`packages/database/prisma/seeds/coverage/<Model>.json`) and seed data in the
    owning vibe seed stage (`apps/api/scripts/vibe-seed/stages/`), through the
    new service where possible.
+   Advice must pass `vibe-adversarial-reviewer.md` attacks 3, 4, 11, 12 and
+   `diffRules`.
 5. Record needed coverage locally; nobody writes tests in vibe or handoff, and
    the SAME writer lists them for engineering at handoff.
 6. Verify affected and interacting prior row IDs against the final code with
@@ -100,10 +103,6 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
    handoff. Never author tests; only repair an existing one the change broke
    (`guardrails.md`, "Tests"). Independent implementation review and its
    corrections run at handoff.
-   For impossible API metadata or database-host metadata, preserve the
-   repository's existing monitored corruption signal. Every malformed-metadata
-   test must assert that event, including its stable identifying fields, and
-   must never assert silence as the desired result.
 8. Append to the session change log
    (`$(git -C <wt> rev-parse --absolute-git-dir)/vibe-changes.md`): the
    endpoint or model added, the decision table path, and whether a migration

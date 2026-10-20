@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from vibe_contract_text import section
+from vibe_contract_text import flat, section
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -324,3 +324,29 @@ def test_handoff_metadata_preserves_snapshot_headings_and_phase() -> None:
     assert "Filled at handoff" in handoff
     create = section(TICKET_WORKER.read_text(), "## Create mode")
     assert "Handoff, Design Review, and Grading" in create and "Pending." in create
+
+
+def test_pull_request_body_and_evidence_are_gated_by_the_inventory() -> None:
+    hand_over = section(HANDOFF_SKILL.read_text(), "## 9. Hand it over")
+    assert "`blocking.prBody` and `blocking.prEvidence`" in hand_over
+    mode = section((PLUGIN_ROOT / "agents" / "vibe-environment-worker.md").read_text(), "## Pull-request mode")
+    for required in ("--phase pull-request --overlap --ticket", "`assertionChanges`", "`refusals`",
+                     "false creates nothing (`NEEDS_CHANGE`)", "fresh PostHog evaluation"):
+        assert required in mode, required
+    assert "`serverOnly` true skips step 4" in section(HANDOFF_SKILL.read_text(), "## 1. Internal checklist")
+
+
+def test_input_readiness_runs_once_after_the_committed_merge() -> None:
+    """The pre-capture readiness pass was cut: capture checks parity only, readiness runs once after the merge."""
+    agents = PLUGIN_ROOT / "agents"
+    docs = [HANDOFF_SKILL, VIBE_SKILL, *(PLUGIN_ROOT / "skills" / "vibe" / "references").glob("*.md"), *agents.glob("*.md")]
+    for path in docs:
+        text = flat(path.read_text())
+        for stale in ("`main-sync-inputs` before", "main-sync-inputs` record turn as", "Run `main-sync-inputs` again",
+                      "Before publisher preparation, resume the SAME registered source actor"):
+            assert stale not in text, f"{path.name}: {stale}"
+    environment = flat((PLUGIN_ROOT / "skills" / "vibe" / "references" / "environment.md").read_text())
+    assert "once, after this exact committed merge/fix result" in environment
+    assert "no readiness pass precedes capture" in environment
+    assert "fix that cause rather than rerunning into the same bound" in environment
+    assert "`main-sync-inputs` once, after the" in flat(HANDOFF_SKILL.read_text())

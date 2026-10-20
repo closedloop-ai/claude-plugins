@@ -22,13 +22,14 @@ def test_precedent_clears_narrow_layout_obstructions_and_captures_both_states() 
 
 
 def test_frozen_stories_compare_dependency_closure_and_stable_output() -> None:
+    rules = (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
     decomposer = flat(agent("vibe-storybook-decomposer"))
     reviewer = flat(agent("vibe-guardrails-reviewer"))
-    for text in (decomposer, reviewer):
-        assert "transitive rendered dependency closure" in text
-        assert "stable" in text
-        assert "story IDs" in text
-        assert "fixed args, globals and viewport" in text
+    assert "rendered dependency closure" in rules
+    assert "fixed args, globals and viewport" in rules
+    assert "fixed args, globals and viewport" in decomposer
+    assert "`frozen-render`" in decomposer and "`frozen-render`" in reviewer
+    assert "even when its file is byte-identical" in reviewer
 
 
 def test_storybook_train_is_rechecked_against_pinned_base_before_pr() -> None:
@@ -93,21 +94,21 @@ def test_overlapping_live_children_require_explicit_reconciliation() -> None:
     assert "required reconciliation" in requirements
     assert "Discovery alone is incomplete" in requirements
     assert "reconcile it explicitly" in ticket
-    assert "uncovered with current owner and status" in ticket
+    assert "every other child is listed uncovered with its unmet item" in ticket
 
 
 def test_source_prd_children_are_scope_units_claimed_and_closed_with_evidence() -> None:
     skill = flat((VIBE / "SKILL.md").read_text())
     ticket = flat(agent("vibe-ticket-worker"))
+    assert "existing children are the scope units" in skill
+    assert "the ticket worker claims or reports them" in skill
     for phrase in (
-        "existing children are the scope units",
-        "assigning them to the session operator",
-        "linking them `RELATES_TO`",
-        "No agent supersedes a child",
+        "assign it to the session operator",
+        "create one `RELATES_TO` link",
+        "move exactly `children.inReview` to `IN_REVIEW`",
+        "`DONE` with the merge URL and commit",
     ):
-        assert phrase in skill
-    for phrase in ("active by someone else", "`IN_REVIEW`", "`DONE`", "merge URL and commit"):
-        assert phrase in ticket
+        assert phrase in ticket, phrase
 
 
 def test_outdated_version_does_not_stop_resume_or_explicit_proceed() -> None:
@@ -122,11 +123,10 @@ def test_outdated_version_does_not_stop_resume_or_explicit_proceed() -> None:
 def test_existing_children_are_never_agent_superseded() -> None:
     requirements = flat(agent("vibe-requirements-worker"))
     ticket = flat(agent("vibe-ticket-worker"))
-    reviewer = flat(agent("vibe-guardrails-reviewer"))
+    gate = (HANDOFF / "scripts" / "live-ticket-check.mjs").read_text()
     assert "no agent decides that one is superseded" in requirements
-    assert "never authority" in ticket
-    assert "session-created supersession" in reviewer
-    assert '"not reused"' in reviewer
+    assert "any supersession that is not a human ruling outside this session's ticket and plan" in ticket
+    assert "cites the session's own ticket, plan or table as the supersession ruling" in gate
 
 
 def test_desktop_launch_requires_verified_build_output() -> None:
@@ -136,3 +136,25 @@ def test_desktop_launch_requires_verified_build_output() -> None:
     assert "contains the documented Electron entry" in control
     assert "abort the Desktop scenario" in control
     assert "without calling any Electron" in control
+
+
+def test_claimed_children_move_only_through_the_ticket_check_gate() -> None:
+    ticket = section(agent("vibe-ticket-worker"), "## Handoff mode")
+    gate = (HANDOFF / "scripts" / "live-ticket-check.mjs").read_text()
+    assert "you are not the writer; its audit is never evidence" in ticket
+    assert "move exactly `children.inReview` to `IN_REVIEW`" in ticket
+    assert '"child-evidence": { type: "string" }' in gate
+    assert "its own audit never moves a child" in gate
+    assert "16. PRD child reconciliation" not in agent("vibe-guardrails-reviewer")
+
+
+def test_session_text_is_never_provenance() -> None:
+    quality = (VIBE / "references" / "quality-loop.md").read_text()
+    assert "is never a source" in section(quality, "## Communication and product questions")
+    assert "Never strengthen them either" in section(quality, "## Acceptance criteria before ready")
+    assert "a stated requirement there wins" in section(quality, "### Precedent before asking")
+    check = flat(agent("vibe-guardrails-reviewer"))
+    assert "never a reason to build that behavior" in section(quality, "## Tests: repair, don't author")
+    for phrase in ("new user-reachable capability (a write path, action or control)", "a PRD display cap is not one", "numeric limit", "criterion worded more strongly than its source"):
+        assert phrase in check, phrase
+    assert "flag, rollout, rollback, parity, boundary and non-goal clauses are criteria too" in flat(agent("vibe-requirements-worker"))

@@ -34,6 +34,22 @@ canonical statement:
   the engineering orchestrator installed the new release. It is recovery, not
   a tooling fix: never stop or send the person to engineering for it.
 
+## Processes and state
+
+Operator lessons, 2026-10-19 and 2026-10-20, for every worker in both harnesses.
+- Stop only a pid or process group this session recorded and still owns.
+  Never `pkill`, `killall` or `kill` by name or pattern; report what you did not start.
+- Records, writer state, briefs, monitor config and reports a later step
+  reads live in the session's Git metadata, `.claude/worktrees/` or
+  `~/.codex/vibe/`, never `/tmp` or the system temp folder.
+- In Codex, no computer use: no Computer Use plugin or agent looks through
+  the in-app Browser, and GitHub only through `gh`. Visual checks go to
+  read-only `vibe-verify-worker` through the owned Claude launcher, or are
+  recorded as not run, their criterion `not met yet`.
+- A visual check handed to another worker is a written request made after
+  the push: the pushed head (never a local SHA), URLs or story IDs, flags,
+  steps, expected result and criterion. Findings go to the SAME writer.
+
 ## What may change
 
 For an owned `prototype/<slug>` mockup session, the repository's canonical
@@ -292,13 +308,12 @@ PRD-720 session titled its new stories under v1.0 roots). The bare minimum:
   2026-10-16, after symphony-alpha #8885 invented three entries and a
   duplicate-key special case). After a main sync, the session's entry moves to
   the next version after main's.
-- Moving or retitling a story changes its ID. Every removed or renamed story ID
-  is searched for (`rg`) across `e2e/`, every test, `docs/`,
-  `apps/web/content/docs/`, `.claude/` and the other story files (operator
-  ruling, 2026-10-16, after a stale ID from symphony-alpha #8886 broke an e2e
-  spec). A reference in a test or e2e spec is repaired in the same change (a
-  renamed symbol, "Repair, don't author"); one in a path the writer may not
-  edit is logged as `Engineering needed (forbidden path)`.
+- Moving or retitling a story changes its ID (operator ruling, 2026-10-16,
+  after a stale ID from symphony-alpha #8886 broke an e2e spec): the
+  inventory's `lost-story-id` findings name every reference left. One in a
+  test or e2e spec is repaired in the same change (a renamed symbol, "Repair,
+  don't author"); one in a path the writer may not edit is logged as
+  `Engineering needed (forbidden path)`.
 - A session whose base predates this scheme (symphony-alpha #8867,
   Storybook 3.0.0) follows that base's own `TAXONOMY.md`: there the plain
   roots and the `v1.0` tag are v1.0, and new work goes under `<Level> v2.0/`
@@ -511,7 +526,12 @@ next to Missing tests so engineering sees them.
 
 ### Running and missing tests
 
-Handoff runs the existing affected tests. When one fails, the SAME persistent
+Handoff runs the existing affected tests: after any change, fix or main
+merge (a conflict resolution included), exactly the tests closedloop-graph
+`code_tests_for` returns for the files it touched, plus the inventory's
+`diffRules.requiredTests`, nothing broader by default. Files that map to no tests
+(changelog, README, version text, Storybook Version History) run none; CI
+confirms them (operator ruling, 2026-10-20). When one fails, the SAME persistent
 `vibe-change-worker` fixes the session's own code, never what the test asserts
 (a broken import or setup is a repair, above). Coverage
 the session still needs is recorded internally as it is found and, at

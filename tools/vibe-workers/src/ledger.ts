@@ -101,7 +101,8 @@ export type StrandedRecordVerifier = (lock: string, ledger: Ledger, retained: Re
   Ledger["migrations"][number]["releasedRecord"]>;
 
 /**
- * Rebinds only a stopped writer with proven definition loss or upgrade, retaining every prior state.
+ * Rebinds only a stopped writer with proven definition loss or upgrade, or moves a stopped writer whose runtime
+ * cannot run to the other harness, retaining every prior state.
  * With a verifier and the parent's stopped-turn evidence, it also releases the writer's own record grant
  * that only the removed definition could have released, in the same atomic ledger update.
  */
@@ -124,19 +125,26 @@ export function migrateWriter(input: unknown, currentPluginRoot: string, verifyR
       throw new Error("Wait for owned source and record turns to stop before migration");
     }
     if (!retained && data.retainedRecord) throw new Error("No retained record grant exists to release");
+    const harnessSwitch = data.harnessSwitch;
+    if (harnessSwitch && (harnessSwitch.to === ledger.runtime || data.retainedRecord)) {
+      throw new Error("A harness switch moves a stopped writer to the other runtime and releases no record grant");
+    }
     const observedDigest = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
-    const reason = provenDefinitionChange(ledger, observedDigest, currentVersion);
+    const reason = harnessSwitch ? "harness-switch" as const : provenDefinitionChange(ledger, observedDigest, currentVersion);
     const releasedRecord = retained && data.retainedRecord && verifyRetained
       ? verifyRetained(lock, ledger, data.retainedRecord) : undefined;
     const block = migratableBlock(ledger, observedDigest, releasedRecord);
-    const workerId = data.runtime === "claude" ? randomUUID() : data.workerId;
+    const runtime = harnessSwitch?.to ?? data.runtime;
+    const workerId = runtime === "claude" ? randomUUID() : data.workerId;
     if (!workerId) throw new Error("Native migration requires the new read-only held worker's actual ID");
     const oldIds = [ledger.workerId, ...ledger.migrations.map((item) => item.previous.workerId)];
     if (oldIds.includes(workerId)) throw new Error("Migration requires a new writer identity");
     const { migrations, ...current } = ledger;
     const previous = structuredClone(current);
     ledger.migrations = [...migrations, { id: randomUUID(), at: new Date().toISOString(), reason,
-      observedDigest, previous, workerId, binding: definition.binding, ...(releasedRecord ? { releasedRecord } : {}) }];
+      observedDigest, previous, workerId, binding: definition.binding, ...(releasedRecord ? { releasedRecord } : {}),
+      ...(harnessSwitch ? { harnessSwitch: { ...harnessSwitch, from: ledger.runtime } } : {}) }];
+    ledger.runtime = runtime;
     ledger.workerId = workerId;
     ledger.binding = definition.binding;
     ledger.started = false;

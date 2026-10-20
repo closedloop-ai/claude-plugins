@@ -182,11 +182,7 @@ then step 3's guardrail check, step 5's checks with the new tests included and
 step 6's review on the result, with the repo's `review-soul` critic required
 on those tests, then step 7's commit and its push and publication through
 `vibe-environment-worker` in redeploy mode. The pull request does not open
-until those tests pass and their independent review is clean. It is also hard
-gated on executed interaction evidence through the real web host, WebKit's
-iPhone device descriptor and Chromium's Pixel device descriptor for every
-touched narrow or touch flow. A mocked host, keyboard-only run or Chromium
-`hasTouch` run cannot satisfy this gate.
+until those tests pass, their independent review is clean and step 9's gate passes.
 
 From the request on, every brief in this handoff (the writer, the reviewers,
 the verify and environment workers, the ticket worker) carries the
@@ -212,10 +208,12 @@ dispatch `vibe-ticket-worker` in create mode first; it records the slug on
 the session. If it is `handed-off`, first dispatch `vibe-ticket-worker` in
 plan mode with `mergeCheck: true` when its `livePlanStatus` is `APPROVED`, so
 a merged pull request moves the PLN to `EXECUTED` (operator ruling,
-2026-10-19). Then tell the person it is already
-finished (a pull request was opened, or it was passed on) and stop, unless
-they are asking for changes on the pull request it opened: then follow
-section 10, "Changes on the open pull request".
+2026-10-19). When its pull request is still open, read its threads first
+(`vibe-environment-worker`, `reviewThreads: read`) on every look: any
+`awaitingReply` thread starts section 10, "Changes on the open pull request",
+unasked (operator lesson, 2026-10-19). Otherwise tell the person it is
+already finished and stop, unless they are asking for changes on the pull
+request it opened: then follow section 10.
 
 Then run `node ../vibe/scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"`
 so this conversation is recorded on the session too.
@@ -291,11 +289,12 @@ as `apps/api`, `packages/api`, `packages/database`, Desktop's main process,
 and any migration), the backend checks when it did. If a later inventory run
 reports `backendChanged` true (a fix or a behavior answer added backend code),
 use the backend checks from then on and update the internal checklist.
-The checklist stops immediately when `blocking.forbiddenPaths` is false. That
-gate covers both `forbidden` and `outsideAllowed`, so repo-root scripts, skill
-tests, agent instructions and every other path outside the Never table cannot
-pass by being merely reported. Only inventory-proven `shrinkOnlyAllowlists`
-entries are exempt.
+Its `serverOnly` true skips step 4, Desktop runs and visual QA (record why).
+The checklist stops immediately when `blocking.forbiddenPaths` is false
+(every `forbidden` or `outsideAllowed` path; only inventory-proven
+`shrinkOnlyAllowlists` entries are exempt) or `blocking.diffRulesClear` is
+false: each `diffRules` finding goes to the SAME writer, which fixes it or
+records the change log line it names.
 
 Keep the remaining checklist internal: inventory and shared-owner checks,
 Storybook coverage and footprint, existing tests and the missing tests list,
@@ -371,13 +370,10 @@ story file keeps its title and tag
 `v1Stories` and `retitledStories` block handoff, judged by the scheme of the
 session's base (`storybookScheme`: from symphony-alpha #8867 on, the
 `<Level> v1.0/` roots and the `deprecated` tag are v1.0). Its `compileOnlyV1Repairs`
-do not; the ticket worker puts each on the Engineering checklist. Every story
-ID the base has and the session's built index lost, and every reference to a
-removed or renamed ID still found in `e2e/`, the tests, `docs/`,
-`apps/web/content/docs/`, `.claude/` or the story files, blocks handoff too
-(operator ruling, 2026-10-16, after a stale ID from symphony-alpha #8886
-broke an e2e spec): the decomposer and the guardrails reviewer (check 10)
-report them and the SAME writer fixes them. Story files
+do not; the ticket worker puts each on the Engineering checklist. Every
+`lost-story-id` finding, a lost story ID or a reference still naming one,
+blocks too (operator ruling, 2026-10-16, after a stale ID from
+symphony-alpha #8886 broke an e2e spec); the SAME writer fixes them. Story files
 under the `Start Here/` root are exempt from the v1.0 freeze and the title,
 tag and retitle checks (design ruling, 2026-10-06): Start Here is unversioned
 and its Version History is edited by every Storybook release. Resume the SAME writer to perform every extraction, story and catalog
@@ -511,17 +507,10 @@ findings resume the SAME writer in fix mode, then steps 3 to 6 run again on
 the result. Their reports feed the Design Review evidence in step 8. Owned
 prototype sessions keep their canonical single design review instead.
 
-Every new or changed Storybook `play` runs in a real browser through the
-repository's Storybook test runner or Playwright against the containerized
-Storybook service, with every `storybook/test` interaction awaited. jsdom is
-not final play evidence. Any card or narrow-layout interaction also runs with
-real touch using Playwright's WebKit iPhone and Chromium Pixel device
-descriptors. Keyboard input and Chromium `hasTouch` alone are insufficient;
-the WebKit result is judged by the visible tap outcome even when its click
-reports `pointerType` as `mouse`.
-For a requested pull request these are opening gates, not missing-test notes:
-record the real web-host run and both named touch-device runs with commands,
-commit, screen and outcome before step 9.
+Every new or changed Storybook `play` runs awaited in a real browser, and any
+card or narrow-layout interaction on WebKit iPhone and Chromium Pixel, as the
+verify worker's checks mode says and records. For a requested pull request
+these are opening gates (step 9), not missing-test notes.
 
 ## 7. Upload the last changes
 
@@ -530,22 +519,12 @@ script/normal hooks, still unpushed, before `commit-worktree.mjs --prepare-main-
 This includes the SAME writer's reviewed handoff fixes, not
 private plans or protected localFix source. No change needs no extra local commit.
 
-Resume the same actor for source-owned `main-sync-inputs` before preparation
-and again after the Root-owned committed merge/fix result, using environment.md.
-End readiness's record turn, then ROOT grants its returned opaque witness as
-`mainSyncValidation` for that same actor's validation continuation. Preserve
-private diagnostics/retained reports; unknown generated inputs or consumed
-retained evidence block, never a directory exemption or old report PASS.
-Readiness is not test authority or completed coverage. `requiredE2eComplete`
-must still be actually true before final coverage/assignment.
-
-First repeat `../vibe/references/environment.md`, "Main-sync before publication",
-with handoff purpose. The SAME writer extends/checks its whole session table
-before fixes; a separate exact publisher preparation turn fetches fresh main,
-stages an ordinary NONCOMMITTING merge after the owned Desktop stops, then ends.
-Every source/conflict/generator fix stays with the original
-writer/registration; ROOT alone commits. Captured synced main separates imports
-from feature work, retaining original history and real test-edit violations.
+Then repeat `../vibe/references/environment.md`, "Main-sync before publication",
+with handoff purpose and the whole session table: the same actor runs
+`main-sync-inputs` once, after the Root-owned committed merge/fix result, and
+its witness becomes that actor's `mainSyncValidation`. Its retained reports are
+never PASS; readiness is not test authority or completed coverage, and
+`requiredE2eComplete` must still be true before final coverage/assignment.
 
 Run `node ../vibe/scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"`
 again, then ROOT commits the staged merge and any subsequent reviewed fixes as one more
@@ -557,12 +536,11 @@ this step again. Every main sync is checked for capability removal, this one
 included (operator ruling, 2026-10-16, after a main sync in symphony-alpha
 #8886 made a shipped editable Desktop control read-only): once the merge is
 committed, dispatch `vibe-guardrails-reviewer` for its check 13 on that
-merge; a blocking finding goes back to the SAME writer, then this step again.
+merge and rerun the inventory's `requiredChecks` on the merged tree; a
+blocking finding goes back to the SAME writer, then this step again.
 Resume the SAME writer's source-owned `progress` continuation
 with parent-controlled handoff purpose/transaction to execute
-`main-sync-validate` against committed input. Dirty tracked localFix source is
-NOT a check exception: preserve/block through its same-writer workaround flow,
-never stash/copy/delete or accept different checked/deployed bytes.
+`main-sync-validate` against committed input.
 
 A handoff check that fails is compared against the captured `mainSha` by the
 executor itself (`../vibe/references/quality-loop.md`, "Failures already on
@@ -777,9 +755,9 @@ including Production impact, Flag changes and gates, and researched Open
 Questions per `../vibe/references/ticket-template.md`,
 and every answer from the person so far with how it was handled. For a source
 PRD, also pass every child classification and its current
-ownership, status, activity and delivery evidence. The ticket worker moves
-delivered claimed children to In Review, lists uncovered children, and never
-supersedes one without a cited human ruling. Never include a plan's body in
+ownership, status and activity. The ticket worker moves to In Review only
+the children `scripts/live-ticket-check.mjs --child-evidence` passes and
+lists the rest as uncovered. Never include a plan's body in
 this dispatch: the plans under
 `.closedloop-ai/vibe-plans/` reach ClosedLoop only as the session's PLN. It
 refreshes the record sections (the Environment base commit from the current
@@ -812,21 +790,22 @@ lookup resolved to exactly one user.
 
 On a requested pull request, skip assign mode: the ticket stays with the
 person, In Progress. Before dispatch, require the refreshed pinned-base
-Storybook train check, the real web-host evidence and both named touch-device
-results. Then dispatch
+Storybook train check. Then dispatch
 `vibe-environment-worker` in `pull-request` mode (its own `pull-request`
 record action, an exclusive record turn with no record writes) with the
 worktree, the live ticket slug, the confirmed summary, the final verified
 published commit from step 7, the tests the `pull-request` turn wrote and
 step 5's check results, and the ticket's Production impact and Flag changes
-and gates fields. It opens the pull request on the already pushed branch and
+and gates fields. It opens the pull request on the already pushed branch,
+blocked until the inventory's `blocking.prBody` and `blocking.prEvidence` pass
+(`NEEDS_CHANGE`: runs to the verify worker, the rest to the SAME writer), and
 returns its URL; it never enqueues or merges it. On `BLOCKED`, tell the
 person in one plain line that the pull request could not be opened and
 suggest they message engineering, naming this work by its summary; never give them the
 branch to merge instead. Then mark the session handed off as below.
-After it returns the URL, dispatch the ticket worker to attach that URL to
-every delivered claimed PRD child already in review. A later resume's merge
-check moves only proven delivered children to Done with the merge SHA.
+After it returns the URL, have the ticket worker attach it to every PRD child
+in review. In Codex, arm the core `$gh-monitor-pr` on it when already set up,
+never asking for a restart.
 
 When they chose passing it on, dispatch `vibe-ticket-worker` in assign mode with the worktree, the live
 ticket slug, and the next owner's user id and email from step 8. It confirms
@@ -879,7 +858,9 @@ resumes and every fix goes through this path, never around it:
    those threads and the person's own words. It verifies each claim against
    the code, the session decision table and the ticket, fixes every valid one
    (tests included, under that turn's rules), and returns, per thread, `fixed`
-   with the files it changed or a concrete reason it made no change. A
+   with the files it changed, `partial` with what remains, or `reason`; a
+   flag-gated fix names the test or missing-tests entry pinning flag-off
+   behavior to main. A
    product question a thread raises goes through "Answers from the person";
    a fix that needs a path the writer may never edit is logged as
    `Engineering needed (forbidden path)` and answered with that reason.
@@ -888,7 +869,9 @@ resumes and every fix goes through this path, never around it:
    `vibe-guardrails-reviewer` reruns on the whole new diff), step 4 when a
    component or story changed, step 5's checks, and step 6's review with
    `review-soul` required on the tests. Confirmed findings return to the SAME
-   writer until all of them are clean.
+   writer until all of them are clean. The guardrails reviewer marks each
+   `fixed` thread `verified` or `not-verified` with `file:line` evidence;
+   the writer's own report is never that verification.
 5. Step 7: ROOT commits the fixes, the main-sync publication gate runs, and
    `vibe-environment-worker` in redeploy mode pushes the validated commit to
    the SAME branch through the normal pre-push hook. Never a force push,
@@ -901,10 +884,11 @@ resumes and every fix goes through this path, never around it:
    fixing commit and the writer's per-thread results. On the existing pull
    request it refreshes the body from the session record so it matches the
    diff, with the same template and rules as opening one, then replies on
-   every thread through the REST review-comment reply endpoint and resolves
-   each thread it fixed: a fixed thread gets the fixing commit SHA and is
-   resolved; a thread answered with a reason gets that reason and stays open
-   for its reviewer.
+   every thread through the REST review-comment reply endpoint, a fixed one
+   with the fixing commit SHA. Only
+   `scripts/review-threads.mjs resolve` resolves, and only a `fixed` thread
+   the reviewer `verified`, after its check passes in the same run;
+   `partial`, `reason` and `not-verified` threads get a reply and stay open.
 8. `touch --status handed-off` again, stop local Storybook or Desktop if
    either runs, and tell the person in a line or two what changed and that the
    pull request is updated, with its link. Never a branch to merge.

@@ -80,13 +80,10 @@ path merely because another rule describes how its content should look.
    each new label, count or selection string, `rg` the words and the helpers
    that build them in `packages/app/shared` and the owning feature package: a
    second spelling of wording a shared helper or label map already renders is
-   blocking; name the helper (`guardrails.md`, "Copy"). Nothing agent-written
-   goes into public docs, with no exception (`guardrails.md`, "Feature docs
-   at handoff"; operator ruling, 2026-10-16): run
-   `git -C <wt> diff --name-only <base> apps/web/content/docs docs` and
-   report every path it prints as blocking, in every phase, whatever markers
-   it carries. Confirm the Feature docs record names pages without drafting
-   words for them.
+   blocking; name the helper (`guardrails.md`, "Copy"). The inventory's
+   `outsideAllowed` already blocks every docs path (`guardrails.md`, "Feature
+   docs at handoff"); confirm the Feature docs record names pages without
+   drafting words for them.
 5. Accessibility: icon-only controls without accessible names, disclosures
    without `aria-expanded`, state conveyed by color alone, a second `<main>`.
 6. Fake data: a fetch to an endpoint that does not exist in `apps/api/app/**`,
@@ -172,7 +169,11 @@ path merely because another rule describes how its content should look.
    expected value: one computed by calling production code (the helper under
    test or a sibling production helper) instead of a literal or the spec's
    words is blocking, because it agrees with the code it should check
-   (`vibe-change-worker.md`, "Tests: repair, don't author").
+   (`vibe-change-worker.md`, "Tests: repair, don't author"), in a repair too.
+   Deleting a replaced (not removed) component's tests ports each case its
+   successor still enforces or cites the retiring ruling.
+   Open what each change log line that cleared an inventory `diffRules`
+   finding cites; a citation that does not hold is blocking.
    Extract every acceptance criterion ID used by a test name or `describe`
    title and match it exactly to the ID and source already recorded from the
    ticket, PRD or session table. An invented ID, renumbered criterion or test
@@ -186,12 +187,9 @@ path merely because another rule describes how its content should look.
     `v1.0` tag), or any edit or move of a story file that is v1.0 on main
     (the inventory's `v1Stories`, reason `frozen`), is blocking; that
     component's new states belong in a new entry in the current root holding
-    only them, with no version number in its name. Confirm those frozen stories
-    through the decomposer's dependency-closure report: compare the complete
-    transitive rendered dependency closure on the pinned base and branch, then
-    compare stable renders of the same story IDs with fixed args, globals and
-    viewport. A changed dependency or rendered output is blocking even when
-    the deprecated story file itself is byte-identical. Confirm each of
+    only them, with no version number in its name. A frozen story whose
+    rendered dependency closure changed is the inventory's `frozen-render`
+    finding even when its file is byte-identical. Confirm each of
     the inventory's `compileOnlyV1Repairs` is purely mechanical (prop
     renames, imports, types) with no visual change; anything else in one is
     blocking. Read each such repair with
@@ -215,13 +213,7 @@ path merely because another rule describes how its content should look.
     changed or renumbered main entry, or a validator, test or key
     special-cased so two entries can coexist (a duplicate-key exception) is
     blocking; quote the entries.
-    Story IDs: from the decomposer's `index-diff.mjs` result (or the story
-    titles on the base and the session), list every story ID on the base that
-    the session's index no longer has. Each one not recorded as a sibling
-    replacement is blocking. For every removed or renamed ID, `rg` the old ID
-    across `e2e/`, the test files, `docs/`, `apps/web/content/docs/`,
-    `.claude/` and the story files; each hit still naming it is blocking,
-    quoted with `file:line`.
+    Story IDs: the inventory's `lost-story-id` findings block.
     An existing non-v1.0 story file (on main) retitled, re-tagged or moved breaks every
     link to its stories and is blocking (the inventory's `retitledStories`
     for a title) unless recorded as a sibling replacement's entry; confirm the
@@ -297,15 +289,15 @@ path merely because another rule describes how its content should look.
     PRD statement, a human comment, or a shipped rule found through the graph.
     If its only source is an agent's own rationale, it is a blocking
     `engineering decision` finding. A detailed explanation written by an
-    agent is still not a product source.
-16. PRD child reconciliation: when the source is a PRD, compare its current
-    children with the requirements classification, session ticket and diff.
-    Every live child whose exact outcome the branch implements must be included
-    and claimed, excluded because another person has real activity, superseded
-    by a cited human ruling, or listed uncovered with current owner and status.
-    A session-created supersession, a "not reused" label, or a delivered child
-    left `TODO` is blocking.
-17. Tech debt and flag keys (`guardrails.md`, "No new tech debt" and
+    agent is still not a product source, and neither is the session's own
+    ticket, PLN, plan, table or change log. This covers every new user-reachable
+    capability (a write path, action or control), refusal rule (a
+    PRD display cap is not one), new visual element or state presentation (held
+    to the copy rule),
+    numeric limit, criterion worded more strongly than its source and removed
+    accessibility behavior; a shared-module edit lists its callers in the
+    change log.
+16. Tech debt and flag keys (`guardrails.md`, "No new tech debt" and
     "Feature flags"): each item of a kind that section lists with no
     `Debt:` reason is blocking: a mechanism checks 1, 7, 8 or 12 find, a
     type, constant, validator or bound that differs from or copies the
@@ -319,7 +311,7 @@ path merely because another rule describes how its content should look.
     is blocking. A cited source is not approval.
 
 For publication, verify the SAME source actor's `main-sync-inputs` evidence
-before capture and after the committed merge. Canonical private diagnostics
+after the committed merge. Canonical private diagnostics
 and retained reports are excluded only when actual selected readers/collectors
 do not consume them. Generated dependencies need complete byte/type/mode/set
 and current producer proof, not a cache marker or ignored directory. Readiness

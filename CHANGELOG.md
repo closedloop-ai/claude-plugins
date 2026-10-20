@@ -12,6 +12,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The BHA cache key for a paired added file folds in the paired deleted file's patch, so editing the old file invalidates the entry. Unpaired files keep their existing key.
 - `SCHEMA.md` documents `moved_from`, the context patch and the cache-key change.
 
+### vibe v1.0.66
+
+Lessons ledger from symphony-alpha #8947 to #8987 and the 2026-10-20 operator rulings, in one release. Gates replace the prose rules they enforce: across vibe's agents and skills the instruction text stays about the same length.
+
+#### Added
+- `handoff/scripts/diff-rules.mjs`, run inside `handoff-inventory.mjs` and reported as `diffRules` with `blocking.diffRulesClear`: blocks a migration on an existing table without a recorded lock-strategy precedent or with a full-table backfill, a raw write of a captured artifact field without the canonical activity capture, an error returned inside `withDb.tx` after a write, a Desktop sync lane without the shared give-up and a synchronizing-susan pass, an artifact link delete not scoped to its edge, a dropped ticketed comment whose code survives, a changed story assertion without a Storybook release, a story entry beside a component's current one, a change in a frozen v1.0 story's import closure, and a lost story ID still referenced. It lists the tests the graph does not map (GridTableV2 parity tests, Storybook sort-order tests, e2e specs naming a changed endpoint) and the repo's migration checks.
+- `handoff/scripts/pr-facts.mjs`, imported by the inventory: `serverOnly`, required evidence lanes, assertion and export changes, new `apps/api` refusals, ticket asks and open pull request overlap. In the pull-request phase `--body` adds `blocking.prBody` and `--runs` with `--commit` adds `blocking.prEvidence`; the environment worker builds the body from these facts and creates nothing while either fails.
+- `live-ticket-check.mjs --child-evidence`: a claimed PRD child moves to In Review only when the ticket worker's evidence map (never the writer's audit) shows every acceptance criterion and work item met by an added diff line, a tracked changed file, a merged pull request in history or a final-commit report; "active elsewhere" needs real activity and a supersession needs a human ruling outside the session's own ticket and plan.
+- `handoff/scripts/review-threads.mjs resolve`: resolves review threads only when each fixed thread has its full fixing SHA, a `verified` verdict from a reviewer other than the writer, and, for a flag-gated fix, its flag-off-equals-main test or missing-tests entry; anything else stays open.
+- `writer-state.mjs migrate` takes `harnessSwitch`, so a Codex writer stopped by a usage limit continues as a Claude writer with the same queue, plan, decision table and change log.
+
+#### Changed
+- Publication runs input readiness once, after the committed merge: the pre-capture `main-sync-inputs` turn and its extra bootstrapped checkout are removed, capture checks tracked parity only, and a failing producer reports its command, exit code, last error line and log instead of running to its bound.
+- Tests run after any change, fix or main merge (conflict resolutions included) are exactly the `code_tests_for` set for the touched files plus the inventory's required tests; files that map to no tests run none and CI confirms them.
+- Requirements quote PRD flag, rollout, rollback, parity, boundary and non-goal clauses as criteria and never narrow PRD targets. The session's own ticket, PLN, plan, table and change log are never a source; a writer never builds behavior only its own test expects; guardrails rule provenance covers every new user-reachable capability, refusal rule, visual element, numeric limit and removed accessibility behavior. Guardrails check 16 (now the tech debt and flag keys check) replaces the old child reconciliation prose.
+- Review rules from the feature pull request reviews are one line each in their owners (adversarial reviewer, verify worker, Storybook decomposer), including flag-off parity at 390, 412, 1024 and 1280 px against main's render of the exact shipped story or route, play counts only from real-browser runs, a Desktop launch only after its main bundle's workspace imports resolve, axe contrast on changed story states and migration checks rerun after every main sync. A server-only diff skips Storybook, Desktop runs and visual QA.
+- New guardrails section "Processes and state": stop only processes the session started; keep records out of temp folders; in Codex no computer use, GitHub only through `gh`, visual checks handed to a Claude worker after the push naming the pushed head. A dependency on an open pull request no longer pauses a session, and merged work is pushed once it compiles and its targeted tests pass.
+- Handoff reads an open pull request's human threads on every later look and, in Codex, arms the core PR monitor when it is set up.
+- `fleet-orchestrator`: acceptance criteria are fixed in the plan before a writer starts, the QA plan is a two-way trace between criteria and the diff (each checkpoint cites a criterion ID, regression checks labeled separately), a role table names the specialist agents and skills with fallbacks, lesson and tooling fixes batch into one open PR per repo, and no agent writes a row the repo reserves for human attestation.
+
+
 ### code-review v3.12.1
 
 #### Fixed

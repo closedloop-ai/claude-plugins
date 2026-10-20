@@ -38,6 +38,17 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 - One writer per branch at a time, Codex or Claude. Two writers on one branch overwrite each other.
 - Reviewers, verifiers, QA prep and visual reviewers are read-only Claude subagents. A reviewer that fixes cannot be the independent check.
 - The operator gets QA, merges and enqueues, anything irreversible, and product decisions; everything else you settle (principle 1).
+- Prefer the repo's or an installed plugin's specialist over a general-purpose agent whenever one exists. Repo-specific names below are examples.
+
+| Role | Agent or skill | Plugin | Fallback when not installed |
+|---|---|---|---|
+| Ticket overlap, scope collisions, "did a human ask for this", drift tracing | `closedloop-core:closedloop-intel`, read-only, over the closedloop-graph MCP server | closedloop-core | closedloop-graph tools directly |
+| QA plan per PR (plan-only) and the QA-guide session (one checkpoint at a time) | `closedloop-core:guided-manual-qa` in a Claude worker | closedloop-core | a written checklist from the criteria trace |
+| Pre-merge local CI | the repo's local-CI skill (for example a `local-ci` skill wrapping dagger) | target repo | the repo's documented verify command |
+| Design and visual review of a PR's UI, headless against the deployed preview | the repo's design-review and visual-qa skills and critic agents (for example `design-critic`, `visual-qa-critic`) | target repo | a Claude reviewer reading headless captures |
+| Turning a repeated mistake into a guard | `closedloop-core:prevent-recurrence` | closedloop-core | the lessons loop below |
+| Writers, reviews, handoff, ticket, environment | vibe's own workers (above) | vibe | none; vibe is required |
+| Watchers, pollers, narrow log diagnosis | Sonnet subagents; `codex-fleet-monitor` for the fleet; the `app-server-orchestrator` skill to steer Codex threads | vibe, Codex skills | `fleet.sh session last` polling |
 
 ## Research with closedloop-graph
 
@@ -84,7 +95,6 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 
 - Launch each Claude writer with the [worker preamble](./references/templates.md#worker-preamble) saved to `prompts/`. It starts with invoking vibe and carries the worktree, PR, reading, test, git, thread-reply and report rules so no writer improvises them.
 - A message to a busy worker arrives only when it goes idle; if it idles without acting on one, resend it shortly.
-- Polling and watch workers run on the cheapest capable model.
 - When CPU is tight, give the next review to an idle reviewer that finished, rather than spawning a new one.
 
 ## Moving work between runtimes and accounts
@@ -110,6 +120,8 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 
 - QA happens before merge; never call a PR ready to enqueue before its QA is done.
 - Each PR moves through, in order: independent review → writer fixes → verification of the fixes → design or visual review where UI changed → full check at the final head → QA plan (agent-verified plus human-only checkpoints) → operator QA → version-file conflicts resolved → operator enqueues. A head change sends it back to the earliest step the change affects.
+- Criteria are fixed before the build, because nobody is in the loop to ask for them while it runs: a writer starts only once its plan holds a numbered acceptance-criteria list, each sourced to a ticket AC, a PRD line or an operator ruling, and a mid-flight ruling joins that list with its date. An unrequested write path, a missed operator ruling and a mislabeled defect each traced back to having no such list.
+- The QA plan is a two-way trace between that list and the diff: each checkpoint cites one criterion ID, a diff change mapping to no criterion is a finding, never a checkpoint, and a criterion with no change and no coverage is a gap. Regression checks on neighboring surfaces the diff touches are labeled separately; a regression failure is a bug, never a new requirement.
 - Agent-first QA: an agent verifies everything it can (e2e on the current head, DOM and accessibility reads, API second views, headless screenshots it reads itself) and records it. The operator gets only checkpoints that need a human: perceptual judgment, real-device feel, assistive tech, product judgment, flows an agent cannot drive; measure the rest (contrast ratios, box geometry, focus targets). A defect an agent already observed goes to the writer with its measurement, not to the human checklist.
 - Human QA runs in a dedicated Claude QA-guide session per PR that the operator talks to directly. When the PR's QA plan is ready, save the [QA guide prompt](./references/templates.md#qa-guide-prompt) to `prompts/` and launch it headless from the repo root (`claude -p --output-format json` with the tools it needs allowed); take `session_id` from the JSON and give the operator `cd <repo> && claude --resume <session_id>`. Keep a background wait on its findings file, re-armed like the monitor, and route each failure to the writer.
 - Every PR gets an independent review, then a verification pass of the fixes, before it is QA-ready. Resolve a thread only after the fix is verified in code, with a reply naming the fixing SHA.
@@ -123,7 +135,7 @@ Pushback applies principle 2; more judgment patterns from past programs: [refere
 
 - Debt to push back on also includes parallel code paths, shims and a second owner for the same behavior. Forwarding it for approval as is makes the operator do your review.
 - No agent adds a key to the team's feature-flag service without the operator approving that key ([approval template](./references/templates.md#flag-approval)). Prefer one key per program or surface; corrections and removals are never gated.
-- Never invent product behavior or user-facing copy; cite the human source.
+- Never invent product behavior or user-facing copy; cite the human source. Never write a row the repo reserves for human attestation; read the owning check's header and ask the operator.
 - Respect operator boundaries on other teams' work, such as "don't fix main" while another owner is fixing it.
 
 ## Lessons loop
@@ -131,6 +143,7 @@ Pushback applies principle 2; more judgment patterns from past programs: [refere
 - Log every finding you route to a writer in the lessons ledger at the same moment, tagged new or repeat, with owner and fix. Batched later, they get lost. Format: [references/state.md](./references/state.md#lessons-ledger).
 - A repeat after a shipped fix means the earlier encoding did not bite: make it a gate, not more prose.
 - A plugin PR that encodes lessons replaces the prose its gate enforces and reports the net change in instruction length. The plugin must not get heavier.
+- Batch lesson and tooling fixes into one open PR per repo and add to it until it merges, never one PR per lesson: each PR costs a full CI run.
 
 ## Reporting to the operator
 

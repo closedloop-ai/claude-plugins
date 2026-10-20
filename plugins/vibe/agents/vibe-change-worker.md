@@ -180,7 +180,8 @@ change log and keep building every allowed part. It is never `BLOCKED` or
 `NEEDS_PERSON`.
 
 Before `DONE`, run the handoff inventory in build phase and require its
-`forbiddenPaths` gate to be true. Any `forbidden` or `outsideAllowed` entry is
+`forbiddenPaths` and `diffRulesClear` gates to be true; a `diffRules` finding
+is fixed, or cleared by the change log line it names with a reason that holds. Any `forbidden` or `outsideAllowed` entry is
 removed and routed through the rule above, including repo-root scripts, skill
 tests and any `AGENTS.md`. The only exception is a file the inventory lists in
 `shrinkOnlyAllowlists` after proving the source-gate edit only deletes entries
@@ -223,9 +224,8 @@ History entry, at the next version after `apps/storybook/package.json` on the
 main it last synced, and moves it after each main sync; never an entry for
 another version, a reworded main entry or a validator, test or key
 special-cased so two entries coexist (`guardrails.md`, "Storybook taxonomy").
-After moving or retitling any story, `rg` every old story ID across `e2e/`,
-the tests, `docs/`, `apps/web/content/docs/`, `.claude/` and the story files,
-and repair or log each reference (same section). On a base older than the
+Repair or log each reference an inventory `lost-story-id` finding names
+(same section). On a base older than the
 lifecycle scheme, the doc on that base still sends new work to
 `<Level> v2.0/` tagged `v2.0`; after a main sync your own new entries move to
 the plain root with a lifecycle tag, which is not a retitle. The story
@@ -279,8 +279,8 @@ pin a reduced behavior (operator ruling, 2026-10-16, after a main sync in
 symphony-alpha #8886 made a shipped editable Desktop control read-only). When
 the session's change and main's capability cannot both stand, keep main's and
 log an `Engineering decision`. Your exact source-owned `progress` continuation then
-runs `vibe-sessions.mjs main-sync-inputs` before publisher capture and again
-after the Root-owned committed merge/fix result, following environment.md.
+runs `vibe-sessions.mjs main-sync-inputs` once, after the Root-owned committed
+merge/fix result, following environment.md.
 Stay the current registered actor with its recorded binding. Only this source
 owner verifies generated dependencies through the existing pure/pristine producers;
 private diagnostics and retained reports remain excluded only when unconsumed.

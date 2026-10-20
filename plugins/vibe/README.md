@@ -116,8 +116,9 @@ and retained reports without accepting their contents as coverage. Known generat
 dependencies need complete pure or pristine owner verification before execution;
 unknown extras, edited bodies, producer drift and aliases remain blocked. Selected
 package proofs use bounded deduplicated names and full byte/mode/set digests in
-the existing private receipt. The same actor repeats readiness after the committed
-merge and supplies the opaque recipe witness for actual validation. Fixed local
+the existing private receipt. The same actor runs readiness once, after the
+committed merge, and supplies the opaque recipe witness for actual validation;
+capture checks parity and unknown outputs, rechecking only a proof recorded for that commit. Fixed local
 process budgets and the authenticated Claude envelope remain distinct from
 unchanged test, hook and general-worker deadlines.
 Report admission follows actual selected entries, tasks, configs and producer
@@ -165,8 +166,9 @@ situation (operator ruling, 2026-10-16): Asana first, then another
 established app with the same flow (Linear, or GitHub's own screens), then
 their public help centers when no browser can look. `scripts/precedent-check.mjs`
 holds the research brief and its safety rules: a separate headless
-`claude -p --chrome` run in Claude Code, the orchestrator's own in-app Browser
-or Computer Use in Codex; nothing that exists is touched, test data lives
+`claude -p --chrome` run in both harnesses (Codex never uses computer use;
+without a signed-in `claude` CLI the requirements worker reads the help
+centers); nothing that exists is touched, test data lives
 only in a `zz vibe precedent check (temp)` private project that is deleted
 afterwards, and every state is verified before it is recorded. The answer
 and its source (`Asana, observed <date>`, a help-center URL, or the ticket
@@ -278,6 +280,17 @@ Coverage is planned and independently verified from the whole session
 decision table, including earlier requests and real-boundary negative cases.
 Required source, existing-test or review gaps block final alignment and
 handoff; a listed missing test does not.
+The handoff inventory also runs `diff-rules.mjs` and reports `diffRules`: a
+migration on an existing table without its recorded lock-strategy precedent
+or with a full-table backfill, a raw write of a captured artifact field, an
+error returned inside a transaction after a write, a Desktop sync lane without
+the shared give-up, backoff and a synchronizing-susan pass, an unscoped
+artifact link delete, a dropped ticketed comment, an unrecorded change to a
+shared service, a story assertion changed without a release, a new story
+entry beside a component's current one, and a change in a frozen v1.0
+story's import closure each block (`blocking.diffRulesClear`) until the
+writer fixes the code or records the change log line the finding names. It
+also lists tests the graph does not map, which the verify worker runs.
 Handoff also drives the running web app and Desktop for each touched screen
 with symphony-alpha's control skill (`pnpm control`, hidden and read-only),
 and records the artifact paths and what each proves in Design Review and the
@@ -310,6 +323,8 @@ rows the person accepted as Frozen Behavior in the session decision table that
 the ticket attaches; `cl-execute` reads that attachment, keeps every frozen row
 passing with tests in its pull request, and changes one only with that
 person's explicit OK.
+The handoff inventory also reports what a pull request body must state, and
+blocks creating one that misses a fact or lacks passing runs.
 
 ### `vibe-seed-refresh`
 
@@ -470,9 +485,23 @@ no child is superseded without a human ruling. Version-check cases also cover
 explicit proceed instructions and resumed sessions continuing after reporting
 an available update.
 
+The case tagged `review-gates` rehearses a blocking `diffRules` finding:
+handoff stops and the same writer adds the canonical activity capture
+instead of a placeholder change log line, while the unmapped parity test
+still runs.
+
+The `pr-facts` case checks that a body missing computed facts is not created.
+
+The case tagged `ledger-lessons` rehearses a claimed PRD child moving to In
+Review only when its evidence map passes `live-ticket-check.mjs --child-evidence`.
+
+The case tagged `orchestration-lessons` rehearses a Codex writer stopped by
+its account's usage limit, which moves to Claude through the writer ledger's
+harness switch instead of another worker doing its work.
+
 ## Runtime Files
 
-Version `1.0.60` contains 11 skills and 16 agents. It has no standalone
+Version `1.0.66` contains 12 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains the skill-contract test modules and
 `vibe_contract_text.py`, the text helpers they share.

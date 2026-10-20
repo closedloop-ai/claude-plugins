@@ -60,11 +60,21 @@
 // symphony-alpha's .storybook/manager.ts treats it, and its Version History
 // page is edited by every Storybook release, so a tag there is not a version.
 //
+// `diffRules` is diff-rules.mjs's result on the session's own changes (local
+// fixes left out); any `diffRules.blocking` finding blocks
+// (`blocking.diffRulesClear`).
+//
 // `backendChanged` says whether the work touched backend code
 // (`backendFiles`). Handoff adds two workflow-code-review passes when it did;
 // its test run stays targeted either way.
 //
+// The handoff and pull-request phases also report the pull request facts
+// (pr-facts.mjs); `--ticket` adds `asks`, `--overlap` adds `overlap` (one
+// `gh pr list`, or `--prs-json`). In the pull-request phase `--body` adds
+// `blocking.prBody` and `--runs` with `--commit` adds `blocking.prEvidence`.
+//
 // Usage: handoff-inventory.mjs --worktree <path> [--phase build|handoff|pull-request]
+//   [--ticket <file>] [--overlap] [--prs-json <file>] [--body <file>] [--runs <file> --commit <sha>]
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -77,7 +87,9 @@ import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 import { isRootTest, isSnapshot, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
 import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
 import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-shrink.mjs";
+import { runDiffRules } from "./diff-rules.mjs";
 import { isPortableSurfaceAllowlistEdit, PORTABLE_SURFACE_CHECKER } from "./prototype-allowlist.mjs";
+import { loadOpenPrs, pullRequestFacts } from "./pr-facts.mjs";
 import {
   isUnversionedStory,
   STORY_GROUP_ORDER_PATH,
@@ -130,12 +142,26 @@ const STORY_PATHSPECS = ["*.stories.ts", "*.stories.tsx"];
 // test (operator ruling, 2026-10-13).
 const PHASES = ["build", "handoff", "pull-request"];
 
-const { values } = parseArgs({ options: { worktree: { type: "string" }, phase: { type: "string", default: "build" } } });
+const { values } = parseArgs({
+  options: {
+    worktree: { type: "string" },
+    phase: { type: "string", default: "build" },
+    ticket: { type: "string" },
+    overlap: { type: "boolean" },
+    "prs-json": { type: "string" },
+    body: { type: "string" },
+    runs: { type: "string" },
+    commit: { type: "string" },
+  },
+});
 if (!values.worktree) {
   fail("--worktree is required.");
 }
 if (!PHASES.includes(values.phase)) {
   fail("--phase must be build, handoff or pull-request.");
+}
+if ((values.body || values.runs) && values.phase !== "pull-request") {
+  fail("--body and --runs need --phase pull-request.");
 }
 const worktree = path.resolve(values.worktree);
 
@@ -183,16 +209,23 @@ const storybookSchemeUnreadable = storybookScheme.summary.name === StorybookSche
   changedFiles.some((file) => STORY_PATTERN.test(file.path));
 const { v1Stories, compileOnlyV1Repairs } = findV1Stories(changedFiles);
 const retitledStories = findRetitledStories(changedFiles);
+const diffRules = runDiffRules({ worktree, base: baseCommit, exclude: new Set(localFixTickets.keys()), isFrozenStory: isV1Story,
+  storyReplacements: new Set((Array.isArray(record?.storyReplacements) ? record.storyReplacements : []).map((entry) => entry?.path)),
+});
+const prFacts = values.phase === "build" ? null : readPullRequestFacts();
 
 const blocking = {
   forbiddenPaths: forbidden.length === 0 && outsideAllowed.length === 0,
   hasChanges: changedFiles.length > 0,
   storiesInV2Taxonomy: v1Stories.length === 0,
   existingStoryTitlesKept: retitledStories.every((story) => story.replacement !== null),
+  diffRulesClear: diffRules.blocking.length === 0,
   ...(storybookSchemeUnreadable ? { storybookSchemeRecognized: false } : {}),
   ...(trackedLocalPlans.length ? { localPlansUntracked: false } : {}),
   ...(prototype ? { prototypePublicationCurrent: publicationProblem === undefined } : {}),
   ...(mainSync?.pendingMerge ? { mainSyncMergeCommitted: false } : {}),
+  ...(prFacts?.prBodyProblems ? { prBody: prFacts.prBodyProblems.length === 0 } : {}),
+  ...(prFacts?.prEvidenceProblems ? { prEvidence: prFacts.prEvidenceProblems.length === 0 } : {}),
 };
 
 const result = {
@@ -224,6 +257,8 @@ const result = {
   v1Stories,
   compileOnlyV1Repairs,
   retitledStories,
+  diffRules: { blocking: diffRules.blocking, requiredTests: diffRules.requiredTests, requiredChecks: diffRules.requiredChecks },
+  ...prFacts,
 };
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 process.exit(result.ok ? 0 : 1);
@@ -235,6 +270,31 @@ function git(args) {
     maxBuffer: GIT_MAX_BUFFER,
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
+}
+
+function readPullRequestFacts() {
+  let prs = null;
+  let overlapError;
+  if (values.overlap || values.body || values["prs-json"]) {
+    try {
+      prs = values["prs-json"] ? JSON.parse(readFileSync(values["prs-json"], "utf8")) : loadOpenPrs();
+    } catch (error) {
+      overlapError = error instanceof Error ? error.message.split("\n")[0] : String(error);
+    }
+  }
+  const facts = pullRequestFacts({
+    worktree,
+    base: baseCommit,
+    include: new Set(changedFiles.map((file) => file.path)),
+    prs,
+    ownBranch: branch,
+    prBase: baseBranch(),
+    ticketText: values.ticket ? readFileSync(values.ticket, "utf8") : undefined,
+    body: values.body ? readFileSync(values.body, "utf8") : undefined,
+    runs: values.runs ? JSON.parse(readFileSync(values.runs, "utf8")) : undefined,
+    commit: values.commit,
+  });
+  return overlapError ? { ...facts, overlapError } : facts;
 }
 
 function fail(message) {

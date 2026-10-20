@@ -23,6 +23,7 @@ TICKET_TEMPLATE = REFERENCES / "ticket-template.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 VIBE_SKILL = PLUGIN_ROOT / "skills" / "vibe" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
+DIFF_RULES = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "diff-rules.mjs"
 CL_EXECUTE_PR = PLUGIN_ROOT / "skills" / "cl-execute" / "references" / "implementation-review-pr.md"
 RULING = "operator ruling, 2026-10-16"
 
@@ -86,15 +87,13 @@ def test_a_compile_only_repair_rewords_no_prose_and_is_read_word_by_word() -> No
 
 def test_lost_and_stale_story_ids_are_searched_and_block() -> None:
     rule = section(GUARDRAILS.read_text(), "## Storybook taxonomy")
-    assert "Every removed or renamed story ID is searched for (`rg`) across `e2e/`" in rule
-    check = reviewer_check(10)
-    assert_all(check, (
-        "list every story ID on the base that the session's index no longer has",
-        "`rg` the old ID across `e2e/`, the test files, `docs/`, `apps/web/content/docs/`, `.claude/` and the story files",
-        "each hit still naming it is blocking",
-    ))
-    assert "`scripts/index-diff.mjs` of the session's built index against the base's" in flat(agent("vibe-storybook-decomposer"))
-    assert "every reference to a removed or renamed ID still found in `e2e/`" in flat(HANDOFF_SKILL.read_text())
+    assert "the inventory's `lost-story-id` findings name every reference left" in rule
+    assert "`lost-story-id` findings block" in reviewer_check(10)
+    assert "`lost-story-id` finding, a lost story ID or a reference still naming one, blocks too" in flat(HANDOFF_SKILL.read_text())
+    rules = DIFF_RULES.read_text()
+    assert '"lost-story-id"' in rules
+    for spec in ('"e2e/"', '"docs/"', '"apps/web/content/docs/"', '".claude/"', '"*.test.*"', '"*.stories.*"'):
+        assert spec in rules, spec
 
 
 def test_a_slot_alone_is_not_a_shared_owner() -> None:
@@ -140,7 +139,7 @@ def test_nothing_agent_written_goes_into_public_docs() -> None:
     assert "scoped exception" not in copy
     table = next(line for line in GUARDRAILS.read_text().splitlines() if line.startswith("| `packages/app/**`"))
     assert "`apps/web/content/docs/**`" in table.split("|")[2]
-    assert "report every path it prints as blocking, in every phase, whatever markers it carries" in reviewer_check(4)
+    assert "`outsideAllowed` already blocks every docs path" in reviewer_check(4)
     inventory = INVENTORY.read_text()
     assert "isExistingDocsEdit" not in inventory
     assert "PRODUCT_DOCS_PREFIX" not in inventory
@@ -212,8 +211,9 @@ def test_pull_request_tests_follow_the_review_rules() -> None:
 
 def test_verify_runs_sort_order_tests_containerized_e2e_and_reads_ci_tiers() -> None:
     verify = flat(agent("vibe-verify-worker"))
+    assert "apps/storybook/__tests__/preview-story-sort-order.test.ts" in DIFF_RULES.read_text()
     assert_all(verify, (
-        "__tests__/preview-story-sort-order.test.ts",
+        "`diffRules.requiredTests`",
         "runs at handoff through the repo's containerized path (the `local-ci` skill, `dagger call e-2-e`)",
         "read `.github/pr-test-event-tiers.md` and cite the tier",
     ))
@@ -300,3 +300,38 @@ def test_new_text_uses_no_emdashes_or_double_hyphen_dashes() -> None:
     for path in (GUARDRAILS, DESIGN_PASS, QUALITY, HANDOFF_SKILL, TICKET_TEMPLATE):
         assert "—" not in path.read_text(), path.name
         assert " -- " not in path.read_text(), path.name
+
+
+def test_diff_rules_run_inside_the_inventory_and_block() -> None:
+    inventory = INVENTORY.read_text()
+    rules = DIFF_RULES.read_text()
+    assert 'import { runDiffRules } from "./diff-rules.mjs";' in inventory
+    assert "diffRulesClear: diffRules.blocking.length === 0" in inventory
+    for rule in ("migration-precedent", "migration-backfill", "activity-capture", "tx-result-after-write",
+                 "desktop-sync-lane", "artifact-link-delete", "ticketed-comment", "shared-path",
+                 "story-outcome", "story-entry", "frozen-render"):
+        assert f'"{rule}"' in rules, rule
+    assert "`forbiddenPaths` and `diffRulesClear` gates to be true" in flat(agent("vibe-change-worker"))
+    assert "`blocking.diffRulesClear` is false" in section(HANDOFF_SKILL.read_text(), "## 1. Internal checklist")
+    assert "diff-rules.mjs" not in HANDOFF_SKILL.read_text()
+    reviewer = section(agent("vibe-guardrails-reviewer"), "## Check, for added or changed lines only")
+    assert "Open what each change log line that cleared an inventory `diffRules` finding cites" in reviewer
+    assert "`diffRules.requiredTests` and `requiredChecks`" in flat(agent("vibe-verify-worker"))
+
+
+def test_review_lessons_have_one_line_owners() -> None:
+    adversary = section(agent("vibe-adversarial-reviewer"), "## Attack surface")
+    for phrase in ("unnormalized id case", "a precondition fetched inside the `mutationFn`",
+                   "the route's `requiredScopes`", "12. Write paths", "a disclosure or expand control that also selects its row",
+                   "under 24px (2.5.8)"):
+        assert phrase in adversary, phrase
+    verify = flat(agent("vibe-verify-worker"))
+    assert "never a commit that is not an ancestor" in verify
+    assert "every surface it reaches with the flag off at 390, 412, 1024 and 1280 px wide" in verify
+    assert "axe `color-contrast` on every new or changed story state; a failing node blocks" in verify
+    assert "an in-row message a fixed-height row clips" in adversary
+    assert "rerun the inventory's `requiredChecks` on the merged tree" in flat(HANDOFF_SKILL.read_text())
+    assert "renaming its folder, SQL unchanged" in DIFF_RULES.read_text()
+    decomposer = flat(agent("vibe-storybook-decomposer"))
+    assert "never place an entry on a fallback a sibling retires" in decomposer
+    assert "its flag-on state on that surface's existing story entry" in decomposer

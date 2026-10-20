@@ -84,7 +84,8 @@ Do this first, in both modes.
 3. Report everything found, not a pick: the component that provides the
    capability and its path; how each host consumes it (a prop, a hook, a
    wrapper, its own copy); and every existing story that exercises it, with
-   its title, story names, lifecycle tag and file.
+   its title, story names, lifecycle tag and file, minus those an open pull
+   request removes: never place an entry on a fallback a sibling retires.
 4. Decide in this order. First (design ruling, 2026-10-15): a change to an
    existing component (new states or variants, an extra column action, a new
    footer) never retitles, re-tags or moves its existing story file.
@@ -203,12 +204,12 @@ advice was applied.
 In handoff mode also run these checks and report each result with its
 evidence (operator ruling, 2026-10-16, after symphony-alpha #8885 and #8886):
 
-- Frozen rendered baseline: for every story deprecated on the pinned base,
-  compute its transitive rendered dependency closure on the base and current
-  branch. Diff the closure, not only the story file. Render the same story IDs
-  from both commits with fixed args, globals and viewport, and compare the
-  stable output. Any closure or output change is a finding unless it is a
-  recorded compile-only repair whose rendered output is identical.
+- Frozen renders: for each inventory `frozen-render` finding, render its
+  story IDs on the base and branch with fixed args, globals and viewport and
+  run their plays; a difference is a finding, a match is what its change log
+  line cites.
+- Flag-on states: every surface the session claims has its flag-on state on
+  that surface's existing story entry.
 - States: for each state the ticket, PRD or acceptance criteria name, the
   story on the consumed component that shows it, or the missing state.
 - Names: each new or changed story whose name claims more than its args and
@@ -217,14 +218,10 @@ evidence (operator ruling, 2026-10-16, after symphony-alpha #8885 and #8886):
   paging helper, each typed entity whose slug prefix does not match its type,
   and each value-dependent column tested only with all-default values that let
   it collapse.
+- Emitters and lifecycle: a story state no production path emits, and a
+  `stable` tag on a surface only reachable behind a default-off flag.
 - Sidebar folds: every new `!dev` marker and the person's explicit request for
   sidebar reduction that authorizes it. Without that request it is a finding.
-- Story IDs: `scripts/index-diff.mjs` of the session's built index against
-  the base's; every story ID the base has and the session lost, and for each
-  removed or renamed ID, the `rg` hits for the old ID in `e2e/`, the test
-  files, `docs/`, `apps/web/content/docs/`, `.claude/` and the story files
-  (`../skills/vibe/references/guardrails.md`, "Storybook taxonomy"). A lost
-  ID with no recorded replacement, or a hit still naming one, is a finding.
 - Version History: the session's new entries in `Start Here/Version History`
   against the base's `apps/storybook/package.json` `version`; anything but
   one entry at the next version is a finding.

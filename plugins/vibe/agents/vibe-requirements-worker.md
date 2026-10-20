@@ -36,7 +36,8 @@ questions"), or produce an upfront summary for the person.
    produced it), then the full text through the ClosedLoop MCP
    (`get-document`, `get-document-comments`). Extract the acceptance criteria
    of the ticket AND of its PRD, each quoted exactly with its source slug,
-   any design or prototype links, and any decisions in comments. These seed
+   any design or prototype links, and any decisions in comments; the PRD's flag,
+   rollout, rollback, parity, boundary and non-goal clauses are criteria too. These seed
    the session's acceptance criteria list (`quality-loop.md`, "Acceptance
    criteria before ready"). Tag ticket text that names an implementation
    mechanism (a poller, feed, lane, socket, route, table, cursor, or a write
@@ -52,10 +53,9 @@ questions"), or produce an upfront summary for the person.
    with its source, and an unratified or conflicting one as not settled.
    When the source is a PRD, load every child before defining scope. List each
    open child as a scope unit and classify it as untouched, active by someone
-   else, delivered, superseded by a cited human ruling, or uncovered. Untouched
-   means no implementation branch, pull request, progress comment or other
-   person's active ownership. Existing children are never declared "not
-   reused" and no agent decides that one is superseded.
+   else, delivered, superseded by a cited human ruling, or uncovered. Existing children are never declared "not reused" and no agent
+   decides that one is superseded. Never narrow the targets a PRD names; list
+   each one the request will not build as unadopted.
 2. Overlap: for a ticket or a description, run `query_collisions` with the
    title and request text, then `search_nodes` and `fts_search` on its key
    terms. Inspect every matching PRD even when it is `EXECUTED`: report its
@@ -70,7 +70,9 @@ questions"), or produce an upfront summary for the person.
 4. Note in-flight work on that code: run `blast_radius_tickets` on its route
    and main component files. List open GitHub pull requests and inspect their
    changed files, reporting every open pull request that touches any of those
-   same files. A ticket-only collision result is incomplete.
+   same files or a module they import; resolve each named dependency ("Roadmap
+   N", "Dependencies:") to its PRD and open pull requests. A ticket-only
+   collision result is incomplete.
 
 ## Reference mode
 

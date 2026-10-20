@@ -70,9 +70,8 @@ The checkout is the one the preflight remembered
   `../skills/vibe/scripts/vibe-preflight.sh` again with the selected arguments
   in a new command. Keep `--prototype` during common/prototype repair and
   repo-selection reruns; use the selected default only for full app preflight.
-  The Codex
-  Computer Use plugin may click through installer or Authorize dialogs as
-  `preflight.md` describes. When an installer is waiting for the Mac
+  Never use Computer Use: a dialog that needs a click is the person's,
+  returned as `NEEDS_PERSON` in one plain line. When an installer is waiting for the Mac
   password, a sign-in needs the person in the browser, macOS asks for folder
   access, stop and return `NEEDS_PERSON` for that human-only action.
   Multiple checkouts are resolved internally from the active workspace or
@@ -86,8 +85,8 @@ The checkout is the one the preflight remembered
   launcher refused with `MCP_TOOLS_MISSING` names the connection that did not
   load. When it is listed
   but not answering, reconnect it the way `preflight.md` reconnects the
-  ClosedLoop connector (Computer Use may open Settings; the person completes
-  any sign-in), or have the person quit and reopen the ChatGPT app, returned
+  ClosedLoop connector (the person opens Settings and completes any sign-in,
+  never Computer Use), or have the person quit and reopen the ChatGPT app, returned
   as `NEEDS_PERSON` in one plain line. When it is not configured at all,
   return `BLOCKED` saying the closedloop-graph connector is missing, for
   engineering.
@@ -128,7 +127,8 @@ The checkout is the one the preflight remembered
   it, return `BLOCKED` with `DESKTOP_UNAVAILABLE` and the error in one line.
 - Stop: end the processes the session's stack lists (only those pids, after
   checking each is still the process you started) and clear the stack with
-  `touch --stack '{}'`. Never touch another session's files.
+  `touch --stack '{}'`. Never touch another session's files, and never stop
+  a process by name or pattern (`pkill`, `killall`).
 - Discard (only when the orchestrator says the person confirmed): stop the
   session's processes (as above), then run
   `node ../skills/vibe/scripts/vibe-sessions.mjs discard --worktree "<target-wt>" --confirm`

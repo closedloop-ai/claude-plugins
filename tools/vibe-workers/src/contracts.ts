@@ -58,10 +58,16 @@ export const bindingSchema = z.object({
 /** The writer's own record grant that only its removed definition could release. */
 export const retainedRecordSchema = z.object({ lease: z.string().uuid(), stoppedTurn: stoppedTurnSchema }).strict();
 export type RetainedRecord = z.infer<typeof retainedRecordSchema>;
+/** A writer whose runtime cannot run (a Codex account at its usage limit) moves to the other harness. */
+export const harnessSwitchSchema = z.object({
+  to: z.enum(["codex", "claude"]), cause: z.enum(["usage-limit", "runtime-unavailable"]),
+  evidence: z.string().min(1).max(1024),
+}).strict();
+export type HarnessSwitch = z.infer<typeof harnessSwitchSchema>;
 /** Migration is a parent-owned operation, separate from ordinary registration. */
 export const migrateSchema = registerSchema.extend({
   previousWorkerId: identifierSchema, previousDigest: z.string().regex(/^[a-f0-9]{64}$/),
-  retainedRecord: retainedRecordSchema.optional(),
+  retainedRecord: retainedRecordSchema.optional(), harnessSwitch: harnessSwitchSchema.optional(),
 }).strict();
 const requestSchema = z.object({ id: identifierSchema, input: z.string().min(1).max(64 * 1024) }).strict();
 const ledgerStateSchema = z.object({
@@ -77,11 +83,12 @@ const ledgerStateSchema = z.object({
 /** Retains the full prior writer state without recursively copying migration history. */
 export const migrationSchema = z.object({
   id: z.string().uuid(), at: z.string().datetime(),
-  reason: z.enum(["definition-missing", "definition-upgraded"]),
+  reason: z.enum(["definition-missing", "definition-upgraded", "harness-switch"]),
   observedDigest: z.string().length(64).nullable(),
   previous: ledgerStateSchema, workerId: identifierSchema, binding: bindingSchema,
   releasedRecord: z.object({ requestId: identifierSchema, recordAction: identifierSchema,
     state: stoppedTurnSchema.shape.state }).strict().optional(),
+  harnessSwitch: harnessSwitchSchema.extend({ from: z.enum(["codex", "claude"]) }).strict().optional(),
 }).strict();
 export const ledgerSchema = ledgerStateSchema.extend({ migrations: z.array(migrationSchema).default([]) }).strict();
 export type Ledger = z.infer<typeof ledgerSchema>;
