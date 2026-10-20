@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.12.1
+
+#### Fixed
+- `/code-review:deep` and `/code-review:shallow` now state the plugin root as a `PLUGIN_ROOT` binding for `start.md`, because Claude Code fills in `${CLAUDE_PLUGIN_ROOT}` only in the invoked command's text, not in a file opened with Read or in the Bash environment. `start.md` stage 0b resolves `PLUGIN_ROOT` from that binding, or from its own substituted text when invoked directly as `/code-review:start`, checks it with a literal-path `test -f`, and falls back to the in-repo tree or the marketplace cache only when neither yields a real path. Its GitHub-mode reads use `<PLUGIN_ROOT>`, and the `fix` skill reads its templates from `${CLAUDE_PLUGIN_ROOT}` instead of the never-substituted `<CLAUDE_PLUGIN_ROOT>`.
+- The `singleton-dispatch` spawn template passes the stage_11 manifest's `taxonomy_path` as `{TAXONOMY_PATH}`, and `signal_extraction_prompt.txt` names the file the agent is given (`extract_signals_taxonomy.json`). `extract-signals-prepare` and `coverage-critic-prepare` resolve `--cr-dir` and the prompt path, so every path in their manifests is absolute.
+- The signal-extraction cache key hashes the agent input bundle `extract-signals-prepare` builds, together with the taxonomy and prompt hashes, instead of the diff tip, which is the literal `HEAD` for branch reviews. A review of a changed diff no longer reuses an earlier run's signals. `extract-signals-prepare` no longer takes `--diff-tip`.
+- `stats.verification` in `review_result.json` counts `tentative_count` (TENTATIVE verdicts), `downgrade_count` (DOWNGRADE verdicts) and `skipped_count` (verified findings with no verifier verdict) instead of reporting zero, and `stats.by_reviewer[].tentative` counts each reviewer's TENTATIVE findings. The `present-local` skill and `github-review.md` compute CONFIRMED + DOWNGRADE as `verified_count - tentative_count - re_asserted - justified_invalid_count - skipped_count` and list the skipped count.
+
 ### vibe v1.0.60
 
 #### Changed
