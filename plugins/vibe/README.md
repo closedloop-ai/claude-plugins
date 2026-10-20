@@ -192,9 +192,10 @@ and verifier on `gpt-6-sol`, all at reasoning effort `high` unless raised
 explicitly; in Claude Code the agent files' `model:` frontmatter does the
 same with sonnet. Before spawning workers or forwarding a request, and when a
 turn stalls, Codex runs `scripts/codex-usage.mjs check`, which reads the
-account's rate limits from the App Server; the Claude launcher reads each
-turn's `rate_limit_event`. A reached limit, or paid extra usage in Claude
-Code, stops the session with a plain message unless the person explicitly
+account's rate limits from the App Server through codex-fleet-monitor's
+shared reader; the Claude launcher reads each turn's `rate_limit_event`. A
+reached limit that no longer allows ordinary usage, or paid extra usage in
+Claude Code, stops the session with a plain message unless the person explicitly
 allowed credits. Containerized e2e runs only the specs the change needs, one
 stack per machine through `scripts/e2e-lock.mjs`.
 

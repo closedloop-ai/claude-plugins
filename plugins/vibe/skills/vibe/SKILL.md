@@ -122,7 +122,9 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   `node scripts/codex-usage.mjs check` before spawning a worker or
   forwarding a request to the writer, and again when a worker turn stalls
   with no progress. It reads the account's rate limits from the Codex App
-  Server. On `"status":"stop"` (exit 3) a limit is reached: spawn and forward
+  Server through codex-fleet-monitor's shared reader. On `"status":"stop"`
+  (exit 3) a limit is reached and ordinary usage is no longer allowed, so
+  continuing would draw on paid credits or cannot run at all: spawn and forward
   nothing, leave the writer's request queued, and tell the person in one plain
   sentence that the Codex usage limit is reached and when it resets
   (`resetsAt`), and that the session picks up from there then, or now if they

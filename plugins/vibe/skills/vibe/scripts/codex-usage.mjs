@@ -2,26 +2,32 @@
 // The Codex usage check a vibe session runs before it spawns workers or starts
 // a long turn, and again when a turn stalls. It asks the Codex App Server for
 // the signed-in account's rate limits (`account/rateLimits/read`) and says
-// whether the session may continue. When the account has reached a limit
-// (`rateLimitReachedType` is set), the session stops and tells the person
-// instead of carrying on with paid credits, unless the person explicitly
-// allowed credits for this session (`--allow-credits`).
+// whether the session may continue. The read and its classification belong to
+// codex-fleet-monitor's ratelimit.mjs; this script only gates on them. When the
+// account has reached a limit and ordinary usage is no longer allowed, the
+// session stops and tells the person instead of carrying on with paid credits,
+// unless the person explicitly allowed credits for this session
+// (`--allow-credits`). It reads through a private `codex app-server` on stdio,
+// so a check never starts or depends on the managed daemon.
 //
 // Usage: codex-usage.mjs check [--allow-credits] [--codex <CLI>] [--timeout-ms <n>]
 //
 // Prints one JSON object:
-//   {"status":"ok", ...}               continue
-//   {"status":"stop", ...}             a limit is reached: stop and tell the person (exit 3)
+//   {"status":"ok", ...}               continue (also when a limit is reached but ordinary
+//                                      usage is still allowed, `state` LIMIT)
+//   {"status":"stop", ...}             a limit is reached and ordinary usage is not allowed:
+//                                      stop and tell the person (exit 3)
 //   {"status":"credits_allowed", ...}  a limit is reached, the person allowed credits: continue
 //   {"status":"unknown","reason":...}  the limits could not be read: continue
-// Every status but `unknown` also carries `rateLimitReachedType`, `resetsAt`
+// Every status but `unknown` also carries `state` (ratelimit.mjs's
+// UsageState), `rateLimitReachedType`, `resetsAt`
 // (ISO time or null), `primary` and `secondary` window usage, and
 // `ordinaryUsageAllowed` as the App Server reported them.
 
-import { spawn } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { classifyUsage, readRateLimits, UsageState, UsageTransport } from "../../codex-fleet-monitor/scripts/ratelimit.mjs";
 import { findCodex } from "./plugin-version.mjs";
 
 export const UsageStatus = Object.freeze({
@@ -32,93 +38,35 @@ export const UsageStatus = Object.freeze({
 });
 export const STOP_EXIT = 3;
 const DEFAULT_TIMEOUT_MS = 20_000;
-const INITIALIZE_ID = 1;
-const RATE_LIMITS_ID = 2;
 
 /** Turns an `account/rateLimits/read` result into the session's decision. */
 export function decideUsage(result, { allowCredits = false } = {}) {
-  const snapshot = result?.rateLimits;
-  if (!snapshot || typeof snapshot !== "object") {
+  const state = classifyUsage(result);
+  if (state === UsageState.Unknown) {
     return { status: UsageStatus.Unknown, reason: "The App Server returned no rate limits." };
   }
-  const reached = typeof snapshot.rateLimitReachedType === "string" ? snapshot.rateLimitReachedType : null;
+  const snapshot = result.rateLimits;
   const details = {
-    rateLimitReachedType: reached,
+    state,
+    rateLimitReachedType: typeof snapshot.rateLimitReachedType === "string" ? snapshot.rateLimitReachedType : null,
     resetsAt: resetTime(snapshot),
     primary: windowUsage(snapshot.primary),
     secondary: windowUsage(snapshot.secondary),
     ordinaryUsageAllowed: typeof result.ordinaryUsageAllowed === "boolean" ? result.ordinaryUsageAllowed : null,
   };
-  if (!reached) {
+  if (state === UsageState.Ok || state === UsageState.Limit) {
     return { status: UsageStatus.Ok, ...details };
   }
   return { status: allowCredits ? UsageStatus.CreditsAllowed : UsageStatus.Stop, ...details };
 }
 
-/** Reads the account's rate limits through a short-lived `codex app-server` on stdio. */
-export function readRateLimits({ codex = findCodex(), timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-  return new Promise((resolve) => {
-    let settled = false;
-    let buffer = "";
-    const child = spawn(codex, ["app-server"], { stdio: ["pipe", "pipe", "ignore"] });
-    const finish = (outcome) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      child.stdin.end();
-      child.kill();
-      resolve(outcome);
-    };
-    const timer = setTimeout(() => finish({ error: `No answer from the App Server within ${timeoutMs}ms.` }), timeoutMs);
-    const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`);
-    child.once("error", (error) => finish({ error: `Could not start ${codex}: ${error.message}` }));
-    child.once("close", () => finish({ error: "The App Server exited before it answered." }));
-    child.stdin.on("error", () => finish({ error: "The App Server closed its input before it answered." }));
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      buffer += chunk;
-      let boundary = buffer.indexOf("\n");
-      while (boundary >= 0) {
-        const line = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 1);
-        boundary = buffer.indexOf("\n");
-        const message = parseLine(line);
-        if (message?.id === INITIALIZE_ID) {
-          if (message.error) {
-            finish({ error: `initialize failed: ${message.error.message ?? "unknown error"}` });
-            return;
-          }
-          send({ method: "initialized" });
-          send({ id: RATE_LIMITS_ID, method: "account/rateLimits/read", params: { excludeResetCreditDetails: true } });
-        } else if (message?.id === RATE_LIMITS_ID) {
-          finish(message.error
-            ? { error: `account/rateLimits/read failed: ${message.error.message ?? "unknown error"}` }
-            : { result: message.result });
-          return;
-        }
-      }
-    });
-    send({ id: INITIALIZE_ID, method: "initialize", params: { clientInfo: { name: "vibe_usage", title: "Vibe usage check", version: "1.0.0" } } });
-  });
-}
-
 /** Reads the limits and decides; an unreadable answer is `unknown`, never a guessed `ok` or `stop`. */
 export async function checkUsage({ codex, timeoutMs, allowCredits = false } = {}) {
-  const outcome = await readRateLimits({ codex, timeoutMs });
+  const outcome = await readRateLimits({ transport: UsageTransport.Stdio, codex: codex ?? findCodex(), timeoutMs: timeoutMs ?? DEFAULT_TIMEOUT_MS });
   if (outcome.error) {
     return { status: UsageStatus.Unknown, reason: outcome.error };
   }
   return decideUsage(outcome.result, { allowCredits });
-}
-
-function parseLine(line) {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
 }
 
 function windowUsage(window) {

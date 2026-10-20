@@ -66,6 +66,7 @@ test("a reached limit stops the session with exit 3 and reports when it resets",
   assert.equal(result.status, STOP_EXIT, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), {
     status: "stop",
+    state: "LIMIT-SPENDING-CREDITS",
     rateLimitReachedType: "rate_limit_reached",
     resetsAt: "2026-10-26T19:23:23.000Z",
     primary: { usedPercent: 100, resetsAt: "2026-10-26T19:23:23.000Z", windowDurationMins: 10_080 },
@@ -93,6 +94,16 @@ test("a limit not yet reached continues, whatever the percentages say", () => {
   assert.equal(decision.rateLimitReachedType, null);
   assert.equal(decision.resetsAt, "2026-10-26T07:33:20.000Z");
   assert.equal(decision.secondary.usedPercent, 71);
+});
+
+test("a reached limit continues while ordinary usage is still allowed", () => {
+  const { file } = fakeCodex("reached-ordinary", { result: { ...reachedLimits, ordinaryUsageAllowed: true } });
+  const result = run(file);
+  assert.equal(result.status, 0, result.stderr);
+  const decision = JSON.parse(result.stdout);
+  assert.equal(decision.status, "ok");
+  assert.equal(decision.state, "LIMIT");
+  assert.equal(decision.rateLimitReachedType, "rate_limit_reached");
 });
 
 test("an unreadable answer is unknown, never a guessed ok or stop", async () => {
