@@ -11616,10 +11616,16 @@ var bindingSchema = external_exports.object({
   capabilities: capabilitiesSchema
 }).strict();
 var retainedRecordSchema = external_exports.object({ lease: external_exports.string().uuid(), stoppedTurn: stoppedTurnSchema }).strict();
+var harnessSwitchSchema = external_exports.object({
+  to: external_exports.enum(["codex", "claude"]),
+  cause: external_exports.enum(["usage-limit", "runtime-unavailable"]),
+  evidence: external_exports.string().min(1).max(1024)
+}).strict();
 var migrateSchema = registerSchema.extend({
   previousWorkerId: identifierSchema,
   previousDigest: external_exports.string().regex(/^[a-f0-9]{64}$/),
-  retainedRecord: retainedRecordSchema.optional()
+  retainedRecord: retainedRecordSchema.optional(),
+  harnessSwitch: harnessSwitchSchema.optional()
 }).strict();
 var requestSchema = external_exports.object({ id: identifierSchema, input: external_exports.string().min(1).max(64 * 1024) }).strict();
 var ledgerStateSchema = external_exports.object({
@@ -11645,7 +11651,7 @@ var ledgerStateSchema = external_exports.object({
 var migrationSchema = external_exports.object({
   id: external_exports.string().uuid(),
   at: external_exports.string().datetime(),
-  reason: external_exports.enum(["definition-missing", "definition-upgraded"]),
+  reason: external_exports.enum(["definition-missing", "definition-upgraded", "harness-switch"]),
   observedDigest: external_exports.string().length(64).nullable(),
   previous: ledgerStateSchema,
   workerId: identifierSchema,
@@ -11654,7 +11660,8 @@ var migrationSchema = external_exports.object({
     requestId: identifierSchema,
     recordAction: identifierSchema,
     state: stoppedTurnSchema.shape.state
-  }).strict().optional()
+  }).strict().optional(),
+  harnessSwitch: harnessSwitchSchema.extend({ from: external_exports.enum(["codex", "claude"]) }).strict().optional()
 }).strict();
 var ledgerSchema = ledgerStateSchema.extend({ migrations: external_exports.array(migrationSchema).default([]) }).strict();
 async function readInput(stream = process.stdin) {

@@ -177,12 +177,15 @@ the session worktree, leaving no tracked file behind.
   screen control cannot switch: the story of the touched component in both
   themes. Only a surface with a single theme gets one capture, and its Checks
   line says so.
-- **After the deploy.** The orchestrator's own browser tab is signed in as
-  the person: in Codex, the in-app browser's screenshot of the app tab; in
-  Claude Code, the Chrome extension's screenshot when it is connected. A
-  Claude Code session without it has no preview screenshot, so the writer's
-  local screenshot is the only comparison, and a touched screen it could not
-  capture keeps its visual criteria `not met yet` with that reason.
+- **After the deploy.** In Claude Code, the orchestrator's own browser tab is
+  signed in as the person: the Chrome extension's screenshot when it is
+  connected. In Codex there is no computer use (`guardrails.md`, "Processes
+  and state"): the orchestrator writes the visual-check request that section
+  describes and hands it to a Claude worker, never a screenshot of the
+  in-app Browser tab. A session without either has no preview screenshot, so
+  the writer's local screenshot is the only comparison, and a touched screen
+  it could not capture keeps its visual criteria `not met yet` with that
+  reason.
 
 ## Desktop
 
@@ -282,27 +285,13 @@ script and normal hooks, still unpushed, BEFORE preparation. Private plans stay
 excluded; interfering protected localFix source is preserved and blocks parity,
 not silently included or discarded. A clean result needs no extra local commit.
 
-Before publisher preparation, resume the SAME registered source actor for
-`node <plugin-root>/skills/vibe/scripts/vibe-sessions.mjs main-sync-inputs --worktree "<wt>"`
-with its actual exclusive `progress` context on stdin. This source-owned
-readiness operation verifies canonical private-plan exclusion, tracked/index
-parity, the existing read-only Biome derivative and finite generated dependencies.
-It uses existing pure owners or a pristine owned detached validation checkout
-and normal canonical bootstrap, never another feature branch/source writer.
-Unknown extra/edited/consumed outputs and protected localFix code remain blocked
-and preserved. It never deletes retained reports or reads their bodies as PASS.
-Inputs needed by a selected replay/verdict reader are not output-only evidence.
-Finish that actual record turn before the publisher below; readiness is not a
-main capture, test authority, validation PASS or permission to publish.
-
 1. Stop only the session's owned Desktop through its existing operational
    owner before changing its source. The publishing helper's exact existing
    create/redeploy or prototype-share record turn runs
    `node <plugin-root>/skills/vibe/scripts/commit-worktree.mjs --prepare-main-sync --worktree "<wt>"`
    with `{ "context": <granted operationContext> }` on stdin. It fetches
    `origin main`, captures the private FETCH_HEAD SHA once, and stages an
-   ordinary noncommitting merge. It never commits, pushes, resets, rebases,
-   stashes, changes mode/data, or manually edits a conflict. Retain the
+   ordinary noncommitting merge, never committing or pushing. Retain the
    returned `transactionId`, `mainSha`, original base and imported-file facts.
 2. End that helper turn using actual stopped/completed evidence before any
    source continuation. The SAME registered writer extends its existing
@@ -311,50 +300,41 @@ main capture, test authority, validation PASS or permission to publish.
    generated source and fixes stay with that writer; no new tests are written
    unless the person asked for a pull request, and the writer only repairs
    existing tests the merge broke (`guardrails.md`, "Tests").
-   Upstream imports are not newly authored feature tests, but no actual
-   unrecorded test edit is retrospectively relabeled.
 3. Only the root commits the staged merge/fixes through the existing commit
    script and normal hooks. Then resume that SAME writer for its exact
    source-owned record continuation (`progress`) with the captured
    `mainSyncTransactionId` and root-controlled `publicationPurpose`.
-   Run `main-sync-inputs` again after this exact committed merge/fix result.
+   Run `node <plugin-root>/skills/vibe/scripts/vibe-sessions.mjs main-sync-inputs --worktree "<wt>"`
+   once, after this exact committed merge/fix result; no readiness pass
+   precedes capture. It proves generated inputs in one pristine checkout;
+   unknown or edited outputs and localFix code block, and
+   retained reports are never PASS. A failing producer names its command,
+   exit or timeout and private log: fix that cause rather than rerunning
+   into the same bound.
    It preserves captured imports/original test history and returns
    `validationWitness`, whose `recipeSha256` binds the actual fixed recipe and
    budgets to transaction, committed HEAD/tree and input identity. Finish that
    record turn; ROOT grants the same actor's next validation continuation with
-   this opaque value as `mainSyncValidation`. Never manufacture commands,
-   duration, PASS, retrospective authoring phase or a replacement registration.
+   this opaque value as `mainSyncValidation`, never a manufactured PASS.
    It runs `node <plugin-root>/skills/vibe/scripts/vibe-sessions.mjs main-sync-validate --worktree "<wt>"`
    with the granted context on stdin. The shared executor runs the existing
    scope/phase command matrix and records actual results at committed HEAD.
-   Its affected test selection is pinned to the transaction's captured
-   `mainSha` (operator ruling, 2026-10-16), so `origin/main` advancing during
-   validation, which on symphony-alpha happens every few minutes, never
-   invalidates it. The guards that remain are the session's own HEAD or tree
-   changing and a rewritten `origin/main` that would make the affected wrapper
-   select from another base.
+   Its affected test selection is pinned to the captured `mainSha` (operator
+   ruling, 2026-10-16), so only the session's own HEAD or tree changing, or a
+   rewritten `origin/main`, invalidates it, never `origin/main` advancing.
    At handoff a failing check is run again on the captured `mainSha` in one
    disposable bootstrapped checkout, bounded by `run-bounded.mjs`; one that
    also fails there is `main-preexisting` and does not block publication
    (`quality-loop.md`, "Failures already on main"; operator ruling,
    2026-10-16). Its recipe binds that comparison's reserve, so the Claude
    envelope covers it.
-   A source-generating check that changes source returns to this writer/root
-   commit/recheck sequence, never an operational publisher repair.
-   Known selected generated-output changes require canonical re-verification
-   and ONE bounded whole-matrix restart within the original command budgets;
-   only authenticated changed owners regenerate, with untouched proof retained.
-   unrelated writes, unknown outputs or continued churn yield no receipt.
-   FULL local lint-scripts has a fixed 30-minute outer process budget; aggregate
-   test budgets derive from actual selected owning allocations. These are not
-   CI, assertion, individual-test or hook deadline changes. The general worker
-   keeps its 15-minute default and 30-minute maximum. Only the actual Root-owned
-   validation witness permits a derived finite Claude whole-turn envelope.
-   Its canonical recipe also binds the finite selected recovery lifecycle reserve;
-   this never doubles check budgets or grants per-owner restarts.
-   Prelaunch reads bounded recipe data without child execution; after owned
-   process handlers exist, actual inputs and recipe are recomputed. Missing,
-   tampered, stale or canceled proof blocks, never an enlarged caller timeout.
+   A check that changes source returns to this writer/root commit/recheck
+   sequence; a known generated-output change gets one bounded whole-matrix
+   restart, and unknown outputs or continued churn yield no receipt. FULL
+   local lint-scripts has a fixed 30-minute budget; the general worker keeps
+   its 15-minute default and 30-minute maximum, and only the Root-owned
+   witness derives a finite Claude envelope. Missing, tampered, stale or
+   canceled proof blocks, never an enlarged caller timeout.
 4. Validation checks every tracked/index byte/mode and scoped executable
    overlay against committed input before/between/after checks and again at
    consumption. Managed `localFixes` remain commit exclusions, NEVER check
@@ -363,10 +343,8 @@ main capture, test authority, validation PASS or permission to publish.
    Never stash, discard, copy a validation checkout, invent PASS or validate
    corrected local bytes while deploying different committed source. Private
    non-source plans/evidence/logs may remain. Preserve exact actor/lease and
-   current registration metadata. If its definition is missing or provably
-   upgraded, ROOT follows quality-loop's recorded migration before new code.
-   Helpers never re-register a writer; refresh readiness/validation under the
-   returned current actor and retain captured imports/base/transaction facts.
+   current registration metadata; a missing or upgraded definition follows
+   quality-loop's recorded migration.
 5. A fresh publishing turn receives the same `mainSyncTransactionId` and
    purpose in its parent-issued grant. Claude injects `operationContext` in
    the turn envelope; native Codex's parent composes it from its actual

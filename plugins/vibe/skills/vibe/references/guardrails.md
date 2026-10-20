@@ -34,6 +34,22 @@ canonical statement:
   the engineering orchestrator installed the new release. It is recovery, not
   a tooling fix: never stop or send the person to engineering for it.
 
+## Processes and state
+
+Operator lessons, 2026-10-19 and 2026-10-20, for every worker in both harnesses.
+- Stop only a pid or process group this session recorded and still owns.
+  Never `pkill`, `killall` or `kill` by name or pattern; report what you did not start.
+- Records, writer state, briefs, monitor config and reports a later step
+  reads live in the session's Git metadata, `.claude/worktrees/` or
+  `~/.codex/vibe/`, never `/tmp` or the system temp folder.
+- In Codex, no computer use: no Computer Use plugin or agent looks through
+  the in-app Browser, and GitHub only through `gh`. Visual checks go to
+  read-only `vibe-verify-worker` through the owned Claude launcher, or are
+  recorded as not run, their criterion `not met yet`.
+- A visual check handed to another worker is a written request made after
+  the push: the pushed head (never a local SHA), URLs or story IDs, flags,
+  steps, expected result and criterion. Findings go to the SAME writer.
+
 ## What may change
 
 For an owned `prototype/<slug>` mockup session, the repository's canonical

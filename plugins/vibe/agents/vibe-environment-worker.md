@@ -199,8 +199,8 @@ every conflict/source problem. Do not run a raw merge/commit/push yourself.
 
 1. Complete fresh main-sync, same-writer behavior/table checks, ROOT commit
    and exact committed-input validation before publishing, per environment.md.
-   Only the SAME source actor runs `main-sync-inputs` before capture and after
-   the committed merge/fixes; this helper never regenerates dependencies.
+   Only the SAME source actor runs `main-sync-inputs`, after the committed
+   merge/fixes; this helper never regenerates dependencies.
    Require its canonical generated-input/readiness evidence. Preserve retained
    reports/private diagnostics; they are not PASS or consumed replay inputs.
    Preserve an explicit flags request under its own later request-only turn.
@@ -404,8 +404,10 @@ or `--body-file`).
 
 - `reviewThreads: read`: list the unresolved review threads with
   `gh api graphql` (`pullRequest.reviewThreads`, with `isResolved`, the
-  thread `id`, and each comment's `databaseId`, author, `path`, `line` and
-  body) and return them. Change nothing.
+  thread `id`, and each comment's `databaseId`, author login and
+  `__typename`, `path`, `line` and body) and return them, marking
+  `awaitingReply` each thread a human other than the author spoke last on.
+  Change nothing.
 - Update, with the pushed fixing commit and the writer's per-thread results:
   1. Confirm the branch on `origin` is at that commit (step 1 above).
   2. Refresh the body from the session record so it matches the diff: build
@@ -417,10 +419,13 @@ or `--body-file`).
      Keep the title unless the summary it names changed.
   3. For each thread, reply through the REST review-comment reply endpoint,
      `gh api -X POST repos/closedloop-ai/symphony-alpha/pulls/<number>/comments/<comment databaseId>/replies --input <payload.json>`,
-     never the GraphQL `addPullRequestReviewThreadReply`. A thread the writer
-     fixed gets the fixing commit SHA and is then resolved with the GraphQL
-     `resolveReviewThread` mutation on its thread `id`; a thread it answered
-     with a reason gets that reason and stays open for its reviewer.
+     never the GraphQL `addPullRequestReviewThreadReply`, a fixed thread with
+     the fixing commit SHA, a `partial` one with what remains. Then resolve
+     only through
+     `node ../skills/handoff/scripts/review-threads.mjs resolve --results <file> --threads <file>`
+     (the writer's results with the reviewer's per-thread `verification`, and
+     the threads you read). Never call `resolveReviewThread` yourself; exit 1
+     returns `BLOCKED` with its problems.
   4. Step 5's limits hold.
 
 Return `DONE` with the pull request URL, the threads replied to and resolved,

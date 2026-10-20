@@ -224115,10 +224115,16 @@ var bindingSchema = external_exports.object({
   capabilities: capabilitiesSchema
 }).strict();
 var retainedRecordSchema = external_exports.object({ lease: external_exports.string().uuid(), stoppedTurn: stoppedTurnSchema }).strict();
+var harnessSwitchSchema = external_exports.object({
+  to: external_exports.enum(["codex", "claude"]),
+  cause: external_exports.enum(["usage-limit", "runtime-unavailable"]),
+  evidence: external_exports.string().min(1).max(1024)
+}).strict();
 var migrateSchema = registerSchema.extend({
   previousWorkerId: identifierSchema,
   previousDigest: external_exports.string().regex(/^[a-f0-9]{64}$/),
-  retainedRecord: retainedRecordSchema.optional()
+  retainedRecord: retainedRecordSchema.optional(),
+  harnessSwitch: harnessSwitchSchema.optional()
 }).strict();
 var requestSchema = external_exports.object({ id: identifierSchema, input: external_exports.string().min(1).max(64 * 1024) }).strict();
 var ledgerStateSchema = external_exports.object({
@@ -224144,7 +224150,7 @@ var ledgerStateSchema = external_exports.object({
 var migrationSchema = external_exports.object({
   id: external_exports.string().uuid(),
   at: external_exports.string().datetime(),
-  reason: external_exports.enum(["definition-missing", "definition-upgraded"]),
+  reason: external_exports.enum(["definition-missing", "definition-upgraded", "harness-switch"]),
   observedDigest: external_exports.string().length(64).nullable(),
   previous: ledgerStateSchema,
   workerId: identifierSchema,
@@ -224153,7 +224159,8 @@ var migrationSchema = external_exports.object({
     requestId: identifierSchema,
     recordAction: identifierSchema,
     state: stoppedTurnSchema.shape.state
-  }).strict().optional()
+  }).strict().optional(),
+  harnessSwitch: harnessSwitchSchema.extend({ from: external_exports.enum(["codex", "claude"]) }).strict().optional()
 }).strict();
 var ledgerSchema = ledgerStateSchema.extend({ migrations: external_exports.array(migrationSchema).default([]) }).strict();
 async function readInput(stream = process.stdin) {
@@ -227535,7 +227542,12 @@ function prepareInputOrigins(value, before, producers) {
     const executable = argv[0] === "node" ? process.execPath : argv[0];
     const result = spawnSync7(executable, argv.slice(1), { cwd, encoding: "utf8", timeout: OWNER_MS, maxBuffer: 16 * 1024 * 1024 });
     commands.push({ argv, exitCode: result.status, stdoutSha256: digest(result.stdout ?? ""), stderrSha256: digest(result.stderr ?? "") });
-    if (result.error || result.status !== 0) throw new MainSyncError(`Canonical generated-input producer failed: ${argv.slice(0, 4).join(" ")}; preserve private operation evidence`, "NEEDS_CHANGE");
+    if (result.error || result.status !== 0) {
+      const command = argv.slice(0, 4).join(" ");
+      const lastLine = (result.stderr ?? "").trim().split("\n").at(-1)?.slice(0, 300);
+      const cause = result.error && "code" in result.error && result.error.code === "ETIMEDOUT" ? `timed out after ${OWNER_MS / 6e4} minutes` : `exited ${result.status ?? result.signal}${lastLine ? `: ${lastLine}` : ""}`;
+      throw new MainSyncError(`Canonical generated-input producer ${command} ${cause}; private log ${log}`, "NEEDS_CHANGE");
+    }
   }
 }
 function assertTracked(root, before) {
@@ -227994,9 +228006,10 @@ function prepareMainSyncInputs(raw) {
 function prepareMainSync(raw) {
   const value = syncContext(raw, "prepare");
   const root = value.place.root;
-  committedInputs(root);
+  const inventory = inspectInputInventory(root);
   const previousFile = join17(value.place.dir, MAIN_SYNC_FILE);
   const state = existsSync11(previousFile) ? mainSyncStateSchema.parse(readPrivateJson(previousFile)) : void 0;
+  if (state?.inputs?.headSha === inventory.headSha && state.inputs.treeSha === inventory.treeSha) committedInputs(root);
   const previous = state?.phase === "input-readiness" ? state.previous : state;
   if (previous && (previous.worktree !== root || previous.branch !== value.place.branch || previous.originalBase !== value.place.session.baseCommit || previous.operator.id !== value.place.session.operator.id || previous.operator.email !== value.place.session.operator.email)) {
     throw new MainSyncError("Previous main-sync provenance belongs to another session; preserve it and inspect the owned evidence");

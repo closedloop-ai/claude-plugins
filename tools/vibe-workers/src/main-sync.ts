@@ -67,9 +67,11 @@ export function prepareMainSyncInputs(raw: unknown) {
 export function prepareMainSync(raw: unknown) {
   const value = syncContext(raw, "prepare");
   const root = value.place.root;
-  committedInputs(root);
+  const inventory = inspectInputInventory(root);
   const previousFile = join(value.place.dir, MAIN_SYNC_FILE);
   const state = existsSync(previousFile) ? mainSyncStateSchema.parse(readPrivateJson(previousFile)) : undefined;
+  // Generated inputs are proven once, after the merge; only a proof already recorded for this exact commit is rechecked here.
+  if (state?.inputs?.headSha === inventory.headSha && state.inputs.treeSha === inventory.treeSha) committedInputs(root);
   const previous = state?.phase === "input-readiness" ? state.previous : state;
   if (previous && (previous.worktree !== root || previous.branch !== value.place.branch
     || previous.originalBase !== value.place.session.baseCommit || previous.operator.id !== value.place.session.operator.id

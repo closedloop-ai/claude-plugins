@@ -116,8 +116,9 @@ and retained reports without accepting their contents as coverage. Known generat
 dependencies need complete pure or pristine owner verification before execution;
 unknown extras, edited bodies, producer drift and aliases remain blocked. Selected
 package proofs use bounded deduplicated names and full byte/mode/set digests in
-the existing private receipt. The same actor repeats readiness after the committed
-merge and supplies the opaque recipe witness for actual validation. Fixed local
+the existing private receipt. The same actor runs readiness once, after the
+committed merge, and supplies the opaque recipe witness for actual validation;
+capture checks parity and unknown outputs, rechecking only a proof recorded for that commit. Fixed local
 process budgets and the authenticated Claude envelope remain distinct from
 unchanged test, hook and general-worker deadlines.
 Report admission follows actual selected entries, tasks, configs and producer
@@ -165,8 +166,9 @@ situation (operator ruling, 2026-10-16): Asana first, then another
 established app with the same flow (Linear, or GitHub's own screens), then
 their public help centers when no browser can look. `scripts/precedent-check.mjs`
 holds the research brief and its safety rules: a separate headless
-`claude -p --chrome` run in Claude Code, the orchestrator's own in-app Browser
-or Computer Use in Codex; nothing that exists is touched, test data lives
+`claude -p --chrome` run in both harnesses (Codex never uses computer use;
+without a signed-in `claude` CLI the requirements worker reads the help
+centers); nothing that exists is touched, test data lives
 only in a `zz vibe precedent check (temp)` private project that is deleted
 afterwards, and every state is verified before it is recorded. The answer
 and its source (`Asana, observed <date>`, a help-center URL, or the ticket
@@ -492,6 +494,10 @@ The `pr-facts` case checks that a body missing computed facts is not created.
 
 The case tagged `ledger-lessons` rehearses a claimed PRD child moving to In
 Review only when its evidence map passes `live-ticket-check.mjs --child-evidence`.
+
+The case tagged `orchestration-lessons` rehearses a Codex writer stopped by
+its account's usage limit, which moves to Claude through the writer ledger's
+harness switch instead of another worker doing its work.
 
 ## Runtime Files
 

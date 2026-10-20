@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { CLAUDE_TOOLS, TASK_PREFIX, TEMP_PROJECT, precedentPrompt, summarize } from "./precedent-check.mjs";
+import { CLAUDE_TOOLS, TASK_PREFIX, TEMP_PROJECT, precedentPrompt, precedentRoot, summarize } from "./precedent-check.mjs";
 import { makeHome } from "./test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "precedent-check.mjs");
@@ -32,8 +33,8 @@ function fakeClaude(dir, { output = REPORT, code = 0, sleep = 0 } = {}) {
   return file;
 }
 
-function run(args) {
-  const result = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8" });
+function run(args, env = process.env) {
+  const result = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", env });
   if (result.error) {
     throw result.error;
   }
@@ -128,4 +129,16 @@ test("the summary reads only the report's Answer and Source lines", () => {
   });
   assert.deepEqual(summarize("Answer: undocumented\nSource: undocumented\n"), { answer: "undocumented", source: "undocumented" });
   assert.deepEqual(summarize("nothing"), { answer: null, source: null });
+});
+
+test("without --out the report folder is under the vibe home a reboot keeps, never the temp folder", (t) => {
+  const fixture = makeHome("vibe-precedent-home-");
+  t.after(fixture.cleanup);
+  const claude = fakeClaude(fixture.root);
+  const { status, json } = run(["run", "--question", QUESTION, "--claude", claude], { ...process.env, HOME: fixture.home });
+  assert.equal(status, 0);
+  const root = path.join(fixture.home, ".codex", "vibe", "precedent");
+  assert.equal(path.dirname(path.dirname(json.report)), root);
+  assert.equal(precedentRoot("/Users/someone"), path.join("/Users/someone", ".codex", "vibe", "precedent"));
+  assert.ok(!precedentRoot().startsWith(os.tmpdir()));
 });

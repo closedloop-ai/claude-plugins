@@ -42,9 +42,9 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 
 | Role | Agent or skill | Plugin | Fallback when not installed |
 |---|---|---|---|
-| Ticket overlap, scope collisions, "did a human ask for this", drift tracing | `closedloop-intel` agent, read-only, over the closedloop-graph MCP server | closedloop-core | closedloop-graph tools directly |
+| Ticket overlap, scope collisions, "did a human ask for this", drift tracing | `closedloop-core:closedloop-intel`, read-only, over the closedloop-graph MCP server | closedloop-core | closedloop-graph tools directly |
 | QA plan per PR (plan-only) and the QA-guide session (one checkpoint at a time) | `closedloop-core:guided-manual-qa` in a Claude worker | closedloop-core | a written checklist from the criteria trace |
-| Pre-merge local CI | the repo's local-CI skill (for example symphony-alpha's `local-ci`, which wraps dagger) | target repo | the repo's documented verify command |
+| Pre-merge local CI | the repo's local-CI skill (for example a `local-ci` skill wrapping dagger) | target repo | the repo's documented verify command |
 | Design and visual review of a PR's UI, headless against the deployed preview | the repo's design-review and visual-qa skills and critic agents (for example `design-critic`, `visual-qa-critic`) | target repo | a Claude reviewer reading headless captures |
 | Turning a repeated mistake into a guard | `closedloop-core:prevent-recurrence` | closedloop-core | the lessons loop below |
 | Writers, reviews, handoff, ticket, environment | vibe's own workers (above) | vibe | none; vibe is required |

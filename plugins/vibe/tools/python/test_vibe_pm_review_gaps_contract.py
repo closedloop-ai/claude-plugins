@@ -160,7 +160,7 @@ def test_changes_on_a_vibe_pull_request_resume_the_session_through_one_path() ->
         "pushes the validated commit to the SAME branch through the normal pre-push hook. Never a force push",
         "refreshes the body from the session record so it matches the diff",
         "through the REST review-comment reply endpoint",
-        "a fixed thread gets the fixing commit SHA and is resolved",
+        "the fixing commit SHA",
         "--status handed-off",
     ))
     order = [
@@ -242,3 +242,19 @@ def test_pull_request_mode_tests_pin_what_they_name_and_prefer_tokens_structure_
         "Prefer assertions on tokens, structure and behavior",
         "over raw CSS or style-string pins",
     ))
+
+
+def test_threads_are_read_on_every_look_and_resolved_only_by_the_verifying_script() -> None:
+    handoff = (PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md").read_text()
+    step0 = section(handoff, "## 0. Pick the session")
+    assert "on every look: any `awaitingReply` thread starts section 10" in step0
+    assert "`$gh-monitor-pr`" in flat(handoff)
+    changes = section(handoff, "## 10. Changes on the open pull request")
+    for phrase in ("`partial` with what remains", "the writer's own report is never that verification",
+                   "`scripts/review-threads.mjs resolve` resolves", "after its check passes in the same run",
+                   "flag-off behavior to main"):
+        assert phrase in changes, phrase
+    environment = flat(agent("vibe-environment-worker"))
+    assert "`awaitingReply`" in environment
+    assert "review-threads.mjs resolve --results" in environment
+    assert "Never call `resolveReviewThread` yourself" in environment

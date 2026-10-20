@@ -70,12 +70,13 @@ once, for both harnesses:
   starts a separate headless `claude -p --chrome` limited to the Chrome
   tools, web search and fetch, with the brief on stdin, and that run falls
   back to the help centers itself when Chrome is not available.
-- Codex: `node scripts/precedent-check.mjs prompt --question "<question>"
-  --situation "<what to reproduce>"` prints the brief, and the orchestrator
-  follows it itself, in a tab of its own in the in-app Browser (never the
-  person's app tab) or with the Computer Use plugin. With neither, dispatch
-  read-only `vibe-requirements-worker` in precedent mode for the help
-  centers.
+- Codex: no computer use (`guardrails.md`, "Processes and state"). The
+  orchestrator runs the same `run` command, so a headless Claude does the
+  looking, never the in-app Browser or the Computer Use plugin. Without a
+  signed-in `claude` CLI, `node scripts/precedent-check.mjs prompt
+  --question "<question>" --situation "<what to reproduce>"` prints the
+  brief for read-only `vibe-requirements-worker` in precedent mode, which
+  works from the help centers.
 
 The brief's rules bind every look: the account already signed in is used,
 and nobody signs in, creates an account or types a credential. Nothing that
@@ -221,6 +222,15 @@ engineering about it.
    source-owned readiness and validation for the captured transaction. Never
    reuse an old grant, lease or validation witness.
 
+**A writer whose runtime cannot run.** A Codex writer stopped by its usage
+limit moves to Claude through this command, never to a worker outside the
+session records (operator lesson, 2026-10-19). Finish its turn `"status":
+"FAILED"` with `"state": "failed"` evidence, run `migrate` with step 3's
+JSON (recorded `"runtime": "codex"`, no `workerId`) plus `"harnessSwitch":
+{ "to": "claude", "cause": "usage-limit", "evidence": "<error line>" }`, and
+continue at step 5. It refuses running turns, retained grants, a `BLOCKED`
+writer and a same-runtime switch, and records the switch in `migrations`.
+
 Any other binding/read/identity error remains `BLOCKED` internally. Never
 migrate around a refusal or to create parallel authors. If migration fails,
 retain the ledger and stop the unused held Codex worker without source writes.
@@ -265,13 +275,10 @@ without live ticket/operator verification. This does not perform a discard or
 authorize one. Neither path fabricates a session or registers a source writer.
 Writers, prototypes and environment publication have no sessionless fallback.
 
-Main-sync's source-owned input readiness uses the SAME registered actor's
-exclusive progress turn, never an ops helper or another implementation worker.
-Follow environment.md: `main-sync-inputs` before capture and after the Root-owned
-merge/fix commit; finish the turn, then pass its opaque `validationWitness` in
-the parent grant as `mainSyncValidation`. Only identity/digest-bound validation
-derives a finite owned Claude envelope; general worker limits remain unchanged.
-Generated origin and retained-report exclusion are not test authority or PASS.
+Main-sync readiness (`main-sync-inputs`, once, after the Root-owned merge/fix
+commit) runs in the SAME registered actor's exclusive progress turn; its
+`validationWitness` becomes the next grant's `mainSyncValidation`
+(environment.md). It is not test authority or PASS.
 
 Researchers and independent reviewers may run in parallel, read-only. Backend,
 primitive, prototype, Storybook and verify roles provide read-only guidance or
@@ -472,6 +479,17 @@ No worker commits; the orchestrator still uses the owned commit script. Vibe
 and handoff open no PR unless the person asks for one; then handoff opens it
 at its end ("Tests: repair, don't author"). Operational publishing uses this
 same session branch.
+
+**A dependency on an open pull request never idles the session** (operator
+lesson, 2026-10-19). Never pause, wait for the merge, or ask the person to
+restart anything: the writer commits every change that compiles without the
+unmerged code, so only the dependent import waits, and ROOT reads
+`gh pr view <number> --json state,mergedAt,headRefOid` at every resume until
+a main sync brings it in. Never base or merge the session on that unmerged
+head; the inventory would count its files as the session's. Merged work is
+pushed as soon as it compiles and its targeted tests pass, e2e results
+following, and a publish-helper failure is reported at once with its command
+and error.
 
 ## Lean build loop
 

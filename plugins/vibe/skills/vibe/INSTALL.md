@@ -55,8 +55,8 @@ Check:
 
 In Codex Desktop, open Plugins and make sure these are added and enabled:
 
-- **Browser**: the in-app browser the work happens in.
-- **Computer Use**: lets setup click through installer and sign-in dialogs.
+- **Browser**: the in-app browser the work happens in. Vibe never uses
+  Computer Use; a dialog that needs a click is yours.
 
 Quit the ChatGPT app completely and reopen it, so it loads the new plugin and
 connector.
