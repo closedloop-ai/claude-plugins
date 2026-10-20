@@ -118,7 +118,7 @@ unknown extras, edited bodies, producer drift and aliases remain blocked. Select
 package proofs use bounded deduplicated names and full byte/mode/set digests in
 the existing private receipt. The same actor runs readiness once, after the
 committed merge, and supplies the opaque recipe witness for actual validation;
-capture checks only tracked parity and unknown outputs. Fixed local
+capture checks parity and unknown outputs, rechecking only a proof recorded for that commit. Fixed local
 process budgets and the authenticated Claude envelope remain distinct from
 unchanged test, hook and general-worker deadlines.
 Report admission follows actual selected entries, tasks, configs and producer
