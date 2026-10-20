@@ -167,6 +167,12 @@
             "--settings"
           ],
           "help": "Path to code-review.json (operator-tunable settings; defaults to .closedloop-ai/settings/code-review.json). Used to load out_of_hunk_confidence_floor."
+        },
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "help": "CR_DIR holding scope.json. Its review_root is where findings' new-file lines are checked and re-anchored; omitted or unprovable, only deleted files are checked."
         }
       ]
     },

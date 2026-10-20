@@ -665,7 +665,9 @@
         "--findings",
         "{cr_dir}/findings.json",
         "--diff-data",
-        "{cr_dir}/diff_data.json"
+        "{cr_dir}/diff_data.json",
+        "--cr-dir",
+        "{cr_dir}"
       ],
       "stdout": "{cr_dir}/findings_validated.json",
       "expected_outputs": [

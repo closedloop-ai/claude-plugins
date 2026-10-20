@@ -2283,6 +2283,87 @@ def _normalize_findings(
     return normalized, warnings, non_standard
 
 
+def _snippet_anchor(code_snippet: object) -> str:
+    """First non-blank line of a finding's ``code_snippet``, stripped."""
+    if not isinstance(code_snippet, str):
+        return ""
+    for raw in code_snippet.splitlines():
+        stripped = raw.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+def _reanchor_out_of_range_lines(
+    findings: list[dict[str, Any]],
+    file_statuses: dict[str, str],
+    patch_lines: dict[str, dict[str, dict[str, str]]],
+    review_root: str,
+) -> None:
+    """Re-anchor diff-scope findings whose ``line`` is past the end of the file.
+
+    A reviewer can cite a line from the wrong numbering (e.g. its position
+    in ``patches_all.txt``). Such a line is checked against the file it
+    names: the old file, rebuilt from the patch's removed lines, for a file
+    deleted outright (``file_statuses`` value ``"removed"``); otherwise the
+    new file under ``review_root``, whether or not it is in the diff. When
+    the first non-blank line of ``code_snippet`` occurs on exactly one line
+    of that file, ``line`` moves there and the original is kept in
+    ``line_reanchored_from``. Otherwise the finding is kept and tagged
+    ``line_out_of_range: True``. Runs before range filtering and duplicate
+    merging, so a re-anchored finding is range-checked and merged at its real
+    line.
+
+    The validator OWNS both fields: any reviewer-supplied value is stripped.
+    A file that cannot be read (no proven ``review_root``, or missing on
+    disk) is left unjudged.
+    """
+    for finding in findings:
+        finding.pop("line_out_of_range", None)
+        finding.pop("line_reanchored_from", None)
+        if (finding.get("finding_scope") or "diff") != "diff":
+            continue
+        filepath = finding.get("file")
+        raw_line = finding.get("line")
+        if not isinstance(filepath, str) or not filepath:
+            continue
+        if isinstance(raw_line, str) and raw_line.strip().isdigit():
+            line = int(raw_line)
+        elif isinstance(raw_line, int) and not isinstance(raw_line, bool):
+            line = raw_line
+        else:
+            continue
+        if line < 1:
+            continue
+
+        file_lines: list[str] | None = None
+        if file_statuses.get(filepath) == "removed":
+            removed = (patch_lines.get(filepath) or {}).get("removed_lines") or {}
+            numbered = {int(k): v for k, v in removed.items() if str(k).isdigit()}
+            if numbered:
+                file_lines = [numbered.get(n, "") for n in range(1, max(numbered) + 1)]
+        elif review_root:
+            try:
+                file_lines = (Path(review_root) / filepath).read_text(
+                    errors="replace",
+                ).splitlines()
+            except OSError:
+                file_lines = None
+        if file_lines is None or line <= len(file_lines):
+            continue
+
+        anchor = _snippet_anchor(finding.get("code_snippet"))
+        matches = (
+            [n for n, text in enumerate(file_lines, start=1) if anchor in text]
+            if anchor else []
+        )
+        if len(matches) == 1:
+            finding["line_reanchored_from"] = line
+            finding["line"] = matches[0]
+        else:
+            finding["line_out_of_range"] = True
+
+
 def _filter_scope_and_range(
     findings: list[dict[str, Any]],
     files_to_review: set[str],
@@ -2398,6 +2479,18 @@ def _filter_scope_and_range(
 
         finding.pop("out_of_diff", None)
         line = int(finding.get("line", 0))
+
+        # A line past the end of its file (``_reanchor_out_of_range_lines``
+        # found no unique re-anchor) has no position to range-check. Where a
+        # finding points is never by itself a reason to discard it, so only
+        # the normal confidence rule applies.
+        if finding.get("line_out_of_range") is True:
+            finding.pop("out_of_hunk_kept", None)
+            if priority > 1 and confidence < CONFIDENCE_DISCARD_THRESHOLD:
+                discarded.append({"finding": finding, "reason": "DISCARD_LOW_CONFIDENCE"})
+                continue
+            result.append(finding)
+            continue
 
         file_ranges = changed_ranges.get(filepath, {})
         if (file_statuses or {}).get(filepath) == "removed":
@@ -2643,6 +2736,23 @@ def cmd_validate(args: argparse.Namespace) -> int:
     normalized, normalization_warnings, non_standard_values = _normalize_findings(
         raw_findings, discarded
     )
+    # New-file contents are read from the review root, the tree the reviewers
+    # read. Without a proven root, lines on surviving files are left unjudged
+    # rather than checked against some other checkout.
+    review_root = ""
+    cr_dir_arg = getattr(args, "cr_dir", None)
+    if cr_dir_arg:
+        scope_meta = _read_optional_json(Path(cr_dir_arg) / "scope.json", {})
+        try:
+            review_root = _require_review_root(cr_dir_arg, scope_meta)
+        except ReviewRootError as exc:
+            print(
+                f"Warning: line-range re-anchoring skipped for surviving files — {exc}",
+                file=sys.stderr,
+            )
+    _reanchor_out_of_range_lines(
+        normalized, file_statuses, diff_data.get("patch_lines", {}) or {}, review_root,
+    )
     filtered = _filter_scope_and_range(
         normalized, files_to_review, changed_ranges, discarded,
         out_of_hunk_confidence_floor=out_of_hunk_floor,
@@ -2660,6 +2770,12 @@ def cmd_validate(args: argparse.Namespace) -> int:
     kept_out_of_diff = sum(
         1 for f in filtered if f.get("out_of_diff") is True
     )
+    lines_reanchored = sum(
+        1 for f in filtered if "line_reanchored_from" in f
+    )
+    kept_line_out_of_range = sum(
+        1 for f in filtered if f.get("line_out_of_range") is True
+    )
 
     deduped = _merge_duplicates(filtered, discarded)
     validated = _group_cross_file(deduped)
@@ -2674,6 +2790,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
         "cross_file_grouped": cross_file_grouped,
         "kept_out_of_hunk": kept_out_of_hunk,
         "kept_out_of_diff": kept_out_of_diff,
+        "lines_reanchored": lines_reanchored,
+        "kept_line_out_of_range": kept_line_out_of_range,
         "discarded_out_of_hunk_low_confidence": sum(
             1 for d in discarded
             if d["reason"] == "DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE"
@@ -5255,6 +5373,10 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
     summary comment instead (the summary renders all validated findings). They
     are pre-skipped when tagged, and a runtime 422 is treated as a non-inline
     skip rather than a failure to cover parser/GitHub diff disagreements.
+
+    Findings the validator tagged ``line_out_of_range: True`` (line past the
+    end of the file, no unique re-anchor) have no real line to comment on and
+    are never posted inline either; they too surface only in the summary.
     """
     try:
         with open(args.findings) as f:
@@ -5306,6 +5428,7 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
     skipped_no_inline = 0
     skipped_out_of_hunk = 0
     skipped_out_of_diff = 0
+    skipped_out_of_range = 0
     failed = 0
     pr_files: _PrFiles | None = None
 
@@ -5320,6 +5443,14 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
         # post. Surface them in the summary only and skip the API call.
         if finding.get("out_of_hunk_kept") is True:
             skipped_out_of_hunk += 1
+            continue
+
+        # The validator found the line past the end of its file and could not
+        # re-anchor it, so there is no real line to comment on (even through
+        # an out_of_diff evidence anchor, whose body would cite the bogus
+        # line). Summary only.
+        if finding.get("line_out_of_range") is True:
+            skipped_out_of_range += 1
             continue
 
         path = finding.get("file") or ""
@@ -5414,11 +5545,13 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
 
     total_skipped = (
         skipped_dedup + skipped_no_inline + skipped_out_of_hunk + skipped_out_of_diff
+        + skipped_out_of_range
     )
     print(
         f"Posted {posted}, skipped {total_skipped} "
         f"(dedup={skipped_dedup}, non-inline={skipped_no_inline}, "
-        f"out-of-hunk={skipped_out_of_hunk}, out-of-diff={skipped_out_of_diff}), "
+        f"out-of-hunk={skipped_out_of_hunk}, out-of-diff={skipped_out_of_diff}, "
+        f"line-out-of-range={skipped_out_of_range}), "
         f"failed {failed}"
     )
     return 0

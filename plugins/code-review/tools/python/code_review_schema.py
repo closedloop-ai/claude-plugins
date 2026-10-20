@@ -926,6 +926,12 @@ class CanonicalFinding:
     # validator set them; reviewer-supplied values are stripped).
     out_of_hunk_kept: bool = False  # in a diff file, outside its changed lines
     out_of_diff: bool = False  # in a file outside the diff (ISS-12737)
+    # line was past the end of its file and moved to the one line matching
+    # code_snippet; holds the reviewer's original line
+    line_reanchored_from: int | None = None
+    # line is past the end of its file and code_snippet matched no single
+    # line: kept, but never posted inline
+    line_out_of_range: bool = False
 
     # Schema version (per-finding, complements envelope version)
     schema_version: int = SCHEMA_VERSION
@@ -1285,6 +1291,8 @@ def finding_json_schema() -> dict[str, Any]:
             "other_locations": {"type": "array"},
             "out_of_hunk_kept": {"type": "boolean"},
             "out_of_diff": {"type": "boolean"},
+            "line_reanchored_from": {"type": "integer"},
+            "line_out_of_range": {"type": "boolean"},
         },
     }
 

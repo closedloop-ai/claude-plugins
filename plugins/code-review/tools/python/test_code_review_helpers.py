@@ -3972,6 +3972,40 @@ class TestCmdPostComments:
         assert "out-of-hunk=1" in out
         assert "failed 0" in out
 
+    def test_line_out_of_range_skips_inline_post(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A finding the validator tagged ``line_out_of_range`` has no real
+        line to comment on (it is past the end of its file), so it is never
+        posted inline — not even through an ``out_of_diff`` evidence anchor
+        — and is left for the summary."""
+        findings = [
+            {"file": "src/a.ts", "line": 267, "severity": "HIGH", "category": "Bug",
+             "issue": "bogus line", "line_out_of_range": True},
+            {"file": "src/c.ts", "line": 400, "severity": "HIGH", "category": "Bug",
+             "issue": "bogus line outside the diff", "out_of_diff": True,
+             "line_out_of_range": True,
+             "evidence": [{"file": "src/a.ts", "line": 2, "note": "caller"}]},
+            {"file": "b.ts", "line": 20, "severity": "HIGH", "category": "Bug",
+             "issue": "real inline"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="[]", stderr=""
+            )
+            rc = self._run(path)
+        assert rc == 0
+        posts = [
+            c for c in mock_run.call_args_list
+            if any("body=" in str(a) for a in c.args[0])
+        ]
+        assert [p for p in posts if "path=src/a.ts" in p.args[0] or "path=src/c.ts" in p.args[0]] == []
+        out = capsys.readouterr().out
+        assert "Posted 1" in out
+        assert "line-out-of-range=2" in out
+        assert "failed 0" in out
+
     @staticmethod
     def _pr_files_pages() -> str:
         """``gh api --paginate`` output for ``pulls/{pr}/files``: two pages
@@ -26075,3 +26109,129 @@ class TestVerificationStatsCounts:
             root / "prompts" / "github-review.md",
         ):
             assert formula in doc.read_text(), doc.name
+
+
+class TestValidateLineReanchor:
+    """A diff-scope line past the end of its file (e.g. a reviewer citing its
+    position in ``patches_all.txt``) is re-anchored on ``code_snippet`` before
+    range filtering and duplicate merging, or kept and tagged
+    ``line_out_of_range``.
+    """
+
+    _FILE = "src/persistence/records.py"
+
+    def _records_source(self) -> str:
+        lines = [f"# line {n}" for n in range(1, 23)]
+        lines[16] = "        return self._rows[key]"
+        lines[19] = "        self._rows.clear()"
+        lines[20] = "        self._rows.clear()"
+        return "\n".join(lines) + "\n"
+
+    def _finding(self, **overrides: Any) -> dict[str, Any]:
+        base: dict[str, Any] = {
+            "file": self._FILE, "line": 17, "severity": "HIGH",
+            "category": "Correctness", "priority": 1, "confidence": 0.95,
+            "issue": "KeyError on a missing record",
+            "recommendation": "Use self._rows.get(key)",
+            "code_snippet": "\n        return self._rows[key]\n",
+        }
+        base.update(overrides)
+        return base
+
+    def _run(
+        self, tmp_path: Path, findings: list[dict[str, Any]],
+        diff_data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        import io
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        root = tmp_path / "root"
+        resolved = _make_review_root(root, {self._FILE: self._records_source()})
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": resolved,
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+        }))
+        diff_data = diff_data or _make_diff_data(
+            files=[self._FILE], ranges={self._FILE: {"added": [[15, 19]], "removed": []}},
+        )
+        (cr_dir / "findings.json").write_text(json.dumps(findings))
+        (cr_dir / "diff_data.json").write_text(json.dumps(diff_data))
+        ns = argparse.Namespace(
+            findings=str(cr_dir / "findings.json"),
+            diff_data=str(cr_dir / "diff_data.json"),
+            settings=None,
+            cr_dir=str(cr_dir),
+        )
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            assert cmd_validate(ns) == 0
+        return json.loads(buf.getvalue())
+
+    def test_reanchored_finding_merges_with_its_duplicate(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path, [
+            self._finding(reviewer="bha_p0"),
+            self._finding(reviewer="unified_auditor", line=267),
+        ])
+        assert result["stats"]["discarded_duplicate"] == 1
+        assert [f["line"] for f in result["validated"]] == [17]
+        reanchored = [
+            d["finding"] for d in result["discarded"] if d["reason"] == "DISCARD_DUPLICATE"
+        ] + result["validated"]
+        assert any(f.get("line_reanchored_from") == 267 for f in reanchored)
+        assert result["stats"]["lines_reanchored"] == 1
+
+    def test_reanchor_sets_line_and_keeps_the_original(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path, [self._finding(line=267)])
+        (finding,) = result["validated"]
+        assert finding["line"] == 17
+        assert finding["line_reanchored_from"] == 267
+        assert "line_out_of_range" not in finding
+        assert "out_of_hunk_kept" not in finding
+
+    def test_unmatched_snippet_is_kept_and_tagged(self, tmp_path: Path) -> None:
+        # P2 at 0.6: the out-of-hunk floor (0.80) would discard it on
+        # location alone; an unanchorable line must not.
+        result = self._run(tmp_path, [self._finding(
+            line=267, priority=2, severity="MEDIUM", confidence=0.6,
+            code_snippet="not in the file",
+        )])
+        (finding,) = result["validated"]
+        assert finding["line"] == 267
+        assert finding["line_out_of_range"] is True
+        assert "line_reanchored_from" not in finding
+        assert "out_of_hunk_kept" not in finding
+        assert result["stats"]["kept_line_out_of_range"] == 1
+
+    def test_ambiguous_snippet_is_tagged_not_moved(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path, [self._finding(
+            line=267, code_snippet="self._rows.clear()",
+        )])
+        (finding,) = result["validated"]
+        assert finding["line"] == 267
+        assert finding["line_out_of_range"] is True
+
+    def test_in_range_line_strips_reviewer_supplied_tags(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path, [self._finding(
+            line_out_of_range=True, line_reanchored_from=3,
+        )])
+        (finding,) = result["validated"]
+        assert finding["line"] == 17
+        assert "line_out_of_range" not in finding
+        assert "line_reanchored_from" not in finding
+
+    def test_deleted_file_is_measured_from_the_patch(self, tmp_path: Path) -> None:
+        gone = "src/old.py"
+        removed = {str(n): f"old {n}" for n in range(1, 6)}
+        removed["3"] = "def legacy_entry():"
+        diff_data = _make_diff_data(
+            files=[gone],
+            statuses={gone: "removed"},
+            ranges={gone: {"added": [], "removed": [[1, 5]]}},
+            patch_lines={gone: {"added_lines": {}, "removed_lines": removed}},
+        )
+        result = self._run(tmp_path, [self._finding(
+            file=gone, line=40, code_snippet="def legacy_entry():",
+        )], diff_data)
+        (finding,) = result["validated"]
+        assert finding["line"] == 3
+        assert finding["line_reanchored_from"] == 40

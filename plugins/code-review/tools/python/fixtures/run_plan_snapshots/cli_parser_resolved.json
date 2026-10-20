@@ -177,6 +177,13 @@
           ],
           "dest": "settings",
           "default": null
+        },
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null
         }
       ]
     },

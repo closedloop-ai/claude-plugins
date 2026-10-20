@@ -118,11 +118,23 @@ shape. Producers may emit dicts directly; the Python convenience type lives in
   // Present (and true) only when the validator set them; any value a
   // reviewer emits is stripped. Never both on one finding.
   "out_of_hunk_kept": true,  // file is in the diff, line is outside its changed ranges
-  "out_of_diff": true         // file is outside the diff (ISS-12737): kept under the
+  "out_of_diff": true,        // file is outside the diff (ISS-12737): kept under the
                               // normal 0.5 confidence floor, always verified (never
                               // from the verify cache); the verifier rejects it with
                               // rejection_class "not_caused_by_diff" when no change in
                               // the patch caused it
+
+  // Line-range tags (stage_22 validate, before range filtering and duplicate
+  // merging). A diff-scope line past the end of its file (the new file under
+  // review_root, or for a file deleted outright the old file rebuilt from the
+  // patch) is re-anchored to the one line containing the first non-blank
+  // line of code_snippet. Validator-owned like the tags above; at most one of
+  // the two is present.
+  "line_reanchored_from": <int>, // the reviewer's original line; `line` now holds
+                                 // the re-anchored line
+  "line_out_of_range": true      // no single line matched: kept (location is never a
+                                 // discard reason) under the normal 0.5 confidence
+                                 // floor, never posted inline, shown in the summary
 }
 ```
 
