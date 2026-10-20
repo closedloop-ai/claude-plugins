@@ -55,8 +55,11 @@ export function acquireNativeRecord(input: unknown) {
 export function releaseNativeRecord(input: unknown) {
   const data = releaseSchema.parse(input);
   const { lease, stoppedTurn, ...grant } = data;
-  const definition = readDefinition(grant.agentRoot, grant.agentName, []);
-  grant.agentRoot = definition.root;
+  // A plugin upgrade deletes older version directories. A helper's grant is then released against the root it
+  // recorded at acquisition; the writer's own continuation keeps quality-loop.md's stranded `migrate` path.
+  if (grant.primaryOwner || observeDefinitionDigest(grant.agentRoot, grant.agentName, []) !== null) {
+    grant.agentRoot = readDefinition(grant.agentRoot, grant.agentName, []).root;
+  }
   const place = grant.sessionless ? checkoutLocation(grant.worktree) : location(grant.worktree);
   grant.worktree = place.root;
   releaseRecordTurnAt(place, (lock) => {

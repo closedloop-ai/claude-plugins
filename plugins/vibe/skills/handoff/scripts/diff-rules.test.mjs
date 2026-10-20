@@ -178,6 +178,30 @@ test("routes, GridTableV2 and story titles require the tests the graph does not 
     },
   });
   assert.deepEqual(result.requiredTests.map((entry) => entry.path), ["e2e/links.spec.ts", ...tests]);
+  assert.match(result.requiredChecks.map((check) => check.command).join(), /narrow-controls\.mjs --worktree <wt> --wide <row\.yml> --narrow <row\.yml>/);
+  assert.deepEqual(run(t, { head: { "apps/app/x.ts": "export const x = 1;\n" } }).requiredChecks, []);
+});
+
+test("copy provenance: a new toast, label or JSX string needs a cited source; existing and moved copy pass", (t) => {
+  const file = "packages/app/tags/remove-tags.tsx";
+  const base = { [file]: "export function A() {\n  return <Button aria-label=\"Close\">Save</Button>;\n}\n" };
+  const head = { [file]: [
+    "export function A({ n }) {",
+    "  toast.success(`Removed ${tag} from ${n} items`);",
+    "  const ok = a > limit && b < 3;",
+    "  return <Button aria-label=\"Close\" title=\"Remove tag\" variant=\"ghost\">Save</Button>;",
+    "}",
+    "export const B = () => <p className=\"x\">Nothing matched your filters</p>;",
+    "",
+  ].join("\n") };
+  const bare = run(t, { base, head });
+  assert.deepEqual(bare.blocking.map((finding) => [finding.rule, finding.line]), [["copy-provenance", 2], ["copy-provenance", 4], ["copy-provenance", 6]]);
+  assert.match(bare.blocking[0].fix, /Copy: "Removed \$\{tag\} from \$\{n\} items": <ticket, PRD or person's words/);
+  const cited = "Copy: \"Removed ${tag} from ${n} items\": ISS-1 AC2\nCopy: \"Remove tag\": PRD-1 R3\nCopy: \"Nothing matched your filters\": ISS-1 AC4\n";
+  assert.deepEqual(run(t, { base, head, changeLog: cited }).found, []);
+  const elsewhere = { ...base, "apps/app/old-toast.tsx": "toast.success(`Removed ${label} from ${count} items`);\n" };
+  assert.deepEqual(run(t, { base: elsewhere, head }).blocking.map((finding) => finding.line), [4, 6]);
+  assert.deepEqual(run(t, { head: { "packages/app/tags/remove-tags.test.tsx": "toast(\"Brand new words\");\n" } }).found, []);
 });
 
 test("a lost story ID blocks unless recorded as a replacement, and every reference to it blocks", (t) => {

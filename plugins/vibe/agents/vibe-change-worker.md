@@ -539,6 +539,8 @@ words, check and result (`met` or `not met yet`), and, with a reference image
 on a UI change, a Reference check line per touched screen and theme (light
 and dark wherever the surface supports both): the screenshot path, the
 reference path and the differences found and fixed, or that it could not be
-captured locally and why. `BLOCKED` gives
+captured locally and why. A layout fix claim (wraps, truncates, fits)
+carries a measurement of the named element, not its container, at the named
+viewport: rendered width and line count. `BLOCKED` gives
 evidence without a technical question or silent downscope. Every non-trivial
 result ends with the required Graph block.

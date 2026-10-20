@@ -173,7 +173,9 @@ path merely because another rule describes how its content should look.
    Deleting a replaced (not removed) component's tests ports each case its
    successor still enforces or cites the retiring ruling.
    Open what each change log line that cleared an inventory `diffRules`
-   finding cites; a citation that does not hold is blocking.
+   finding cites; a citation that does not hold is blocking. A session-written
+   assertion that pins the opposite of the behavior its brief asks for (a
+   `truncate` pin on a title the brief says wraps) is blocking.
    Extract every acceptance criterion ID used by a test name or `describe`
    title and match it exactly to the ID and source already recorded from the
    ticket, PRD or session table. An invented ID, renumbered criterion or test

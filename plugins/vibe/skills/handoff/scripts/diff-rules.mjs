@@ -55,6 +55,16 @@ const STORY_ID_WORD = /[A-Z]{2,}(?=[A-Z][a-z]|\b|\d)|[A-Z]?[a-z]+|[A-Z]|\d+/g;
 const HARNESS_NAME = /harness|adapter/i;
 const EXPECT_CALL = /\bexpect\(/;
 const WINDOW = 25;
+const COPY_FILE = /^(?:apps\/app|apps\/desktop\/src\/renderer|packages\/app|packages\/design-system)\/.*\.tsx?$/;
+const COPY_LITERALS = [
+  /\btoast(?:\.\w+)?\(\s*(["'`])((?:(?!\1)[^\\]|\\.)*)\1/g,
+  /(?:\baria-label|\baria-description|\blabel|\btitle|\bplaceholder|\bdescription|\btooltip)\s*[=:]\s*\{?\s*(["'`])((?:(?!\1)[^\\]|\\.)*)\1/g,
+  /()(?<=[\w"'}/])>([^<>{}=&|();]*[A-Za-z]{2,}[^<>{}=&|();]*)</g,
+];
+const WORDING = /[A-Z]|\s/;
+const TEMPLATE_PART = /\$\{[^}]*\}/;
+const TEMPLATE_PARTS = /\$\{[^}]*\}/g;
+const NARROW_CONTROLS = "node <vibe plugin>/skills/handoff/scripts/narrow-controls.mjs --worktree <wt> --wide <row.yml> --narrow <row.yml>";
 
 /** Parses `git diff --unified=0` output into per-file added and removed lines. */
 export function parseUnifiedDiff(text) {
@@ -124,7 +134,11 @@ export function evaluateDiff(files, changeLog, repo) {
   checkStories(live, files, repo, logged, add);
   checkFrozenRenders(files, repo, logged, add);
   checkLostStoryIds(files, repo, add);
+  checkCopyProvenance(live, files, repo, logged, add);
   requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo), ...sidebarOrderTests(files, repo));
+  if (gridTouched(files)) {
+    requiredChecks.push({ command: NARROW_CONTROLS, reason: "a GridTableV2 type, adapter or mount changed; run it on one row of each touched surface captured at wide and narrow width (control snapshot or ariaSnapshot), and every wide control it reports without a narrow home blocks" });
+  }
   return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks };
 }
 
@@ -431,13 +445,49 @@ export function routeSpecs(files, repo) {
 
 /** GridTableV2 parity tests read other files' source, so the graph never maps them. */
 export function gridParityTests(files, repo) {
-  const touched = files.some((file) => GRID_TABLE.test(file.path) || [...file.added, ...file.removed].some((entry) => GRID_SYMBOL.test(entry.text)));
-  if (!touched) {
+  if (!gridTouched(files)) {
     return [];
   }
   return [GRID_PARITY_TEST, ...repo.headFiles.filter((file) => HOST_PARITY_TEST.test(file))]
     .filter((file) => repo.headFiles.includes(file))
     .map((file) => ({ path: file, reason: "a GridTableV2 type, adapter or mount changed; this parity test is not mapped by code_tests_for" }));
+}
+
+function gridTouched(files) {
+  return files.some((file) => GRID_TABLE.test(file.path) || [...file.added, ...file.removed].some((entry) => GRID_SYMBOL.test(entry.text)));
+}
+
+/**
+ * A new toast, label, title, placeholder, description or aria string, or JSX text, that the base tree never had
+ * needs a cited human source (a prose provenance rule did not stop agent-written toasts, symphony-alpha #8956).
+ */
+function checkCopyProvenance(files, allFiles, repo, logged, add) {
+  const removed = allFiles.flatMap((file) => file.removed.map((entry) => entry.text)).join("\n");
+  for (const file of files.filter((entry) => COPY_FILE.test(entry.path) && !isTestFile(entry.path) && !STORY_FILE.test(entry.path))) {
+    for (const entry of file.added) {
+      for (const text of copyLiterals(entry.text)) {
+        if (!removed.includes(text) && !logged(`Copy: "${text}":`) && !repo.baseContains(text)) {
+          add("copy-provenance", file.path, entry.line, `new user-visible string "${text}" with no cited human source`, `reuse the shared constant or label map that renders it, or record \`Copy: "${text}": <ticket, PRD or person's words that give it>\`; the session's own ticket, plan or change log is not a source`);
+        }
+      }
+    }
+  }
+}
+
+export function copyLiterals(line) {
+  if (COMMENT_LINE.test(line)) {
+    return [];
+  }
+  const found = new Set();
+  for (const pattern of COPY_LITERALS) {
+    for (const match of line.matchAll(pattern)) {
+      const text = match[2].trim();
+      if (/[A-Za-z]{2,}/.test(text.replace(TEMPLATE_PARTS, "")) && WORDING.test(text)) {
+        found.add(text);
+      }
+    }
+  }
+  return [...found];
 }
 
 /** The sidebar order is copied into preview.tsx; only these tests catch the copy drifting. */
@@ -478,6 +528,16 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
     baseFiles,
     baseBlobs,
     storyReplacements,
+    baseContains: (text) => {
+      const parts = text.split(TEMPLATE_PART);
+      const search = parts.length > 1 ? ["-E", "-e", parts.map((part) => part.replace(/[.[\]()*+?{}|^$\\]/g, "\\$&")).join(".*")] : ["-F", "-e", text];
+      try {
+        git(worktree, ["grep", "-q", ...search, base, "--", "apps/", "packages/"]);
+        return true;
+      } catch {
+        return false;
+      }
+    },
     filesNaming: (text) => lines(() => git(worktree, ["grep", "-l", "-F", text, "--", ...STORY_ID_PATHSPECS])),
     isFrozenStory,
     frozenStories: () => {

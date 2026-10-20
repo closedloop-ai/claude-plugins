@@ -68,7 +68,7 @@ Load the guided-manual-qa skill (closedloop-core:guided-manual-qa) and read the 
 Check the PR's current pushed head with `gh pr view <number> -R <owner/repo> --json headRefOid`. If it is not the plan's head <sha>, say so and stop.
 Otherwise reply only "ready and waiting" and stop.
 When the operator returns, present one checkpoint at a time: its criterion ID (or "regression"), what to do, what to look for, and the requirement it proves. Wait for pass or fail.
-Record each result in the plan. Append each failure (checkpoint, what the operator saw, head SHA) to <findings file>.
+Record each result in the plan. Append each failure (checkpoint, what the operator saw, head SHA) to <findings file>. Never file a ticket; the orchestrator files them.
 ```
 
 ## Flag approval

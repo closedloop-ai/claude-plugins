@@ -212,7 +212,9 @@ engineering about it.
    migration entry adds `releasedRecord` (request, action, stopped state,
    never the lease). Another actor's grant, any other root, a present
    definition (use `release-record`), a running lease, missing or mismatched
-   evidence and stale identity are refused with nothing changed.
+   evidence and stale identity are refused with nothing changed. A stopped
+   helper's grant under a removed root needs no old cache: `release-record`
+   with its identical grant frees it, and `migrate` refuses until it is gone.
 4. A writer blocked before block reasons existed has no `blockReason`. The
    command accepts it only with that retained grant under an absent
    definition, then records the proven reason; otherwise it stays refused.

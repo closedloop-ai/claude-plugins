@@ -88,7 +88,9 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    iOS tap by its result, as its click may report `pointerType` `mouse`).
    Also compare the narrow-width DOM geometry and captures with the same
    width on main: a control that floats over the list on main but becomes an
-   in-flow band is a finding.
+   in-flow band is a finding. For each touched list surface, snapshot one row
+   at wide and at narrow width and run `../skills/handoff/scripts/narrow-controls.mjs`;
+   each wide control it reports without a narrow home is a finding.
 7. Copies: where the diff repeats a rule, wiring, or component at more than
    one site (`../skills/vibe/references/design-pass.md`, "Red flags"), find an
    input on which the copies already behave differently. That divergence is

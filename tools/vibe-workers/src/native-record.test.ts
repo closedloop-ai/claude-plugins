@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { changeWriter, readWriterSummary, registerWriter } from "./ledger.js";
 import { bundleDirectory, fixture, graph } from "./test-fixtures.js";
@@ -55,6 +55,23 @@ describe("native helper record CLI", () => {
     expect(run("acquire-record", { ...input, agentName: "vibe-change-worker", recordAction: "progress",
       workerId: "different-primary" }).status).toBe(1);
     expect(run("acquire-record", { ...input, recordAction: "cancel" }).status).toBe(0);
+  }, 10000);
+  it("releases a stopped helper's grant after a plugin upgrade deleted its recorded version directory", () => {
+    const value = setup();
+    const versionRoot = join(value.base, "cache", "vibe", "1.0.54");
+    mkdirSync(dirname(versionRoot), { recursive: true });
+    cpSync(value.agentRoot, versionRoot, { recursive: true });
+    const input = { ...grant(value), agentRoot: versionRoot };
+    const acquired = run("acquire-record", input);
+    expect(acquired.status, acquired.stderr).toBe(0);
+    const { lease } = JSON.parse(acquired.stdout);
+    rmSync(versionRoot, { recursive: true });
+    expect(run("release-record", release({ ...input, workerId: "other-helper" }, lease)).status).toBe(1);
+    expect(run("release-record", release({ ...input, agentRoot: value.agentRoot }, lease)).status).toBe(1);
+    const released = run("release-record", release(input, lease));
+    expect(released.stderr).not.toMatch(/ENOENT/);
+    expect(released.status, released.stderr).toBe(0);
+    expect(existsSync(join(value.metadata, "vibe-record-turn.lock"))).toBe(false);
   }, 10000);
   it("grants the Codex environment helper its pull-request action and refuses it to other roles", () => {
     const value = setup();

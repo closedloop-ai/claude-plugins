@@ -12249,8 +12249,9 @@ function acquireNativeRecord(input) {
 function releaseNativeRecord(input) {
   const data = releaseSchema.parse(input);
   const { lease, stoppedTurn, ...grant } = data;
-  const definition = readDefinition(grant.agentRoot, grant.agentName, []);
-  grant.agentRoot = definition.root;
+  if (grant.primaryOwner || observeDefinitionDigest(grant.agentRoot, grant.agentName, []) !== null) {
+    grant.agentRoot = readDefinition(grant.agentRoot, grant.agentName, []).root;
+  }
   const place = grant.sessionless ? checkoutLocation(grant.worktree) : location(grant.worktree);
   grant.worktree = place.root;
   releaseRecordTurnAt(place, (lock) => {

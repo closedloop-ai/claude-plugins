@@ -136,6 +136,12 @@ git -C "<path to the claude-plugins checkout>" pull
 "$CODEX" plugin list --marketplace closedloop-ai
 ```
 
+`plugin add` deletes every older vibe version's cache, including the one a
+running session was recorded under. Nothing needs restoring: a stopped
+helper's lock releases without its old version and a writer moves through
+`references/quality-loop.md`'s turn stranded by a plugin upgrade. A turn still running
+loses its scripts, so install between turns.
+
 In both cases, quit the ChatGPT app completely (Cmd+Q, not just closing the
 window) and reopen it, so it loads the new skills and workers. The new
 version is the `version` in `plugins/vibe/.codex-plugin/plugin.json` on

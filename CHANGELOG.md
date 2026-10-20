@@ -4,6 +4,22 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.68
+
+Lessons appended to the vibe lessons ledger on the evening of 2026-10-20, in one release. The repeat lesson and the copy provenance repeat become checks, not more prose.
+
+#### Added
+- `handoff/scripts/narrow-controls.mjs`: compares the interactive controls in Playwright accessibility snapshots of one row at wide and narrow width and fails on any wide control with no narrow home. A change log line `Narrow home: <role> "<name>" -> <role> "<name>"` must name a control the narrow row has; `Narrow ruling: <role> "<name>": <source>` records a human ruling. `diff-rules.mjs` lists it in `requiredChecks` for every GridTableV2 change, and the adversarial reviewer runs it on each touched list surface (symphony-alpha #8962: narrow rows replaced the editable status pill with a read-only glyph after a one-line rule asked for this comparison).
+- `diff-rules.mjs` `copy-provenance`: a new toast, label, title, placeholder, description, tooltip or aria string, or JSX text, in `apps/app`, the Desktop renderer, `packages/app` or `packages/design-system` that the base tree never had and the diff did not move blocks until the change log records `Copy: "<text>": <source>`; guardrails check 9 already opens each cited source (symphony-alpha #8956: an agent-written removal toast).
+
+#### Fixed
+- `writer-state.mjs release-record` frees a stopped helper's grant whose recorded plugin version directory was deleted by an upgrade, against the root recorded at acquisition, instead of failing with `ENOENT`. The writer's own continuation keeps the stranded `migrate` path.
+
+#### Changed
+- `INSTALL.md`: `plugin add` deletes every older vibe version's cache; nothing needs restoring, because helper locks release without the old version and the writer migrates. Install between turns.
+- The writer's layout fix claim carries a measurement of the named element at the named viewport; guardrails check 9 blocks a session-written assertion that pins the opposite of its brief.
+- `fleet-orchestrator`: the orchestrator alone files a ticket for a QA finding, after searching open tickets from the last day for the same subject; the QA guide never files.
+
 ### vibe v1.0.67
 
 Lessons appended to the vibe lessons ledger on 2026-10-20 after v1.0.66, in one release.
