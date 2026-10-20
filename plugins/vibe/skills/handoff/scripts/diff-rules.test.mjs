@@ -1,235 +1,190 @@
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 import { parseUnifiedDiff, runDiffRules, transactionBodies } from "./diff-rules.mjs";
-import { git, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
+import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.join(HERE, "diff-rules.mjs");
-const BASE_MIGRATION = "packages/database/prisma/migrations/20261020030000_drop_routines/migration.sql";
+const isFrozenStory = (text) => / v1\.0\//.test(text);
 
-/** A checkout whose base commit holds `baseFiles`; `head` files are written uncommitted, `changeLog` beside the session record. */
-function session(t, { baseFiles = {}, head = {}, remove = [], changeLog = "", commit = false }) {
+function put(root, files) {
+  for (const [file, content] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), content);
+  }
+}
+
+/** Findings as [rule, file] for a base commit of `base` files and an uncommitted (or committed) `head`. */
+function run(t, { base = {}, head = {}, changeLog = "", commit = false }) {
   const { root, home, cleanup } = makeHome("vibe-diff-rules-");
   t.after(cleanup);
   const checkout = path.join(root, "wt");
   git(root, ["init", "--quiet", "--initial-branch=main", checkout], home);
-  for (const [file, content] of Object.entries({ "README.md": "seed\n", [BASE_MIGRATION]: "SELECT 1;\n", ...baseFiles })) {
-    mkdirSync(path.dirname(path.join(checkout, file)), { recursive: true });
-    writeFileSync(path.join(checkout, file), content);
-  }
+  put(checkout, { "README.md": "seed\n", ...base });
   git(checkout, ["add", "-A"], home);
   git(checkout, ["commit", "--quiet", "-m", "base"], home);
-  const base = git(checkout, ["rev-parse", "HEAD"], home);
-  for (const [file, content] of Object.entries(head)) {
-    mkdirSync(path.dirname(path.join(checkout, file)), { recursive: true });
-    writeFileSync(path.join(checkout, file), content);
-  }
-  for (const file of remove) {
-    rmSync(path.join(checkout, file));
-  }
+  const baseSha = git(checkout, ["rev-parse", "HEAD"], home);
+  put(checkout, head);
   if (commit) {
     git(checkout, ["add", "-A"], home);
     git(checkout, ["commit", "--quiet", "-m", "session"], home);
   }
-  const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], home);
-  writeFileSync(path.join(gitDir, "vibe-changes.md"), changeLog);
-  return { checkout, base, home, result: () => runDiffRules({ worktree: checkout, base }) };
+  writeFileSync(path.join(git(checkout, ["rev-parse", "--absolute-git-dir"], home), "vibe-changes.md"), changeLog);
+  const result = runDiffRules({ worktree: checkout, base: baseSha, isFrozenStory });
+  return { ...result, found: result.blocking.map((finding) => [finding.rule, finding.file]) };
 }
 
-const rules = (result) => result.blocking.map((finding) => finding.rule);
-
-test("parseUnifiedDiff keeps added and removed line numbers per file", () => {
+test("the diff parser keeps line numbers, drops private plans, and finds transaction bodies", () => {
   const files = parseUnifiedDiff([
-    "diff --git a/a.ts b/a.ts",
-    "--- a/a.ts",
-    "+++ b/a.ts",
-    "@@ -3,1 +3,2 @@",
-    "-old",
-    "+new",
-    "+more",
-    "diff --git a/.closedloop-ai/vibe-plans/p.md b/.closedloop-ai/vibe-plans/p.md",
-    "new file mode 100644",
-    "--- /dev/null",
-    "+++ b/.closedloop-ai/vibe-plans/p.md",
-    "@@ -0,0 +1 @@",
-    "+plan",
+    "diff --git a/a.ts b/a.ts", "--- a/a.ts", "+++ b/a.ts", "@@ -3,1 +3,2 @@", "-old", "+new", "+more",
+    "diff --git a/.closedloop-ai/vibe-plans/p.md b/.closedloop-ai/vibe-plans/p.md", "new file mode 100644",
+    "--- /dev/null", "+++ b/.closedloop-ai/vibe-plans/p.md", "@@ -0,0 +1 @@", "+plan",
   ].join("\n"));
-  assert.equal(files.length, 1);
-  assert.deepEqual(files[0].removed, [{ line: 3, text: "old" }]);
-  assert.deepEqual(files[0].added, [{ line: 3, text: "new" }, { line: 4, text: "more" }]);
+  assert.deepEqual(files.map((file) => [file.path, file.removed, file.added]), [["a.ts", [{ line: 3, text: "old" }], [{ line: 3, text: "new" }, { line: 4, text: "more" }]]]);
+  assert.deepEqual(transactionBodies("x\nwithDb.tx(async (tx) => {\n  a();\n});\n"), [[2, 4]]);
 });
 
-test("a migration older than the base's newest blocks and every migration requires the repo gates", (t) => {
-  const older = session(t, { head: { "packages/database/prisma/migrations/20261019000000_add_x/migration.sql": "CREATE TABLE \"x\" (id int);\n" } }).result();
-  assert.deepEqual(rules(older), ["migration-order"]);
-  assert.deepEqual(older.requiredChecks.map((check) => check.command), ["pnpm check:destructive-migrations", "pnpm check:migration-immutability"]);
-  const newer = session(t, { head: { "packages/database/prisma/migrations/20261021000000_add_x/migration.sql": "CREATE TABLE \"x\" (id int);\nCREATE INDEX \"x_i\" ON \"x\"(id);\n" } }).result();
-  assert.deepEqual(rules(newer), []);
-});
-
-test("a migration on an existing table needs its recorded precedent, and a full-table backfill blocks", (t) => {
+test("migrations: an existing table needs its recorded precedent, a full-table backfill blocks, and the repo gates run", (t) => {
+  const file = "packages/database/prisma/migrations/20261021000000_link_kind/migration.sql";
   const sql = [
+    "CREATE TABLE \"fresh\" (id int);",
+    "CREATE INDEX \"fresh_i\" ON \"fresh\"(id);",
     "CREATE INDEX \"artifact_links_kind_idx\" ON \"artifact_links\"(\"kind\");",
     "UPDATE \"artifact_links\" SET \"kind\" = 'x';",
-    "ALTER TABLE \"y\" ADD CONSTRAINT \"y_fk\" FOREIGN KEY (\"a\") REFERENCES \"z\"(\"id\") ON DELETE CASCADE ON UPDATE CASCADE;",
+    "ALTER TABLE \"y\" ADD CONSTRAINT \"y_fk\" FOREIGN KEY (\"a\") REFERENCES \"z\"(\"id\") ON UPDATE CASCADE;",
   ].join("\n");
-  const file = "packages/database/prisma/migrations/20261021000000_link_kind/migration.sql";
-  const bare = session(t, { head: { [file]: sql } }).result();
-  assert.deepEqual(rules(bare).sort(), ["migration-backfill", "migration-precedent", "migration-precedent"]);
-  assert.ok(bare.blocking.some((finding) => finding.problem.includes("artifact_links")));
-  assert.ok(!bare.blocking.some((finding) => finding.problem.includes("CASCADE")));
-  const logged = session(t, {
-    head: { [file]: sql },
-    changeLog: "- Migration precedent: artifact_links: a, b, c\n- Migration precedent: y: d, e, f\n",
-  }).result();
-  assert.deepEqual(rules(logged), []);
+  const bare = run(t, { head: { [file]: sql } });
+  assert.deepEqual(bare.found, [["migration-precedent", file], ["migration-precedent", file], ["migration-backfill", file]]);
+  assert.deepEqual(bare.requiredChecks.map((check) => check.command), ["pnpm check:destructive-migrations", "pnpm check:migration-immutability"]);
+  const logged = run(t, { head: { [file]: sql }, changeLog: "Migration precedent: artifact_links: a, b, c\nMigration precedent: y: d, e, f\n" });
+  assert.deepEqual(logged.found, []);
 });
 
-test("a raw write of a captured artifact field needs the canonical capture", (t) => {
-  const write = "export async function move(tx) {\n  await tx.artifact.updateMany({\n    where: { id: { in: ids } },\n    data: { projectId: target },\n  });\n}\n";
-  const file = "apps/api/app/documents/move-service.ts";
-  assert.deepEqual(rules(session(t, { head: { [file]: write } }).result()), ["activity-capture"]);
-  const captured = `${write}export const after = () => captureBatchProjectChange({ tx });\n`;
-  assert.deepEqual(rules(session(t, { head: { [file]: captured } }).result()), []);
-  const logged = session(t, { head: { [file]: write }, changeLog: `Activity capture: ${file}: the caller's captureBatchProjectChange\n` }).result();
-  assert.deepEqual(rules(logged), []);
-  const uncaptured = "await tx.artifact.updateMany({ where: {}, data: { sortKey: 1 } });\n";
-  assert.deepEqual(rules(session(t, { head: { [file]: uncaptured } }).result()), []);
-});
-
-test("returning an error inside withDb.tx after a write blocks; refusing before the first write does not", (t) => {
-  const partial = [
-    "export const run = () => withDb.tx(async (tx) => {",
-    "  await tx.artifactLink.create({ data });",
-    "  if (cycle) {",
-    "    return Result.err(Status.Conflict);",
-    "  }",
-    "  return Result.ok(1);",
-    "});",
-  ].join("\n");
-  const file = "apps/api/app/links/service.ts";
-  const found = session(t, { head: { [file]: partial } }).result();
-  assert.deepEqual(rules(found), ["tx-result-after-write"]);
-  assert.equal(found.blocking[0].line, 4);
-  const validated = partial.replace("  await tx.artifactLink.create({ data });\n  if (cycle) {\n    return Result.err(Status.Conflict);\n  }", "  if (cycle) {\n    return Result.err(Status.Conflict);\n  }\n  await tx.artifactLink.create({ data });");
-  assert.deepEqual(rules(session(t, { head: { [file]: validated } }).result()), []);
-  assert.deepEqual(transactionBodies(partial), [[1, 7]]);
-});
-
-test("an artifact link delete must name the exact edge", (t) => {
-  const file = "apps/api/app/links/placement.ts";
-  const broad = "await tx.artifactLink.deleteMany({\n  where: { targetId: id, linkType: LinkType.Produces },\n});\n";
-  assert.deepEqual(rules(session(t, { head: { [file]: broad } }).result()), ["artifact-link-delete"]);
-  const exact = "await tx.artifactLink.deleteMany({\n  where: { sourceId: parent, targetId: id, linkType: LinkType.Produces },\n});\n";
-  assert.deepEqual(rules(session(t, { head: { [file]: exact } }).result()), []);
+test("backend writes: uncaptured artifact fields, errors after a transaction write, and unscoped link deletes block", (t) => {
+  const write = "await tx.artifact.updateMany({\n  where: { id: { in: ids } },\n  data: { projectId: target },\n});\n";
+  const partial = "export const run = () => withDb.tx(async (tx) => {\n  await tx.artifactLink.create({ data });\n  if (cycle) {\n    return Result.err(Status.Conflict);\n  }\n});\n";
+  const result = run(t, {
+    head: {
+      "apps/api/app/a/raw.ts": write,
+      "apps/api/app/a/captured.ts": `${write}captureBatchProjectChange({ tx });\n`,
+      "apps/api/app/a/logged.ts": write,
+      "apps/api/app/a/sort-key.ts": "await tx.artifact.updateMany({ where: {}, data: { sortKey: 1 } });\n",
+      "apps/api/app/a/partial.ts": partial,
+      "apps/api/app/a/validated.ts": partial.replace("  await tx.artifactLink.create({ data });\n", "").replace("});\n", "  await tx.artifactLink.create({ data });\n});\n"),
+      "apps/api/app/a/broad-delete.ts": "await tx.artifactLink.deleteMany({ where: { targetId: id, linkType: L } });\n",
+      "apps/api/app/a/exact-delete.ts": "await tx.artifactLink.deleteMany({ where: { sourceId: p, targetId: id, linkType: L } });\n",
+    },
+    changeLog: "Activity capture: apps/api/app/a/logged.ts: the caller's captureBatchProjectChange\n",
+  });
+  assert.deepEqual(result.found.sort(), [
+    ["activity-capture", "apps/api/app/a/raw.ts"],
+    ["artifact-link-delete", "apps/api/app/a/broad-delete.ts"],
+    ["tx-result-after-write", "apps/api/app/a/partial.ts"],
+  ]);
 });
 
 test("a new Desktop sync lane needs the shared give-up, the shared backoff, a Susan pass and the roster", (t) => {
   const lane = "apps/desktop/src/main/agent-sync/placement-outbox.ts";
-  const table = "apps/desktop/prisma/migrations/20261021000000_placement_outbox/migration.sql";
-  const handRolled = "export const delay = (attempt) => 1000 * 2 ** attempt;\n";
-  const bare = session(t, { head: { [lane]: handRolled, [table]: "CREATE TABLE \"placement_sync_outbox\" (id int);\n" } }).result();
-  assert.deepEqual(rules(bare).sort(), ["desktop-sync-lane", "desktop-sync-lane", "desktop-sync-lane", "desktop-sync-lane"]);
-  const shared = [
-    "import { LaneGiveUpStampDefect } from \"../../shared/lane-give-up.js\";",
-    "import { exponentialBackoffMs } from \"../../shared/exponential-backoff.js\";",
-    "export const delay = (attempt) => exponentialBackoffMs(attempt + 1);",
-  ].join("\n");
-  const done = session(t, {
-    head: { [lane]: shared, [table]: "CREATE TABLE \"placement_sync_outbox\" (id int);\n" },
-    changeLog: "- Synchronizing-susan: no findings\n- Engineering needed (forbidden path): apps/desktop/src/main/sync/AGENTS.md; why: the lane roster names the new lane\n",
-  }).result();
-  assert.deepEqual(rules(done), []);
+  const table = { "apps/desktop/prisma/migrations/20261021000000_placement/migration.sql": "CREATE TABLE \"placement_sync_outbox\" (id int);\n" };
+  const bare = run(t, { head: { [lane]: "export const delay = (attempt) => 1000 * 2 ** attempt;\n", ...table } });
+  assert.equal(bare.found.filter(([rule]) => rule === "desktop-sync-lane").length, 4);
+  const done = run(t, {
+    head: { [lane]: "import { LaneGiveUpStampDefect } from \"../../shared/lane-give-up.js\";\nexport const delay = (n) => exponentialBackoffMs(n + 1);\n", ...table },
+    changeLog: "Synchronizing-susan: no findings\nEngineering needed (forbidden path): apps/desktop/src/main/sync/AGENTS.md; why: roster\n",
+  });
+  assert.deepEqual(done.found, []);
 });
 
-test("a dropped ticketed comment blocks while its code survives, and not when it moves or the code goes", (t) => {
-  const file = "packages/app/shared/lib/order.ts";
-  const base = "// ISS-12251: keep the id tiebreak so equal ranks stay stable\nexport const order = (a, b) => a.rank - b.rank || a.id.localeCompare(b.id);\n";
-  const dropped = session(t, { baseFiles: { [file]: base }, head: { [file]: "export const order = (a, b) => a.rank - b.rank || a.id.localeCompare(b.id);\n" }, commit: true }).result();
-  assert.deepEqual(rules(dropped), ["ticketed-comment"]);
-  const moved = session(t, {
-    baseFiles: { [file]: base },
-    head: { [file]: "export { order } from \"./sort\";\n", "packages/app/shared/lib/sort.ts": base },
-  }).result();
-  assert.deepEqual(rules(moved), []);
-  const deleted = session(t, { baseFiles: { [file]: `${base}export const keep = 1;\n` }, head: { [file]: "export const keep = 1;\n" } }).result();
-  assert.deepEqual(rules(deleted), []);
+test("a dropped ticketed comment blocks while its code survives; moved, reworded or deleted with its code it does not", (t) => {
+  const comment = (slug) => `// ${slug}: keep the id tiebreak so equal ranks stay stable\nexport const order${slug.slice(4)} = (a, b) => a.id.localeCompare(b.id);\n`;
+  const result = run(t, {
+    base: { "p/dropped.ts": comment("ISS-1"), "p/moved.ts": comment("ISS-2"), "p/reworded.ts": comment("ISS-3"), "p/deleted.ts": `${comment("ISS-4")}export const keep = 1;\n` },
+    head: {
+      "p/dropped.ts": comment("ISS-1").split("\n").slice(1).join("\n"),
+      "p/moved.ts": "export { order2 } from \"./sort\";\n",
+      "p/sort.ts": comment("ISS-2"),
+      "p/reworded.ts": comment("ISS-3").replace("keep the id tiebreak", "the id tiebreak keeps"),
+      "p/deleted.ts": "export const keep = 1;\n",
+    },
+    commit: true,
+  });
+  assert.deepEqual(result.found, [["ticketed-comment", "p/dropped.ts"]]);
 });
 
-test("a modified shared service needs a recorded parity line", (t) => {
-  const helper = "apps/api/lib/tree-order.ts";
-  const baseFiles = {
-    [helper]: "export const sortTree = (rows) => rows;\n",
-    "apps/api/app/a/service.ts": "import { sortTree } from \"../../lib/tree-order\";\n",
-    "apps/api/app/b/service.ts": "import { sortTree } from \"@/lib/tree-order.js\";\n",
+test("a modified service that two files import needs a recorded parity line", (t) => {
+  const importing = (stem) => ({ [`apps/api/app/x-${stem}/service.ts`]: `import { f } from "../../lib/${stem}";\n`, [`apps/api/app/y-${stem}/service.ts`]: `import { f } from "@/lib/${stem}.js";\n` });
+  const result = run(t, {
+    base: { "apps/api/lib/shared.ts": "a\n", "apps/api/lib/ruled.ts": "a\n", "apps/api/lib/single.ts": "a\n", ...importing("shared"), ...importing("ruled"), "apps/api/app/z/service.ts": "import { f } from \"../../lib/single\";\n" },
+    head: { "apps/api/lib/shared.ts": "b\n", "apps/api/lib/ruled.ts": "b\n", "apps/api/lib/single.ts": "b\n" },
+    changeLog: "Shared path: apps/api/lib/ruled.ts: changed; ruling: ISS-1 operator comment\n",
+  });
+  assert.deepEqual(result.found, [["shared-path", "apps/api/lib/shared.ts"]]);
+});
+
+test("stories: a flipped assertion needs a release, a new entry beside a current one or for a harness blocks", (t) => {
+  const meta = (title, component = "Rows") => `export default { title: "${title}", component: ${component}, tags: ["stable"] };\n`;
+  const story = `${meta("Composites/Rows")}export const Refused = { play: async () => { await expect(alert).toBeVisible(); } };\n`;
+  const flipped = story.replace("toBeVisible()", "not.toBeInTheDocument()");
+  const result = run(t, {
+    base: { "s/rows.stories.tsx": story, "s/cards.stories.tsx": meta("Composites v1.0/Cards", "Cards") },
+    head: {
+      "s/rows.stories.tsx": flipped,
+      "s/rows-touch.stories.tsx": meta("Composites/Rows Touch"),
+      "s/cards-current.stories.tsx": meta("Composites/Cards", "Cards"),
+      "s/rows-harness.stories.tsx": meta("Composites/Rows Harness", "RowsHarness"),
+    },
+  });
+  assert.deepEqual(result.found.sort(), [
+    ["story-entry", "s/rows-harness.stories.tsx"],
+    ["story-entry", "s/rows-touch.stories.tsx"],
+    ["story-outcome", "s/rows.stories.tsx"],
+  ]);
+  const released = run(t, {
+    base: { "s/rows.stories.tsx": story, "apps/storybook/package.json": "{\n  \"version\": \"3.2.4\"\n}\n" },
+    head: { "s/rows.stories.tsx": flipped, "apps/storybook/package.json": "{\n  \"version\": \"3.3.0\"\n}\n" },
+  });
+  assert.deepEqual(released.found, []);
+});
+
+test("a change anywhere in a frozen story's import closure blocks until its identical render is recorded", (t) => {
+  const base = {
+    "apps/storybook/stories/row.stories.tsx": "import { Row } from \"@repo/design-system/components/row\";\nexport default { title: \"Composites v1.0/Row\" };\n",
+    "packages/design-system/components/row.tsx": "import { cell } from \"./cell\";\nexport const Row = cell;\n",
+    "packages/design-system/components/cell.tsx": "export const cell = 1;\n",
+    "packages/design-system/components/other.tsx": "export const other = 1;\n",
   };
-  const changed = { [helper]: "export const sortTree = (rows) => [...rows].reverse();\n" };
-  assert.deepEqual(rules(session(t, { baseFiles, head: changed }).result()), ["shared-path"]);
-  const logged = session(t, { baseFiles, head: changed, changeLog: `Shared path: ${helper}: changed; ruling: ISS-1 operator comment\n` }).result();
-  assert.deepEqual(rules(logged), []);
-  const single = { ...baseFiles, "apps/api/app/b/service.ts": "export const b = 1;\n" };
-  assert.deepEqual(rules(session(t, { baseFiles: single, head: changed }).result()), []);
+  const deep = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" } });
+  assert.deepEqual(deep.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]]);
+  assert.deepEqual(run(t, { base, head: { "packages/design-system/components/other.tsx": "export const other = 2;\n" } }).found, []);
+  const recorded = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: "Frozen render unchanged: apps/storybook/stories/row.stories.tsx: storybook test-runner on base and branch, identical\n" });
+  assert.deepEqual(recorded.found, []);
 });
 
-test("a changed story assertion needs a release, and a new entry beside a current one blocks", (t) => {
-  const story = "apps/storybook/stories/rows.stories.tsx";
-  const baseStory = "export default { title: \"Composites/Rows\", component: Rows, tags: [\"stable\"] };\nexport const Refused = { play: async () => { await expect(alert).toBeVisible(); } };\n";
-  const flipped = baseStory.replace("toBeVisible()", "not.toBeInTheDocument()");
-  assert.deepEqual(rules(session(t, { baseFiles: { [story]: baseStory }, head: { [story]: flipped } }).result()), ["story-outcome"]);
-  const released = session(t, {
-    baseFiles: { [story]: baseStory, "apps/storybook/package.json": "{\n  \"version\": \"3.2.4\"\n}\n" },
-    head: { [story]: flipped, "apps/storybook/package.json": "{\n  \"version\": \"3.3.0\"\n}\n" },
-  }).result();
-  assert.deepEqual(rules(released), []);
-  const sibling = session(t, {
-    baseFiles: { [story]: baseStory },
-    head: { "apps/storybook/stories/rows-touch.stories.tsx": "export default { title: \"Composites/Rows Touch\", component: Rows, tags: [\"stable\"] };\n" },
-  }).result();
-  assert.deepEqual(rules(sibling), ["story-entry"]);
-  const frozen = session(t, {
-    baseFiles: { [story]: baseStory.replace("Composites/Rows", "Composites v1.0/Rows") },
-    head: { "apps/storybook/stories/rows-current.stories.tsx": "export default { title: \"Composites/Rows\", component: Rows, tags: [\"stable\"] };\n" },
-  }).result();
-  assert.deepEqual(rules(frozen), []);
-  const harness = session(t, { head: { "apps/storybook/stories/rows-preview-harness.stories.tsx": "export default { title: \"Composites/Rows Harness\", component: RowsHarness };\n" } }).result();
-  assert.deepEqual(rules(harness), ["story-entry"]);
-});
-
-test("route and GridTableV2 changes require the specs and parity tests the graph does not map", (t) => {
-  const result = session(t, {
-    baseFiles: {
+test("routes, GridTableV2 and story titles require the tests the graph does not map", (t) => {
+  const tests = ["apps/app/__tests__/grid-table-v2-surface-capability-parity.test.ts", "apps/app/__tests__/sessions-list-v2-host-capability-parity.test.ts", "apps/storybook/__tests__/preview-story-sort-order.test.ts", "apps/storybook/__tests__/story-group-order.test.ts"];
+  const result = run(t, {
+    base: {
+      ...Object.fromEntries(tests.map((file) => [file, "test\n"])),
       "apps/api/app/documents/[id]/links/route.ts": "export const POST = 1;\n",
       "e2e/links.spec.ts": "await request.post(`/documents/${id}/links`, { data: body });\n",
       "e2e/other.spec.ts": "await request.post('/documents/abc/linksets');\n",
-      "apps/app/__tests__/grid-table-v2-surface-capability-parity.test.ts": "test\n",
-      "apps/app/__tests__/sessions-list-v2-host-capability-parity.test.ts": "test\n",
       "packages/design-system/lib/grid-table-v2-types.ts": "export type A = 1;\n",
+      "s/rows.stories.tsx": "export default { title: \"Composites/Rows\" };\n",
     },
     head: {
       "apps/api/app/documents/[id]/links/route.ts": "export const POST = 2;\n",
       "packages/design-system/lib/grid-table-v2-types.ts": "export type A = 2;\n",
+      "s/rows.stories.tsx": "export default { title: \"Composites/Row List\" };\n",
     },
-  }).result();
-  assert.deepEqual(result.requiredTests.map((entry) => entry.path), [
-    "e2e/links.spec.ts",
-    "apps/app/__tests__/grid-table-v2-surface-capability-parity.test.ts",
-    "apps/app/__tests__/sessions-list-v2-host-capability-parity.test.ts",
-  ]);
+  });
+  assert.deepEqual(result.requiredTests.map((entry) => entry.path), ["e2e/links.spec.ts", ...tests]);
 });
 
-test("the CLI prints the verdict and exits 1 only when something blocks", (t) => {
-  const blocked = session(t, { head: { "packages/database/prisma/migrations/20261019000000_add_x/migration.sql": "SELECT 1;\n" } });
-  const failing = runNode(SCRIPT, ["--worktree", blocked.checkout, "--base", blocked.base], blocked.home);
-  assert.equal(failing.status, 1);
-  assert.equal(failing.json.ok, false);
-  const clean = session(t, { head: { "README.md": "changed\n" } });
-  const passing = runNode(SCRIPT, ["--worktree", clean.checkout, "--base", clean.base], clean.home);
-  assert.equal(passing.status, 0);
-  assert.deepEqual(passing.json.blocking, []);
-  const missing = runNode(SCRIPT, ["--worktree", clean.checkout], clean.home);
-  assert.equal(missing.status, 1);
-  assert.match(missing.json.error, /--base/);
+test("a lost story ID blocks unless recorded as a replacement, and every reference to it blocks", (t) => {
+  const story = "export default { title: \"Composites/Rows\" };\nexport const Default = {};\nexport const WithLongText = {};\n";
+  const result = run(t, {
+    base: { "s/rows.stories.tsx": story, "e2e/rows.spec.ts": "goto('?path=/story/composites-rows--with-long-text');\n", "e2e/other.spec.ts": "composites-rows--default\n" },
+    head: { "s/rows.stories.tsx": "export default { title: \"Composites/Rows\" };\nexport const Default = {};\n" },
+  });
+  assert.deepEqual(result.found, [["lost-story-id", "s/rows.stories.tsx"], ["lost-story-id", "e2e/rows.spec.ts"]]);
 });

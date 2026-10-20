@@ -26,8 +26,8 @@ them the branch to merge.
 The same rule as the `vibe` skill, without exception: you never read source
 files, search the codebase, edit files, read diffs or tickets in full, or run
 builds, tests, linters, reviews, git, or `gh` yourself. You keep an internal
-checklist, talk to the person, run this skill's inventory and diff rules
-scripts, the vibe session script, and the vibe commit script (short JSON), and dispatch
+checklist, talk to the person, run this skill's inventory script, the
+vibe session script, and the vibe commit script (short JSON), and dispatch
 workers. You commit, through `../vibe/scripts/commit-worktree.mjs`; no worker
 ever commits, because a commit runs the repository's commit hooks. Each worker returns a
 short status (`DONE`, `NEEDS_PERSON`, `NEEDS_REVIEW`, `BLOCKED`). Apply
@@ -289,11 +289,11 @@ as `apps/api`, `packages/api`, `packages/database`, Desktop's main process,
 and any migration), the backend checks when it did. If a later inventory run
 reports `backendChanged` true (a fix or a behavior answer added backend code),
 use the backend checks from then on and update the internal checklist.
-The checklist stops immediately when `blocking.forbiddenPaths` is false. That
-gate covers both `forbidden` and `outsideAllowed`, so repo-root scripts, skill
-tests, agent instructions and every other path outside the Never table cannot
-pass by being merely reported. Only inventory-proven `shrinkOnlyAllowlists`
-entries are exempt.
+The checklist stops immediately when `blocking.forbiddenPaths` is false
+(every `forbidden` or `outsideAllowed` path; only inventory-proven
+`shrinkOnlyAllowlists` entries are exempt) or `blocking.diffRulesClear` is
+false: each `diffRules` finding goes to the SAME writer, which fixes it or
+records the change log line it names.
 
 Keep the remaining checklist internal: inventory and shared-owner checks,
 Storybook coverage and footprint, existing tests and the missing tests list,
@@ -332,14 +332,6 @@ request retires, and a requested pull request's recorded tests. Reject other tes
 retrospectively relabel them. Preserve valid evidence
 when resuming interrupted handoff.
 
-Then run `node scripts/diff-rules.mjs --worktree "<wt>" --base <inventory baseCommit>`
-(`../vibe/references/review-gates.md`; the JSON stays out of the chat). Its
-`blocking` findings stop the checklist like `blocking.forbiddenPaths`: each
-resumes the SAME writer, which fixes the code or records the change log line
-the finding names, and the script runs again until `blocking` is empty. The
-guardrails reviewer (check 17) then verifies what each recorded line cites.
-Pass its `requiredTests` and `requiredChecks` to step 5's verify worker.
-
 Non-publication inventory failures, outside-allowed paths, owner/duplicate
 findings and other confirmed source defects resume the SAME persistent writer
 in fix mode. It verifies and applies corrections; no backend/guardrails/setup
@@ -375,13 +367,10 @@ story file keeps its title and tag
 `v1Stories` and `retitledStories` block handoff, judged by the scheme of the
 session's base (`storybookScheme`: from symphony-alpha #8867 on, the
 `<Level> v1.0/` roots and the `deprecated` tag are v1.0). Its `compileOnlyV1Repairs`
-do not; the ticket worker puts each on the Engineering checklist. Every story
-ID the base has and the session's built index lost, and every reference to a
-removed or renamed ID still found in `e2e/`, the tests, `docs/`,
-`apps/web/content/docs/`, `.claude/` or the story files, blocks handoff too
-(operator ruling, 2026-10-16, after a stale ID from symphony-alpha #8886
-broke an e2e spec): the decomposer and the guardrails reviewer (check 10)
-report them and the SAME writer fixes them. Story files
+do not; the ticket worker puts each on the Engineering checklist. Every
+`lost-story-id` finding, a lost story ID or a reference still naming one,
+blocks too (operator ruling, 2026-10-16, after a stale ID from
+symphony-alpha #8886 broke an e2e spec); the SAME writer fixes them. Story files
 under the `Start Here/` root are exempt from the v1.0 freeze and the title,
 tag and retitle checks (design ruling, 2026-10-06): Start Here is unversioned
 and its Version History is edited by every Storybook release. Resume the SAME writer to perform every extraction, story and catalog
@@ -417,9 +406,7 @@ is not executed coverage; a row without an existing test goes on the missing
 tests list, never counted as covered.
 
 Lighter: read-only verify checks mode runs Biome without write flags, gates,
-affected types/tests and relevant existing lanes, plus every `requiredTests`
-entry and `requiredChecks` command step 3's `diff-rules.mjs` returned, which
-the graph does not map. Backend: full-suite mode
+affected types/tests and relevant existing lanes. Backend: full-suite mode
 runs every required lane. Both report defects back to this same writer.
 Do not weaken tests, skip required coverage or fall back to visible automated
 browser/Electron windows. Record exact unsupported local limitations.

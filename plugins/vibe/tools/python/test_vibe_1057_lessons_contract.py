@@ -22,13 +22,14 @@ def test_precedent_clears_narrow_layout_obstructions_and_captures_both_states() 
 
 
 def test_frozen_stories_compare_dependency_closure_and_stable_output() -> None:
+    rules = (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
     decomposer = flat(agent("vibe-storybook-decomposer"))
     reviewer = flat(agent("vibe-guardrails-reviewer"))
-    for text in (decomposer, reviewer):
-        assert "transitive rendered dependency closure" in text
-        assert "stable" in text
-        assert "story IDs" in text
-        assert "fixed args, globals and viewport" in text
+    assert "rendered dependency closure" in rules
+    assert "fixed args, globals and viewport" in rules
+    assert "fixed args, globals and viewport" in decomposer
+    assert "`frozen-render`" in decomposer and "`frozen-render`" in reviewer
+    assert "even when its file is byte-identical" in reviewer
 
 
 def test_storybook_train_is_rechecked_against_pinned_base_before_pr() -> None:

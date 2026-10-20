@@ -290,13 +290,12 @@ PRD-720 session titled its new stories under v1.0 roots). The bare minimum:
   2026-10-16, after symphony-alpha #8885 invented three entries and a
   duplicate-key special case). After a main sync, the session's entry moves to
   the next version after main's.
-- Moving or retitling a story changes its ID. Every removed or renamed story ID
-  is searched for (`rg`) across `e2e/`, every test, `docs/`,
-  `apps/web/content/docs/`, `.claude/` and the other story files (operator
-  ruling, 2026-10-16, after a stale ID from symphony-alpha #8886 broke an e2e
-  spec). A reference in a test or e2e spec is repaired in the same change (a
-  renamed symbol, "Repair, don't author"); one in a path the writer may not
-  edit is logged as `Engineering needed (forbidden path)`.
+- Moving or retitling a story changes its ID (operator ruling, 2026-10-16,
+  after a stale ID from symphony-alpha #8886 broke an e2e spec): the
+  inventory's `lost-story-id` findings name every reference left. One in a
+  test or e2e spec is repaired in the same change (a renamed symbol, "Repair,
+  don't author"); one in a path the writer may not edit is logged as
+  `Engineering needed (forbidden path)`.
 - A session whose base predates this scheme (symphony-alpha #8867,
   Storybook 3.0.0) follows that base's own `TAXONOMY.md`: there the plain
   roots and the `v1.0` tag are v1.0, and new work goes under `<Level> v2.0/`

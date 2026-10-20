@@ -60,6 +60,10 @@
 // symphony-alpha's .storybook/manager.ts treats it, and its Version History
 // page is edited by every Storybook release, so a tag there is not a version.
 //
+// `diffRules` is diff-rules.mjs's result on the session's own changes (local
+// fixes left out); any `diffRules.blocking` finding blocks
+// (`blocking.diffRulesClear`).
+//
 // `backendChanged` says whether the work touched backend code
 // (`backendFiles`). Handoff runs its lighter checks when it did not, and the
 // full suite with two workflow-code-review passes when it did.
@@ -77,6 +81,7 @@ import { readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 import { isRootTest, isSnapshot, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
 import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
 import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-shrink.mjs";
+import { runDiffRules } from "./diff-rules.mjs";
 import { isPortableSurfaceAllowlistEdit, PORTABLE_SURFACE_CHECKER } from "./prototype-allowlist.mjs";
 import {
   isUnversionedStory,
@@ -183,12 +188,16 @@ const storybookSchemeUnreadable = storybookScheme.summary.name === StorybookSche
   changedFiles.some((file) => STORY_PATTERN.test(file.path));
 const { v1Stories, compileOnlyV1Repairs } = findV1Stories(changedFiles);
 const retitledStories = findRetitledStories(changedFiles);
+const diffRules = runDiffRules({ worktree, base: baseCommit, exclude: new Set(localFixTickets.keys()), isFrozenStory: isV1Story,
+  storyReplacements: new Set((Array.isArray(record?.storyReplacements) ? record.storyReplacements : []).map((entry) => entry?.path)),
+});
 
 const blocking = {
   forbiddenPaths: forbidden.length === 0 && outsideAllowed.length === 0,
   hasChanges: changedFiles.length > 0,
   storiesInV2Taxonomy: v1Stories.length === 0,
   existingStoryTitlesKept: retitledStories.every((story) => story.replacement !== null),
+  diffRulesClear: diffRules.blocking.length === 0,
   ...(storybookSchemeUnreadable ? { storybookSchemeRecognized: false } : {}),
   ...(trackedLocalPlans.length ? { localPlansUntracked: false } : {}),
   ...(prototype ? { prototypePublicationCurrent: publicationProblem === undefined } : {}),
@@ -224,6 +233,7 @@ const result = {
   v1Stories,
   compileOnlyV1Repairs,
   retitledStories,
+  diffRules: { blocking: diffRules.blocking, requiredTests: diffRules.requiredTests, requiredChecks: diffRules.requiredChecks },
 };
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 process.exit(result.ok ? 0 : 1);

@@ -59,26 +59,13 @@ run/attempt/job/step and checked-out source evidence, not run.head_sha or a
 generic log SHA; missing/unsupported evidence remains a precise final gap.
 
 Run Biome WITHOUT write/fix flags, source gates, `pnpm typecheck:affected`,
-`pnpm test:affected --continue`, and the relevant existing lanes named by
-`pnpm test:lanes`. Shared app changes also run the Desktop renderer lane
+`pnpm test:affected --continue`, the relevant existing lanes named by
+`pnpm test:lanes`, and the inventory's `diffRules.requiredTests` and
+`requiredChecks`. Shared app changes also run the Desktop renderer lane
 directly when the repo requires it. Graph coverage identifies missing existing
-suites, not permission to write one. Then run
-`node ../skills/handoff/scripts/diff-rules.mjs --worktree "<wt>" --base <inventory baseCommit>`
-and add every `requiredTests` entry and `requiredChecks` command to what you
-run, whatever `code_tests_for` returns: those tests read other files' source
-or pin request bodies, so the graph does not map them (the GridTableV2
-surface and host capability parity tests, the e2e specs naming a changed
-endpoint; `../skills/vibe/references/review-gates.md`). Report each with
-its command and result; one not run is a gap, never a pass. Three more,
-from the reviews of symphony-alpha #8885 and #8886 (operator ruling,
-2026-10-16):
+suites, not permission to write one. More, from the reviews of
+symphony-alpha #8885 and #8886 (operator ruling, 2026-10-16):
 
-- When the diff touches Storybook sidebar order (`apps/storybook/story-group-order.ts`,
-  `apps/storybook/.storybook/preview.tsx` or `manager.ts`) or adds, moves or
-  retitles a story, run the preview sort-order tests:
-  `pnpm --filter storybook exec vitest run __tests__/preview-story-sort-order.test.ts __tests__/story-group-order.test.ts`.
-  The sidebar order is copied into `preview.tsx` and only that test catches
-  the copy drifting.
 - Every e2e spec the session touched, and every spec that covers a touched
   screen (`code_tests_for`, and `rg` of the screen's route and test IDs under
   `e2e/`), runs at handoff through the repo's containerized path (the
@@ -98,14 +85,11 @@ from the reviews of symphony-alpha #8885 and #8886 (operator ruling,
 - When cards or a narrow layout have any interaction, run the relevant flow
   with real touch through Playwright's WebKit iPhone descriptor and Chromium
   Pixel descriptor. Keyboard input and Chromium with `hasTouch` alone do not
-  count. Do not reject the iOS Safari path because the click synthesized from
+  count, and neither do a Storybook fixture standing in for the consumed
+  surface or synthetic `dispatchEvent` pointer events for the gesture under
+  test. Do not reject the iOS Safari path because the click synthesized from
   a tap reports `pointerType` as `mouse`; prove the user-visible result of the
   tap in both device runs.
-  A touch or narrow run loads the consumed surface (the product host or the
-  prototype route), never a Storybook fixture alone, and drives the gesture
-  under test with real touch, never synthetic `dispatchEvent` pointer
-  events; compact assertions are re-derived from what the narrow row
-  renders (`review-gates.md`, rule 25).
   A requested pull request is blocked until its final evidence names the real
   web host, WebKit iPhone and Chromium Pixel commands, commit, screen and
   visible interaction outcome. Missing evidence is not deferred as a test gap.
@@ -143,13 +127,8 @@ criterion IDs it covers, so every criterion traces to a test, and the suite
 or lane that owns it (`pnpm test:lanes`). An entry for URL-synced state names
 the real web and Desktop host adapters and the same-route link and Back
 cases. A test still named or placed after a module the session deleted or
-moved is listed as a rename. Each acceptance criterion needs one entry or
-executed test through the real hook and `QueryClient` across two fetches,
-and each settlement or rollback contract one with the consumer subscribed to
-the real query cache; view tests that mock the page-data hook do not cover
-either (`review-gates.md`, rules 16 and 24). A new mutation route needs one
-that feeds the client request builder's real output into the real route
-(rule 1). In a `pull-request` turn, every entry must
+moved is listed as a rename. Each criterion needs one test through the real
+hook and `QueryClient`. In a `pull-request` turn, every entry must
 have been written, in a lane CI runs for its path, with literal or
 spec-derived expected values, never values computed by production code
 (`vibe-change-worker.md`, "Tests: repair, don't author"); an entry still
@@ -257,9 +236,9 @@ session touched:
    `pnpm control api GET <path>` for the record the screen shows, and
    `pnpm control ipc <namespace.method>` read calls for a Desktop screen,
    where relevant.
-4. When a baseline exists (an earlier control capture of the same entry from
-   before this session's change), return its artifact paths beside the new
-   ones and say what changed. When the session recorded reference images
+4. When a baseline exists (an earlier control capture of the same entry on
+   the merge-base or current main, never a commit that is not an ancestor),
+   return its artifact paths beside the new ones and say what changed. When the session recorded reference images
    (`referenceImages`), open each as an image (`Read` in Claude Code,
    `view_image` in Codex) beside the matching capture and report every
    visible difference in shadow, elevation, font size, weight, color,
@@ -267,6 +246,9 @@ session touched:
    writer (`quality-loop.md`, "Visual references").
 5. `pnpm control down --session <name>` for every session you started, even
    after a failure.
+
+For a shared component, capture every surface it reaches with the flag off
+at phone and desktop width; a difference from main is a finding.
 
 A static or generated page control cannot drive (an HTML page a script or a
 main-process module writes, such as Desktop's sign-in return page) is still

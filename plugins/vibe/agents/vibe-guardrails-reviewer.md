@@ -1,6 +1,6 @@
 ---
 name: vibe-guardrails-reviewer
-description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, Storybook taxonomy placement and precedent placement, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them or added unasked, leftovers after an extraction, capability removed by a main sync, flag retirement against a recorded hold, each new mechanism's reuse and cost scaling, and the review-gates script's findings with the evidence behind each recorded exception). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
+description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, Storybook taxonomy placement and precedent placement, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them or added unasked, leftovers after an extraction, capability removed by a main sync, flag retirement against a recorded hold, and each new mechanism's reuse and cost scaling). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
 model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
 ---
@@ -80,13 +80,10 @@ path merely because another rule describes how its content should look.
    each new label, count or selection string, `rg` the words and the helpers
    that build them in `packages/app/shared` and the owning feature package: a
    second spelling of wording a shared helper or label map already renders is
-   blocking; name the helper (`guardrails.md`, "Copy"). Nothing agent-written
-   goes into public docs, with no exception (`guardrails.md`, "Feature docs
-   at handoff"; operator ruling, 2026-10-16): run
-   `git -C <wt> diff --name-only <base> apps/web/content/docs docs` and
-   report every path it prints as blocking, in every phase, whatever markers
-   it carries. Confirm the Feature docs record names pages without drafting
-   words for them.
+   blocking; name the helper (`guardrails.md`, "Copy"). The inventory's
+   `outsideAllowed` already blocks every docs path (`guardrails.md`, "Feature
+   docs at handoff"); confirm the Feature docs record names pages without
+   drafting words for them.
 5. Accessibility: icon-only controls without accessible names, disclosures
    without `aria-expanded`, state conveyed by color alone, a second `<main>`.
 6. Fake data: a fetch to an endpoint that does not exist in `apps/api/app/**`,
@@ -172,7 +169,11 @@ path merely because another rule describes how its content should look.
    expected value: one computed by calling production code (the helper under
    test or a sibling production helper) instead of a literal or the spec's
    words is blocking, because it agrees with the code it should check
-   (`vibe-change-worker.md`, "Tests: repair, don't author").
+   (`vibe-change-worker.md`, "Tests: repair, don't author"), in a repair too.
+   Deleting the tests of a component that was replaced, not removed, ports
+   each case the successor still enforces or cites the ruling retiring it.
+   Open what each change log line that cleared an inventory `diffRules`
+   finding cites; a citation that does not hold is blocking.
    Extract every acceptance criterion ID used by a test name or `describe`
    title and match it exactly to the ID and source already recorded from the
    ticket, PRD or session table. An invented ID, renumbered criterion or test
@@ -186,12 +187,9 @@ path merely because another rule describes how its content should look.
     `v1.0` tag), or any edit or move of a story file that is v1.0 on main
     (the inventory's `v1Stories`, reason `frozen`), is blocking; that
     component's new states belong in a new entry in the current root holding
-    only them, with no version number in its name. Confirm those frozen stories
-    through the decomposer's dependency-closure report: compare the complete
-    transitive rendered dependency closure on the pinned base and branch, then
-    compare stable renders of the same story IDs with fixed args, globals and
-    viewport. A changed dependency or rendered output is blocking even when
-    the deprecated story file itself is byte-identical. Confirm each of
+    only them, with no version number in its name. A frozen story whose
+    rendered dependency closure changed is the inventory's `frozen-render`
+    finding even when its file is byte-identical. Confirm each of
     the inventory's `compileOnlyV1Repairs` is purely mechanical (prop
     renames, imports, types) with no visual change; anything else in one is
     blocking. Read each such repair with
@@ -215,13 +213,7 @@ path merely because another rule describes how its content should look.
     changed or renumbered main entry, or a validator, test or key
     special-cased so two entries can coexist (a duplicate-key exception) is
     blocking; quote the entries.
-    Story IDs: from the decomposer's `index-diff.mjs` result (or the story
-    titles on the base and the session), list every story ID on the base that
-    the session's index no longer has. Each one not recorded as a sibling
-    replacement is blocking. For every removed or renamed ID, `rg` the old ID
-    across `e2e/`, the test files, `docs/`, `apps/web/content/docs/`,
-    `.claude/` and the story files; each hit still naming it is blocking,
-    quoted with `file:line`.
+    Story IDs: the inventory's `lost-story-id` findings block.
     An existing non-v1.0 story file (on main) retitled, re-tagged or moved breaks every
     link to its stories and is blocking (the inventory's `retitledStories`
     for a title) unless recorded as a sibling replacement's entry; confirm the
@@ -305,23 +297,6 @@ path merely because another rule describes how its content should look.
     by a cited human ruling, or listed uncovered with current owner and status.
     A session-created supersession, a "not reused" label, or a delivered child
     left `TODO` is blocking.
-17. Review gates (`../skills/vibe/references/review-gates.md`): run
-    `node ../skills/handoff/scripts/diff-rules.mjs --worktree "<wt>" --base <base>`
-    and quote its result. Every `blocking` entry is a blocking finding. For
-    each change log line written to clear one (`Migration precedent:`,
-    `Activity capture:`, `Synchronizing-susan:`, `Comment removed:`,
-    `Shared path:`, `Story outcome unchanged:`, `Story entry:`), open what it
-    cites: the three migrations, the covering capture call, the Susan
-    verdict, the comment the change made false, the parity test or missing
-    test entry with legacy fixtures (a five-level chain, a cycle, a foreign
-    kind where the path walks a graph), the human ruling, the unchanged
-    assertion, the Placement block. A line whose citation does not hold is
-    blocking. Then apply the judgment rules that name you there (frontend
-    wiring, tests through real paths and Storybook), quoting `file:line`.
-    In check 9, a repaired or rewritten expected value computed by calling
-    production code is blocking as it is in a new test, and deleting the tests
-    of a component that was replaced rather than removed needs each case the
-    successor still enforces ported or retired by a cited ruling.
 
 For publication, verify the SAME source actor's `main-sync-inputs` evidence
 before capture and after the committed merge. Canonical private diagnostics

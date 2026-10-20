@@ -1,23 +1,19 @@
-#!/usr/bin/env node
 // Mechanical review gates over a vibe session's diff, for defects that shipped
-// in vibe pull requests and repeated after a prose rule
-// (../../vibe/references/review-gates.md). Each blocking finding names the fix
-// or the change log line that records why the code stays as it is. Also lists
-// the tests and repo checks the diff requires whatever the graph maps.
-// Prints one JSON object; exits 1 when anything blocks. Changes nothing.
-//
-// Usage: diff-rules.mjs --worktree <wt> --base <inventory baseCommit> [--change-log <file>]
+// in vibe pull requests and repeated after a prose rule. handoff-inventory.mjs
+// runs them and reports the result as `diffRules`, so no worker runs another
+// command. Each blocking finding names the fix, or the change log line that
+// records why the code stays; `requiredTests` and `requiredChecks` are what the
+// diff needs run whatever the graph maps. Git reads and file reads only.
 
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
-import { parseArgs } from "node:util";
 import { git } from "../../vibe/scripts/session-record.mjs";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
+import { isUnversionedStory, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 
 const PRIVATE_PLANS = ".closedloop-ai/vibe-plans/";
-const MIGRATIONS = "packages/database/prisma/migrations/";
-const MIGRATION_DIR = /^packages\/database\/prisma\/migrations\/(\d{8,})_[^/]+\/migration\.sql$/;
+const MIGRATION_DIR = /^packages\/database\/prisma\/migrations\/[^/]+\/migration\.sql$/;
 const DESKTOP_MIGRATION = /^apps\/desktop\/prisma\/migrations\/[^/]+\/migration\.sql$/;
 const SOURCE_FILE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
 const SQL_TABLE_TOUCH = /\b(?:CREATE\s+(?:UNIQUE\s+)?INDEX\b[^;]*?\bON\s+(?:ONLY\s+)?|ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?|(?<!\bON\s{1,10})UPDATE\s+)"?(\w+)"?/gi;
@@ -35,7 +31,8 @@ const DESKTOP_LANE_FILE = /^apps\/desktop\/src\/main\/.*(?:outbox|lane|sync)[^/]
 const SYNC_TABLE = /outbox|sync/i;
 const GIVE_UP_IMPORT = /from\s+["'][^"']*(?:shared\/lane-give-up|sync-lane-give-up-telemetry)(?:\.js)?["']/;
 const HAND_ROLLED_BACKOFF = /\*\*\s*\(?\s*\w*(?:attempt|retry|retries|n)\b/i;
-const TICKETED = /\b(?:ISS|PRD|PLN|FEA)-\d+\b|https?:\/\//;
+const TICKETED = /\b(?:ISS|PRD|PLN|FEA)-\d+\b|https?:\/\/\S+/;
+const TICKET_TOKENS = /\b(?:ISS|PRD|PLN|FEA)-\d+\b|https?:\/\/\S+/g;
 const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*)/;
 const SHARED_PATH = /^(?:apps\/api\/lib\/.+|apps\/api\/app\/.*service[^/]*|packages\/app\/.*data-source[^/]*)\.tsx?$/;
 const API_ROUTE = /^apps\/api\/app\/(.*)\/route\.ts$/;
@@ -44,11 +41,18 @@ const GRID_SYMBOL = /\bGridTableV2\b/;
 const GRID_PARITY_TEST = "apps/app/__tests__/grid-table-v2-surface-capability-parity.test.ts";
 const HOST_PARITY_TEST = /^apps\/app\/__tests__\/[^/]+-host-capability-parity\.test\.ts$/;
 const STORY_FILE = /\.stories\.tsx?$/;
+const SIDEBAR_ORDER_FILES = new Set(["apps/storybook/story-group-order.ts", "apps/storybook/.storybook/preview.tsx", "apps/storybook/.storybook/manager.ts"]);
+const SIDEBAR_ORDER_TESTS = ["apps/storybook/__tests__/preview-story-sort-order.test.ts", "apps/storybook/__tests__/story-group-order.test.ts"];
 const STORY_VERSION_FILE = "apps/storybook/package.json";
 const STORY_COMPONENT = /\bcomponent:\s*([A-Z]\w*)/;
 const STORY_TITLE = /\btitle:\s*["'`]([^"'`]+)["'`]/;
-const FROZEN_TITLE = / v1\.0\/|^Start Here\//;
-const HARNESS_NAME = /harness|adapter|preview/i;
+const IMPORT_SPECIFIER = /\b(?:from|import)\s*\(?\s*["']([^"']+)["']/g;
+const SOURCE_EXTENSIONS = ["", ".ts", ".tsx", ".js", ".mjs", "/index.ts", "/index.tsx"];
+const FROZEN_CANDIDATE = String.raw`v1\.0|deprecated`;
+const CLOSURE_LIMIT = 20000;
+const STORY_ID_PATHSPECS = ["e2e/", "docs/", "apps/web/content/docs/", ".claude/", "*.test.*", "*.spec.*", "*.stories.*"];
+const STORY_ID_WORD = /[A-Z]{2,}(?=[A-Z][a-z]|\b|\d)|[A-Z]?[a-z]+|[A-Z]|\d+/g;
+const HARNESS_NAME = /harness|adapter/i;
 const EXPECT_CALL = /\bexpect\(/;
 const WINDOW = 25;
 
@@ -92,8 +96,8 @@ export function parseUnifiedDiff(text) {
 
 /**
  * Applies every rule. `repo` supplies reads: `head(path)` and `base(path)` file
- * text or null, `baseMigrations` (folder names on the base), `headFiles`
- * (tracked paths at head) and `importers(path)` (non-test files importing it).
+ * text or null, `headFiles`
+ * (tracked paths at head) and `importerCounts(paths)` (non-test files importing each).
  */
 export function evaluateDiff(files, changeLog, repo) {
   const blocking = [];
@@ -104,22 +108,27 @@ export function evaluateDiff(files, changeLog, repo) {
   const live = files.filter((file) => file.status !== "D");
 
   checkMigrations(live, repo, logged, add, requiredChecks);
+  const shared = live.filter((file) => file.status === "M" && SHARED_PATH.test(file.path) && !logged("Shared path:", file.path));
+  const importers = shared.length ? repo.importerCounts(shared.map((file) => file.path)) : new Map();
+  for (const file of shared.filter((entry) => (importers.get(entry.path) ?? 0) >= 2)) {
+    add("shared-path", file.path, file.added[0]?.line ?? 1, "changes a shared read or write path without recorded evidence that existing callers are unchanged", "record `Shared path: <path>: unchanged for existing callers; evidence: <test or missing test entry with legacy fixtures>` or `...: changed; ruling: <human source>`");
+  }
   for (const file of live.filter((entry) => SOURCE_FILE.test(entry.path) && !isTestFile(entry.path))) {
     const head = repo.head(file.path) ?? "";
     checkActivityCapture(file, head, logged, add);
     checkTransactions(file, head, add);
     checkLinkDeletes(file, head, add);
-    checkSharedPath(file, repo, logged, add);
   }
   checkDesktopLane(live, repo, logged, add);
   checkTicketedComments(files, repo, logged, add);
   checkStories(live, files, repo, logged, add);
-  requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo));
+  checkFrozenRenders(files, repo, logged, add);
+  checkLostStoryIds(files, repo, add);
+  requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo), ...sidebarOrderTests(files, repo));
   return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks };
 }
 
 function checkMigrations(files, repo, logged, add, requiredChecks) {
-  const newest = repo.baseMigrations.map((name) => /^(\d{8,})_/.exec(name)?.[1]).filter(Boolean).sort().at(-1) ?? "";
   let touched = false;
   for (const file of files) {
     const match = MIGRATION_DIR.exec(file.path);
@@ -130,26 +139,23 @@ function checkMigrations(files, repo, logged, add, requiredChecks) {
     if (!match || file.status !== "A") {
       continue;
     }
-    if (match[1] <= newest) {
-      add("migration-order", file.path, 1, `timestamp ${match[1]} is not newer than the base's newest migration ${newest}`, "rename the folder to a timestamp after the base's newest migration");
-    }
     const sql = repo.head(file.path) ?? "";
     const created = new Set([...sql.matchAll(SQL_CREATE_TABLE)].map((found) => found[1]));
     const existing = new Set([...sql.matchAll(SQL_TABLE_TOUCH)].map((found) => found[1]).filter((table) => !created.has(table)));
     for (const table of existing) {
-      if (!logged("Migration precedent:", table)) {
+      if (!logged(`Migration precedent: ${table}:`)) {
         add("migration-precedent", file.path, 1, `changes existing table ${table} without a recorded lock-strategy precedent`, `copy the last three migrations on ${table} and record \`Migration precedent: ${table}: <folders>\``);
       }
     }
     for (const update of sql.matchAll(SQL_UPDATE_STATEMENT)) {
-      if (!/\bWHERE\b/i.test(update[0]) && !logged("Migration precedent:", update[1])) {
+      if (!/\bWHERE\b/i.test(update[0]) && !logged(`Migration precedent: ${update[1]}:`)) {
         add("migration-backfill", file.path, 1, `full-table UPDATE of ${update[1]} in a schema migration`, `move or bound the backfill as ${update[1]}'s precedent does, and record \`Migration precedent: ${update[1]}: <folders>\``);
       }
     }
   }
   if (touched) {
     requiredChecks.push(
-      { command: "pnpm check:destructive-migrations", reason: "a migration changed; the repo's index-lock gate" },
+      { command: "pnpm check:destructive-migrations", reason: "a migration changed; the repo's index-lock and migration-order gate" },
       { command: "pnpm check:migration-immutability", reason: "a migration changed" }
     );
   }
@@ -219,12 +225,6 @@ function checkLinkDeletes(file, head, add) {
   }
 }
 
-function checkSharedPath(file, repo, logged, add) {
-  if (file.status === "M" && SHARED_PATH.test(file.path) && repo.importers(file.path) >= 2 && !logged("Shared path:", file.path)) {
-    add("shared-path", file.path, file.added[0]?.line ?? 1, "changes a shared read or write path without recorded evidence that existing callers are unchanged", "record `Shared path: <path>: unchanged for existing callers; evidence: <test or missing test entry with legacy fixtures>` or `...: changed; ruling: <human source>`");
-  }
-}
-
 function checkDesktopLane(files, repo, logged, add) {
   const laneFiles = files.filter((file) => file.status === "A" && DESKTOP_LANE_FILE.test(file.path) && !isTestFile(file.path));
   const syncTables = files
@@ -275,15 +275,16 @@ function explainedCodeSurvives(file, entry, baseText, addedTexts) {
 
 function checkTicketedComments(files, repo, logged, add) {
   const addedLines = files.flatMap((file) => file.added);
-  const carried = new Set(addedLines.filter((entry) => COMMENT_LINE.test(entry.text)).map((entry) => commentBody(entry.text)));
+  const addedComments = addedLines.filter((entry) => COMMENT_LINE.test(entry.text));
+  const carried = new Set(addedComments.map((entry) => commentBody(entry.text)));
+  const carriedTokens = new Set(addedComments.flatMap((entry) => entry.text.match(TICKET_TOKENS) ?? []));
   const addedTexts = new Set(addedLines.map((entry) => entry.text.trim()));
   for (const file of files.filter((entry) => entry.status !== "D" && SOURCE_FILE.test(entry.path))) {
-    const baseText = repo.base(file.oldPath ?? file.path) ?? "";
     for (const entry of file.removed) {
       const body = commentBody(entry.text);
       const ticket = TICKETED.exec(entry.text)?.[0];
-      if (COMMENT_LINE.test(entry.text) && ticket && !carried.has(body) && !logged("Comment removed:", file.path)
-        && explainedCodeSurvives(file, entry, baseText, addedTexts)) {
+      if (COMMENT_LINE.test(entry.text) && ticket && !carried.has(body) && !carriedTokens.has(ticket) && !logged("Comment removed:", file.path)
+        && explainedCodeSurvives(file, entry, repo.base(file.oldPath ?? file.path) ?? "", addedTexts)) {
         add("ticketed-comment", file.oldPath ?? file.path, entry.line, `removes a comment citing ${ticket} that no added line carries`, "keep the comment with the code it explains, or record `Comment removed: <path>: <slug or URL>: <what the change made false>`");
       }
     }
@@ -304,15 +305,108 @@ function checkStories(files, allFiles, repo, logged, add) {
     const title = STORY_TITLE.exec(head)?.[1] ?? "";
     const component = STORY_COMPONENT.exec(head)?.[1];
     if (HARNESS_NAME.test(title) || HARNESS_NAME.test(path.basename(file.path))) {
-      add("story-entry", file.path, 1, "gives a harness, adapter or preview its own Storybook entry", "put its states on the consumed component's current entry, or record `Story entry: <path>: <reason>`");
+      add("story-entry", file.path, 1, "gives a harness or adapter its own Storybook entry", "put its states on the consumed component's current entry, or record `Story entry: <path>: <reason>`");
       continue;
     }
     const current = component && repo.baseStoriesRendering(component).find((story) => {
       const text = repo.base(story) ?? "";
-      return STORY_COMPONENT.exec(text)?.[1] === component && !FROZEN_TITLE.test(STORY_TITLE.exec(text)?.[1] ?? "") && !/["']deprecated["']/.test(text);
+      return STORY_COMPONENT.exec(text)?.[1] === component && !isUnversionedStory(text) && !repo.isFrozenStory(text);
     });
     if (current) {
       add("story-entry", file.path, 1, `adds a new entry for ${component}, which already has the current entry ${current}`, "add the states to that entry, or record `Story entry: <path>: <sibling replacement or Placement block>`");
+    }
+  }
+}
+
+/** A base-relative import specifier resolved to a file on the base, or undefined. */
+function resolveImport(from, specifier, baseFiles) {
+  let stem;
+  if (specifier.startsWith(".")) {
+    stem = path.posix.join(path.posix.dirname(from), specifier);
+  } else if (specifier.startsWith("@repo/")) {
+    stem = `packages/${specifier.slice("@repo/".length)}`;
+  } else {
+    return undefined;
+  }
+  stem = stem.replace(/\.js$/, "");
+  return SOURCE_EXTENSIONS.map((extension) => `${stem}${extension}`).find((candidate) => baseFiles.has(candidate) && SOURCE_FILE.test(candidate));
+}
+
+/**
+ * Every frozen v1.0 story on the base whose rendered dependency closure (its
+ * file and everything it imports, transitively) the diff changed. Its render
+ * and play against main must be identical, so a change needs the recorded
+ * evidence; a byte-identical story file is not enough. Edits to the story file
+ * itself are the inventory's `v1Stories` and `compileOnlyV1Repairs`.
+ */
+function checkFrozenRenders(files, repo, logged, add) {
+  const changed = new Set(files.flatMap((file) => [file.path, file.oldPath].filter(Boolean)));
+  const stories = repo.frozenStories().filter((story) => !logged(`Frozen render unchanged: ${story}:`));
+  if (stories.length === 0) {
+    return;
+  }
+  const imports = new Map();
+  let frontier = stories;
+  while (frontier.length && imports.size < CLOSURE_LIMIT) {
+    const texts = repo.baseBlobs(frontier);
+    const next = new Set();
+    for (const file of frontier) {
+      const targets = [...(texts.get(file) ?? "").matchAll(IMPORT_SPECIFIER)]
+        .map((found) => resolveImport(file, found[1], repo.baseFiles)).filter(Boolean);
+      imports.set(file, targets);
+      targets.filter((target) => !imports.has(target)).forEach((target) => next.add(target));
+    }
+    frontier = [...next];
+  }
+  for (const story of stories) {
+    const seen = new Set([story]);
+    const queue = [story];
+    while (queue.length) {
+      for (const target of imports.get(queue.shift()) ?? []) {
+        if (!seen.has(target)) {
+          seen.add(target);
+          queue.push(target);
+        }
+      }
+    }
+    const touched = [...seen].filter((file) => file !== story && changed.has(file));
+    if (touched.length) {
+      add("frozen-render", story, 1, `frozen v1.0 story renders changed files: ${touched.slice(0, 3).join(", ")}${touched.length > 3 ? ", ..." : ""}`, "render the same story IDs on the base and the branch with fixed args, globals and viewport and run their plays; both must be identical, then record `Frozen render unchanged: <story path>: <command and result>`; otherwise keep the frozen story's render unchanged");
+    }
+  }
+}
+
+/** Storybook's story ID: the sanitized title, `--`, the sanitized start-cased export name. */
+export function storyId(title, exportName) {
+  const sanitize = (text) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return `${sanitize(title)}--${sanitize((exportName.match(STORY_ID_WORD) ?? []).join(" "))}`;
+}
+
+function storyIds(source) {
+  const title = source ? storyMetaTitle(source) : null;
+  return title ? storyExportNames(source).map((name) => storyId(title, name)) : [];
+}
+
+/**
+ * Story IDs the base has and the session lost block unless the file is a
+ * recorded sibling replacement's entry (a retitle is the inventory's
+ * `retitledStories`), and every reference to a lost ID left in specs, tests,
+ * docs, agent files or stories blocks.
+ */
+function checkLostStoryIds(files, repo, add) {
+  const still = new Set(files.filter((file) => file.status !== "D" && STORY_FILE.test(file.path)).flatMap((file) => storyIds(repo.head(file.path))));
+  for (const file of files.filter((entry) => entry.status !== "A" && STORY_FILE.test(entry.oldPath ?? entry.path))) {
+    const baseText = repo.base(file.oldPath ?? file.path);
+    const lost = storyIds(baseText).filter((id) => !still.has(id));
+    const headTitle = file.status === "D" ? null : storyMetaTitle(repo.head(file.path) ?? "");
+    const retitled = headTitle !== null && headTitle !== storyMetaTitle(baseText ?? "");
+    if (lost.length && !retitled && !repo.storyReplacements.has(file.path)) {
+      add("lost-story-id", file.path, 1, `loses story IDs ${lost.join(", ")}`, "keep the title and export names, or record the file as a sibling replacement's entry (`vibe-sessions.mjs story-replacement`)");
+    }
+    for (const id of lost) {
+      for (const hit of repo.filesNaming(id)) {
+        add("lost-story-id", hit, 1, `still names the removed or renamed story ID ${id}`, "point it at the story's current ID");
+      }
     }
   }
 }
@@ -327,7 +421,7 @@ export function routeSpecs(files, repo) {
       continue;
     }
     const segments = match[1].split("/").filter((segment) => !/^\(.*\)$/.test(segment));
-    const pattern = new RegExp(`/${segments.map((segment) => (/^\[.*\]$/.test(segment) ? "[^/\"'`?\\s]+" : segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))).join("/")}(?![\\w-])`);
+    const pattern = new RegExp(`/${segments.map((segment) => (/^\[.*\]$/.test(segment) ? "[^/\"'`?\\s]+" : escapeRegExp(segment))).join("/")}(?![\\w-])`);
     for (const spec of specs.filter((candidate) => pattern.test(repo.head(candidate) ?? ""))) {
       required.push({ path: spec, reason: `names the changed endpoint in ${file.path}; specs pin request bodies and untagged specs do not run on the pull request` });
     }
@@ -346,35 +440,94 @@ export function gridParityTests(files, repo) {
     .map((file) => ({ path: file, reason: "a GridTableV2 type, adapter or mount changed; this parity test is not mapped by code_tests_for" }));
 }
 
-function gitRepo(worktree, base) {
+/** The sidebar order is copied into preview.tsx; only these tests catch the copy drifting. */
+export function sidebarOrderTests(files, repo) {
+  const touched = files.some((file) => SIDEBAR_ORDER_FILES.has(file.path) || (STORY_FILE.test(file.path)
+    && (file.status !== "M" || [...file.added, ...file.removed].some((entry) => STORY_TITLE.test(entry.text)))));
+  return touched
+    ? SIDEBAR_ORDER_TESTS.filter((test) => repo.headFiles.includes(test)).map((test) => ({ path: test, reason: "the sidebar order or a story title changed" }))
+    : [];
+}
+
+function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
   const headFiles = git(worktree, ["ls-files"]).split("\n").filter(Boolean);
-  const read = (file) => {
+  const baseFiles = new Set(lines(() => git(worktree, ["ls-tree", "-r", "--name-only", base])));
+  const blobs = new Map();
+  const baseBlobs = (paths) => {
+    const missing = [...new Set(paths)].filter((file) => !blobs.has(file) && baseFiles.has(file));
+    if (missing.length) {
+      readBlobs(worktree, base, missing).forEach((text, file) => blobs.set(file, text));
+    }
+    return new Map(paths.map((file) => [file, blobs.get(file)]));
+  };
+  const read = memoize((file) => {
     const absolute = path.join(worktree, file);
     return existsSync(absolute) ? readFileSync(absolute, "utf8") : null;
-  };
-  const baseRead = (file) => {
+  });
+  const baseRead = memoize((file) => {
     try {
       return git(worktree, ["show", `${base}:${file}`]);
     } catch {
       return null;
     }
-  };
+  });
   return {
     head: read,
     base: baseRead,
     headFiles,
-    baseMigrations: lines(() => git(worktree, ["ls-tree", "--name-only", `${base}:${MIGRATIONS}`])),
+    baseFiles,
+    baseBlobs,
+    storyReplacements,
+    filesNaming: (text) => lines(() => git(worktree, ["grep", "-l", "-F", text, "--", ...STORY_ID_PATHSPECS])),
+    isFrozenStory,
+    frozenStories: () => {
+      const candidates = lines(() => git(worktree, ["grep", "-l", "-E", FROZEN_CANDIDATE, base, "--", "*.stories.tsx", "*.stories.ts"]))
+        .map((hit) => hit.slice(base.length + 1));
+      const texts = baseBlobs(candidates);
+      return candidates.filter((story) => !isUnversionedStory(texts.get(story)) && isFrozenStory(texts.get(story) ?? ""));
+    },
     baseStoriesRendering: (component) =>
       lines(() => git(worktree, ["grep", "-l", "-E", `component:[[:space:]]*${component}([^[:alnum:]_]|$)`, base, "--", "*.stories.tsx", "*.stories.ts"]))
         .map((hit) => hit.slice(base.length + 1)),
-    importers: (file) => {
-      const stem = path.basename(file).replace(/\.tsx?$/, "");
-      const directory = path.dirname(file);
-      const quote = `(\\.js)?["']`;
-      const elsewhere = lines(() => git(worktree, ["grep", "-l", "-E", `from ["'][^"']*/${path.basename(directory)}/${stem}${quote}`, "--", "*.ts", "*.tsx"]));
-      const sibling = lines(() => git(worktree, ["grep", "-l", "-E", `from ["']\\./${stem}${quote}`, "--", `${directory}/*.ts`, `${directory}/*.tsx`]));
-      return new Set([...elsewhere, ...sibling].filter((hit) => hit !== file && !isTestFile(hit))).size;
+    importerCounts: (files) => {
+      const targets = files.map((file) => {
+        const stem = path.basename(file).replace(/\.tsx?$/, "");
+        const directory = path.dirname(file);
+        return { file, directory, elsewhere: `${path.basename(directory)}/${stem}`, sibling: `./${stem}`, stem };
+      });
+      const hits = lines(() => git(worktree, ["grep", "-F", ...targets.flatMap((target) => ["-e", target.elsewhere, "-e", target.sibling]), "--", "*.ts", "*.tsx"]));
+      const counts = new Map();
+      for (const target of targets) {
+        const elsewhere = new RegExp(`from ["'][^"']*/${escapeRegExp(target.elsewhere)}(?:\\.js)?["']`);
+        const sibling = new RegExp(`from ["']\\./${escapeRegExp(target.stem)}(?:\\.js)?["']`);
+        const importing = new Set();
+        for (const hit of hits) {
+          const at = hit.indexOf(":");
+          const hitFile = hit.slice(0, at);
+          const text = hit.slice(at + 1);
+          if (hitFile !== target.file && !isTestFile(hitFile)
+            && (elsewhere.test(text) || (path.dirname(hitFile) === target.directory && sibling.test(text)))) {
+            importing.add(hitFile);
+          }
+        }
+        counts.set(target.file, importing.size);
+      }
+      return counts;
     },
+  };
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function memoize(read) {
+  const cache = new Map();
+  return (key) => {
+    if (!cache.has(key)) {
+      cache.set(key, read(key));
+    }
+    return cache.get(key);
   };
 }
 
@@ -399,30 +552,37 @@ function untrackedAsAdded(worktree) {
     }));
 }
 
-export function runDiffRules({ worktree, base, changeLog }) {
-  const files = [...parseUnifiedDiff(git(worktree, ["diff", "--no-color", "--unified=0", "-M", base])), ...untrackedAsAdded(worktree)];
+/** Reads many base blobs through one `git cat-file --batch`. */
+function readBlobs(worktree, base, files) {
+  const output = execFileSync("git", ["cat-file", "--batch"], {
+    cwd: worktree, input: files.map((file) => `${base}:${file}`).join("\n") + "\n", maxBuffer: 512 * 1024 * 1024,
+  });
+  const texts = new Map();
+  let offset = 0;
+  for (const file of files) {
+    const end = output.indexOf(10, offset);
+    const header = output.subarray(offset, end).toString();
+    const size = Number(header.split(" ")[2]);
+    offset = end + 1;
+    if (header.endsWith("missing")) {
+      continue;
+    }
+    texts.set(file, output.subarray(offset, offset + size).toString("utf8"));
+    offset += size + 1;
+  }
+  return texts;
+}
+
+/**
+ * Runs every rule on the session diff. `exclude` holds paths that are not the
+ * session's work (local fixes); `isFrozenStory` is the base's v1.0 predicate
+ * (storybook-taxonomy.mjs, by the base's scheme); `storyReplacements` holds
+ * story files recorded as a sibling replacement's entry.
+ */
+export function runDiffRules({ worktree, base, changeLog, exclude = new Set(), isFrozenStory = () => false, storyReplacements = new Set() }) {
+  const files = [...parseUnifiedDiff(git(worktree, ["diff", "--no-color", "--unified=0", "-M", base])), ...untrackedAsAdded(worktree)]
+    .filter((file) => !exclude.has(file.path));
   const logFile = changeLog ?? path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-changes.md");
   const log = existsSync(logFile) ? readFileSync(logFile, "utf8") : "";
-  return evaluateDiff(files, log, gitRepo(worktree, base));
-}
-
-function main() {
-  const { values } = parseArgs({
-    options: { worktree: { type: "string" }, base: { type: "string" }, "change-log": { type: "string" } },
-  });
-  try {
-    if (!values.worktree || !values.base) {
-      throw new Error("--worktree and --base are required.");
-    }
-    const result = runDiffRules({ worktree: path.resolve(values.worktree), base: values.base, changeLog: values["change-log"] });
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    process.exit(result.ok ? 0 : 1);
-  } catch (error) {
-    process.stdout.write(`${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })}\n`);
-    process.exit(1);
-  }
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  main();
+  return evaluateDiff(files, log, gitRepo(worktree, base, isFrozenStory, storyReplacements));
 }

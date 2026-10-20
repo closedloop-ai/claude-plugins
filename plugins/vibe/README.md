@@ -259,17 +259,17 @@ Coverage is planned and independently verified from the whole session
 decision table, including earlier requests and real-boundary negative cases.
 Required source, existing-test or review gaps block final alignment and
 handoff; a listed missing test does not.
-Handoff also runs `diff-rules.mjs`, the mechanical half of
-`references/review-gates.md`: an out-of-order migration or one without its
-table's lock-strategy precedent, a raw write of a captured artifact field, an
+The handoff inventory also runs `diff-rules.mjs` and reports `diffRules`: a
+migration on an existing table without its recorded lock-strategy precedent
+or with a full-table backfill, a raw write of a captured artifact field, an
 error returned inside a transaction after a write, a Desktop sync lane without
 the shared give-up, backoff and a synchronizing-susan pass, an unscoped
 artifact link delete, a dropped ticketed comment, an unrecorded change to a
-shared service, a story assertion changed without a release and a new story
-entry beside a component's current one each block until the writer fixes the
-code or records the reason the guardrails reviewer then verifies. It also
-names the tests the graph does not map, such as the GridTableV2 parity tests
-and the e2e specs naming a changed endpoint, which the verify worker runs.
+shared service, a story assertion changed without a release, a new story
+entry beside a component's current one, and a change in a frozen v1.0
+story's import closure each block (`blocking.diffRulesClear`) until the
+writer fixes the code or records the change log line the finding names. It
+also lists tests the graph does not map, which the verify worker runs.
 Handoff also drives the running web app and Desktop for each touched screen
 with symphony-alpha's control skill (`pnpm control`, hidden and read-only),
 and records the artifact paths and what each proves in Design Review and the
@@ -431,11 +431,10 @@ no child is superseded without a human ruling. Version-check cases also cover
 explicit proceed instructions and resumed sessions continuing after reporting
 an available update.
 
-The two cases tagged `review-gates` rehearse a blocking review gate: handoff
-stops and the same writer adds the canonical activity capture instead of a
-placeholder change log line while the unmapped parity test still runs, and a
-new Desktop sync lane uses the shared give-up and backoff and gets a
-synchronizing-susan pass.
+The case tagged `review-gates` rehearses a blocking `diffRules` finding:
+handoff stops and the same writer adds the canonical activity capture
+instead of a placeholder change log line, while the unmapped parity test
+still runs.
 
 ## Runtime Files
 

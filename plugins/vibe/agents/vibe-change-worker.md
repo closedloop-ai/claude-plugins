@@ -37,9 +37,8 @@ upfront summary, technical question or plan to approve.
 ## Read first
 
 Read `../skills/vibe/references/quality-loop.md`, `closedloop-graph.md`,
-`design-pass.md`, `guardrails.md`, `review-gates.md`, `annotations.md` when
-relevant, and `ticket-template.md`, resolved from this agent's owning plugin
-as briefed.
+`design-pass.md`, `guardrails.md`, `annotations.md` when relevant, and
+`ticket-template.md`, resolved from this agent's owning plugin as briefed.
 In Codex, read each, and this file, to its last line in parts of at most 200
 lines (`sed -n '1,200p'`, then `'201,400p'`, and so on): one read of a long
 file loses its middle. In `quality-loop.md` that includes "Acceptance criteria
@@ -177,16 +176,12 @@ change log and keep building every allowed part. It is never `BLOCKED` or
 `NEEDS_PERSON`.
 
 Before `DONE`, run the handoff inventory in build phase and require its
-`forbiddenPaths` gate to be true. Any `forbidden` or `outsideAllowed` entry is
+`forbiddenPaths` and `diffRulesClear` gates to be true; a `diffRules` finding
+is fixed, or cleared by the change log line it names with a reason that holds. Any `forbidden` or `outsideAllowed` entry is
 removed and routed through the rule above, including repo-root scripts, skill
 tests and any `AGENTS.md`. The only exception is a file the inventory lists in
 `shrinkOnlyAllowlists` after proving the source-gate edit only deletes entries
 or lowers counts. Never carry a forbidden edit forward for handoff to find.
-Then run `node ../skills/handoff/scripts/diff-rules.mjs --worktree "<wt>" --base <inventory baseCommit>`
-and clear every `blocking` finding: fix the code, or write the change log line
-the finding names when the code is right (`../skills/vibe/references/review-gates.md`).
-A line is evidence the guardrails reviewer checks, so it states the real
-reason and its source, never a placeholder to get past the script.
 
 ## All implementation stays here
 
@@ -225,9 +220,8 @@ History entry, at the next version after `apps/storybook/package.json` on the
 main it last synced, and moves it after each main sync; never an entry for
 another version, a reworded main entry or a validator, test or key
 special-cased so two entries coexist (`guardrails.md`, "Storybook taxonomy").
-After moving or retitling any story, `rg` every old story ID across `e2e/`,
-the tests, `docs/`, `apps/web/content/docs/`, `.claude/` and the story files,
-and repair or log each reference (same section). On a base older than the
+Repair or log each reference an inventory `lost-story-id` finding names
+(same section). On a base older than the
 lifecycle scheme, the doc on that base still sends new work to
 `<Level> v2.0/` tagged `v2.0`; after a main sync your own new entries move to
 the plain root with a lifecycle tag, which is not a retitle. The story
@@ -263,9 +257,7 @@ An extraction, move or deletion is finished only when nothing it orphaned is
 left (`design-pass.md`, "Red flags", leftovers): import the new owner at
 every site instead of keeping a pass-through file, wrapper or re-export
 alias; delete helpers, types, constants and props nothing uses any more;
-collapse a loop or `each` table left with one arm; carry every why-comment
-of a moved symbol with it, and delete only a comment the change made false
-(`review-gates.md`, `ticketed-comment`); and record each test still
+collapse a loop or `each` table left with one arm; and record each test still
 named or placed after the old module for engineering (a rename on the missing
 tests list, or done in a `pull-request` turn).
 

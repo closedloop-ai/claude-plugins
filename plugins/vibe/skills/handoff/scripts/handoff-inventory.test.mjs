@@ -627,3 +627,26 @@ test("all of apps/storybook is allowed while root scripts, .github and AGENTS.md
   ]);
   assert.deepEqual(refused.json.outsideAllowed, [{ path: "scripts/lint/rules/no-threaded-feature-flag.ts", status: "A" }]);
 });
+
+test("diff rule findings block the inventory and its required tests are reported, local fixes left out", (t) => {
+  const { home, worktree } = setup(t, "diff-rules", {
+    "apps/app/__tests__/grid-table-v2-surface-capability-parity.test.ts": "test\n",
+    "packages/design-system/lib/grid-table-v2-types.ts": "export type A = 1;\n",
+  });
+  write(worktree, "packages/design-system/lib/grid-table-v2-types.ts", "export type A = 2;\n");
+  const clean = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(clean.status, 0, JSON.stringify(clean.json));
+  assert.equal(clean.json.blocking.diffRulesClear, true);
+  assert.deepEqual(clean.json.diffRules.requiredTests.map((entry) => entry.path), ["apps/app/__tests__/grid-table-v2-surface-capability-parity.test.ts"]);
+
+  const write_ = "await tx.artifactLink.deleteMany({ where: { targetId: id } });\n";
+  write(worktree, "apps/api/app/links/fix.ts", write_);
+  runNode(SESSIONS, ["local-fix", "--worktree", worktree, "--ticket", "ISS-77", "--path", "apps/api/app/links/fix.ts"], home);
+  assert.equal(runNode(INVENTORY, ["--worktree", worktree], home).json.blocking.diffRulesClear, true);
+
+  write(worktree, "apps/api/app/links/service.ts", write_);
+  const blocked = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(blocked.status, 1);
+  assert.equal(blocked.json.blocking.diffRulesClear, false);
+  assert.deepEqual(blocked.json.diffRules.blocking.map((finding) => [finding.rule, finding.file]), [["artifact-link-delete", "apps/api/app/links/service.ts"]]);
+});
