@@ -265,8 +265,6 @@
         "{cr_dir}",
         "--diff-data",
         "{cr_dir}/diff_data.json",
-        "--diff-tip",
-        "<DIFF_TIP>",
         "--intent",
         "{cr_dir}/intent.json",
         "--cache-dir",

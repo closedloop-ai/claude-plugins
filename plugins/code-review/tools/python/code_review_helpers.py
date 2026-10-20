@@ -7386,20 +7386,24 @@ def _signal_extraction_prompt_hash(path: Path) -> str:
 
 
 def signal_extraction_cache_key(
-    diff_tip: str, taxonomy_hash: str, prompt_hash: str,
+    input_hash: str, taxonomy_hash: str, prompt_hash: str,
 ) -> str:
     """Cache key for the ``signals`` namespace (PLN-725).
 
-    Tuple ``(diff_tip, taxonomy_hash, prompt_hash)`` is the complete set
-    of inputs the extraction is a pure function of. Both
-    ``taxonomy_hash`` and ``prompt_hash`` are content-addressed hashes of
+    Tuple ``(input_hash, taxonomy_hash, prompt_hash)`` is the complete set
+    of inputs the extraction is a pure function of. Every member is a
+    content hash: ``input_hash`` is ``_stable_json_hash`` of the agent
+    input bundle ``_build_signal_input`` renders (the only view of the diff
+    and intent the agent gets), and ``taxonomy_hash`` / ``prompt_hash`` hash
     the on-disk asset bytes (``_taxonomy_hash`` and
-    ``_signal_extraction_prompt_hash``), computed inside
+    ``_signal_extraction_prompt_hash``). All three are computed inside
     ``cmd_extract_signals_prepare`` rather than taken on faith from
-    caller-supplied flags. Editing either asset flips the key for real.
+    caller-supplied flags. Never key on a ref name: a branch review's diff
+    tip is the literal ``HEAD``, which would let every later review reuse
+    the first run's signals.
     """
     payload = (
-        (diff_tip or "") + "\0"
+        (input_hash or "") + "\0"
         + (taxonomy_hash or "") + "\0"
         + (prompt_hash or "")
     )
@@ -7589,8 +7593,9 @@ def fail_closed_signal_set(taxonomy: dict[str, Any]) -> list[dict[str, Any]]:
 def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
     """PLN-725 Stage 1a: prep the signal-extraction agent input + check cache.
 
-    Reads ``diff_data.json`` and (optionally) an intent summary, computes
-    the ``(diff_tip, taxonomy_hash, prompt_hash)`` cache key, and either:
+    Reads ``diff_data.json`` and (optionally) an intent summary, renders
+    the agent input bundle, computes the ``(input_hash, taxonomy_hash,
+    prompt_hash)`` cache key, and either:
 
       - **Cache hit** — writes the cached extraction directly to
         ``<cr_dir>/extract_signals.json`` and emits a manifest with
@@ -7611,7 +7616,6 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
     cr_dir = Path(args.cr_dir).resolve()
     diff_data_path = Path(args.diff_data)
     cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
-    diff_tip = str(args.diff_tip)
     taxonomy_path = (
         Path(args.taxonomy) if getattr(args, "taxonomy", None) else _default_signal_taxonomy_path()
     )
@@ -7655,8 +7659,22 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
         print(f"Error reading prompt asset: {exc}", file=sys.stderr)
         return 1
 
+    # Build the bundle before the cache lookup: the key content-addresses it.
+    intent_summary: dict[str, Any] | None = None
+    if intent_path is not None:
+        try:
+            with open(intent_path) as f:
+                intent_summary = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            intent_summary = None
+        if not isinstance(intent_summary, dict):
+            intent_summary = None
+    agent_input = _build_signal_input(diff_data, intent_summary)
+
     taxonomy_hash = _taxonomy_hash(taxonomy_bytes)
-    key = signal_extraction_cache_key(diff_tip, taxonomy_hash, prompt_hash)
+    key = signal_extraction_cache_key(
+        _stable_json_hash(agent_input), taxonomy_hash, prompt_hash,
+    )
 
     output_path = cr_dir / "extract_signals.json"
 
@@ -7680,17 +7698,6 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
             "model": model,
         })
 
-    intent_summary: dict[str, Any] | None = None
-    if intent_path is not None:
-        try:
-            with open(intent_path) as f:
-                intent_summary = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            intent_summary = None
-        if not isinstance(intent_summary, dict):
-            intent_summary = None
-
-    agent_input = _build_signal_input(diff_data, intent_summary)
     input_path = cr_dir / "extract_signals_input.json"
     with open(input_path, "w") as f:
         json.dump(agent_input, f, indent=2)

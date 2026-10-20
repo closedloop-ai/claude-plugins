@@ -299,14 +299,6 @@
         },
         {
           "flags": [
-            "--diff-tip"
-          ],
-          "dest": "diff_tip",
-          "default": null,
-          "required": true
-        },
-        {
-          "flags": [
             "--prompt-hash"
           ],
           "dest": "prompt_hash",

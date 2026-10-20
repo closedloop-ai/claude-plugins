@@ -14154,30 +14154,30 @@ class TestSignalTaxonomy:
 
 
 class TestSignalExtractionCacheKey:
-    """Cache key contract: tuple of (diff_tip, taxonomy_hash, prompt_hash)."""
+    """Cache key contract: tuple of (input_hash, taxonomy_hash, prompt_hash)."""
 
     def test_same_inputs_same_key(self) -> None:
         from code_review_helpers import signal_extraction_cache_key
-        a = signal_extraction_cache_key("dt", "tax", "ph")
-        b = signal_extraction_cache_key("dt", "tax", "ph")
+        a = signal_extraction_cache_key("ih", "tax", "ph")
+        b = signal_extraction_cache_key("ih", "tax", "ph")
         assert a == b
 
-    def test_diff_tip_flip_changes_key(self) -> None:
+    def test_input_hash_flip_changes_key(self) -> None:
         from code_review_helpers import signal_extraction_cache_key
-        a = signal_extraction_cache_key("dt1", "tax", "ph")
-        b = signal_extraction_cache_key("dt2", "tax", "ph")
+        a = signal_extraction_cache_key("ih1", "tax", "ph")
+        b = signal_extraction_cache_key("ih2", "tax", "ph")
         assert a != b
 
     def test_taxonomy_hash_flip_changes_key(self) -> None:
         from code_review_helpers import signal_extraction_cache_key
-        a = signal_extraction_cache_key("dt", "tax1", "ph")
-        b = signal_extraction_cache_key("dt", "tax2", "ph")
+        a = signal_extraction_cache_key("ih", "tax1", "ph")
+        b = signal_extraction_cache_key("ih", "tax2", "ph")
         assert a != b
 
     def test_prompt_hash_flip_changes_key(self) -> None:
         from code_review_helpers import signal_extraction_cache_key
-        a = signal_extraction_cache_key("dt", "tax", "ph1")
-        b = signal_extraction_cache_key("dt", "tax", "ph2")
+        a = signal_extraction_cache_key("ih", "tax", "ph1")
+        b = signal_extraction_cache_key("ih", "tax", "ph2")
         assert a != b
 
 
@@ -14349,7 +14349,6 @@ class TestExtractSignalsPrepare:
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="ph0",
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -14387,7 +14386,6 @@ class TestExtractSignalsPrepare:
         args = argparse.Namespace(
             cr_dir="cr",
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="ph0",
             cache_dir=None,
             taxonomy=None,
@@ -14405,9 +14403,65 @@ class TestExtractSignalsPrepare:
         assert manifest["output_path"] == str(cr_abs / "extract_signals.json")
         assert Path(manifest["prompt_path"]).is_absolute()
 
+    def _prepare_in(
+        self, base: Path, cache_dir: Path, diff_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        from code_review_helpers import cmd_extract_signals_prepare
+        base.mkdir(parents=True)
+        diff_path = base / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+        args = argparse.Namespace(
+            cr_dir=str(base / "cr"),
+            diff_data=str(diff_path),
+            prompt_hash="ph0",
+            cache_dir=str(cache_dir),
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        assert cmd_extract_signals_prepare(args) == 0
+        return json.loads((base / "cr" / "extract_signals_manifest.json").read_text())
+
+    def test_changed_diff_misses_a_prior_runs_cache_entry(self, tmp_path: Path) -> None:
+        """Regression: the key used the literal ``HEAD`` diff tip, so a
+        re-review after new commits (or a staged vs working-tree review of
+        the same branch) reused the first run's signals. The key now
+        content-addresses the agent's input bundle.
+        """
+        from code_review_helpers import CACHE_NAMESPACE_SIGNALS
+        cache_dir = tmp_path / "cache"
+        (cache_dir / CACHE_NAMESPACE_SIGNALS).mkdir(parents=True)
+        diff_a = json.loads(_build_diff_data(tmp_path).read_text())
+        first = self._prepare_in(tmp_path / "a", cache_dir, diff_a)
+        assert first["status"] == "needs_agent"
+        (cache_dir / CACHE_NAMESPACE_SIGNALS / f"{first['cache_key']}.json").write_text(
+            json.dumps({
+                "status": "ok", "signals": [], "errors": [],
+                "written_at": datetime.now(timezone.utc).isoformat(),
+            }),
+        )
+
+        # Same files, one changed line: a new commit on the branch, or the
+        # working tree differing from the index.
+        diff_b = json.loads(json.dumps(diff_a))
+        diff_b["patch_lines"]["src/auth/login.ts"]["added_lines"]["42"] = (
+            "const session = await issueToken(user, { mfa: true });"
+        )
+        second = self._prepare_in(tmp_path / "b", cache_dir, diff_b)
+        assert second["status"] == "needs_agent"
+        assert second["cache_key"] != first["cache_key"]
+
+        # Positive control: the unchanged diff still hits.
+        again = self._prepare_in(tmp_path / "c", cache_dir, diff_a)
+        assert again["status"] == "cache_hit"
+        assert again["cache_key"] == first["cache_key"]
+
     def test_cache_hit_serves_directly_without_agent(self, tmp_path: Path) -> None:
         from code_review_helpers import (
             CACHE_NAMESPACE_SIGNALS,
+            _build_signal_input,
+            _stable_json_hash,
             cmd_extract_signals_prepare,
             load_signal_taxonomy,
             signal_extraction_cache_key,
@@ -14421,7 +14475,10 @@ class TestExtractSignalsPrepare:
         _, raw = load_signal_taxonomy()
         import hashlib
         taxonomy_hash = hashlib.sha256(raw).hexdigest()
-        key = signal_extraction_cache_key("abcdef1234", taxonomy_hash, "ph0")
+        input_hash = _stable_json_hash(
+            _build_signal_input(json.loads(diff_path.read_text()), None),
+        )
+        key = signal_extraction_cache_key(input_hash, taxonomy_hash, "ph0")
         cached_payload = {
             "status": "ok",
             "signals": [
@@ -14442,7 +14499,6 @@ class TestExtractSignalsPrepare:
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="ph0",
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -14477,7 +14533,6 @@ class TestExtractSignalsConsolidate:
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="ph0",
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -14767,7 +14822,6 @@ class TestPR121PromptIsContentAddressed:
         return argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="",  # No override — exercise content-addressing.
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -14837,7 +14891,6 @@ class TestPR121AgentInputBundle:
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="",
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -25878,7 +25931,6 @@ class TestSingletonDispatchTaxonomyContract:
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(_build_diff_data(tmp_path)),
-            diff_tip="abcdef1234",
             prompt_hash="ph0",
             cache_dir=None,
             taxonomy=None,
