@@ -420,10 +420,8 @@ no child is superseded without a human ruling. Version-check cases also cover
 explicit proceed instructions and resumed sessions continuing after reporting
 an available update.
 
-The cases tagged `ledger-lessons` rehearse a claimed PRD child moving to In
-Review only when the ticket worker's evidence map passes
-`handoff/scripts/live-ticket-check.mjs --child-evidence`, and rule provenance
-that never accepts the session's own ticket or plan as a source.
+The case tagged `ledger-lessons` rehearses a claimed PRD child moving to In
+Review only when its evidence map passes `live-ticket-check.mjs --child-evidence`.
 
 ## Runtime Files
 

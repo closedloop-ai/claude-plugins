@@ -299,7 +299,8 @@ path merely because another rule describes how its content should look.
     `engineering decision` finding. A detailed explanation written by an
     agent is still not a product source, and neither is the session's own
     ticket, PLN, plan, table or change log. This covers every refusal rule (a
-    PRD display cap is not one), state presentation (held to the copy rule),
+    PRD display cap is not one), new visual element or state presentation (held
+    to the copy rule),
     numeric limit, criterion worded more strongly than its source and removed
     accessibility behavior; a shared-module edit lists its callers in the
     change log.

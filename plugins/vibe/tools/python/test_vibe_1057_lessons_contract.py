@@ -135,3 +135,24 @@ def test_desktop_launch_requires_verified_build_output() -> None:
     assert "contains the documented Electron entry" in control
     assert "abort the Desktop scenario" in control
     assert "without calling any Electron" in control
+
+
+def test_claimed_children_move_only_through_the_ticket_check_gate() -> None:
+    ticket = section(agent("vibe-ticket-worker"), "## Handoff mode")
+    gate = (HANDOFF / "scripts" / "live-ticket-check.mjs").read_text()
+    assert "you are not the writer; its audit is never evidence" in ticket
+    assert "move exactly `children.inReview` to `IN_REVIEW`" in ticket
+    assert '"child-evidence": { type: "string" }' in gate
+    assert "its own audit never moves a child" in gate
+    assert "16. PRD child reconciliation" not in agent("vibe-guardrails-reviewer")
+
+
+def test_session_text_is_never_provenance() -> None:
+    quality = (VIBE / "references" / "quality-loop.md").read_text()
+    assert "is never a source" in section(quality, "## Communication and product questions")
+    assert "Never strengthen them either" in section(quality, "## Acceptance criteria before ready")
+    assert "a stated requirement there wins" in section(quality, "### Precedent before asking")
+    check = flat(agent("vibe-guardrails-reviewer"))
+    for phrase in ("a PRD display cap is not one", "numeric limit", "criterion worded more strongly than its source"):
+        assert phrase in check, phrase
+    assert "flag, rollout, rollback, parity, boundary and non-goal clauses are criteria too" in flat(agent("vibe-requirements-worker"))

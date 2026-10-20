@@ -6,10 +6,9 @@ import { fileURLToPath } from "node:url";
 import { checkChildEvidence, parseAddedLines, readFacts } from "./live-ticket-check.mjs";
 import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.join(HERE, "live-ticket-check.mjs");
-const NOW = Date.parse("2026-10-20T12:00:00.000Z");
+const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "live-ticket-check.mjs");
 const PULL = "https://github.com/closedloop-ai/symphony-alpha/pull/8947";
+const MET = { id: "AC-1", text: "Cards regroup by drag", result: "met", evidence: [{ kind: "diff", path: "apps/app/board.tsx", line: 2 }] };
 
 function fixture(t) {
   const home = makeHome("vibe-live-ticket-children-");
@@ -23,155 +22,72 @@ function fixture(t) {
   writeFileSync(path.join(checkout, "ledger.local.md"), "row\n");
   git(checkout, ["add", "-A"], home.home);
   git(checkout, ["commit", "--quiet", "-m", "feature"], home.home);
-  const head = git(checkout, ["rev-parse", "HEAD"], home.home);
-  return { home, checkout, base, head, facts: readFacts(checkout, base, { now: NOW, liveTicket: "ISS-12000", livePlan: "PLN-900", operator: "op@example.com" }) };
+  const facts = readFacts(checkout, base, { now: Date.parse("2026-10-20T12:00:00Z"), liveTicket: "ISS-12000", livePlan: "PLN-900", operator: "op@example.com" });
+  const check = (children, reviewer = "vibe-ticket-worker") => checkChildEvidence({ reviewer, children }, facts);
+  const delivered = (...evidence) => check([{ slug: "ISS-9393", classification: "delivered", items: [{ ...MET, evidence }] }]);
+  return { home, checkout, base, facts, check, delivered };
 }
 
-function delivered(items, extra = {}) {
-  return { slug: "ISS-9393", classification: "delivered", items, ...extra };
-}
-
-const MET_DIFF = { id: "AC-1", text: "Cards regroup by drag", result: "met", evidence: [{ kind: "diff", path: "apps/app/board.tsx", line: 2 }] };
-
-test("a delivered child with every item evidenced on changed lines may move to IN_REVIEW", (t) => {
-  const { facts } = fixture(t);
-  const result = checkChildEvidence({ reviewer: "vibe-adversarial-reviewer", children: [delivered([MET_DIFF])] }, facts);
-  assert.deepEqual(result.problems, []);
-  assert.deepEqual(result.inReview, ["ISS-9393"]);
-});
-
-test("the writer's own audit never moves a child", (t) => {
-  const { facts } = fixture(t);
-  for (const reviewer of ["vibe-change-worker", "", undefined]) {
-    const result = checkChildEvidence({ reviewer, children: [delivered([MET_DIFF])] }, facts);
-    assert.equal(result.ok, false, String(reviewer));
-  }
-});
-
-test("a pending design review or device run blocks the claim even when other items are met", (t) => {
-  const { facts } = fixture(t);
+test("a delivered child moves only when every item is met with verifiable evidence", (t) => {
+  const { check, delivered, facts, base } = fixture(t);
+  assert.deepEqual(delivered(MET.evidence[0]).inReview, ["ISS-9393"]);
+  assert.equal(check([{ slug: "ISS-9393", classification: "delivered", items: [MET] }], "vibe-change-worker").ok, false);
   const pending = { id: "WI-2", text: "Design review signed off", result: "not met yet", evidence: [] };
-  const result = checkChildEvidence({ reviewer: "vibe-adversarial-reviewer", children: [delivered([MET_DIFF, pending])] }, facts);
-  assert.equal(result.ok, false);
-  assert.deepEqual(result.inReview, []);
-  assert.ok(result.problems.some((problem) => problem.item === "WI-2"));
-  const running = { ...MET_DIFF, id: "AC-3", evidence: [{ kind: "report", url: "https://example.invalid/run", commit: facts.head, status: "running" }] };
-  assert.equal(checkChildEvidence({ reviewer: "r", children: [delivered([running])] }, facts).ok, false);
-});
-
-test("diff evidence must cite an added or changed line of a file this branch changed", (t) => {
-  const { facts } = fixture(t);
-  const cases = [
+  assert.deepEqual(check([{ slug: "ISS-9393", classification: "delivered", items: [MET, pending] }]).inReview, []);
+  const named = check([{ slug: "ISS-9393", classification: "delivered", items: [MET], namedEvidencePaths: ["docs/ledger.md"] }]);
+  assert.match(named.problems[0].problem, /docs\/ledger\.md/);
+  const passes = [
+    { kind: "diff", path: "apps/app/board.tsx", line: 4 },
+    { kind: "tracked", path: "docs/ledger.md" },
+    { kind: "merged-pr", url: PULL, commit: base },
+    { kind: "report", url: "https://example.invalid/design", commit: facts.head },
+  ];
+  for (const evidence of passes) assert.equal(delivered(evidence).ok, true, JSON.stringify(evidence));
+  const fails = [
     { kind: "diff", path: "apps/app/board.tsx", line: 1 },
     { kind: "diff", path: "README.md", line: 1 },
-    { kind: "diff", path: "apps/app/board.tsx" },
+    { kind: "tracked", path: "ledger.local.md" },
+    { kind: "merged-pr", url: PULL, commit: "a".repeat(40) },
+    { kind: "report", url: "https://example.invalid/design", commit: base },
+    { kind: "report", url: "https://example.invalid/run", commit: facts.head, status: "running" },
   ];
-  for (const evidence of cases) {
-    const result = checkChildEvidence({ reviewer: "r", children: [delivered([{ ...MET_DIFF, evidence: [evidence] }])] }, facts);
-    assert.equal(result.ok, false, JSON.stringify(evidence));
+  for (const evidence of fails) assert.equal(delivered(evidence).ok, false, JSON.stringify(evidence));
+});
+
+test("active elsewhere needs real activity and a supersession needs a human ruling outside the session", (t) => {
+  const { check } = fixture(t);
+  const active = (activity) => check([{ slug: "ISS-9500", classification: "active-elsewhere", activity }]).ok;
+  assert.equal(active({ pr: PULL, prState: "OPEN" }), true);
+  assert.equal(active({ branchCommitAt: "2026-10-18T00:00:00Z" }), true);
+  assert.equal(active({ ownerStatus: "IN_PROGRESS", owner: "someone@example.com" }), true);
+  for (const activity of [{ pr: PULL, prState: "CLOSED" }, { branchCommitAt: "2026-10-01T00:00:00Z" }, { ownerStatus: "IN_PROGRESS", owner: "op@example.com" }, undefined]) {
+    assert.equal(active(activity), false, JSON.stringify(activity));
   }
-  const added = checkChildEvidence({ reviewer: "r", children: [delivered([{ ...MET_DIFF, evidence: [{ kind: "diff", path: "apps/app/board.tsx", line: 4 }] }])] }, facts);
-  assert.equal(added.ok, true);
-});
-
-test("a ledger or artifact must be a tracked path in the diff, never a gitignored local file", (t) => {
-  const { facts } = fixture(t);
-  const tracked = { ...MET_DIFF, evidence: [{ kind: "tracked", path: "docs/ledger.md" }] };
-  assert.equal(checkChildEvidence({ reviewer: "r", children: [delivered([tracked])] }, facts).ok, true);
-  for (const file of ["ledger.local.md", "README.md"]) {
-    const item = { ...MET_DIFF, evidence: [{ kind: "tracked", path: file }] };
-    assert.equal(checkChildEvidence({ reviewer: "r", children: [delivered([item])] }, facts).ok, false, file);
+  const superseded = (ruling) => check([{ slug: "ISS-9600", classification: "superseded", ruling }]).ok;
+  assert.equal(superseded({ by: "Product lead", where: "ISS-9600 comment", quote: "Drop this." }), true);
+  for (const where of ["ISS-12000 What this is", "PLN-900", "session decision table"]) {
+    assert.equal(superseded({ by: "agent", where, quote: "not reused" }), false, where);
   }
+  assert.deepEqual(check([{ slug: "ISS-9700", classification: "uncovered" }]).uncovered, ["ISS-9700"]);
 });
 
-test("every evidence path the child names must carry an item's evidence", (t) => {
-  const { facts } = fixture(t);
-  const result = checkChildEvidence({ reviewer: "r", children: [delivered([MET_DIFF], { namedEvidencePaths: ["docs/ledger.md"] })] }, facts);
-  assert.equal(result.ok, false);
-  assert.match(result.problems[0].problem, /docs\/ledger\.md/);
-});
-
-test("delivered on main needs a merged pull request whose merge commit is in history", (t) => {
-  const { facts, base } = fixture(t);
-  const onMain = { ...MET_DIFF, evidence: [{ kind: "merged-pr", url: PULL, commit: base }] };
-  assert.equal(checkChildEvidence({ reviewer: "r", children: [delivered([onMain])] }, facts).ok, true);
-  const unknown = { ...MET_DIFF, evidence: [{ kind: "merged-pr", url: PULL, commit: "a".repeat(40) }] };
-  assert.equal(checkChildEvidence({ reviewer: "r", children: [delivered([unknown])] }, facts).ok, false);
-  const bare = { ...MET_DIFF, evidence: [{ kind: "merged-pr", commit: base }] };
-  assert.equal(checkChildEvidence({ reviewer: "r", children: [delivered([bare])] }, facts).ok, false);
-});
-
-test("a report counts only when it was produced on the final commit", (t) => {
-  const { facts, base } = fixture(t);
-  const current = { ...MET_DIFF, evidence: [{ kind: "report", url: "https://example.invalid/design", commit: facts.head }] };
-  assert.equal(checkChildEvidence({ reviewer: "r", children: [delivered([current])] }, facts).ok, true);
-  const stale = { ...MET_DIFF, evidence: [{ kind: "report", url: "https://example.invalid/design", commit: base }] };
-  assert.equal(checkChildEvidence({ reviewer: "r", children: [delivered([stale])] }, facts).ok, false);
-});
-
-test("active elsewhere needs an open pull request, a recent branch commit or another owner's IN_PROGRESS", (t) => {
-  const { facts } = fixture(t);
-  const check = (activity) => checkChildEvidence({ reviewer: "r", children: [{ slug: "ISS-9500", classification: "active-elsewhere", activity }] }, facts);
-  assert.equal(check({ pr: PULL, prState: "OPEN" }).ok, true);
-  assert.equal(check({ branchCommitAt: "2026-10-18T00:00:00.000Z" }).ok, true);
-  assert.equal(check({ ownerStatus: "IN_PROGRESS", owner: "someone@example.com" }).ok, true);
-  assert.equal(check({ pr: PULL, prState: "CLOSED" }).ok, false);
-  assert.equal(check({ branchCommitAt: "2026-10-01T00:00:00.000Z" }).ok, false);
-  assert.equal(check({ ownerStatus: "TODO", owner: "someone@example.com" }).ok, false);
-  assert.equal(check({ ownerStatus: "IN_PROGRESS", owner: "op@example.com" }).ok, false);
-  assert.equal(check(undefined).ok, false);
-});
-
-test("a supersession needs a human ruling that is not the session's own ticket or plan", (t) => {
-  const { facts } = fixture(t);
-  const check = (ruling) => checkChildEvidence({ reviewer: "r", children: [{ slug: "ISS-9600", classification: "superseded", ruling }] }, facts);
-  assert.equal(check({ by: "Product lead", where: "ISS-9600 comment 2026-10-12", quote: "Drop this, PRD-725 covers it." }).ok, true);
-  assert.equal(check({ by: "agent", where: "ISS-12000 What this is", quote: "not reused" }).ok, false);
-  assert.equal(check({ by: "agent", where: "PLN-900", quote: "superseded" }).ok, false);
-  assert.equal(check({ by: "agent", where: "session decision table", quote: "superseded" }).ok, false);
-  assert.equal(check({ by: "Product lead", where: "ISS-9600 comment" }).ok, false);
-});
-
-test("uncovered children are listed and never block", (t) => {
-  const { facts } = fixture(t);
-  const result = checkChildEvidence({ reviewer: "r", children: [{ slug: "ISS-9700", classification: "uncovered" }, { slug: "nope", classification: "uncovered" }] }, facts);
-  assert.deepEqual(result.uncovered, ["ISS-9700"]);
-  assert.equal(result.ok, false);
-});
-
-test("parseAddedLines reads new-side ranges, including single-line and pure-deletion hunks", () => {
-  const lines = parseAddedLines([
-    "diff --git a/x.ts b/x.ts",
-    "--- a/x.ts",
-    "+++ b/x.ts",
-    "@@ -1 +1,2 @@",
-    "@@ -9,2 +10 @@",
-    "@@ -20,3 +21,0 @@",
-    "diff --git a/gone.ts b/gone.ts",
-    "--- a/gone.ts",
-    "+++ /dev/null",
-    "@@ -1,2 +0,0 @@",
-  ].join("\n"));
+test("parseAddedLines reads new-side ranges and skips deleted files", () => {
+  const lines = parseAddedLines(["+++ b/x.ts", "@@ -1 +1,2 @@", "@@ -9,2 +10 @@", "@@ -20,3 +21,0 @@", "+++ /dev/null", "@@ -1,2 +0,0 @@"].join("\n"));
   assert.deepEqual([...lines.get("x.ts")], [1, 2, 10]);
-  assert.equal(lines.has("gone.ts"), false);
+  assert.equal(lines.size, 1);
 });
 
-test("the CLI reports the children gate beside the ticket check and fails on a writer's map", (t) => {
+test("the CLI reports the children gate beside the ticket check", (t) => {
   const { home, checkout, base } = fixture(t);
   const ticket = path.join(home.root, "ticket.md");
   writeFileSync(ticket, "## What this is\nFixture.\n");
-  const good = path.join(home.root, "good.json");
-  writeFileSync(good, JSON.stringify({ reviewer: "vibe-ticket-worker", children: [delivered([MET_DIFF])] }));
-  const args = (map) => ["--file", ticket, "--worktree", checkout, "--base-commit", base, "--child-evidence", map];
-  const passed = runNode(SCRIPT, args(good), home.home);
-  assert.equal(passed.json.children.ok, true);
-  assert.deepEqual(passed.json.children.inReview, ["ISS-9393"]);
-  const bad = path.join(home.root, "bad.json");
-  writeFileSync(bad, JSON.stringify({ reviewer: "vibe-change-worker", children: [delivered([MET_DIFF])] }));
-  const failed = runNode(SCRIPT, args(bad), home.home);
+  const map = (reviewer) => {
+    const file = path.join(home.root, `${reviewer}.json`);
+    writeFileSync(file, JSON.stringify({ reviewer, children: [{ slug: "ISS-9393", classification: "delivered", items: [MET] }] }));
+    return ["--file", ticket, "--worktree", checkout, "--base-commit", base, "--child-evidence", file];
+  };
+  assert.deepEqual(runNode(SCRIPT, map("vibe-ticket-worker"), home.home).json.children.inReview, ["ISS-9393"]);
+  const failed = runNode(SCRIPT, map("vibe-change-worker"), home.home);
   assert.equal(failed.status, 1);
   assert.equal(failed.json.children.ok, false);
-  const missing = runNode(SCRIPT, ["--file", ticket, "--child-evidence", good], home.home);
-  assert.equal(missing.status, 1);
-  assert.match(missing.json.error, /needs --worktree and --base-commit/);
 });

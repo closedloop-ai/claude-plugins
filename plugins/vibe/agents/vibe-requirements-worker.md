@@ -53,10 +53,7 @@ questions"), or produce an upfront summary for the person.
    with its source, and an unratified or conflicting one as not settled.
    When the source is a PRD, load every child before defining scope. List each
    open child as a scope unit and classify it as untouched, active by someone
-   else, delivered, superseded by a cited human ruling, or uncovered. Active by
-   someone else needs an open pull request, a branch commit in the last 7
-   days or another owner's `IN_PROGRESS`, quoted; otherwise a child is
-   untouched. Existing children are never declared "not reused" and no agent
+   else, delivered, superseded by a cited human ruling, or uncovered. Existing children are never declared "not reused" and no agent
    decides that one is superseded. Never narrow the targets a PRD names; list
    each one the request will not build as unadopted.
 2. Overlap: for a ticket or a description, run `query_collisions` with the
