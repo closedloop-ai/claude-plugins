@@ -222,15 +222,15 @@ def test_build_loop_runs_existing_checks_and_handoff_lists_missing_tests() -> No
     environment = flat(agent("vibe-environment-worker"))
     handoff = HANDOFF_SKILL.read_text()
 
-    assert "Run the existing affected tests before pushing" in environment
+    assert "still no broad or full test suite" in environment
     assert "Never write or edit tests in deployment mode" in environment
     checks = section(handoff, "## 5. Checks and the missing tests list")
     assert "It authors no tests" in checks
     assert "fixes the session's own code when one fails, never what a test asserts" in checks
     assert "it only repairs an existing test the session's change broke" in checks
     assert "lists every missing test as engineering's scope of work" in checks
-    assert "Lighter: read-only verify checks mode" in checks
-    assert "Backend: full-suite mode" in checks
+    assert "Read-only verify checks mode runs the same targeted checks" in checks
+    assert "only the tests `code_tests_for` returns for each changed file" in checks
     assert "Resume the SAME writer with an explicit handoff continuation" in checks
     assert "The verify worker never writes or fixes tests" in checks
 

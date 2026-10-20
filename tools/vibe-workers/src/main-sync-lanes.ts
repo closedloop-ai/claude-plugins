@@ -42,8 +42,12 @@ console.log(JSON.stringify({commands: execPlan([], [...commands.values()]), ...(
 `;
 const BROWSER_SCRIPT = /^(?:test:e2e(?::.*)?|test:web-smoke)$/;
 
-/** Reuses structured owning exports; the report's prose and blind --exec are never launch instructions. */
-export function discoverCheckLanes(root: string, receipt: MainSyncReceipt) {
+/**
+ * Reuses structured owning exports; the report's prose and blind --exec are never launch instructions. No selected
+ * lane runs locally (operator ruling, 2026-10-19: CI runs the broad suites); each required browser or Desktop e2e
+ * lane comes back as a limitation that only CI evidence clears.
+ */
+export function discoverRequiredE2eLanes(root: string, receipt: MainSyncReceipt) {
   if (process.env.PWDEBUG) throw new MainSyncError("Headless/displayless validation cannot run with ambient PWDEBUG; no test lane was spawned");
   const discovery = { argv: ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", DISCOVERY_SOURCE, receipt.mainSha] };
   verifyReportProducerInputs(root, root, ReportExecutionOwner.Discovery, DISCOVERY_MODULES);
@@ -53,7 +57,6 @@ export function discoverCheckLanes(root: string, receipt: MainSyncReceipt) {
     timeout: MAX_CHECK_MS, maxBuffer: 16 * 1024 * 1024 });
   if (run.error || run.status !== 0) throw new MainSyncError("Structured owning test-lane discovery failed; no test lane was spawned");
   const selected = discoverySchema.parse(JSON.parse(run.stdout));
-  const commands: CheckCommand[] = [discovery, { argv: ["pnpm", "test:lanes"] }];
   const limitations: z.infer<typeof e2eLimitationSchema>[] = [];
   for (const lane of selected.commands) {
     const bindings: Record<string, string> = { ...lane.env, ...(lane.suites === undefined ? {} : { AFFECTED_SCRIPT_SUITES: lane.suites }) };
@@ -68,16 +71,12 @@ export function discoverCheckLanes(root: string, receipt: MainSyncReceipt) {
       }
       limitations.push({ argv: ["pnpm", "--dir", "apps/desktop", lane.script], bindings,
         reason: "Selected Desktop verdict reads results.json then adjacent dd-quarantine.json from fixed retained locations; no verified current-run report isolation is available here. No lane spawned or PASS; use exact-SHA authorized external coverage" });
-    } else {
-      if (BROWSER_SCRIPT.test(lane.script)) {
-        limitations.push({ argv: ["pnpm", ...(lane.dir ? ["--dir", lane.dir] : []), lane.script], bindings,
-          reason: `Required browser lane ${lane.script} has no verified supported headless launch here; no lane spawned or PASS` });
-        continue;
-      }
-      commands.push({ argv: ["pnpm", ...(lane.dir ? ["--dir", lane.dir] : []), lane.script], bindings });
+    } else if (BROWSER_SCRIPT.test(lane.script)) {
+      limitations.push({ argv: ["pnpm", ...(lane.dir ? ["--dir", lane.dir] : []), lane.script], bindings,
+        reason: `Required browser lane ${lane.script} has no verified supported headless launch here; no lane spawned or PASS` });
     }
   }
-  return { commands, limitations };
+  return limitations;
 }
 
 function displaylessPrerequisites(root: string) {

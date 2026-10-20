@@ -42,7 +42,7 @@ one element), at least:
 | `vibe-adversarial-reviewer` | `code_callers` and `code_importers` on each changed component or hook, `code_tests_for` on changed files, and `blast_radius_tickets` on them |
 | `vibe-storybook-decomposer` | `code_symbols` for existing stories, similar components and the capability's precedent on sibling entities, `code_importers` on the precedent's providing component, and `code_callers` before extracting anything |
 | `vibe-handoff-summarizer` | `code_symbols` and `code_callers` to name the screens each changed component appears on, and `blast_radius_tickets` on the changed files |
-| `vibe-verify-worker` (read-only checks, full-suite and coverage) | `code_tests_for` on the changed files |
+| `vibe-verify-worker` (read-only targeted checks and coverage) | `code_tests_for` on the changed files, which selects the only tests it runs |
 | `vibe-primitive-worker` | `code_symbols` and `search_nodes` for an existing component under another name |
 | `vibe-prototype-worker` | `code_symbols` and `code_importers` on each shared component it builds on, and `blast_radius_tickets` on each file it edits |
 

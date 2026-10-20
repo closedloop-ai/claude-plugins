@@ -155,10 +155,11 @@ COVERAGE_CORE_REQUIRED: tuple[str, ...] = (
 # ship with the plugin (not project-specific like critic-gates.json
 # entries) but are gated by tier band AND trigger evaluation. Added to
 # the Coverage Plan's ``best_effort`` bucket only when the invocation
-# depth meets ``min_depth`` AND at least one trigger fires — either a
-# ``signal`` trigger matching the extracted signals (e.g. the Impact
-# Analyzer) or an unconditional ``{"type": "always"}`` trigger that
-# fires on the tier band alone (e.g. the Design Critic).
+# depth meets ``min_depth`` AND at least one trigger fires — a
+# ``signal`` trigger matching the extracted signals or a
+# ``change_class`` trigger (e.g. the Impact Analyzer), or an
+# unconditional ``{"type": "always"}`` trigger that fires on the tier
+# band alone (e.g. the Design Critic).
 #
 # Entry shape:
 #   - reviewer:  reviewer name; must also be registered in
@@ -178,7 +179,11 @@ COVERAGE_CORE_REQUIRED: tuple[str, ...] = (
 #
 # The Impact Analyzer (FEA-1401) is the first entry: opus-grade
 # cross-file reviewer, runs only in ``--depth deep`` when the diff
-# emits ``exported_symbol_change`` or ``symbol_deletion`` signals.
+# emits ``exported_symbol_change`` or ``symbol_deletion`` signals, or
+# deletes a file outright (the deterministic ``file_deletion``
+# change_class, read from ``file_statuses`` — ISS-12737). It stays
+# best-effort and deep-only: at standard and shallow depth Bug Hunter B
+# and the fast-path reviewer own deletions.
 #
 # The Design Critic is the second entry: a software-design craftsmanship
 # reviewer that runs on EVERY ``--depth deep`` review (a single
@@ -200,6 +205,7 @@ COVERAGE_CORE_CONDITIONAL: tuple[dict[str, Any], ...] = (
                 "name": "symbol_deletion",
                 "min_confidence": 0.85,
             },
+            {"type": "change_class", "class": "file_deletion"},
         ),
         "min_depth": "deep",
         "required": False,
@@ -290,7 +296,7 @@ SPAWN_SPEC_BUCKETS: frozenset[str] = frozenset({
 # absent from the fleet.
 SPAWN_SPEC_SKIP_REASONS: frozenset[str] = frozenset({
     "deferred_pln723",         # test_quality slot reserved for PLN-723
-    "no_partitions",           # all files cached → no BHA
+    "no_partitions",           # all files cached, or only deleted files left → no BHA
     "docs_only",               # arbitrate-budget waived the BHA floor (docs-only diff)
     "unknown_reviewer",        # closed-vocab violation: not core, not critic
     "missing_reviewer_name",   # plan entry with blank/missing reviewer
@@ -309,13 +315,16 @@ SPAWN_SPEC_FALLBACK_REASONS: frozenset[str] = frozenset({
 
 
 # Canonical change_class values. Extensible — adding one requires
-# updating ``CHANGE_CLASS_PATH_PATTERNS`` in code_review_helpers.py and
-# the documenting comment here.
+# a detector in code_review_helpers.py (a ``CHANGE_CLASS_PATH_PATTERNS``
+# entry for path-based classes) and the documenting comment here.
+# ``file_deletion`` is the one class not derived from paths: it fires
+# when any ``file_statuses`` value is ``"removed"`` (ISS-12737).
 COVERAGE_CHANGE_CLASSES: frozenset[str] = frozenset({
     "schema_change",
     "infrastructure_change",
     "build_config_change",
     "dependency_change",
+    "file_deletion",
 })
 
 VERDICTS: frozenset[str] = frozenset({
@@ -913,6 +922,11 @@ class CanonicalFinding:
     # Cross-file grouping
     other_locations: list[OtherLocation] = field(default_factory=list)
 
+    # Validator-owned location tags (present and True only when the
+    # validator set them; reviewer-supplied values are stripped).
+    out_of_hunk_kept: bool = False  # in a diff file, outside its changed lines
+    out_of_diff: bool = False  # in a file outside the diff (ISS-12737)
+
     # Schema version (per-finding, complements envelope version)
     schema_version: int = SCHEMA_VERSION
 
@@ -1269,6 +1283,8 @@ def finding_json_schema() -> dict[str, Any]:
             "rejection_class": {"type": ["string", "null"]},
             "human_review_recommended": {"type": "boolean"},
             "other_locations": {"type": "array"},
+            "out_of_hunk_kept": {"type": "boolean"},
+            "out_of_diff": {"type": "boolean"},
         },
     }
 

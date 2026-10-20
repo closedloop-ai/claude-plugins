@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { git, mainSyncAdmission, mainSyncRecipeFiles, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "vibe-sessions.mjs");
+const FLAG_KEYS = path.join(path.dirname(fileURLToPath(import.meta.url)), "flag-keys.mjs");
 const SPACED_CHECKOUT = ["Documents", "Closedloop.ai - Active Work", "symphony-alpha"];
 const OPERATOR_ARGS = ["--operator-id", "user-operator", "--operator-email", "operator@example.com", "--operator-name", "Sample Operator"];
 
@@ -438,6 +439,24 @@ function writeRollout(codexHome, day, id, meta) {
   writeJson(file, `${JSON.stringify({ type: "session_meta", payload })}\n${JSON.stringify({ type: "event" })}\n`);
 }
 
+test("list shows each session's flag keys per surface and the person's approval of each proposed key", (t) => {
+  const { root, home, worktree } = newSession(t, "flag-keys");
+  const file = path.join(root, "flag-keys.json");
+  writeJson(file, { surfaces: [{ surface: "Branches list", hosts: ["web"], keys: [
+    { key: "labs-nav-section", origin: "existing", readAt: ["apps/app/page.tsx"] },
+    { key: "branches-list-v2", origin: "new", reason: "net-new-screen", repoRule: "A flag is required for a net-new screen.", source: "PRD-729: a new screen" },
+  ] }] });
+  const saved = runNode(FLAG_KEYS, ["record", "--worktree", worktree, "--file", file], home);
+  assert.equal(saved.status, 0, saved.stderr);
+  const listed = runNode(SCRIPT, ["list"], home);
+  assert.deepEqual(listed.json.sessions.find((session) => session.slug === "flag-keys").flagKeys, [
+    { surface: "Branches list", hosts: ["web"], keys: [
+      { key: "labs-nav-section", origin: "existing" },
+      { key: "branches-list-v2", origin: "new", approval: "pending" },
+    ] },
+  ]);
+});
+
 test("codex-sessions records this thread and every subagent it spawned, nested ones included", (t) => {
   const { root, home, worktree } = newSession(t, "sessions");
   const codexHome = path.join(root, "codex-home");
@@ -505,8 +524,14 @@ test("ticket-sections renders the record's sections and marks what is still pend
     home
   );
   assert.equal(recorded.status, 0, recorded.stderr);
+  const keysPending = runNode(SCRIPT, ["ticket-sections", "--worktree", worktree], home);
+  assert.match(keysPending.json.markdown, /### Keys to see this work\n\nPending\./);
+  const keysFile = path.join(root, "flag-keys.json");
+  writeJson(keysFile, { surfaces: [{ surface: "Sections", hosts: ["web"], keys: [{ key: "a-flag", origin: "existing", readAt: ["apps/app/a.tsx"] }] }] });
+  runNode(FLAG_KEYS, ["record", "--worktree", worktree, "--file", keysFile], home);
   const filled = runNode(SCRIPT, ["ticket-sections", "--worktree", worktree], home);
   assert.doesNotMatch(filled.json.markdown, /Pending\./);
+  assert.match(filled.json.markdown, /\| Sections \| web \| `a-flag` \| existing key \| on main \| false \|/);
   assert.match(filled.json.markdown, /\| `a-flag` \| false \|\n\| `b-flag` \| `test` \|/);
   assert.match(filled.json.markdown, /as PostHog user `user_abc`\. 2 flags\./);
   assert.match(filled.json.markdown, /- Codex session \(orchestrator\): `thread-12345678`/);

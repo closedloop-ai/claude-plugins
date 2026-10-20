@@ -4,7 +4,8 @@ import type { Capability } from "./contracts.js";
 
 /** A launch refused before or at worker start, carrying the one plain step a person can take when there is one. */
 export class LaunchPrecheckError extends Error {
-  constructor(readonly code: "CLAUDE_SIGN_IN_NEEDED" | "CLAUDE_CLI_MISSING" | "MCP_TOOLS_MISSING" | "MISSING_CAPABILITIES",
+  constructor(readonly code: "CLAUDE_SIGN_IN_NEEDED" | "CLAUDE_CLI_MISSING" | "MCP_TOOLS_MISSING" | "MISSING_CAPABILITIES"
+    | "USAGE_LIMIT_REACHED",
     message: string, readonly personAction?: string) { super(message); }
 }
 

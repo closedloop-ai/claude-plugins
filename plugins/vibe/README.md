@@ -183,6 +183,22 @@ and `codex plugin add` for vibe and closedloop-core in Codex) and asks them
 to reopen the app. When the check cannot reach GitHub the session carries
 on and says so.
 
+Sessions keep Codex and Claude usage down. Each worker's model follows its
+role from one policy per harness: in Codex, `scripts/worker-model.mjs` (backed
+by `cl-sweep/scripts/model-policy.mjs`, which cl-sweep and cl-execute use too)
+puts read-only explorers (requirements, backend, primitive and Storybook
+advice, the handoff summary) on `gpt-5.6-terra` and every writer, reviewer
+and verifier on `gpt-6-sol`, all at reasoning effort `high` unless raised
+explicitly; in Claude Code the agent files' `model:` frontmatter does the
+same with sonnet. Before spawning workers or forwarding a request, and when a
+turn stalls, Codex runs `scripts/codex-usage.mjs check`, which reads the
+account's rate limits from the App Server through codex-fleet-monitor's
+shared reader; the Claude launcher reads each turn's `rate_limit_event`. A
+reached limit that no longer allows ordinary usage, or paid extra usage in
+Claude Code, stops the session with a plain message unless the person explicitly
+allowed credits. Containerized e2e runs only the specs the change needs, one
+stack per machine through `scripts/e2e-lock.mjs`.
+
 Two notices reach the person without waiting for a reply. When a request names
 an outside product as its reference, or gives a screenshot of one, the
 requirements worker researches that product's public documentation, reads the
@@ -249,7 +265,10 @@ request retires, recorded with `retired-tests.mjs` and the retiring ticket or
 PRD, and the live ticket lists those deletions next to Missing tests. The
 handoff inventory lists repairs and recorded deletions and rejects an added or
 unrecorded deleted test file, and the guardrails reviewer checks each one. Handoff
-runs the existing affected tests, the writer fixes the session's own code
+runs only the targeted existing tests (the ones closedloop-graph's
+`code_tests_for` returns for each changed file) with Biome, source gates and
+the affected typecheck, never a broad or full local suite; CI runs those. The
+writer fixes the session's own code
 when one fails, never what a test asserts, and the ticket lists the missing tests as
 engineering's scope of work: the behavior and row each covers and the files
 to cover. Only the person's explicit request for a pull request authorizes
@@ -301,6 +320,35 @@ through the queue, and mark the ticket Done. The fix worker runs the full web
 and Desktop screen walk itself, on a Mac through `pnpm vibe walk-linux`, and
 its counts and result file go into the PR's Test plan and the ticket's loop.
 
+### `codex-fleet-monitor`
+
+Background event watcher for a fleet of long-running Codex App Server threads
+(local and one ssh host) plus the pull requests they produce. One command polls
+every watched thread and PR and exits with a diff on the first change: a session
+going idle, stalling, or failing, a merge conflict, new review or comment
+counts, changed checks, or a new PR. Liveness is read from the thread's last
+turn and item count, so a turn left open by a silent Codex usage limit shows as
+`STALLED` instead of running forever. It also prints a Codex usage line for each
+machine (used-percent band, and whether a reached limit has started spending
+paid credits), check counts only once they settle, and optionally the
+delegated-work request files sessions drop for Claude workers. A change made
+between a watcher exit and its re-arm is still reported. It needs only this
+plugin and the `codex` CLI; sessions are listed by thread id.
+
+### `fleet-orchestrator`
+
+Playbook for a Claude Code session orchestrating several Codex and Claude
+workers on parallel PRs, on one or more machines, for an operator who does QA
+and merges: roles, orchestration state that survives a reboot or compaction,
+Codex budget rules, a Claude takeover of a dead Codex writer, CPU and shared e2e
+stack slot locks, agent-first QA, pushback on flags and extra code paths, and a
+lessons ledger. `fleet.sh` starts or resumes a Codex thread bound to a
+worktree, starts and steers turns from prompt files and reads the last messages,
+on this machine or over ssh on another, and runs commands in a machine's named
+slots. `request-visual.mjs` files a Codex session's visual-work request only when it names the PR's pushed head. Machine specifics live in the orchestration dir's `config.env`, shared
+with `codex-fleet-monitor`, which watches the fleet. One machine needs no remote
+config; more need ssh key auth plus `codex`, `node` and `gh` on each.
+
 ### ClosedLoop Ticket Skills
 
 The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl-analyze`, `cl-find-related-tickets`, `cl-split`, `cl-work-report`, `cl-sweep`, and `cl-execute`. Together they cover policy-aware ticket analysis, related-ticket discovery, safe one-level split workflows, private project work reports, sweep coordination, and end-to-end ticket execution. The imported sweep scripts use the native managed Codex App Server through bundled helpers rather than depending on a separate `app-server-orchestrator` skill. Runtime access still depends on the operator's normal ClosedLoop, GitHub, `workflow-memory`, and `closedloop-graph` MCP/API configuration.
@@ -314,11 +362,11 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 | `vibe-ticket-worker` | sonnet | Live ticket creation and source link, the session plan as a linked PLN, next-owner lookup, handoff grading, assignment, and cancellation |
 | `vibe-environment-worker` | sonnet | Vercel environment creation, redeploy, flag snapshots, Desktop setup, deployment records, and opening a pull request the person asked for at handoff |
 | `vibe-change-worker` | sonnet | Sole persistent implementation writer for local planning, full-stack changes, stories, fixes, the handoff missing tests list and serialized recording |
-| `vibe-backend-worker` | opus | Read-only decision-table and backend guidance for that writer |
+| `vibe-backend-worker` | sonnet | Read-only decision-table and backend guidance for that writer |
 | `vibe-primitive-worker` | sonnet | Read-only reusable-component and steward-specification guidance for that writer |
 | `vibe-prototype-worker` | sonnet | Read-only canonical prototype guidance or operational immutable Vercel sharing of the writer's reviewed committed result |
 | `vibe-storybook-decomposer` | sonnet | Read-only Storybook placement owner (precedent search on sibling entities before any story or shared component is placed) and component extraction, story and control guidance for that writer |
-| `vibe-verify-worker` | sonnet | Read-only existing checks, handoff coverage review, full backend suite, Storybook footprint and handoff running app checks with `pnpm control` |
+| `vibe-verify-worker` | sonnet | Read-only targeted existing checks (`code_tests_for` per changed file), locked containerized e2e for the specs the change needs, handoff coverage review, Storybook footprint and handoff running app checks with `pnpm control` |
 | `vibe-guardrails-reviewer` | sonnet | Read-only judgment-based review of reuse, placement (including Storybook precedent placement), copy provenance, accessibility, and tests |
 | `vibe-adversarial-reviewer` | opus | Separate read-only handoff review of ownership, dependencies, contracts, regressions, and web/Desktop behavior |
 | `vibe-handoff-summarizer` | sonnet | Read-only plain-language summary of the session inventory, changes, and overlaps |
@@ -398,14 +446,16 @@ and skips it after the person declined; and the startup version check asks
 line waiting for the first reply after that answer), says nothing when current, carries on
 when GitHub cannot be reached, and asks for a reopen after updating.
 
-The seven cases tagged `review-lessons` come from the reviews of two vibe
-feature pull requests (operator ruling, 2026-10-16). Each rehearses one
+The eight cases tagged `review-lessons` come from the reviews of vibe
+feature pull requests (operator rulings, 2026-10-16 and 2026-10-20). Each rehearses one
 handoff review decision from supplied session state: a main sync that turned
 a shipped editable control read-only, an invented Version History entry and a
 reworded compile-only repair, a stale story ID left in an e2e spec, two
 children each wiring their own selection behind a shared slot, a criterion
 checked on one view but not the board it names, an agent-drafted product docs
-paragraph, and a flag retired while a linked ticket held it.
+paragraph, a flag retired while a linked ticket held it, and one redesign
+gated behind three new keys beside a gate on a wording fix to a shipped
+surface.
 
 The six cases tagged `qa-lessons` rehearse real-browser Storybook play
 execution, WebKit iPhone and Chromium Pixel touch coverage, overlap research
@@ -425,7 +475,7 @@ Review only when its evidence map passes `live-ticket-check.mjs --child-evidence
 
 ## Runtime Files
 
-Version `1.0.62` contains 10 skills and 16 agents. It has no standalone
+Version `1.0.67` contains 12 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains the skill-contract test modules and
 `vibe_contract_text.py`, the text helpers they share.

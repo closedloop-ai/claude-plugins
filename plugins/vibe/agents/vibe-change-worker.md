@@ -78,6 +78,10 @@ acceptance criterion asks for the old path to go (operator ruling,
 2026-10-16, after symphony-alpha #8885 retired a held flag). It is never
 `NEEDS_PERSON`.
 
+Never add a flag key or read yourself: propose it and return
+`NEEDS_FLAG_APPROVAL` (`../skills/vibe/references/guardrails.md`, "Feature
+flags"). Every other new mechanism follows "No new tech debt" there.
+
 An action over selected rows accounts for every selected row, the ineligible
 ones included: none is silently dropped, and the count the person sees
 matches the selection. When the ticket and PRD do not say how ineligible rows

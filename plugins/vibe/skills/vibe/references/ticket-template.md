@@ -139,8 +139,8 @@ path and decision table, or "None: every screen uses existing API endpoints.">
 
 ## Production flag snapshot
 
-<From ticket-sections: when it was taken, for which PostHog user, and every
-flag with its value.>
+<From ticket-sections: when it was taken, for which PostHog user, every flag
+with its value, and "Keys to see this work" (`guardrails.md`, "Feature flags").>
 
 ## Sessions
 
