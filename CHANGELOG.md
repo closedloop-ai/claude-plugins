@@ -4,6 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.65
+
+#### Added
+- `fleet-orchestrator` skill: rules, each with its reason, for a Claude Code session that runs several Codex and Claude workers on parallel PRs across one or more machines for an operator who does QA and merges. It covers roles (the orchestrator never edits a product repo, one writer per branch, read-only reviewers), persistent orchestration state with saved prompts and a resume log, Codex budget rules (effort `high`, no computer use, visual work as request files for Claude workers), a Claude takeover of a dead Codex writer, heavy-check placement and slot locks, agent-first QA with independent review and fix verification before merge, pushback on unapproved flag keys and parallel code paths, a lessons ledger, and operator reporting. It points to `codex-fleet-monitor` for watching and to the target repo's `AGENTS.md` and workflow repo memory for repo specifics. `references/` holds the state layout, resume log and lessons ledger formats, and the visual request, worker preamble and flag approval templates.
+- `fleet-orchestrator/scripts/codex-session.mjs`: `turn` starts a Codex thread bound to a worktree cwd (or resumes the one in `<stateDir>/<name>.json`) and starts a turn from a prompt file with the saved model, effort (default `high`) and sandbox; `steer` adds a prompt file to the active turn; `last` prints the monitor's status line and the last agent messages. It reuses the App Server client and in-process timeout exported by `codex-fleet-monitor`'s `liveness.mjs`, sets approval policy `never` because it disconnects once a turn is accepted, writes the state file atomically, and records every prompt file sent. The state file is the one `codex-fleet-monitor` reads for a `local|remote <name>` session line.
+- `fleet-orchestrator/scripts/slot-lock.sh [--slots N] <lockName> <owner> <command...>` runs a command once one of N named slots is free on the machine, records the owner, reclaims a slot whose holder pid is dead, and frees the slot when the command exits or the script is interrupted (the command is stopped too). `--status <lockName>` lists holders. One script serves a machine-wide shared e2e stack slot and an N-slot heavy-check cap.
+
 ### vibe v1.0.59
 
 #### Added
