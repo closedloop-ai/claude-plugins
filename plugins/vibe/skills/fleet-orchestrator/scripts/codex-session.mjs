@@ -2,18 +2,17 @@
 //   node codex-session.mjs turn  <stateDir> <name> --prompt-file <file> [--cwd <dir>] [--model <m>] [--effort <e>] [--sandbox <mode>]
 //   node codex-session.mjs steer <stateDir> <name> --prompt-file <file>
 //   node codex-session.mjs last  <stateDir> <name> [--count <n>]
-// `turn` starts a thread bound to --cwd when <stateDir>/<name>.json does not exist, otherwise resumes the
-// thread it names, then starts a turn with the prompt file's text. `steer` adds the prompt to the active turn.
+// `turn` starts a thread bound to --cwd when <stateDir>/<name>.json does not exist (a new session also needs
+// --effort), otherwise resumes the thread it names, then starts a turn with the prompt file's text. `steer` adds the prompt to the active turn.
 // `last` prints the thread's status line and its last <n> agent messages (default 1).
 // The state file is the one codex-fleet-monitor reads for a `local|remote <name>` session line.
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import {
   connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint, summarize,
 } from '../../codex-fleet-monitor/scripts/liveness.mjs';
 
-export const DEFAULT_EFFORT = 'high';
 const COMMANDS = new Set(['turn', 'steer', 'last']);
 const SANDBOXES = new Set(['read-only', 'workspace-write', 'danger-full-access']);
 const SANDBOX_POLICIES = {
@@ -89,6 +88,7 @@ export function loadState(stateDir, name) {
 export function saveState(stateDir, name, state) {
   const target = statePath(stateDir, name);
   const temp = `${target}.${process.pid}.tmp`;
+  mkdirSync(stateDir, { recursive: true });
   writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`);
   renameSync(temp, target);
 }
@@ -102,11 +102,12 @@ export function nextState(saved, options) {
     throw new Error(`session is bound to ${saved.cwd}; start a new session name for ${options.cwd}`);
   }
   if (!saved && !options.cwd) throw new Error('a new session needs --cwd');
+  if (!saved && !options.effort) throw new Error('a new session needs --effort');
   return {
     threadId: saved?.threadId,
     cwd: saved?.cwd ?? options.cwd,
     model: options.model ?? saved?.model,
-    effort: options.effort ?? saved?.effort ?? DEFAULT_EFFORT,
+    effort: options.effort ?? saved?.effort,
     sandbox: options.sandbox ?? saved?.sandbox,
     turns: saved?.turns ?? [],
   };

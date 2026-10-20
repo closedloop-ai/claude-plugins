@@ -8,7 +8,7 @@ One directory per program on each machine, in a path that survives a reboot (und
 <orchDir>/
   config.env  sessions.txt  prs.txt   monitor inputs (see codex-fleet-monitor)
   last-snapshot.txt  item-history.txt  checks-*.txt   monitor-owned; leave alone
-  sessions/<name>.json   codex-session.mjs state: threadId, cwd, model, effort, sandbox, turns
+  sessions/<name>.json   session state written by fleet.sh: threadId, cwd, model, effort, sandbox, turns
   prompts/<name>-<nn>-<slug>.md   every prompt sent to any worker, written before sending
   requests/                       REQUESTS_DIR: visual-work request files from Codex sessions
   findings/                       review, verification, QA and visual results, one file per task
@@ -16,7 +16,7 @@ One directory per program on each machine, in a path that survives a reboot (und
   lessons.md
 ```
 
-A remote machine keeps the same `sessions/`, `prompts/` and `requests/` under its own persistent dir, which is the monitor's `REMOTE_STATE_DIR` (pointing at its `sessions/`) and `REMOTE_REQUESTS_DIR`. Copy a prompt file there before running `codex-session.mjs` on that machine.
+A remote machine keeps `sessions/` and `requests/` under its own persistent dir (`REMOTE_STATE_DIR` and `REMOTE_REQUESTS_DIR`). Prompts stay in this machine's `prompts/`; `fleet.sh` copies each one over when it sends it.
 
 ## Resume log
 

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import {
-  DEFAULT_EFFORT, lastMessages, loadState, nextState, parseCli, run, saveState,
+  lastMessages, loadState, nextState, parseCli, run, saveState,
 } from './codex-session.mjs';
 
 /** Records each request and answers from `replies[method]` (a value or a function of params). */
@@ -58,19 +58,21 @@ test('parseCli rejects bad commands, names and option combinations', () => {
 
 test('state files round trip, are absent until saved, and must name a thread and cwd', () => {
   const { dir } = workDir();
-  assert.equal(loadState(dir, 'w1'), null);
+  const stateDir = join(dir, 'sessions');
+  assert.equal(loadState(stateDir, 'w1'), null);
   const state = { threadId: 'T1', cwd: '/wt', effort: 'high', turns: [] };
-  saveState(dir, 'w1', state);
-  assert.deepEqual(loadState(dir, 'w1'), state);
-  assert.deepEqual(readdirSync(dir).sort(), ['prompt.md', 'w1.json']);
+  saveState(stateDir, 'w1', state);
+  assert.deepEqual(loadState(stateDir, 'w1'), state);
+  assert.deepEqual(readdirSync(stateDir), ['w1.json']);
   writeFileSync(join(dir, 'bad.json'), JSON.stringify({ cwd: '/wt' }));
   assert.throws(() => loadState(dir, 'bad'), /has no threadId and cwd/);
 });
 
 test('nextState binds a session to its first cwd and keeps model and effort between turns', () => {
-  assert.throws(() => nextState(null, {}), /a new session needs --cwd/);
-  assert.deepEqual(nextState(null, { cwd: '/wt' }), {
-    threadId: undefined, cwd: '/wt', model: undefined, effort: DEFAULT_EFFORT, sandbox: undefined, turns: [],
+  assert.throws(() => nextState(null, { effort: 'high' }), /a new session needs --cwd/);
+  assert.throws(() => nextState(null, { cwd: '/wt' }), /a new session needs --effort/);
+  assert.deepEqual(nextState(null, { cwd: '/wt', effort: 'high' }), {
+    threadId: undefined, cwd: '/wt', model: undefined, effort: 'high', sandbox: undefined, turns: [],
   });
   const saved = { threadId: 'T1', cwd: '/wt', model: 'm1', effort: 'medium', sandbox: 'workspace-write', turns: [{ turnId: 'u1' }] };
   assert.deepEqual(nextState(saved, { cwd: '/wt' }), saved);
@@ -81,7 +83,7 @@ test('nextState binds a session to its first cwd and keeps model and effort betw
 test('turn on a new session starts a thread in the cwd, starts the turn and saves the state', async () => {
   const { dir, promptFile } = workDir();
   const client = stubClient({ 'thread/start': { thread: { id: 'T1' } }, 'turn/start': { turn: { id: 'U1' } } });
-  const line = await run(client, parseCli(['turn', dir, 'w1', '--prompt-file', promptFile, '--cwd', '/wt', '--model', 'm']));
+  const line = await run(client, parseCli(['turn', dir, 'w1', '--prompt-file', promptFile, '--cwd', '/wt', '--model', 'm', '--effort', 'high']));
   assert.equal(line, 'w1 turn T1 U1');
   assert.deepEqual(client.calls, [
     { method: 'thread/start', params: { cwd: '/wt', model: 'm', approvalPolicy: 'never' } },
@@ -89,12 +91,12 @@ test('turn on a new session starts a thread in the cwd, starts the turn and save
       method: 'turn/start',
       params: {
         threadId: 'T1', input: [{ type: 'text', text: 'Fix the failing check.\n', text_elements: [] }],
-        cwd: '/wt', model: 'm', effort: DEFAULT_EFFORT, approvalPolicy: 'never',
+        cwd: '/wt', model: 'm', effort: 'high', approvalPolicy: 'never',
       },
     },
   ]);
   assert.deepEqual(JSON.parse(readFileSync(join(dir, 'w1.json'), 'utf8')), {
-    threadId: 'T1', cwd: '/wt', model: 'm', effort: DEFAULT_EFFORT, turns: [{ turnId: 'U1', kind: 'turn', promptFile }],
+    threadId: 'T1', cwd: '/wt', model: 'm', effort: 'high', turns: [{ turnId: 'U1', kind: 'turn', promptFile }],
   });
 });
 
@@ -115,7 +117,7 @@ test('turn on a saved session resumes its thread with the saved options', async 
 test('a failed turn/start leaves the state file unchanged', async () => {
   const { dir, promptFile } = workDir();
   const client = stubClient({ 'thread/start': { thread: { id: 'T1' } }, 'turn/start': {} });
-  await assert.rejects(run(client, parseCli(['turn', dir, 'w1', '--prompt-file', promptFile, '--cwd', '/wt'])), /no turn id/);
+  await assert.rejects(run(client, parseCli(['turn', dir, 'w1', '--prompt-file', promptFile, '--cwd', '/wt', '--effort', 'high'])), /no turn id/);
   assert.equal(loadState(dir, 'w1'), null);
 });
 

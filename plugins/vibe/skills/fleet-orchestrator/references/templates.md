@@ -11,7 +11,7 @@ A Codex session writes this to the requests dir as `<session>-<yyyymmdd-hhmm>-<s
 Session: <session name>
 PR: <owner/repo>#<number>
 Pushed head: <full sha; must equal the PR head>
-Where: <URLs or Storybook story ids>
+Where: <URLs or component story ids>
 Flags: <key=on|off for every flag on the path>
 Steps:
 1. <step>
@@ -25,10 +25,10 @@ Prepend to every Claude worker prompt; keep the `Takeover` line only when replac
 
 ```
 You are the only writer on <owner/repo>#<number>, worktree <path> on <machine>, branch <branch>.
-Takeover: a Codex session wrote this branch and stopped (<limit|crash>). Continue in the same worktree from its last pushed head <sha>. Do not edit vibe session records; commit normally.
-Before editing, read every AGENTS.md that owns the paths you touch and query the workflow repo memory for this repo.
-Tests: run only the tests covering what you changed (ask the repo's test graph or lane tool which). Heavy checks go through <slot-lock command or remote host>. Never run native e2e on <operator laptop>.
-Git: plain commit messages; regular push only, never force or amend after push.
+Takeover: a Codex session wrote this branch and stopped (<limit|crash>). Continue in the same worktree from its last pushed head <sha>. Do not edit the Codex session's own records; commit normally.
+Before editing, read the repo docs that own the paths you touch (AGENTS.md files or contributor guide) and the team's repo memory tool if it has one.
+Tests: run only the tests covering what you changed (ask the repo's test graph or lane tool which). Heavy checks go through <fleet.sh slot command for the chosen machine>. Never run e2e that opens windows on the operator's daily machine.
+Git: commit messages per the repo's conventions; regular push only, never force or amend after push.
 Review threads: reply on the thread naming the fixing SHA and resolve it only after the fix is verified in code.
 Report when done: pushed head SHA, files changed, tests run and results, open items, anything that needs the operator.
 

@@ -323,11 +323,12 @@ workers on parallel PRs, on one or more machines, for an operator who does QA
 and merges: roles, orchestration state that survives a reboot or compaction,
 Codex budget rules, a Claude takeover of a dead Codex writer, CPU and shared e2e
 stack slot locks, agent-first QA, pushback on flags and extra code paths, and a
-lessons ledger. `codex-session.mjs` starts or resumes a Codex thread bound to a
-worktree, starts and steers turns from prompt files and reads the last
-messages, keeping a per-session state file that `codex-fleet-monitor` reads.
-`slot-lock.sh` runs a command in one of N named slots on a machine. It watches
-the fleet through `codex-fleet-monitor`.
+lessons ledger. `fleet.sh` starts or resumes a Codex thread bound to a
+worktree, starts and steers turns from prompt files and reads the last messages,
+on this machine or over ssh on another, and runs commands in a machine's named
+slots. Machine specifics live in the orchestration dir's `config.env`, shared
+with `codex-fleet-monitor`, which watches the fleet. One machine needs no remote
+config; more need ssh key auth plus `codex`, `node` and `gh` on each.
 
 ### ClosedLoop Ticket Skills
 
