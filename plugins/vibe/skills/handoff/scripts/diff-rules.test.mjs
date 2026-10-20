@@ -156,7 +156,7 @@ test("a change anywhere in a frozen story's import closure blocks until its iden
   const deep = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" } });
   assert.deepEqual(deep.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]]);
   assert.deepEqual(run(t, { base, head: { "packages/design-system/components/other.tsx": "export const other = 2;\n" } }).found, []);
-  const recorded = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: "Frozen render unchanged: apps/storybook/stories/row.stories.tsx: storybook test-runner on base and branch, identical\n" });
+  const recorded = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: "Frozen render unchanged: all 1 stories: storybook test-runner on base and branch, identical\n" });
   assert.deepEqual(recorded.found, []);
 });
 

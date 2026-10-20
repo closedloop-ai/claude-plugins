@@ -341,7 +341,7 @@ function resolveImport(from, specifier, baseFiles) {
  */
 function checkFrozenRenders(files, repo, logged, add) {
   const changed = new Set(files.flatMap((file) => [file.path, file.oldPath].filter(Boolean)));
-  const stories = repo.frozenStories().filter((story) => !logged(`Frozen render unchanged: ${story}:`));
+  const stories = repo.frozenStories();
   if (stories.length === 0) {
     return;
   }
@@ -358,7 +358,7 @@ function checkFrozenRenders(files, repo, logged, add) {
     }
     frontier = [...next];
   }
-  for (const story of stories) {
+  const affected = stories.filter((story) => {
     const seen = new Set([story]);
     const queue = [story];
     while (queue.length) {
@@ -369,10 +369,10 @@ function checkFrozenRenders(files, repo, logged, add) {
         }
       }
     }
-    const touched = [...seen].filter((file) => file !== story && changed.has(file));
-    if (touched.length) {
-      add("frozen-render", story, 1, `frozen v1.0 story renders changed files: ${touched.slice(0, 3).join(", ")}${touched.length > 3 ? ", ..." : ""}`, "render the same story IDs on the base and the branch with fixed args, globals and viewport and run their plays; both must be identical, then record `Frozen render unchanged: <story path>: <command and result>`; otherwise keep the frozen story's render unchanged");
-    }
+    return [...seen].some((file) => file !== story && changed.has(file));
+  });
+  if (affected.length && !logged(`Frozen render unchanged: all ${affected.length} stories:`)) {
+    add("frozen-render", affected[0], 1, `${affected.length} frozen v1.0 stories render files this diff changed: ${affected.join(", ")}`, `render their story IDs on the base and the branch with fixed args, globals and viewport and run their plays; when every one is identical record \`Frozen render unchanged: all ${affected.length} stories: <command and result>\`, otherwise keep the frozen renders unchanged`);
   }
 }
 
