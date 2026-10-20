@@ -49,7 +49,7 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 - Run Codex at the high effort level, not the maximum: the maximum burns the limit far faster for little gain on PR work. Writers and reviewers use `CODEX_MODEL`; tell each session in its prompt to run explorer and read-only sub-agents on `CODEX_EXPLORER_MODEL`.
 - No computer use in Codex: no browser, in-app browser, desktop app UI or screenshots. It is the fastest drain. Code host work goes through its CLI.
 - Visual work is a request file a Codex session drops in the requests dir ([template](./references/templates.md#visual-request)); a Claude worker does it and you steer the findings back as text.
-- When a machine's account nears its limit, move its busiest sessions to another machine or account as fresh threads with resume prompts, before they stop mid-fix.
+- Watch the usage rate, not just the level: estimate time to the limit from the trend, and move a machine's busiest sessions to another machine or account as fresh threads with resume prompts before they stop mid-fix.
 - A dead Codex writer (limit, crash) is taken over by a Claude worker in the same worktree, with the [takeover preamble](./references/templates.md#worker-preamble). There is no supported migration of a Codex writer's session to Claude, so the worker never edits the Codex session's records and commits normally.
 - Fresh and resumed threads may stop to ask about a plugin version update; say "keep the current version" in the resume prompt.
 
@@ -72,17 +72,19 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 ## Quality gates and QA
 
 - QA happens before merge; never call a PR ready to enqueue before its QA is done.
-- Agent-first QA: an agent verifies everything it can (e2e on the current head, DOM and accessibility reads, API second views, headless screenshots it reads itself) and records it. The operator gets only checkpoints that need a human: perceptual judgment, real-device feel, product judgment, flows an agent cannot drive. A defect an agent already observed is a finding for the writer, not a human checkpoint.
+- Agent-first QA: an agent verifies everything it can (e2e on the current head, DOM and accessibility reads, API second views, headless screenshots it reads itself) and records it. The operator gets only checkpoints that need a human: perceptual judgment, real-device feel, assistive tech, product judgment, flows an agent cannot drive; measure the rest (contrast ratios, box geometry, focus targets). A defect an agent already observed goes to the writer with its measurement, not to the human checklist.
 - Every PR gets an independent review, then a verification pass of the fixes, before it is QA-ready. Resolve a thread only after the fix is verified in code, with a reply naming the fixing SHA.
 - Before enqueue, run a containerized or full check wherever PR CI skips suites, and resolve shared version-file conflicts right before each enqueue, in merge order. The queue rebuilds on current main, and a skipped suite is not a pass.
 - Track merge order for stacked or overlapping PRs and tell each writer which one merges first.
-- A before and after comparison uses the candidate's merge-base or current main as the baseline, never an unrelated branch.
+- A before and after comparison uses the candidate's merge-base or current main as the baseline, never an unrelated branch. Trace a surprising difference to the commit and ticket that introduced it before blaming the PR.
 
 ## Pushback
 
+More judgment patterns from past programs: [references/judgment.md](./references/judgment.md).
+
 - When a worker's design looks irrational or adds debt (extra feature flags, parallel code paths, shims, a second owner for the same behavior, new docs files, plugin PRs that only add), push back with a simpler alternative and tell the operator what you spotted. Forwarding it for approval as is makes the operator do your review.
 - No agent adds a key to the team's feature-flag service without the operator approving that key ([approval template](./references/templates.md#flag-approval)). Prefer one key per program or surface; corrections and removals are never gated.
-- Settle unspecified UX by precedent (how the established product your team follows for UX precedent does it, then the repo's own siblings) before asking the operator.
+- Settle unspecified UX by precedent (how the established product your team follows for UX precedent does it, then the repo's own siblings) and tell the operator the ruling in one line; escalate only what precedent cannot settle.
 - Never invent product behavior or user-facing copy; cite the human source.
 - Respect operator boundaries on other teams' work, such as "don't fix main" while another owner is fixing it.
 
