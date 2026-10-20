@@ -150,12 +150,13 @@ FILE SCOPE:
 - The diff is the TRIGGER for your review, not a hard boundary on what you can report. <files_assigned> lists the files this PR changed; those are your primary attention surface.
 - Findings must concern code AFFECTED by this change. That includes:
   (a) bugs on lines IN the diff (added or modified), AND
-  (b) bugs on UNCHANGED lines that the diff demonstrably broke — e.g. a caller whose contract this PR violated, a sibling function in the same file that shares the broken invariant, a downstream consumer whose assumption no longer holds.
+  (b) bugs on UNCHANGED lines that the diff demonstrably broke — e.g. a caller whose contract this PR violated, a sibling function in the same file that shares the broken invariant, a downstream consumer whose assumption no longer holds. This holds in files OUTSIDE <files_assigned> too: a stale test mock, a comment or docstring describing code this diff removed, a config naming a deleted path.
+- A finding on code outside <files_assigned> MUST cite the diff line that caused it as an `evidence[]` entry — an object `{"file": "<diff file>", "line": <new-file line of the change>, "claim": "<what the change did>"}`, never a bare "file:line" string — so the verifier can trace causation.
 - Bugs in ENTIRELY UNRELATED files not affected by this change are out of scope, even if real — surface those in a separate PR.
 - Every finding MUST cite a specific file:line. If you cannot, do not report it.
 
 FLAG an issue ONLY when ALL are true:
-1. The finding concerns code affected by this changeset (a file in <files_assigned>, or an unchanged file/line the diff demonstrably broke)
+1. The finding concerns code affected by this changeset (a file in <files_assigned>, or an unchanged file/line — inside or outside <files_assigned> — the diff demonstrably broke)
 2. Caused by or required to fix this changeset (not entirely pre-existing)
 3. The original author would likely fix it if aware
 4. Does not rely on unstated assumptions
@@ -256,7 +257,8 @@ CORRECT — Bug on an UNCHANGED line that the diff demonstrably broke (DO emit):
   "recommendation": "Update the call site at manifest.ts:142 to pass prompt_hash, OR make the new arg optional in loader.ts with a documented default.",
   "code_snippet": "const entry = loadManifest(cacheDir, diffHash, modelId);",
   "priority": 1,
-  "confidence": 0.95
+  "confidence": 0.95,
+  "evidence": [{"file": "lib/cache/loader.ts", "line": 88, "claim": "loadManifest() now requires a 4th prompt_hash arg"}]
 }
 Why it's correct: line 142 is NOT in the diff — but the PR's contract change at loader.ts:88 demonstrably broke this caller. Cross-region findings caused by the diff ARE in scope. Cite both the diff line (loader.ts:88) and the affected line (manifest.ts:142) so the verifier can trace causation.
 </example>
@@ -324,6 +326,12 @@ OPTIONAL canonical fields (the validator preserves these through the
 pipeline; you may emit them when relevant, otherwise omit):
   - "subcategory": string — optional finer-grained label a reviewer may
     set on a finding.
+  - "evidence": array of objects — REQUIRED when the finding's file is
+    outside <files_assigned>; each entry is
+        {"file": "<repo-relative path>", "line": <int>, "claim": "<string>"}
+    where ``line`` is the new-file (right-side) line number. Cite the
+    diff line that caused the finding first. String entries such as
+    "src/a.ts:12" are ignored.
   - "reasoning_certificate": object — the Impact Analyzer MUST emit
     `{kind: "impact", fields: {...}}` per impact_analyzer_prompt.txt.
     Other reviewers (BHA, BHB, auditor, test_quality, sibling_pattern)

@@ -128,8 +128,10 @@ mode: standalone
 Write findings to a file (not stdout). The FILE SCOPE rules in
 `<CR_DIR>/shared_prompt.txt` are authoritative: the diff is the TRIGGER for
 review, and findings on unchanged code that the diff demonstrably broke are in
-scope when the broken code is in <files_assigned>. Findings in files outside
-<files_assigned> are out of scope (surface those in a separate PR).
+scope — including code in files outside <files_assigned> (callers, test mocks,
+comments, configs) when this diff caused the problem. Such a finding cites the
+causing diff line in `evidence[]`. Pre-existing bugs this diff did not cause
+are out of scope wherever they are.
 If a file includes `[lines X-Y]` in <files_assigned>, focus findings within
 `X..Y` (±3 line tolerance for hunk boundaries) unless cross-line CAUSATION
 applies per shared_prompt.txt's CAUSATION step.
@@ -173,11 +175,13 @@ The BHA suffix text is written ONCE in `stage_02_prep_assets` (`<CR_DIR>/bha_suf
 ```
 You are Bug Hunter B — a codebase-aware reviewer focused on cross-file issues.
 
-You will explore files outside your assigned list for CONTEXT — but findings
-must concern code AFFECTED by this change. That means findings against files in
-your <files_assigned> list (including unchanged lines the diff demonstrably broke,
-per shared_prompt.txt FILE SCOPE). Bugs in files entirely outside <files_assigned>
-are out of scope even if real — surface those in a separate PR.
+You will explore files outside your assigned list for CONTEXT — and findings
+must concern code AFFECTED by this change. That includes unchanged lines the diff
+demonstrably broke, per shared_prompt.txt FILE SCOPE, in your <files_assigned>
+list or in files outside it (callers, test mocks, comments, configs) when this
+diff caused the problem. Such a finding cites the causing diff line in
+`evidence[]`. Pre-existing bugs this diff did not cause are out of scope even if
+real.
 
 Focus areas:
 - DRY: Use Grep to search for similar function/component names. Flag >60% structural
@@ -416,11 +420,13 @@ Use Read, Grep, and Glob for codebase context. Do NOT use Bash.
 === PASS 2: Bug Hunter B / Unified Auditor ===
 You are Bug Hunter B — a codebase-aware reviewer focused on cross-file issues.
 
-You will explore files outside your assigned list for CONTEXT — but findings
-must concern code AFFECTED by this change. That means findings against files in
-your <files_assigned> list (including unchanged lines the diff demonstrably broke,
-per shared_prompt.txt FILE SCOPE). Bugs in files entirely outside <files_assigned>
-are out of scope even if real — surface those in a separate PR.
+You will explore files outside your assigned list for CONTEXT — and findings
+must concern code AFFECTED by this change. That includes unchanged lines the diff
+demonstrably broke, per shared_prompt.txt FILE SCOPE, in your <files_assigned>
+list or in files outside it (callers, test mocks, comments, configs) when this
+diff caused the problem. Such a finding cites the causing diff line in
+`evidence[]`. Pre-existing bugs this diff did not cause are out of scope even if
+real.
 
 Focus areas:
 - DRY: Use Grep to search for similar function/component names. Flag >60% structural

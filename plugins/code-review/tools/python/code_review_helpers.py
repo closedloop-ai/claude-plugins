@@ -2273,12 +2273,29 @@ def _filter_scope_and_range(
     """Filter by file scope, line range, and confidence.
 
     Honors ``finding_scope``:
-      - ``diff`` (default): file-in-diff check applies; line-in-changed-range
-        check is confidence-gated for P2+ (see below).
+      - ``diff`` (default): file-in-diff decides which path applies (see
+        below); the line-in-changed-range check is confidence-gated for
+        P2+ on files in the diff.
       - ``system`` / ``pr_metadata``: file/line checks bypassed; finding must
         carry a canonical ``system_marker``.
 
-    Out-of-hunk P2+ semantics (in-hunk and P1 paths unchanged):
+    Out-of-diff semantics (ISS-12737): a diff-scope finding whose ``file``
+    is not in ``files_to_review`` is KEPT and tagged ``out_of_diff: True``.
+    Callers, test mocks, comments and configs outside the diff are often
+    what a change breaks, so where a finding points is never by itself a
+    reason to discard it. The line-range check is skipped (a file outside
+    the diff has no changed ranges) and the normal in-hunk confidence rule
+    applies: P2+ below ``CONFIDENCE_DISCARD_THRESHOLD`` is discarded with
+    ``DISCARD_LOW_CONFIDENCE``; the out-of-hunk floor does NOT apply.
+    Whether the diff caused the problem is the verifier's call
+    (``rejection_class: "not_caused_by_diff"``), not the validator's — no
+    ``evidence[]`` citation is required here. The validator OWNS the tag:
+    every other exit path pops a reviewer-supplied value. A diff-scope
+    finding with no ``file`` at all cannot be located anywhere and is
+    discarded with ``DISCARD_MISSING_FILE``.
+
+    Out-of-hunk P2+ semantics (files in the diff; in-hunk and P1 paths
+    unchanged):
       - confidence > ``out_of_hunk_confidence_floor`` (default 0.80) →
         the finding survives and is tagged ``out_of_hunk_kept: True`` so
         presenters can distinguish in-hunk from companion-change findings
@@ -2322,20 +2339,32 @@ def _filter_scope_and_range(
             if priority > 1 and confidence < CONFIDENCE_DISCARD_THRESHOLD:
                 discarded.append({"finding": finding, "reason": "DISCARD_LOW_CONFIDENCE"})
                 continue
-            # system/pr_metadata findings can never be "companion-change" —
-            # the field is meaningless for them. Pop any reviewer-supplied
-            # value so the schema convention (present iff companion-change)
-            # holds universally.
+            # system/pr_metadata findings can never be "companion-change"
+            # or "out of diff" — the fields are meaningless for them. Pop
+            # any reviewer-supplied value so the schema convention
+            # (present iff the validator set it) holds universally.
             finding.pop("out_of_hunk_kept", None)
+            finding.pop("out_of_diff", None)
             result.append(finding)
             continue
 
         # diff scope (default): apply file + line filters.
-        filepath = str(finding.get("file", ""))
-        if filepath not in files_to_review:
-            discarded.append({"finding": finding, "reason": "DISCARD_FILE_NOT_CHANGED"})
+        filepath = str(finding.get("file") or "")
+        if not filepath:
+            discarded.append({"finding": finding, "reason": "DISCARD_MISSING_FILE"})
             continue
 
+        if filepath not in files_to_review:
+            finding.pop("out_of_hunk_kept", None)
+            if priority > 1 and confidence < CONFIDENCE_DISCARD_THRESHOLD:
+                finding.pop("out_of_diff", None)
+                discarded.append({"finding": finding, "reason": "DISCARD_LOW_CONFIDENCE"})
+                continue
+            finding["out_of_diff"] = True
+            result.append(finding)
+            continue
+
+        finding.pop("out_of_diff", None)
         line = int(finding.get("line", 0))
 
         file_ranges = changed_ranges.get(filepath, {})
@@ -2583,14 +2612,17 @@ def cmd_validate(args: argparse.Namespace) -> int:
         normalized, files_to_review, changed_ranges, discarded,
         out_of_hunk_confidence_floor=out_of_hunk_floor,
     )
-    # Count out-of-hunk findings that survived the confidence floor.
+    # Count out-of-hunk / out-of-diff findings that survived the filter.
     # Counted on ``filtered`` (post-filter, pre-grouping) because
     # ``_group_cross_file`` absorbs sibling findings into the primary's
-    # ``other_locations`` where the ``out_of_hunk_kept`` tag is lost;
-    # post-grouping would silently undercount companion-change findings
-    # that happened to be grouped with another.
+    # ``other_locations`` where the tags are lost; post-grouping would
+    # silently undercount tagged findings that happened to be grouped
+    # with another.
     kept_out_of_hunk = sum(
         1 for f in filtered if f.get("out_of_hunk_kept") is True
+    )
+    kept_out_of_diff = sum(
+        1 for f in filtered if f.get("out_of_diff") is True
     )
 
     deduped = _merge_duplicates(filtered, discarded)
@@ -2605,7 +2637,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         "validated": len(validated),
         "cross_file_grouped": cross_file_grouped,
         "kept_out_of_hunk": kept_out_of_hunk,
-        "discarded_file_not_changed": sum(1 for d in discarded if d["reason"] == "DISCARD_FILE_NOT_CHANGED"),
+        "kept_out_of_diff": kept_out_of_diff,
         "discarded_out_of_hunk_low_confidence": sum(
             1 for d in discarded
             if d["reason"] == "DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE"
@@ -3111,11 +3143,14 @@ def _verification_priority(finding: dict[str, Any]) -> float:
 def _needs_verification(finding: dict[str, Any]) -> bool:
     """Apply the PLN-722 'What gets verified' tier table to one finding.
 
-    Out-of-hunk findings (``out_of_hunk_kept: True``) ALWAYS verify
-    regardless of confidence. Their causal claim — that the diff broke
-    nearby unchanged code — is exactly the cross-region reasoning LLM
-    reviewers are weakest on, so the high-confidence MEDIUM skip rule
-    (confidence ≥ 0.85 → no verification) is the wrong default for them.
+    Out-of-hunk findings (``out_of_hunk_kept: True``) and findings outside
+    the diff (``out_of_diff: True``) ALWAYS verify regardless of severity
+    or confidence. Their causal claim — that the diff broke unchanged
+    code — is exactly the cross-region reasoning LLM reviewers are
+    weakest on, so the high-confidence MEDIUM skip rule (confidence ≥
+    0.85 → no verification) is the wrong default for them. For
+    ``out_of_diff`` findings the verifier is also the only causation
+    check (ISS-12737): the validator does not discard on location.
     """
     category = str(finding.get("category", ""))
     source = str(finding.get("source", ""))
@@ -3132,12 +3167,12 @@ def _needs_verification(finding: dict[str, Any]) -> bool:
     if source == "injection-detector":
         return False
 
-    # Out-of-hunk-kept backstop: every such finding gets verified.
-    # Placed after the deterministic-producer guards (Hygiene findings
-    # never carry the tag in practice, but the ordering keeps the
-    # never-verify producers absolute) and before the severity tiers
+    # Out-of-hunk-kept / out-of-diff backstop: every such finding gets
+    # verified. Placed after the deterministic-producer guards (Hygiene
+    # findings never carry the tags in practice, but the ordering keeps
+    # the never-verify producers absolute) and before the severity tiers
     # so confidence-based skips don't apply.
-    if finding.get("out_of_hunk_kept") is True:
+    if finding.get("out_of_hunk_kept") is True or finding.get("out_of_diff") is True:
         return True
 
     if severity in ("BLOCKING", "HIGH"):
@@ -3246,19 +3281,27 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
                 "confidence": f.get("confidence"),
                 "category": f.get("category"),
                 "_priority_score": _verification_priority(f),
+                "_out_of_diff": f.get("out_of_diff") is True,
             })
         else:
             skipped.append(fid)
 
     # Rank by priority; stable secondary sort by finding_id so a tie
     # doesn't make the cutoff non-deterministic across runs (cache
-    # invalidation cares about ordering).
-    eligible.sort(key=lambda e: (-e["_priority_score"], e["finding_id"]))
+    # invalidation cares about ordering). Out-of-diff findings rank
+    # first and are never deferred: the verifier is their only causation
+    # check. They sit outside the budget, so VERIFY_MAX_VERIFICATIONS
+    # still bounds the in-diff findings verified and the cap trims only
+    # those.
+    eligible.sort(
+        key=lambda e: (not e["_out_of_diff"], -e["_priority_score"], e["finding_id"]),
+    )
 
     deferred: list[str] = []
-    if len(eligible) > VERIFY_MAX_VERIFICATIONS:
-        deferred = [e["finding_id"] for e in eligible[VERIFY_MAX_VERIFICATIONS:]]
-        eligible = eligible[:VERIFY_MAX_VERIFICATIONS]
+    cap = VERIFY_MAX_VERIFICATIONS + sum(1 for e in eligible if e["_out_of_diff"])
+    if len(eligible) > cap:
+        deferred = [e["finding_id"] for e in eligible[cap:]]
+        eligible = eligible[:cap]
 
     inputs_dir = cr_dir / "verifier_inputs"
     inputs_dir.mkdir(parents=True, exist_ok=True)
@@ -3295,8 +3338,10 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
         # (finding_id, snippet_hash, model, prompt_hash) tuple, materialize
         # the cached verdict at the canonical output path and skip
         # spawning the agent. cmd_verify_consolidate reads the same file
-        # regardless of source.
-        cached = _read_cached_verification(
+        # regardless of source. Out-of-diff findings skip the cache: its
+        # key covers the cited snippet, not the diff whose causation the
+        # verifier must re-establish on every run.
+        cached = None if entry["_out_of_diff"] else _read_cached_verification(
             cache_dir, finding, entry["model"], prompt_hash,
         )
         if cached is not None:
@@ -3312,17 +3357,18 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
                 pass
 
         input_path = inputs_dir / f"{fid}.json"
+        verifier_input: dict[str, Any] = {
+            "finding": finding,
+            "verifier_prompt_path": str(verifier_prompt_path),
+            "output_path": str(output_path),
+            "review_root": review_root,
+        }
+        if entry["_out_of_diff"]:
+            # The causation check searches the patch for the change that
+            # broke the cited code; hand the verifier the full-diff patch.
+            verifier_input["patches_path"] = str(cr_dir / "patches_all.txt")
         with open(input_path, "w") as fh:
-            json.dump(
-                {
-                    "finding": finding,
-                    "verifier_prompt_path": str(verifier_prompt_path),
-                    "output_path": str(output_path),
-                    "review_root": review_root,
-                },
-                fh,
-                indent=2,
-            )
+            json.dump(verifier_input, fh, indent=2)
         to_verify.append({
             "finding_id": fid,
             "model": entry["model"],
@@ -4343,6 +4389,24 @@ def _is_global_cache_enabled(is_github_mode: bool) -> bool:
     return not is_github_mode
 
 
+def _cached_findings_for(
+    entry: dict[str, Any], hit_file: str, review_set: set[str],
+) -> list[Any]:
+    """Findings a cache hit on ``hit_file`` brings back.
+
+    Drops an out-of-diff finding filed under ``hit_file`` once its own
+    file is in the diff: that file is reviewed in its own right this run,
+    and the cached copy may describe code the author has since fixed.
+    """
+    kept: list[Any] = []
+    for finding in entry.get("findings", []):
+        fpath = finding.get("file") if isinstance(finding, dict) else None
+        if fpath != hit_file and fpath in review_set:
+            continue
+        kept.append(finding)
+    return kept
+
+
 def _write_cache_output_files(  # noqa: PLR0913
     output_dir: Path,
     cached_files: list[str],
@@ -4501,6 +4565,7 @@ def _cmd_cache_check_v1(  # noqa: PLR0913
     """Per-cr-dir cache-check path (non-global-cache fallback)."""
     manifest_file_existed = (cache_dir / CACHE_MANIFEST_FILENAME).exists()
     manifest = _load_manifest(cache_dir)
+    review_set = set(files_to_review)
 
     cached_files: list[str] = []
     uncached_files: list[str] = []
@@ -4518,7 +4583,7 @@ def _cmd_cache_check_v1(  # noqa: PLR0913
             and _is_entry_fresh(entry, CACHE_NAMESPACE_BHA)
         ):
             cached_files.append(filepath)
-            cached_findings.extend(entry.get("findings", []))
+            cached_findings.extend(_cached_findings_for(entry, filepath, review_set))
         else:
             uncached_files.append(filepath)
 
@@ -4553,6 +4618,7 @@ def _cmd_cache_check_v2(  # noqa: PLR0913
     fallback: str | None = None
     manifest: dict[str, Any] = {}
     manifest_file_existed = (cache_dir / CACHE_MANIFEST_FILENAME).exists()
+    review_set = set(files_to_review)
 
     try:
         with _manifest_lock(lock_path, exclusive=False):
@@ -4579,7 +4645,9 @@ def _cmd_cache_check_v2(  # noqa: PLR0913
                     and _is_entry_fresh(entry, CACHE_NAMESPACE_BHA)
                 ):
                     cached_files.append(filepath)
-                    cached_findings.extend(entry.get("findings", []))
+                    cached_findings.extend(
+                        _cached_findings_for(entry, filepath, review_set),
+                    )
                     entry["last_hit_at"] = now_iso
                     entry["hit_count"] = entry.get("hit_count", 0) + 1
                 else:
@@ -4614,12 +4682,75 @@ def _cmd_cache_check_v2(  # noqa: PLR0913
     return 0
 
 
-def _collect_bha_findings(bha_dir: Path) -> dict[str, list[dict[str, Any]]]:
-    """Glob BHA findings from agent_bha_*.json files, grouped by filepath."""
+_BHA_PARTITION_FILE_RE = re.compile(r"agent_bha_p(\d+)\.json$")
+
+
+def _read_partition_files(partitions_file: str | None) -> dict[int, list[str]]:
+    """Map partition id → its files from ``partitions.json``; ``{}`` on any read error."""
+    if not partitions_file:
+        return {}
+    pdata = _read_optional_json(Path(partitions_file), None)
+    if not isinstance(pdata, dict):
+        return {}
+    out: dict[int, list[str]] = {}
+    partitions = pdata.get("partitions")
+    for part in partitions if isinstance(partitions, list) else []:
+        if not isinstance(part, dict):
+            continue
+        pid = part.get("id")
+        files = part.get("files")
+        if not isinstance(pid, int) or not isinstance(files, list):
+            continue
+        out[pid] = [
+            str(entry["file"]) for entry in files
+            if isinstance(entry, dict) and entry.get("file")
+        ]
+    return out
+
+
+def _out_of_diff_cache_keys(
+    finding: dict[str, Any],
+    diff_files: set[str],
+    partition_files: list[str],
+) -> list[str]:
+    """Diff files to cache an out-of-diff BHA finding under.
+
+    Cache entries exist only for reviewed diff files, so a finding whose
+    ``file`` is outside the diff is filed under the first diff file its
+    ``evidence[]`` cites, else under every file of the partition whose
+    agent produced it. A cache hit on any of those files brings it back.
+    """
+    evidence = finding.get("evidence")
+    for entry in evidence if isinstance(evidence, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        cited = entry.get("file")
+        if isinstance(cited, str) and cited in diff_files:
+            return [cited]
+    return [f for f in partition_files if f in diff_files]
+
+
+def _collect_bha_findings(
+    bha_dir: Path,
+    diff_files: set[str] | None = None,
+    partition_files: dict[int, list[str]] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Glob BHA findings from agent_bha_*.json files, grouped by cache filepath.
+
+    A finding is grouped under its own ``file``. When ``diff_files`` is
+    given, a finding whose ``file`` is outside the diff is grouped under
+    the diff files :func:`_out_of_diff_cache_keys` picks instead, so it
+    survives the next cache hit (ISS-12737).
+    """
     import glob as glob_mod
     findings_by_file: dict[str, list[dict[str, Any]]] = {}
     for bha_path_str in sorted(glob_mod.glob(str(bha_dir / "agent_bha_*.json"))):
         bha_path = Path(bha_path_str)
+        pid_match = _BHA_PARTITION_FILE_RE.search(bha_path.name)
+        own_partition: list[str] = (
+            (partition_files or {}).get(int(pid_match.group(1)), [])
+            if pid_match else []
+        )
         try:
             with open(bha_path) as f:
                 bha_data = json.load(f)
@@ -4628,8 +4759,13 @@ def _collect_bha_findings(bha_dir: Path) -> dict[str, list[dict[str, Any]]]:
             )
             for finding in bha_findings:
                 fpath = finding.get("file", "")
-                if fpath:
+                if not fpath:
+                    continue
+                if diff_files is None or fpath in diff_files:
                     findings_by_file.setdefault(fpath, []).append(finding)
+                    continue
+                for key in _out_of_diff_cache_keys(finding, diff_files, own_partition):
+                    findings_by_file.setdefault(key, []).append(finding)
         except (json.JSONDecodeError, OSError):
             continue
     return findings_by_file
@@ -4652,10 +4788,12 @@ def cmd_cache_update(args: argparse.Namespace) -> int:
         current_hashes[filepath] = _compute_patch_hash(filepath, file_patch)
 
     bha_dir = Path(args.bha_dir)
-    findings_by_file = _collect_bha_findings(bha_dir)
+    partitions_file: str | None = getattr(args, "partitions_file", None)
+    findings_by_file = _collect_bha_findings(
+        bha_dir, set(files_to_review), _read_partition_files(partitions_file),
+    )
 
     reviewed_files: list[str] = args.reviewed_files or []
-    partitions_file: str | None = getattr(args, "partitions_file", None)
     if not reviewed_files and partitions_file:
         try:
             with open(partitions_file) as pf:
@@ -4920,8 +5058,98 @@ def _gh_api(
     return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
 
+# Verdicts under which the verifier (or an operator override) upheld an
+# out-of-diff finding, so its label may say this change caused it.
+_CAUSATION_CONFIRMED_VERDICTS = frozenset({"CONFIRMED", "DOWNGRADE", "RE_ASSERTED"})
+
+
+def _patch_right_side_lines(patch: str) -> set[int]:
+    """New-file line numbers GitHub can anchor a RIGHT-side comment on.
+
+    Those are the added and context lines inside each hunk of the
+    unified-diff ``patch`` GitHub returns per PR file.
+    """
+    lines: set[int] = set()
+    new_line: int | None = None
+    for raw in patch.splitlines():
+        header = HUNK_RE.match(raw)
+        if header:
+            new_line = int(header.group(3))
+            continue
+        if new_line is None or raw.startswith(("-", "\\")):
+            continue
+        lines.add(new_line)
+        new_line += 1
+    return lines
+
+
+def _parse_paginated_json_arrays(text: str) -> list[Any]:
+    """Concatenate the JSON arrays ``gh api --paginate`` prints back to back."""
+    decoder = json.JSONDecoder()
+    items: list[Any] = []
+    idx = 0
+    text = text.strip()
+    while idx < len(text):
+        page, idx = decoder.raw_decode(text, idx)
+        if isinstance(page, list):
+            items.extend(page)
+        while idx < len(text) and text[idx].isspace():
+            idx += 1
+    return items
+
+
+def _fetch_pr_diff_lines(owner: str, repo_name: str, pr_number: Any) -> dict[str, set[int]]:
+    """Map each PR file to the lines an inline comment can anchor on; ``{}`` on failure."""
+    result = _gh_api(
+        [f"/repos/{owner}/{repo_name}/pulls/{pr_number}/files?per_page=100", "--paginate"],
+        dry_run=False,
+        label="fetch PR files",
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return {}
+    try:
+        files = _parse_paginated_json_arrays(result.stdout)
+    except json.JSONDecodeError:
+        return {}
+    out: dict[str, set[int]] = {}
+    for entry in files:
+        if not isinstance(entry, dict):
+            continue
+        filename = entry.get("filename")
+        patch = entry.get("patch")
+        if isinstance(filename, str) and isinstance(patch, str):
+            out[filename] = _patch_right_side_lines(patch)
+    return out
+
+
+def _out_of_diff_inline_anchor(
+    finding: dict[str, Any], diff_lines: dict[str, set[int]],
+) -> tuple[str, int] | None:
+    """First ``evidence[]`` location of an out-of-diff finding that lies in the PR diff."""
+    evidence = finding.get("evidence")
+    for entry in evidence if isinstance(evidence, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        cited_file = entry.get("file")
+        cited_line = entry.get("line")
+        if (
+            isinstance(cited_file, str)
+            and isinstance(cited_line, int)
+            and not isinstance(cited_line, bool)
+            and cited_line in diff_lines.get(cited_file, set())
+        ):
+            return cited_file, cited_line
+    return None
+
+
 def cmd_post_comments(args: argparse.Namespace) -> int:
     """Post inline review comments to a GitHub PR.
+
+    Findings outside the diff (``out_of_diff: True``) post inline at the
+    first ``evidence[]`` location that lies in the PR diff (fetched from
+    ``pulls/{pr}/files``), with a body that opens with the affected
+    ``file:line``. With no such location they are summary-only, like
+    out-of-hunk findings.
 
     Out-of-hunk findings are never posted inline. GitHub's
     ``pulls/{pr}/comments`` API rejects any comment whose line is not part of
@@ -4982,7 +5210,9 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
     skipped_dedup = 0
     skipped_no_inline = 0
     skipped_out_of_hunk = 0
+    skipped_out_of_diff = 0
     failed = 0
+    pr_diff_lines: dict[str, set[int]] | None = None
 
     for finding in findings:
         # Skip findings explicitly marked as non-inline
@@ -5018,12 +5248,30 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
             failed += 1
             continue
 
+        body = _format_comment_body(finding)
+
+        # Out-of-diff findings point at a line GitHub cannot anchor on;
+        # re-anchor at the diff line their evidence cites, or leave them
+        # to the summary.
+        if finding.get("out_of_diff") is True:
+            if pr_diff_lines is None:
+                pr_diff_lines = _fetch_pr_diff_lines(owner, repo_name, pr_number)
+            anchor = _out_of_diff_inline_anchor(finding, pr_diff_lines)
+            if anchor is None:
+                skipped_out_of_diff += 1
+                continue
+            causation = (
+                "caused by this change"
+                if finding.get("verifier_verdict") in _CAUSATION_CONFIRMED_VERDICTS
+                else "causation unconfirmed"
+            )
+            body = f"**Affected location:** `{path}:{line}` (outside the diff — {causation})\n\n{body}"
+            path, line = anchor
+
         # Dedup check
         if (path, line) in existing_comments:
             skipped_dedup += 1
             continue
-
-        body = _format_comment_body(finding)
 
         api_result = _gh_api(
             [
@@ -5065,11 +5313,14 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
 
         posted += 1
 
-    total_skipped = skipped_dedup + skipped_no_inline + skipped_out_of_hunk
+    total_skipped = (
+        skipped_dedup + skipped_no_inline + skipped_out_of_hunk + skipped_out_of_diff
+    )
     print(
         f"Posted {posted}, skipped {total_skipped} "
         f"(dedup={skipped_dedup}, non-inline={skipped_no_inline}, "
-        f"out-of-hunk={skipped_out_of_hunk}), failed {failed}"
+        f"out-of-hunk={skipped_out_of_hunk}, out-of-diff={skipped_out_of_diff}), "
+        f"failed {failed}"
     )
     return 0
 

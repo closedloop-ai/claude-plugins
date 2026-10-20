@@ -2385,10 +2385,78 @@ class TestValidate:
         assert len(result["validated"]) == 1
         assert result["stats"]["validated"] == 1
 
-    def test_file_not_in_scope(self, tmp_path: Path) -> None:
+    def test_out_of_diff_finding_kept_and_tagged(self, tmp_path: Path) -> None:
+        """ISS-12737: a finding on a file outside the diff is kept, not
+        discarded, and tagged ``out_of_diff``. A P2 at 0.65 clears the
+        normal 0.5 floor; the 0.80 out-of-hunk floor does not apply."""
+        diff_data = _make_diff_data(files=["src/app.ts"])
+        findings = [{
+            "file": "src/other.test.ts",
+            "line": 500,
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "Stale mock of a symbol this diff deleted",
+            "priority": 2,
+            "confidence": 0.65,
+            "out_of_hunk_kept": True,
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert len(result["validated"]) == 1
+        kept = result["validated"][0]
+        assert kept["out_of_diff"] is True
+        assert "out_of_hunk_kept" not in kept
+        assert result["discarded"] == []
+        assert result["stats"]["kept_out_of_diff"] == 1
+        assert result["stats"]["kept_out_of_hunk"] == 0
+        assert "discarded_file_not_changed" not in result["stats"]
+
+    def test_out_of_diff_low_confidence_discarded(self, tmp_path: Path) -> None:
         diff_data = _make_diff_data(files=["src/app.ts"])
         findings = [{
             "file": "src/other.ts",
+            "line": 5,
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "Weak guess",
+            "priority": 2,
+            "confidence": 0.4,
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert result["validated"] == []
+        assert [d["reason"] for d in result["discarded"]] == ["DISCARD_LOW_CONFIDENCE"]
+        assert "out_of_diff" not in result["discarded"][0]["finding"]
+        assert result["stats"]["discarded_low_confidence"] == 1
+        assert result["stats"]["kept_out_of_diff"] == 0
+
+    def test_validator_strips_reviewer_supplied_out_of_diff(
+        self, tmp_path: Path,
+    ) -> None:
+        """The validator OWNS ``out_of_diff``: a reviewer-set value on a
+        finding inside the diff must not survive."""
+        diff_data = _make_diff_data(
+            files=["src/app.ts"],
+            ranges={"src/app.ts": {"added": [[10, 20]], "removed": []}},
+        )
+        findings = [{
+            "file": "src/app.ts",
+            "line": 15,
+            "severity": "HIGH",
+            "category": "Correctness",
+            "issue": "Bug",
+            "priority": 1,
+            "confidence": 0.9,
+            "out_of_diff": True,
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert len(result["validated"]) == 1
+        assert "out_of_diff" not in result["validated"][0]
+        assert result["stats"]["kept_out_of_diff"] == 0
+
+    def test_diff_finding_without_file_discarded(self, tmp_path: Path) -> None:
+        """A diff-scope finding with no ``file`` cannot be located and must
+        not be kept as "outside the diff"."""
+        diff_data = _make_diff_data(files=["src/app.ts"])
+        findings = [{
             "line": 5,
             "severity": "HIGH",
             "category": "Correctness",
@@ -2396,8 +2464,9 @@ class TestValidate:
             "priority": 1,
         }]
         result = self._run_validate(findings, diff_data, tmp_path)
-        assert len(result["validated"]) == 0
-        assert result["stats"]["discarded_file_not_changed"] == 1
+        assert result["validated"] == []
+        assert [d["reason"] for d in result["discarded"]] == ["DISCARD_MISSING_FILE"]
+        assert result["stats"]["kept_out_of_diff"] == 0
 
     def test_out_of_hunk_high_confidence_survives(self, tmp_path: Path) -> None:
         """v2.21.0 relaxation: a P2+ MEDIUM finding outside the changed
@@ -3817,6 +3886,107 @@ class TestCmdPostComments:
         out = capsys.readouterr().out
         assert "Posted 1" in out
         assert "out-of-hunk=1" in out
+        assert "failed 0" in out
+
+    @staticmethod
+    def _pr_files_pages() -> str:
+        """``gh api --paginate`` output for ``pulls/{pr}/files``: two pages
+        printed back to back. ``src/b.ts`` (page 2) adds lines 11-12 under
+        a hunk starting at new line 10; line 13 is context, then a removal."""
+        page1 = [{"filename": "src/a.ts", "patch": "@@ -1,1 +1,2 @@\n a\n+b"}]
+        page2 = [{
+            "filename": "src/b.ts",
+            "patch": "@@ -10,3 +10,4 @@\n ctx\n+new1\n+new2\n ctx2\n-gone",
+        }]
+        return json.dumps(page1) + json.dumps(page2)
+
+    def test_out_of_diff_posts_inline_at_cited_diff_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """ISS-12737: an ``out_of_diff`` finding posts inline at the first
+        ``evidence[]`` location inside the PR diff, and the body opens with
+        the affected file:line."""
+        findings = [{
+            "file": "src/other.test.ts", "line": 40, "severity": "HIGH",
+            "category": "Bug", "issue": "stale mock", "out_of_diff": True,
+            "evidence": [
+                {"file": "src/other.test.ts", "line": 40, "claim": "mock"},
+                {"file": "src/b.ts", "line": 99, "claim": "outside hunk"},
+                {"file": "src/b.ts", "line": 12, "claim": "symbol deleted"},
+            ],
+        }]
+        path = _make_findings_file(tmp_path, findings)
+        existing = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        files = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=self._pr_files_pages(), stderr="",
+        )
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [existing, files]
+            rc = self._run(path, dry_run=True)
+        assert rc == 0
+        # 1 GET existing comments + 1 GET PR files; the dry-run POST makes no call.
+        assert mock_run.call_count == 2
+        out = capsys.readouterr().out
+        assert "POST comment src/b.ts:12" in out
+        assert "body=**Affected location:** `src/other.test.ts:40`" in out
+        assert "Posted 1" in out
+        assert "out-of-diff=0" in out
+
+    @pytest.mark.parametrize(("verdict", "label"), [
+        ("CONFIRMED", "caused by this change"),
+        ("DOWNGRADE", "caused by this change"),
+        ("TENTATIVE", "causation unconfirmed"),
+        (None, "causation unconfirmed"),
+    ])
+    def test_out_of_diff_label_follows_verifier_verdict(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+        verdict: str | None, label: str,
+    ) -> None:
+        """Only a verdict that upheld the finding lets the body claim this
+        change caused it."""
+        findings = [{
+            "file": "src/other.test.ts", "line": 40, "severity": "HIGH",
+            "category": "Bug", "issue": "stale mock", "out_of_diff": True,
+            "verifier_verdict": verdict,
+            "evidence": [{"file": "src/b.ts", "line": 12, "claim": "symbol deleted"}],
+        }]
+        path = _make_findings_file(tmp_path, findings)
+        existing = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        files = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=self._pr_files_pages(), stderr="",
+        )
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [existing, files]
+            rc = self._run(path, dry_run=True)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert f"`src/other.test.ts:40` (outside the diff — {label})" in out
+        assert "Posted 1" in out
+
+    def test_out_of_diff_without_diff_evidence_is_summary_only(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        findings = [
+            {"file": "src/other.ts", "line": 40, "severity": "HIGH",
+             "category": "Bug", "issue": "stale comment", "out_of_diff": True,
+             "evidence": [{"file": "src/b.ts", "line": 15, "claim": "removed line"}]},
+            {"file": "src/a.ts", "line": 2, "severity": "HIGH",
+             "category": "Bug", "issue": "real inline"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        existing = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        files = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=self._pr_files_pages(), stderr="",
+        )
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [existing, files]
+            rc = self._run(path, dry_run=True)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "src/other.ts" not in out.split("Posted")[0]
+        assert "POST comment src/a.ts:2" in out
+        assert "Posted 1" in out
+        assert "out-of-diff=1" in out
         assert "failed 0" in out
 
     def test_null_line_does_not_crash(self, tmp_path: Path) -> None:
@@ -6254,6 +6424,105 @@ class TestCacheUpdatePartitionsFile:
         # Both files cached because the partition is NOT test_only
         assert "src/app.ts" in manifest
         assert "src/app.test.ts" in manifest
+
+
+class TestCacheUpdateOutOfDiff:
+    """ISS-12737: a BHA finding on a file outside the diff is cached under
+    diff files, so a cache hit brings it back — on both cache paths."""
+
+    _OUT_OF_DIFF = {
+        "file": "src/other.test.ts", "line": 40, "category": "Correctness",
+        "severity": "HIGH", "issue": "stale mock",
+    }
+
+    @staticmethod
+    def _round_trip(
+        tmp_path: Path, global_cache: int, finding: dict[str, Any],
+        check_files: list[str] | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """cache-update a two-file partition, then cache-check ``check_files``
+        (default: the same diff)."""
+        import argparse
+
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        bha_dir = tmp_path / "bha"
+        bha_dir.mkdir()
+        out = tmp_path / "out"
+        out.mkdir()
+        partitions_file = tmp_path / "partitions.json"
+        partitions_file.write_text(json.dumps({"partitions": [
+            {"id": 0, "files": [{"file": "src/a.ts"}, {"file": "src/b.ts"}]},
+        ]}))
+        (bha_dir / "agent_bha_p0.json").write_text(json.dumps({"findings": [finding]}))
+        diff_path = bha_dir / "diff_data.json"
+        diff_path.write_text(json.dumps(_make_cache_diff_data(files=["src/a.ts", "src/b.ts"])))
+        common = {
+            "cache_dir": str(cache_dir), "diff_data": str(diff_path),
+            "prompt_hash": "abc123", "model_id": "opus",
+            "schema_version": 2 if global_cache else 1,
+            "global_cache": global_cache, "context_key": "ctx123",
+        }
+        cmd_cache_update(argparse.Namespace(
+            **common, bha_dir=str(bha_dir), reviewed_files=[],
+            partitions_file=str(partitions_file),
+        ))
+        manifest = _load_manifest(cache_dir)
+        if check_files is not None:
+            diff_path.write_text(json.dumps(_make_cache_diff_data(files=check_files)))
+        cmd_cache_check(argparse.Namespace(**common, output_dir=str(out)))
+        cached = json.loads((out / "agent_cached_bha.json").read_text())["findings"]
+        return manifest, cached
+
+    @staticmethod
+    def _stored_under(manifest: dict[str, Any], global_cache: int) -> set[str]:
+        def findings_of(slot: dict[str, Any]) -> list[Any]:
+            if global_cache:
+                return [f for entry in slot.values() for f in entry["findings"]]
+            return slot["findings"]
+        return {fp for fp, slot in manifest.items() if findings_of(slot)}
+
+    @pytest.mark.parametrize("global_cache", [0, 1])
+    def test_filed_under_cited_diff_file(
+        self, tmp_path: Path, global_cache: int,
+    ) -> None:
+        finding = {**self._OUT_OF_DIFF, "evidence": [
+            {"file": "src/unrelated.ts", "line": 1, "claim": "not in diff"},
+            {"file": "src/b.ts", "line": 7, "claim": "symbol deleted here"},
+        ]}
+        manifest, cached = self._round_trip(tmp_path, global_cache, finding)
+        assert self._stored_under(manifest, global_cache) == {"src/b.ts"}
+        assert cached == [finding]
+
+    @pytest.mark.parametrize("global_cache", [0, 1])
+    def test_uncited_filed_under_every_partition_file(
+        self, tmp_path: Path, global_cache: int,
+    ) -> None:
+        from code_review_helpers import _merge_duplicates
+
+        manifest, cached = self._round_trip(tmp_path, global_cache, dict(self._OUT_OF_DIFF))
+        assert self._stored_under(manifest, global_cache) == {"src/a.ts", "src/b.ts"}
+        # One copy per partition file comes back; validate's dedup collapses them.
+        assert cached == [self._OUT_OF_DIFF, self._OUT_OF_DIFF]
+        discarded: list[dict[str, Any]] = []
+        assert _merge_duplicates(cached, discarded) == [self._OUT_OF_DIFF]
+        assert [d["reason"] for d in discarded] == ["DISCARD_DUPLICATE"]
+
+    @pytest.mark.parametrize("global_cache", [0, 1])
+    def test_not_served_once_its_file_enters_the_diff(
+        self, tmp_path: Path, global_cache: int,
+    ) -> None:
+        """The author fixes the out-of-diff file, so it joins the diff while
+        src/a.ts and src/b.ts stay unchanged: their cache hits must not bring
+        back the finding about the line that was just fixed."""
+        _, cached = self._round_trip(
+            tmp_path, global_cache, dict(self._OUT_OF_DIFF),
+            check_files=["src/a.ts", "src/b.ts", "src/other.test.ts"],
+        )
+        assert cached == []
+        result = json.loads((tmp_path / "out" / "cache_result.json").read_text())
+        assert result["cached_files"] == ["src/a.ts", "src/b.ts"]
+        assert result["uncached_files"] == ["src/other.test.ts"]
 
 
 # ---------------------------------------------------------------------------
@@ -11229,6 +11498,18 @@ class TestVerifyTierTable:
         }
         assert _needs_verification(f_inj) is False
 
+    def test_out_of_diff_always_verified_even_at_low_severity(self) -> None:
+        """ISS-12737: the verifier is the only causation check for findings
+        outside the diff, so LOW (normally skipped) still verifies."""
+        f = {
+            "severity": "LOW",
+            "confidence": 0.99,
+            "category": "Documentation",
+            "source": "agent",
+            "out_of_diff": True,
+        }
+        assert _needs_verification(f) is True
+
     def test_priority_ranking_higher_severity_first(self) -> None:
         blocking_lo = {"severity": "BLOCKING", "confidence": 0.5}
         medium_hi = {"severity": "MEDIUM", "confidence": 0.84}
@@ -11355,6 +11636,46 @@ class TestVerifyPrepare:
             (tmp_path / "cr" / "agent_verifier_bha_p0_f0.json").read_text(),
         )
         assert materialized["verifier_verdict"] == "CONFIRMED"
+
+    def test_out_of_diff_sent_below_threshold_past_cap_and_cache(
+        self, tmp_path: Path,
+    ) -> None:
+        """ISS-12737: an ``out_of_diff`` finding reaches the verifier even
+        when its severity would skip verification, the budget cap is full,
+        and a fresh cached verdict exists — and its input carries the patch."""
+        from code_review_helpers import _write_cached_verification
+
+        ood = _make_validated_finding(
+            "auditor_f0", file="src/other.test.ts", severity="LOW", confidence=0.6,
+        )
+        ood["out_of_diff"] = True
+        fillers = [
+            _make_validated_finding(f"bha_p0_f{i:03d}", severity="BLOCKING", confidence=1.0)
+            for i in range(VERIFY_MAX_VERIFICATIONS + 5)
+        ]
+        cache_dir = tmp_path / "cache"
+        _write_cached_verification(
+            cache_dir, ood, "sonnet", "phash_v1",
+            {"verifier_verdict": "CONFIRMED", "verifier_confidence": 0.9,
+             "verifier_reasoning": "cached", "evidence_checks": [],
+             "rejection_class": None},
+        )
+
+        _, manifest = _run_verify_prepare(
+            tmp_path, [*fillers, ood], cache_dir=cache_dir, prompt_hash="phash_v1",
+        )
+        to_verify = {e["finding_id"]: e for e in manifest["to_verify"]}
+        assert "auditor_f0" in to_verify
+        assert "auditor_f0" not in manifest["deferred_budget"]
+        assert manifest["cache_hits"] == []
+        # The out-of-diff finding sits outside the budget: the in-diff
+        # fillers still get all VERIFY_MAX_VERIFICATIONS slots.
+        assert len(manifest["to_verify"]) == VERIFY_MAX_VERIFICATIONS + 1
+        assert len(manifest["deferred_budget"]) == 5
+        payload = json.loads(Path(to_verify["auditor_f0"]["input_path"]).read_text())
+        assert payload["patches_path"] == str(tmp_path / "cr" / "patches_all.txt")
+        in_diff = json.loads(Path(to_verify["bha_p0_f000"]["input_path"]).read_text())
+        assert "patches_path" not in in_diff
 
 
 class TestOverrideCache:

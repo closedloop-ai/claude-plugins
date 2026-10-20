@@ -22,7 +22,8 @@ The input file is JSON with shape:
     "finding": { ... canonical finding ... },
     "verifier_prompt_path": "<this file>",
     "output_path": "<where to write your verdict>",
-    "review_root": "<absolute dir to read source from — always populated>"
+    "review_root": "<absolute dir to read source from — always populated>",
+    "patches_path": "<full-diff patch file — present only when finding.out_of_diff is true>"
   }
 
 Read the input file. The `finding` field contains the full canonical
@@ -178,6 +179,39 @@ For each entry in `finding.evidence[]`:
   - One entry can't be read (file missing, etc.) AND another verifies →
     TENTATIVE.
   - All entries verify (or evidence[] is empty) → continue.
+
+### 2b. CAUSATION CHECK (only when `finding.out_of_diff == true`)
+
+The finding points at a file outside the diff. The validator kept it
+without asking whether this change caused it; you are the only causation
+check. Skip this step for every other finding.
+
+  1. **Find the causing change.** Read the patch at `patches_path` (fall
+     back to `<review_root>` and the diff files in `finding.evidence[]`
+     when it is missing) and find the change — an added, modified or
+     deleted line — that the finding's problem follows from: a renamed or
+     deleted symbol, a changed signature or contract, a removed file, a
+     changed default. Search the patch yourself: Grep `patches_path` for
+     each identifier, path or string the cited code depends on, and page
+     through the whole file with Read `offset`/`limit` — one Read call
+     returns only the first ~2000 lines. A missing `evidence[]` citation
+     of the diff line is NOT a reason to reject; reviewers often omit it.
+  2. **Confirm the dependency.** Read the cited code at `finding.file:line`
+     and confirm it depends on that change (imports, calls, mocks,
+     describes, or configures the thing that changed).
+  3. **Verdict.**
+     - Causing change found and the dependency holds → continue with the
+       remaining checks. Record the causing `file:line` in
+       `evidence_checks[]` (claim = "caused by change at <file:line>").
+     - You read the whole patch and no change in it touches what the cited
+       code depends on (the problem is pre-existing or unrelated) →
+       REJECTED, `rejection_class: "not_caused_by_diff"`. The
+       `evidence_checks[]` entry must state what the cited code depends on
+       and what the patch actually changes, so the rejection rests on what
+       you read, not on a missing citation.
+     - The patch could not be read, or was read only in part (a
+       truncated Read you did not page past, a search you could not
+       run), or the link is plausible but unproven → TENTATIVE.
 
 ### 3. GUARD CHECK
 
@@ -380,7 +414,7 @@ shape is:
       "source": "<file:line, or 'grep across repo'>"
     }
   ],
-  "rejection_class": "evidence_not_found" | "evidence_contradicted" | "guard_exists" | "unreachable" | null
+  "rejection_class": "evidence_not_found" | "evidence_contradicted" | "guard_exists" | "unreachable" | "not_caused_by_diff" | null
 }
 ```
 
@@ -392,7 +426,8 @@ Rules:
   - **TENTATIVE**: `verifier_severity` is null. `rejection_class` is null.
     Use this when ambiguity remains after checks 1–5.
   - **REJECTED**: `verifier_severity` is null. `rejection_class` is one of
-    the four enumerated classes. At least one `evidence_checks[]` entry
+    the five enumerated classes (`not_caused_by_diff` only for
+    `out_of_diff` findings). At least one `evidence_checks[]` entry
     must have `verified: false` with a concrete `actual_read`.
   - **JUSTIFIED-VALID** (PLN-721): the author's justification passed both
     J1 (existence) and J2 (responsiveness). `verifier_severity` is null.
