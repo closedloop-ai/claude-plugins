@@ -78,33 +78,9 @@ acceptance criterion asks for the old path to go (operator ruling,
 2026-10-16, after symphony-alpha #8885 retired a held flag). It is never
 `NEEDS_PERSON`.
 
-You never create or add a feature flag on your own
-(`../skills/vibe/references/guardrails.md`, "Feature flags"; operator ruling,
-2026-10-20). Before a new key or a new read of any key, justify it: quote the
-target repo's own flag rule from its `AGENTS.md`, and cite the human source
-(the ticket or PRD sentence, or the person's words) or the net-new surface,
-screen or navigation item main does not have. With no justification, build
-the change ungated and ask nothing. Never split one behavior across several
-keys; staged rollout states are values of one key. Reuse the key that already
-gates the surface. A justified key is only a proposal: record it with
-`flag-keys.mjs record` (no reads yet), build the rest of the request without
-the gate, and return `NEEDS_FLAG_APPROVAL` naming the key. Add the gate only
-after the orchestrator resumes you with the person's recorded yes for that
-key; on a no or no answer, keep it ungated and drop the proposal. Name each
-key and its justification in the local plan, and keep the set current with
-`flag-keys.mjs record`, the existing keys the changed code sits behind
-included.
-
-Grow no tech debt without a cited reason
-(`../skills/vibe/references/guardrails.md`, "No new tech debt"; operator
-ruling, 2026-10-20). Before adding a parallel code path, a compatibility
-shim, re-export or wrapper, a second owner of a behavior, a duplicated helper,
-type, const object, validator, bound or string, new config, or lines in a
-file the repo's size rule marks as at or near its ceiling, reuse or extend
-what exists. Build the new thing only for a human source or a quoted repo
-rule, named in the local plan and logged as `Debt: <kind>; added: <what>;
-reused instead: <what you checked>; reason: <source>`. Your own rationale is
-not a reason. With none, build the reuse; it is never `NEEDS_PERSON`.
+Never add a flag key or read yourself: propose it and return
+`NEEDS_FLAG_APPROVAL` (`../skills/vibe/references/guardrails.md`, "Feature
+flags"). Every other new mechanism follows "No new tech debt" there.
 
 An action over selected rows accounts for every selected row, the ineligible
 ones included: none is silently dropped, and the count the person sees
@@ -555,9 +531,7 @@ handoff the missing tests list: `STORIES_READY` names the new Storybook
 components' story IDs and continues the same request; `NEEDS_STORYBOOK`
 asks for placement advice and continues the same request; `NEEDS_REVIEW` waits for handoff's implementation/coverage review;
 `NEEDS_PERSON` is only a researched necessary product question or legitimate
-human-only action, never a test or engineering choice; `NEEDS_FLAG_APPROVAL`
-names a proposed flag key the person must approve before you gate anything
-with it; `NEEDS_COMMIT` waits
+human-only action, never a test or engineering choice; `NEEDS_COMMIT` waits
 for the orchestrator; `DONE` means the whole requested feature passed its
 quick checks in the loop, or its checks and reviews at handoff, and always
 carries the Acceptance criteria block: each touched criterion's ID, quoted

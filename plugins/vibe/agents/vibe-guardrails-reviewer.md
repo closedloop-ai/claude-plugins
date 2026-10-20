@@ -1,6 +1,6 @@
 ---
 name: vibe-guardrails-reviewer
-description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, Storybook taxonomy placement and precedent placement, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them or added unasked, leftovers after an extraction, capability removed by a main sync, flag retirement against a recorded hold, every flag key the session adds or depends on against the person's per-key approval, the target repo's flag rule and its human source, every new mechanism against the no-new-tech-debt principle, and each new mechanism's reuse and cost scaling). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
+description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, Storybook taxonomy placement and precedent placement, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them or added unasked, leftovers after an extraction, capability removed by a main sync, flag retirement against a recorded hold, each new mechanism's reuse and cost scaling, and tech debt and flag keys without a cited reason or the person's approval). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
 model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
 ---
@@ -40,13 +40,6 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
 
 ## Check, for added or changed lines only
 
-Every check applies one principle: a change grows no tech debt without a
-cited reason, and the simpler option that reuses what exists wins
-(`guardrails.md`, "No new tech debt"; operator ruling, 2026-10-20). For each
-new mechanism a check finds, read its `Debt:` line in the change log; one
-whose only reason is an agent's own rationale, or that has no line, is
-blocking, and the compliant fix is the reuse.
-
 Before the numbered review, require the inventory's `forbiddenPaths` gate to
 be true. Any entry under `forbidden` or `outsideAllowed` is blocking in every
 phase, including repo-root scripts, plugin or skill files, and agent instruction
@@ -61,11 +54,7 @@ path merely because another rule describes how its content should look.
    or API client call) in the diff, `rg` its endpoint path, query key and
    subject in `packages/app/shared` (`shared/auth` included) and the existing
    `use-*` hooks (such as `use-tags`); an existing one that already does the
-   job is blocking. Quote the existing hook or helper as evidence. The same
-   holds for each new type, const object, validator or numeric bound: `rg`
-   its name and shape, and for each bound the canonical constant (a new
-   schema whose limit differs from the constant the domain already exports is
-   blocking).
+   job is blocking. Quote the existing hook or helper as evidence.
 2. Tokens: hardcoded colors, arbitrary pixel values, inline styles, ad-hoc
    dark-mode overrides. Name the token to use. Before accepting any hardcoded
    color, shadow or dark override, read which tokens the touched surface
@@ -108,9 +97,7 @@ path merely because another rule describes how its content should look.
    raw internal `<a href>` instead of `<Link>`, client `console` calls, nested
    ternaries, inline imports, files over 1,000 lines, narrating comments, and
    any `as` cast, stories included (a story's args are typed through its
-   `Meta`, never cast). Read the target repo's file-size rule and report the
-   physical line count of every touched file it marks as over or near its
-   ceiling (symphony-alpha: 1,000 lines); one the session grew is blocking. For each URL search-param key, storage key or route
+   `Meta`, never cast). For each URL search-param key, storage key or route
    segment the diff spells as a literal, `rg` that literal across
    `apps/app`, `apps/desktop/src/renderer` and `packages/app`: a literal a
    shared constant already exports, or one spelled separately on web and
@@ -146,10 +133,7 @@ path merely because another rule describes how its content should look.
      file whose exports only forward to the new owner (a pass-through or
      wrapper), a re-export alias, an export with no remaining importer, a
      prop no caller passes, and a loop or `each` table over one remaining
-     arm are each blocking, cited at `file:line`. So is a component, prop,
-     controller method or hook the session kept for a deprecated story or
-     "frozen legacy" with no production importer: diff its importers on the
-     base and the branch, and keep it only for a named live consumer.
+     arm are each blocking, cited at `file:line`.
 9. Tests and checks: an added or deleted test file (`*.test.*`, `*.spec.*`,
    `__tests__/`, `e2e/`, or a snapshot or fixture a test reads), a changed
    snapshot, or a changed test that is not a pure repair is blocking in the
@@ -261,10 +245,7 @@ path merely because another rule describes how its content should look.
     live both beside the shared component and in page sections, so only the
     reported precedents tell whether a page-scoped story mirrors them.
 12. Mechanisms: for each new poller, interval, background lane, socket,
-    cross-process channel, route, table or cursor in the diff, each new
-    service, store, config key, environment variable or setting, each second
-    path (a route, service, writer or store for a behavior an existing one
-    already owns), and each write
+    cross-process channel, route, table or cursor in the diff, and each write
     into another tool's data (its files, or its API or IPC, such as a method
     that changes that tool's stored state), name the existing mechanism that
     does or could do the job (`closedloop-graph.md`, the row for channels that
@@ -324,31 +305,14 @@ path merely because another rule describes how its content should look.
     by a cited human ruling, or listed uncovered with current owner and status.
     A session-created supersession, a "not reused" label, or a delivered child
     left `TODO` is blocking.
-17. Flag keys (`guardrails.md`, "Feature flags"; operator ruling,
-    2026-10-20, after one session gated a single Branches list behind
-    `branches-list-adapter-connected`, `-disconnected` and `-rollback`):
-    read the target repo's flag rule from the checkout's `AGENTS.md` files
-    yourself, then list every flag key the diff adds, every key it reads in a
-    new place, and every existing key the changed code sits behind (`rg` the
-    diff for the repo's flag read helpers and key constants, and
-    `code_grep` each changed screen's entry points). Compare that list with
-    the record (`flag-keys.mjs show --worktree <wt>`, whose `problems` must
-    be empty). Each of these is blocking, quoted with `file:line`: a new key
-    or new read with no recorded approval from the person for its current
-    proposal (a cited source, a plan or a reviewer's agreement is not
-    approval, and an approval of one key never covers another); a new key or
-    new read whose justification is missing, cites only an agent-written plan, PLN,
-    decision table or change log, or does not match the repo rule's quoted
-    sentence; a gate on a change the repo rule says ships directly (in
-    symphony-alpha: an edit to a shipped surface, a correction or a
-    removal), checked against main; more than one key for one behavior,
-    staged rollout states as separate keys included; a new key where an
-    existing key on main, or one another session's `list` entry records,
-    already gates the same surface; one surface gated by different keys on
-    web and Desktop; and a key the diff reads that the record does not list,
-    or a record entry the diff does not read. The compliant fix for an
-    unjustified or unapproved key is the change built ungated, or the reused
-    key.
+17. Tech debt and flag keys (`guardrails.md`, "No new tech debt" and
+    "Feature flags"): a new mechanism checks 1, 7, 8 or 12 find with no
+    `Debt:` reason is blocking. Read the repo's flag rule yourself, list every
+    key the diff adds, newly reads or sits behind, and run
+    `flag-keys.mjs show --worktree <wt>`. Any `problems`, a read the record
+    lacks, a key the rule does not support, split keys, a gate on a change
+    the rule ships directly, or a new key where one already gates the surface
+    is blocking. A cited source is not approval.
 
 For publication, verify the SAME source actor's `main-sync-inputs` evidence
 before capture and after the committed merge. Canonical private diagnostics

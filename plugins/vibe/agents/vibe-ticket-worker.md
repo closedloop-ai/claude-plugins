@@ -250,11 +250,7 @@ Production impact is production-only added/changed/removed paths/effects if
 merged, shared-parent consumers and relevant web/Desktop consequences, not
 already shipped; keep story/test/prototype-only inventory separate. Preserve
 exact new/existing modified/removed flag keys, owning paths and all relevant
-entry/read/mutation/host gates, with each new key's or new read's
-justification and the person's approval (who, when, their words) from the
-record's `flagKeys` (`guardrails.md`, "Feature flags"). No new flags does not mean no existing gates. The keys to see the
-work reach the ticket only through `ticket-sections`; never type them by hand,
-and return `NEEDS_CHANGE` when the record has none recorded.
+entry/read/mutation/host gates. No new flags does not mean no existing gates.
 Keep source defaults, timestamped verified production values and local QA
 toggles distinct; explicitly retain unavailable/stale evidence, never guess
 or overwrite/implicitly refresh the machine-generated flag snapshot.

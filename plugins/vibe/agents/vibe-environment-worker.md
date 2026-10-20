@@ -344,8 +344,8 @@ request (`../skills/handoff/SKILL.md`, "A requested pull request"). Your
 grant is the `pull-request` record action: no ticket or session writes, no
 push, no commit. Inputs: the worktree, the live ticket slug, the confirmed
 summary, the final verified published commit, the tests the `pull-request`
-turn wrote and the check results, the ticket's Production impact and Flag
-changes and gates fields, and its "Keys to see this work" block.
+turn wrote and the check results, and the ticket's Production impact and Flag
+changes and gates fields.
 
 1. Confirm the branch on `origin` is at the verified published commit
    (`git -C "<wt>" ls-remote origin <branch>`). If not, return `BLOCKED`;
@@ -359,9 +359,8 @@ changes and gates fields, and its "Keys to see this work" block.
    (`gh api repos/closedloop-ai/symphony-alpha/contents/.github/pull_request_template.md --jq .content | base64 -d`)
    and fill every section from the session's own record, never from
    invention:
-   - Summary: the confirmed summary, with the live ticket's slug, then the
-     keys to see the work per surface and host, copied from the "Keys to see
-     this work" block.
+   - Summary: the confirmed summary, with the live ticket's slug and its
+     "Keys to see this work".
    - Breaking changes: an honest answer from Production impact; write the
      root `AGENTS.md`'s "none" answer only when Production impact supports it
      (no API response field, database column or cross-process wire shape
@@ -369,8 +368,7 @@ changes and gates fields, and its "Keys to see this work" block.
    - UI Feature Flag: the heading alone, unless the change adds a net-new
      surface, screen or navigation item or a new flag primitive; then attest
      `[ui-flag:gated] <key>` or `[ui-flag:N/A] <reason>` only from the Flag
-     changes and gates field, citing the new key's recorded justification
-     and the person's approval of it.
+     changes and gates field.
    - Test plan: at most 20 lines: the tests written and the checks run, with
      their results.
    When the record cannot support a required answer, say so in that section

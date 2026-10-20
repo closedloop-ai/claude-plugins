@@ -229,13 +229,17 @@ test("no key is built without the person's yes to that exact question, and the y
   const built = session.recordKeys(proposal(["packages/app/branches/components/branches-list.tsx"]));
   assert.equal(built.status, 1);
   assert.match(built.json.error, /`branches-list-v2` is read in packages\/app\/branches\/components\/branches-list\.tsx without the person's yes/);
-  assert.equal(session.recordKeys(proposal([])).status, 0);
+  const recorded = session.recordKeys(proposal([]));
+  assert.equal(recorded.status, 0);
+  assert.deepEqual(recorded.json.pending.map((entry) => entry.key), ["branches-list-v2"]);
+  assert.match(recorded.json.pending[0].next, /return NEEDS_FLAG_APPROVAL for `branches-list-v2`/);
   assert.equal(session.read().flagKeys.surfaces[0].keys[0].key, "branches-list-v2");
 
   const notAsked = session.approve("branches-list-v2", "approved", "yes");
   assert.equal(notAsked.status, 1);
   assert.match(notAsked.json.error, /The person was not asked about `branches-list-v2` in these words/);
   const question = session.ask("branches-list-v2");
+  assert.match(question.next[1], /--decision approved only for an explicit yes/);
   const unanswered = session.approve("branches-list-v2", "approved", "yes");
   assert.equal(unanswered.status, 1);
   assert.match(unanswered.json.error, /No recorded answer under flag-approval:branches-list-v2:/);

@@ -231,13 +231,27 @@ export function recordFlagKeys(worktree, file) {
   const now = new Date().toISOString();
   const updated = { ...record, flagKeys: { ...candidate, recordedAt: now }, lastActiveAt: now };
   writeSessionRecord(worktree, updated);
-  return { worktree, ...updated };
+  const pending = [...proposals(candidate).keys()]
+    .filter((key) => approvalStatus(candidate, key) === ApprovalStatus.Pending)
+    .map((key) => ({
+      key,
+      next: `Do not read \`${key}\` yet. Confirm no key on main or in another session's vibe-sessions.mjs list entry already gates these surfaces (reuse it if one does), build the rest without the gate, and return NEEDS_FLAG_APPROVAL for \`${key}\`.`,
+    }));
+  return { worktree, ...updated, pending };
 }
 
 /** The approval question for one proposed key, with the key to ask it under. */
 export function flagQuestion(worktree, key) {
   const proposal = requireProposal(requireSessionRecord(worktree), key);
-  return { key, questionKey: approvalQuestionKey(proposal), question: approvalQuestion(proposal) };
+  const questionKey = approvalQuestionKey(proposal);
+  return {
+    key, questionKey, question: approvalQuestion(proposal),
+    next: [
+      `Ask the person in exactly these words with session-questions.mjs ask --worktree <wt> --key ${questionKey}, one key per question, with no research or precedent gate.`,
+      `Record their exact words with session-questions.mjs answer under ${questionKey}, then run flag-keys.mjs approve --key ${key} --answer "<their words>" with --decision approved only for an explicit yes, otherwise declined.`,
+      "Resume the same writer with the result. With no answer, the key stays pending and nothing is gated.",
+    ],
+  };
 }
 
 /**
@@ -533,8 +547,10 @@ function run(argv) {
     return values[name];
   };
   switch (positionals[0]) {
-    case "record":
-      return { session: recordFlagKeys(option("worktree"), option("file")) };
+    case "record": {
+      const { pending, ...session } = recordFlagKeys(option("worktree"), option("file"));
+      return { session, pending };
+    }
     case "question":
       return flagQuestion(option("worktree"), option("key"));
     case "approve":
