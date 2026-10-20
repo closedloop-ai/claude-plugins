@@ -152,6 +152,9 @@ internal to a function body. Specifically, flag:
     renames a column.
   - **Deletions**: any exported symbol whose declaration disappears.
     These are the highest-confidence breakages — they always break.
+    For a file deleted outright (`deleted file mode` in the patch), the
+    symbols to check are every export it declared PLUS its module path
+    (the import specifiers that resolved to it).
 
 Ignore symbols that are clearly **internal** (private/unexported,
 underscored, inside `__init__` blocks not in `__all__`, etc.). Ignore
@@ -203,6 +206,11 @@ For each candidate symbol:
   - Use `output_mode: "files_with_matches"` first to enumerate files;
     then `output_mode: "content"` with `-n` and `-B 5 -A 10` to read
     context around each hit.
+  - **For a deleted file, also search by name and path**, not only by
+    call syntax: its module path and import specifiers, each exported
+    name, and string or path references (route tables, plugin
+    manifests, registries, glob patterns, dynamic imports). Each live
+    reference is an `external_impact[]` entry (`deleted_reference`).
 
 ### Step 3: Evaluate each usage
 
@@ -386,7 +394,10 @@ analyze 1–5 symbols, run 5–15 greps, and finish in under a minute.
   - Anchor file/line MUST be inside `<files_assigned>` (the diff).
     `external_impact[]` entries can cite any repo file.
   - Anchor file/line is **where the symbol changed**, NOT where it
-    breaks. The break is in the `external_impact[]` entry.
+    breaks. The break is in the `external_impact[]` entry. For a file
+    deleted outright, anchor ONE finding at the deleted declaration
+    (or the file's first line for a module-path break), numbered in the
+    OLD file, and list every broken reference in `external_impact[]`.
   - You may NOT emit findings about the symbol's internal logic — that
     is BHA's job. You may NOT emit findings about whether the change
     should have happened at all — that subjective judgment is out of

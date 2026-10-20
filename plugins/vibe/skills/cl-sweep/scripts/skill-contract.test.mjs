@@ -1161,3 +1161,30 @@ test('a new data direction needs a traced decision in cl-execute and cl-analyze'
   assert.match(gateResult, /^- Decision provenance: <PASS \| BLOCKED \| UNKNOWN \| NOT_APPLICABLE> - </m);
   assert.match(gateResult, /^- Data direction: <PASS \| BLOCKED \| UNKNOWN \| NOT_APPLICABLE> - </m);
 });
+
+test('Codex lanes take models from the one policy: high by default, explorers on gpt-5.6-terra', async () => {
+  const policy = await import('./model-policy.mjs');
+  const known = new Set([
+    policy.TICKET_OWNER_MODEL, policy.EXPLORER_MODEL, policy.MECHANICAL_SUPPORT_MODEL, policy.LEGACY_UNVERSIONED_MODEL,
+  ]);
+  assert.equal(policy.DEFAULT_REASONING_EFFORT, 'high');
+  assert.equal(policy.codexBindingForRole('explorer').model, 'gpt-5.6-terra');
+  assert.equal(policy.codexBindingForRole('writer').model, 'gpt-6-sol');
+  const sources = {
+    surfaces: read('cl-sweep/references/execution-surfaces.md'),
+    protocol: read('cl-sweep/references/cli-worker-protocol.md'),
+    sweep: read('cl-sweep/SKILL.md'),
+    lanes: read('cl-execute/references/support-lanes-and-sweeps.md'),
+    planReview: read('cl-execute/references/plan-review-prompt.md'),
+  };
+  for (const [name, source] of Object.entries(sources)) {
+    for (const [model] of source.matchAll(/gpt-\d+(?:\.\d+)?-[a-z]+(?![a-z*-])/g)) {
+      assert.ok(known.has(model), `${name} names ${model}, which is not in model-policy.mjs`);
+    }
+    assert.doesNotMatch(source, /effort: "?xhigh"? on|`high` or `xhigh`|"high"` or `"xhigh"` as the/i, name);
+  }
+  for (const name of ['surfaces', 'protocol', 'sweep', 'lanes']) {
+    assert.match(sources[name], /gpt-5\.6-terra/, name);
+    assert.match(sources[name], /xhigh`?"?`? only (?:when|by)/i, name);
+  }
+});

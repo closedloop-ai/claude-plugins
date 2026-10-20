@@ -129,8 +129,8 @@ export function comparisonLogs(comparison: MainComparison) {
 }
 
 /**
- * The same check on main. A selector relative to the session's own diff (the affected wrappers and the pinned Turbo
- * filter) would select different packages there, so main runs that task over the packages the session selected.
+ * The same check on main. A selector relative to the session's own diff (the affected typecheck wrapper and the
+ * pinned Turbo filter) would select different packages there, so main runs that task over the packages the session selected.
  */
 export function capturedMainArgv(root: string, mainSha: string, command: CheckCommand, selection: Selection | undefined):
   { argv: string[] } | { reason: string } {
@@ -138,7 +138,6 @@ export function capturedMainArgv(root: string, mainSha: string, command: CheckCo
   let task: string | undefined;
   let rest: string[] = [];
   if (words.join(" ") === "pnpm typecheck:affected") { task = "typecheck"; rest = ["--concurrency=1"]; }
-  else if (words[0] === "pnpm" && words[1] === "test:affected") { task = "test"; rest = words.slice(2); }
   else if (words[0] === "pnpm" && words[1] === "turbo" && words.slice(3).some((word) => PINNED_FILTER.test(word))) {
     task = words[2];
     rest = words.slice(3).filter((word) => !PINNED_FILTER.test(word));

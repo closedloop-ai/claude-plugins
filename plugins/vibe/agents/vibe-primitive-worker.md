@@ -53,7 +53,9 @@ skill (`.claude/skills/storybook/SKILL.md`, `references/gotchas.md`,
    one lifecycle tag and the release bump, never a frozen v1.0 root
    (`guardrails.md`, "Storybook taxonomy").
 4. `pnpm --filter storybook catalog:sync`, `pnpm --filter storybook validate:catalog`,
-   `pnpm --filter storybook test`, and Biome on your files, until all pass.
+   `pnpm --filter storybook exec vitest run <the new story files>` (those
+   files only, never the whole Storybook suite), and Biome on your files,
+   until all pass.
 5. Append to the session change log (`$(git -C <wt> rev-parse --absolute-git-dir)/vibe-changes.md`).
 6. Add a Progress line to the live ticket per `ticket-template.md` naming the
    new building block and its story.

@@ -61,8 +61,8 @@
 // page is edited by every Storybook release, so a tag there is not a version.
 //
 // `backendChanged` says whether the work touched backend code
-// (`backendFiles`). Handoff runs its lighter checks when it did not, and the
-// full suite with two workflow-code-review passes when it did.
+// (`backendFiles`). Handoff adds two workflow-code-review passes when it did;
+// its test run stays targeted either way.
 //
 // The handoff and pull-request phases also report the pull request facts
 // (pr-facts.mjs); `--ticket` adds `asks`, `--overlap` adds `overlap` (one

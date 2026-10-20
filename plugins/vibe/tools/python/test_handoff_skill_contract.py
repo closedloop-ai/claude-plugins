@@ -162,8 +162,8 @@ def test_check_weight_follows_whether_the_session_changed_backend_code() -> None
     assert "handoff-inventory.mjs --worktree" in task_list
     assert "`backendChanged`" in task_list
     assert "use the backend checks from then on" in task_list
-    assert "Lighter: read-only verify checks mode" in checks
-    assert "Backend: full-suite mode runs every required lane" in checks
+    assert "Read-only verify checks mode runs the same targeted checks whether or not backend changed" in checks
+    assert "Backend changes add the two review passes, not a wider test run" in checks
     assert "Lighter: repo `review-soul`" in reviews
     assert "`vibe-adversarial-reviewer`" in reviews
     assert "parallel, read-only" in reviews

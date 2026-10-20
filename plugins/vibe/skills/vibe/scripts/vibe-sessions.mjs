@@ -54,7 +54,8 @@
 // (PLN) that the ticket worker publishes from the local plans and links from
 // the live ticket, and `livePlanStatus` the status it last set on it
 // (operator ruling, 2026-10-19). `flag-snapshot` validates and saves the production flag snapshot
-// (ISS-12048) next to the record; `codex-sessions` records this Codex thread
+// (ISS-12048) next to the record; `list` also shows the keys flag-keys.mjs
+// recorded and the person's approval of each; `codex-sessions` records this Codex thread
 // (`--thread`, else CODEX_THREAD_ID) and every subagent thread it spawned;
 // `ticket-sections` prints the live ticket's Environment, Production flag
 // snapshot, and Sessions sections from the record, with the branch's current
@@ -91,6 +92,7 @@ import { parseArgs } from "node:util";
 import { readWriterSummary } from "./dist/writer-state.mjs";
 import { admitMainSyncRequest, admitMainSyncShare, MainSyncError, mainSyncFailure, pushMainSync,
   readMainSyncInput, readMainSyncProvenance, prepareMainSyncInputs, validateMainSync } from "./dist/main-sync.mjs";
+import { listedFlagKeys } from "./flag-keys.mjs";
 import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublication } from "./prototype-session.mjs";
 import { adoptStartupQuestions } from "./session-questions.mjs";
 import { git, readSessionRecord, sessionLiveTicket, writeSessionRecord as writeRecord } from "./session-record.mjs";
@@ -322,6 +324,7 @@ function listSessions(repo) {
         vercel: isOwnedPrototypeSession(record) ? null : record?.vercel ?? vercelDefaults(entry.branch),
         ...(isOwnedPrototypeSession(record) && record.prototype ? { prototype: record.prototype } : {}),
         flagSnapshotTakenAt: record?.flagSnapshot?.takenAt ?? null,
+        flagKeys: listedFlagKeys(record?.flagKeys ?? null),
         stack: record?.stack ?? null,
         localFixes: record?.localFixes ?? [],
         ...changeSummary(entry.worktree),
@@ -644,6 +647,7 @@ function withDefaults(record) {
     livePlanStatus: rest.livePlanStatus ?? null,
     vercel: vercelWithDefaults(rest),
     flagSnapshot: rest.flagSnapshot ?? null,
+    flagKeys: rest.flagKeys ?? null,
     clerkOrgId: rest.clerkOrgId ?? null,
     desktopAuthSavedAt: rest.desktopAuthSavedAt ?? null,
     codexSessions: rest.codexSessions ?? { orchestrators: [], subagents: [] },
