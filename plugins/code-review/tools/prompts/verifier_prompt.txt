@@ -191,9 +191,11 @@ check. Skip this step for every other finding.
      when it is missing) and find the change — an added, modified or
      deleted line — that the finding's problem follows from: a renamed or
      deleted symbol, a changed signature or contract, a removed file, a
-     changed default. Search the patch yourself. A missing `evidence[]`
-     citation of the diff line is NOT a reason to reject; reviewers often
-     omit it.
+     changed default. Search the patch yourself: Grep `patches_path` for
+     each identifier, path or string the cited code depends on, and page
+     through the whole file with Read `offset`/`limit` — one Read call
+     returns only the first ~2000 lines. A missing `evidence[]` citation
+     of the diff line is NOT a reason to reject; reviewers often omit it.
   2. **Confirm the dependency.** Read the cited code at `finding.file:line`
      and confirm it depends on that change (imports, calls, mocks,
      describes, or configures the thing that changed).
@@ -207,8 +209,9 @@ check. Skip this step for every other finding.
        `evidence_checks[]` entry must state what the cited code depends on
        and what the patch actually changes, so the rejection rests on what
        you read, not on a missing citation.
-     - The patch could not be read, or the link is plausible but
-       unproven → TENTATIVE.
+     - The patch could not be read, or was read only in part (a
+       truncated Read you did not page past, a search you could not
+       run), or the link is plausible but unproven → TENTATIVE.
 
 ### 3. GUARD CHECK
 
