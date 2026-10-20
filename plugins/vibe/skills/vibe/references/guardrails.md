@@ -472,7 +472,12 @@ next to Missing tests so engineering sees them.
 
 ### Running and missing tests
 
-Handoff runs the existing affected tests. When one fails, the SAME persistent
+Handoff runs the existing affected tests: after any change, fix or main
+merge (a conflict resolution included), exactly the tests closedloop-graph
+`code_tests_for` returns for the files it touched, plus the inventory's
+`diffRules.requiredTests`, nothing broader by default. Files that map to no tests
+(changelog, README, version text, Storybook Version History) run none; CI
+confirms them (operator ruling, 2026-10-20). When one fails, the SAME persistent
 `vibe-change-worker` fixes the session's own code, never what the test asserts
 (a broken import or setup is a repair, above). Coverage
 the session still needs is recorded internally as it is found and, at

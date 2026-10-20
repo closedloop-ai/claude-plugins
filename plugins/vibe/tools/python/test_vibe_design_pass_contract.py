@@ -229,8 +229,8 @@ def test_build_loop_runs_existing_checks_and_handoff_lists_missing_tests() -> No
     assert "fixes the session's own code when one fails, never what a test asserts" in checks
     assert "it only repairs an existing test the session's change broke" in checks
     assert "lists every missing test as engineering's scope of work" in checks
-    assert "Lighter: read-only verify checks mode" in checks
-    assert "Backend: full-suite mode" in checks
+    assert "read-only verify checks mode" in checks
+    assert "the existing affected tests" in checks
     assert "Resume the SAME writer with an explicit handoff continuation" in checks
     assert "The verify worker never writes or fixes tests" in checks
 

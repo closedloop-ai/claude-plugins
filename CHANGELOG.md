@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### vibe v1.0.64
 
+#### Changed
+- Test runs after any change, fix or main merge (conflict resolutions included) are exactly the tests closedloop-graph `code_tests_for` returns for the touched files plus the inventory's required tests, nothing broader by default; files that map to no tests (changelog, README, version text, Storybook Version History) run none and CI confirms them (operator ruling, 2026-10-20). The verify worker's full-suite mode, `test:affected` and lane runs are removed, and backend handoffs use the same checks mode.
+
 #### Added
 - `skills/handoff/scripts/diff-rules.mjs`, run by `handoff-inventory.mjs` (the step the writer and handoff already run) and reported as `diffRules` with `blocking.diffRulesClear`: blocks a migration on an existing table without a recorded lock-strategy precedent or with a full-table backfill, a raw write of a captured artifact field with no canonical activity capture, an error returned inside `withDb.tx` after a write, a new Desktop sync lane without the shared give-up and backoff and a recorded synchronizing-susan pass, an artifact link delete not scoped to its edge, a removed ticketed comment whose code survives, an unrecorded change to a shared service or data source, a changed story assertion without a Storybook release, a new story entry beside a component's current one or for a harness, a change anywhere in a frozen v1.0 story's import closure (cleared by one recorded identical render and play of every affected story), and a lost story ID or any reference still naming one. Each finding names the fix or the change log line that records why not, which the guardrails reviewer verifies. It also lists the tests the graph does not map (GridTableV2 surface and host parity tests, Storybook sort-order tests, e2e specs naming a changed endpoint) and the repo's migration checks. Git reads only, no network.
 

@@ -405,9 +405,9 @@ every required unsuperseded row, including earlier requests. Planned coverage
 is not executed coverage; a row without an existing test goes on the missing
 tests list, never counted as covered.
 
-Lighter: read-only verify checks mode runs Biome without write flags, gates,
-affected types/tests and relevant existing lanes. Backend: full-suite mode
-runs every required lane. Both report defects back to this same writer.
+Lighter and backend alike: read-only verify checks mode runs Biome without
+write flags, gates, affected types and the existing affected tests, and
+reports defects back to this same writer.
 Do not weaken tests, skip required coverage or fall back to visible automated
 browser/Electron windows. Record exact unsupported local limitations.
 

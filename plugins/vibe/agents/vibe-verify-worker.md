@@ -18,7 +18,7 @@ worktree/branch.
 
 ## Inputs and references
 
-The owned worktree, mode (`checks`, `footprint`, `full-suite`, `coverage`, or
+The owned worktree, mode (`checks`, `footprint`, `coverage`, or
 `control`), inventory, acceptance criteria and the sole writer's local plan and
 missing tests list.
 Read the actual table at the same session decision table path and affected/
@@ -59,10 +59,8 @@ run/attempt/job/step and checked-out source evidence, not run.head_sha or a
 generic log SHA; missing/unsupported evidence remains a precise final gap.
 
 Run Biome WITHOUT write/fix flags, source gates, `pnpm typecheck:affected`,
-`pnpm test:affected --continue`, the relevant existing lanes named by
-`pnpm test:lanes`, and the inventory's `diffRules.requiredTests` and
-`requiredChecks`. Shared app changes also run the Desktop renderer lane
-directly when the repo requires it. Graph coverage identifies missing existing
+the existing affected tests (`guardrails.md`, "Running and missing tests"),
+and the inventory's `diffRules.requiredTests` and `requiredChecks`. Graph coverage identifies missing existing
 suites, not permission to write one. More, from the reviews of
 symphony-alpha #8885 and #8886 (operator ruling, 2026-10-16):
 
@@ -103,12 +101,6 @@ A failure returns its command, owning files and evidence to the sole writer.
 Do not change code, suppress a check, shrink an allowlist yourself, skip an
 assertion, raise a timeout or update a snapshot to clear it. List pre-existing
 failures accurately. Existing tests run; nobody writes them in vibe or handoff.
-
-## Full-suite mode
-
-When backend changed, run `pnpm verify` unscoped, `pnpm test`, and relevant
-script lanes (`pnpm test:lint`, `pnpm test:skills` where named). Same read-only
-and displayless rules. Return pass/fail per lane; the writer fixes defects.
 
 ## Coverage advice and the missing tests list
 
