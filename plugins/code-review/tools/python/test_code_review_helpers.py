@@ -25755,3 +25755,56 @@ class TestRunPrefixRoutePartition:
             json.dumps({"status_message": "1/2 files cached"}),
         )
         assert _rp_cache_status_message(tmp_path) == "1/2 files cached"
+
+
+class TestPluginRootResolutionContract:
+    """Claude Code fills in ``${CLAUDE_PLUGIN_ROOT}`` only in the text of the
+    command or skill being invoked. It is not filled in a file the agent opens
+    with Read, and it is not a Bash environment variable. /code-review:deep and
+    /code-review:shallow reach start.md through Read, so they must bind the
+    resolved root for it; Read-loaded files must not rely on the token.
+    """
+
+    _ROOT = Path(__file__).parents[2]
+
+    def _read_loaded_files(self) -> list[Path]:
+        root = self._ROOT
+        return sorted([
+            root / "README.md",
+            root / "SCHEMA.md",
+            *(root / "prompts").glob("*.md"),
+            *(root / "tools" / "prompts").glob("*.txt"),
+            *(root / "agents").glob("*.md"),
+        ])
+
+    @pytest.mark.parametrize("command", ["deep.md", "shallow.md"])
+    def test_wrapper_commands_bind_plugin_root(self, command: str) -> None:
+        text = (self._ROOT / "commands" / command).read_text()
+        assert "**`PLUGIN_ROOT` = `${CLAUDE_PLUGIN_ROOT}`**" in text
+
+    def test_start_md_uses_the_token_only_as_its_own_candidate(self) -> None:
+        text = _start_command_text()
+        assert text.count("CLAUDE_PLUGIN_ROOT") == 1
+        candidate = _extract_section(text, "2. **This file's own text**", "\n")
+        assert "`${CLAUDE_PLUGIN_ROOT}`" in candidate
+
+    def test_start_md_checks_a_literal_plugin_root_path(self) -> None:
+        stage_0b = _extract_section(
+            _start_command_text(), "**0b. Resolve plugin paths", "**Four resolution outcomes",
+        )
+        assert "test -f <PLUGIN_ROOT>/tools/python/code_review_helpers.py" in stage_0b
+
+    def test_read_loaded_files_do_not_rely_on_the_token(self) -> None:
+        offenders = [
+            str(p.relative_to(self._ROOT)) for p in self._read_loaded_files()
+            if "CLAUDE_PLUGIN_ROOT" in p.read_text()
+        ]
+        assert offenders == []
+
+    def test_skills_use_the_substituted_token_form(self) -> None:
+        offenders = [
+            str(p.relative_to(self._ROOT))
+            for p in (self._ROOT / "skills").glob("*/SKILL.md")
+            if "<CLAUDE_PLUGIN_ROOT>" in p.read_text()
+        ]
+        assert offenders == []

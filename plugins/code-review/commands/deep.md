@@ -5,7 +5,9 @@ argument-hint: "[scope] [--github] [--base <ref>] [--since-last-review] [--full-
 
 # Deep Code Review (PLN-807 + FEA-1401)
 
-This command is shorthand for `/start --depth deep`. Follow every instruction in `${CLAUDE_PLUGIN_ROOT}/commands/start.md` verbatim, with one binding:
+This command is shorthand for `/start --depth deep`. Follow every instruction in `${CLAUDE_PLUGIN_ROOT}/commands/start.md` verbatim, with two bindings:
+
+**`PLUGIN_ROOT` = `${CLAUDE_PLUGIN_ROOT}`** (Claude Code fills this in for this command). This is the caller binding start.md's stage 0b resolves first. Wherever start.md (or any file it tells you to read) writes `${CLAUDE_PLUGIN_ROOT}` or `<PLUGIN_ROOT>`, use this value. Do not try to read the plugin root from a Bash environment variable; it is not set there.
 
 **`DEPTH = "deep"` for the entire run.** Pass `--depth deep` to every helper that accepts the flag (notably `prepare-run`, `hygiene`, `review-state-read`, and `review-state-write`).
 
@@ -42,4 +44,4 @@ A cached `shallow` or `standard` review does NOT satisfy a deep invocation — `
 
 ## Execution
 
-Follow `start.md` from "0a. Resolve plugin root" through every gate and stage, with `DEPTH = "deep"` substituted into every helper invocation. The run plan emitted by `prepare-run --depth deep` will include every stage tagged `min_depth` ≤ `deep` (today: same as standard); the walker behavior is otherwise unchanged.
+Follow `start.md` from "Stage 0 — Initialize Run Plan" through every gate and stage, with the `PLUGIN_ROOT` binding above and `DEPTH = "deep"` substituted into every helper invocation. The run plan emitted by `prepare-run --depth deep` will include every stage tagged `min_depth` ≤ `deep` (today: same as standard); the walker behavior is otherwise unchanged.

@@ -206,7 +206,7 @@ For each finding in the manual-surface bucket, look up the template per the rout
 | Any finding from `envelope.pending_verification[]` (verifier didn't run) | `templates/pending_verification.md` |
 | (no matching template — e.g., a future category) | `templates/_generic.md` |
 
-Read each template once (Read tool, path `<CLAUDE_PLUGIN_ROOT>/skills/fix/templates/<name>.md`), then substitute placeholders `{file}`, `{line}`, `{severity}`, `{category}`, `{subcategory}`, `{issue}`, `{explanation}`, `{recommendation}`, `{code_snippet}`, plus category-specific placeholders documented in each template. Missing placeholder data → leave the placeholder visible so the operator sees the gap (do not silently drop).
+Read each template once (Read tool, path `${CLAUDE_PLUGIN_ROOT}/skills/fix/templates/<name>.md`), then substitute placeholders `{file}`, `{line}`, `{severity}`, `{category}`, `{subcategory}`, `{issue}`, `{explanation}`, `{recommendation}`, `{code_snippet}`, plus category-specific placeholders documented in each template. Missing placeholder data → leave the placeholder visible so the operator sees the gap (do not silently drop).
 
 Buffer each rendered entry for the Step 4 report.
 

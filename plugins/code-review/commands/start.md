@@ -39,9 +39,9 @@ Tier transitions are detected via `review_state.json`: a cached `shallow` review
 
 ## GitHub Mode Constraints
 
-**If MODE=github**, read the GitHub-specific instructions:
+**If MODE=github**, read the GitHub-specific instructions (`<PLUGIN_ROOT>` is resolved in stage 0b):
 ```
-Read ${CLAUDE_PLUGIN_ROOT}/prompts/github-review.md
+Read <PLUGIN_ROOT>/prompts/github-review.md
 ```
 This file contains posting constraints, PR metadata resolution, and output steps. Local mode does not need this file.
 
@@ -71,7 +71,7 @@ Four runtime gates modify walker default behavior (they are runtime-driven and e
 
 Read this entire file before starting. Agent-fleet dispatch (stages 11/15/20/23) lives in dedicated skills invoked by stage id; the present format and remaining per-stage notes are referenced by stage id below.
 
-**CRITICAL — No shell variables in Bash commands.** Claude Code prompts for manual approval on every `$VAR` expansion in paths. Substitute all resolved values directly into every Bash command. The only real env var is `${CLAUDE_PLUGIN_ROOT}` (resolved once in stage 0).
+**CRITICAL — No shell variables in Bash commands.** Claude Code prompts for manual approval on every `$VAR` expansion in paths. Substitute all resolved values directly into every Bash command. That includes the plugin root: it is not a Bash environment variable, so resolve `PLUGIN_ROOT` once in stage 0b and write its literal path into every command.
 
 Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (`<HELPERS>`, `<CR_DIR>`, `<CACHE_DIR>`, `<DIFF_SCOPE>`, etc.) to mark values you must replace with the resolved literal string before running the command. These are template tokens, NOT shell variables.
 
@@ -112,17 +112,22 @@ Flag incompatibility checks (emit error and exit immediately):
 
 The remaining `$ARGUMENTS` (after flag removal) is `SCOPE_ARGS`. Detect `PR_NUMBER` if `SCOPE_ARGS` is a single integer.
 
-**0b. Resolve plugin paths and create the CR_DIR via prepare-run.** Run one Bash command to discover the plugin root:
+**0b. Resolve plugin paths and create the CR_DIR via prepare-run.** `PLUGIN_ROOT` is the absolute directory of the code-review plugin that was invoked. Claude Code fills in its plugin-root placeholder only in the text of the command or skill being invoked: the placeholder is NOT filled in a file opened with the Read tool, and it is NOT an environment variable in Bash (echoing it in Bash prints an empty line). Never resolve the plugin root through Bash expansion. Pick the first candidate that is a real absolute path:
+
+1. **Caller binding** — you reached this file through `/code-review:deep` or `/code-review:shallow` (or any command that tells you to follow this file and states a `PLUGIN_ROOT` value). Use the value that command stated.
+2. **This file's own text** — this file was invoked directly as `/code-review:start`, so Claude Code filled in this candidate: `${CLAUDE_PLUGIN_ROOT}`. If it reads as an absolute path, use it. If it still reads as a literal `${...}` token, this file was opened with Read and the candidate is unusable.
+
+Confirm the candidate with a literal-path check (substitute the resolved path; no `$VAR`):
 
 ```bash
-echo "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py"
+test -f <PLUGIN_ROOT>/tools/python/code_review_helpers.py && echo ok
 ```
 
 **Four resolution outcomes — try in order:**
 
-1. **Normal case** — output is a real path ending in `/tools/python/code_review_helpers.py` and the file at that path exists. Track it as `HELPERS` and `PLUGIN_ROOT = ${CLAUDE_PLUGIN_ROOT}`.
+1. **Normal case** — candidate 1 or 2 yielded an absolute path and the check prints `ok`. Track `PLUGIN_ROOT` as that path and `HELPERS = <PLUGIN_ROOT>/tools/python/code_review_helpers.py`.
 
-2. **In-repo dogfood case** — `${CLAUDE_PLUGIN_ROOT}` is empty (the echo output begins with `/tools/`, no plugin root prefix). This happens when the plugin marketplace cache hasn't picked up an in-repo branch of the plugin itself. Fall back to the in-repo tree IFF `plugins/code-review/.claude-plugin/plugin.json` exists at the current working directory:
+2. **In-repo dogfood case** — neither candidate yielded a real path (no caller binding, the token stayed literal, or the check failed). Fall back to the in-repo tree IFF `plugins/code-review/.claude-plugin/plugin.json` exists at the current working directory:
 
    ```bash
    test -f plugins/code-review/tools/python/code_review_helpers.py && pwd
@@ -130,15 +135,15 @@ echo "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py"
 
    If that succeeds, set `PLUGIN_ROOT = <pwd>/plugins/code-review` and `HELPERS = <PLUGIN_ROOT>/tools/python/code_review_helpers.py`. This branch deliberately runs the in-repo helpers against the in-repo branch (correct for dogfooding — the run exercises the helpers actually being reviewed, not the cached marketplace version).
 
-3. **Marketplace cache fallback** — `${CLAUDE_PLUGIN_ROOT}` is empty AND outcome 2 did not apply (no in-repo tree at cwd) AND a populated marketplace cache exists at `~/.claude/plugins/cache/closedloop-ai/code-review/<version>/`. Common case: operator runs `/code-review` from a non-monorepo repo in a session where the marketplace plugin is installed but Claude Code did not populate `${CLAUDE_PLUGIN_ROOT}` (env-var exposure varies across IDEs/CLI configurations). Resolve to the highest-semver cached version:
+3. **Marketplace cache fallback** — no usable candidate AND outcome 2 did not apply (no in-repo tree at cwd) AND a populated marketplace cache exists at `~/.claude/plugins/cache/closedloop-ai/code-review/<version>/`. This version may differ from the plugin that was invoked, so use it only as a last resort. Resolve to the highest-semver cached version:
 
    ```bash
    ls -d "$HOME/.claude/plugins/cache/closedloop-ai/code-review/"*/ 2>/dev/null | sort -V | tail -1
    ```
 
-   If the output is non-empty AND `<dir>/tools/python/code_review_helpers.py` exists, set `PLUGIN_ROOT = <dir>` (trim the trailing slash) and `HELPERS = <PLUGIN_ROOT>/tools/python/code_review_helpers.py`. Then echo a single-line stderr notice to the operator so the fallback is observable: `Notice: CLAUDE_PLUGIN_ROOT empty; resolved to marketplace cache <PLUGIN_ROOT>`. If the cache directory exists but no version subdirectory contains `tools/python/code_review_helpers.py` (stale or partial install), fall through to outcome 4.
+   If the output is non-empty AND `<dir>/tools/python/code_review_helpers.py` exists, set `PLUGIN_ROOT = <dir>` (trim the trailing slash) and `HELPERS = <PLUGIN_ROOT>/tools/python/code_review_helpers.py`. Then echo a single-line stderr notice to the operator so the fallback is observable: `Notice: plugin root unresolved; using marketplace cache <PLUGIN_ROOT>`. If the cache directory exists but no version subdirectory contains `tools/python/code_review_helpers.py` (stale or partial install), fall through to outcome 4.
 
-4. **Misconfiguration** — `${CLAUDE_PLUGIN_ROOT}` is empty AND no in-repo tree exists AND no usable marketplace cache exists. The plugin is not installed anywhere reachable. Hard-fail with: `Error: ${CLAUDE_PLUGIN_ROOT} is empty, no in-repo plugin tree at ./plugins/code-review/, and no marketplace cache at ~/.claude/plugins/cache/closedloop-ai/code-review/. Install the code-review plugin via the marketplace, or cd to the claude-plugins monorepo root.` Do NOT attempt the run — every helper invocation would crash on a malformed path.
+4. **Misconfiguration** — no usable candidate AND no in-repo tree exists AND no usable marketplace cache exists. The plugin is not installed anywhere reachable. Hard-fail with: `Error: could not resolve the code-review plugin root (no caller binding, no substituted plugin root, no in-repo plugin tree at ./plugins/code-review/, and no marketplace cache at ~/.claude/plugins/cache/closedloop-ai/code-review/). Invoke the plugin's /code-review:start, /code-review:deep, or /code-review:shallow command, or cd to the claude-plugins monorepo root.` Do NOT attempt the run — every helper invocation would crash on a malformed path.
 
 Then create a session-scoped `CR_DIR` and emit the run plan.
 
@@ -196,7 +201,7 @@ Reads `<CR_DIR>/setup.json` and writes `<CR_DIR>/run_plan.json` containing `revi
 { content: "Present findings by severity", status: "pending", activeForm: "Presenting results" }
 ```
 
-If MODE=github, also Read `${CLAUDE_PLUGIN_ROOT}/prompts/github-review.md` now.
+If MODE=github, also Read `<PLUGIN_ROOT>/prompts/github-review.md` now.
 
 ---
 
@@ -240,7 +245,7 @@ Walk `STAGES` in array order. For each stage:
 
 | Token              | Source                                                          |
 |--------------------|-----------------------------------------------------------------|
-| `<PLUGIN_ROOT>`    | `${CLAUDE_PLUGIN_ROOT}` resolved in stage 0                     |
+| `<PLUGIN_ROOT>`    | `PLUGIN_ROOT` resolved in stage 0b                              |
 | `<DIFF_SCOPE>`     | `<CR_DIR>/scope.json` → `diff_scope`                            |
 | `<BASE_REF>`       | `<CR_DIR>/scope.json` → `base_ref`                              |
 | `<DIFF_TIP>`       | `<CR_DIR>/scope.json` → `diff_tip`                              |
