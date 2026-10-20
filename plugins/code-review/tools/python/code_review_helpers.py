@@ -2355,8 +2355,6 @@ def _filter_scope_and_range(
             continue
 
         if filepath not in files_to_review:
-            # Outside the diff: kept under the normal in-hunk confidence
-            # rule; the verifier decides causation.
             finding.pop("out_of_hunk_kept", None)
             if priority > 1 and confidence < CONFIDENCE_DISCARD_THRESHOLD:
                 finding.pop("out_of_diff", None)
@@ -3152,7 +3150,7 @@ def _needs_verification(finding: dict[str, Any]) -> bool:
     weakest on, so the high-confidence MEDIUM skip rule (confidence ≥
     0.85 → no verification) is the wrong default for them. For
     ``out_of_diff`` findings the verifier is also the only causation
-    check (ISS-12737): the validator no longer discards on location.
+    check (ISS-12737): the validator does not discard on location.
     """
     category = str(finding.get("category", ""))
     source = str(finding.get("source", ""))
