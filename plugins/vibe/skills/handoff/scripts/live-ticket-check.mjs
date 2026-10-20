@@ -30,6 +30,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { flagKeyProblems } from "../../vibe/scripts/flag-keys.mjs";
 import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe/scripts/prototype-session.mjs";
+import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
 import { localPlanFiles } from "../../vibe/scripts/session-plan.mjs";
 import { git, readSessionRecord } from "../../vibe/scripts/session-record.mjs";
 
@@ -125,6 +126,8 @@ export function checkLiveTicket(body, { baseCommit, record, headSha, branch, pla
     }
   }
   problems.push(...checkSessionPlan(record, planCount));
+  // Operator ruling, 2026-10-20: no path on the operator's machine, and no plan pointed at by path.
+  problems.push(...pointerProblems(body).map(({ line, kind }) => ({ section: "Body", problem: `line ${line}: ${kind}` })));
   // Operator ruling, 2026-10-20: every proposed flag key needs the person's recorded yes.
   problems.push(...flagKeyProblems(record).map((problem) => ({ section: "Flag keys", problem })));
   return { ok: problems.length === 0, problems };

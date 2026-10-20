@@ -102,7 +102,7 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 - Move a machine's busiest writers when its `codex-usage` band reaches `MOVE_AT_PERCENT`, or its trend says it will before the work is done, and on any `LIMIT` or `LIMIT-SPENDING-CREDITS` line. Move a Claude writer when it hits its usage or rate limit; the monitor cannot read Claude usage, so you learn it from the worker's errors or from the operator.
 - Before any move the old writer stops, or is confirmed dead, after committing and pushing or reporting its uncommitted state. One writer per branch holds through every move.
 - Codex to another Codex machine or account: a fresh thread through `fleet.sh` in the branch's worktree there, with a [resume prompt](./references/templates.md#resume-prompt).
-- Codex to Claude: a Claude writer in the same worktree with the [takeover preamble](./references/templates.md#worker-preamble). It invokes `vibe:vibe`, never edits the Codex session's records, and commits normally; vibe has no session migration for this yet, so log the gap to the lessons ledger.
+- Codex to Claude: a Claude writer in the same worktree with the [takeover preamble](./references/templates.md#worker-preamble). It resumes the same vibe session and moves its writer with vibe's harness switch before any other step; a Claude writer beside a ledger that still names the stopped Codex writer has every environment request refused.
 - Claude to Codex: a Codex vibe session through `fleet.sh` in the same worktree, with a resume prompt.
 - Fresh and resumed threads may stop to ask about a plugin version update, so every resume prompt says to keep the current version.
 
@@ -125,7 +125,9 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 - Agent-first QA: an agent verifies everything it can (e2e on the current head, DOM and accessibility reads, API second views, headless screenshots it reads itself) and records it. The operator gets only checkpoints that need a human: perceptual judgment, real-device feel, assistive tech, product judgment, flows an agent cannot drive; measure the rest (contrast ratios, box geometry, focus targets). A defect an agent already observed goes to the writer with its measurement, not to the human checklist.
 - Human QA runs in a dedicated Claude QA-guide session per PR that the operator talks to directly. When the PR's QA plan is ready, save the [QA guide prompt](./references/templates.md#qa-guide-prompt) to `prompts/` and launch it headless from the repo root (`claude -p --output-format json` with the tools it needs allowed); take `session_id` from the JSON and give the operator `cd <repo> && claude --resume <session_id>`. Keep a background wait on its findings file, re-armed like the monitor, and route each failure to the writer.
 - Every PR gets an independent review, then a verification pass of the fixes, before it is QA-ready. Resolve a thread only after the fix is verified in code, with a reply naming the fixing SHA.
-- Before enqueue, run a containerized or full check wherever PR CI skips suites, and resolve shared version-file conflicts right before each enqueue, in merge order. The queue rebuilds on current main, and a skipped suite is not a pass.
+- Before enqueue, run the lanes the diff can affect wherever PR CI skips them (the repo's lane selector, never full suites by default), and resolve shared version-file conflicts right before each enqueue, in merge order. The queue rebuilds on current main, and a skipped suite is not a pass.
+- A release-version bump every UI PR touches (a component catalog version and its history entry) is made only at enqueue time, and the operator arms auto-merge in the same minute; made earlier, it re-conflicts with every other open PR.
+- A fix merged to main reaches a preview only once the ref the preview's backing environment deploys from contains it: check ancestry against that ref (`git merge-base --is-ancestor <fix> <ref>`) before calling a preview fix live.
 - Track merge order for stacked or overlapping PRs and tell each writer which one merges first.
 - A before and after comparison uses the candidate's merge-base or current main as the baseline, never an unrelated branch.
 
@@ -144,6 +146,14 @@ Pushback applies principle 2; more judgment patterns from past programs: [refere
 - A repeat after a shipped fix means the earlier encoding did not bite: make it a gate, not more prose.
 - A plugin PR that encodes lessons replaces the prose its gate enforces and reports the net change in instruction length. The plugin must not get heavier.
 - Batch lesson and tooling fixes into one open PR per repo and add to it until it merges, never one PR per lesson: each PR costs a full CI run.
+
+## Artifacts people read
+
+Hard rule (operator, 2026-10-20). A ticket, PR body, PR comment, review reply or any other artifact written for people never references a path on the operator's machine (a home path such as `~/`, a temp, scratchpad or worktree path) or says something is on someone's laptop.
+
+- Evidence is uploaded and embedded: a screenshot goes into the ticket as an inline image through the ticket tool (for example a new document version with inline images); text evidence is quoted inline, briefly.
+- A plan the ticket references is attached, never pointed at: an implementation plan is a plan document linked to the ticket, and a QA plan or other working file is uploaded as an attachment on the ticket and named by its attachment name.
+- Check every worker draft for this before it is posted; vibe's ticket and PR body checks refuse a local path.
 
 ## Reporting to the operator
 

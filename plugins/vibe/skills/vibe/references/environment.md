@@ -10,7 +10,10 @@ the team's local checks; the vibe skill never uses it.
 
 ## Seeded or blank
 
-Asked once when the session starts, recorded as the session's `mode`.
+Asked once when the session starts, recorded as the session's `mode`. When
+the person asks to switch it, record the new mode with `vibe-sessions.mjs
+touch --worktree "<wt>" --mode <seeded|blank>` and request the environment
+again; the request carries the recorded mode.
 
 - **Seeded**: the vibe seed fills the environment with realistic data under an
   org named `<email> Co` using the signed-in person's Clerk primary email,

@@ -6,6 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 
 const REPO = "closedloop-ai/symphony-alpha";
@@ -194,6 +195,7 @@ export function bodyProblems(body, facts, files, prBase) {
       .map((refusal) => `new ${refusal.status} refusal ${refusal.path}:${refusal.line} is not listed`),
     ...facts.asks.filter((ask) => !flat.includes(ask)).map((ask) => `ticket ask not quoted and answered: ${ask}`),
     ...(prBase !== "main" && !flat.includes(STACKED_BASE_STATEMENT) ? [`base is ${prBase}; add verbatim: ${STACKED_BASE_STATEMENT}`] : []),
+    ...pointerProblems(body).map(({ line, kind }) => `body line ${line}: ${kind}`),
   ];
 }
 

@@ -26,13 +26,14 @@ Prepend to every Claude writer prompt; keep the `Takeover` line only when replac
 ```
 Invoke vibe:vibe first: resume the vibe session for <ticket or PRD>, or start one for it, and follow its rules for all of the work below.
 You are the only writer on <owner/repo>#<number>, worktree <path> on <machine>, branch <branch>.
-Takeover: a Codex vibe session wrote this branch and stopped (<limit|crash>). Vibe cannot move that session to you, so run your own vibe session for the same <ticket or PRD> in the same worktree from its last pushed head <sha>. Do not edit the Codex session's records; commit normally.
+Takeover: a Codex vibe session wrote this branch and stopped (<usage-limit|runtime-unavailable>). Resume that same vibe session and, before any other step, move its writer to you with vibe's harness switch (`writer-state.mjs migrate` with `harnessSwitch`, vibe's quality loop, "A writer whose runtime cannot run"). Never start a second session on this branch. Continue from its last pushed head <sha>; commit normally.
 Before editing, read the repo docs that own the paths you touch (AGENTS.md files or contributor guide) or the team knowledge base.
 Research graph-first with closedloop-graph before searching files by hand, as vibe requires: ticket_detail for the ticket and its PRD, query_collisions and blast_radius_tickets for overlapping work, code_callers and code_importers before a shared change.
 Tests: after any change, fix or merge (a conflict resolution included), run exactly the tests code_tests_for maps to the files it touched, nothing broader by default; files that map to no tests (changelog, README, version text) run none and CI confirms.
 Heavy checks go through <fleet.sh slot command for the chosen machine>. Never run e2e that opens windows on the operator's daily machine.
 Git: commit messages per the repo's conventions; regular push only, never force or amend after push.
 Review threads: reply on the thread naming the fixing SHA and resolve it only after the fix is verified in code.
+Artifacts for people (tickets, PR bodies, PR comments, review replies): never name a path on the operator's machine (home, temp, scratchpad or worktree paths) or say something is on someone's laptop. Embed screenshots as uploaded images and quote text evidence inline, briefly. A plan is attached, never pointed at: link the implementation plan as a plan document, and upload a QA plan or other working file as a ticket attachment named by its attachment name.
 Report when done: pushed head SHA, files changed, tests run and results, open items, anything that needs the operator.
 
 Task:
@@ -54,6 +55,7 @@ Tests: after any change, fix or merge (a conflict resolution included), run exac
 Budget: effort <CODEX_EFFORT>; no computer use (no browser, in-app browser, desktop app UI or screenshots).
 Visual requests: draft one from the fleet-orchestrator skill's visual request template and file it only with `node <request-visual.mjs on this machine> <requests dir> <draft>` from your worktree; it refuses an unpushed or stale head.
 If asked about a plugin version update, keep the current version.
+Artifacts for people (tickets, PR bodies, PR comments, review replies): never name a path on the operator's machine (home, temp, scratchpad or worktree paths) or say something is on someone's laptop. Embed screenshots as uploaded images and quote text evidence inline, briefly. A plan is attached, never pointed at: link the implementation plan as a plan document, and upload a QA plan or other working file as a ticket attachment named by its attachment name.
 ```
 
 ## QA guide prompt

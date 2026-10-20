@@ -197,6 +197,19 @@ test("a flag snapshot without the keys to see the work fails the check", () => {
   ]);
 });
 
+test("a ticket naming a path on the operator's machine or a local plan fails the check", () => {
+  const body = completeTicket({ Handoff: "- Screenshot: /Users/x/file.png\n- Log: ~/foo\n- Capture: `.control/runs/a.png`\n- QA plan: .closedloop-ai/vibe-plans/qa.md\n- Attached: `qa-plan.md`" });
+  const problems = checkLiveTicket(body).problems;
+  const lines = body.split("\n");
+  assert.deepEqual(problems.map(({ section, problem }) => [section, lines[Number(/^line (\d+)/.exec(problem)[1]) - 1]]), [
+    ["Body", "- Screenshot: /Users/x/file.png"], ["Body", "- Log: ~/foo"], ["Body", "- Capture: `.control/runs/a.png`"],
+    ["Body", "- QA plan: .closedloop-ai/vibe-plans/qa.md"],
+  ]);
+  assert.match(problems[0].problem, /upload and embed/);
+  assert.match(problems[3].problem, /link the PLN or attach the file/);
+  assert.ok(problems.every(({ problem }) => !problem.includes("/Users/x") && !problem.includes("~/foo")));
+});
+
 test("with --base-commit, the Environment section must name the branch's current base", (t) => {
   const ticket = completeTicket();
   assert.deepEqual(checkLiveTicket(ticket, { baseCommit: "abcdef1234567890aa" }).problems, []);

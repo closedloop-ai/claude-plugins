@@ -203,14 +203,15 @@ def test_control_evidence_lands_in_design_review_and_validation_records() -> Non
     template = TICKET_TEMPLATE.read_text()
     handoff = section(template, "## Handoff")
     assert "- Running app checks:" in handoff
-    for required in ("`pnpm control` commands run at handoff", "each artifact path with what it proves",
+    for required in ("`pnpm control` commands run at handoff", "each result with what it proves",
                      "Keep these apart from source-only claims", "exact control command and the reason"):
         assert required in handoff, required
     visual = section(template, "## Design Review")
     assert "`pnpm control` captures from the Handoff Running app checks" in visual
-    assert "uploaded as ticket attachments because `.control/` paths are local" in visual
+    assert "its screenshot embedded and what it proves" in visual
     ticket = flat(agent("vibe-ticket-worker"))
-    assert "Running app checks and Design Review's Visual evidence carry the control artifact paths" in ticket
+    assert "Running app checks and Design Review's Visual evidence carry each control capture embedded" in ticket
+    assert "never its local path" in ticket
 
 
 def test_the_build_loop_uses_control_only_for_an_acceptance_criterion_read() -> None:

@@ -7,12 +7,19 @@
 // would publish a local absolute path, a username or personal email, a secret
 // or credential, or a private session input is refused with its line, so
 // nothing is published until the writer fixes its own source.
+// `pointerProblems` is the narrower gate for a ticket, pull request body or
+// review reply (operator ruling, 2026-10-20): it refuses a line naming a path
+// on the operator's machine or the local plans folder, since evidence is
+// uploaded and embedded and a plan is linked or attached, never pointed at.
+
+import { LOCAL_PLAN_PREFIX } from "./local-plans.mjs";
 
 const FENCE = /^\s*(```|~~~)/;
 const INLINE_CODE = /`[^`\n]*`/g;
 const ANGLE_NAME = /<\/?[A-Za-z][^<>\n]*>/g;
 
 const LOCAL_PATH = /(?:^|[\s("'`=:,[{<])((?:\/(?:Users|home|private|tmp|Volumes|root|var\/folders)\/|~\/|[A-Za-z]:\\(?:Users|Documents and Settings)\\|file:\/\/)[^\s"'`)\]}>]*)/;
+const CONTROL_CAPTURE = /(?:^|[\s("'`=:,[{<])\.control\//;
 const EMAIL = /\b[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})\b/g;
 const EXAMPLE_EMAIL_DOMAIN = /(?:^|\.)(?:example\.(?:com|org|net|invalid)|test|example|invalid|localhost)$/i;
 const SECRETS = [
@@ -94,4 +101,17 @@ function codeSpanAngleNames(line) {
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Lines of a ticket, pull request body or reply that point at the operator's
+ * machine: a local absolute or home path, a gitignored `.control/` capture,
+ * or the local plans folder. Returns `[{ line, kind }]`, 1-based, never
+ * echoing the value.
+ */
+export function pointerProblems(text) {
+  return text.replace(/\r\n/g, "\n").split("\n").flatMap((line, index) => [
+    ...(LOCAL_PATH.test(line) || CONTROL_CAPTURE.test(line) ? [{ line: index + 1, kind: "local path: upload and embed the evidence, or quote text inline" }] : []),
+    ...(line.includes(LOCAL_PLAN_PREFIX) ? [{ line: index + 1, kind: "local plan: link the PLN or attach the file and name the attachment" }] : []),
+  ]);
 }

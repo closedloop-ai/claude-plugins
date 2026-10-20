@@ -51,6 +51,15 @@ publication, and the same ticket worker verifies completeness and assignment.
   paths, usernames, personal emails, secrets or credentials, and no private
   session inputs. Product scope and truthful delivery/review history remain
   here.
+- Hard rule (operator ruling, 2026-10-20), for this body, the PLN and the pull
+  request: never reference a path on the operator's machine (home, temp,
+  scratchpad, worktree or `.control/` paths) or say something is on someone's
+  laptop. Embed a screenshot with `create-document-version` `inlineImages`;
+  quote text evidence inline, briefly. A plan is attached, never pointed at:
+  the implementation plan is the linked PLN, and a QA plan or other working
+  file is uploaded with `upload-attachment` and named by its attachment name.
+  `live-ticket-check.mjs` refuses a line naming a local path or the local plans
+  folder.
 - Conflicts: each `Conflict` the change log records (Placement blocks and
   owner prep) goes in exactly one section, by its audience. `design`
   (Storybook sidebar placement, taxonomy and story granularity, visual or UX
@@ -187,13 +196,13 @@ subagent that worked on this.>
   a flaky one "passed on its one rerun">
 - Running app checks: <for each screen the session touched, on web and
   Desktop, the `pnpm control` commands run at handoff on the final commit and
-  each artifact path with what it proves (capture, console errors and page
+  each result with what it proves (embedded capture, console errors and page
   errors, network, API or Desktop IPC reads), before and after when a
   baseline exists. Keep these apart from source-only claims. A surface that
   control could not drive names the exact control command and the reason;
   never claim it verified>, or "None: owned prototype session"
 - Reviews: <n fixed, n rejected; one line each, rejected with why>
-- Session decision table: <the one session artifact path, whole-table final
+- Session decision table: <the one session table, attached, whole-table final
   alignment and actual row/test evidence across all requests; not a technical plan.
   Name the attachment and its Frozen Behavior row IDs: the behavior the person
   accepted, which engineering keeps passing with tests in its pull request and
@@ -251,13 +260,10 @@ surfaces; never invent a preview or inspection.>
 - Visual evidence: <actual design/visual-QA reports and screenshots, with
   commits, viewports/dimensions, hosts and states inspected, including the
   `pnpm control` captures from the Handoff Running app checks: each touched
-  screen and host with its artifact path and what it proves, before and after
-  when a baseline exists, and the cited screenshots uploaded as ticket
-  attachments because `.control/` paths are local. Separately list
+  screen and host with its screenshot embedded and what it proves, before and
+  after when a baseline exists. Separately list
   source-only, unverified, failed or unsupported coverage, with the exact
-  control command and reason for a surface control could not drive.
-  Accessible evidence links/attachments, not an inaccessible local path as
-  the only evidence.>
+  control command and reason for a surface control could not drive.>
 - Limits and decisions: <known gaps, remaining design decisions and owners;
   do not say looks good or Storybook correct without actual inspection/check
   evidence. Preserve existing required visual/product approval gates.>

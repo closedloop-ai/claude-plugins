@@ -501,7 +501,7 @@ harness switch instead of another worker doing its work.
 
 ## Runtime Files
 
-Version `1.0.66` contains 12 skills and 16 agents. It has no standalone
+Version `1.0.67` contains 12 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains the skill-contract test modules and
 `vibe_contract_text.py`, the text helpers they share.

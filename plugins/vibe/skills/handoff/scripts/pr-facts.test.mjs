@@ -84,6 +84,9 @@ test("the body gate refuses missing facts, uncited lines and a stacked base with
   assert.match(facts(s, { body: COMPLETE_BODY, prBase: "vibe/dependency" }).prBodyProblems.join(), /add verbatim/);
   assert.deepEqual(facts(s, { body: `${COMPLETE_BODY}\n${STACKED_BASE_STATEMENT}`, prBase: "vibe/dependency" }).prBodyProblems, []);
   assert.match(facts(s, { body: COMPLETE_BODY, prs: null }).prBodyProblems.join(), /could not be read/);
+  const local = facts(s, { body: `${COMPLETE_BODY}\n![after](/Users/x/file.png)\nLog in ~/foo\nPlan: .closedloop-ai/vibe-plans/r1.md` }).prBodyProblems;
+  assert.deepEqual(local.map((problem) => problem.replace(/:.*/, "")), ["body line 5", "body line 6", "body line 7"]);
+  assert.ok(local.every((problem) => !problem.includes("/Users/x") && !problem.includes("~/foo")), "never echoes the path");
 });
 
 test("evidence: lanes follow the diff, and unfinished, missing or stale runs block", () => {

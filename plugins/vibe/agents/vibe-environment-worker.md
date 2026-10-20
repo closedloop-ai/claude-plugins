@@ -374,7 +374,11 @@ changes and gates fields.
    - Test plan: at most 20 lines: the tests written and the checks run, with
      their results.
    When the record cannot support a required answer, say so in that section
-   for the reviewer instead of inventing one.
+   for the reviewer instead of inventing one. The body and every review reply
+   follow the live ticket's hard rule (`../skills/vibe/references/ticket-template.md`,
+   operator ruling 2026-10-20): no path on the operator's machine and no plan
+   pointed at by path; cite the ticket's embedded evidence or quote text
+   inline, briefly. `blocking.prBody` refuses a line naming one.
 4. Title: `<live ticket slug>: <plain imperative summary>`, at most 72
    characters including the ` (#NNNN)` GitHub appends, with no mention of AI
    tools. Create it with

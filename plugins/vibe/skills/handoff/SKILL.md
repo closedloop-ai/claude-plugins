@@ -674,8 +674,8 @@ grade the finished code and its appearance/Storybook implementation:
   reports, including unresolved advisories and their dispositions.
 - Actual design/visual-QA reports and screenshots with inspected commits,
   viewports/dimensions, hosts and states, and accessible links/attachments,
-  including the running app verification's control captures with their
-  artifact paths and what each proves. Source-only, unverified, failed and
+  including the running app verification's control captures, embedded rather
+  than named by local path, and what each proves. Source-only, unverified, failed and
   unsupported coverage remains explicit, with the exact control command and
   reason for a surface control could not drive.
 - Known gaps and remaining design decisions/owners, with no invented copy and

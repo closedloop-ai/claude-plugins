@@ -335,10 +335,10 @@ historical inspections accurately. Preserve the existing grading block.
    every `retiredTests` entry the inventory reports as deleted (`D`) or
    changed (`M`) with its path, case, the retired code it covered and the
    ticket or PRD that retired it, or "None". Running app checks and
-   Design Review's Visual evidence carry the control artifact paths with what
+   Design Review's Visual evidence carry each control capture embedded
+   (`create-document-version` `inlineImages`), never its local path, with what
    each proves, kept apart from source-only claims, and name the exact command
-   and reason for any surface control could not drive; upload the cited
-   screenshots with the granted upload action. Place each `Conflict` entry in
+   and reason for any surface control could not drive. Place each `Conflict` entry in
    the change log once, by its audience (`../skills/vibe/references/ticket-template.md`,
    "Conflicts"): `design` on Design Review's Design conflicts line; anything
    else, or no clear audience, as an unchecked item at the end of the

@@ -4,6 +4,20 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.67
+
+Lessons appended to the vibe lessons ledger on 2026-10-20 after v1.0.66, in one release.
+
+#### Added
+- Hard rule (operator ruling, 2026-10-20): a ticket, PR body, PR comment or review reply never references a path on the operator's machine or says something is on someone's laptop; screenshots are embedded (`create-document-version` `inlineImages`), text evidence is quoted inline, an implementation plan is the linked PLN and a QA plan or other working file is a ticket attachment named by its attachment name. Stated in `fleet-orchestrator` (its own section and both worker templates), the live ticket rules in `ticket-template.md` and the environment worker's pull request body step.
+- `publishable-text.mjs pointerProblems`: refuses a line naming a local absolute or home path, a `.control/` capture or the local plans folder. `live-ticket-check.mjs` reports each as a `Body` problem and `pr-facts.mjs` adds each to `blocking.prBody`, without echoing the path.
+
+#### Changed
+- Design Review's Visual evidence and the Handoff running app checks carry embedded captures instead of `.control/` artifact paths.
+- `fleet-orchestrator` Codex to Claude takeover resumes the same vibe session and moves its writer with the `harnessSwitch` migration before any other step, instead of starting a second session beside a ledger that still names the stopped Codex writer.
+- `environment.md`: a seeded or blank mode change is recorded with `touch --mode` and the environment requested again.
+- `fleet-orchestrator`: before enqueue, run the lanes the diff can affect rather than full suites; a shared release-version bump is made only at enqueue with auto-merge armed in the same minute; a main fix reaches a preview only once the preview's deploy ref contains it; stop a stale worker and its processes rather than messaging it; being on main is not evidence of the final design; withdraw an instruction as soon as a worker's alternative is accepted.
+
 ### code-review v3.12.2
 
 #### Fixed
