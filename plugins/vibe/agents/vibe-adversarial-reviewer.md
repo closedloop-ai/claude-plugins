@@ -54,7 +54,8 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    path or a replaced one with no new home.
 2. States: loading, empty, error, partial data, long text, many rows, zero
    values versus unknown values. A screen that shows `0` or a blank where data
-   is still loading or failed is a finding.
+   is still loading or failed is a finding, and so is an in-row message a
+   fixed-height row clips (reuse the grid's growable row).
 3. Data correctness: a value computed from the wrong field, a count that can
    exceed its population, a sort without a tie-breaker, a filter whose
    predicate does not match its label, a date shown in the wrong zone, a sort
@@ -94,13 +95,11 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    a finding; a copy that still agrees is the guardrails reviewer's, not
    yours.
 8. Acceptance criteria per surface (`quality-loop.md`, "Acceptance criteria
-   before ready"; operator ruling, 2026-10-16, after the board's collapse
-   state in symphony-alpha #8885 was not URL-backed although its criterion
-   required it): for each unsuperseded criterion, list every surface it
-   names (each view, such as list and board, and web and Desktop where their
-   adapters differ) and every mechanism word it uses (a URL, a saved view, a
-   reload, a link, Back). For each pair, find the code that delivers it on
-   that surface. A surface with no such code, or whose only `### Checks`
+   before ready"; operator ruling, 2026-10-16, after symphony-alpha #8885):
+   pair every surface an unsuperseded criterion names (each view, and web
+   and Desktop where adapters differ) with every mechanism word it uses (a
+   URL, a saved view, a reload, a link, Back), and find the code delivering
+   each pair. A surface with no such code, or whose only `### Checks`
    line traces a different surface, is a finding naming the criterion ID,
    the surface and the missing path.
 9. Selections and bulk actions: an action over selected rows must account

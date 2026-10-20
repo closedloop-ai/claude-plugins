@@ -546,7 +546,8 @@ this step again. Every main sync is checked for capability removal, this one
 included (operator ruling, 2026-10-16, after a main sync in symphony-alpha
 #8886 made a shipped editable Desktop control read-only): once the merge is
 committed, dispatch `vibe-guardrails-reviewer` for its check 13 on that
-merge; a blocking finding goes back to the SAME writer, then this step again.
+merge and rerun the inventory's `requiredChecks` on the merged tree; a
+blocking finding goes back to the SAME writer, then this step again.
 Resume the SAME writer's source-owned `progress` continuation
 with parent-controlled handoff purpose/transaction to execute
 `main-sync-validate` against committed input. Dirty tracked localFix source is

@@ -155,7 +155,7 @@ function checkMigrations(files, repo, logged, add, requiredChecks) {
   }
   if (touched) {
     requiredChecks.push(
-      { command: "pnpm check:destructive-migrations", reason: "a migration changed; the repo's index-lock and migration-order gate" },
+      { command: "pnpm check:destructive-migrations", reason: "a migration changed; the repo's index-lock and migration-order gate, rerun on the merged tree after every main sync (fix an out-of-order migration by renaming its folder, SQL unchanged)" },
       { command: "pnpm check:migration-immutability", reason: "a migration changed" }
     );
   }

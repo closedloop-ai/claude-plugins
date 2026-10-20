@@ -170,8 +170,8 @@ path merely because another rule describes how its content should look.
    test or a sibling production helper) instead of a literal or the spec's
    words is blocking, because it agrees with the code it should check
    (`vibe-change-worker.md`, "Tests: repair, don't author"), in a repair too.
-   Deleting the tests of a component that was replaced, not removed, ports
-   each case the successor still enforces or cites the ruling retiring it.
+   Deleting a replaced (not removed) component's tests ports each case its
+   successor still enforces or cites the retiring ruling.
    Open what each change log line that cleared an inventory `diffRules`
    finding cites; a citation that does not hold is blocking.
    Extract every acceptance criterion ID used by a test name or `describe`

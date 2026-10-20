@@ -92,7 +92,7 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
    owning vibe seed stage (`apps/api/scripts/vibe-seed/stages/`), through the
    new service where possible.
    Advice must pass `vibe-adversarial-reviewer.md` attacks 3, 4, 11, 12 and
-   the inventory's `diffRules`.
+   `diffRules`.
 5. Record needed coverage locally; nobody writes tests in vibe or handoff, and
    the SAME writer lists them for engineering at handoff.
 6. Verify affected and interacting prior row IDs against the final code with

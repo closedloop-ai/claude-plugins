@@ -81,15 +81,15 @@ symphony-alpha #8885 and #8886 (operator ruling, 2026-10-16):
   execute the touched stories' plays in a real browser with the repository's
   Storybook test runner or Playwright against its containerized Storybook
   service. A jsdom result, source inspection or successful build is not play
-  evidence. Report the command, story IDs, browser and result.
+  evidence. Report the command, story IDs, browser and result, plus axe
+  `color-contrast` on every new or changed story state; a failing node blocks.
 - When cards or a narrow layout have any interaction, run the relevant flow
   with real touch through Playwright's WebKit iPhone descriptor and Chromium
   Pixel descriptor. Keyboard input and Chromium with `hasTouch` alone do not
   count, and neither do a Storybook fixture standing in for the consumed
   surface or synthetic `dispatchEvent` pointer events for the gesture under
-  test. Do not reject the iOS Safari path because the click synthesized from
-  a tap reports `pointerType` as `mouse`; prove the user-visible result of the
-  tap in both device runs.
+  test. Judge an iOS tap by its user-visible result in both device runs, even
+  when its click reports `pointerType` as `mouse`.
   A requested pull request is blocked until its final evidence names the real
   web host, WebKit iPhone and Chromium Pixel commands, commit, screen and
   visible interaction outcome. Missing evidence is not deferred as a test gap.
@@ -248,7 +248,7 @@ session touched:
    after a failure.
 
 For a shared component, capture every surface it reaches with the flag off
-at phone and desktop width; a difference from main is a finding.
+at 390, 412, 1024 and 1280 px wide; a difference from main is a finding.
 
 A static or generated page control cannot drive (an HTML page a script or a
 main-process module writes, such as Desktop's sign-in return page) is still

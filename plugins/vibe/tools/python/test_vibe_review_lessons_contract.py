@@ -327,7 +327,11 @@ def test_review_lessons_have_one_line_owners() -> None:
         assert phrase in adversary, phrase
     verify = flat(agent("vibe-verify-worker"))
     assert "never a commit that is not an ancestor" in verify
-    assert "every surface it reaches with the flag off at phone and desktop width" in verify
+    assert "every surface it reaches with the flag off at 390, 412, 1024 and 1280 px wide" in verify
+    assert "axe `color-contrast` on every new or changed story state; a failing node blocks" in verify
+    assert "an in-row message a fixed-height row clips" in adversary
+    assert "rerun the inventory's `requiredChecks` on the merged tree" in flat(HANDOFF_SKILL.read_text())
+    assert "renaming its folder, SQL unchanged" in DIFF_RULES.read_text()
     decomposer = flat(agent("vibe-storybook-decomposer"))
     assert "never place an entry on a fallback a sibling retires" in decomposer
     assert "its flag-on state on that surface's existing story entry" in decomposer
