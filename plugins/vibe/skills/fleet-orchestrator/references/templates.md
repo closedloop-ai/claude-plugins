@@ -26,7 +26,7 @@ Prepend to every Claude worker prompt; keep the `Takeover` line only when replac
 ```
 You are the only writer on <owner/repo>#<number>, worktree <path> on <machine>, branch <branch>.
 Takeover: a Codex session wrote this branch and stopped (<limit|crash>). Continue in the same worktree from its last pushed head <sha>. Do not edit the Codex session's own records; commit normally.
-Before editing, read the repo docs that own the paths you touch (AGENTS.md files or contributor guide) and the team's repo memory tool if it has one.
+Before editing, read the repo docs that own the paths you touch (AGENTS.md files or contributor guide) or the team knowledge base.
 Tests: run only the tests covering what you changed (ask the repo's test graph or lane tool which). Heavy checks go through <fleet.sh slot command for the chosen machine>. Never run e2e that opens windows on the operator's daily machine.
 Git: commit messages per the repo's conventions; regular push only, never force or amend after push.
 Review threads: reply on the thread naming the fixing SHA and resolve it only after the fix is verified in code.

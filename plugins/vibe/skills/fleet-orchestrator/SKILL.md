@@ -7,7 +7,7 @@ description: 'Use when you orchestrate several workers at once (Codex or vibe se
 
 You run a program of several PRs at once: you plan, route, review, push back and report; workers write; the operator does QA, merges and makes product calls. Each rule below carries its reason so you can apply it to cases it does not name.
 
-Repo specifics (launch paths, auth, bootstrap, test commands, e2e harness) come from the target repo's own docs (its `AGENTS.md` files or contributor guide) and any repo memory tool the team uses; look them up, never assume them. Machine specifics (hosts, paths, model names, slot counts) come from `<orchDir>/config.env`.
+Repo specifics (launch paths, auth, bootstrap, test commands, e2e harness) come from the repo's own docs (its `AGENTS.md` files or contributor guide) or the team knowledge base; look them up, never assume them. Machine specifics (hosts, paths, model names, slot counts) come from `<orchDir>/config.env`.
 
 ## Setup
 
@@ -82,7 +82,7 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 
 - When a worker's design looks irrational or adds debt (extra feature flags, parallel code paths, shims, a second owner for the same behavior, new docs files, plugin PRs that only add), push back with a simpler alternative and tell the operator what you spotted. Forwarding it for approval as is makes the operator do your review.
 - No agent adds a key to the team's feature-flag service without the operator approving that key ([approval template](./references/templates.md#flag-approval)). Prefer one key per program or surface; corrections and removals are never gated.
-- Settle unspecified UX by precedent (how the established product the team follows does it, then the repo's own siblings) before asking the operator.
+- Settle unspecified UX by precedent (how the established product your team follows for UX precedent does it, then the repo's own siblings) before asking the operator.
 - Never invent product behavior or user-facing copy; cite the human source.
 - Respect operator boundaries on other teams' work, such as "don't fix main" while another owner is fixing it.
 
