@@ -17155,15 +17155,13 @@ class TestPLN725Phase5PostMergeHardening:
 
     # --- Fix 2: walker-resolved diff_tip + cache-dir on prepare ------------
 
-    def test_stage_11_prepare_uses_walker_diff_tip_token(self) -> None:
-        # Literal "HEAD" would make the cache key constant across
-        # reviews — every entry written under the same diff_tip,
-        # cache_hit path unreachable through the walker. The walker
-        # substitutes <DIFF_TIP> from scope.json before dispatch.
+    def test_stage_11_prepare_takes_no_diff_tip(self) -> None:
+        # A branch scope's <DIFF_TIP> resolves to the literal "HEAD", so a
+        # key built from it was constant across reviews. stage_11's key
+        # content-addresses the agent input bundle instead, and prepare
+        # no longer accepts a diff tip at all.
         args = self._stage("stage_11_extract_signals")["args"]
-        idx = args.index("--diff-tip")
-        assert args[idx + 1] == "<DIFF_TIP>"
-        assert args[idx + 1] != "HEAD"
+        assert "--diff-tip" not in args
 
     def test_stage_11_prepare_receives_cache_dir(self) -> None:
         # Without --cache-dir, prepare runs cache-blind and the
