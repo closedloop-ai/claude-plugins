@@ -497,7 +497,7 @@ finding — best-effort omissions are budget-driven, not coverage gaps.
 | 15 | coverage-critic (plan 05)    | `coverage-critic`        | `coverage.json` (`critic` section, `final` on cache_hit/skipped) |
 | 15c| verify-coverage (plan 05)    | `verify-coverage`        | `coverage.json` (`verify` section)                             |
 | 16 | arbitrate-budget             | `arbitrate-budget`       | `coverage.json` (`final` section, in-place), `coverage_gaps.json` |
-| 17 | partition                    | `partition`              | `partitions.json`, `patches_p<N>.txt`                          |
+| 17 | partition                    | `partition`              | `partitions.json`, `patches_p<N>.txt`, `patches_p<N>_context.txt` (moved files only) |
 | 18 | compute-hashes               | `compute-hashes`         | `hashes.json`                                                 |
 | 19 | cache-check                  | `cache-check`            | `cache_result.json`                                            |
 | 19b| derive-spawn-spec (plan 05)  | `derive-spawn-spec`      | `spawn.json` (`spec` section)                                  |
@@ -538,6 +538,25 @@ compared there. An out-of-range line takes the out-of-hunk path; nothing is
 discarded for its location alone. `partition` never assigns a `removed` file
 to Bug Hunter A, and `resolve-coverage` adds the `file_deletion` change class
 when any file is `removed`.
+
+`diff_data.json` also carries `moved_from` (ISS-12737), present only when a
+pair exists:
+
+```jsonc
+"moved_from": { "<added path>": "<deleted path>", ... }
+```
+
+A file moved and heavily edited falls below git's default 50% rename
+similarity, so the default view reports it as a `removed` file plus an
+`added` one. `parse-diff` runs `git diff --name-status -M30%` over the same
+range and records each rename whose new path is `added` and old path
+`removed`; `files_to_review` and `file_statuses` are unchanged. The pairing is
+heuristic and occasionally joins unrelated files. `partition` writes the
+deleted files' patch to `patches_p<N>_context.txt` for each partition holding a
+paired added file, and adds `moved_from` (that partition's pairs) and
+`context_patch` (the filename) to its `partitions.json` entry; Bug Hunter A
+reads it as reference only and anchors findings on the new file.
+`uncached_diff_data.json` keeps the pairs whose added file missed the cache.
 
 ---
 
@@ -649,6 +668,12 @@ from `cache_result.json` by `finalize-result`). The other four
 namespaces have their key inputs, paths, and TTLs declared but ship
 real producers with plans 03 (verifications, overrides) and 05
 (signals, coverage_critic).
+
+In the BHA manifest the per-file `patch_hash` is a hash of the file's
+`patch_lines`. For an added file paired in `diff_data.json` `moved_from`, it
+also folds in the paired deleted file's `patch_lines`, because Bug Hunter A
+reviews it with that patch as context: editing the old file invalidates the
+entry.
 
 The canonical on-disk file layout `<CACHE_DIR>/bha/<file_hash>.json`
 (per-file caches) is a future migration; the current implementation

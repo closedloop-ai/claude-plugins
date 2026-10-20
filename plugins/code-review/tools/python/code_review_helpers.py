@@ -112,6 +112,7 @@ U0_FILE_THRESHOLD = 200
 
 # Parsing thresholds
 NAME_STATUS_MIN_FIELDS = 2
+NAME_STATUS_RENAME_FIELDS = 3
 NUMSTAT_MIN_FIELDS = 3
 DIFF_HEADER_PARTS = 2
 
@@ -1163,6 +1164,43 @@ def _parse_name_status(raw: str) -> dict[str, str]:
     return statuses
 
 
+# Rename-similarity floor for pairing a deleted file with an added one. Git's
+# default (50%) already reports lighter moves as renames; this catches files
+# moved and heavily edited, which the default reports as a delete plus an add.
+MOVED_FROM_SIMILARITY = "30%"
+
+
+def _parse_moved_from(raw: str, file_statuses: dict[str, str]) -> dict[str, str]:
+    """Pair added files with the deleted files they were moved from.
+
+    *raw* is ``git diff --name-status -M<MOVED_FROM_SIMILARITY>`` output.
+    Only renames whose new path is ``added`` and old path ``removed`` in
+    *file_statuses* (the default-similarity view) are recorded: a rename
+    the default already detected is diffed in place and needs no pairing.
+    Returns ``{added path: deleted path}``.
+    """
+    moved_from: dict[str, str] = {}
+    for line in raw.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) != NAME_STATUS_RENAME_FIELDS or not parts[0].startswith("R"):
+            continue
+        old_path, new_path = parts[1], parts[2]
+        if file_statuses.get(new_path) == "added" and file_statuses.get(old_path) == "removed":
+            moved_from[new_path] = old_path
+    return moved_from
+
+
+def _moved_from_pairs(diff_data: dict[str, Any]) -> dict[str, str]:
+    """``diff_data["moved_from"]`` as ``{added path: deleted path}``; ``{}`` when absent or malformed."""
+    raw = diff_data.get("moved_from")
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        new: old for new, old in raw.items()
+        if isinstance(new, str) and isinstance(old, str)
+    }
+
+
 def _parse_numstat(raw: str) -> dict[str, dict[str, int]]:
     """Parse git diff --numstat output into {path: {added, removed}}."""
     loc: dict[str, dict[str, int]] = {}
@@ -1283,6 +1321,13 @@ def cmd_parse_diff(args: argparse.Namespace) -> int:
     name_status_raw = _run_git(["diff", "--name-status"] + scope_args, workdir)
     file_statuses = _parse_name_status(name_status_raw)
 
+    # 2b. Moved-and-edited files: the default view above reports them as a
+    # delete plus an add; pair them at a lower similarity floor.
+    moved_raw = _run_git(
+        ["diff", "--name-status", f"-M{MOVED_FROM_SIMILARITY}"] + scope_args, workdir,
+    )
+    moved_from = _parse_moved_from(moved_raw, file_statuses)
+
     # 3. --numstat
     numstat_raw = _run_git(["diff", "--numstat"] + scope_args, workdir)
     file_loc = _parse_numstat(numstat_raw)
@@ -1315,6 +1360,8 @@ def cmd_parse_diff(args: argparse.Namespace) -> int:
         "changed_ranges": changed_ranges,
         "patch_lines": patch_lines,
     }
+    if moved_from:
+        result["moved_from"] = moved_from
 
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")
@@ -1694,12 +1741,19 @@ def _write_per_partition_patches(
     diff_scope: str,
     cr_dir: Path,
     workdir: str | None = None,
+    moved_from: dict[str, str] | None = None,
 ) -> list[str]:
     """Write ``patches_p<N>.txt`` for each partition and return their filenames.
 
     The ``partition`` helper is the canonical producer of per-partition patch
     files. Strips any embedded pathspec (``-- file1 file2``) from ``diff_scope``
     since we always supply our own explicit file list.
+
+    When a partition holds files paired in *moved_from* (``{added: deleted}``),
+    the deleted files' patch is also written to ``patches_p<N>_context.txt``,
+    and the partition entry gains ``moved_from`` (its pairs) and
+    ``context_patch`` (that filename). The returned list names only the
+    ``patches_p<N>.txt`` files.
     """
     run_kwargs: dict[str, Any] = {"capture_output": False, "text": True, "check": False}
     if workdir:
@@ -1729,6 +1783,18 @@ def _write_per_partition_patches(
         with open(patch_path, "w") as out:
             subprocess.run(cmd, stdout=out, stderr=subprocess.DEVNULL, **run_kwargs)
         written.append(patch_name)
+
+        pairs = {f: moved_from[f] for f in files_in_part if moved_from and f in moved_from}
+        if pairs:
+            context_name = f"patches_p{part_id}_context.txt"
+            context_cmd = (
+                ["git", "diff", "--no-renames"] + range_parts
+                + ["--"] + sorted(set(pairs.values()))
+            )
+            with open(cr_dir / context_name, "w") as out:
+                subprocess.run(context_cmd, stdout=out, stderr=subprocess.DEVNULL, **run_kwargs)
+            part["moved_from"] = pairs
+            part["context_patch"] = context_name
     return written
 
 
@@ -1748,6 +1814,7 @@ def cmd_partition(args: argparse.Namespace) -> int:
     changed_ranges: dict[str, dict[str, list[list[int]]]] = diff_data.get("changed_ranges", {})
     files_to_review: list[str] = diff_data.get("files_to_review", [])
     file_statuses: dict[str, str] = diff_data.get("file_statuses", {}) or {}
+    moved_from = _moved_from_pairs(diff_data)
 
     loc_budget = args.loc_budget
     max_files = args.max_files
@@ -1828,6 +1895,7 @@ def cmd_partition(args: argparse.Namespace) -> int:
             partition_mode="unified",
             unified_threshold=unified_threshold,
             total_changed_loc=total_changed_loc,
+            moved_from=moved_from,
         )
 
     current_files: list[dict[str, Any]] = []
@@ -2043,6 +2111,7 @@ def cmd_partition(args: argparse.Namespace) -> int:
         partition_mode="partitioned",
         unified_threshold=unified_threshold,
         total_changed_loc=total_changed_loc,
+        moved_from=moved_from,
     )
 
 
@@ -2055,6 +2124,7 @@ def _emit_partitions(
     partition_mode: str,
     unified_threshold: int,
     total_changed_loc: int,
+    moved_from: dict[str, str] | None = None,
 ) -> int:
     """Materialize per-partition patches (when requested), build the
     ``partitions.json`` output payload, and emit it to stdout.
@@ -2077,7 +2147,7 @@ def _emit_partitions(
     partition_patches: list[str] = []
     if diff_scope and cr_dir_arg:
         partition_patches = _write_per_partition_patches(
-            partitions, diff_scope, Path(cr_dir_arg), workdir,
+            partitions, diff_scope, Path(cr_dir_arg), workdir, moved_from,
         )
 
     output: dict[str, Any] = {
@@ -4187,6 +4257,25 @@ def _compute_patch_hash(file_path: str, patch_data: dict[str, dict[str, str]]) -
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def _bha_patch_hash(
+    file_path: str,
+    patch_lines: dict[str, dict[str, dict[str, str]]],
+    moved_from: dict[str, str],
+) -> str:
+    """BHA cache patch hash for *file_path*.
+
+    A file paired in ``moved_from`` is reviewed with its deleted file's patch
+    as context, so that patch folds into the key; editing the old file
+    invalidates the entry. Unpaired files keep the plain patch hash.
+    """
+    patch_hash = _compute_patch_hash(file_path, patch_lines.get(file_path, {}))
+    old_path = moved_from.get(file_path)
+    if old_path is None:
+        return patch_hash
+    old_hash = _compute_patch_hash(old_path, patch_lines.get(old_path, {}))
+    return hashlib.sha256(f"{patch_hash}\0{old_hash}".encode()).hexdigest()
+
+
 def _load_manifest(cache_dir: Path) -> dict[str, Any]:
     """Load manifest.json from cache_dir, return {} on missing/corrupt/non-dict."""
     manifest_path = cache_dir / CACHE_MANIFEST_FILENAME
@@ -4529,6 +4618,12 @@ def _write_cache_output_files(  # noqa: PLR0913
             fp: p for fp, p in diff_data["patch_lines"].items()
             if fp in uncached_set
         }
+    uncached_moved_from = {
+        new: old for new, old in _moved_from_pairs(diff_data).items()
+        if new in uncached_set
+    }
+    if uncached_moved_from:
+        uncached_diff_data["moved_from"] = uncached_moved_from
     with open(output_dir / "uncached_diff_data.json", "w") as f:
         json.dump(uncached_diff_data, f, indent=2)
         f.write("\n")
@@ -4634,14 +4729,14 @@ def _cmd_cache_check_v1(  # noqa: PLR0913
     manifest_file_existed = (cache_dir / CACHE_MANIFEST_FILENAME).exists()
     manifest = _load_manifest(cache_dir)
     review_set = set(files_to_review)
+    moved_from = _moved_from_pairs(diff_data)
 
     cached_files: list[str] = []
     uncached_files: list[str] = []
     cached_findings: list[dict[str, Any]] = []
 
     for filepath in files_to_review:
-        file_patch = patch_lines.get(filepath, {})
-        patch_hash = _compute_patch_hash(filepath, file_patch)
+        patch_hash = _bha_patch_hash(filepath, patch_lines, moved_from)
         entry = manifest.get(filepath)
 
         if (
@@ -4687,6 +4782,7 @@ def _cmd_cache_check_v2(  # noqa: PLR0913
     manifest: dict[str, Any] = {}
     manifest_file_existed = (cache_dir / CACHE_MANIFEST_FILENAME).exists()
     review_set = set(files_to_review)
+    moved_from = _moved_from_pairs(diff_data)
 
     try:
         with _manifest_lock(lock_path, exclusive=False):
@@ -4698,8 +4794,7 @@ def _cmd_cache_check_v2(  # noqa: PLR0913
             now_iso = datetime.now(timezone.utc).isoformat()
 
             for filepath in files_to_review:
-                file_patch = patch_lines.get(filepath, {})
-                patch_hash = _compute_patch_hash(filepath, file_patch)
+                patch_hash = _bha_patch_hash(filepath, patch_lines, moved_from)
                 composite = _compute_composite_key(
                     model_id, prompt_hash, patch_hash, context_key,
                 )
@@ -4850,10 +4945,11 @@ def cmd_cache_update(args: argparse.Namespace) -> int:
     patch_lines: dict[str, dict[str, dict[str, str]]] = diff_data.get("patch_lines", {})
 
     # Compute current patch hashes for all files in the diff
-    current_hashes: dict[str, str] = {}
-    for filepath in files_to_review:
-        file_patch = patch_lines.get(filepath, {})
-        current_hashes[filepath] = _compute_patch_hash(filepath, file_patch)
+    moved_from = _moved_from_pairs(diff_data)
+    current_hashes: dict[str, str] = {
+        filepath: _bha_patch_hash(filepath, patch_lines, moved_from)
+        for filepath in files_to_review
+    }
 
     bha_dir = Path(args.bha_dir)
     partitions_file: str | None = getattr(args, "partitions_file", None)

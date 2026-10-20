@@ -13826,6 +13826,143 @@ class TestPartitionExcludesDeletedFiles:
         assert result["total_changed_loc"] == 0
 
 
+def _moved_diff_data(old_line: str = "guard()") -> dict[str, Any]:
+    """diff_data for ``old/a.py`` moved to ``new/a.py`` plus an unrelated ``c.ts``."""
+    data = _make_cache_diff_data(
+        files=["new/a.py", "old/a.py", "c.ts"],
+        patch_lines={
+            "new/a.py": {"added_lines": {"1": "def run():"}, "removed_lines": {}},
+            "old/a.py": {"added_lines": {}, "removed_lines": {"1": old_line}},
+            "c.ts": {"added_lines": {"1": "x"}, "removed_lines": {}},
+        },
+    )
+    data["file_statuses"].update({"new/a.py": "added", "old/a.py": "removed"})
+    data["moved_from"] = {"new/a.py": "old/a.py"}
+    return data
+
+
+class TestMovedFromContext:
+    """ISS-12737 PR 3: a file moved and heavily edited is paired with its old
+    path, Bug Hunter A gets the old file's patch as context, and that patch
+    feeds the BHA cache key."""
+
+    def test_parse_diff_pairs_at_30_percent_and_not_below(self, tmp_path: Path) -> None:
+        import contextlib
+        import io
+
+        from code_review_helpers import cmd_parse_diff
+
+        def original(name: str) -> str:
+            return "".join(f"{name} line {i} of the original module\n" for i in range(1, 21))
+
+        repo = tmp_path / "repo"
+        _make_review_root(
+            repo, {"a.py": original("alpha"), "b.py": original("bravo"), "c.py": original("charlie")},
+        )
+        git_fixture(repo, "checkout", "--quiet", "-b", "feat")
+        rewritten = [f"rewritten {i} entirely different content\n" for i in range(1, 17)]
+        (repo / "pkg").mkdir()
+        # ~33% similar: paired only below git's default 50% floor.
+        (repo / "pkg" / "a.py").write_text(
+            "".join(original("alpha").splitlines(keepends=True)[:8] + rewritten[:12]),
+        )
+        # ~15% similar: below the 30% floor, never paired.
+        (repo / "pkg" / "b.py").write_text(
+            "".join(original("bravo").splitlines(keepends=True)[:4] + rewritten),
+        )
+        # Identical: the default view already reports it as a rename.
+        (repo / "pkg" / "c.py").write_text(original("charlie"))
+        for name in ("a.py", "b.py", "c.py"):
+            (repo / name).unlink()
+        git_fixture(repo, "add", "-A")
+        git_fixture(repo, "commit", "--quiet", "-m", "move")
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = cmd_parse_diff(argparse.Namespace(scope="main...feat", workdir=str(repo)))
+        assert rc == 0
+        diff_data = json.loads(out.getvalue())
+        assert diff_data["moved_from"] == {"pkg/a.py": "a.py"}
+        # The pairing is extra: the default-similarity view is unchanged.
+        assert diff_data["file_statuses"] == {
+            "a.py": "removed", "b.py": "removed",
+            "pkg/a.py": "added", "pkg/b.py": "added", "pkg/c.py": "modified",
+        }
+        assert sorted(diff_data["files_to_review"]) == [
+            "a.py", "b.py", "pkg/a.py", "pkg/b.py", "pkg/c.py",
+        ]
+
+    def test_context_patch_written_only_for_partitions_with_paired_files(
+        self, tmp_path: Path,
+    ) -> None:
+        from unittest.mock import patch as mock_patch
+
+        from code_review_helpers import _write_per_partition_patches
+
+        captured: list[list[str]] = []
+
+        def mock_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
+            captured.append(cmd)
+            return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+        partitions: list[dict[str, Any]] = [
+            {"id": 0, "files": [{"file": "c.ts"}]},
+            {"id": 1, "files": [{"file": "new/a.py"}, {"file": "d.ts"}]},
+        ]
+        with mock_patch("code_review_helpers.subprocess.run", side_effect=mock_run):
+            written = _write_per_partition_patches(
+                partitions, "main...HEAD", tmp_path,
+                moved_from={"new/a.py": "old/a.py"},
+            )
+
+        assert written == ["patches_p0.txt", "patches_p1.txt"]
+        assert not (tmp_path / "patches_p0_context.txt").exists()
+        assert "moved_from" not in partitions[0]
+        assert (tmp_path / "patches_p1_context.txt").exists()
+        assert partitions[1]["moved_from"] == {"new/a.py": "old/a.py"}
+        assert partitions[1]["context_patch"] == "patches_p1_context.txt"
+        assert captured[-1] == [
+            "git", "diff", "--no-renames", "main...HEAD", "--", "old/a.py",
+        ]
+        assert len(captured) == 3
+
+    def test_partition_reads_moved_from_from_diff_data(self, tmp_path: Path) -> None:
+        result, captured = TestPartitionPatches()._run(
+            tmp_path, with_patches=True, diff_data=_moved_diff_data(),
+        )
+        [part] = result["partitions"]
+        assert [f["file"] for f in part["files"]] == ["c.ts", "new/a.py"]
+        assert part["moved_from"] == {"new/a.py": "old/a.py"}
+        assert part["context_patch"] == "patches_p0_context.txt"
+        assert captured[-1][-2:] == ["--", "old/a.py"]
+
+    @pytest.mark.parametrize("version", ["v1", "v2"])
+    def test_changing_the_paired_deleted_file_invalidates_the_cache(
+        self, tmp_path: Path, version: str,
+    ) -> None:
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        bha_dir = tmp_path / "bha"
+        bha_dir.mkdir()
+        (bha_dir / "agent_bha_p0.json").write_text(json.dumps({"findings": []}))
+        if version == "v1":
+            update, check = TestCmdCacheUpdate()._run_cache_update, TestCmdCacheCheck()._run_cache_check
+        else:
+            update, check = TestCmdCacheUpdateV2()._run, TestCmdCacheCheckV2()._run
+        update(cache_dir, _moved_diff_data(), bha_dir, reviewed_files=["new/a.py", "c.ts"])
+
+        out = tmp_path / "out"
+        out.mkdir()
+        same = check(cache_dir, _moved_diff_data(), out)
+        assert sorted(same["cached_files"]) == ["c.ts", "new/a.py"]
+
+        changed = check(cache_dir, _moved_diff_data(old_line="other()"), out)
+        assert changed["cached_files"] == ["c.ts"]
+        assert "new/a.py" in changed["uncached_files"]
+        uncached = json.loads((out / "uncached_diff_data.json").read_text())
+        assert uncached["moved_from"] == {"new/a.py": "old/a.py"}
+
+
 class TestLoadCodeReviewSettings:
     """``_load_code_review_settings`` shape pinning + per-key validation."""
 
