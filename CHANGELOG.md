@@ -19,6 +19,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - The handoff inventory reports the pull request facts from the diff (`pr-facts.mjs`): `serverOnly` and required evidence lanes, assertion and export changes, new `apps/api` refusals, ticket asks and, with `--overlap`, open pull requests sharing a changed or imported file. In the pull-request phase `--body` adds `blocking.prBody` and `--runs` with `--commit` adds `blocking.prEvidence`; the environment worker builds the body from the facts and creates nothing while either fails.
 - A server-only diff skips Storybook, Desktop runs and visual QA. The prose rules the gate replaces were removed, and the PR body re-evaluates PostHog before marking a key `(flag-pending)`.
+### vibe v1.0.67
+
+#### Changed
+- Claimed PRD children reach In Review only through `live-ticket-check.mjs --child-evidence`, inside the ticket check handoff already runs. The ticket worker (not the writer) maps every acceptance criterion and work item of each claimed child to evidence the script verifies: an added diff line, a tracked file the branch changed, a merged pull request whose commit is in history, or a report on the final commit. A writer-authored map, pending evidence, a gitignored ledger, an uncovered named evidence path, "active elsewhere" without an open pull request, a recent branch commit or another owner's IN_PROGRESS, and a supersession citing the session's own ticket or plan all fail; only `children.inReview` moves. Guardrails check 16 and the duplicated child and supersession prose it replaces are removed; the tech debt and flag keys check moves up to 16.
+- Requirements treats PRD flag, rollout, rollback, parity, boundary and non-goal clauses as criteria and never narrows the targets a PRD names. The session's own ticket, PLN, plan, table and change log are never a source; criteria are never strengthened; a precedent never overrides the ticket's scope, the pull request's human threads or a stated sibling requirement; a writer never builds behavior only its own test expects; guardrails rule provenance names every new user-reachable capability, refusal rules, state presentation, numeric limits and removed accessibility behavior.
+- Net instruction length: 1 more line and 39 fewer words across agents and skills. No new dispatch or step.
+
+#### Added
+- Node tests for the children gate, two contract tests and one shared Claude Code and Codex eval case tagged `ledger-lessons`.
 ### vibe v1.0.65
 
 #### Added

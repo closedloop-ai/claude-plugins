@@ -490,6 +490,9 @@ still runs.
 
 The `pr-facts` case checks that a body missing computed facts is not created.
 
+The case tagged `ledger-lessons` rehearses a claimed PRD child moving to In
+Review only when its evidence map passes `live-ticket-check.mjs --child-evidence`.
+
 ## Runtime Files
 
 Version `1.0.66` contains 12 skills and 16 agents. It has no standalone

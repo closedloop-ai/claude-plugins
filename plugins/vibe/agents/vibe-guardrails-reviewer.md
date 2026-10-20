@@ -289,15 +289,15 @@ path merely because another rule describes how its content should look.
     PRD statement, a human comment, or a shipped rule found through the graph.
     If its only source is an agent's own rationale, it is a blocking
     `engineering decision` finding. A detailed explanation written by an
-    agent is still not a product source.
-16. PRD child reconciliation: when the source is a PRD, compare its current
-    children with the requirements classification, session ticket and diff.
-    Every live child whose exact outcome the branch implements must be included
-    and claimed, excluded because another person has real activity, superseded
-    by a cited human ruling, or listed uncovered with current owner and status.
-    A session-created supersession, a "not reused" label, or a delivered child
-    left `TODO` is blocking.
-17. Tech debt and flag keys (`guardrails.md`, "No new tech debt" and
+    agent is still not a product source, and neither is the session's own
+    ticket, PLN, plan, table or change log. This covers every new user-reachable
+    capability (a write path, action or control), refusal rule (a
+    PRD display cap is not one), new visual element or state presentation (held
+    to the copy rule),
+    numeric limit, criterion worded more strongly than its source and removed
+    accessibility behavior; a shared-module edit lists its callers in the
+    change log.
+16. Tech debt and flag keys (`guardrails.md`, "No new tech debt" and
     "Feature flags"): each item of a kind that section lists with no
     `Debt:` reason is blocking: a mechanism checks 1, 7, 8 or 12 find, a
     type, constant, validator or bound that differs from or copies the

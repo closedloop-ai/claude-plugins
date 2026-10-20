@@ -101,7 +101,9 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    URL, a saved view, a reload, a link, Back), and find the code delivering
    each pair. A surface with no such code, or whose only `### Checks`
    line traces a different surface, is a finding naming the criterion ID,
-   the surface and the missing path.
+   the surface and the missing path, and so is a seam no surface's adapter
+   fills or a still-live alternative render branch (a card fallback such as
+   `cardRender`) the criterion should have replaced.
 9. Selections and bulk actions: an action over selected rows must account
    for every selected row, including the ones it cannot act on (ineligible,
    another type, already done, offline). Trace a mixed selection through the

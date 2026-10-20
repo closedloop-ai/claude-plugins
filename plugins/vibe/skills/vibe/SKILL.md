@@ -440,12 +440,9 @@ Then follow "Resuming" below.
    Keep its quoted acceptance criteria from the ticket and its PRD for the
    writer's first request (`references/quality-loop.md`, "Acceptance criteria
    before ready"). When the source is a PRD, its existing children are the
-   scope units. The requirements brief lists and classifies every child before
-   the session ticket is created. The ticket worker claims only untouched
-   children covered by the request by assigning them to the session operator,
-   setting them In Progress, linking them `RELATES_TO` the session ticket and
-   leaving a short comment. A child with real activity by another person is
-   reported and excluded from the build. No agent supersedes a child.
+   scope units: the requirements brief classifies every child before the
+   session ticket exists, and the ticket worker claims or reports them
+   (`vibe-ticket-worker.md`, create step 7).
    The route and FEATURE_MAP id it returns say where the relevant code lives
    and are for workers; never present them as a screen the session starts on
    (the app opens on its default page after sign-in), and never promise a
