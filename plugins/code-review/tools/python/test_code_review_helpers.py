@@ -3932,6 +3932,37 @@ class TestCmdPostComments:
         assert "Posted 1" in out
         assert "out-of-diff=0" in out
 
+    @pytest.mark.parametrize(("verdict", "label"), [
+        ("CONFIRMED", "caused by this change"),
+        ("DOWNGRADE", "caused by this change"),
+        ("TENTATIVE", "causation unconfirmed"),
+        (None, "causation unconfirmed"),
+    ])
+    def test_out_of_diff_label_follows_verifier_verdict(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+        verdict: str | None, label: str,
+    ) -> None:
+        """Only a verdict that upheld the finding lets the body claim this
+        change caused it."""
+        findings = [{
+            "file": "src/other.test.ts", "line": 40, "severity": "HIGH",
+            "category": "Bug", "issue": "stale mock", "out_of_diff": True,
+            "verifier_verdict": verdict,
+            "evidence": [{"file": "src/b.ts", "line": 12, "claim": "symbol deleted"}],
+        }]
+        path = _make_findings_file(tmp_path, findings)
+        existing = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        files = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=self._pr_files_pages(), stderr="",
+        )
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [existing, files]
+            rc = self._run(path, dry_run=True)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert f"`src/other.test.ts:40` (outside the diff — {label})" in out
+        assert "Posted 1" in out
+
     def test_out_of_diff_without_diff_evidence_is_summary_only(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
     ) -> None:
@@ -6407,8 +6438,10 @@ class TestCacheUpdateOutOfDiff:
     @staticmethod
     def _round_trip(
         tmp_path: Path, global_cache: int, finding: dict[str, Any],
+        check_files: list[str] | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        """cache-update a two-file partition, then cache-check the same diff."""
+        """cache-update a two-file partition, then cache-check ``check_files``
+        (default: the same diff)."""
         import argparse
 
         cache_dir = tmp_path / "cache"
@@ -6435,6 +6468,8 @@ class TestCacheUpdateOutOfDiff:
             partitions_file=str(partitions_file),
         ))
         manifest = _load_manifest(cache_dir)
+        if check_files is not None:
+            diff_path.write_text(json.dumps(_make_cache_diff_data(files=check_files)))
         cmd_cache_check(argparse.Namespace(**common, output_dir=str(out)))
         cached = json.loads((out / "agent_cached_bha.json").read_text())["findings"]
         return manifest, cached
@@ -6472,6 +6507,22 @@ class TestCacheUpdateOutOfDiff:
         discarded: list[dict[str, Any]] = []
         assert _merge_duplicates(cached, discarded) == [self._OUT_OF_DIFF]
         assert [d["reason"] for d in discarded] == ["DISCARD_DUPLICATE"]
+
+    @pytest.mark.parametrize("global_cache", [0, 1])
+    def test_not_served_once_its_file_enters_the_diff(
+        self, tmp_path: Path, global_cache: int,
+    ) -> None:
+        """The author fixes the out-of-diff file, so it joins the diff while
+        src/a.ts and src/b.ts stay unchanged: their cache hits must not bring
+        back the finding about the line that was just fixed."""
+        _, cached = self._round_trip(
+            tmp_path, global_cache, dict(self._OUT_OF_DIFF),
+            check_files=["src/a.ts", "src/b.ts", "src/other.test.ts"],
+        )
+        assert cached == []
+        result = json.loads((tmp_path / "out" / "cache_result.json").read_text())
+        assert result["cached_files"] == ["src/a.ts", "src/b.ts"]
+        assert result["uncached_files"] == ["src/other.test.ts"]
 
 
 # ---------------------------------------------------------------------------
@@ -11617,8 +11668,10 @@ class TestVerifyPrepare:
         assert "auditor_f0" in to_verify
         assert "auditor_f0" not in manifest["deferred_budget"]
         assert manifest["cache_hits"] == []
-        assert len(manifest["to_verify"]) == VERIFY_MAX_VERIFICATIONS
-        assert len(manifest["deferred_budget"]) == 6
+        # The out-of-diff finding sits outside the budget: the in-diff
+        # fillers still get all VERIFY_MAX_VERIFICATIONS slots.
+        assert len(manifest["to_verify"]) == VERIFY_MAX_VERIFICATIONS + 1
+        assert len(manifest["deferred_budget"]) == 5
         payload = json.loads(Path(to_verify["auditor_f0"]["input_path"]).read_text())
         assert payload["patches_path"] == str(tmp_path / "cr" / "patches_all.txt")
         in_diff = json.loads(Path(to_verify["bha_p0_f000"]["input_path"]).read_text())

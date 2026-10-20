@@ -3290,16 +3290,15 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
     # doesn't make the cutoff non-deterministic across runs (cache
     # invalidation cares about ordering). Out-of-diff findings rank
     # first and are never deferred: the verifier is their only causation
-    # check, so they take budget first and the cap trims only the rest.
+    # check. They sit outside the budget, so VERIFY_MAX_VERIFICATIONS
+    # still bounds the in-diff findings verified and the cap trims only
+    # those.
     eligible.sort(
         key=lambda e: (not e["_out_of_diff"], -e["_priority_score"], e["finding_id"]),
     )
 
     deferred: list[str] = []
-    cap = max(
-        VERIFY_MAX_VERIFICATIONS,
-        sum(1 for e in eligible if e["_out_of_diff"]),
-    )
+    cap = VERIFY_MAX_VERIFICATIONS + sum(1 for e in eligible if e["_out_of_diff"])
     if len(eligible) > cap:
         deferred = [e["finding_id"] for e in eligible[cap:]]
         eligible = eligible[:cap]
@@ -4390,6 +4389,24 @@ def _is_global_cache_enabled(is_github_mode: bool) -> bool:
     return not is_github_mode
 
 
+def _cached_findings_for(
+    entry: dict[str, Any], hit_file: str, review_set: set[str],
+) -> list[Any]:
+    """Findings a cache hit on ``hit_file`` brings back.
+
+    Drops an out-of-diff finding filed under ``hit_file`` once its own
+    file is in the diff: that file is reviewed in its own right this run,
+    and the cached copy may describe code the author has since fixed.
+    """
+    kept: list[Any] = []
+    for finding in entry.get("findings", []):
+        fpath = finding.get("file") if isinstance(finding, dict) else None
+        if fpath != hit_file and fpath in review_set:
+            continue
+        kept.append(finding)
+    return kept
+
+
 def _write_cache_output_files(  # noqa: PLR0913
     output_dir: Path,
     cached_files: list[str],
@@ -4548,6 +4565,7 @@ def _cmd_cache_check_v1(  # noqa: PLR0913
     """Per-cr-dir cache-check path (non-global-cache fallback)."""
     manifest_file_existed = (cache_dir / CACHE_MANIFEST_FILENAME).exists()
     manifest = _load_manifest(cache_dir)
+    review_set = set(files_to_review)
 
     cached_files: list[str] = []
     uncached_files: list[str] = []
@@ -4565,7 +4583,7 @@ def _cmd_cache_check_v1(  # noqa: PLR0913
             and _is_entry_fresh(entry, CACHE_NAMESPACE_BHA)
         ):
             cached_files.append(filepath)
-            cached_findings.extend(entry.get("findings", []))
+            cached_findings.extend(_cached_findings_for(entry, filepath, review_set))
         else:
             uncached_files.append(filepath)
 
@@ -4600,6 +4618,7 @@ def _cmd_cache_check_v2(  # noqa: PLR0913
     fallback: str | None = None
     manifest: dict[str, Any] = {}
     manifest_file_existed = (cache_dir / CACHE_MANIFEST_FILENAME).exists()
+    review_set = set(files_to_review)
 
     try:
         with _manifest_lock(lock_path, exclusive=False):
@@ -4626,7 +4645,9 @@ def _cmd_cache_check_v2(  # noqa: PLR0913
                     and _is_entry_fresh(entry, CACHE_NAMESPACE_BHA)
                 ):
                     cached_files.append(filepath)
-                    cached_findings.extend(entry.get("findings", []))
+                    cached_findings.extend(
+                        _cached_findings_for(entry, filepath, review_set),
+                    )
                     entry["last_hit_at"] = now_iso
                     entry["hit_count"] = entry.get("hit_count", 0) + 1
                 else:
@@ -5037,7 +5058,9 @@ def _gh_api(
     return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
 
-_PATCH_HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+# Verdicts under which the verifier (or an operator override) upheld an
+# out-of-diff finding, so its label may say this change caused it.
+_CAUSATION_CONFIRMED_VERDICTS = frozenset({"CONFIRMED", "DOWNGRADE", "RE_ASSERTED"})
 
 
 def _patch_right_side_lines(patch: str) -> set[int]:
@@ -5049,9 +5072,9 @@ def _patch_right_side_lines(patch: str) -> set[int]:
     lines: set[int] = set()
     new_line: int | None = None
     for raw in patch.splitlines():
-        header = _PATCH_HUNK_HEADER_RE.match(raw)
+        header = HUNK_RE.match(raw)
         if header:
-            new_line = int(header.group(1))
+            new_line = int(header.group(3))
             continue
         if new_line is None or raw.startswith(("-", "\\")):
             continue
@@ -5237,7 +5260,12 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
             if anchor is None:
                 skipped_out_of_diff += 1
                 continue
-            body = f"**Affected location:** `{path}:{line}` (outside the diff — caused by this change)\n\n{body}"
+            causation = (
+                "caused by this change"
+                if finding.get("verifier_verdict") in _CAUSATION_CONFIRMED_VERDICTS
+                else "causation unconfirmed"
+            )
+            body = f"**Affected location:** `{path}:{line}` (outside the diff — {causation})\n\n{body}"
             path, line = anchor
 
         # Dedup check

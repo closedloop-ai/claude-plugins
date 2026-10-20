@@ -80,10 +80,13 @@ Then continue with:
 
 **Findings outside the diff (ISS-12737):** when a finding has
 `out_of_diff: true`, label its **File:** line so the reader knows the
-cited file is not part of this change — in every severity section:
+cited file is not part of this change — in every severity section. Say
+"caused by this change" only when `verifier_verdict` is `CONFIRMED`,
+`DOWNGRADE` or `RE_ASSERTED`; otherwise say "causation unconfirmed":
 
 ```markdown
 **File:** `path/other.ts:line` — outside the diff — caused by this change
+**File:** `path/other.ts:line` — outside the diff — causation unconfirmed
 ```
 
 **Impact Analyzer findings (FEA-1401):** when a finding has

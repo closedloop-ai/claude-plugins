@@ -400,7 +400,7 @@ Then continue with the remaining summary content:
 1. **[P2] [file:line]** Title
 2. **[P3] [file:line]** Title
 
-For a finding tagged `out_of_diff`, append ` — outside the diff — caused by this change` to its line in whichever section it lands.
+For a finding tagged `out_of_diff`, append ` — outside the diff — caused by this change` to its line in whichever section it lands when its `verifier_verdict` is `CONFIRMED`, `DOWNGRADE` or `RE_ASSERTED`, and ` — outside the diff — causation unconfirmed` otherwise.
 
 ### Validation Stats
 
