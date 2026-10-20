@@ -11,7 +11,7 @@ Repo specifics (launch paths, auth, bootstrap, test commands, e2e harness) come 
 
 ## Setup
 
-Works on one machine with no remote config. More machines need ssh key auth between them, plus `codex`, `node` and `gh` on each. Prerequisites, the `config.env` keys with placeholders, and the setup checklist: [references/setup.md](./references/setup.md).
+Works on one machine with no remote config. More machines need ssh key auth between them, plus `codex`, `node`, `gh` and this plugin on each. Prerequisites, the `config.env` keys with placeholders, and the setup checklist: [references/setup.md](./references/setup.md).
 
 ## Roles
 
@@ -28,7 +28,7 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 - Write every prompt to `prompts/` before sending it. A restarted orchestrator can then see what each worker was told; `fleet.sh` only accepts prompt files.
 - Keep a dated resume log (rulings, merge order, who owns what, pending items) and read it first after any restart or compaction. Your memory of the program does not survive either.
 - After your own restart, subagents are gone: re-arm the watcher, relaunch Claude workers from their saved prompts, and tell the operator what you restarted.
-- If a remote machine reboots or loses its session state, its Codex threads cannot be reattached: start fresh threads in the same worktrees with resume prompts built from `prompts/` and the resume log, and say "keep the current version" in them.
+- If a remote machine reboots or loses its session state, its Codex threads cannot be reattached: start fresh threads in the same worktrees with [resume prompts](./references/templates.md#resume-prompt) built from `prompts/` and the resume log.
 
 ## Monitoring
 
@@ -52,9 +52,6 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 - Run Codex at the high effort level, not the maximum: the maximum burns the limit far faster for little gain on PR work. Writers and reviewers use `CODEX_MODEL`; tell each session in its prompt to run explorer and read-only sub-agents on `CODEX_EXPLORER_MODEL`.
 - No computer use in Codex: no browser, in-app browser, desktop app UI or screenshots. It is the fastest drain. Code host work goes through its CLI.
 - Visual work is a request file a Codex session drops in the requests dir ([template](./references/templates.md#visual-request)); a Claude worker does it and you steer the findings back as text.
-- Watch the usage rate, not just the level: estimate time to the limit from the trend, and move a machine's busiest sessions to another machine or account as fresh threads with resume prompts before they stop mid-fix.
-- A dead Codex writer (limit, crash) is taken over by a Claude writer in the same worktree, with the [takeover preamble](./references/templates.md#worker-preamble). Vibe has no path yet to move a Codex writer's session to Claude, so the Claude writer still invokes `vibe:vibe` and follows its rules, never edits the Codex session's records, and commits normally; log the gap to the lessons ledger.
-- Fresh and resumed threads may stop to ask about a plugin version update; say "keep the current version" in the resume prompt.
 
 ## Claude workers
 
@@ -62,6 +59,15 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 - A message to a busy worker arrives only when it goes idle; if it idles without acting on one, resend it shortly.
 - Polling and watch workers run on the cheapest capable model.
 - When CPU is tight, give the next review to an idle reviewer that finished, rather than spawning a new one.
+
+## Moving work between runtimes and accounts
+
+- Move a machine's busiest writers when its `codex-usage` band reaches `MOVE_AT_PERCENT`, or its trend says it will before the work is done, and on any `LIMIT` or `LIMIT-SPENDING-CREDITS` line. Move a Claude writer when it hits its usage or rate limit; the monitor cannot read Claude usage, so you learn it from the worker's errors or from the operator.
+- Before any move the old writer stops, or is confirmed dead, after committing and pushing or reporting its uncommitted state. One writer per branch holds through every move.
+- Codex to another Codex machine or account: a fresh thread through `fleet.sh` in the branch's worktree there, with a [resume prompt](./references/templates.md#resume-prompt).
+- Codex to Claude: a Claude writer in the same worktree with the [takeover preamble](./references/templates.md#worker-preamble). It invokes `vibe:vibe`, never edits the Codex session's records, and commits normally; vibe has no session migration for this yet, so log the gap to the lessons ledger.
+- Claude to Codex: a Codex vibe session through `fleet.sh` in the same worktree, with a resume prompt.
+- Fresh and resumed threads may stop to ask about a plugin version update, so every resume prompt says to keep the current version.
 
 ## Machines and CPU
 

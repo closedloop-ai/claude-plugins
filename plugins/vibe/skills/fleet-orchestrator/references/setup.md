@@ -19,6 +19,7 @@ CODEX_EXPLORER_MODEL=<cheaper model: explorers and read-only sub-agents>
 CODEX_EFFORT=<the high effort level, not the maximum>
 
 HEAVY_SLOTS=<concurrent heavy checks this machine can take>
+MOVE_AT_PERCENT=<codex-usage band at which to move writers off a machine>
 
 # One other machine; leave all of these out for a single machine
 REMOTE_HOST=<ssh host or alias>
@@ -28,7 +29,7 @@ REMOTE_SHELL="zsh -lic"                     # a login shell there that puts node
 REMOTE_HEAVY_SLOTS=<concurrent heavy checks that machine can take>
 ```
 
-`fleet.sh` uses `LOCAL_STATE_DIR` (default `<orchDir>/sessions`), `CODEX_MODEL` and `CODEX_EFFORT` as `turn` defaults, the slot counts, and the `REMOTE_*` keys. `CODEX_EXPLORER_MODEL` goes into each session's prompt, which tells the session which model its own sub-agents use.
+`fleet.sh` uses `LOCAL_STATE_DIR` (default `<orchDir>/sessions`), `CODEX_MODEL` and `CODEX_EFFORT` as `turn` defaults, the slot counts, and the `REMOTE_*` keys. `CODEX_EXPLORER_MODEL` goes into each session's prompt, which tells the session which model its own sub-agents use. `MOVE_AT_PERCENT` is for you: compare it with each `codex-usage` line.
 
 ## Checklist
 

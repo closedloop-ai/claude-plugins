@@ -37,6 +37,20 @@ Task:
 <task>
 ```
 
+## Resume prompt
+
+Starts a Codex writer on work another writer began, or a fresh thread after a move or reboot. Fill it from the resume log and the last writer's report; for a Claude writer use the worker preamble with its `Takeover` line instead.
+
+```
+$vibe resume the vibe session for <ticket or PRD>.
+Worktree <path> on <machine>, branch <branch>, PR <owner/repo>#<number>, pushed head <full sha>. You are its only writer.
+Done: <what is finished and pushed>
+Left: <what remains, in order>
+Rulings in force: <operator rulings and merge order that bind this work>
+Budget: effort <CODEX_EFFORT>; explorer and read-only sub-agents on <CODEX_EXPLORER_MODEL>; no computer use (no browser, in-app browser, desktop app UI or screenshots); visual work goes in a request file.
+If asked about a plugin version update, keep the current version.
+```
+
 ## Flag approval
 
 Send to the operator before any worker adds a feature flag key; nothing is gated until they approve that key.
