@@ -13,6 +13,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `fleet-orchestrator/scripts/slot-lock.sh [--slots N] <lockName> <owner> <command...>` runs a command once one of N named slots is free on the machine, records the owner, reclaims a slot whose holder pid is dead, and frees the slot when the command exits or the script is interrupted (the command is stopped too). `--status <lockName>` lists holders. It and `fleet.sh` run on the bash 3.2 that macOS ships.
 - `fleet-orchestrator/scripts/request-visual.mjs <requestsDir> <draft> [--worktree <dir>]` files a visual-work request drafted from the template as `<session>-<yyyymmdd-hhmm>-<slug>.md`, and refuses (exit 1, naming both SHAs) unless the draft's pushed head equals the PR's current head from `gh` and the worktree's HEAD, so a request cannot name an unpushed commit. It also refuses when `gh` is missing or fails, a field is missing or still a placeholder, or the head is not a full SHA. Codex sessions write requests only through it, and `fleet.sh` ships it to remote machines.
 - `generic.test.mjs` fails when any file in the skill carries an absolute home path, an IPv4 address, an email address, a ticket id, an `owner/repo#number` reference or this organization's or repository's name (the plugin family's own `closedloop-graph`, `closedloop-core` and `vibe` stay allowed), so the skill stays usable on any machine.
+
+### vibe v1.0.61
+
+#### Added
+- `skills/vibe/scripts/flag-keys.mjs` (`record`, `question`, `approve`, `show`). No agent creates or adds a feature flag on its own: the writer records a justified proposal (reason, the target repo's flag rule sentence quoted from its `AGENTS.md`, and a human source; a spec rollout must name its slug), `question` prints the exact approval question (the key, why, what it gates per surface and host, and every other key the same work sits behind), and `approve` saves the person's answer only after that exact question was asked and answered through `session-questions.mjs`, recording who and when. An approval covers one key and the proposal it answered; a changed surface, stack, reason or source needs a new question. `record` refuses a read of an unapproved key, a declined key, a second new key on one surface, and a proposal without its justification.
+- The live ticket's Production flag snapshot section renders "Keys to see this work": per surface and host, every key that must be on, new and existing, with the person's approval and each key's value in their snapshot. `vibe-sessions.mjs list` shows each session's keys and approvals.
+- `live-ticket-check.mjs` fails a ticket without the keys block and, with `--worktree`, a session with no recorded keys, a proposed key without the person's yes, or an approved key no file reads.
+- A `pm-flag-key-sprawl-blocked` eval case and `test_vibe_flag_keys_contract.py`.
+
+#### Changed
+- `guardrails.md` states two rules once. "No new tech debt": a new flag key, parallel path, shim or code kept for a deprecated story, second owner, duplicated helper, type, constant, validator or bound, new config, or growth of a file near the repo's size ceiling needs a human source or a quoted repo rule, logged as a `Debt:` line; otherwise the writer reuses what exists. "Feature flags": no agent creates or adds a flag on its own; a key is proposed only for what the target repo's own flag rule allows, one behavior gets one key, an existing key for the surface is reused, the person approves each key, and an agent never adds or edits a flag registration attestation. The writer, the vibe and handoff skills, the guardrails reviewer, the ticket template, the quality loop and the environment worker each point at these sections in a line instead of restating them; `flag-keys.mjs` messages carry the procedure.
+- The writer returns `NEEDS_FLAG_APPROVAL` instead of gating; the vibe skill asks the printed question and records the answer; handoff asks a pending approval once and names the keys to see the work; the guardrails reviewer gains check 17 for tech debt without a `Debt:` reason (mechanisms checks 1, 7, 8 and 12 find, copied or divergent types, constants, validators and bounds, exports only tests or deprecated stories import, and growth of a file near the size ceiling) and for flag keys `flag-keys.mjs show` reports, that the repo rule does not support, that split one behavior, gate a change the rule ships directly or duplicate an existing key.
+
 ### vibe v1.0.60
 
 #### Changed
@@ -2700,6 +2713,7 @@ Evidence-based audit of every backward-compat / legacy surface in the plugin. Ea
 - `write_runs_log_entry` default chain changes from `LAST_CLAUDE_COMMAND → self_learning` to `LAST_CLAUDE_COMMAND → CLOSEDLOOP_COMMAND → plan_execute`, removing the over-attribution of fresh-start Loops to `self_learning` in Datadog (FEA-936).
 - `emit_perf_event` empty-input guard treats an empty `json_line` as a silent no-op, preventing Loop-wide kills under older jq + `set -euo pipefail` and corrupt blank perf.jsonl lines under modern jq 1.8+ (FEA-936).
 - Legacy state-file read path hardened with `|| echo ""` so older state files lacking the `command:` field do not abort the script under `set -euo pipefail`.
+
 ### code v1.11.15
 
 #### Changed

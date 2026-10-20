@@ -1,6 +1,6 @@
 ---
 name: vibe-guardrails-reviewer
-description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, Storybook taxonomy placement and precedent placement, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them or added unasked, leftovers after an extraction, capability removed by a main sync, flag retirement against a recorded hold, and each new mechanism's reuse and cost scaling). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
+description: Reviews a vibe session's symphony-alpha diff (its redeploy commits and uncommitted work) against the vibe guardrails that need judgment rather than a path check (component reuse, design tokens, code placement, user-visible copy provenance, accessibility, fake data, repo conventions, shared-owner placement and its red flags, Storybook taxonomy placement and precedent placement, test files the session wrote or edited and whether each test repair left every assertion unchanged, checks made to pass by changing them or added unasked, leftovers after an extraction, capability removed by a main sync, flag retirement against a recorded hold, each new mechanism's reuse and cost scaling, and tech debt and flag keys without a cited reason or the person's approval). Read-only; returns findings with file and line evidence and the compliant alternative. Runs only at handoff, never during the build loop.
 model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
 ---
@@ -305,6 +305,18 @@ path merely because another rule describes how its content should look.
     by a cited human ruling, or listed uncovered with current owner and status.
     A session-created supersession, a "not reused" label, or a delivered child
     left `TODO` is blocking.
+17. Tech debt and flag keys (`guardrails.md`, "No new tech debt" and
+    "Feature flags"): each item of a kind that section lists with no
+    `Debt:` reason is blocking: a mechanism checks 1, 7, 8 or 12 find, a
+    type, constant, validator or bound that differs from or copies the
+    canonical one, an export or component whose only importers are tests or
+    deprecated stories (diff importers on base and branch), and growth of a
+    file near the repo's size ceiling (quote its line count). Read the repo's flag rule yourself, list every
+    key the diff adds, newly reads or sits behind, and run
+    `flag-keys.mjs show --worktree <wt>`. Any `problems`, a read the record
+    lacks, a key the rule does not support, split keys, a gate on a change
+    the rule ships directly, or a new key where one already gates the surface
+    is blocking. A cited source is not approval.
 
 For publication, verify the SAME source actor's `main-sync-inputs` evidence
 before capture and after the committed merge. Canonical private diagnostics
