@@ -4,18 +4,6 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.0.66
-
-#### Changed
-- Publication runs source input readiness once per publication instead of twice. `commit-worktree.mjs --prepare-main-sync` now checks only tracked parity and unknown outputs before capturing main, so the writer's `main-sync-inputs` record turn and its pristine bootstrapped checkout no longer run before the merge; the single pass after the committed merge proves generated inputs and returns the validation witness as before. A failing generated-input producer now names its command, its exit code and last error line or its timeout, and its private log, so the cause is fixed instead of the pass being rerun into the same bound.
-- `writer-state.mjs migrate` takes a `harnessSwitch` (`to`, `cause` `usage-limit` or `runtime-unavailable`, `evidence`) that moves a stopped writer to the other runtime with its definition still present, so a Codex writer stopped by its account's usage limit continues as a Claude writer with the same queue, active request, checkpoint, plan, decision table and change log. It refuses running turns, retained grants, a `BLOCKED` writer and a same-runtime switch, and records the switch in the ledger's migration history.
-- `handoff/scripts/review-threads.mjs resolve` is now the only way handoff resolves review threads: in one run it checks every unresolved thread has a result, that each fixed thread has the full fixing SHA and a `verified` verdict with evidence from a reviewer other than the writer, and that a flag-gated fix names its flag-off-equals-main test or missing-tests entry, and only then resolves; any problem resolves nothing. Partial, reasoned and unverified answers get a reply and stay open. Handoff reads an open vibe pull request's threads on every later look and starts the change path for any thread a human spoke last on, and in Codex arms the core PR monitor when that is already set up.
-- New guardrails section "Processes and state": stop only processes the session started, never by name or pattern; keep records, briefs, monitor config and reports out of temp folders (precedent reports now default to `~/.codex/vibe/precedent/`); in Codex use no computer use, with GitHub only through `gh` and visual checks handed to read-only `vibe-verify-worker` through the owned Claude launcher; and a delegated visual check is written after the push and names the pushed head. Codex precedent checks run as a headless Claude, and preflight and setup dialogs go to the person.
-- A dependency on an open pull request no longer pauses a session or asks for a restart: the writer commits every change that compiles without it, ROOT checks the dependency on every resume, merged work is pushed once it compiles and its targeted tests pass with e2e following, and a publish-helper failure is reported at once with its command and error.
-- Instruction text is no longer than before: the restated main-sync ceremony in the vibe skill, handoff and environment reference was cut to pointers at its one canonical sequence.
-
-#### Added
-- Vitest coverage for the harness switch and the single readiness pass, node tests for the thread resolver and the precedent report folder, contract pins in the existing contract tests, and one shared Claude Code and Codex eval case tagged `orchestration-lessons`.
 ### code-review v3.12.0
 
 #### Changed
