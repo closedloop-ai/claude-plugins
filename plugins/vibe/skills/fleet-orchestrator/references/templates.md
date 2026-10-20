@@ -28,7 +28,8 @@ Invoke vibe:vibe first: resume the vibe session for <ticket or PRD>, or start on
 You are the only writer on <owner/repo>#<number>, worktree <path> on <machine>, branch <branch>.
 Takeover: a Codex vibe session wrote this branch and stopped (<limit|crash>). Vibe cannot move that session to you, so run your own vibe session for the same <ticket or PRD> in the same worktree from its last pushed head <sha>. Do not edit the Codex session's records; commit normally.
 Before editing, read the repo docs that own the paths you touch (AGENTS.md files or contributor guide) or the team knowledge base.
-Tests: run only the tests covering what you changed (ask the repo's test graph or lane tool which). Heavy checks go through <fleet.sh slot command for the chosen machine>. Never run e2e that opens windows on the operator's daily machine.
+Research graph-first with closedloop-graph before searching files by hand, as vibe requires: ticket_detail for the ticket and its PRD, query_collisions and blast_radius_tickets for overlapping work, code_callers and code_importers before a shared change, code_tests_for for the tests to run.
+Tests: run only the tests covering what you changed (code_tests_for names them). Heavy checks go through <fleet.sh slot command for the chosen machine>. Never run e2e that opens windows on the operator's daily machine.
 Git: commit messages per the repo's conventions; regular push only, never force or amend after push.
 Review threads: reply on the thread naming the fixing SHA and resolve it only after the fix is verified in code.
 Report when done: pushed head SHA, files changed, tests run and results, open items, anything that needs the operator.
@@ -47,6 +48,7 @@ Worktree <path> on <machine>, branch <branch>, PR <owner/repo>#<number>, pushed 
 Done: <what is finished and pushed>
 Left: <what remains, in order>
 Rulings in force: <operator rulings and merge order that bind this work>
+Research graph-first with closedloop-graph before searching files by hand, as vibe requires: ticket_detail for the ticket and its PRD, query_collisions and blast_radius_tickets for overlapping work, code_callers and code_importers before a shared change, code_tests_for for the tests to run.
 Budget: effort <CODEX_EFFORT>; explorer and read-only sub-agents on <CODEX_EXPLORER_MODEL>; no computer use (no browser, in-app browser, desktop app UI or screenshots); visual work goes in a request file.
 If asked about a plugin version update, keep the current version.
 ```

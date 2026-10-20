@@ -16,7 +16,7 @@ Repo specifics (launch paths, auth, bootstrap, test commands, e2e harness) come 
 
 ## Setup
 
-Works on one machine with no remote config. More machines need ssh key auth between them, plus `codex`, `node`, `gh` and this plugin on each. Prerequisites, the `config.env` keys with placeholders, and the setup checklist: [references/setup.md](./references/setup.md).
+Works on one machine with no remote config. More machines need ssh key auth between them, plus `codex`, `node`, `gh`, this plugin and the closedloop-graph MCP server on each. Prerequisites, the `config.env` keys with placeholders, and the setup checklist: [references/setup.md](./references/setup.md).
 
 ## Roles
 
@@ -26,6 +26,15 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 - One writer per branch at a time, Codex or Claude. Two writers on one branch overwrite each other.
 - Reviewers, verifiers, QA prep and visual reviewers are read-only Claude subagents. A reviewer that fixes cannot be the independent check.
 - The operator gets QA, merges and enqueues, anything irreversible, and product decisions; everything else you settle (principle 1).
+
+## Research with closedloop-graph
+
+The closedloop-graph MCP server is required; decide from it, not from guesses. Tool guide: [vibe's closedloop-graph reference](../vibe/references/closedloop-graph.md).
+
+- Before assigning work or ruling between PRs, check open-PR and ticket overlap with `query_collisions` and `blast_radius_tickets`; read a ticket's PRD lineage and children with `ticket_detail`.
+- Before a shared change, read its callers and importers (`code_callers`, `code_importers`); for which tests cover a change, use `code_tests_for`, the only route to tests.
+- Trace a surprising difference in a before and after comparison to the commit and ticket that introduced it before blaming the PR.
+- Every worker prompt requires the same graph-first research (the preamble and resume templates carry it).
 
 ## State and persistence
 
@@ -91,7 +100,7 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 - Every PR gets an independent review, then a verification pass of the fixes, before it is QA-ready. Resolve a thread only after the fix is verified in code, with a reply naming the fixing SHA.
 - Before enqueue, run a containerized or full check wherever PR CI skips suites, and resolve shared version-file conflicts right before each enqueue, in merge order. The queue rebuilds on current main, and a skipped suite is not a pass.
 - Track merge order for stacked or overlapping PRs and tell each writer which one merges first.
-- A before and after comparison uses the candidate's merge-base or current main as the baseline, never an unrelated branch. Trace a surprising difference to the commit and ticket that introduced it before blaming the PR.
+- A before and after comparison uses the candidate's merge-base or current main as the baseline, never an unrelated branch.
 
 ## Pushback
 
