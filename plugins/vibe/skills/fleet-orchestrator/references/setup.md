@@ -10,6 +10,10 @@
 `<orchDir>/config.env` holds every machine-specific value. codex-fleet-monitor reads the same file; its own keys are documented in that skill. Use absolute paths: a `~` would expand to this machine's home, not the other machine's.
 
 ```sh
+WRITERS=<claude, codex or both>
+CODEX_MACHINES=<local, remote or both: where Codex accounts have budget>
+UX_PRECEDENT=<the established product the team follows for UX precedent>
+
 LOCAL_STATE_DIR=<orchDir>/sessions          # Codex session state files on this machine
 REQUESTS_DIR=<orchDir>/requests             # visual-work request files from sessions here
 
@@ -30,6 +34,19 @@ REMOTE_HEAVY_SLOTS=<concurrent heavy checks that machine can take>
 ```
 
 `fleet.sh` uses `LOCAL_STATE_DIR` (default `<orchDir>/sessions`), `CODEX_MODEL` and `CODEX_EFFORT` as `turn` defaults, the slot counts, and the `REMOTE_*` keys. `CODEX_EXPLORER_MODEL` goes into each session's prompt, which tells the session which model its own sub-agents use. `MOVE_AT_PERCENT` is for you: compare it with each `codex-usage` line.
+
+## First-run interview
+
+Ask once, in one question set, only for keys `config.env` lacks; offer the default first.
+
+| Question | Default | Writes |
+|---|---|---|
+| Machines: this one only, or more (the ssh host of each)? | this one only | `REMOTE_HOST`, `REMOTE_STATE_DIR`, `REMOTE_REQUESTS_DIR`, `REMOTE_SHELL` |
+| Writers: Claude only, Codex only, or both? | Claude only | `WRITERS` |
+| Codex (when chosen): which machine's account has budget, at what usage band to move work, and which models and effort? | this machine; move at 80 | `CODEX_MACHINES`, `MOVE_AT_PERCENT`, `CODEX_MODEL`, `CODEX_EXPLORER_MODEL`, `CODEX_EFFORT` |
+| Which product does the team follow for UX precedent? | none; repo siblings only | `UX_PRECEDENT` |
+
+Then set `LOCAL_STATE_DIR`, `REQUESTS_DIR` and the slot counts from this machine's layout and core count, write the file, and run steps 3 and 5 of the checklist below plus a check that this plugin is installed on each machine. Report each check as passed or failed.
 
 ## Checklist
 

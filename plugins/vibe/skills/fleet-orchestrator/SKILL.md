@@ -15,7 +15,7 @@ You run a program of several PRs at once: you plan, route, review, push back and
    2. its PRD;
    3. the PR's human review threads on that behavior, resolved ones included;
    4. closedloop-graph for related tickets and other open PRs touching it;
-   5. only then precedent (the established product your team follows for UX precedent, then the repo's own siblings) and sibling consistency.
+   5. only then precedent (the established product your team follows for UX precedent, `UX_PRECEDENT` in config, then the repo's own siblings) and sibling consistency.
 
    A human-sourced line that conflicts with the ruling goes to the operator as a question with a recommendation. Record every ruling with its source in the resume log, and tell the writer to cite it on the ticket and the relevant thread.
 
@@ -26,6 +26,9 @@ Repo specifics (launch paths, auth, bootstrap, test commands, e2e harness) come 
 ## Setup
 
 Works on one machine with no remote config. More machines need ssh key auth between them, plus `codex`, `node`, `gh`, this plugin and the closedloop-graph MCP server on each. Prerequisites, the `config.env` keys with placeholders, and the setup checklist: [references/setup.md](./references/setup.md).
+
+- First run: when `<orchDir>/config.env` is missing, or lacks a key this run needs, ask the operator once before launching anything, as one short structured question set (the harness's ask-question tool where available) with the [first-run questions](./references/setup.md#first-run-interview) and their defaults. Write `config.env` from the answers, run the checklist's verification, and report what passed.
+- Later runs read `config.env` and do not ask again unless a verification fails.
 
 ## Roles
 
