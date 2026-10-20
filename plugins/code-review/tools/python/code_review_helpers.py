@@ -32,7 +32,7 @@ from collections.abc import Generator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from code_review_schema import (
     CACHE_NAMESPACE_BHA,
@@ -1193,8 +1193,14 @@ def _parse_u0_output(
 
     Returns:
         (changed_ranges, patch_lines)
-        changed_ranges: {filepath: {"added": [[s,e],...], "removed": [[s,e],...]}}
+        changed_ranges: {filepath: {"added": [[s,e],...], "removed": [[s,e],...],
+                                    "deletion_points": [[c,c+1],...]}}
         patch_lines: {filepath: {"added_lines": {"line": "content"}, "removed_lines": {"line": "content"}}}
+
+    ``added`` ranges and ``deletion_points`` are numbered in the new file;
+    ``removed`` ranges are numbered in the old file. ``deletion_points`` is
+    present only for files with a pure-deletion hunk (``+c,0``): ``[c, c+1]``
+    are the surviving new-file lines on either side of the removed block.
     """
     changed_ranges: dict[str, dict[str, list[list[int]]]] = {}
     patch_lines: dict[str, dict[str, dict[str, str]]] = {}
@@ -1237,6 +1243,10 @@ def _parse_u0_output(
                 end = current_added_start + current_added_count - 1
                 changed_ranges[current_file]["added"].append(
                     [current_added_start, end]
+                )
+            elif current_removed_count > 0:
+                changed_ranges[current_file].setdefault("deletion_points", []).append(
+                    [current_added_start, current_added_start + 1]
                 )
 
             removed_line_counter = 0
@@ -1723,12 +1733,21 @@ def _write_per_partition_patches(
 
 
 def cmd_partition(args: argparse.Namespace) -> int:
-    """Execute partition subcommand."""
+    """Execute partition subcommand.
+
+    Files deleted outright (``file_statuses`` value ``"removed"``) are not
+    partitioned: Bug Hunter A reviews code that still exists, so their lines
+    count toward neither ``total_changed_loc`` (the unified-mode decision)
+    nor the bin-packing, and they are left out of ``test_file_paths``. The
+    cross-file reviewers own deletions. A diff that only deletes files
+    therefore yields zero partitions.
+    """
     diff_data_path: str | None = getattr(args, "diff_data", None)
     diff_data = json.load(open(diff_data_path)) if diff_data_path else json.load(sys.stdin)
     file_loc: dict[str, dict[str, int]] = diff_data.get("file_loc", {})
     changed_ranges: dict[str, dict[str, list[list[int]]]] = diff_data.get("changed_ranges", {})
     files_to_review: list[str] = diff_data.get("files_to_review", [])
+    file_statuses: dict[str, str] = diff_data.get("file_statuses", {}) or {}
 
     loc_budget = args.loc_budget
     max_files = args.max_files
@@ -1736,6 +1755,8 @@ def cmd_partition(args: argparse.Namespace) -> int:
     # Build file entries with LOC, sorted descending
     file_entries: list[dict[str, Any]] = []
     for f in files_to_review:
+        if file_statuses.get(f) == "removed":
+            continue
         loc_info = file_loc.get(f, {"added": 0, "removed": 0})
         total = loc_info["added"] + loc_info["removed"]
         file_entries.append({"file": f, "loc": total, "is_test": _is_test_file(f)})
@@ -2269,6 +2290,7 @@ def _filter_scope_and_range(
     discarded: list[dict[str, Any]],
     *,
     out_of_hunk_confidence_floor: float = OUT_OF_HUNK_CONFIDENCE_FLOOR,
+    file_statuses: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Filter by file scope, line range, and confidence.
 
@@ -2293,6 +2315,16 @@ def _filter_scope_and_range(
     every other exit path pops a reviewer-supplied value. A diff-scope
     finding with no ``file`` at all cannot be located anywhere and is
     discarded with ``DISCARD_MISSING_FILE``.
+
+    Line numbering (ISS-12737): a finding's line is numbered in the file
+    it names. On a file deleted outright (``file_statuses`` value
+    ``"removed"``) that is the old file, so the line is checked against
+    the ``removed`` ranges. On every other file (``added``, ``modified``,
+    or no recorded status) it is the new file, so the line is in range
+    only within ``added`` ranges or ``deletion_points`` (the surviving
+    lines beside a pure deletion); ``removed`` ranges are old-file numbers
+    and are not compared. Both checks use the ±3 ``_line_in_range``
+    tolerance. A line out of range takes the out-of-hunk path below.
 
     Out-of-hunk P2+ semantics (files in the diff; in-hunk and P1 paths
     unchanged):
@@ -2368,10 +2400,12 @@ def _filter_scope_and_range(
         line = int(finding.get("line", 0))
 
         file_ranges = changed_ranges.get(filepath, {})
-        added = file_ranges.get("added", [])
-        removed = file_ranges.get("removed", [])
-
-        in_range = _line_in_range(line, added) or _line_in_range(line, removed)
+        if (file_statuses or {}).get(filepath) == "removed":
+            in_range = _line_in_range(line, file_ranges.get("removed", []))
+        else:
+            in_range = _line_in_range(
+                line, file_ranges.get("added", []),
+            ) or _line_in_range(line, file_ranges.get("deletion_points", []))
         if not in_range and priority > 1:
             # Confidence must STRICTLY EXCEED the floor (``>``, not ``>=``)
             # so ``floor=1.0`` is a real kill switch — reviewer confidence
@@ -2587,6 +2621,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     )
     files_to_review: set[str] = set(diff_data.get("files_to_review", []))
     changed_ranges: dict[str, dict[str, list[list[int]]]] = diff_data.get("changed_ranges", {})
+    file_statuses: dict[str, str] = diff_data.get("file_statuses", {}) or {}
 
     # Read the operator-tunable out-of-hunk confidence floor from
     # code-review.json (same file that hosts bha_unified_threshold_loc).
@@ -2611,6 +2646,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     filtered = _filter_scope_and_range(
         normalized, files_to_review, changed_ranges, discarded,
         out_of_hunk_confidence_floor=out_of_hunk_floor,
+        file_statuses=file_statuses,
     )
     # Count out-of-hunk / out-of-diff findings that survived the filter.
     # Counted on ``filtered`` (post-filter, pre-grouping) because
@@ -3193,6 +3229,35 @@ def _select_verifier_model(finding: dict[str, Any]) -> str:
     return _VERIFY_MODEL_DEFAULT
 
 
+def _diff_removed_files(cr_dir: Path) -> frozenset[str]:
+    """On-disk names of the files ``diff_data.json`` records as deleted outright."""
+    data = _read_optional_json(cr_dir / "diff_data.json", None)
+    if not isinstance(data, dict):
+        return frozenset()
+    statuses = data.get("file_statuses")
+    if not isinstance(statuses, dict):
+        return frozenset()
+    names = (
+        _git_unquote_path(recorded)
+        for recorded, status in statuses.items()
+        if status == "removed" and isinstance(recorded, str)
+    )
+    return frozenset(name for name in names if name)
+
+
+def _cites_file_in(finding: dict[str, Any], files: frozenset[str]) -> bool:
+    """Whether the finding's own file or any ``evidence[]`` file is in ``files``."""
+    if not files:
+        return False
+    evidence = finding.get("evidence")
+    cited = [finding.get("file")] + [
+        entry.get("file")
+        for entry in (evidence if isinstance(evidence, list) else [])
+        if isinstance(entry, dict)
+    ]
+    return any(isinstance(path, str) and path in files for path in cited)
+
+
 def cmd_verify_prepare(args: argparse.Namespace) -> int:
     """Tier-select findings for verification and emit per-finding inputs.
 
@@ -3306,6 +3371,7 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
     inputs_dir = cr_dir / "verifier_inputs"
     inputs_dir.mkdir(parents=True, exist_ok=True)
     verifier_prompt_path = cr_dir / "verifier_prompt.txt"
+    removed_files = _diff_removed_files(cr_dir)
 
     to_verify: list[dict[str, Any]] = []
     cache_hits: list[str] = []
@@ -3357,15 +3423,17 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
                 pass
 
         input_path = inputs_dir / f"{fid}.json"
+        input_path = inputs_dir / f"{fid}.json"
         verifier_input: dict[str, Any] = {
             "finding": finding,
             "verifier_prompt_path": str(verifier_prompt_path),
             "output_path": str(output_path),
             "review_root": review_root,
         }
-        if entry["_out_of_diff"]:
+        if entry["_out_of_diff"] or _cites_file_in(finding, removed_files):
             # The causation check searches the patch for the change that
-            # broke the cited code; hand the verifier the full-diff patch.
+            # broke the cited code, and a file this diff deleted can only be
+            # read from its patch; hand the verifier the full-diff patch.
             verifier_input["patches_path"] = str(cr_dir / "patches_all.txt")
         with open(input_path, "w") as fh:
             json.dump(verifier_input, fh, indent=2)
@@ -5063,23 +5131,26 @@ def _gh_api(
 _CAUSATION_CONFIRMED_VERDICTS = frozenset({"CONFIRMED", "DOWNGRADE", "RE_ASSERTED"})
 
 
-def _patch_right_side_lines(patch: str) -> set[int]:
-    """New-file line numbers GitHub can anchor a RIGHT-side comment on.
+def _patch_side_lines(patch: str, *, old_side: bool) -> set[int]:
+    """Lines GitHub can anchor an inline comment on, for one side of ``patch``.
 
-    Those are the added and context lines inside each hunk of the
-    unified-diff ``patch`` GitHub returns per PR file.
+    ``patch`` is the unified diff GitHub returns per PR file. The RIGHT side
+    (``old_side=False``) is the new-file numbers of added and context lines;
+    the LEFT side (``old_side=True``) is the old-file numbers of removed and
+    context lines.
     """
     lines: set[int] = set()
-    new_line: int | None = None
+    line_no: int | None = None
+    skipped = "+" if old_side else "-"
     for raw in patch.splitlines():
         header = HUNK_RE.match(raw)
         if header:
-            new_line = int(header.group(3))
+            line_no = int(header.group(1) if old_side else header.group(3))
             continue
-        if new_line is None or raw.startswith(("-", "\\")):
+        if line_no is None or raw.startswith((skipped, "\\")):
             continue
-        lines.add(new_line)
-        new_line += 1
+        lines.add(line_no)
+        line_no += 1
     return lines
 
 
@@ -5098,28 +5169,46 @@ def _parse_paginated_json_arrays(text: str) -> list[Any]:
     return items
 
 
-def _fetch_pr_diff_lines(owner: str, repo_name: str, pr_number: Any) -> dict[str, set[int]]:
-    """Map each PR file to the lines an inline comment can anchor on; ``{}`` on failure."""
+class _PrFiles(NamedTuple):
+    """What ``pulls/{pr}/files`` says about the PR's files."""
+
+    #: Per file, the lines an inline comment can anchor on: new-file (RIGHT)
+    #: lines, or old-file (LEFT) lines on a file the PR deletes.
+    diff_lines: dict[str, set[int]]
+    #: Files the PR deletes (``status: "removed"``); comments on them post
+    #: on the LEFT side, at old-file line numbers.
+    removed: frozenset[str]
+
+
+def _fetch_pr_files(owner: str, repo_name: str, pr_number: Any) -> _PrFiles:
+    """Read ``pulls/{pr}/files`` once; empty on failure (every file then posts RIGHT)."""
+    empty = _PrFiles({}, frozenset())
     result = _gh_api(
         [f"/repos/{owner}/{repo_name}/pulls/{pr_number}/files?per_page=100", "--paginate"],
         dry_run=False,
         label="fetch PR files",
     )
     if result.returncode != 0 or not result.stdout.strip():
-        return {}
+        return empty
     try:
         files = _parse_paginated_json_arrays(result.stdout)
     except json.JSONDecodeError:
-        return {}
-    out: dict[str, set[int]] = {}
+        return empty
+    diff_lines: dict[str, set[int]] = {}
+    removed: set[str] = set()
     for entry in files:
         if not isinstance(entry, dict):
             continue
         filename = entry.get("filename")
+        if not isinstance(filename, str):
+            continue
+        is_removed = entry.get("status") == "removed"
+        if is_removed:
+            removed.add(filename)
         patch = entry.get("patch")
-        if isinstance(filename, str) and isinstance(patch, str):
-            out[filename] = _patch_right_side_lines(patch)
-    return out
+        if isinstance(patch, str):
+            diff_lines[filename] = _patch_side_lines(patch, old_side=is_removed)
+    return _PrFiles(diff_lines, frozenset(removed))
 
 
 def _out_of_diff_inline_anchor(
@@ -5148,8 +5237,14 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
     Findings outside the diff (``out_of_diff: True``) post inline at the
     first ``evidence[]`` location that lies in the PR diff (fetched from
     ``pulls/{pr}/files``), with a body that opens with the affected
-    ``file:line``. With no such location they are summary-only, like
-    out-of-hunk findings.
+    ``file:line``. On a file the PR deletes that location is an old-file
+    line. With no such location they are summary-only, like out-of-hunk
+    findings.
+
+    A finding on a file the PR deletes (``status: "removed"`` in the same
+    ``pulls/{pr}/files`` lookup, read once before the first inline post)
+    posts with ``side=LEFT``: its line is numbered in the old file, which
+    is what GitHub expects on that side. Every other finding posts RIGHT.
 
     Out-of-hunk findings are never posted inline. GitHub's
     ``pulls/{pr}/comments`` API rejects any comment whose line is not part of
@@ -5212,7 +5307,7 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
     skipped_out_of_hunk = 0
     skipped_out_of_diff = 0
     failed = 0
-    pr_diff_lines: dict[str, set[int]] | None = None
+    pr_files: _PrFiles | None = None
 
     for finding in findings:
         # Skip findings explicitly marked as non-inline
@@ -5254,9 +5349,9 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
         # re-anchor at the diff line their evidence cites, or leave them
         # to the summary.
         if finding.get("out_of_diff") is True:
-            if pr_diff_lines is None:
-                pr_diff_lines = _fetch_pr_diff_lines(owner, repo_name, pr_number)
-            anchor = _out_of_diff_inline_anchor(finding, pr_diff_lines)
+            if pr_files is None:
+                pr_files = _fetch_pr_files(owner, repo_name, pr_number)
+            anchor = _out_of_diff_inline_anchor(finding, pr_files.diff_lines)
             if anchor is None:
                 skipped_out_of_diff += 1
                 continue
@@ -5273,6 +5368,10 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
             skipped_dedup += 1
             continue
 
+        if pr_files is None:
+            pr_files = _fetch_pr_files(owner, repo_name, pr_number)
+        side = "LEFT" if path in pr_files.removed else "RIGHT"
+
         api_result = _gh_api(
             [
                 f"/repos/{owner}/{repo_name}/pulls/{pr_number}/comments",
@@ -5280,7 +5379,7 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
                 "-f", f"path={path}",
                 "-F", f"line={line}",
                 "-f", f"commit_id={head_sha}",
-                "-f", "side=RIGHT",
+                "-f", f"side={side}",
             ],
             dry_run=dry_run,
             label=f"POST comment {path}:{line}",
@@ -7792,8 +7891,10 @@ def _emit_signal_extraction_failed_finding(
 #      of legacy ``moduleCritics[]`` entries is handled inline by
 #      ``migrate_legacy_module_critics``.
 
-# Canonical change_class → path glob patterns. Adding a class requires
-# an entry here AND in ``COVERAGE_CHANGE_CLASSES`` (schema module).
+# Canonical change_class → path glob patterns. Adding a path-based class
+# requires an entry here AND in ``COVERAGE_CHANGE_CLASSES`` (schema
+# module). ``file_deletion`` is status-based and added in
+# ``resolve_coverage`` instead.
 CHANGE_CLASS_PATH_PATTERNS: dict[str, tuple[str, ...]] = {
     "schema_change": (
         "**/migrations/**",
@@ -8108,7 +8209,8 @@ def resolve_coverage(
         ``migrate_legacy_module_critics`` so a file with only those
         entries keeps working.
       - ``diff_data``: parse-diff output. Uses ``files_to_review`` for
-        path/extension/change_class triggers and ``patch_lines`` for
+        path/extension/change_class triggers, ``file_statuses`` for the
+        ``file_deletion`` change_class, and ``patch_lines`` for
         content_signal triggers.
       - ``extract_signals``: optional Phase 1 output. When omitted,
         ``signal`` triggers cannot fire (the determinism enforcement
@@ -8126,9 +8228,10 @@ def resolve_coverage(
     core reviewers (``COVERAGE_CORE_CONDITIONAL``) appear in
     ``best_effort`` only when their tier band brackets
     ``invocation_depth`` AND at least one of their triggers fires —
-    either a ``signal`` trigger matching the extracted signals or an
-    unconditional ``{"type": "always"}`` trigger (e.g. the Design
-    Critic, gated by the tier band alone).
+    a ``signal`` trigger matching the extracted signals, a
+    ``change_class`` trigger (e.g. the Impact Analyzer on
+    ``file_deletion``), or an unconditional ``{"type": "always"}``
+    trigger (e.g. the Design Critic, gated by the tier band alone).
 
     Determinism enforcement: a rule with ``required: true`` whose
     triggers are entirely LLM-driven (only ``signal`` triggers) is
@@ -8142,6 +8245,9 @@ def resolve_coverage(
         patch_lines_raw if isinstance(patch_lines_raw, dict) else {}
     )
     change_classes = classify_file_changes(files)
+    file_statuses = diff_data.get("file_statuses")
+    if isinstance(file_statuses, dict) and "removed" in file_statuses.values():
+        change_classes.add("file_deletion")
     signals = signals_to_confidence_map(extract_signals)
 
     # Compose rule list: canonical coverage[] + migrated moduleCritics[].
@@ -8168,12 +8274,12 @@ def resolve_coverage(
         seen_required.add(core_name)
 
     # FEA-1401 / PLN-726: conditional core reviewers gated by tier band
-    # AND signal trigger. Eligibility requires BOTH (a)
+    # AND trigger. Eligibility requires BOTH (a)
     # ``_DEPTH_RANK[invocation_depth] >= _DEPTH_RANK[entry["min_depth"]]``
     # AND (b) at least one trigger fires. Today every entry has
-    # ``required: False`` (Impact Analyzer's signal triggers are LLM-
-    # driven; the PLN-725 determinism enforcement bars LLM-only triggers
-    # from solely driving required selection). All eligible conditional
+    # ``required: False``: the Impact Analyzer is best-effort even when
+    # its deterministic ``file_deletion`` trigger fires (ISS-12737 — at
+    # standard and shallow depth Bug Hunter B owns deletions). All eligible conditional
     # core reviewers land in ``best_effort`` with ``source: "core"`` so
     # downstream consumers can distinguish them from project-specific
     # critic-gates.json matches (``source: "rule"``).
@@ -12863,7 +12969,8 @@ _SPAWN_CORE_ROLES: dict[str, dict[str, Any]] = {
     },
     # FEA-1401 Impact Analyzer. Conditional core reviewer (declared in
     # COVERAGE_CORE_CONDITIONAL); only lands in coverage plans when the
-    # invocation depth is ``deep`` AND a signal trigger fires. The
+    # invocation depth is ``deep`` AND one of its triggers fires (a
+    # signal, or the ``file_deletion`` change_class). The
     # spawn-spec walker treats it like any other core role once it
     # appears in the plan.
     "impact": {
@@ -12991,7 +13098,8 @@ def _derive_spawn_agents_from_plan(
         if role_cfg is not None:
             if role_cfg["partitioned"]:
                 # BHA expands per partition. When partitions is empty
-                # (all files cached), no BHA spawn.
+                # (all files cached, or every uncached file was deleted),
+                # no BHA spawn.
                 if not partitions:
                     skipped.append({
                         "reviewer": reviewer,
@@ -13281,7 +13389,8 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
         return _write_spawn_spec(spec, cr_dir, review_root)
 
     # Distinguish missing partitions.json (upstream stage_17 failure)
-    # from valid empty partitions (all files cached). A missing file
+    # from valid empty partitions (all files cached, or only deleted
+    # files left). A missing file
     # means the standard flow can't know if there's nothing to review
     # or if the partitioner crashed; silently skipping BHA in that
     # case would suppress coverage. Treat as a fallback sentinel so
@@ -13362,7 +13471,7 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     # coverage gaps.
     _SPAWN_BENIGN_REQUIRED_SKIPS = {
         "deferred_pln723",      # PLN-723 placeholder slot
-        "no_partitions",        # all files cached
+        "no_partitions",        # all files cached, or only deleted files left
         "docs_only",            # arbitrate-budget waived the BHA floor
         "gated_by_verify",      # BLOCKING sanitization
     }
@@ -13542,7 +13651,8 @@ def _build_spawn_required_gap_findings(
 
     Benign reasons (intentional omissions, not coverage gaps): the
     PLN-723 ``deferred_pln723`` placeholder, ``no_partitions``
-    (all files cached — BHA legitimately has nothing to do),
+    (all files cached, or every uncached file was deleted outright — BHA
+    legitimately has nothing to do),
     ``docs_only`` (arbitrate-budget waived the BHA floor for a
     docs-only diff), and ``gated_by_verify`` (BLOCKING sanitization
     already surfaces via agent_coverage-verify-blocking.json).

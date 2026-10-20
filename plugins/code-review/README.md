@@ -41,7 +41,7 @@ plugins/code-review/
     prompts/shared_prompt.txt        Shared reviewer constraints injected into every agent prompt
     prompts/bha_suffix.txt           Bug Hunter A reviewer persona and focus areas
     prompts/design_critic_suffix.txt Design Critic reviewer role (software-design craftsmanship; always-on at deep tier)
-    prompts/impact_analyzer_prompt.txt   Impact Analyzer reviewer role (FEA-1401 cross-file blast radius; deep tier, signal-gated)
+    prompts/impact_analyzer_prompt.txt   Impact Analyzer reviewer role (FEA-1401 cross-file blast radius; deep tier, gated by signals or a deleted file)
     prompts/coverage_critic_prompt.txt   Coverage critic role (standard/deep tiers)
     prompts/signal_extraction_prompt.txt Signal extraction role (standard/deep tiers)
     prompts/verifier_prompt.txt      Finding-verifier role (falsify-oriented; PLN-722)
@@ -152,7 +152,7 @@ Runs a comprehensive code review. Invokes the full pipeline: diff parsing, hygie
 
 ### `/shallow` and `/deep`
 
-Thin command-file wrappers around `/start` with `--depth` pre-bound. `/shallow` invokes the built-in fleet only (BHA + BHB + unified_auditor + verifier; no `critic-gates.json` entries, no signal extraction). `/deep` invokes the standard fleet plus the deep-tier reviewers: the **Design Critic** (always-on at deep — no signal trigger), and the FEA-1401 **Impact Analyzer** when signal extraction detects an exported-symbol change or symbol deletion.
+Thin command-file wrappers around `/start` with `--depth` pre-bound. `/shallow` invokes the built-in fleet only (BHA + BHB + unified_auditor + verifier; no `critic-gates.json` entries, no signal extraction). `/deep` invokes the standard fleet plus the deep-tier reviewers: the **Design Critic** (always-on at deep — no signal trigger), and the FEA-1401 **Impact Analyzer** when signal extraction detects an exported-symbol change or symbol deletion, or when the diff deletes a file.
 
 ### `/cost`
 
@@ -192,7 +192,7 @@ Three tiers select which reviewer fleet runs:
 | Verifier | ✓ | ✓ | ✓ |
 | `fast_path_reviewer` (auto on tiny PRs) | ✓ (auto) | ✓ (auto) | ✓ (auto) |
 | `design_critic` (always-on at deep) | ✗ | ✗ | ✓ |
-| `impact_analyzer` (FEA-1401, on exported-symbol change/deletion) | ✗ | ✗ | ✓ (on signal) |
+| `impact_analyzer` (FEA-1401, on exported-symbol change/deletion or a deleted file) | ✗ | ✗ | ✓ (on signal or file deletion) |
 
 **Standard-mode budget arithmetic.** With PLN-807 Phase 4, `arbitrate-budget` reserves BHA partitions FIRST (from `_max_bha_partitions_by_loc`) and then allocates the remaining budget to critics and best-effort. The total domain-critic count across both required and best-effort buckets is capped uniformly at `DOMAIN_CRITIC_CAP = 3` (by priority asc, reviewer asc) for both standard and deep tiers. Required-bucket critics dropped by the cap emit coverage-gap findings; cap-deferred entries carry `defer_reason: "domain_critic_cap"` in `deferred_for_budget`. PRs with sparse critic-gates rosters see identical fleet to pre-PLN-807.
 
