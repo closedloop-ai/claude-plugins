@@ -1,6 +1,6 @@
 {
   "name": "code-review",
-  "version": "3.10.5",
+  "version": "3.11.0",
   "description": "Code review plugin for automated review workflows and inline GitHub PR comments.",
   "author": {
     "name": "ClosedLoop",
