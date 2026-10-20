@@ -37,7 +37,10 @@ For `status: "needs_agent"`, the manifest carries the inputs the agent needs:
 | Field | Use |
 |---|---|
 | `prompt_path` | The agent's system prompt path — pass as `{PROMPT_PATH}` below; the agent reads it itself. |
-| `input_path` | The bounded input bundle (taxonomy + diff summary + AVAILABLE list / etc.) — pass as `{INPUT_PATH}`; the agent reads it itself. |
+| `input_path` | The bounded input bundle (diff summary + AVAILABLE list / etc.) — pass as `{INPUT_PATH}`; the agent reads it itself. |
+| `taxonomy_path` | stage_11 only: the run's snapshot of the signal taxonomy (`<CR_DIR>/extract_signals_taxonomy.json`) — pass as `{TAXONOMY_PATH}`; the agent reads it itself. stage_15 manifests carry no `taxonomy_path`. |
+
+Every path in a `needs_agent` manifest is absolute. Pass them through verbatim: the singleton Task runs in the session's checkout, which on a worktree-based run is not the review root, so a relative path would resolve against the wrong tree.
 | `model` | Model tier for the dispatch (`haiku` for signal-extraction, `sonnet` for coverage-critic). |
 
 The manifest's `output_path` / `coverage_state` field is the **canonical sibling consolidate output** (`extract_signals.json` for stage_11; `<CR_DIR>/coverage.json` — the `final` section — for stage_15), NOT where the agent writes. The agent's write target is fixed by convention:
@@ -62,6 +65,9 @@ Spawn one synchronous `Task` (do **not** set `run_in_background: true`). Unlike 
    Read it. Your input bundle is at:
      {INPUT_PATH}
 
+   [stage_11 only] The signal taxonomy is at:
+   [stage_11 only]   {TAXONOMY_PATH}
+
    Read the bundle for the contract you are validating against. Write
    your output JSON to:
      {OUTPUT_PATH}
@@ -75,7 +81,8 @@ Spawn one synchronous `Task` (do **not** set `run_in_background: true`). Unlike 
    |---|---|
    | `{PROMPT_PATH}` | `manifest.prompt_path` |
    | `{INPUT_PATH}` | `manifest.input_path` |
-   | `{OUTPUT_PATH}` | The by-convention agent write target from the table above — `<CR_DIR>/pln725_extract_signals.json` (stage_11) or `<CR_DIR>/pln725_coverage_critic.json` (stage_15). **NOT** `manifest.output_path`. |
+   | `{TAXONOMY_PATH}` | stage_11: `manifest.taxonomy_path`. Keep the two `[stage_11 only]` lines (dropping the `[stage_11 only]` prefix). stage_15: delete both `[stage_11 only]` lines. |
+   | `{OUTPUT_PATH}` | The by-convention agent write target from the table above — `pln725_extract_signals.json` (stage_11) or `pln725_coverage_critic.json` (stage_15) in the same absolute directory as `manifest.input_path` (that directory is `<CR_DIR>`). **NOT** `manifest.output_path`. |
    | `{STAGE_LABEL}` | `"signal-extraction"` for stage_11, `"coverage-critic"` for stage_15. |
 4. After the Task returns, hand control back to the caller. **In the default `run-prefix` flow** (the caller is `start.md`'s Deterministic Prefix loop): do NOT advance the walker — return, and `start.md` re-invokes `run-prefix --resume-from <resume_stage>`, which runs the sibling consolidate stage. **In the per-stage fallback walk** (the caller is walking stages one at a time): advance the walker to the sibling consolidate stage yourself. Either way, no `TaskOutput` call — that's for background tasks; synchronous Tasks complete before control returns.
 

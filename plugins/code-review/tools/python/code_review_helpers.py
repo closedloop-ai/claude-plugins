@@ -7605,7 +7605,10 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
     Always exits 0; structural failures (no diff_data, malformed
     taxonomy) print to stderr and return 1.
     """
-    cr_dir = Path(args.cr_dir)
+    # Absolute paths: the singleton Task that reads this manifest runs in the
+    # session's checkout, which is not the review root on a worktree run, so a
+    # relative --cr-dir would resolve against the wrong tree.
+    cr_dir = Path(args.cr_dir).resolve()
     diff_data_path = Path(args.diff_data)
     cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
     diff_tip = str(args.diff_tip)
@@ -7614,7 +7617,7 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
     )
     prompt_path = (
         Path(args.prompt) if getattr(args, "prompt", None) else _default_signal_extraction_prompt_path()
-    )
+    ).resolve()
     intent_path = Path(args.intent) if getattr(args, "intent", None) else None
     model = str(getattr(args, "model", None) or SIGNAL_EXTRACTION_MODEL_DEFAULT)
 
@@ -9222,7 +9225,9 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
 
     Always exits 0; structural failures print to stderr and return 1.
     """
-    cr_dir = Path(args.cr_dir)
+    # Absolute: the singleton Task resolves manifest paths from the session's
+    # checkout, not the review root (see cmd_extract_signals_prepare).
+    cr_dir = Path(args.cr_dir).resolve()
     signals_path = (
         Path(args.extract_signals) if getattr(args, "extract_signals", None) else None
     )
@@ -9233,7 +9238,7 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     no_critic = bool(getattr(args, "no_critic", False))
     prompt_path = (
         Path(args.prompt) if getattr(args, "prompt", None) else _default_coverage_critic_prompt_path()
-    )
+    ).resolve()
     model = str(getattr(args, "model", None) or COVERAGE_CRITIC_MODEL_DEFAULT)
 
     try:

@@ -14374,6 +14374,37 @@ class TestExtractSignalsPrepare:
         ts_entry = next(f for f in agent_input["files"] if f["path"].endswith(".ts"))
         assert ts_entry["language_hint"] == "typescript"
 
+    def test_manifest_paths_are_absolute_for_relative_cr_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The singleton Task resolves manifest paths from the session's
+        checkout, not the review root, so a relative --cr-dir must not leak
+        relative paths into the manifest.
+        """
+        from code_review_helpers import cmd_extract_signals_prepare
+        monkeypatch.chdir(tmp_path)
+        diff_path = _build_diff_data(tmp_path)
+        args = argparse.Namespace(
+            cr_dir="cr",
+            diff_data=str(diff_path),
+            diff_tip="abcdef1234",
+            prompt_hash="ph0",
+            cache_dir=None,
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        assert cmd_extract_signals_prepare(args) == 0
+
+        cr_abs = (tmp_path / "cr").resolve()
+        manifest = json.loads((cr_abs / "extract_signals_manifest.json").read_text())
+        assert manifest["status"] == "needs_agent"
+        assert manifest["input_path"] == str(cr_abs / "extract_signals_input.json")
+        assert manifest["taxonomy_path"] == str(cr_abs / "extract_signals_taxonomy.json")
+        assert manifest["output_path"] == str(cr_abs / "extract_signals.json")
+        assert Path(manifest["prompt_path"]).is_absolute()
+
     def test_cache_hit_serves_directly_without_agent(self, tmp_path: Path) -> None:
         from code_review_helpers import (
             CACHE_NAMESPACE_SIGNALS,
@@ -16221,6 +16252,30 @@ class TestCoverageCriticPrepareCLI:
         bundle = json.loads((cr_dir / "coverage_critic_input.json").read_text())
         assert bundle["available_reviewers"] == inputs["available"]
         assert "coverage_plan_initial" in bundle
+
+    def test_manifest_paths_are_absolute_for_relative_cr_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Same contract as the stage_11 manifest: the singleton Task runs in
+        the session's checkout, so every manifest path must be absolute.
+        """
+        from code_review_helpers import cmd_coverage_critic_prepare
+        inputs = _write_coverage_critic_inputs(
+            tmp_path, signals={"signals": []},
+        )
+        monkeypatch.chdir(tmp_path)
+        args = self._args(tmp_path, inputs, cr_dir="cr")
+        assert cmd_coverage_critic_prepare(args) == 0
+
+        cr_abs = (tmp_path / "cr").resolve()
+        manifest = _read_coverage_section(cr_abs, "critic")
+        assert manifest["status"] == "needs_agent"
+        assert manifest["input_path"] == str(cr_abs / "coverage_critic_input.json")
+        assert manifest["diff_summary_path"] == str(
+            cr_abs / "coverage_critic_diff_summary.json",
+        )
+        assert manifest["coverage_state"] == str(cr_abs / "coverage.json")
+        assert Path(manifest["prompt_path"]).is_absolute()
 
     def test_prepare_filters_existing_reviewers_from_available(self, tmp_path: Path) -> None:
         """If the AVAILABLE list contains a reviewer already in the
@@ -25808,3 +25863,41 @@ class TestPluginRootResolutionContract:
             if "<CLAUDE_PLUGIN_ROOT>" in p.read_text()
         ]
         assert offenders == []
+
+
+class TestSingletonDispatchTaxonomyContract:
+    """stage_11's agent must be told where the taxonomy snapshot is, and the
+    signal-extraction prompt must name the file prepare actually writes.
+    """
+
+    _ROOT = Path(__file__).parents[2]
+
+    def _taxonomy_snapshot_name(self, tmp_path: Path) -> str:
+        from code_review_helpers import cmd_extract_signals_prepare
+        cr_dir = tmp_path / "cr"
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(_build_diff_data(tmp_path)),
+            diff_tip="abcdef1234",
+            prompt_hash="ph0",
+            cache_dir=None,
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        assert cmd_extract_signals_prepare(args) == 0
+        manifest = json.loads((cr_dir / "extract_signals_manifest.json").read_text())
+        return Path(manifest["taxonomy_path"]).name
+
+    def test_spawn_template_passes_the_taxonomy_path(self) -> None:
+        skill = (self._ROOT / "skills" / "singleton-dispatch" / "SKILL.md").read_text()
+        template = _extract_section(skill, "3. Prompt template:", "4. After the Task returns")
+        assert "{TAXONOMY_PATH}" in template
+        assert "| `{TAXONOMY_PATH}` | stage_11: `manifest.taxonomy_path`." in template
+
+    def test_prompt_names_the_snapshot_prepare_writes(self, tmp_path: Path) -> None:
+        prompt = (self._ROOT / "tools" / "prompts" / "signal_extraction_prompt.txt").read_text()
+        name = self._taxonomy_snapshot_name(tmp_path)
+        assert f"`{name}`" in prompt
+        assert "`signal_taxonomy.json`" not in prompt
