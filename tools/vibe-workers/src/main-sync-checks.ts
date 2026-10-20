@@ -8,14 +8,14 @@ import { MAX_CHECK_MS, MainSyncError, mainSyncStateSchema, type MainComparison, 
 import { committedIdentity, digest, syncContext, readPrivateJson, saveSyncReceipt, MAIN_SYNC_FILE } from "./main-sync-state.js";
 import { CapturedMainComparison, comparisonLogs, runBounded } from "./main-sync-main-comparison.js";
 import { comparisonBudgetMs } from "./main-sync-validation-recipe.js";
-import { discoverCheckLanes, type CheckCommand } from "./main-sync-lanes.js";
+import { discoverRequiredE2eLanes, type CheckCommand } from "./main-sync-lanes.js";
 import { GENERATED_BIOME_PATH, MAX_INPUT_BYTES, verifyGeneratedBiomeInput } from "./main-sync-generated-input.js";
 import { committedLocalPlans, isLocalPlanPath } from "../../../plugins/vibe/skills/vibe/scripts/local-plans.mjs";
 import { verifyPrivateInput, verifyPrivateRoot, verifyEvidencePath } from "./main-sync-private-inputs.js";
 import { presentProducers, producerFor, producerFiles, producerPackage, producerOwnerInputs, reportOutputs, verifyProducerInputs, verifyProducerInputsForOrigin } from "./main-sync-input-catalog.js";
 import { originIdentity, sameOriginFiles } from "./main-sync-input-files.js";
 import { readWriterSummary } from "./ledger.js";
-import { affectedTestReportSelection, bindCheckBudgets, commandSelection } from "./main-sync-budget.js";
+import { bindCheckBudgets, commandSelection } from "./main-sync-budget.js";
 import { verifyReportRecipe, verifyReportExecution } from "./main-sync-report-inputs.js";
 import { ReportExecutionOwner } from "./main-sync-report-execution.js";
 import { recheckSelectedProduction, selectedRecoveryReserve } from "./main-sync-check-production.js";
@@ -26,8 +26,6 @@ import { packageOwnerPaths, packageTupleIdentity } from "./main-sync-package-own
 const EXECUTABLE_INPUT = /(?:\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss|html|sql|prisma)$|(?:^|\/)\.(?:npmrc|nvmrc)|(?:^|\/)(?:package-lock|pnpm-lock))/;
 const SOURCE_PATH = /\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss)$/;
 const PRIVATE_ARTIFACT = /\.(?:md|json|log|txt|png|webp)$/;
-const BACKEND_PREFIXES = ["apps/api/", "apps/mcp/", "apps/relay/", "apps/realtime/", "packages/api/",
-  "packages/database/", "apps/desktop/src/main/", "apps/desktop/src/server/", "apps/desktop/prisma/"];
 const CACHE_SEGMENTS = new Set(["node_modules", ".next", ".turbo", "dist", "storybook-static", ".cache"]);
 const turboTasksSchema = z.object({ tasks: z.array(z.object({ taskId: z.string(), package: z.string().optional() }).passthrough()) }).passthrough();
 
@@ -182,7 +180,6 @@ export function checkRecipe(value: ReturnType<typeof syncContext>, receipt: Main
   const root = value.place.root;
   const files = git(root, ["diff", "--name-only", "--no-renames", receipt.mainSha, "HEAD"]).split("\n").filter(Boolean);
   const prototype = value.place.branch.startsWith("prototype/");
-  const backend = files.some((file) => BACKEND_PREFIXES.some((prefix) => file.startsWith(prefix)) || /\/(?:prisma|migrations)\//.test(`/${file}`));
   const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync(join(root, file)));
   const commands: CheckCommand[] = [];
   const e2eLimitations: z.infer<typeof e2eLimitationSchema>[] = [];
@@ -192,7 +189,7 @@ export function checkRecipe(value: ReturnType<typeof syncContext>, receipt: Main
     if (paths.length) commands.push({ argv: ["pnpm", "exec", "biome", "check", ...paths] });
     commands.push({ argv: ["pnpm", "typecheck:affected"] });
     verifyReportRecipe(commands);
-    const bound = bindCheckBudgets(root, receipt, commands);
+    const bound = bindCheckBudgets(commands);
     return { commands: bound, e2eLimitations, recovery: selectedRecoveryReserve(root, bound) };
   }
   if (prototype) {
@@ -202,26 +199,20 @@ export function checkRecipe(value: ReturnType<typeof syncContext>, receipt: Main
       { argv: ["pnpm", "exec", "biome", "check", "apps/prototypes"] },
       { argv: ["node", ".claude/skills/prototype-approve/scripts/read-decision-log.mjs", `apps/prototypes/app/p/${value.place.session.slug}/decisions.md`] });
   } else {
+    // operator ruling, 2026-10-19: no broad or full local suite runs here. The verify worker runs the tests
+    // closedloop-graph's code_tests_for selects per changed file, and CI runs the broad suites on the PR and after merge.
     if (paths.length) commands.push({ argv: ["pnpm", "exec", "biome", "check", ...paths] });
-    const lanes = discoverCheckLanes(root, receipt);
-    e2eLimitations.push(...lanes.limitations);
-    commands.push({ argv: ["pnpm", "check:source-gates"] }, { argv: ["pnpm", "typecheck:affected"] },
-      { argv: ["pnpm", "test:affected", "--continue"] }, ...lanes.commands);
-    if (backend) commands.push({ argv: ["pnpm", "verify"] },
-      { argv: ["pnpm", "test"] }, { argv: ["pnpm", "test:lint"] }, { argv: ["pnpm", "test:skills"] });
+    e2eLimitations.push(...discoverRequiredE2eLanes(root, receipt));
+    commands.push({ argv: ["pnpm", "check:source-gates"] }, { argv: ["pnpm", "typecheck:affected"] });
   }
   const filter = `...[${receipt.validationSince}]`;
-  commands.push({ argv: ["pnpm", "turbo", "typecheck", `--filter=${filter}`, "--concurrency=1"] },
-    { argv: ["pnpm", "turbo", "test", `--filter=${filter}`, "--continue"], timeoutMs: MAX_CHECK_MS });
-  if (files.some((file) => file.startsWith("packages/app/") || file.startsWith("apps/desktop/src/renderer/"))) {
-    commands.push({ argv: ["pnpm", "--filter", "desktop", "test:renderer"] });
-  }
+  commands.push({ argv: ["pnpm", "turbo", "typecheck", `--filter=${filter}`, "--concurrency=1"] });
   if (files.some((file) => file.includes(".stories.") || file.startsWith("apps/storybook/") || file.startsWith("packages/design-system/"))) {
-    commands.push({ argv: ["pnpm", "--filter", "storybook", "test"] }, { argv: ["pnpm", "--filter", "storybook", "validate:catalog"] });
+    commands.push({ argv: ["pnpm", "--filter", "storybook", "validate:catalog"] });
   }
   commands.push({ argv: ["pnpm", "vibe", "storybook-diff"] });
   verifyReportRecipe(commands);
-  const bound = bindCheckBudgets(root, receipt, commands);
+  const bound = bindCheckBudgets(commands);
   // operator ruling, 2026-10-16: a handoff failure is compared against the captured main; the reserve bounds that.
   return { commands: bound, e2eLimitations, recovery: selectedRecoveryReserve(root, bound),
     comparison: { timeoutMs: comparisonBudgetMs(bound.map((command) => ({ timeoutMs: command.timeoutMs ?? MAX_CHECK_MS }))) } };
@@ -241,7 +232,7 @@ export function executeChecks(value: ReturnType<typeof syncContext>, receipt: Ma
    let restart = false;
    for (const [index, command] of recipe.commands.entries()) {
     assertIdentity(value.place.root, before);
-    let selection: z.infer<typeof turboTasksSchema> | undefined = affectedTestReportSelection(value.place.root, command);
+    let selection: z.infer<typeof turboTasksSchema> | undefined;
     if (command.argv[1] === "turbo" || command.argv.join(" ") === "pnpm typecheck:affected") {
       const start = performance.now();
       selection = commandSelection(value.place.root, command, remainingBudget(MAX_CHECK_MS, drySpent[index]!));

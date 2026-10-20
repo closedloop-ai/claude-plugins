@@ -175,10 +175,12 @@ work; never overlap duplicate lenses. Mutating subagents remain forbidden until
 sublease, file-ownership, and callback fencing exist.
 
 - Every such `spawn_agent` call uses `fork_turns: "none"` and explicitly sets a
-  role-bounded model. Use `model: "gpt-6-sol"` for planning, correctness-
-  sensitive review/QA, synthesis, and any high-judgment work where mistakes
-  matter. Only when the ticket owner actually decomposes a separate bounded,
-  deterministic lower-risk support role may it use `model: "gpt-6-luna"`.
+  role-bounded model from `../scripts/model-policy.mjs`. Use
+  `model: "gpt-6-sol"` for planning, correctness-sensitive review/QA,
+  synthesis, and any high-judgment work where mistakes matter. Explorer lanes
+  use `model: "gpt-5.6-terra"`. Only when the ticket owner actually decomposes
+  a separate bounded, deterministic lower-risk support role may it use
+  `model: "gpt-6-luna"`.
   A full-history
   support fork is forbidden unless the user explicitly requests a
   conversational-history review and no immutable artifact can represent the
@@ -215,13 +217,16 @@ sublease, file-ownership, and callback fencing exist.
 - Pair the model with its bounded role and reasoning effort. Luna roles
   (deterministic search/inventory/status, artifact parsing, hashing, and
   mechanical support tasks) use `model: "gpt-6-luna"` with
-  `reasoning_effort: "low"`. Sol roles include bounded code/evidence
-  exploration and initial classification, planning review, ordinary or
-  high-risk correctness review, visual QA, logical QA, compatibility/test
-  diagnosis, cross-boundary architecture, security/privacy,
-  database/migration, ambiguous-correctness judgment, and synthesis; use
-  `model: "gpt-6-sol"` with `reasoning_effort: "high"` or `"xhigh"` as the
-  risk requires. Support lanes return bounded evidence only and never own
+  `reasoning_effort: "low"`. Explorer roles (bounded code/evidence
+  exploration, codebase exploration, graph lookups, requirements or precedent
+  research, and read-only search) use `model: "gpt-5.6-terra"` with
+  `reasoning_effort: "high"`. Sol roles include initial classification,
+  planning review, ordinary or high-risk correctness review, visual QA,
+  logical QA, compatibility/test diagnosis, cross-boundary architecture,
+  security/privacy, database/migration, ambiguous-correctness judgment, and
+  synthesis; use `model: "gpt-6-sol"` with `reasoning_effort: "high"`, raised
+  to `"xhigh"` only by an explicit choice for that lane. Support lanes return
+  bounded evidence only and never own
   orchestration, ticket work, coding/planning, final judgment, or mutation.
   Bounded inputs and compact artifact handoff are required; a cheaper model or
   effort tier is not itself a token-savings claim.

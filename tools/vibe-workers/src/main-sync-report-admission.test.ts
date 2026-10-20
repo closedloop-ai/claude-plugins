@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { installAffectedTestWrapper, invokeSync, syncFixture, selectedReportFixture } from "./main-sync-test-fixtures.js";
+import { invokeSync, syncFixture, selectedReportFixture } from "./main-sync-test-fixtures.js";
 import { buildInfoInputFixture, huskyInputFixture } from "./main-sync-input-test-fixtures.js";
 
 const fixtures: ReturnType<typeof syncFixture>[] = [];
@@ -651,19 +651,16 @@ describe("canonical bootstrap health is not validation proof", () => {
     } finally { source.finish(); }
   }, 30000);
 
-  it.each([["typecheck", false], ["typecheck", true], ["test", false], ["test", true]] as const)("checks actual selected %s task entries with retained input=%s", (task, retainedInput) => {
+  it.each([["typecheck", false], ["typecheck", true]] as const)("checks actual selected %s task entries with retained input=%s", (task, retainedInput) => {
     const value = setupReportCapability("export {};\n");
     const marker = join(value.metadata, "selected-task-check-ran");
     const retained = join(value.worktree, "apps/desktop/playwright-report-e2e/results.json");
-    value.write("apps/app/package.json", JSON.stringify({ name: "app", scripts: { typecheck: "fixture", test: "fixture", [task]: "node selected-reader.mjs" } }));
+    value.write("apps/app/package.json", JSON.stringify({ name: "app", scripts: { test: "fixture", [task]: "node selected-reader.mjs" } }));
     value.write("apps/app/selected-reader.mjs", `import fs from 'node:fs';fs.readFileSync(${JSON.stringify(retainedInput ? retained : join(value.worktree, "package.json"))},'utf8');\n`);
     value.write("apps/unused/package.json", JSON.stringify({ name: "unused", scripts: { [task]: "node retained-reader.mjs" } }));
     value.write("apps/unused/retained-reader.mjs", `import fs from 'node:fs';fs.readFileSync(${JSON.stringify(retained)},'utf8');\n`);
     const runner = readFileSync(join(value.bin, "pnpm"), "utf8");
     value.write("../bin/pnpm", runner.replace("const command = args[0];", `const command = args[0];if(command===${JSON.stringify(`${task}:affected`)})fs.writeFileSync(${JSON.stringify(marker)},'ran');`));
-    if (task === "test") {
-      installAffectedTestWrapper(value);
-    }
     value.git(["add", "."]); value.git(["commit", "-m", "Synthetic selected task report boundary"]);
     const source = value.sourceTurn("handoff");
     try { expect(invokeSync(value, "inputs", source.context).status).toBe(0); }

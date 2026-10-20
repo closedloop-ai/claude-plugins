@@ -51,7 +51,12 @@ import {
   validateFeatureOwnershipMetadata,
   verifyFeatureOwnership,
 } from './feature-ownership.mjs';
-import { isLegacyTicketOwnerModel, LEGACY_UNVERSIONED_MODEL, TICKET_OWNER_MODEL } from './model-policy.mjs';
+import {
+  DEFAULT_REASONING_EFFORT,
+  isLegacyTicketOwnerModel,
+  LEGACY_UNVERSIONED_MODEL,
+  TICKET_OWNER_MODEL,
+} from './model-policy.mjs';
 
 export const SESSION_SCHEMA = 'CL_SWEEP_APP_SERVER_WORKER_SESSION v1';
 export const EVENT_PREFIX = 'CL_SWEEP_EVENT v1 ';
@@ -62,7 +67,7 @@ export const MAX_RESULT_ARTIFACT_BYTES = 4 * 1024 * 1024;
 const MAX_PARENT_ACTION_CHARS = 512;
 export const REQUIRED_WORKER_MODEL = TICKET_OWNER_MODEL;
 export const LEGACY_COMPATIBLE_WORKER_MODEL = LEGACY_UNVERSIONED_MODEL;
-export const DEFAULT_TICKET_REASONING_EFFORT = 'xhigh';
+export const DEFAULT_TICKET_REASONING_EFFORT = DEFAULT_REASONING_EFFORT;
 const EXTERNAL_PARENT_WRITER_FAILURE = 'The target thread has an active writer outside this managed App Server daemon';
 const SESSION_PATH = Symbol('sessionPath');
 const EVENT_KINDS = new Set([

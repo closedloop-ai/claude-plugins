@@ -2,41 +2,66 @@
 // Prints "codex-usage <label> <band>% <state> resets=<n>" from account/rateLimits/read, or
 // "codex-usage <label> unreadable READFAIL". Band is the used percent floored to 10.
 // Needs liveness.mjs beside it; snapshot.sh ships both files to the remote host.
-import { connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint } from './liveness.mjs';
+// Also the plugin's one reader and classifier of Codex usage: vibe/scripts/codex-usage.mjs imports it.
+import { connectStdio, connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint } from './liveness.mjs';
 
-export function usageState(response) {
+export const UsageState = Object.freeze({
+  Ok: 'ok',
+  Limit: 'LIMIT',
+  SpendingCredits: 'LIMIT-SPENDING-CREDITS',
+  Stopped: 'LIMIT-STOPPED',
+  Unknown: 'unknown',
+});
+
+// `daemon` starts the managed App Server if needed and leaves it running; `stdio` starts a private one per read.
+export const UsageTransport = Object.freeze({ Daemon: 'daemon', Stdio: 'stdio' });
+
+// The available reset count stays in the answer; only the separate detail lookup is skipped.
+const READ_PARAMS = { excludeResetCreditDetails: true };
+
+/**
+ * LIMIT: a limit is reached but ordinary usage is still allowed. LIMIT-SPENDING-CREDITS: ordinary
+ * usage is not allowed (or unreported) and turns are drawing on paid credits. LIMIT-STOPPED: no credits either.
+ */
+export function classifyUsage(response) {
   const limits = response?.rateLimits;
-  if (!limits?.rateLimitReachedType) return 'ok';
-  if (response.ordinaryUsageAllowed) return 'LIMIT';
-  return limits.credits?.hasCredits ? 'LIMIT-SPENDING-CREDITS' : 'LIMIT-STOPPED';
+  if (!limits || typeof limits !== 'object') return UsageState.Unknown;
+  if (!limits.rateLimitReachedType) return UsageState.Ok;
+  if (response.ordinaryUsageAllowed === true) return UsageState.Limit;
+  return limits.credits?.hasCredits ? UsageState.SpendingCredits : UsageState.Stopped;
+}
+
+/** Resolves `{ result }` or `{ error }`; never throws. */
+export async function readRateLimits({ transport = UsageTransport.Daemon, codex = 'codex', timeoutMs } = {}) {
+  const client = transport === UsageTransport.Stdio ? connectStdio(codex) : connectViaProxy(daemonSocket(codex), codex);
+  try {
+    try {
+      await client.initialize(timeoutMs);
+    } catch (error) {
+      return { error: `initialize failed: ${error.message}` };
+    }
+    try {
+      return { result: await client.request('account/rateLimits/read', READ_PARAMS, timeoutMs) };
+    } catch (error) {
+      return { error: `account/rateLimits/read failed: ${error.message}` };
+    }
+  } finally {
+    client.close();
+  }
 }
 
 export function usageLine(label, response) {
   const used = response?.rateLimits?.primary?.usedPercent;
   const band = Number.isFinite(used) ? `${Math.floor(used / 10) * 10}%` : '?%';
   const resets = response?.rateLimitResetCredits?.availableCount ?? 0;
-  return `codex-usage ${label} ${band} ${usageState(response)} resets=${resets}`;
-}
-
-export async function readUsage(client, label) {
-  try {
-    return usageLine(label, await client.request('account/rateLimits/read', {}));
-  } catch {
-    return `codex-usage ${label} unreadable READFAIL`;
-  }
+  return `codex-usage ${label} ${band} ${classifyUsage(response)} resets=${resets}`;
 }
 
 async function main() {
   exitAfterTotalTimeout();
   const label = process.argv[2] ?? 'local';
-  const client = connectViaProxy(daemonSocket());
-  try {
-    await client.initialize();
-    console.log(await readUsage(client, label));
-  } catch {
-    console.log(`codex-usage ${label} unreadable READFAIL`);
-  }
-  client.close();
+  const { result, error } = await readRateLimits();
+  console.log(error ? `codex-usage ${label} unreadable READFAIL` : usageLine(label, result));
   process.exit(0);
 }
 

@@ -2,12 +2,11 @@ import { z } from "zod";
 import { validationCommitSchema } from "./main-sync-validation-contracts.js";
 
 export const producerReadArguments = Object.freeze(["rev-parse", "HEAD", "--absolute-git-dir"] as const);
-export const budgetRefReadArguments = Object.freeze(["rev-parse", "HEAD", "origin/main"] as const);
 /** Data syntax only; the fixed native caller establishes provenance separately. */
 export const terminatedCommitSchema = z.string().refine(value => value.includes("\n"))
   .transform(value => value.slice(0, value.indexOf("\n"))).pipe(validationCommitSchema);
 type FirstFailureHead = { kind: "unproved" } | { kind: "proved"; head: string };
-type FixedReadArguments = typeof producerReadArguments | typeof budgetRefReadArguments;
+type FixedReadArguments = typeof producerReadArguments;
 
 const channelSchema = z.union([z.string(), z.instanceof(Buffer), z.null()]);
 const resultSchema = z.object({
@@ -62,11 +61,6 @@ function sameChannel(left: z.infer<typeof channelSchema>, right: z.infer<typeof 
 /** Only the producer's fixed failed invocation can establish this first field. */
 export function producerFailureHead(error: unknown): FirstFailureHead {
   return fixedFailureHead(error, producerReadArguments);
-}
-
-/** Only the budget's fixed failed invocation can establish this first field. */
-export function budgetFailureHead(error: unknown): FirstFailureHead {
-  return fixedFailureHead(error, budgetRefReadArguments);
 }
 
 function fixedFailureHead(error: unknown, args: FixedReadArguments): FirstFailureHead {

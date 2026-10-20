@@ -102,7 +102,7 @@ function startFixtureServer(socketPath, workerCwd, parentCwd) {
       }
       if (method === 'turn/start' && params.threadId === 'worker-thread') {
         assert.equal(params.model, 'gpt-6-sol');
-        assert.equal(params.effort, 'xhigh');
+        assert.equal(params.effort, 'high');
         state.workerMaterialized = true;
         send({ id, result: { turn: { id: 'worker-turn', status: 'inProgress' } } });
         const event = {
