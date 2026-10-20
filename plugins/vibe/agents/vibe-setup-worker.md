@@ -70,10 +70,8 @@ The checkout is the one the preflight remembered
   `../skills/vibe/scripts/vibe-preflight.sh` again with the selected arguments
   in a new command. Keep `--prototype` during common/prototype repair and
   repo-selection reruns; use the selected default only for full app preflight.
-  Never use the Codex Computer Use plugin
-  (`../skills/vibe/references/guardrails.md`, "Processes and state"): an
-  installer or Authorize dialog that needs a click is the person's, returned
-  as `NEEDS_PERSON` in one plain line. When an installer is waiting for the Mac
+  Never use Computer Use: a dialog that needs a click is the person's,
+  returned as `NEEDS_PERSON` in one plain line. When an installer is waiting for the Mac
   password, a sign-in needs the person in the browser, macOS asks for folder
   access, stop and return `NEEDS_PERSON` for that human-only action.
   Multiple checkouts are resolved internally from the active workspace or
@@ -130,9 +128,7 @@ The checkout is the one the preflight remembered
 - Stop: end the processes the session's stack lists (only those pids, after
   checking each is still the process you started) and clear the stack with
   `touch --stack '{}'`. Never touch another session's files, and never stop
-  a process by name or pattern (`pkill`, `killall`), even one that looks like
-  this session's (`../skills/vibe/references/guardrails.md`, "Processes and
-  state").
+  a process by name or pattern (`pkill`, `killall`).
 - Discard (only when the orchestrator says the person confirmed): stop the
   session's processes (as above), then run
   `node ../skills/vibe/scripts/vibe-sessions.mjs discard --worktree "<target-wt>" --confirm`

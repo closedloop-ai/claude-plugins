@@ -90,7 +90,8 @@ describe("selected retained-report admission at production readiness", () => {
       expect(result.status, result.stdout).toBe(kind === "literal-safe" ? 0 : 1);
       expect(existsSync(marker)).toBe(kind === "literal-safe" || kind === "unknown");
       if (kind === "unknown") {
-        expect(result.json?.error).toBe("Canonical generated-input producer failed: bash .closedloop-ai/loops-setup.sh; preserve private operation evidence");
+        expect(String(result.json?.error)).toMatch(
+          /^Canonical generated-input producer bash \.closedloop-ai\/loops-setup\.sh exited \d+.*; private log \S+vibe-input-origin-\S+\.json$/);
         expect(result.json?.mainSync).toBeUndefined();
         expect(existsSync(join(value.metadata, "vibe-main-sync.json"))).toBe(false);
       } else if (kind !== "literal-safe") {

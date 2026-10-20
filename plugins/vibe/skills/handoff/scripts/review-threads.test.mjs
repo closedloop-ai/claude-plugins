@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -16,57 +16,62 @@ function fixed(threadId, extra = {}) {
   return { threadId, commentId: 7, result: "fixed", fixingCommit: SHA, verification: verified, ...extra };
 }
 
-test("only an independently verified fix is resolved; partial and reasoned answers stay open", () => {
-  const result = checkThreads({ writer: WRITER, threads: [
+/** A temp folder with a fake gh that logs each call's arguments. */
+function workspace(t) {
+  const dir = mkdtempSync(path.join(tmpdir(), "review-threads-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const gh = path.join(dir, "gh");
+  writeFileSync(gh, `#!/bin/sh\nprintf '%s\\n' "$@" >> "${dir}/calls.txt"\necho '{}'\n`);
+  chmodSync(gh, 0o755);
+  const run = (results, threads) => {
+    writeFileSync(path.join(dir, "results.json"), JSON.stringify(results));
+    writeFileSync(path.join(dir, "threads.json"), JSON.stringify(threads));
+    const out = spawnSync(process.execPath, [SCRIPT, "resolve", "--results", path.join(dir, "results.json"),
+      "--threads", path.join(dir, "threads.json"), "--gh", gh], { encoding: "utf8" });
+    return { status: out.status, json: JSON.parse(out.stdout) };
+  };
+  const calls = () => (existsSync(path.join(dir, "calls.txt")) ? readFileSync(path.join(dir, "calls.txt"), "utf8") : "");
+  return { run, calls };
+}
+
+test("only an independently verified fix is resolved; partial and reasoned answers stay open", (t) => {
+  const { run, calls } = workspace(t);
+  const threads = [
     fixed("T1"),
     { threadId: "T2", commentId: 8, result: "partial", remaining: "the Desktop path still skips the check" },
     { threadId: "T3", commentId: 9, result: "reason", reason: "the ticket keeps the old order" },
-  ] });
-  assert.deepEqual(result, { ok: true, resolve: ["T1"], replyOnly: ["T2", "T3"], problems: [] });
+  ];
+  const { status, json } = run({ writer: WRITER, threads }, threads.map(({ threadId }) => ({ threadId })));
+  assert.equal(status, 0);
+  assert.deepEqual(json, { ok: true, resolved: ["T1"], replyOnly: ["T2", "T3"], problems: [] });
+  assert.match(calls(), /id=T1/);
+  assert.doesNotMatch(calls(), /id=T2|id=T3/);
 });
 
-test("the writer's own word, an unverified verdict or a missing SHA never resolves a thread", () => {
+test("a failed verification resolves nothing, not even the verified threads", (t) => {
+  const { run, calls } = workspace(t);
+  const threads = [fixed("T1"), fixed("T2", { verification: { ...verified, by: "vibe-change-worker" } })];
+  const { status, json } = run({ writer: WRITER, threads }, [{ threadId: "T1" }, { threadId: "T2" }]);
+  assert.equal(status, 1);
+  assert.deepEqual(json.resolved, []);
+  assert.equal(calls(), "");
+});
+
+test("the writer's own word, an unverified verdict, a short SHA or a missing result never resolves", () => {
   for (const [thread, pattern] of [
-    [fixed("T1", { verification: { ...verified, by: "vibe-change-worker" } }), /other than the writer/],
     [fixed("T1", { verification: { ...verified, by: WRITER } }), /other than the writer/],
-    [fixed("T1", { verification: { ...verified, verdict: "not-verified" } }), /did not verify/],
-    [fixed("T1", { verification: { ...verified, evidence: " " } }), /cites its evidence/],
+    [fixed("T1", { verification: { ...verified, verdict: "not-verified" } }), /has not verified/],
+    [fixed("T1", { verification: { ...verified, evidence: " " } }), /has not verified/],
     [fixed("T1", { fixingCommit: "abc123" }), /full fixing commit/],
+    [fixed("T1", { flagGated: true }), /flag-off-equals-main/],
     [{ threadId: "T1", commentId: 7, result: "partial" }, /what remains/],
-    [{ threadId: "T1", commentId: 7, result: "done" }, /fixed, partial or reason/],
   ]) {
-    const result = checkThreads({ writer: WRITER, threads: [thread] });
+    const result = checkThreads({ writer: WRITER, threads: [thread] }, [{ threadId: "T1" }]);
     assert.equal(result.ok, false);
-    assert.deepEqual(result.resolve, []);
     assert.match(result.problems.join("\n"), pattern);
   }
-});
-
-test("a flag-gated fix names the flag-off-equals-main test or its missing-tests entry", () => {
-  assert.equal(checkThreads({ writer: WRITER, threads: [fixed("T1", { flagGated: true })] }).ok, false);
-  for (const evidence of ["test:apps/api/__tests__/flag-off.test.ts", "missing-test:R12 flag off matches main"]) {
-    assert.deepEqual(checkThreads({ writer: WRITER, threads: [fixed("T1", { flagGated: true, flagOffEqualsMain: evidence })] }).resolve, ["T1"]);
-  }
-});
-
-test("every unresolved thread on the pull request needs a result", () => {
-  const result = checkThreads({ writer: WRITER, threads: [fixed("T1")] }, [{ threadId: "T1" }, { threadId: "T2" }]);
-  assert.equal(result.ok, false);
-  assert.deepEqual(result.problems, ["T2: unresolved thread has no result"]);
-});
-
-test("the CLI exits 1 on a problem and 0 when every thread is settled", (t) => {
-  const dir = mkdtempSync(path.join(tmpdir(), "review-threads-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const results = path.join(dir, "results.json");
-  const threads = path.join(dir, "threads.json");
-  writeFileSync(threads, JSON.stringify([{ threadId: "T1" }]));
-  writeFileSync(results, JSON.stringify({ writer: WRITER, threads: [fixed("T1")] }));
-  const ok = spawnSync(process.execPath, [SCRIPT, "check", "--results", results, "--threads", threads], { encoding: "utf8" });
-  assert.equal(ok.status, 0);
-  assert.deepEqual(JSON.parse(ok.stdout).resolve, ["T1"]);
-  writeFileSync(results, JSON.stringify({ writer: WRITER, threads: [fixed("T1", { verification: { by: WRITER, verdict: "verified", evidence: "x" } })] }));
-  const refused = spawnSync(process.execPath, [SCRIPT, "check", "--results", results], { encoding: "utf8" });
-  assert.equal(refused.status, 1);
-  assert.equal(JSON.parse(refused.stdout).ok, false);
+  assert.deepEqual(checkThreads({ writer: WRITER, threads: [fixed("T1")] }, [{ threadId: "T1" }, { threadId: "T2" }]).problems,
+    ["T2: unresolved thread has no result"]);
+  assert.equal(checkThreads({ writer: WRITER, threads: [fixed("T1", { flagGated: true,
+    flagOffEqualsMain: "missing-test:R12 flag off matches main" })] }, []).ok, true);
 });

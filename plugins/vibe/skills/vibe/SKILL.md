@@ -113,14 +113,6 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   quality-loop.md's turn stranded by a plugin upgrade: `migrate` with
   `retainedRecord`, internally, never a question or a message to engineering.
   Startup and confirmed discard use the same bounded stable contexts below.
-- Both harnesses follow `references/guardrails.md`, "Processes and state":
-  stop only processes the session started, never by name or pattern; keep
-  every record, brief and report a resume needs out of temp folders; and in
-  Codex use no computer use, GitHub only through `gh`, with each visual check
-  handed to a Claude worker as a written request. A Codex writer stalled by
-  its account's usage limit moves to Claude through `writer-state.mjs
-  migrate` with `harnessSwitch` (`references/quality-loop.md`, "A writer
-  whose runtime cannot run"); no other worker does the writer's work.
 - Plugin root: the folder two levels above this file (in Codex,
   `~/.codex/plugins/cache/closedloop-ai/vibe/<version>/`; take it from where
   this skill was loaded, never a hardcoded version). Resolve it to an absolute
@@ -519,16 +511,8 @@ section 5's actual identity/hold/lease rules, not a new bootstrap source actor.
 ROOT commits the checked deliverable LOCALLY under normal hooks, still unpushed,
 before `commit-worktree.mjs --prepare-main-sync`; if no deliverable changed,
 no extra commit is needed. Protected dirty localFix source remains preserved/blocking.
-Resume the SAME source actor's exclusive progress turn for `main-sync-inputs`
-before publisher preparation and again after the Root-owned merge/fix commit.
-Use the canonical sequence in environment.md, including its opaque validation
-witness/new exact grant; readiness is not coverage or test authority.
-Apply `references/environment.md`, "Main-sync before publication": local
-canonical plan/session table before source, separate plan checks, a completed
-exact create preparation turn, same-writer fixes/behavior checks, ROOT commit
-and that writer's actual committed-input validation. A new exact create grant
-carries captured `mainSyncTransactionId`, build purpose and derived context.
-No stale interim raw push is allowed.
+Apply `references/environment.md`, "Main-sync before publication" (one
+`main-sync-inputs` pass, after the merge commit); no stale interim raw push.
 
 Dispatch `vibe-environment-worker`
 in create mode with the worktree, the live ticket slug, the mode, and
@@ -868,15 +852,9 @@ that waited, and one deploy after the last of them carries them all. A
 2. Keep deployment progress internal; report completion, not technical steps.
    After the writer's quick checks, ROOT commits the checked deliverable
    LOCALLY with the existing commit script and normal hooks, still unpushed. Then the
-   publishing helper runs `commit-worktree.mjs --prepare-main-sync`.
-   First finish the SAME source actor's `main-sync-inputs` record turn as
-   environment.md requires; no operational helper regenerates dependencies.
-   Before any remote push repeat `references/environment.md`, "Main-sync
-   before publication": extend the SAME writer's local plan/session table,
-   run a separate noncommitting preparation turn after
-   source stops, and route all conflicts/fixes to that writer. Preserve
-   captured main/original base/imports. A missing or upgraded definition uses
-   only quality-loop's recorded migration; refresh old-actor validation proof.
+   publishing helper runs `commit-worktree.mjs --prepare-main-sync`; no
+   operational helper regenerates dependencies. Before any remote push
+   follow `references/environment.md`, "Main-sync before publication".
 3. After preparation and SAME-writer conflict/source correction, ROOT commits
    the staged ordinary merge and any checked fixes (nothing is pushed yet):
    `node scripts/commit-worktree.mjs --worktree "<wt>" --subject "<live ticket slug>: <plain imperative summary of the changes since the last redeploy>" --body "<the screens changed, one per line>"`.

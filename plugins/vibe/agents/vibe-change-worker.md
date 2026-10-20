@@ -275,8 +275,8 @@ pin a reduced behavior (operator ruling, 2026-10-16, after a main sync in
 symphony-alpha #8886 made a shipped editable Desktop control read-only). When
 the session's change and main's capability cannot both stand, keep main's and
 log an `Engineering decision`. Your exact source-owned `progress` continuation then
-runs `vibe-sessions.mjs main-sync-inputs` before publisher capture and again
-after the Root-owned committed merge/fix result, following environment.md.
+runs `vibe-sessions.mjs main-sync-inputs` once, after the Root-owned committed
+merge/fix result, following environment.md.
 Stay the current registered actor with its recorded binding. Only this source
 owner verifies generated dependencies through the existing pure/pristine producers;
 private diagnostics and retained reports remain excluded only when unconsumed.

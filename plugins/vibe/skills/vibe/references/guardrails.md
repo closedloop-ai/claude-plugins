@@ -33,47 +33,22 @@ canonical statement:
   upgrade, stays allowed, but only after a human or
   the engineering orchestrator installed the new release. It is recovery, not
   a tooling fix: never stop or send the person to engineering for it.
-  A writer whose runtime cannot run (a Codex account at its usage limit)
-  moves to the other harness through the same command's harness switch
-  (`quality-loop.md`, "A writer whose runtime cannot run"), never by having
-  another worker do the writer's work outside the session records.
 
 ## Processes and state
 
-These bind the orchestrators and every worker, in both harnesses, on the
-person's Mac and on any machine a session uses (operator lessons,
-2026-10-19 and 2026-10-20).
-
-- Stop only processes this session started: a pid or process group the
-  session recorded (the stack's pids, the owned launcher's group, a
-  command you ran yourself), confirmed still to be that process before
-  you signal it. Never `pkill`, `killall` or `kill` by name or pattern,
-  and never match a process by a script name another session could be
-  running (a test runner, a dev server, a Storybook): several sessions and
-  e2e runs share one machine. Something you did not start that blocks you
-  is reported as a blocker, never stopped.
-- Session and orchestration state lives where a reboot keeps it: the
-  session's private Git metadata (`git -C <wt> rev-parse --absolute-git-dir`),
-  the worktree under the checkout's `.claude/worktrees/`, and `~/.codex/vibe/`.
-  Never keep a session record, writer or queue state, a prompt or brief
-  that a resume needs, monitor or watcher config, research reports or
-  evidence a later step reads under `/tmp`, `/private/tmp` or the system
-  temp folder. A temp folder is only for a throwaway file the same command
-  deletes before it exits.
-- When the writer runs in Codex, no computer use: neither the orchestrator
-  nor a worker drives the Computer Use plugin or looks at a page through the
-  in-app Browser (screenshots, reading a page, hosted Storybook, design
-  review captures), and GitHub is read and written only through `gh`, never
-  a browser tab (operator ruling, 2026-10-20: computer use drains the Codex
-  weekly limit fastest). The in-app Browser tab that shows the person their
-  app is theirs to look at. Every visual check becomes a written request:
-  the pull request or branch and head commit, the URLs or story IDs, the
-  flags, the steps, the expected result and the acceptance criterion or
-  requirement it checks. Hand it to a Claude worker through the owned
-  launcher (`scripts/dist/claude-worker.mjs`, read-only
-  `vibe-verify-worker`) and steer its findings back to the SAME writer.
-  Without a signed-in `claude` CLI the check is recorded as not run with
-  that reason, and a criterion it would have proven stays `not met yet`.
+Operator lessons, 2026-10-19 and 2026-10-20, for every worker in both harnesses.
+- Stop only a pid or process group this session recorded and still owns.
+  Never `pkill`, `killall` or `kill` by name or pattern; report what you did not start.
+- Records, writer state, briefs, monitor config and reports a later step
+  reads live in the session's Git metadata, `.claude/worktrees/` or
+  `~/.codex/vibe/`, never `/tmp` or the system temp folder.
+- In Codex, no computer use: no Computer Use plugin or agent looks through
+  the in-app Browser, and GitHub only through `gh`. Visual checks go to
+  read-only `vibe-verify-worker` through the owned Claude launcher, or are
+  recorded as not run, their criterion `not met yet`.
+- A visual check handed to another worker is a written request made after
+  the push: the pushed head (never a local SHA), URLs or story IDs, flags,
+  steps, expected result and criterion. Findings go to the SAME writer.
 
 ## What may change
 

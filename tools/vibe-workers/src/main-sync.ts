@@ -67,7 +67,8 @@ export function prepareMainSyncInputs(raw: unknown) {
 export function prepareMainSync(raw: unknown) {
   const value = syncContext(raw, "prepare");
   const root = value.place.root;
-  committedInputs(root);
+  // Parity and unknown outputs only: generated inputs are proven once, by the source readiness pass after the merge.
+  inspectInputInventory(root);
   const previousFile = join(value.place.dir, MAIN_SYNC_FILE);
   const state = existsSync(previousFile) ? mainSyncStateSchema.parse(readPrivateJson(previousFile)) : undefined;
   const previous = state?.phase === "input-readiness" ? state.previous : state;

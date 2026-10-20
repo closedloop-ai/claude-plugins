@@ -307,7 +307,7 @@ path merely because another rule describes how its content should look.
     left `TODO` is blocking.
 
 For publication, verify the SAME source actor's `main-sync-inputs` evidence
-before capture and after the committed merge. Canonical private diagnostics
+after the committed merge. Canonical private diagnostics
 and retained reports are excluded only when actual selected readers/collectors
 do not consume them. Generated dependencies need complete byte/type/mode/set
 and current producer proof, not a cache marker or ignored directory. Readiness

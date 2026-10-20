@@ -116,8 +116,9 @@ and retained reports without accepting their contents as coverage. Known generat
 dependencies need complete pure or pristine owner verification before execution;
 unknown extras, edited bodies, producer drift and aliases remain blocked. Selected
 package proofs use bounded deduplicated names and full byte/mode/set digests in
-the existing private receipt. The same actor repeats readiness after the committed
-merge and supplies the opaque recipe witness for actual validation. Fixed local
+the existing private receipt. The same actor runs readiness once, after the
+committed merge, and supplies the opaque recipe witness for actual validation;
+capture checks only tracked parity and unknown outputs. Fixed local
 process budgets and the authenticated Claude envelope remain distinct from
 unchanged test, hook and general-worker deadlines.
 Report admission follows actual selected entries, tasks, configs and producer
@@ -421,11 +422,9 @@ no child is superseded without a human ruling. Version-check cases also cover
 explicit proceed instructions and resumed sessions continuing after reporting
 an available update.
 
-The two cases tagged `orchestration-lessons` rehearse a Codex writer stopped
-by its account's usage limit, which moves to Claude through the writer
-ledger's harness switch instead of another worker doing its work, and review
-threads after a fix pass, where only a fix a reviewer other than the writer
-verified is resolved and partial or unverified fixes stay open.
+The case tagged `orchestration-lessons` rehearses a Codex writer stopped by
+its account's usage limit, which moves to Claude through the writer ledger's
+harness switch instead of another worker doing its work.
 
 ## Runtime Files
 

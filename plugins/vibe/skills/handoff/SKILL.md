@@ -210,15 +210,12 @@ dispatch `vibe-ticket-worker` in create mode first; it records the slug on
 the session. If it is `handed-off`, first dispatch `vibe-ticket-worker` in
 plan mode with `mergeCheck: true` when its `livePlanStatus` is `APPROVED`, so
 a merged pull request moves the PLN to `EXECUTED` (operator ruling,
-2026-10-19). When the session opened a pull request that is still open,
-dispatch `vibe-environment-worker` in `pull-request` mode with
-`reviewThreads: read` on every such look, whatever the person asked: a
-thread it marks `awaitingReply` (a human reviewer spoke last) starts section 10, "Changes on the open pull request", without waiting for
-the person to ask (operator lesson, 2026-10-19: six human threads sat
-unanswered after a vibe pull request opened). Otherwise tell the person it is
-already finished (a pull request was opened, or it was passed on) and stop,
-unless they are asking for changes on the pull request it opened: then
-follow section 10.
+2026-10-19). When its pull request is still open, read its threads first
+(`vibe-environment-worker`, `reviewThreads: read`) on every look: any
+`awaitingReply` thread starts section 10, "Changes on the open pull request",
+unasked (operator lesson, 2026-10-19). Otherwise tell the person it is
+already finished and stop, unless they are asking for changes on the pull
+request it opened: then follow section 10.
 
 Then run `node ../vibe/scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"`
 so this conversation is recorded on the session too.
@@ -527,22 +524,12 @@ script/normal hooks, still unpushed, before `commit-worktree.mjs --prepare-main-
 This includes the SAME writer's reviewed handoff fixes, not
 private plans or protected localFix source. No change needs no extra local commit.
 
-Resume the same actor for source-owned `main-sync-inputs` before preparation
-and again after the Root-owned committed merge/fix result, using environment.md.
-End readiness's record turn, then ROOT grants its returned opaque witness as
-`mainSyncValidation` for that same actor's validation continuation. Preserve
-private diagnostics/retained reports; unknown generated inputs or consumed
-retained evidence block, never a directory exemption or old report PASS.
-Readiness is not test authority or completed coverage. `requiredE2eComplete`
-must still be actually true before final coverage/assignment.
-
-First repeat `../vibe/references/environment.md`, "Main-sync before publication",
-with handoff purpose. The SAME writer extends/checks its whole session table
-before fixes; a separate exact publisher preparation turn fetches fresh main,
-stages an ordinary NONCOMMITTING merge after the owned Desktop stops, then ends.
-Every source/conflict/generator fix stays with the original
-writer/registration; ROOT alone commits. Captured synced main separates imports
-from feature work, retaining original history and real test-edit violations.
+Then repeat `../vibe/references/environment.md`, "Main-sync before publication",
+with handoff purpose and the whole session table: the same actor runs
+`main-sync-inputs` once, after the Root-owned committed merge/fix result, and
+its witness becomes that actor's `mainSyncValidation`. Its retained reports are
+never PASS; readiness is not test authority or completed coverage, and
+`requiredE2eComplete` must still be true before final coverage/assignment.
 
 Run `node ../vibe/scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"`
 again, then ROOT commits the staged merge and any subsequent reviewed fixes as one more
@@ -557,9 +544,7 @@ committed, dispatch `vibe-guardrails-reviewer` for its check 13 on that
 merge; a blocking finding goes back to the SAME writer, then this step again.
 Resume the SAME writer's source-owned `progress` continuation
 with parent-controlled handoff purpose/transaction to execute
-`main-sync-validate` against committed input. Dirty tracked localFix source is
-NOT a check exception: preserve/block through its same-writer workaround flow,
-never stash/copy/delete or accept different checked/deployed bytes.
+`main-sync-validate` against committed input.
 
 A handoff check that fails is compared against the captured `mainSha` by the
 executor itself (`../vibe/references/quality-loop.md`, "Failures already on
@@ -822,11 +807,8 @@ person in one plain line that the pull request could not be opened and
 suggest they message engineering, naming this work by its summary; never give them the
 branch to merge instead. Then mark the session handed off as below.
 After it returns the URL, dispatch the ticket worker to attach that URL to
-every delivered claimed PRD child already in review. In Codex, when the core
-`$gh-monitor-pr` skill's setup is already in place, arm it on the new pull
-request so a review wakes this root, which then runs step 0's thread read;
-never ask the person to restart the app for it. Without it, step 0's read on
-every later look is the check. A later resume's merge
+every delivered claimed PRD child already in review. In Codex, arm the core
+`$gh-monitor-pr` on it when already set up, never asking for a restart. A later resume's merge
 check moves only proven delivered children to Done with the merge SHA.
 
 When they chose passing it on, dispatch `vibe-ticket-worker` in assign mode with the worktree, the live
@@ -880,10 +862,9 @@ resumes and every fix goes through this path, never around it:
    those threads and the person's own words. It verifies each claim against
    the code, the session decision table and the ticket, fixes every valid one
    (tests included, under that turn's rules), and returns, per thread, `fixed`
-   with the files it changed, `partial` with what remains, or `reason` with a
-   concrete reason it made no change. A fix whose behavior a feature flag
-   gates also names the test, or the missing-tests entry, that pins the
-   flag-off behavior to main. A
+   with the files it changed, `partial` with what remains, or `reason`; a
+   flag-gated fix names the test or missing-tests entry pinning flag-off
+   behavior to main. A
    product question a thread raises goes through "Answers from the person";
    a fix that needs a path the writer may never edit is logged as
    `Engineering needed (forbidden path)` and answered with that reason.
@@ -892,12 +873,9 @@ resumes and every fix goes through this path, never around it:
    `vibe-guardrails-reviewer` reruns on the whole new diff), step 4 when a
    component or story changed, step 5's checks, and step 6's review with
    `review-soul` required on the tests. Confirmed findings return to the SAME
-   writer until all of them are clean. The guardrails reviewer also checks
-   each thread the writer called `fixed` against the thread's text and the
-   new diff and returns a per-thread verdict, `verified` or `not-verified`,
-   with `file:line` evidence; the writer's own report is never that
-   verification. A `not-verified` thread goes back to the SAME writer, or
-   becomes `partial` with what remains.
+   writer until all of them are clean. The guardrails reviewer marks each
+   `fixed` thread `verified` or `not-verified` with `file:line` evidence;
+   the writer's own report is never that verification.
 5. Step 7: ROOT commits the fixes, the main-sync publication gate runs, and
    `vibe-environment-worker` in redeploy mode pushes the validated commit to
    the SAME branch through the normal pre-push hook. Never a force push,
@@ -910,11 +888,11 @@ resumes and every fix goes through this path, never around it:
    fixing commit and the writer's per-thread results. On the existing pull
    request it refreshes the body from the session record so it matches the
    diff, with the same template and rules as opening one, then replies on
-   every thread through the REST review-comment reply endpoint. It resolves
-   only the threads `scripts/review-threads.mjs check` lists under `resolve`:
-   fixed, with the fixing commit SHA, and verified by the reviewer. A
-   `partial` thread gets what was fixed and what remains, a `reason` thread
-   gets its reason, and both stay open for the reviewer.
+   every thread through the REST review-comment reply endpoint, a fixed one
+   with the fixing commit SHA. Only
+   `scripts/review-threads.mjs resolve` resolves, and only a `fixed` thread
+   the reviewer `verified`, after its check passes in the same run;
+   `partial`, `reason` and `not-verified` threads get a reply and stay open.
 8. `touch --status handed-off` again, stop local Storybook or Desktop if
    either runs, and tell the person in a line or two what changed and that the
    pull request is updated, with its link. Never a branch to merge.

@@ -216,30 +216,14 @@ engineering about it.
    source-owned readiness and validation for the captured transaction. Never
    reuse an old grant, lease or validation witness.
 
-**A writer whose runtime cannot run.** A Codex writer whose account reached
-its usage limit (a turn error naming the usage or rate limit) stays silent
-until the limit resets, and the session stalls. ROOT moves it to Claude
-through the same command; it never has a Claude worker do the writer's work
-outside the session records (operator lesson, 2026-10-19).
-
-1. Wait for the dead turn to stop, then finish it with `writer-state.mjs
-   finish`, `"status": "FAILED"`, the limit message as `resultSummary` and
-   stopped-turn evidence with `"state": "failed"`. The active request, its
-   checkpoint and the queue stay.
-2. Run `migrate` with step 3's JSON (the recorded `"runtime": "codex"`,
-   the Claude capabilities, no `workerId`) plus `"harnessSwitch": { "to":
-   "claude", "cause": "usage-limit", "evidence": "<the turn's error line>" }`.
-   The recorded definition may still be present; the switch needs no
-   upgrade. It refuses a running source or record turn, a retained record
-   grant, a writer refusal (`BLOCKED`) and a switch to the same runtime, and
-   records `harnessSwitch` with `from`, `to`, cause and evidence in
-   `migrations`.
-3. Continue with step 5 above: the owned Claude launcher starts the new
-   session once and resumes it, with the same plan, decision table,
-   checkpoint and change log, and every grant and validation witness is
-   fresh. `"cause": "runtime-unavailable"` covers a runtime that cannot be
-   started at all; a switch back to Codex later is the same command with
-   `"to": "codex"` and the new held native ID as `workerId`.
+**A writer whose runtime cannot run.** A Codex writer stopped by its usage
+limit moves to Claude through this command, never to a worker outside the
+session records (operator lesson, 2026-10-19). Finish its turn `"status":
+"FAILED"` with `"state": "failed"` evidence, run `migrate` with step 3's
+JSON (recorded `"runtime": "codex"`, no `workerId`) plus `"harnessSwitch":
+{ "to": "claude", "cause": "usage-limit", "evidence": "<error line>" }`, and
+continue at step 5. It refuses running turns, retained grants, a `BLOCKED`
+writer and a same-runtime switch, and records the switch in `migrations`.
 
 Any other binding/read/identity error remains `BLOCKED` internally. Never
 migrate around a refusal or to create parallel authors. If migration fails,
@@ -285,13 +269,10 @@ without live ticket/operator verification. This does not perform a discard or
 authorize one. Neither path fabricates a session or registers a source writer.
 Writers, prototypes and environment publication have no sessionless fallback.
 
-Main-sync's source-owned input readiness uses the SAME registered actor's
-exclusive progress turn, never an ops helper or another implementation worker.
-Follow environment.md: `main-sync-inputs` before capture and after the Root-owned
-merge/fix commit; finish the turn, then pass its opaque `validationWitness` in
-the parent grant as `mainSyncValidation`. Only identity/digest-bound validation
-derives a finite owned Claude envelope; general worker limits remain unchanged.
-Generated origin and retained-report exclusion are not test authority or PASS.
+Main-sync readiness (`main-sync-inputs`, once, after the Root-owned merge/fix
+commit) runs in the SAME registered actor's exclusive progress turn; its
+`validationWitness` becomes the next grant's `mainSyncValidation`
+(environment.md). It is not test authority or PASS.
 
 Researchers and independent reviewers may run in parallel, read-only. Backend,
 primitive, prototype, Storybook and verify roles provide read-only guidance or
@@ -494,18 +475,15 @@ at its end ("Tests: repair, don't author"). Operational publishing uses this
 same session branch.
 
 **A dependency on an open pull request never idles the session** (operator
-lesson, 2026-10-19: a session paused until another pull request merged and
-asked the person to restart the app for a detached monitor). Never pause,
-wait for the merge, or ask the person to restart anything. The writer builds
-every part of the request the unmerged code does not gate, now, and logs
-`Dependency: #<number> at <head sha>; needed for <what>` in the change log;
-the ticket worker puts it on the live ticket's Progress. ROOT reads that pull
-request with `gh pr view <number> --json state,mergedAt,headRefOid` at every
-resume and before handoff; once it has merged, the normal main sync brings
-its code in and the gated part is built. A session branch is never based on
-or merged with the dependency's unmerged head: the handoff inventory and the
-main sync diff the session against main, so the dependency's files would
-count as this session's work.
+lesson, 2026-10-19). Never pause, wait for the merge, or ask the person to
+restart anything: the writer commits every change that compiles without the
+unmerged code, so only the dependent import waits, and ROOT reads
+`gh pr view <number> --json state,mergedAt,headRefOid` at every resume until
+a main sync brings it in. Never base or merge the session on that unmerged
+head; the inventory would count its files as the session's. Merged work is
+pushed as soon as it compiles and its targeted tests pass, e2e results
+following, and a publish-helper failure is reported at once with its command
+and error.
 
 ## Lean build loop
 

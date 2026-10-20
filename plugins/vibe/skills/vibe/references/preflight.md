@@ -21,9 +21,8 @@ installation guide. Missing Node uses the ordinary `install-node` fix before
 the core check can run. Repo choice and cloning
 replace the `--repo` path but preserve `--prototype` when selected. A prototype
 does not need the app's public PostHog key.
-Never use the Codex Computer Use plugin (`guardrails.md`, "Processes and
-state"; operator ruling, 2026-10-20): a dialog that needs a click is the
-person's, asked in one plain line. Never type,
+Never use Computer Use (`guardrails.md`, "Processes and state"): a dialog
+that needs a click is the person's, asked in one plain line. Never type,
 store, or ask for a password or token; when an installer asks for the Mac
 password, tell the person "Your Mac is asking for your password to finish
 installing <thing>; type it in the prompt" and wait.

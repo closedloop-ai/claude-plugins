@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from vibe_contract_text import agent, flat, section
@@ -244,3 +245,17 @@ def test_the_update_commands_match_the_install_guide() -> None:
     assert "claude plugin marketplace update ${MARKETPLACE}" in script
     assert "claude plugin update vibe@${MARKETPLACE}" in script
     assert "`$vibe` checks this itself at the start of every session" in install
+
+
+def test_codex_uses_no_computer_use_and_visual_requests_name_the_pushed_head() -> None:
+    plugin = VIBE_SKILL.parents[2]
+    docs = [*(plugin / "agents").glob("*.md"), *(VIBE_SKILL.parent / "references").glob("*.md"), VIBE_SKILL,
+            VIBE_SKILL.parent / "INSTALL.md", plugin / "skills" / "handoff" / "SKILL.md"]
+    for path in docs:
+        for paragraph in re.split(r"\n\s*\n|\n(?=- )|\n(?=\| )", path.read_text()):
+            if re.search("computer use", paragraph, re.IGNORECASE):
+                assert re.search(r"\b(?:never|not|no)\b", paragraph, re.IGNORECASE), f"{path.name}: {flat(paragraph)[:160]}"
+    rules = section((VIBE_SKILL.parent / "references" / "guardrails.md").read_text(), "## Processes and state")
+    for phrase in ("In Codex, no computer use", "GitHub only through `gh`", "owned Claude launcher",
+                   "written request made after the push", "the pushed head (never a local SHA)"):
+        assert phrase in rules, phrase

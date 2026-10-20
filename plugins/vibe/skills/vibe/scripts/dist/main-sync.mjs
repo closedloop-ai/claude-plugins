@@ -227673,7 +227673,12 @@ function prepareInputOrigins(value, before, producers) {
     const executable = argv[0] === "node" ? process.execPath : argv[0];
     const result = spawnSync7(executable, argv.slice(1), { cwd, encoding: "utf8", timeout: OWNER_MS, maxBuffer: 16 * 1024 * 1024 });
     commands.push({ argv, exitCode: result.status, stdoutSha256: digest(result.stdout ?? ""), stderrSha256: digest(result.stderr ?? "") });
-    if (result.error || result.status !== 0) throw new MainSyncError(`Canonical generated-input producer failed: ${argv.slice(0, 4).join(" ")}; preserve private operation evidence`, "NEEDS_CHANGE");
+    if (result.error || result.status !== 0) {
+      const command = argv.slice(0, 4).join(" ");
+      const lastLine = (result.stderr ?? "").trim().split("\n").at(-1)?.slice(0, 300);
+      const cause = result.error && "code" in result.error && result.error.code === "ETIMEDOUT" ? `timed out after ${OWNER_MS / 6e4} minutes` : `exited ${result.status ?? result.signal}${lastLine ? `: ${lastLine}` : ""}`;
+      throw new MainSyncError(`Canonical generated-input producer ${command} ${cause}; private log ${log}`, "NEEDS_CHANGE");
+    }
   }
 }
 function assertTracked(root, before) {
@@ -228162,7 +228167,7 @@ function prepareMainSyncInputs(raw) {
 function prepareMainSync(raw) {
   const value = syncContext(raw, "prepare");
   const root = value.place.root;
-  committedInputs(root);
+  inspectInputInventory(root);
   const previousFile = join17(value.place.dir, MAIN_SYNC_FILE);
   const state = existsSync11(previousFile) ? mainSyncStateSchema.parse(readPrivateJson(previousFile)) : void 0;
   const previous = state?.phase === "input-readiness" ? state.previous : state;
