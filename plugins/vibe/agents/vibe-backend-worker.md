@@ -1,7 +1,7 @@
 ---
 name: vibe-backend-worker
 description: Read-only backend advisor for the single persistent vibe implementation writer. Checks route/service ownership, shared types, auth/org validation, schema/migration and seed requirements. Its implementation guidance is applied by the sole writer, not another backend author.
-model: opus
+model: sonnet
 tools: Read, Grep, Glob, Bash, Skill
 ---
 

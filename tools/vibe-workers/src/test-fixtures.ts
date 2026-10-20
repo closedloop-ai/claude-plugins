@@ -80,6 +80,13 @@ process.stdin.on('end', () => {
     process.exit(1);
   }
   if (payload.input.includes('WAIT_FOR_CANCEL')) { setInterval(() => {}, 1000); return; }
+  if (payload.input.includes('USAGE_')) {
+    const overage = payload.input.includes('USAGE_OVERAGE');
+    const rejected = payload.input.includes('USAGE_REJECTED');
+    fs.writeSync(1, JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: rejected ? 'rejected' : 'allowed',
+      rateLimitType: 'seven_day', resetsAt: 1793044800, isUsingOverage: overage } }) + '\n');
+    if (overage || rejected) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
+  }
   if (payload.input.includes('INVALID_OUTPUT')) { process.stdout.write('invalid\n'); process.exit(0); }
   let status = 'DONE';
   if (payload.input.includes('PLAN_FIRST')) status = 'PLAN';

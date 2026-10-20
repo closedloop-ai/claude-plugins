@@ -33,7 +33,7 @@ shape. Producers may emit dicts directly; the Python convenience type lives in
   // ── Anchor (depends on finding_scope) ─────────────────────
   "finding_scope": "diff | system | pr_metadata",
   "file": "<repo-relative path; null when finding_scope != 'diff'>",
-  "line": <int|null>,
+  "line": <int|null>,          // new-file line; old-file line when `file` was deleted outright (status "removed")
   "system_marker": "<from the canonical enum (Section 3); null when finding_scope == 'diff'>",
 
   // ── Classification ────────────────────────────────────────
@@ -515,6 +515,29 @@ finding — best-effort omissions are budget-driven, not coverage gaps.
 
 Stages from plans 01/03/05/06 are present in `run_plan.json` but marked
 `enabled: false` until those plans land.
+
+### 7a. `diff_data.json` line numbering (ISS-12737)
+
+`parse-diff` records, per file, `changed_ranges[<file>]`:
+
+```jsonc
+{
+  "added":   [[start, end], ...],   // new-file line numbers
+  "removed": [[start, end], ...],   // OLD-file line numbers
+  "deletion_points": [[c, c + 1], ...] // new-file lines either side of a pure
+                                       // deletion (hunk `+c,0`); present only
+                                       // when the file has such a hunk
+}
+```
+
+`validate` checks a finding's `line` in the numbering of the file it names.
+On a file whose `file_statuses` value is `removed` it is the old file, checked
+against `removed`. On every other file it is the new file, checked against
+`added` and `deletion_points` (both ±3 lines); `removed` ranges are never
+compared there. An out-of-range line takes the out-of-hunk path; nothing is
+discarded for its location alone. `partition` never assigns a `removed` file
+to Bug Hunter A, and `resolve-coverage` adds the `file_deletion` change class
+when any file is `removed`.
 
 ---
 

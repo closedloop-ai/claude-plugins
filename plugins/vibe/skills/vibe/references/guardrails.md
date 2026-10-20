@@ -112,8 +112,9 @@ The build loop stays lean (`quality-loop.md`, "Lean build loop"): quick
 prep, the build, the quick checks the commit hooks need, the orchestrator's
 commit, deploy, and showing the person. Reviews and heavy validation run
 at handoff: the guardrails and adversarial reviews, browser E2E, visual QA,
-logical QA, product-contract QA, the existing tests (the whole suite and two review
-passes when backend code changed), the running web app and Desktop driven with
+logical QA, product-contract QA, the targeted existing tests (the ones
+`code_tests_for` returns for each changed file, never a full suite) and two review
+passes when backend code changed, the running web app and Desktop driven with
 the repo's control skill, and the list of tests engineering still has to write
 (Tests, below). Beyond the quick checks, the loop's only other check is the
 writer's acceptance check before a change is called ready (`quality-loop.md`, "Acceptance criteria
@@ -154,11 +155,10 @@ the ready message tells the person so in plain words, so they never accept a
 change the branch cannot keep (operator ruling, 2026-10-15). A fix to vibe's own tooling is
 different and still stops the session ("Plugins and tooling", above).
 
-Vibe work is headed for `main`, so the closed-by-default UI policy applies: a
-net-new screen, surface, or navigation item ships behind a default-off PostHog
-flag (one key for web and Desktop, read where it gates). If the person chose
-Labs, the Labs pattern is that flag. Tell them in one line that the new screen
-stays hidden on their environment until that flag is turned on for them.
+Vibe work is headed for `main`, so the target repo's flag rule decides which
+keys it may add ("Feature flags"). If the person chose Labs, the Labs pattern
+is that flag. Tell them in one line that the new screen stays hidden on their
+environment until that flag is turned on for them.
 
 The prototype-first rule in the root `AGENTS.md` (net-new screens start in
 `apps/prototypes`) does not apply to vibe sessions. That is an operator
@@ -234,7 +234,9 @@ When nothing in the catalog fits:
    - Register it by running `pnpm --filter storybook catalog:sync` and
      `pnpm --filter storybook validate:catalog`. Never hand-edit
      `component-catalog.ts`.
-4. Run `pnpm --filter storybook test` and confirm the new stories pass.
+4. Run the Storybook tests for the new or changed story files only
+   (`pnpm --filter storybook exec vitest run <story files>`), never the whole
+   `pnpm --filter storybook test` suite, and confirm the new stories pass.
 5. A new component is built with its stories before the feature that uses it.
    The orchestrator points the person to its stories on local Storybook in one
    plain message and does not wait (`SKILL.md`, section 5, "Notices that never
@@ -407,6 +409,43 @@ reviewer, the ticket worker and the handoff skill point at it.
   writer and recorded on the Feature docs line instead, never kept as a
   draft.
 
+## No new tech debt
+
+Operator ruling, 2026-10-20: a change grows no tech debt without a cited
+reason. A new flag key, a parallel path (a second route, service, writer or
+store for a behavior one already owns), a shim, re-export or code kept only
+for a deprecated story, a second owner, a duplicated helper, type, constant,
+validator or bound, new config, or growth of a file near the repo's size
+ceiling needs a human source or a quoted repo rule; otherwise reuse what
+exists. The writer logs `Debt: <kind>; added: <what>; reused instead: <what>;
+reason: <source>`; its own rationale is never the reason. Flags are the
+tested case below.
+
+## Feature flags
+
+Operator rulings, 2026-10-20, after one session gated one Branches list behind
+three keys, others gated edits to shipped surfaces, and no handoff said which
+keys to turn on. No agent creates or adds a flag on its own.
+
+- Propose a key, or a new read of one, only for what the target repo's own
+  flag rule allows, quoted from its `AGENTS.md`, with a human source; what
+  that rule ships directly is built ungated. One behavior gets one key
+  (rollout states are its values), one key covers web and Desktop, and a key
+  already gating the surface, on main or in another session's
+  `vibe-sessions.mjs list` entry, is reused.
+- Record proposals and every key the work sits behind with
+  `scripts/flag-keys.mjs record`, then return `NEEDS_FLAG_APPROVAL`. The
+  person approves each key: ask the exact words `flag-keys.mjs question`
+  prints (the key, why, what it gates, the whole stack) and record the answer
+  with `approve`. Only an explicit yes builds the key; no answer or nobody to
+  ask builds nothing. The script's messages give the fields and next steps.
+- The ticket's Production flag snapshot section shows "Keys to see this work"
+  from the record, handoff tells the person, and `live-ticket-check.mjs`
+  fails an unapproved key.
+- An agent never adds or edits a flag registration attestation (symphony-alpha
+  ISS-8676: a ledger row or verification date only a human makes); the
+  approval and "Keys to see this work" tell the human which key to ledger.
+
 ## Accessibility
 
 Icon-only controls get accessible names, disclosures get `aria-expanded`, one
@@ -419,8 +458,7 @@ destination pattern: the route checks the `labs-nav-section` container flag
 plus its own PostHog key (see `apps/app/app/(authenticated)/[orgSlug]/help/page.tsx`
 and `packages/app/shared/lib/feature-flags.ts`). One key gates web and Desktop.
 Tell them the Labs entry shows on their environment only if those flags are
-on for them, and record the key in the session summary so handoff can list
-it.
+on for them; both keys follow "Feature flags".
 
 ## Tests
 

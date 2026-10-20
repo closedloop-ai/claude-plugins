@@ -12510,6 +12510,33 @@ async function privateData(file) {
   }
 }
 
+// src/claude-usage.ts
+var rateLimitEventSchema = external_exports.object({
+  type: external_exports.literal("rate_limit_event"),
+  rate_limit_info: external_exports.object({
+    status: external_exports.string().min(1).max(64),
+    rateLimitType: external_exports.string().max(64).optional(),
+    resetsAt: external_exports.number().finite().optional(),
+    isUsingOverage: external_exports.boolean().optional()
+  }).passthrough()
+}).passthrough();
+var RATE_LIMIT_REJECTED = "rejected";
+function rateLimitFromEvent(event) {
+  const parsed = rateLimitEventSchema.safeParse(event);
+  if (!parsed.success) return void 0;
+  const info = parsed.data.rate_limit_info;
+  return {
+    status: info.status,
+    ...info.rateLimitType ? { rateLimitType: info.rateLimitType } : {},
+    ...info.resetsAt !== void 0 && info.resetsAt > 0 ? { resetsAt: new Date(info.resetsAt * 1e3).toISOString() } : {},
+    ...info.isUsingOverage !== void 0 ? { isUsingOverage: info.isUsingOverage } : {}
+  };
+}
+function mustStopForUsage(rateLimit, allowCredits) {
+  if (!rateLimit || allowCredits) return false;
+  return rateLimit.status === RATE_LIMIT_REJECTED || rateLimit.isUsingOverage === true;
+}
+
 // src/claude-worker.ts
 var launchSchema = recordContextSchema.extend({
   /** Optional: the launcher binds its own installed plugin root (or a resumed writer's recorded root) when omitted. */
@@ -12518,7 +12545,9 @@ var launchSchema = recordContextSchema.extend({
   input: external_exports.string().min(1).max(64 * 1024).optional(),
   continuation: external_exports.string().min(1).max(64 * 1024).optional(),
   capabilities: capabilitiesSchema,
-  timeoutMs: external_exports.number().int().min(1e3).max(30 * 60 * 1e3).default(15 * 60 * 1e3)
+  timeoutMs: external_exports.number().int().min(1e3).max(30 * 60 * 1e3).default(15 * 60 * 1e3),
+  /** Set only when the person explicitly allowed paid extra usage; otherwise a reached limit or overage stops the turn. */
+  allowCredits: external_exports.boolean().optional()
 }).strict().refine((data) => !(data.input && data.continuation), "Supply input or continuation, not both");
 var resultSchema = external_exports.object({
   type: external_exports.literal("result"),
@@ -12725,7 +12754,7 @@ async function runWorker(rawInput) {
       ...operationContext ? { operationContext } : {},
       ...referenceImagesFor(input.agentName, place.dir),
       input: turnInput
-    }), timeoutMs, trace, (processGroupId) => {
+    }), timeoutMs, trace, input.allowCredits === true, (processGroupId) => {
       if (persistent && lease) attachClaudeProcess(input.worktree, workerId, lease, processGroupId);
     });
     process.removeListener("SIGTERM", cancelBeforeLaunch);
@@ -12785,7 +12814,7 @@ async function runWorker(rawInput) {
     if (discardLock && !cleanupBlocked && discardPlace) rmSync2(join7(discardPlace.dir, "vibe-record-turn.lock"), { recursive: true, force: true });
   }
 }
-async function launchProcess(args, granted, cwd, input, timeoutMs, trace, attach) {
+async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowCredits, attach) {
   return await new Promise((resolve3, reject) => {
     const child = spawn("claude", args, {
       cwd,
@@ -12797,6 +12826,7 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, attach
     let bytes = 0;
     let final;
     let authFailed = false;
+    let rateLimit;
     const decoder = new StringDecoder("utf8");
     let killTimer;
     const stop = (reason) => {
@@ -12850,6 +12880,10 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, attach
         try {
           const event = JSON.parse(line);
           checkInit(event);
+          rateLimit = rateLimitFromEvent(event) ?? rateLimit;
+          if (mustStopForUsage(rateLimit, allowCredits)) {
+            stop(new LaunchPrecheckError("USAGE_LIMIT_REACHED", "Claude reported a reached usage limit or paid extra usage"));
+          }
           const parsed = resultSchema.safeParse(event);
           if (parsed.success) {
             final = parsed.data;
@@ -12894,7 +12928,7 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, attach
         }
         try {
           const result = workerResultSchema.parse(final.structured_output !== void 0 ? final.structured_output : JSON.parse(final.result));
-          resolve3({ ...result, sessionId: final.session_id });
+          resolve3({ ...result, sessionId: final.session_id, ...rateLimit ? { rateLimit } : {} });
         } catch {
           reject(new Error("Worker returned no valid compact status object"));
         }

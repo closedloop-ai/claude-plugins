@@ -151,7 +151,8 @@ FILE SCOPE:
 - Findings must concern code AFFECTED by this change. That includes:
   (a) bugs on lines IN the diff (added or modified), AND
   (b) bugs on UNCHANGED lines that the diff demonstrably broke — e.g. a caller whose contract this PR violated, a sibling function in the same file that shares the broken invariant, a downstream consumer whose assumption no longer holds. This holds in files OUTSIDE <files_assigned> too: a stale test mock, a comment or docstring describing code this diff removed, a config naming a deleted path.
-- A finding on code outside <files_assigned> MUST cite the diff line that caused it as an `evidence[]` entry — an object `{"file": "<diff file>", "line": <new-file line of the change>, "claim": "<what the change did>"}`, never a bare "file:line" string — so the verifier can trace causation.
+- A finding on code outside <files_assigned> MUST cite the diff line that caused it as an `evidence[]` entry — an object `{"file": "<diff file>", "line": <new-file line of the change>, "claim": "<what the change did>"}` (the old-file line when the cited file was deleted outright), never a bare "file:line" string — so the verifier can trace causation.
+- Lines deleted from a file that still exists are EVIDENCE, not a finding location. Removing a guard, lock release, validation step or `await` is a valid bug, but point `file`/`line` at the surviving line beside the deletion (a new-file line number), never at a removed line's number. Only a finding on a file this diff deleted outright (status `removed`) uses old-file line numbers.
 - Bugs in ENTIRELY UNRELATED files not affected by this change are out of scope, even if real — surface those in a separate PR.
 - Every finding MUST cite a specific file:line. If you cannot, do not report it.
 

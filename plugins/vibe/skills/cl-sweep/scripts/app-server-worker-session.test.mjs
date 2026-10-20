@@ -298,7 +298,7 @@ function manuallyWriteArtifact(fixture, event, artifact) {
   };
 }
 
-test('new ticket sessions default to gpt-6-sol and capture a synchronous callback', async () => {
+test('new ticket sessions default to gpt-6-sol at high effort and capture a synchronous callback', async () => {
   const fixture = initializeFixture();
   const event = {
     event_id: randomUUID(),
@@ -329,14 +329,14 @@ test('new ticket sessions default to gpt-6-sol and capture a synchronous callbac
   assert.equal(stored.appServerThreadId, 'worker-thread');
   assert.equal(REQUIRED_WORKER_MODEL, 'gpt-6-sol');
   assert.equal(stored.requestedModel, REQUIRED_WORKER_MODEL);
-  assert.equal(stored.requestedReasoningEffort, 'xhigh');
+  assert.equal(stored.requestedReasoningEffort, 'high');
   assert.equal(stored.modelBinding.field, 'model');
   assert.match(readFileSync(fixture.eventsFile, 'utf8'), new RegExp(event.event_id));
   const threadStart = client.requests.find(({ method }) => method === 'thread/start');
   assert.equal(threadStart.params.model, REQUIRED_WORKER_MODEL);
   const start = client.requests.find(({ method, params }) => method === 'turn/start' && params.threadId === 'worker-thread');
   assert.equal(start.params.model, REQUIRED_WORKER_MODEL);
-  assert.equal(start.params.effort, 'xhigh');
+  assert.equal(start.params.effort, 'high');
   assert.equal(start.params.cwd, realpathSync(fixture.worktree));
   assert.deepEqual(start.params.sandboxPolicy, { type: 'dangerFullAccess' });
   assert.match(start.params.input[0].text, /validate-callback --session-file/);
@@ -371,22 +371,7 @@ test('new ticket sessions reject every legacy model without fallback', () => {
 
 test('resumes an existing WAITING session with the bound callback preflight', async () => {
   const fixture = initializeFixture();
-  const makeEvent = () => ({
-    event_id: randomUUID(),
-    parent_thread_id: 'parent-thread',
-    ticket: 'ISS-1',
-    worker_id: 'worker-1',
-    owner_surface: 'cli',
-    owner_generation: 3,
-    lease_id: 'lease-1',
-    lease_token_hash: 'a'.repeat(64),
-    kind: 'EXECUTION_CHECKPOINT',
-    phase: 'implementation',
-    status: 'WAITING',
-    parent_action: 'continue',
-    worktree: fixture.worktree,
-    payload: {},
-  });
+  const makeEvent = () => waitingCheckpointEvent(fixture.worktree);
   await runTurn({
     'session-file': fixture.sessionFile,
     'prompt-file': fixture.promptFile,
@@ -413,7 +398,7 @@ test('resumes an existing WAITING session with the bound callback preflight', as
   ));
   assert.equal(resume.params.model, REQUIRED_WORKER_MODEL);
   assert.equal(start.params.model, REQUIRED_WORKER_MODEL);
-  assert.equal(start.params.effort, 'xhigh');
+  assert.equal(start.params.effort, 'high');
   assert.match(start.params.input[0].text, /"parent_thread_id":"parent-thread"/);
   assert.match(start.params.input[0].text, /validate-callback --session-file/);
 });
@@ -467,11 +452,25 @@ test('fails closed before a worker turn when model proof is missing or incompati
   }, { client: new FakeClient({ worktree: fixture.worktree }) }), /requestedModel must be gpt-6-sol or a persisted legacy gpt-5\.5\/gpt-5\.6-\* binding/);
 });
 
+test('an explicitly raised or already persisted xhigh effort is kept on every turn', async () => {
+  const fixture = initializeFixture({ 'reasoning-effort': 'xhigh' });
+  assert.equal(JSON.parse(readFileSync(fixture.sessionFile, 'utf8')).requestedReasoningEffort, 'xhigh');
+  const client = new FakeClient({ worktree: fixture.worktree, event: waitingCheckpointEvent(fixture.worktree) });
+  await runTurn({
+    'session-file': fixture.sessionFile,
+    'prompt-file': fixture.promptFile,
+    'events-file': fixture.eventsFile,
+  }, { client });
+  const start = client.requests.find(({ method, params }) => method === 'turn/start' && params.threadId === 'worker-thread');
+  assert.equal(start.params.effort, 'xhigh');
+  assert.equal(JSON.parse(readFileSync(fixture.sessionFile, 'utf8')).requestedReasoningEffort, 'xhigh');
+});
+
 test('status validates the persisted gpt-6-sol model binding without starting a turn', async () => {
   const fixture = initializeFixture();
   const status = await statusSession({ 'session-file': fixture.sessionFile }, { client: new FakeClient({ worktree: fixture.worktree }) });
   assert.equal(status.requestedModel, REQUIRED_WORKER_MODEL);
-  assert.equal(status.requestedReasoningEffort, 'xhigh');
+  assert.equal(status.requestedReasoningEffort, 'high');
   assert.deepEqual(status.modelBinding, { valid: true, error: null });
 
   const stored = JSON.parse(readFileSync(fixture.sessionFile, 'utf8'));
@@ -1808,3 +1807,22 @@ test('an original idle thread can be restored only after the outgoing thread is 
   assert.equal(restored.threadId, 'source-thread');
   assert.equal(JSON.parse(readFileSync(targetFile, 'utf8')).appServerThreadId, 'source-thread');
 });
+
+function waitingCheckpointEvent(worktree) {
+  return {
+    event_id: randomUUID(),
+    parent_thread_id: 'parent-thread',
+    ticket: 'ISS-1',
+    worker_id: 'worker-1',
+    owner_surface: 'cli',
+    owner_generation: 3,
+    lease_id: 'lease-1',
+    lease_token_hash: 'a'.repeat(64),
+    kind: 'EXECUTION_CHECKPOINT',
+    phase: 'implementation',
+    status: 'WAITING',
+    parent_action: 'continue',
+    worktree,
+    payload: {},
+  };
+}

@@ -58,16 +58,35 @@ automatic technical approval question for the vibe coder. Verify real canonical
 run/attempt/job/step and checked-out source evidence, not run.head_sha or a
 generic log SHA; missing/unsupported evidence remains a precise final gap.
 
-Run Biome WITHOUT write/fix flags, source gates, `pnpm typecheck:affected`,
-the existing affected tests (`guardrails.md`, "Running and missing tests"),
-and the inventory's `diffRules.requiredTests` and `requiredChecks`. Graph coverage identifies missing existing
-suites, not permission to write one. More, from the reviews of
-symphony-alpha #8885 and #8886 (operator ruling, 2026-10-16):
+Validation is targeted, never a broad or full local suite (operator ruling,
+2026-10-19, after vibe sessions exhausted the weekly Codex limits). Run Biome
+WITHOUT write/fix flags on the changed files, source gates,
+`pnpm typecheck:affected` (the changed packages and their dependents), and
+only the tests closedloop-graph's `code_tests_for` returns for each changed
+file (any file a change, fix or main merge touched, conflict resolutions
+included), plus the inventory's `diffRules.requiredTests` and `requiredChecks`, each through its owning package's runner on those test files alone (for
+example `pnpm --filter <package> exec vitest run <test files>`). Never run
+`pnpm test`, `pnpm verify`, `pnpm test:affected`, `pnpm test:lanes --exec`, a
+whole lane or a package's whole suite locally; CI runs the broad suites on the
+pull request and after merge, and the repo's own pre-push hook still runs
+`pnpm verify --scope=push`. A requested pull request opens once these targeted
+checks pass. When `code_tests_for` answers `found: false` for a changed file,
+record that file and run no wider suite in its place. Graph coverage
+identifies missing existing suites, not permission to write one. Three more,
+from the reviews of symphony-alpha #8885 and #8886 (operator ruling,
+2026-10-16):
 
 - Every e2e spec the session touched, and every spec that covers a touched
   screen (`code_tests_for`, and `rg` of the screen's route and test IDs under
   `e2e/`), runs at handoff through the repo's containerized path (the
-  `local-ci` skill, `dagger call e-2-e`), never natively on the person's Mac.
+  `local-ci` skill, `dagger call e-2-e`), never natively on the person's Mac,
+  and only those specs, never the whole e2e suite. The containerized stack
+  is one per machine (one compose project name, fixed ports and shared
+  Dagger cache volumes), so start it only through
+  `node ../skills/vibe/scripts/e2e-lock.mjs run <the e2e command>`, which
+  waits until no other session's stack is running. Its exit 75 means the
+  stack stayed busy past the wait: record that limitation with the holder it
+  prints, never a pass, and never start the stack around the lock.
   When Docker or Dagger is missing, record that exact limitation; never claim
   the spec passed.
 - Before you claim that CI runs, or ran, a check or test, read

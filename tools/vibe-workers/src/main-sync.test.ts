@@ -606,23 +606,25 @@ describe("production main-sync publication CLIs", () => {
     expect(receipt.featureTestHistory).toContainEqual({ commit: mergeCommit, path });
     expect(receipt.featureTestHistory.some((entry: { path: string }) => entry.path === "apps/app/imported.test.ts")).toBe(false);
   }, 30000);
-  it("executes the existing full backend handoff matrix without imposing it on build checks", () => {
+  it("runs no broad suite at handoff, backend change or not (operator ruling, 2026-10-19)", () => {
     const value = setup();
     value.write("apps/api/change.ts", "backend source\n"); value.git(["add", "."]);
     value.git(["commit", "-m", "Backend feature fixture"]);
-    validateFixture(value, "build");
-    const calls = () => value.calls().trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
-    expect(calls()).not.toContainEqual(["verify"]);
-    writeFileSync(join(value.metadata, "validation-calls.jsonl"), "");
+    const calls = () => value.calls().trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]);
     validateFixture(value, "handoff");
-    for (const command of [["verify"], ["test"], ["test:lint"], ["test:skills"], ["vibe", "storybook-diff"]]) {
-      expect(calls()).toContainEqual(command);
+    const handoff = calls().filter((call) => !call.includes("--dry=json"));
+    for (const command of [["check:source-gates"], ["typecheck:affected"], ["vibe", "storybook-diff"]]) {
+      expect(handoff).toContainEqual(command);
     }
+    for (const command of [["verify"], ["test"], ["test:lint"], ["test:skills"], ["test:lanes"], ["test:affected", "--continue"]]) {
+      expect(handoff).not.toContainEqual(command);
+    }
+    expect(handoff.some((call) => call[0] === "turbo" && call[1] === "test")).toBe(false);
     const publication = value.start("redeploy", "build");
     try { expect(invokeSync(value, "push", publication.context).status).toBe(1); } finally { publication.finish(); }
     expect(value.git(["ls-remote", "origin", "refs/heads/vibe/test"])).toBe("");
   }, 60000);
-  it("runs only the commit-hook checks for a build-loop deploy and the full matrix at handoff", () => {
+  it("runs only the commit-hook checks for a build-loop deploy and adds gates and typecheck at handoff", () => {
     const value = setup();
     value.write("apps/app/feature.ts", "export const feature = 1;\n");
     value.write("scripts/lint/owned-change.ts", "export {};\n");
@@ -635,11 +637,14 @@ describe("production main-sync publication CLIs", () => {
     writeFileSync(join(value.metadata, "validation-calls.jsonl"), "");
     validateFixture(value, "handoff");
     const handoff = executed(calls());
-    for (const command of [["check:source-gates"], ["typecheck:affected"], ["test:affected", "--continue"], ["test:lanes"], ["test:skills"],
-      ["vibe", "storybook-diff"]]) expect(handoff).toContainEqual(command);
-    expect(handoff.some((call) => call[0] === "turbo" && call[1] === "test")).toBe(true);
+    for (const command of [["check:source-gates"], ["typecheck:affected"], ["vibe", "storybook-diff"]]) {
+      expect(handoff).toContainEqual(command);
+    }
+    expect(handoff.some((call) => call[0] === "turbo" && call[1] === "typecheck")).toBe(true);
+    for (const command of [["test:affected", "--continue"], ["test:lanes"], ["test:skills"]]) expect(handoff).not.toContainEqual(command);
+    expect(handoff.some((call) => call[0] === "turbo" && call[1] === "test")).toBe(false);
   }, 60000);
-  it("runs a lane the owning reporter widened to its whole suite and explains why", () => {
+  it("does not run a lane the owning reporter widened to its whole suite", () => {
     // symphony-alpha LaneCiCommand carries widenReason when a changed package.json makes the selector run a lane whole.
     const value = setup();
     value.write("scripts/lint/report-test-lanes.ts", "export function laneCiCommand(script) {return {script, widenReason: 'package.json can change how any suite in this lane resolves or runs'};}\nexport function execPlan(_, commands) {return commands;}\n");
@@ -647,7 +652,7 @@ describe("production main-sync publication CLIs", () => {
     const result = validateFixture(value, "handoff");
     expect(result.status, result.stdout).toBe(0);
     const calls = value.calls().trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
-    expect(calls).toContainEqual(["test:skills"]);
+    expect(calls).not.toContainEqual(["test:skills"]);
   }, 60000);
   it("preserves symlink evidence and rejects stale operator provenance before preparing or requesting", () => {
     const value = setup();

@@ -23,12 +23,12 @@ This stage runs when the walker reaches `stage_20`.
 - `partitioned: false` → patches file is `patches_all.txt`; `<files_assigned>` is the full `files_to_review` list.
 - `subagent_type` per descriptor: use `code-review:code-review-worker-graph` when `reviewer ∈ {bug_hunter_b, impact, design_critic}` (or the fast-path agent); use `code-review:code-review-worker` for every other descriptor. See the "Agent type" rule above. Pass the resolved `CODE_INTEL_ALLOWED` and `CODE_INTEL_REQUIRE_ROOT_ARG` into the BHB / Impact / Design Critic / fast-path prompts.
 - Prompt-suffix dispatch is **two-level**:
-  - When `source == "core"`, branch on the `reviewer` field to select the suffix: `bug_hunter_a` → BHA, `bug_hunter_b` → BHB, `unified_auditor` → Auditor, `impact` → Impact Analyzer, `design_critic` → Design Critic. (All five roles share `source: "core"`, so `source` alone is not enough.) `impact` only appears in `agents[]` when invocation depth is `deep` AND signal extraction emitted `exported_symbol_change` or `symbol_deletion`; `design_critic` appears in `agents[]` on every `deep` review (an always-on conditional core reviewer). Both are code-intelligence-aware: `impact` and `design_critic` each load the code-intelligence protocol, so spawn both as `code-review:code-review-worker-graph` and substitute the resolved `CODE_INTEL_ALLOWED` and `CODE_INTEL_REQUIRE_ROOT_ARG` into their suffixes.
+  - When `source == "core"`, branch on the `reviewer` field to select the suffix: `bug_hunter_a` → BHA, `bug_hunter_b` → BHB, `unified_auditor` → Auditor, `impact` → Impact Analyzer, `design_critic` → Design Critic. (All five roles share `source: "core"`, so `source` alone is not enough.) `impact` only appears in `agents[]` when invocation depth is `deep` AND either signal extraction emitted `exported_symbol_change` or `symbol_deletion`, or the diff deletes a file outright (the deterministic `file_deletion` change class, read from `file_statuses` — no signal needed); `design_critic` appears in `agents[]` on every `deep` review (an always-on conditional core reviewer). Both are code-intelligence-aware: `impact` and `design_critic` each load the code-intelligence protocol, so spawn both as `code-review:code-review-worker-graph` and substitute the resolved `CODE_INTEL_ALLOWED` and `CODE_INTEL_REQUIRE_ROOT_ARG` into their suffixes.
   - When `source` is `"rule"` or `"critic"` → Domain Critic suffix (the `reviewer` field carries the critic name for the `{critic_name}` prompt slot). `"rule"` means the entry came from a deterministically matched `critic-gates.json` `coverage[]` rule (including migrated legacy `moduleCritics[]`); `"critic"` means the entry was LLM-proposed by `coverage_critic`. Both spawn as `domain_<N>` with sonnet.
   - When `source == "fast_path"` → Fast Path suffix (only emitted on the fast-path branch; mutually exclusive with the bucket walk).
 - `spec.fast_path: true` → spec emits exactly one agent (`agent_id: "fast"`); skip the standard-flow tables and use the Fast Path suffix below.
 - `spec.gated_by_verify: true` → a BLOCKING verify verdict from stage_15c fired (the canonical finding already lives in `agent_coverage-verify-blocking.json`). The spec has already been sanitized — only `source: "core"` agents will be present in `agents[]`; rule/critic-source reviewers were moved to `skipped[]` with `reason: "gated_by_verify"`. Spawn the (sanitized) spec as-is and surface a one-line warning in the present step that arbitration was bypassed.
-- `spec.skipped[]` → reviewers the spec deliberately did not spawn (e.g. `test_quality` deferred to PLN-723; `bug_hunter_a` skipped because all files cached). Do not re-add them.
+- `spec.skipped[]` → reviewers the spec deliberately did not spawn (e.g. `test_quality` deferred to PLN-723; `bug_hunter_a` skipped because all files cached or only deleted files are left). Do not re-add them.
 
 The static tables, model selection notes, and partition-to-agent mapping below remain authoritative for the **fallback path** (when `spawn.json` is absent, its `spec` section is missing, or it marks `arbitrate_status: "fallback"`) and for human inspection of the canonical fleet shape.
 
@@ -88,7 +88,7 @@ For BHB, Auditor, and Domain Critic, the `<files_assigned>` in their prompt list
 - `partition.is_test_only == true`: use `spawn.json.route -> models.bug_hunter_a.test_only` (Sonnet).
 - Otherwise: use `spawn.json.route -> models.bug_hunter_a.default` (Opus).
 
-**Skip BHA when all files are cached.** If `uncached_diff_data.json` has an empty `files_to_review`, `partitions.json` will have zero partitions. Skip spawning BHA agents entirely — all BHA findings come from cache. BHB, Auditor, Domain Critic still run against the full `diff_data.json` and `patches_all.txt`.
+**Skip BHA when there are zero partitions.** `partitions.json` has zero partitions when every file is cached (empty `files_to_review` in `uncached_diff_data.json`) or when every uncached file was deleted outright (`partition` never assigns a `removed` file to Bug Hunter A). Skip spawning BHA agents entirely — any BHA findings come from cache. BHB, Auditor, Domain Critic still run against the full `diff_data.json` and `patches_all.txt`, and BHB owns the deletions.
 
 ### Per-Agent Prompt Template
 
@@ -135,6 +135,11 @@ are out of scope wherever they are.
 If a file includes `[lines X-Y]` in <files_assigned>, focus findings within
 `X..Y` (±3 line tolerance for hunk boundaries) unless cross-line CAUSATION
 applies per shared_prompt.txt's CAUSATION step.
+Files marked `removed` in <files_assigned> were deleted outright. They are not
+review targets for single-file reviewers (Bug Hunter A, Unified Auditor, domain
+critics): Bug Hunter B, the Impact Analyzer and the fast-path reviewer own
+deletions. Lines deleted from a file that still exists are evidence, per
+shared_prompt.txt FILE SCOPE.
 
 <output_file>{CR_DIR}/agent_{AGENT_ID}.json</output_file>
 
@@ -193,6 +198,8 @@ Focus areas:
 
 For DRY claims, one concrete example of prior art is sufficient (cite file path + function name).
 
+{DELETIONS_SECTION}
+
 CODE INTELLIGENCE (optional): CODE_INTEL_ALLOWED=<CODE_INTEL_ALLOWED>,
 CODE_INTEL_REQUIRE_ROOT_ARG=<CODE_INTEL_REQUIRE_ROOT_ARG>. Follow the
 "OPTIONAL — CODE INTELLIGENCE" protocol in {CR_DIR}/shared_prompt.txt: inspect your own
@@ -215,6 +222,31 @@ DRY detection (check Learned Patterns for known conventions) and pattern consist
 ```
 
 Do NOT embed the full CLAUDE.md in Bug Hunter B's prompt — it consumes orchestrator context. The agent reads the file itself via the Read tool.
+
+**Deletions section (Bug Hunter B and the fast-path reviewer).** Replace `{DELETIONS_SECTION}` with the block below, substituting `{DELETED_FILES}` with one `- <path>` line per `files_to_review` entry whose `diff_data.json` `file_statuses` value is `removed`. When no file is removed, replace `{DELETIONS_SECTION}` with nothing.
+
+```
+DELETIONS — you own them. This diff deletes these files outright (status `removed`):
+{DELETED_FILES}
+For each deleted file:
+1. Search <review_root> for what still references it:
+   - its module path and import specifiers;
+   - each name it exported;
+   - string or path references: route tables, plugin manifests, registries,
+     glob patterns, dynamic imports.
+2. Ask what relied on the file existing:
+   - behavior that is now gone (auth, rate limiting, retries, deleted tests);
+   - callers outside this repo (public routes, CLI flags, config keys,
+     published exports);
+   - history that must not be deleted (applied migrations).
+3. Place each finding:
+   - A broken reference in this repo: point `file`/`line` at that reference
+     (a file outside the diff is fine) and cite the deleted declaration in
+     `evidence[]` as {"file": "<deleted file>", "line": <old-file line>, "claim": "..."}.
+   - A caller outside the repo, or lost behavior with no surviving location:
+     point `file`/`line` at the declaration in the deleted file, numbered in
+     the OLD file (the `-` side of its patch hunk).
+```
 
 **Unified Auditor** (Sonnet):
 ```
@@ -253,7 +285,7 @@ Return findings in the standard JSON format.
 
 **Impact Analyzer** (FEA-1401 — conditional, deep tier only, model per `spawn.json.route -> models.impact` (default `opus`), `AGENT_ID: "impact"`):
 
-The Impact Analyzer is a conditional core reviewer that only appears in `spawn.json.spec.agents[]` when invocation depth is `deep` AND signal extraction emitted `exported_symbol_change` or `symbol_deletion`. Its prompt is per-run-cached at `{CR_DIR}/impact_analyzer_prompt.txt` (copied by `prep-assets` on the same contract as `verifier_prompt.txt` — editing the source busts the prompt-hash so cache entries built against the old prompt are invalidated).
+The Impact Analyzer is a conditional core reviewer that only appears in `spawn.json.spec.agents[]` when invocation depth is `deep` AND either signal extraction emitted `exported_symbol_change` or `symbol_deletion`, or the diff deletes a file outright (`file_deletion` change class). Its prompt is per-run-cached at `{CR_DIR}/impact_analyzer_prompt.txt` (copied by `prep-assets` on the same contract as `verifier_prompt.txt` — editing the source busts the prompt-hash so cache entries built against the old prompt are invalidated).
 
 The reviewer reads the full diff (`patches_all.txt`) and uses Read, Grep, Glob to find external usages of changed symbols, evaluating each callsite's compatibility under the new signature. Findings anchor at the diff line where the symbol changed; the `external_impact[]` array on each finding lists the breaking callsites. The verifier per-entry-audits each callsite and replays the cited grep query (first 5 findings per batch).
 
@@ -438,6 +470,8 @@ Focus areas:
 
 For DRY claims, one concrete example of prior art is sufficient (cite file path + function name).
 
+{DELETIONS_SECTION}
+
 CODE INTELLIGENCE (optional): CODE_INTEL_ALLOWED=<CODE_INTEL_ALLOWED>,
 CODE_INTEL_REQUIRE_ROOT_ARG=<CODE_INTEL_REQUIRE_ROOT_ARG>. Follow the
 "OPTIONAL — CODE INTELLIGENCE" protocol in {CR_DIR}/shared_prompt.txt — when
@@ -489,6 +523,8 @@ Standard severity/priority rules apply.
 ```
 
 If `domain_critics` is empty, remove the `{DOMAIN_CRITIC_PASS}` placeholder entirely.
+
+Replace `{DELETIONS_SECTION}` in PASS 2 exactly as for Bug Hunter B (the Deletions section above): the fast-path reviewer owns deletions on a small diff.
 
 **Fast-Path Spawn + Collection:**
 - Spawn exactly ONE agent (`AGENT_ID: "fast"`) and collect it SYNCHRONOUSLY (MANDATORY). Either spawn the Task with `run_in_background: false` (omitted is fine), in which case the call blocks and returns the `DONE`/findings status directly, or, if you do background it, your VERY NEXT action MUST be a blocking `TaskOutput` for `AGENT_ID: "fast"`. Do NOT emit a final summary, mark a todo complete, or end your turn until the fast-path agent has returned and the remaining stages (`stage_21_collect_findings` through `stage_30_footer`) have run. Backgrounding one agent provides no parallelism and, in headless mode, lets the run exit before those stages execute (see the headless warning below).
