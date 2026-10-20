@@ -18,6 +18,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Fixed
 - `validate` no longer compares a new-file line against `removed` ranges, which are numbered in the old file and accepted lines by numeric coincidence. On an added or modified file a line is in range only within `added` ranges or `deletion_points` (±3 lines); on a deleted file it is checked against `removed` ranges. An out-of-range line takes the existing out-of-hunk path; nothing new is discarded for its location.
 
+### vibe v1.0.59
+
+#### Added
+- `codex-fleet-monitor` skill: a background event watcher for a fleet of Codex App Server threads (local and one ssh host) plus the pull requests they produce. It exits with a diff on the first change and flags IDLE, STALLED, FAILED, merge conflicts, review and comment counts, check changes and new PRs. Liveness is read from each thread's last turn and item count rather than the turn id alone, so a turn left open by a silent Codex usage limit is reported as STALLED. It needs only the vibe plugin and the `codex` CLI: `liveness.mjs` is a single self-contained file that talks to the managed App Server through `codex app-server proxy`, and `sessions.txt` lists sessions as `local|remote <label> <threadId>` (the two-column `<name>` form that reads a `<name>.json` state file with a `threadId` still works). The skill description tells agents to reach for it whenever two or more Codex or vibe sessions are running.
+- `codex-fleet-monitor` prints `codex-usage <local|remote> <band>% <state> resets=<n>` for this machine and the ssh host from `account/rateLimits/read`, where the state is `ok`, `LIMIT`, `LIMIT-SPENDING-CREDITS` (the limit is reached and turns are consuming paid credits) or `LIMIT-STOPPED`. `ratelimit.mjs` reuses the App Server client exported by `liveness.mjs` and is bounded by the same in-process timeout; both files are copied to `<REMOTE_STATE_DIR>/.fleet-monitor/` on the remote host. The skill tells agents to warn the user when the band rises fast and to stop sending turns on `LIMIT-SPENDING-CREDITS` unless the user approves paid credits.
+- Optional `REQUESTS_DIR` and `REMOTE_REQUESTS_DIR` print `requests <where> <count> <newest file>`, so the watcher wakes when a Codex session drops a delegated-work request for a Claude worker.
+- `codex-fleet-monitor`'s `watch.sh` compares each run against the previous run's `last-snapshot.txt`, so a change between a watcher exit and its re-arm (such as a session switching to paid credits) is still reported. PR check counts are reported only once settled: while `gh` lists no checks or any check is pending, the line keeps the last settled counts with a ` (running)` suffix instead of flapping on every CI run.
+
 ### code-review v3.11.0
 
 #### Changed

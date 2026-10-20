@@ -301,6 +301,21 @@ through the queue, and mark the ticket Done. The fix worker runs the full web
 and Desktop screen walk itself, on a Mac through `pnpm vibe walk-linux`, and
 its counts and result file go into the PR's Test plan and the ticket's loop.
 
+### `codex-fleet-monitor`
+
+Background event watcher for a fleet of long-running Codex App Server threads
+(local and one ssh host) plus the pull requests they produce. One command polls
+every watched thread and PR and exits with a diff on the first change: a session
+going idle, stalling, or failing, a merge conflict, new review or comment
+counts, changed checks, or a new PR. Liveness is read from the thread's last
+turn and item count, so a turn left open by a silent Codex usage limit shows as
+`STALLED` instead of running forever. It also prints a Codex usage line for each
+machine (used-percent band, and whether a reached limit has started spending
+paid credits), check counts only once they settle, and optionally the
+delegated-work request files sessions drop for Claude workers. A change made
+between a watcher exit and its re-arm is still reported. It needs only this
+plugin and the `codex` CLI; sessions are listed by thread id.
+
 ### ClosedLoop Ticket Skills
 
 The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl-analyze`, `cl-find-related-tickets`, `cl-split`, `cl-work-report`, `cl-sweep`, and `cl-execute`. Together they cover policy-aware ticket analysis, related-ticket discovery, safe one-level split workflows, private project work reports, sweep coordination, and end-to-end ticket execution. The imported sweep scripts use the native managed Codex App Server through bundled helpers rather than depending on a separate `app-server-orchestrator` skill. Runtime access still depends on the operator's normal ClosedLoop, GitHub, `workflow-memory`, and `closedloop-graph` MCP/API configuration.

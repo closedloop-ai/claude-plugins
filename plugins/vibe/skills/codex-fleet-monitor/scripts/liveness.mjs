@@ -1,0 +1,258 @@
+// Usage: node liveness.mjs <stateDir> <session>...
+// A session is "<name>" (reads <stateDir>/<name>.json, which holds a threadId) or "<label>=<threadId>".
+// Prints "<label> <lastTurnStatus> <itemCount> <flag>"; flag is LIMIT, ERROR, READFAIL or -.
+// Self-contained: speaks the Codex App Server protocol to the managed daemon through
+// `codex app-server proxy`, so a single file is all a remote host needs.
+import { createHash, randomBytes } from 'node:crypto';
+import { execFileSync, spawn } from 'node:child_process';
+import { readFileSync, realpathSync } from 'node:fs';
+import { createConnection } from 'node:net';
+import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+
+const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+const REQUEST_TIMEOUT_MS = 30_000;
+const TOTAL_TIMEOUT_MS = 120_000;
+
+export function encodeFrame(payload, opcode = 0x1) {
+  const body = Buffer.from(payload);
+  const mask = randomBytes(4);
+  let header;
+  if (body.length < 126) header = Buffer.from([0x80 | opcode, 0x80 | body.length]);
+  else if (body.length <= 0xffff) {
+    header = Buffer.alloc(4);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | 126;
+    header.writeUInt16BE(body.length, 2);
+  } else {
+    header = Buffer.alloc(10);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | 127;
+    header.writeBigUInt64BE(BigInt(body.length), 2);
+  }
+  const masked = Buffer.from(body);
+  for (let i = 0; i < masked.length; i += 1) masked[i] ^= mask[i % 4];
+  return Buffer.concat([header, mask, masked]);
+}
+
+export function decodeFrames(buffer) {
+  const frames = [];
+  let offset = 0;
+  while (buffer.length - offset >= 2) {
+    const first = buffer[offset];
+    const second = buffer[offset + 1];
+    let length = second & 0x7f;
+    let headerLength = 2;
+    if (length === 126) {
+      if (buffer.length - offset < 4) break;
+      length = buffer.readUInt16BE(offset + 2);
+      headerLength = 4;
+    } else if (length === 127) {
+      if (buffer.length - offset < 10) break;
+      length = Number(buffer.readBigUInt64BE(offset + 2));
+      headerLength = 10;
+    }
+    const maskLength = second & 0x80 ? 4 : 0;
+    if (buffer.length - offset < headerLength + maskLength + length) break;
+    const start = offset + headerLength + maskLength;
+    const payload = Buffer.from(buffer.subarray(start, start + length));
+    if (maskLength) {
+      const mask = buffer.subarray(offset + headerLength, start);
+      for (let i = 0; i < payload.length; i += 1) payload[i] ^= mask[i % 4];
+    }
+    frames.push({ fin: Boolean(first & 0x80), opcode: first & 0x0f, payload });
+    offset = start + length;
+  }
+  return { frames, remainder: buffer.subarray(offset) };
+}
+
+/** JSON-RPC over a WebSocket carried on a duplex byte stream (reader/writer). */
+export class AppServerClient {
+  constructor(reader, writer, { onClose = () => {} } = {}) {
+    this.writer = writer;
+    this.buffer = Buffer.alloc(0);
+    this.open = false;
+    this.fragments = [];
+    this.pending = new Map();
+    this.nextId = 1;
+    this.key = randomBytes(16).toString('base64');
+    this.connected = new Promise((resolve, reject) => {
+      this.onOpen = resolve;
+      this.fail = (error) => {
+        reject(error);
+        for (const p of this.pending.values()) p.reject(error);
+        this.pending.clear();
+      };
+    });
+    this.connected.catch(() => {});
+    reader.on('data', (chunk) => this.receive(chunk));
+    reader.on('error', (error) => this.fail(error));
+    reader.on('close', () => { this.fail(new Error('App Server connection closed')); onClose(); });
+    writer.on('error', (error) => this.fail(error));
+    writer.write([
+      'GET /rpc HTTP/1.1', 'Host: localhost', 'Upgrade: websocket', 'Connection: Upgrade',
+      `Sec-WebSocket-Key: ${this.key}`, 'Sec-WebSocket-Version: 13', '', '',
+    ].join('\r\n'));
+  }
+
+  receive(chunk) {
+    this.buffer = Buffer.concat([this.buffer, chunk]);
+    if (!this.open) {
+      const boundary = this.buffer.indexOf('\r\n\r\n');
+      if (boundary < 0) return;
+      const head = this.buffer.subarray(0, boundary).toString('utf8');
+      this.buffer = this.buffer.subarray(boundary + 4);
+      const accept = createHash('sha1').update(this.key + WS_GUID).digest('base64');
+      if (!/^HTTP\/1\.1 101\b/.test(head) || !head.includes(accept)) {
+        this.fail(new Error(`WebSocket upgrade rejected: ${head.split('\r\n')[0] || 'empty response'}`));
+        return;
+      }
+      this.open = true;
+      this.onOpen();
+    }
+    const { frames, remainder } = decodeFrames(this.buffer);
+    this.buffer = remainder;
+    for (const frame of frames) this.handleFrame(frame);
+  }
+
+  handleFrame({ fin, opcode, payload }) {
+    if (opcode === 0x9) this.writer.write(encodeFrame(payload, 0xa));
+    else if (opcode === 0x8) this.fail(new Error('App Server closed the connection'));
+    else if (opcode === 0x1 || opcode === 0x0) {
+      this.fragments.push(payload);
+      if (!fin) return;
+      const text = Buffer.concat(this.fragments).toString('utf8');
+      this.fragments = [];
+      this.handleMessage(text);
+    }
+  }
+
+  handleMessage(text) {
+    let message;
+    try { message = JSON.parse(text); } catch { return; }
+    if (message.id !== undefined && ('result' in message || 'error' in message)) {
+      const pending = this.pending.get(String(message.id));
+      if (!pending) return;
+      this.pending.delete(String(message.id));
+      if (message.error) pending.reject(new Error(message.error.message || 'App Server request failed'));
+      else pending.resolve(message.result);
+    } else if (message.id !== undefined && message.method) {
+      this.send({ id: message.id, error: { code: -32603, message: 'Server requests are not supported' } });
+    }
+  }
+
+  send(message) { this.writer.write(encodeFrame(JSON.stringify(message))); }
+
+  async request(method, params, timeoutMs = REQUEST_TIMEOUT_MS) {
+    await this.connected;
+    const id = `fleet-${this.nextId++}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`${method} timed out`));
+      }, timeoutMs);
+      this.pending.set(id, {
+        resolve: (v) => { clearTimeout(timer); resolve(v); },
+        reject: (e) => { clearTimeout(timer); reject(e); },
+      });
+      this.send({ id, method, params });
+    });
+  }
+
+  async initialize() {
+    await this.request('initialize', {
+      clientInfo: { name: 'fleet-liveness', title: 'Fleet liveness', version: '1.0.0' },
+      capabilities: { experimentalApi: true, optOutNotificationMethods: ['item/agentMessage/delta'] },
+    });
+    this.send({ method: 'initialized', params: {} });
+  }
+
+  close() {
+    try { this.writer.write(encodeFrame(Buffer.alloc(0), 0x8)); } catch {}
+    this.writer.end?.();
+  }
+}
+
+/** Connect through `codex app-server proxy --sock <socket>`, which bridges stdio to the daemon. */
+export function connectViaProxy(socket, codex = 'codex') {
+  const child = spawn(codex, ['app-server', 'proxy', '--sock', socket], { stdio: ['pipe', 'pipe', 'ignore'] });
+  child.on('error', () => {});
+  const client = new AppServerClient(child.stdout, child.stdin);
+  const close = client.close.bind(client);
+  client.close = () => { close(); child.kill(); };
+  return client;
+}
+
+/** Connect straight to a Unix socket that already speaks WebSocket. */
+export function connectDirect(socket) {
+  const stream = createConnection(socket);
+  return new AppServerClient(stream, stream);
+}
+
+export function daemonSocket() {
+  const fallback = `${homedir()}/.codex/app-server-control/app-server-control.sock`;
+  try {
+    const started = execFileSync('codex', ['app-server', 'daemon', 'start'], { encoding: 'utf8', timeout: 30_000 });
+    return JSON.parse(started).socketPath ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function parseSession(spec, dir) {
+  const eq = spec.indexOf('=');
+  if (eq > 0) return { label: spec.slice(0, eq), threadId: spec.slice(eq + 1) };
+  return { label: spec, threadId: JSON.parse(readFileSync(`${dir}/${spec}.json`, 'utf8')).threadId };
+}
+
+export function summarize(label, thread) {
+  const turn = (thread?.turns ?? []).at(-1);
+  const err = JSON.stringify(turn?.error ?? '').toLowerCase();
+  let flag = '-';
+  if (/usage|limit|quota|rate/.test(err)) flag = 'LIMIT';
+  else if (turn?.error) flag = 'ERROR';
+  return `${label} ${turn?.status ?? 'none'} ${(turn?.items ?? []).length} ${flag}`;
+}
+
+export async function readSessions(client, dir, specs) {
+  const lines = [];
+  for (const spec of specs) {
+    let label = spec.split('=')[0];
+    try {
+      const session = parseSession(spec, dir);
+      label = session.label;
+      const { thread } = await client.request('thread/read', { threadId: session.threadId, includeTurns: true });
+      lines.push(summarize(label, thread));
+    } catch {
+      lines.push(`${label} unreadable 0 READFAIL`);
+    }
+  }
+  return lines;
+}
+
+async function main() {
+  exitAfterTotalTimeout();
+  const [dir, ...specs] = process.argv.slice(2);
+  const client = connectViaProxy(daemonSocket());
+  try {
+    await client.initialize();
+  } catch {
+    for (const spec of specs) console.log(`${spec.split('=')[0]} unreadable 0 READFAIL`);
+    process.exit(0);
+  }
+  for (const line of await readSessions(client, dir, specs)) console.log(line);
+  client.close();
+  process.exit(0);
+}
+
+if (isEntryPoint(import.meta.url)) await main();
+
+/** Bounds the whole run from inside node; macOS has no `timeout` or `gtimeout` command. */
+export function exitAfterTotalTimeout() {
+  setTimeout(() => process.exit(1), TOTAL_TIMEOUT_MS).unref();
+}
+
+/** Compare real paths: a symlinked directory (macOS /tmp) makes argv[1] differ from the module url. */
+export function isEntryPoint(moduleUrl) {
+  return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(moduleUrl));
+}
