@@ -306,8 +306,12 @@ path merely because another rule describes how its content should look.
     A session-created supersession, a "not reused" label, or a delivered child
     left `TODO` is blocking.
 17. Tech debt and flag keys (`guardrails.md`, "No new tech debt" and
-    "Feature flags"): a new mechanism checks 1, 7, 8 or 12 find with no
-    `Debt:` reason is blocking. Read the repo's flag rule yourself, list every
+    "Feature flags"): each item of a kind that section lists with no
+    `Debt:` reason is blocking: a mechanism checks 1, 7, 8 or 12 find, a
+    type, constant, validator or bound that differs from or copies the
+    canonical one, an export or component whose only importers are tests or
+    deprecated stories (diff importers on base and branch), and growth of a
+    file near the repo's size ceiling (quote its line count). Read the repo's flag rule yourself, list every
     key the diff adds, newly reads or sits behind, and run
     `flag-keys.mjs show --worktree <wt>`. Any `problems`, a read the record
     lacks, a key the rule does not support, split keys, a gate on a change

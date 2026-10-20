@@ -116,7 +116,10 @@ def test_the_guardrails_reviewer_checks_every_key_the_session_adds_or_depends_on
     assert_all(check, (
         '"No new tech debt"',
         CANONICAL,
-        "a new mechanism checks 1, 7, 8 or 12 find with no `Debt:` reason is blocking",
+        "each item of a kind that section lists with no `Debt:` reason is blocking",
+        "a type, constant, validator or bound that differs from or copies the canonical one",
+        "an export or component whose only importers are tests or deprecated stories",
+        "growth of a file near the repo's size ceiling",
         "Read the repo's flag rule yourself",
         "every key the diff adds, newly reads or sits behind",
         "`flag-keys.mjs show --worktree <wt>`",
