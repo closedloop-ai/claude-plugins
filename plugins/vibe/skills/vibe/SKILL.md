@@ -127,9 +127,11 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   continuing would draw on paid credits or cannot run at all: spawn and forward
   nothing, leave the writer's request queued, and tell the person in one plain
   sentence that the Codex usage limit is reached and when it resets
-  (`resetsAt`), and that the session picks up from there then, or now if they
-  say to use paid credits. Pass `--allow-credits` only after the person
-  explicitly said to use credits in this session. `unknown` is not a stop.
+  (`resetsAt`), and that the session picks up from there then, or, when
+  `state` is `LIMIT-SPENDING-CREDITS`, now if they say to use paid credits.
+  Pass `--allow-credits` only after the person explicitly said to use credits
+  in this session; `LIMIT-STOPPED` (no credits left) stops even then.
+  `unknown` is not a stop.
   In Claude Code there is no usage query to call first: the launcher reads
   each turn's `rate_limit_event`, returns the last one as `rateLimit`, and
   stops a turn that hits the limit or starts paid extra usage with code

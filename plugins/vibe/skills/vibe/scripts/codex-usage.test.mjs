@@ -96,6 +96,16 @@ test("a limit not yet reached continues, whatever the percentages say", () => {
   assert.equal(decision.secondary.usedPercent, 71);
 });
 
+test("a reached limit with no credits left stops even when credits were allowed", () => {
+  const noCredits = { ...reachedLimits, rateLimits: { ...reachedLimits.rateLimits, credits: { hasCredits: false, unlimited: false } } };
+  const { file } = fakeCodex("reached-no-credits", { result: noCredits });
+  const result = run(file, ["--allow-credits"]);
+  assert.equal(result.status, STOP_EXIT, result.stderr);
+  const decision = JSON.parse(result.stdout);
+  assert.equal(decision.status, "stop");
+  assert.equal(decision.state, "LIMIT-STOPPED");
+});
+
 test("a reached limit continues while ordinary usage is still allowed", () => {
   const { file } = fakeCodex("reached-ordinary", { result: { ...reachedLimits, ordinaryUsageAllowed: true } });
   const result = run(file);

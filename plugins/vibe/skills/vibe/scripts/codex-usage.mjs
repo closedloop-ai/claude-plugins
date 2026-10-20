@@ -17,7 +17,8 @@
 //                                      usage is still allowed, `state` LIMIT)
 //   {"status":"stop", ...}             a limit is reached and ordinary usage is not allowed:
 //                                      stop and tell the person (exit 3)
-//   {"status":"credits_allowed", ...}  a limit is reached, the person allowed credits: continue
+//   {"status":"credits_allowed", ...}  a limit is reached, credits remain and the person allowed
+//                                      them: continue (no credits left is always `stop`)
 //   {"status":"unknown","reason":...}  the limits could not be read: continue
 // Every status but `unknown` also carries `state` (ratelimit.mjs's
 // UsageState), `rateLimitReachedType`, `resetsAt`
@@ -57,7 +58,9 @@ export function decideUsage(result, { allowCredits = false } = {}) {
   if (state === UsageState.Ok || state === UsageState.Limit) {
     return { status: UsageStatus.Ok, ...details };
   }
-  return { status: allowCredits ? UsageStatus.CreditsAllowed : UsageStatus.Stop, ...details };
+  // With no credits left, allowing them cannot make a turn run.
+  const creditsUsable = allowCredits && state === UsageState.SpendingCredits;
+  return { status: creditsUsable ? UsageStatus.CreditsAllowed : UsageStatus.Stop, ...details };
 }
 
 /** Reads the limits and decides; an unreadable answer is `unknown`, never a guessed `ok` or `stop`. */
