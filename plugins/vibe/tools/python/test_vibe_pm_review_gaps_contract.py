@@ -160,7 +160,7 @@ def test_changes_on_a_vibe_pull_request_resume_the_session_through_one_path() ->
         "pushes the validated commit to the SAME branch through the normal pre-push hook. Never a force push",
         "refreshes the body from the session record so it matches the diff",
         "through the REST review-comment reply endpoint",
-        "a fixed thread gets the fixing commit SHA and is resolved",
+        "fixed, with the fixing commit SHA, and verified by the reviewer",
         "--status handed-off",
     ))
     order = [

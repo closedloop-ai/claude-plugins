@@ -40,6 +40,10 @@ mode or permission to change production flags or machine snapshot fields.
 
 macOS has no `timeout` or `gtimeout` command. To bound or wait on a long check,
 use your tool's own timeout setting or `node ../skills/vibe/scripts/run-bounded.mjs <seconds> <command>` (exit 124 on time out), never `timeout <n> ...`.
+A hung or stray run is stopped only by the pid or process group you started,
+never with `pkill`, `killall` or a name or pattern match: another session's
+tests and e2e stacks run on the same machine
+(`../skills/vibe/references/guardrails.md`, "Processes and state").
 
 Read `environment.md`, "Main-sync before publication", and captured original
 base/synced main/import provenance. Verify actual checked inputs equal committed

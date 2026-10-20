@@ -113,6 +113,14 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   quality-loop.md's turn stranded by a plugin upgrade: `migrate` with
   `retainedRecord`, internally, never a question or a message to engineering.
   Startup and confirmed discard use the same bounded stable contexts below.
+- Both harnesses follow `references/guardrails.md`, "Processes and state":
+  stop only processes the session started, never by name or pattern; keep
+  every record, brief and report a resume needs out of temp folders; and in
+  Codex use no computer use, GitHub only through `gh`, with each visual check
+  handed to a Claude worker as a written request. A Codex writer stalled by
+  its account's usage limit moves to Claude through `writer-state.mjs
+  migrate` with `harnessSwitch` (`references/quality-loop.md`, "A writer
+  whose runtime cannot run"); no other worker does the writer's work.
 - Plugin root: the folder two levels above this file (in Codex,
   `~/.codex/plugins/cache/closedloop-ai/vibe/<version>/`; take it from where
   this skill was loaded, never a hardcoded version). Resolve it to an absolute

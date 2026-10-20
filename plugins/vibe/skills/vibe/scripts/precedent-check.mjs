@@ -7,14 +7,17 @@
 //
 // Usage:
 //   precedent-check.mjs prompt --question <text> [--situation <text>] [--apps <list>]
-//       Prints {"ok":true,"prompt":...}: the brief the Codex orchestrator
-//       follows itself in its in-app Browser or with Computer Use.
+//       Prints {"ok":true,"prompt":...}: the brief for the read-only requirements
+//       worker's precedent mode when no signed-in `claude` CLI can run it. Codex
+//       never follows it with computer use (`references/guardrails.md`,
+//       "Processes and state").
 //   precedent-check.mjs run --question <text> [--situation <text>] [--apps <list>]
 //                          [--out <dir>] [--claude <CLI>] [--timeout-seconds <n>]
-//       Claude Code: a session's Claude in Chrome tools are bound when it
-//       starts, so the look runs as a separate headless `claude -p --chrome`
-//       run with the brief on stdin. Writes prompt.md and report.md to --out
-//       (a new temporary folder by default) and prints
+//       Both harnesses: the look runs as a separate headless `claude -p --chrome`
+//       run with the brief on stdin (a Claude Code session's Chrome tools are
+//       bound when it starts). Writes prompt.md and report.md to --out (by
+//       default a new folder under ~/.codex/vibe/precedent/, which a reboot
+//       keeps, never the system temp folder) and prints
 //       {"ok":true,"report":...,"answer":...,"source":...}, or
 //       {"ok":false,"error":...,"report":...} when the run failed or timed out.
 //
@@ -170,7 +173,7 @@ async function main() {
     const timeout = Number(values["timeout-seconds"]);
     return runClaude({
       prompt,
-      out: values.out ?? mkdtempSync(path.join(os.tmpdir(), "vibe-precedent-")),
+      out: values.out ?? newRunFolder(),
       claude: values.claude,
       timeoutSeconds: Number.isFinite(timeout) && timeout > 0 ? timeout : DEFAULT_TIMEOUT_SECONDS,
     });
@@ -185,4 +188,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     process.stdout.write(`${JSON.stringify({ ok: false, error: error.message })}\n`);
     process.exitCode = 1;
   }
+}
+
+/** Where precedent reports live when no --out is given: under the vibe home a reboot keeps. */
+export function precedentRoot(home = os.homedir()) {
+  return path.join(home, ".codex", "vibe", "precedent");
+}
+
+function newRunFolder() {
+  const root = precedentRoot();
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  return mkdtempSync(path.join(root, "run-"));
 }

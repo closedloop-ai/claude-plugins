@@ -152,8 +152,9 @@ def test_each_harness_has_its_precedent_path() -> None:
         "Claude Code: a session's Claude in Chrome tools are bound when it starts",
         "`node scripts/precedent-check.mjs run --question",
         "headless `claude -p --chrome`",
-        "Codex: `node scripts/precedent-check.mjs prompt --question",
-        "in a tab of its own in the in-app Browser (never the person's app tab) or with the Computer Use plugin",
+        "Codex: no computer use",
+        "never the in-app Browser or the Computer Use plugin",
+        "`node scripts/precedent-check.mjs prompt --question",
         "read-only `vibe-requirements-worker` in precedent mode",
     ))
     assert "`scripts/precedent-check.mjs`" in section(VIBE_SKILL.read_text(), "## Your role: orchestrate, never do the work")

@@ -177,12 +177,15 @@ the session worktree, leaving no tracked file behind.
   screen control cannot switch: the story of the touched component in both
   themes. Only a surface with a single theme gets one capture, and its Checks
   line says so.
-- **After the deploy.** The orchestrator's own browser tab is signed in as
-  the person: in Codex, the in-app browser's screenshot of the app tab; in
-  Claude Code, the Chrome extension's screenshot when it is connected. A
-  Claude Code session without it has no preview screenshot, so the writer's
-  local screenshot is the only comparison, and a touched screen it could not
-  capture keeps its visual criteria `not met yet` with that reason.
+- **After the deploy.** In Claude Code, the orchestrator's own browser tab is
+  signed in as the person: the Chrome extension's screenshot when it is
+  connected. In Codex there is no computer use (`guardrails.md`, "Processes
+  and state"): the orchestrator writes the visual-check request that section
+  describes and hands it to a Claude worker, never a screenshot of the
+  in-app Browser tab. A session without either has no preview screenshot, so
+  the writer's local screenshot is the only comparison, and a touched screen
+  it could not capture keeps its visual criteria `not met yet` with that
+  reason.
 
 ## Desktop
 

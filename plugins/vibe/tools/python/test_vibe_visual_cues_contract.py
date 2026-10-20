@@ -213,9 +213,9 @@ def test_capture_works_in_both_harnesses_with_named_fallbacks() -> None:
         "`pnpm control up desktop --mode e2e`",
         "never `--headed`, `--allow-write`, `eval` or `eval-main`",
         "The control skill's browser is 1440 by 900.",
-        "in Codex, the in-app browser's screenshot of the app tab",
-        "in Claude Code, the Chrome extension's screenshot when it is connected",
-        "A Claude Code session without it has no preview screenshot",
+        "the Chrome extension's screenshot when it is connected",
+        "In Codex there is no computer use",
+        "A session without either has no preview screenshot",
     ))
     assert "When the session recorded reference images (`referenceImages`), open each as an image" in flat(agent("vibe-verify-worker"))
 

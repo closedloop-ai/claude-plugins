@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.65
+
+#### Added
+- `writer-state.mjs migrate` takes a `harnessSwitch` (`to`, `cause` `usage-limit` or `runtime-unavailable`, `evidence`) that moves a stopped writer to the other runtime with its definition still present, so a Codex writer stopped by its account's usage limit continues as a Claude writer with the same queue, active request, checkpoint, plan, decision table and change log. It refuses a running source or record turn, a retained record grant, a writer refusal and a switch to the same runtime, and records `from`, `to`, cause and evidence in the ledger's migration history. `quality-loop.md` documents the procedure, and no other worker does the writer's work outside the session records.
+- `handoff/scripts/review-threads.mjs check` decides which review threads may be resolved after a fix pass on a vibe pull request: a fixed thread needs the full fixing SHA and a `verified` verdict with evidence from a reviewer other than the writer, a partial fix or reasoned answer gets a reply and stays open, a flag-gated fix names its flag-off-equals-main test or missing-tests entry, and every unresolved thread needs a result. The environment worker replies to nothing until the check passes and resolves only what it lists.
+- Contract tests for the orchestration lessons, node tests for the thread check and the precedent report folder, vitest coverage for the harness switch, and two shared Claude Code and Codex eval cases tagged `orchestration-lessons`.
+
+#### Changed
+- New guardrails section "Processes and state": stop only processes the session started, never with `pkill`, `killall` or a name or pattern match; keep session records, writer state, briefs, monitor config and research reports out of temp folders; and in Codex use no computer use, with GitHub only through `gh` and every visual check handed to a Claude worker as a written request. Precedent checks run as a headless Claude in both harnesses, Codex preflight and setup dialogs go to the person, and precedent reports default to `~/.codex/vibe/precedent/` instead of the system temp folder.
+- Handoff reads a session's open pull request review threads on every later look and starts the change path for any thread a human spoke last on, without waiting for the person to ask; in Codex it arms the core PR monitor when that is already set up. In the change path the guardrails reviewer verifies each claimed fix per thread before anything is resolved.
+- A dependency on an open pull request no longer pauses a session or asks the person to restart anything: the writer builds what the unmerged code does not gate, logs the dependency, and ROOT checks its state on every resume and before handoff.
+
 ### vibe v1.0.58
 
 #### Changed

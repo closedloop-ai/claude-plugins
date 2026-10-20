@@ -400,8 +400,10 @@ or `--body-file`).
 
 - `reviewThreads: read`: list the unresolved review threads with
   `gh api graphql` (`pullRequest.reviewThreads`, with `isResolved`, the
-  thread `id`, and each comment's `databaseId`, author, `path`, `line` and
-  body) and return them. Change nothing.
+  thread `id`, and each comment's `databaseId`, author login and
+  `__typename` (`User` or `Bot`), `path`, `line` and body) and return them,
+  marking each thread whose latest comment is from a human other than the
+  pull request's author as `awaitingReply`. Change nothing.
 - Update, with the pushed fixing commit and the writer's per-thread results:
   1. Confirm the branch on `origin` is at that commit (step 1 above).
   2. Refresh the body from the session record so it matches the diff: build
@@ -411,13 +413,25 @@ or `--body-file`).
      `gh pr edit <number> --repo closedloop-ai/symphony-alpha --body-file <file>`,
      the file named and re-read as step 4 says.
      Keep the title unless the summary it names changed.
-  3. For each thread, reply through the REST review-comment reply endpoint,
+  3. Write the per-thread results (the writer's `fixed`, `partial` or
+     `reason` with its fixing commit, what remains or the reason, and the
+     guardrails reviewer's `verification` of each fix: `by`, `verdict`,
+     `evidence`) to a file named for the live ticket, re-read it, and run
+     `node ../skills/handoff/scripts/review-threads.mjs check --results <that file> --threads <the unresolved threads you read>`.
+     It exits 1 when a fixed thread lacks the full fixing SHA or a
+     `verified` verdict from a reviewer other than the writer, when a
+     flag-gated fix names no flag-off-equals-main test or missing-tests
+     entry, or when an unresolved thread has no result: return `BLOCKED`
+     with its problems and reply to nothing.
+  4. For each thread, reply through the REST review-comment reply endpoint,
      `gh api -X POST repos/closedloop-ai/symphony-alpha/pulls/<number>/comments/<comment databaseId>/replies --input <payload.json>`,
-     never the GraphQL `addPullRequestReviewThreadReply`. A thread the writer
-     fixed gets the fixing commit SHA and is then resolved with the GraphQL
-     `resolveReviewThread` mutation on its thread `id`; a thread it answered
-     with a reason gets that reason and stays open for its reviewer.
-  4. Step 5's limits hold.
+     never the GraphQL `addPullRequestReviewThreadReply`. Resolve, with the
+     GraphQL `resolveReviewThread` mutation on its thread `id`, only a thread
+     the check lists under `resolve`, after its reply carries the fixing
+     commit SHA. A `partial` thread's reply says what was fixed and what
+     remains, a `reason` thread's reply gives the reason, and both stay open
+     for the reviewer.
+  5. Step 5's limits hold.
 
 Return `DONE` with the pull request URL, the threads replied to and resolved,
 or `BLOCKED` with why.

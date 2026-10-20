@@ -165,8 +165,9 @@ situation (operator ruling, 2026-10-16): Asana first, then another
 established app with the same flow (Linear, or GitHub's own screens), then
 their public help centers when no browser can look. `scripts/precedent-check.mjs`
 holds the research brief and its safety rules: a separate headless
-`claude -p --chrome` run in Claude Code, the orchestrator's own in-app Browser
-or Computer Use in Codex; nothing that exists is touched, test data lives
+`claude -p --chrome` run in both harnesses (Codex never uses computer use;
+without a signed-in `claude` CLI the requirements worker reads the help
+centers); nothing that exists is touched, test data lives
 only in a `zz vibe precedent check (temp)` private project that is deleted
 afterwards, and every state is verified before it is recorded. The answer
 and its source (`Asana, observed <date>`, a help-center URL, or the ticket
@@ -420,9 +421,15 @@ no child is superseded without a human ruling. Version-check cases also cover
 explicit proceed instructions and resumed sessions continuing after reporting
 an available update.
 
+The two cases tagged `orchestration-lessons` rehearse a Codex writer stopped
+by its account's usage limit, which moves to Claude through the writer
+ledger's harness switch instead of another worker doing its work, and review
+threads after a fix pass, where only a fix a reviewer other than the writer
+verified is resolved and partial or unverified fixes stay open.
+
 ## Runtime Files
 
-Version `1.0.58` contains 10 skills and 16 agents. It has no standalone
+Version `1.0.65` contains 10 skills and 16 agents. It has no standalone
 commands, hooks, root-level shell scripts, or production Python tools under
 `tools/python/`; that directory contains the skill-contract test modules and
 `vibe_contract_text.py`, the text helpers they share.
