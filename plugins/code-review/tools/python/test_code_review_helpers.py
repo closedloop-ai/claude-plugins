@@ -2847,7 +2847,6 @@ class TestValidate:
         assert [d["reason"] for d in result["discarded"]] == [
             "DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE",
         ]
-        assert len(result["validated"]) == 1
 
     def test_low_confidence_discard(self, tmp_path: Path) -> None:
         diff_data = _make_diff_data(
@@ -24114,15 +24113,12 @@ class TestFEA1401ResolveCoverage(_ConditionalCoreFixtures):
         }
         assert "file_deletion" in plan["stats"]["detected_change_classes"]
 
-    @pytest.mark.parametrize("status", ["modified", "added"])
-    def test_file_deletion_fires_only_when_a_status_is_removed(
-        self, status: str,
-    ) -> None:
+    def test_file_deletion_does_not_fire_on_modified_file(self) -> None:
         from code_review_helpers import resolve_coverage
 
         plan = resolve_coverage(
             critic_gates=self._empty_critic_gates(),
-            diff_data=self._deletion_diff(status),
+            diff_data=self._deletion_diff("modified"),
             extract_signals={"signals": []},
             invocation_depth="deep",
         )

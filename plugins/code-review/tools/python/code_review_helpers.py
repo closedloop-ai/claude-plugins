@@ -12931,7 +12931,8 @@ _SPAWN_CORE_ROLES: dict[str, dict[str, Any]] = {
     },
     # FEA-1401 Impact Analyzer. Conditional core reviewer (declared in
     # COVERAGE_CORE_CONDITIONAL); only lands in coverage plans when the
-    # invocation depth is ``deep`` AND a signal trigger fires. The
+    # invocation depth is ``deep`` AND one of its triggers fires (a
+    # signal, or the ``file_deletion`` change_class). The
     # spawn-spec walker treats it like any other core role once it
     # appears in the plan.
     "impact": {

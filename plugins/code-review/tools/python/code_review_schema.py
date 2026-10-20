@@ -155,10 +155,11 @@ COVERAGE_CORE_REQUIRED: tuple[str, ...] = (
 # ship with the plugin (not project-specific like critic-gates.json
 # entries) but are gated by tier band AND trigger evaluation. Added to
 # the Coverage Plan's ``best_effort`` bucket only when the invocation
-# depth meets ``min_depth`` AND at least one trigger fires — either a
-# ``signal`` trigger matching the extracted signals (e.g. the Impact
-# Analyzer) or an unconditional ``{"type": "always"}`` trigger that
-# fires on the tier band alone (e.g. the Design Critic).
+# depth meets ``min_depth`` AND at least one trigger fires — a
+# ``signal`` trigger matching the extracted signals or a
+# ``change_class`` trigger (e.g. the Impact Analyzer), or an
+# unconditional ``{"type": "always"}`` trigger that fires on the tier
+# band alone (e.g. the Design Critic).
 #
 # Entry shape:
 #   - reviewer:  reviewer name; must also be registered in
