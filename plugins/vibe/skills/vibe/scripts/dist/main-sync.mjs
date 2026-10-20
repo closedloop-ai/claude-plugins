@@ -7270,7 +7270,7 @@ var require_public_api = __commonJS({
       }
       return doc;
     }
-    function parse5(src, reviver, options) {
+    function parse4(src, reviver, options) {
       let _reviver = void 0;
       if (typeof reviver === "function") {
         _reviver = reviver;
@@ -7311,7 +7311,7 @@ var require_public_api = __commonJS({
         return value.toString(options);
       return new Document.Document(value, _replacer, options).toString(options);
     }
-    exports.parse = parse5;
+    exports.parse = parse4;
     exports.parseAllDocuments = parseAllDocuments;
     exports.parseDocument = parseDocument;
     exports.stringify = stringify;
@@ -8227,7 +8227,7 @@ var require_parse = __commonJS({
       }
       return { risky: false };
     };
-    var parse5 = (input, options) => {
+    var parse4 = (input, options) => {
       if (typeof input !== "string") {
         throw new TypeError("Expected a string");
       }
@@ -8397,7 +8397,7 @@ var require_parse = __commonJS({
             output = token.close = `)$))${extglobStar}`;
           }
           if (token.inner.includes("*") && (rest = remaining()) && /^\.[^\\/.]+$/.test(rest)) {
-            const expression = parse5(rest, { ...options, fastpaths: false }).output;
+            const expression = parse4(rest, { ...options, fastpaths: false }).output;
             output = token.close = `)${expression})${extglobStar})`;
           }
           if (token.prev.type === "bos") {
@@ -8920,7 +8920,7 @@ var require_parse = __commonJS({
       }
       return state;
     };
-    parse5.fastpaths = (input, options) => {
+    parse4.fastpaths = (input, options) => {
       const opts = { ...options };
       const max = typeof opts.maxLength === "number" ? Math.min(MAX_LENGTH, opts.maxLength) : MAX_LENGTH;
       const len = input.length;
@@ -8985,7 +8985,7 @@ var require_parse = __commonJS({
       }
       return source;
     };
-    module.exports = parse5;
+    module.exports = parse4;
   }
 });
 
@@ -8994,7 +8994,7 @@ var require_picomatch = __commonJS({
   "node_modules/picomatch/lib/picomatch.js"(exports, module) {
     "use strict";
     var scan = require_scan();
-    var parse5 = require_parse();
+    var parse4 = require_parse();
     var utils = require_utils();
     var constants = require_constants();
     var isObject = (val) => val && typeof val === "object" && !Array.isArray(val);
@@ -9082,7 +9082,7 @@ var require_picomatch = __commonJS({
     picomatch3.isMatch = (str, patterns, options) => picomatch3(patterns, options)(str);
     picomatch3.parse = (pattern, options) => {
       if (Array.isArray(pattern)) return pattern.map((p) => picomatch3.parse(p, options));
-      return parse5(pattern, { ...options, fastpaths: false });
+      return parse4(pattern, { ...options, fastpaths: false });
     };
     picomatch3.scan = (input, options) => scan(input, options);
     picomatch3.compileRe = (state, options, returnOutput = false, returnState = false) => {
@@ -9108,10 +9108,10 @@ var require_picomatch = __commonJS({
       }
       let parsed = { negated: false, fastpaths: true };
       if (options.fastpaths !== false && (input[0] === "." || input[0] === "*")) {
-        parsed.output = parse5.fastpaths(input, options);
+        parsed.output = parse4.fastpaths(input, options);
       }
       if (!parsed.output) {
-        parsed = parse5(input, options);
+        parsed = parse4(input, options);
       }
       return picomatch3.compileRe(parsed, options, returnOutput, returnState);
     };
@@ -196034,7 +196034,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         return ts_textChanges_exports.ChangeTracker.with(
           { host, formatContext, preferences },
           (changeTracker) => {
-            const parsed = contents.map((c) => parse5(sourceFile, c));
+            const parsed = contents.map((c) => parse4(sourceFile, c));
             const flattenedLocations = focusLocations && flatten(focusLocations);
             for (const nodes of parsed) {
               placeNodeGroup(
@@ -196047,7 +196047,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
           }
         );
       }
-      function parse5(sourceFile, content) {
+      function parse4(sourceFile, content) {
         const nodeKinds = [
           {
             parse: () => createSourceFile(
@@ -226308,7 +226308,6 @@ import { isAbsolute as isAbsolute4 } from "node:path";
 
 // src/main-sync-native-failure.ts
 var producerReadArguments = Object.freeze(["rev-parse", "HEAD", "--absolute-git-dir"]);
-var budgetRefReadArguments = Object.freeze(["rev-parse", "HEAD", "origin/main"]);
 var terminatedCommitSchema = external_exports.string().refine((value) => value.includes("\n")).transform((value) => value.slice(0, value.indexOf("\n"))).pipe(validationCommitSchema);
 var channelSchema = external_exports.union([external_exports.string(), external_exports.instanceof(Buffer), external_exports.null()]);
 var resultSchema = external_exports.object({
@@ -226362,9 +226361,6 @@ function sameChannel(left, right) {
 }
 function producerFailureHead(error) {
   return fixedFailureHead(error, producerReadArguments);
-}
-function budgetFailureHead(error) {
-  return fixedFailureHead(error, budgetRefReadArguments);
 }
 function fixedFailureHead(error, args) {
   const native = nativeFailureResult(error);
@@ -227082,9 +227078,6 @@ function capturedMainArgv(root, mainSha, command, selection) {
   if (words.join(" ") === "pnpm typecheck:affected") {
     task = "typecheck";
     rest = ["--concurrency=1"];
-  } else if (words[0] === "pnpm" && words[1] === "test:affected") {
-    task = "test";
-    rest = words.slice(2);
   } else if (words[0] === "pnpm" && words[1] === "turbo" && words.slice(3).some((word) => PINNED_FILTER.test(word))) {
     task = words[2];
     rest = words.slice(3).filter((word) => !PINNED_FILTER.test(word));
@@ -227161,7 +227154,7 @@ if (desktop) {
 console.log(JSON.stringify({commands: execPlan([], [...commands.values()]), ...(desktopHarness ? {desktopHarness} : {})}));
 `;
 var BROWSER_SCRIPT = /^(?:test:e2e(?::.*)?|test:web-smoke)$/;
-function discoverCheckLanes(root, receipt) {
+function discoverRequiredE2eLanes(root, receipt) {
   if (process.env.PWDEBUG) throw new MainSyncError("Headless/displayless validation cannot run with ambient PWDEBUG; no test lane was spawned");
   const discovery = { argv: ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", DISCOVERY_SOURCE, receipt.mainSha] };
   verifyReportProducerInputs(root, root, ReportExecutionOwner.Discovery, DISCOVERY_MODULES);
@@ -227174,7 +227167,6 @@ function discoverCheckLanes(root, receipt) {
   });
   if (run.error || run.status !== 0) throw new MainSyncError("Structured owning test-lane discovery failed; no test lane was spawned");
   const selected = discoverySchema.parse(JSON.parse(run.stdout));
-  const commands = [discovery, { argv: ["pnpm", "test:lanes"] }];
   const limitations = [];
   for (const lane of selected.commands) {
     const bindings = { ...lane.env, ...lane.suites === void 0 ? {} : { AFFECTED_SCRIPT_SUITES: lane.suites } };
@@ -227194,19 +227186,15 @@ function discoverCheckLanes(root, receipt) {
         bindings,
         reason: "Selected Desktop verdict reads results.json then adjacent dd-quarantine.json from fixed retained locations; no verified current-run report isolation is available here. No lane spawned or PASS; use exact-SHA authorized external coverage"
       });
-    } else {
-      if (BROWSER_SCRIPT.test(lane.script)) {
-        limitations.push({
-          argv: ["pnpm", ...lane.dir ? ["--dir", lane.dir] : [], lane.script],
-          bindings,
-          reason: `Required browser lane ${lane.script} has no verified supported headless launch here; no lane spawned or PASS`
-        });
-        continue;
-      }
-      commands.push({ argv: ["pnpm", ...lane.dir ? ["--dir", lane.dir] : [], lane.script], bindings });
+    } else if (BROWSER_SCRIPT.test(lane.script)) {
+      limitations.push({
+        argv: ["pnpm", ...lane.dir ? ["--dir", lane.dir] : [], lane.script],
+        bindings,
+        reason: `Required browser lane ${lane.script} has no verified supported headless launch here; no lane spawned or PASS`
+      });
     }
   }
-  return { commands, limitations };
+  return limitations;
 }
 function displaylessPrerequisites(root) {
   const result = spawnSync4(
@@ -227262,61 +227250,15 @@ function referencesPrivateInputs(root, privatePaths) {
 }
 
 // src/main-sync-budget.ts
-var import_yaml4 = __toESM(require_dist(), 1);
 import { spawnSync as spawnSync5 } from "node:child_process";
 import { readFileSync as readFileSync11 } from "node:fs";
 import { join as join12 } from "node:path";
 import { createHash as createHash3 } from "node:crypto";
-
-// src/main-sync-budget-ref-read.ts
-var tupleSchema = external_exports.tuple([validationCommitSchema, validationCommitSchema]);
-function readBudgetRefs(root) {
-  const capture = captureBudgetRefs(root);
-  if (capture.kind === "complete") return { head: capture.head, main: capture.main };
-  if (capture.kind === "proved-first-incomplete") return completeBudgetMain(root, capture);
-  return fallbackBudgetRefs(root, capture);
-}
-function captureBudgetRefs(root) {
-  let output;
-  try {
-    output = git(root, [...budgetRefReadArguments]);
-  } catch (error) {
-    const first2 = budgetFailureHead(error);
-    return first2.kind === "proved" ? { kind: "proved-first-incomplete", head: first2.head } : first2;
-  }
-  const tuple = tupleSchema.safeParse(output.split("\n"));
-  if (tuple.success) return { kind: "complete", head: tuple.data[0], main: tuple.data[1] };
-  const first = terminatedCommitSchema.safeParse(output);
-  return first.success ? { kind: "proved-first-incomplete", head: first.data } : { kind: "unproved" };
-}
-var fallbackBudgetRefs = (root, _capture) => {
-  const head = git(root, ["rev-parse", "HEAD"]);
-  const main = git(root, ["rev-parse", "origin/main"]);
-  return { head, main };
-};
-var completeBudgetMain = (root, capture) => ({
-  head: capture.head,
-  main: git(root, ["rev-parse", "origin/main"])
-});
-
-// src/main-sync-budget.ts
 var GENERAL_CHECK_MS = 15 * 60 * 1e3;
-var FULL_LOCAL_LINT_MS = 30 * 60 * 1e3;
-var shardJobSchema = external_exports.object({
-  "timeout-minutes": external_exports.number().int().min(1).max(60),
-  strategy: external_exports.object({ matrix: external_exports.object({ shard: external_exports.tuple([external_exports.literal(1), external_exports.literal(2), external_exports.literal(3)]) }).passthrough() }).passthrough()
-}).passthrough();
-var workflowSchema2 = external_exports.object({ jobs: external_exports.object({
-  "test-shard": shardJobSchema,
-  "desktop-node": shardJobSchema,
-  "desktop-renderer": external_exports.object({ "timeout-minutes": external_exports.number().int().min(1).max(60) }).passthrough()
-}).passthrough() }).passthrough();
 var tasksSchema = external_exports.object({ tasks: external_exports.array(external_exports.object({ taskId: external_exports.string().min(1), package: external_exports.string().min(1) }).passthrough()).max(5e4) }).passthrough();
 var affectedFilterSchema = external_exports.string().regex(/^\.\.\.\[[a-f0-9]{40}\]$/);
 var wrapperSchema = external_exports.object({ scripts: external_exports.record(external_exports.string()) }).passthrough();
 var AFFECTED_TYPECHECK_SHA = "01c2c50b267a071fa3ed193612c6d2c94f18fde6d01c78c6c47bfd81b56aad69";
-var AFFECTED_TEST_SHA = "b1d8c482cb012520f93729cb6f760b3e6d4344d191f94d569e7300265e2955b5";
-var testSelections = /* @__PURE__ */ new WeakMap();
 function commandSelection(root, command, timeoutMs = GENERAL_CHECK_MS) {
   let argv;
   if (command.argv[0] === "pnpm" && command.argv[1] === "turbo") argv = [...command.argv.slice(1), "--dry=json"];
@@ -227338,81 +227280,8 @@ function affectedFilter(root) {
   if (selected.error || selected.status !== 0) throw new MainSyncError("Existing affected-filter owner failed; no selection was derived");
   return affectedFilterSchema.parse(selected.stdout.trim());
 }
-function bindCheckBudgets(root, receipt, commands) {
-  const aggregates = /* @__PURE__ */ new Map();
-  return commands.map((command) => {
-    if (command.argv.join(" ") === "pnpm test:lint" && !command.bindings?.AFFECTED_SCRIPT_SUITES) {
-      return { ...command, timeoutMs: FULL_LOCAL_LINT_MS };
-    }
-    if (command.argv[0] === "pnpm" && (command.argv[1] === "test:affected" || command.argv[1] === "turbo" && command.argv[2] === "test")) {
-      const key = command.argv[1] === "test:affected" ? "affected" : receipt.validationSince;
-      let budget = aggregates.get(key);
-      if (budget === void 0) {
-        budget = selectedTestBudget(root, receipt, key === "affected");
-        aggregates.set(key, budget);
-      }
-      const bound = { ...command, timeoutMs: budget.timeoutMs };
-      if (key === "affected" && canonicalTestWrapper(root)) {
-        testSelections.set(bound, { root, head: budget.head, mainSha: receipt.mainSha, command: JSON.stringify(bound), wrapperSha: testWrapperIdentity(root), selection: budget.selection });
-      }
-      return bound;
-    }
-    return { ...command, timeoutMs: command.timeoutMs ?? GENERAL_CHECK_MS };
-  });
-}
-function selectedTestBudget(root, receipt, affected) {
-  const { head } = readBudgetRefs(root);
-  const workflow = workflowSchema2.parse((0, import_yaml4.parse)(readFileSync11(join12(root, ".github/workflows/pr-test.yml"), "utf8")));
-  let filter = `...[${receipt.validationSince}]`;
-  if (affected) {
-    filter = affectedFilter(root);
-    if (filter !== `...[${receipt.mainSha}]`) {
-      throw new MainSyncError("Affected test selection is not pinned to the captured main", "NEEDS_CHANGE");
-    }
-  }
-  verifyReportExecution(root, root, ReportExecutionOwner.TurboSelection, ["pnpm", "turbo", "test", `--filter=${filter}`, "--dry=json"]);
-  const run = spawnSync5("pnpm", ["turbo", "test", `--filter=${filter}`, "--dry=json"], {
-    cwd: root,
-    encoding: "utf8",
-    timeout: 12e4,
-    maxBuffer: 16 * 1024 * 1024
-  });
-  if (run.error || run.status !== 0) throw new MainSyncError("Could not derive fixed test budget from actual selected Turbo tasks");
-  const selection = tasksSchema.parse(JSON.parse(run.stdout));
-  if (head !== git(root, ["rev-parse", "HEAD"])) {
-    throw new MainSyncError("Test selection refs changed during the owning budget child", "NEEDS_CHANGE");
-  }
-  const tasks = selection.tasks;
-  const packages = new Set(tasks.map((task) => task.package));
-  let minutes = 0;
-  if ([...packages].some((name) => name !== "desktop")) {
-    minutes += workflow.jobs["test-shard"]["timeout-minutes"] * workflow.jobs["test-shard"].strategy.matrix.shard.length;
-  }
-  if (packages.has("desktop")) {
-    minutes += workflow.jobs["desktop-node"]["timeout-minutes"] * workflow.jobs["desktop-node"].strategy.matrix.shard.length + workflow.jobs["desktop-renderer"]["timeout-minutes"];
-  }
-  return { timeoutMs: minutes ? minutes * 60 * 1e3 : GENERAL_CHECK_MS, selection, head };
-}
-function affectedTestReportSelection(root, command) {
-  const record = testSelections.get(command);
-  if (!record) return void 0;
-  if (record.root !== root || record.head !== git(root, ["rev-parse", "HEAD"]) || wrapperBase(root) !== record.mainSha || record.command !== JSON.stringify(command) || record.wrapperSha !== testWrapperIdentity(root) || !canonicalTestWrapper(root)) throw new MainSyncError("Affected test selection owner changed before its report assessment", "NEEDS_CHANGE");
-  return record.selection;
-}
-function wrapperBase(root) {
-  try {
-    return git(root, ["merge-base", "origin/main", "HEAD"]);
-  } catch {
-    return void 0;
-  }
-}
-function testWrapperIdentity(root) {
-  return createHash3("sha256").update(readFileSync11(join12(root, "scripts/test-affected.sh"))).digest("hex");
-}
-function canonicalTestWrapper(root) {
-  const pkg = wrapperSchema.parse(JSON.parse(readFileSync11(join12(root, "package.json"), "utf8")));
-  if (pkg.scripts["test:affected"] !== "sh scripts/test-affected.sh") return false;
-  return testWrapperIdentity(root) === AFFECTED_TEST_SHA;
+function bindCheckBudgets(commands) {
+  return commands.map((command) => ({ ...command, timeoutMs: command.timeoutMs ?? GENERAL_CHECK_MS }));
 }
 
 // src/main-sync-check-production.ts
@@ -227759,17 +227628,6 @@ import { relative as relative8 } from "node:path";
 var EXECUTABLE_INPUT = /(?:\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss|html|sql|prisma)$|(?:^|\/)\.(?:npmrc|nvmrc)|(?:^|\/)(?:package-lock|pnpm-lock))/;
 var SOURCE_PATH = /\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss)$/;
 var PRIVATE_ARTIFACT = /\.(?:md|json|log|txt|png|webp)$/;
-var BACKEND_PREFIXES = [
-  "apps/api/",
-  "apps/mcp/",
-  "apps/relay/",
-  "apps/realtime/",
-  "packages/api/",
-  "packages/database/",
-  "apps/desktop/src/main/",
-  "apps/desktop/src/server/",
-  "apps/desktop/prisma/"
-];
 var CACHE_SEGMENTS = /* @__PURE__ */ new Set(["node_modules", ".next", ".turbo", "dist", "storybook-static", ".cache"]);
 var turboTasksSchema = external_exports.object({ tasks: external_exports.array(external_exports.object({ taskId: external_exports.string(), package: external_exports.string().optional() }).passthrough()) }).passthrough();
 function committedInputs(root) {
@@ -227904,7 +227762,6 @@ function checkRecipe(value, receipt) {
   const root = value.place.root;
   const files = git(root, ["diff", "--name-only", "--no-renames", receipt.mainSha, "HEAD"]).split("\n").filter(Boolean);
   const prototype = value.place.branch.startsWith("prototype/");
-  const backend = files.some((file) => BACKEND_PREFIXES.some((prefix) => file.startsWith(prefix)) || /\/(?:prisma|migrations)\//.test(`/${file}`));
   const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync10(join16(root, file)));
   const commands = [];
   const e2eLimitations = [];
@@ -227912,7 +227769,7 @@ function checkRecipe(value, receipt) {
     if (paths.length) commands.push({ argv: ["pnpm", "exec", "biome", "check", ...paths] });
     commands.push({ argv: ["pnpm", "typecheck:affected"] });
     verifyReportRecipe(commands);
-    const bound2 = bindCheckBudgets(root, receipt, commands);
+    const bound2 = bindCheckBudgets(commands);
     return { commands: bound2, e2eLimitations, recovery: selectedRecoveryReserve(root, bound2) };
   }
   if (prototype) {
@@ -227925,35 +227782,17 @@ function checkRecipe(value, receipt) {
     );
   } else {
     if (paths.length) commands.push({ argv: ["pnpm", "exec", "biome", "check", ...paths] });
-    const lanes = discoverCheckLanes(root, receipt);
-    e2eLimitations.push(...lanes.limitations);
-    commands.push(
-      { argv: ["pnpm", "check:source-gates"] },
-      { argv: ["pnpm", "typecheck:affected"] },
-      { argv: ["pnpm", "test:affected", "--continue"] },
-      ...lanes.commands
-    );
-    if (backend) commands.push(
-      { argv: ["pnpm", "verify"] },
-      { argv: ["pnpm", "test"] },
-      { argv: ["pnpm", "test:lint"] },
-      { argv: ["pnpm", "test:skills"] }
-    );
+    e2eLimitations.push(...discoverRequiredE2eLanes(root, receipt));
+    commands.push({ argv: ["pnpm", "check:source-gates"] }, { argv: ["pnpm", "typecheck:affected"] });
   }
   const filter = `...[${receipt.validationSince}]`;
-  commands.push(
-    { argv: ["pnpm", "turbo", "typecheck", `--filter=${filter}`, "--concurrency=1"] },
-    { argv: ["pnpm", "turbo", "test", `--filter=${filter}`, "--continue"], timeoutMs: MAX_CHECK_MS }
-  );
-  if (files.some((file) => file.startsWith("packages/app/") || file.startsWith("apps/desktop/src/renderer/"))) {
-    commands.push({ argv: ["pnpm", "--filter", "desktop", "test:renderer"] });
-  }
+  commands.push({ argv: ["pnpm", "turbo", "typecheck", `--filter=${filter}`, "--concurrency=1"] });
   if (files.some((file) => file.includes(".stories.") || file.startsWith("apps/storybook/") || file.startsWith("packages/design-system/"))) {
-    commands.push({ argv: ["pnpm", "--filter", "storybook", "test"] }, { argv: ["pnpm", "--filter", "storybook", "validate:catalog"] });
+    commands.push({ argv: ["pnpm", "--filter", "storybook", "validate:catalog"] });
   }
   commands.push({ argv: ["pnpm", "vibe", "storybook-diff"] });
   verifyReportRecipe(commands);
-  const bound = bindCheckBudgets(root, receipt, commands);
+  const bound = bindCheckBudgets(commands);
   return {
     commands: bound,
     e2eLimitations,
@@ -227973,7 +227812,7 @@ function executeChecks(value, receipt, preparedRecipe) {
       let restart = false;
       for (const [index, command] of recipe.commands.entries()) {
         assertIdentity(value.place.root, before);
-        let selection = affectedTestReportSelection(value.place.root, command);
+        let selection;
         if (command.argv[1] === "turbo" || command.argv.join(" ") === "pnpm typecheck:affected") {
           const start2 = performance2.now();
           selection = commandSelection(value.place.root, command, remainingBudget(MAX_CHECK_MS, drySpent[index]));

@@ -12,6 +12,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The BHA cache key for a paired added file folds in the paired deleted file's patch, so editing the old file invalidates the entry. Unpaired files keep their existing key.
 - `SCHEMA.md` documents `moved_from`, the context patch and the cache-key change.
 
+### vibe v1.0.61
+
+#### Added
+- `skills/vibe/scripts/flag-keys.mjs` (`record`, `question`, `approve`, `show`). No agent creates or adds a feature flag on its own: the writer records a justified proposal (reason, the target repo's flag rule sentence quoted from its `AGENTS.md`, and a human source; a spec rollout must name its slug), `question` prints the exact approval question (the key, why, what it gates per surface and host, and every other key the same work sits behind), and `approve` saves the person's answer only after that exact question was asked and answered through `session-questions.mjs`, recording who and when. An approval covers one key and the proposal it answered; a changed surface, stack, reason or source needs a new question. `record` refuses a read of an unapproved key, a declined key, a second new key on one surface, and a proposal without its justification.
+- The live ticket's Production flag snapshot section renders "Keys to see this work": per surface and host, every key that must be on, new and existing, with the person's approval and each key's value in their snapshot. `vibe-sessions.mjs list` shows each session's keys and approvals.
+- `live-ticket-check.mjs` fails a ticket without the keys block and, with `--worktree`, a session with no recorded keys, a proposed key without the person's yes, or an approved key no file reads.
+- A `pm-flag-key-sprawl-blocked` eval case and `test_vibe_flag_keys_contract.py`.
+
+#### Changed
+- `guardrails.md` states two rules once. "No new tech debt": a new flag key, parallel path, shim or code kept for a deprecated story, second owner, duplicated helper, type, constant, validator or bound, new config, or growth of a file near the repo's size ceiling needs a human source or a quoted repo rule, logged as a `Debt:` line; otherwise the writer reuses what exists. "Feature flags": no agent creates or adds a flag on its own; a key is proposed only for what the target repo's own flag rule allows, one behavior gets one key, an existing key for the surface is reused, the person approves each key, and an agent never adds or edits a flag registration attestation. The writer, the vibe and handoff skills, the guardrails reviewer, the ticket template, the quality loop and the environment worker each point at these sections in a line instead of restating them; `flag-keys.mjs` messages carry the procedure.
+- The writer returns `NEEDS_FLAG_APPROVAL` instead of gating; the vibe skill asks the printed question and records the answer; handoff asks a pending approval once and names the keys to see the work; the guardrails reviewer gains check 17 for tech debt without a `Debt:` reason (mechanisms checks 1, 7, 8 and 12 find, copied or divergent types, constants, validators and bounds, exports only tests or deprecated stories import, and growth of a file near the size ceiling) and for flag keys `flag-keys.mjs show` reports, that the repo rule does not support, that split one behavior, gate a change the rule ships directly or duplicate an existing key.
+### vibe v1.0.60
+
+#### Changed
+- Codex workers default to reasoning effort `high` instead of `xhigh`: new cl-sweep ticket-owner sessions, cl-execute and cl-sweep support lanes, and the vibe skills' native workers. `xhigh` stays available when raised explicitly, and an existing session's persisted effort is never rewritten.
+- Worker models follow their role from one policy per harness. In Codex, `cl-sweep/scripts/model-policy.mjs` puts explorer and research lanes on `gpt-5.6-terra`, keeps writers, reviewers and verifiers on `gpt-6-sol`, and leaves mechanical lanes on `gpt-6-luna`; the vibe, handoff and seed-refresh skills take each spawn's model and effort from `vibe/scripts/worker-model.mjs`. In Claude Code, `vibe-backend-worker` moves from opus to sonnet like the other read-only explorers.
+- Vibe validation is targeted: the verify worker runs only the tests closedloop-graph's `code_tests_for` returns for each changed file, with Biome, source gates and the affected typecheck. Its full-suite mode is removed, the handoff publication recipe no longer runs `test:affected`, test lanes, `turbo test`, `pnpm verify`, `pnpm test`, `test:lint`, `test:skills`, the Desktop renderer lane or the whole Storybook suite, and Storybook checks run only the new or changed story files. Required browser and Desktop e2e lanes are still recorded for CI evidence.
+- Containerized e2e runs only the specs the change needs, one stack per machine.
+
+#### Added
+- `vibe/scripts/codex-usage.mjs` reads the Codex account's rate limits through the App Server `account/rateLimits/read` method before workers spawn and when a turn stalls; a reached limit that no longer allows ordinary usage stops the session with a plain message unless the person explicitly allowed credits. A reached limit that still allows ordinary usage continues, with `state` `LIMIT` in the output. With no credits left (`LIMIT-STOPPED`) it stops even when credits were allowed. The read and its classification are codex-fleet-monitor's `ratelimit.mjs` (`readRateLimits` and `classifyUsage`), so the gate and the monitor's `codex-usage` line share one reader and one set of states; the check uses its private stdio App Server transport and never starts the managed daemon.
+- The Claude worker launcher reports each turn's last `rate_limit_event` as `rateLimit` and stops a turn that reaches the limit or starts paid extra usage (`USAGE_LIMIT_REACHED`) unless the launch input sets `allowCredits`.
+- `vibe/scripts/e2e-lock.mjs`, a machine-wide lock the verify worker runs every containerized e2e command through, taking over a lock left by a process that no longer exists.
+
+#### Removed
+- The test-selection budgeting and report admission that only the removed handoff test commands used (`main-sync-budget-ref-read.ts`, the affected test wrapper pin, the `test:lint` budget and the captured-main mapping of `test:affected`).
+
 ### code-review v3.12.0
 
 #### Changed

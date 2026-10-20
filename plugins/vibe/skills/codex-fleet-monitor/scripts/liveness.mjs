@@ -66,25 +66,73 @@ export function decodeFrames(buffer) {
   return { frames, remainder: buffer.subarray(offset) };
 }
 
-/** JSON-RPC over a WebSocket carried on a duplex byte stream (reader/writer). */
-export class AppServerClient {
-  constructor(reader, writer, { onClose = () => {} } = {}) {
-    this.writer = writer;
-    this.buffer = Buffer.alloc(0);
-    this.open = false;
-    this.fragments = [];
+/** JSON-RPC requests and replies; a subclass frames messages in `send` and feeds replies to `handleMessage`. */
+class JsonRpcClient {
+  constructor() {
     this.pending = new Map();
     this.nextId = 1;
-    this.key = randomBytes(16).toString('base64');
+    this.failure = null;
     this.connected = new Promise((resolve, reject) => {
       this.onOpen = resolve;
       this.fail = (error) => {
+        this.failure ??= error;
         reject(error);
         for (const p of this.pending.values()) p.reject(error);
         this.pending.clear();
       };
     });
     this.connected.catch(() => {});
+  }
+
+  handleMessage(text) {
+    let message;
+    try { message = JSON.parse(text); } catch { return; }
+    if (message.id !== undefined && ('result' in message || 'error' in message)) {
+      const pending = this.pending.get(String(message.id));
+      if (!pending) return;
+      this.pending.delete(String(message.id));
+      if (message.error) pending.reject(new Error(message.error.message || 'App Server request failed'));
+      else pending.resolve(message.result);
+    } else if (message.id !== undefined && message.method) {
+      this.send({ id: message.id, error: { code: -32603, message: 'Server requests are not supported' } });
+    }
+  }
+
+  async request(method, params, timeoutMs = REQUEST_TIMEOUT_MS) {
+    await this.connected;
+    if (this.failure) throw this.failure;
+    const id = `fleet-${this.nextId++}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`${method} timed out`));
+      }, timeoutMs);
+      this.pending.set(id, {
+        resolve: (v) => { clearTimeout(timer); resolve(v); },
+        reject: (e) => { clearTimeout(timer); reject(e); },
+      });
+      this.send({ id, method, params });
+    });
+  }
+
+  async initialize(timeoutMs = REQUEST_TIMEOUT_MS) {
+    await this.request('initialize', {
+      clientInfo: { name: 'fleet-liveness', title: 'Fleet liveness', version: '1.0.0' },
+      capabilities: { experimentalApi: true, optOutNotificationMethods: ['item/agentMessage/delta'] },
+    }, timeoutMs);
+    this.send({ method: 'initialized', params: {} });
+  }
+}
+
+/** JSON-RPC over a WebSocket carried on a duplex byte stream (reader/writer). */
+export class AppServerClient extends JsonRpcClient {
+  constructor(reader, writer, { onClose = () => {} } = {}) {
+    super();
+    this.writer = writer;
+    this.buffer = Buffer.alloc(0);
+    this.open = false;
+    this.fragments = [];
+    this.key = randomBytes(16).toString('base64');
     reader.on('data', (chunk) => this.receive(chunk));
     reader.on('error', (error) => this.fail(error));
     reader.on('close', () => { this.fail(new Error('App Server connection closed')); onClose(); });
@@ -127,50 +175,42 @@ export class AppServerClient {
     }
   }
 
-  handleMessage(text) {
-    let message;
-    try { message = JSON.parse(text); } catch { return; }
-    if (message.id !== undefined && ('result' in message || 'error' in message)) {
-      const pending = this.pending.get(String(message.id));
-      if (!pending) return;
-      this.pending.delete(String(message.id));
-      if (message.error) pending.reject(new Error(message.error.message || 'App Server request failed'));
-      else pending.resolve(message.result);
-    } else if (message.id !== undefined && message.method) {
-      this.send({ id: message.id, error: { code: -32603, message: 'Server requests are not supported' } });
-    }
-  }
-
   send(message) { this.writer.write(encodeFrame(JSON.stringify(message))); }
-
-  async request(method, params, timeoutMs = REQUEST_TIMEOUT_MS) {
-    await this.connected;
-    const id = `fleet-${this.nextId++}`;
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`${method} timed out`));
-      }, timeoutMs);
-      this.pending.set(id, {
-        resolve: (v) => { clearTimeout(timer); resolve(v); },
-        reject: (e) => { clearTimeout(timer); reject(e); },
-      });
-      this.send({ id, method, params });
-    });
-  }
-
-  async initialize() {
-    await this.request('initialize', {
-      clientInfo: { name: 'fleet-liveness', title: 'Fleet liveness', version: '1.0.0' },
-      capabilities: { experimentalApi: true, optOutNotificationMethods: ['item/agentMessage/delta'] },
-    });
-    this.send({ method: 'initialized', params: {} });
-  }
 
   close() {
     try { this.writer.write(encodeFrame(Buffer.alloc(0), 0x8)); } catch {}
     this.writer.end?.();
   }
+}
+
+/** JSON-RPC as one JSON object per line, the framing of `codex app-server` on stdio. */
+export class LineClient extends JsonRpcClient {
+  constructor(reader, writer) {
+    super();
+    this.writer = writer;
+    this.buffer = '';
+    reader.setEncoding?.('utf8');
+    reader.on('data', (chunk) => this.receive(chunk));
+    reader.on('error', (error) => this.fail(error));
+    reader.on('close', () => this.fail(new Error('The App Server exited before it answered')));
+    writer.on('error', () => this.fail(new Error('The App Server closed its input before it answered')));
+    this.onOpen();
+  }
+
+  receive(chunk) {
+    this.buffer += chunk;
+    let boundary = this.buffer.indexOf('\n');
+    while (boundary >= 0) {
+      const line = this.buffer.slice(0, boundary);
+      this.buffer = this.buffer.slice(boundary + 1);
+      this.handleMessage(line);
+      boundary = this.buffer.indexOf('\n');
+    }
+  }
+
+  send(message) { this.writer.write(`${JSON.stringify(message)}\n`); }
+
+  close() { this.writer.end?.(); }
 }
 
 /** Connect through `codex app-server proxy --sock <socket>`, which bridges stdio to the daemon. */
@@ -183,16 +223,26 @@ export function connectViaProxy(socket, codex = 'codex') {
   return client;
 }
 
+/** Start a private `codex app-server` on stdio; it needs no daemon and leaves nothing running. */
+export function connectStdio(codex = 'codex') {
+  const child = spawn(codex, ['app-server'], { stdio: ['pipe', 'pipe', 'ignore'] });
+  const client = new LineClient(child.stdout, child.stdin);
+  child.on('error', (error) => client.fail(new Error(`Could not start ${codex}: ${error.message}`)));
+  const close = client.close.bind(client);
+  client.close = () => { close(); child.kill(); };
+  return client;
+}
+
 /** Connect straight to a Unix socket that already speaks WebSocket. */
 export function connectDirect(socket) {
   const stream = createConnection(socket);
   return new AppServerClient(stream, stream);
 }
 
-export function daemonSocket() {
+export function daemonSocket(codex = 'codex') {
   const fallback = `${homedir()}/.codex/app-server-control/app-server-control.sock`;
   try {
-    const started = execFileSync('codex', ['app-server', 'daemon', 'start'], { encoding: 'utf8', timeout: 30_000 });
+    const started = execFileSync(codex, ['app-server', 'daemon', 'start'], { encoding: 'utf8', timeout: 30_000 });
     return JSON.parse(started).socketPath ?? fallback;
   } catch {
     return fallback;

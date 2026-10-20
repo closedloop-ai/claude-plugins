@@ -42,7 +42,8 @@ new technical-plan milestone. A reference product's behavior list, a
 request's new Storybook components and the endings line in a new session's
 first reply are notices the person may interrupt, never approval gates
 (`SKILL.md`, section 5, "Notices that never wait"). Human
-sign-in, credential entry and OS permission actions remain with the person.
+sign-in, credential entry and OS permission actions remain with the person,
+and so does each flag key's approval (`guardrails.md`, "Feature flags").
 
 ### Precedent before asking
 
@@ -499,7 +500,7 @@ between a request and the person seeing it.
   (`environment.md`, "Main-sync before publication") is unchanged.
 
 Browser E2E, visual QA, logical QA, product-contract QA, the guardrails and
-adversarial reviews, `workflow-code-review`, the existing test suite,
+adversarial reviews, `workflow-code-review`, the targeted existing tests,
 Storybook footprint, running app checks and any other heavy validation run
 at `$handoff`, never during the loop, even where a repository protocol
 asks for them before a change is done: handoff runs them. The acceptance

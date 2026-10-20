@@ -13,7 +13,7 @@ A Codex turn that hits a usage limit stays open and simply stops producing items
 
 ## Requirements
 
-- Each Codex session is identified by its thread id. `scripts/liveness.mjs` is self-contained (Node built-ins only): it starts the managed App Server with `codex app-server daemon start`, connects through `codex app-server proxy`, and calls `thread/read`. `scripts/ratelimit.mjs` reuses its client to call `account/rateLimits/read`. Nothing outside the vibe plugin and the `codex` CLI is needed.
+- Each Codex session is identified by its thread id. `scripts/liveness.mjs` is self-contained (Node built-ins only): it starts the managed App Server with `codex app-server daemon start`, connects through `codex app-server proxy`, and calls `thread/read`. `scripts/ratelimit.mjs` reuses its client to call `account/rateLimits/read`; it is also the plugin's one usage reader and classifier, which the vibe skill's `codex-usage.mjs` gate imports. Nothing outside the vibe plugin and the `codex` CLI is needed.
 - `codex`, `node`, `jq`, `gh` (authenticated) on this machine; `codex` and `node` on the remote host, reachable through `REMOTE_SHELL`.
 
 ## Set up a work dir
@@ -66,7 +66,7 @@ Start it with `run_in_background`. You are notified when it exits. Read its outp
 | `codex-usage <local\|remote> <band>% ok resets=<n>` | Codex account usage on that machine, used percent floored to 10; `resets` is the count of available limit resets | none; if the band rises fast, warn the user with the rate |
 | `codex-usage ... LIMIT` / `LIMIT-STOPPED` | usage limit reached; `LIMIT` means ordinary usage is still allowed, `LIMIT-STOPPED` means sessions cannot run | tell the user right away; a reset or second account is theirs to do |
 | `codex-usage ... LIMIT-SPENDING-CREDITS` | limit reached and turns are now consuming paid credits | tell the user at once and stop sending turns unless they approve paid credits |
-| `codex-usage ... unreadable READFAIL` | the App Server or remote host could not be read | check `codex` on that machine |
+| `codex-usage ... unknown` / `unreadable READFAIL` | the App Server answered without rate limits, or it or the remote host could not be read | check `codex` on that machine |
 | `requests <local\|remote> <count> <newest file>` / `requests ... UNREADABLE` | a session dropped (or you removed) a delegated-work request file | hand the new request to a Claude worker, then steer its result back to the session that asked |
 | `open-prs <repo> <numbers>` | open PR list changed | add the new PR to `prs.txt` and start its review |
 | `pr ... <state> <head> <reviewDecision> <mergeable> comments= reviews= inline= checks=` | any field changed | new head: re-review; count up: read the feedback; `CONFLICTING`: tell the owning session to merge the base branch; checks: act on failures. Check counts change only once settled; while any check is pending the last settled counts show with ` (running)` |
