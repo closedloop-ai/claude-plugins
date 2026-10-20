@@ -251,8 +251,8 @@ merged, shared-parent consumers and relevant web/Desktop consequences, not
 already shipped; keep story/test/prototype-only inventory separate. Preserve
 exact new/existing modified/removed flag keys, owning paths and all relevant
 entry/read/mutation/host gates, with each new key's or new read's
-justification from the record's `flagKeys` (`guardrails.md`, "Feature
-flags"). No new flags does not mean no existing gates. The keys to see the
+justification and the person's approval (who, when, their words) from the
+record's `flagKeys` (`guardrails.md`, "Feature flags"). No new flags does not mean no existing gates. The keys to see the
 work reach the ticket only through `ticket-sections`; never type them by hand,
 and return `NEEDS_CHANGE` when the record has none recorded.
 Keep source defaults, timestamped verified production values and local QA

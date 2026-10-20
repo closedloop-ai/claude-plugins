@@ -369,7 +369,8 @@ changes and gates fields, and its "Keys to see this work" block.
    - UI Feature Flag: the heading alone, unless the change adds a net-new
      surface, screen or navigation item or a new flag primitive; then attest
      `[ui-flag:gated] <key>` or `[ui-flag:N/A] <reason>` only from the Flag
-     changes and gates field, citing the new key's recorded justification.
+     changes and gates field, citing the new key's recorded justification
+     and the person's approval of it.
    - Test plan: at most 20 lines: the tests written and the checks run, with
      their results.
    When the record cannot support a required answer, say so in that section

@@ -1,4 +1,4 @@
-"""Contract checks for the 2026-10-20 operator ruling on feature flag sprawl.
+"""Contract checks for the 2026-10-20 operator rulings on feature flag sprawl and tech debt.
 
 About 14 symphony-alpha vibe sessions each added PostHog keys and nothing
 challenged them: one gated a single Branches list redesign behind three keys,
@@ -14,6 +14,11 @@ turn on. Each lesson lands in the owner of the behavior:
 4. Handoff, the ticket, the summarizer and the pull request carry the keys to
    see the work per surface; the live ticket check refuses a ticket without
    them, and `vibe-sessions.mjs list` shows them across sessions.
+5. No agent creates or adds a flag on its own: the person approves each key
+   in the session, after seeing the key, why, what it gates and the full
+   stack; no answer means no flag.
+6. Flags are one case of a general principle, no new tech debt without a
+   cited reason, which the existing owners apply.
 """
 
 from __future__ import annotations
@@ -28,6 +33,8 @@ GUARDRAILS = VIBE / "references" / "guardrails.md"
 TICKET_TEMPLATE = VIBE / "references" / "ticket-template.md"
 VIBE_SKILL = VIBE / "SKILL.md"
 SESSIONS_SCRIPT = VIBE / "scripts" / "vibe-sessions.mjs"
+FLAG_KEYS_SCRIPT = VIBE / "scripts" / "flag-keys.mjs"
+QUALITY = VIBE / "references" / "quality-loop.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 TICKET_CHECK = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "live-ticket-check.mjs"
 RULING = "operator ruling, 2026-10-20"
@@ -42,23 +49,22 @@ def assert_all(text: str, required: tuple[str, ...]) -> None:
 def test_the_canonical_rule_reads_the_target_repo_and_needs_a_human_source() -> None:
     rule = section(GUARDRAILS.read_text(), "## Feature flags")
     assert_all(rule, (
-        "Operator ruling, 2026-10-20",
+        "Operator rulings, 2026-10-20",
         "`branches-list-adapter-connected`",
-        "The target repo's rule decides, never this file.",
+        "The target repo's rule decides what may even be proposed, never this file.",
         "an existing key read in a new place counts",
         "read the rule from the checkout",
-        "Quote the sentence the key relies on",
-        "No justification means no flag.",
-        "An agent-written plan, PLN, decision table or change log is never the source",
-        "is built ungated",
+        "quote the sentence the key relies on",
+        "is built ungated and never proposed",
         "One behavior, one key. Staged rollout states",
         "never more keys",
         "One key gates every host the surface exists on, web and Desktop",
         "Reuse first.",
         "`vibe-sessions.mjs list` for keys other sessions recorded on the same surface",
-        "`vibe-sessions.mjs flag-keys --worktree <wt> --file <flag-keys.json>`",
+        "`flag-keys.mjs record --worktree <wt> --file <flag-keys.json>`",
         "the existing keys the changed code already sits behind included",
         "a second new key on one surface",
+        "a read of a key the person has not approved",
         '"Keys to see this work"',
     ))
 
@@ -68,22 +74,80 @@ def test_the_closed_by_default_paragraph_points_at_the_repo_rule_instead_of_rest
     assert "the target repo's own flag rule decides which keys the work may add or read" in text
     assert "net-new screen, surface, or navigation item ships behind a default-off PostHog flag" not in text
     labs = section(GUARDRAILS.read_text(), "## Labs")
-    assert "record both keys with `flag-keys`" in labs
+    assert "the person approves each one, and `flag-keys.mjs record` keeps them" in labs
 
 
-def test_the_writer_justifies_every_new_key_or_read_before_building_it() -> None:
-    writer = paragraph(agent("vibe-change-worker"), "Before you add a feature flag key or a new read of any key")
+def test_the_writer_justifies_and_proposes_but_never_adds_a_flag_on_its_own() -> None:
+    writer = paragraph(agent("vibe-change-worker"), "You never create or add a feature flag on your own")
     assert_all(writer, (
         CANONICAL,
         RULING,
         "quote the target repo's own flag rule from its `AGENTS.md`",
-        "With no justification, build the change ungated.",
+        "With no justification, build the change ungated and ask nothing.",
         "Never split one behavior across several keys",
         "Reuse the key that already gates the surface.",
-        "`vibe-sessions.mjs flag-keys`",
-        "is never `NEEDS_PERSON`: the answer is no flag",
+        "A justified key is only a proposal",
+        "return `NEEDS_FLAG_APPROVAL` naming the key",
+        "Add the gate only after the orchestrator resumes you with the person's recorded yes for that key",
+        "on a no or no answer, keep it ungated",
     ))
-    assert "keeps the set current with `vibe-sessions.mjs flag-keys`" in flat(VIBE_SKILL.read_text())
+    assert "`NEEDS_FLAG_APPROVAL` names a proposed flag key the person must approve" in flat(agent("vibe-change-worker"))
+
+
+def test_the_person_approves_each_key_after_seeing_why_what_it_gates_and_the_whole_stack() -> None:
+    rule = section(GUARDRAILS.read_text(), "## Feature flags")
+    assert_all(rule, (
+        "So no agent creates or adds a feature flag on its own: the person approves each key in the session.",
+        "the justification is the input to that question, never a substitute for it",
+        "every other key the same work also sits behind there, so the person sees the whole stack",
+        "Only an explicit yes from the person running the session lets the key be built",
+        "which saves who and when and refuses an answer to any other question",
+        "No answer, or a run with nobody to ask, leaves the key pending and builds no flag; never assume a yes.",
+        "An approval covers one key and the exact proposal it answered",
+    ))
+    skill = section(VIBE_SKILL.read_text(), "## 7. Feature flags")
+    assert_all(skill, (
+        "When the writer returns `NEEDS_FLAG_APPROVAL` for a key",
+        "`node scripts/flag-keys.mjs question --worktree \"<wt>\" --key <key>`",
+        "in exactly those words through `session-questions.mjs`",
+        "one key per question",
+        "It skips the product research and precedent gate",
+        "`approved` only for an explicit yes",
+        "With no answer the key stays pending and nothing is gated.",
+    ))
+    assert "`NEEDS_FLAG_APPROVAL` (the writer proposed a feature flag key" in flat(VIBE_SKILL.read_text())
+    questions = section(QUALITY.read_text(), "## Communication and product questions")
+    assert "A feature flag key is the one technical choice the person always decides" in questions
+    script = FLAG_KEYS_SCRIPT.read_text()
+    assert 'case "approve":' in script
+    assert "only the person running it can approve a flag key" in script
+
+
+def test_tech_debt_is_one_principle_applied_by_the_existing_owners() -> None:
+    rule = section(GUARDRAILS.read_text(), "## No new tech debt")
+    assert_all(rule, (
+        "Operator ruling, 2026-10-20: a change must not grow tech debt without a cited reason.",
+        "flags (\"Feature flags\") are its concrete, tested case",
+        "The simpler option that reuses what exists wins by default.",
+        "`Debt: <kind>; added: <what>; reused instead: <what it checked>; reason: <source>`",
+        "| A parallel code path",
+        "| A compatibility shim, re-export, wrapper or code kept alive for a deprecated story",
+        "| A second owner for the same behavior",
+        "| A duplicated helper, hook, type, const object, validator, bound or copy string",
+        "| New config: an env var, setting, option or threshold",
+        "| A file grown toward the repo's size ceiling",
+    ))
+    writer = paragraph(agent("vibe-change-worker"), "Grow no tech debt without a cited reason")
+    assert_all(writer, ('"No new tech debt"', "Your own rationale is not a reason.", "With none, build the reuse"))
+    reviewer = section(agent("vibe-guardrails-reviewer"), "## Check, for added or changed lines only")
+    assert_all(reviewer, (
+        "Every check applies one principle: a change grows no tech debt without a cited reason",
+        "a new schema whose limit differs from the constant the domain already exports is blocking",
+        "one the session grew is blocking",
+        "keep it only for a named live consumer",
+        "each second path (a route, service, writer or store for a behavior an existing one already owns)",
+    ))
+    assert "A tech debt finding" in flat(HANDOFF_SKILL.read_text())
 
 
 def test_the_guardrails_reviewer_checks_every_key_the_session_adds_or_depends_on() -> None:
@@ -94,7 +158,8 @@ def test_the_guardrails_reviewer_checks_every_key_the_session_adds_or_depends_on
         RULING,
         "read the target repo's flag rule from the checkout's `AGENTS.md` files yourself",
         "every existing key the changed code sits behind",
-        "the record's `flagKeys`",
+        "with no recorded approval from the person for its current proposal",
+        "an approval of one key never covers another",
         "cites only an agent-written plan",
         "a gate on a change the repo rule says ships directly",
         "staged rollout states as separate keys included",
@@ -112,7 +177,8 @@ def test_handoff_routes_flag_findings_to_the_writer_and_tells_the_person_the_key
     assert_all(handoff, (
         "A flag key finding (the reviewer's check 17",
         "builds the change ungated or reuses the existing key",
-        "never a question for the person",
+        "a justified key with no recorded approval: ask the person its approval question once",
+        "Never treat a cited source as approval.",
         "the live ticket check refuses a ticket without them",
         'and its "Keys to see this work" block',
     ))
@@ -134,8 +200,11 @@ def test_the_ticket_summary_and_pull_request_carry_the_keys_and_justifications()
     assert "citing the new key's recorded justification" in environment
 
 
-def test_the_record_command_the_rule_names_exists_and_the_ticket_check_requires_its_block() -> None:
-    script = SESSIONS_SCRIPT.read_text()
-    assert 'case "flag-keys":' in script
-    assert "flagKeys: listedFlagKeys(" in script
-    assert '"lists no keys to see the work"' in TICKET_CHECK.read_text()
+def test_the_record_commands_the_rule_names_exist_and_the_ticket_check_requires_approval() -> None:
+    script = FLAG_KEYS_SCRIPT.read_text()
+    for command in ('case "record":', 'case "question":', 'case "approve":', 'case "show":'):
+        assert command in script
+    assert "flagKeys: listedFlagKeys(" in SESSIONS_SCRIPT.read_text()
+    check = TICKET_CHECK.read_text()
+    assert '"lists no keys to see the work"' in check
+    assert "flagKeyProblems(record)" in check

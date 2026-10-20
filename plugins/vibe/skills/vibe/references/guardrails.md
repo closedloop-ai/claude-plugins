@@ -408,47 +408,87 @@ reviewer, the ticket worker and the handoff skill point at it.
   writer and recorded on the Feature docs line instead, never kept as a
   draft.
 
+## No new tech debt
+
+Operator ruling, 2026-10-20: a change must not grow tech debt without a cited
+reason. This section is the principle's one canonical statement; the owners
+below apply it, and flags ("Feature flags") are its concrete, tested case.
+
+Every new mechanism the writer adds needs a cited reason: a human source (the
+ticket or PRD sentence, the person's words, a traced ruling) or the target
+repo's own rule, quoted. The simpler option that reuses what exists wins by
+default. An agent's own rationale, plan, PLN, decision table or change log is
+never the reason (`quality-loop.md`, "Communication and product questions").
+The writer names the reason in the local plan and logs
+`Debt: <kind>; added: <what>; reused instead: <what it checked>; reason: <source>`
+in the change log; with no reason, it builds the reuse instead.
+
+| Kind of debt | Where it is prevented | Where it is caught at handoff |
+|---|---|---|
+| A flag key or a new read of one | "Feature flags": the person's per-key approval | `vibe-guardrails-reviewer` check 17; `live-ticket-check.mjs` |
+| A parallel code path: a second route, service, writer, table, store or cursor for a behavior an existing one owns | `vibe-change-worker` prep (graph-first owner research, `design-pass.md` "Owner rules") | check 12 (Mechanisms) |
+| A compatibility shim, re-export, wrapper or code kept alive for a deprecated story | `design-pass.md`, "Red flags", Leftovers | check 8 (Leftovers) |
+| A second owner for the same behavior | `design-pass.md`, "Owner rules" | check 8 (Shared owner and red flags) |
+| A duplicated helper, hook, type, const object, validator, bound or copy string | "Reuse first", "Copy" | checks 1 (Reuse), 4 (Copy) and 8 (Private copies) |
+| New config: an env var, setting, option or threshold | "Checks"; this section | check 12 (Mechanisms) and 15 (Rule provenance) |
+| A file grown toward the repo's size ceiling | the repo's file-size rule (symphony-alpha root `AGENTS.md`) | check 7 (Conventions) |
+
 ## Feature flags
 
-Operator ruling, 2026-10-20: about 14 symphony-alpha sessions each added
+Operator rulings, 2026-10-20: about 14 symphony-alpha sessions each added
 their own PostHog keys and nothing challenged them. One session gated a single
 Branches list redesign behind three keys (`branches-list-adapter-connected`,
 `-disconnected`, `-rollback`); stacked with other sessions' keys, a person had
 to turn on many keys to see one screen. Writers also gated edits to shipped
 surfaces that the repo's rule says ship directly, and no handoff said which
-keys to turn on. This section is the rule's one canonical statement; the
-writer, the guardrails reviewer, the summarizer, the ticket worker and the
-handoff skill point at it.
+keys to turn on. So no agent creates or adds a feature flag on its own: the
+person approves each key in the session. This section is the rule's one
+canonical statement; the writer, the orchestrators, the guardrails reviewer,
+the summarizer and the ticket worker point at it.
 
-- The target repo's rule decides, never this file. Before adding a new flag
-  key or a new read of any key (an existing key read in a new place counts),
-  read the rule from the checkout:
+- The target repo's rule decides what may even be proposed, never this file.
+  Before proposing a new flag key or a new read of any key (an existing key
+  read in a new place counts), read the rule from the checkout:
   `rg -n -i 'feature flag|closed-by-default|ui-flag' "<wt>/AGENTS.md"` plus
-  the nearest `AGENTS.md` of each directory the read lands in. Quote the
-  sentence the key relies on; do not paraphrase it from memory or from this
-  file.
-- No justification means no flag. A new key or new read is justified only by
-  what that rule allows (in symphony-alpha today: a net-new surface, screen or
-  navigation item, or a rollout the author or a spec asks for), with its
-  human source: the ticket or PRD slug and its sentence, or the person's
-  words. A net-new reason names what main does not have. An agent-written
-  plan, PLN, decision table or change log is never the source
-  (`quality-loop.md`, "Communication and product questions"). Whatever the
-  rule says ships directly (in symphony-alpha: edits to a shipped surface,
-  corrections and removals) is built ungated; a default-off flag on it keeps
-  the old behavior for everyone.
+  the nearest `AGENTS.md` of each directory the read lands in, and quote the
+  sentence the key relies on. A key is proposed only for what that rule
+  allows (in symphony-alpha today: a net-new surface, screen or navigation
+  item, or a rollout the author or a spec asks for), with its human source:
+  the ticket or PRD slug and its sentence, or the person's words. A net-new
+  reason names what main does not have. Whatever the rule says ships directly
+  (in symphony-alpha: edits to a shipped surface, corrections and removals)
+  is built ungated and never proposed.
 - One behavior, one key. Staged rollout states (connected and disconnected,
   on and off, rollback, phase one and two) are the values or the rollout
   percentage of that one key, never more keys. One key gates every host the
   surface exists on, web and Desktop, read where it gates.
-- Reuse first. Before naming a new key, `rg` the repo's flag key constants
+- Reuse first. Before proposing a new key, `rg` the repo's flag key constants
   (symphony-alpha: `packages/app/shared/lib/feature-flags.ts`), `code_grep`
   the surface's entry points for keys that already gate them, and read
   `vibe-sessions.mjs list` for keys other sessions recorded on the same
-  surface. A key that already gates the surface is reused.
-- Record the keys to see the work. Whenever the session adds, reuses or
-  removes a key or read, and at handoff, the writer saves the full set with
-  `vibe-sessions.mjs flag-keys --worktree <wt> --file <flag-keys.json>`:
+  surface. A key that already gates the surface is reused, and reusing it in
+  a new place is still a proposal.
+- The person approves each key; the justification is the input to that
+  question, never a substitute for it. The writer records the proposal with
+  `flag-keys.mjs record` (the key with no reads yet), builds the rest of the
+  request without the gate, and returns `NEEDS_FLAG_APPROVAL` naming the key.
+  The orchestrator prints the question with
+  `flag-keys.mjs question --worktree <wt> --key <key>` (the key, why with its
+  source, what it gates per surface and host, and every other key the same
+  work also sits behind there, so the person sees the whole stack) and asks
+  it in those exact words through `session-questions.mjs` under the key the
+  command prints. Only an explicit yes from the person running the session
+  lets the key be built: record it with
+  `flag-keys.mjs approve --worktree <wt> --key <key> --decision approved --answer "<their words>"`,
+  which saves who and when and refuses an answer to any other question. A no
+  is recorded as `declined` and the change ships without the key. No answer,
+  or a run with nobody to ask, leaves the key pending and builds no flag;
+  never assume a yes. An approval covers one key and the exact proposal it
+  answered: another key, or a changed surface, stack, reason or source, is
+  asked again.
+- Record the keys to see the work. Whenever the session proposes, builds,
+  reuses or removes a key or read, and at handoff, the writer saves the full
+  set with `flag-keys.mjs record --worktree <wt> --file <flag-keys.json>`:
   per surface, its hosts (`web`, `desktop`) and every key that must be on to
   see the work there, the existing keys the changed code already sits behind
   included. Each key is `new` (created by this work), `new-read` (an existing
@@ -456,12 +496,13 @@ handoff skill point at it.
   gates the changed code), with the files that read it. `new` and `new-read`
   also carry `reason` (`net-new-surface`, `net-new-screen`,
   `net-new-navigation-item` or `spec-requested-rollout`), `repoRule` (the
-  quoted sentence) and `source`; the script refuses a key without them, a
-  spec rollout whose source names no slug, and a second new key on one
-  surface. A surface no key gates is listed with no keys. The live ticket's
-  Production flag snapshot section renders the set as "Keys to see this work"
-  with each key's value in the person's snapshot, and `list` shows it for
-  every session.
+  quoted sentence) and `source`. The script refuses a proposal without them,
+  a spec rollout whose source names no slug, a second new key on one surface,
+  a read of a key the person has not approved, and a declined key. A surface
+  no key gates is listed with no keys. The live ticket's Production flag
+  snapshot section renders the set as "Keys to see this work", with each
+  key's approval and its value in the person's snapshot, and `list` shows it
+  for every session.
 
 ## Accessibility
 
@@ -475,8 +516,8 @@ destination pattern: the route checks the `labs-nav-section` container flag
 plus its own PostHog key (see `apps/app/app/(authenticated)/[orgSlug]/help/page.tsx`
 and `packages/app/shared/lib/feature-flags.ts`). One key gates web and Desktop.
 Tell them the Labs entry shows on their environment only if those flags are
-on for them, and record both keys with `flag-keys` ("Feature flags") so
-handoff can list them.
+on for them. Both keys go through "Feature flags": the person approves each
+one, and `flag-keys.mjs record` keeps them so handoff can list them.
 
 ## Tests
 

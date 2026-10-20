@@ -43,6 +43,10 @@ request's new Storybook components and the endings line in a new session's
 first reply are notices the person may interrupt, never approval gates
 (`SKILL.md`, section 5, "Notices that never wait"). Human
 sign-in, credential entry and OS permission actions remain with the person.
+A feature flag key is the one technical choice the person always decides
+(operator ruling, 2026-10-20): its approval question is asked in the exact
+words `flag-keys.mjs question` prints, one key at a time, with no research or
+precedent gate in front of it (`guardrails.md`, "Feature flags").
 
 ### Precedent before asking
 

@@ -141,8 +141,9 @@ path and decision table, or "None: every screen uses existing API endpoints.">
 
 <From ticket-sections: when it was taken, for which PostHog user, and every
 flag with its value; then "Keys to see this work": per surface and host, every
-key that must be on to see the work, new and existing, with its value in that
-snapshot (`guardrails.md`, "Feature flags").>
+key that must be on to see the work, new and existing, with the person's
+approval of each new one and its value in that snapshot (`guardrails.md`,
+"Feature flags").>
 
 ## Sessions
 
@@ -161,8 +162,9 @@ subagent that worked on this.>
 - Flag changes and gates: <exact keys classified as new, existing modified or
   removed, with owning source paths and the changed code's gated entry points,
   reads, mutations and host gates. For each new key and new read, its
-  justification from the session record's `flagKeys`: the reason, the quoted
-  repo rule and the human source (`guardrails.md`, "Feature flags"). Include relevant existing gates, not only
+  justification from the session record's `flagKeys` (the reason, the quoted
+  repo rule and the human source) and the person's approval: who, when and
+  their words (`guardrails.md`, "Feature flags"). Include relevant existing gates, not only
   Labs flags. Say "No new flags" when the verified diff establishes that, but
   still list existing modified/removed keys and gates around changed code.
   Separate source defaults (source evidence), actually verified production

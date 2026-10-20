@@ -354,9 +354,14 @@ checks. Keep the writer's Design blocks for the ticket.
 A flag key finding (the reviewer's check 17; `../vibe/references/guardrails.md`,
 "Feature flags", operator ruling, 2026-10-20) resumes the SAME writer like any
 other source defect: it builds the change ungated or reuses the existing key,
-and saves the session's set again with `vibe-sessions.mjs flag-keys`. It is
-never a question for the person, and the review reruns until no flag key
-finding remains.
+and saves the session's set again with `flag-keys.mjs record`. The one
+exception is a justified key with no recorded approval: ask the person its
+approval question once, exactly as the vibe skill's section 7 says, and
+record their answer; without an explicit yes the writer removes the gate.
+Never treat a cited source as approval. The review reruns until no flag key
+finding remains. A tech debt finding (`../vibe/references/guardrails.md`,
+"No new tech debt") goes to the same writer, who builds the reuse unless the
+change log cites a human source or repo rule for the new mechanism.
 
 ## 4. Storybook
 
@@ -665,9 +670,10 @@ effects; it is not already shipped. Keep story/test/prototype-only inventory
 separate. The flag evidence covers exact new/existing modified/removed keys
 and relevant entry/read/mutation/host gates, including existing gates when
 there are no new flags, plus each new key's or new read's justification from
-the record's `flagKeys`; the writer saves that set with `flag-keys` before
-the ticket fill, so `ticket-sections` renders the keys to see the work and the
-live ticket check refuses a ticket without them. Keep source defaults,
+the record's `flagKeys`; the writer saves that set with `flag-keys.mjs
+record` before the ticket fill, so `ticket-sections` renders the keys to see
+the work and the live ticket check refuses a ticket without them or with a
+key the person has not approved. Keep source defaults,
 timestamped actually verified production values and local QA toggles
 distinct; unavailable/stale verification
 is not permission to guess or overwrite/refresh the machine snapshot.

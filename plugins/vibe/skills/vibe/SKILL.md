@@ -226,7 +226,9 @@ built the request's new Storybook components first; section 5, "Notices that
 never wait"). `NEEDS_DESKTOP_STOP` (the worker must merge
 main into the worktree or otherwise swap its commit while Desktop runs),
 `NEEDS_COMMIT` (the worktree has changes you have not committed yet: commit
-them as section 6 step 3 says, then dispatch the worker again), or
+them as section 6 step 3 says, then dispatch the worker again),
+`NEEDS_FLAG_APPROVAL` (the writer proposed a feature flag key and built the
+rest without it; ask the person as section 7 says), or
 `BLOCKED` (with the reason).
 
 `NEEDS_REVIEW` from a prototype means its code is built but its quick checks
@@ -927,11 +929,20 @@ the flags or to match production again, dispatch `vibe-environment-worker` in
 flags mode with the worktree and the live ticket slug. Never refresh them
 otherwise.
 
-Every key the work adds or reads, and the keys a person must turn on to see
-it, follow `references/guardrails.md`, "Feature flags" (operator ruling,
-2026-10-20): the writer justifies each new key or read against the target
-repo's own flag rule before building it, never splits one behavior across
-keys, and keeps the set current with `vibe-sessions.mjs flag-keys`.
+No agent creates or adds a feature flag on its own (operator ruling,
+2026-10-20; `references/guardrails.md`, "Feature flags"). When the writer
+returns `NEEDS_FLAG_APPROVAL` for a key, print its question with
+`node scripts/flag-keys.mjs question --worktree "<wt>" --key <key>` and ask it
+in exactly those words through `session-questions.mjs` (section 5, "Questions
+are asked once") under the `questionKey` it prints, one key per question. It
+skips the product research and precedent gate: only the person decides a
+key. Record their words with `session-questions.mjs answer`, then
+`node scripts/flag-keys.mjs approve --worktree "<wt>" --key <key> --decision approved|declined --answer "<their words>"`,
+`approved` only for an explicit yes. Resume the SAME writer with the result:
+it adds the approved key, or keeps the change ungated and removes a declined
+one. With no answer the key stays pending and nothing is gated. The writer
+keeps the session's keys current with `flag-keys.mjs record`, and handoff
+lists the keys to see the work.
 
 ## 8. Ending a session
 

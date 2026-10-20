@@ -9,6 +9,9 @@
 // With `--worktree`, a session that has local plans must have its PLN
 // recorded, and handoff must have left it APPROVED (operator ruling,
 // 2026-10-19); the ticket worker checks its links on ClosedLoop before this.
+// It also needs the session's flag keys recorded, each proposed key approved
+// by the person for its current proposal and read by a file (operator ruling,
+// 2026-10-20).
 // Prints one JSON object; exits 0 when complete and 1 otherwise. Changes
 // nothing. The sections are the headings of ../../vibe/references/ticket-template.md.
 //
@@ -18,6 +21,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { flagKeyProblems } from "../../vibe/scripts/flag-keys.mjs";
 import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe/scripts/prototype-session.mjs";
 import { localPlanFiles } from "../../vibe/scripts/session-plan.mjs";
 import { git, readSessionRecord } from "../../vibe/scripts/session-record.mjs";
@@ -114,6 +118,8 @@ export function checkLiveTicket(body, { baseCommit, record, headSha, branch, pla
     }
   }
   problems.push(...checkSessionPlan(record, planCount));
+  // Operator ruling, 2026-10-20: every proposed flag key needs the person's recorded yes.
+  problems.push(...flagKeyProblems(record).map((problem) => ({ section: "Flag keys", problem })));
   return { ok: problems.length === 0, problems };
 }
 
