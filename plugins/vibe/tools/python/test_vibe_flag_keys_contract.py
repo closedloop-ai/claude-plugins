@@ -53,6 +53,7 @@ def test_the_canonical_rule_reads_the_target_repo_and_needs_a_human_source() -> 
         "in another session's `vibe-sessions.mjs list` entry, is reused",
         "every key the work sits behind with `scripts/flag-keys.mjs record`",
         '"Keys to see this work"',
+        "An agent never adds or edits a flag registration attestation",
     ))
 
 

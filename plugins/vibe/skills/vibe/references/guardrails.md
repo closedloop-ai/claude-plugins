@@ -440,6 +440,9 @@ keys to turn on. No agent creates or adds a flag on its own.
 - The ticket's Production flag snapshot section shows "Keys to see this work"
   from the record, handoff tells the person, and `live-ticket-check.mjs`
   fails an unapproved key.
+- An agent never adds or edits a flag registration attestation (symphony-alpha
+  ISS-8676: a ledger row or verification date only a human makes); the
+  approval and "Keys to see this work" tell the human which key to ledger.
 
 ## Accessibility
 
