@@ -2,6 +2,6 @@
 type: regex
 match: contains
 flags: i
-pattern: 'SOURCE:[^\n]*(adversarial|independent|reviewer|child evidence)[^\n]*'
+pattern: 'SOURCE:[^\n]*(gate|ticket check|child.evidence|inReview|not the writer)'
 ---
-The independent reviewer's map decides, not the writer's audit.
+The gate on the ticket worker's own map decides, not the writer's audit.

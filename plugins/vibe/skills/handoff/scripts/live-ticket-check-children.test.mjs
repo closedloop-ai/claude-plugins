@@ -3,16 +3,16 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { checkChildEvidence, parseAddedLines, readFacts } from "./child-evidence.mjs";
+import { checkChildEvidence, parseAddedLines, readFacts } from "./live-ticket-check.mjs";
 import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.join(HERE, "child-evidence.mjs");
+const SCRIPT = path.join(HERE, "live-ticket-check.mjs");
 const NOW = Date.parse("2026-10-20T12:00:00.000Z");
 const PULL = "https://github.com/closedloop-ai/symphony-alpha/pull/8947";
 
 function fixture(t) {
-  const home = makeHome("vibe-child-evidence-");
+  const home = makeHome("vibe-live-ticket-children-");
   t.after(home.cleanup);
   const checkout = path.join(home.root, "wt");
   makeCheckout({ ...home, checkout, files: { "apps/app/board.tsx": "one\ntwo\nthree\n", ".gitignore": "ledger.local.md\n" } });
@@ -156,16 +156,22 @@ test("parseAddedLines reads new-side ranges, including single-line and pure-dele
   assert.equal(lines.has("gone.ts"), false);
 });
 
-test("the CLI exits 1 with the problems and 0 with the slugs allowed to move", (t) => {
+test("the CLI reports the children gate beside the ticket check and fails on a writer's map", (t) => {
   const { home, checkout, base } = fixture(t);
+  const ticket = path.join(home.root, "ticket.md");
+  writeFileSync(ticket, "## What this is\nFixture.\n");
   const good = path.join(home.root, "good.json");
-  writeFileSync(good, JSON.stringify({ reviewer: "vibe-adversarial-reviewer", children: [delivered([MET_DIFF])] }));
-  const passed = runNode(SCRIPT, ["--worktree", checkout, "--base", base, "--map", good], home.home);
-  assert.equal(passed.status, 0);
-  assert.deepEqual(passed.json.inReview, ["ISS-9393"]);
+  writeFileSync(good, JSON.stringify({ reviewer: "vibe-ticket-worker", children: [delivered([MET_DIFF])] }));
+  const args = (map) => ["--file", ticket, "--worktree", checkout, "--base-commit", base, "--child-evidence", map];
+  const passed = runNode(SCRIPT, args(good), home.home);
+  assert.equal(passed.json.children.ok, true);
+  assert.deepEqual(passed.json.children.inReview, ["ISS-9393"]);
   const bad = path.join(home.root, "bad.json");
   writeFileSync(bad, JSON.stringify({ reviewer: "vibe-change-worker", children: [delivered([MET_DIFF])] }));
-  const failed = runNode(SCRIPT, ["--worktree", checkout, "--base", base, "--map", bad], home.home);
+  const failed = runNode(SCRIPT, args(bad), home.home);
   assert.equal(failed.status, 1);
-  assert.equal(failed.json.ok, false);
+  assert.equal(failed.json.children.ok, false);
+  const missing = runNode(SCRIPT, ["--file", ticket, "--child-evidence", good], home.home);
+  assert.equal(missing.status, 1);
+  assert.match(missing.json.error, /needs --worktree and --base-commit/);
 });

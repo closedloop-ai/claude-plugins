@@ -298,33 +298,11 @@ path merely because another rule describes how its content should look.
     If its only source is an agent's own rationale, it is a blocking
     `engineering decision` finding. A detailed explanation written by an
     agent is still not a product source, and neither is the session's own
-    text: its live ticket, PLN, local plan, decision table or change log
-    (`quality-loop.md`, "Communication and product questions"). List and
-    match each of these too, every one blocking without a human source:
-    - every new server refusal, validation rule and refusal reason, each
-      matched to the PRD clause that states it (a display cap or an example
-      in a PRD is not a refusal rule);
-    - every new state presentation (a loading pulse, an error ring, an
-      `aria-invalid`, a live region), held to the same source rule as copy;
-    - every new numeric limit (a rate limit, cache or LRU size, page size,
-      threshold, ceiling), or an `Engineering decision` entry when no human
-      gave it;
-    - every acceptance criterion the plan or table words more strongly than
-      its source, quoted beside the source's words;
-    - every edit to a shared module with callers outside the ticket's path,
-      which needs a named reason and the list of affected callers in the
-      change log (symphony-alpha #8956 rewrote a shared label helper and
-      deleted its regression test, citing its own plan's restated criterion);
-    - every accessibility behavior the diff removes or changes, checked
-      against DONE sibling tickets for a stated requirement
-      (`quality-loop.md`, "Precedent before asking").
-16. PRD child reconciliation: when the source is a PRD, compare its current
-    children with the requirements classification, session ticket and diff.
-    Every live child whose exact outcome the branch implements must be included
-    and claimed, excluded because another person has real activity, superseded
-    by a cited human ruling, or listed uncovered with current owner and status.
-    A session-created supersession, a "not reused" label, or a delivered child
-    left `TODO` is blocking.
+    ticket, PLN, plan, table or change log. This covers every refusal rule (a
+    PRD display cap is not one), state presentation (held to the copy rule),
+    numeric limit, criterion worded more strongly than its source and removed
+    accessibility behavior; a shared-module edit lists its callers in the
+    change log.
 
 For publication, verify the SAME source actor's `main-sync-inputs` evidence
 before capture and after the committed merge. Canonical private diagnostics

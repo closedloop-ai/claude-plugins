@@ -7,13 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### vibe v1.0.62
 
 #### Changed
-- Claimed PRD children reach In Review only through `handoff/scripts/child-evidence.mjs`. The adversarial reviewer (attack 12, in either handoff weight) maps every acceptance criterion and work item of each claimed child to evidence the script verifies: an added line in the diff, a tracked file the branch changed, a merged pull request whose merge commit is in history, or a report produced on the final commit. A writer-authored map, a pending item, a gitignored ledger, an evidence path the child names but nothing covers, "active elsewhere" without an open pull request, a recent branch commit or another owner's IN_PROGRESS, and a supersession citing the session's own ticket, plan or table all fail. The ticket worker moves exactly the slugs the gate passes and lists the rest uncovered.
-- Requirements research quotes PRD and ticket flag, rollout, rollback, parity, boundary and non-goal clauses as acceptance criteria, never narrows the targets a PRD names, and calls a child active elsewhere only with real activity evidence.
-- Text the session wrote (its live ticket, PLN, local plan, decision table and change log) is never a source for user-visible behavior. Criteria are never strengthened by the session's restatement, an operator clause naming visible content is met only where each surface renders it, and a precedent never overrides a stated requirement in a DONE or open sibling ticket.
-- Guardrails rule provenance now lists new refusal rules, state presentations, numeric limits, strengthened criteria, shared-module edits with outside callers and changed accessibility behavior, each blocking without a human source. The adversarial reviewer treats an unfilled seam and a still-live fallback render branch as an unmet criterion.
+- Claimed PRD children reach In Review only through `live-ticket-check.mjs --child-evidence`, inside the ticket check handoff already runs. The ticket worker (not the writer) maps every acceptance criterion and work item of each claimed child to evidence the script verifies: an added diff line, a tracked file the branch changed, a merged pull request whose commit is in history, or a report on the final commit. A writer-authored map, pending evidence, a gitignored ledger, an uncovered named evidence path, "active elsewhere" without an open pull request, a recent branch commit or another owner's IN_PROGRESS, and a supersession citing the session's own ticket or plan all fail; only `children.inReview` moves. Guardrails check 16 and the duplicated child and supersession prose it replaces are removed.
+- Requirements treats PRD flag, rollout, rollback, parity, boundary and non-goal clauses as criteria and never narrows the targets a PRD names. The session's own ticket, PLN, plan, table and change log are never a source; criteria are never strengthened; a precedent never overrides a stated sibling requirement; guardrails rule provenance names refusal rules, state presentation, numeric limits and removed accessibility behavior.
+- Net instruction length: 3 more lines and 16 fewer words across agents and skills. No new dispatch or step.
 
 #### Added
-- `child-evidence.mjs` with node tests, a contract test module, and two shared Claude Code and Codex eval cases tagged `ledger-lessons`.
+- Node tests for the children gate, a contract test module and two shared Claude Code and Codex eval cases tagged `ledger-lessons`.
 
 ### vibe v1.0.58
 

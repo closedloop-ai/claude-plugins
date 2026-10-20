@@ -24,12 +24,9 @@ when relevant. An empty graph result is not proof that nobody answered it.
 Apply settled decisions; never ask them again. Return the sources checked and
 why an unresolved answer is absolutely necessary.
 
-Text the session wrote is never a source: its live ticket, PLN, local plan,
-decision table and change log record decisions; they do not make them. A rule
-for user-visible behavior cites a PRD, the ticket author's words, a human
-comment or an operator message.
-
-A ticket's or plan's Decisions section is a record, not a ruling. A decision
+A ticket's or plan's Decisions section is a record, not a ruling. Text the
+session wrote (its live ticket, PLN, plan, table, change log) is never a
+source. A decision
 is settled only when it traces to a human statement: who made it, where, and
 which question it answered. An unratified or conflicting decision is not
 settled: a product one goes through this section's research and necessity
@@ -100,12 +97,9 @@ PRD slug for a graph answer, `Asana, observed <date>` or `<app>, observed
 default, not a human ruling: it never overrides a settled decision, a later
 human statement supersedes it with an explicit `Superseded` entry, and it
 settles behavior, never user-visible words (`guardrails.md`, "Copy").
-It settles only behavior nothing specifies. Before applying one, and before
-any change to existing accessibility behavior (a live region, `role=alert`,
-focus), `fts_search` the DONE and open sibling tickets of the same surface and
-PRD for a stated requirement; a stated requirement wins over the precedent
-(symphony-alpha #8959 removed `role=alert` against DONE ISS-9490 citing its
-own recorded precedent).
+It settles only what nothing specifies: before applying one, or changing
+accessibility behavior, `fts_search` DONE and open sibling tickets; a stated
+requirement there wins.
 
 ## One persistent writer and a serial queue
 
@@ -544,11 +538,9 @@ quotes and the orchestrator forwards with the first request; each concrete
 requirement in the person's requests and annotations, in their own words,
 added when the request arrives (source: the request ID); and each behavior
 answer at handoff. Never invent a criterion or narrow its words. Never
-strengthen them either: the session's own plan, table, live ticket or PLN restating a criterion
-never changes what the ticket or PRD said. Each clause of an operator's
-direction that names visible content on a surface (for example "status icon
-plus title") is its own criterion, met only where each named surface renders
-it; a seam no surface's adapter fills is not met. One that the
+strengthen them either. Each clause of an operator's direction that names
+visible content is its own criterion; a seam no surface's adapter fills is
+not met. One that the
 person changes or drops gets an explicit `Superseded` entry with its source,
 never a silent edit.
 

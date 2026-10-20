@@ -93,21 +93,21 @@ def test_overlapping_live_children_require_explicit_reconciliation() -> None:
     assert "required reconciliation" in requirements
     assert "Discovery alone is incomplete" in requirements
     assert "reconcile it explicitly" in ticket
-    assert "uncovered with current owner and status" in ticket
+    assert "every other child is listed uncovered with its unmet item" in ticket
 
 
 def test_source_prd_children_are_scope_units_claimed_and_closed_with_evidence() -> None:
     skill = flat((VIBE / "SKILL.md").read_text())
     ticket = flat(agent("vibe-ticket-worker"))
+    assert "existing children are the scope units" in skill
+    assert "the ticket worker claims or reports them" in skill
     for phrase in (
-        "existing children are the scope units",
-        "assigning them to the session operator",
-        "linking them `RELATES_TO`",
-        "No agent supersedes a child",
+        "assign it to the session operator",
+        "create one `RELATES_TO` link",
+        "move exactly `children.inReview` to `IN_REVIEW`",
+        "`DONE` with the merge URL and commit",
     ):
-        assert phrase in skill
-    for phrase in ("active by someone else", "`IN_REVIEW`", "`DONE`", "merge URL and commit"):
-        assert phrase in ticket
+        assert phrase in ticket, phrase
 
 
 def test_outdated_version_does_not_stop_resume_or_explicit_proceed() -> None:
@@ -122,11 +122,10 @@ def test_outdated_version_does_not_stop_resume_or_explicit_proceed() -> None:
 def test_existing_children_are_never_agent_superseded() -> None:
     requirements = flat(agent("vibe-requirements-worker"))
     ticket = flat(agent("vibe-ticket-worker"))
-    reviewer = flat(agent("vibe-guardrails-reviewer"))
+    gate = (HANDOFF / "scripts" / "live-ticket-check.mjs").read_text()
     assert "no agent decides that one is superseded" in requirements
-    assert "never authority" in ticket
-    assert "session-created supersession" in reviewer
-    assert '"not reused"' in reviewer
+    assert "any supersession that is not a human ruling outside this session's ticket and plan" in ticket
+    assert "cites the session's own ticket, plan or table as the supersession ruling" in gate
 
 
 def test_desktop_launch_requires_verified_build_output() -> None:

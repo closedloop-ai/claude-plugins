@@ -421,9 +421,9 @@ explicit proceed instructions and resumed sessions continuing after reporting
 an available update.
 
 The cases tagged `ledger-lessons` rehearse a claimed PRD child moving to In
-Review only when the independent reviewer's evidence map passes
-`handoff/scripts/child-evidence.mjs`, and rule provenance that never accepts
-the session's own ticket or plan as a source.
+Review only when the ticket worker's evidence map passes
+`handoff/scripts/live-ticket-check.mjs --child-evidence`, and rule provenance
+that never accepts the session's own ticket or plan as a source.
 
 ## Runtime Files
 

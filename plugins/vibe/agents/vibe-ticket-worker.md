@@ -41,8 +41,7 @@ writer's missing tests list, every `mainPreexistingFailures` entry the final
 validation returned with its main run's log, and the running app verification's control
 artifact paths with what each proves and any surface it could not drive.
 For a session sourced from a PRD it also receives the requirements worker's
-complete child classification and the adversarial reviewer's child evidence
-map path (`../skills/handoff/SKILL.md`, step 6).
+complete child classification.
 
 ## Read first
 
@@ -174,9 +173,7 @@ F. Status. The PLN's status follows the work (operator ruling, 2026-10-19):
    `search_nodes` with the summary; mention overlapping open tickets under
    What this is. When the source is a PRD, fetch every child and its comments,
    assignee, status, branch and pull request evidence. Use the requirements
-   brief's classification, but recheck it live before any mutation. A child
-   with real activity by another person is reported and excluded from the
-   build, never claimed, built, canceled or superseded by the session.
+   brief's classification, but recheck it live before any mutation.
 3. Body from the template: What this is, Scope and acceptance criteria
    (quoted from the brief and the originating ticket, never invented; an item
    the person still has to state is `Pending.`), Environment, Production flag
@@ -200,8 +197,7 @@ F. Status. The PLN's status follows the work (operator ruling, 2026-10-19):
    the session live ticket, and add one short comment naming that session
    ticket as the coordinator. Confirm the assignee, status and link. List
    untouched children outside the requested outcome as uncovered instead of
-   claiming them. A child may be marked superseded only with a cited human
-   ruling; an agent conclusion or the new session ticket is never authority.
+   claiming them.
 
 ## Plan mode
 
@@ -216,12 +212,9 @@ With `mergeCheck: true`, change nothing else: run
 `gh pr list --repo closedloop-ai/symphony-alpha --head <session branch> --state merged --json number,url,mergedAt`
 from the worktree. When it lists a merged pull request and the PLN is not
 `EXECUTED`, set `EXECUTED` through step F (with `expectedStatus` the status
-you read) and record it. For a source PRD, reread every child the session
-claimed. Move each delivered child from `IN_REVIEW` to `DONE` only when the
-merged pull request and the child's delivery evidence prove its exact outcome,
-then add the merge URL and commit as evidence. Leave uncovered children and
-children with activity by another person unchanged and list them; otherwise
-change nothing.
+you read) and record it. For a source PRD, move each claimed child the
+handoff gate put in `IN_REVIEW` to `DONE` with the merge URL and commit as
+evidence; change nothing else.
 
 ## Handoff mode
 
@@ -233,22 +226,18 @@ which goes under Missing tests as engineering's scope of work. The table covers
 the whole session, not just backend/latest work. Never author its rows or treat
 planned or missing tests as executed coverage.
 For a source PRD, reread every child and reconcile it explicitly before any
-complete claim: included and delivered, active by someone else and excluded,
-superseded with the exact human ruling, or uncovered with current owner and
-status. Discovery without one of those outcomes returns `NEEDS_CHANGE`.
-Never supersede a child from agent judgment. A child moves to `IN_REVIEW` only
-through the child evidence gate: run
-`node ../skills/handoff/scripts/child-evidence.mjs --worktree "<wt>" --base <inventory baseCommit> --map <the adversarial reviewer's child evidence map> --live-ticket <slug> --live-plan <PLN slug> --operator <operator email>`
-and move exactly the slugs it returns under `inReview`, add the pull request URL
-when one exists, and confirm the status. The map is the independent reviewer's,
-never the writer's own audit or yours. `ok: false` moves nothing it names: a
-child with any acceptance criterion or work item not met (a design review,
-hosted URL, device run, ledger or named evidence path still pending) stays
-where it is and is listed uncovered with that item, and a problem with the map
-itself returns `NEEDS_CHANGE`. A child the map calls active elsewhere passes
-only with an open pull request, a branch commit in the last 7 days or another
-owner's `IN_PROGRESS`; otherwise it is uncovered. The session ticket's Handoff
-section lists every uncovered child.
+complete claim. Write `<gitdir>/vibe-child-evidence.json` yourself (you are not
+the writer; its audit is never evidence): `{"reviewer": "vibe-ticket-worker",
+"children": [...]}`, each child `delivered`, `active-elsewhere`, `superseded`
+or `uncovered`, and for a delivered one every acceptance criterion and work
+item quoted from the child (design review, hosted URL, device runs, ledger)
+with `result` and evidence: an added diff line, a tracked changed file, a
+merged pull request with its commit, or a report on the final commit. Run
+step 8's ticket check with `--child-evidence` on it and move exactly
+`children.inReview` to `IN_REVIEW`, with the pull request URL when one exists;
+every other child is listed uncovered with its unmet item in the Handoff
+section. The gate also refuses any supersession that is not a human ruling
+outside this session's ticket and plan.
 Populate Design Review only at handoff from the verified final diff,
 current publication receipts and detailed design evidence/report paths.
 Add the section to legacy tickets that lack it before the existing final
@@ -388,9 +377,6 @@ historical inspections accurately. Preserve the existing grading block.
    the PLN matches the current local plans: repair whatever is missing or
    stale here; it is never a question for the person. A `NEEDS_CHANGE` from
    step B goes back to the same writer like any other.
-   No criterion or plan task depending on external work is complete without
-   deployed evidence for that dependency; an explicitly missing collector,
-   selector or monitor blocks the completion claim and PLN approval.
 8. Write the body back with `create-document-version`, then save it to
    `$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-live-ticket.md` and run
    `node ../skills/handoff/scripts/live-ticket-check.mjs --file "<that file>" --base-commit <inventory baseCommit> --worktree "<wt>"`.
