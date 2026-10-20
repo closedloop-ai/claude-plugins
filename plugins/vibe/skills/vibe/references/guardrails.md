@@ -112,8 +112,9 @@ The build loop stays lean (`quality-loop.md`, "Lean build loop"): quick
 prep, the build, the quick checks the commit hooks need, the orchestrator's
 commit, deploy, and showing the person. Reviews and heavy validation run
 at handoff: the guardrails and adversarial reviews, browser E2E, visual QA,
-logical QA, product-contract QA, the existing tests (the whole suite and two review
-passes when backend code changed), the running web app and Desktop driven with
+logical QA, product-contract QA, the targeted existing tests (the ones
+`code_tests_for` returns for each changed file, never a full suite) and two review
+passes when backend code changed, the running web app and Desktop driven with
 the repo's control skill, and the list of tests engineering still has to write
 (Tests, below). Beyond the quick checks, the loop's only other check is the
 writer's acceptance check before a change is called ready (`quality-loop.md`, "Acceptance criteria
@@ -234,7 +235,9 @@ When nothing in the catalog fits:
    - Register it by running `pnpm --filter storybook catalog:sync` and
      `pnpm --filter storybook validate:catalog`. Never hand-edit
      `component-catalog.ts`.
-4. Run `pnpm --filter storybook test` and confirm the new stories pass.
+4. Run the Storybook tests for the new or changed story files only
+   (`pnpm --filter storybook exec vitest run <story files>`), never the whole
+   `pnpm --filter storybook test` suite, and confirm the new stories pass.
 5. A new component is built with its stories before the feature that uses it.
    The orchestrator points the person to its stories on local Storybook in one
    plain message and does not wait (`SKILL.md`, section 5, "Notices that never

@@ -100,7 +100,7 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 
 - Run heavy checks (full test suites, typecheck, repo-wide lint and other gates, component story runs) on the least loaded machine, in the worker's own worktree there ([checklist step 4](./references/setup.md#checklist) gets the branch there). Keep the operator's daily machine for edits and git.
 - Cap heavy runs per machine at its `HEAVY_SLOTS` or `REMOTE_HEAVY_SLOTS`: `scripts/fleet.sh <orchDir> local|remote slot heavy <owner> <worktree> <command...>`.
-- A shared e2e stack with fixed ports takes a machine-wide single slot: `scripts/fleet.sh <orchDir> local|remote slot e2e-stack <owner> <worktree> <command...>`. Only runs that start that stack take it; tests against a stand-in server, component story runs, unit tests and typecheck run outside it in parallel.
+- A shared e2e stack with fixed ports runs only under vibe's machine-wide e2e lock, the one every vibe session's e2e command already takes: `node ../vibe/scripts/e2e-lock.mjs run <command...>` on the machine that runs the stack. A second lock for the same stack would let two runs collide. Only runs that start that stack take it; tests against a stand-in server, component story runs, unit tests and typecheck run outside it in parallel.
 - `scripts/slot-lock.sh` underneath frees the slot when the command exits or is interrupted and reclaims one whose holder pid died; `scripts/slot-lock.sh --status <lockName>` on that machine lists holders.
 - Kill only processes you started, matched by pid or worktree path, never an unscoped `pkill`. Other runs on that machine belong to someone else.
 - Plugin marketplaces and env files on a remote machine live in persistent paths too.

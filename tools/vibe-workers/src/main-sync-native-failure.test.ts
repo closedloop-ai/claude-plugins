@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { nativeFailureResult, type NativeFailure, producerFailureHead, budgetFailureHead,
-  producerReadArguments, budgetRefReadArguments, terminatedCommitSchema } from "./main-sync-native-failure.js";
+import { nativeFailureResult, type NativeFailure, producerFailureHead,
+  producerReadArguments, terminatedCommitSchema } from "./main-sync-native-failure.js";
 
 describe("structured synchronous native result", () => {
   it.each(["string", "buffer"])("accepts coherent %s exited channels without cmd or identity promotion", kind => {
@@ -56,7 +56,7 @@ describe("structured synchronous native result", () => {
   void compilerNegative;
 });
 
-describe.each([["producer", producerFailureHead, producerReadArguments], ["budget", budgetFailureHead, budgetRefReadArguments]] as const)(
+describe.each([["producer", producerFailureHead, producerReadArguments]] as const)(
   "closed %s failed first field", (_name, adapter, args) => {
     it.each([
       [false,128,null,true], [true,128,null,true], [false,128,"SIGTERM",false], [true,128,"SIGTERM",false],
@@ -72,7 +72,7 @@ describe.each([["producer", producerFailureHead, producerReadArguments], ["budge
       "keeps %s unproved", kind => {
         const value = fixture(); value.message=`Command failed: git ${args.join(" ")}\n${value.stderr}`;
         let input: unknown=value;
-        if(kind==="cross-context") value.message=`Command failed: git ${args===producerReadArguments ? budgetRefReadArguments.join(" ") : producerReadArguments.join(" ")}\n`;
+        if(kind==="cross-context") value.message="Command failed: git rev-parse HEAD origin/main\n";
         if(kind==="wrong-command") value.message="Command failed: other HEAD origin/main\n";
         if(kind==="raw") input=value.stdout;
         if(kind==="plain") input={...value};

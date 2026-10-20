@@ -91,8 +91,8 @@ test('slot runs in the given dir with the machine\'s heavy slot count', TIMEOUT,
   const result = f.run(['local', 'slot', 'heavy', 'w1 tests', f.root, 'bash', '-c', 'pwd; ls "$SLOT_LOCK_DIR"']);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, `${f.root}\nheavy-1.lock\nheavy-2.lock\nheavy-3.lock\n`);
-  const single = f.run(['local', 'slot', 'e2e-stack', 'w1 e2e', f.root, 'ls', locks]);
-  assert.equal(single.stdout, 'e2e-stack-1.lock\nheavy-1.lock\nheavy-2.lock\n');
+  const single = f.run(['local', 'slot', 'shared', 'w1 shared', f.root, 'ls', locks]);
+  assert.equal(single.stdout, 'heavy-1.lock\nheavy-2.lock\nshared-1.lock\n');
 });
 
 test('a remote slot uses REMOTE_HEAVY_SLOTS and the remote dir', TIMEOUT, () => {

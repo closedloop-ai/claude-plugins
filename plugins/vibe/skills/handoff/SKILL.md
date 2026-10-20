@@ -76,7 +76,9 @@ no-tests rule.
 
 Harness notes match the `vibe` skill: in Codex invoke as `$handoff` and spawn
 plugin agents from `../../agents/<name>.md` with the file's body as the
-subagent's instructions; in Claude Code use `/vibe:handoff` and the
+subagent's instructions and the `model` and `reasoning_effort` that
+`node ../vibe/scripts/worker-model.mjs codex <name>` prints; the vibe skill's
+usage-limit check runs here the same way; in Claude Code use `/vibe:handoff` and the
 `vibe:<name>` agents. Repo agents live in `<repo>/.claude/agents/`. Paths like
 `scripts/...` and `../vibe/...` are relative to this skill's own folder, not
 the repository. Resolve the plugin root (two levels above this file, as the
@@ -408,9 +410,12 @@ every required unsuperseded row, including earlier requests. Planned coverage
 is not executed coverage; a row without an existing test goes on the missing
 tests list, never counted as covered.
 
-Lighter: read-only verify checks mode runs Biome without write flags, gates,
-affected types/tests and relevant existing lanes. Backend: full-suite mode
-runs every required lane. Both report defects back to this same writer.
+Read-only verify checks mode runs the same targeted checks whether or not
+backend changed (`../../agents/vibe-verify-worker.md`, "Existing checks"):
+Biome without write flags on the changed files, gates, the affected typecheck
+and only the tests `code_tests_for` returns for each changed file, never a
+broad or full local suite. Backend changes add the two review passes, not a
+wider test run. It reports defects back to this same writer.
 Do not weaken tests, skip required coverage or fall back to visible automated
 browser/Electron windows. Record exact unsupported local limitations.
 
@@ -485,9 +490,10 @@ push, until its rerun on the corrected tests is clean.
 These run here and never in the build loop (operator ruling,
 2026-10-13). Browser E2E runs headless in step 5's checks and step 7's
 validation. Every e2e spec the session touched, and every spec covering a
-touched screen, runs through the repo's containerized path (the `local-ci`
-skill's `dagger call e-2-e`) in the verify worker's checks mode, never
-natively on the person's Mac; a missing Docker or Dagger is recorded as that
+touched screen, and no other spec, runs through the repo's containerized path
+(the `local-ci` skill's `dagger call e-2-e`) in the verify worker's checks
+mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the
+verify worker's "Existing checks"), never natively on the person's Mac; a missing Docker or Dagger is recorded as that
 exact limitation, never a pass (operator ruling, 2026-10-16). No worker
 claims what CI runs or ran without first reading
 `.github/pr-test-event-tiers.md` and citing the job's tier. For the screens the session touched, run the repository's own

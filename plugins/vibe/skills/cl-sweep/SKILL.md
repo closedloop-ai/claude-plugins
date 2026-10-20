@@ -154,7 +154,7 @@ identity and callback ownership, not ticket-domain policy or surface selection.
   validation-artifact support request must follow the
   [Read-Only Support-Lane Contract](references/execution-surfaces.md). That
   reference owns `fork_turns: "none"`, role-bounded `gpt-6-sol` /
-  `gpt-6-luna` selection, reasoning effort tiers,
+  `gpt-5.6-terra` / `gpt-6-luna` selection, reasoning effort tiers,
   self-contained packet requirements, visual-QA repo-memory preflight, result
   artifact handoff, and root-owned fallback limits.
 - Every Desktop child launch or resume prompt must include the exact parent task id and
@@ -364,12 +364,16 @@ identity and callback ownership, not ticket-domain policy or surface selection.
   supported runtime/capture command, dead port not a blocker, and exact command
   error when setup fails. visual_qa_web and visual_qa_desktop lanes must carry
   repo_memory_preflight.
-- Support lane model selection is role-bounded, never a fallback. Use
-  `model: "gpt-6-sol"` for planning, correctness-sensitive review, synthesis,
-  or any other intelligent work where mistakes matter. Only when the worker
+- Support lane model selection is role-bounded, never a fallback, and comes
+  from `scripts/model-policy.mjs`. Use `model: "gpt-6-sol"` at
+  `reasoning_effort: "high"` for planning, correctness-sensitive review,
+  synthesis, or any other intelligent work where mistakes matter; `xhigh` only
+  when raised explicitly. Explorer lanes (code/evidence exploration, graph
+  lookups, requirements or precedent research, read-only search) use
+  `model: "gpt-5.6-terra"` at `high`. Only when the worker
   actually decomposes a separate bounded deterministic lower-risk support role
   may it use `model: "gpt-6-luna"` with `reasoning_effort: "low"` for
-  inventory, artifact parsing, or status mechanics. Luna never owns
+  inventory, artifact parsing, or status mechanics. Luna and terra never own
   orchestration, ticket work, coding/planning, final judgment, or mutation.
 - Parent and worker result transport stays bounded and routing-only. Use
   CL_SWEEP_RESULT v1 with inline fallback when the artifact path is unavailable,
@@ -593,9 +597,11 @@ remains unchanged when Desktop is complete.
    binding; never rewrite the session file or interrupt the turn. At its next
    authoritative idle boundary, replace its owner/session under the CLI lease
    replacement protocol before any new turn. Pass the exact persisted model to
-   thread resume during recovery; pass `effort: "xhigh"` on ordinary
-   mutating ticket-owner turns, with medium reserved only for explicitly
-   classified deterministic narrow continuations. `turn/steer` has no model
+   thread resume during recovery; pass the session's persisted
+   `requestedReasoningEffort` on every turn. New ticket-owner sessions persist
+   `high`; `xhigh` only when raised explicitly at session start, and an
+   existing session's persisted effort is never rewritten. Medium is reserved
+   only for explicitly classified deterministic narrow continuations. `turn/steer` has no model
    field and is valid only for an already-active turn under the proven binding.
    Reject missing, unproven, incompatible, or rerouted model bindings before
    starting or resuming work. Never create a new legacy-model session, and allow
