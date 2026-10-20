@@ -228167,9 +228167,10 @@ function prepareMainSyncInputs(raw) {
 function prepareMainSync(raw) {
   const value = syncContext(raw, "prepare");
   const root = value.place.root;
-  inspectInputInventory(root);
+  const inventory = inspectInputInventory(root);
   const previousFile = join17(value.place.dir, MAIN_SYNC_FILE);
   const state = existsSync11(previousFile) ? mainSyncStateSchema.parse(readPrivateJson(previousFile)) : void 0;
+  if (state?.inputs?.headSha === inventory.headSha && state.inputs.treeSha === inventory.treeSha) committedInputs(root);
   const previous = state?.phase === "input-readiness" ? state.previous : state;
   if (previous && (previous.worktree !== root || previous.branch !== value.place.branch || previous.originalBase !== value.place.session.baseCommit || previous.operator.id !== value.place.session.operator.id || previous.operator.email !== value.place.session.operator.email)) {
     throw new MainSyncError("Previous main-sync provenance belongs to another session; preserve it and inspect the owned evidence");
