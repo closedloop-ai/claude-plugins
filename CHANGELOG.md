@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.0.72
+### vibe v1.0.73
 
 The open lessons from the 2026-10-20 and 2026-10-21 ledger entries, with a mechanical check wherever the lesson had a checkable shape.
 
@@ -20,6 +20,9 @@ The open lessons from the 2026-10-20 and 2026-10-21 ledger entries, with a mecha
 - A delivered PRD child moves to IN_REVIEW only with the pull request that delivers it; without one it is `awaitingPullRequest` and keeps its status.
 - Writer rules: every new user-visible element needs a source naming it, a capability list is not one, absorbed tickets are recorded, and matching a prototype never removes what main ships. Handoff QAs the feature-complete head and makes the last main merge one pass right before enqueue.
 - fleet-orchestrator: QA before one final main merge and immediate enqueue, stop idle helpers once their result is accepted, follow-up tickets in the current sprint with no lineage under an executed PRD, the executed-PRD flag section, a shallow-clone check before attributing history, one e2e lock entry per head, a prototype never removes shipped items, and lessons stay general with their primary fix in vibe.
+
+### vibe v1.0.72
+
 codex-fleet-monitor stays cheap and says when it is in trouble. A supervisor with four long-lived sessions sat near 1 GB of RSS because every pass read each thread's full history; a pass waiting on a stuck daemon connection could block forever without a line; and its logs and per-PR state files grew without bound.
 
 #### Changed
