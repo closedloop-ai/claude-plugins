@@ -79,7 +79,7 @@ no later human answer allowing the retirement means the flag stays:
 - Log an engineering decision that names the key, the hold and the comment.
   It is never `NEEDS_PERSON`.
 
-Example log line:
+Required log line:
 `Engineering decision: retire <key> despite the hold on <ticket>?; built: <flag kept>; evidence: <the comment>`
 
 Never add a flag key or read yourself: propose it and return

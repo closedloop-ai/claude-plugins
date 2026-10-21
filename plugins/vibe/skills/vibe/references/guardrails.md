@@ -191,9 +191,6 @@ app code directly.
   documents) belongs in its feature slice in `packages/app/<feature>/`
   (`components/`, `hooks/`, `lib/`). `apps/app` keeps route shells.
 - Domain code never goes in `packages/design-system`; `biome.jsonc` blocks it.
-- `packages/app` never imports `next/*`, `@clerk/*`, `@repo/database`,
-  `@repo/analytics`, or an app alias; use the injected ports (see
-  `packages/app/AGENTS.md`).
 - Add a new control to the surface that already owns that entity or flow
   (same tab, drawer, dialog, or card) instead of a parallel page.
 - For any component that composes or inherits from a shared parent,
@@ -364,7 +361,7 @@ guardrails reviewer point at it.
   `.dark` block already defines is blocking at handoff, never advisory.
 - "Not bundled" is recorded per token, never per surface. Only a token the
   surface genuinely lacks may be logged as missing, with the evidence of the
-  check. Example line:
+  check. Required log line:
   `Engineering needed (token not bundled): <surface>; <token>; checked <each stylesheet and block searched>; uses <the token's exact value>`
 - That property then uses the token's exact value with the token cited
   beside it, never a value no token defines, and every other property on the
@@ -428,8 +425,8 @@ second owner, a duplicated helper, type, constant, validator or bound, new
 config, or growth of a file near the repo's size ceiling needs a human source
 or a quoted repo rule; otherwise reuse what exists.
 
-The writer logs each one; its own rationale is never the reason. Example
-line:
+The writer logs each one; its own rationale is never the reason. Required
+log line:
 `Debt: <kind>; added: <what>; reused instead: <what>; reason: <source>`
 
 Flags are the tested case below.

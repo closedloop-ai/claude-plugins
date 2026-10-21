@@ -376,7 +376,9 @@ If the decision is not `GO` or `GO_WITH_UI_PLAN_APPROVAL`, do not execute the pa
 - an `AMBIGUOUS` or unexamined requirements contract;
 - missing external-doc evidence for a third-party integration.
 
-On a conflict, change the decision to `ENGINEERING_BLOCKED`, `PRODUCT_BLOCKED`, or `HUMAN_REVIEW_REQUIRED` according to the blocker evidence; never change it to `SPLIT_RECOMMENDED`. Then apply these, in order:
+On a conflict, change the decision to `ENGINEERING_BLOCKED`, `PRODUCT_BLOCKED`, or `HUMAN_REVIEW_REQUIRED` according to the blocker evidence; never change it to `SPLIT_RECOMMENDED`.
+
+These rules apply to every GO decision, not only on a conflict:
 
 - A `MISSING_LINK` requirements state may return `GO` only with one exact verified link recommendation and `Next action: reconcile exact PRD link then run plan-only $cl-execute`. The parent must create and re-fetch the link before execution.
 - The only allowed readiness exceptions are an explicitly recorded ticket intent to revive/remove dead code or resolve duplicate work, or the exact-ticket/session-level high-complexity override above. Neither permits an `EXTREME` risk or another blocked readiness item.
