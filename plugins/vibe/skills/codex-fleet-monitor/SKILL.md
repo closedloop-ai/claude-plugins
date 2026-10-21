@@ -63,7 +63,7 @@ The label is what appears in the output lines.
 scripts/watch.sh <workDir> [intervalSeconds]
 ```
 
-Start it with `run_in_background`. You are notified when it exits. Read its output, handle every line, then start it again; it only watches while running. Editing `sessions.txt` or `prs.txt` takes effect on the next re-arm. `scripts/snapshot.sh <workDir>` prints the current state once.
+Start it with `run_in_background`. You are notified when it exits. Read its output, handle every line, then start it again; it only watches while running. `watch.sh` records its pid, each tick and its exit in `<workDir>/watcher.json`, and `node scripts/watcher.mjs <workDir>` prints `watcher ok` or `watcher MISSING(<why>)` (exit 1): check it before ending any turn that handled an event, and re-arm on `MISSING`. Editing `sessions.txt` or `prs.txt` takes effect on the next re-arm. `scripts/snapshot.sh <workDir>` prints the current state once.
 
 ## Reading the output
 
@@ -121,7 +121,7 @@ Every action is an `EVENT recovery ...` line in the events log, which the `recov
 - Each pass is bounded by `PASS_TIMEOUT_SECONDS` (default 300, enough for a daemon restart and the resumes after it). A pass that runs longer gets a `pass-timeout` event, its App Server connections are closed so it unwinds and releases its lock, and the loop goes on.
 - After every pass it writes `<stateDir>/.fleet-recovery/heartbeat.json`: time, pid, interval, pass count, last pass duration, last error and RSS. The watcher's `supervisor` line reads it, so a hung, dead or leaking supervisor is an event. Once an hour it logs a `supervise: hourly` line (passes, errors, longest pass, RSS). A clean stop removes the heartbeat.
 - It logs to stdout, which the templates append to `<workDir>/supervisor.log`; at `LOG_MAX_BYTES` (default 1 MB) it copies that file to `supervisor.log.1` and empties it. `SUPERVISOR_LOG` names the file when it is elsewhere. The events log rotates the same way to `events.log.1`.
-- Keep it running with `templates/codex-fleet-supervisor.plist` (launchd, macOS) or `templates/codex-fleet-supervisor.service` (systemd user unit, Linux). Each template says where to save it and how to load it; nothing is installed for you.
+- Keep it running with `templates/codex-fleet-supervisor.plist` (launchd, macOS) or `templates/codex-fleet-supervisor.service` (systemd user unit, Linux). Each template says where to save it and how to load it; nothing is installed for you. On macOS restart it with `launchctl bootout` then `launchctl bootstrap`, never `launchctl kickstart -k`, which hung the calling shell and left the job waiting its throttle before it respawned.
 
 ## Notes
 

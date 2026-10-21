@@ -90,6 +90,10 @@ recorded, what was observed directly stays separate from help center or
 forum material, on-screen wording is quoted exactly as evidence, and a
 situation nothing settles is reported as `undocumented`, never guessed. A failed run, or an
 `undocumented` answer from every app, leaves the question to the person.
+Before an answer is recorded, `node scripts/precedent-check.mjs check
+--report <report>` must pass: it refuses an answer from public material or
+`undocumented` unless `--no-browser <reason>` says why no browser could look
+(precedent mode's public-material path passes that reason).
 
 The answer goes to the SAME writer, which records it in the session decision
 table as the decision for the affected rows, with its source: the ticket or

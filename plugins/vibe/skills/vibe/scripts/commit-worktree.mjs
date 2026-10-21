@@ -14,6 +14,7 @@
 // Hooks always run; a refused commit commits nothing and reports the end of
 // the hook output. Never amends, squashes, or skips hooks.
 //
+// A commit also reports `pushDue` and `unpushedMinutes` (`push-cadence.mjs`).
 // Prints one JSON object on stdout. Errors print {"ok":false,"error":...} and
 // exit non-zero.
 
@@ -22,6 +23,7 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { committedLocalPlans, isLocalPlanPath } from "./local-plans.mjs";
+import { unpushedAge } from "./push-cadence.mjs";
 import { git, readSessionRecord } from "./session-record.mjs";
 import { mainSyncFailure, prepareMainSync, readMainSyncInput } from "./dist/main-sync.mjs";
 
@@ -94,7 +96,17 @@ function commitWorktree() {
       `The commit was refused (${reason}); nothing was committed. Last lines:\n${output.slice(-HOOK_OUTPUT_LINES).join("\n")}`
     );
   }
-  return { committed: true, commit: git(worktree, ["rev-parse", "HEAD"]), subject, merge: merging, files, excluded };
+  return { committed: true, commit: git(worktree, ["rev-parse", "HEAD"]), subject, merge: merging, files, excluded, ...pushCadence(worktree, [...excluded, ...localFixes]) };
+}
+
+// A tested checkpoint is pushed at least every 90 minutes (`push-cadence.mjs`); the commit never fails on it.
+function pushCadence(worktree, ignore) {
+  try {
+    const { minutes, due } = unpushedAge(worktree, { ignore });
+    return { pushDue: due, unpushedMinutes: minutes };
+  } catch {
+    return {};
+  }
 }
 
 function requireSubject(subject) {

@@ -7,7 +7,7 @@
 // stack to be free, runs the command, and releases the lock when the command
 // ends. A lock left by a process that no longer exists is taken over.
 //
-// Usage: e2e-lock.mjs run [--wait-seconds <n>] [--lock-dir <dir>] <command> [args...]
+// Usage: e2e-lock.mjs run [--wait-seconds <n>] [--lock-dir <dir>] [--foreign-compose <project>]... <command> [args...]
 //        e2e-lock.mjs status [--lock-dir <dir>]
 //
 // The lock's own options come first; the first other word starts the command,
@@ -18,12 +18,21 @@
 // and exits 76, so a session batches its selected specs into one run instead
 // of queueing one entry per spec.
 //
+// A run overlapped a stack another tool started on the same fixed compose
+// project and ports, and its teardown removed that live stack. So `run` gives
+// the command its own compose project (`COMPOSE_PROJECT_NAME=vibe-e2e-<id>`,
+// unless the caller already set one), and a teardown inside it removes only
+// the project it created. Each `--foreign-compose <project>` (or the
+// comma-separated `VIBE_E2E_FOREIGN_COMPOSE`) names a stack started outside
+// this lock: while `docker compose ls` shows it running, the stack counts as
+// busy. Without Docker, or when the listing fails, nothing is checked.
+//
 // `run` exits with the command's own code. When the stack stays busy past
 // `--wait-seconds` (default 3600) it runs nothing, prints
 // {"status":"busy","holder":{...}} and exits 75. `status` prints
 // {"status":"free"} or {"status":"held","holder":{...}}.
 
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -36,6 +45,7 @@ const DEFAULT_WAIT_SECONDS = 3600;
 const POLL_MS = 5_000;
 const OWNER_FILE = "owner.json";
 const OWNERLESS_GRACE_MS = 60_000;
+const COMPOSE_PREFIX = "vibe-e2e-";
 
 /** The machine-wide lock folder, shared by every worktree and both harnesses. */
 export function defaultLockDir(home = os.homedir()) {
@@ -155,27 +165,59 @@ function isAlive(pid) {
   }
 }
 
-const OWN_OPTIONS = new Set(["--wait-seconds", "--lock-dir"]);
+const OWN_OPTIONS = new Set(["--wait-seconds", "--lock-dir", "--foreign-compose"]);
+const REPEATED_OPTIONS = new Set(["--foreign-compose"]);
+
+/** The first of `projects` that `docker compose ls` lists as running, or null; no Docker means none. */
+export function runningForeignCompose(projects, docker = process.env.VIBE_E2E_DOCKER || "docker") {
+  if (projects.length === 0) {
+    return null;
+  }
+  const listed = spawnSync(docker, ["compose", "ls", "--format", "json"], { encoding: "utf8", timeout: 30_000 });
+  if (listed.error || listed.status !== 0) {
+    return null;
+  }
+  let stacks;
+  try {
+    stacks = JSON.parse(listed.stdout || "[]");
+  } catch {
+    return null;
+  }
+  const running = new Set((Array.isArray(stacks) ? stacks : [])
+    .filter((stack) => /running/i.test(String(stack?.Status ?? "")))
+    .map((stack) => stack.Name));
+  return projects.find((project) => running.has(project)) ?? null;
+}
+
+/** The compose project a run's command gets: the caller's own, or one named for this run. */
+export function composeProjectFor(env, token) {
+  return env.COMPOSE_PROJECT_NAME || `${COMPOSE_PREFIX}${token.replace(/-/g, "").slice(0, 8)}`;
+}
 
 // The action, then the lock's own `--option value` pairs, then the command and its arguments untouched.
 function parseCommandLine(argv) {
   const [action, ...rest] = argv;
-  const values = {};
+  const values = { "foreign-compose": [] };
   let index = 0;
   while (OWN_OPTIONS.has(rest[index])) {
     if (rest[index + 1] === undefined) {
       throw new Error(`${rest[index]} needs a value.`);
     }
-    values[rest[index].slice(2)] = rest[index + 1];
+    const key = rest[index].slice(2);
+    if (REPEATED_OPTIONS.has(rest[index])) {
+      values[key].push(rest[index + 1]);
+    } else {
+      values[key] = rest[index + 1];
+    }
     index += 2;
   }
   const [command, ...args] = rest.slice(index);
   return { action, values, command, args };
 }
 
-function runCommand(command, args) {
+function runCommand(command, args, env) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: "inherit" });
+    const child = spawn(command, args, { stdio: "inherit", env });
     const forward = (signal) => child.kill(signal);
     process.on("SIGINT", forward);
     process.on("SIGTERM", forward);
@@ -198,7 +240,7 @@ async function main(argv) {
     return 0;
   }
   if (action !== "run" || !command) {
-    throw new Error("Usage: e2e-lock.mjs run [--wait-seconds <n>] [--lock-dir <dir>] <command> [args...]");
+    throw new Error("Usage: e2e-lock.mjs run [--wait-seconds <n>] [--lock-dir <dir>] [--foreign-compose <project>]... <command> [args...]");
   }
   const waitSeconds = values["wait-seconds"] === undefined ? DEFAULT_WAIT_SECONDS : Number(values["wait-seconds"]);
   if (!Number.isFinite(waitSeconds) || waitSeconds < 0) {
@@ -217,12 +259,30 @@ async function main(argv) {
     process.stdout.write(`${JSON.stringify({ status: "duplicate", entry: duplicate, reason: "this worktree already holds or waits for the stack; put every selected spec in one run per head" })}\n`);
     return DUPLICATE_EXIT;
   }
+  const foreign = [...values["foreign-compose"], ...(process.env.VIBE_E2E_FOREIGN_COMPOSE ?? "").split(",")]
+    .map((name) => name.trim()).filter(Boolean);
   const waiter = path.join(waitersDir(lockDir), `${owner.token}.json`);
   mkdirSync(waitersDir(lockDir), { recursive: true });
   writeFileSync(waiter, JSON.stringify(owner), { mode: 0o600 });
+  const deadline = Date.now() + waitSeconds * 1000;
   let attempt;
   try {
-    attempt = await acquire(lockDir, owner, { waitSeconds });
+    for (;;) {
+      attempt = await acquire(lockDir, owner, { waitSeconds: Math.max(0, (deadline - Date.now()) / 1000) });
+      if (!attempt.acquired) {
+        break;
+      }
+      const busyProject = runningForeignCompose(foreign);
+      if (!busyProject) {
+        break;
+      }
+      release(lockDir, owner);
+      attempt = { acquired: false, holder: { composeProject: busyProject } };
+      if (Date.now() >= deadline) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, Math.min(POLL_MS, Math.max(1, deadline - Date.now()))));
+    }
   } finally {
     rmSync(waiter, { force: true });
   }
@@ -230,8 +290,10 @@ async function main(argv) {
     process.stdout.write(`${JSON.stringify({ status: "busy", holder: attempt.holder })}\n`);
     return BUSY_EXIT;
   }
+  const composeProject = composeProjectFor(process.env, owner.token);
+  process.stderr.write(`e2e-lock: compose project ${composeProject}\n`);
   try {
-    return await runCommand(command, args);
+    return await runCommand(command, args, { ...process.env, COMPOSE_PROJECT_NAME: composeProject });
   } finally {
     release(lockDir, owner);
   }

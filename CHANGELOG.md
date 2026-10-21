@@ -4,6 +4,22 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.74
+
+Signal safety after a plugin test ended every process on an operator's machine, and the open lessons from the 2026-10-21 ledger entries, each with a mechanical check where one fits.
+
+#### Fixed
+- `helpers.mjs stopped` no longer signals a process group it does not own. A test recorded pid 1 and stopped it; `endProcesses` sent `kill(-1)`, which signals every process the user owns, twice. Pids of 1 or lower are refused at record time and never signalled, nor is the stopper's own pid or its parent. A whole group is signalled only for a pid recorded with `--group` whose process group id still equals the pid; any other pid is signalled alone. A pid the system reports as not ours (EPERM, a reused pid) is never signalled and does not block `stopped`. `endProcesses` takes an injected `kill`, so its tests check every decision without a real signal.
+- Every group signal in the plugin (`run-bounded.mjs`, `precedent-check.mjs`, the vibe-workers ledger and Claude worker, and their tests) checks the pid above 1 first. The dist bundles are rebuilt.
+
+#### Added
+- `test_vibe_signal_safety_contract.py`: no plugin test passes 0, 1, a negative literal, its own pid or its parent's pid to a call that sends a signal, writes one into a `pids` ledger, or calls `endProcesses` without an injected `kill`; no plugin source signals a group (`process.kill(-x)`, `kill(-x)`, `kill -- -x`) unless `x` is checked above 1 just before.
+- fleet-orchestrator: `board.mjs` keeps the fleet board every writer reads, flags rows behind the pushed head, and tracks rulings (saved once as a reference file) and ready QA checkpoints until each writer and QA guide is told directly; writers message each other (Codex through the app-server orchestrator's send, Claude through SendMessage).
+- fleet-orchestrator: `qa-plan-check.mjs` makes zero human checkpoints the default and refuses a human checkpoint without a reason an agent cannot cover, a visual judgment included (agents compare screenshots with the reference). `helpers.mjs` records the processes a helper starts (`pid`), ends them on `stopped`, lists `ORPHAN` helpers, and keeps a stack handed to a QA guide (`hand`, `unhand`) from QA reruns.
+- codex-fleet-monitor: `watch.sh` writes `watcher.json` and `watcher.mjs` reports a lapsed watcher; the supervisor template restarts with bootout then bootstrap, never kickstart, and respawns after 30 seconds.
+- vibe: `push-cadence.mjs` and `pushDue` on every commit (a tested checkpoint is pushed at least every 90 minutes); `shepherd.mjs` polls a pull request every two minutes in the final stage and stops on a conflict; the final main merge pushes before its e2e run; `main-sync-push` refuses a migration that sorts before main's newest (`migration-order.mjs`); `e2e-lock.mjs` gives each run its own compose project and honors `--foreign-compose`; `precedent-check.mjs check` refuses a public-material or undocumented answer unless no browser could look.
+- handoff: a repository can declare gates required when paths match (`.vibe/path-gates.json`); each matching gate is a required run on the published commit.
+
 ### vibe v1.0.73
 
 The open lessons from the 2026-10-20 and 2026-10-21 ledger entries, with a mechanical check wherever the lesson had a checkable shape.

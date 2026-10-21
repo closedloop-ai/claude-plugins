@@ -34,6 +34,8 @@ Heavy checks go through <fleet.sh slot command for the chosen machine>. Never ru
 Git: commit messages per the repo's conventions; regular push only, never force or amend after push.
 Review threads: reply on the thread naming the fixing SHA and resolve it only after the fix is verified in code.
 Artifacts for people (tickets, PR bodies, PR comments, review replies): never name a path on the operator's machine (home, temp, scratchpad or worktree paths) or say something is on someone's laptop. Embed screenshots as uploaded images and quote text evidence inline, briefly. A plan is attached, never pointed at: link the implementation plan as a plan document, and upload a QA plan or other working file as a ticket attachment named by its attachment name.
+Fleet board: <orchDir>/board.md shows every writer's PR, head, status and dependencies. Message another writer directly when your work touches theirs: Codex writers through the app-server-orchestrator skill's send, Claude workers and QA guides through SendMessage.
+Push a tested checkpoint at least every 90 minutes of active work; send review findings after that as follow-up commits, and add no new scope to an unpushed checkpoint.
 Report when done: pushed head SHA, files changed, tests run and results, open items, anything that needs the operator.
 
 Task:

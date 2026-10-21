@@ -5,6 +5,9 @@
   skill directory) and WORK_DIR (the supervisor's work dir), save it as
   ~/Library/LaunchAgents/codex-fleet-supervisor.plist, then run
   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/codex-fleet-supervisor.plist
+  To restart it, run launchctl bootout gui/$(id -u)/codex-fleet-supervisor, then the same
+  launchctl bootstrap line. Never use launchctl kickstart -k, which hung the calling shell and left
+  the job waiting ThrottleInterval before it respawned.
   The login shell puts node and codex on PATH. launchd appends to supervisor.log, and the supervisor
   rotates it at LOG_MAX_BYTES (default 1 MB) into supervisor.log.1.
 -->
@@ -23,7 +26,7 @@
   <key>KeepAlive</key>
   <true/>
   <key>ThrottleInterval</key>
-  <integer>300</integer>
+  <integer>30</integer>
   <key>StandardOutPath</key>
   <string>WORK_DIR/supervisor.log</string>
   <key>StandardErrorPath</key>

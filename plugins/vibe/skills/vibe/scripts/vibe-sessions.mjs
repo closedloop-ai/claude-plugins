@@ -93,6 +93,7 @@ import { readWriterSummary } from "./dist/writer-state.mjs";
 import { admitMainSyncRequest, admitMainSyncShare, MainSyncError, mainSyncFailure, pushMainSync,
   readMainSyncInput, readMainSyncProvenance, prepareMainSyncInputs, validateMainSync } from "./dist/main-sync.mjs";
 import { listedFlagKeys } from "./flag-keys.mjs";
+import { migrationOrderProblems } from "./migration-order.mjs";
 import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublication } from "./prototype-session.mjs";
 import { adoptStartupQuestions } from "./session-questions.mjs";
 import { git, readSessionRecord, sessionLiveTicket, writeSessionRecord as writeRecord } from "./session-record.mjs";
@@ -240,6 +241,7 @@ async function run(command) {
     case "main-sync-inputs":
       return { mainSync: prepareMainSyncInputs(await readMainSyncInput(requireOption("worktree"))) };
     case "main-sync-push":
+      refuseLateMigrations(requireOption("worktree"));
       return { mainSync: pushMainSync(await readMainSyncInput(requireOption("worktree"))) };
     case "main-sync-share":
       return { mainSync: admitMainSyncShare(await readMainSyncInput(requireOption("worktree"))) };
@@ -991,4 +993,12 @@ function recordStoryReplacement() {
   const updated = { ...record, storyReplacements, lastActiveAt: now };
   writeRecord(worktree, updated);
   return { worktree, ...updated };
+}
+
+/** Refuses a push while a branch migration sorts before main's newest one (`migration-order.mjs`). */
+function refuseLateMigrations(worktree) {
+  const { problems } = migrationOrderProblems(worktree);
+  if (problems.length > 0) {
+    throw new MainSyncError(`Nothing was pushed: ${problems.join("; ")}`, "NEEDS_CHANGE");
+  }
 }

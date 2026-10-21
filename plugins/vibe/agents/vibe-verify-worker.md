@@ -68,7 +68,9 @@ Validation is targeted, never a broad or full local suite. Run:
   included), plus the inventory's `diffRules.requiredTests` and
   `requiredChecks`, each through its owning package's runner on those test
   files alone (for example
-  `pnpm --filter <package> exec vitest run <test files>`).
+  `pnpm --filter <package> exec vitest run <test files>`). A required test
+  whose path is a command comes from the repo's `.vibe/path-gates.json`: run
+  that command and record it in `testRuns` with the command as its `path`.
 
 Never run `pnpm test`, `pnpm verify`, `pnpm test:affected`, `pnpm test:lanes --exec`, a
 whole lane or a package's whole suite locally; CI runs the broad suites on the

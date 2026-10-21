@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BUSY_EXIT, DUPLICATE_EXIT, defaultLockDir, readHolder, release, sameWorktreeEntry, tryAcquire } from "./e2e-lock.mjs";
+import { BUSY_EXIT, DUPLICATE_EXIT, composeProjectFor, defaultLockDir, readHolder, release, runningForeignCompose, sameWorktreeEntry, tryAcquire } from "./e2e-lock.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "e2e-lock.mjs");
 const root = mkdtempSync(path.join(os.tmpdir(), "vibe-e2e-lock-"));
@@ -115,6 +115,55 @@ test("a missing command is refused with usage", () => {
   const result = spawnSync(process.execPath, [SCRIPT, "run"], { encoding: "utf8" });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /Usage/);
+});
+
+test("each run gets its own compose project unless the caller set one", () => {
+  const lockDir = path.join(root, "compose-own");
+  const print = [process.execPath, "-e", "process.stdout.write(process.env.COMPOSE_PROJECT_NAME)"];
+  const env = { ...process.env };
+  Reflect.deleteProperty(env, "COMPOSE_PROJECT_NAME");
+  Reflect.deleteProperty(env, "VIBE_E2E_FOREIGN_COMPOSE");
+  const first = spawnSync(process.execPath, [SCRIPT, "run", "--lock-dir", lockDir, ...print], { encoding: "utf8", env });
+  const second = spawnSync(process.execPath, [SCRIPT, "run", "--lock-dir", lockDir, ...print], { encoding: "utf8", env });
+  assert.equal(first.status, 0, first.stderr);
+  assert.match(first.stdout, /^vibe-e2e-[0-9a-f]{8}$/);
+  assert.notEqual(first.stdout, second.stdout, "two runs never share a project, so one teardown cannot remove the other's stack");
+  assert.match(first.stderr, new RegExp(`compose project ${first.stdout}`));
+  const kept = spawnSync(process.execPath, [SCRIPT, "run", "--lock-dir", lockDir, ...print], { encoding: "utf8", env: { ...env, COMPOSE_PROJECT_NAME: "callers-own" } });
+  assert.equal(kept.stdout, "callers-own");
+  assert.equal(composeProjectFor({}, "0123abcd-ef45-6789"), "vibe-e2e-0123abcd");
+});
+
+test("a stack started outside the lock on a named compose project keeps the stack busy; no Docker checks nothing", () => {
+  const lockDir = path.join(root, "compose-foreign");
+  const listing = path.join(root, "compose-ls.json");
+  const docker = path.join(root, "fake-docker");
+  writeFileSync(docker, `#!/bin/sh\n[ "$1 $2 $3 $4" = "compose ls --format json" ] || exit 9\ncat "${listing}"\n`);
+  chmodSync(docker, 0o755);
+  writeFileSync(listing, JSON.stringify([{ Name: "fixed-e2e", Status: "running(5)" }, { Name: "other", Status: "exited(1)" }]));
+  assert.equal(runningForeignCompose(["other", "fixed-e2e"], docker), "fixed-e2e");
+  assert.equal(runningForeignCompose(["other"], docker), null, "an exited project is not a running stack");
+  assert.equal(runningForeignCompose(["fixed-e2e"], path.join(root, "no-docker")), null);
+  const marker = path.join(root, "foreign-ran");
+  const env = { ...process.env, VIBE_E2E_DOCKER: docker };
+  Reflect.deleteProperty(env, "VIBE_E2E_FOREIGN_COMPOSE");
+  const command = [process.execPath, "-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran")`];
+  const busy = spawnSync(process.execPath, [SCRIPT, "run", "--wait-seconds", "0", "--lock-dir", lockDir, "--foreign-compose", "fixed-e2e", ...command], { encoding: "utf8", env });
+  assert.equal(busy.status, BUSY_EXIT, busy.stderr);
+  assert.deepEqual(JSON.parse(busy.stdout).holder, { composeProject: "fixed-e2e" });
+  assert.equal(existsSync(marker), false);
+  assert.equal(existsSync(lockDir), false, "the lock is released while the foreign stack runs");
+  const fromEnv = spawnSync(process.execPath, [SCRIPT, "run", "--wait-seconds", "0", "--lock-dir", lockDir, ...command], { encoding: "utf8", env: { ...env, VIBE_E2E_FOREIGN_COMPOSE: "x, fixed-e2e" } });
+  assert.equal(fromEnv.status, BUSY_EXIT);
+  writeFileSync(listing, "[]");
+  const free = spawnSync(process.execPath, [SCRIPT, "run", "--wait-seconds", "0", "--lock-dir", lockDir, "--foreign-compose", "fixed-e2e", ...command], { encoding: "utf8", env });
+  assert.equal(free.status, 0, free.stderr);
+  assert.equal(existsSync(marker), true);
+  rmSync(marker);
+  const noDocker = spawnSync(process.execPath, [SCRIPT, "run", "--wait-seconds", "0", "--lock-dir", lockDir, "--foreign-compose", "fixed-e2e", ...command],
+    { encoding: "utf8", env: { ...env, VIBE_E2E_DOCKER: path.join(root, "no-docker") } });
+  assert.equal(noDocker.status, 0, noDocker.stderr);
+  assert.equal(existsSync(marker), true);
 });
 
 async function waitFor(predicate) {

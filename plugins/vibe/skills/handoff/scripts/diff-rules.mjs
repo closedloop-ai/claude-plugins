@@ -10,6 +10,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { git } from "../../vibe/scripts/session-record.mjs";
 import { E2E_ROOT_PATHSPECS, isTestFile } from "../../vibe/scripts/test-files.mjs";
+import { pathGateTests } from "./path-gates.mjs";
 import { routeSpecs } from "./route-specs.mjs";
 import { escapeRegExp, IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
 import { isUnversionedStory, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
@@ -151,7 +152,7 @@ export function evaluateDiff(files, changeLog, repo) {
   checkCopyProvenance(live, files, repo, logged, add);
   checkCapabilityRemovals(live, files, repo, logged, add);
   checkRestoredRemovalsDeepening(live, files, repo, changeLog, add);
-  requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo), ...sidebarOrderTests(files, repo));
+  requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo), ...sidebarOrderTests(files, repo), ...pathGateTests(live, (file) => repo.head(file)));
   return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks };
 }
 

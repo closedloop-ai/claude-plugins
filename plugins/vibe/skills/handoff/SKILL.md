@@ -491,7 +491,10 @@ step 5's checks and step 7's validation:
   screen, and no other spec.
 - Run them through the repo's containerized path (the `local-ci` skill's
   `dagger call e-2-e`) in the verify worker's checks mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the verify worker's
-  "Existing checks"), never natively on the person's Mac.
+  "Existing checks"), never natively on the person's Mac. The lock gives
+  each run its own compose project, so a teardown removes only its own
+  stack; `--foreign-compose <project>` names a stack started outside the
+  lock, which keeps the machine busy while it runs.
 - A missing Docker or Dagger is recorded as that exact limitation, never a
   pass.
 
@@ -907,4 +910,10 @@ the next pass through step 7's main-sync publication gate is the one main
 merge. Rerun only the tests selected for the files the merge touched, and
 tell the person it is ready to enqueue right away, once
 `node scripts/qa-merge-order.mjs --worktree "<wt>" --qa-head <QA'd sha>`
-passes; the merge queue retests it against main.
+passes; the merge queue retests it against main. That merge waits on no e2e
+run: push it first, then run only the e2e specs covering the files whose
+conflicts were resolved. From then on the pull request is shepherded:
+`node ../vibe/scripts/shepherd.mjs --pr <n> --repo <owner/repo>` polls it
+every two minutes and stops on a conflict (merge main at once in final-merge
+mode, push, run it again), failed checks (the SAME writer fixes them), a
+merge or a close.

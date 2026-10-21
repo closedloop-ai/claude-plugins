@@ -58,6 +58,8 @@ test("commits the session's changes but never its local fixes or files that neve
   assert.equal(git(checkout, ["log", "-1", "--format=%s"], home), "ISS-7: Add the new panel");
   assert.equal(git(checkout, ["log", "-1", "--format=%b"], home), "Screens: projects");
   assert.equal(result.json.commit, git(checkout, ["rev-parse", "HEAD"], home));
+  assert.equal(result.json.pushDue, false, "a commit made just now is not due, and excluded files left behind do not age it");
+  assert.equal(typeof result.json.unpushedMinutes, "number");
   const leftOver = git(checkout, ["status", "--porcelain", "--untracked-files=all"], home).split("\n").map((line) => line.slice(3));
   assert.deepEqual(leftOver.sort(), [".control/run.json", ".env.local", "apps/app/.env", "scripts/fix.sh", "tools/patched/a.ts"]);
 });

@@ -409,3 +409,11 @@ test("a spec importing only the helper export that does not reach the changed en
   });
   assert.deepEqual(result.requiredTests.map((entry) => entry.path), ["e2e/move.spec.ts"]);
 });
+
+test("a repo-declared path gate becomes a required run when the diff touches its paths", (t) => {
+  const gates = JSON.stringify({ gates: [{ name: "catalog-imports", paths: ["apps/prototypes/**"], command: "node apps/prototypes/scripts/check-catalog-imports.mjs" }] });
+  const touched = run(t, { base: { ".vibe/path-gates.json": gates }, head: { "apps/prototypes/src/page.tsx": "export const x = 1;\n" } });
+  assert.ok(touched.requiredTests.some((entry) => entry.path === "node apps/prototypes/scripts/check-catalog-imports.mjs"));
+  const elsewhere = run(t, { base: { ".vibe/path-gates.json": gates }, head: { "apps/app/page.tsx": "export const x = 1;\n" } });
+  assert.ok(!elsewhere.requiredTests.some((entry) => entry.path.includes("check-catalog-imports")));
+});

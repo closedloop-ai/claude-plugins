@@ -369,7 +369,9 @@ not silently included or discarded. A clean result needs no extra local commit.
    worker/lease; replay or another helper turn is not the same continuation.
 6. Create/redeploy uses `vibe-sessions.mjs main-sync-push`, which pushes the
    explicit validated SHA through normal hooks, then `dispatch-inputs` with
-   that context. Prototype share uses `main-sync-share` admission plus the
+   that context. It refuses while a migration the branch adds sorts before
+   main's newest one in the same folder (`scripts/migration-order.mjs`): the
+   SAME writer renames it to a later timestamp, contents unchanged. Prototype share uses `main-sync-share` admission plus the
    same exact-SHA push gate, then only canonical readiness/immutable URL
    inspection. No helper or source writer commits. Failures stop publication;
    the root resumes the same writer, not a replacement author.

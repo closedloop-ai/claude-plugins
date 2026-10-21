@@ -885,7 +885,10 @@ that waited, and one deploy after the last of them carries them all. A
    The subject stays under 72 characters and never mentions AI tools. The
    script leaves out the session's `localFixes` and files that never belong
    in a commit, and the repository's commit hook runs. `committed: false`
-   means nothing changed; continue. `"ok":false` means the hook refused:
+   means nothing changed; continue. A commit reporting `pushDue: true`
+   (`scripts/push-cadence.mjs`) has work that waited 90 minutes unpushed:
+   publish this tested checkpoint now, send later review findings as
+   follow-up commits, and add no new scope to an unpushed checkpoint. `"ok":false` means the hook refused:
    resume the SAME persistent writer in fix mode with the error, then commit
    again. An existing test or fixture the change broke is repaired there
    (`references/guardrails.md`, "Repair, don't author"). When the writer
