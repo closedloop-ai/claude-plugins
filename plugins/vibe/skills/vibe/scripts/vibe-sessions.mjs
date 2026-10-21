@@ -15,7 +15,7 @@
 //   vibe-sessions.mjs touch           --worktree <path> [--summary <text>] [--ticket ISS-123]
 //                                     [--status active|handed-off] [--live-ticket ISS-123]
 //                                     [--live-plan PLN-123] [--live-plan-status DRAFT|APPROVED|EXECUTED]
-//                                     [--mode seeded|blank] [--stack <json>]
+//                                     [--mode seeded|blank] [--stack <json>] [--main-merge deferred|final]
 //                                     [--clerk-org-id org_...]
 //                                     [--operator-id <id> --operator-email <email> [--operator-name <name>]]
 //   vibe-sessions.mjs flag-snapshot   --worktree <path> --file <snapshot.json> [--replace]
@@ -148,6 +148,14 @@ const SessionStatus = {
   HandedOff: "handed-off",
 };
 
+// Whether a publication merges fresh main: `deferred` (the default) waits for
+// QA, conflicts included; `final` merges it, set once QA has passed or when the
+// person asks for a main merge now (dist/main-sync.mjs, mainMergeDecision).
+const MainMerge = {
+  Deferred: "deferred",
+  Final: "final",
+};
+
 // Seeded: the session's Vercel environment is filled by the vibe seed under
 // Acme Co. Blank: no data; the person creates their own org (ISS-12056).
 const SessionMode = {
@@ -169,6 +177,7 @@ const { positionals, values } = parseArgs({
     "handoff-ticket": { type: "string" },
     "live-plan": { type: "string" },
     "live-plan-status": { type: "string" },
+    "main-merge": { type: "string" },
     file: { type: "string" },
     thread: { type: "string" },
     out: { type: "string" },
@@ -429,6 +438,10 @@ function touchSession() {
   if (livePlanStatus !== undefined && !(livePlan ?? record.livePlan)) {
     throw new Error("--live-plan-status needs a recorded --live-plan.");
   }
+  const mainMerge = values["main-merge"];
+  if (mainMerge !== undefined && !Object.values(MainMerge).includes(mainMerge)) {
+    throw new Error(`--main-merge must be one of: ${Object.values(MainMerge).join(", ")}.`);
+  }
   const now = new Date().toISOString();
   const updated = {
     ...record,
@@ -442,6 +455,7 @@ function touchSession() {
     livePlanStatus: livePlanStatus ?? record.livePlanStatus,
     clerkOrgId: values["clerk-org-id"] ? requireClerkOrgId(values["clerk-org-id"]) : record.clerkOrgId,
     stack: values.stack ? JSON.parse(values.stack) : record.stack,
+    ...(mainMerge ?? record.mainMerge ? { mainMerge: mainMerge ?? record.mainMerge } : {}),
     lastActiveAt: now,
   };
   writeRecord(worktree, updated);

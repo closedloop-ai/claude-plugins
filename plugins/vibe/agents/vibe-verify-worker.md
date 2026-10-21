@@ -74,16 +74,23 @@ Never run `pnpm test`, `pnpm verify`, `pnpm test:affected`, `pnpm test:lanes --e
 whole lane or a package's whole suite locally; CI runs the broad suites on the
 pull request and after merge, and the repo's own pre-push hook still runs
 `pnpm verify --scope=push`. A requested pull request opens once these targeted
-checks pass. When `code_tests_for` answers `found: false` for a changed file,
-record that file and run no wider suite in its place. Graph coverage
+checks pass. Select over the whole branch diff against the base. Where
+`code_tests_for` returns no test list for a file (`found: false`, empty or
+unknown), use the repo's related-test command (for example
+`vitest related <file> --run`), never a wider suite; also select e2e specs by
+reference across every e2e root (routes, request fields, test IDs, accessible
+names, channels and flag keys the file touches). Record both as `testSelection`
+and every run as `testRuns` in `<gitdir>/vibe-pr-evidence.json`;
+`blocking.prEvidence` names what is missing. Skipped CI is not a run. Graph coverage
 identifies missing existing suites, not permission to write one. Three more
 rules:
 
 - Every e2e spec the session touched, and every spec that covers a touched
   screen (`code_tests_for`, and `rg` of the screen's route and test IDs under
-  `e2e/`), runs at handoff through the repo's containerized path (the
+  every e2e root: any directory named `e2e`, `e2e-*` or `*-e2e`), runs at handoff through the repo's containerized path (the
   `local-ci` skill, `dagger call e-2-e`), never natively on the person's Mac,
-  and only those specs, never the whole e2e suite. The containerized stack
+  and only those specs, never the whole e2e suite, all in one locked run per
+  head: the lock refuses a second entry from the same worktree (exit 76). The containerized stack
   is one per machine (one compose project name, fixed ports and shared
   Dagger cache volumes), so start it only through
   `node ../skills/vibe/scripts/e2e-lock.mjs run <the e2e command>`, which

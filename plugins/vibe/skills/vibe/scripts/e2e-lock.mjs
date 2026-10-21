@@ -13,19 +13,25 @@
 // The lock's own options come first; the first other word starts the command,
 // so the command keeps every flag of its own.
 //
+// One session takes one entry per head: a `run` from a worktree that already
+// holds or waits for the stack runs nothing, prints {"status":"duplicate",...}
+// and exits 76, so a session batches its selected specs into one run instead
+// of queueing one entry per spec.
+//
 // `run` exits with the command's own code. When the stack stays busy past
 // `--wait-seconds` (default 3600) it runs nothing, prints
 // {"status":"busy","holder":{...}} and exits 75. `status` prints
 // {"status":"free"} or {"status":"held","holder":{...}}.
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const BUSY_EXIT = 75;
+export const DUPLICATE_EXIT = 76;
 const DEFAULT_WAIT_SECONDS = 3600;
 const POLL_MS = 5_000;
 const OWNER_FILE = "owner.json";
@@ -71,6 +77,39 @@ export async function acquire(lockDir, owner, { waitSeconds = DEFAULT_WAIT_SECON
       return attempt;
     }
     await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, Math.max(1, deadline - Date.now()))));
+  }
+}
+
+/** A live holder or waiter of the lock started from `worktree`, or null. */
+export function sameWorktreeEntry(lockDir, worktree) {
+  const entries = [readHolder(lockDir), ...readWaiters(lockDir)];
+  return entries.find((entry) => entry && (entry.worktree ?? entry.cwd) === worktree && isAlive(entry.pid)) ?? null;
+}
+
+function waitersDir(lockDir) {
+  return `${lockDir}.waiters`;
+}
+
+function readWaiters(lockDir) {
+  try {
+    return readdirSync(waitersDir(lockDir)).map((name) => {
+      try {
+        const waiter = JSON.parse(readFileSync(path.join(waitersDir(lockDir), name), "utf8"));
+        return Number.isSafeInteger(waiter?.pid) ? waiter : null;
+      } catch {
+        return null;
+      }
+    });
+  } catch {
+    return [];
+  }
+}
+
+function worktreeOf(cwd) {
+  try {
+    return execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return cwd;
   }
 }
 
@@ -169,10 +208,24 @@ async function main(argv) {
     pid: process.pid,
     token: randomUUID(),
     cwd: process.cwd(),
+    worktree: worktreeOf(process.cwd()),
     command: [command, ...args].join(" ").slice(0, 500),
     startedAt: new Date().toISOString(),
   };
-  const attempt = await acquire(lockDir, owner, { waitSeconds });
+  const duplicate = sameWorktreeEntry(lockDir, owner.worktree);
+  if (duplicate) {
+    process.stdout.write(`${JSON.stringify({ status: "duplicate", entry: duplicate, reason: "this worktree already holds or waits for the stack; put every selected spec in one run per head" })}\n`);
+    return DUPLICATE_EXIT;
+  }
+  const waiter = path.join(waitersDir(lockDir), `${owner.token}.json`);
+  mkdirSync(waitersDir(lockDir), { recursive: true });
+  writeFileSync(waiter, JSON.stringify(owner), { mode: 0o600 });
+  let attempt;
+  try {
+    attempt = await acquire(lockDir, owner, { waitSeconds });
+  } finally {
+    rmSync(waiter, { force: true });
+  }
   if (!attempt.acquired) {
     process.stdout.write(`${JSON.stringify({ status: "busy", holder: attempt.holder })}\n`);
     return BUSY_EXIT;

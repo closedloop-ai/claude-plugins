@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { invokeSync, syncFixture, validateFixture, currentSyncDefinitions, selectedReportFixture } from "./main-sync-test-fixtures.js";
+import { finalMerge, invokeSync, syncFixture, validateFixture, currentSyncDefinitions, selectedReportFixture } from "./main-sync-test-fixtures.js";
 import { prismaInputFixture, fumadocsInputFixture, buildInfoInputFixture, largeProducerInputFixture, nextInputFixture, pureInputFixture,
   docsInputFixture, huskyInputFixture, desktopPrismaInputFixture, producerShimInputFixture } from "./main-sync-input-test-fixtures.js";
 import { gzipSync, gunzipSync } from "node:zlib";
@@ -285,6 +285,7 @@ describe("production committed-input privacy and origin boundaries", () => {
 
   it("refuses an oversized fresh capture before atomic save and retains the exact prior receipt and feature tree", () => {
     const value = setup();
+    finalMerge(value);
     const first = value.start("redeploy");
     try { expect(invokeSync(value, "prepare", first.context).status).toBe(0); } finally { first.finish(); }
     const file = join(value.metadata, "vibe-main-sync.json");

@@ -2,7 +2,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, syml
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
-import { generatedBiomeFixture, invokeSync, syncFixture, validateFixture, currentSyncDefinitions } from "./main-sync-test-fixtures.js";
+import { finalMerge, generatedBiomeFixture, invokeSync, syncFixture, validateFixture, currentSyncDefinitions } from "./main-sync-test-fixtures.js";
 import { bundleDirectory, graph, recordWrite, writeAgent } from "./test-fixtures.js";
 import { GENERATED_BIOME_PATH, MAX_INPUT_BYTES } from "./main-sync-generated-input.js";
 
@@ -209,8 +209,48 @@ describe("production main-sync publication CLIs", () => {
       } finally { turn.finish(); }
     }
   }, 30000);
+  it("waits on a clean main until final-merge mode: preparation records the branch's own base and stages nothing", () => {
+    const value = setup();
+    value.git(["checkout", "main"]);
+    value.write("packages/app/upstream.ts", "upstream\n");
+    value.git(["add", "."]); value.git(["commit", "-m", "Upstream changed"]); value.git(["push", "origin", "main"]);
+    const upstream = value.git(["rev-parse", "HEAD"]);
+    value.git(["checkout", "vibe/test"]);
+    const before = value.git(["rev-parse", "HEAD"]);
+    const turn = value.start("redeploy");
+    try {
+      const result = invokeSync(value, "prepare", turn.context);
+      expect(result.status, result.stderr).toBe(0);
+      expect((result.json?.mainSync as { mainMerge?: string } | undefined)?.mainMerge).toBe("deferred");
+      expect(value.git(["rev-parse", "HEAD"])).toBe(before);
+      expect(existsSync(join(value.metadata, "MERGE_HEAD"))).toBe(false);
+      const receipt = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8"));
+      expect(receipt.mainSha).toBe(value.git(["merge-base", before, upstream]));
+      expect(receipt.deferredMain.mainSha).toBe(upstream);
+      expect(receipt.importedFiles).toEqual([]);
+    } finally { turn.finish(); }
+  }, 30000);
+  it("leaves a conflicting branch unmerged for QA until final-merge mode", () => {
+    const value = setup();
+    value.write("apps/app/probe.ts", "feature side\n"); value.git(["add", "."]); value.git(["commit", "-m", "Feature side"]);
+    const before = value.git(["rev-parse", "HEAD"]);
+    value.git(["checkout", "main"]); value.write("apps/app/probe.ts", "main side\n");
+    value.git(["add", "."]); value.git(["commit", "-m", "Main side"]); value.git(["push", "origin", "main"]);
+    const upstream = value.git(["rev-parse", "HEAD"]);
+    value.git(["checkout", "vibe/test"]);
+    const turn = value.start("redeploy");
+    try {
+      const result = invokeSync(value, "prepare", turn.context);
+      expect(result.status, result.stderr).toBe(0);
+      expect((result.json?.mainSync as { mainMerge?: string } | undefined)?.mainMerge).toBe("deferred");
+      expect(value.git(["rev-parse", "HEAD"])).toBe(before);
+      expect(value.git(["diff", "--name-only", "--diff-filter=U"])).toBe("");
+      expect(JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8")).deferredMain.mainSha).toBe(upstream);
+    } finally { turn.finish(); }
+  }, 30000);
   it("prepares fresh main without committing and preserves the original session base", () => {
     const value = setup();
+    finalMerge(value);
     value.git(["checkout", "main"]);
     value.write("packages/app/upstream.ts", "upstream\n");
     value.git(["add", "."]); value.git(["commit", "-m", "Upstream changed"]); value.git(["push", "origin", "main"]);
@@ -228,6 +268,7 @@ describe("production main-sync publication CLIs", () => {
   }, 30000);
   it("blocks preparation for an actually running owned Desktop descriptor and permits the same caller after its process exits", async () => {
     const value = setup();
+    finalMerge(value);
     value.git(["checkout", "main"]); value.write("README.md", "upstream before Desktop preparation\n");
     value.git(["add", "."]); value.git(["commit", "-m", "Upstream before owned process"]);
     value.git(["push", "origin", "main"]); value.git(["checkout", "vibe/test"]);
@@ -426,6 +467,7 @@ describe("production main-sync publication CLIs", () => {
   }, 30000);
   it("uses one captured main through validation and publishes that exact SHA after the remote main advances", () => {
     const value = setup();
+    finalMerge(value);
     const preparation = value.start("create");
     try { expect(invokeSync(value, "prepare", preparation.context).status).toBe(0); } finally { preparation.finish(); }
     const captured = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8"));
@@ -443,6 +485,7 @@ describe("production main-sync publication CLIs", () => {
   }, 30000);
   it("retains a real conflict for the same writer and never commits or pushes from preparation", () => {
     const value = setup();
+    finalMerge(value);
     value.write("apps/app/probe.ts", "feature side\n"); value.git(["add", "."]); value.git(["commit", "-m", "Feature side"]);
     const before = value.git(["rev-parse", "HEAD"]);
     value.git(["checkout", "main"]); value.write("apps/app/probe.ts", "main side\n");
@@ -516,6 +559,7 @@ describe("production main-sync publication CLIs", () => {
   }, 30000);
   it("attributes imported tests/forbidden paths to captured main before ROOT commit without hiding feature-authored tests", () => {
     const value = setup();
+    finalMerge(value);
     value.write("packages/app/feature.ts", "feature source\n");
     value.write("apps/app/authored.test.ts", "early feature test\n");
     value.git(["add", "."]); value.git(["commit", "-m", "Feature authored paths"]);
@@ -553,6 +597,7 @@ describe("production main-sync publication CLIs", () => {
   }, 30000);
   it("retains original feature test history when fresh main absorbs identical bytes", () => {
     const value = setup();
+    finalMerge(value);
     const path = "apps/app/early.test.ts";
     value.write(path, "original feature-authored test\n");
     value.write("packages/app/feature.ts", "remaining feature source\n");
@@ -586,6 +631,7 @@ describe("production main-sync publication CLIs", () => {
   }, 30000);
   it("retains newly combined merge test assertions but excludes exact upstream adoption", () => {
     const value = setup();
+    finalMerge(value);
     const path = "apps/app/conflict.test.ts";
     value.write(path, "feature assertion\n"); value.git(["add", "."]);
     value.git(["commit", "-m", "Feature assertions"]);
@@ -697,6 +743,7 @@ describe("production main-sync publication CLIs", () => {
   }, 30000);
   it("requires fresh preparation when a later publisher tries to reuse a consumed transaction", () => {
     const value = setup();
+    finalMerge(value);
     validateFixture(value);
     const first = value.start("redeploy");
     try { expect(invokeSync(value, "push", first.context).status).toBe(0); } finally { first.finish(); }
@@ -748,6 +795,7 @@ describe("production main-sync publication CLIs", () => {
   }, 30000);
   it("locally ROOT commits reviewed dirty source before preparation, then commits the merge and publishes checked inputs", () => {
     const value = setup();
+    finalMerge(value);
     value.git(["checkout", "main"]); value.write("README.md", "fresh main\n"); value.git(["add", "."]);
     value.git(["commit", "-m", "Main before reviewed deliverable"]); value.git(["push", "origin", "main"]);
     value.git(["checkout", "vibe/test"]);

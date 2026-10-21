@@ -16,7 +16,10 @@
 // also gates a source PRD's claimed children (vibe lessons ledger: symphony-alpha
 // #8947, #8953, #8958, #8959, #8960, #8963 and PRD-729 moved children to
 // IN_REVIEW with design review, device runs, hosted URLs or ledgers unbuilt,
-// on the writer's own audit): only `children.inReview` may move to IN_REVIEW.
+// on the writer's own audit): only `children.inReview` may move to IN_REVIEW,
+// and only when the map names the delivering pull request (`pullRequest`); a
+// delivered child with none is `awaitingPullRequest` and keeps its status
+// (operator ruling, 2026-10-21: no IN_REVIEW without a pull request).
 // Prints one JSON object; exits 0 when complete and 1 otherwise. Changes
 // nothing. The sections are the headings of ../../vibe/references/ticket-template.md.
 //
@@ -252,7 +255,7 @@ const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 export function checkChildEvidence(map, facts) {
   const problems = [];
   const report = (slug, problem, item) => problems.push({ slug, ...(item ? { item } : {}), problem });
-  const result = { inReview: [], activeElsewhere: [], superseded: [], uncovered: [] };
+  const result = { inReview: [], awaitingPullRequest: [], activeElsewhere: [], superseded: [], uncovered: [] };
   if (!map || typeof map !== "object") {
     return { ok: false, ...result, problems: [{ slug: null, problem: "the map is not a JSON object" }] };
   }
@@ -275,7 +278,7 @@ export function checkChildEvidence(map, facts) {
     switch (child.classification) {
       case "delivered":
         checkDelivered(child, facts, (problem, item) => report(slug, problem, item));
-        if (problems.length === before) result.inReview.push(slug);
+        if (problems.length === before) (PULL_URL.test(map.pullRequest ?? "") ? result.inReview : result.awaitingPullRequest).push(slug);
         break;
       case "active-elsewhere":
         checkActivity(child.activity, facts, (problem) => report(slug, problem));

@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
-import { isTestFile } from "../../vibe/scripts/test-files.mjs";
+import { isE2ePath, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
 
 const REPO = "closedloop-ai/symphony-alpha";
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -26,6 +26,9 @@ const CITATION = /(?<![\w/.-])((?:[\w@.-]+\/)*[\w@.-]+\.[A-Za-z]{1,5}):(\d+)\b/g
 const PR_NUMBER = /#(\d{3,6})\b/g;
 const UI = ["apps/app/", "apps/web/", "apps/storybook/", "apps/prototypes/", "apps/desktop/src/renderer/", "packages/app/", "packages/design-system/"];
 const DESKTOP_HOST = ["apps/desktop/src/renderer/", "packages/app/"];
+const TEMPLATE_PATHS = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md", "pull_request_template.md"];
+const TEMPLATE_HEADING = /^#{1,6}\s+\S.*$/gm;
+const SELECTORS = ["code_tests_for", "related", "e2e-reference"];
 
 export const STACKED_BASE_STATEMENT = "Stacked pull request: its base is not main, so no required CI lane runs on it; local evidence is listed below.";
 
@@ -156,7 +159,7 @@ export function requiredLanes(changed, touchFlows = []) {
     if (touchFlows.length > 0) lanes.push("webkit-iphone", "chromium-pixel");
     if (changed.some((file) => /\.stories\.tsx?$/.test(file))) lanes.push("storybook-plays");
   }
-  if (changed.some((file) => file.startsWith("e2e/"))) lanes.push("e2e");
+  if (changed.some(isE2ePath)) lanes.push("e2e");
   return lanes;
 }
 
@@ -177,7 +180,7 @@ export function evidenceProblems(runsFile, changed, commit) {
 }
 
 /** What a drafted body gets wrong against the facts. */
-export function bodyProblems(body, facts, files, prBase) {
+export function bodyProblems(body, facts, files, prBase, template = "") {
   const flat = body.replace(/\s+/g, " ");
   const byPath = new Map(files.map((file) => [file.path, file]));
   const changedLine = (file, line) => file.hunks.some((hunk) => hunk.added.some((entry) => entry.line === line)
@@ -196,6 +199,7 @@ export function bodyProblems(body, facts, files, prBase) {
     ...facts.asks.filter((ask) => !flat.includes(ask)).map((ask) => `ticket ask not quoted and answered: ${ask}`),
     ...(prBase !== "main" && !flat.includes(STACKED_BASE_STATEMENT) ? [`base is ${prBase}; add verbatim: ${STACKED_BASE_STATEMENT}`] : []),
     ...pointerProblems(body).map(({ line, kind }) => `body line ${line}: ${kind}`),
+    ...templateHeadingProblems(body, template),
   ];
 }
 
@@ -208,7 +212,7 @@ export function loadOpenPrs() {
 }
 
 /** The facts for the inventory's JSON, with the gates when a body or a runs file is given. */
-export function pullRequestFacts({ worktree, base, include, prs, ownBranch, ticketText, body, runs, commit, prBase = "main" }) {
+export function pullRequestFacts({ worktree, base, include, prs, ownBranch, ticketText, body, runs, commit, prBase = "main", requiredTests = [], template }) {
   const files = readDiff(worktree, base).filter((file) => include.has(file.path));
   const changed = files.map((file) => file.path);
   const { contracts, refusals } = contractChanges(files);
@@ -223,8 +227,8 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
   };
   return {
     ...facts,
-    ...(body === undefined ? {} : { prBodyProblems: bodyProblems(body, facts, files, prBase) }),
-    ...(runs === undefined ? {} : { prEvidenceProblems: evidenceProblems(runs, changed, commit) }),
+    ...(body === undefined ? {} : { prBodyProblems: bodyProblems(body, facts, files, prBase, template ?? readTemplate(worktree, base)) }),
+    ...(runs === undefined ? {} : { prEvidenceProblems: [...evidenceProblems(runs, changed, commit), ...selectionProblems(runs, files, requiredTests, commit)] }),
   };
 }
 
@@ -234,4 +238,66 @@ function git(worktree, args) {
 
 function gh(args) {
   return execFileSync("gh", args, { encoding: "utf8", maxBuffer: MAX_BUFFER }).trim();
+}
+
+/**
+ * Every heading of the repo's pull request template is a line of the body.
+ * A body edited by hand dropped a required heading twice and failed the
+ * repo's required body check.
+ */
+export function templateHeadingProblems(body, template) {
+  const lines = new Set(body.split("\n").map((line) => line.trim()));
+  return (template.match(TEMPLATE_HEADING) ?? []).map((heading) => heading.trim())
+    .filter((heading) => !lines.has(heading)).map((heading) => `template heading "${heading}" is missing`);
+}
+
+/**
+ * Test selection over the whole branch diff (vibe-pr-evidence.json
+ * `testSelection` and `testRuns`). Each changed source file needs an import
+ * selection that returned tests (`code_tests_for`), or the repo's related-test
+ * selection when the graph found none or does not index the file, plus an e2e
+ * by-reference selection, since import selection never reaches specs that
+ * drive the app. Every selected test, every required test of the diff rules and
+ * every spec the branch edits needs a passing run on the published commit;
+ * skipped CI is not a run.
+ */
+export function selectionProblems(runsFile, files, requiredTests, commit) {
+  const selection = Array.isArray(runsFile?.testSelection) ? runsFile.testSelection : [];
+  const listed = (entry) => Array.isArray(entry?.tests) && entry.tests.every((test) => typeof test === "string");
+  const problems = selection.filter((entry) => !SELECTORS.includes(entry?.selector))
+    .map((entry) => `testSelection entry for ${entry?.file ?? "no file"} has selector ${JSON.stringify(entry?.selector)}; use one of ${SELECTORS.join(", ")}`);
+  const of = (file, selector) => selection.filter((entry) => entry?.file === file && entry.selector === selector && listed(entry));
+  const live = files.filter((file) => file.status !== "D");
+  for (const file of live.filter((entry) => SOURCE.test(entry.path) && !isTestFile(entry.path)).map((entry) => entry.path)) {
+    if (!of(file, "code_tests_for").some((entry) => entry.tests.length > 0) && of(file, "related").length === 0) {
+      problems.push(`${file}: no import selection; code_tests_for returned no tests or does not index it, so record the repo's related-test selection`);
+    }
+    if (of(file, "e2e-reference").length === 0) {
+      problems.push(`${file}: no e2e by-reference selection (routes, request fields, test IDs, accessible names, channels and flag keys it touches)`);
+    }
+  }
+  const selected = new Set([
+    ...selection.filter((entry) => SELECTORS.includes(entry?.selector) && listed(entry)).flatMap((entry) => entry.tests),
+    ...requiredTests.map((entry) => entry.path),
+    ...live.filter((entry) => TEST_SPEC_PATTERN.test(entry.path)).map((entry) => entry.path),
+  ]);
+  const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
+  for (const test of [...selected].sort()) {
+    const run = runs.find((entry) => entry?.path === test && entry.status === "passed" && (!commit || entry.commit === commit));
+    if (!run) {
+      problems.push(`${test}: selected but no passing run on ${commit ?? "the published commit"} in testRuns`);
+    }
+  }
+  return problems;
+}
+
+function readTemplate(worktree, base) {
+  for (const file of TEMPLATE_PATHS) {
+    try {
+      return git(worktree, ["show", `${base}:${file}`]);
+    } catch {
+      // Not at this path; try the next one.
+    }
+  }
+  return "";
 }

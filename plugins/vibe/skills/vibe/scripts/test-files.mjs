@@ -18,8 +18,9 @@ export function isSnapshot(filePath) {
   return SNAPSHOT_PATTERN.test(filePath);
 }
 
+/** A test under a root web or Desktop test directory, or under any e2e suite root. */
 export function isRootTest(filePath) {
-  return ROOT_TEST_PREFIXES.some((prefix) => filePath.startsWith(prefix));
+  return ROOT_TEST_PREFIXES.some((prefix) => filePath.startsWith(prefix)) || isE2ePath(filePath);
 }
 
 /** A file under an e2e suite root, at any depth. */

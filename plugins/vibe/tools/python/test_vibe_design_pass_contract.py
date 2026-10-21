@@ -230,7 +230,7 @@ def test_build_loop_runs_existing_checks_and_handoff_lists_missing_tests() -> No
     assert "it only repairs an existing test the session's change broke" in checks
     assert "lists every missing test as engineering's scope of work" in checks
     assert "Read-only verify checks mode runs the same targeted checks" in checks
-    assert "only the tests `code_tests_for` returns for each changed file" in checks
+    assert "only the tests selected for each file of the whole branch diff" in checks
     assert "Resume the SAME writer with an explicit handoff continuation" in checks
     assert "The verify worker never writes or fixes tests" in checks
 

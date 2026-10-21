@@ -84,6 +84,7 @@ export const mainSyncReceiptSchema = z.object({
   requestContinuations: z.array(requestContinuationSchema.extend({ turn: publicationTurnSchema.optional() })).max(2).default([]),
   inputs: originProofSchema.optional(),
   recipe: storedValidationRecipeSchema.optional(),
+  deferredMain: z.object({ mainSha: commitSchema, reason: z.string().min(1).max(500) }).strict().optional(),
 }).strict();
 export type MainSyncReceipt = z.infer<typeof mainSyncReceiptSchema>;
 export const readinessStateSchema = z.object({ version: z.literal(1), phase: z.literal("input-readiness"),
@@ -102,6 +103,7 @@ export const sessionSchema = z.object({
   vercel: z.object({ lastDeployedCommit: commitSchema.nullable().optional(),
     verifiedAt: z.string().nullable().optional(), verifiedRequestId: z.string().nullable().optional() }).passthrough().nullable().optional(),
   lastRequestId: z.string().nullable().optional(),
+  mainMerge: z.enum(["deferred", "final"]).optional(),
   prototype: z.object({ deployedCommit: commitSchema, verifiedAt: z.string(), previewUrl: z.string() }).passthrough().optional(),
 }).passthrough();
 export type MainSyncSession = z.infer<typeof sessionSchema>;

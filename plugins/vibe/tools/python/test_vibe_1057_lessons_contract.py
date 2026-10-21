@@ -94,7 +94,8 @@ def test_overlapping_live_children_require_explicit_reconciliation() -> None:
     assert "required reconciliation" in requirements
     assert "Discovery alone is incomplete" in requirements
     assert "reconcile it explicitly" in ticket
-    assert "every other child is listed uncovered with its unmet item" in ticket
+    assert "Every other child is listed uncovered with its unmet item" in ticket
+    assert "Never set `IN_REVIEW` without a pull request" in ticket
 
 
 def test_source_prd_children_are_scope_units_claimed_and_closed_with_evidence() -> None:

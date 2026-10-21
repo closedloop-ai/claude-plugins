@@ -263,3 +263,9 @@ export function generatedBiomeFixture(value: ReturnType<typeof syncFixture>) {
   writeFileSync(artifact, output);
   return { artifact, config, output, derive };
 }
+
+/** Final-merge mode, set once QA passes: the next publication merges fresh main. */
+export function finalMerge(value: ReturnType<typeof syncFixture>) {
+  const file = join(value.metadata, "vibe-session.json");
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), mainMerge: "final" }, null, 2));
+}

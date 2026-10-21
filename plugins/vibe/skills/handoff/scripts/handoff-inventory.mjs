@@ -293,6 +293,7 @@ function readPullRequestFacts() {
     body: values.body ? readFileSync(values.body, "utf8") : undefined,
     runs: values.runs ? JSON.parse(readFileSync(values.runs, "utf8")) : undefined,
     commit: values.commit,
+    requiredTests: diffRules.requiredTests,
   });
   return overlapError ? { ...facts, overlapError } : facts;
 }

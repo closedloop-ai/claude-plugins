@@ -23,7 +23,7 @@ function fixture(t) {
   git(checkout, ["add", "-A"], home.home);
   git(checkout, ["commit", "--quiet", "-m", "feature"], home.home);
   const facts = readFacts(checkout, base, { now: Date.parse("2026-10-20T12:00:00Z"), liveTicket: "ISS-12000", livePlan: "PLN-900", operator: "op@example.com" });
-  const check = (children, reviewer = "vibe-ticket-worker") => checkChildEvidence({ reviewer, children }, facts);
+  const check = (children, reviewer = "vibe-ticket-worker", pullRequest = PULL) => checkChildEvidence({ reviewer, pullRequest, children }, facts);
   const delivered = (...evidence) => check([{ slug: "ISS-9393", classification: "delivered", items: [{ ...MET, evidence }] }]);
   return { home, checkout, base, facts, check, delivered };
 }
@@ -52,6 +52,17 @@ test("a delivered child moves only when every item is met with verifiable eviden
     { kind: "report", url: "https://example.invalid/run", commit: facts.head, status: "running" },
   ];
   for (const evidence of fails) assert.equal(delivered(evidence).ok, false, JSON.stringify(evidence));
+});
+
+test("a delivered child moves to IN_REVIEW only with the pull request that delivers it (PRD-729)", (t) => {
+  const { check } = fixture(t);
+  const children = [{ slug: "ISS-9393", classification: "delivered", items: [MET] }];
+  for (const pullRequest of [null, "", "https://example.invalid/pull/1"]) {
+    const result = check(children, "vibe-ticket-worker", pullRequest);
+    assert.equal(result.ok, true);
+    assert.deepEqual([result.inReview, result.awaitingPullRequest], [[], ["ISS-9393"]], String(pullRequest));
+  }
+  assert.deepEqual(check(children).inReview, ["ISS-9393"]);
 });
 
 test("active elsewhere needs real activity and a supersession needs a human ruling outside the session", (t) => {
@@ -83,7 +94,7 @@ test("the CLI reports the children gate beside the ticket check", (t) => {
   writeFileSync(ticket, "## What this is\nFixture.\n");
   const map = (reviewer) => {
     const file = path.join(home.root, `${reviewer}.json`);
-    writeFileSync(file, JSON.stringify({ reviewer, children: [{ slug: "ISS-9393", classification: "delivered", items: [MET] }] }));
+    writeFileSync(file, JSON.stringify({ reviewer, pullRequest: PULL, children: [{ slug: "ISS-9393", classification: "delivered", items: [MET] }] }));
     return ["--file", ticket, "--worktree", checkout, "--base-commit", base, "--child-evidence", file];
   };
   assert.deepEqual(runNode(SCRIPT, map("vibe-ticket-worker"), home.home).json.children.inReview, ["ISS-9393"]);

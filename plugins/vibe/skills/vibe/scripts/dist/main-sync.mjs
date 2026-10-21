@@ -224525,7 +224525,8 @@ var mainSyncReceiptSchema = external_exports.object({
   publicationTurn: publicationTurnSchema.optional(),
   requestContinuations: external_exports.array(requestContinuationSchema.extend({ turn: publicationTurnSchema.optional() })).max(2).default([]),
   inputs: originProofSchema.optional(),
-  recipe: storedValidationRecipeSchema.optional()
+  recipe: storedValidationRecipeSchema.optional(),
+  deferredMain: external_exports.object({ mainSha: commitSchema, reason: external_exports.string().min(1).max(500) }).strict().optional()
 }).strict();
 var readinessStateSchema = external_exports.object({
   version: external_exports.literal(1),
@@ -224555,6 +224556,7 @@ var sessionSchema = external_exports.object({
     verifiedRequestId: external_exports.string().nullable().optional()
   }).passthrough().nullable().optional(),
   lastRequestId: external_exports.string().nullable().optional(),
+  mainMerge: external_exports.enum(["deferred", "final"]).optional(),
   prototype: external_exports.object({ deployedCommit: commitSchema, verifiedAt: external_exports.string(), previewUrl: external_exports.string() }).passthrough().optional()
 }).passthrough();
 var MAX_CHECK_MS = 15 * 60 * 1e3;
@@ -228035,9 +228037,11 @@ function prepareMainSync(raw) {
   } catch {
     throw new MainSyncError("Fresh main fetch failed; nothing was published");
   }
-  const mainSha = git(root, ["rev-parse", "FETCH_HEAD^{commit}"]);
+  const fetchedMain = git(root, ["rev-parse", "FETCH_HEAD^{commit}"]);
   const startingHead = git(root, ["rev-parse", "HEAD"]);
-  const common = git(root, ["merge-base", startingHead, mainSha]);
+  const common = git(root, ["merge-base", startingHead, fetchedMain]);
+  const decision = mainMergeDecision(root, value.place.session, fetchedMain);
+  const mainSha = decision.merge ? fetchedMain : common;
   const importedFiles = git(root, ["diff", "--name-status", "--no-renames", common, mainSha]).split("\n").filter(Boolean).map((line) => {
     const tab = line.indexOf("	");
     return { status: line.slice(0, tab), path: line.slice(tab + 1) };
@@ -228063,7 +228067,8 @@ function prepareMainSync(raw) {
     ])],
     featureTestHistory: featureTestHistory(root, value.place.session.baseCommit, startingHead, previous),
     requestContinuations: [],
-    ...state?.inputs ? { inputs: state.inputs } : {}
+    ...state?.inputs ? { inputs: state.inputs } : {},
+    ...decision.merge ? {} : { deferredMain: { mainSha: fetchedMain, reason: decision.reason } }
   };
   saveSyncReceipt(value.place.dir, receipt);
   if (!isAncestor(root, mainSha)) {
@@ -228081,7 +228086,9 @@ function prepareMainSync(raw) {
     mainSha,
     headSha: git(root, ["rev-parse", "HEAD"]),
     requiresCommit,
-    importedFiles
+    importedFiles,
+    mainMerge: decision.merge ? "merged" : "deferred",
+    mainMergeReason: decision.reason
   };
 }
 function validateMainSync(raw) {
@@ -228286,6 +228293,11 @@ function consumeRequestContinuation(value, receipt) {
   const continuations = [...receipt.requestContinuations];
   continuations[index] = { ...intent, turn };
   saveSyncReceipt(value.place.dir, { ...receipt, requestContinuations: continuations });
+}
+function mainMergeDecision(root, session, mainSha) {
+  if (isAncestor(root, mainSha)) return { merge: true, reason: "main is already merged" };
+  if (session.mainMerge === "final") return { merge: true, reason: "final-merge mode" };
+  return { merge: false, reason: "main waits for final-merge mode" };
 }
 function isAncestor(root, commit) {
   try {

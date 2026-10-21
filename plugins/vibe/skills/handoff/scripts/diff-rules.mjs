@@ -9,13 +9,14 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { git } from "../../vibe/scripts/session-record.mjs";
-import { E2E_ROOT_PATHSPECS, isE2ePath, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
+import { E2E_ROOT_PATHSPECS, isTestFile } from "../../vibe/scripts/test-files.mjs";
+import { routeSpecs } from "./route-specs.mjs";
+import { escapeRegExp, IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
 import { isUnversionedStory, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 
 const PRIVATE_PLANS = ".closedloop-ai/vibe-plans/";
 const MIGRATION_DIR = /^packages\/database\/prisma\/migrations\/[^/]+\/migration\.sql$/;
 const DESKTOP_MIGRATION = /^apps\/desktop\/prisma\/migrations\/[^/]+\/migration\.sql$/;
-const SOURCE_FILE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
 const SQL_TABLE_TOUCH = /\b(?:CREATE\s+(?:UNIQUE\s+)?INDEX\b[^;]*?\bON\s+(?:ONLY\s+)?|ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?|(?<!\bON\s{1,10})UPDATE\s+)"?(\w+)"?/gi;
 const SQL_CREATE_TABLE = /\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"?(\w+)"?/gi;
 const SQL_UPDATE_STATEMENT = /(?<!\bON\s{1,10})\bUPDATE\s+"?(\w+)"?[^;]*;/gi;
@@ -35,7 +36,6 @@ const TICKETED = /\b(?:ISS|PRD|PLN|FEA)-\d+\b|https?:\/\/\S+/;
 const TICKET_TOKENS = /\b(?:ISS|PRD|PLN|FEA)-\d+\b|https?:\/\/\S+/g;
 const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*)/;
 const SHARED_PATH = /^(?:apps\/api\/lib\/.+|apps\/api\/app\/.*service[^/]*|packages\/app\/.*data-source[^/]*)\.tsx?$/;
-const API_ROUTE = /^apps\/api\/app\/(.*)\/route\.ts$/;
 const GRID_TABLE = /grid-table-v2/;
 const GRID_SYMBOL = /\bGridTableV2\b/;
 const GRID_PARITY_TEST = "apps/app/__tests__/grid-table-v2-surface-capability-parity.test.ts";
@@ -46,8 +46,6 @@ const SIDEBAR_ORDER_TESTS = ["apps/storybook/__tests__/preview-story-sort-order.
 const STORY_VERSION_FILE = "apps/storybook/package.json";
 const STORY_COMPONENT = /\bcomponent:\s*([A-Z]\w*)/;
 const STORY_TITLE = /\btitle:\s*["'`]([^"'`]+)["'`]/;
-const IMPORT_SPECIFIER = /\b(?:from|import)\s*\(?\s*["']([^"']+)["']/g;
-const SOURCE_EXTENSIONS = ["", ".ts", ".tsx", ".js", ".mjs", "/index.ts", "/index.tsx"];
 const FROZEN_CANDIDATE = String.raw`v1\.0|deprecated`;
 const CLOSURE_LIMIT = 20000;
 const STORY_ID_PATHSPECS = [...E2E_ROOT_PATHSPECS, "docs/", "apps/web/content/docs/", ".claude/", "*.test.*", "*.spec.*", "*.stories.*"];
@@ -74,7 +72,8 @@ const ENV_DUMP = [
 ];
 const JSX_MOUNT = /<([A-Z][A-Za-z0-9]*)\b/g;
 const RESTORE_LIMIT = 40;
-const ROUTE_SPEC_HOPS = 3;
+const DEEPEN_STEPS = ["--deepen=1000", "--deepen=10000", "--unshallow"];
+const DEEPEN_TIMEOUT_MS = 10 * 60 * 1000;
 
 /** Parses `git diff --unified=0` output into per-file added and removed lines. */
 export function parseUnifiedDiff(text) {
@@ -150,7 +149,8 @@ export function evaluateDiff(files, changeLog, repo) {
   checkFrozenRenders(files, repo, logged, add);
   checkLostStoryIds(files, repo, add);
   checkCopyProvenance(live, files, repo, logged, add);
-  checkRestoredRemovals(live, files, repo, changeLog, add);
+  checkCapabilityRemovals(live, files, repo, logged, add);
+  checkRestoredRemovalsDeepening(live, files, repo, changeLog, add);
   requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo), ...sidebarOrderTests(files, repo));
   return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks };
 }
@@ -345,20 +345,6 @@ function checkStories(files, allFiles, repo, logged, add) {
   }
 }
 
-/** An import specifier resolved to a file in `files` (relative or `@repo/`), or undefined. */
-function resolveImport(from, specifier, files) {
-  let stem;
-  if (specifier.startsWith(".")) {
-    stem = path.posix.join(path.posix.dirname(from), specifier);
-  } else if (specifier.startsWith("@repo/")) {
-    stem = `packages/${specifier.slice("@repo/".length)}`;
-  } else {
-    return undefined;
-  }
-  stem = stem.replace(/\.js$/, "");
-  return SOURCE_EXTENSIONS.map((extension) => `${stem}${extension}`).find((candidate) => files.has(candidate) && SOURCE_FILE.test(candidate));
-}
-
 /**
  * Every frozen v1.0 story on the base whose rendered dependency closure (its
  * file and everything it imports, transitively) the diff changed. Its render
@@ -438,79 +424,6 @@ function checkLostStoryIds(files, repo, add) {
   }
 }
 
-/**
- * The e2e specs, under every e2e root, that reach each changed API route's
- * endpoint: naming it themselves, or importing a helper that names it (up to
- * ROUTE_SPEC_HOPS imports away). A helper is never listed; it cannot run.
- */
-export function routeSpecs(files, repo) {
-  const routes = files.flatMap((file) => {
-    const match = API_ROUTE.exec(file.path);
-    return match ? [{ route: file.path, pattern: endpointPattern(match[1]) }] : [];
-  });
-  if (routes.length === 0) {
-    return [];
-  }
-  const e2eFiles = repo.headFiles.filter((file) => isE2ePath(file) && SOURCE_FILE.test(file));
-  const importers = e2eImporters(e2eFiles, repo);
-  const required = new Map();
-  for (const { route, pattern } of routes) {
-    for (const named of e2eFiles.filter((candidate) => pattern.test(repo.head(candidate) ?? ""))) {
-      for (const [spec, hops] of specsReaching(named, importers)) {
-        const via = hops === 0 ? "names" : `imports ${named}${hops > 1 ? ` (${hops} imports away)` : ""}, which names`;
-        if (!required.has(spec)) {
-          required.set(spec, { path: spec, reason: `${via} the changed endpoint in ${route}; specs pin request bodies and untagged specs do not run on the pull request` });
-        }
-      }
-    }
-  }
-  return [...required.values()];
-}
-
-function endpointPattern(routeDirectory) {
-  const segments = routeDirectory.split("/").filter((segment) => !/^\(.*\)$/.test(segment));
-  return new RegExp(`/${segments.map((segment) => (/^\[.*\]$/.test(segment) ? "[^/\"'`?\\s]+" : escapeRegExp(segment))).join("/")}(?![\\w-])`);
-}
-
-/** Each e2e file mapped to the e2e files that import it. */
-function e2eImporters(e2eFiles, repo) {
-  const known = new Set(e2eFiles);
-  const importers = new Map();
-  for (const file of e2eFiles) {
-    for (const found of (repo.head(file) ?? "").matchAll(IMPORT_SPECIFIER)) {
-      const target = resolveImport(file, found[1], known);
-      if (target && target !== file) {
-        importers.set(target, (importers.get(target) ?? new Set()).add(file));
-      }
-    }
-  }
-  return importers;
-}
-
-/** Specs that are `file` or import it within ROUTE_SPEC_HOPS, with their distance; the walk stops at a spec. */
-function specsReaching(file, importers) {
-  const reached = new Map();
-  const seen = new Set([file]);
-  let frontier = [file];
-  for (let hops = 0; frontier.length && hops <= ROUTE_SPEC_HOPS; hops += 1) {
-    const next = [];
-    for (const current of frontier) {
-      if (TEST_SPEC_PATTERN.test(current)) {
-        reached.set(current, hops);
-        continue;
-      }
-      for (const importer of importers.get(current) ?? []) {
-        if (!seen.has(importer)) {
-          seen.add(importer);
-          next.push(importer);
-        }
-      }
-    }
-    frontier = next;
-  }
-  return reached;
-}
-
 /** GridTableV2 parity tests read other files' source, so the graph never maps them. */
 export function gridParityTests(files, repo) {
   const touched = files.some((file) => GRID_TABLE.test(file.path) || [...file.added, ...file.removed].some((entry) => GRID_SYMBOL.test(entry.text)));
@@ -540,16 +453,43 @@ function checkCopyProvenance(files, allFiles, repo, logged, add) {
 }
 
 /**
+ * In a shallow clone a removal older than the shallow boundary is invisible, so while a lookup finds
+ * nothing the history is deepened step by step (`repo.deepen`) and the check reruns. It blocks only
+ * when a fetch fails, with git's reason.
+ */
+function checkRestoredRemovalsDeepening(files, allFiles, repo, changeLog, add) {
+  let findings = [];
+  const collect = (...finding) => findings.push(finding);
+  let unresolved = checkRestoredRemovals(files, allFiles, repo, changeLog, collect);
+  let failure = null;
+  for (let attempt = 0; unresolved > 0 && repo.shallow() && failure === null; attempt += 1) {
+    const step = attempt < DEEPEN_STEPS.length ? repo.deepen() : { ok: false, reason: "the clone is still shallow after every step" };
+    if (step.ok) {
+      findings = [];
+      unresolved = checkRestoredRemovals(files, allFiles, repo, changeLog, collect);
+    } else {
+      failure = step.reason;
+    }
+  }
+  if (failure !== null) {
+    collect("restored-removal", files[0].path, 1, `the clone is shallow and deepening it failed (${failure}), so a removal older than its shallow boundary is invisible to this check`, "fix the fetch (network, remote or credentials) and rerun, or run `git fetch --unshallow` yourself");
+  }
+  findings.forEach((finding) => add(...finding));
+}
+
+/**
  * A component mounted again, or a file added back, that a base commit removed needs a human's restore
- * authorization naming the removal it overrides.
+ * authorization naming the removal it overrides. Returns how many history lookups found no removal.
  */
 function checkRestoredRemovals(files, allFiles, repo, changeLog, add) {
   const authorized = (name) => new RegExp(String.raw`^\s*(?:[-*]\s+)?Restore authorization:\s*${escapeRegExp(name)}:\s*(?:operator ruling|[A-Z][\w'.-]+(?:\s+[A-Z][\w'.-]+)+),\s*\d{4}-\d{2}-\d{2},\s*[^;\n]+;\s*overrides\s+(?:ISS|PRD|PLN|FEA)-\d+`, "m").test(changeLog);
   const removed = new Set(allFiles.flatMap((file) => file.removed.flatMap((entry) => [...entry.text.matchAll(JSX_MOUNT)].map((match) => match[1]))));
   let checked = 0;
+  let unresolved = 0;
   for (const file of files.filter((entry) => COPY_FILE.test(entry.path) && !isTestFile(entry.path) && !STORY_FILE.test(entry.path))) {
     if (file.status === "A" && !authorized(file.path) && checked++ < RESTORE_LIMIT) {
       const removal = repo.deletionOf(file.path);
+      unresolved += removal ? 0 : 1;
       if (removal) {
         add("restored-removal", file.path, 1, `adds back a file deleted by ${removal}`, `remove it, or record \`Restore authorization: ${file.path}: <human name or operator ruling>, <YYYY-MM-DD>, <where>; overrides <removal ticket>\``);
       }
@@ -558,12 +498,37 @@ function checkRestoredRemovals(files, allFiles, repo, changeLog, add) {
     const mounted = new Set(file.added.flatMap((entry) => [...entry.text.matchAll(JSX_MOUNT)].map((match) => match[1])));
     for (const name of [...mounted].filter((item) => !before.includes(`<${item}`) && !removed.has(item) && !authorized(item))) {
       if (checked++ >= RESTORE_LIMIT) {
-        return;
+        return unresolved;
       }
       const removal = repo.unmountOf(name);
+      unresolved += removal ? 0 : 1;
       if (removal) {
         const line = file.added.find((entry) => entry.text.includes(`<${name}`))?.line ?? 1;
         add("restored-removal", file.path, line, `mounts ${name}, removed by ${removal}`, `find that removal's ticket and its human ruling; remove the mount, or record \`Restore authorization: ${name}: <human name or operator ruling>, <YYYY-MM-DD>, <where>; overrides <removal ticket>\``);
+      }
+    }
+  }
+  return unresolved;
+}
+
+/**
+ * A component mount or a user-visible string the base ships that the diff takes away, and adds nowhere
+ * else, needs the human source that retires it: matching a prototype once dropped a shipped menu item.
+ */
+function checkCapabilityRemovals(files, allFiles, repo, logged, add) {
+  const added = allFiles.flatMap((file) => file.added.map((entry) => entry.text)).join("\n");
+  for (const file of files.filter((entry) => COPY_FILE.test(entry.path) && !isTestFile(entry.path) && !STORY_FILE.test(entry.path))) {
+    const head = repo.head(file.path) ?? "";
+    const seen = new Set();
+    for (const entry of file.removed) {
+      const mounts = [...entry.text.matchAll(JSX_MOUNT)].map((match) => match[1])
+        .filter((name) => !added.includes(`<${name}`) && !new RegExp(`<${name}\\b`).test(head))
+        .map((name) => ({ key: name, what: `the ${name} mount` }));
+      const strings = copyLiterals(entry.text).filter((text) => !added.includes(text) && !head.includes(text))
+        .map((text) => ({ key: `"${text}"`, what: `"${text}"` }));
+      for (const { key, what } of [...mounts, ...strings].filter((item) => !seen.has(item.key) && !logged(`Removal: ${item.key}:`))) {
+        seen.add(key);
+        add("capability-removal", file.path, 1, `removes ${what} that the base ships, with no recorded human source`, `keep it, or record \`Removal: ${key}: <ticket, PRD or human ruling that retires it>\`; matching a prototype or design is not a source`);
       }
     }
   }
@@ -595,6 +560,7 @@ export function sidebarOrderTests(files, repo) {
 }
 
 function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
+  let deepened = 0;
   const headFiles = git(worktree, ["ls-files"]).split("\n").filter(Boolean);
   const baseFiles = new Set(lines(() => git(worktree, ["ls-tree", "-r", "--name-only", base])));
   const blobs = new Map();
@@ -619,6 +585,16 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
   return {
     head: read,
     base: baseRead,
+    shallow: () => lines(() => git(worktree, ["rev-parse", "--is-shallow-repository"]))[0] === "true",
+    deepen: () => {
+      const step = DEEPEN_STEPS[deepened++] ?? "--unshallow";
+      try {
+        execFileSync("git", ["-C", worktree, "fetch", "--quiet", step], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: DEEPEN_TIMEOUT_MS });
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, reason: `git fetch ${step}: ${String(error?.stderr ?? error?.message ?? error).trim().split("\n")[0]}` };
+      }
+    },
     headFiles,
     baseFiles,
     baseBlobs,
@@ -686,10 +662,6 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
       return counts;
     },
   };
-}
-
-function escapeRegExp(text) {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function memoize(read) {

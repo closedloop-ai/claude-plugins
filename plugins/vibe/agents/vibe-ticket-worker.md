@@ -183,7 +183,10 @@ F. Status. The PLN's status follows the work:
    Handoff, Design Review, and Grading. Design Review stays `Pending.` here;
    its finished evidence is populated only at handoff. "Built in a vibe session by"
    names the operator's `name`, or their `email` when the record has no name.
-4. `create-document` with `type: ISSUE`, `status: IN_PROGRESS`, the assignee,
+4. Run `node ../skills/vibe/scripts/ticket-write-check.mjs --project-name "<project name>"`
+   (with `--parent <SLUG>:<STATUS>` for any parent it will link under); it
+   refuses a past sprint and a parent that is EXECUTED, OBSOLETE, DONE or CANCELED.
+   `create-document` with `type: ISSUE`, `status: IN_PROGRESS`, the assignee,
    the project, `priority: MEDIUM`, a plain title in the person's terms, and
    `repositorySelection` with primary `closedloop-ai/symphony-alpha` on the
    session's branch.
@@ -212,8 +215,12 @@ APPROVED`).
 With `mergeCheck: true`, change nothing else: run
 `gh pr list --repo closedloop-ai/symphony-alpha --head <session branch> --state merged --json number,url,mergedAt`
 from the worktree. When it lists a merged pull request and the PLN is not
-`EXECUTED`, set `EXECUTED` through step F (with `expectedStatus` the status
-you read) and record it. For a source PRD, move each claimed child the
+`EXECUTED`, run
+`node ../skills/handoff/scripts/executed-check.mjs --file <its saved latest text> --last-merge <mergedAt>`;
+when it fails, append a version adding the section it names (the session's
+flag keys, each read now from the flag service), and rerun it. Only once it
+passes, set `EXECUTED` through step F (with `expectedStatus` the status you
+read) and record it. For a source PRD, move each claimed child the
 handoff gate put in `IN_REVIEW` to `DONE` with the merge URL and commit as
 evidence; change nothing else.
 
@@ -229,15 +236,18 @@ planned or missing tests as executed coverage.
 For a source PRD, reread every child and reconcile it explicitly before any
 complete claim. Write `<gitdir>/vibe-child-evidence.json` yourself (you are not
 the writer; its audit is never evidence): `{"reviewer": "vibe-ticket-worker",
-"children": [...]}`, each child `delivered`, `active-elsewhere`, `superseded`
+"pullRequest": "<the session's pull request URL, when one exists>", "children": [...]}`, each child `delivered`, `active-elsewhere`, `superseded`
 or `uncovered`, and for a delivered one every acceptance criterion and work
 item quoted from the child (design review, hosted URL, device runs, ledger)
 with `result` and evidence: an added diff line, a tracked changed file, a
 merged pull request with its commit, or a report on the final commit. Run
 step 8's ticket check with `--child-evidence` on it and move exactly
-`children.inReview` to `IN_REVIEW`, with the pull request URL when one exists;
-every other child is listed uncovered with its unmet item in the Handoff
-section. The gate also refuses any supersession that is not a human ruling
+`children.inReview` to `IN_REVIEW`, with the pull request URL. A child in
+`children.awaitingPullRequest` was delivered but has no pull request yet: it
+keeps its status, listed in the Handoff section as delivered on the branch,
+and moves when the pull request opens. Never set `IN_REVIEW` without a pull
+request. Every other child is listed uncovered with its unmet item in the
+Handoff section. The gate also refuses any supersession that is not a human ruling
 outside this session's ticket and plan.
 Populate Design Review only at handoff from the verified final diff,
 current publication receipts and detailed design evidence/report paths.

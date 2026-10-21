@@ -272,7 +272,7 @@ stuck loading; a restart fixes it). Before any such step, stop Desktop (above);
 after it, start Desktop again with step 5 then step 6, which records a new
 port and token, and open the new tab. Ordinary edits to files, which is all
 the SAME writer performs, are fine while it runs. The main-sync publication
-gate merges fresh main and obeys this owned-Desktop stop rule; it never
+gate merges fresh main when it merges (step 1) and obeys this owned-Desktop stop rule; it never
 stops an unrelated Desktop or changes a running renderer's tree.
 
 ## Main-sync before publication
@@ -293,7 +293,11 @@ not silently included or discarded. A clean result needs no extra local commit.
    `node <plugin-root>/skills/vibe/scripts/commit-worktree.mjs --prepare-main-sync --worktree "<wt>"`
    with `{ "context": <granted operationContext> }` on stdin. It fetches
    `origin main`, captures the private FETCH_HEAD SHA once, and stages an
-   ordinary noncommitting merge, never committing or pushing. Retain the
+   ordinary noncommitting merge only in final-merge mode
+   (`vibe-sessions.mjs touch --main-merge final`, set once QA passes or when
+   the person asks for a main merge now). Otherwise main waits
+   (`mainMerge: "deferred"`), conflicts included, and the branch's own base
+   stands in as its main; a failing check is fixed on that base. It never commits or pushes. Retain the
    returned `transactionId`, `mainSha`, original base and imported-file facts.
 2. End that helper turn using actual stopped/completed evidence before any
    source continuation. The SAME registered writer extends its existing

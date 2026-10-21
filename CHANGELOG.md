@@ -17,6 +17,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The `judges` plugin (all judge agents, `context-manager-for-judges`, the `run-judges`, `eval-cache` and `artifact-type-tailored-context` skills, `judge-input.schema.json`, and its Python tools and tests) is deleted, and its entry is removed from `.claude-plugin/marketplace.json`.
 - `install.sh` no longer installs or verifies `judges@closedloop-ai`, and its repair instructions no longer name it. An existing install is not uninstalled.
 
+### vibe v1.0.73
+
+The open lessons from the 2026-10-20 and 2026-10-21 ledger entries, with a mechanical check wherever the lesson had a checkable shape.
+
+#### Fixed
+- The route rule requires only the specs that import a helper export reaching the changed endpoint: an export whose declaration names it, or references a constant, function or import that does, followed across re-exports within three files. A route named in a large shared fixture no longer requires every spec importing that fixture (62 specs to 2 on the incident route). Namespace, dynamic and indirect default imports, a helper whose top level runs on load and a file the splitter cannot read fall back to file level, with the reason in the requirement (`route-specs.mjs`, `module-symbols.mjs`).
+- `isRootTest` and the `e2e` evidence lane cover every e2e root, not only `e2e/`; the verify worker searches every e2e root for specs covering a touched screen.
+- In a shallow clone the restored-removal rule deepens the history in steps (`--deepen=1000`, `--deepen=10000`, then `--unshallow`) until its lookups resolve, and blocks only when a fetch fails, with git's reason.
+- Publication main-sync no longer merges main on every push (operator ruling: QA the feature-complete head, then merge main once). `prepareMainSync` merges only in final-merge mode (`vibe-sessions.mjs touch --main-merge final`, set once QA passes or when the person asks for a main merge now); otherwise, conflicts and failing checks included, the branch's own base stands in as its main and the receipt records the waiting main as `deferredMain`. The dist bundle is rebuilt.
+
+#### Added
+- The pull-request evidence gate checks test selection over the whole branch diff: each changed source file needs an import selection (`code_tests_for` with tests, or the repo's related-test selection) and an e2e by-reference selection, and every selected, required or edited test needs a passing run on the published commit (`testSelection` and `testRuns` in `vibe-pr-evidence.json`).
+- The body gate refuses a pull request body missing a heading of the repo's pull request template.
+- `executed-check.mjs` refuses to mark a plan or PRD executed until its first section is `## Production visual QA` with each flag, where to see it and its state, checked after the last merge; the ticket worker adds the section before setting EXECUTED.
+- A delivered PRD child moves to IN_REVIEW only with the pull request that delivers it; without one it is `awaitingPullRequest` and keeps its status.
+- Writer rules: every new user-visible element needs a source naming it, a capability list is not one, absorbed tickets are recorded, and matching a prototype never removes what main ships. Handoff QAs the feature-complete head and makes the last main merge one pass right before enqueue.
+- `diff-rules.mjs` blocks a removed component mount or user-visible string the base ships, added nowhere else, without a `Removal:` line citing the human source that retires it.
+- `e2e-lock.mjs` refuses a second entry from a worktree that already holds or waits for the stack (exit 76), so a session runs its selected specs as one entry per head.
+- `ticket-write-check.mjs` refuses a ticket in a past sprint, linked under an EXECUTED, OBSOLETE, DONE or CANCELED parent, or moved to IN_REVIEW without its pull request.
+- `qa-merge-order.mjs` passes only when the branch is the QA'd head plus at most one merge of main.
+- fleet-orchestrator: `helpers.mjs` lists helpers whose result was accepted and that still run as `STOP` lines; `history-origin.mjs` refuses to attribute history in a shallow clone. The skill points at these checks and at `executed-check.mjs`, and keeps lessons general with their primary fix in vibe.
+
 ### vibe v1.0.72
 
 codex-fleet-monitor stays cheap and says when it is in trouble. A supervisor with four long-lived sessions sat near 1 GB of RSS because every pass read each thread's full history; a pass waiting on a stuck daemon connection could block forever without a line; and its logs and per-PR state files grew without bound.

@@ -12,7 +12,7 @@ import { isPublisherContext } from "./record-context.js";
 import { committedInputs, executeChecks, checkRecipe, inspectInputInventory } from "./main-sync-checks.js";
 import { prepareInputOrigins, reusableInputOrigin } from "./main-sync-input-origin.js";
 import { storedRecipe, verifyRecipeWitness, recipeIdentity } from "./main-sync-validation-recipe.js";
-import { MainSyncError, mainSyncInputSchema, mainSyncReceiptSchema, mainSyncStateSchema, type MainSyncReceipt } from "./main-sync-contracts.js";
+import { MainSyncError, mainSyncInputSchema, mainSyncReceiptSchema, mainSyncStateSchema, type MainSyncReceipt, type MainSyncSession } from "./main-sync-contracts.js";
 import { comparisonLogs } from "./main-sync-main-comparison.js";
 import { digest, requireSyncReceipt, saveSyncReceipt, syncContext, syncLocation, readPrivateJson, MAIN_SYNC_FILE } from "./main-sync-state.js";
 
@@ -63,7 +63,10 @@ export function prepareMainSyncInputs(raw: unknown) {
     ...(witness ? { validationWitness: witness } : {}) };
 }
 
-/** Captures fresh main once, then stages an ordinary merge; this operation never commits or pushes. */
+/**
+ * Captures fresh main once, then stages an ordinary merge only in final-merge mode (`mainMergeDecision`);
+ * otherwise the branch's own merge-base with main stands in as its main. Never commits or pushes.
+ */
 export function prepareMainSync(raw: unknown) {
   const value = syncContext(raw, "prepare");
   const root = value.place.root;
@@ -86,9 +89,11 @@ export function prepareMainSync(raw: unknown) {
   if (desktopSchema.parse(JSON.parse(desktop.stdout)).running) throw new MainSyncError("Stop only this session's owned Desktop before main-sync", "NEEDS_DESKTOP_STOP");
   try { git(root, ["fetch", "origin", "main"], { timeout: GIT_NETWORK_MS }); }
   catch { throw new MainSyncError("Fresh main fetch failed; nothing was published"); }
-  const mainSha = git(root, ["rev-parse", "FETCH_HEAD^{commit}"]);
+  const fetchedMain = git(root, ["rev-parse", "FETCH_HEAD^{commit}"]);
   const startingHead = git(root, ["rev-parse", "HEAD"]);
-  const common = git(root, ["merge-base", startingHead, mainSha]);
+  const common = git(root, ["merge-base", startingHead, fetchedMain]);
+  const decision = mainMergeDecision(root, value.place.session, fetchedMain);
+  const mainSha = decision.merge ? fetchedMain : common;
   const importedFiles = git(root, ["diff", "--name-status", "--no-renames", common, mainSha]).split("\n").filter(Boolean)
     .map((line) => { const tab = line.indexOf("\t"); return { status: line.slice(0, tab), path: line.slice(tab + 1) }; });
   const validationSince = value.place.session.vercel?.lastDeployedCommit
@@ -101,7 +106,8 @@ export function prepareMainSync(raw: unknown) {
     importedCommits: [...new Set([...(previous?.importedCommits ?? []),
       ...git(root, ["rev-list", `${common}..${mainSha}`]).split("\n").filter(Boolean)])],
     featureTestHistory: featureTestHistory(root, value.place.session.baseCommit, startingHead, previous), requestContinuations: [],
-    ...(state?.inputs ? { inputs: state.inputs } : {}) };
+    ...(state?.inputs ? { inputs: state.inputs } : {}),
+    ...(decision.merge ? {} : { deferredMain: { mainSha: fetchedMain, reason: decision.reason } }) };
   saveSyncReceipt(value.place.dir, receipt);
   if (!isAncestor(root, mainSha)) {
     try { git(root, ["merge", "--no-commit", "--no-ff", mainSha], { timeout: GIT_NETWORK_MS }); }
@@ -112,7 +118,8 @@ export function prepareMainSync(raw: unknown) {
   }
   const requiresCommit = existsSync(join(value.place.dir, "MERGE_HEAD"));
   return { status: requiresCommit ? "NEEDS_COMMIT" : "DONE", transactionId: receipt.transactionId,
-    mainSha, headSha: git(root, ["rev-parse", "HEAD"]), requiresCommit, importedFiles };
+    mainSha, headSha: git(root, ["rev-parse", "HEAD"]), requiresCommit, importedFiles,
+    mainMerge: decision.merge ? "merged" : "deferred", mainMergeReason: decision.reason };
 }
 
 /** Only the same active source writer executes checks and creates the exact committed-result receipt. */
@@ -301,6 +308,17 @@ function consumeRequestContinuation(value: ReturnType<typeof syncContext>, recei
   const continuations = [...receipt.requestContinuations];
   continuations[index] = { ...intent, turn };
   saveSyncReceipt(value.place.dir, { ...receipt, requestContinuations: continuations });
+}
+
+/**
+ * Whether a publication merges fresh main (operator ruling, 2026-10-21: QA the feature-complete head,
+ * conflicts included, then merge main once). Only final-merge mode (`vibe-sessions.mjs touch
+ * --main-merge final`, set once QA passes or when the person asks for a main merge now) merges it.
+ */
+function mainMergeDecision(root: string, session: MainSyncSession, mainSha: string) {
+  if (isAncestor(root, mainSha)) return { merge: true, reason: "main is already merged" };
+  if (session.mainMerge === "final") return { merge: true, reason: "final-merge mode" };
+  return { merge: false, reason: "main waits for final-merge mode" };
 }
 
 function isAncestor(root: string, commit: string) {

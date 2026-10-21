@@ -3,7 +3,7 @@ import { unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { evidenceProblems, pullRequestFacts, requiredLanes, STACKED_BASE_STATEMENT } from "./pr-facts.mjs";
+import { evidenceProblems, pullRequestFacts, requiredLanes, selectionProblems, STACKED_BASE_STATEMENT, templateHeadingProblems } from "./pr-facts.mjs";
 import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -30,6 +30,12 @@ const COMPLETE_BODY = [
   "Changed LinkKind, removed LINK_LIMIT.",
   "Say why POST vs DELETE in the PR. POST carries the edge.",
 ].join("\n");
+
+const SOURCES = [ROUTE, "packages/api/src/types/links.ts", "packages/api/src/service.ts"];
+const SELECTED = {
+  testSelection: SOURCES.flatMap((file) => [{ file, selector: "code_tests_for", tests: [TEST] }, { file, selector: "e2e-reference", tests: [] }]),
+  testRuns: [{ path: TEST, status: "passed", commit: "a".repeat(40), command: "vitest run" }],
+};
 
 function session(t) {
   const fixture = makeHome("pr-facts-");
@@ -92,6 +98,7 @@ test("the body gate refuses missing facts, uncited lines and a stacked base with
 test("evidence: lanes follow the diff, and unfinished, missing or stale runs block", () => {
   const changed = ["packages/app/list.tsx", "packages/app/list.stories.tsx"];
   assert.deepEqual(requiredLanes([ROUTE]), []);
+  assert.deepEqual(["e2e/a.spec.ts", "e2e-web-smoke/b.spec.ts", "apps/desktop/test/e2e/c.spec.ts"].map((file) => requiredLanes([file])), [["e2e"], ["e2e"], ["e2e"]]);
   assert.deepEqual(requiredLanes(changed, ["card select"]), ["web-host", "desktop-host", "webkit-iphone", "chromium-pixel", "storybook-plays"]);
   const commit = "a".repeat(40);
   const runs = requiredLanes(changed, ["card select"]).map((lane) => ({ lane, status: "passed", command: "run", commit, outcome: "selected" }));
@@ -112,7 +119,7 @@ test("the inventory reports the facts and gates only the pull-request phase", (t
   assert.equal(handoff.json.overlap, null);
   assert.equal("prBody" in handoff.json.blocking, false);
   const run = (body) => runNode(INVENTORY, ["--worktree", s.wt, "--phase", "pull-request", "--ticket", ticket, "--prs-json", prs,
-    "--body", s.file("body.md", body), "--runs", s.file("runs.json", { touchFlows: [], touchFlowsReason: "server only", runs: [] }),
+    "--body", s.file("body.md", body), "--runs", s.file("runs.json", { touchFlows: [], touchFlowsReason: "server only", runs: [], ...SELECTED }),
     "--commit", "a".repeat(40)], s.home);
   const failing = run("Summary only.");
   assert.equal(failing.status, 1);
@@ -121,4 +128,35 @@ test("the inventory reports the facts and gates only the pull-request phase", (t
   assert.equal(passing.json.blocking.prBody, true, JSON.stringify(passing.json.prBodyProblems));
   assert.equal(passing.json.blocking.prEvidence, true);
   assert.match(runNode(INVENTORY, ["--worktree", s.wt, "--phase", "handoff", "--body", ticket], s.home).json.error, /--phase pull-request/);
+});
+
+test("a body that drops a heading of the repo's pull request template is refused (#8960, #8967)", (t) => {
+  const template = "## Summary\n\n## Breaking changes\n\n## Test plan\n";
+  assert.deepEqual(templateHeadingProblems("## Summary\nx\n## Breaking changes\nNone\n## Test plan\nran it\n", template), []);
+  assert.deepEqual(templateHeadingProblems("## Summary\nx\n## Breaking changes\nNone\nTest plan: ran it\n", template), ["template heading \"## Test plan\" is missing"]);
+  assert.deepEqual(templateHeadingProblems("anything", ""), []);
+  const s = session(t);
+  assert.match(facts(s, { body: COMPLETE_BODY, template }).prBodyProblems.join(), /template heading "## Summary" is missing/);
+});
+
+test("test selection covers the whole branch diff, and every selected, required or edited test passed on the commit (#8963)", (t) => {
+  const s = session(t);
+  const commit = "a".repeat(40);
+  const gate = (runs, requiredTests = []) => facts(s, { runs: { touchFlows: [], touchFlowsReason: "server only", runs: [], ...runs }, commit, requiredTests }).prEvidenceProblems;
+  assert.deepEqual(gate(SELECTED), []);
+  const empty = gate({});
+  for (const file of SOURCES) {
+    assert.ok(empty.some((problem) => problem.startsWith(`${file}: no import selection`)), file);
+    assert.ok(empty.some((problem) => problem.startsWith(`${file}: no e2e by-reference selection`)), file);
+  }
+  assert.ok(empty.some((problem) => problem.startsWith(`${TEST}: selected but no passing run`)), "an edited spec is always selected");
+  const unindexed = SELECTED.testSelection.map((entry) => (entry.file === "packages/api/src/service.ts" && entry.selector === "code_tests_for" ? { ...entry, tests: null } : entry));
+  assert.match(gate({ ...SELECTED, testSelection: unindexed }).join(), /service\.ts: no import selection/);
+  assert.deepEqual(gate({ ...SELECTED, testSelection: [...unindexed, { file: "packages/api/src/service.ts", selector: "related", tests: [] }] }), []);
+  const emptyGraph = SELECTED.testSelection.map((entry) => (entry.selector === "code_tests_for" && entry.file === ROUTE ? { ...entry, tests: [] } : entry));
+  assert.match(gate({ ...SELECTED, testSelection: emptyGraph }).join(), /route\.ts: no import selection/);
+  assert.match(gate(SELECTED, [{ path: "e2e/links.spec.ts", reason: "names the endpoint" }]).join(), /e2e\/links\.spec\.ts: selected but no passing run/);
+  assert.match(gate({ ...SELECTED, testRuns: [{ ...SELECTED.testRuns[0], commit: "b".repeat(40) }] }).join(), /links\.test\.ts: selected but no passing run/);
+  assert.match(gate({ ...SELECTED, testRuns: [{ ...SELECTED.testRuns[0], status: "skipped" }] }).join(), /links\.test\.ts: selected but no passing run/);
+  assert.match(selectionProblems({ testSelection: [{ file: ROUTE, selector: "guess", tests: [] }] }, [], [], commit).join(), /selector "guess"/);
 });
