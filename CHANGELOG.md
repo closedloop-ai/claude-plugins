@@ -4,6 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.69
+
+Prose cleanup of the vibe agents and skills, fleet-orchestrator included, so they read cleanly on any repository. No rule is added, dropped or loosened; this entry and the lessons ledger keep the provenance the instructions no longer carry.
+
+#### Changed
+- Agent, skill and reference markdown no longer cites dated operator or design rulings, PR numbers, ticket slugs, or symphony-alpha paths, component names and flag keys as examples. Generic examples replace the ones that helped.
+- Dense run-on rules are split into short steps. Inline log templates (`Engineering decision:`, `Engineering needed (token not bundled):`, `Debt:`, `Known main failure`, `harnessSwitch`) become a step plus a separate line with the unchanged literal format.
+- Places that named symphony-alpha only as the working repository now say "the repository"; the `gh --repo`, preflight remote and workflow commands the workers actually run are unchanged.
+- Four symphony-alpha specific rules leave the plugin for that repository's `AGENTS.md` files: the Branch PRD-600/601/602 contract check, the shared app package's forbidden imports, the Labs destination's container flag and example files, and the root code style list. The plugin keeps the general form of each.
+- Contract tests that pinned a citation now pin the rule's own sentence; no assertion was removed.
+
 ### vibe v1.0.68
 
 Lessons appended to the vibe lessons ledger on the evening of 2026-10-20, in one release. The repeat lesson and the copy provenance repeat become checks, not more prose. Every check here works on any repository; rules specific to one repository belong in that repository (its AGENTS.md, source gates and repo memory), not in vibe.
