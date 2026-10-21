@@ -1,6 +1,8 @@
 // Usage: node liveness.mjs <stateDir> <session>...
 // A session is "<name>" (reads <stateDir>/<name>.json, which holds a threadId) or "<label>=<threadId>".
-// Prints "<label> <lastTurnStatus> <itemCount> <flag>"; flag is LIMIT, TRANSIENT, SYSTEM-ERROR, ERROR, READFAIL or -.
+// Prints "<label> <lastTurnStatus> <progress> <flag>"; progress is the id of the last turn's newest item (it
+// changes while the turn works), flag is LIMIT, TRANSIENT, SYSTEM-ERROR, ERROR, READFAIL or -.
+// It never loads a thread's history: a long thread's full read is tens of MB of JSON.
 // Self-contained: speaks the Codex App Server protocol to the managed daemon through
 // `codex app-server proxy`, so a single file is all a remote host needs.
 import { createHash, randomBytes } from 'node:crypto';
@@ -98,20 +100,23 @@ class JsonRpcClient {
     }
   }
 
-  async request(method, params, timeoutMs = REQUEST_TIMEOUT_MS) {
-    await this.connected;
-    if (this.failure) throw this.failure;
+  /** The timeout also covers the connection, so a daemon that never completes the upgrade cannot hang a caller. */
+  request(method, params, timeoutMs = REQUEST_TIMEOUT_MS) {
     const id = `fleet-${this.nextId++}`;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`${method} timed out`));
       }, timeoutMs);
-      this.pending.set(id, {
+      const settle = {
         resolve: (v) => { clearTimeout(timer); resolve(v); },
         reject: (e) => { clearTimeout(timer); reject(e); },
-      });
-      this.send({ id, method, params });
+      };
+      this.connected.then(() => {
+        if (this.failure) return settle.reject(this.failure);
+        this.pending.set(id, settle);
+        this.send({ id, method, params });
+      }, settle.reject);
     });
   }
 
@@ -255,12 +260,36 @@ export function parseSession(spec, dir) {
   return { label: spec, threadId: JSON.parse(readFileSync(`${dir}/${spec}.json`, 'utf8')).threadId };
 }
 
-export function summarize(label, thread) {
-  const turn = (thread?.turns ?? []).at(-1);
+/** The default turn and progress read a full thread (`includeTurns`), as fleet-orchestrator's `last` does. */
+export function summarize(label, thread, turn = (thread?.turns ?? []).at(-1), progress = String((turn?.items ?? []).length)) {
   let flag = '-';
   if (thread?.status?.type === 'systemError') flag = Failure.SystemError;
   else if (turn?.error) flag = classifyTurnError(turn.error);
-  return `${label} ${turn?.status ?? 'none'} ${(turn?.items ?? []).length} ${flag}`;
+  return `${label} ${turn?.status ?? 'none'} ${progress} ${flag}`;
+}
+
+const UNKNOWN_METHOD = /unknown variant|method not found/i;
+
+/**
+ * A thread's status and last turn without its history: `thread/read` without turns, then `thread/turns/list`
+ * for the newest turn with no items. With `progress`, also the id of that turn's newest item (`-` when it
+ * has none). An App Server too old for `thread/turns/list` gets the full read, and the item count as progress.
+ */
+export async function readThreadState(client, threadId, { progress = false } = {}) {
+  const { thread } = await client.request('thread/read', { threadId, includeTurns: false });
+  let turns;
+  try {
+    turns = await client.request('thread/turns/list', { threadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' });
+  } catch (error) {
+    if (!UNKNOWN_METHOD.test(error.message)) throw error;
+    const full = (await client.request('thread/read', { threadId, includeTurns: true })).thread;
+    const turn = (full?.turns ?? []).at(-1) ?? null;
+    return { thread, turn, progress: String((turn?.items ?? []).length) };
+  }
+  const turn = turns?.data?.[0] ?? null;
+  if (!progress || !turn) return { thread, turn, progress: '-' };
+  const items = await client.request('thread/items/list', { threadId, turnId: turn.id, limit: 1, sortDirection: 'desc' });
+  return { thread, turn, progress: items?.data?.[0]?.item?.id ?? '-' };
 }
 
 export async function readSessions(client, dir, specs) {
@@ -270,8 +299,8 @@ export async function readSessions(client, dir, specs) {
     try {
       const session = parseSession(spec, dir);
       label = session.label;
-      const { thread } = await client.request('thread/read', { threadId: session.threadId, includeTurns: true });
-      lines.push(summarize(label, thread));
+      const { thread, turn, progress } = await readThreadState(client, session.threadId, { progress: true });
+      lines.push(summarize(label, thread, turn, progress));
     } catch {
       lines.push(`${label} unreadable 0 READFAIL`);
     }

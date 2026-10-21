@@ -5,7 +5,8 @@
   skill directory) and WORK_DIR (the supervisor's work dir), save it as
   ~/Library/LaunchAgents/codex-fleet-supervisor.plist, then run
   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/codex-fleet-supervisor.plist
-  The login shell puts node and codex on PATH.
+  The login shell puts node and codex on PATH. launchd appends to supervisor.log, and the supervisor
+  rotates it at LOG_MAX_BYTES (default 1 MB) into supervisor.log.1.
 -->
 <plist version="1.0">
 <dict>

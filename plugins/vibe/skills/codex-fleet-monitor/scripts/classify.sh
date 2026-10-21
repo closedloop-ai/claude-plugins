@@ -1,7 +1,7 @@
 #!/bin/zsh
-# stdin: "<where> <stateName> <turnStatus> <items> <flag>". $1: item history file. $2: stall seconds.
-# A running turn whose item count has not grown for $2 seconds is STALLED (a Codex usage limit
-# leaves the turn open and silent, so "turn is open" alone is not liveness).
+# stdin: "<where> <stateName> <turnStatus> <progress> <flag>". $1: item history file. $2: stall seconds.
+# A running turn whose progress (its newest item) has not changed for $2 seconds is STALLED (a Codex usage
+# limit leaves the turn open and silent, so "turn is open" alone is not liveness).
 H=$1; STALL=${2:-720}; touch $H; now=$(date +%s)
 while read where n st items flag; do
   prev=$(grep "^$where:$n " $H | awk '{print $2, $3}'); pi=${prev% *}; pt=${prev#* }

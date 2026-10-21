@@ -6,8 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import {
-  classifyTurnError, connectDirect, decodeFrames, encodeFrame, Failure, parseSession, readSessions, summarize,
+  classifyTurnError, connectDirect, decodeFrames, encodeFrame, Failure, parseSession, readSessions, readThreadState, summarize,
 } from './liveness.mjs';
+import { answerThreadRead } from './test-support.mjs';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
@@ -20,7 +21,7 @@ function serverFrame(text, opcode = 0x1) {
 }
 
 /** Fake App Server: WebSocket upgrade, then JSON-RPC answers from `threads`. */
-function fakeServer(threads) {
+function fakeServer(threads, options = {}) {
   const calls = [];
   const server = createServer((socket) => {
     let buffer = Buffer.alloc(0);
@@ -43,14 +44,14 @@ function fakeServer(threads) {
         const message = JSON.parse(frame.payload.toString());
         calls.push(message);
         if (message.id === undefined) continue;
-        if (message.method === 'initialize') socket.write(serverFrame(JSON.stringify({ id: message.id, result: {} })));
-        else if (message.method === 'thread/read') {
-          const thread = threads[message.params.threadId];
-          const reply = thread
-            ? { id: message.id, result: { thread } }
-            : { id: message.id, error: { code: -32600, message: 'no such thread' } };
-          socket.write(serverFrame(JSON.stringify(reply)));
+        let reply;
+        try {
+          const result = message.method === 'initialize' ? {} : answerThreadRead(threads, message.method, message.params, options);
+          reply = { id: message.id, result };
+        } catch (error) {
+          reply = { id: message.id, error: { code: -32600, message: error.message } };
         }
+        socket.write(serverFrame(JSON.stringify(reply)));
       }
     });
   });
@@ -106,12 +107,14 @@ test('parseSession accepts label=threadId and a state file name', () => {
   assert.deepEqual(parseSession('w1', dir), { label: 'w1', threadId: 'T-file' });
 });
 
+const item = (id) => ({ id, type: 'agentMessage', text: 'x'.repeat(10) });
+
 test('reads threads over a fake server and reports READFAIL for failures', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'fleet-'));
   writeFileSync(join(dir, 'w1.json'), JSON.stringify({ threadId: 'T1' }));
   const { server, calls } = fakeServer({
-    T1: { turns: [{ status: 'inProgress', items: [1, 2, 3] }] },
-    T2: { turns: [{ status: 'failed', items: [1], error: { message: 'usage limit reached' } }] },
+    T1: { status: { type: 'active' }, turns: [{ id: 't-0', status: 'completed', items: [item('i-0')] }, { id: 't-1', status: 'inProgress', items: [item('i-1'), item('i-2'), item('i-3')] }] },
+    T2: { status: { type: 'idle' }, turns: [{ id: 't-2', status: 'failed', items: [item('i-4')], error: { message: 'usage limit reached' } }] },
   });
   const sock = join(dir, 's.sock');
   await new Promise((resolve) => server.listen(sock, resolve));
@@ -120,16 +123,69 @@ test('reads threads over a fake server and reports READFAIL for failures', async
     await client.initialize();
     const lines = await readSessions(client, dir, ['w1', 'two=T2', 'gone=T9', 'nofile']);
     assert.deepEqual(lines, [
-      'w1 inProgress 3 -',
-      'two failed 1 LIMIT',
+      'w1 inProgress i-3 -',
+      'two failed i-4 LIMIT',
       'gone unreadable 0 READFAIL',
       'nofile unreadable 0 READFAIL',
     ]);
     const read = calls.find((c) => c.method === 'thread/read');
-    assert.deepEqual(read.params, { threadId: 'T1', includeTurns: true });
+    assert.deepEqual(read.params, { threadId: 'T1', includeTurns: false });
     assert.ok(calls.some((c) => c.method === 'initialized'));
   } finally {
     client.close();
     server.close();
+  }
+});
+
+test('a read never loads a thread history: status, the newest turn without items, and its newest item id', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-'));
+  const history = Array.from({ length: 50 }, (_, n) => ({ id: `t-${n}`, status: 'completed', items: Array.from({ length: 40 }, (__, k) => item(`i-${n}-${k}`)) }));
+  const { server, calls } = fakeServer({ T1: { status: { type: 'active' }, turns: [...history, { id: 't-last', status: 'inProgress', items: [item('i-a'), item('i-b')] }] } });
+  const sock = join(dir, 's.sock');
+  await new Promise((resolve) => server.listen(sock, resolve));
+  const client = connectDirect(sock);
+  try {
+    await client.initialize();
+    assert.deepEqual(await readSessions(client, dir, ['w1=T1']), ['w1 inProgress i-b -']);
+    const reads = calls.filter((c) => c.id !== undefined && c.method !== 'initialize');
+    assert.ok(reads.every((c) => c.params.includeTurns !== true), 'no thread/read asks for the history');
+    assert.deepEqual(reads.find((c) => c.method === 'thread/turns/list').params, { threadId: 'T1', limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' });
+    assert.deepEqual(reads.find((c) => c.method === 'thread/items/list').params, { threadId: 'T1', turnId: 't-last', limit: 1, sortDirection: 'desc' });
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
+test('an App Server without thread/turns/list gets the full read and the item count', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-'));
+  const { server } = fakeServer({ T1: { status: { type: 'idle' }, turns: [{ id: 't-1', status: 'completed', items: [item('i-1'), item('i-2')] }] } }, { legacy: true });
+  const sock = join(dir, 's.sock');
+  await new Promise((resolve) => server.listen(sock, resolve));
+  const client = connectDirect(sock);
+  try {
+    await client.initialize();
+    const state = await readThreadState(client, 'T1', { progress: true });
+    assert.equal(state.turn.id, 't-1');
+    assert.equal(summarize('w1', state.thread, state.turn, state.progress), 'w1 completed 2 -');
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
+test('a request times out while the connection never opens', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-'));
+  const sockets = [];
+  const silent = createServer((socket) => sockets.push(socket));
+  const sock = join(dir, 's.sock');
+  await new Promise((resolve) => silent.listen(sock, resolve));
+  const client = connectDirect(sock);
+  try {
+    await assert.rejects(client.request('thread/read', { threadId: 'T1' }, 200), /thread\/read timed out/);
+  } finally {
+    client.close();
+    for (const socket of sockets) socket.destroy();
+    silent.close();
   }
 });

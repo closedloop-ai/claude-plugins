@@ -1,6 +1,7 @@
 #!/bin/zsh
 # Usage: snapshot.sh <workDir>. One line per watched item; any changed line is an event.
 # With RECOVER=1 (watch.sh sets it) it first runs a recover.mjs pass on each machine that has sessions.
+# State files of PRs no longer in prs.txt are removed.
 K=${0:A:h}; W=${1:?workDir}; [ -f $W/config.env ] && source $W/config.env
 : ${STALL_SECONDS:=720} ${BOT_LOGIN_REGEX:=vercel|codex|github-actions|copilot|bot} ${REMOTE_SHELL:=zsh -lic}
 : > $W/live.txt
@@ -11,6 +12,7 @@ remote_node() {
   local d=$REMOTE_STATE_DIR/.fleet-monitor
   local e="USAGE_HIGH_PERCENT=$HIGH AUTO_RESTART_DAEMON=${AUTO_RESTART_DAEMON:-} RECOVERY_BACKOFF_SECONDS=${${RECOVERY_BACKOFF_SECONDS:-}// /,}"
   e+=" RESTART_COOLDOWN_SECONDS=${RESTART_COOLDOWN_SECONDS:-} CONTINUE_PROMPT_FILE=${REMOTE_CONTINUE_PROMPT_FILE:-}"
+  e+=" PASS_TIMEOUT_SECONDS=${PASS_TIMEOUT_SECONDS:-} LOG_MAX_BYTES=${LOG_MAX_BYTES:-} SUPERVISOR_RSS_CAP_MB=${SUPERVISOR_RSS_CAP_MB:-}"
   COPYFILE_DISABLE=1 tar -C $K -cf - liveness.mjs ratelimit.mjs recover.mjs 2>/dev/null | ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 \
     ${REMOTE_HOST:?set REMOTE_HOST} "mkdir -p $d && tar -C $d -xf - && $REMOTE_SHELL 'env $e node $d/$*'" 2>/dev/null
 }
@@ -28,11 +30,12 @@ R=$(awk '$1=="remote"{print (NF>=3 ? $2"="$3 : $2)}' $W/sessions.txt 2>/dev/null
 if [ "${RECOVER:-}" = 1 ]; then
   [ -n "${L// }" ] && AUTO_RESTART_DAEMON=${AUTO_RESTART_DAEMON:-} RECOVERY_BACKOFF_SECONDS=${RECOVERY_BACKOFF_SECONDS:-} \
     RESTART_COOLDOWN_SECONDS=${RESTART_COOLDOWN_SECONDS:-} CONTINUE_PROMPT_FILE=${CONTINUE_PROMPT_FILE:-} \
+    PASS_TIMEOUT_SECONDS=${PASS_TIMEOUT_SECONDS:-} LOG_MAX_BYTES=${LOG_MAX_BYTES:-} \
     node $K/recover.mjs ${LOCAL_STATE_DIR:?set LOCAL_STATE_DIR} ${=L} >/dev/null 2>&1
   [ -n "${R// }" ] && remote_node recover.mjs $REMOTE_STATE_DIR $R >/dev/null
 fi
 if [ -n "${L// }" ]; then
-  node $K/recover.mjs --report $LOCAL_STATE_DIR local
+  SUPERVISOR_RSS_CAP_MB=${SUPERVISOR_RSS_CAP_MB:-} node $K/recover.mjs --report $LOCAL_STATE_DIR local
   node $K/liveness.mjs ${LOCAL_STATE_DIR:?set LOCAL_STATE_DIR} ${=L} | sed 's/^/local /' >> $W/live.txt
 fi
 if [ -n "${R// }" ]; then
@@ -50,6 +53,16 @@ for r in ${=WATCH_NEW_PR_REPOS}; do
   op=$(gh pr list -R $r --state open --search "${PR_SEARCH:-}" --json number --jq '.[].number' 2>/dev/null | sort -n | tr '\n' ' ')
   echo "open-prs $r $(keep open-$r "$op")"
 done
+# keep-<field>-<repo>-<n>, merge-<repo>-<n> and checks-<repo>-<n> files of a PR that left prs.txt are removed.
+prune_pr_state() {
+  local -A live; local r n f rest
+  [ -f $W/prs.txt ] && while read r n; do [ -n "$n" ] && live[${r//[^A-Za-z0-9_-]/_}-$n]=1 && live[${r//\//_}-$n]=1; done < $W/prs.txt
+  for f in $W/keep-(st|c|v|i|ck)-*.txt(N) $W/merge-*.txt(N) $W/checks-*.txt(N); do
+    rest=${${f:t:r}#keep-}; rest=${rest#*-}
+    [ -n "${live[$rest]:-}" ] || rm -f $f
+  done
+}
+prune_pr_state
 [ -s $W/prs.txt ] || exit 0
 ME=${MY_GH_LOGIN:-$(gh api user --jq .login 2>/dev/null)}
 skip="(.user.login==\"$ME\" or (.user.login|test(\"$BOT_LOGIN_REGEX\";\"i\")))"

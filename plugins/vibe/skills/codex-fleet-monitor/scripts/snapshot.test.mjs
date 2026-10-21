@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -36,7 +36,7 @@ function fixture() {
   for (const name of ['gh', 'codex']) chmodSync(join(bin, name), 0o755);
   writeFileSync(join(work, 'config.env'), 'WATCH_NEW_PR_REPOS="acme/app"\n');
   writeFileSync(join(work, 'prs.txt'), 'acme/app 42\n');
-  const env = { ...process.env, FAKE_ROOT: root, PATH: `${bin}:${process.env.PATH}` };
+  const env = { ...process.env, FAKE_ROOT: root, PATH: `${bin}:${process.env.PATH}`, FLEET_SUPERVISOR_LOCK: join(root, 'supervisor.lock') };
   const run = (mode) => {
     writeFileSync(join(root, 'gh-mode'), mode);
     const result = spawnSync('zsh', [SNAPSHOT, work], { env, encoding: 'utf8', timeout: 50_000 });
@@ -65,4 +65,50 @@ test('the recovery events log is a snapshot line, so a recovery action wakes the
   assert.match(f.run('ok'), /^recovery local 0 -$/m);
   writeFileSync(join(state, '.fleet-recovery', 'events.log'), '2026-01-01T00:00:00.000Z EVENT recovery w1 resumed attempt=1/3 turn=t2\n');
   assert.match(f.run('ok'), /^recovery local 1 recovery w1 resumed attempt=1\/3 turn=t2$/m);
+});
+
+/** A work dir with one local session and no PRs; its heartbeat file and supervisor lock are the fixture's to write. */
+function supervised() {
+  const f = fixture();
+  const state = join(f.root, 'state');
+  mkdirSync(join(state, '.fleet-recovery'), { recursive: true });
+  writeFileSync(join(f.work, 'config.env'), `LOCAL_STATE_DIR=${state}\n`);
+  writeFileSync(join(f.work, 'sessions.txt'), 'local w1 T1\n');
+  writeFileSync(join(f.work, 'prs.txt'), '');
+  const heartbeat = (ageSeconds, rssMb = 50) => writeFileSync(join(state, '.fleet-recovery', 'heartbeat.json'), JSON.stringify({
+    at: new Date(Date.now() - ageSeconds * 1000).toISOString(), pid: 1, intervalSeconds: 60, passes: 3, lastPassMs: 40, lastError: null, rssBytes: rssMb * 1024 * 1024,
+  }));
+  return { ...f, heartbeat, lock: () => writeFileSync(join(f.root, 'supervisor.lock'), `${process.pid}\n`) };
+}
+
+test('the supervisor heartbeat is a snapshot line: ok, STALE past 3 intervals, RSS-HIGH over the cap', TIMEOUT, () => {
+  const f = supervised();
+  assert.doesNotMatch(f.run('ok'), /^supervisor /m, 'no supervisor, no line');
+  f.heartbeat(30);
+  assert.match(f.run('ok'), /^supervisor local ok$/m);
+  f.heartbeat(181);
+  assert.match(f.run('ok'), /^supervisor local STALE\(>180s\)$/m);
+  f.heartbeat(30, 400);
+  assert.match(f.run('ok'), /^supervisor local RSS-HIGH\(>300MB\)$/m);
+  f.heartbeat(500, 400);
+  assert.match(f.run('ok'), /^supervisor local STALE\(>180s\),RSS-HIGH\(>300MB\)$/m);
+});
+
+test('a supervisor lock with no heartbeat is MISSING', TIMEOUT, () => {
+  const f = supervised();
+  f.lock();
+  assert.match(f.run('ok'), /^supervisor local MISSING$/m);
+});
+
+test('state files of a PR that left prs.txt are removed; those of a watched PR stay', TIMEOUT, () => {
+  const f = fixture();
+  writeFileSync(join(f.work, 'prs.txt'), 'acme/app 42\n');
+  f.run('ok');
+  const gone = ['keep-st-acme_app-7.txt', 'keep-c-acme_app-7.txt', 'keep-ck-acme_app-7.txt', 'merge-acme_app-7.txt', 'checks-acme_app-7.txt', 'keep-st-other_repo-42.txt'];
+  for (const name of gone) writeFileSync(join(f.work, name), 'x\n');
+  f.run('ok');
+  for (const name of gone) assert.equal(existsSync(join(f.work, name)), false, `${name} is pruned`);
+  for (const name of ['keep-st-acme_app-42.txt', 'keep-ck-acme_app-42.txt', 'merge-acme_app-42.txt', 'checks-acme_app-42.txt', 'keep-open-acme_app.txt']) {
+    assert.equal(existsSync(join(f.work, name)), true, `${name} stays`);
+  }
 });
