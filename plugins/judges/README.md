@@ -1,5 +1,7 @@
 # judges
 
+> **Deprecated.** The `judges` plugin is no longer maintained and will be removed from the closedloop-ai marketplace in a later release. Keep it installed until then: the `code` plugin's planning prompts still call `judges:eval-cache`. The release that removes it also updates `code` and `install.sh`, so no manual step is needed.
+
 A collection of specialized LLM judge agents that evaluate implementation plans, code artifacts, and PRD documents against software engineering principles and best practices. Judges run in parallel, score artifacts using a structured `CaseScore` JSON schema, and aggregate results into a validation report.
 
 ## Features

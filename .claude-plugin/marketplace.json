@@ -32,7 +32,7 @@
     {
       "name": "judges",
       "source": "./plugins/judges",
-      "description": "LLM Judges plugin"
+      "description": "Deprecated, will be removed from the marketplace: LLM Judges plugin"
     },
     {
       "name": "platform",
@@ -42,7 +42,7 @@
     {
       "name": "self-learning",
       "source": "./plugins/self-learning",
-      "description": "Self-learning plugin"
+      "description": "Deprecated, will be removed from the marketplace: Self-learning plugin"
     }
   ]
 }

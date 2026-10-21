@@ -21,6 +21,16 @@ codex-fleet-monitor recovers Codex sessions after a transient provider failure o
 - `fleet-orchestrator` Monitoring: run the supervisor on every machine that hosts Codex writers; enable the daemon restart only with the operator's agreement.
 - CI installs zsh for the snapshot tests.
 
+### judges v1.7.3
+
+#### Changed
+- The plugin is marked deprecated: its `plugin.json` and marketplace descriptions and its README now say it will be removed from the marketplace in a later release, and the README says to keep it installed until then. No behavior changes.
+
+### self-learning v1.2.7
+
+#### Changed
+- The plugin is marked deprecated: its `plugin.json` and marketplace descriptions and its README now say it will be removed from the marketplace in a later release, and the README says to keep it installed until then. No behavior changes.
+
 ### vibe v1.0.69
 
 Prose cleanup of the vibe agents and skills, fleet-orchestrator included, so they read cleanly on any repository. No rule is added, dropped or loosened; this entry and the lessons ledger keep the provenance the instructions no longer carry.
