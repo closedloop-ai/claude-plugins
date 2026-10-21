@@ -147,7 +147,9 @@ export function evaluateDiff(files, changeLog, repo) {
   checkFrozenRenders(files, repo, logged, add);
   checkLostStoryIds(files, repo, add);
   checkCopyProvenance(live, files, repo, logged, add);
-  checkRestoredRemovals(live, files, repo, changeLog, add);
+  if (checkRestoredRemovals(live, files, repo, changeLog, add) > 0 && repo.shallow) {
+    add("restored-removal", live[0].path, 1, "the clone is shallow, so a removal older than its shallow boundary is invisible to the restored-removal check", "deepen the history (`git fetch --unshallow`, or `git fetch --deepen=<n>` past the removal) and rerun");
+  }
   requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo), ...sidebarOrderTests(files, repo));
   return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks };
 }
@@ -451,15 +453,17 @@ function checkCopyProvenance(files, allFiles, repo, logged, add) {
 
 /**
  * A component mounted again, or a file added back, that a base commit removed needs a human's restore
- * authorization naming the removal it overrides.
+ * authorization naming the removal it overrides. Returns how many history lookups found no removal.
  */
 function checkRestoredRemovals(files, allFiles, repo, changeLog, add) {
   const authorized = (name) => new RegExp(String.raw`^\s*(?:[-*]\s+)?Restore authorization:\s*${escapeRegExp(name)}:\s*(?:operator ruling|[A-Z][\w'.-]+(?:\s+[A-Z][\w'.-]+)+),\s*\d{4}-\d{2}-\d{2},\s*[^;\n]+;\s*overrides\s+(?:ISS|PRD|PLN|FEA)-\d+`, "m").test(changeLog);
   const removed = new Set(allFiles.flatMap((file) => file.removed.flatMap((entry) => [...entry.text.matchAll(JSX_MOUNT)].map((match) => match[1]))));
   let checked = 0;
+  let unresolved = 0;
   for (const file of files.filter((entry) => COPY_FILE.test(entry.path) && !isTestFile(entry.path) && !STORY_FILE.test(entry.path))) {
     if (file.status === "A" && !authorized(file.path) && checked++ < RESTORE_LIMIT) {
       const removal = repo.deletionOf(file.path);
+      unresolved += removal ? 0 : 1;
       if (removal) {
         add("restored-removal", file.path, 1, `adds back a file deleted by ${removal}`, `remove it, or record \`Restore authorization: ${file.path}: <human name or operator ruling>, <YYYY-MM-DD>, <where>; overrides <removal ticket>\``);
       }
@@ -468,15 +472,17 @@ function checkRestoredRemovals(files, allFiles, repo, changeLog, add) {
     const mounted = new Set(file.added.flatMap((entry) => [...entry.text.matchAll(JSX_MOUNT)].map((match) => match[1])));
     for (const name of [...mounted].filter((item) => !before.includes(`<${item}`) && !removed.has(item) && !authorized(item))) {
       if (checked++ >= RESTORE_LIMIT) {
-        return;
+        return unresolved;
       }
       const removal = repo.unmountOf(name);
+      unresolved += removal ? 0 : 1;
       if (removal) {
         const line = file.added.find((entry) => entry.text.includes(`<${name}`))?.line ?? 1;
         add("restored-removal", file.path, line, `mounts ${name}, removed by ${removal}`, `find that removal's ticket and its human ruling; remove the mount, or record \`Restore authorization: ${name}: <human name or operator ruling>, <YYYY-MM-DD>, <where>; overrides <removal ticket>\``);
       }
     }
   }
+  return unresolved;
 }
 
 export function copyLiterals(line) {
@@ -529,6 +535,7 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
   return {
     head: read,
     base: baseRead,
+    shallow: lines(() => git(worktree, ["rev-parse", "--is-shallow-repository"]))[0] === "true",
     headFiles,
     baseFiles,
     baseBlobs,

@@ -19,7 +19,7 @@ function put(root, files) {
 }
 
 /** Findings as [rule, file] for a base commit of `base` files and an uncommitted (or committed) `head`. */
-function run(t, { history = [], base = {}, head = {}, changeLog = "", commit = false }) {
+function run(t, { history = [], base = {}, head = {}, changeLog = "", commit = false, shallow = false }) {
   const { root, home, cleanup } = makeHome("vibe-diff-rules-");
   t.after(cleanup);
   const checkout = path.join(root, "wt");
@@ -33,6 +33,9 @@ function run(t, { history = [], base = {}, head = {}, changeLog = "", commit = f
   git(checkout, ["add", "-A"], home);
   git(checkout, ["commit", "--quiet", "-m", "base"], home);
   const baseSha = git(checkout, ["rev-parse", "HEAD"], home);
+  if (shallow) {
+    writeFileSync(path.join(git(checkout, ["rev-parse", "--absolute-git-dir"], home), "shallow"), `${baseSha}\n`);
+  }
   put(checkout, head);
   if (commit) {
     git(checkout, ["add", "-A"], home);
@@ -219,6 +222,21 @@ test("a component or file a human removed is not brought back without a restore 
   assert.deepEqual(run(t, { history, head, changeLog }).found.filter(([rule]) => rule === "restored-removal"), []);
   const noSlug = "Restore authorization: ReadSourceBadge: operator ruling, 2026-10-21, session thread\n";
   assert.equal(run(t, { history, head, changeLog: noSlug }).found.some(([rule, file]) => rule === "restored-removal" && file === toolbar), true);
+});
+
+test("in a shallow clone the restored-removal check says the history it needs is cut off", (t) => {
+  const toolbar = "packages/app/sessions/sessions-toolbar.tsx";
+  const withPill = "export const Toolbar = () => (\n  <Bar>\n    <ReadSourceBadge source={source} />\n  </Bar>\n);\n";
+  const history = [
+    { message: "Add sessions toolbar", files: { [toolbar]: withPill } },
+    { message: "ISS-6005: remove the cloud pill", files: { [toolbar]: "export const Toolbar = () => (\n  <Bar>\n  </Bar>\n);\n" } },
+  ];
+  const head = { [toolbar]: withPill };
+  const restored = run(t, { history, head, shallow: true }).blocking.filter((finding) => finding.rule === "restored-removal");
+  assert.equal(restored.length, 1);
+  assert.match(restored[0].problem, /shallow/);
+  assert.match(restored[0].fix, /git fetch --unshallow/);
+  assert.equal(run(t, { history, head: { [toolbar]: "export const Toolbar = 2;\n" }, shallow: true }).found.some(([rule]) => rule === "restored-removal"), false);
 });
 
 test("copy provenance: a new toast, label or JSX string needs a cited source; existing and moved copy pass", (t) => {
