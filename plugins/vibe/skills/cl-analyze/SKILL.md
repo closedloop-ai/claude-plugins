@@ -364,25 +364,4 @@ Next action:
 - <reconcile exact PRD link then run plan-only $cl-execute | run $cl-execute in this thread | run $cl-execute for UI plan and human approval | add ClosedLoop comment tagging product contact | surface engineering blocker privately to user | ask user>
 ```
 
-If the decision is not `GO` or `GO_WITH_UI_PLAN_APPROVAL`, do not execute the parent ticket.
-
-`Decision: GO` or `Decision: GO_WITH_UI_PLAN_APPROVAL` conflicts with any of these:
-
-- a readiness item that is not `PASS`, `NOT_APPLICABLE`, or `APPROVAL_REQUIRED` for `UI design guidance` only;
-- a proposal contract audit that is `BLOCKED` or `UNKNOWN`;
-- `Complexity: HIGH` without `High-complexity execution override: APPROVED`;
-- `Risk: EXTREME`;
-- unknown repo/surface metadata or missing required metadata;
-- an `AMBIGUOUS` or unexamined requirements contract;
-- missing external-doc evidence for a third-party integration.
-
-On a conflict, change the decision to `ENGINEERING_BLOCKED`, `PRODUCT_BLOCKED`, or `HUMAN_REVIEW_REQUIRED` according to the blocker evidence; never change it to `SPLIT_RECOMMENDED`.
-
-These rules apply to every GO decision, not only on a conflict:
-
-- A `MISSING_LINK` requirements state may return `GO` only with one exact verified link recommendation and `Next action: reconcile exact PRD link then run plan-only $cl-execute`. The parent must create and re-fetch the link before execution.
-- The only allowed readiness exceptions are an explicitly recorded ticket intent to revive/remove dead code or resolve duplicate work, or the exact-ticket/session-level high-complexity override above. Neither permits an `EXTREME` risk or another blocked readiness item.
-- Use `GO_WITH_UI_PLAN_APPROVAL` only when `UI work: YES`, `UI design source: missing`, `Human UI plan approval: required`, and every non-UI readiness item is `PASS` or `NOT_APPLICABLE`. Otherwise use `GO` only when `Human UI plan approval: not_required` or a current session-level plan-approval instruction is separately recorded.
-- If `Split lineage: split_child` and the current ticket is too complex to execute directly because historical split shape is defective, return `ENGINEERING_BLOCKED` or `HUMAN_REVIEW_REQUIRED`, set `Blocker category: engineering` or `mixed`, set `Splittable: NO`, set ClosedLoop comment target to `none`, and explain that the ticket remains a single issue rather than being split or repaired.
-- If a legacy split child has a product, duplicate, inactive-surface, external-doc, extreme-risk, or unrelated engineering blocker, return the normal blocker decision and keep engineering/operational routing private unless an explicit Product decision exists.
-- Otherwise change it to `HUMAN_REVIEW_REQUIRED`, set ClosedLoop comment target to `none`, and surface the blocker privately to the user.
+If the decision is not `GO` or `GO_WITH_UI_PLAN_APPROVAL`, do not execute the parent ticket. If `Decision: GO` or `Decision: GO_WITH_UI_PLAN_APPROVAL` would conflict with any readiness item that is not `PASS`, `NOT_APPLICABLE`, or `APPROVAL_REQUIRED` for `UI design guidance` only, a proposal contract audit that is `BLOCKED` or `UNKNOWN`, `Complexity: HIGH` without `High-complexity execution override: APPROVED`, `Risk: EXTREME`, unknown repo/surface metadata, missing required metadata, an `AMBIGUOUS` or unexamined requirements contract, or missing external-doc evidence for a third-party integration, change the decision to `ENGINEERING_BLOCKED`, `PRODUCT_BLOCKED`, or `HUMAN_REVIEW_REQUIRED` according to the blocker evidence; never change it to `SPLIT_RECOMMENDED`. A `MISSING_LINK` requirements state may return `GO` only with one exact verified link recommendation and `Next action: reconcile exact PRD link then run plan-only $cl-execute`; the parent must create and re-fetch the link before execution. The only allowed readiness exceptions are an explicitly recorded ticket intent to revive/remove dead code or resolve duplicate work, or the exact-ticket/session-level high-complexity override above; neither permits an `EXTREME` risk or another blocked readiness item. Use `GO_WITH_UI_PLAN_APPROVAL` only when `UI work: YES`, `UI design source: missing`, `Human UI plan approval: required`, and every non-UI readiness item is `PASS` or `NOT_APPLICABLE`; otherwise use `GO` only when `Human UI plan approval: not_required` or a current session-level plan-approval instruction is separately recorded. If `Split lineage: split_child` and the current ticket is too complex to execute directly because historical split shape is defective, return `ENGINEERING_BLOCKED` or `HUMAN_REVIEW_REQUIRED`, set `Blocker category: engineering` or `mixed`, set `Splittable: NO`, set ClosedLoop comment target to `none`, and explain that the ticket remains a single issue rather than being split or repaired. If a legacy split child has a product, duplicate, inactive-surface, external-doc, extreme-risk, or unrelated engineering blocker, return the normal blocker decision and keep engineering/operational routing private unless an explicit Product decision exists. Otherwise change it to `HUMAN_REVIEW_REQUIRED`, set ClosedLoop comment target to `none`, and surface the blocker privately to the user.
