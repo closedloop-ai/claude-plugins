@@ -45,9 +45,9 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
 - The `decision-table` skill, loaded by name (`$decision-table` in Codex or
   `/closedloop-core:decision-table` in Claude Code), and its
   references. Using it is mandatory, as for the other workers.
-- The root `AGENTS.md`, `apps/api/AGENTS.md`, `packages/api/AGENTS.md`,
-  `packages/database/AGENTS.md`, and the nearest `AGENTS.md` of every directory
-  you edit (`apps/desktop/AGENTS.md` for Desktop main-process work).
+- The root `AGENTS.md`, the `AGENTS.md` of the API app, the shared types
+  package and the database package, and the nearest `AGENTS.md` of every
+  directory you edit (the Desktop app's for Desktop main-process work).
 
 ## Implementation guidance (sole writer only)
 
@@ -73,20 +73,23 @@ change broke is only repaired (`guardrails.md`, "Repair, don't author").
    identifying fields. A test that expects no
    warning or error is not evidence when the repository contract requires that
    monitored event.
-3. Implement to the table: shared types in `packages/api/src/types/`, a thin
-   route and a service in `apps/api` (`withAnyAuth`, Zod, org scoping on every
-   query, `Result`), and for schema changes a Prisma schema edit with a
-   migration generated without any live database: `prisma migrate diff
-   --from-schema-datamodel <the schema at the session's base commit, saved to
-   a temporary file> --to-schema-datamodel packages/database/prisma/schema.prisma
-   --script` into a new migration folder named the way
-   `packages/database/AGENTS.md` describes. Never connect to the stage or a
-   shared developer database, and never edit a migration that has landed on
-   main. The API's Vercel build applies it to the session's own data on the
-   next redeploy. The clean-workflow proof `packages/database/AGENTS.md` asks
-   for needs a throwaway local database, which this Mac does not have, so add
-   a Backend still missing line on the ticket saying that proof is still owed
-   for the migration.
+3. Implement to the table, following the repository's `AGENTS.md`
+   placement rules:
+   - Shared types in the repository's canonical shared types module.
+   - A thin route and a service in the API app, with the repository's auth
+     wrapper, Zod validation, org scoping on every query, and its result type.
+   - For schema changes, a Prisma schema edit with a migration generated
+     without any live database:
+     `prisma migrate diff --from-schema-datamodel <the schema at the session's base commit, saved to a temporary file> --to-schema-datamodel <the repository's schema.prisma> --script`
+     into a new migration folder named the way the database package's
+     `AGENTS.md` describes.
+   - Never connect to the stage or a shared developer database, and never
+     edit a migration that has landed on main. The API's Vercel build applies
+     it to the session's own data on the next redeploy.
+   - The clean-workflow proof the database package's `AGENTS.md` asks for
+     needs a throwaway local database, which this Mac does not have. Add a
+     Backend still missing line on the ticket saying that proof is still owed
+     for the migration.
 4. New models: add the seed coverage file
    (`packages/database/prisma/seeds/coverage/<Model>.json`) and seed data in the
    owning vibe seed stage (`apps/api/scripts/vibe-seed/stages/`), through the

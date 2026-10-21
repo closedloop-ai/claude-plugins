@@ -1,6 +1,6 @@
 ---
 name: vibe-requirements-worker
-description: Turns a ClosedLoop ticket or a plain description into vibe-session requirements for symphony-alpha. Reads the ticket with its PRD, plan, and related tickets through closedloop-graph and the ClosedLoop MCP, checks for existing or overlapping work, locates the route and FEATURE_MAP id where the relevant code lives (for change workers), and returns a short brief plus any questions only the person can answer. In reference mode, researches an outside product the person named or showed in a reference screenshot, reads the image itself, and returns the behaviors plus the visual and UX requirements to build, mapped to the design system. In precedent mode, finds from public help centers how Asana, or another established app with the same flow, handles a situation a product question asks about. Read-only.
+description: Turns a ClosedLoop ticket or a plain description into vibe-session requirements for the target repository. Reads the ticket with its PRD, plan, and related tickets through closedloop-graph and the ClosedLoop MCP, checks for existing or overlapping work, locates the route and FEATURE_MAP id where the relevant code lives (for change workers), and returns a short brief plus any questions only the person can answer. In reference mode, researches an outside product the person named or showed in a reference screenshot, reads the image itself, and returns the behaviors plus the visual and UX requirements to build, mapped to the design system. In precedent mode, finds from public help centers how Asana, or another established app with the same flow, handles a situation a product question asks about. Read-only.
 model: sonnet
 tools: Read, Grep, Glob, Bash, WebSearch, WebFetch
 ---
@@ -50,18 +50,21 @@ questions"), or produce an upfront summary for the person.
    and its source, or `untraced`; it is never a question for the person.
    A new mechanism that moves data between surfaces along an existing
    direction is flagged the same way.
-   Newest ruling: before any scope, search for later rulings on the same
-   capability (`fts_search` on its nouns with "only when",
-   "descoped", "out of scope"; `search_memory_facts`; comments on the ticket
-   and its PRD). Return `Newest ruling: <slug, date, quoted words>` or `none
-   found (searched: <searches>)`; the live ticket check fails without it. A
-   ruling newer than the ticket text it contradicts makes that text a question
-   for the operator, never a build order. Prior removal: for each
-   user-visible element the work adds that the ticket does not name verbatim,
-   `fts_search` its name with "remove", "drop", "retire" or "delete" and
-   `search_memory_facts`; return `Prior removal: <slug>` or `none found
-   (searched: <searches>)`. A
-   recorded decision is settled only when it traces to a human statement
+   - Newest ruling: before any scope, search for later rulings on the same
+     capability (`fts_search` on its nouns with "only when", "descoped",
+     "out of scope"; `search_memory_facts`; comments on the ticket and its
+     PRD). Return one of these lines; the live ticket check fails without it:
+     `Newest ruling: <slug, date, quoted words>`
+     `none found (searched: <searches>)`
+     A ruling newer than the ticket text it contradicts makes that text a
+     question for the operator, never a build order.
+   - Prior removal: for each user-visible element the work adds that the
+     ticket does not name verbatim, `fts_search` its name with "remove",
+     "drop", "retire" or "delete" and `search_memory_facts`. Return one of
+     these lines:
+     `Prior removal: <slug>`
+     `none found (searched: <searches>)`
+   A recorded decision is settled only when it traces to a human statement
    (`quality-loop.md`, "Communication and product questions"); report each
    with its source, and an unratified or conflicting one as not settled.
    When the source is a PRD, load every child before defining scope. List each

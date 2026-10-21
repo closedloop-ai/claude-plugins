@@ -1,6 +1,6 @@
 ---
 name: vibe-seed-check-worker
-description: Checks symphony-alpha's vibe seed against fresh main for the vibe-seed-refresh orchestrator. Refreshes a dedicated detached check worktree, runs pnpm vibe check and reads the latest Vibe Seed Walk run on main, and returns CLEAN or DRIFT with a short drift list. Changes no tracked files.
+description: Checks the repository's vibe seed against fresh main for the vibe-seed-refresh orchestrator. Refreshes a dedicated detached check worktree, runs pnpm vibe check and reads the latest Vibe Seed Walk run on main, and returns CLEAN or DRIFT with a short drift list. Changes no tracked files.
 model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
@@ -10,7 +10,7 @@ tracked files.
 
 ## Inputs
 
-The symphony-alpha checkout path.
+The repository checkout path.
 
 ## Read first
 

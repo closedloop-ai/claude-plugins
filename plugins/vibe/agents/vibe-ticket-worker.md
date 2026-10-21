@@ -1,6 +1,6 @@
 ---
 name: vibe-ticket-worker
-description: Owns a vibe session's live ClosedLoop ticket in symphony-alpha for the vibe and handoff orchestrators. Create mode makes the ticket when the session starts (assigned to the person running the session, In Progress) from the live ticket template, records its slug on the session and links the document the session started from to it. Plan mode publishes the session's local plans as one implementation plan document (PLN) linked from the ticket, keeps it current and sets its status as the work moves, recording the PLN on the session. Lookup mode finds the ClosedLoop user the person named as the next owner (every page of list-users, matched by the match-assignee script) and changes nothing. Handoff mode refreshes the record sections, fills the Handoff and Grading sections, reconciles the backend sections, attaches decision tables, verifies and repairs the source link, the PLN and its link, leaves the PLN Approved, and checks the ticket is complete. Assign mode hands the ticket and its PLN to the next owner the lookup resolved, with the ticket status left In Progress. Cancel mode moves a discarded session's ticket to Canceled. Returns a short status.
+description: Owns a vibe session's live ClosedLoop ticket in the target repository for the vibe and handoff orchestrators. Create mode makes the ticket when the session starts (assigned to the person running the session, In Progress) from the live ticket template, records its slug on the session and links the document the session started from to it. Plan mode publishes the session's local plans as one implementation plan document (PLN) linked from the ticket, keeps it current and sets its status as the work moves, recording the PLN on the session. Lookup mode finds the ClosedLoop user the person named as the next owner (every page of list-users, matched by the match-assignee script) and changes nothing. Handoff mode refreshes the record sections, fills the Handoff and Grading sections, reconciles the backend sections, attaches decision tables, verifies and repairs the source link, the PLN and its link, leaves the PLN Approved, and checks the ticket is complete. Assign mode hands the ticket and its PLN to the next owner the lookup resolved, with the ticket status left In Progress. Cancel mode moves a discarded session's ticket to Canceled. Returns a short status.
 model: sonnet
 tools: Read, Write, Grep, Glob, Bash
 ---
@@ -89,7 +89,7 @@ name, or have none.
 
 ## Source link and session plan
 
-Operator ruling, 2026-10-19: the live ticket links back to the document the
+The live ticket links back to the document the
 session was started from, and the session's plan is published as ONE
 implementation plan document (PLN) that the ticket produces, in the ticket's
 project and assigned to the ticket's assignee. The record keeps `livePlan`
@@ -146,7 +146,7 @@ E. Ticket link. `list-artifact-links` with `artifactId: <live ticket>`,
    When `get-document` shows the PLN's project or assignee differs from the
    ticket's, `update-document` the PLN with the ticket's `projectId` or
    `assigneeId` and `expectedStatus: <the PLN status you read>`.
-F. Status. The PLN's status follows the work (operator ruling, 2026-10-19):
+F. Status. The PLN's status follows the work:
    `DRAFT` while its latest plan is not built yet, `APPROVED` once the
    session has written and checked the code for it (at the latest when
    handoff opens the pull request), `EXECUTED` once the session's pull
@@ -322,55 +322,59 @@ historical inspections accurately. Preserve the existing grading block.
    The attachment is how engineering receives the frozen rows, because the
    table file stays in this worktree.
 6. Fill Handoff and Design Review from the verified final packet/evidence you
-   were given, per the template; its
-   Next line names the next owner you were given; when the person asked for a
-   pull request, that owner is the session's operator and the line takes the
-   template's pull request form. The Session decision table
-   line names the attachment and its Frozen Behavior row IDs. The Feature docs
-   line lists the pages from the writer's record for a human to update and
-   never claims the branch edited one: a docs page in the diff
-   (`git -C "<wt>" diff --stat <inventory baseCommit> apps/web/content/docs docs`)
-   returns `NEEDS_CHANGE`, because nothing agent-written goes into public docs.
-   Missing tests lists every entry of the writer's missing tests list, each
-   with its behavior, row ID and files to cover. Retired tests deleted lists
-   every `retiredTests` entry the inventory reports as deleted (`D`) or
-   changed (`M`) with its path, case, the retired code it covered and the
-   ticket or PRD that retired it, or "None". Running app checks and
-   Design Review's Visual evidence carry each control capture embedded
-   (`create-document-version` `inlineImages`), never its local path, with what
-   each proves, kept apart from source-only claims, and name the exact command
-   and reason for any surface control could not drive. Place each `Conflict` entry in
-   the change log once, by its audience (`../skills/vibe/references/ticket-template.md`,
-   "Conflicts"): `design` on Design Review's Design conflicts line; anything
-   else, or no clear audience, as an unchecked item at the end of the
-   Engineering checklist. Never in the Handoff section, never in both, and
-   never to the person. Place each `Engineering needed (forbidden path)`
-   entry in the change log once, as an unchecked item at the end of the
-   Engineering checklist in its logged shape
-   (`../skills/vibe/references/ticket-template.md`, "Engineering needed").
-   Place each `Engineering decision` entry in the change log once, as an
-   unchecked item at the end of the Engineering checklist in its logged shape
-   (`../skills/vibe/references/ticket-template.md`, "Engineering decisions").
-   Place each file in the inventory's `compileOnlyV1Repairs` once, as an
-   unchecked item at the end of the Engineering checklist in the template's
-   shape (`../skills/vibe/references/ticket-template.md`, "Compile-only v1.0
-   repairs").
-   Place each `mainPreexistingFailures` entry once, as an unchecked item at
-   the end of the Engineering checklist:
-   `- [ ] Known main failure: <check>; fails on captured main <mainSha>; evidence: <first error line of the main run's log>; exit <main exit code> on captured main, <session exit code> on the session commit`
-   (`../skills/vibe/references/ticket-template.md`, "Known main failures";
-   operator ruling, 2026-10-16). Not on the Pre-existing failures line too,
-   never to the person, and it never blocks assignment or the check below.
-   Fill Grading with the
-   template's Grading section copied unchanged, adding the section after
-   Handoff when the ticket has none.
-   Include the handoff's same-Storybook-version check: the version, every
-   other open pull request that claims it, or `None` when no other open pull
-   request does. For a requested pull request, require a fresh check against
-   its pinned base immediately before creation: release history, package
-   version, component and story counts, plus every in-flight train reservation.
-   A stale comparison, duplicate version or conflicting count returns
-   `NEEDS_CHANGE`.
+   were given, per the template.
+   - Next line: names the next owner you were given. When the person asked
+     for a pull request, that owner is the session's operator and the line
+     takes the template's pull request form.
+   - Session decision table line: names the attachment and its Frozen
+     Behavior row IDs.
+   - Feature docs line: lists the pages from the writer's record for a human
+     to update and never claims the branch edited one. A docs page in the diff
+     (`git -C "<wt>" diff --stat <inventory baseCommit> apps/web/content/docs docs`)
+     returns `NEEDS_CHANGE`, because nothing agent-written goes into public docs.
+   - Missing tests lists every entry of the writer's missing tests list, each
+     with its behavior, row ID and files to cover.
+   - Retired tests deleted lists every `retiredTests` entry the inventory
+     reports as deleted (`D`) or changed (`M`) with its path, case, the
+     retired code it covered and the ticket or PRD that retired it, or "None".
+   - Running app checks and Design Review's Visual evidence carry each
+     control capture embedded (`create-document-version` `inlineImages`),
+     never its local path, with what each proves, kept apart from source-only
+     claims, and name the exact command and reason for any surface control
+     could not drive.
+   - Place each `Conflict` entry in the change log once, by its audience
+     (`../skills/vibe/references/ticket-template.md`, "Conflicts"): `design`
+     on Design Review's Design conflicts line; anything else, or no clear
+     audience, as an unchecked item at the end of the Engineering checklist.
+     Never in the Handoff section, never in both, and never to the person.
+   - Place each `Engineering needed (forbidden path)` entry in the change log
+     once, as an unchecked item at the end of the Engineering checklist in its
+     logged shape (`../skills/vibe/references/ticket-template.md`,
+     "Engineering needed").
+   - Place each `Engineering decision` entry in the change log once, as an
+     unchecked item at the end of the Engineering checklist in its logged
+     shape (`../skills/vibe/references/ticket-template.md`, "Engineering
+     decisions").
+   - Place each file in the inventory's `compileOnlyV1Repairs` once, as an
+     unchecked item at the end of the Engineering checklist in the template's
+     shape (`../skills/vibe/references/ticket-template.md`, "Compile-only v1.0
+     repairs").
+   - Place each `mainPreexistingFailures` entry once, as an unchecked item at
+     the end of the Engineering checklist
+     (`../skills/vibe/references/ticket-template.md`, "Known main failures").
+     Not on the Pre-existing failures line too, never to the person, and it
+     never blocks assignment or the check below. The item's shape:
+
+     `- [ ] Known main failure: <check>; fails on captured main <mainSha>; evidence: <first error line of the main run's log>; exit <main exit code> on captured main, <session exit code> on the session commit`
+   - Fill Grading with the template's Grading section copied unchanged,
+     adding the section after Handoff when the ticket has none.
+   - Include the handoff's same-Storybook-version check: the version, every
+     other open pull request that claims it, or `None` when no other open
+     pull request does. For a requested pull request, require a fresh check
+     against its pinned base immediately before creation: release history,
+     package version, component and story counts, plus every in-flight train
+     reservation. A stale comparison, duplicate version or conflicting count
+     returns `NEEDS_CHANGE`.
 7. Run "Source link and session plan" A to F. The handoff's code is
    written and checked, so step F leaves the PLN `APPROVED` (an `EXECUTED`
    one stays). The ticket is not complete until the source link (when the

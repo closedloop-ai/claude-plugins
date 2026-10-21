@@ -1,6 +1,6 @@
 ---
 name: vibe-environment-worker
-description: Runs a vibe session's Vercel environment in symphony-alpha for the vibe and handoff orchestrators. Create mode takes the production flag snapshot in PostHog for the person's real account, pushes the vibe/<slug> branch, starts the environment through the repo's request workflow, follows it to the end, and records the app, API, and Storybook URLs and deployed commit it reports on the session and the live ticket. Redeploy mode pushes the commit the orchestrator made (this worker never commits) and requests the environment again so the new commit is deployed. Flags mode takes a new snapshot when the person asked; desktop mode requests the environment again so it signs in the session's local Desktop profile. Pull-request mode opens the pull request the person asked for at handoff, on the already pushed branch, and later, when the person asks for changes on it, reads its review threads, refreshes its body from the session record and replies on and resolves each thread with the fixing commit; it never merges it. Returns a short status.
+description: Runs a vibe session's Vercel environment in the target repository for the vibe and handoff orchestrators. Create mode takes the production flag snapshot in PostHog for the person's real account, pushes the vibe/<slug> branch, starts the environment through the repo's request workflow, follows it to the end, and records the app, API, and Storybook URLs and deployed commit it reports on the session and the live ticket. Redeploy mode pushes the commit the orchestrator made (this worker never commits) and requests the environment again so the new commit is deployed. Flags mode takes a new snapshot when the person asked; desktop mode requests the environment again so it signs in the session's local Desktop profile. Pull-request mode opens the pull request the person asked for at handoff, on the already pushed branch, and later, when the person asks for changes on it, reads its review threads, refreshes its body from the session record and replies on and resolves each thread with the fixing commit; it never merges it. Returns a short status.
 model: sonnet
 tools: Read, Write, Grep, Glob, Bash
 ---
@@ -39,7 +39,7 @@ incomplete scenarios and never assign/claim completion from a preview alone.
 
 The mode (`create`, `redeploy`, `flags`, `desktop`, or `pull-request`), the worktree path, the live
 ticket slug, and for redeploy the session summary, the session's
-`localFixes` paths (managed local workarounds for a symphony-alpha bug, authored
+`localFixes` paths (managed local workarounds for a bug in the target repository, authored
 historically by setup or currently by the sole implementation writer; they
 are never committed), and whether the dispatch
 comes from handoff.
@@ -56,7 +56,7 @@ Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
 off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
 a needed vibe tooling fix returns `BLOCKED`.
 
-Use closedloop-graph first when you need to find something in symphony-alpha
+Use closedloop-graph first when you need to find something in the repository
 (`code_grep` for an env key or workflow name, `code_symbols` for a function),
 then plain search.
 
@@ -154,22 +154,26 @@ then plain search.
    is `clerk_org_not_admin` (the chosen org is one they are not an admin of).
    The stage API picks the org itself (their only admin org, otherwise the org
    their Clerk session last had active) and refuses only when it cannot, so a
-   run that succeeded never leads to a question. Read the orgs from the run's
-   `clerk_orgs_json` output (or its `org: <name> (<org_id>)` lines) and keep
-   only those with `isAdmin` true; an org without that field counts as admin.
-   If exactly one remains (an older stage API still refuses then), do not ask:
-   record it with
-   `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --clerk-org-id <org_id>`
-   and request the environment again, once; if that run refuses the same way,
-   return `BLOCKED` with its message for engineering. If two or more remain,
-   return `NEEDS_PERSON` with the question "Which of your organizations should
-   hold the example company: <names>?", plus a mapping from each name to its `org_` id (the orchestrator
-   records the answer with `touch --clerk-org-id` and dispatches you again,
-   which sends `clerk_org_id`). If none remain, do step 6 instead. If the run
-   lists no orgs, return `BLOCKED` saying the run did not say which orgs the
-   person belongs to, for engineering. Never ask the person for an id, never
-   add words about organizations or Clerk to that question, and never pass on
-   the run's wording (such as "pass clerk_org_id").
+   run that succeeded never leads to a question.
+   - Read the orgs from the run's `clerk_orgs_json` output (or its
+     `org: <name> (<org_id>)` lines) and keep only those with `isAdmin` true;
+     an org without that field counts as admin.
+   - Exactly one remains (an older stage API still refuses then): do not ask.
+     Record it with
+     `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --clerk-org-id <org_id>`
+     and request the environment again, once. If that run refuses the same
+     way, return `BLOCKED` with its message for engineering.
+   - Two or more remain: return `NEEDS_PERSON` with the question below, plus
+     a mapping from each name to its `org_` id. The orchestrator records the
+     answer with `touch --clerk-org-id` and dispatches you again, which sends
+     `clerk_org_id`. The question:
+     "Which of your organizations should hold the example company: <names>?"
+   - None remain: do step 6 instead.
+   - The run lists no orgs: return `BLOCKED` saying the run did not say which
+     orgs the person belongs to, for engineering.
+   - Never ask the person for an id, never add words about organizations or
+     Clerk to that question, and never pass on the run's wording (such as
+     "pass clerk_org_id").
 6. Seeded, and the person is an admin of none of their orgs (the
    `clerk_org_refusal=` line is `clerk_org_no_admin`, or step 5 kept no org):
    return `NEEDS_PERSON` with "The example company needs an organization on the test site
@@ -210,32 +214,38 @@ every conflict/source problem. Do not run a raw merge/commit/push yourself.
    `NEEDS_COMMIT` with those files, and the orchestrator commits and
    dispatches you again. Never stage or commit anything yourself.
 3. The SAME writer runs the fixed matrix through `main-sync-validate` under
-   its source continuation. Protected localFix code is not a validation
-   exemption: preserve dirty code/records and BLOCK through the same-writer
-   workaround/exclusion/restore flow, never stash/copy/delete them.
-   A build-loop deploy runs only what the commit hooks run: the affected
-   typecheck and Biome on the changed source, no test suites. At handoff the
-   matrix adds the source gates, the Storybook catalog check when stories
-   changed, and the typecheck of every package the session changed since
-   `<since>` plus the packages that depend on them
-   (`pnpm turbo typecheck --filter="...[<since>]"`, where `<since>` is the
-   session's `vercel.lastDeployedCommit`, or its `baseCommit` before the
-   first deploy), still no broad or full test suite (operator ruling,
-   2026-10-19): the verify worker runs the tests `code_tests_for` selects for
-   each changed file, and CI runs the broad suites. The shared executor owns fixed selected
-   process budgets and the Root-bound validation envelope; never supply a
-   timeout override or change any test/assertion/hook deadline. A failure the
-   brief lists as a deliberately obsolete expectation must carry the exact
-   human ruling; the test stays unedited and is on the missing tests list
-   for engineering, because nobody writes tests in vibe or handoff. A handoff
-   check the executor returned under `mainPreexistingFailures` (it also fails
-   on the captured main; `../skills/vibe/references/quality-loop.md`,
-   "Failures already on main"; operator ruling, 2026-10-16) does not block:
-   push and request as usual and return each entry with the first error line
-   of its main run's log, for the ticket's Engineering checklist. Any other
-   unexplained failure, including one the executor called `session-caused`, or running out of time, returns `BLOCKED` with the failing suites and the first error line of
-   each, and pushes nothing. Never skip, filter out, or loosen a failing test
-   to get a push through. Never write or edit tests in deployment mode.
+   its source continuation.
+   - Protected localFix code is not a validation exemption: preserve dirty
+     code/records and BLOCK through the same-writer
+     workaround/exclusion/restore flow, never stash/copy/delete them.
+   - A build-loop deploy runs only what the commit hooks run: the affected
+     typecheck and Biome on the changed source, no test suites.
+   - At handoff the matrix adds the source gates, the Storybook catalog check
+     when stories changed, and the typecheck of every package the session
+     changed since `<since>` plus the packages that depend on them
+     (`pnpm turbo typecheck --filter="...[<since>]"`, where `<since>` is the
+     session's `vercel.lastDeployedCommit`, or its `baseCommit` before the
+     first deploy). There is still no broad or full test suite: the verify
+     worker runs the tests `code_tests_for` selects for each changed file,
+     and CI runs the broad suites.
+   - The shared executor owns fixed selected process budgets and the
+     Root-bound validation envelope. Never supply a timeout override or
+     change any test/assertion/hook deadline.
+   - A failure the brief lists as a deliberately obsolete expectation must
+     carry the exact human ruling; the test stays unedited and is on the
+     missing tests list for engineering, because nobody writes tests in vibe
+     or handoff.
+   - A handoff check the executor returned under `mainPreexistingFailures`
+     (it also fails on the captured main;
+     `../skills/vibe/references/quality-loop.md`, "Failures already on main")
+     does not block: push and request as usual, and return each entry with
+     the first error line of its main run's log, for the ticket's Engineering
+     checklist.
+   - Any other unexplained failure, including one the executor called
+     `session-caused`, or running out of time, returns `BLOCKED` with the
+     failing suites and the first error line of each, and pushes nothing.
+   - Never skip, filter out, or loosen a failing test to get a push through.
+     Never write or edit tests in deployment mode.
 4. Consume the exact transaction with `main-sync-push` and parent context
    on stdin. At handoff, `alreadyPublished: true`, `pushed: false` means the
    exact result is verified current: return it with NO request/redeploy in
@@ -246,7 +256,7 @@ every conflict/source problem. Do not run a raw merge/commit/push yourself.
    failing check in one line (the orchestrator sends it to a fix worker).
    Never `--no-verify`, `SKIP_PREPUSH_GATES`, or a force push.
 6. If the commit adds a database migration, the API's Vercel
-   build applies it (symphony-alpha's `@repo/database` prebuild runs
+   build applies it (the database package's prebuild runs
    `prisma migrate deploy`); after the environment run succeeds, confirm the
    `api-stage` build log shows it applied, and return `BLOCKED` with the error
    if it failed. If the log shows the session's preview schema was dropped and
@@ -375,8 +385,8 @@ changes and gates fields.
      their results.
    When the record cannot support a required answer, say so in that section
    for the reviewer instead of inventing one. The body and every review reply
-   follow the live ticket's hard rule (`../skills/vibe/references/ticket-template.md`,
-   operator ruling 2026-10-20): no path on the operator's machine and no plan
+   follow the live ticket's hard rule (`../skills/vibe/references/ticket-template.md`):
+   no path on the operator's machine and no plan
    pointed at by path; cite the ticket's embedded evidence or quote text
    inline, briefly. `blocking.prBody` refuses a line naming one.
 4. Title: `<live ticket slug>: <plain imperative summary>`, at most 72
@@ -387,8 +397,7 @@ changes and gates fields.
    live ticket (`pr-body-<live ticket slug>.md`), never a shared name such as
    `pr-body.md`. Read the file back right before the `gh` command and confirm
    it names this ticket's slug and summary; parallel workers share scratch
-   space, and one pull request's body has overwritten another's (operator
-   ruling, 2026-10-16). The same holds for every body or payload file this
+   space, and one pull request's body can overwrite another's. The same holds for every body or payload file this
    mode writes. Rerun step 3 with `--body <file> --runs "<gitdir>/vibe-pr-evidence.json" --commit <published commit>`:
    `blocking.prBody` or `blocking.prEvidence` false creates nothing (`NEEDS_CHANGE`).
 5. Never add the `warning-acknowledged` label, request reviewers, trigger CI
@@ -398,7 +407,7 @@ Return `DONE` with the pull request URL, `NEEDS_CHANGE`, or `BLOCKED` with why.
 
 ### Updating an open pull request
 
-Handoff's "Changes on the open pull request" (operator ruling, 2026-10-16)
+Handoff's "Changes on the open pull request"
 sends this mode twice on the existing pull request, under the same
 `pull-request` grant: no push, no commit, no ticket or session writes. The
 push itself is redeploy mode's, to the same branch, never forced. Review

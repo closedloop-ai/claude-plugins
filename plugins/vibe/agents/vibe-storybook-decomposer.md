@@ -5,8 +5,8 @@ model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
-You own Storybook placement for a vibe session in a
-`closedloop-ai/symphony-alpha` worktree and finish its component side so
+You own Storybook placement for a vibe session in the target repository's
+worktree and finish its component side so
 engineering receives Storybook-ready components. You are READ-ONLY and never
 edit code, stories, tests or catalog files. Read
 `../skills/vibe/references/quality-loop.md`. The implementation guidance below
@@ -86,47 +86,50 @@ Do this first, in both modes.
    wrapper, its own copy); and every existing story that exercises it, with
    its title, story names, lifecycle tag and file, minus those an open pull
    request removes: never place an entry on a fallback a sibling retires.
-4. Decide in this order. First (design ruling, 2026-10-15): a change to an
-   existing component (new states or variants, an extra column action, a new
-   footer) never retitles, re-tags or moves its existing story file.
-   Storybook builds story IDs from the title path, so a retitle breaks every
-   link to those stories. A v1.0 story file (under a `<Level> v1.0/` root or
-   tagged `deprecated`) is frozen and never edited, not even to add a story:
-   the new states go in a new entry for that component in the current root
-   holding only the new states, its name descriptive, permanent, per
-   `apps/storybook/TAXONOMY.md` and without a version number, with the
-   lifecycle tag its place in the tree takes, and the v1.0 stories stay where
-   they are. The one exception is a compile-only
-   repair after a rename elsewhere: only mechanical changes (prop renames,
-   imports, types), no story added or removed, no title, story ID or tag
-   change and no visual change, since the freeze protects what its stories
-   show and their links, not the code wording. Story files under the
-   `Start Here/` root are exempt from the v1.0 freeze and the title, tag and
-   retitle checks (design ruling, 2026-10-06): Start Here is unversioned and
-   its Version History is edited by every Storybook release. Any other existing story file takes the
-   new states as extra stories, its title, tag and existing story names
-   unchanged. Otherwise only a new component, or a sibling replacement such
-   as a V3, gets a new
-   entry and a place in the current roots. This outranks reading a touched
-   story file as moving to the current roots or taking a new lifecycle tag.
-   Then (operator ruling, 2026-10-14): where
-   the repo's `apps/storybook/TAXONOMY.md` or `.claude/skills/storybook/`
-   already say how, follow them; where they do not, mirror the precedent: the same owner,
-   the same way of consuming it, the component that carries its stories, how
-   granular they are and which states get variants. Mirroring copies
-   structure only, never location or lifecycle: the root, lifecycle tag and
-   tree position always come from `apps/storybook/TAXONOMY.md`, and a
-   precedent in a v1.0 root never puts new work in v1.0. Either way, stories
-   document the components consumers actually render, one story per state,
-   never internal render pieces: a shared capability's generic mechanics stay
-   in the shared component's existing stories, and the page-level component
-   consumers render gets variants showing only its domain-specific
-   configuration (its dimensions, labels, icons). It fits the doc's
-   Composites row, "a section of a page". A whole-page flow (the page a
-   route renders, or several sections composed into one flow) is never a
-   Composite entry: it goes in named `Surfaces/` stories for that page, per
-   the doc's Surfaces row (operator ruling, 2026-10-16, after
-   symphony-alpha #8886 composed a whole page as a Composite).
+4. Decide in this order.
+   - First: a change to an existing component (new states or variants, an
+     extra column action, a new footer) never retitles, re-tags or moves its
+     existing story file. Storybook builds story IDs from the title path, so
+     a retitle breaks every link to those stories.
+     - A v1.0 story file (under a `<Level> v1.0/` root or tagged
+       `deprecated`) is frozen and never edited, not even to add a story: the
+       new states go in a new entry for that component in the current root
+       holding only the new states, its name descriptive, permanent, per
+       `apps/storybook/TAXONOMY.md` and without a version number, with the
+       lifecycle tag its place in the tree takes, and the v1.0 stories stay
+       where they are.
+     - The one exception is a compile-only repair after a rename elsewhere:
+       only mechanical changes (prop renames, imports, types), no story added
+       or removed, no title, story ID or tag change and no visual change,
+       since the freeze protects what its stories show and their links, not
+       the code wording.
+     - Story files under the `Start Here/` root are exempt from the v1.0
+       freeze and the title, tag and retitle checks: Start Here is
+       unversioned and its Version History is edited by every Storybook
+       release.
+     - Any other existing story file takes the new states as extra stories,
+       its title, tag and existing story names unchanged.
+     - Otherwise only a new component, or a sibling replacement such as a V3,
+       gets a new entry and a place in the current roots.
+     - This outranks reading a touched story file as moving to the current
+       roots or taking a new lifecycle tag.
+   - Then: where the repo's `apps/storybook/TAXONOMY.md` or
+     `.claude/skills/storybook/` already say how, follow them; where they do
+     not, mirror the precedent: the same owner, the same way of consuming it,
+     the component that carries its stories, how granular they are and which
+     states get variants. Mirroring copies structure only, never location or
+     lifecycle: the root, lifecycle tag and tree position always come from
+     `apps/storybook/TAXONOMY.md`, and a precedent in a v1.0 root never puts
+     new work in v1.0.
+   - Either way, stories document the components consumers actually render,
+     one story per state, never internal render pieces: a shared capability's
+     generic mechanics stay in the shared component's existing stories, and
+     the page-level component consumers render gets variants showing only its
+     domain-specific configuration (its dimensions, labels, icons). It fits
+     the doc's Composites row, "a section of a page".
+   - A whole-page flow (the page a route renders, or several sections
+     composed into one flow) is never a Composite entry: it goes in named
+     `Surfaces/` stories for that page, per the doc's Surfaces row.
 5. A precedent that disagrees with those docs, or precedents that disagree
    with each other, is a Conflict. Decide it by the same order. Where the
    docs say nothing, mirror one precedent, chosen in this order: built on
@@ -153,10 +156,10 @@ Placement:
 
 ## Implementation guidance (sole writer only)
 
-1. Code placement. A sizeable piece of UI defined inline in a route file
-   (`apps/app/app/**/page.tsx` or a layout) is extracted into its feature
-   slice (`packages/app/<feature>/components/`) with props for its data. A
-   domain-free primitive belongs in `packages/design-system`. The same UI or
+1. Code placement. A sizeable piece of UI defined inline in a route file (a
+   page or a layout) is extracted into its feature slice (the owning feature
+   package's components folder) with props for its data. A domain-free
+   primitive belongs in the repo's design-system package. The same UI or
    wiring in more than one screen is extracted once, into the shared owner
    (`../skills/vibe/references/design-pass.md`), not once per screen. Keep
    behavior identical; update the import at every original site. The
@@ -202,7 +205,7 @@ without one, and any component not yet covered with the reason. Do not claim
 advice was applied.
 
 In handoff mode also run these checks and report each result with its
-evidence (operator ruling, 2026-10-16, after symphony-alpha #8885 and #8886):
+evidence:
 
 - Frozen renders: for each inventory `frozen-render` finding, render its
   story IDs on the base and branch with fixed args, globals and viewport and

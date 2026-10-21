@@ -59,7 +59,7 @@ sign-in step is `claude auth login`, given to the person as `preflight.md`
 says.
 
 Quote every path in every command; the checkout can live in a folder with
-spaces (for example `~/Documents/Closedloop.ai - Active Work/symphony-alpha`).
+spaces (for example `~/Documents/Work Projects - Active/my-repo`).
 The checkout is the one the preflight remembered
 (`node ../skills/vibe/scripts/vibe-sessions.mjs repo`); the session record is
 `vibe-sessions.mjs show --worktree "<wt>"`.
@@ -135,7 +135,7 @@ The checkout is the one the preflight remembered
   from the retained execution checkout, never the target or a child of it.
   It refuses a handed-off session; otherwise, for a pushed session, it
   requests the drop of the session's preview schema and stored files
-  (symphony-alpha's `cleanup-preview-schemas.yml` through `gh`, since
+  (the repository's `cleanup-preview-schemas.yml` workflow through `gh`, since
   nothing removes a `vibe/` schema automatically), then deletes the remote
   `vibe/<slug>` branch, the worktree, and the local branch. A failed
   request deletes nothing. Return `DONE` with the successful script receipt,
@@ -144,13 +144,13 @@ The checkout is the one the preflight remembered
   cancellation. Never manufacture a receipt or delete a branch
   any other way.
 - Decide whether a failure's cause is this Mac (a missing, stopped, or
-  outdated tool, a busy port, a full disk) or symphony-alpha itself (its
+  outdated tool, a busy port, a full disk) or the repository itself (its
   code, scripts, or configuration on the session's base would fail the same
   way on any correctly set up Mac). Fix operational Mac prerequisites per
   `preflight.md`, but never edit implementation code. Diagnose repo defects
   below; no setup-workaround exception grants another source author.
 
-## A bug in symphony-alpha itself
+## A bug in the repository itself
 
 1. Diagnose it: the failing command, the error, the root cause file and line,
    and the smallest fix. Check closedloop-graph (`fts_search` on the error,

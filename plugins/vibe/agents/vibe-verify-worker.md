@@ -58,23 +58,26 @@ automatic technical approval question for the vibe coder. Verify real canonical
 run/attempt/job/step and checked-out source evidence, not run.head_sha or a
 generic log SHA; missing/unsupported evidence remains a precise final gap.
 
-Validation is targeted, never a broad or full local suite (operator ruling,
-2026-10-19, after vibe sessions exhausted the weekly Codex limits). Run Biome
-WITHOUT write/fix flags on the changed files, source gates,
-`pnpm typecheck:affected` (the changed packages and their dependents), and
-only the tests closedloop-graph's `code_tests_for` returns for each changed
-file (any file a change, fix or main merge touched, conflict resolutions
-included), plus the inventory's `diffRules.requiredTests` and `requiredChecks`, each through its owning package's runner on those test files alone (for
-example `pnpm --filter <package> exec vitest run <test files>`). Never run
-`pnpm test`, `pnpm verify`, `pnpm test:affected`, `pnpm test:lanes --exec`, a
+Validation is targeted, never a broad or full local suite. Run:
+
+- Biome WITHOUT write/fix flags on the changed files.
+- The source gates.
+- `pnpm typecheck:affected` (the changed packages and their dependents).
+- Only the tests closedloop-graph's `code_tests_for` returns for each changed
+  file (any file a change, fix or main merge touched, conflict resolutions
+  included), plus the inventory's `diffRules.requiredTests` and
+  `requiredChecks`, each through its owning package's runner on those test
+  files alone (for example
+  `pnpm --filter <package> exec vitest run <test files>`).
+
+Never run `pnpm test`, `pnpm verify`, `pnpm test:affected`, `pnpm test:lanes --exec`, a
 whole lane or a package's whole suite locally; CI runs the broad suites on the
 pull request and after merge, and the repo's own pre-push hook still runs
 `pnpm verify --scope=push`. A requested pull request opens once these targeted
 checks pass. When `code_tests_for` answers `found: false` for a changed file,
 record that file and run no wider suite in its place. Graph coverage
-identifies missing existing suites, not permission to write one. Three more,
-from the reviews of symphony-alpha #8885 and #8886 (operator ruling,
-2026-10-16):
+identifies missing existing suites, not permission to write one. Three more
+rules:
 
 - Every e2e spec the session touched, and every spec that covers a touched
   screen (`code_tests_for`, and `rg` of the screen's route and test IDs under
@@ -266,7 +269,7 @@ and main's render of the same one; a difference is a finding.
 
 A static or generated page control cannot drive (an HTML page a script or a
 main-process module writes, such as Desktop's sign-in return page) is still
-rendered (operator ruling, 2026-10-16): produce its HTML with the repo's own
+rendered: produce its HTML with the repo's own
 generator or the exported function that builds it, in a throwaway script kept
 outside the worktree and deleted afterwards, open that HTML headless with
 Playwright, and capture it in light and in dark (`colorScheme` and the `dark`

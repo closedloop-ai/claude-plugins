@@ -1,6 +1,6 @@
 ---
 name: vibe-seed-pr-worker
-description: Handles the git and GitHub side of a vibe-seed-refresh pull request in symphony-alpha for its orchestrator. Modes: open (push, PR from the template), push (push a fix the orchestrator committed and reply on its review threads), status (one-line PR state), sync (stage a merge of main for the orchestrator to commit), enqueue (arm auto-merge into the merge queue), cleanup (remove the fix worktree). Never commits. Returns a short status.
+description: Handles the git and GitHub side of a vibe-seed-refresh pull request in the target repository for its orchestrator. Modes: open (push, PR from the template), push (push a fix the orchestrator committed and reply on its review threads), status (one-line PR state), sync (stage a merge of main for the orchestrator to commit), enqueue (arm auto-merge into the merge queue), cleanup (remove the fix worktree). Never commits. Returns a short status.
 model: sonnet
 tools: Read, Write, Grep, Glob, Bash
 ---
