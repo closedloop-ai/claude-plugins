@@ -296,3 +296,58 @@ test("route specs follow helper imports two hops and scan every e2e-named root",
   assert.deepEqual(result.requiredTests.map((entry) => entry.path).sort(), ["e2e-web-smoke/boot.spec.ts", "e2e/move-flow.spec.ts"]);
   assert.match(result.requiredTests.find((entry) => entry.path === "e2e/move-flow.spec.ts").reason, /e2e\/helpers\/paths\.ts/);
 });
+
+test("route specs require only the specs importing a helper export that reaches the endpoint; unresolvable imports fall back with a reason", (t) => {
+  const route = "apps/api/app/artifact-links/batch-move/route.ts";
+  const helper = [
+    "// Mocks for /artifact-links/batch-move and the list.",
+    "const BATCH_MOVE_PATH = \"/artifact-links/batch-move\";",
+    "const BATCH_MOVE_URL_GLOB = `**${BATCH_MOVE_PATH}**`;",
+    "export function sessionListRow(id) {",
+    "  return { id, label: \"{ not a brace }\" };",
+    "}",
+    "export async function installProjectWriteMocks(",
+    "  page,",
+    "  moves",
+    ") {",
+    "  await page.route(BATCH_MOVE_URL_GLOB, (r) => moves.push(r));",
+    "}",
+    "const wrap = (page) => installProjectWriteMocks(page, []);",
+    "export { wrap as installWrapped };",
+    "",
+  ].join("\n");
+  const result = run(t, {
+    base: {
+      [route]: "export const POST = 1;\n",
+      "e2e/helpers/fixtures.ts": helper,
+      "e2e/rows.spec.ts": "import { sessionListRow } from \"./helpers/fixtures\";\n",
+      "e2e/rows-typed.spec.ts": "import type { installProjectWriteMocks } from \"./helpers/fixtures\";\nimport { sessionListRow } from \"./helpers/fixtures\";\n",
+      "e2e/move.spec.ts": "import {\n  installProjectWriteMocks,\n  sessionListRow,\n} from \"./helpers/fixtures\";\n",
+      "e2e/wrapped.spec.ts": "import { installWrapped as setup } from \"./helpers/fixtures\";\n",
+      "e2e/helpers/rows-only.ts": "import { sessionListRow } from \"./fixtures\";\nexport const rows = () => [sessionListRow(1)];\n",
+      "e2e/rows-deep.spec.ts": "import { rows } from \"./helpers/rows-only\";\n",
+      "e2e/helpers/move-reexport.ts": "export { installProjectWriteMocks as mockMoves } from \"./fixtures\";\n",
+      "e2e/move-deep.spec.ts": "import { mockMoves } from \"./helpers/move-reexport\";\n",
+      "e2e/namespace.spec.ts": "import * as fixtures from \"./helpers/fixtures\";\n",
+    },
+    head: { [route]: "export const POST = 2;\n" },
+  });
+  const required = new Map(result.requiredTests.map((entry) => [entry.path, entry.reason]));
+  assert.deepEqual([...required.keys()].sort(), ["e2e/move-deep.spec.ts", "e2e/move.spec.ts", "e2e/namespace.spec.ts", "e2e/wrapped.spec.ts"]);
+  assert.match(required.get("e2e/move.spec.ts"), /imports installProjectWriteMocks from e2e\/helpers\/fixtures\.ts/);
+  assert.match(required.get("e2e/namespace.spec.ts"), /file-level fallback: namespace import/);
+});
+
+test("a spec importing only the helper export that does not reach the changed endpoint is not required", (t) => {
+  const route = "apps/api/app/artifact-links/batch-move/route.ts";
+  const result = run(t, {
+    base: {
+      [route]: "export const POST = 1;\n",
+      "e2e/helpers/two-exports.ts": "export const mockMove = (page) => page.route(\"**/artifact-links/batch-move\", handler);\nexport const rowFixture = (id) => ({ id });\n",
+      "e2e/move.spec.ts": "import { mockMove } from \"./helpers/two-exports\";\n",
+      "e2e/rows.spec.ts": "import { rowFixture } from \"./helpers/two-exports\";\n",
+    },
+    head: { [route]: "export const POST = 2;\n" },
+  });
+  assert.deepEqual(result.requiredTests.map((entry) => entry.path), ["e2e/move.spec.ts"]);
+});
