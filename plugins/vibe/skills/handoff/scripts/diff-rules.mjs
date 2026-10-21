@@ -72,6 +72,8 @@ const ENV_DUMP = [
 ];
 const JSX_MOUNT = /<([A-Z][A-Za-z0-9]*)\b/g;
 const RESTORE_LIMIT = 40;
+const DEEPEN_STEPS = ["--deepen=1000", "--deepen=10000", "--unshallow"];
+const DEEPEN_TIMEOUT_MS = 10 * 60 * 1000;
 
 /** Parses `git diff --unified=0` output into per-file added and removed lines. */
 export function parseUnifiedDiff(text) {
@@ -148,9 +150,7 @@ export function evaluateDiff(files, changeLog, repo) {
   checkLostStoryIds(files, repo, add);
   checkCopyProvenance(live, files, repo, logged, add);
   checkCapabilityRemovals(live, files, repo, logged, add);
-  if (checkRestoredRemovals(live, files, repo, changeLog, add) > 0 && repo.shallow) {
-    add("restored-removal", live[0].path, 1, "the clone is shallow, so a removal older than its shallow boundary is invisible to the restored-removal check", "deepen the history (`git fetch --unshallow`, or `git fetch --deepen=<n>` past the removal) and rerun");
-  }
+  checkRestoredRemovalsDeepening(live, files, repo, changeLog, add);
   requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo), ...sidebarOrderTests(files, repo));
   return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks };
 }
@@ -453,6 +453,31 @@ function checkCopyProvenance(files, allFiles, repo, logged, add) {
 }
 
 /**
+ * In a shallow clone a removal older than the shallow boundary is invisible, so while a lookup finds
+ * nothing the history is deepened step by step (`repo.deepen`) and the check reruns. It blocks only
+ * when a fetch fails, with git's reason.
+ */
+function checkRestoredRemovalsDeepening(files, allFiles, repo, changeLog, add) {
+  let findings = [];
+  const collect = (...finding) => findings.push(finding);
+  let unresolved = checkRestoredRemovals(files, allFiles, repo, changeLog, collect);
+  let failure = null;
+  for (let attempt = 0; unresolved > 0 && repo.shallow() && failure === null; attempt += 1) {
+    const step = attempt < DEEPEN_STEPS.length ? repo.deepen() : { ok: false, reason: "the clone is still shallow after every step" };
+    if (step.ok) {
+      findings = [];
+      unresolved = checkRestoredRemovals(files, allFiles, repo, changeLog, collect);
+    } else {
+      failure = step.reason;
+    }
+  }
+  if (failure !== null) {
+    collect("restored-removal", files[0].path, 1, `the clone is shallow and deepening it failed (${failure}), so a removal older than its shallow boundary is invisible to this check`, "fix the fetch (network, remote or credentials) and rerun, or run `git fetch --unshallow` yourself");
+  }
+  findings.forEach((finding) => add(...finding));
+}
+
+/**
  * A component mounted again, or a file added back, that a base commit removed needs a human's restore
  * authorization naming the removal it overrides. Returns how many history lookups found no removal.
  */
@@ -535,6 +560,7 @@ export function sidebarOrderTests(files, repo) {
 }
 
 function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
+  let deepened = 0;
   const headFiles = git(worktree, ["ls-files"]).split("\n").filter(Boolean);
   const baseFiles = new Set(lines(() => git(worktree, ["ls-tree", "-r", "--name-only", base])));
   const blobs = new Map();
@@ -559,7 +585,16 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
   return {
     head: read,
     base: baseRead,
-    shallow: lines(() => git(worktree, ["rev-parse", "--is-shallow-repository"]))[0] === "true",
+    shallow: () => lines(() => git(worktree, ["rev-parse", "--is-shallow-repository"]))[0] === "true",
+    deepen: () => {
+      const step = DEEPEN_STEPS[deepened++] ?? "--unshallow";
+      try {
+        execFileSync("git", ["-C", worktree, "fetch", "--quiet", step], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: DEEPEN_TIMEOUT_MS });
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, reason: `git fetch ${step}: ${String(error?.stderr ?? error?.message ?? error).trim().split("\n")[0]}` };
+      }
+    },
     headFiles,
     baseFiles,
     baseBlobs,

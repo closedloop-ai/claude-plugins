@@ -236,6 +236,15 @@ test("new records the person running the session and refuses to start without th
   assert.deepEqual(nameless.json.session.operator, { id: "user-second", email: "second+08252026@example.com", name: null });
 });
 
+test("touch records final-merge mode for the publication main-sync and refuses other values", (t) => {
+  const { home, worktree } = newSession(t, "final-merge");
+  assert.equal(runNode(SCRIPT, ["show", "--worktree", worktree], home).json.session.mainMerge, undefined);
+  assert.equal(runNode(SCRIPT, ["touch", "--worktree", worktree, "--main-merge", "final"], home).json.session.mainMerge, "final");
+  assert.equal(runNode(SCRIPT, ["touch", "--worktree", worktree, "--summary", "kept"], home).json.session.mainMerge, "final");
+  const refused = runNode(SCRIPT, ["touch", "--worktree", worktree, "--main-merge", "now"], home);
+  assert.notEqual(refused.status, 0);
+});
+
 test("touch sets the operator on a record written before it existed and keeps it otherwise", (t) => {
   const { home, worktree } = newSession(t, "older");
   const file = recordFile(worktree, home);

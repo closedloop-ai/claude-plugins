@@ -16,7 +16,7 @@ test("a follow-up goes in the current sprint and never under an executed or obso
   assert.deepEqual(ticketWriteProblems({ projectName: "12/28-1/1", today: "2026-12-30" }), []);
   assert.match(ticketWriteProblems({ projectName: "Enterprise", today: TODAY }).join(), /no date range/);
   assert.deepEqual(ticketWriteProblems({ projectName: "Enterprise", projectEnd: "2026-10-23", today: TODAY }), []);
-  for (const status of ["EXECUTED", "OBSOLETE"]) {
+  for (const status of ["EXECUTED", "OBSOLETE", "DONE", "CANCELED"]) {
     assert.match(ticketWriteProblems({ parents: [{ slug: "PRD-721", status }], today: TODAY }).join(), new RegExp(`PRD-721 is ${status}`));
   }
 });

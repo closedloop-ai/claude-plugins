@@ -185,7 +185,7 @@ F. Status. The PLN's status follows the work:
    names the operator's `name`, or their `email` when the record has no name.
 4. Run `node ../skills/vibe/scripts/ticket-write-check.mjs --project-name "<project name>"`
    (with `--parent <SLUG>:<STATUS>` for any parent it will link under); it
-   refuses a past sprint and a parent that is EXECUTED or OBSOLETE.
+   refuses a past sprint and a parent that is EXECUTED, OBSOLETE, DONE or CANCELED.
    `create-document` with `type: ISSUE`, `status: IN_PROGRESS`, the assignee,
    the project, `priority: MEDIUM`, a plain title in the person's terms, and
    `repositorySelection` with primary `closedloop-ai/symphony-alpha` on the

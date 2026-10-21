@@ -2,7 +2,7 @@
 // Checks a ClosedLoop issue write before it is made (operator rulings,
 // 2026-10-21): a new or follow-up ticket goes in the current sprint project,
 // never a past one, and is never linked under a parent that is already
-// EXECUTED or OBSOLETE; an issue moves to IN_REVIEW only with the pull request
+// EXECUTED, OBSOLETE, DONE or CANCELED; an issue moves to IN_REVIEW only with the pull request
 // that delivers it. Prints one JSON object; exits 0 when the write may go
 // ahead and 1 otherwise. Changes nothing.
 //
@@ -15,7 +15,7 @@
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
-const CLOSED_PARENT = new Set(["EXECUTED", "OBSOLETE"]);
+const CLOSED_PARENT = new Set(["EXECUTED", "OBSOLETE", "DONE", "CANCELED"]);
 const RANGE = /(\d{1,2})\/(\d{1,2})\s*-\s*(\d{1,2})\/(\d{1,2})/;
 const PULL_URL = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/;
 const DAY_MS = 24 * 60 * 60 * 1000;

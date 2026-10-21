@@ -11,7 +11,8 @@ The open lessons from the 2026-10-20 and 2026-10-21 ledger entries, with a mecha
 #### Fixed
 - The route rule requires only the specs that import a helper export reaching the changed endpoint: an export whose declaration names it, or references a constant, function or import that does, followed across re-exports within three files. A route named in a large shared fixture no longer requires every spec importing that fixture (62 specs to 2 on the incident route). Namespace, dynamic and indirect default imports, a helper whose top level runs on load and a file the splitter cannot read fall back to file level, with the reason in the requirement (`route-specs.mjs`, `module-symbols.mjs`).
 - `isRootTest` and the `e2e` evidence lane cover every e2e root, not only `e2e/`; the verify worker searches every e2e root for specs covering a touched screen.
-- The restored-removal rule blocks in a shallow clone, where the removal it looks for can be cut off, until the history is deepened.
+- In a shallow clone the restored-removal rule deepens the history in steps (`--deepen=1000`, `--deepen=10000`, then `--unshallow`) until its lookups resolve, and blocks only when a fetch fails, with git's reason.
+- Publication main-sync no longer merges main on every push (operator ruling: QA the feature-complete head, then merge main once). `prepareMainSync` merges only in final-merge mode (`vibe-sessions.mjs touch --main-merge final`, set once QA passes), when the branch no longer merges cleanly onto main (`git merge-tree`), or when its last validation failed; otherwise the branch's own base stands in as its main and the receipt records the waiting main as `deferredMain`. The dist bundle is rebuilt.
 
 #### Added
 - The pull-request evidence gate checks test selection over the whole branch diff: each changed source file needs an import selection (`code_tests_for` with tests, or the repo's related-test selection) and an e2e by-reference selection, and every selected, required or edited test needs a passing run on the published commit (`testSelection` and `testRuns` in `vibe-pr-evidence.json`).
@@ -21,7 +22,7 @@ The open lessons from the 2026-10-20 and 2026-10-21 ledger entries, with a mecha
 - Writer rules: every new user-visible element needs a source naming it, a capability list is not one, absorbed tickets are recorded, and matching a prototype never removes what main ships. Handoff QAs the feature-complete head and makes the last main merge one pass right before enqueue.
 - `diff-rules.mjs` blocks a removed component mount or user-visible string the base ships, added nowhere else, without a `Removal:` line citing the human source that retires it.
 - `e2e-lock.mjs` refuses a second entry from a worktree that already holds or waits for the stack (exit 76), so a session runs its selected specs as one entry per head.
-- `ticket-write-check.mjs` refuses a ticket in a past sprint, linked under an EXECUTED or OBSOLETE parent, or moved to IN_REVIEW without its pull request.
+- `ticket-write-check.mjs` refuses a ticket in a past sprint, linked under an EXECUTED, OBSOLETE, DONE or CANCELED parent, or moved to IN_REVIEW without its pull request.
 - `qa-merge-order.mjs` passes only when the branch is the QA'd head plus at most one merge of main.
 - fleet-orchestrator: `helpers.mjs` lists helpers whose result was accepted and that still run as `STOP` lines; `history-origin.mjs` refuses to attribute history in a shallow clone. The skill points at these checks and at `executed-check.mjs`, and keeps lessons general with their primary fix in vibe.
 

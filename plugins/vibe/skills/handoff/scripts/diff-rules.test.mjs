@@ -19,7 +19,7 @@ function put(root, files) {
 }
 
 /** Findings as [rule, file] for a base commit of `base` files and an uncommitted (or committed) `head`. */
-function run(t, { history = [], base = {}, head = {}, changeLog = "", commit = false, shallow = false }) {
+function run(t, { history = [], base = {}, head = {}, changeLog = "", commit = false }) {
   const { root, home, cleanup } = makeHome("vibe-diff-rules-");
   t.after(cleanup);
   const checkout = path.join(root, "wt");
@@ -33,9 +33,6 @@ function run(t, { history = [], base = {}, head = {}, changeLog = "", commit = f
   git(checkout, ["add", "-A"], home);
   git(checkout, ["commit", "--quiet", "-m", "base"], home);
   const baseSha = git(checkout, ["rev-parse", "HEAD"], home);
-  if (shallow) {
-    writeFileSync(path.join(git(checkout, ["rev-parse", "--absolute-git-dir"], home), "shallow"), `${baseSha}\n`);
-  }
   put(checkout, head);
   if (commit) {
     git(checkout, ["add", "-A"], home);
@@ -224,19 +221,40 @@ test("a component or file a human removed is not brought back without a restore 
   assert.equal(run(t, { history, head, changeLog: noSlug }).found.some(([rule, file]) => rule === "restored-removal" && file === toolbar), true);
 });
 
-test("in a shallow clone the restored-removal check says the history it needs is cut off", (t) => {
+test("in a shallow clone the restored-removal check deepens the history to find the removal, and blocks only when that fails", (t) => {
   const toolbar = "packages/app/sessions/sessions-toolbar.tsx";
   const withPill = "export const Toolbar = () => (\n  <Bar>\n    <ReadSourceBadge source={source} />\n  </Bar>\n);\n";
-  const history = [
-    { message: "Add sessions toolbar", files: { [toolbar]: withPill } },
-    { message: "ISS-6005: remove the cloud pill", files: { [toolbar]: "export const Toolbar = () => (\n  <Bar>\n  </Bar>\n);\n" } },
-  ];
-  const head = { [toolbar]: withPill };
-  const restored = run(t, { history, head, shallow: true }).blocking.filter((finding) => finding.rule === "restored-removal");
+  const shallowSession = (reachable) => {
+    const { root, home, cleanup } = makeHome("vibe-diff-rules-shallow-");
+    t.after(cleanup);
+    const origin = path.join(root, "origin");
+    git(root, ["init", "--quiet", "--initial-branch=main", origin], home);
+    const commit = (files, message) => {
+      put(origin, files);
+      git(origin, ["add", "-A"], home);
+      git(origin, ["commit", "--quiet", "-m", message], home);
+    };
+    commit({ [toolbar]: withPill }, "Add sessions toolbar");
+    commit({ [toolbar]: "export const Toolbar = () => (\n  <Bar>\n  </Bar>\n);\n" }, "ISS-6005: remove the cloud pill");
+    commit({ "README.md": "base\n" }, "base");
+    const checkout = path.join(root, "wt");
+    git(root, ["clone", "--quiet", "--depth", "1", `file://${origin}`, checkout], home);
+    const base = git(checkout, ["rev-parse", "HEAD"], home);
+    if (!reachable) {
+      git(checkout, ["remote", "set-url", "origin", `file://${path.join(root, "gone")}`], home);
+    }
+    put(checkout, { [toolbar]: withPill });
+    const result = runDiffRules({ worktree: checkout, base, isFrozenStory, changeLog: path.join(root, "no-log.md") });
+    return { result, shallow: git(checkout, ["rev-parse", "--is-shallow-repository"], home) };
+  };
+  const deepened = shallowSession(true);
+  const restored = deepened.result.blocking.filter((finding) => finding.rule === "restored-removal");
   assert.equal(restored.length, 1);
-  assert.match(restored[0].problem, /shallow/);
-  assert.match(restored[0].fix, /git fetch --unshallow/);
-  assert.equal(run(t, { history, head: { [toolbar]: "export const Toolbar = 2;\n" }, shallow: true }).found.some(([rule]) => rule === "restored-removal"), false);
+  assert.match(restored[0].problem, /mounts ReadSourceBadge, removed by commit \w+ ISS-6005/);
+  assert.equal(deepened.shallow, "false");
+  const failed = shallowSession(false).result.blocking.filter((finding) => finding.rule === "restored-removal");
+  assert.equal(failed.length, 1);
+  assert.match(failed[0].problem, /deepening it failed \(git fetch --deepen=1000: /);
 });
 
 test("removing a mount or a user-visible string main ships needs a recorded human source; moved ones do not (#8947)", (t) => {
