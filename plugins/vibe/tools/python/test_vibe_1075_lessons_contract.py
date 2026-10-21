@@ -24,12 +24,6 @@ def test_criteria_audit_and_rulings_check_gate_the_handoff() -> None:
     assert '- Ruling <date> (<who>): "' in (VIBE / "references" / "ticket-template.md").read_text()
 
 
-def test_changed_specs_need_a_run_in_their_lane_before_enqueue() -> None:
-    assert "changedSpecRunProblems" in (HANDOFF / "scripts" / "qa-merge-order.mjs").read_text()
-    assert "--evidence <gitdir>/vibe-pr-evidence.json" in _text(HANDOFF / "SKILL.md")
-    assert "--evidence <evidence file>" in _text(FLEET / "SKILL.md")
-
-
 def test_findings_reach_a_writer_with_their_evidence() -> None:
     assert "finding-brief.mjs <orchDir> --findings" in _text(FLEET / "SKILL.md")
     assert "$prompt.evidence" in (FLEET / "scripts" / "fleet.sh").read_text()

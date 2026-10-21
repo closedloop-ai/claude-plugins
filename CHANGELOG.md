@@ -6,14 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### vibe v1.0.75
 
-The 2026-10-21 lessons after #331: a stale Codex session state, the audit findings a merged pull request carried, rulings that never reached the criteria, findings sent without evidence, a precedent check that skipped the disputed case, and e2e specs that first ran after merge.
+The 2026-10-21 lessons after #331: a stale Codex session state, the audit findings a merged pull request carried, rulings that never reached the criteria, findings sent without evidence, and a precedent check that skipped the disputed case.
 
 #### Fixed
 - `native-app-server-orchestrator.mjs turn-start` on a record left RUNNING while its thread is idle with no active turn reconciles against the thread first (`reconcileSession`) and then starts the turn; a thread with a turn in progress is still refused.
 
 #### Added
 - handoff: `criteria-audit.mjs` needs a fresh-context MET/PARTIAL/MISSED audit of every acceptance criterion on the final head and a criteria x surface x input x flag matrix with evidence in every cell, flag-off cells proven by a diff against the base or a ruling. `rulings-check.mjs` fails until every ruling in the QA record or resume log is on the ticket with the criteria it amends; the ticket template carries the `Ruling` line.
-- handoff: `qa-merge-order.mjs --evidence` needs a passing run of every changed e2e spec at the head in the lane that runs it.
 - handoff diff rules: a new sort comparator needs a recorded tie test that exists, and a new export no other file uses blocks unless recorded.
 - vibe: `precedent-check.mjs --behavior` makes each disputed behavior a required checklist item, observed with a screenshot or marked for the operator.
 - fleet-orchestrator: `finding-brief.mjs` refuses a finding without a story or route, viewport, and selector or screenshot, and `fleet.sh` ships its screenshots with the prompt to a remote writer.

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { changedSpecRunProblems, qaMergeOrderProblems } from "./qa-merge-order.mjs";
+import { qaMergeOrderProblems } from "./qa-merge-order.mjs";
 import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
 
 function repo(t) {
@@ -46,22 +46,4 @@ test("a second main merge or a new commit after QA is refused", (t) => {
   r.commit("g.txt", "fix\n", "fix after QA");
   assert.match(r.check().join(), /1 commit\(s\) after the QA'd head are not a merge of main/);
   assert.match(r.check("0".repeat(40)).join(), /not in this branch/);
-});
-
-test("a changed e2e spec needs a passing run at the head in its lane before enqueue", (t) => {
-  const r = repo(t);
-  mkdirSync(path.join(r.wt, "e2e"), { recursive: true });
-  const head = r.commit("e2e/board.spec.ts", "test('x', () => {});\n", "spec");
-  const spec = "e2e/board.spec.ts";
-  assert.match(changedSpecRunProblems(r.wt, undefined, "main")[0], /no testRuns evidence/);
-  assert.deepEqual(changedSpecRunProblems(r.wt, { testRuns: [{ path: spec, status: "passed", commit: head }] }, "main"),
-    [`${spec}: no passing run at ${head} in the lane that runs it (a testRuns entry with its lane)`], "a run with no lane does not count");
-  assert.equal(changedSpecRunProblems(r.wt, { testRuns: [{ path: spec, status: "passed", commit: r.qaHead, lane: "desktop" }] }, "main").length, 1, "a run on an older head does not count");
-  assert.equal(changedSpecRunProblems(r.wt, { testRuns: [{ path: spec, status: "failed", commit: head, lane: "desktop" }] }, "main").length, 1);
-  assert.deepEqual(changedSpecRunProblems(r.wt, { testRuns: [{ path: spec, status: "passed", commit: head, lane: "desktop-displayless" }] }, "main"), []);
-});
-
-test("a branch that changes no e2e spec needs no spec runs", (t) => {
-  const r = repo(t);
-  assert.deepEqual(changedSpecRunProblems(r.wt, undefined, "main"), []);
 });
