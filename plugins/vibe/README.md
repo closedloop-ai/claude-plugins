@@ -345,8 +345,9 @@ Background event watcher for a fleet of long-running Codex App Server threads
 every watched thread and PR and exits with a diff on the first change: a session
 going idle, stalling, or failing, a merge conflict, new review or comment
 counts, changed checks, or a new PR. Liveness is read from the thread's last
-turn and item count, so a turn left open by a silent Codex usage limit shows as
-`STALLED` instead of running forever. It also prints a Codex usage line for each
+turn and its newest item, so a turn left open by a silent Codex usage limit
+shows as `STALLED` instead of running forever. It never loads a thread's history,
+so a pass stays small on long-lived threads. It also prints a Codex usage line for each
 machine (used-percent band, and whether a reached limit has started spending
 paid credits), check counts only once they settle, and optionally the
 delegated-work request files sessions drop for Claude workers. A turn that
@@ -356,7 +357,11 @@ gets an alert, or a daemon restart when `AUTO_RESTART_DAEMON=1`, after which
 the sessions on that host whose turn was active or failed are resumed and idle
 ones stay idle. `supervise.sh` runs that recovery on the host that owns
 the sessions with no orchestrator awake, one per host, with launchd and systemd
-templates. A failed `gh` read repeats the last value. A change made
+templates. Each supervisor pass is bounded by `PASS_TIMEOUT_SECONDS`; the
+supervisor writes a heartbeat after every pass and an hourly summary, and the
+watcher reports a stale, missing or high-RSS heartbeat. `events.log` and
+`supervisor.log` rotate at `LOG_MAX_BYTES`, and a PR's state files are removed
+once it leaves `prs.txt`. A failed `gh` read repeats the last value. A change made
 between a watcher exit and its re-arm is still reported. It needs only this
 plugin and the `codex` CLI; sessions are listed by thread id.
 

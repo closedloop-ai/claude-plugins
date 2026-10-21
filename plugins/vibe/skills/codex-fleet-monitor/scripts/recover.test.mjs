@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { connectDirect, decodeFrames } from './liveness.mjs';
+import { answerThreadRead } from './test-support.mjs';
 import {
   acquireLock, DEFAULT_CONTINUE_PROMPT, lockHolder, readConfig, recoverPass, reportLine,
 } from './recover.mjs';
@@ -17,6 +18,7 @@ const HERE = fileURLToPath(new URL('.', import.meta.url));
 const SYSTEM_ERROR = 'The App Server thread is in a system-error state';
 const OVERLOADED = { message: 'Selected model is at capacity. Please try a different model.', codexErrorInfo: 'serverOverloaded', additionalDetails: null };
 const MINUTE = 60_000;
+const READS = new Set(['initialize', 'thread/read', 'thread/turns/list', 'thread/items/list']);
 
 function serverFrame(text) {
   const body = Buffer.from(text);
@@ -38,7 +40,8 @@ function fakeAppServer(threads) {
     const thread = threads[params?.threadId];
     if (method === 'initialize') return {};
     if (!thread) throw new Error('no such thread');
-    if (method === 'thread/read') return { thread: structuredClone({ id: params.threadId, ...thread }) };
+    const read = answerThreadRead(threads, method, params);
+    if (read) return read;
     if (thread.status.type === 'systemError') throw new Error(SYSTEM_ERROR);
     if (method === 'thread/resume') {
       if (thread.status.type === 'notLoaded') thread.status = { type: 'idle' };
@@ -229,7 +232,7 @@ test('a usage limit or an ordinary error is left for a human', async () => {
   const h = await harness(threads, { RECOVERY_BACKOFF_SECONDS: '0' });
   try {
     assert.deepEqual(await h.pass(0), []);
-    assert.equal(h.fake.calls.filter((call) => call.method !== 'thread/read' && call.method !== 'initialize').length, 0);
+    assert.equal(h.fake.calls.filter((call) => !READS.has(call.method)).length, 0);
   } finally {
     h.close();
   }
@@ -316,4 +319,39 @@ test('a second supervisor on the host exits while the first holds the lock', { t
     await exited;
   }
   assert.equal(existsSync(env.FLEET_SUPERVISOR_LOCK), false, 'the lock is released on SIGTERM');
+});
+
+test('a recovery pass reads each thread status and newest turn, never the history', async () => {
+  const history = Array.from({ length: 20 }, (_, n) => ({ id: `old-${n}`, status: 'completed', items: [1, 2, 3], error: null }));
+  const threads = { T1: { status: { type: 'idle' }, turns: [...history, failedTurn('t-1')] } };
+  const h = await harness(threads);
+  try {
+    const [event] = await h.pass(0);
+    assert.match(event, /^EVENT recovery t1 transient-failure turn=t-1 code=serverOverloaded/);
+    const reads = h.fake.calls.filter((call) => call.method === 'thread/read');
+    assert.ok(reads.length > 0);
+    assert.ok(reads.every((call) => call.params.includeTurns !== true), 'no pass asks for the turns');
+    assert.ok(h.fake.calls.some((call) => call.method === 'thread/turns/list' && call.params.limit === 1));
+  } finally {
+    h.close();
+  }
+});
+
+test('the events log moves to events.log.1 at LOG_MAX_BYTES', async () => {
+  const threads = { T1: { status: { type: 'idle' }, turns: [failedTurn('t-1')] } };
+  const h = await harness(threads, { RECOVERY_BACKOFF_SECONDS: '0', LOG_MAX_BYTES: '100' });
+  try {
+    await h.pass(0);
+    Object.assign(threads.T1.turns.at(-1), { status: 'failed', error: OVERLOADED });
+    threads.T1.status = { type: 'idle' };
+    assert.deepEqual(await h.pass(1), ['EVENT recovery t1 gave-up after 1 retry; needs a human']);
+    const log = join(h.dir, '.fleet-recovery', 'events.log');
+    assert.ok(statSync(log).size <= 100, `events.log is ${statSync(log).size} bytes`);
+    assert.match(readFileSync(log, 'utf8'), /^\S+ EVENT recovery t1 gave-up after 1 retry; needs a human\n$/);
+    assert.match(readFileSync(`${log}.1`, 'utf8'), /EVENT recovery t1 resumed attempt=1\/1/);
+    assert.equal(existsSync(`${log}.2`), false, 'one old file is kept');
+    assert.match(reportLine(h.dir, 'local'), /^recovery local 1 recovery t1 gave-up/);
+  } finally {
+    h.close();
+  }
 });

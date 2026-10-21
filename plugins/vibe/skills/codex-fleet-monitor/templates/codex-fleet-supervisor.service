@@ -9,6 +9,9 @@ Description=codex-fleet-monitor supervisor (resumes Codex sessions after transie
 
 [Service]
 ExecStart=/bin/bash -lc 'exec "SKILL_DIR/scripts/supervise.sh" "WORK_DIR"'
+# Append mode, so the supervisor can rotate this file at LOG_MAX_BYTES (default 1 MB) into supervisor.log.1.
+StandardOutput=append:WORK_DIR/supervisor.log
+StandardError=append:WORK_DIR/supervisor.log
 Restart=on-failure
 RestartSec=60
 RestartPreventExitStatus=3

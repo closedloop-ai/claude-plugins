@@ -20,6 +20,20 @@ The open lessons from the 2026-10-20 and 2026-10-21 ledger entries, with a mecha
 - A delivered PRD child moves to IN_REVIEW only with the pull request that delivers it; without one it is `awaitingPullRequest` and keeps its status.
 - Writer rules: every new user-visible element needs a source naming it, a capability list is not one, absorbed tickets are recorded, and matching a prototype never removes what main ships. Handoff QAs the feature-complete head and makes the last main merge one pass right before enqueue.
 - fleet-orchestrator: QA before one final main merge and immediate enqueue, stop idle helpers once their result is accepted, follow-up tickets in the current sprint with no lineage under an executed PRD, the executed-PRD flag section, a shallow-clone check before attributing history, one e2e lock entry per head, a prototype never removes shipped items, and lessons stay general with their primary fix in vibe.
+codex-fleet-monitor stays cheap and says when it is in trouble. A supervisor with four long-lived sessions sat near 1 GB of RSS because every pass read each thread's full history; a pass waiting on a stuck daemon connection could block forever without a line; and its logs and per-PR state files grew without bound.
+
+#### Changed
+- `liveness.mjs` and `recover.mjs` never load a thread's history: `thread/read` without turns gives the status, `thread/turns/list` the newest turn without items, and `thread/items/list` that turn's newest item id. On four real threads (29 to 53 MB rollouts) one supervisor pass went from about 1 GB resident (1.4 to 1.7 GB peak) to 18 MB (50 MB peak), and one `liveness.mjs` run from 1.46 GB peak to 52 MB. An App Server without `thread/turns/list` gets the full read.
+- The `session` liveness column is the newest item id instead of the item count; `STALLED` means it has not changed for `STALL_SECONDS`.
+- A request's timeout also covers the connection, so a daemon that never answers the upgrade cannot hang a caller.
+- The systemd template appends stdout and stderr to `supervisor.log`, like the launchd one.
+
+#### Added
+- `PASS_TIMEOUT_SECONDS` (default 300): a recovery pass, in the supervisor or a watcher tick, that runs longer gets a `pass-timeout` event, its App Server connections are closed so it unwinds and releases its lock, and the loop goes on.
+- Supervisor heartbeat: after every pass `<stateDir>/.fleet-recovery/heartbeat.json` records time, pid, interval, pass count, last pass duration, last error and RSS, and an hourly summary line goes to the log. The watcher prints `supervisor <where> ok`, `STALE` (older than 3 intervals), `MISSING` (lock without heartbeat), `UNREADABLE` or `RSS-HIGH` (over `SUPERVISOR_RSS_CAP_MB`, default 300).
+- `LOG_MAX_BYTES` (default 1 MB): `events.log` rotates to `events.log.1`, and the supervisor copies the `supervisor.log` its stdout appends to into `supervisor.log.1` and empties it.
+- `snapshot.sh` removes the `keep-*`, `merge-*` and `checks-*` files of a PR that left `prs.txt`.
+- Tests: a pass on a daemon that never answers times out and the loop continues; both logs rotate at the cap; stale, missing and high-RSS heartbeats; pruning; no read asks for a thread's turns.
 
 ### vibe v1.0.71
 
