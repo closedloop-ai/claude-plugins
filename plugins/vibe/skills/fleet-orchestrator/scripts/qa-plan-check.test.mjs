@@ -12,24 +12,24 @@ const record = (sections) => sections.map(([id, routing]) => `### ${id}: title\n
 
 test('agent-verified and e2e-covered checkpoints are the agent\'s; a human one needs a reason no agent can cover', () => {
   const found = checkpoints(record([
-    ['QA-001', 'AGENT_VERIFIED: DOM read on head abc'],
-    ['QA-002', '`E2E_COVERED` by the move spec'],
-    ['QA-003', 'needs a real device: trackpad scroll feel on the tree grid'],
-    ['QA-004', 'screen reader announcement order (VoiceOver)'],
-    ['QA-005', 'visual: whether the drag chip looks right'],
-    ['QA-006', 'the operator should take a look'],
-    ['QA-007', null],
-    ['QA-008', 'the layout looks and feels right'],
+    ['C1', 'AGENT_VERIFIED: DOM read on head abc'],
+    ['C2', '`E2E_COVERED` by the move spec'],
+    ['C3', 'needs a real device: trackpad scroll feel on the tree grid'],
+    ['C4', 'screen reader announcement order (VoiceOver)'],
+    ['C5', 'visual: whether the drag chip looks right'],
+    ['C6', 'the operator should take a look'],
+    ['C7', null],
+    ['C8', 'the layout looks and feels right'],
   ]));
   assert.deepEqual(found.map((checkpoint) => [checkpoint.id, verdict(checkpoint).kind]), [
-    ['QA-001', 'agent'],
-    ['QA-002', 'agent'],
-    ['QA-003', 'human'],
-    ['QA-004', 'human'],
-    ['QA-005', 'refused'],
-    ['QA-006', 'refused'],
-    ['QA-007', 'refused'],
-    ['QA-008', 'refused'],
+    ['C1', 'agent'],
+    ['C2', 'agent'],
+    ['C3', 'human'],
+    ['C4', 'human'],
+    ['C5', 'refused'],
+    ['C6', 'refused'],
+    ['C7', 'refused'],
+    ['C8', 'refused'],
   ]);
   assert.match(verdict(found[4]).why, /compare its screenshot with the saved reference/);
 });
@@ -38,12 +38,12 @@ test('the command exits 1 on a refused checkpoint and 0 for a plan with zero hum
   const dir = mkdtempSync(path.join(os.tmpdir(), 'qa-plan-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const plan = path.join(dir, 'qa.md');
-  writeFileSync(plan, record([['QA-001', 'AGENT_VERIFIED: capture compared with the reference'], ['QA-002', 'whether the spacing looks right']]));
+  writeFileSync(plan, record([['C1', 'AGENT_VERIFIED: capture compared with the reference'], ['C2', 'whether the spacing looks right']]));
   const refused = spawnSync(process.execPath, [path.join(HERE, 'qa-plan-check.mjs'), '--plan', plan], { encoding: 'utf8' });
   assert.equal(refused.status, 1);
-  assert.match(refused.stdout, /^REFUSED QA-002: a visual judgment is the agent's/m);
+  assert.match(refused.stdout, /^REFUSED C2: a visual judgment is the agent's/m);
   assert.match(refused.stdout, /human checkpoints: 0, refused: 1/);
-  writeFileSync(plan, record([['QA-001', 'AGENT_VERIFIED: capture compared with the reference']]));
+  writeFileSync(plan, record([['C1', 'AGENT_VERIFIED: capture compared with the reference']]));
   const clean = spawnSync(process.execPath, [path.join(HERE, 'qa-plan-check.mjs'), '--plan', plan], { encoding: 'utf8' });
   assert.equal(clean.status, 0);
   assert.equal(clean.stdout, 'human checkpoints: 0, refused: 0\n');
