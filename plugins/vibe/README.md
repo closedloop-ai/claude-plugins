@@ -352,8 +352,9 @@ paid credits), check counts only once they settle, and optionally the
 delegated-work request files sessions drop for Claude workers. A turn that
 failed with a transient provider error (model at capacity, rate limit, 5xx) is
 resumed after a backoff with a continue prompt; a thread left in `systemError`
-gets an alert, or a daemon restart and resume of every session on that host when
-`AUTO_RESTART_DAEMON=1`. `supervise.sh` runs that recovery on the host that owns
+gets an alert, or a daemon restart when `AUTO_RESTART_DAEMON=1`, after which
+the sessions on that host whose turn was active or failed are resumed and idle
+ones stay idle. `supervise.sh` runs that recovery on the host that owns
 the sessions with no orchestrator awake, one per host, with launchd and systemd
 templates. A failed `gh` read repeats the last value. A change made
 between a watcher exit and its re-arm is still reported. It needs only this

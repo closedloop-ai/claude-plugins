@@ -140,7 +140,7 @@ test('a transient failure waits out the backoff, then resumes with the continue 
   }
 });
 
-test('overloaded, then stuck in systemError: retries, then with the switch on restarts and resumes every session', async () => {
+test('overloaded, then stuck in systemError: retries, then with the switch on restarts and resumes the interrupted sessions', async () => {
   const threads = {
     T1: { status: { type: 'systemError' }, turns: [failedTurn('t-1')] },
     T2: { status: { type: 'active', activeFlags: [] }, turns: [{ id: 't-2', status: 'inProgress', items: [1], error: null }] },
@@ -158,12 +158,12 @@ test('overloaded, then stuck in systemError: retries, then with the switch on re
     assert.equal(tries[2], `EVENT recovery t1 resume-failed attempt=3/3: ${SYSTEM_ERROR}`);
     assert.match(tries[3], /^EVENT recovery !!! RESTARTING the Codex App Server daemon on hostA: sessions=t1 are stuck in systemError/);
     assert.equal(h.fake.restarts(), 1);
-    assert.deepEqual(tries.slice(4), [
+    assert.deepEqual(tries.slice(7), [
       'EVENT recovery t1 resumed-after-restart turn=new-1',
       'EVENT recovery t2 resumed-after-restart turn=new-2',
-      'EVENT recovery t3 resumed-after-restart turn=new-3',
+      'EVENT recovery t3 left-idle-after-restart',
     ]);
-    assert.deepEqual(turnStarts(h.fake.calls).map((call) => call.params.threadId), ['T1', 'T2', 'T3']);
+    assert.deepEqual(turnStarts(h.fake.calls).map((call) => call.params.threadId), ['T1', 'T2']);
     assert.ok(turnStarts(h.fake.calls).every((call) => call.params.input[0].text === DEFAULT_CONTINUE_PROMPT));
 
     // The resumed turn fails the same way inside the cooldown: no second restart, one alert.
@@ -174,6 +174,33 @@ test('overloaded, then stuck in systemError: retries, then with the switch on re
     for (const at of [18, 20, 25, 35, 36]) later.push(...await h.pass(at * MINUTE));
     assert.equal(h.fake.restarts(), 1);
     assert.equal(later.filter((line) => /restart-cooldown sessions=t1/.test(line)).length, 1);
+  } finally {
+    h.close();
+  }
+});
+
+test('a restart resumes only the sessions whose turn was active or failed, and leaves an idle one idle', async () => {
+  const threads = {
+    T1: { status: { type: 'systemError' }, turns: [failedTurn('t-1')] },
+    T2: { status: { type: 'active', activeFlags: [] }, turns: [{ id: 't-2', status: 'inProgress', items: [1], error: null }] },
+    T3: { status: { type: 'idle' }, turns: [{ id: 't-3', status: 'completed', items: [1], error: null }] },
+    T4: { status: { type: 'idle' }, turns: [failedTurn('t-4', { message: 'boom', codexErrorInfo: 'sandboxError' })] },
+  };
+  const h = await harness(threads, { AUTO_RESTART_DAEMON: '1', RECOVERY_BACKOFF_SECONDS: '0' });
+  try {
+    const events = await h.pass(0);
+    assert.equal(h.fake.restarts(), 1);
+    assert.deepEqual(events.filter((line) => /before-restart/.test(line)), [
+      'EVENT recovery t1 before-restart thread=systemError turn=failed',
+      'EVENT recovery t2 before-restart thread=active turn=inProgress',
+      'EVENT recovery t3 before-restart thread=idle turn=completed',
+      'EVENT recovery t4 before-restart thread=idle turn=failed',
+    ]);
+    assert.deepEqual(turnStarts(h.fake.calls).map((call) => call.params.threadId), ['T1', 'T2', 'T4']);
+    assert.ok(events.includes('EVENT recovery t3 left-idle-after-restart'));
+    assert.ok(!events.some((line) => /t3 resumed/.test(line)));
+    assert.equal(threads.T3.turns.length, 1, 'the idle session got no continue prompt');
+    assert.equal(threads.T2.turns[0].status, 'interrupted');
   } finally {
     h.close();
   }

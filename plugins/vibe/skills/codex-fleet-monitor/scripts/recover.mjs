@@ -3,6 +3,7 @@
 // Sessions are given as for liveness.mjs. A session whose last turn failed with a TRANSIENT provider error
 // is resumed after a backoff with a continue prompt. A thread still in systemError after the retries needs
 // the App Server daemon restarted: that happens only with AUTO_RESTART_DAEMON=1, otherwise it is an ALERT.
+// After a restart only sessions whose turn was active or failed are resumed; idle sessions stay idle.
 // Every action prints an EVENT line and is appended to <stateDir>/.fleet-recovery/events.log.
 // Settings (environment): RECOVERY_BACKOFF_SECONDS (default "120 300 600", one retry per value),
 // CONTINUE_PROMPT_FILE, AUTO_RESTART_DAEMON, RESTART_COOLDOWN_SECONDS (default 1800), FLEET_SUPERVISOR_LOCK.
@@ -87,9 +88,9 @@ function recoveryDir(stateDir) {
 function loadState(stateDir) {
   try {
     const state = JSON.parse(readFileSync(`${recoveryDir(stateDir)}/state.json`, 'utf8'));
-    return { sessions: state.sessions ?? {}, lastRestartAt: state.lastRestartAt ?? null, alerted: state.alerted ?? null };
+    return { sessions: state.sessions ?? {}, lastRestartAt: state.lastRestartAt ?? null, alerted: state.alerted ?? null, beforeRestart: state.beforeRestart ?? null };
   } catch {
-    return { sessions: {}, lastRestartAt: null, alerted: null };
+    return { sessions: {}, lastRestartAt: null, alerted: null, beforeRestart: null };
   }
 }
 
@@ -234,7 +235,16 @@ export async function recoverPass({ stateDir, specs, config, connect, restart, n
   return events;
 }
 
-/** Restarts the daemon for threads stuck in systemError when allowed, then resumes every session on the host. */
+/** A turn the restart interrupts (active) or that already failed needs the continue prompt; an idle one does not. */
+export function needsResumeAfterRestart(thread) {
+  const turn = (thread?.turns ?? []).at(-1);
+  return thread?.status?.type === 'active' || turn?.status === 'inProgress' || turn?.status === 'failed';
+}
+
+/**
+ * Restarts the daemon for threads stuck in systemError when allowed. Each session's state just before the
+ * restart is recorded; afterwards only those with an active or failed turn are resumed, and idle ones stay idle.
+ */
 async function handleStuck({ stuck, sessions, state, config, connect, restart, now, host, emit, client }) {
   const key = stuck.join(',');
   if (!config.autoRestart) {
@@ -251,9 +261,15 @@ async function handleStuck({ stuck, sessions, state, config, connect, restart, n
     }
     return client;
   }
-  const loud = `!!! RESTARTING the Codex App Server daemon on ${host}: sessions=${key} are stuck in systemError; every watched session on this host will be resumed`;
+  const loud = `!!! RESTARTING the Codex App Server daemon on ${host}: sessions=${key} are stuck in systemError; sessions with an active or failed turn will be resumed`;
   console.error(loud);
   emit(loud);
+  state.beforeRestart = {};
+  for (const { label, thread } of sessions) {
+    const before = { thread: thread?.status?.type ?? 'unknown', turn: (thread?.turns ?? []).at(-1)?.status ?? 'none' };
+    state.beforeRestart[label] = before;
+    emit(`${label} before-restart thread=${before.thread} turn=${before.turn}`);
+  }
   state.lastRestartAt = now;
   state.alerted = null;
   client?.close?.();
@@ -264,8 +280,12 @@ async function handleStuck({ stuck, sessions, state, config, connect, restart, n
     return null;
   }
   const fresh = await connect();
-  for (const { label, threadId, options } of sessions) {
+  for (const { label, threadId, options, thread } of sessions) {
     delete state.sessions[label];
+    if (!needsResumeAfterRestart(thread)) {
+      emit(`${label} left-idle-after-restart`);
+      continue;
+    }
     try {
       emit(`${label} resumed-after-restart turn=${await resumeSession(fresh, threadId, config.prompt, options)}`);
     } catch (error) {
@@ -296,7 +316,7 @@ export async function connectDaemon() {
 const PASS_TIMEOUT_MS = 300_000;
 
 async function main() {
-  // Longer than liveness.mjs's bound: a pass may restart the daemon and resume every session.
+  // Longer than liveness.mjs's bound: a pass may restart the daemon and resume several sessions.
   setTimeout(() => process.exit(1), PASS_TIMEOUT_MS).unref();
   const args = process.argv.slice(2);
   if (args[0] === '--report') {
