@@ -228040,7 +228040,7 @@ function prepareMainSync(raw) {
   const fetchedMain = git(root, ["rev-parse", "FETCH_HEAD^{commit}"]);
   const startingHead = git(root, ["rev-parse", "HEAD"]);
   const common = git(root, ["merge-base", startingHead, fetchedMain]);
-  const decision = mainMergeDecision(root, value.place.session, startingHead, fetchedMain, previous);
+  const decision = mainMergeDecision(root, value.place.session, fetchedMain);
   const mainSha = decision.merge ? fetchedMain : common;
   const importedFiles = git(root, ["diff", "--name-status", "--no-renames", common, mainSha]).split("\n").filter(Boolean).map((line) => {
     const tab = line.indexOf("	");
@@ -228294,14 +228294,10 @@ function consumeRequestContinuation(value, receipt) {
   continuations[index] = { ...intent, turn };
   saveSyncReceipt(value.place.dir, { ...receipt, requestContinuations: continuations });
 }
-function mainMergeDecision(root, session, head, mainSha, previous) {
+function mainMergeDecision(root, session, mainSha) {
   if (isAncestor(root, mainSha)) return { merge: true, reason: "main is already merged" };
   if (session.mainMerge === "final") return { merge: true, reason: "final-merge mode" };
-  if (previous?.failedChecks?.length) return { merge: true, reason: "the last validation failed" };
-  const probe = spawnSync9("git", ["-C", root, "merge-tree", "--write-tree", head, mainSha], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-  if (probe.status === 1) return { merge: true, reason: "the branch no longer merges cleanly onto main" };
-  if (probe.status !== 0) return { merge: true, reason: "could not test whether the branch merges cleanly onto main" };
-  return { merge: false, reason: "main waits for final-merge mode: the branch merges cleanly and its last validation passed" };
+  return { merge: false, reason: "main waits for final-merge mode" };
 }
 function isAncestor(root, commit) {
   try {

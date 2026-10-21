@@ -294,10 +294,10 @@ not silently included or discarded. A clean result needs no extra local commit.
    with `{ "context": <granted operationContext> }` on stdin. It fetches
    `origin main`, captures the private FETCH_HEAD SHA once, and stages an
    ordinary noncommitting merge only in final-merge mode
-   (`vibe-sessions.mjs touch --main-merge final`, set once QA passes), when
-   the branch no longer merges cleanly onto main, or when its last validation
-   failed. Otherwise main waits (`mainMerge: "deferred"`) and the branch's own
-   base stands in as its main. It never commits or pushes. Retain the
+   (`vibe-sessions.mjs touch --main-merge final`, set once QA passes or when
+   the person asks for a main merge now). Otherwise main waits
+   (`mainMerge: "deferred"`), conflicts included, and the branch's own base
+   stands in as its main; a failing check is fixed on that base. It never commits or pushes. Retain the
    returned `transactionId`, `mainSha`, original base and imported-file facts.
 2. End that helper turn using actual stopped/completed evidence before any
    source continuation. The SAME registered writer extends its existing

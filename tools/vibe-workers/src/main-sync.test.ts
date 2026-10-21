@@ -230,6 +230,24 @@ describe("production main-sync publication CLIs", () => {
       expect(receipt.importedFiles).toEqual([]);
     } finally { turn.finish(); }
   }, 30000);
+  it("leaves a conflicting branch unmerged for QA until final-merge mode", () => {
+    const value = setup();
+    value.write("apps/app/probe.ts", "feature side\n"); value.git(["add", "."]); value.git(["commit", "-m", "Feature side"]);
+    const before = value.git(["rev-parse", "HEAD"]);
+    value.git(["checkout", "main"]); value.write("apps/app/probe.ts", "main side\n");
+    value.git(["add", "."]); value.git(["commit", "-m", "Main side"]); value.git(["push", "origin", "main"]);
+    const upstream = value.git(["rev-parse", "HEAD"]);
+    value.git(["checkout", "vibe/test"]);
+    const turn = value.start("redeploy");
+    try {
+      const result = invokeSync(value, "prepare", turn.context);
+      expect(result.status, result.stderr).toBe(0);
+      expect((result.json?.mainSync as { mainMerge?: string } | undefined)?.mainMerge).toBe("deferred");
+      expect(value.git(["rev-parse", "HEAD"])).toBe(before);
+      expect(value.git(["diff", "--name-only", "--diff-filter=U"])).toBe("");
+      expect(JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8")).deferredMain.mainSha).toBe(upstream);
+    } finally { turn.finish(); }
+  }, 30000);
   it("prepares fresh main without committing and preserves the original session base", () => {
     const value = setup();
     finalMerge(value);

@@ -64,7 +64,7 @@ export function prepareMainSyncInputs(raw: unknown) {
 }
 
 /**
- * Captures fresh main once, then stages an ordinary merge only when `mainMergeDecision` calls for one;
+ * Captures fresh main once, then stages an ordinary merge only in final-merge mode (`mainMergeDecision`);
  * otherwise the branch's own merge-base with main stands in as its main. Never commits or pushes.
  */
 export function prepareMainSync(raw: unknown) {
@@ -92,7 +92,7 @@ export function prepareMainSync(raw: unknown) {
   const fetchedMain = git(root, ["rev-parse", "FETCH_HEAD^{commit}"]);
   const startingHead = git(root, ["rev-parse", "HEAD"]);
   const common = git(root, ["merge-base", startingHead, fetchedMain]);
-  const decision = mainMergeDecision(root, value.place.session, startingHead, fetchedMain, previous);
+  const decision = mainMergeDecision(root, value.place.session, fetchedMain);
   const mainSha = decision.merge ? fetchedMain : common;
   const importedFiles = git(root, ["diff", "--name-status", "--no-renames", common, mainSha]).split("\n").filter(Boolean)
     .map((line) => { const tab = line.indexOf("\t"); return { status: line.slice(0, tab), path: line.slice(tab + 1) }; });
@@ -312,18 +312,13 @@ function consumeRequestContinuation(value: ReturnType<typeof syncContext>, recei
 
 /**
  * Whether a publication merges fresh main (operator ruling, 2026-10-21: QA the feature-complete head,
- * then merge main once). A push merges main only in final-merge mode (`vibe-sessions.mjs touch
- * --main-merge final`, set once QA passes), when the branch no longer merges cleanly onto main, or when
- * its last validation failed; otherwise main waits.
+ * conflicts included, then merge main once). Only final-merge mode (`vibe-sessions.mjs touch
+ * --main-merge final`, set once QA passes or when the person asks for a main merge now) merges it.
  */
-function mainMergeDecision(root: string, session: MainSyncSession, head: string, mainSha: string, previous?: MainSyncReceipt) {
+function mainMergeDecision(root: string, session: MainSyncSession, mainSha: string) {
   if (isAncestor(root, mainSha)) return { merge: true, reason: "main is already merged" };
   if (session.mainMerge === "final") return { merge: true, reason: "final-merge mode" };
-  if (previous?.failedChecks?.length) return { merge: true, reason: "the last validation failed" };
-  const probe = spawnSync("git", ["-C", root, "merge-tree", "--write-tree", head, mainSha], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-  if (probe.status === 1) return { merge: true, reason: "the branch no longer merges cleanly onto main" };
-  if (probe.status !== 0) return { merge: true, reason: "could not test whether the branch merges cleanly onto main" };
-  return { merge: false, reason: "main waits for final-merge mode: the branch merges cleanly and its last validation passed" };
+  return { merge: false, reason: "main waits for final-merge mode" };
 }
 
 function isAncestor(root: string, commit: string) {

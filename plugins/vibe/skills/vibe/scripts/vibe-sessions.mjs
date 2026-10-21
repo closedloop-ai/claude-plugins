@@ -149,7 +149,8 @@ const SessionStatus = {
 };
 
 // Whether a publication merges fresh main: `deferred` (the default) waits for
-// QA, `final` merges it once QA has passed (dist/main-sync.mjs, mainMergeDecision).
+// QA, conflicts included; `final` merges it, set once QA has passed or when the
+// person asks for a main merge now (dist/main-sync.mjs, mainMergeDecision).
 const MainMerge = {
   Deferred: "deferred",
   Final: "final",

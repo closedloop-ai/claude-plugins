@@ -899,9 +899,9 @@ resumes and every fix goes through this path, never around it:
 Each fix is the SAME writer's; no other worker or helper edits source or
 tests here, and no step above is skipped because the change looks small.
 
-A pull request is QA'd on its feature-complete head; fix pushes before then
-leave main unmerged unless the branch stops merging cleanly or fails its
-checks. Once the person's QA has passed, run
+A pull request is QA'd on its feature-complete head, even when it conflicts
+with main; fix pushes before then leave main unmerged unless the person asks
+for a main merge now (set final-merge mode for that push). Once the person's QA has passed, run
 `node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --main-merge final`;
 the next pass through step 7's main-sync publication gate is the one main
 merge. Rerun only the tests selected for the files the merge touched, and
