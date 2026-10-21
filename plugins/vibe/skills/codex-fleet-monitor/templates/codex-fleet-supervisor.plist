@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent for the codex-fleet-monitor supervisor. Replace SKILL_DIR (the codex-fleet-monitor
+  skill directory) and WORK_DIR (the supervisor's work dir), save it as
+  ~/Library/LaunchAgents/codex-fleet-supervisor.plist, then run
+  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/codex-fleet-supervisor.plist
+  The login shell puts node and codex on PATH.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>codex-fleet-supervisor</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>exec "SKILL_DIR/scripts/supervise.sh" "WORK_DIR"</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>300</integer>
+  <key>StandardOutPath</key>
+  <string>WORK_DIR/supervisor.log</string>
+  <key>StandardErrorPath</key>
+  <string>WORK_DIR/supervisor.log</string>
+</dict>
+</plist>

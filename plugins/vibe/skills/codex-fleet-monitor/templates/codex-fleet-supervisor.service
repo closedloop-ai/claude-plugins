@@ -1,0 +1,17 @@
+# systemd user unit for the codex-fleet-monitor supervisor. Replace SKILL_DIR (the codex-fleet-monitor
+# skill directory) and WORK_DIR (the supervisor's work dir), save it as
+# ~/.config/systemd/user/codex-fleet-supervisor.service, then run
+#   systemctl --user daemon-reload && systemctl --user enable --now codex-fleet-supervisor
+# and, so it keeps running after you log out, loginctl enable-linger "$USER".
+# The login shell puts node and codex on PATH. Exit status 3 means another supervisor holds the lock.
+[Unit]
+Description=codex-fleet-monitor supervisor (resumes Codex sessions after transient provider failures)
+
+[Service]
+ExecStart=/bin/bash -lc 'exec "SKILL_DIR/scripts/supervise.sh" "WORK_DIR"'
+Restart=on-failure
+RestartSec=60
+RestartPreventExitStatus=3
+
+[Install]
+WantedBy=default.target

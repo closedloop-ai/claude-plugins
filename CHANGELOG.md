@@ -4,6 +4,23 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.70
+
+codex-fleet-monitor recovers Codex sessions after a transient provider failure on its own, instead of printing `FAILED(ERROR)` and waiting for an orchestrator to wake. A provider overload ("Selected model is at capacity", `serverOverloaded`) left two writers' threads in the App Server's `systemError` state, where resume and new turns fail; only a daemon restart cleared them, hours later.
+
+#### Added
+- `recover.mjs`: one recovery pass over a host's sessions. A turn that failed with a transient provider error is resumed after a backoff (`RECOVERY_BACKOFF_SECONDS`, default 120, 300 and 600 seconds, one retry per value) with `thread/resume` and a `turn/start` carrying a continue prompt (`CONTINUE_PROMPT_FILE` replaces the built-in one), which tells the session to check its real state and not redo finished steps. A thread still in `systemError` after the retries gets an `ALERT`; with `AUTO_RESTART_DAEMON=1` (off by default) it prints a loud line, restarts the App Server daemon at most once per `RESTART_COOLDOWN_SECONDS`, and resumes every watched session on that host. Every action is an `EVENT recovery` line in `<stateDir>/.fleet-recovery/events.log`, reported by a new `recovery <where> <count> <last event>` snapshot line.
+- `watch.sh` runs a recovery pass on each machine every tick.
+- `supervise.sh` and `supervise.mjs`: run recovery on the host that owns the sessions, independent of any orchestrator session, one per host through a lock file that a dead holder's successor takes over. While it runs, the watcher's pass on that host steps aside. `templates/` has a launchd agent and a systemd user unit; nothing is installed.
+- Tests: a stateful fake App Server walks overloaded, then `systemError`, through the retries to a restart that resumes every session, and with the switch off to one alert and no restart; a second supervisor is refused; a blank `gh` read is not an event.
+
+#### Changed
+- `liveness.mjs` classifies a failed turn by `codexErrorInfo`, falling back to the message: `FAILED(TRANSIENT)` for capacity, rate limits, 5xx and dropped connections; `FAILED(LIMIT)` only for usage limits; `FAILED(SYSTEM-ERROR)` for a thread in `systemError`. A rate limit was `LIMIT` before.
+- `snapshot.sh` repeats the last value of a `gh` field whose read failed or came back empty, so an API blip is not an event.
+- The `codex-usage` line prints one `under<N>%` band below `USAGE_HIGH_PERCENT` (default `MOVE_AT_PERCENT`, else 80) and `HIGH(<band>%)` from there, so ordinary usage no longer wakes the watcher every 10 percent.
+- `fleet-orchestrator` Monitoring: run the supervisor on every machine that hosts Codex writers; enable the daemon restart only with the operator's agreement.
+- CI installs zsh for the snapshot tests.
+
 ### vibe v1.0.69
 
 Prose cleanup of the vibe agents and skills, fleet-orchestrator included, so they read cleanly on any repository. No rule is added, dropped or loosened; this entry and the lessons ledger keep the provenance the instructions no longer carry.

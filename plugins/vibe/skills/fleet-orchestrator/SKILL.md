@@ -73,6 +73,7 @@ The closedloop-graph MCP server is required; decide from it, not from guesses. T
 
 Run [codex-fleet-monitor](../codex-fleet-monitor/SKILL.md) (`vibe:codex-fleet-monitor`) on the same `<orchDir>` in the background for the whole program and act on its lines as its table says, including usage bands, paid-credit spending and request files. It reads the session state files `fleet.sh` writes, listed as `local|remote <name>` in `sessions.txt`.
 
+- The watcher resumes a session after a transient provider failure on its own; read its `recovery` lines when you wake. Run its supervisor on every machine that hosts Codex writers, so recovery also happens while you are not running. Set `AUTO_RESTART_DAEMON=1` in `config.env` only when the operator agrees that a stuck daemon may be restarted unattended.
 - Re-arm the watcher in the same step you read each event. It only watches while running, and it costs nothing while waiting.
 - Before you or a reviewer inspect a head, check it equals the pushed PR head (`gh pr view <n> --json headRefOid`). Sessions sometimes report local, unpushed commits.
 

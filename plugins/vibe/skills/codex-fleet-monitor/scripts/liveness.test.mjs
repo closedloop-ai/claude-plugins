@@ -5,7 +5,9 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { connectDirect, decodeFrames, encodeFrame, parseSession, readSessions, summarize } from './liveness.mjs';
+import {
+  classifyTurnError, connectDirect, decodeFrames, encodeFrame, Failure, parseSession, readSessions, summarize,
+} from './liveness.mjs';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
@@ -63,12 +65,38 @@ test('frames round trip through the masked encoder', () => {
   assert.equal(remainder.length, 0);
 });
 
-test('summarize classifies limit, error and running turns', () => {
-  const turn = (extra) => ({ turns: [{ status: 'failed', items: [1, 2], ...extra }] });
+test('summarize classifies limit, transient, system-error, error and running turns', () => {
+  const turn = (extra, status) => ({ status, turns: [{ status: 'failed', items: [1, 2], ...extra }] });
+  const overloaded = { message: 'Selected model is at capacity. Please try a different model.', codexErrorInfo: 'serverOverloaded' };
   assert.equal(summarize('a', turn({ error: { message: 'You hit your usage limit' } })), 'a failed 2 LIMIT');
+  assert.equal(summarize('a', turn({ error: overloaded })), 'a failed 2 TRANSIENT');
+  assert.equal(summarize('a', turn({ error: overloaded }, { type: 'systemError' })), 'a failed 2 SYSTEM-ERROR');
   assert.equal(summarize('a', turn({ error: { message: 'boom' } })), 'a failed 2 ERROR');
   assert.equal(summarize('a', turn({})), 'a failed 2 -');
   assert.equal(summarize('a', { turns: [] }), 'a none 0 -');
+});
+
+test('classifyTurnError keeps usage limits apart from transient provider failures', () => {
+  const table = [
+    [{ message: 'Selected model is at capacity', codexErrorInfo: 'serverOverloaded' }, Failure.Transient],
+    [{ message: 'slow down', codexErrorInfo: 'rateLimitExceeded' }, Failure.Transient],
+    [{ message: 'x', codexErrorInfo: 'internalServerError' }, Failure.Transient],
+    [{ message: 'x', codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } } }, Failure.Transient],
+    [{ message: 'x', codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 503 } } }, Failure.Transient],
+    [{ message: 'x', codexErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 429 } } }, Failure.Transient],
+    [{ message: 'x', codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } } }, Failure.Error],
+    [{ message: 'You have hit your usage limit', codexErrorInfo: 'usageLimitExceeded' }, Failure.Limit],
+    [{ message: 'context too long', codexErrorInfo: 'contextWindowExceeded' }, Failure.Error],
+    [{ message: 'Selected model is at capacity', codexErrorInfo: null }, Failure.Transient],
+    [{ message: 'stream error: status 502', codexErrorInfo: 'other' }, Failure.Transient],
+    [{ message: 'rate limit reached' }, Failure.Transient],
+    [{ message: 'You hit your usage limit; rate limits reset at 5pm' }, Failure.Limit],
+    [{ message: 'quota exceeded' }, Failure.Limit],
+    [{ message: 'token limit' }, Failure.Limit],
+    [{ message: 'boom' }, Failure.Error],
+    ['server overloaded', Failure.Transient],
+  ];
+  for (const [error, flag] of table) assert.equal(classifyTurnError(error), flag, JSON.stringify(error));
 });
 
 test('parseSession accepts label=threadId and a state file name', () => {
@@ -83,7 +111,7 @@ test('reads threads over a fake server and reports READFAIL for failures', async
   writeFileSync(join(dir, 'w1.json'), JSON.stringify({ threadId: 'T1' }));
   const { server, calls } = fakeServer({
     T1: { turns: [{ status: 'inProgress', items: [1, 2, 3] }] },
-    T2: { turns: [{ status: 'failed', items: [1], error: { message: 'rate limit reached' } }] },
+    T2: { turns: [{ status: 'failed', items: [1], error: { message: 'usage limit reached' } }] },
   });
   const sock = join(dir, 's.sock');
   await new Promise((resolve) => server.listen(sock, resolve));

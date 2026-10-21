@@ -1,6 +1,6 @@
 // Usage: node liveness.mjs <stateDir> <session>...
 // A session is "<name>" (reads <stateDir>/<name>.json, which holds a threadId) or "<label>=<threadId>".
-// Prints "<label> <lastTurnStatus> <itemCount> <flag>"; flag is LIMIT, ERROR, READFAIL or -.
+// Prints "<label> <lastTurnStatus> <itemCount> <flag>"; flag is LIMIT, TRANSIENT, SYSTEM-ERROR, ERROR, READFAIL or -.
 // Self-contained: speaks the Codex App Server protocol to the managed daemon through
 // `codex app-server proxy`, so a single file is all a remote host needs.
 import { createHash, randomBytes } from 'node:crypto';
@@ -257,10 +257,9 @@ export function parseSession(spec, dir) {
 
 export function summarize(label, thread) {
   const turn = (thread?.turns ?? []).at(-1);
-  const err = JSON.stringify(turn?.error ?? '').toLowerCase();
   let flag = '-';
-  if (/usage|limit|quota|rate/.test(err)) flag = 'LIMIT';
-  else if (turn?.error) flag = 'ERROR';
+  if (thread?.status?.type === 'systemError') flag = Failure.SystemError;
+  else if (turn?.error) flag = classifyTurnError(turn.error);
   return `${label} ${turn?.status ?? 'none'} ${(turn?.items ?? []).length} ${flag}`;
 }
 
@@ -305,4 +304,39 @@ export function exitAfterTotalTimeout() {
 /** Compare real paths: a symlinked directory (macOS /tmp) makes argv[1] differ from the module url. */
 export function isEntryPoint(moduleUrl) {
   return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(moduleUrl));
+}
+
+/** The flag a failed turn or thread gets; recover.mjs acts on TRANSIENT and SYSTEM-ERROR. */
+export const Failure = Object.freeze({
+  Limit: 'LIMIT',
+  Transient: 'TRANSIENT',
+  SystemError: 'SYSTEM-ERROR',
+  Error: 'ERROR',
+});
+
+const TRANSIENT_ERROR_CODES = new Set(['serverOverloaded', 'rateLimitExceeded', 'internalServerError']);
+const HTTP_ERROR_CODES = ['httpConnectionFailed', 'responseStreamConnectionFailed', 'responseStreamDisconnected', 'responseTooManyFailedAttempts'];
+const TRANSIENT_MESSAGE = /at capacity|overloaded|rate.?limit|too many requests|temporarily unavailable|internal server error|bad gateway|service unavailable|gateway timeout|(?:status|http|error)[ :=]*5\d\d\b/;
+const USAGE_MESSAGE = /usage|quota/;
+const LIMIT_MESSAGE = /limit/;
+
+/**
+ * Classifies a turn error by its codexErrorInfo, falling back to the message. Provider capacity, rate
+ * limits, 5xx and dropped connections are TRANSIENT; a usage limit stays LIMIT, since only a reset clears it.
+ */
+export function classifyTurnError(error) {
+  const info = error?.codexErrorInfo;
+  if (info === 'usageLimitExceeded') return Failure.Limit;
+  if (TRANSIENT_ERROR_CODES.has(info)) return Failure.Transient;
+  const http = info && typeof info === 'object' ? HTTP_ERROR_CODES.find((code) => code in info) : undefined;
+  if (http) {
+    const status = info[http]?.httpStatusCode;
+    return status == null || status === 429 || status >= 500 ? Failure.Transient : Failure.Error;
+  }
+  if (info && info !== 'other') return Failure.Error;
+  const text = (typeof error === 'string' ? error : `${error?.message ?? ''} ${error?.additionalDetails ?? ''}`).toLowerCase();
+  if (USAGE_MESSAGE.test(text)) return Failure.Limit;
+  if (TRANSIENT_MESSAGE.test(text)) return Failure.Transient;
+  if (LIMIT_MESSAGE.test(text)) return Failure.Limit;
+  return Failure.Error;
 }

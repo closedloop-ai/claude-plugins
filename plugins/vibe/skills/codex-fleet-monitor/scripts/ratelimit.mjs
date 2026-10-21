@@ -1,6 +1,7 @@
 // Usage: node ratelimit.mjs <label>
 // Prints "codex-usage <label> <band>% <state> resets=<n>" from account/rateLimits/read, or
-// "codex-usage <label> unreadable READFAIL". Band is the used percent floored to 10.
+// "codex-usage <label> unreadable READFAIL". Band is `under<N>%` below N percent used (USAGE_HIGH_PERCENT,
+// default 80), so ordinary use is not an event, and `HIGH(<used percent floored to 10>%)` from N up.
 // Needs liveness.mjs beside it; snapshot.sh ships both files to the remote host.
 // Also the plugin's one reader and classifier of Codex usage: vibe/scripts/codex-usage.mjs imports it.
 import { connectStdio, connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint } from './liveness.mjs';
@@ -50,9 +51,25 @@ export async function readRateLimits({ transport = UsageTransport.Daemon, codex 
   }
 }
 
-export function usageLine(label, response) {
-  const used = response?.rateLimits?.primary?.usedPercent;
-  const band = Number.isFinite(used) ? `${Math.floor(used / 10) * 10}%` : '?%';
+/**
+ * At or above this used percent (USAGE_HIGH_PERCENT, default 80) the band shows and changes per 10;
+ * below it every value prints the same.
+ */
+export const HIGH_USAGE_PERCENT = 80;
+
+export function usageBand(used, high = HIGH_USAGE_PERCENT) {
+  if (!Number.isFinite(used)) return '?%';
+  if (used < high) return `under${high}%`;
+  return `HIGH(${Math.floor(used / 10) * 10}%)`;
+}
+
+export function highUsagePercent(env = process.env) {
+  const value = Number(env.USAGE_HIGH_PERCENT);
+  return env.USAGE_HIGH_PERCENT && Number.isFinite(value) && value > 0 ? value : HIGH_USAGE_PERCENT;
+}
+
+export function usageLine(label, response, high = HIGH_USAGE_PERCENT) {
+  const band = usageBand(response?.rateLimits?.primary?.usedPercent, high);
   const resets = response?.rateLimitResetCredits?.availableCount ?? 0;
   return `codex-usage ${label} ${band} ${classifyUsage(response)} resets=${resets}`;
 }
@@ -61,7 +78,7 @@ async function main() {
   exitAfterTotalTimeout();
   const label = process.argv[2] ?? 'local';
   const { result, error } = await readRateLimits();
-  console.log(error ? `codex-usage ${label} unreadable READFAIL` : usageLine(label, result));
+  console.log(error ? `codex-usage ${label} unreadable READFAIL` : usageLine(label, result, highUsagePercent()));
   process.exit(0);
 }
 
