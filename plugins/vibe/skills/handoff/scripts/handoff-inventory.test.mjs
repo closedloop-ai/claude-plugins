@@ -79,13 +79,15 @@ test("staged or committed plans block handoff instead of hiding a planning leak"
   }
 });
 
-test("root web and desktop test specs are allowed only for a requested pull request, never at handoff", (t) => {
+test("root web, desktop and every e2e-root test spec are allowed only for a requested pull request, never at handoff", (t) => {
   const { home, worktree } = setup(t, "pull-request-tests");
   write(worktree, "e2e/feature.spec.ts", "export {};\n");
+  write(worktree, "e2e-web-smoke/feature.spec.ts", "export {};\n");
   write(worktree, "apps/desktop/test/feature.spec.ts", "export {};\n");
   write(worktree, "e2e/playwright.config.ts", "export {};\n");
   const specs = [
     { path: "apps/desktop/test/feature.spec.ts", status: "A" },
+    { path: "e2e-web-smoke/feature.spec.ts", status: "A" },
     { path: "e2e/feature.spec.ts", status: "A" },
     { path: "e2e/playwright.config.ts", status: "A" },
   ];
@@ -107,7 +109,9 @@ test("existing tests and fixtures may be repaired in every phase; only a pull re
     "packages/app/sessions/retired.test.tsx": "expect(retired()).toBe(1);\n",
     "e2e/sessions.spec.ts": "test('sessions', () => {});\n",
     "e2e/fixtures/auth.ts": "export const auth = {};\n",
+    "e2e-web-smoke/boot.spec.ts": "test('boot', () => {});\n",
   });
+  write(worktree, "e2e-web-smoke/boot.spec.ts", "test('boot', async () => {});\n");
   write(worktree, "packages/app/sessions/list.test.tsx", "expect(render(ListV2)).toBeTruthy();\n");
   write(worktree, "packages/app/sessions/__fixtures__/rows.ts", "export const rows: Row[] = [];\n");
   write(worktree, "packages/app/sessions/__snapshots__/list.test.tsx.snap", "exports[`list`] = `<ol />`;\n");
@@ -117,6 +121,7 @@ test("existing tests and fixtures may be repaired in every phase; only a pull re
   write(worktree, "packages/app/sessions/__tests__/helper.ts", "export {};\n");
   git(worktree, ["rm", "-q", "packages/app/sessions/retired.test.tsx"], home);
   const repairs = [
+    { path: "e2e-web-smoke/boot.spec.ts", status: "M" },
     { path: "e2e/fixtures/auth.ts", status: "M" },
     { path: "e2e/sessions.spec.ts", status: "M" },
     { path: "packages/app/sessions/__fixtures__/rows.ts", status: "M" },

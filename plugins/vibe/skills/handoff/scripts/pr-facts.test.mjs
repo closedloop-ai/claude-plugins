@@ -92,6 +92,7 @@ test("the body gate refuses missing facts, uncited lines and a stacked base with
 test("evidence: lanes follow the diff, and unfinished, missing or stale runs block", () => {
   const changed = ["packages/app/list.tsx", "packages/app/list.stories.tsx"];
   assert.deepEqual(requiredLanes([ROUTE]), []);
+  assert.deepEqual(["e2e/a.spec.ts", "e2e-web-smoke/b.spec.ts", "apps/desktop/test/e2e/c.spec.ts"].map((file) => requiredLanes([file])), [["e2e"], ["e2e"], ["e2e"]]);
   assert.deepEqual(requiredLanes(changed, ["card select"]), ["web-host", "desktop-host", "webkit-iphone", "chromium-pixel", "storybook-plays"]);
   const commit = "a".repeat(40);
   const runs = requiredLanes(changed, ["card select"]).map((lane) => ({ lane, status: "passed", command: "run", commit, outcome: "selected" }));

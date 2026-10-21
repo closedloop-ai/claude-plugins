@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
-import { isTestFile } from "../../vibe/scripts/test-files.mjs";
+import { isE2ePath, isTestFile } from "../../vibe/scripts/test-files.mjs";
 
 const REPO = "closedloop-ai/symphony-alpha";
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -156,7 +156,7 @@ export function requiredLanes(changed, touchFlows = []) {
     if (touchFlows.length > 0) lanes.push("webkit-iphone", "chromium-pixel");
     if (changed.some((file) => /\.stories\.tsx?$/.test(file))) lanes.push("storybook-plays");
   }
-  if (changed.some((file) => file.startsWith("e2e/"))) lanes.push("e2e");
+  if (changed.some(isE2ePath)) lanes.push("e2e");
   return lanes;
 }
 

@@ -81,7 +81,7 @@ rules:
 
 - Every e2e spec the session touched, and every spec that covers a touched
   screen (`code_tests_for`, and `rg` of the screen's route and test IDs under
-  `e2e/`), runs at handoff through the repo's containerized path (the
+  every e2e root: any directory named `e2e`, `e2e-*` or `*-e2e`), runs at handoff through the repo's containerized path (the
   `local-ci` skill, `dagger call e-2-e`), never natively on the person's Mac,
   and only those specs, never the whole e2e suite. The containerized stack
   is one per machine (one compose project name, fixed ports and shared
