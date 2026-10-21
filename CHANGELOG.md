@@ -4,6 +4,23 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.72
+
+The open lessons from the 2026-10-20 and 2026-10-21 ledger entries, with a mechanical check wherever the lesson had a checkable shape.
+
+#### Fixed
+- The route rule requires only the specs that import a helper export reaching the changed endpoint: an export whose declaration names it, or references a constant, function or import that does, followed across re-exports within three files. A route named in a large shared fixture no longer requires every spec importing that fixture (62 specs to 2 on the incident route). Namespace, dynamic and indirect default imports, a helper whose top level runs on load and a file the splitter cannot read fall back to file level, with the reason in the requirement (`route-specs.mjs`, `module-symbols.mjs`).
+- `isRootTest` and the `e2e` evidence lane cover every e2e root, not only `e2e/`; the verify worker searches every e2e root for specs covering a touched screen.
+- The restored-removal rule blocks in a shallow clone, where the removal it looks for can be cut off, until the history is deepened.
+
+#### Added
+- The pull-request evidence gate checks test selection over the whole branch diff: each changed source file needs an import selection (`code_tests_for` with tests, or the repo's related-test selection) and an e2e by-reference selection, and every selected, required or edited test needs a passing run on the published commit (`testSelection` and `testRuns` in `vibe-pr-evidence.json`).
+- The body gate refuses a pull request body missing a heading of the repo's pull request template.
+- `executed-check.mjs` refuses to mark a plan or PRD executed until its first section is `## Production visual QA` with each flag, where to see it and its state, checked after the last merge; the ticket worker adds the section before setting EXECUTED.
+- A delivered PRD child moves to IN_REVIEW only with the pull request that delivers it; without one it is `awaitingPullRequest` and keeps its status.
+- Writer rules: every new user-visible element needs a source naming it, a capability list is not one, absorbed tickets are recorded, and matching a prototype never removes what main ships. Handoff QAs the feature-complete head and makes the last main merge one pass right before enqueue.
+- fleet-orchestrator: QA before one final main merge and immediate enqueue, stop idle helpers once their result is accepted, follow-up tickets in the current sprint with no lineage under an executed PRD, the executed-PRD flag section, a shallow-clone check before attributing history, one e2e lock entry per head, a prototype never removes shipped items, and lessons stay general with their primary fix in vibe.
+
 ### vibe v1.0.71
 
 The handoff's route rule (`diffRules.requiredTests`) now finds every e2e spec that reaches a changed API route. It scanned only the root `e2e/` directory and matched the endpoint against each file's own text, so a spec that reached the endpoint through a helper was missed and the helper itself was listed, though it cannot run. Two specs that pinned a changed route's request body this way went red on main after merge.

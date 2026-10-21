@@ -411,8 +411,9 @@ tests list, never counted as covered.
 Read-only verify checks mode runs the same targeted checks whether or not
 backend changed (`../../agents/vibe-verify-worker.md`, "Existing checks"):
 Biome without write flags on the changed files, gates, the affected typecheck
-and only the tests `code_tests_for` returns for each changed file, never a
-broad or full local suite. Backend changes add the two review passes, not a
+and only the tests selected for each file of the whole branch diff
+(`code_tests_for`, the repo's related-test command where the graph has none,
+and e2e specs by reference), never a broad or full local suite. Backend changes add the two review passes, not a
 wider test run. It reports defects back to this same writer.
 Do not weaken tests, skip required coverage or fall back to visible automated
 browser/Electron windows. Record exact unsupported local limitations.
@@ -897,3 +898,9 @@ resumes and every fix goes through this path, never around it:
 
 Each fix is the SAME writer's; no other worker or helper edits source or
 tests here, and no step above is skipped because the change looks small.
+
+A pull request is QA'd on its feature-complete head. Once the person's QA has
+passed, the last main merge is one pass through step 7's main-sync
+publication gate: rerun only the tests selected for the files the merge
+touched, and tell the person it is ready to enqueue right away; the merge
+queue retests it against main. Never wait on main to settle before QA.

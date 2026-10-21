@@ -212,16 +212,12 @@ APPROVED`).
 With `mergeCheck: true`, change nothing else: run
 `gh pr list --repo closedloop-ai/symphony-alpha --head <session branch> --state merged --json number,url,mergedAt`
 from the worktree. When it lists a merged pull request and the PLN is not
-`EXECUTED`, first give the PLN its production visual-QA flag section: save
-its latest text, and when
-`node ../skills/handoff/scripts/executed-check.mjs --file <saved text> --last-merge <mergedAt>`
-fails, append a version whose first section is `## Production visual QA`:
-one line per feature flag the merged change relies on (the session's flag
-keys), as `` `<key>`: <where to see it in production>; <its current
-production state, read now from the flag service> ``, or `No flags: <why>`,
-then `Checked: <ISO time of that read>`. Rerun the check on the new text;
-only once it passes, set `EXECUTED` through step F (with `expectedStatus` the
-status you read) and record it. For a source PRD, move each claimed child the
+`EXECUTED`, run
+`node ../skills/handoff/scripts/executed-check.mjs --file <its saved latest text> --last-merge <mergedAt>`;
+when it fails, append a version adding the section it names (the session's
+flag keys, each read now from the flag service), and rerun it. Only once it
+passes, set `EXECUTED` through step F (with `expectedStatus` the status you
+read) and record it. For a source PRD, move each claimed child the
 handoff gate put in `IN_REVIEW` to `DONE` with the merge URL and commit as
 evidence; change nothing else.
 

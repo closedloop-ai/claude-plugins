@@ -59,6 +59,7 @@ The closedloop-graph MCP server is required; decide from it, not from guesses. T
 - Before a shared change, read its callers and importers (`code_callers`, `code_importers`).
 - Which tests to run, or rerun, after any change, fix or merge (a conflict resolution included) is decided by `code_tests_for`, the only route to tests, over the files that change touched: run exactly those and nothing broader by default. Files that map to no tests (changelog, README, version text) run none, and CI confirms.
 - Trace a surprising difference in a before and after comparison to the commit and ticket that introduced it before blaming the PR.
+- Before attributing a file's origin or a first failure from local history, check `git rev-parse --is-shallow-repository`. In a shallow clone the oldest visible commit looks like the origin; deepen the history, or ask the code host's commits API for the path, first.
 - Every worker prompt requires the same graph-first research (the preamble and resume templates carry it).
 
 ## State and persistence
@@ -103,7 +104,7 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 - Launch each Claude writer with the [worker preamble](./references/templates.md#worker-preamble) saved to `prompts/`. It starts with invoking vibe and carries the worktree, PR, reading, test, git, thread-reply and report rules so no writer improvises them.
 - A message to a busy worker arrives only when it goes idle; if it idles without acting on one, resend it shortly.
 - A pane teammate sees your messages only when its current turn ends. For an urgent redirect, ask the operator to press Esc in the named pane, which ends the turn and delivers them; otherwise expect delivery at the next turn boundary. Keep long briefs in a file and send its path.
-- When CPU is tight, give the next review to an idle reviewer that finished, rather than spawning a new one.
+- Stop a helper (reviewer, verifier, QA prep, poller) as soon as you accept its result. Its brief and findings are already on disk, so the next trigger launches a fresh one from them. Idle helper panes hide the active ones from the operator; at each status check, stop any helper that has sat idle for more than a few minutes.
 
 ## Moving work between runtimes and accounts
 
@@ -119,6 +120,7 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 - Run heavy checks (full test suites, typecheck, repo-wide lint and other gates, component story runs) on the least loaded machine, in the worker's own worktree there ([checklist step 4](./references/setup.md#checklist) gets the branch there). Keep the operator's daily machine for edits and git.
 - Balance heavy work by measured load, not a fixed machine: before each heavy run, compare load per core (`uptime` against the core count) on each machine and send the run to the lower one. A fixed choice once drove one machine to more than twice its core count while the other sat idle.
 - Cap heavy runs per machine at its `HEAVY_SLOTS` or `REMOTE_HEAVY_SLOTS`: `scripts/fleet.sh <orchDir> local|remote slot heavy <owner> <worktree> <command...>`.
+- A session takes one lock entry per head for all its selected specs, never one per spec; per-spec entries swamp a single stack.
 - A shared e2e stack with fixed ports runs only under vibe's machine-wide e2e lock, the one every vibe session's e2e command already takes: `node ../vibe/scripts/e2e-lock.mjs run <command...>` on the machine that runs the stack. A second lock for the same stack would let two runs collide. Only runs that start that stack take it; tests against a stand-in server, component story runs, unit tests and typecheck run outside it in parallel.
 - `scripts/slot-lock.sh` underneath frees the slot when the command exits or is interrupted and reclaims one whose holder pid died; `scripts/slot-lock.sh --status <lockName>` on that machine lists holders.
 - Kill only processes you started, matched by pid or worktree path, never an unscoped `pkill`. Other runs on that machine belong to someone else.
@@ -127,7 +129,8 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 ## Quality gates and QA
 
 - QA happens before merge; never call a PR ready to enqueue before its QA is done.
-- Each PR moves through, in order: independent review → writer fixes → verification of the fixes → design or visual review where UI changed → full check at the final head → QA plan (agent-verified plus human-only checkpoints) → operator QA → version-file conflicts resolved → operator enqueues. A head change sends it back to the earliest step the change affects.
+- Each PR moves through, in order: independent review → writer fixes → verification of the fixes → design or visual review where UI changed → full check at the final head → QA plan (agent-verified plus human-only checkpoints) → operator QA → one main merge → operator enqueues. A head change sends it back to the earliest step the change affects.
+- QA runs on the feature-complete head, even when it conflicts with main; on a fast-moving main, a head kept current before QA goes stale during QA. After QA the writer merges main once, resolving version-file conflicts, reruns only the tests `code_tests_for` selects for the files the merge touched, and the operator enqueues at once; the merge queue retests against main. QA results carry over to files whose per-file patch is unchanged (`git patch-id`). Never ask a writer to merge main mid-work unless a conflict blocks the build itself.
 - Criteria are fixed before the build, because nobody is in the loop to ask for them while it runs.
   - A writer starts only once its plan holds a numbered acceptance-criteria list.
   - Each criterion is sourced to a ticket AC, a PRD line or an operator ruling.
@@ -143,6 +146,8 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
   4. Keep a background wait on its findings file, re-armed like the monitor, and route each failure to the writer.
 
   You alone file a ticket for a QA finding (the QA guide never does), and only after searching open tickets created in the last day for the same subject. Two actors once filed the same follow-up a minute apart.
+  A follow-up ticket goes in the current week's sprint project, with the project set explicitly rather than taken from the default, and with no lineage link under a PRD that is already executed. A ticket moves to in review only with the pull request that delivers it; a delivered child without one stays open.
+- Check the test selection in each push report (the PR evidence file's selected tests and their runs) and have QA compare it with the specs the PR edits; selection covers the whole branch diff, not the latest push.
 - Every PR gets an independent review, then a verification pass of the fixes, before it is QA-ready. Resolve a thread only after the fix is verified in code, with a reply naming the fixing SHA.
 - Before enqueue, run the lanes the diff can affect wherever PR CI skips them (the repo's lane selector, never full suites by default), and resolve shared version-file conflicts right before each enqueue, in merge order. The queue rebuilds on current main, and a skipped suite is not a pass.
 - A release-version bump every UI PR touches (a component catalog version and its history entry) is made only at enqueue time, and the operator arms auto-merge in the same minute; made earlier, it re-conflicts with every other open PR.
@@ -156,6 +161,7 @@ Pushback applies principle 2; more judgment patterns from past programs: [refere
 
 - Debt to push back on also includes parallel code paths, shims and a second owner for the same behavior. Forwarding it for approval as is makes the operator do your review.
 - No agent adds a key to the team's feature-flag service without the operator approving that key ([approval template](./references/templates.md#flag-approval)). Prefer one key per program or surface; corrections and removals are never gated.
+- An instruction to match a prototype or design never removes what main ships: diff main's shipped controls and items against the target before you brief a writer, and keep any the target leaves out unless a human source retires it.
 - Never invent product behavior or user-facing copy; cite the human source. Never write a row the repo reserves for human attestation; read the owning check's header and ask the operator.
 - Respect operator boundaries on other teams' work, such as "don't fix main" while another owner is fixing it.
 
@@ -165,6 +171,8 @@ Pushback applies principle 2; more judgment patterns from past programs: [refere
 - A repeat after a shipped fix means the earlier encoding did not bite: make it a gate, not more prose.
 - A plugin PR that encodes lessons replaces the prose its gate enforces and reports the net change in instruction length. The plugin must not get heavier.
 - Batch lesson and tooling fixes into one open PR per repo and add to it until it merges, never one PR per lesson: each PR costs a full CI run.
+- A lesson's primary fix lives in vibe itself, its writer instructions plus a mechanical check, because many people run vibe without an orchestrator; a rule here is only a second layer.
+- A lessons PR encodes general rules only. One repo's product rules, paths and component names go in that repo's own instruction files, gates or knowledge base, never in this plugin.
 
 ## Artifacts people read
 
@@ -179,3 +187,4 @@ Hard rule. A ticket, PR body, PR comment, review reply or any other artifact wri
 - Surface every problem the moment you see it: limits, stalls, failures, new human review comments, blockers.
 - Keep status updates short.
 - The final report lists, per PRD, which flags must be on to see each change.
+- Before a PRD is marked executed, its first section is `## Production visual QA`: each feature flag its shipped changes rely on, where to see it in production and its current production state (or `No flags: <why>`), then `Checked: <ISO time>` taken after the last merge, so someone else can visual-QA it in production. `node ../handoff/scripts/executed-check.mjs --file <PRD text> --last-merge <time>` must pass first.
