@@ -60,7 +60,7 @@ const groupLeader = async (t, dir) => {
  * one real signal. Pids sit above every real pid_max, in case one leaks.
  */
 const fakeTable = (processes) => {
-  const table = new Map(processes.map((entry) => [entry.pid, { ...entry }]));
+  const table = new Map(processes.map((entry) => [entry.pid, { identity: `id-${entry.pid}`, ...entry }]));
   const calls = [];
   const fail = (code) => Object.assign(new Error(code), { code });
   const kill = (target, signal) => {
@@ -74,13 +74,24 @@ const fakeTable = (processes) => {
     const entry = table.get(target);
     if (!entry || entry.state === 'gone') throw fail('ESRCH');
     if (entry.state === 'foreign') throw fail('EPERM');
+    if (signal === 'SIGTERM' && entry.reusedOnTerm) {
+      // The process exits on SIGTERM and the system hands its pid to another of the user's apps.
+      entry.identity = entry.reusedOnTerm;
+      return;
+    }
     if (signal !== 0) entry.state = 'gone';
   };
   const groupOf = (pid) => table.get(pid)?.pgid ?? null;
+  const identityOf = (pid) => {
+    const entry = table.get(pid);
+    return entry && entry.state !== 'gone' ? entry.identity : null;
+  };
   const sent = () => calls.filter(([, signal]) => signal !== 0);
   const state = (pid) => table.get(pid)?.state;
-  return { kill, groupOf, calls, sent, state };
+  return { kill, groupOf, identityOf, calls, sent, state };
 };
+/** A target as `stopped` builds it from the ledger, with the identity recorded at `pid` time. */
+const recorded = (pid, group, identity = `id-${pid}`) => ({ pid, group, identity });
 const FAKE = 2_147_480_000;
 const waitUntil = async (predicate) => {
   for (let i = 0; i < 100 && !predicate(); i += 1) await new Promise((resolve) => setTimeout(resolve, 50));
@@ -163,7 +174,7 @@ test('a pid of 1 or lower is never recorded: signalling group 1 reaches every pr
 test('endProcesses never signals a pid of 1 or lower, this process or its parent, even when one is recorded', async () => {
   const fake = fakeTable([]);
   const unsafe = [0, 1, -1, -42, Number.NaN, 1.5, process.pid, process.ppid].map((pid) => ({ pid, group: true }));
-  assert.deepEqual(await endProcesses(unsafe, 0, { kill: fake.kill, groupOf: fake.groupOf }), []);
+  assert.deepEqual(await endProcesses(unsafe, 0, { kill: fake.kill, groupOf: fake.groupOf, identityOf: fake.identityOf }), []);
   assert.deepEqual(fake.calls, [], 'not even a liveness probe');
 });
 
@@ -177,13 +188,9 @@ test('endProcesses signals a pid alone unless it was recorded as a group the hel
     { pid: FAKE + 6, pgid: FAKE + 9, state: 'alive' },
   ]);
   const survivors = await endProcesses(
-    [
-      { pid: FAKE + 1, group: false },
-      { pid: FAKE + 3, group: true },
-      { pid: FAKE + 5, group: true },
-    ],
+    [recorded(FAKE + 1, false), recorded(FAKE + 3, true), recorded(FAKE + 5, true)],
     0,
-    { kill: fake.kill, groupOf: fake.groupOf }
+    { kill: fake.kill, groupOf: fake.groupOf, identityOf: fake.identityOf }
   );
   assert.deepEqual(survivors, []);
   assert.deepEqual(fake.sent(), [
@@ -198,9 +205,55 @@ test('endProcesses signals a pid alone unless it was recorded as a group the hel
 
 test('endProcesses never signals a pid the system says is not ours (EPERM), and does not count it as a survivor', async () => {
   const fake = fakeTable([{ pid: FAKE + 7, pgid: FAKE + 7, state: 'foreign' }]);
-  assert.deepEqual(await endProcesses([{ pid: FAKE + 7, group: true }], 0, { kill: fake.kill, groupOf: fake.groupOf }), []);
+  assert.deepEqual(await endProcesses([recorded(FAKE + 7, true)], 0, { kill: fake.kill, groupOf: fake.groupOf, identityOf: fake.identityOf }), []);
   assert.deepEqual(fake.sent(), []);
   assert.equal(isAlive(FAKE + 7), false, 'a fake pid above pid_max does not exist');
+});
+
+test('a reused pid whose start time or command differs from the record is never signalled', async () => {
+  const fake = fakeTable([{ pid: FAKE + 10, pgid: FAKE + 30, state: 'alive', identity: 'Wed Oct 21 16:00:01 2026 /Applications/Slack.app/Contents/MacOS/Slack' }]);
+  const targets = [recorded(FAKE + 10, false, 'Wed Oct 21 15:00:00 2026 node dev-server.js')];
+  assert.deepEqual(await endProcesses(targets, 0, { kill: fake.kill, groupOf: fake.groupOf, identityOf: fake.identityOf }), []);
+  assert.deepEqual(fake.sent(), []);
+  assert.equal(fake.state(FAKE + 10), 'alive');
+});
+
+test('a reused pid that now leads its own group, as a launchd app does, is never group-killed', async () => {
+  const fake = fakeTable([
+    { pid: FAKE + 11, pgid: FAKE + 11, state: 'alive', identity: 'Wed Oct 21 16:05:00 2026 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome' },
+    { pid: FAKE + 12, pgid: FAKE + 11, state: 'alive', identity: 'Wed Oct 21 16:05:01 2026 Google Chrome Helper' },
+  ]);
+  const targets = [recorded(FAKE + 11, true, 'Wed Oct 21 15:00:00 2026 sh -c next dev')];
+  assert.deepEqual(await endProcesses(targets, 0, { kill: fake.kill, groupOf: fake.groupOf, identityOf: fake.identityOf }), []);
+  assert.deepEqual(fake.sent(), []);
+  assert.equal(fake.state(FAKE + 12), 'alive', 'the app and its group are untouched');
+});
+
+test('a record with no identity, as an older ledger has, is never signalled', async () => {
+  const fake = fakeTable([{ pid: FAKE + 13, pgid: FAKE + 13, state: 'alive' }]);
+  for (const identity of [undefined, '', null]) {
+    assert.deepEqual(await endProcesses([{ pid: FAKE + 13, group: true, identity }], 0, { kill: fake.kill, groupOf: fake.groupOf, identityOf: fake.identityOf }), []);
+  }
+  assert.deepEqual(fake.sent(), []);
+  assert.equal(fake.state(FAKE + 13), 'alive');
+});
+
+test('identity is read again before every signal: a pid reused during the grace gets no SIGKILL', async () => {
+  const fake = fakeTable([{ pid: FAKE + 14, pgid: FAKE + 40, state: 'alive', reusedOnTerm: 'Wed Oct 21 16:10:00 2026 /Applications/iTerm.app/Contents/MacOS/iTerm2' }]);
+  assert.deepEqual(await endProcesses([recorded(FAKE + 14, false)], 0, { kill: fake.kill, groupOf: fake.groupOf, identityOf: fake.identityOf }), []);
+  assert.deepEqual(fake.sent(), [[FAKE + 14, 'SIGTERM']]);
+  assert.equal(fake.state(FAKE + 14), 'alive', 'the app now holding the pid is not killed');
+});
+
+test('pid records each process with its start time and command, and refuses one it cannot read', (t) => {
+  const dir = tempDir(t);
+  const server = child(t, 'sleep', ['60']);
+  assert.equal(run([dir, 'pid', 'qa-i', String(server)]).status, 0);
+  const identity = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'))['qa-i'].identities[server];
+  assert.match(identity, /sleep 60/);
+  const refused = run([dir, 'pid', 'qa-j', String(FAKE + 15)]);
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /cannot read the start time and command/);
 });
 
 test('stopping a helper recorded with --group ends its whole process group', { timeout: 30_000 }, async (t) => {

@@ -22,7 +22,11 @@
 // `--group` pid whose process group id still equals the pid; any other pid is
 // signalled alone. A pid of 1 or lower, this process or its parent is never
 // recorded or signalled, and neither is a pid the system says is not ours
-// (EPERM): a recorded pid can be reused by an unrelated process.
+// (EPERM). A recorded pid can be reused, even by one of the user's own apps,
+// so `pid` stores each process's start time and command (`ps -o
+// lstart=,command=`), refusing one it cannot read, and every signal re-reads
+// them first: a pid whose identity differs, cannot be read, or was never
+// recorded is treated as not ours and never signalled, alone or as a group.
 // `hand` marks a running app stack (a worktree path, port or URL) as handed to
 // a human QA guide; `start --stack` on a handed stack exits 1, so a rerun that
 // toggles flags or moves data launches its own stack.
@@ -87,6 +91,13 @@ export function isAlive(pid) {
   return probe(pid) !== "gone";
 }
 
+/** A process's start time and command (`ps -o lstart=,command=`), or null when it cannot be read. */
+export function readIdentity(pid) {
+  const result = spawnSync("ps", ["-o", "lstart=,command=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } });
+  const identity = result.stdout?.trim();
+  return result.status === 0 && identity ? identity : null;
+}
+
 /** The process group id of `pid`, or null when it cannot be read. */
 export function readGroupId(pid) {
   const result = spawnSync("ps", ["-o", "pgid=", "-p", String(pid)], { encoding: "utf8" });
@@ -95,17 +106,22 @@ export function readGroupId(pid) {
 }
 
 /**
- * Ends `targets` ({ pid, group }), SIGKILLs what outlives the grace, and
- * returns the pids still alive. Unsafe and foreign pids are never signalled.
- * `kill` and `groupOf` are injectable so tests can check every decision
- * without sending a real signal.
+ * Ends `targets` ({ pid, group, identity }), SIGKILLs what outlives the
+ * grace, and returns the pids still alive and ours. Unsafe and foreign pids
+ * are never signalled; a pid is ours only while `identityOf` still returns
+ * the identity recorded for it. `kill`, `groupOf` and `identityOf` are
+ * injectable so tests can check every decision without sending a real signal.
  */
-export async function endProcesses(targets, graceSeconds = DEFAULT_GRACE_SECONDS, { kill = defaultKill, groupOf = readGroupId } = {}) {
+export async function endProcesses(targets, graceSeconds = DEFAULT_GRACE_SECONDS, { kill = defaultKill, groupOf = readGroupId, identityOf = readIdentity } = {}) {
   const owned = targets.filter((target) => safePid(target.pid));
-  const live = () => owned.filter((target) => probe(target.pid, kill) === "alive");
-  const signal = ({ pid, group }, name) => {
+  const same = (target) => typeof target.identity === "string" && target.identity !== "" && identityOf(target.pid) === target.identity;
+  const live = () => owned.filter((target) => probe(target.pid, kill) === "alive" && same(target));
+  const signal = (target, name) => {
+    const { pid, group } = target;
     // Checked again here so no edit to the filter above can ever reach kill(-1).
     if (!(pid > 1)) return;
+    // Re-read right before the signal: the pid may have been reused since the last check.
+    if (!same(target)) return;
     const wholeGroup = group === true && groupOf(pid) === pid;
     try {
       kill(wholeGroup ? -pid : pid, name);
@@ -213,16 +229,26 @@ async function main(argv) {
     ledger[name] = { startedAt: at, ...(values.brief ? { brief: values.brief } : {}), ...(values.stack ? { stack: values.stack } : {}) };
   } else if (action === "pid") {
     const pids = parsePids(positionals.slice(1));
+    const identities = Object.fromEntries(pids.map((pid) => [pid, readIdentity(pid)]));
+    const unreadable = pids.filter((pid) => !identities[pid]);
+    if (unreadable.length > 0) {
+      throw new Error(`cannot read the start time and command of ${unreadable.join(" ")}; record only a running process this helper started.`);
+    }
     const entry = ledger[name] ?? {};
     const groups = values.group ? [...new Set([...(entry.groups ?? []), ...pids])] : (entry.groups ?? []);
-    ledger[name] = { ...entry, pids: [...new Set([...(entry.pids ?? []), ...pids])], ...(groups.length > 0 ? { groups } : {}) };
+    ledger[name] = {
+      ...entry,
+      pids: [...new Set([...(entry.pids ?? []), ...pids])],
+      identities: { ...(entry.identities ?? {}), ...identities },
+      ...(groups.length > 0 ? { groups } : {}),
+    };
   } else if (action === "accepted") {
     ledger[name] = { ...(ledger[name] ?? {}), acceptedAt: at };
   } else {
     const grace = values["grace-seconds"] === undefined ? DEFAULT_GRACE_SECONDS : Number(values["grace-seconds"]);
     const entry = ledger[name] ?? {};
     const groups = new Set(entry.groups ?? []);
-    const survivors = await endProcesses((entry.pids ?? []).map((pid) => ({ pid, group: groups.has(pid) })), grace);
+    const survivors = await endProcesses((entry.pids ?? []).map((pid) => ({ pid, group: groups.has(pid), identity: entry.identities?.[pid] })), grace);
     if (survivors.length > 0) {
       process.stdout.write(`ALIVE ${name} ${survivors.join(" ")}\n`);
       return 1;

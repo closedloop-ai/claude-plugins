@@ -25,7 +25,7 @@ test("a command past its limit is stopped with everything it started, exiting 12
   assert.equal(code, TIMED_OUT_EXIT);
 });
 
-test("the stopped command's whole process group is gone after a time out", () => {
+test("the stopped command's whole process group is gone after a time out", async () => {
   const result = spawnSync(process.execPath, [SCRIPT, "1", process.execPath, "-e", `
     const { spawn } = require("node:child_process");
     const grandchild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
@@ -35,7 +35,17 @@ test("the stopped command's whole process group is gone after a time out", () =>
   assert.equal(result.status, TIMED_OUT_EXIT, result.stderr);
   assert.match(result.stderr, /stopped after 1s/);
   const grandchild = Number(result.stdout.trim());
-  assert.ok(grandchild > 0);
+  assert.ok(grandchild > 1);
+  // A killed grandchild whose parent already exited still answers a liveness probe until it is reaped, so wait, bounded, for it to go.
+  const gone = () => {
+    try {
+      process.kill(grandchild, 0);
+      return false;
+    } catch (error) {
+      return error?.code === "ESRCH";
+    }
+  };
+  for (let waited = 0; waited < 5000 && !gone(); waited += 50) await new Promise((resolve) => setTimeout(resolve, 50));
   assert.throws(() => process.kill(grandchild, 0), { code: "ESRCH" });
 });
 
