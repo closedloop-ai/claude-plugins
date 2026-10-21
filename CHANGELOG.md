@@ -12,7 +12,7 @@ Prose cleanup of the vibe agents and skills, fleet-orchestrator included, so the
 - Agent, skill and reference markdown no longer cites dated operator or design rulings, PR numbers, ticket slugs, or symphony-alpha paths, component names and flag keys as examples. Generic examples replace the ones that helped.
 - Dense run-on rules are split into short steps. Inline log templates (`Engineering decision:`, `Engineering needed (token not bundled):`, `Debt:`, `Known main failure`, `harnessSwitch`) become a step plus a separate required log line with the unchanged literal format.
 - Places that named symphony-alpha only as the working repository now say "the repository"; the `gh --repo`, preflight remote and workflow commands the workers actually run are unchanged.
-- Four symphony-alpha specific rules leave the plugin for that repository's `AGENTS.md` files: the Branch PRD-600/601/602 contract check, the shared app package's forbidden imports, the Labs destination's container flag and example files, and the root code style list. The plugin keeps the general form of each.
+- Five symphony-alpha specific rules leave the plugin, which keeps the general form of each. The Branch PRD-600/601/602 contract check and the Labs destination's container flag and example files move to that repository's `AGENTS.md` files in closedloop-ai/symphony-alpha#9028, which also documents the branch analytics perf fixture so the generic perf fixture rule applies there. The shared app package's forbidden imports were already in `packages/app/AGENTS.md`, and the code style list was already in the root `AGENTS.md`.
 - Contract tests that pinned a citation now pin the rule's own sentence; no assertion was removed.
 
 ### vibe v1.0.68
