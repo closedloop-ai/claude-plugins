@@ -300,7 +300,7 @@ test("committed redeploys count as the session's work and the live ticket is rep
   write(worktree, "apps/app/page.tsx", "export const page = 3;\n");
   git(worktree, ["add", "apps/app/page.tsx"], home);
   git(worktree, ["commit", "--quiet", "-m", "redeploy 1"], home);
-  write(worktree, "apps/app/later.tsx", "export const later = 1;\n");
+  write(worktree, "apps/app/later.tsx", "const later = 1;\n");
   runNode(SESSIONS, ["touch", "--worktree", worktree, "--live-ticket", "ISS-90"], home);
 
   const result = runNode(INVENTORY, ["--worktree", worktree], home);
@@ -349,8 +349,8 @@ test("a session may only shrink the source-gate allowlist under scripts/", (t) =
 test("frontend-only work reports no backend change", (t) => {
   const { home, worktree } = setup(t, "frontend-only");
   write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
-  write(worktree, "packages/app/tags/components/tag-menu.tsx", "export const TagMenu = 1;\n");
-  write(worktree, "apps/desktop/src/renderer/view.tsx", "export const view = 1;\n");
+  write(worktree, "packages/app/tags/components/tag-menu.tsx", "const TagMenu = 1;\n");
+  write(worktree, "apps/desktop/src/renderer/view.tsx", "const view = 1;\n");
 
   const result = runNode(INVENTORY, ["--worktree", worktree], home);
   assert.equal(result.status, 0, JSON.stringify(result.json));
@@ -362,9 +362,9 @@ test("backend work is allowed and reported for the full checks", (t) => {
   const { home, worktree } = setup(t, "backend");
   write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
   write(worktree, "apps/api/app/tags/route.ts", "export const GET = 1;\n");
-  write(worktree, "packages/api/src/types/tag.ts", "export type Tag = string;\n");
+  write(worktree, "packages/api/src/types/tag.ts", "type Tag = string;\n");
   write(worktree, "packages/database/prisma/migrations/1_tags/migration.sql", "select 1;\n");
-  write(worktree, "apps/desktop/src/main/tags.ts", "export const tags = 1;\n");
+  write(worktree, "apps/desktop/src/main/tags.ts", "const tags = 1;\n");
 
   const result = runNode(INVENTORY, ["--worktree", worktree], home);
   assert.equal(result.status, 0, JSON.stringify(result.json));

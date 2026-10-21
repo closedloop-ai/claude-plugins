@@ -910,7 +910,18 @@ the next pass through step 7's main-sync publication gate is the one main
 merge. Rerun only the tests selected for the files the merge touched, and
 tell the person it is ready to enqueue right away, once
 `node scripts/qa-merge-order.mjs --worktree "<wt>" --qa-head <QA'd sha>`
-passes; the merge queue retests it against main. That merge waits on no e2e
+passes; the merge queue retests it against main. Pass it `--evidence
+<gitdir>/vibe-pr-evidence.json`: every e2e spec file the branch adds or
+changes needs a passing run at that head in the lane that runs it (`lane` on
+its `testRuns` entry), because PR CI skips those lanes. On that head, a
+fresh-context reviewer given only the ticket's criteria and the diff writes
+the MET/PARTIAL/MISSED audit, and
+`node scripts/criteria-audit.mjs --worktree "<wt>" --ticket <body> --audit <audit> --matrix <matrix>`
+must pass (every criterion MET, and every criterion x surface x input x flag
+cell evidenced, flag-off cells by a diff against the base or a ruling).
+`node scripts/rulings-check.mjs --ticket <body> --record <QA record>` must
+pass too: every ruling made during the work is on the ticket with the
+criteria it amends. That merge waits on no e2e
 run: push it first, then run only the e2e specs covering the files whose
 conflicts were resolved. From then on the pull request is shepherded:
 `node ../vibe/scripts/shepherd.mjs --pr <n> --repo <owner/repo>` polls it

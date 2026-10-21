@@ -132,6 +132,7 @@ Built in a vibe session by <operator name>.
 - Acceptance criteria:
   - [ ] <one checkable line each, quoted from the person or the originating
     ticket>
+- Ruling <date> (<who>): "<each human ruling made during the work, quoted>"; amends: <the AC-n it changes, or none>
 
 ## Environment
 

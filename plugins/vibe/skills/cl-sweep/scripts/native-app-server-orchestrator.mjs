@@ -800,7 +800,7 @@ export async function startDurableTurn(client, session, prompt, persist, lifecyc
     return establishFirstTurn(client, session, prompt, persist, dependencies);
   }
   if (!isFreshThread) {
-    const live = await readThreadState(client, session.threadId);
+    const live = await (dependencies.readThreadState || readThreadState)(client, session.threadId);
     if (live.cwd && canonicalDirectory(live.cwd) !== session.cwd) fail('Live worker cwd does not match session cwd');
     if (live.status === 'active') fail(`Worker already has active turn ${live.activeTurnId}`);
   }
@@ -841,8 +841,14 @@ async function startIdleTurn(client, session, prompt, persist = () => {}, lifecy
 
 /** Start one idle worker turn and return immediately. */
 export async function startTurn(options, dependencies = {}) {
-  const { path, session } = loadSession(options.stateFile);
+  let { path, session } = loadSession(options.stateFile);
   validateSessionBinding(session);
+  if (session.state === 'RUNNING' && !session.pendingOperation) {
+    // A finished turn once left the record RUNNING while the thread sat idle with no active turn,
+    // so both turn-start and steer refused. Trust the thread: reconcile, then decide.
+    await reconcileSession(options, dependencies);
+    ({ path, session } = loadSession(options.stateFile));
+  }
   if (!STARTABLE_STATES.has(session.state)) fail(`Session cannot start a turn from ${session.state}`);
   const connection = await connectedClient(session, options, dependencies);
   try {

@@ -93,7 +93,10 @@ situation nothing settles is reported as `undocumented`, never guessed. A failed
 Before an answer is recorded, `node scripts/precedent-check.mjs check
 --report <report>` must pass: it refuses an answer from public material or
 `undocumented` unless `--no-browser <reason>` says why no browser could look
-(precedent mode's public-material path passes that reason).
+(precedent mode's public-material path passes that reason). Pass each disputed
+behavior the question turns on as `--behavior "<the interaction to perform>"`
+to `run`: `check` then refuses a report until every one is observed with a
+screenshot or marked `needs a write to test` for the operator.
 
 The answer goes to the SAME writer, which records it in the session decision
 table as the decision for the affected rows, with its source: the ticket or

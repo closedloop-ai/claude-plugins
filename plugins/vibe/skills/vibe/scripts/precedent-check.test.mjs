@@ -172,3 +172,34 @@ test("check refuses an undocumented or help-center-only answer until a live look
   assert.equal(checkReport("I looked around.").ok, false);
   assert.equal(run(["check"]).status, 1);
 });
+
+test("a disputed behavior is a required checklist item: the report must observe it with a screenshot or mark it for the operator", () => {
+  const behaviors = ["select a collapsed parent, then run a bulk action: does it reach the hidden children?", "select all with a filter applied"];
+  const prompt = precedentPrompt({ question: "Does select-all reach hidden rows?", behaviors });
+  assert.match(prompt, /^B1\. select a collapsed parent/m);
+  assert.match(prompt, /^B2\. select all with a filter applied$/m);
+  const headline = "Answer: no select-all\nSource: Asana, observed 2026-10-21\n";
+  const refused = checkReport(headline, undefined, behaviors);
+  assert.equal(refused.ok, false);
+  assert.deepEqual(refused.missing.map((item) => item.id), ["B1", "B2"]);
+  const partial = checkReport(`${headline}B1: observed: the action reached all 4 children; screenshot: b1.png\nB2: observed: nothing happened\n`, undefined, behaviors);
+  assert.deepEqual(partial.missing.map((item) => item.id), ["B2"], "an observation without a screenshot does not settle it");
+  const settled = checkReport(`${headline}B1: observed: the action reached all 4 children; screenshot: b1.png\nB2: needs a write to test: only a filter on real tasks shows it\n`, undefined, behaviors);
+  assert.equal(settled.ok, true);
+  assert.equal(checkReport(headline, undefined, []).ok, true, "no disputed behaviors, no checklist");
+});
+
+test("run saves the disputed behaviors beside the report, and check reads them", (t) => {
+  const { root: dir, cleanup } = makeHome("precedent-checklist-");
+  t.after(cleanup);
+  const claude = path.join(dir, "claude");
+  writeFileSync(claude, "#!/bin/sh\ncat >/dev/null\nprintf 'Answer: no select-all\\nSource: Asana, observed 2026-10-21\\n'\n");
+  chmodSync(claude, 0o755);
+  const out = path.join(dir, "run");
+  const ran = spawnSync(process.execPath, [SCRIPT, "run", "--question", "q", "--behavior", "select a collapsed parent", "--out", out, "--claude", claude], { encoding: "utf8" });
+  assert.equal(JSON.parse(ran.stdout).ok, true, ran.stdout);
+  assert.deepEqual(JSON.parse(readFileSync(path.join(out, "checklist.json"), "utf8")).behaviors, ["select a collapsed parent"]);
+  const checked = spawnSync(process.execPath, [SCRIPT, "check", "--report", path.join(out, "report.md")], { encoding: "utf8" });
+  assert.equal(checked.status, 1);
+  assert.match(JSON.parse(checked.stdout).error, /does not settle B1/);
+});

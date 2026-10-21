@@ -20,13 +20,22 @@
 //       keeps, never the system temp folder) and prints
 //       {"ok":true,"report":...,"answer":...,"source":...}, or
 //       {"ok":false,"error":...,"report":...} when the run failed or timed out.
-//   precedent-check.mjs check --report <file> [--no-browser <reason>]
+//   Both take `--behavior <text>`, once per disputed behavior: the concrete
+//       interaction the question turns on (for example "select a collapsed
+//       parent, then run a bulk action: does it reach the hidden children?").
+//       A check once answered the headline question and never tried the
+//       sub-question in dispute. `run` saves them as checklist.json beside the
+//       report.
+//   precedent-check.mjs check --report <file> [--no-browser <reason>] [--behavior <text>]...
 //       Refuses (exit 1) a report not settled by a live look: an `undocumented`
 //       answer or a public-material source. Precedent means the named product's
 //       live app in the operator's signed-in browser; a help-center search once
 //       came back undocumented while the live app had the answer. `--no-browser`
 //       with the reason no browser could look accepts a public or undocumented
-//       report and echoes the reason.
+//       report and echoes the reason. It also refuses a report missing a line
+//       for any disputed behavior (--behavior, or else checklist.json beside the
+//       report): `B<n>: observed: <what happened>; screenshot: <capture>`, or
+//       `B<n>: needs a write to test: <why>` for the operator.
 //
 // `--apps` names the apps to try after Asana, in order (default: Linear, then
 // the service's own screens). Every command prints one JSON object.
@@ -48,16 +57,21 @@ const ANSWER_LINE = /^Answer:\s*(.+)$/m;
 const SOURCE_LINE = /^Source:\s*(.+)$/m;
 const PUBLIC_SOURCE = /https?:\/\/|help center|help-center|documentation|docs/i;
 const UNDOCUMENTED = /^undocumented\b/i;
+const CHECKLIST_FILE = "checklist.json";
 
 /** The research brief for one product question. */
-export function precedentPrompt({ question, situation, apps = DEFAULT_APPS, today = new Date() }) {
+export function precedentPrompt({ question, situation, apps = DEFAULT_APPS, behaviors = [], today = new Date() }) {
   requireText("question", question);
   const date = today.toISOString().slice(0, 10);
+  const disputed = behaviors.length === 0 ? "" : `
+Disputed behaviors, every one required. Perform each interaction in the app, verify the result, and capture a screenshot of it. One that only a change to existing data could show is not performed: mark it for the operator.
+${behaviors.map((behavior, index) => `B${index + 1}. ${behavior}`).join("\n")}
+`;
   return `You are checking how established apps handle one situation, to answer a product question in a vibe session. Report what you see; never change anything that already exists.
 
 Question: ${question}
 Situation to reproduce: ${situation || question}
-
+${disputed}
 Order:
 1. Asana, in Chrome, with the account already signed in there. Never sign in, create an account or type a credential.
 2. When Asana does not have this situation, another established app with the same flow: ${apps}.
@@ -84,6 +98,7 @@ Observed directly: <what you saw, with quoted wording>
 Help center / forum: <what public material says, with URLs>
 Apps without this situation: <each app checked that does not have it>
 Cleanup: <what you created and deleted, confirmed gone, or "nothing created">
+${behaviors.map((_, index) => `B${index + 1}: observed: <what happened>; screenshot: <capture file> | B${index + 1}: needs a write to test: <why>`).join("\n")}
 `;
 }
 
@@ -103,11 +118,30 @@ export function summarize(report) {
   return { answer, source, sourceKind: sourceKind(source) };
 }
 
+/** Disputed behaviors the report leaves without an observed result and screenshot, or an operator note. */
+export function missingBehaviors(report, behaviors) {
+  return behaviors.map((behavior, index) => ({ id: `B${index + 1}`, behavior })).filter(({ id }) => {
+    const line = new RegExp(`^${id}:\\s*(?:observed:\\s*\\S.*;\\s*screenshot:\\s*\\S+|needs a write to test:\\s*\\S.*)$`, "m");
+    return !line.test(report);
+  });
+}
+
 /** Whether a report is settled by a live look; `noBrowser` names why none could look. */
-export function checkReport(report, noBrowser) {
+export function checkReport(report, noBrowser, behaviors = []) {
   const { answer, source, sourceKind: kind } = summarize(report);
   if (!answer || !source) {
     return { ok: false, error: "the report has no Answer or Source line" };
+  }
+  const missing = missingBehaviors(report, behaviors);
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      answer,
+      source,
+      sourceKind: kind,
+      missing,
+      error: `the report does not settle ${missing.map(({ id }) => id).join(", ")}: each disputed behavior needs "observed: <what happened>; screenshot: <capture>", or "needs a write to test: <why>" for the operator`,
+    };
   }
   const settledLive = kind === "observed" && !UNDOCUMENTED.test(answer);
   if (settledLive) {
@@ -210,27 +244,32 @@ async function main() {
       "timeout-seconds": { type: "string" },
       report: { type: "string" },
       "no-browser": { type: "string" },
+      behavior: { type: "string", multiple: true },
     },
   });
   if (command === "check") {
     if (!values.report) {
       throw new Error("check needs --report <file>");
     }
-    const result = checkReport(readFileSync(values.report, "utf8"), values["no-browser"]);
+    const result = checkReport(readFileSync(values.report, "utf8"), values["no-browser"], values.behavior?.length ? values.behavior : savedBehaviors(values.report));
     if (!result.ok) {
       process.exitCode = 1;
     }
     return result;
   }
-  const prompt = precedentPrompt({ question: values.question, situation: values.situation, apps: values.apps });
+  const behaviors = values.behavior ?? [];
+  const prompt = precedentPrompt({ question: values.question, situation: values.situation, apps: values.apps, behaviors });
   if (command === "prompt") {
     return { ok: true, liveLook: false, prompt };
   }
   if (command === "run") {
     const timeout = Number(values["timeout-seconds"]);
+    const out = values.out ?? newRunFolder();
+    mkdirSync(out, { recursive: true });
+    writeFileSync(path.join(out, CHECKLIST_FILE), `${JSON.stringify({ behaviors }, null, 2)}\n`);
     return runClaude({
       prompt,
-      out: values.out ?? newRunFolder(),
+      out,
       claude: values.claude,
       timeoutSeconds: Number.isFinite(timeout) && timeout > 0 ? timeout : DEFAULT_TIMEOUT_SECONDS,
     });
@@ -256,4 +295,14 @@ function newRunFolder() {
   const root = precedentRoot();
   mkdirSync(root, { recursive: true, mode: 0o700 });
   return mkdtempSync(path.join(root, "run-"));
+}
+
+/** The disputed behaviors `run` saved beside a report, or none. */
+function savedBehaviors(reportFile) {
+  try {
+    const saved = JSON.parse(readFileSync(path.join(path.dirname(reportFile), CHECKLIST_FILE), "utf8"));
+    return Array.isArray(saved.behaviors) ? saved.behaviors.filter((behavior) => typeof behavior === "string") : [];
+  } catch {
+    return [];
+  }
 }

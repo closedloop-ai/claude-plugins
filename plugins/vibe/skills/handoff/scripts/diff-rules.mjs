@@ -11,6 +11,7 @@ import path from "node:path";
 import { git } from "../../vibe/scripts/session-record.mjs";
 import { E2E_ROOT_PATHSPECS, isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { pathGateTests } from "./path-gates.mjs";
+import { checkComparators, checkUnusedExports } from "./review-gap-rules.mjs";
 import { routeSpecs } from "./route-specs.mjs";
 import { escapeRegExp, IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
 import { isUnversionedStory, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
@@ -152,6 +153,8 @@ export function evaluateDiff(files, changeLog, repo) {
   checkCopyProvenance(live, files, repo, logged, add);
   checkCapabilityRemovals(live, files, repo, logged, add);
   checkRestoredRemovalsDeepening(live, files, repo, changeLog, add);
+  checkComparators(live, repo, logged, add, changeLog);
+  checkUnusedExports(live, repo, logged, add);
   requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo), ...sidebarOrderTests(files, repo), ...pathGateTests(live, (file) => repo.head(file)));
   return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks };
 }
@@ -599,6 +602,7 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
     headFiles,
     baseFiles,
     baseBlobs,
+    wordFiles: (word) => lines(() => git(worktree, ["grep", "-l", "-w", "-F", "--untracked", "-e", word])),
     storyReplacements,
     deletionOf: (file) => {
       const hit = lines(() => git(worktree, ["log", "--diff-filter=D", "-n", "1", "--format=%h %s", base, "--", file]))[0];
