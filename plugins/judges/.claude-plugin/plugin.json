@@ -1,7 +1,7 @@
 {
   "name": "judges",
-  "description": "LLM Judges plugin",
-  "version": "1.7.2",
+  "description": "Deprecated, will be removed from the marketplace: LLM Judges plugin",
+  "version": "1.7.3",
   "author": {
     "name": "ClosedLoop",
     "email": "support@closedloop.ai"
