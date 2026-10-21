@@ -86,7 +86,12 @@ scripts/fleet.sh <orchDir> local|remote session steer <name> --prompt-file <file
 scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 ```
 
-`turn` starts a thread bound to `--cwd` the first time (refusing a different cwd later) and resumes it afterwards, then starts a turn; `--model` and `--effort` default to `CODEX_MODEL` and `CODEX_EFFORT`, and a new session refuses to start without an effort or with a prompt that does not start with `$vibe`. Model, effort, sandbox and each prompt file sent persist in the session's state file. `steer` adds to the active turn and fails when none is running. `last` prints the monitor's status line and the last agent messages.
+- `turn` starts a thread bound to `--cwd` the first time (refusing a different cwd later) and resumes it afterwards, then starts a turn.
+  - `--model` and `--effort` default to `CODEX_MODEL` and `CODEX_EFFORT`.
+  - A new session refuses to start without an effort or with a prompt that does not start with `$vibe`.
+  - Model, effort, sandbox and each prompt file sent persist in the session's state file.
+- `steer` adds to the active turn and fails when none is running.
+- `last` prints the monitor's status line and the last agent messages.
 
 - Run Codex at the high effort level, not the maximum: the maximum burns the limit far faster for little gain on PR work. The thread runs on `CODEX_MODEL`; vibe's own worker-model policy picks each sub-agent's model, so never name one in a prompt.
 - No computer use in Codex: no browser, in-app browser, desktop app UI or screenshots. It is the fastest drain. Code host work goes through its CLI.
@@ -122,10 +127,21 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 
 - QA happens before merge; never call a PR ready to enqueue before its QA is done.
 - Each PR moves through, in order: independent review → writer fixes → verification of the fixes → design or visual review where UI changed → full check at the final head → QA plan (agent-verified plus human-only checkpoints) → operator QA → version-file conflicts resolved → operator enqueues. A head change sends it back to the earliest step the change affects.
-- Criteria are fixed before the build, because nobody is in the loop to ask for them while it runs: a writer starts only once its plan holds a numbered acceptance-criteria list, each sourced to a ticket AC, a PRD line or an operator ruling, and a mid-flight ruling joins that list with its date. An unrequested write path, a missed operator ruling and a mislabeled defect each traced back to having no such list.
+- Criteria are fixed before the build, because nobody is in the loop to ask for them while it runs.
+  - A writer starts only once its plan holds a numbered acceptance-criteria list.
+  - Each criterion is sourced to a ticket AC, a PRD line or an operator ruling.
+  - A mid-flight ruling joins that list with its date.
+
+  An unrequested write path, a missed operator ruling and a mislabeled defect each traced back to having no such list.
 - The QA plan is a two-way trace between that list and the diff: each checkpoint cites one criterion ID, a diff change mapping to no criterion is a finding, never a checkpoint, and a criterion with no change and no coverage is a gap. Regression checks on neighboring surfaces the diff touches are labeled separately; a regression failure is a bug, never a new requirement.
 - Agent-first QA: an agent verifies everything it can (e2e on the current head, DOM and accessibility reads, API second views, headless screenshots it reads itself) and records it. The operator gets only checkpoints that need a human: perceptual judgment, real-device feel, assistive tech, product judgment, flows an agent cannot drive; measure the rest (contrast ratios, box geometry, focus targets). A defect an agent already observed goes to the writer with its measurement, not to the human checklist.
-- Human QA runs in a dedicated Claude QA-guide session per PR that the operator talks to directly. When the PR's QA plan is ready, save the [QA guide prompt](./references/templates.md#qa-guide-prompt) to `prompts/` and launch it headless from the repo root (`claude -p --output-format json` with the tools it needs allowed); take `session_id` from the JSON and give the operator `cd <repo> && claude --resume <session_id>`. Keep a background wait on its findings file, re-armed like the monitor, and route each failure to the writer. You alone file a ticket for a QA finding (the QA guide never does), and only after searching open tickets created in the last day for the same subject; two actors filed the same follow-up a minute apart.
+- Human QA runs in a dedicated Claude QA-guide session per PR that the operator talks to directly. When the PR's QA plan is ready:
+  1. Save the [QA guide prompt](./references/templates.md#qa-guide-prompt) to `prompts/`.
+  2. Launch it headless from the repo root (`claude -p --output-format json` with the tools it needs allowed).
+  3. Take `session_id` from the JSON and give the operator `cd <repo> && claude --resume <session_id>`.
+  4. Keep a background wait on its findings file, re-armed like the monitor, and route each failure to the writer.
+
+  You alone file a ticket for a QA finding (the QA guide never does), and only after searching open tickets created in the last day for the same subject. Two actors once filed the same follow-up a minute apart.
 - Every PR gets an independent review, then a verification pass of the fixes, before it is QA-ready. Resolve a thread only after the fix is verified in code, with a reply naming the fixing SHA.
 - Before enqueue, run the lanes the diff can affect wherever PR CI skips them (the repo's lane selector, never full suites by default), and resolve shared version-file conflicts right before each enqueue, in merge order. The queue rebuilds on current main, and a skipped suite is not a pass.
 - A release-version bump every UI PR touches (a component catalog version and its history entry) is made only at enqueue time, and the operator arms auto-merge in the same minute; made earlier, it re-conflicts with every other open PR.
@@ -151,7 +167,7 @@ Pushback applies principle 2; more judgment patterns from past programs: [refere
 
 ## Artifacts people read
 
-Hard rule (operator, 2026-10-20). A ticket, PR body, PR comment, review reply or any other artifact written for people never references a path on the operator's machine (a home path such as `~/`, a temp, scratchpad or worktree path) or says something is on someone's laptop.
+Hard rule. A ticket, PR body, PR comment, review reply or any other artifact written for people never references a path on the operator's machine (a home path such as `~/`, a temp, scratchpad or worktree path) or says something is on someone's laptop.
 
 - Evidence is uploaded and embedded: a screenshot goes into the ticket as an inline image through the ticket tool (for example a new document version with inline images); text evidence is quoted inline, briefly.
 - A plan the ticket references is attached, never pointed at: an implementation plan is a plan document linked to the ticket, and a QA plan or other working file is uploaded as an attachment on the ticket and named by its attachment name.
