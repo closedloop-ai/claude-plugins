@@ -11982,6 +11982,7 @@ function summary(ledger) {
 }
 function proveGroupStopped(processGroupId) {
   if (process.platform === "win32") throw new Error("Owned process-group proof is unsupported on this platform");
+  if (!(processGroupId > 1)) throw new Error("Unable to prove the owned process group stopped; retain the lease");
   try {
     process.kill(-processGroupId, 0);
   } catch (error) {
@@ -12977,7 +12978,7 @@ function safeFailure(error) {
   return { code: "WORKER_TURN_FAILED", summary: "The worker turn failed; inspect its private evidence and retain the same writer identity." };
 }
 async function finishOwnedGroup(child) {
-  if (!child.pid) return;
+  if (!child.pid || child.pid <= 1) return;
   if (process.platform === "win32") {
     throw new OwnedCleanupError("Owned descendant cleanup is unsupported on this platform; writer lease retained for stopped-turn proof");
   }
@@ -12995,7 +12996,7 @@ async function finishOwnedGroup(child) {
   throw new OwnedCleanupError("Owned process group is still present; writer lease retained for stopped-turn proof");
 }
 function signalOwnedChild(child, signal) {
-  if (!child.pid) return;
+  if (!child.pid || child.pid <= 1) return;
   try {
     if (process.platform === "win32") child.kill(signal);
     else process.kill(-child.pid, signal);

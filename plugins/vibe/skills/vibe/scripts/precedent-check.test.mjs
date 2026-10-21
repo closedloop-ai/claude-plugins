@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { CLAUDE_TOOLS, TASK_PREFIX, TEMP_PROJECT, precedentPrompt, precedentRoot, summarize } from "./precedent-check.mjs";
+import { CLAUDE_TOOLS, TASK_PREFIX, TEMP_PROJECT, checkReport, precedentPrompt, precedentRoot, summarize } from "./precedent-check.mjs";
 import { makeHome } from "./test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "precedent-check.mjs");
@@ -83,6 +83,7 @@ test("prompt mode prints the brief for the Codex orchestrator and starts nothing
   const { status, json } = run(["prompt", "--question", QUESTION, "--situation", "Start connecting GitHub, then cancel"]);
   assert.equal(status, 0);
   assert.equal(json.ok, true);
+  assert.equal(json.liveLook, false, "the fallback brief is not a live look");
   assert.match(json.prompt, /Situation to reproduce: Start connecting GitHub, then cancel/);
 });
 
@@ -96,6 +97,7 @@ test("run mode starts headless claude with Chrome and only the research tools, t
     ok: true,
     answer: "Returns to the integrations page with nothing connected and no error",
     source: "Asana, observed 2026-10-16",
+    sourceKind: "observed",
     prompt: path.join(out, "prompt.md"),
     report: path.join(out, "report.md"),
   });
@@ -126,9 +128,11 @@ test("the summary reads only the report's Answer and Source lines", () => {
   assert.deepEqual(summarize(REPORT), {
     answer: "Returns to the integrations page with nothing connected and no error",
     source: "Asana, observed 2026-10-16",
+    sourceKind: "observed",
   });
-  assert.deepEqual(summarize("Answer: undocumented\nSource: undocumented\n"), { answer: "undocumented", source: "undocumented" });
-  assert.deepEqual(summarize("nothing"), { answer: null, source: null });
+  assert.deepEqual(summarize("Answer: undocumented\nSource: undocumented\n"), { answer: "undocumented", source: "undocumented", sourceKind: "none" });
+  assert.deepEqual(summarize("Answer: x\nSource: https://help.asana.com/hc/en-us/articles/1\n"), { answer: "x", source: "https://help.asana.com/hc/en-us/articles/1", sourceKind: "public" });
+  assert.deepEqual(summarize("nothing"), { answer: null, source: null, sourceKind: "none" });
 });
 
 test("without --out the report folder is under the vibe home a reboot keeps, never the temp folder", (t) => {
@@ -141,4 +145,30 @@ test("without --out the report folder is under the vibe home a reboot keeps, nev
   assert.equal(path.dirname(path.dirname(json.report)), root);
   assert.equal(precedentRoot("/Users/someone"), path.join("/Users/someone", ".codex", "vibe", "precedent"));
   assert.ok(!precedentRoot().startsWith(os.tmpdir()));
+});
+
+test("check refuses an undocumented or help-center-only answer until a live look ran, unless no browser can look", (t) => {
+  const dir = workspace(t);
+  const write = (name, text) => {
+    const file = path.join(dir, name);
+    writeFileSync(file, text);
+    return file;
+  };
+  const live = write("live.md", REPORT);
+  const publicOnly = write("public.md", "Answer: Keeps the list as it was\nSource: https://help.asana.com/hc/en-us/articles/1\n");
+  const undocumentedOnline = write("undocumented.md", "Answer: undocumented\nSource: undocumented\n");
+  const observedUndocumented = write("observed-undocumented.md", "Answer: undocumented\nSource: Asana, observed 2026-10-21\n");
+  assert.deepEqual(run(["check", "--report", live]), { status: 0, json: { ok: true, answer: summarize(REPORT).answer, source: "Asana, observed 2026-10-16", sourceKind: "observed" } });
+  for (const file of [publicOnly, undocumentedOnline, observedUndocumented]) {
+    const refused = run(["check", "--report", file]);
+    assert.equal(refused.status, 1, file);
+    assert.equal(refused.json.ok, false);
+    assert.match(refused.json.error, /run precedent-check\.mjs run for a live look in the signed-in browser first/);
+  }
+  const accepted = run(["check", "--report", publicOnly, "--no-browser", "no signed-in claude CLI on this machine"]);
+  assert.equal(accepted.status, 0);
+  assert.equal(accepted.json.sourceKind, "public");
+  assert.equal(accepted.json.noBrowser, "no signed-in claude CLI on this machine");
+  assert.equal(checkReport("I looked around.").ok, false);
+  assert.equal(run(["check"]).status, 1);
 });

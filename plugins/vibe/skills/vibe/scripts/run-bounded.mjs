@@ -28,6 +28,8 @@ export function runBounded(command, args, { seconds, stdio = "inherit" }) {
     let timedOut = false;
     let killTimer;
     const signalGroup = (signal) => {
+      // kill(-1) would signal every process the user owns.
+      if (!(child.pid > 1)) return;
       try {
         process.kill(-child.pid, signal);
       } catch (error) {

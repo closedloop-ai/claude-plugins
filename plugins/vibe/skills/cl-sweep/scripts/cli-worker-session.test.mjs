@@ -448,7 +448,9 @@ if (args.includes('--help')) {
   process.stdout.write(args.includes('resume') ? 'Usage: codex exec resume [SESSION_ID] [PROMPT]\\n-m, --model <MODEL>\\n' : '-C, --cd <DIR>\\n-m, --model <MODEL>\\n');
   process.exit(0);
 }
-process.kill(process.pid, 'SIGKILL');
+// Ends by a signal without signalling any pid; stderr is closed so abort's report does not replace the signal.
+require('node:fs').closeSync(2);
+process.abort();
 `);
   chmodSync(fakeCodex, 0o755);
   const session = join(state, 'session.json');
@@ -458,7 +460,7 @@ process.kill(process.pid, 'SIGKILL');
   const failed = spawnSync('node', [script, 'run', '--session-file', session, '--prompt-file', prompt, '--events-file', join(state, 'events.jsonl'), '--codex', fakeCodex], { encoding: 'utf8' });
   assert.notEqual(failed.status, 0);
   assert.doesNotMatch(failed.stderr, /Codex exited null/);
-  assert.match(JSON.parse(readFileSync(session, 'utf8')).lastFailure, /SIGKILL/);
+  assert.match(JSON.parse(readFileSync(session, 'utf8')).lastFailure, /SIGABRT/);
 
   const healthy = setup().fakeCodex;
   const retryPrompt = join(state, 'retry.txt');

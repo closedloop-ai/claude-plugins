@@ -350,6 +350,7 @@ function summary(ledger: Ledger) {
 
 function proveGroupStopped(processGroupId: number) {
   if (process.platform === "win32") throw new Error("Owned process-group proof is unsupported on this platform");
+  if (!(processGroupId > 1)) throw new Error("Unable to prove the owned process group stopped; retain the lease");
   try { process.kill(-processGroupId, 0); }
   catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ESRCH") return;

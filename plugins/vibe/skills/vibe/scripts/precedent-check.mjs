@@ -20,6 +20,13 @@
 //       keeps, never the system temp folder) and prints
 //       {"ok":true,"report":...,"answer":...,"source":...}, or
 //       {"ok":false,"error":...,"report":...} when the run failed or timed out.
+//   precedent-check.mjs check --report <file> [--no-browser <reason>]
+//       Refuses (exit 1) a report not settled by a live look: an `undocumented`
+//       answer or a public-material source. Precedent means the named product's
+//       live app in the operator's signed-in browser; a help-center search once
+//       came back undocumented while the live app had the answer. `--no-browser`
+//       with the reason no browser could look accepts a public or undocumented
+//       report and echoes the reason.
 //
 // `--apps` names the apps to try after Asana, in order (default: Linear, then
 // the service's own screens). Every command prints one JSON object.
@@ -39,6 +46,8 @@ const DEFAULT_TIMEOUT_SECONDS = 900;
 const MAX_TEXT = 2000;
 const ANSWER_LINE = /^Answer:\s*(.+)$/m;
 const SOURCE_LINE = /^Source:\s*(.+)$/m;
+const PUBLIC_SOURCE = /https?:\/\/|help center|help-center|documentation|docs/i;
+const UNDOCUMENTED = /^undocumented\b/i;
 
 /** The research brief for one product question. */
 export function precedentPrompt({ question, situation, apps = DEFAULT_APPS, today = new Date() }) {
@@ -83,12 +92,47 @@ export function claudeArgs() {
   return ["-p", "--chrome", "--allowedTools", CLAUDE_TOOLS];
 }
 
-/** The answer and source lines of a report, or null for each line it lacks. */
+/**
+ * The answer and source lines of a report, or null for each line it lacks, and
+ * the kind of source: `observed` (a look at the live app), `public` (help
+ * center or documentation only) or `none`.
+ */
 export function summarize(report) {
+  const answer = ANSWER_LINE.exec(report)?.[1].trim() ?? null;
+  const source = SOURCE_LINE.exec(report)?.[1].trim() ?? null;
+  return { answer, source, sourceKind: sourceKind(source) };
+}
+
+/** Whether a report is settled by a live look; `noBrowser` names why none could look. */
+export function checkReport(report, noBrowser) {
+  const { answer, source, sourceKind: kind } = summarize(report);
+  if (!answer || !source) {
+    return { ok: false, error: "the report has no Answer or Source line" };
+  }
+  const settledLive = kind === "observed" && !UNDOCUMENTED.test(answer);
+  if (settledLive) {
+    return { ok: true, answer, source, sourceKind: kind };
+  }
+  if (typeof noBrowser === "string" && noBrowser.trim() !== "") {
+    return { ok: true, answer, source, sourceKind: kind, noBrowser: noBrowser.trim() };
+  }
   return {
-    answer: ANSWER_LINE.exec(report)?.[1].trim() ?? null,
-    source: SOURCE_LINE.exec(report)?.[1].trim() ?? null,
+    ok: false,
+    answer,
+    source,
+    sourceKind: kind,
+    error: `the answer is ${UNDOCUMENTED.test(answer) ? "undocumented" : `from ${kind === "public" ? "public material" : "no source"}`}, not a live look; run precedent-check.mjs run for a live look in the signed-in browser first, or pass --no-browser <reason> when no browser can look`,
   };
+}
+
+function sourceKind(source) {
+  if (!source) {
+    return "none";
+  }
+  if (/\bobserved\b/i.test(source)) {
+    return "observed";
+  }
+  return PUBLIC_SOURCE.test(source) && !UNDOCUMENTED.test(source) ? "public" : "none";
 }
 
 /** Runs the headless look and resolves with its result; never rejects. */
@@ -110,7 +154,8 @@ export function runClaude({ prompt, out, claude = "claude", timeoutSeconds = DEF
     const timer = setTimeout(() => {
       timedOut = true;
       try {
-        process.kill(-child.pid, "SIGKILL");
+        // kill(-1) would signal every process the user owns.
+        if (child.pid > 1) process.kill(-child.pid, "SIGKILL");
       } catch {
         // Already gone.
       }
@@ -124,7 +169,7 @@ export function runClaude({ prompt, out, claude = "claude", timeoutSeconds = DEF
       clearTimeout(timer);
       report.end(() => {
         const text = readFileSync(reportFile, "utf8");
-        const { answer, source } = summarize(text);
+        const { answer, source, sourceKind: kind } = summarize(text);
         if (timedOut) {
           resolve({ ok: false, error: `timed out after ${timeoutSeconds}s`, prompt: promptFile, report: reportFile });
         } else if (code !== 0 || !answer || !source) {
@@ -135,7 +180,7 @@ export function runClaude({ prompt, out, claude = "claude", timeoutSeconds = DEF
             report: reportFile,
           });
         } else {
-          resolve({ ok: true, answer, source, prompt: promptFile, report: reportFile });
+          resolve({ ok: true, answer, source, sourceKind: kind, prompt: promptFile, report: reportFile });
         }
       });
     });
@@ -163,11 +208,23 @@ async function main() {
       out: { type: "string" },
       claude: { type: "string" },
       "timeout-seconds": { type: "string" },
+      report: { type: "string" },
+      "no-browser": { type: "string" },
     },
   });
+  if (command === "check") {
+    if (!values.report) {
+      throw new Error("check needs --report <file>");
+    }
+    const result = checkReport(readFileSync(values.report, "utf8"), values["no-browser"]);
+    if (!result.ok) {
+      process.exitCode = 1;
+    }
+    return result;
+  }
   const prompt = precedentPrompt({ question: values.question, situation: values.situation, apps: values.apps });
   if (command === "prompt") {
-    return { ok: true, prompt };
+    return { ok: true, liveLook: false, prompt };
   }
   if (command === "run") {
     const timeout = Number(values["timeout-seconds"]);
@@ -178,7 +235,7 @@ async function main() {
       timeoutSeconds: Number.isFinite(timeout) && timeout > 0 ? timeout : DEFAULT_TIMEOUT_SECONDS,
     });
   }
-  throw new Error("command must be prompt or run");
+  throw new Error("command must be prompt, run or check");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

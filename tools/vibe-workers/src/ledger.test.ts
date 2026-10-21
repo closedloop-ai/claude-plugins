@@ -158,7 +158,7 @@ describe("persistent writer ledger", () => {
       expect(() => changeWriter("finish", { ...input, lease: claimed.turn?.lease, status: "FAILED" })).toThrow(/still running/);
       expect(readWriterSummary(value.worktree)?.processGroupId).toBe(child.pid);
       expect(readWriterSummary(value.worktree)?.running).toBe(true);
-    } finally { process.kill(-child.pid!, "SIGTERM"); await closed; }
+    } finally { const group = child.pid ?? 0; if (group > 1) process.kill(-group, "SIGTERM"); await closed; }
     changeWriter("finish", { ...input, lease: claimed.turn?.lease, status: "FAILED" });
     expect(readWriterSummary(value.worktree)?.running).toBe(false);
     expect(readWriterSummary(value.worktree)?.workerId).toBe(registered.workerId);

@@ -356,7 +356,7 @@ function safeFailure(error: unknown): { code: string; summary: string; personAct
 
 /** Completion is not a free writer slot until the owned process group is proven stopped. */
 async function finishOwnedGroup(child: ChildProcessWithoutNullStreams) {
-  if (!child.pid) return;
+  if (!child.pid || child.pid <= 1) return;
   if (process.platform === "win32") {
     throw new OwnedCleanupError("Owned descendant cleanup is unsupported on this platform; writer lease retained for stopped-turn proof");
   }
@@ -374,7 +374,7 @@ async function finishOwnedGroup(child: ChildProcessWithoutNullStreams) {
 }
 
 function signalOwnedChild(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals) {
-  if (!child.pid) return;
+  if (!child.pid || child.pid <= 1) return;
   try {
     if (process.platform === "win32") child.kill(signal);
     else process.kill(-child.pid, signal);

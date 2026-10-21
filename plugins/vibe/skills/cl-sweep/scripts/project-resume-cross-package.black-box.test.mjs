@@ -50,6 +50,7 @@ function spawnPublicCli(args, env) {
 
 async function killPublicCli(processHandle) {
   assert.equal(processHandle.child.exitCode, null, 'public CLI must still be alive before forced termination');
+  assert.ok(processHandle.child.pid > 1, 'signalling group 1 would reach every process the user owns');
   process.kill(-processHandle.child.pid, 'SIGKILL');
   const exit = await processHandle.exited;
   assert.equal(exit.code, null);
