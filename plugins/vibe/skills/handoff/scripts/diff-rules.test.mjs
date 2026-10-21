@@ -247,8 +247,52 @@ test("copy provenance: a new toast, label or JSX string needs a cited source; ex
 test("a lost story ID blocks unless recorded as a replacement, and every reference to it blocks", (t) => {
   const story = "export default { title: \"Composites/Rows\" };\nexport const Default = {};\nexport const WithLongText = {};\n";
   const result = run(t, {
-    base: { "s/rows.stories.tsx": story, "e2e/rows.spec.ts": "goto('?path=/story/composites-rows--with-long-text');\n", "e2e/other.spec.ts": "composites-rows--default\n" },
+    base: {
+      "s/rows.stories.tsx": story,
+      "e2e/rows.spec.ts": "goto('?path=/story/composites-rows--with-long-text');\n",
+      "e2e/other.spec.ts": "composites-rows--default\n",
+      "apps/desktop/test/e2e/helpers/story-urls.ts": "export const LONG = \"composites-rows--with-long-text\";\n",
+    },
     head: { "s/rows.stories.tsx": "export default { title: \"Composites/Rows\" };\nexport const Default = {};\n" },
   });
-  assert.deepEqual(result.found, [["lost-story-id", "s/rows.stories.tsx"], ["lost-story-id", "e2e/rows.spec.ts"]]);
+  assert.deepEqual(result.found, [["lost-story-id", "s/rows.stories.tsx"], ["lost-story-id", "apps/desktop/test/e2e/helpers/story-urls.ts"], ["lost-story-id", "e2e/rows.spec.ts"]]);
+});
+
+test("a changed route requires the web and Desktop specs that reach its endpoint only through a helper, never the helper (#8967)", (t) => {
+  const route = "apps/api/app/artifact-links/batch-move/route.ts";
+  const webHelper = "e2e/helpers/sessions-list-fixtures.ts";
+  const desktopHelper = "apps/desktop/test/e2e/helpers/sessions-list-project-cloud.ts";
+  const result = run(t, {
+    base: {
+      [route]: "export const POST = 1;\n",
+      [webHelper]: "const BATCH_MOVE_PATH = \"/artifact-links/batch-move\";\nexport const mockMove = (page) => page.route(`**${BATCH_MOVE_PATH}**`, handler);\n",
+      "e2e/sessions-linked-entity-columns.spec.ts": "import {\n  mockMove,\n} from \"./helpers/sessions-list-fixtures\";\ntest(\"moves\", () => mockMove(page));\n",
+      [desktopHelper]: "export const isMove = (request, pathname) => request.method === \"POST\" && pathname === \"/artifact-links/batch-move\";\n",
+      "apps/desktop/test/e2e/sessions-list-project-edit.spec.ts": "import {\n  isMove,\n} from \"./helpers/sessions-list-project-cloud\";\ntest(\"edits\", () => isMove(request, path));\n",
+      "e2e/helpers/unrelated.ts": "export const other = \"/documents\";\n",
+      "e2e/unrelated.spec.ts": "import { other } from \"./helpers/unrelated\";\n",
+    },
+    head: { [route]: "export const POST = 2;\n" },
+  });
+  assert.deepEqual(result.requiredTests.map((entry) => entry.path).sort(), [
+    "apps/desktop/test/e2e/sessions-list-project-edit.spec.ts",
+    "e2e/sessions-linked-entity-columns.spec.ts",
+  ]);
+});
+
+test("route specs follow helper imports two hops and scan every e2e-named root", (t) => {
+  const route = "apps/api/app/artifact-links/batch-move/route.ts";
+  const result = run(t, {
+    base: {
+      [route]: "export const POST = 1;\n",
+      "e2e/helpers/paths.ts": "export const MOVE = \"/artifact-links/batch-move\";\n",
+      "e2e/helpers/move-flow.ts": "export { MOVE } from \"./paths\";\nimport { MOVE } from \"./paths.js\";\n",
+      "e2e/move-flow.spec.ts": "import { MOVE } from \"./helpers/move-flow\";\n",
+      "e2e-web-smoke/boot.spec.ts": "await request.post(\"/artifact-links/batch-move\");\n",
+      "packages/app/client.ts": "fetch(\"/artifact-links/batch-move\");\n",
+    },
+    head: { [route]: "export const POST = 2;\n" },
+  });
+  assert.deepEqual(result.requiredTests.map((entry) => entry.path).sort(), ["e2e-web-smoke/boot.spec.ts", "e2e/move-flow.spec.ts"]);
+  assert.match(result.requiredTests.find((entry) => entry.path === "e2e/move-flow.spec.ts").reason, /e2e\/helpers\/paths\.ts/);
 });

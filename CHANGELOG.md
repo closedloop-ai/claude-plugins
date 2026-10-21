@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.71
+
+The handoff's route rule (`diffRules.requiredTests`) now finds every e2e spec that reaches a changed API route. It scanned only the root `e2e/` directory and matched the endpoint against each file's own text, so a spec that reached the endpoint through a helper was missed and the helper itself was listed, though it cannot run. Two specs that pinned a changed route's request body this way went red on main after merge.
+
+#### Fixed
+- `routeSpecs` (`diff-rules.mjs`) scans every e2e suite root: any directory named `e2e`, `e2e-*` or `*-e2e`, at any depth, so Desktop, smoke and walk suites count. When a helper names the endpoint, it follows imports back up to three hops to the specs that use it and requires those; a helper is never listed. Each entry says which helper connects it.
+- The lost-story-ID reference scan searches the same e2e roots instead of root `e2e/` alone, so a Desktop e2e helper still naming a removed story ID blocks.
+
+#### Added
+- `test-files.mjs` exports `isE2ePath` and `E2E_ROOT_PATHSPECS`, the one definition of an e2e root both rules use.
+- Tests: a changed route with a web helper and a Desktop helper naming its endpoint, each imported by one spec, requires both specs and neither helper; a two-hop helper chain and an `e2e-*` root are followed; a Desktop e2e helper naming a lost story ID blocks.
+
 ### vibe v1.0.70
 
 codex-fleet-monitor recovers Codex sessions after a transient provider failure on its own, instead of printing `FAILED(ERROR)` and waiting for an orchestrator to wake. A provider overload ("Selected model is at capacity", `serverOverloaded`) left two writers' threads in the App Server's `systemError` state, where resume and new turns fail; only a daemon restart cleared them, hours later.

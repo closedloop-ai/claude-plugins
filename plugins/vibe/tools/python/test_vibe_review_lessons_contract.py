@@ -91,7 +91,8 @@ def test_lost_and_stale_story_ids_are_searched_and_block() -> None:
     assert "`lost-story-id` finding, a lost story ID or a reference still naming one, blocks too" in flat(HANDOFF_SKILL.read_text())
     rules = DIFF_RULES.read_text()
     assert '"lost-story-id"' in rules
-    for spec in ('"e2e/"', '"docs/"', '"apps/web/content/docs/"', '".claude/"', '"*.test.*"', '"*.stories.*"'):
+    assert "STORY_ID_PATHSPECS = [...E2E_ROOT_PATHSPECS," in rules
+    for spec in ('"docs/"', '"apps/web/content/docs/"', '".claude/"', '"*.test.*"', '"*.stories.*"'):
         assert spec in rules, spec
 
 

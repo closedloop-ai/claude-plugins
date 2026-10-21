@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { git } from "../../vibe/scripts/session-record.mjs";
-import { isTestFile } from "../../vibe/scripts/test-files.mjs";
+import { E2E_ROOT_PATHSPECS, isE2ePath, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
 import { isUnversionedStory, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 
 const PRIVATE_PLANS = ".closedloop-ai/vibe-plans/";
@@ -50,7 +50,7 @@ const IMPORT_SPECIFIER = /\b(?:from|import)\s*\(?\s*["']([^"']+)["']/g;
 const SOURCE_EXTENSIONS = ["", ".ts", ".tsx", ".js", ".mjs", "/index.ts", "/index.tsx"];
 const FROZEN_CANDIDATE = String.raw`v1\.0|deprecated`;
 const CLOSURE_LIMIT = 20000;
-const STORY_ID_PATHSPECS = ["e2e/", "docs/", "apps/web/content/docs/", ".claude/", "*.test.*", "*.spec.*", "*.stories.*"];
+const STORY_ID_PATHSPECS = [...E2E_ROOT_PATHSPECS, "docs/", "apps/web/content/docs/", ".claude/", "*.test.*", "*.spec.*", "*.stories.*"];
 const STORY_ID_WORD = /[A-Z]{2,}(?=[A-Z][a-z]|\b|\d)|[A-Z]?[a-z]+|[A-Z]|\d+/g;
 const HARNESS_NAME = /harness|adapter/i;
 const EXPECT_CALL = /\bexpect\(/;
@@ -74,6 +74,7 @@ const ENV_DUMP = [
 ];
 const JSX_MOUNT = /<([A-Z][A-Za-z0-9]*)\b/g;
 const RESTORE_LIMIT = 40;
+const ROUTE_SPEC_HOPS = 3;
 
 /** Parses `git diff --unified=0` output into per-file added and removed lines. */
 export function parseUnifiedDiff(text) {
@@ -344,8 +345,8 @@ function checkStories(files, allFiles, repo, logged, add) {
   }
 }
 
-/** A base-relative import specifier resolved to a file on the base, or undefined. */
-function resolveImport(from, specifier, baseFiles) {
+/** An import specifier resolved to a file in `files` (relative or `@repo/`), or undefined. */
+function resolveImport(from, specifier, files) {
   let stem;
   if (specifier.startsWith(".")) {
     stem = path.posix.join(path.posix.dirname(from), specifier);
@@ -355,7 +356,7 @@ function resolveImport(from, specifier, baseFiles) {
     return undefined;
   }
   stem = stem.replace(/\.js$/, "");
-  return SOURCE_EXTENSIONS.map((extension) => `${stem}${extension}`).find((candidate) => baseFiles.has(candidate) && SOURCE_FILE.test(candidate));
+  return SOURCE_EXTENSIONS.map((extension) => `${stem}${extension}`).find((candidate) => files.has(candidate) && SOURCE_FILE.test(candidate));
 }
 
 /**
@@ -437,22 +438,77 @@ function checkLostStoryIds(files, repo, add) {
   }
 }
 
-/** The e2e specs that name each changed API route's endpoint. */
+/**
+ * The e2e specs, under every e2e root, that reach each changed API route's
+ * endpoint: naming it themselves, or importing a helper that names it (up to
+ * ROUTE_SPEC_HOPS imports away). A helper is never listed; it cannot run.
+ */
 export function routeSpecs(files, repo) {
-  const specs = repo.headFiles.filter((file) => file.startsWith("e2e/") && SOURCE_FILE.test(file));
-  const required = [];
-  for (const file of files) {
+  const routes = files.flatMap((file) => {
     const match = API_ROUTE.exec(file.path);
-    if (!match) {
-      continue;
-    }
-    const segments = match[1].split("/").filter((segment) => !/^\(.*\)$/.test(segment));
-    const pattern = new RegExp(`/${segments.map((segment) => (/^\[.*\]$/.test(segment) ? "[^/\"'`?\\s]+" : escapeRegExp(segment))).join("/")}(?![\\w-])`);
-    for (const spec of specs.filter((candidate) => pattern.test(repo.head(candidate) ?? ""))) {
-      required.push({ path: spec, reason: `names the changed endpoint in ${file.path}; specs pin request bodies and untagged specs do not run on the pull request` });
+    return match ? [{ route: file.path, pattern: endpointPattern(match[1]) }] : [];
+  });
+  if (routes.length === 0) {
+    return [];
+  }
+  const e2eFiles = repo.headFiles.filter((file) => isE2ePath(file) && SOURCE_FILE.test(file));
+  const importers = e2eImporters(e2eFiles, repo);
+  const required = new Map();
+  for (const { route, pattern } of routes) {
+    for (const named of e2eFiles.filter((candidate) => pattern.test(repo.head(candidate) ?? ""))) {
+      for (const [spec, hops] of specsReaching(named, importers)) {
+        const via = hops === 0 ? "names" : `imports ${named}${hops > 1 ? ` (${hops} imports away)` : ""}, which names`;
+        if (!required.has(spec)) {
+          required.set(spec, { path: spec, reason: `${via} the changed endpoint in ${route}; specs pin request bodies and untagged specs do not run on the pull request` });
+        }
+      }
     }
   }
-  return required;
+  return [...required.values()];
+}
+
+function endpointPattern(routeDirectory) {
+  const segments = routeDirectory.split("/").filter((segment) => !/^\(.*\)$/.test(segment));
+  return new RegExp(`/${segments.map((segment) => (/^\[.*\]$/.test(segment) ? "[^/\"'`?\\s]+" : escapeRegExp(segment))).join("/")}(?![\\w-])`);
+}
+
+/** Each e2e file mapped to the e2e files that import it. */
+function e2eImporters(e2eFiles, repo) {
+  const known = new Set(e2eFiles);
+  const importers = new Map();
+  for (const file of e2eFiles) {
+    for (const found of (repo.head(file) ?? "").matchAll(IMPORT_SPECIFIER)) {
+      const target = resolveImport(file, found[1], known);
+      if (target && target !== file) {
+        importers.set(target, (importers.get(target) ?? new Set()).add(file));
+      }
+    }
+  }
+  return importers;
+}
+
+/** Specs that are `file` or import it within ROUTE_SPEC_HOPS, with their distance; the walk stops at a spec. */
+function specsReaching(file, importers) {
+  const reached = new Map();
+  const seen = new Set([file]);
+  let frontier = [file];
+  for (let hops = 0; frontier.length && hops <= ROUTE_SPEC_HOPS; hops += 1) {
+    const next = [];
+    for (const current of frontier) {
+      if (TEST_SPEC_PATTERN.test(current)) {
+        reached.set(current, hops);
+        continue;
+      }
+      for (const importer of importers.get(current) ?? []) {
+        if (!seen.has(importer)) {
+          seen.add(importer);
+          next.push(importer);
+        }
+      }
+    }
+    frontier = next;
+  }
+  return reached;
 }
 
 /** GridTableV2 parity tests read other files' source, so the graph never maps them. */
