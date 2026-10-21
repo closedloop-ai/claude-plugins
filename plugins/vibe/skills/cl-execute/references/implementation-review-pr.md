@@ -156,16 +156,16 @@ on leaving implementation using the [display reporter](../../cl-sweep/references
 ## Validation
 
 1. Run relevant focused tests, typecheck, lint, and `git diff --check`.
-2. In `symphony-alpha`, prefer repo-documented validation commands and
-   memory-backed launch paths over ad hoc commands. When the repository declares
+2. When the repository documents validation commands or memory-backed launch
+   paths, prefer them over ad hoc commands. When the repository declares
    an evidence-capture verification protocol (for example a repo-owned
    `control` skill), reproduce the ticket's user-visible behavior with it before
    editing and capture the same evidence after the fix; record the before/after
    artifact references as `Repo verification evidence`. This evidence supports,
    and never replaces, design visual QA, E2E, or human manual QA.
-   Repo verification evidence rule: in `symphony-alpha`, which declares the
-   `control` skill (`.claude/skills/control/SKILL.md`, Control Protocol), a
-   ticket with `UI work: YES` or any runtime behavior change must record before
+   Repo verification evidence rule: in a repository that declares a repo-owned
+   `control` skill with a `pnpm control` CLI as its protocol, a ticket with
+   `UI work: YES` or any runtime behavior change must record before
    and after artifact paths captured with `pnpm control` on every touched
    surface (web, desktop, or both). `not_applicable` is allowed only for a
    change with no user-visible or runtime behavior and must name its category:
@@ -385,8 +385,7 @@ fix, and manual-QA failure as a correction event in the documented format so
 the repository can decide whether it becomes an architecture change, a gate, a
 rule, or a skill. Append one JSON object per line to
 `~/.closedloop-ai/gardener/corrections.jsonl` (create the directory if needed),
-shaped as the repository's schema says (in `symphony-alpha`,
-`.claude/skills/gardener/references/correction-events.md`). The weekly gardener
+shaped as the repository's documented schema says. The weekly gardener
 automation reads that file. Record the appended event ids in the result.
 Emitting events never replaces the workflow-memory lesson above.
 
@@ -475,7 +474,7 @@ Record the assumption and its evidence in the decision log and under
    recitals, full SHAs, sample tables, and step-by-step logs
    in the plan or `CL Execute Result`, and link them instead of pasting them
    into the PR body. When the repository keeps a feature map that feature PRs
-   must not edit (in `symphony-alpha`, `.claude/skills/control/FEATURE_MAP.md`),
+   must not edit (for example a `FEATURE_MAP.md` owned by a repo `control` skill),
    add one `Feature map: <entry id>: <what changed>` line per affected entry to
    the PR description, and one when your own `pnpm control` drive shows an
    entry's How to reach or Expected behavior is already wrong.

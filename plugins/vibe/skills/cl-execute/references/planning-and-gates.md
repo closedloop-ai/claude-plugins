@@ -316,10 +316,10 @@ regression tickets, measurement evidence is part of acceptance.
    complaint and at a clearly smaller one, and show the metric separates. If the
    realistic case does not reproduce the slowness, fix the workload before
    changing code. Revert a rejected attempt in full before the next one, and
-   rerun the focused regression tests on every kept attempt. In
-   `symphony-alpha`, API/branch analytics latency work that depends on branch
-   analytics data uses the branch analytics perf fixture or a more specific
-   documented perf harness when one exists. For production DB evidence, prefer committed ops
+   rerun the focused regression tests on every kept attempt. When the
+   repository documents a perf fixture for the data the work depends on (for
+   example a branch analytics perf fixture for API/branch analytics latency
+   work), use it, or a more specific documented perf harness when one exists. For production DB evidence, prefer committed ops
    SQL/runbooks/psql patterns over ad hoc app code.
 7. Concurrent performance workers must use worker-isolated local databases or
    datastores; never share a mutable perf database with another active worker.

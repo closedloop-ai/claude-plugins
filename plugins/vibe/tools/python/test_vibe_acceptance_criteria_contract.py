@@ -38,9 +38,9 @@ def rule() -> str:
     return section(QUALITY.read_text(), HEADING)
 
 
-def test_the_rule_is_dated_and_canonical() -> None:
+def test_the_rule_is_canonical() -> None:
     text = rule()
-    assert "operator ruling, 2026-10-14" in text
+    assert "has been checked against the code" in text
     assert "This section is the rule's one canonical statement" in text
     assert "Heavy QA still waits for handoff." in text
 

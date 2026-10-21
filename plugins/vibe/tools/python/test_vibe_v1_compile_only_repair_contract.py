@@ -31,7 +31,6 @@ TICKET_TEMPLATE = VIBE / "references" / "ticket-template.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
 README = PLUGIN_ROOT / "README.md"
-RULING = "design ruling, 2026-10-15"
 EXCEPTION = (
     "The one exception is a compile-only repair after a rename elsewhere: only mechanical changes (prop renames, "
     "imports, types), no story added or removed, no title, story ID or tag change and no visual change, since the "
@@ -46,7 +45,7 @@ def test_the_placement_owner_states_the_exception_in_full_once() -> None:
     order = paragraph(agent("vibe-storybook-decomposer"), "4. Decide in this order")
     assert EXCEPTION in order
     assert order.index("is frozen and never edited, not even to add a story") < order.index(EXCEPTION)
-    assert f"First ({RULING})" in order
+    assert "- First: a change to an existing component" in order
     holders = [path.name for path in sorted(PLUGIN_ROOT.rglob("*.md")) if EXCEPTION in flat(path.read_text())]
     assert holders == ["vibe-storybook-decomposer.md"]
 
@@ -78,7 +77,7 @@ def test_the_writer_never_avoids_a_rename_and_logs_the_repair() -> None:
     assert (
         "Never avoid a rename to protect a v1.0 story file; when a rename breaks one, repair it with only prop "
         "renames, imports and types, no story added or removed and no title, story ID, tag or visual change, and "
-        f"log `Compile-only repair to v1.0: <file>` in the change log ({RULING})."
+        "log `Compile-only repair to v1.0: <file>` in the change log."
     ) in writer
 
 
@@ -106,7 +105,7 @@ def test_the_ticket_worker_places_each_repair_once_on_the_engineering_checklist(
     rule = paragraph(template, "- Compile-only v1.0 repairs:")
     assert (
         "each file in the handoff inventory's `compileOnlyV1Repairs` goes once at the end of the Engineering "
-        f"checklist as {CHECKLIST_SHAPE} ({RULING})."
+        f"checklist as {CHECKLIST_SHAPE}."
     ) in rule
     assert (
         "| Engineering checklist | `vibe-ticket-worker` | session start; handoff appends engineering conflicts, "

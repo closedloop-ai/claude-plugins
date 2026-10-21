@@ -1,11 +1,11 @@
 # Preflight fixes
 
-The preflight finds the symphony-alpha checkout wherever it lives in the home
+The preflight finds the repository's checkout wherever it lives in the home
 folder (by its git remote `closedloop-ai/symphony-alpha`, not its folder
 name) and remembers it in `~/.codex/vibe/config.json`. Every later run and
 `vibe-sessions.mjs` use that remembered checkout. Paths can contain spaces
-(for example `~/Documents/Closedloop.ai - Active Work/symphony-alpha`), so
-quote every path in every command.
+(for example a checkout inside a folder named `Active Work`), so quote every
+path in every command.
 
 Vibe sessions run on a Vercel environment, not a local web stack, so the
 preflight does not check Docker; `gh` matters because workers push the
@@ -13,14 +13,19 @@ session's branch and start its environment through GitHub.
 
 `scripts/vibe-preflight.sh` reports each failure with a `fix` key. Apply the
 matching fix below, then re-run the script. Run fixes yourself in the terminal.
-Keep the selected preflight arguments on every rerun: preserve `--runtime codex`
-or `--runtime claude` for the active harness and any explicit `--codex` CLI path.
-Common/prototype checks keep `--prototype`, while app preflight omits it. Codex
-otherwise uses its PATH executable or the ChatGPT app's bundled CLI, as in the
-installation guide. Missing Node uses the ordinary `install-node` fix before
-the core check can run. Repo choice and cloning
-replace the `--repo` path but preserve `--prototype` when selected. A prototype
-does not need the app's public PostHog key.
+
+Keep the selected preflight arguments on every rerun:
+
+- Preserve `--runtime codex` or `--runtime claude` for the active harness and
+  any explicit `--codex` CLI path. Codex otherwise uses its PATH executable or
+  the ChatGPT app's bundled CLI, as in the installation guide.
+- Common/prototype checks keep `--prototype`, while app preflight omits it. A
+  prototype does not need the app's public PostHog key.
+- Repo choice and cloning replace the `--repo` path but preserve `--prototype`
+  when selected.
+- Missing Node uses the ordinary `install-node` fix before the core check can
+  run.
+
 Never use Computer Use (`guardrails.md`, "Processes and state"): a dialog
 that needs a click is the person's, asked in one plain line. Never type,
 store, or ask for a password or token; when an installer asks for the Mac
@@ -39,10 +44,10 @@ installing <thing>; type it in the prompt" and wait.
 | `brew-install-gh` | `brew install gh`, then apply `gh-auth-login`. |
 | `claude-auth-login` | Claude Code only: the `claude` command that runs this session's workers is signed out. Return `NEEDS_PERSON` with exactly: "Your Claude sign-in on this Mac has run out, so I can't start the helpers that build your change. Open the Terminal app (press Cmd and Space, type Terminal, press Return), type claude auth login and press Return, then finish signing in in the browser window that opens. Tell me when you're done." Never give `claude /login` instead: it opens a full Claude session in the Terminal that prints the project's permission rules and asks about project connections. Re-run the preflight once they say they're done. |
 | `gh-auth-login` | `gh auth login --hostname github.com --git-protocol https --web`. It prints a one-time code and opens the browser. Give the person the code to paste and ask them to click Authorize, signing in to GitHub there first when needed. Then `gh auth setup-git`. |
-| `choose-repo` | More than one symphony-alpha checkout was found (the `detail` lists them, separated by a vertical bar). Resolve the active workspace or recorded session through current evidence, then rerun with `--repo "<chosen folder>"`. If it remains ambiguous, return `BLOCKED` internally rather than asking the person a technical checkout question or guessing. |
+| `choose-repo` | More than one checkout of the repository was found (the `detail` lists them, separated by a vertical bar). Resolve the active workspace or recorded session through current evidence, then rerun with `--repo "<chosen folder>"`. If it remains ambiguous, return `BLOCKED` internally rather than asking the person a technical checkout question or guessing. |
 | `allow-folder-access` | macOS did not let Codex look inside the folders in `detail`. Return `NEEDS_PERSON`: "Your Mac is asking whether Codex can open your <folder> folder; click Allow." If no prompt appears, they allow it in System Settings, Privacy & Security, Files and Folders, under Codex. Then re-run the preflight. Never clone while this is unresolved; the checkout may be in that folder. |
 | `clone-repo` | Only when the preflight found no checkout anywhere in the home folder: `mkdir -p "$HOME/Source" && gh repo clone closedloop-ai/symphony-alpha "$HOME/Source/symphony-alpha"`, run the preflight with `--repo "$HOME/Source/symphony-alpha"` so it is remembered, then apply `run-loops-setup`. |
-| `ask-for-repo-path` | The folder given with `--repo` is not a symphony-alpha checkout (its git remote is not `closedloop-ai/symphony-alpha`). Resolve the active workspace or recorded checkout internally. Return `BLOCKED` with the evidence if unresolved; never ask a technical folder question or clone another copy while an existing checkout may be present. |
+| `ask-for-repo-path` | The folder given with `--repo` is not a checkout of the repository (its git remote is not `closedloop-ai/symphony-alpha`). Resolve the active workspace or recorded checkout internally. Return `BLOCKED` with the evidence if unresolved; never ask a technical folder question or clone another copy while an existing checkout may be present. |
 | `posthog-key-missing` | Neither the checkout's `apps/app/.env.local` nor the production app's page gave the public PostHog key the flag snapshot needs (`detail` says why; usually no network). Check the Mac is online and re-run the preflight. If it still fails, tell the person "I can't reach the product's analytics settings right now; engineering can help." and show `detail` to engineering. Never ask the person for a key or a Vercel sign-in. |
 | `run-loops-setup` | In the remembered checkout (`repo` detail; quote the path, it can contain spaces): `git -C "<repo>" pull --ff-only origin main` only if the working tree is clean, then `cd "<repo>" && ./.closedloop-ai/loops-setup.sh`. If it reports missing env values, show the exact names to engineering rather than guessing values. |
 

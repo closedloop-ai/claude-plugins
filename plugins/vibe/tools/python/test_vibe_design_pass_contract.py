@@ -96,7 +96,7 @@ def test_prep_is_a_bounded_lookup_with_defined_fields() -> None:
     assert "`pnpm control feature show <id>`" in prep
     assert "`.claude/skills/control/feature-map.json`" in prep
     assert "`packages/design-system/storybook/component-catalog.ts`" in prep
-    assert "`workflow-memory query --summary-only --repo symphony-alpha" in prep
+    assert "`workflow-memory query --summary-only --repo <repo> --query" in prep
     assert "`packages/app/AGENTS.md`" in prep
     assert "`Prep: trivial`" in prep
     for field in PREP_FIELDS:

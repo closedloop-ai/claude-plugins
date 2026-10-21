@@ -27,7 +27,7 @@ maintenance, terminal-owner removal, and legacy split-state handling. Read
 
    | Ticket tag | Repo skill the user runs |
    | --- | --- |
-   | `feature-map` | `feature-map-refresh` (symphony-alpha; the only non-CI writer of FEATURE_MAP.md) |
+   | `feature-map` | `feature-map-refresh` (the repository's only non-CI writer of FEATURE_MAP.md) |
 
    Before seeding or resuming any ticket from that universe, apply the current
    root's `scope-exclusions.json` as a hard negative allowlist. Preserve an

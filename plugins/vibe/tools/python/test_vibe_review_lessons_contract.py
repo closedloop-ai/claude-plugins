@@ -25,7 +25,6 @@ VIBE_SKILL = PLUGIN_ROOT / "skills" / "vibe" / "SKILL.md"
 INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.mjs"
 DIFF_RULES = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "diff-rules.mjs"
 CL_EXECUTE_PR = PLUGIN_ROOT / "skills" / "cl-execute" / "references" / "implementation-review-pr.md"
-RULING = "operator ruling, 2026-10-16"
 
 
 def assert_all(text: str, required: tuple[str, ...]) -> None:
@@ -44,7 +43,7 @@ def reviewer_check(number: int) -> str:
 def test_main_sync_capability_removal_is_a_reviewer_check_on_every_merge() -> None:
     check = reviewer_check(13)
     assert_all(check, (
-        RULING,
+        "unless the ticket or a cited human ruling retires it",
         "check every main-sync merge in the session, not only the latest",
         "--merges",
         "diff the merge result against main's side",
@@ -106,7 +105,7 @@ def test_a_slot_alone_is_not_a_shared_owner() -> None:
     check = reviewer_check(8)
     assert_all(check, (
         "Slot without an owner",
-        "Two children that each hold their own copy behind the parent's slot is blocking, the ISS-12137 red flag",
+        "Two children that each hold their own copy behind the parent's slot is blocking",
         "Private copies",
         "a duplicated band or status icon map",
     ))
@@ -129,7 +128,7 @@ def test_each_acceptance_criterion_maps_to_every_surface_it_names() -> None:
 def test_nothing_agent_written_goes_into_public_docs() -> None:
     docs = section(GUARDRAILS.read_text(), "## Feature docs at handoff")
     assert_all(docs, (
-        f"Nothing agent-written goes into public docs ({RULING}).",
+        "Nothing agent-written goes into public docs. This section is the rule's one canonical statement",
         "No worker edits, creates or drafts anything under `apps/web/content/docs/`",
         "it never carries drafted words",
         "reports any change under either folder as outside the allowed paths in every phase",
@@ -268,13 +267,13 @@ def test_an_outdated_plugin_question_comes_before_the_endings_line() -> None:
 
 
 def test_reuse_and_wording_checks_grep_shared_owners_first() -> None:
-    assert "`shared/auth` included) and the existing `use-*` hooks (such as `use-tags`)" in reviewer_check(1)
+    assert "(its auth helpers included) and the existing `use-*` hooks" in reviewer_check(1)
     assert "a second spelling of wording a shared helper or label map already renders is blocking" in reviewer_check(4)
     check = reviewer_check(7)
     assert "any `as` cast, stories included" in check
-    assert "`rg` that literal across `apps/app`, `apps/desktop/src/renderer` and `packages/app`" in check
+    assert "`rg` that literal across every host that renders the surface (web and Desktop) and the shared app package" in check
     writer = flat(agent("vibe-change-worker"))
-    assert "`rg` `packages/app/shared` (`shared/auth` included) and the existing `use-*` hooks (such as `use-tags`)" in writer
+    assert "`rg` the repo's shared app hooks and helpers (its auth helpers included) and the existing `use-*` hooks" in writer
 
 
 def test_pr_body_files_are_named_per_ticket_and_read_back_before_gh() -> None:

@@ -181,7 +181,7 @@ Group both confirmed and uncertain tickets beneath their respective project slug
 ## Invocation Examples
 
 ```text
-$cl-find-related-tickets Branches list and branch details work in symphony-alpha. Known set: FEA-100, FEA-101. Report only newly found nonterminal tickets.
+$cl-find-related-tickets Branches list and branch details work in the web app. Known set: FEA-100, FEA-101. Report only newly found nonterminal tickets.
 ```
 
 ```text

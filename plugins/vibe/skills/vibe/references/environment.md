@@ -1,11 +1,11 @@
 # The vibe environment
 
-Each vibe session runs on its own Vercel environment (ISS-12056): the web
+Each vibe session runs on its own Vercel environment: the web
 app, the API, and Storybook deployed from the session's `vibe/<slug>` branch
 as production builds, backed by the session's own throwaway data in the stage
 database (its own preview schema, which nothing removes automatically: it
-stays until the session is thrown away, ISS-12135). Nothing
-of the web app runs on this Mac. `just vibe-up` stays in symphony-alpha for
+stays until the session is thrown away). Nothing
+of the web app runs on this Mac. `just vibe-up` stays in the repository for
 the team's local checks; the vibe skill never uses it.
 
 ## Seeded or blank
@@ -82,14 +82,13 @@ alone, or `<storybook-base>/?path=/story/<story-id>` for one story. The base
 is the verified Vercel `storybookUrl` or the local `storybookUrl` in the
 session's stack. Never give the bare canvas,
 `<storybook-base>/iframe.html?id=<story-id>&viewMode=story`, which shows the
-story without the sidebar or controls (operator ruling, 2026-10-14,
-after the PRD-720 session sent that form). This section is the rule's one
+story without the sidebar or controls. This section is the rule's one
 canonical statement; the skills, the ticket template and the workers point at
 it.
 
 ## The production flag snapshot
 
-Taken once, when the environment is created (ISS-12048): every feature flag's
+Taken once, when the environment is created: every feature flag's
 production value, evaluated in PostHog with the public project key (`phc_`)
 as the person's real account (their Clerk user id, the PostHog distinct id)
 and real ClosedLoop org. PostHog is one project for stage and production, so
@@ -170,7 +169,7 @@ the session worktree, leaving no tracked file behind.
   reference has another width, take the screenshot with the throwaway script
   at the reference image's width.
 - **Light and dark.** The final state is captured in both themes wherever the
-  surface supports both (operator ruling, 2026-10-16): it renders inside the
+  surface supports both: it renders inside the
   app or Desktop shell, or its stylesheet has a `.dark` or
   `prefers-color-scheme: dark` block. A story: its canvas URL once with
   `&globals=theme:light` and once with `&globals=theme:dark` (the Storybook
@@ -227,8 +226,8 @@ repo). `<api>` and `<app>` are the session's `vercel.apiUrl` and
 6. Record the launch (the pid `echo $!` printed) and that URL on the
    session: `vibe-sessions.mjs desktop-launched --worktree "<wt>" --pid <pid> --log "<gitdir>/vibe-desktop.log"`.
    It reads the URL from the log and keeps anything else the stack lists. A
-   worktree whose `vibe:profile launch` predates the browser tab
-   (symphony-alpha before ISS-12182) logs the window but no URL: the launch is
+   worktree whose `vibe:profile launch` predates the browser tab logs the
+   window but no URL: the launch is
    recorded with no URL and Desktop keeps running as its own window, as it
    did before the tab existed.
 
@@ -322,14 +321,12 @@ not silently included or discarded. A clean result needs no extra local commit.
    It runs `node <plugin-root>/skills/vibe/scripts/vibe-sessions.mjs main-sync-validate --worktree "<wt>"`
    with the granted context on stdin. The shared executor runs the existing
    scope/phase command matrix and records actual results at committed HEAD.
-   Its affected test selection is pinned to the captured `mainSha` (operator
-   ruling, 2026-10-16), so only the session's own HEAD or tree changing, or a
+   Its affected test selection is pinned to the captured `mainSha`, so only the session's own HEAD or tree changing, or a
    rewritten `origin/main`, invalidates it, never `origin/main` advancing.
    At handoff a failing check is run again on the captured `mainSha` in one
    disposable bootstrapped checkout, bounded by `run-bounded.mjs`; one that
    also fails there is `main-preexisting` and does not block publication
-   (`quality-loop.md`, "Failures already on main"; operator ruling,
-   2026-10-16). Its recipe binds that comparison's reserve, so the Claude
+   (`quality-loop.md`, "Failures already on main"). Its recipe binds that comparison's reserve, so the Claude
    envelope covers it.
    A check that changes source returns to this writer/root commit/recheck
    sequence; a known generated-output change gets one bounded whole-matrix
@@ -425,7 +422,7 @@ main repeatedly while CI waits. Changed source/new preparation invalidates proof
   the SAME persistent writer in fix mode, then redeploy. Never skip the checks.
 - A problem with this Mac (a missing or signed-out tool): fix it per
   `preflight.md`.
-- A bug in symphony-alpha itself that stops local Storybook or Desktop
+- A bug in the repository itself that stops local Storybook or Desktop
   starting: setup diagnoses and files/reuses the existing ticket, without
   editing code. The SAME persistent writer makes the smallest managed local
   workaround in this session worktree, records every changed file with

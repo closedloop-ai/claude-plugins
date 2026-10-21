@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Finish a vibe session in symphony-alpha and hand it to whoever picks it up next, usually design and then engineering. Through workers, completes internal scope and Storybook checks, runs lint, typecheck and the existing tests without writing any (it lists the missing tests for engineering), lists the existing product docs pages a human needs to update without editing any, reviews the integrated result and fixes confirmed findings, and verifies each touched screen in the running web app and Desktop with the repo's control skill. Settles in plain words how the session ends: a pull request the person takes through review and merge (plain-language intent such as "I'll get the PR merged" counts as asking for one), or passing it to someone, asking for a name or email only then. Checks the live ticket is complete, publishes the final app environment or canonical prototype preview, then either opens the requested pull request as its last step with the ticket left with the person, or assigns the ticket to the next owner, status left In Progress either way. When the person later asks for changes on that pull request, resumes the session so the same writer fixes it, reruns the guardrails review and checks, pushes to the same branch, refreshes the pull request body and answers each review thread with the fixing commit. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
+description: Finish a vibe session and hand it to whoever picks it up next, usually design and then engineering. Through workers, completes internal scope and Storybook checks, runs lint, typecheck and the existing tests without writing any (it lists the missing tests for engineering), lists the existing product docs pages a human needs to update without editing any, reviews the integrated result and fixes confirmed findings, and verifies each touched screen in the running web app and Desktop with the repo's control skill. Settles in plain words how the session ends: a pull request the person takes through review and merge (plain-language intent such as "I'll get the PR merged" counts as asking for one), or passing it to someone, asking for a name or email only then. Checks the live ticket is complete, publishes the final app environment or canonical prototype preview, then either opens the requested pull request as its last step with the ticket left with the person, or assigns the ticket to the next owner, status left In Progress either way. When the person later asks for changes on that pull request, resumes the session so the same writer fixes it, reruns the guardrails review and checks, pushes to the same branch, refreshes the pull request body and answers each review thread with the fixing commit. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
 ---
 
 # Handoff
@@ -10,7 +10,7 @@ orchestrate making it safe and complete for the next people, without asking
 them to understand any of the engineering. The session's live ClosedLoop
 ticket was created when the session started and the workers kept it current;
 handoff checks it is complete rather than writing it. The session ends one
-of two ways (operator ruling, 2026-10-15). The person can ask for a pull
+of two ways. The person can ask for a pull
 request they take through review and merge themselves ("A requested pull
 request"): handoff opens it as its last step and the ticket stays with them.
 Or they pass it to someone, and the ticket is assigned to whoever they name.
@@ -56,7 +56,7 @@ fix and never stops the handoff: it is recorded for engineering and the handoff
 goes on (`../vibe/references/quality-loop.md`, "Failures already on main").
 Only a failure the session caused blocks.
 
-Handoff authors no tests (`../vibe/references/guardrails.md`, "Tests"; operator ruling, 2026-10-13). It runs the existing affected tests, and when one
+Handoff authors no tests (`../vibe/references/guardrails.md`, "Tests"). It runs the existing affected tests, and when one
 fails the SAME persistent `vibe-change-worker` fixes the session's own code,
 never what the test asserts; it only repairs an existing test or fixture the
 session's change broke ("Repair, don't author"). The tests the session still
@@ -164,7 +164,7 @@ change worker has not handled; it refuses one with `NEEDS_CHANGE`.
 Without the person's explicit request for a pull request, nothing in vibe or
 handoff writes a test. The person asks in plain words, and plain-language
 intent to take the work through review and merge themselves IS that request
-(`../vibe/references/guardrails.md`, "Tests"; operator ruling, 2026-10-15):
+(`../vibe/references/guardrails.md`, "Tests"):
 "raise a PR", "open a pull request", "I'll get the PR merged", "I'll get it
 merged", "I'll ship it myself", "I want to take it through review", or
 choosing the pull request in step 0's question. Words like these take this
@@ -207,11 +207,10 @@ If the session has no `liveTicket` (it started before live tickets existed),
 dispatch `vibe-ticket-worker` in create mode first; it records the slug on
 the session. If it is `handed-off`, first dispatch `vibe-ticket-worker` in
 plan mode with `mergeCheck: true` when its `livePlanStatus` is `APPROVED`, so
-a merged pull request moves the PLN to `EXECUTED` (operator ruling,
-2026-10-19). When its pull request is still open, read its threads first
+a merged pull request moves the PLN to `EXECUTED`. When its pull request is still open, read its threads first
 (`vibe-environment-worker`, `reviewThreads: read`) on every look: any
 `awaitingReply` thread starts section 10, "Changes on the open pull request",
-unasked (operator lesson, 2026-10-19). Otherwise tell the person it is
+unasked. Otherwise tell the person it is
 already finished and stop, unless they are asking for changes on the pull
 request it opened: then follow section 10.
 
@@ -285,7 +284,7 @@ requested pull request").
 Run `node scripts/handoff-inventory.mjs --worktree "<wt>" --phase handoff` (the JSON stays out
 of the chat). Its `backendChanged` picks how hard the work is checked: the
 lighter checks when the session changed no backend code (`backendFiles`, such
-as `apps/api`, `packages/api`, `packages/database`, Desktop's main process,
+as the API app, shared API types, the database package, Desktop's main process,
 and any migration), the backend checks when it did. If a later inventory run
 reports `backendChanged` true (a fix or a behavior answer added backend code),
 use the backend checks from then on and update the internal checklist.
@@ -310,7 +309,7 @@ The inventory from step 1 covers the session's redeploy commits and anything
 not committed yet. Dispatch `vibe-handoff-summarizer` with the worktree and
 the inventory path.
 
-The inventory's `localFixes` are managed local workarounds for symphony-alpha
+The inventory's `localFixes` are managed local workarounds for repository
 bugs, each with its owning ticket. Historical entries may be setup-authored;
 new entries are authored only by the SAME persistent implementation writer. They
 are not the person's work: the inventory already leaves them out of
@@ -342,15 +341,16 @@ genuinely needed is removed and logged as
 "What may change"), and the ticket worker puts it on the Engineering
 checklist. A finding marked `engineering decision` follows step 6's rule
 for decisions. A removal never silently undoes a visible change the person
-already saw (operator ruling, 2026-10-15: an approved bold heading needed a
-font generator outside the allowed paths and handoff reverted it without a
-word). When it does, tell the person in one plain line which part will
-look different until engineering makes it, the affected criterion goes back
-to `not met yet` with that reason, and the touched screen is rendered again
-in the verify worker's control mode on the final commit, never left as last
-seen. Re-run
-inventory and independent read-only guardrails
-checks. Keep the writer's Design blocks for the ticket. A flag key without
+already saw (for example, an approved heading style that needed a change
+outside the allowed paths). When a removal does undo one:
+
+- tell the person in one plain line which part will look different until
+  engineering makes it;
+- the affected criterion goes back to `not met yet` with that reason;
+- the touched screen is rendered again in the verify worker's control mode on
+  the final commit, never left as last seen.
+
+Re-run inventory and independent read-only guardrails checks. Keep the writer's Design blocks for the ticket. A flag key without
 the person's recorded yes gets its approval question once, as the vibe
 skill's section 7 says; with no yes the writer removes the gate.
 
@@ -368,14 +368,14 @@ story file is never edited beyond a compile-only repair and any other existing
 story file keeps its title and tag
 (`../vibe/references/guardrails.md`, "Storybook taxonomy"); the inventory's
 `v1Stories` and `retitledStories` block handoff, judged by the scheme of the
-session's base (`storybookScheme`: from symphony-alpha #8867 on, the
+session's base (`storybookScheme`: under the lifecycle scheme, the
 `<Level> v1.0/` roots and the `deprecated` tag are v1.0). Its `compileOnlyV1Repairs`
 do not; the ticket worker puts each on the Engineering checklist. Every
 `lost-story-id` finding, a lost story ID or a reference still naming one,
-blocks too (operator ruling, 2026-10-16, after a stale ID from
-symphony-alpha #8886 broke an e2e spec); the SAME writer fixes them. Story files
+blocks too, because a stale ID breaks any spec that still names it; the SAME
+writer fixes them. Story files
 under the `Start Here/` root are exempt from the v1.0 freeze and the title,
-tag and retitle checks (design ruling, 2026-10-06): Start Here is unversioned
+tag and retitle checks: Start Here is unversioned
 and its Version History is edited by every Storybook release. Resume the SAME writer to perform every extraction, story and catalog
 source change. Read-only verify footprint mode measures the sidebar and
 reports remaining problems; they return to the writer, never another author.
@@ -420,9 +420,7 @@ browser/Electron windows. Record exact unsupported local limitations.
 ### Existing feature docs
 
 Nothing agent-written goes into public docs (`../vibe/references/guardrails.md`,
-"Feature docs at handoff"; operator ruling, 2026-10-16, after an
-agent-drafted paragraph was committed to a product docs page in
-symphony-alpha #8885). In the same handoff continuation the SAME writer only
+"Feature docs at handoff"). In the same handoff continuation the SAME writer only
 records which existing product docs pages under `apps/web/content/docs/`
 describe a feature this session changed, with the passage that no longer
 matches, or that no page covers them, for the ticket's Feature docs line. It
@@ -476,7 +474,7 @@ live ticket's Engineering checklist (`../vibe/references/ticket-template.md`,
 
 On a requested pull request, lighter and backend alike, the repo's
 `review-soul` critic is REQUIRED on the tests the writer wrote in its
-`pull-request` turn (operator ruling, 2026-10-16), not optional: give it
+`pull-request` turn, not optional: give it
 those test files and the code they cover. It checks above all that each
 test can fail when the behavior it names breaks and that no test name claims
 more than its assertions pin. Its confirmed findings resume the SAME writer
@@ -485,16 +483,21 @@ push, until its rerun on the corrected tests is clean.
 
 ### Browser E2E and the repository's QA passes
 
-These run here and never in the build loop (operator ruling,
-2026-10-13). Browser E2E runs headless in step 5's checks and step 7's
-validation. Every e2e spec the session touched, and every spec covering a
-touched screen, and no other spec, runs through the repo's containerized path
-(the `local-ci` skill's `dagger call e-2-e`) in the verify worker's checks
-mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the
-verify worker's "Existing checks"), never natively on the person's Mac; a missing Docker or Dagger is recorded as that
-exact limitation, never a pass (operator ruling, 2026-10-16). No worker
-claims what CI runs or ran without first reading
-`.github/pr-test-event-tiers.md` and citing the job's tier. For the screens the session touched, run the repository's own
+These run here and never in the build loop. Browser E2E runs headless in
+step 5's checks and step 7's validation:
+
+- Run every e2e spec the session touched, and every spec covering a touched
+  screen, and no other spec.
+- Run them through the repo's containerized path (the `local-ci` skill's
+  `dagger call e-2-e`) in the verify worker's checks mode, one stack per machine through `../vibe/scripts/e2e-lock.mjs` (the verify worker's
+  "Existing checks"), never natively on the person's Mac.
+- A missing Docker or Dagger is recorded as that exact limitation, never a
+  pass.
+
+No worker claims what CI runs or ran without first reading
+`.github/pr-test-event-tiers.md` and citing the job's tier.
+
+For the screens the session touched, run the repository's own
 read-only passes where its root `AGENTS.md` calls for them on this change:
 visual QA (`/visual-qa` in Claude Code, `$visual-qa` in Codex) for a UI
 change, against the session's acceptance criteria when the ticket or its PRD
@@ -533,9 +536,9 @@ commit (nothing is squashed or amended):
 (under 72 characters, no mention of AI tools). `committed: false` means
 nothing changed. A commit the hook refused goes back to step 5's fixing, then
 this step again. Every main sync is checked for capability removal, this one
-included (operator ruling, 2026-10-16, after a main sync in symphony-alpha
-#8886 made a shipped editable Desktop control read-only): once the merge is
-committed, dispatch `vibe-guardrails-reviewer` for its check 13 on that
+included, because a merge can quietly take away something main ships (for
+example, turn an editable control read-only). Once the merge is committed,
+dispatch `vibe-guardrails-reviewer` for its check 13 on that
 merge and rerun the inventory's `requiredChecks` on the merged tree; a
 blocking finding goes back to the SAME writer, then this step again.
 Resume the SAME writer's source-owned `progress` continuation
@@ -544,7 +547,7 @@ with parent-controlled handoff purpose/transaction to execute
 
 A handoff check that fails is compared against the captured `mainSha` by the
 executor itself (`../vibe/references/quality-loop.md`, "Failures already on
-main"; operator ruling, 2026-10-16). A result that lists
+main"). A result that lists
 `mainPreexistingFailures` still has `publicationReady: true`: continue with the
 redeploy below, carry every entry to step 8's ticket worker as a Known main
 failure, never send it to the writer as a fix, never stop and never ask the
@@ -610,7 +613,7 @@ when a baseline exists, and returns each artifact path with what it proves.
 
 A static or generated page control cannot drive (an HTML page a script or a
 main-process module writes, such as Desktop's sign-in return page) is
-rendered directly instead (operator ruling, 2026-10-16): the verify worker
+rendered directly instead: the verify worker
 produces its HTML with the repo's own generator, opens it headless and
 captures it in light and dark wherever it supports both. "Could not drive" is
 not accepted for such a page. Any other surface it can neither drive nor
@@ -766,7 +769,7 @@ Grading sections, reconciles the backend sections, attaches the files,
 verifies the source link (source PRODUCES ticket), the PLN, its link (ticket
 PRODUCES PLN) and that the PLN matches the current local plans, repairs any
 that is missing or stale, and leaves the PLN `APPROVED` before a pull request
-opens (operator ruling, 2026-10-19), then runs
+opens, then runs
 `scripts/live-ticket-check.mjs`, which refuses a session with local plans and
 no `APPROVED` PLN recorded. It returns:
 
@@ -835,9 +838,8 @@ Storybook is broken, and do not try to get around it.
 ## 10. Changes on the open pull request
 
 A pull request handoff opened for the person is not the end of the work when
-someone asks for changes on it (operator ruling, 2026-10-16). Before this
-path existed, review fixes on a vibe pull request happened outside vibe: the
-pull request body was never refreshed and nothing reran the guardrails. When
+someone asks for changes on it. Review fixes made outside this path leave the
+pull request body stale and skip the guardrails. When
 the person asks for changes on their vibe pull request ("please fix the
 review comments", "engineering asked for changes on my PR", a link to the
 pull request, or engineering's request passed on through them), the session

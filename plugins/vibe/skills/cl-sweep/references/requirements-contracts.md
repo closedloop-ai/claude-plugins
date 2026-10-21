@@ -53,13 +53,6 @@ does not turn `BLOCKED` or `UNKNOWN` readiness into `PASS`. An external,
 other-owner, out-of-scope, or unverified dependency remains blocking until live
 evidence resolves it or the exact ownership/scope transfer is authorized.
 
-When branch list, branch detail, branch metrics, selected-PR, Branch evidence,
-date-window, denominator, partial/unavailable, zero/unavailable, or web/Desktop
-Branch contracts are touched, require the worker to check the change against the
-applicable PRD-600, PRD-601, and PRD-602 versions and exact requirement IDs. Do
-not accept review feedback or implementation shortcuts that create drift from
-those established requirements.
-
 ## Link Reconciliation
 
 Do not execute while the requirements-contract result is ambiguous.

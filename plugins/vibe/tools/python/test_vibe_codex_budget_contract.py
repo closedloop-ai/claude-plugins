@@ -56,7 +56,7 @@ def test_usage_limits_stop_both_harnesses_unless_credits_were_allowed() -> None:
 def test_verify_worker_runs_only_targeted_tests() -> None:
     text = agent("vibe-verify-worker")
     checks = section(text, "## Existing checks")
-    assert "only the tests closedloop-graph's `code_tests_for` returns for each changed file" in checks
+    assert "Only the tests closedloop-graph's `code_tests_for` returns for each changed file" in checks
     assert "Never run `pnpm test`, `pnpm verify`, `pnpm test:affected`" in checks
     assert "## Full-suite mode" not in text
     assert "`full-suite`" not in text

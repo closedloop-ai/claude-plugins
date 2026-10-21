@@ -1,12 +1,12 @@
 ---
 name: vibe-seed-refresh
-description: Keep symphony-alpha's vibe seed (the throwaway, fully seeded data behind `just vibe-up` and the vibe skill's seeded Vercel environments) in step with main. Checks fresh main for seed drift (models marked todo, models with no coverage file, a failing seed, a red Vibe Seed Walk run on main); when drift exists it creates a ClosedLoop ticket and marks it IN_PROGRESS, has workers fix the seed in a fresh worktree and open a PR, monitors it with gh-monitor-pr until green, enables auto-merge into the merge queue, keeps monitoring until it merges, then marks the ticket DONE. Built for Codex Desktop. Use when asked to "refresh the vibe seed", "check the seed", "update the seeded db", or on a schedule.
+description: Keep the repository's vibe seed (the throwaway, fully seeded data behind `just vibe-up` and the vibe skill's seeded Vercel environments) in step with main. Checks fresh main for seed drift (models marked todo, models with no coverage file, a failing seed, a red Vibe Seed Walk run on main); when drift exists it creates a ClosedLoop ticket and marks it IN_PROGRESS, has workers fix the seed in a fresh worktree and open a PR, monitors it with gh-monitor-pr until green, enables auto-merge into the merge queue, keeps monitoring until it merges, then marks the ticket DONE. Built for Codex Desktop. Use when asked to "refresh the vibe seed", "check the seed", "update the seeded db", or on a schedule.
 ---
 
 # Vibe seed refresh
 
 The vibe seed fills a throwaway database and Desktop profile from code in
-symphony-alpha: locally for `just vibe-up`, and in each seeded vibe session's
+the repository: locally for `just vibe-up`, and in each seeded vibe session's
 Vercel environment. Every Prisma model has a coverage file saying whether the
 seed fills it (`seeded`), deliberately leaves it empty (`skipped`, with a
 reason), or still owes it data (`todo`). Engineers add `todo` when they add a
@@ -54,7 +54,7 @@ means `checking`.
 
 ## 1. Check
 
-Dispatch `vibe-seed-check-worker` with the symphony-alpha checkout path: the
+Dispatch `vibe-seed-check-worker` with the repository checkout path: the
 `repo` from `node ../vibe/scripts/vibe-sessions.mjs repo`, the checkout the
 vibe preflight remembered (if none is remembered, run
 `../vibe/scripts/vibe-preflight.sh --runtime codex` in Codex, or
@@ -88,7 +88,7 @@ Docker), on Linux through the native `pnpm vibe up --ci`, `pnpm vibe walk`,
 (route, web and Desktop screen counts, failures, result file) in state. A
 `DONE` without a `Walk:` line is not done: send it back to the fix worker. On
 `BLOCKED`, tell the operator the reason and stop; a refused walk (Docker VM too
-small, the `cl-ai-stage` AWS sign-in expired, another walk-linux run active)
+small, the walk's AWS sign-in expired, another walk-linux run active)
 is reported with the tool's exact message, never as a pass and never worked
 around.
 

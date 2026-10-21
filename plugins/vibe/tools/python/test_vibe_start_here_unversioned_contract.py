@@ -25,7 +25,7 @@ INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.
 TAXONOMY_SCRIPT = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "storybook-taxonomy.mjs"
 EXEMPTION = (
     "Story files under the `Start Here/` root are exempt from the v1.0 freeze and the title, tag and retitle "
-    "checks (design ruling, 2026-10-06): Start Here is unversioned and its Version History is edited by every "
+    "checks: Start Here is unversioned and its Version History is edited by every "
     "Storybook release."
 )
 

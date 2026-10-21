@@ -25,7 +25,6 @@ VIBE_SKILL = VIBE / "SKILL.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 README = PLUGIN_ROOT / "README.md"
 SESSIONS = VIBE / "scripts" / "vibe-sessions.mjs"
-RULING = "operator ruling, 2026-10-19"
 
 RETIRED_PHRASES = (
     "Never upload or insert a technical plan",
@@ -61,7 +60,7 @@ def test_the_never_upload_the_plan_rule_is_gone_everywhere() -> None:
 
 def test_the_source_document_produces_the_live_ticket_after_a_listing() -> None:
     rules = plan_rules()
-    assert RULING in rules
+    assert "The live ticket links back to the document the session was started from" in rules
     source = rules[rules.index("A. Source link."):rules.index("B. Render the plan")]
     assert_all(source, (
         "the record's `ticket`",
@@ -103,7 +102,7 @@ def test_the_plan_follows_the_ticket_safety_rules_and_a_refusal_goes_to_the_writ
     template = flat(TICKET_TEMPLATE.read_text())
     assert "This body and the PLN follow the same safety rules" in template
     planning = section(QUALITY.read_text(), "## Local plan")
-    assert_all(planning, (RULING, "repo-relative paths only", "`scripts/session-plan.mjs`",
+    assert_all(planning, ("(`../../../agents/vibe-ticket-worker.md`, \"Source link and session plan\")", "repo-relative paths only", "`scripts/session-plan.mjs`",
                           "a refusal comes back to this same writer"))
     writer = flat(agent("vibe-change-worker"))
     assert "the ticket worker publishes it as the session's PLN" in writer

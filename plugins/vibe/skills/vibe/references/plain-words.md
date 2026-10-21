@@ -2,8 +2,7 @@
 
 The person running a vibe session is not an engineer. Some describe the work
 and pass it on; others bring screenshots and may open the pull request
-themselves. Neither should have to learn how the work is built (operator
-ruling, 2026-10-15). Every message the person sees, from the orchestrator or
+themselves. Neither should have to learn how the work is built. Every message the person sees, from the orchestrator or
 relayed from a worker, uses plain words: setup, progress, notices, questions,
 sample data and errors alike.
 

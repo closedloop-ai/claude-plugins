@@ -35,7 +35,6 @@ INSTALL = VIBE / "INSTALL.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 PLUGIN_VERSION = VIBE / "scripts" / "plugin-version.mjs"
 PRECEDENT = VIBE / "scripts" / "precedent-check.mjs"
-RULING = "operator ruling, 2026-10-16"
 OFFER_WITH_CRITERIA = "Want me to check how it looks against the ticket's requirements and fix anything that's off?"
 OFFER_WITHOUT = "Want me to check how it looks against our design standards and fix anything that's off?"
 
@@ -59,7 +58,8 @@ def assert_all(text: str, required: tuple[str, ...]) -> None:
 
 def test_visual_qa_checks_the_criteria_or_falls_back_to_the_design_pack() -> None:
     assert_all(visual_qa(), (
-        "Operator ruling, 2026-10-16",
+        "This section adds an opt-in visual QA the orchestrator offers during the session",
+        "takes precedence over the lean build loop's rule that leaves visual QA to handoff alone",
         "in Codex and Claude Code alike",
         "`/visual-qa` in Claude Code, `$visual-qa` in Codex",
         "`/design` and `$design`",
@@ -94,7 +94,7 @@ def test_visual_qa_is_offered_at_visible_milestones_and_never_on_a_small_edit() 
         "When this deploy is a visible milestone",
         "never a small edit",
         "the ready message also offers visual QA, without waiting for the person to think of it",
-        RULING,
+        "When the person says it looks good and wants it polished, run visual QA before handoff without asking",
     ))
 
 
@@ -130,7 +130,7 @@ def test_the_build_loop_is_otherwise_unchanged() -> None:
 def test_precedent_is_checked_in_order_before_any_question() -> None:
     rule = precedent()
     assert_all(rule, (
-        "Operator ruling, 2026-10-16",
+        "Walk a fine line on product questions during a session.",
         "A question is asked only when neither the graph research above nor another app's precedent answers it",
         "what a mature app does in the same situation is the default answer",
         "The order is Asana",
@@ -204,7 +204,7 @@ def test_a_precedent_is_recorded_with_its_source_and_is_not_a_human_ruling() -> 
 def test_the_version_check_runs_at_every_start_and_never_blocks() -> None:
     assert_all(plugin_version(), (
         "Every `$vibe` start, new or resume, first checks whether this plugin is the latest release",
-        RULING,
+        "It runs once per conversation, so its question is never repeated and does not go through `session-questions.mjs`.",
         "`node scripts/plugin-version.mjs --runtime codex` in Codex, or `--runtime claude` in Claude Code",
         "`current`: say nothing about it and continue.",
         "the check never blocks",
@@ -224,8 +224,7 @@ def test_the_version_check_runs_at_every_start_and_never_blocks() -> None:
 def test_the_person_chosen_update_is_the_one_plugin_change_allowed() -> None:
     tooling = section(GUARDRAILS.read_text(), "## Plugins and tooling")
     assert_all(tooling, (
-        "The one exception is the vibe update the person chooses when the startup version check finds a newer release",
-        RULING,
+        "The one exception is the vibe update the person chooses when the startup version check finds a newer release (`SKILL.md`, section 1, \"Plugin version\")",
         "the orchestrator runs exactly the update commands `plugin-version.mjs` printed, and nothing else",
     ))
     role = section(VIBE_SKILL.read_text(), "## Your role: orchestrate, never do the work")

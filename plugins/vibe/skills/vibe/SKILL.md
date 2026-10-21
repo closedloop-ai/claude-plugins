@@ -61,12 +61,14 @@ Follow `references/quality-loop.md` for the one persistent writer, serial
 queue, internal planning/review and communication. The person never sees a technical plan or
 technical question, and needs no upfront summary. Updates say only which
 feature is complete, which of its acceptance criteria are not done yet, and
-what is being worked on next. The notices in
-section 5, "Notices that never wait" (a reference product's behavior list,
-new Storybook components and the endings line in a new session's first
-reply), none of which waits, the startup version check (section 1, "Plugin
-version") and the visual QA offer and its results (section 6, step 5) are the
-only other messages.
+what is being worked on next. The only other messages are:
+
+- the notices in section 5, "Notices that never wait" (a reference product's
+  behavior list, new Storybook components and the endings line in a new
+  session's first reply), none of which waits;
+- the startup version check (section 1, "Plugin version");
+- the visual QA offer and its results (section 6, step 5).
+
 Research product questions through closedloop-graph and live evidence first,
 then through how Asana, or another established app with the same flow,
 handles the same situation; interrupt only for an absolutely necessary
@@ -150,8 +152,8 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   `vibe:<name>`. Launch every worker through `scripts/dist/claude-worker.mjs`,
   never through the native Agent tool: a plugin agent dispatched natively gets
   only the built-in tools its file lists, with no ClosedLoop or closedloop-graph
-  tools (the 2026-10-15 session's ticket worker came back `BLOCKED` and its
-  verify worker could not reach the graph for exactly this reason). The only
+  tools, so a natively dispatched ticket worker comes back `BLOCKED` and a
+  verify worker cannot reach the graph. The only
   native dispatch is the bootstrap in section 1. Send the launcher one JSON
   object on stdin: `{"worktree", "agentName", "mode", "requestId", "input"
   (or "continuation"), "capabilities"}` plus the record and sessionless fields
@@ -221,7 +223,7 @@ stops until core is explicitly installed and enabled.
   worker opens it with `Read` in Claude Code or `view_image` in Codex
   (`references/quality-loop.md`, "Visual references").
 - macOS has no `timeout` or `gtimeout` command, so a check bounded with it
-  fails with "command not found" (the 2026-10-15 verify worker hit this).
+  fails with "command not found".
   Bound a slow command with the tool's own timeout setting or
   `node <root>/skills/vibe/scripts/run-bounded.mjs <seconds> <command>`
   (exit 124 on time out). Say so in every worker brief that runs commands.
@@ -266,7 +268,7 @@ missing tests for engineering, and tests are written only when the person
 explicitly asks for a pull request. They ask in plain words: "raise a PR",
 "open a pull request", "I'll get the PR merged", "I'll get it merged", "I'll
 ship it myself" or "I want to take it through review" is that request
-(`references/guardrails.md`, "Tests"; operator ruling, 2026-10-15), and it
+(`references/guardrails.md`, "Tests"), and it
 takes the handoff skill's requested pull request path ("A requested pull
 request"), which opens the pull request for them at the end. This skill opens
 no PR itself, and never offers to send the person the branch to merge. Never ask the
@@ -280,7 +282,7 @@ stay with the workers.
 ### Plugin version
 
 Every `$vibe` start, new or resume, first checks whether this plugin is the
-latest release (operator ruling, 2026-10-16): run
+latest release: run
 `node scripts/plugin-version.mjs --runtime codex` in Codex, or
 `--runtime claude` in Claude Code. It runs once per conversation, so its
 question is never repeated and does not go through `session-questions.mjs`.
@@ -321,7 +323,7 @@ section 2 identifies the session. For an app session, re-run the default
 `scripts/vibe-preflight.sh` and resolve its failures before section 3.
 Pure mockups and recorded prototype resumes need no PostHog key.
 
-The selected preflight command finds the symphony-alpha checkout anywhere
+The selected preflight command finds the repository's checkout anywhere
 in the home folder by its git remote, remembers it in
 `~/.codex/vibe/config.json` for every later run, checks that the Node every
 command will run satisfies the checkout's `engines` range, and prints one JSON
@@ -364,8 +366,8 @@ the person to set anything up beyond what that worker reports as
 ## 2. Start or resume
 
 Starting `$vibe` never searches for previous sessions up front: that search
-is slow, so it runs only for someone who chose to resume (operator ruling,
-2026-10-15). First settle whether the person is resuming or starting new:
+is slow, so it runs only for someone who chose to resume. First settle whether
+the person is resuming or starting new:
 
 - Their own words already say resume: "pick up where I left off", "resume",
   or a named session or slug. Go to "Finding a session to resume" without
@@ -397,22 +399,24 @@ Only after the person chose resume, run `node scripts/vibe-sessions.mjs list`
   it, or throw it away?" Act on the answer (finish it as section 8 says,
   resume, or section 9).
 - A `handed-off` session is finished (a pull request was opened for the
-  person, or it was passed to design and engineering) and is not offered,
-  with one exception (operator ruling, 2026-10-16): when the person asks for
-  changes on the pull request vibe opened for them ("please fix the review
-  comments", "engineering asked for changes on my PR", the pull request's
-  link), that session resumes, without asking resume or new, through the
-  handoff skill's "Changes on the open pull request": the SAME writer fixes
-  it, the guardrails review and checks rerun, the fixes are pushed to the
-  same branch (never forced), the pull request body is refreshed from the
-  session record, and each review thread is answered with the fixing commit
-  and resolved once fixed.
+  person, or it was passed to design and engineering) and is not offered.
+  The one exception: the person asks for changes on the pull request vibe
+  opened for them ("please fix the review comments", "engineering asked for
+  changes on my PR", the pull request's link). That session resumes, without
+  asking resume or new, through the handoff skill's "Changes on the open pull
+  request":
+  - the SAME writer fixes it;
+  - the guardrails review and checks rerun;
+  - the fixes are pushed to the same branch (never forced);
+  - the pull request body is refreshed from the session record;
+  - each review thread is answered with the fixing commit and resolved once
+    fixed.
 
 Before offering anything, for each `handed-off` session whose
 `livePlanStatus` is `APPROVED`, dispatch `vibe-ticket-worker` in plan mode
 with `mergeCheck: true` (its own record turn): when the session's pull
-request has merged it moves the PLN to `EXECUTED` (operator ruling,
-2026-10-19). This is internal; never mention it to the person.
+request has merged it moves the PLN to `EXECUTED`. This is internal; never
+mention it to the person.
 
 Then follow "Resuming" below.
 
@@ -478,7 +482,7 @@ Then follow "Resuming" below.
    requirements worker's brief, the originating ticket if any, and the mode.
    It records the ticket's slug on the session itself and links the
    originating document (a PRD, an ISS or another document) to the ticket
-   (source PRODUCES ticket; operator ruling, 2026-10-19).
+   (source PRODUCES ticket).
    Keep the ticket link in the session record for completion and handoff.
 7. Stand up the environment (section 3).
 
@@ -705,8 +709,7 @@ evidence, never by replacing the writer.
    local plan before writing. That block is a read-only lookup in quick prep,
    not a review. The writer logs a Conflict in it with its audience, `design`
    or `engineering`, for the live ticket (`references/ticket-template.md`,
-   "Conflicts"), never a question for the person (operator ruling,
-   2026-10-14).
+   "Conflicts"), never a question for the person.
    A part that needs a path the writer may never edit is logged as
    `Engineering needed (forbidden path)` for the live ticket's Engineering
    checklist while the writer builds the rest (`references/guardrails.md`,
@@ -747,7 +750,7 @@ evidence, never by replacing the writer.
    `built: true` when the request is `DONE` and `built: false` otherwise. It
    publishes the session's plan as its one PLN, linked from the live ticket,
    appends a version only when the plan changed materially, and sets the
-   PLN's status (operator ruling, 2026-10-19). Its `NEEDS_CHANGE` (a plan line
+   PLN's status. Its `NEEDS_CHANGE` (a plan line
    that would publish a local path, a username, a secret or a private input)
    goes to the SAME writer to fix its local plan, then plan mode runs again.
    None of it waits on or reaches the person, and it never delays the deploy.
@@ -812,8 +815,8 @@ what it already built, like any other request about it.
   look at each one in the component gallery: <link>", with no mention of a
   server, a story or Storybook, then resume the SAME writer to build the feature with them. A change
   that only reuses existing components skips this step.
-- Endings. In the first reply to a NEW session (operator ruling,
-  2026-10-15), include this one line as it is: "When you're done, I can
+- Endings. In the first reply to a NEW session, include this one line as it
+  is: "When you're done, I can
   either open a pull request for you, or pass it to design or engineering to
   finish." It is a notice, not a question: it rides along with whatever that
   first reply says or asks, and nothing waits on it. The one thing that
@@ -831,9 +834,7 @@ Local Storybook remains available and product design approvals stay intact.
 
 ### Questions are asked once
 
-No question reaches the person twice (operator ruling, 2026-10-15). In the
-session that prompted this rule the page-wording question went out in three
-messages while it waited for one answer. Every question, yours or one a
+No question reaches the person twice. Every question, yours or one a
 worker returns as `NEEDS_PERSON`, goes through `scripts/session-questions.mjs`,
 except the startup version question, which runs once per conversation
 (section 1, "Plugin version"):
@@ -857,8 +858,8 @@ except the startup version question, which runs once per conversation
 
 ## 6. Deploy each change
 
-The orchestrator deploys every change in the build loop without being asked
-(operator ruling, 2026-10-13): as soon as the writer finishes a request
+The orchestrator deploys every change in the build loop without being asked:
+as soon as the writer finishes a request
 (section 5, step 7), commit and deploy it to the session's Vercel preview with
 the steps below, then tell the person it's ready to look at. The person no
 longer has to say "redeploy"; when they do say "redeploy", "redeploy to
@@ -921,7 +922,7 @@ that waited, and one deploy after the last of them carries them all. A
    already declined it for this version. The offer's words, its
    `session-questions.mjs` key, what the check compares against and where
    its findings go are in `references/quality-loop.md`, "Visual QA during the
-   session" (operator ruling, 2026-10-16). On `BLOCKED` because the repo's checks
+   session". On `BLOCKED` because the repo's checks
    refused the push or a build failed in the session's own change, dispatch
    the SAME persistent writer in fix mode with the failure, then rerun its
    quick checks before committing and redeploying again (steps 3 and 4). Keep the repair details internal.
@@ -943,7 +944,7 @@ gate, and record it as the command's output says (`references/guardrails.md`,
 
 ## 8. Ending a session
 
-A session ends one of two ways (operator ruling, 2026-10-15): a pull request
+A session ends one of two ways: a pull request
 the person takes through review and merge themselves (the handoff skill's "A
 requested pull request"), or passing it to someone, usually design and then
 engineering, to finish. Never use the word "handoff" with the person as if
@@ -1000,7 +1001,7 @@ Whenever the person asks to throw a session away (at any point, for any
    The worker re-verifies target ownership and the person's confirmation, never
    deletes its execution checkout, and discards only the target worktree. It
    stops the session's local processes, requests the drop of the session's
-   data in symphony-alpha (nothing removes it automatically), deletes the
+   app data (nothing removes it automatically), deletes the
    worktree and the local and remote branch, and returns the script's receipt.
 4. Only after that successful result has `discarded: true`, retain its
    `cancelEvidence` in the parent. If there was a live ticket, dispatch

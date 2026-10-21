@@ -1,7 +1,7 @@
 # Using closedloop-graph
 
 closedloop-graph is the ClosedLoop ticket and code intelligence server: a
-ticket ledger, a semantic ticket graph, and a code graph of symphony-alpha.
+ticket ledger, a semantic ticket graph, and a code graph of the repository.
 It is required. Every vibe and handoff worker that locates, changes, or
 reviews code calls it for every non-trivial request, before searching files
 by hand, because it answers "where is this", "who else uses this", and "is

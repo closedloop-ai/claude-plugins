@@ -59,9 +59,9 @@ def assert_all(text: str, required: tuple[str, ...]) -> None:
         assert phrase in text, phrase
 
 
-def test_the_rule_is_dated_canonical_and_serves_every_person_without_asking() -> None:
+def test_the_rule_is_canonical_and_serves_every_person_without_asking() -> None:
     assert_all(rule(), (
-        "(operator ruling, 2026-10-15: \"we're missing visual cues\")",
+        "every visual and UX property it shows becomes an acceptance criterion",
         "This section is the rule's one canonical statement",
         "nobody is asked which kind they are",
         "gets the reference saved, read, turned into criteria and checked against a screenshot before ready",
@@ -154,11 +154,11 @@ def test_reference_requirements_become_criteria_and_only_reference_visuals_need_
 def test_the_check_runs_with_a_reference_image_and_never_without_one() -> None:
     assert_all(check(), (
         "Only when the person gave a reference image",
-        "(operator ruling, 2026-10-15)",
+        "and the change renders UI. With no reference image",
         "With no reference image there is no render and no compare.",
     ))
     lean = section(QUALITY.read_text(), "## Lean build loop")
-    assert "The reference check before ready is the one exception to this rule (operator ruling, 2026-10-15), and it runs only with a reference image." in lean
+    assert "The reference check before ready is the one exception to this rule, and it runs only with a reference image." in lean
     assert "- Reference check: only when the person gave a reference image" in lean
     assert "the one exception to its no-automated-visual-QA rule" in rule()
     assert "With no reference image there is no render or compare." in flat(agent("vibe-change-worker"))
@@ -238,5 +238,5 @@ def test_a_visible_change_needing_an_outside_path_is_never_silently_reverted() -
     ))
     assert_all(flat(GUARDRAILS.read_text()), (
         "The same holds for a path outside the allowed table: the writer does not edit it in the loop either.",
-        "so they never accept a change the branch cannot keep (operator ruling, 2026-10-15)",
+        "so they never accept a change the branch cannot keep. A fix to vibe's own tooling is different",
     ))

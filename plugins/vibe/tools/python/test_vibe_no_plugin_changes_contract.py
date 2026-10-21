@@ -43,7 +43,7 @@ def rule() -> str:
 
 def test_the_rule_binds_both_orchestrators_and_every_worker_in_both_harnesses() -> None:
     text = rule()
-    assert "Operator ruling, 2026-10-13" in text
+    assert "This rule binds the vibe and handoff orchestrators" in text
     assert "binds the vibe and handoff orchestrators and every worker, in Codex and Claude Code" in text
     assert "this section is its one canonical statement" in text
 

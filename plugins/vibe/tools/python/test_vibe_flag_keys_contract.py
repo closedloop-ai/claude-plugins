@@ -45,7 +45,7 @@ def assert_all(text: str, required: tuple[str, ...]) -> None:
 def test_the_canonical_rule_reads_the_target_repo_and_needs_a_human_source() -> None:
     rule = section(GUARDRAILS.read_text(), "## Feature flags")
     assert_all(rule, (
-        "Operator rulings, 2026-10-20",
+        "Propose a key, or a new read of one,",
         "No agent creates or adds a flag on its own.",
         "only for what the target repo's own flag rule allows, quoted from its `AGENTS.md`, with a human source",
         "what that rule ships directly is built ungated",
@@ -101,7 +101,7 @@ def test_the_person_approves_each_key_after_seeing_why_what_it_gates_and_the_who
 def test_tech_debt_is_one_principle_applied_by_the_existing_owners() -> None:
     rule = section(GUARDRAILS.read_text(), "## No new tech debt")
     assert_all(rule, (
-        "Operator ruling, 2026-10-20: a change grows no tech debt without a cited reason.",
+        "A change grows no tech debt without a cited reason.",
         "a parallel path (a second route, service, writer or store for a behavior one already owns)",
         "a shim, re-export or code kept only for a deprecated story, a second owner",
         "a duplicated helper, type, constant, validator or bound, new config, or growth of a file near the repo's size ceiling",

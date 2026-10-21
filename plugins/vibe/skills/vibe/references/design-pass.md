@@ -30,8 +30,7 @@ review follows `quality-loop.md` internally.
    shared hook the parent calls, and a child passes only its domain wiring.
    Two children that each keep their own copy of that state behind the
    parent's slot is the red flag the root `AGENTS.md` names under shared
-   behavior in the shared parent, even when the slot exists (operator ruling,
-   2026-10-16).
+   behavior in the shared parent, even when the slot exists.
 2. A child asking for what this session already built into a sibling (another
    child of the same parent) is rule 1: move it into the parent and have both
    opt in, never copy it.
@@ -66,19 +65,20 @@ not a design session: no second design, no questions, no approval.
    anything that already renders the concept, plus the paved paths and
    shared-surface rules in `packages/app/AGENTS.md` and the nearest
    `AGENTS.md` of each directory involved.
-4. Known pitfalls, when the `workflow-memory` command exists on this Mac:
-   `workflow-memory query --summary-only --repo symphony-alpha --query "<screen and behavior keywords>"`
-   (with `--env-file ~/.workflow/.env` when that file exists). One query;
-   treat what it returns as hints to verify. Skip it when the command is not
+4. Known pitfalls, when the `workflow-memory` command exists on this Mac.
+   Run one query, where `<repo>` is the repository's name, adding
+   `--env-file ~/.workflow/.env` when that file exists:
+   `workflow-memory query --summary-only --repo <repo> --query "<screen and behavior keywords>"`
+   Treat what it returns as hints to verify. Skip it when the command is not
    installed.
 5. Precedent: where the same capability already exists for a sibling
    entity (another entity's list or detail surface): the component that
    provides it, how its hosts consume it, and where its stories live
    (`code_symbols` on the capability's names, `code_importers` on that
    component). Where the owner rules, the repo's `AGENTS.md` ("Shared behavior
-   belongs in the shared parent (ISS-12135)") and its docs already say how,
-   follow them; where they do not, mirror the precedent's ownership,
-   component and Storybook structure, never its root or version (operator ruling, 2026-10-14).
+   belongs in the shared parent") and its docs already say how, follow them;
+   where they do not, mirror the precedent's ownership, component and
+   Storybook structure, never its root or version.
 6. Placement: before a story is created, retitled or moved or a shared
    component is added, the writer returns `NEEDS_STORYBOOK` and
    `vibe-storybook-decomposer` answers with its Placement block (`SKILL.md`,
@@ -87,8 +87,7 @@ not a design session: no second design, no questions, no approval.
    `<Level> v1.0/` root or tagged `deprecated`), which is never edited
    beyond a compile-only repair, and
    otherwise in its existing story file, title and tag unchanged; only a new
-   component or a sibling replacement otherwise gets a new entry (design
-   ruling, 2026-10-15).
+   component or a sibling replacement otherwise gets a new entry.
 7. The owner, by the rules above and the precedent.
 
 A copy, color, or spacing edit on one element reports `Prep: trivial` and
@@ -140,8 +139,7 @@ worker fixes what it confirms in fix mode, without asking the person.
 - Hard-coded host keys: a URL search-param key, storage key or route segment
   spelled as a literal in a host adapter or child when a shared constant
   exists, or spelled separately on web and Desktop.
-- Leftovers: what an extraction, move or deletion leaves behind (operator
-  ruling, 2026-10-16, after symphony-alpha #8885 and #8886): a pass-through
+- Leftovers: what an extraction, move or deletion leaves behind: a pass-through
   file or wrapper that only forwards to the new owner, a re-export alias, an
   orphaned helper, type or constant, an unused prop, a loop or `each` table
   over the one arm left after a matrix arm was deleted, and a test still named

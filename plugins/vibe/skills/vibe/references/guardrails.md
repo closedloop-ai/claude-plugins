@@ -8,26 +8,27 @@ to vibe sessions and points at the repo rules that matter most here.
 
 ## Plugins and tooling
 
-Operator ruling, 2026-10-13. It binds the vibe and handoff orchestrators
-and every worker, in Codex and Claude Code, and this section is its one
-canonical statement:
+This rule binds the vibe and handoff orchestrators and every worker, in
+Codex and Claude Code, and this section is its one canonical statement:
 
 - Never install, update, reinstall, uninstall or repoint a plugin, change a
   plugin marketplace, or modify a plugin cache. The one exception is the
   vibe update the person chooses when the startup version check finds a
-  newer release (operator ruling, 2026-10-16; `SKILL.md`, section 1,
-  "Plugin version"): the orchestrator runs exactly the update commands
-  `plugin-version.mjs` printed, and nothing else.
+  newer release (`SKILL.md`, section 1, "Plugin version"): the orchestrator
+  runs exactly the update commands `plugin-version.mjs` printed, and nothing
+  else.
 - Never clone or vendor the plugin's own repository (claude-plugins) to run a
   different version of its tooling.
-- When continuing needs a fix to the vibe tooling, stop. Record the blocker:
-  the request stays `BLOCKED` in the session ledger with the reason, and a line
-  in the live ticket's Progress names it. Report it to engineering: tell the
-  person in one plain line that this needs engineering and to message engineering, naming this work by its summary (`plain-words.md`). It is never a question for the person.
+- When continuing needs a fix to the vibe tooling, stop. It is never a
+  question for the person.
+  1. Record the blocker: the request stays `BLOCKED` in the session ledger
+     with the reason, and a line in the live ticket's Progress names it.
+  2. Report it to engineering: tell the person in one plain line that this
+     needs engineering and to message engineering, naming this work by its
+     summary (`plain-words.md`).
 - A handoff check that also fails on the main the session captured is not a
   needed fix and never stops the handoff: it is a Known main failure recorded
-  for engineering (`quality-loop.md`, "Failures already on main"; operator
-  ruling, 2026-10-16).
+  for engineering (`quality-loop.md`, "Failures already on main").
 - Writer migration through `writer-state.mjs migrate` (`quality-loop.md`,
   "Recorded definition migration"), including a turn stranded by a plugin
   upgrade, stays allowed, but only after a human or
@@ -36,7 +37,8 @@ canonical statement:
 
 ## Processes and state
 
-Operator lessons, 2026-10-19 and 2026-10-20, for every worker in both harnesses.
+These rules bind every worker in both harnesses.
+
 - Stop only a pid or process group this session recorded and still owns.
   Never `pkill`, `killall` or `kill` by name or pattern; report what you did not start.
 - Records, writer state, briefs, monitor config and reports a later step
@@ -89,18 +91,16 @@ like every other, its story validators are checks ("Checks", below), and its
 test files follow "Tests". The `scripts/**` in the Never column is the
 repo-root `scripts/` folder, never `apps/storybook/scripts/`.
 
-`apps/desktop/scripts/**` is in the Never column explicitly (operator ruling,
-2026-10-16): no column listed it, so it already fell outside the allowed
-paths, and a static Desktop page's asset generator lives there. Nothing about
-it changes: the handoff inventory still reports it under `outsideAllowed`,
-and a request that needs it takes the forbidden-path route below
-(`Engineering needed (forbidden path)`), never an edit in the session.
+`apps/desktop/scripts/**` is in the Never column explicitly: no column listed
+it, so it already fell outside the allowed paths, and a static Desktop page's
+asset generator lives there. Nothing about it changes: the handoff inventory
+still reports it under `outsideAllowed`, and a request that needs it takes the
+forbidden-path route below (`Engineering needed (forbidden path)`), never an
+edit in the session.
 
-Nothing agent-written goes into public docs (operator ruling, 2026-10-16,
-after an agent-drafted paragraph was committed to a product docs page in
-symphony-alpha #8885; it retires the 2026-10-13 docs-draft exception). No
-worker edits `apps/web/content/docs/` or the internal `docs/` folder, in any
-phase; "Feature docs at handoff" below says what handoff records instead.
+Nothing agent-written goes into public docs. No worker edits
+`apps/web/content/docs/` or the internal `docs/` folder, in any phase;
+"Feature docs at handoff" below says what handoff records instead.
 
 Backend, built by that same writer using canonical backend guidance, each under its owning
 `AGENTS.md`:
@@ -124,20 +124,24 @@ Backend, built by that same writer using canonical backend guidance, each under 
   backend-only. Handoff attaches it to the live ticket so the reviewing
   engineer sees whole-session behavior and actual coverage evidence.
 
-The build loop stays lean (`quality-loop.md`, "Lean build loop"): quick
-prep, the build, the quick checks the commit hooks need, the orchestrator's
-commit, deploy, and showing the person. Reviews and heavy validation run
-at handoff: the guardrails and adversarial reviews, browser E2E, visual QA,
-logical QA, product-contract QA, the targeted existing tests (the ones
-`code_tests_for` returns for each changed file, never a full suite) and two review
-passes when backend code changed, the running web app and Desktop driven with
-the repo's control skill, and the list of tests engineering still has to write
-(Tests, below). Beyond the quick checks, the loop's only other check is the
-writer's acceptance check before a change is called ready (`quality-loop.md`, "Acceptance criteria
-before ready"): one cheap existing test, script, control read or source trace
-per touched criterion, never a suite or QA pass. Outside the loop, visual QA
-also runs during the session when the person accepts it or asks for polish
-(`quality-loop.md`, "Visual QA during the session").
+The build loop stays lean (`quality-loop.md`, "Lean build loop"):
+
+- The loop is quick prep, the build, the quick checks the commit hooks need,
+  the orchestrator's commit, deploy, and showing the person.
+- Beyond the quick checks, the loop's only other check is the writer's
+  acceptance check before a change is called ready (`quality-loop.md`,
+  "Acceptance criteria before ready"): one cheap existing test, script,
+  control read or source trace per touched criterion, never a suite or QA
+  pass.
+- Reviews and heavy validation run at handoff: the guardrails and
+  adversarial reviews, browser E2E, visual QA, logical QA, product-contract
+  QA, the targeted existing tests (the ones `code_tests_for` returns for each
+  changed file, never a full suite) and two review passes when backend code
+  changed, the running web app and Desktop driven with the repo's control
+  skill, and the list of tests engineering still has to write (Tests, below).
+- Outside the loop, visual QA also runs during the session when the person
+  accepts it or asks for polish (`quality-loop.md`, "Visual QA during the
+  session").
 
 One exception under `scripts/`: the source-gate allowlist
 (`scripts/lint/source-gate-allowlist.json`) is shrink-only, so when the
@@ -168,7 +172,7 @@ outside the allowed table: the writer does not edit it in the loop either.
 A visible part of the request that needs such a path keeps its acceptance
 criterion `not met yet` with the reason that engineering must make it, and
 the ready message tells the person so in plain words, so they never accept a
-change the branch cannot keep (operator ruling, 2026-10-15). A fix to vibe's own tooling is
+change the branch cannot keep. A fix to vibe's own tooling is
 different and still stops the session ("Plugins and tooling", above).
 
 Vibe work is headed for `main`, so the target repo's flag rule decides which
@@ -177,8 +181,8 @@ is that flag. Tell them in one line that the new screen stays hidden on their
 environment until that flag is turned on for them.
 
 The prototype-first rule in the root `AGENTS.md` (net-new screens start in
-`apps/prototypes`) does not apply to vibe sessions. That is an operator
-decision recorded on ISS-12017. Build in Storybook and app code directly.
+`apps/prototypes`) does not apply to vibe sessions. Build in Storybook and
+app code directly.
 
 ## Where code goes
 
@@ -205,9 +209,8 @@ decision recorded on ISS-12017. Build in Storybook and app code directly.
 Before building anything, search
 `packages/design-system/storybook/component-catalog.ts` and `packages/app` for
 a component that already renders the concept, and use it. Follow the paved
-paths in `packages/app/AGENTS.md`: list surfaces use `GridTableV2` with the v2
-pagination and header, dates format through `shared/lib/date-utils.ts`, and so
-on. Read `.claude/design/discipline-core.md` once per session; it is the
+paths in `packages/app/AGENTS.md`, such as the shared list surface with its
+pagination and header, and the shared date formatting helpers. Read `.claude/design/discipline-core.md` once per session; it is the
 team's design standard.
 
 ## Missing primitives
@@ -263,8 +266,7 @@ When nothing in the catalog fits:
 
 Read the repo's `apps/storybook/TAXONOMY.md` and follow it for every story
 the session adds, moves, renames or touches; that doc is the authority, so its
-rules are not copied here (operator ruling, 2026-10-14, after the
-PRD-720 session titled its new stories under v1.0 roots). The bare minimum:
+rules are not copied here. The bare minimum:
 
 - New stories go in the current roots, titled under the plain level
   (`Foundations/`, `Primitives/`, `Composites/`, `Patterns/`, `Surfaces/`),
@@ -272,23 +274,23 @@ PRD-720 session titled its new stories under v1.0 roots). The bare minimum:
   `Composites v1.0/`, `Surfaces v1.0/`), whose story files are all tagged
   `deprecated`.
 - New states or variants of an existing component never retitle, re-tag or
-  move its existing story file, since story IDs come from the title. A v1.0
-  story file (under a `<Level> v1.0/` root or tagged `deprecated`) is never
-  edited beyond a compile-only repair (prop renames, imports, types; no
-  story, title, tag or visual change): its component's new states go in a new
-  entry in the current root holding only them, its name descriptive,
-  permanent and without a version number. A compile-only repair rewords no
-  comment, description, docs parameter or story text either: a renamed
-  identifier inside prose is its only prose change (operator ruling,
-  2026-10-16, after a repair in symphony-alpha #8885 rewrote prose). Any
-  other existing file takes them
-  as extra stories, its title and tag unchanged. Otherwise only a new
-  component or a sibling replacement (a V3) gets a new entry (design ruling,
-  2026-10-15; `vibe-storybook-decomposer.md`, "Precedent search" step 4).
+  move its existing story file, since story IDs come from the title. Where
+  they go (`vibe-storybook-decomposer.md`, "Precedent search" step 4):
+  - A v1.0 story file (under a `<Level> v1.0/` root or tagged `deprecated`)
+    is never edited beyond a compile-only repair (prop renames, imports,
+    types; no story, title, tag or visual change): its component's new
+    states go in a new entry in the current root holding only them, its name
+    descriptive, permanent and without a version number.
+  - A compile-only repair rewords no comment, description, docs parameter or
+    story text either: a renamed identifier inside prose is its only prose
+    change.
+  - Any other existing file takes them as extra stories, its title and tag
+    unchanged.
+  - Otherwise only a new component or a sibling replacement (a V3) gets a new
+    entry.
 - Story files under the `Start Here/` root are exempt from the v1.0 freeze
-  and the title, tag and retitle checks (design ruling, 2026-10-06): Start
-  Here is unversioned and its Version History is edited by every Storybook
-  release.
+  and the title, tag and retitle checks: Start Here is unversioned and its
+  Version History is edited by every Storybook release.
 - Composites, Patterns and Surfaces are placed in the page tree the doc
   describes.
 - Each story file carries exactly one lifecycle tag in its own meta, per the
@@ -304,21 +306,18 @@ PRD-720 session titled its new stories under v1.0 roots). The bare minimum:
   synced, describing only what the session changed, with `package.json` bumped
   to match. Never add an entry for a version main does not have beyond that
   one, renumber or reword main's entries, or special-case a validator, test or
-  key (a duplicate-key exception) so two entries can coexist (operator ruling,
-  2026-10-16, after symphony-alpha #8885 invented three entries and a
-  duplicate-key special case). After a main sync, the session's entry moves to
-  the next version after main's.
-- Moving or retitling a story changes its ID (operator ruling, 2026-10-16,
-  after a stale ID from symphony-alpha #8886 broke an e2e spec): the
-  inventory's `lost-story-id` findings name every reference left. One in a
-  test or e2e spec is repaired in the same change (a renamed symbol, "Repair,
-  don't author"); one in a path the writer may not edit is logged as
+  key (a duplicate-key exception) so two entries can coexist. After a main
+  sync, the session's entry moves to the next version after main's.
+- Moving or retitling a story changes its ID: the inventory's
+  `lost-story-id` findings name every reference left. One in a test or e2e
+  spec is repaired in the same change (a renamed symbol, "Repair, don't
+  author"); one in a path the writer may not edit is logged as
   `Engineering needed (forbidden path)`.
-- A session whose base predates this scheme (symphony-alpha #8867,
-  Storybook 3.0.0) follows that base's own `TAXONOMY.md`: there the plain
-  roots and the `v1.0` tag are v1.0, and new work goes under `<Level> v2.0/`
-  tagged `v2.0`. Syncing main moves it to this scheme: its own new entries
-  then take the plain root and a lifecycle tag (design ruling, 2026-10-16).
+- A session whose base predates this scheme (Storybook before 3.0.0) follows
+  that base's own `TAXONOMY.md`: there the plain roots and the `v1.0` tag are
+  v1.0, and new work goes under `<Level> v2.0/` tagged `v2.0`. Syncing main
+  moves it to this scheme: its own new entries then take the plain root and a
+  lifecycle tag.
 
 The handoff inventory judges story files by the scheme of the session's base
 (`storybookScheme`, read from that base's own Storybook sources). It blocks a
@@ -349,13 +348,8 @@ is close, raise it as a missing primitive.
 
 ### Check the bundled tokens first
 
-Operator ruling, 2026-10-16. A product manager's static Desktop sign-in
-return page gave its button a page-local `--button-shadow` with hardcoded
-`rgb()` values and its own dark-mode override, and the pull request said no
-bundled elevation token existed, while `--shadow-inset` sat in the `:root`
-and `.dark` blocks of `packages/design-system/styles/globals.css`. This
-section is the rule's one canonical statement; the writer and the guardrails
-reviewer point at it.
+This section is the rule's one canonical statement; the writer and the
+guardrails reviewer point at it.
 
 - Before writing or accepting any hardcoded color, shadow or dark-mode
   override, read the tokens the touched surface actually bundles: each
@@ -370,14 +364,14 @@ reviewer point at it.
   `.dark` block already defines is blocking at handoff, never advisory.
 - "Not bundled" is recorded per token, never per surface. Only a token the
   surface genuinely lacks may be logged as missing, with the evidence of the
-  check: `Engineering needed (token not bundled): <surface>; <token>; checked
-  <each stylesheet and block searched>; uses <the token's exact value>`. That
-  property then uses the token's exact value with the token cited beside it,
-  never a value no token defines, and every other property on the surface
-  keeps its bundled token. A missing-token line without the stylesheets and
-  blocks searched, or for a token that check finds, is a finding, and so is a
-  wider claim such as "this page bundles no tokens" or "no elevation token
-  exists".
+  check. Example line:
+  `Engineering needed (token not bundled): <surface>; <token>; checked <each stylesheet and block searched>; uses <the token's exact value>`
+- That property then uses the token's exact value with the token cited
+  beside it, never a value no token defines, and every other property on the
+  surface keeps its bundled token.
+- A missing-token line without the stylesheets and blocks searched, or for a
+  token that check finds, is a finding, and so is a wider claim such as "this
+  page bundles no tokens" or "no elevation token exists".
 No icon-in-a-colored-box chips, no borders on everything, no badge where a
 plain string works.
 
@@ -406,7 +400,7 @@ flags"), even when the words match.
 
 ## Feature docs at handoff
 
-Nothing agent-written goes into public docs (operator ruling, 2026-10-16).
+Nothing agent-written goes into public docs.
 This section is the rule's one canonical statement; the writer, the guardrails
 reviewer, the ticket worker and the handoff skill point at it.
 
@@ -427,21 +421,22 @@ reviewer, the ticket worker and the handoff skill point at it.
 
 ## No new tech debt
 
-Operator ruling, 2026-10-20: a change grows no tech debt without a cited
-reason. A new flag key, a parallel path (a second route, service, writer or
-store for a behavior one already owns), a shim, re-export or code kept only
-for a deprecated story, a second owner, a duplicated helper, type, constant,
-validator or bound, new config, or growth of a file near the repo's size
-ceiling needs a human source or a quoted repo rule; otherwise reuse what
-exists. The writer logs `Debt: <kind>; added: <what>; reused instead: <what>;
-reason: <source>`; its own rationale is never the reason. Flags are the
-tested case below.
+A change grows no tech debt without a cited reason. A new flag key, a
+parallel path (a second route, service, writer or store for a behavior one
+already owns), a shim, re-export or code kept only for a deprecated story, a
+second owner, a duplicated helper, type, constant, validator or bound, new
+config, or growth of a file near the repo's size ceiling needs a human source
+or a quoted repo rule; otherwise reuse what exists.
+
+The writer logs each one; its own rationale is never the reason. Example
+line:
+`Debt: <kind>; added: <what>; reused instead: <what>; reason: <source>`
+
+Flags are the tested case below.
 
 ## Feature flags
 
-Operator rulings, 2026-10-20, after one session gated one Branches list behind
-three keys, others gated edits to shipped surfaces, and no handoff said which
-keys to turn on. No agent creates or adds a flag on its own.
+No agent creates or adds a flag on its own.
 
 - Propose a key, or a new read of one, only for what the target repo's own
   flag rule allows, quoted from its `AGENTS.md`, with a human source; what
@@ -458,8 +453,8 @@ keys to turn on. No agent creates or adds a flag on its own.
 - The ticket's Production flag snapshot section shows "Keys to see this work"
   from the record, handoff tells the person, and `live-ticket-check.mjs`
   fails an unapproved key.
-- An agent never adds or edits a flag registration attestation (symphony-alpha
-  ISS-8676: a ledger row or verification date only a human makes); the
+- An agent never adds or edits a flag registration attestation (a ledger row
+  or verification date only a human makes); the
   approval and "Keys to see this work" tell the human which key to ledger.
 
 ## Accessibility
@@ -469,10 +464,10 @@ Icon-only controls get accessible names, disclosures get `aria-expanded`, one
 
 ## Labs
 
-Default: no flag. When the person asks for Labs, follow the existing Labs
-destination pattern: the route checks the `labs-nav-section` container flag
-plus its own PostHog key (see `apps/app/app/(authenticated)/[orgSlug]/help/page.tsx`
-and `packages/app/shared/lib/feature-flags.ts`). One key gates web and Desktop.
+Default: no flag. When the person asks for Labs, follow the repo's existing
+Labs destination pattern: the route checks the repo's Labs container flag
+plus its own PostHog key, as an existing Labs destination does. One key gates
+web and Desktop.
 Tell them the Labs entry shows on their environment only if those flags are
 on for them; both keys follow "Feature flags".
 
@@ -481,7 +476,7 @@ on for them; both keys follow "Feature flags".
 No worker authors a test in vibe or handoff: no new `*.test.*` or `*.spec.*`
 file, nothing new under `__tests__/` or `e2e/`, no new case, assertion,
 snapshot or fixture, and no deleted test of live behavior. This holds in the
-build loop and at handoff alike (operator ruling, 2026-10-13). The edits
+build loop and at handoff alike. The edits
 allowed are a repair and a retired-only deletion, below. Existing tests run
 at handoff, and stories remain part of component work.
 
@@ -493,7 +488,7 @@ decide it, or it goes to engineering, never to the person.
 When the session's own change breaks an EXISTING test or test fixture (an
 import, a renamed or retired symbol, setup, a type error), the SAME persistent
 `vibe-change-worker` mechanically updates that existing file so the tree
-compiles and the commit hooks pass, in the build loop or at handoff (operator ruling, 2026-10-13, after the PRD-720 live test). A repair never
+compiles and the commit hooks pass, in the build loop or at handoff. A repair never
 changes what any test asserts: no weakened or deleted assertion, no changed
 expected value or snapshot, no new skip, no loosened matcher, tolerance or
 timeout. It adds no test file, no case and no coverage; new tests still go on
@@ -511,13 +506,18 @@ blocked commit goes to engineering.
 ### Retired-only tests may be deleted
 
 The SAME writer may delete a test file or test case that covers ONLY code the
-request itself retires, citing the ticket or PRD that retires that code
-(operator ruling, 2026-10-13; the root `AGENTS.md`: "When the contract
-under test is deliberately retired, deleting its test is the complete and
-correct outcome"). A test that still covers any live behavior is only
-repaired, never deleted; when one file mixes both, delete only the retired
-cases and repair the rest. Record every deletion before the commit with
-`node <plugin-root>/skills/vibe/scripts/retired-tests.mjs record --worktree "<wt>" --path <test file> [--case "<test name>"] --retired-by <ISS-, PRD- or FEA- slug> --covers "<retired code it covered>"`.
+request itself retires, citing the ticket or PRD that retires that code (the
+root `AGENTS.md`: "When the contract under test is deliberately retired,
+deleting its test is the complete and correct outcome"). A test that still
+covers any live behavior is only repaired, never deleted;
+when one file mixes both, delete only the retired cases and repair the rest.
+
+Record every deletion before the commit:
+
+```
+node <plugin-root>/skills/vibe/scripts/retired-tests.mjs record --worktree "<wt>" --path <test file> [--case "<test name>"] --retired-by <ISS-, PRD- or FEA- slug> --covers "<retired code it covered>"
+```
+
 The handoff inventory admits a deleted test file outside a pull request only
 with that whole-file record and lists every recorded deletion under
 `retiredTests`; `vibe-guardrails-reviewer` verifies each one covered only
@@ -531,7 +531,7 @@ merge (a conflict resolution included), exactly the tests closedloop-graph
 `code_tests_for` returns for the files it touched, plus the inventory's
 `diffRules.requiredTests`, nothing broader by default. Files that map to no tests
 (changelog, README, version text, Storybook Version History) run none; CI
-confirms them (operator ruling, 2026-10-20). When one fails, the SAME persistent
+confirms them. When one fails, the SAME persistent
 `vibe-change-worker` fixes the session's own code, never what the test asserts
 (a broken import or setup is a repair, above). Coverage
 the session still needs is recorded internally as it is found and, at
@@ -549,8 +549,7 @@ tests. Record phase, criteria and test paths in the session change log so
 reviewers can tell those tests from forbidden test changes.
 
 The person asks in plain words, and plain-language intent to take the work
-through review and merge themselves IS that explicit request (operator ruling,
-2026-10-15). Words such as "raise a PR", "open a pull request", "I'll get the
+through review and merge themselves IS that explicit request. Words such as "raise a PR", "open a pull request", "I'll get the
 PR merged", "I'll get it merged", "I'll ship it myself" and "I want to take it
 through review" all ask for a pull request and take handoff's requested pull
 request path, as does choosing the pull request in handoff's question about
@@ -579,9 +578,8 @@ request on its own.
 
 Never add a check nobody asked for: a new gate, validator, lint rule, CI
 step or repo-wide test, or a shared test helper widened to support one, that
-the ticket, its PRD or the person did not ask for is instruction inflation
-(operator ruling, 2026-10-16, after symphony-alpha #8886 added a repo-wide
-Storybook gate and widened a shared test helper for it). A check the work
+the ticket, its PRD or the person did not ask for is instruction inflation.
+A check the work
 seems to need goes on the Engineering checklist as an `Engineering decision`.
 
 Never make a failing check pass by changing the check: test assertions and
@@ -595,11 +593,6 @@ If an expectation looks wrong without that evidence, keep it and report it.
 
 ## Repo rules that bite most often
 
-From the root `AGENTS.md`; the Biome and source gates enforce most of them:
-const objects instead of TypeScript `enum`, const references instead of
-string literals, `<Link>` from `@repo/navigation/link` for in-app navigation,
-`next/image` in `apps/app`, no `console` logging in client code, no nested
-ternaries, cognitive complexity at most 20, files under 1,000 lines, regex
-literals at module level, camelCase identifiers, imports at the top, new
-functions at the bottom of a file, and no comments that narrate the code.
-After each batch of edits run `pnpm exec biome check --write <changed files>`.
+The code style rules in the root `AGENTS.md` bind every edit; the Biome and
+source gates enforce most of them. After each batch of edits run
+`pnpm exec biome check --write <changed files>`.

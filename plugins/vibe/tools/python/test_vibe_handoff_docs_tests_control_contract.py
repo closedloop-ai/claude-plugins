@@ -58,7 +58,7 @@ def plugin_prose() -> dict[str, str]:
 
 def test_handoff_lists_docs_pages_and_leaves_internal_docs_to_engineering() -> None:
     docs = section(GUARDRAILS.read_text(), "## Feature docs at handoff")
-    assert "Nothing agent-written goes into public docs (operator ruling, 2026-10-16)" in docs
+    assert "Nothing agent-written goes into public docs. This section is the rule's one canonical statement" in docs
     assert "the repo's internal engineering `docs/` folder" in docs
     assert "only records which existing product docs pages describe a changed feature" in docs
     step = section(HANDOFF_SKILL.read_text(), "### Existing feature docs")
@@ -83,7 +83,7 @@ def test_the_inventory_has_no_internal_docs_allowance() -> None:
 def test_no_worker_writes_tests_in_vibe_or_handoff() -> None:
     rule = section(GUARDRAILS.read_text(), "## Tests")
     for required in ("No worker authors a test in vibe or handoff",
-                     "in the build loop and at handoff alike", "operator ruling, 2026-10-13",
+                     "in the build loop and at handoff alike", "The edits allowed are a repair and a retired-only deletion",
                      "Handoff runs the existing affected tests",
                      "fixes the session's own code, never what the test asserts",
                      "listed on the live ticket under Missing tests as engineering's scope of work",

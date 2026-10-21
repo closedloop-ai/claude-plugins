@@ -50,7 +50,7 @@ def test_guardrails_allow_repairs_that_change_no_assertion() -> None:
     for required in ("breaks an EXISTING test or test fixture",
                      "an import, a renamed or retired symbol, setup, a type error",
                      "mechanically updates that existing file so the tree compiles and the commit hooks pass",
-                     "in the build loop or at handoff", "after the PRD-720 live test",
+                     "in the build loop or at handoff", "pass, in the build loop or at handoff. A repair never changes",
                      "A repair never changes what any test asserts", "no weakened or deleted assertion",
                      "no changed expected value or snapshot", "no new skip",
                      "no loosened matcher, tolerance or timeout",

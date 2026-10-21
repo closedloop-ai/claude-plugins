@@ -59,7 +59,7 @@ def test_both_skills_and_the_person_facing_workers_reference_the_list() -> None:
 def test_every_question_is_recorded_and_never_asked_twice() -> None:
     rule = section(VIBE_SKILL.read_text(), "### Questions are asked once")
     for required in (
-        "No question reaches the person twice (operator ruling, 2026-10-15).",
+        "No question reaches the person twice.",
         "node scripts/session-questions.mjs ask --key <topic>",
         "Ask only when it returns `\"ask\": true`.",
         "it is already waiting: do not repeat it, remind the person of it, or add it to another message",

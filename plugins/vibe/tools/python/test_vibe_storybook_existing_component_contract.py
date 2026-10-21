@@ -41,7 +41,6 @@ INVENTORY = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "handoff-inventory.
 TAXONOMY_SCRIPT = PLUGIN_ROOT / "skills" / "handoff" / "scripts" / "storybook-taxonomy.mjs"
 SESSIONS = VIBE / "scripts" / "vibe-sessions.mjs"
 README = PLUGIN_ROOT / "README.md"
-RULING = "design ruling, 2026-10-15"
 CANONICAL = "never retitles, re-tags or moves its existing story file"
 FROZEN = "is frozen and never edited, not even to add a story"
 V1_FILE = "A v1.0 story file (under a `<Level> v1.0/` root or tagged `deprecated`)"
@@ -50,7 +49,7 @@ V1_FILE = "A v1.0 story file (under a `<Level> v1.0/` root or tagged `deprecated
 def test_existing_components_come_first_in_the_placement_owners_decision_order() -> None:
     order = paragraph(agent("vibe-storybook-decomposer"), "4. Decide in this order")
     for required in (
-        f"4. Decide in this order. First ({RULING}): a change to an existing component",
+        "4. Decide in this order. - First: a change to an existing component",
         "(new states or variants, an extra column action, a new footer)",
         f"{CANONICAL}.",
         "Storybook builds story IDs from the title path, so a retitle breaks every link to those stories",
@@ -67,7 +66,7 @@ def test_existing_components_come_first_in_the_placement_owners_decision_order()
         assert required in order, required
     assert "even in a v1.0 root" not in order
     assert "v2.0" not in order
-    assert order.index(f"First ({RULING})") < order.index("Then (")
+    assert order.index("- First:") < order.index("- Then:")
     placement = flat(agent("vibe-storybook-decomposer"))
     assert "an existing file's title and tag unchanged, a v1.0 file not edited beyond a compile-only repair (step 4)" in placement
     assert "which places every new story:" in placement
@@ -90,7 +89,7 @@ def test_guardrails_and_design_pass_carry_the_one_liner() -> None:
         "permanent and without a version number.",
         "Any other existing file takes them as extra stories, its title and tag unchanged.",
         "Otherwise only a new component or a sibling replacement (a V3) gets a new entry",
-        f"({RULING}; `vibe-storybook-decomposer.md`, \"Precedent search\" step 4)",
+        "(`vibe-storybook-decomposer.md`, \"Precedent search\" step 4)",
     ):
         assert required in guardrails, required
     design = paragraph(DESIGN_PASS.read_text(), "6. Placement:")
@@ -98,7 +97,7 @@ def test_guardrails_and_design_pass_carry_the_one_liner() -> None:
         "New states of an existing component go in a new entry in the current root holding only them when its "
         "story file is v1.0 (under a `<Level> v1.0/` root or tagged `deprecated`), which is never edited beyond a "
         "compile-only repair, and otherwise in its existing story file, title and tag unchanged; only a "
-        f"new component or a sibling replacement otherwise gets a new entry ({RULING})."
+        "new component or a sibling replacement otherwise gets a new entry."
     ) in design
 
 

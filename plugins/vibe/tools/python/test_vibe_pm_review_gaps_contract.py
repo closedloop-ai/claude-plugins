@@ -37,7 +37,6 @@ QUALITY = VIBE / "references" / "quality-loop.md"
 GUARDRAILS = VIBE / "references" / "guardrails.md"
 ENVIRONMENT = VIBE / "references" / "environment.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
-RULING = "operator ruling, 2026-10-16"
 PER_TOKEN = "`Engineering needed (token not bundled): <surface>; <token>; checked <each stylesheet and block searched>; uses <the token's exact value>`"
 
 
@@ -60,8 +59,8 @@ def assert_all(text: str, required: tuple[str, ...]) -> None:
 
 def test_the_token_rule_is_canonical_dated_and_checks_root_and_dark_blocks() -> None:
     assert_all(tokens_rule(), (
-        f"{RULING[0].upper()}{RULING[1:]}.",
         "This section is the rule's one canonical statement; the writer and the guardrails reviewer point at it.",
+        "Before writing or accepting any hardcoded color, shadow or dark-mode override",
         "read the tokens the touched surface actually bundles",
         "its `:root` block and its `.dark` (or `prefers-color-scheme: dark`) block",
         "`packages/design-system/styles/globals.css`",
@@ -77,14 +76,14 @@ def test_the_writer_checks_bundled_tokens_before_any_raw_value_and_logs_per_toke
     assert_all(writer, (
         "Before you write any color, shadow or dark-mode value, with or without a reference, read the tokens the touched surface actually bundles",
         "its `:root` and `.dark` (or `prefers-color-scheme: dark`) blocks",
-        "\"Check the bundled tokens first\"; operator ruling, 2026-10-16",
+        "\"Check the bundled tokens first\")",
         "a page-local custom property re-declaring a bundled token's value",
         "never claim a whole surface or token family is not bundled",
         "so the surface's own CSS adds no `.dark` or `prefers-color-scheme` rule",
         PER_TOKEN,
     ))
     quality = flat(QUALITY.read_text())
-    assert "\"Check the bundled tokens first\"; operator ruling, 2026-10-16" in quality
+    assert "(`guardrails.md`, \"Check the bundled tokens first\")" in quality
     assert "`Engineering needed (token not bundled): <surface>; <token>; checked <each stylesheet and block searched>; uses <the token's exact value>`" in quality
     for text in (writer, quality, flat(GUARDRAILS.read_text())):
         assert "`Engineering needed (tokens not bundled): <surface>; uses <token> values`" not in text
@@ -106,7 +105,7 @@ def test_the_reference_check_renders_light_and_dark_but_never_without_a_referenc
     check = section(QUALITY.read_text(), "### The reference check before ready")
     assert_all(check, (
         "With no reference image there is no render and no compare.",
-        "renders that final state in both light and dark wherever the surface supports both (operator ruling, 2026-10-16)",
+        "renders that final state in both light and dark wherever the surface supports both and compares each theme's screenshot",
         "takes the screenshots again until no difference remains in either theme",
         "`DONE` on such a change carries a Reference check line per touched screen and theme",
     ))
@@ -116,13 +115,13 @@ def test_the_reference_check_renders_light_and_dark_but_never_without_a_referenc
         "Only when the session has a reference image",
         "with none, nothing here runs",
         "in each theme it supports",
-        "**Light and dark.** The final state is captured in both themes wherever the surface supports both (operator ruling, 2026-10-16)",
+        "**Light and dark.** The final state is captured in both themes wherever the surface supports both: it renders inside the app or Desktop shell",
         "`&globals=theme:light`",
         "`&globals=theme:dark`",
         "Playwright's `colorScheme: \"light\"` and once with `colorScheme: \"dark\"`",
     ))
     writer = agent("vibe-change-worker")
-    assert "Render the final state in both light and dark wherever the surface supports both (operator ruling, 2026-10-16)" in writer
+    assert "Render the final state in both light and dark wherever the surface supports both, and record a Reference check line for each theme" in writer
     assert "a Reference check line per touched screen and theme" in writer
     assert "With no reference image there is no render or compare." in writer
     build = section(VIBE_SKILL.read_text(), "## 5. Build loop")
@@ -134,14 +133,14 @@ def test_handoff_verify_renders_a_static_page_it_cannot_drive() -> None:
     verify = agent("vibe-verify-worker")
     assert_all(verify, (
         "A static or generated page control cannot drive",
-        "is still rendered (operator ruling, 2026-10-16)",
+        "is still rendered: produce its HTML with the repo's own generator",
         "open that HTML headless with Playwright, and capture it in light and in dark",
         "\"Could not drive\" is never the result for such a page",
         "only a surface that is neither drivable nor directly renderable returns a limitation",
     ))
     handoff = flat(HANDOFF_SKILL.read_text())
     assert_all(handoff, (
-        "is rendered directly instead (operator ruling, 2026-10-16)",
+        "is rendered directly instead: the verify worker produces its HTML with the repo's own generator",
         "\"Could not drive\" is not accepted for such a page.",
     ))
 
@@ -149,7 +148,7 @@ def test_handoff_verify_renders_a_static_page_it_cannot_drive() -> None:
 def test_changes_on_a_vibe_pull_request_resume_the_session_through_one_path() -> None:
     path = remediation()
     assert_all(path, (
-        f"({RULING})",
+        "Review fixes made outside this path leave the pull request body stale and skip the guardrails",
         "the session resumes and every fix goes through this path, never around it",
         "--status active",
         "`reviewThreads: read`",
@@ -181,7 +180,7 @@ def test_vibe_offers_a_handed_off_session_back_only_for_changes_on_its_pull_requ
     start = section(VIBE_SKILL.read_text(), "## 2. Start or resume")
     assert_all(start, (
         "Asking for changes on the pull request vibe opened for them (\"please fix the review comments\") is a resume too.",
-        f"with one exception ({RULING}): when the person asks for changes on the pull request vibe opened for them",
+        "The one exception: the person asks for changes on the pull request vibe opened for them",
         "through the handoff skill's \"Changes on the open pull request\"",
         "the pull request body is refreshed from the session record",
         "each review thread is answered with the fixing commit and resolved once fixed",
@@ -218,7 +217,7 @@ def test_desktop_scripts_sit_in_the_never_column_without_changing_behavior() -> 
     never = table.split("|")[2]
     assert "`apps/desktop/scripts/**`" in never
     assert_all(flat(text), (
-        "`apps/desktop/scripts/**` is in the Never column explicitly (operator ruling, 2026-10-16)",
+        "`apps/desktop/scripts/**` is in the Never column explicitly: no column listed it",
         "the handoff inventory still reports it under `outsideAllowed`",
         "takes the forbidden-path route below (`Engineering needed (forbidden path)`)",
     ))
@@ -227,7 +226,7 @@ def test_desktop_scripts_sit_in_the_never_column_without_changing_behavior() -> 
 def test_review_soul_is_required_on_the_tests_a_pull_request_turn_wrote() -> None:
     handoff = flat(HANDOFF_SKILL.read_text())
     assert_all(handoff, (
-        f"the repo's `review-soul` critic is REQUIRED on the tests the writer wrote in its `pull-request` turn ({RULING}), not optional",
+        "the repo's `review-soul` critic is REQUIRED on the tests the writer wrote in its `pull-request` turn, not optional",
         "the pull request does not open, or take a new push, until its rerun on the corrected tests is clean",
         "| Requested pull request: review of the tests the writer wrote | repo `review-soul`, required (step 6) |",
         "with the repo's `review-soul` critic required on those tests",
@@ -237,7 +236,7 @@ def test_review_soul_is_required_on_the_tests_a_pull_request_turn_wrote() -> Non
 def test_pull_request_mode_tests_pin_what_they_name_and_prefer_tokens_structure_behavior() -> None:
     writer = agent("vibe-change-worker")
     assert_all(writer, (
-        f"Two more rules bind every test you write there ({RULING})",
+        "Two more rules bind every test you write there:",
         "A test's name never claims more than its assertions pin: it must fail when the behavior it names breaks.",
         "Prefer assertions on tokens, structure and behavior",
         "over raw CSS or style-string pins",

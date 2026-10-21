@@ -34,7 +34,6 @@ GUARDRAILS = REFERENCES / "guardrails.md"
 QUALITY = REFERENCES / "quality-loop.md"
 TICKET_TEMPLATE = REFERENCES / "ticket-template.md"
 RECORD_CONTEXT = PLUGIN_ROOT.parents[1] / "tools" / "vibe-workers" / "src" / "record-context.ts"
-RULING = "operator ruling, 2026-10-15"
 TWO_WAY = ("Do you want me to open a pull request so you can take it through review and merge, "
            "or pass it to someone, usually design and then engineering, to finish?")
 ENDINGS_LINE = ("When you're done, I can either open a pull request for you, "
@@ -53,7 +52,7 @@ def plugin_texts() -> dict[str, str]:
 def test_plain_words_are_an_explicit_pull_request_request() -> None:
     rule = section(GUARDRAILS.read_text(), "## Tests")
     assert "plain-language intent to take the work through review and merge themselves IS that explicit request" in rule
-    assert RULING in rule
+    assert "as does choosing the pull request in handoff's question about how the session ends" in rule
     for phrase in (*PR_PHRASES, "open a pull request", "I'll get it merged"):
         assert phrase in rule, phrase
     assert "take handoff's requested pull request path" in rule

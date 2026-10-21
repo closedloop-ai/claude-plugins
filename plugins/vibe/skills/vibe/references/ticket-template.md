@@ -45,21 +45,22 @@ publication, and the same ticket worker verifies completeness and assignment.
   publishes from them, links from this ticket (ticket PRODUCES PLN), keeps
   current and moves from `DRAFT` to `APPROVED` to `EXECUTED` as the work does;
   the document the session started from is linked to this ticket (source
-  PRODUCES ticket) (operator ruling, 2026-10-19;
-  `../../../agents/vibe-ticket-worker.md`, "Source link and session plan").
+  PRODUCES ticket) (`../../../agents/vibe-ticket-worker.md`, "Source link
+  and session plan").
   This body and the PLN follow the same safety rules: no local absolute
   paths, usernames, personal emails, secrets or credentials, and no private
   session inputs. Product scope and truthful delivery/review history remain
   here.
-- Hard rule (operator ruling, 2026-10-20), for this body, the PLN and the pull
-  request: never reference a path on the operator's machine (home, temp,
-  scratchpad, worktree or `.control/` paths) or say something is on someone's
-  laptop. Embed a screenshot with `create-document-version` `inlineImages`;
-  quote text evidence inline, briefly. A plan is attached, never pointed at:
-  the implementation plan is the linked PLN, and a QA plan or other working
-  file is uploaded with `upload-attachment` and named by its attachment name.
-  `live-ticket-check.mjs` refuses a line naming a local path or the local plans
-  folder.
+- Hard rule for this body, the PLN and the pull request: never reference a
+  path on the operator's machine (home, temp, scratchpad, worktree or
+  `.control/` paths) or say something is on someone's laptop.
+  - Embed a screenshot with `create-document-version` `inlineImages`.
+  - Quote text evidence inline, briefly.
+  - A plan is attached, never pointed at: the implementation plan is the
+    linked PLN, and a QA plan or other working file is uploaded with
+    `upload-attachment` and named by its attachment name.
+  - `live-ticket-check.mjs` refuses a line naming a local path or the local
+    plans folder.
 - Conflicts: each `Conflict` the change log records (Placement blocks and
   owner prep) goes in exactly one section, by its audience. `design`
   (Storybook sidebar placement, taxonomy and story granularity, visual or UX
@@ -85,7 +86,7 @@ publication, and the same ticket worker verifies completeness and assignment.
   session.
 - Known main failures: each entry of handoff's `mainPreexistingFailures` (a
   check that also fails on the main the session captured; `quality-loop.md`,
-  "Failures already on main"; operator ruling, 2026-10-16) goes once at the
+  "Failures already on main") goes once at the
   end of the Engineering checklist as
   `- [ ] Known main failure: <check>; fails on captured main <mainSha>; evidence: <first error line of the main run's log>; exit <main exit code> on captured main, <session exit code> on the session commit`.
   Not on the Handoff section's Pre-existing failures line, never in both, and
@@ -93,8 +94,7 @@ publication, and the same ticket worker verifies completeness and assignment.
   assignment or the pull request.
 - Compile-only v1.0 repairs: each file in the handoff inventory's
   `compileOnlyV1Repairs` goes once at the end of the Engineering checklist as
-  `- [ ] Check compile-only repair to v1.0: <file>; confirm only prop, import or type changes and no visual change`
-  (design ruling, 2026-10-15).
+  `- [ ] Check compile-only repair to v1.0: <file>; confirm only prop, import or type changes and no visual change`.
 
 | Section | Written by | When |
 |---|---|---|
@@ -309,6 +309,6 @@ Yes / no, plus one line when it's a no:
       and a test for every frozen row, in the pull request
 - [ ] Decide whether a net-new surface needs a default-off PostHog flag before
       merge (closed-by-default UI policy)
-- [ ] Verify shared `packages/app` changes on both web and Desktop
+- [ ] Verify shared UI package changes on both web and Desktop
 - [ ] Open the pull request to `main`; independent code review
 ````

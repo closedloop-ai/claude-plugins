@@ -122,7 +122,7 @@ def test_precedent_search_reports_everything_from_the_graph_and_the_built_index(
 def test_repo_docs_decide_first_then_the_precedent() -> None:
     search = section(agent("vibe-storybook-decomposer"), "## Precedent search")
     order = (
-        "Then (operator ruling, 2026-10-14): where the repo's "
+        "Then: where the repo's "
         f"{TAXONOMY_DOC} or {STORYBOOK_SKILL} already say how, follow them; "
         "where they do not, mirror the precedent"
     )
@@ -195,9 +195,9 @@ def test_owner_prep_looks_for_the_precedent_first_and_points_at_the_repo_rule() 
     for required in (
         "where the same capability already exists for a sibling entity",
         "how its hosts consume it, and where its stories live",
-        'the repo\'s `AGENTS.md` ("Shared behavior belongs in the shared parent (ISS-12135)")',
+        'the repo\'s `AGENTS.md` ("Shared behavior belongs in the shared parent")',
         "mirror the precedent's ownership, component and Storybook structure, never its root or version",
-        "operator ruling, 2026-10-14",
+        "already say how, follow them; where they do not",
     ):
         assert required in precedent, required
     assert "review-owned, no gate" not in text
@@ -222,7 +222,7 @@ def test_page_scoped_story_check_is_judgment_only() -> None:
     check = paragraph(reviewer, "11. Storybook placement")
     for required in (
         "judgment only; every finding here is advisory",
-        "a new page-scoped story or page-specific composite for a capability a shared `packages/design-system` component already provides",
+        "a new page-scoped story or page-specific composite for a capability a shared design-system component already provides",
         "This is not a mechanical check",
     ):
         assert required in check, required

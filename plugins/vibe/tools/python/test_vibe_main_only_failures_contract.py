@@ -24,14 +24,13 @@ TICKET_TEMPLATE = REFERENCES / "ticket-template.md"
 HANDOFF_SKILL = PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md"
 WORKERS_SRC = PLUGIN_ROOT.parents[1] / "tools" / "vibe-workers" / "src"
 MAIN_SYNC_BUNDLE = PLUGIN_ROOT / "skills" / "vibe" / "scripts" / "dist" / "main-sync.mjs"
-RULING = "operator ruling, 2026-10-16"
 TICKET_LINE = "- [ ] Known main failure: <check>; fails on captured main <mainSha>; evidence:"
 
 
 def test_quality_loop_states_the_classification_once() -> None:
     rule = section(QUALITY.read_text(), "## Failures already on main")
     for required in (
-        "Operator ruling, 2026-10-16",
+        "This applies to handoff in Codex and Claude Code alike",
         "Codex and Claude Code alike",
         "runs that same check on the main the session captured",
         "disposable checkout",
@@ -55,7 +54,7 @@ def test_quality_loop_states_the_classification_once() -> None:
 def test_a_main_only_failure_is_not_a_needed_tooling_fix() -> None:
     tooling = section(GUARDRAILS.read_text(), "## Plugins and tooling")
     assert "also fails on the main the session captured is not a needed fix and never stops the handoff" in tooling
-    assert RULING in tooling
+    assert "it is a Known main failure recorded for engineering" in tooling
     handoff = flat(HANDOFF_SKILL.read_text())
     assert "A check that also fails on the main the session captured is not a needed fix and never stops the handoff" in handoff
     assert "Only a failure the session caused blocks." in handoff
@@ -69,7 +68,7 @@ def test_handoff_publishes_and_routes_main_preexisting_failures_to_the_ticket() 
         "never send it to the writer as a fix, never stop and never ask the person about it",
         "error says `session-caused`",
         "blocks as before and goes back to the SAME writer",
-        RULING,
+        '"Failures already on main"',
     ):
         assert required in upload, required
     choose = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")

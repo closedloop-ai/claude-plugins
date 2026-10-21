@@ -43,8 +43,8 @@ before terminal success.
 
 When the target repository declares an evidence-capture verification protocol,
 require a `Repo verification evidence` value before accepting a PR handoff; it
-supports and never replaces design visual QA, E2E, or human manual QA. In
-`symphony-alpha` (the `control` skill), a handoff with `UI work: YES` or a
+supports and never replaces design visual QA, E2E, or human manual QA. When
+that protocol is a repo-owned `control` skill, a handoff with `UI work: YES` or a
 runtime behavior change is rejected unless the value lists before and after
 artifact paths captured with `pnpm control` for each touched surface, or is
 `blocked` with the exact control command and error. `not_applicable` is

@@ -37,7 +37,7 @@ def test_the_rule_defers_to_the_repo_taxonomy_doc_and_states_only_the_minimum() 
     for required in (
         f"Read the repo's {TAXONOMY_DOC} and follow it",
         "that doc is the authority, so its rules are not copied here",
-        "operator ruling, 2026-10-14",
+        "so its rules are not copied here. The bare minimum:",
         "New stories go in the current roots, titled under the plain level "
         "(`Foundations/`, `Primitives/`, `Composites/`, `Patterns/`, `Surfaces/`)",
         "never in the frozen v1.0 roots (`Foundations v1.0/`, `Primitives v1.0/`, `Composites v1.0/`, "
@@ -48,7 +48,7 @@ def test_the_rule_defers_to_the_repo_taxonomy_doc_and_states_only_the_minimum() 
         "preview or anything under `Not In The Live App`; never `deprecated`, which only the v1.0 roots carry",
         "(`tags: [\"!stable\", \"experimental\"]`)",
         "Adding, moving or renaming stories is a Storybook release",
-        "A session whose base predates this scheme (symphony-alpha #8867, Storybook 3.0.0) follows that base's "
+        "A session whose base predates this scheme (Storybook before 3.0.0) follows that base's "
         "own `TAXONOMY.md`: there the plain roots and the `v1.0` tag are v1.0, and new work goes under "
         "`<Level> v2.0/` tagged `v2.0`",
         "The handoff inventory judges story files by the scheme of the session's base (`storybookScheme`",

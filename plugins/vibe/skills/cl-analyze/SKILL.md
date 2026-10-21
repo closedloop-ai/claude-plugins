@@ -34,7 +34,7 @@ Before routing or recommending blocker communication, read the sibling policy sk
 
 1. Parse the input into a ClosedLoop feature URL or `FEA-*` slug. If the ticket is missing, ask one concise clarification and stop.
 2. Load the feature, linked PRDs, plans, comments, acceptance criteria, attachments, project context, status, assignee, parent/child links, split signature comments, design links, screenshots, prototypes, and any obvious duplicate or related tickets. Run the Requirements Contract Discovery below before deciding readiness.
-3. Identify the target repo and code surface. In `symphony-alpha`, query repo memory before choosing the investigation path, then verify memory hints against current repo docs and code. When the repo publishes a feature or surface map (for example a `FEATURE_MAP.md` owned by a repo `control` skill), use it to resolve vague descriptions and screenshots to concrete routes, components, and code locations, then verify against code.
+3. Identify the target repo and code surface. When the repo has a shared repo memory, query it before choosing the investigation path, then verify memory hints against current repo docs and code. When the repo publishes a feature or surface map (for example a `FEATURE_MAP.md` owned by a repo `control` skill), use it to resolve vague descriptions and screenshots to concrete routes, components, and code locations, then verify against code.
 4. Keep two separate inventories while inspecting: `Expected surfaces` contains only files, packages, contracts, and tests that the minimum credible implementation is likely to change; contextual/dependency surfaces are existing behavior that must be understood or preserved but is not expected to change. Do not promote inspected files into `Expected surfaces` merely because the ticket depends on them.
 5. Inspect only enough implementation to judge whether the ticket is coherent and executable. Prefer `rg`, repo docs, route registration, imports, tests, and ownership boundaries over assumptions.
 6. If the ticket touches a third-party API, SDK, hosted platform, model provider, auth provider, billing provider, webhook/event contract, or fast-moving dependency, consult the official current online documentation before deciding readiness. Prefer primary vendor docs over blogs, examples, or model memory. Record the URL, relevant version/date when visible, and the specific fact used.
@@ -193,7 +193,31 @@ Do not generalize that rule to all work described as a "port." A port that parse
 
 Use `HIGH` only when the expected implementation itself must change multiple independently risky ownership boundaries or contracts, or requires a concrete migration/refactor. Before assigning `HIGH`, state why a referential adapter, registration, link, or existing extension point cannot satisfy the ticket and name the independently mergeable implementation boundaries that make one execution unsafe. Do not count documentation, focused tests, or drift guards as separate workstreams when they validate the same atomic change.
 
-`HIGH` complexity or `EXTREME` risk is a blocker for direct automatic execution by default. A `HIGH` ticket may return `GO` only under an exact-ticket or session-level human complexity override: the user directs execution of that named ticket or ticket set and accepts or requires its atomic unsplit implementation shape, `Risk` is not `EXTREME`, every readiness item passes, product intent and ownership are clear, the approved requirements/design contract is complete, and the result records the approval evidence in `High-complexity execution override: APPROVED`. Apply cl-policy's natural-language rule: in this context, “proceed with ISS-1234, do not split it” or equivalent is sufficient; never require the user to recite `HIGH`, `risk`, `override`, or a magic sentence. Before reporting the override missing, search the current user thread plus the latest exact-ticket memory/comments, with the newest direct user instruction taking precedence. Persist and reuse an accepted override, and ask again only for a concrete material scope/risk expansion beyond it. Never infer an override from assignment, priority, an approved PRD, or a generic request to make progress. Without that narrow override, use `ENGINEERING_BLOCKED` or `HUMAN_REVIEW_REQUIRED`; do not use `SPLIT_RECOMMENDED`. If historical split evidence shows the current ticket is too broad, overlapping, dependent, or not independently validatable, use `ENGINEERING_BLOCKED` or `HUMAN_REVIEW_REQUIRED`; do not use `SPLIT_REPAIR_REQUIRED`. Product ambiguity, duplicate/stale scope, inactive surface, missing external docs, extreme risk, or unrelated engineering uncertainty cannot be overridden this way. `EXTREME` risk must not be split or executed automatically. When a session-level instruction requires the operator's personal approval for every implementation plan, a high-complexity override authorizes only plan-only `$cl-execute`; branch creation, code changes, PR work, and merge work remain blocked until the operator personally approves the exact plan.
+`HIGH` complexity or `EXTREME` risk is a blocker for direct automatic execution by default.
+
+A `HIGH` ticket may return `GO` only under an exact-ticket or session-level human complexity override. Every one of these must hold:
+
+- The user directs execution of that named ticket or ticket set and accepts or requires its atomic unsplit implementation shape.
+- `Risk` is not `EXTREME`.
+- Every readiness item passes.
+- Product intent and ownership are clear.
+- The approved requirements/design contract is complete.
+- The result records the approval evidence in `High-complexity execution override: APPROVED`.
+
+Recognize and keep the override:
+
+- Apply cl-policy's natural-language rule: in this context, “proceed with ISS-1234, do not split it” or equivalent is sufficient. Never require the user to recite `HIGH`, `risk`, `override`, or a magic sentence.
+- Before reporting the override missing, search the current user thread plus the latest exact-ticket memory/comments. The newest direct user instruction takes precedence.
+- Persist and reuse an accepted override. Ask again only for a concrete material scope/risk expansion beyond it.
+- Never infer an override from assignment, priority, an approved PRD, or a generic request to make progress.
+
+Without the override, and what it never covers:
+
+- Without that narrow override, use `ENGINEERING_BLOCKED` or `HUMAN_REVIEW_REQUIRED`; do not use `SPLIT_RECOMMENDED`.
+- If historical split evidence shows the current ticket is too broad, overlapping, dependent, or not independently validatable, use `ENGINEERING_BLOCKED` or `HUMAN_REVIEW_REQUIRED`; do not use `SPLIT_REPAIR_REQUIRED`.
+- Product ambiguity, duplicate/stale scope, inactive surface, missing external docs, extreme risk, or unrelated engineering uncertainty cannot be overridden this way.
+- `EXTREME` risk must not be split or executed automatically.
+- When a session-level instruction requires the operator's personal approval for every implementation plan, a high-complexity override authorizes only plan-only `$cl-execute`. Branch creation, code changes, PR work, and merge work remain blocked until the operator personally approves the exact plan.
 
 ## Merge Batch Fit
 
@@ -340,4 +364,23 @@ Next action:
 - <reconcile exact PRD link then run plan-only $cl-execute | run $cl-execute in this thread | run $cl-execute for UI plan and human approval | add ClosedLoop comment tagging product contact | surface engineering blocker privately to user | ask user>
 ```
 
-If the decision is not `GO` or `GO_WITH_UI_PLAN_APPROVAL`, do not execute the parent ticket. If `Decision: GO` or `Decision: GO_WITH_UI_PLAN_APPROVAL` would conflict with any readiness item that is not `PASS`, `NOT_APPLICABLE`, or `APPROVAL_REQUIRED` for `UI design guidance` only, a proposal contract audit that is `BLOCKED` or `UNKNOWN`, `Complexity: HIGH` without `High-complexity execution override: APPROVED`, `Risk: EXTREME`, unknown repo/surface metadata, missing required metadata, an `AMBIGUOUS` or unexamined requirements contract, or missing external-doc evidence for a third-party integration, change the decision to `ENGINEERING_BLOCKED`, `PRODUCT_BLOCKED`, or `HUMAN_REVIEW_REQUIRED` according to the blocker evidence; never change it to `SPLIT_RECOMMENDED`. A `MISSING_LINK` requirements state may return `GO` only with one exact verified link recommendation and `Next action: reconcile exact PRD link then run plan-only $cl-execute`; the parent must create and re-fetch the link before execution. The only allowed readiness exceptions are an explicitly recorded ticket intent to revive/remove dead code or resolve duplicate work, or the exact-ticket/session-level high-complexity override above; neither permits an `EXTREME` risk or another blocked readiness item. Use `GO_WITH_UI_PLAN_APPROVAL` only when `UI work: YES`, `UI design source: missing`, `Human UI plan approval: required`, and every non-UI readiness item is `PASS` or `NOT_APPLICABLE`; otherwise use `GO` only when `Human UI plan approval: not_required` or a current session-level plan-approval instruction is separately recorded. If `Split lineage: split_child` and the current ticket is too complex to execute directly because historical split shape is defective, return `ENGINEERING_BLOCKED` or `HUMAN_REVIEW_REQUIRED`, set `Blocker category: engineering` or `mixed`, set `Splittable: NO`, set ClosedLoop comment target to `none`, and explain that the ticket remains a single issue rather than being split or repaired. If a legacy split child has a product, duplicate, inactive-surface, external-doc, extreme-risk, or unrelated engineering blocker, return the normal blocker decision and keep engineering/operational routing private unless an explicit Product decision exists. Otherwise change it to `HUMAN_REVIEW_REQUIRED`, set ClosedLoop comment target to `none`, and surface the blocker privately to the user.
+If the decision is not `GO` or `GO_WITH_UI_PLAN_APPROVAL`, do not execute the parent ticket.
+
+`Decision: GO` or `Decision: GO_WITH_UI_PLAN_APPROVAL` conflicts with any of these:
+
+- a readiness item that is not `PASS`, `NOT_APPLICABLE`, or `APPROVAL_REQUIRED` for `UI design guidance` only;
+- a proposal contract audit that is `BLOCKED` or `UNKNOWN`;
+- `Complexity: HIGH` without `High-complexity execution override: APPROVED`;
+- `Risk: EXTREME`;
+- unknown repo/surface metadata or missing required metadata;
+- an `AMBIGUOUS` or unexamined requirements contract;
+- missing external-doc evidence for a third-party integration.
+
+On a conflict, change the decision to `ENGINEERING_BLOCKED`, `PRODUCT_BLOCKED`, or `HUMAN_REVIEW_REQUIRED` according to the blocker evidence; never change it to `SPLIT_RECOMMENDED`. Then apply these, in order:
+
+- A `MISSING_LINK` requirements state may return `GO` only with one exact verified link recommendation and `Next action: reconcile exact PRD link then run plan-only $cl-execute`. The parent must create and re-fetch the link before execution.
+- The only allowed readiness exceptions are an explicitly recorded ticket intent to revive/remove dead code or resolve duplicate work, or the exact-ticket/session-level high-complexity override above. Neither permits an `EXTREME` risk or another blocked readiness item.
+- Use `GO_WITH_UI_PLAN_APPROVAL` only when `UI work: YES`, `UI design source: missing`, `Human UI plan approval: required`, and every non-UI readiness item is `PASS` or `NOT_APPLICABLE`. Otherwise use `GO` only when `Human UI plan approval: not_required` or a current session-level plan-approval instruction is separately recorded.
+- If `Split lineage: split_child` and the current ticket is too complex to execute directly because historical split shape is defective, return `ENGINEERING_BLOCKED` or `HUMAN_REVIEW_REQUIRED`, set `Blocker category: engineering` or `mixed`, set `Splittable: NO`, set ClosedLoop comment target to `none`, and explain that the ticket remains a single issue rather than being split or repaired.
+- If a legacy split child has a product, duplicate, inactive-surface, external-doc, extreme-risk, or unrelated engineering blocker, return the normal blocker decision and keep engineering/operational routing private unless an explicit Product decision exists.
+- Otherwise change it to `HUMAN_REVIEW_REQUIRED`, set ClosedLoop comment target to `none`, and surface the blocker privately to the user.

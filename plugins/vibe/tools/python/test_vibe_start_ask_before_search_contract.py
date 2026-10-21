@@ -46,9 +46,9 @@ def starting_new() -> str:
     return start[start.index("### Starting new") : start.index("### Mockup sessions")]
 
 
-def test_the_decision_comes_before_any_search_and_cites_the_ruling() -> None:
+def test_the_decision_comes_before_any_search_and_states_why() -> None:
     start = start_section()
-    assert "operator ruling, 2026-10-15" in decision()
+    assert "that search is slow, so it runs only for someone who chose to resume" in decision()
     assert SEARCH not in decision().replace(f"never run `{SEARCH}`", "")
     assert start.index(QUESTION) < start.index(f"run `node scripts/{SEARCH}`")
     assert not start.lstrip().startswith(f"Run `node scripts/{SEARCH}`")

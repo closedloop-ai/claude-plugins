@@ -49,8 +49,7 @@ and so does each flag key's approval (`guardrails.md`, "Feature flags").
 
 ### Precedent before asking
 
-Operator ruling, 2026-10-16: walk a fine line on product questions during a
-session. A question is asked only when neither the graph research above nor
+Walk a fine line on product questions during a session. A question is asked only when neither the graph research above nor
 another app's precedent answers it. When the graph and live decisions do not
 settle how the product should behave in a situation (someone cancels a GitHub
 authorization halfway, a list is empty, an action is undone), what a mature
@@ -226,11 +225,15 @@ engineering about it.
 
 **A writer whose runtime cannot run.** A Codex writer stopped by its usage
 limit moves to Claude through this command, never to a worker outside the
-session records (operator lesson, 2026-10-19). Finish its turn `"status":
-"FAILED"` with `"state": "failed"` evidence, run `migrate` with step 3's
-JSON (recorded `"runtime": "codex"`, no `workerId`) plus `"harnessSwitch":
-{ "to": "claude", "cause": "usage-limit", "evidence": "<error line>" }`, and
-continue at step 5. It refuses running turns, retained grants, a `BLOCKED`
+session records:
+
+1. Finish its turn `"status": "FAILED"` with `"state": "failed"` evidence.
+2. Run `migrate` with step 3's JSON (recorded `"runtime": "codex"`, no
+   `workerId`) plus this field:
+   `"harnessSwitch": { "to": "claude", "cause": "usage-limit", "evidence": "<error line>" }`
+3. Continue at step 5.
+
+The command refuses running turns, retained grants, a `BLOCKED`
 writer and a same-runtime switch, and records the switch in `migrations`.
 
 Any other binding/read/identity error remains `BLOCKED` internally. Never
@@ -445,8 +448,7 @@ paste it into the ticket, and never attach it. The ticket worker publishes the
 folder's top-level plans as the session's ONE implementation plan document
 (PLN): in the live ticket's project, assigned to its assignee, linked ticket
 PRODUCES PLN, and given a new version only when the plan changed materially
-(operator ruling, 2026-10-19; `../../../agents/vibe-ticket-worker.md`, "Source
-link and session plan"). The PLN is `DRAFT` while its latest plan is not built,
+(`../../../agents/vibe-ticket-worker.md`, "Source link and session plan"). The PLN is `DRAFT` while its latest plan is not built,
 `APPROVED` once the session wrote and checked the code, and `EXECUTED` once the
 pull request merged. So write every plan for an engineer who never saw the
 session, under the live ticket's safety rules: repo-relative paths only, and
@@ -482,21 +484,23 @@ and handoff open no PR unless the person asks for one; then handoff opens it
 at its end ("Tests: repair, don't author"). Operational publishing uses this
 same session branch.
 
-**A dependency on an open pull request never idles the session** (operator
-lesson, 2026-10-19). Never pause, wait for the merge, or ask the person to
-restart anything: the writer commits every change that compiles without the
-unmerged code, so only the dependent import waits, and ROOT reads
-`gh pr view <number> --json state,mergedAt,headRefOid` at every resume until
-a main sync brings it in. Never base or merge the session on that unmerged
-head; the inventory would count its files as the session's. Merged work is
-pushed as soon as it compiles and its targeted tests pass, e2e results
-following, and a publish-helper failure is reported at once with its command
-and error.
+**A dependency on an open pull request never idles the session**. Never
+pause, wait for the merge, or ask the person to restart anything.
+
+- The writer commits every change that compiles without the unmerged code, so
+  only the dependent import waits.
+- ROOT reads `gh pr view <number> --json state,mergedAt,headRefOid` at every
+  resume until a main sync brings it in.
+- Never base or merge the session on that unmerged head; the inventory would
+  count its files as the session's.
+- Merged work is pushed as soon as it compiles and its targeted tests pass,
+  with e2e results following.
+- A publish-helper failure is reported at once with its command and error.
 
 ## Lean build loop
 
 The build loop is quick prep, the build, the quick checks the commit hooks
-need, the orchestrator's commit, deploy, and showing the person (operator ruling, 2026-10-13, after the PRD-720 live test). Nothing heavier runs
+need, the orchestrator's commit, deploy, and showing the person. Nothing heavier runs
 between a request and the person seeing it.
 
 - Quick prep: the bounded lookup in `design-pass.md`, the local plan and the
@@ -530,11 +534,11 @@ Storybook footprint, running app checks and any other heavy validation run
 at `$handoff`, never during the loop, even where a repository protocol
 asks for them before a change is done: handoff runs them. The acceptance
 check's single test, script or control read per criterion is not one of them.
-The reference check before ready is the one exception to this rule (operator
-ruling, 2026-10-15), and it runs only with a reference image.
+The reference check before ready is the one exception to this rule, and it
+runs only with a reference image.
 Visual QA can also run between requests, outside the loop, when the person
 accepts the offer at a visible milestone or asks for polish ("Visual QA
-during the session"; operator ruling, 2026-10-16): after a deploy, never
+during the session"): after a deploy, never
 inside a request's build, and it never holds a deploy back.
 The reference-product
 and new Storybook components notices (`SKILL.md`, section 5, "Notices that
@@ -543,11 +547,9 @@ never wait") stay as they are.
 ## Acceptance criteria before ready
 
 Nothing is called ready until every acceptance criterion the change touches
-has been checked against the code (operator ruling, 2026-10-14, after
-the PRD-720 live test: a session said ISS-12462 was ready while "A deep link
-to a grouped view restores the same collapse state for the recipient" held
-on Branches and was never built on Documents). Heavy QA still waits for
-handoff. This section is the rule's one canonical statement; the skills and
+has been checked against the code. For example, a criterion that holds on
+one list view and was never built on a sibling view is not ready. Heavy QA
+still waits for handoff. This section is the rule's one canonical statement; the skills and
 workers point at it.
 
 The list lives in the session decision table, not a new artifact: one
@@ -570,9 +572,8 @@ names: each view (a list and a board are two), web and Desktop where their
 adapters differ, and the mechanism its words require (a URL, a saved view, a
 reload, a shared link, Back). A criterion is met only when every surface on
 that line has its own `met` check; a check on one surface never stands in for
-another (operator ruling, 2026-10-16, after symphony-alpha #8885 kept a
-board's collapse state out of the URL its criterion required while the list
-view had it).
+another. For example, a list view that keeps its collapse state in the URL
+does not meet that criterion for a board view that does not.
 
 After each build or fix and its quick checks, before returning `DONE`, the
 writer checks every unsuperseded criterion the change touches, including
@@ -627,13 +628,11 @@ never counts as met.
 ## Visual references
 
 A reference the person gives reaches the writer as an image it reads, and
-every visual and UX property it shows becomes an acceptance criterion
-(operator ruling, 2026-10-15: "we're missing visual cues"). A person built UI
-from two screenshots, one of another product; the session missed a drop
-shadow, a larger text size and bold type, and fixed each once she pointed it
-out. The writer received the saved path beside the orchestrator's own text
-description, never read the image before its first build, and reference mode
-was scoped to behaviors, so those properties never became criteria. This
+every visual and UX property it shows becomes an acceptance criterion.
+Without this, a session misses properties such as a drop shadow, a larger
+text size or bold type: the writer builds from the orchestrator's text
+description without reading the image, and reference research scoped to
+behaviors never turns those properties into criteria. This
 section is the rule's one canonical statement; the skills and workers point
 at it. The build loop stays lean: the reference check below is the one
 exception to its no-automated-visual-QA rule, and it runs only when there is
@@ -735,14 +734,20 @@ missing-primitive path (`NEEDS_PRIMITIVE`, built by the writer from the
 read-only design-system steward's spec). Before any raw value, the writer
 reads the tokens the touched surface actually bundles, in each stylesheet's
 `:root` and `.dark` blocks (`guardrails.md`, "Check the bundled tokens
-first"; operator ruling, 2026-10-16). A bundled token is always used. Only a
-token the surface genuinely lacks (a page generated outside the app shell can
-lack some) is logged, per token and with the stylesheets and blocks searched,
-as `Engineering needed (token not bundled): <surface>; <token>; checked
-<each stylesheet and block searched>; uses <the token's exact value>`, and
-that property alone uses the token's exact value with the token cited beside
-it; it never invents a value no token defines. Never copy the outside
-product's words; user copy follows `guardrails.md`, "Copy".
+first").
+
+- A bundled token is always used.
+- Only a token the surface genuinely lacks (a page generated outside the app
+  shell can lack some) is logged, one line per token, naming the stylesheets
+  and blocks searched.
+- That property alone uses the token's exact value with the token cited
+  beside it; it never invents a value no token defines.
+
+The log line:
+`Engineering needed (token not bundled): <surface>; <token>; checked <each stylesheet and block searched>; uses <the token's exact value>`
+
+Never copy the outside product's words; user copy follows `guardrails.md`,
+"Copy".
 
 The writer adds each requirement to the session's `## Acceptance Criteria`
 as a criterion (source: the request ID and the reference image path), naming
@@ -757,14 +762,13 @@ cheapest honest evidence that list allows, a source trace included.
 ### The reference check before ready
 
 Only when the person gave a reference image (a screenshot or image, or a
-link or page captured as one) and the change renders UI (operator ruling,
-2026-10-15). With no reference image there is no render and no compare.
+link or page captured as one) and the change renders UI. With no reference image there is no render and no compare.
 
 Before returning `DONE`, the writer takes one screenshot of each touched
 screen or component at the reference's viewport (`environment.md`,
 "Capturing for the reference check") and opens it beside the reference
 image. It renders that final state in both light and dark wherever the
-surface supports both (operator ruling, 2026-10-16) and compares each theme's
+surface supports both and compares each theme's
 screenshot: the reference's properties in the reference's own theme, and in
 the other theme the same properties delivered by the same tokens, none lost,
 unreadable or turned back into a raw value. It looks only at the properties
@@ -804,10 +808,10 @@ has fixed it.
 
 ## Visual QA during the session
 
-Operator ruling, 2026-10-16, newer than the lean-loop ruling (2026-10-13,
-after the PRD-720 live test) that left visual QA to handoff alone. It adds an
-opt-in visual QA the orchestrator offers during the session, in Codex and
-Claude Code alike; the build loop above is otherwise unchanged. This section
+This section adds an opt-in visual QA the orchestrator offers during the
+session, in Codex and Claude Code alike. It takes precedence over the lean
+build loop's rule that leaves visual QA to handoff alone; the build loop above
+is otherwise unchanged. This section
 is the rule's one canonical statement, and handoff's visual QA compares
 against the same basis.
 
@@ -877,8 +881,7 @@ since); then the request goes to the writer as an ordinary request under
 ## Tests: repair, don't author
 
 No test authoring in the build loop or at handoff, including new
-fixtures/snapshots (operator ruling, 2026-10-13; `guardrails.md`,
-"Tests"). The SAME writer repairs an existing test or fixture its own change
+fixtures/snapshots (`guardrails.md`, "Tests"). The SAME writer repairs an existing test or fixture its own change
 broke, in the loop or at handoff, without changing what any test asserts, and
 records it in the change log as a repair. It may delete a test file or case
 that covers only code the request retires, recorded with `retired-tests.mjs`
@@ -901,19 +904,18 @@ an interrupted handoff.
 
 The only exception is the person explicitly asking for a pull request to be
 raised, in any plain words that say they will take it through review and
-merge themselves (`guardrails.md`, "Tests"; operator ruling, 2026-10-15).
+merge themselves (`guardrails.md`, "Tests").
 Then the SAME writer, in an explicit `pull-request` turn, writes full
 tests for every change in the session, records their paths, criteria and
 rulings in the change log, runs them and fixes implementation defects, and
 independent reviewers examine that coverage before the pull request opens.
 Its own test expecting behavior no ticket, PRD or request names is a wrong
-test, never a reason to build that behavior (symphony-alpha #8953 wired an
-ungated status write to pass its own e2e).
+test, never a reason to build that behavior (for example, wiring an ungated
+status write so the session's own e2e test passes).
 
 ## Failures already on main
 
-Operator ruling, 2026-10-16, for handoff in Codex and Claude Code alike. A
-handoff check can fail because it is already red on main, not because of
+This applies to handoff in Codex and Claude Code alike. A handoff check can fail because it is already red on main, not because of
 anything the session did. `main-sync-validate` settles which, so neither the
 orchestrator nor the writer judges it:
 
