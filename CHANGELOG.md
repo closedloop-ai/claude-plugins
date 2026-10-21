@@ -19,7 +19,11 @@ The open lessons from the 2026-10-20 and 2026-10-21 ledger entries, with a mecha
 - `executed-check.mjs` refuses to mark a plan or PRD executed until its first section is `## Production visual QA` with each flag, where to see it and its state, checked after the last merge; the ticket worker adds the section before setting EXECUTED.
 - A delivered PRD child moves to IN_REVIEW only with the pull request that delivers it; without one it is `awaitingPullRequest` and keeps its status.
 - Writer rules: every new user-visible element needs a source naming it, a capability list is not one, absorbed tickets are recorded, and matching a prototype never removes what main ships. Handoff QAs the feature-complete head and makes the last main merge one pass right before enqueue.
-- fleet-orchestrator: QA before one final main merge and immediate enqueue, stop idle helpers once their result is accepted, follow-up tickets in the current sprint with no lineage under an executed PRD, the executed-PRD flag section, a shallow-clone check before attributing history, one e2e lock entry per head, a prototype never removes shipped items, and lessons stay general with their primary fix in vibe.
+- `diff-rules.mjs` blocks a removed component mount or user-visible string the base ships, added nowhere else, without a `Removal:` line citing the human source that retires it.
+- `e2e-lock.mjs` refuses a second entry from a worktree that already holds or waits for the stack (exit 76), so a session runs its selected specs as one entry per head.
+- `ticket-write-check.mjs` refuses a ticket in a past sprint, linked under an EXECUTED or OBSOLETE parent, or moved to IN_REVIEW without its pull request.
+- `qa-merge-order.mjs` passes only when the branch is the QA'd head plus at most one merge of main.
+- fleet-orchestrator: `helpers.mjs` lists helpers whose result was accepted and that still run as `STOP` lines; `history-origin.mjs` refuses to attribute history in a shallow clone. The skill points at these checks and at `executed-check.mjs`, and keeps lessons general with their primary fix in vibe.
 
 ### vibe v1.0.72
 

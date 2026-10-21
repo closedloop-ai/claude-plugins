@@ -239,6 +239,28 @@ test("in a shallow clone the restored-removal check says the history it needs is
   assert.equal(run(t, { history, head: { [toolbar]: "export const Toolbar = 2;\n" }, shallow: true }).found.some(([rule]) => rule === "restored-removal"), false);
 });
 
+test("removing a mount or a user-visible string main ships needs a recorded human source; moved ones do not (#8947)", (t) => {
+  const menu = "packages/app/links/row-menu.tsx";
+  const base = { [menu]: [
+    "export const RowMenu = () => (",
+    "  <Menu>",
+    "    <MenuItem label=\"Open\" />",
+    "    <MenuItem label=\"View linked sessions\" />",
+    "    <LinkedBadge />",
+    "  </Menu>",
+    ");",
+    "",
+  ].join("\n"), "packages/app/links/other.tsx": "export const Other = () => <div />;\n" };
+  const head = { [menu]: "export const RowMenu = () => (\n  <Menu>\n    <MenuItem label=\"Open\" />\n  </Menu>\n);\n",
+    "packages/app/links/other.tsx": "export const Other = () => <div><LinkedBadge /></div>;\n" };
+  const removals = run(t, { base, head }).blocking.filter((finding) => finding.rule === "capability-removal");
+  assert.deepEqual(removals.map((finding) => finding.problem.match(/removes (.*?) that the base ships/)?.[1]), ["\"View linked sessions\""]);
+  const changeLog = "Removal: \"View linked sessions\": ISS-4259 comment by Pat Example, 2026-10-21\n";
+  assert.deepEqual(run(t, { base, head, changeLog }).found.filter(([rule]) => rule === "capability-removal"), []);
+  const unmounted = run(t, { base, head: { [menu]: base[menu].replace("    <LinkedBadge />\n", "") } }).blocking.filter((finding) => finding.rule === "capability-removal");
+  assert.match(unmounted[0].problem, /removes the LinkedBadge mount/);
+});
+
 test("copy provenance: a new toast, label or JSX string needs a cited source; existing and moved copy pass", (t) => {
   const file = "packages/app/tags/remove-tags.tsx";
   const base = { [file]: "export function A() {\n  return <Button aria-label=\"Close\">Save</Button>;\n}\n" };

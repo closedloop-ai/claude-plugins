@@ -902,5 +902,6 @@ tests here, and no step above is skipped because the change looks small.
 A pull request is QA'd on its feature-complete head. Once the person's QA has
 passed, the last main merge is one pass through step 7's main-sync
 publication gate: rerun only the tests selected for the files the merge
-touched, and tell the person it is ready to enqueue right away; the merge
-queue retests it against main. Never wait on main to settle before QA.
+touched, and tell the person it is ready to enqueue right away, once
+`node scripts/qa-merge-order.mjs --worktree "<wt>" --qa-head <QA'd sha>`
+passes; the merge queue retests it against main.

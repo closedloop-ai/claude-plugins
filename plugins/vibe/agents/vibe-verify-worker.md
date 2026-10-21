@@ -90,7 +90,7 @@ rules:
   every e2e root: any directory named `e2e`, `e2e-*` or `*-e2e`), runs at handoff through the repo's containerized path (the
   `local-ci` skill, `dagger call e-2-e`), never natively on the person's Mac,
   and only those specs, never the whole e2e suite, all in one locked run per
-  head rather than one run per spec. The containerized stack
+  head: the lock refuses a second entry from the same worktree (exit 76). The containerized stack
   is one per machine (one compose project name, fixed ports and shared
   Dagger cache volumes), so start it only through
   `node ../skills/vibe/scripts/e2e-lock.mjs run <the e2e command>`, which

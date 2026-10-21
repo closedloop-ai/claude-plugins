@@ -173,9 +173,9 @@ text naming that element, a prototype that shows it, or the person's or an
 operator's ruling. A ticket's list of capabilities or action types names no
 new control, menu item or screen. Absorbing an existing ticket's work is fine;
 record each absorbed ticket on the live ticket and in the pull request body.
-Matching a prototype or design never removes what main ships: compare main's
-shipped controls, actions and items with the target first, and keep any the
-target leaves out unless a human source retires it.
+Matching a prototype or design never removes what main ships; `diff-rules.mjs`
+blocks a removed mount or shipped string without a `Removal:` line citing the
+human source that retires it.
 Never bring back an element a human removed: before adding
 a user-visible element the ticket does not name verbatim, run the requirements
 worker's Prior removal search; `diff-rules.mjs` blocks a re-mount or re-added

@@ -147,6 +147,7 @@ export function evaluateDiff(files, changeLog, repo) {
   checkFrozenRenders(files, repo, logged, add);
   checkLostStoryIds(files, repo, add);
   checkCopyProvenance(live, files, repo, logged, add);
+  checkCapabilityRemovals(live, files, repo, logged, add);
   if (checkRestoredRemovals(live, files, repo, changeLog, add) > 0 && repo.shallow) {
     add("restored-removal", live[0].path, 1, "the clone is shallow, so a removal older than its shallow boundary is invisible to the restored-removal check", "deepen the history (`git fetch --unshallow`, or `git fetch --deepen=<n>` past the removal) and rerun");
   }
@@ -483,6 +484,29 @@ function checkRestoredRemovals(files, allFiles, repo, changeLog, add) {
     }
   }
   return unresolved;
+}
+
+/**
+ * A component mount or a user-visible string the base ships that the diff takes away, and adds nowhere
+ * else, needs the human source that retires it: matching a prototype once dropped a shipped menu item.
+ */
+function checkCapabilityRemovals(files, allFiles, repo, logged, add) {
+  const added = allFiles.flatMap((file) => file.added.map((entry) => entry.text)).join("\n");
+  for (const file of files.filter((entry) => COPY_FILE.test(entry.path) && !isTestFile(entry.path) && !STORY_FILE.test(entry.path))) {
+    const head = repo.head(file.path) ?? "";
+    const seen = new Set();
+    for (const entry of file.removed) {
+      const mounts = [...entry.text.matchAll(JSX_MOUNT)].map((match) => match[1])
+        .filter((name) => !added.includes(`<${name}`) && !new RegExp(`<${name}\\b`).test(head))
+        .map((name) => ({ key: name, what: `the ${name} mount` }));
+      const strings = copyLiterals(entry.text).filter((text) => !added.includes(text) && !head.includes(text))
+        .map((text) => ({ key: `"${text}"`, what: `"${text}"` }));
+      for (const { key, what } of [...mounts, ...strings].filter((item) => !seen.has(item.key) && !logged(`Removal: ${item.key}:`))) {
+        seen.add(key);
+        add("capability-removal", file.path, 1, `removes ${what} that the base ships, with no recorded human source`, `keep it, or record \`Removal: ${key}: <ticket, PRD or human ruling that retires it>\`; matching a prototype or design is not a source`);
+      }
+    }
+  }
 }
 
 export function copyLiterals(line) {

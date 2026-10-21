@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BUSY_EXIT, defaultLockDir, readHolder, release, tryAcquire } from "./e2e-lock.mjs";
+import { BUSY_EXIT, DUPLICATE_EXIT, defaultLockDir, readHolder, release, sameWorktreeEntry, tryAcquire } from "./e2e-lock.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "e2e-lock.mjs");
 const root = mkdtempSync(path.join(os.tmpdir(), "vibe-e2e-lock-"));
@@ -57,7 +57,7 @@ test("run serializes two commands on one stack and releases the lock after each"
   const first = spawn(process.execPath, step("a"), { stdio: "ignore" });
   const firstStarted = await waitFor(() => existsSync(marks));
   assert.ok(firstStarted);
-  const second = spawnSync(process.execPath, step("b"), { encoding: "utf8", timeout: 60_000 });
+  const second = spawnSync(process.execPath, step("b"), { encoding: "utf8", timeout: 60_000, cwd: root });
   assert.equal(second.status, 0, second.stderr);
   await new Promise((resolve) => first.once("close", resolve));
   assert.deepEqual(readFileSync(marks, "utf8").trim().split("\n"), ["a-start", "a-end", "b-start", "b-end"]);
@@ -77,6 +77,27 @@ test("run keeps the command's exit code and runs nothing when the stack stays bu
   assert.equal(existsSync(marker), false);
   const status = spawnSync(process.execPath, [SCRIPT, "status", "--lock-dir", lockDir], { encoding: "utf8" });
   assert.equal(JSON.parse(status.stdout).status, "held");
+});
+
+test("one session takes one entry: a second run from the same worktree is refused while the first holds or waits", () => {
+  const lockDir = path.join(root, "per-head");
+  mkdirSync(path.join(root, "wt-a"), { recursive: true });
+  const worktree = realpathSync(path.join(root, "wt-a"));
+  assert.equal(tryAcquire(lockDir, { ...owner(process.pid, "first"), worktree }).acquired, true);
+  assert.equal(sameWorktreeEntry(lockDir, worktree).token, "first");
+  assert.equal(sameWorktreeEntry(lockDir, path.join(root, "wt-b")), null);
+  const marker = path.join(root, "per-spec-ran");
+  const second = spawnSync(process.execPath, [SCRIPT, "run", "--wait-seconds", "0", "--lock-dir", lockDir,
+    process.execPath, "-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran")`], { encoding: "utf8", cwd: worktree });
+  assert.equal(second.status, DUPLICATE_EXIT);
+  assert.match(JSON.parse(second.stdout).reason, /one run per head/);
+  assert.equal(existsSync(marker), false);
+  release(lockDir, { ...owner(process.pid, "first"), worktree });
+  mkdirSync(`${lockDir}.waiters`, { recursive: true });
+  writeFileSync(path.join(`${lockDir}.waiters`, "w.json"), JSON.stringify({ ...owner(process.pid, "waiting"), worktree }));
+  assert.equal(sameWorktreeEntry(lockDir, worktree).token, "waiting");
+  writeFileSync(path.join(`${lockDir}.waiters`, "w.json"), JSON.stringify({ ...owner(DEAD_PID, "waiting"), worktree }));
+  assert.equal(sameWorktreeEntry(lockDir, worktree), null);
 });
 
 test("options after the command belong to the command, not the lock", () => {
