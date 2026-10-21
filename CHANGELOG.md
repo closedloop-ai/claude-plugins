@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.77
+
+#### Added
+- fleet-orchestrator: `status-audit.mjs` compares each in-scope PRD child's status with its evidence (a merged pull request means DONE; an open one or an assigned writer means IN_PROGRESS or IN_REVIEW; neither, while not done, means UNOWNED) and fails until each mismatch is fixed or ruled out of scope with a reason. The skill runs it at every writer assignment and every merge.
+
 ### vibe v1.0.76
 
 Two more 2026-10-21 lessons: a play verdict read from an event that reports success for a play that threw, and a fix scoped to one host of a shared component that changed every host.
