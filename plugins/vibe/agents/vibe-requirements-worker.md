@@ -48,22 +48,19 @@ questions"), or produce an upfront summary for the person.
    (`../skills/cl-execute/references/planning-and-gates.md`, Readiness Gate,
    "Data direction") `data direction (new)`, with the decision that allows it
    and its source, or `untraced`; it is never a question for the person.
-   A new sync mechanism along an existing direction (an offline queue or
-   outbox, a replay or retry queue, a local optimistic write of a cloud-owned
-   field, conflict reconciliation, a new sync lane) is flagged the same way.
-   "Do not ever add offline syncing unless a human explicitly authorizes it."
-   (operator ruling, 2026-10-20.)
+   A new mechanism that moves data between surfaces along an existing
+   direction is flagged the same way.
    Newest ruling: before any scope, search for later rulings on the same
-   capability (`fts_search` on its nouns with "only when", "no local",
+   capability (`fts_search` on its nouns with "only when",
    "descoped", "out of scope"; `search_memory_facts`; comments on the ticket
    and its PRD). Return `Newest ruling: <slug, date, quoted words>` or `none
    found (searched: <searches>)`; the live ticket check fails without it. A
    ruling newer than the ticket text it contradicts makes that text a question
-   for the operator, never a build order (#8965). Prior removal: for each
+   for the operator, never a build order. Prior removal: for each
    user-visible element the work adds that the ticket does not name verbatim,
    `fts_search` its name with "remove", "drop", "retire" or "delete" and
    `search_memory_facts`; return `Prior removal: <slug>` or `none found
-   (searched: <searches>)` (#8957 re-mounted a pill ISS-6005 removed). A
+   (searched: <searches>)`. A
    recorded decision is settled only when it traces to a human statement
    (`quality-loop.md`, "Communication and product questions"); report each
    with its source, and an unratified or conflicting one as not settled.

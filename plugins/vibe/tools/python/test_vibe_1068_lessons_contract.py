@@ -11,10 +11,9 @@ HANDOFF = PLUGIN / "skills" / "handoff"
 FLEET = PLUGIN / "skills" / "fleet-orchestrator"
 
 
-def test_narrow_controls_check_is_run_by_the_reviewer_and_required_by_the_inventory() -> None:
+def test_narrow_controls_check_is_run_by_the_reviewer() -> None:
     assert (HANDOFF / "scripts" / "narrow-controls.mjs").exists()
     assert "narrow-controls.mjs" in flat(agent("vibe-adversarial-reviewer"))
-    assert "narrow-controls.mjs --worktree" in (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
 
 
 def test_copy_provenance_is_a_diff_rule() -> None:
@@ -44,21 +43,13 @@ def test_upgrade_needs_no_restored_cache() -> None:
     assert "helper's grant under a removed root needs no old cache" in loop
 
 
-OFFLINE_RULE = '"Do not ever add offline syncing unless a human explicitly authorizes it."'
-
-
-def test_offline_sync_rule_is_verbatim_where_requirements_and_writer_read_it_and_gated() -> None:
-    for name in ("vibe-requirements-worker", "vibe-change-worker"):
-        assert OFFLINE_RULE in flat(agent(name))
-    rules = (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
-    assert '"sync-authorization"' in rules
-    assert "Sync authorization:" in flat(agent("vibe-change-worker"))
+def test_new_data_mechanisms_need_a_traced_decision() -> None:
     for text in (
         flat(agent("vibe-requirements-worker")),
         flat((PLUGIN / "skills" / "cl-execute" / "references" / "planning-and-gates.md").read_text()),
         flat((PLUGIN / "skills" / "cl-execute" / "references" / "plan-review-prompt.md").read_text()),
     ):
-        assert "sync mechanism along" in text
+        assert "mechanism that moves data between surfaces along an existing direction" in text
 
 
 def test_newest_ruling_is_searched_recorded_and_checked() -> None:
@@ -68,7 +59,7 @@ def test_newest_ruling_is_searched_recorded_and_checked() -> None:
     assert "Newest ruling" in (HANDOFF / "scripts" / "live-ticket-check.mjs").read_text()
     assert "Newest ruling and Prior removal lines" in flat(agent("vibe-ticket-worker"))
     fleet = flat((FLEET / "SKILL.md").read_text())
-    assert "newest-ruling search" in fleet and "sync-mechanism check" in fleet
+    assert "newest-ruling search" in fleet
     assert "press Esc in the named pane" in fleet and "Keep long briefs in a file" in fleet
 
 

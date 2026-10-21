@@ -33,7 +33,7 @@ const DESIGN_REVIEW = [
 function completeTicket(overrides = {}) {
   const sections = {
     "What this is": "Bulk select with tag editing on Sessions and Branches.",
-    "Scope and acceptance criteria": "- Scope: both lists\n- Newest ruling: ISS-12592, 2026-10-15, \"rename on desktop should only be available when logged in online\"\n- Prior removal: none found (searched: fts_search tag editor remove)\n- Acceptance criteria:\n  - [ ] Select several rows and edit their tags",
+    "Scope and acceptance criteria": "- Scope: both lists\n- Newest ruling: ISS-12592, 2026-10-15, \"tag editing stays on the list page\"\n- Prior removal: none found (searched: fts_search tag editor remove)\n- Acceptance criteria:\n  - [ ] Select several rows and edit their tags",
     Environment: ENVIRONMENT,
     Progress: "- 2026-10-06: added bulk select to `<SessionsTable>`",
     "Backend built": "- `PATCH /sessions/tags` in `apps/api/app/sessions/tags/route.ts`",
@@ -194,7 +194,7 @@ test("the scope must carry the newest ruling on the capability, dated, or the se
   for (const line of ["", "- Newest ruling: the ticket\n", "- Newest ruling: none found\n"]) {
     assert.deepEqual(scope(line).problems.map(({ section }) => section), ["Scope and acceptance criteria"]);
   }
-  const ruled = "- Newest ruling: none found (searched: fts_search offline rename, search_memory_facts, ISS-9488 comments)\n";
+  const ruled = "- Newest ruling: none found (searched: fts_search tag editing, search_memory_facts, ticket comments)\n";
   assert.equal(scope(ruled).ok, true);
   for (const prior of ["", "- Prior removal: none\n", "- Prior removal: the pill was removed once\n"]) {
     assert.deepEqual(scope(ruled, prior).problems.map(({ problem }) => problem), ["has no Prior removal line (the removing ticket, or none found with the searches run)"]);

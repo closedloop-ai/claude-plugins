@@ -1,8 +1,6 @@
 #!/usr/bin/env node
 // Compares the interactive controls of one list row captured at a wide and at a
-// narrow width, so a control the narrow row drops cannot pass review unseen
-// (symphony-alpha #8962: narrow rows swapped the editable status pill for a
-// read-only glyph after a one-line rule already asked for this comparison).
+// narrow width, so a control the narrow row drops cannot pass review unseen.
 //
 // Input is two Playwright accessibility snapshots of the same row, as
 // `control snapshot <row locator>` or `locator.ariaSnapshot()` writes them.

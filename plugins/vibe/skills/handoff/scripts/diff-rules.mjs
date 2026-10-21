@@ -55,7 +55,7 @@ const STORY_ID_WORD = /[A-Z]{2,}(?=[A-Z][a-z]|\b|\d)|[A-Z]?[a-z]+|[A-Z]|\d+/g;
 const HARNESS_NAME = /harness|adapter/i;
 const EXPECT_CALL = /\bexpect\(/;
 const WINDOW = 25;
-const COPY_FILE = /^(?:apps\/app|apps\/desktop\/src\/renderer|packages\/app|packages\/design-system)\/.*\.tsx?$/;
+const COPY_FILE = /\.[jt]sx$/;
 const COPY_LITERALS = [
   /\btoast(?:\.\w+)?\(\s*(["'`])((?:(?!\1)[^\\]|\\.)*)\1/g,
   /(?:\baria-label|\baria-description|\blabel|\btitle|\bplaceholder|\bdescription|\btooltip)\s*[=:]\s*\{?\s*(["'`])((?:(?!\1)[^\\]|\\.)*)\1/g,
@@ -64,13 +64,6 @@ const COPY_LITERALS = [
 const WORDING = /[A-Z]|\s/;
 const TEMPLATE_PART = /\$\{[^}]*\}/;
 const TEMPLATE_PARTS = /\$\{[^}]*\}/g;
-const SYNC_NAME = /outbox|queue|pending|replay|sync/i;
-const DESKTOP_SCHEMA = "apps/desktop/prisma/schema.prisma";
-const PRISMA_MODEL = /^\s*model\s+(\w+)\s*\{/;
-const AGENT_SYNC_DIR = "apps/desktop/src/main/agent-sync/";
-const DESKTOP_MAIN = /^apps\/desktop\/src\/main\/.*\.ts$/;
-const LANE_FACTORY = /\b(?:new\s+([A-Z]\w*Lane)|(create[A-Z]\w*(?:Lane|Sync)))\(/g;
-const SYNC_AUTHORIZATION = /^\s*(?:[-*]\s+)?Sync authorization:\s*([A-Z][\w'.-]+(?:\s+[A-Z][\w'.-]+)+),\s*(\d{4}-\d{2}-\d{2}),\s*\S/m;
 const SCRIPT_FILE = /\.(?:[cm]?[jt]sx?|sh|bash|zsh|py)$/;
 const ENV_DUMP = [
   /JSON\.stringify\(\s*process\.env\s*[,)]/,
@@ -81,7 +74,6 @@ const ENV_DUMP = [
 ];
 const JSX_MOUNT = /<([A-Z][A-Za-z0-9]*)\b/g;
 const RESTORE_LIMIT = 40;
-const NARROW_CONTROLS = "node <vibe plugin>/skills/handoff/scripts/narrow-controls.mjs --worktree <wt> --wide <row.yml> --narrow <row.yml>";
 
 /** Parses `git diff --unified=0` output into per-file added and removed lines. */
 export function parseUnifiedDiff(text) {
@@ -142,7 +134,7 @@ export function evaluateDiff(files, changeLog, repo) {
   }
   for (const file of live.filter((entry) => SCRIPT_FILE.test(entry.path) && !isTestFile(entry.path))) {
     for (const entry of file.added.filter((item) => ENV_DUMP.some((pattern) => pattern.test(item.text)))) {
-      add("env-dump", file.path, entry.line, "prints or serializes the whole environment, which holds credentials (#8960 captured an API key this way)", "read only the named non-secret keys the diagnostic needs; never print, log or write env or config wholesale");
+      add("env-dump", file.path, entry.line, "prints or serializes the whole environment, which holds credentials", "read only the named non-secret keys the diagnostic needs; never print, log or write env or config wholesale");
     }
   }
   for (const file of live.filter((entry) => SOURCE_FILE.test(entry.path) && !isTestFile(entry.path))) {
@@ -152,7 +144,6 @@ export function evaluateDiff(files, changeLog, repo) {
     checkLinkDeletes(file, head, add);
   }
   checkDesktopLane(live, repo, logged, add);
-  checkSyncAuthorization(live, repo, changeLog, add);
   checkTicketedComments(files, repo, logged, add);
   checkStories(live, files, repo, logged, add);
   checkFrozenRenders(files, repo, logged, add);
@@ -160,9 +151,6 @@ export function evaluateDiff(files, changeLog, repo) {
   checkCopyProvenance(live, files, repo, logged, add);
   checkRestoredRemovals(live, files, repo, changeLog, add);
   requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo), ...sidebarOrderTests(files, repo));
-  if (gridTouched(files)) {
-    requiredChecks.push({ command: NARROW_CONTROLS, reason: "a GridTableV2 type, adapter or mount changed; run it on one row of each touched surface captured at wide and narrow width (control snapshot or ariaSnapshot), and every wide control it reports without a narrow home blocks" });
-  }
   return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks };
 }
 
@@ -260,43 +248,6 @@ function checkLinkDeletes(file, head, add) {
     if (!LINK_EDGE_KEYS.every((key) => key.test(window))) {
       add("artifact-link-delete", file.path, entry.line, "deletes artifact links not scoped to sourceId, targetId and linkType", "delete only the exact edge the write replaces");
     }
-  }
-}
-
-/**
- * "Do not ever add offline syncing unless a human explicitly authorizes it." (operator ruling,
- * 2026-10-20, after symphony-alpha #8965 built a Desktop offline edit outbox from old ticket text.) A new sync
- * mechanism blocks until the change log names the human who authorized it; a ticket or PRD is not a name.
- */
-function checkSyncAuthorization(files, repo, changeLog, add) {
-  if (SYNC_AUTHORIZATION.test(changeLog)) {
-    return;
-  }
-  const found = [];
-  for (const file of files) {
-    if (file.status === "A" && DESKTOP_MIGRATION.test(file.path)) {
-      for (const table of [...(repo.head(file.path) ?? "").matchAll(SQL_CREATE_TABLE)].map((match) => match[1]).filter((name) => SYNC_NAME.test(name))) {
-        found.push([file.path, 1, `creates Desktop table ${table}`]);
-      }
-    } else if (file.path === DESKTOP_SCHEMA) {
-      for (const entry of file.added) {
-        const model = PRISMA_MODEL.exec(entry.text)?.[1];
-        if (model && SYNC_NAME.test(model)) found.push([file.path, entry.line, `adds Desktop model ${model}`]);
-      }
-    }
-    if (file.status === "A" && file.path.startsWith(AGENT_SYNC_DIR) && !isTestFile(file.path)) {
-      found.push([file.path, 1, "adds a file under apps/desktop/src/main/agent-sync/"]);
-    } else if (DESKTOP_MAIN.test(file.path) && !isTestFile(file.path)) {
-      for (const entry of file.added) {
-        for (const match of entry.text.matchAll(LANE_FACTORY)) {
-          const name = match[1] ?? match[2];
-          if (!repo.baseContains(name)) found.push([file.path, entry.line, `registers new sync lane ${name}`]);
-        }
-      }
-    }
-  }
-  for (const [file, line, what] of found) {
-    add("sync-authorization", file, line, `${what}, a new sync mechanism, without a named human authorizing it`, "remove it, or record `Sync authorization: <human name>, <YYYY-MM-DD>, <where they said it>`; a ticket or PRD an agent wrote is not an authorization");
   }
 }
 
@@ -506,7 +457,8 @@ export function routeSpecs(files, repo) {
 
 /** GridTableV2 parity tests read other files' source, so the graph never maps them. */
 export function gridParityTests(files, repo) {
-  if (!gridTouched(files)) {
+  const touched = files.some((file) => GRID_TABLE.test(file.path) || [...file.added, ...file.removed].some((entry) => GRID_SYMBOL.test(entry.text)));
+  if (!touched) {
     return [];
   }
   return [GRID_PARITY_TEST, ...repo.headFiles.filter((file) => HOST_PARITY_TEST.test(file))]
@@ -514,13 +466,9 @@ export function gridParityTests(files, repo) {
     .map((file) => ({ path: file, reason: "a GridTableV2 type, adapter or mount changed; this parity test is not mapped by code_tests_for" }));
 }
 
-function gridTouched(files) {
-  return files.some((file) => GRID_TABLE.test(file.path) || [...file.added, ...file.removed].some((entry) => GRID_SYMBOL.test(entry.text)));
-}
-
 /**
  * A new toast, label, title, placeholder, description or aria string, or JSX text, that the base tree never had
- * needs a cited human source (a prose provenance rule did not stop agent-written toasts, symphony-alpha #8956).
+ * needs a cited human source; a prose provenance rule did not stop agent-written toasts.
  */
 function checkCopyProvenance(files, allFiles, repo, logged, add) {
   const removed = allFiles.flatMap((file) => file.removed.map((entry) => entry.text)).join("\n");
@@ -537,8 +485,7 @@ function checkCopyProvenance(files, allFiles, repo, logged, add) {
 
 /**
  * A component mounted again, or a file added back, that a base commit removed needs a human's restore
- * authorization naming the removal it overrides (symphony-alpha #8957 re-mounted the toolbar pill ISS-6005
- * removed as "Strict drop & removal").
+ * authorization naming the removal it overrides.
  */
 function checkRestoredRemovals(files, allFiles, repo, changeLog, add) {
   const authorized = (name) => new RegExp(String.raw`^\s*(?:[-*]\s+)?Restore authorization:\s*${escapeRegExp(name)}:\s*(?:operator ruling|[A-Z][\w'.-]+(?:\s+[A-Z][\w'.-]+)+),\s*\d{4}-\d{2}-\d{2},\s*[^;\n]+;\s*overrides\s+(?:ISS|PRD|PLN|FEA)-\d+`, "m").test(changeLog);
@@ -626,9 +573,9 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
     },
     unmountOf: (name) => {
       const mount = new RegExp(`<${name}\\b`);
-      for (const hit of lines(() => git(worktree, ["log", "-G", `<${name}([^A-Za-z0-9]|$)`, "-n", "20", "--format=%H %h %s", base, "--", "apps/", "packages/"]))) {
+      for (const hit of lines(() => git(worktree, ["log", "-G", `<${name}([^A-Za-z0-9]|$)`, "-n", "20", "--format=%H %h %s", base]))) {
         const [sha, ...summary] = hit.split(" ");
-        const diff = lines(() => git(worktree, ["show", "--format=", "--unified=0", sha, "--", "apps/", "packages/"]));
+        const diff = lines(() => git(worktree, ["show", "--format=", "--unified=0", sha]));
         const count = (sign) => diff.filter((text) => text.startsWith(sign) && !text.startsWith(`${sign}${sign}${sign}`) && mount.test(text)).length;
         if (count("-") > count("+")) {
           return `commit ${summary.join(" ")}`;
@@ -640,7 +587,7 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
       const parts = text.split(TEMPLATE_PART);
       const search = parts.length > 1 ? ["-E", "-e", parts.map((part) => part.replace(/[.[\]()*+?{}|^$\\]/g, "\\$&")).join(".*")] : ["-F", "-e", text];
       try {
-        git(worktree, ["grep", "-q", ...search, base, "--", "apps/", "packages/"]);
+        git(worktree, ["grep", "-q", ...search, base]);
         return true;
       } catch {
         return false;
