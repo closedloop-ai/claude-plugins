@@ -142,11 +142,10 @@ Use conventional commits:
 ```
 feat(code): add visual-qa-subagent for screenshot review
 fix(platform): correct fastapi-router-specialist tool list
-docs(judges): update AGENTS.md with new judge
 refactor(code): simplify plan-writer merge mode
 ```
 
-Scopes: `bootstrap`, `code`, `code-review`, `judges`, `platform`, `self-learning`
+Scopes: `bootstrap`, `code`, `code-review`, `platform`, `self-learning`
 
 ## Plugin Version Management
 
@@ -155,7 +154,6 @@ When modifying agents, skills, hooks, commands, or any file under `plugins/{plug
 1. **Update the version** in the plugin's manifest file:
    - `plugins/code/.claude-plugin/plugin.json`
    - `plugins/code-review/.claude-plugin/plugin.json`
-   - `plugins/judges/.claude-plugin/plugin.json`
    - `plugins/self-learning/.claude-plugin/plugin.json`
    - `plugins/platform/.claude-plugin/plugin.json`
 

@@ -37,7 +37,6 @@ Multi-repository, adaptive self-learning, & artifact-bound phased workflow gates
 | [**vibe**](plugins/vibe/) | Vibe sessions and ClosedLoop ticket workflows |
 | [**closedloop-core**](plugins/closedloop-core/) | Shared planning, intelligence, diagrams, review, QA, measurement, and PR monitoring |
 | [**code-review**](plugins/code-review/) | Automated code review with inline GitHub PR comments |
-| [**judges**](plugins/judges/) | LLM-as-judge evaluators for plan and code quality |
 | [**platform**](plugins/platform/) | Claude Code expert guidance, prompt engineering, and artifact management |
 | [**self-learning**](plugins/self-learning/) | Pattern capture and organizational knowledge sharing |
 
@@ -49,13 +48,13 @@ Multi-repository, adaptive self-learning, & artifact-bound phased workflow gates
 
 ## Quick Start
 
-**One-line install** — installs the five Symphony runtime plugins at user scope and keeps them auto-updated:
+**One-line install** — installs the four Symphony runtime plugins at user scope and keeps them auto-updated:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/closedloop-ai/claude-plugins/main/install.sh | bash
 ```
 
-The installer installs `code`, `code-review`, `judges`, `platform`, and `self-learning`, then verifies those runtime plugins are present with existing install paths and enabled user-scoped entries. It re-enables disabled user-scoped runtime plugins and attempts to remove stale project-scoped duplicates when Claude reports a usable `projectPath`. If Claude reports a project-scoped entry without a usable project path, the installer prints the project-directory uninstall command and still repairs the user-scoped install. The `bootstrap` plugin remains available in the marketplace for manual installation, but it is not part of the default runtime install.
+The installer installs `code`, `code-review`, `platform`, and `self-learning`, then verifies those runtime plugins are present with existing install paths and enabled user-scoped entries. It re-enables disabled user-scoped runtime plugins and attempts to remove stale project-scoped duplicates when Claude reports a usable `projectPath`. If Claude reports a project-scoped entry without a usable project path, the installer prints the project-directory uninstall command and still repairs the user-scoped install. The `bootstrap` plugin remains available in the marketplace for manual installation, but it is not part of the default runtime install.
 
 Or install interactively from within Claude Code:
 

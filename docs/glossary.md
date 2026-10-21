@@ -5,7 +5,7 @@ A comprehensive guide to ClosedLoop terminology and concepts.
 ## Orchestration
 
 **Orchestrator**
-The `prompt.md` system prompt loaded by `/code`. Coordinates 8 workflow phases (discovery, planning, judge review, plan refinement, implementation, verification, build validation, and learning capture) entirely through subagent delegation. The orchestrator never reads project files directly.
+The `prompt.md` system prompt loaded by `/code`. Coordinates 8 workflow phases (discovery, planning, critic review, plan refinement, implementation, verification, build validation, and learning capture) entirely through subagent delegation. The orchestrator never reads project files directly.
 
 ## Agents
 
@@ -14,12 +14,6 @@ A specialized Claude instance defined by a `.md` file with YAML frontmatter spec
 
 **Subagent**
 An agent invoked by the orchestrator (or another agent) via Claude Code's Task tool to handle a specific phase. Subagents run in isolated contexts and return results to the caller.
-
-**Judge**
-A read-only evaluation agent that scores implementation plans or code against quality principles (DRY, KISS, SOLID, readability, goal alignment, etc.). Judges produce structured `CaseScore` JSON reports with `final_status` (1=PASS, 2=FAIL, 3=ERROR) consumed by `plan-writer` to refine the plan. The closedloop plugin includes 13 judge agents.
-
-**Context Manager for Judges**
-The support agent (`context-manager-for-judges`) in the `judges` plugin that prepares compressed context within a 30K token budget. Handles both plan-type and code-type evaluations with different budget allocations.
 
 ## Planning
 
@@ -114,15 +108,11 @@ Hook that fires before a `Bash`, `Write`, or `Edit` tool call. Provides just-in-
 **Skill**
 A reusable instruction set loaded into an agent's context via the `skills:` frontmatter field. Skill identifiers use the format `plugin-name:skill-name` (e.g., `closedloop:toon-format`).
 
-**artifact-type-tailored-context** — Compresses artifacts to fit within a token budget using three tiers: full content, intelligent compression, and hard truncation.
-
 **build-status-cache** — Skips rebuild when no code changed since last passing build. Uses git diff hash comparison.
 
 **critic-cache** — Skips critic reviews when plan hash matches stored hash from previous review.
 
 **cross-repo-cache** — Skips cross-repo coordinator when peer repo git hashes are unchanged.
-
-**eval-cache** — Skips plan-evaluator when `plan-evaluation.json` is newer than `plan.json`.
 
 **extract-plan-md** — Syncs `plan.md` with `plan.json` content field. Required after any edit to `plan.json`.
 
@@ -135,8 +125,6 @@ A reusable instruction set loaded into an agent's context via the `skills:` fron
 **plan-structure** — Reusable guidance for plan creation phases. References the plan template and conventions playbook.
 
 **plan-validate** — Deterministic Python script validation replacing most `plan-validator` agent calls. Validates JSON parsing, schema fields, task format, required headers, and array sync.
-
-**run-judges** — Orchestrates parallel judge execution. Plan mode: 13 judges in 4 batches. Code mode: 11 judges in 3 batches.
 
 **closedloop-env** — Provides ClosedLoop environment paths (`CLOSEDLOOP_WORKDIR`, `CLAUDE_PLUGIN_ROOT`, `CLOSEDLOOP_PRD_FILE`, `CLOSEDLOOP_MAX_ITERATIONS`) to agents.
 

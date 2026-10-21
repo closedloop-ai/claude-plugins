@@ -495,7 +495,7 @@ CLI state manager for the `amend-plan` command. Persists conversation state acro
 
 ### `count_tokens.py`
 
-Counts tokens in a file or stdin using the Anthropic API's token counting endpoint. Outputs JSON: `{"input_tokens": N}`. Used by judge context-compression workflows to measure artifact sizes before compression. Requires `ANTHROPIC_API_KEY`.
+Counts tokens in a file or stdin using the Anthropic API's token counting endpoint. Outputs JSON: `{"input_tokens": N}`. Requires `ANTHROPIC_API_KEY`.
 
 ### `stream_formatter.py`
 
@@ -575,8 +575,7 @@ After a full run, the work directory will contain:
   plan.json                  # Structured implementation plan
   plan.md                    # Human-readable plan (synced from plan.json)
   plan-evaluation.json       # Simple mode evaluation results
-  investigation-log.md       # Codebase exploration findings (consumed by plan judges and as secondary context for code judges)
-  code-context.json          # Token-budgeted compressed code-judge context bundle
+  investigation-log.md       # Codebase exploration findings (from pre-explorer)
   requirements-extract.json  # PRD extraction (from pre-explorer)
   code-map.json              # Codebase file map (from pre-explorer)
   state.json                 # Current phase/status for monitoring

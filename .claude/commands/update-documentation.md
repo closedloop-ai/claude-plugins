@@ -37,7 +37,6 @@ Determine the execution mode before starting:
 | `plugins/closedloop-core/` | closedloop-core |
 | `plugins/vibe/` | vibe |
 | `plugins/code-review/` | code-review |
-| `plugins/judges/` | judges |
 | `plugins/platform/` | platform |
 | `plugins/self-learning/` | self-learning |
 
