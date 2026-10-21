@@ -435,3 +435,29 @@ test("a new export no other file uses blocks unless recorded; existing and frame
   assert.deepEqual(run(t, { base: { "p/old.ts": "export const old = 1;\n" }, head: { "p/old.ts": "export const old = 2;\n" } }).found, []);
   assert.deepEqual(run(t, { head: { "app/api/x/route.ts": "export async function GET() {}\n" } }).found, []);
 });
+
+test("a shared component's change requires every host's suites, in both flag states when it reads a flag", (t) => {
+  const base = {
+    "packages/ui/grid.tsx": "export const Grid = (props) => props.rows;\n",
+    "apps/a/sessions.tsx": "import { Grid } from \"@repo/ui/grid\";\nexport const Sessions = Grid;\n",
+    "apps/b/documents.tsx": "import { Grid } from \"@repo/ui/grid\";\nexport const Documents = Grid;\n",
+    "apps/a/sessions.test.tsx": "import { Sessions } from \"./sessions\";\n",
+    "apps/b/documents.stories.tsx": "import { Documents } from \"./documents\";\n",
+    "apps/c/one.tsx": "import { Only } from \"@repo/ui/only\";\nexport const One = Only;\n",
+    "packages/ui/only.tsx": "export const Only = 1;\n",
+  };
+  const suites = ["apps/a/sessions.test.tsx", "apps/b/documents.stories.tsx"];
+  const plain = run(t, { base, head: { "packages/ui/grid.tsx": "export const Grid = (props) => props.rows.slice();\n" }, commit: true });
+  assert.deepEqual(plain.requiredTests.filter((entry) => suites.includes(entry.path)).map((entry) => [entry.path, entry.flagStates]), suites.map((suite) => [suite, undefined]));
+  assert.deepEqual(plain.found, []);
+
+  const flagged = run(t, { base, head: { "packages/ui/grid.tsx": "export const Grid = (props) => (useFeatureFlag(props.k) ? props.rows : []);\n" }, commit: true });
+  assert.deepEqual(flagged.requiredTests.filter((entry) => suites.includes(entry.path)).map((entry) => entry.flagStates), [["on", "off"], ["on", "off"]]);
+  assert.deepEqual(flagged.found, [["shared-flag-branch", "packages/ui/grid.tsx"]]);
+  const keyed = run(t, { base, head: { "packages/ui/grid.tsx": "export const Grid = (props) => (useFeatureFlag(props.k) ? props.rows : []);\n" }, commit: true, changeLog: "Shared behavior: packages/ui/grid.tsx: keyed on hideSelectAll; hosts run: both\n" });
+  assert.deepEqual(keyed.found, []);
+  assert.equal(keyed.requiredTests.filter((entry) => suites.includes(entry.path)).length, 2, "keying it does not drop the hosts' runs");
+
+  const single = run(t, { base, head: { "packages/ui/only.tsx": "export const Only = 2;\n" }, commit: true });
+  assert.deepEqual(single.requiredTests, [], "a component one host imports is not shared");
+});

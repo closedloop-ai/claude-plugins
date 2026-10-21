@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
+import { playVerdictProblems } from "../../vibe/scripts/story-play-verdict.mjs";
 import { isE2ePath, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
 
 const REPO = "closedloop-ai/symphony-alpha";
@@ -175,6 +176,7 @@ export function evidenceProblems(runsFile, changed, commit) {
       ...(run.status === "passed" ? [] : [`${lane}: ${run.status ?? "no status"}; a pull request never opens on an unfinished or failed run`]),
       ...(run.command && run.outcome ? [] : [`${lane}: command or visible outcome missing`]),
       ...(commit && run.commit !== commit ? [`${lane}: ran on ${run.commit}, not the published commit ${commit}`] : []),
+      ...(lane === "storybook-plays" ? playVerdictProblems(run) : []),
     ]);
   });
 }
@@ -259,7 +261,8 @@ export function templateHeadingProblems(body, template) {
  * by-reference selection, since import selection never reaches specs that
  * drive the app. Every selected test, every required test of the diff rules and
  * every spec the branch edits needs a passing run on the published commit;
- * skipped CI is not a run.
+ * skipped CI is not a run. A required test with `flagStates` needs a passing
+ * run for each state, recorded with `flag`.
  */
 export function selectionProblems(runsFile, files, requiredTests, commit) {
   const selection = Array.isArray(runsFile?.testSelection) ? runsFile.testSelection : [];
@@ -282,10 +285,16 @@ export function selectionProblems(runsFile, files, requiredTests, commit) {
     ...live.filter((entry) => TEST_SPEC_PATTERN.test(entry.path)).map((entry) => entry.path),
   ]);
   const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
+  const passed = (test, flag) => runs.some((entry) => entry?.path === test && entry.status === "passed" && (!commit || entry.commit === commit)
+    && (flag === undefined || entry.flag === flag));
   for (const test of [...selected].sort()) {
-    const run = runs.find((entry) => entry?.path === test && entry.status === "passed" && (!commit || entry.commit === commit));
-    if (!run) {
+    if (!passed(test)) {
       problems.push(`${test}: selected but no passing run on ${commit ?? "the published commit"} in testRuns`);
+    }
+  }
+  for (const entry of requiredTests.filter((item) => Array.isArray(item.flagStates))) {
+    for (const flag of entry.flagStates.filter((state) => !passed(entry.path, state))) {
+      problems.push(`${entry.path}: no passing run with the flag ${flag} on ${commit ?? "the published commit"} (testRuns entry with flag: "${flag}")`);
     }
   }
   return problems;

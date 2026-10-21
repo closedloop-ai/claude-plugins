@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.76
+
+Two more 2026-10-21 lessons: a play verdict read from an event that reports success for a play that threw, and a fix scoped to one host of a shared component that changed every host.
+
+#### Added
+- `story-play-verdict.mjs` judges each play from recorded Storybook channel events: PASS only when its completion was observed and no exception or error event fired; `storyFinished`'s status is never trusted. The evidence gate needs `playVerdicts`, all PASS, on the `storybook-plays` run.
+- handoff diff rules: a changed UI component two or more hosts import requires every test and story file that covers it or a host; when the change reads a flag, each is needed with the flag on and off (`flagStates`, runs recorded with `flag`), and the diff blocks until the change log records the host the behavior is keyed on (`shared-flag-branch`).
+
 ### vibe v1.0.75
 
 The 2026-10-21 lessons after #331: a stale Codex session state, the audit findings a merged pull request carried, rulings that never reached the criteria, findings sent without evidence, and a precedent check that skipped the disputed case.

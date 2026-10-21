@@ -71,6 +71,9 @@ Validation is targeted, never a broad or full local suite. Run:
   `pnpm --filter <package> exec vitest run <test files>`). A required test
   whose path is a command comes from the repo's `.vibe/path-gates.json`: run
   that command and record it in `testRuns` with the command as its `path`.
+  A required test with `flagStates` covers a host of a shared component the
+  diff changed: run it with the flag on and with it off, and record each run
+  with `flag: "on"` or `flag: "off"`.
 
 Never run `pnpm test`, `pnpm verify`, `pnpm test:affected`, `pnpm test:lanes --exec`, a
 whole lane or a package's whole suite locally; CI runs the broad suites on the
@@ -110,7 +113,11 @@ rules:
   execute the touched stories' plays in a real browser with the repository's
   Storybook test runner or Playwright against its containerized Storybook
   service. A jsdom result, source inspection or successful build is not play
-  evidence or a play count to report. Report the command, story IDs, browser and result, plus axe
+  evidence or a play count to report. Judge each play with
+  `../skills/vibe/scripts/story-play-verdict.mjs` over the channel events its
+  recorder captured, never by `storyFinished`'s status (it reports success
+  for a play that threw), and record the verdicts as `playVerdicts` on the
+  `storybook-plays` run. Report the command, story IDs, browser and result, plus axe
   `color-contrast` on every new or changed story state; a failing node blocks.
 - When cards or a narrow layout have any interaction, run the relevant flow
   with real touch through Playwright's WebKit iPhone descriptor and Chromium

@@ -101,13 +101,16 @@ test("evidence: lanes follow the diff, and unfinished, missing or stale runs blo
   assert.deepEqual(["e2e/a.spec.ts", "e2e-web-smoke/b.spec.ts", "apps/desktop/test/e2e/c.spec.ts"].map((file) => requiredLanes([file])), [["e2e"], ["e2e"], ["e2e"]]);
   assert.deepEqual(requiredLanes(changed, ["card select"]), ["web-host", "desktop-host", "webkit-iphone", "chromium-pixel", "storybook-plays"]);
   const commit = "a".repeat(40);
-  const runs = requiredLanes(changed, ["card select"]).map((lane) => ({ lane, status: "passed", command: "run", commit, outcome: "selected" }));
+  const runs = requiredLanes(changed, ["card select"]).map((lane) => ({ lane, status: "passed", command: "run", commit, outcome: "selected",
+    ...(lane === "storybook-plays" ? { playVerdicts: [{ storyId: "cards--select", verdict: "PASS" }] } : {}) }));
   const file = { touchFlows: ["card select"], runs };
   assert.deepEqual(evidenceProblems(file, changed, commit), []);
   assert.match(evidenceProblems({ ...file, runs: runs.map((run, i) => (i === 2 ? { ...run, status: "running" } : run)) }, changed, commit).join(), /webkit-iphone: running/);
   assert.match(evidenceProblems({ ...file, runs: runs.slice(1) }, changed, commit).join(), /web-host: no run recorded/);
   assert.match(evidenceProblems(file, changed, "b".repeat(40)).join(), /not the published commit/);
   assert.match(evidenceProblems({ runs }, changed, commit).join(), /touchFlows/);
+  const unjudged = runs.map((run) => (run.lane === "storybook-plays" ? { ...run, playVerdicts: undefined } : run));
+  assert.match(evidenceProblems({ ...file, runs: unjudged }, changed, commit).join(), /storybook-plays: no playVerdicts/);
 });
 
 test("the inventory reports the facts and gates only the pull-request phase", (t) => {
@@ -159,4 +162,14 @@ test("test selection covers the whole branch diff, and every selected, required 
   assert.match(gate({ ...SELECTED, testRuns: [{ ...SELECTED.testRuns[0], commit: "b".repeat(40) }] }).join(), /links\.test\.ts: selected but no passing run/);
   assert.match(gate({ ...SELECTED, testRuns: [{ ...SELECTED.testRuns[0], status: "skipped" }] }).join(), /links\.test\.ts: selected but no passing run/);
   assert.match(selectionProblems({ testSelection: [{ file: ROUTE, selector: "guess", tests: [] }] }, [], [], commit).join(), /selector "guess"/);
+});
+
+test("a required test with flag states needs a passing run with the flag on and with it off", () => {
+  const commit = "c".repeat(40);
+  const required = [{ path: "apps/a/sessions.test.tsx", reason: "shared", flagStates: ["on", "off"] }];
+  const run = (flag) => ({ path: "apps/a/sessions.test.tsx", status: "passed", commit, ...(flag ? { flag } : {}) });
+  const problems = (testRuns) => selectionProblems({ testSelection: [], testRuns }, [], required, commit);
+  assert.deepEqual(problems([run("on")]), [`apps/a/sessions.test.tsx: no passing run with the flag off on ${commit} (testRuns entry with flag: "off")`]);
+  assert.equal(problems([run()]).length, 2, "a run that names no flag state counts for neither");
+  assert.deepEqual(problems([run("on"), run("off")]), []);
 });
