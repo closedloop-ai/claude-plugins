@@ -127,6 +127,8 @@ test('a work dir that watches sessions or PRs fails status while its watcher is 
   const dir = tempDir(t);
   assert.equal(run([dir, 'status']).status, 0, 'no watch list, no watcher expected');
   writeFileSync(path.join(dir, 'prs.txt'), 'acme/app 7\n');
+  assert.equal(run([dir, 'duty', 'green-watch', '--owner', 'w1']).status, 0);
+  assert.equal(run([dir, 'writer', 'w1']).status, 0);
   const missing = run([dir, 'status', '--now', '2026-10-22T06:00:00Z']);
   assert.equal(missing.status, 1);
   assert.match(missing.stdout, /^WATCHER-MISSING \(no watcher\.json\): re-arm watch\.sh now/m);
@@ -147,4 +149,19 @@ test('a writer question waiting 15 minutes is QUESTION-UNANSWERED until answered
   assert.equal(run([dir, 'answered', 'w1', '--now', '2026-10-22T08:50:00Z']).status, 0);
   assert.equal(run([dir, 'status', '--now', '2026-10-22T13:00:00Z']).status, 0);
   assert.equal(run([dir, 'question', 'w1']).status, 2);
+});
+
+test('a watched program needs a green-watch owner; REQUIRED_DUTIES names others', (t) => {
+  const dir = tempDir(t);
+  writeFileSync(path.join(dir, 'prs.txt'), 'acme/app 7\n');
+  writeFileSync(path.join(dir, 'watcher.json'), JSON.stringify({ pid: process.pid, startedAt: '2026-10-22T05:50:00Z', lastTickAt: '2026-10-22T05:59:00Z', intervalSeconds: 120 }));
+  const now = ['--now', '2026-10-22T06:00:00Z'];
+  const bare = run([dir, 'status', ...now]);
+  assert.equal(bare.status, 1);
+  assert.match(bare.stdout, /^MISSING-DUTY green-watch: give it an owner/m);
+  assert.equal(run([dir, 'writer', 'keeper']).status, 0);
+  assert.equal(run([dir, 'duty', 'green-watch', '--owner', 'keeper']).status, 0);
+  assert.equal(run([dir, 'status', ...now]).status, 0);
+  writeFileSync(path.join(dir, 'config.env'), 'REQUIRED_DUTIES="green-watch pr-shepherd"\n');
+  assert.match(run([dir, 'status', ...now]).stdout, /^MISSING-DUTY pr-shepherd/m);
 });

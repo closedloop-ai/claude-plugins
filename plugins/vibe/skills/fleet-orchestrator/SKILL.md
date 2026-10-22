@@ -190,6 +190,15 @@ Pushback applies principle 2; more judgment patterns from past programs: [refere
 - Respect operator boundaries on other teams' work, such as "don't fix main" while another owner is fixing it.
 - Work outside the program goes to its owner (operator ruling): a security or infrastructure finding outside its scope, such as a runtime advisory, becomes a ticket assigned to that owner, and the worker investigating it stops. The program does not take the fix.
 
+## Program practices
+
+- Green watch: `board.mjs` requires a `green-watch` owner while PRs are watched (`MISSING-DUTY`). After program PRs merge, that owner follows each post-merge batch until `GREEN_REF` advances, with `GREEN_WATCH_AGENT` where the repo has one. It attributes every red to its PR and author, fixes ours in one PR, and files one ticket per other author in the current sprint, assigned to them with evidence and a fix. It never cuts a release.
+- Placement: `fleet.sh slot heavy` refuses a machine whose load per core is over `MAX_LOAD_PER_CORE` (exit 4); send the run to the other machine. E2e and desktop app runs never go on the operator's daily machine.
+- Repo knowledge: a repo fact a worker learns goes into the team's repo memory (`REPO_MEMORY_CMD`), and into the nearest `AGENTS.md` through that worker's PR when it binds code.
+- Close-out: `executed-check.mjs --kind prd` before a PRD is executed (its flags section first) and `status-audit.mjs` at every merge and writer assignment.
+- Deadline mode, only when the operator rules it (record it in `rulings.md` with its end): no pre-merge e2e, follow-up pushes run focused tests plus the affected typecheck and leave full lanes to CI, and extras ship in follow-up PRs.
+- Runtime choice: judgment-heavy work and takeovers go to Claude writers, which are faster; bulk mechanical work goes to Codex on `CODEX_MODEL`, which is cheaper. Move work on usage and speed.
+
 ## Lessons loop
 
 - Log every finding you route to a writer in the lessons ledger at the same moment, tagged new or repeat, with owner and fix. Batched later, they get lost. Format: [references/state.md](./references/state.md#lessons-ledger).

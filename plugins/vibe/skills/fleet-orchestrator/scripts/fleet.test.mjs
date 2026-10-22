@@ -30,7 +30,7 @@ function fixture(config) {
   writeFileSync(prompt, 'Start.\n');
   const run = (args, env = {}) => spawnSync('bash', [FLEET, orch, ...args], {
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SLOT_LOCK_DIR: join(root, 'locks'), ...env },
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SLOT_LOCK_DIR: join(root, 'locks'), FLEET_LOAD: '0 8', ...env },
   });
   const argv = (result) => result.stdout.split('\n').filter((l) => l.startsWith('arg:')).map((l) => l.slice(4));
   return { root, orch, prompt, run, argv };
@@ -67,7 +67,7 @@ test('a remote session ships the scripts and prompt file and runs in the remote 
     join(shipped, 'fleet-orchestrator/scripts/codex-session.mjs'), 'turn', join(f.root, 'remote', 'sessions'), 'w1',
     '--prompt-file', join(shipped, 'w1-01-start.md'), '--cwd', '/remote wt', '--effort', 'high',
   ]);
-  for (const file of ['codex-fleet-monitor/scripts/liveness.mjs', 'fleet-orchestrator/scripts/codex-session.mjs', 'fleet-orchestrator/scripts/slot-lock.sh', 'fleet-orchestrator/scripts/request-visual.mjs']) {
+  for (const file of ['codex-fleet-monitor/scripts/liveness.mjs', 'fleet-orchestrator/scripts/codex-session.mjs', 'fleet-orchestrator/scripts/slot-lock.sh', 'fleet-orchestrator/scripts/load-check.sh', 'fleet-orchestrator/scripts/request-visual.mjs']) {
     assert.ok(existsSync(join(shipped, file)), file);
   }
   assert.equal(readFileSync(join(shipped, 'w1-01-start.md'), 'utf8'), 'Start.\n');
@@ -115,4 +115,15 @@ test('rejects unknown machines and actions with usage', TIMEOUT, () => {
     assert.equal(result.status, 2, JSON.stringify(args));
     assert.match(result.stderr, /Usage: fleet\.sh/);
   }
+});
+
+test('a heavy slot refuses a machine whose load per core is over the limit and names the other machine', TIMEOUT, () => {
+  const f = fixture('HEAVY_SLOTS=2\n');
+  const busy = f.run(['local', 'slot', 'heavy', 'w1 tests', f.root, 'echo', 'ran'], { FLEET_LOAD: '34 18' });
+  assert.equal(busy.status, 4);
+  assert.equal(busy.stdout, '');
+  assert.match(busy.stderr, /load 34 on 18 cores is over 1\.5 per core.*run this heavy check on the other machine/);
+  assert.equal(f.run(['local', 'slot', 'heavy', 'w1 tests', f.root, 'echo', 'ran'], { FLEET_LOAD: '20 18' }).stdout, 'ran\n');
+  assert.equal(f.run(['local', 'slot', 'heavy', 'w1 tests', f.root, 'echo', 'ran'], { FLEET_LOAD: '34 18', FLEET_FORCE_HERE: '1' }).stdout, 'ran\n');
+  assert.equal(f.run(['local', 'slot', 'shared', 'w1 shared', f.root, 'echo', 'ran'], { FLEET_LOAD: '34 18' }).stdout, 'ran\n', 'only heavy slots are load-checked');
 });

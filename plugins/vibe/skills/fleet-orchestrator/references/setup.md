@@ -22,7 +22,14 @@ CODEX_MODEL=<model for each Codex writer thread>
 CODEX_EFFORT=<the high effort level, not the maximum>
 
 HEAVY_SLOTS=<concurrent heavy checks this machine can take>
+MAX_LOAD_PER_CORE=1.5                       # a heavy slot refuses this machine above this load per core
 MOVE_AT_PERCENT=<codex-usage band at which to move writers off a machine>
+
+# The target repo's own names for the program practices
+GREEN_REF=<the ref post-merge CI advances when main is healthy>
+GREEN_WATCH_AGENT=<the repo's agent that fixes a red post-merge batch, if it has one>
+REPO_MEMORY_CMD=<the command that adds an entry to the team's repo memory>
+REQUIRED_DUTIES="green-watch"               # board.mjs status prints MISSING-DUTY for each one without an owner
 
 # One other machine; leave all of these out for a single machine
 REMOTE_HOST=<ssh host or alias>
@@ -30,6 +37,7 @@ REMOTE_STATE_DIR=<orchestration dir on that machine>/sessions
 REMOTE_REQUESTS_DIR=<orchestration dir on that machine>/requests
 REMOTE_SHELL="zsh -lic"                     # a login shell there that puts node, codex and gh on PATH
 REMOTE_HEAVY_SLOTS=<concurrent heavy checks that machine can take>
+REMOTE_MAX_LOAD_PER_CORE=1.5
 ```
 
 `fleet.sh` uses `LOCAL_STATE_DIR` (default `<orchDir>/sessions`), `CODEX_MODEL` and `CODEX_EFFORT` as `turn` defaults, the slot counts, and the `REMOTE_*` keys. Sub-agent models are not configured here: vibe's worker-model policy owns them. `MOVE_AT_PERCENT` is for you: compare it with each `codex-usage` line.

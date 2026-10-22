@@ -28,6 +28,10 @@
 // owner was stopped with no replacement. `status` prints `UNOWNED-DUTY <duty>
 // owner <who> <why>` when the owner is neither a board writer nor a running
 // helper in helpers.json, and helpers.mjs refuses to stop an owner.
+// Each duty in `REQUIRED_DUTIES` (config.env, space-separated; default
+// `green-watch` once the work dir watches PRs in prs.txt) must have one:
+// `status` prints `MISSING-DUTY <duty>` until it does. Merged program PRs once
+// broke main's post-merge batch with nobody following it.
 // A Codex writer (`--runtime codex`) whose head has not moved for 30 minutes
 // while its PR has unresolved human review threads (`--threads`, or read with
 // `gh api graphql` for rows with a PR and repo) prints `SLOW <writer> ...`:
@@ -86,6 +90,18 @@ export function unansweredQuestions(board, now) {
   return Object.entries(board.questions)
     .map(([writer, { text, at }]) => ({ writer, text, minutes: Math.floor((now - Date.parse(at)) / 60_000) }))
     .filter((entry) => entry.minutes >= QUESTION_MINUTES);
+}
+
+/** Required duties with no owner recorded. */
+export function missingDuties(board, required) {
+  return required.filter((duty) => !board.duties[duty]);
+}
+
+function requiredDuties(orchDir) {
+  const file = path.join(orchDir, "config.env");
+  const configured = existsSync(file) ? /^REQUIRED_DUTIES=["']?([^"'\n]*)["']?\s*$/m.exec(readFileSync(file, "utf8"))?.[1] : undefined;
+  if (configured !== undefined) return configured.split(/\s+/).filter(Boolean);
+  return existsSync(path.join(orchDir, "prs.txt")) ? ["green-watch"] : [];
 }
 
 /** Every recipient of every delivery not yet told. */
@@ -224,13 +240,15 @@ function main(argv) {
     }
     const duties = unownedDuties(board, readHelpers(orchDir));
     for (const entry of duties) process.stdout.write(`UNOWNED-DUTY ${entry.duty} owner ${entry.owner} ${entry.why}\n`);
+    const missing = missingDuties(board, requiredDuties(orchDir));
+    for (const duty of missing) process.stdout.write(`MISSING-DUTY ${duty}: give it an owner with board.mjs <orchDir> duty ${duty} --owner <writer or helper>\n`);
     const asked = unansweredQuestions(board, now);
     for (const entry of asked) process.stdout.write(`QUESTION-UNANSWERED ${entry.writer} ${entry.minutes}m: ${entry.text.slice(0, 160)}\n`);
     const watched = ["sessions.txt", "prs.txt"].some((file) => existsSync(path.join(orchDir, file)));
     const watcher = watched ? watcherState(orchDir, now) : { ok: true };
     if (!watcher.ok) process.stdout.write(`WATCHER-MISSING ${watcher.line.replace("watcher MISSING", "")}: re-arm watch.sh now (run_in_background)\n`);
-    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length} unowned duties, ${asked.length} unanswered${watcher.ok ? "" : ", watcher missing"}\n`);
-    return stale.length + open.length + slow.length + duties.length + asked.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
+    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${asked.length} unanswered${watcher.ok ? "" : ", watcher missing"}\n`);
+    return stale.length + open.length + slow.length + duties.length + missing.length + asked.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
   }
   const [name, recipient] = positionals;
   if (!name) {
