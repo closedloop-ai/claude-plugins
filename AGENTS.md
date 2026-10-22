@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 This repository is a plugin monorepo under `plugins/`.
 
-- `plugins/code`, `plugins/code-review`, `plugins/judges`, `plugins/bootstrap`, `plugins/platform`, `plugins/self-learning`
+- `plugins/code`, `plugins/code-review`, `plugins/bootstrap`, `plugins/platform`, `plugins/self-learning`
 - Each plugin typically contains `.claude-plugin/` (manifest), `agents/`, `commands/`, `skills/`, `tools/`, `prompts/`, `scripts/`, `schemas/`, and plugin-specific docs or resources.
 - Shared docs are in `docs/` (glossary, dependency map), and repository-wide guidance is in `README.md`, `CONTRIBUTING.md`, and `CHANGELOG.md`.
 - Plugin Python code/tests live under plugin subdirectories, e.g. `plugins/code/tools/python/` and `plugins/code-review/tools/python/`.

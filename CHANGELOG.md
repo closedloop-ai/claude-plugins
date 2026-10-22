@@ -28,6 +28,19 @@ Signal safety after a plugin test ended every process on an operator's machine, 
 - handoff diff rules: `storybook-rules.mjs` reads the repository's `.vibe/storybook-rules.json` and enforces declared Storybook release levels and history, frozen roots, real edit handlers, canonical table cells, controls decisions, lifecycle tag roots, literal list-control options, and reuse of source components. The options rule applies only to select, radio, and check controls, and frozen files are restored rather than edited. Repositories without a declaration run none of these rules.
 - The Storybook declaration's `checks` become required tests whenever a story file or listed path changes, and `skills/handoff/references/storybook-rules.example.json` provides symphony-alpha's declaration.
 
+### code v2.0.1
+
+#### Changed
+- Phase 1.3 (Simple Mode Evaluation) in `prompts/prompt.md` and `prompts/plan-prompt.md` launches `@code:plan-evaluator` directly. The `judges:eval-cache` skill and its row in the Available Skills table are gone, so a re-entered Phase 1.3 always re-runs the evaluator.
+- `test_install_script.py` expects the four plugins `install.sh` now installs; `hooks/tests/test_spawn_event.sh` uses `code:code-reviewer` as its example `subagent_type`.
+- README no longer lists `code-context.json` in the work directory or names judge workflows as the consumer of `count_tokens.py` and `investigation-log.md`.
+
+### judges (removed)
+
+#### Removed
+- The `judges` plugin (all judge agents, `context-manager-for-judges`, the `run-judges`, `eval-cache` and `artifact-type-tailored-context` skills, `judge-input.schema.json`, and its Python tools and tests) is deleted, and its entry is removed from `.claude-plugin/marketplace.json`.
+- `install.sh` no longer installs or verifies `judges@closedloop-ai`, and its repair instructions no longer name it. An existing install is not uninstalled.
+
 ### vibe v1.0.73
 
 The open lessons from the 2026-10-20 and 2026-10-21 ledger entries, with a mechanical check wherever the lesson had a checkable shape.

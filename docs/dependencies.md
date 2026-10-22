@@ -10,17 +10,10 @@ code-review (standalone)
 self-learning (standalone, depended on by code)
 
 bootstrap ──► code
-code ◄──────► judges  (mutual)
 code ────────► self-learning
 ```
 
 ## Per-Plugin Details
-
-### `code` → `judges`
-
-| Type | File | Reference |
-|---|---|---|
-| Skill invocation | `code/prompts/prompt.md` (lines 93, 239) | `judges:eval-cache` |
 
 ### `code` → `self-learning`
 
@@ -28,12 +21,6 @@ code ────────► self-learning
 |---|---|---|
 | Skill declaration (YAML) | 8 agent files (`plan-draft-writer.md`, `plan-writer.md`, `plan-validator.md`, `cross-repo-coordinator.md`, `generic-discovery.md`, `code-reviewer.md`, `implementation-subagent.md`, `verification-subagent.md`) | `self-learning:learning-quality` |
 | Hardcoded filesystem path | `code/scripts/install-dependencies.sh` (line 10) | `self-learning/tools/python/requirements.txt` |
-
-### `judges` → `code`
-
-| Type | File | Reference |
-|---|---|---|
-| Agent reference | `judges/skills/eval-cache/SKILL.md` (lines 18, 41, 50) | `@code:plan-evaluator` |
 
 ### `code-review`
 
@@ -56,6 +43,5 @@ No outbound cross-plugin dependencies. Depended on by `code`.
 
 ## Key Observations
 
-1. **`code` is the hub** — depended on by `judges` and `bootstrap`, while itself depending on `judges` and `self-learning`.
-2. **`code` ↔ `judges` remains a circular dependency** — `code` invokes judge skills, while judges references `@code:plan-evaluator` and `@code:pre-explorer`.
-3. **All dependencies are undeclared**: no `plugin.json` files specify a `dependencies` field.
+1. **`code` is the hub** — depended on by `bootstrap`, while itself depending on `self-learning`.
+2. **All dependencies are undeclared**: no `plugin.json` files specify a `dependencies` field.

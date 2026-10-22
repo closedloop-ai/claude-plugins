@@ -30,11 +30,6 @@
       "description": "Code review plugin"
     },
     {
-      "name": "judges",
-      "source": "./plugins/judges",
-      "description": "Deprecated, will be removed from the marketplace: LLM Judges plugin"
-    },
-    {
       "name": "platform",
       "source": "./plugins/platform",
       "description": "ClosedLoop Platform plugin"
