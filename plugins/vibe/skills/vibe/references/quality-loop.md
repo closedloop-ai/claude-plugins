@@ -823,7 +823,8 @@ and `$design` route production review through.
   the change against them: the run gets the session decision table's
   `## Acceptance Criteria` list (those criteria, plus any the person's
   requests added) and reports each visual and UX criterion as met or not,
-  with what it saw.
+  with what it saw. It also inventories rendered controls and flags any with
+  no requirement naming that control on that surface.
 - When neither has any, it falls back to the design pack's best-practice
   review, against `.claude/design/soul.md`, as the skill does when there is
   no spec.

@@ -297,16 +297,16 @@ path merely because another rule describes how its content should look.
     change log or ticket claims. Match each to the person's words, a ticket or
     PRD statement, a human comment, or a shipped rule found through the graph.
     If its only source is an agent's own rationale, it is a blocking
-    `engineering decision` finding. A detailed explanation written by an
-    agent is still not a product source, and neither is the session's own
-    ticket, PLN, plan, table or change log. This covers every new user-reachable
-    capability (a write path, action or control), refusal rule (a
-    PRD display cap is not one), new visual element or state presentation (held
-    to the copy rule),
-    numeric limit, criterion worded more strongly than its source and removed
-    accessibility behavior; a shared-module edit lists its callers in the
-    change log. A spec or criterion edited to match the code is blocking
-    without a human source (`spec-change` diff rule).
+    `engineering decision` finding. Session artifacts are not a product source.
+    This covers every new
+    user-reachable capability (a write path, action or control), refusal rule
+    (a PRD display cap is not one), visual element, numeric limit, criterion
+    worded more strongly than its source and removed accessibility. Open every
+    `Control:` source: it must name that control on that surface; preservation
+    elsewhere is insufficient. Compare each changed visual baseline with its
+    counted `Baseline inventory:` and cited `Baseline element:` lines; omission
+    or "plausibly intended" is blocking. A spec change without a human source
+    is blocking (`spec-change`).
 16. Tech debt and flag keys (`guardrails.md`, "No new tech debt" and
     "Feature flags"): each item of a kind that section lists with no
     `Debt:` reason is blocking: a mechanism checks 1, 7, 8 or 12 find, a

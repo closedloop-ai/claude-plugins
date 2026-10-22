@@ -74,3 +74,20 @@ def test_green_watch_fixes_pass_vibe_gates_and_results_name_their_commit() -> No
     scripts = PLUGIN / "skills" / "vibe" / "scripts"
     for name in ("pre-pr-lanes.mjs", "e2e-lock.mjs"):
         assert "testedHead" in (scripts / name).read_text(), name
+
+
+def test_new_controls_and_visual_baselines_need_surface_specific_sources() -> None:
+    writer = flat((PLUGIN / "agents" / "vibe-change-worker.md").read_text())
+    reviewer = flat((PLUGIN / "agents" / "vibe-guardrails-reviewer.md").read_text())
+    verifier = flat((PLUGIN / "agents" / "vibe-verify-worker.md").read_text())
+    handoff = flat((PLUGIN / "skills" / "handoff" / "SKILL.md").read_text())
+    fleet = flat((FLEET / "SKILL.md").read_text())
+    environment = flat((PLUGIN / "agents" / "vibe-environment-worker.md").read_text())
+    assert '"preserve X" in one mode does not add X in another' in writer
+    assert "Control: <file>: <prop or mount>: <surface>: <ticket AC or ruling>" in writer
+    assert "it must name that control on that surface" in reviewer
+    assert '"plausibly intended" is blocking' in reviewer
+    assert "report every control with no source on that surface" in verifier
+    assert "rendered-control inventory flags anything with no sourced requirement" in handoff
+    assert '"plausibly intended" never passes' in fleet
+    assert "Baseline inventory:" in environment and "--base <inventory.baseCommit>" in environment

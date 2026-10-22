@@ -19,6 +19,7 @@ import { routeSpecs } from "./route-specs.mjs";
 import { escapeRegExp, IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
 import { checkStorybookRules, storybookRuleTests } from "./storybook-rules.mjs";
 import { isUnversionedStory, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
+import { isVisualBaseline, visualBaselineLedgerProblems } from "./visual-baseline-ledger.mjs";
 
 const PRIVATE_PLANS = ".closedloop-ai/vibe-plans/";
 const MIGRATION_DIR = /^packages\/database\/prisma\/migrations\/[^/]+\/migration\.sql$/;
@@ -80,6 +81,9 @@ const JSX_MOUNT = /<([A-Z][A-Za-z0-9]*)\b/g;
 const RESTORE_LIMIT = 40;
 const DEEPEN_STEPS = ["--deepen=1000", "--deepen=10000", "--unshallow"];
 const DEEPEN_TIMEOUT_MS = 10 * 60 * 1000;
+const CONTROL_PROP = /\b((?:show|enable|allow|with|render|on)[A-Z][A-Za-z0-9]*)\s*(?::|=)/;
+const CONTROL_TERM = /selectall|checkbox|button|menu|action|toolbar|filter|search|picker|popover|dialog|drawer|toggle|favorite|star|bulk|control|disclosure|pagination/i;
+const CONTROL_MOUNT = /<([A-Z][A-Za-z0-9]*)\b/g;
 
 /** Parses `git diff --unified=0` output into per-file added and removed lines. */
 export function parseUnifiedDiff(text) {
@@ -159,6 +163,11 @@ export function evaluateDiff(files, changeLog, repo) {
   checkFrozenRenders(files, repo, logged, add);
   checkLostStoryIds(files, repo, add);
   checkCopyProvenance(live, files, repo, logged, add);
+  checkNewControls(live, changeLog, add);
+  for (const problem of visualBaselineLedgerProblems(changeLog, live.filter((file) => isVisualBaseline(file.path)).map((file) => file.path))) {
+    const file = problem.slice(0, problem.indexOf(":"));
+    add("visual-baseline-ledger", file, 1, problem.slice(problem.indexOf(":") + 2), "compare the baseline diff with the requirement inventory; record its counted `Baseline inventory:` and one cited `Baseline element:` line per new element");
+  }
   checkCapabilityRemovals(live, files, repo, logged, add);
   checkSpecChanges(files, changeLog, add);
   checkRestoredRemovalsDeepening(live, files, repo, changeLog, add);
@@ -167,6 +176,36 @@ export function evaluateDiff(files, changeLog, repo) {
   checkStorybookRules(files, repo, logged, add);
   requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo), ...sidebarOrderTests(files, repo), ...pathGateTests(live, (file) => repo.head(file)), ...storybookRuleTests(files, (file) => repo.head(file)), ...sharedComponentTests(live, repo, logged, add));
   return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks };
+}
+
+function controlSignals(file) {
+  const signals = new Map();
+  const removedMounts = new Set(file.removed.flatMap((entry) => [...entry.text.matchAll(CONTROL_MOUNT)].map((match) => match[1])));
+  for (const entry of file.added) {
+    const prop = CONTROL_PROP.exec(entry.text)?.[1];
+    if (prop && CONTROL_TERM.test(prop)) {
+      signals.set(prop, entry.line);
+    }
+    for (const match of entry.text.matchAll(CONTROL_MOUNT)) {
+      if (CONTROL_TERM.test(match[1]) && !removedMounts.has(match[1])) {
+        signals.set(`<${match[1]}>`, entry.line);
+      }
+    }
+  }
+  return signals;
+}
+
+/** A newly wired control needs a cited criterion or ruling that names it on this surface. */
+function checkNewControls(files, changeLog, add) {
+  for (const file of files.filter((entry) => COPY_FILE.test(entry.path) && !isTestFile(entry.path) && !STORY_FILE.test(entry.path))) {
+    for (const [signal, line] of controlSignals(file)) {
+      const prefix = `Control: ${file.path}: ${signal}:`;
+      const record = changeLog.split("\n").find((entry) => entry.trimStart().startsWith(prefix));
+      if (!record || !/^\s*[^:\n]+:\s*(?:(?:ISS|PRD|FEA)-\d+\s+(?:AC(?:-?\d+)?|acceptance criterion|ruling)\b|operator ruling\b)/i.test(record.slice(record.indexOf(prefix) + prefix.length))) {
+        add("control-provenance", file.path, line, `newly enables ${signal} with no surface-specific ticket acceptance criterion or ruling`, `remove it, or record \`Control: ${file.path}: ${signal}: <surface>: <ticket AC or ruling that names this control on that surface>\`; "preserve" in another mode is not authorization`);
+      }
+    }
+  }
 }
 
 function checkMigrations(files, repo, logged, add, requiredChecks) {

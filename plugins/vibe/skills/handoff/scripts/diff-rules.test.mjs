@@ -319,6 +319,29 @@ test("copy provenance: a new toast, label or JSX string needs a cited source; ex
   assert.deepEqual(run(t, { head: { "src/ui/banner.jsx": "export const B = () => <p>Brand new words</p>;\n", "src/ui/use-banner.js": "import { B } from \"./banner\";\n" } }).found, [["copy-provenance", "src/ui/banner.jsx"]]);
 });
 
+test("a #8962-shaped prop that enables a control needs a source naming it on that surface", (t) => {
+  const file = "packages/app/branches/components/branches-grid-v2.tsx";
+  const base = { [file]: "export const props = { columns };\n" };
+  const head = { [file]: "export const props = {\n  columns,\n  onSelectAll: selection?.onSelectAll,\n  showSelectAll: selection?.showSelectAll,\n};\n" };
+  const bare = run(t, { base, head }).blocking.filter((finding) => finding.rule === "control-provenance");
+  assert.deepEqual(bare.map((finding) => finding.problem), [
+    "newly enables onSelectAll with no surface-specific ticket acceptance criterion or ruling",
+    "newly enables showSelectAll with no surface-specific ticket acceptance criterion or ruling",
+  ]);
+  const cited = [
+    `Control: ${file}: onSelectAll: Branches header: ISS-100 AC-3`,
+    `Control: ${file}: showSelectAll: Branches header: ISS-100 AC-3`,
+  ].join("\n");
+  assert.deepEqual(run(t, { base, head, changeLog: cited }).found.filter(([rule]) => rule === "control-provenance"), []);
+});
+
+test("a changed screenshot baseline needs its counted element ledger before handoff", (t) => {
+  const file = "e2e/__screenshots__/visual-regression.spec.ts/branches-desktop.png";
+  assert.deepEqual(run(t, { base: { [file]: "old\n" }, head: { [file]: "new\n" } }).found, [["visual-baseline-ledger", file]]);
+  const ledger = `Baseline inventory: ${file}: Branches: 1 new element\nBaseline element: ${file}: Branches: star column: ISS-12918 AC-2\n`;
+  assert.deepEqual(run(t, { base: { [file]: "old\n" }, head: { [file]: "new\n" }, changeLog: ledger }).found, []);
+});
+
 test("a lost story ID blocks unless recorded as a replacement, and every reference to it blocks", (t) => {
   const story = "export default { title: \"Composites/Rows\" };\nexport const Default = {};\nexport const WithLongText = {};\n";
   const result = run(t, {

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { claimProblems, titleProblems } from "./pr-preflight.mjs";
+import { visualBaselineLedgerProblems } from "../../handoff/scripts/visual-baseline-ledger.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "pr-preflight.mjs");
 
@@ -36,4 +37,35 @@ test("the command fails a 73-character title and passes a fitting one", (t) => {
   assert.equal(long.status, 1);
   assert.equal(JSON.parse(long.stdout).ok, false);
   assert.equal(run("--title", "x".repeat(64), "--pr", "9188", "--body-file", body).status, 0);
+});
+
+test("a changed visual baseline needs a counted, sourced element ledger (#9188)", (t) => {
+  const file = "e2e/__screenshots__/visual-regression.spec.ts/branches-desktop.png";
+  assert.match(visualBaselineLedgerProblems("The checkbox is plausibly intended.\n", [file]).join(), /needs exactly one/);
+  const incomplete = [
+    `Baseline inventory: ${file}: Branches: 3 new elements`,
+    `Baseline element: ${file}: Branches: star column: ISS-12918 AC-2`,
+    `Baseline element: ${file}: Branches: header select-all checkbox: plausibly intended`,
+  ].join("\n");
+  assert.match(visualBaselineLedgerProblems(incomplete, [file]).join(), /declares 3 new elements but lists 2/);
+  assert.match(visualBaselineLedgerProblems(incomplete, [file]).join(), /plausibly intended/);
+
+  const dir = mkdtempSync(path.join(os.tmpdir(), "pr-baseline-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  execFileSync("git", ["init", "--quiet", "--initial-branch=main", dir]);
+  execFileSync("git", ["-C", dir, "config", "user.email", "test@example.com"]);
+  execFileSync("git", ["-C", dir, "config", "user.name", "Test"]);
+  mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+  writeFileSync(path.join(dir, file), "old");
+  execFileSync("git", ["-C", dir, "add", "."]);
+  execFileSync("git", ["-C", dir, "commit", "--quiet", "-m", "base"]);
+  const base = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  writeFileSync(path.join(dir, file), "new");
+  execFileSync("git", ["-C", dir, "commit", "--quiet", "-am", "baseline"]);
+  const body = path.join(dir, "body.md");
+  writeFileSync(body, incomplete);
+  const failed = spawnSync(process.execPath, [SCRIPT, "--title", "ISS-12901: Fix baselines", "--body-file", body, "--worktree", dir, "--base", base], { encoding: "utf8" });
+  assert.equal(failed.status, 1);
+  writeFileSync(body, `${incomplete}\nBaseline element: ${file}: Branches: avatar style: ISS-12576 ruling\n`.replace("header select-all checkbox: plausibly intended", "header select-all checkbox: ISS-100 AC-3"));
+  assert.equal(spawnSync(process.execPath, [SCRIPT, "--title", "ISS-12901: Fix baselines", "--body-file", body, "--worktree", dir, "--base", base], { encoding: "utf8" }).status, 0);
 });

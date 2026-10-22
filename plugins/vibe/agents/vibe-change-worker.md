@@ -167,12 +167,11 @@ Raising and recording it is neither instruction inflation nor manufactured
 ambiguity: those rules protect settled rulings, and an unexamined mechanism is
 not one.
 
-Build the outcome only along data directions that are already allowed.
-Every new user-visible element needs a source that names it: ticket or PRD
-text naming that element, a prototype that shows it, or the person's or an
-operator's ruling. A ticket's list of capabilities or action types names no
-new control, menu item or screen. Absorbing an existing ticket's work is fine;
-record each absorbed ticket on the live ticket and in the pull request body.
+Build the outcome only along data directions that are already allowed. A newly enabled control needs a
+ticket acceptance criterion or ruling naming that control on that surface;
+"preserve X" in one mode does not add X in another. Record `Control: <file>:
+<prop or mount>: <surface>: <ticket AC or ruling>`; `diff-rules.mjs` blocks
+the diff without it. A capability list names no control, menu item or screen.
 Matching a prototype or design never removes what main ships; `diff-rules.mjs`
 blocks a removed mount or shipped string without a `Removal:` line citing the
 human source that retires it.

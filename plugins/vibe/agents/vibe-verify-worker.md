@@ -269,7 +269,8 @@ session touched:
    `pnpm control console --level pageerror` and `pnpm control network`. Add
    `pnpm control api GET <path>` for the record the screen shows, and
    `pnpm control ipc <namespace.method>` read calls for a Desktop screen,
-   where relevant.
+   where relevant. Inventory the rendered controls against the sourced
+   requirements and report every control with no source on that surface.
 4. When a baseline exists (an earlier control capture of the same entry on
    the merge-base or current main, never a commit that is not an ancestor),
    return its artifact paths beside the new ones and say what changed. When the session recorded reference images

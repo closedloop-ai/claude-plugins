@@ -320,7 +320,8 @@ outside the allowed paths). When a removal does undo one:
 - the touched screen is rendered again in the verify worker's control mode on
   the final commit, never left as last seen.
 
-Re-run inventory and independent read-only guardrails checks. Keep the writer's Design blocks for the ticket. A flag key without
+Re-run inventory and independent read-only guardrails checks; every cleared
+`Control:` citation must name that control on that surface. Keep the writer's Design blocks for the ticket. A flag key without
 the person's recorded yes gets its approval question once, as the vibe
 skill's section 7 says; with no yes the writer removes the gate.
 
@@ -477,7 +478,8 @@ visual QA (`/visual-qa` in Claude Code, `$visual-qa` in Codex) for a UI
 change, against the session's acceptance criteria when the ticket or its PRD
 has them and otherwise as the design pack's best-practice review
 (`../vibe/references/quality-loop.md`, "Visual QA during the session",
-"What it checks"), logical QA (`/logical-qa`, `$logical-qa`) for a data or metric
+"What it checks"); its rendered-control inventory flags anything with no
+sourced requirement. Run logical QA (`/logical-qa`, `$logical-qa`) for a data or metric
 surface, then product-contract QA (`/metal-andrew`, `$metal-andrew`) once that
 evidence is visible. Each skill dispatches its own read-only agents. Confirmed
 findings resume the SAME writer in fix mode for every touched surface, even when

@@ -374,7 +374,8 @@ changes and gates fields.
    invention:
    - Summary: the confirmed summary with the live ticket's slug and its
      "Keys to see this work", then every `overlap`, `assertionChanges`,
-     `contractChanges` and answered `asks` entry.
+     `contractChanges` and answered `asks` entry, plus the change log's
+     `Control:`, `Baseline inventory:` and `Baseline element:` ledger lines.
    - Breaking changes: from Production impact and every `refusals` entry;
      "none" only when Production impact supports it and `refusals` is empty.
    - UI Feature Flag: the heading alone, unless the change adds a net-new
@@ -392,7 +393,7 @@ changes and gates fields.
    inline, briefly. `blocking.prBody` refuses a line naming one.
 4. Title: `<live ticket slug>: <plain imperative summary>`, at most 72
    characters including the ` (#NNNN)` GitHub appends, with no mention of AI
-   tools; `node ../skills/vibe/scripts/pr-preflight.mjs --title "<title>" --body-file <file>`
+   tools; `node ../skills/vibe/scripts/pr-preflight.mjs --title "<title>" --body-file <file> --worktree "<wt>" --base <inventory.baseCommit>`
    must pass. First `node ../skills/vibe/scripts/pre-pr-lanes.mjs check --worktree "<wt>" --report <the repo's lane report output>`
    must pass (each test lane the report names has a passing run recorded at
    HEAD; `BLOCKED` with its `MISSING-LANE` lines otherwise). Create it with
