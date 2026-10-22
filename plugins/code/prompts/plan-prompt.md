@@ -31,7 +31,6 @@ Activate with `Skill(skill="<id>")`.
 | `code:plan-validate` | Every plan validation site (structural checks via Python script) | `VALID`, `FORMAT_ISSUES`, `EMPTY_FILE` |
 | `code:critic-cache` | Phase 2.5 entry, before launching critics | `CRITIC_CACHE_HIT` / `CRITIC_CACHE_MISS` |
 | `code:cross-repo-cache` | Phase 1.4.1 entry, before cross-repo-coordinator | `CROSS_REPO_CACHE_HIT` (with status) / `CROSS_REPO_CACHE_MISS` |
-| `judges:eval-cache` | Phase 1.3 entry, before plan-evaluator | `EVAL_CACHE_HIT` (with `simple_mode`, `selected_critics`) / `EVAL_CACHE_MISS` |
 | `code:iterative-retrieval` | Complex subagent calls where initial response may be incomplete (not for simple queries) | 4-phase protocol: Dispatch → Evaluate → Refine → Loop |
 | `$decision-table` in Codex; `/closedloop-core:decision-table` in Claude Code | Phase 2.7 (generation via plan-writer) | Activated by subagents, not directly by orchestrator |
 
@@ -154,7 +153,7 @@ This is a single-shot interactive command, so review happens in-session via `Ask
 **PHASE 1.3: SIMPLE MODE EVALUATION**
 
 - **If `plan_was_imported = true`:** Mark phases 1.4, 2.5, 2.6 as `completed`, skip to Phase 2.7 (still finalize the plan).
-- Activate `judges:eval-cache` skill. On `EVAL_CACHE_HIT`, use cached values. On `EVAL_CACHE_MISS`, launch @code:plan-evaluator with `WORKDIR` to evaluate plan complexity and write plan-evaluation.json.
+- Launch @code:plan-evaluator with `WORKDIR` to evaluate plan complexity and write plan-evaluation.json.
 - If `simple_mode = true`: Mark phases 1.4, 2.5, 2.6 as `completed`, skip to Phase 2.7 (still finalize the plan).
 - If `simple_mode = false`: Store `selected_critics` for Phase 2.5, proceed to Phase 1.4.
 

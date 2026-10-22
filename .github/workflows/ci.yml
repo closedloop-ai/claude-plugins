@@ -38,6 +38,11 @@ jobs:
           while IFS= read -r plugin; do
             manifest="plugins/$plugin/.claude-plugin/plugin.json"
 
+            if [ ! -e "plugins/$plugin" ]; then
+              echo "Plugin $plugin removed; no version bump required."
+              continue
+            fi
+
             if [ ! -f "$manifest" ]; then
               echo "::error::plugins/$plugin/ changed but $manifest is missing. Each plugin must include a .claude-plugin/plugin.json manifest."
               exit 1

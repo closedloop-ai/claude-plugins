@@ -20,6 +20,19 @@ Signal safety after a plugin test ended every process on an operator's machine, 
 - vibe: `push-cadence.mjs` and `pushDue` on every commit (a tested checkpoint is pushed at least every 90 minutes); `shepherd.mjs` polls a pull request every two minutes in the final stage and stops on a conflict; the final main merge pushes before its e2e run; `main-sync-push` refuses a migration that sorts before main's newest (`migration-order.mjs`); `e2e-lock.mjs` gives each run its own compose project and honors `--foreign-compose`; `precedent-check.mjs check` refuses a public-material or undocumented answer unless no browser could look.
 - handoff: a repository can declare gates required when paths match (`.vibe/path-gates.json`); each matching gate is a required run on the published commit.
 
+### code v2.0.1
+
+#### Changed
+- Phase 1.3 (Simple Mode Evaluation) in `prompts/prompt.md` and `prompts/plan-prompt.md` launches `@code:plan-evaluator` directly. The `judges:eval-cache` skill and its row in the Available Skills table are gone, so a re-entered Phase 1.3 always re-runs the evaluator.
+- `test_install_script.py` expects the four plugins `install.sh` now installs; `hooks/tests/test_spawn_event.sh` uses `code:code-reviewer` as its example `subagent_type`.
+- README no longer lists `code-context.json` in the work directory or names judge workflows as the consumer of `count_tokens.py` and `investigation-log.md`.
+
+### judges (removed)
+
+#### Removed
+- The `judges` plugin (all judge agents, `context-manager-for-judges`, the `run-judges`, `eval-cache` and `artifact-type-tailored-context` skills, `judge-input.schema.json`, and its Python tools and tests) is deleted, and its entry is removed from `.claude-plugin/marketplace.json`.
+- `install.sh` no longer installs or verifies `judges@closedloop-ai`, and its repair instructions no longer name it. An existing install is not uninstalled.
+
 ### vibe v1.0.73
 
 The open lessons from the 2026-10-20 and 2026-10-21 ledger entries, with a mechanical check wherever the lesson had a checkable shape.

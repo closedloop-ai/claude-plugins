@@ -57,7 +57,7 @@ describe("findManifestVersionMismatches", () => {
   });
 
   it("skips a plugin that ships only a claude manifest", () => {
-    writeManifest("judges", CLAUDE_MANIFEST, { version: "1.7.1" });
+    writeManifest("platform", CLAUDE_MANIFEST, { version: "1.1.5" });
 
     expect(findManifestVersionMismatches(pluginsDir)).toEqual([]);
   });

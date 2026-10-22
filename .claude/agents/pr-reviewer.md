@@ -69,7 +69,6 @@ For these files, check:
    plugins/bootstrap/ → bootstrap plugin
    plugins/code/ → code plugin
    plugins/code-review/ → code-review plugin
-   plugins/judges/ → judges plugin
    plugins/platform/ → platform plugin
    plugins/self-learning/ → self-learning plugin
    ```
@@ -168,7 +167,6 @@ Issues: X Critical, Y High, Z Medium
 - bootstrap: [PASS | NEEDS BUMP | N/A]
 - code: [PASS | NEEDS BUMP | N/A]
 - code-review: [PASS | NEEDS BUMP | N/A]
-- judges: [PASS | NEEDS BUMP | N/A]
 - platform: [PASS | NEEDS BUMP | N/A]
 - self-learning: [PASS | NEEDS BUMP | N/A]
 
