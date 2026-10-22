@@ -11,6 +11,7 @@ import json
 import sys
 import threading
 import urllib.request
+from contextlib import contextmanager
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -109,7 +110,6 @@ def graph(tmp_path, monkeypatch, api):
     server = importlib.import_module("refresh_server")
     monkeypatch.setattr(server, "Api", api.client)
     monkeypatch.setattr(server, "api_key", lambda: API_KEY)
-    monkeypatch.setattr(server, "install_launcher", lambda: None)
     monkeypatch.setattr(server, "ensure_helper", lambda port: "helper not started in tests")
     monkeypatch.setattr(server, "GATE", server.Gate())
     monkeypatch.setattr(urllib.request, "urlopen", _no_network)
@@ -118,10 +118,10 @@ def graph(tmp_path, monkeypatch, api):
         sys.modules.pop(name, None)
 
 
-@pytest.fixture
-def helper(graph):
-    """A helper serving on a free loopback port in this process; yields a request function."""
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), graph.server.Handler)
+@contextmanager
+def serving(server):
+    """Serve one loaded refresh-helper module on a free loopback port."""
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     port = httpd.server_address[1]
@@ -150,9 +150,18 @@ def helper(graph):
         return SimpleNamespace(status=resp.status, headers={k.lower(): v for k, v in resp.getheaders()},
                                raw=payload, json=json.loads(payload) if payload else None)
 
-    yield request
-    httpd.shutdown()
-    httpd.server_close()
+    try:
+        yield request
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+@pytest.fixture
+def helper(graph):
+    """A helper serving on a free loopback port in this process; yields a request function."""
+    with serving(graph.server) as request:
+        yield request
 
 
 def new_graph(graph, scope, *, output=None, embed_into=None, graph_id=None, outside_depth="1"):

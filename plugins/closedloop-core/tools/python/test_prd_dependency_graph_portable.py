@@ -5,9 +5,10 @@ import os
 import shutil
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
-from conftest import SCRIPTS, embedded, new_graph, refresh_body
+from conftest import API_KEY, FakeClosedLoop, SCRIPTS, embedded, new_graph, refresh_body, serving
 
 LEGACY_PAGE = ('<!doctype html><html><body><div class="wrap"><h1>PRD-9 dependency graph</h1>'
                '<div class="depgraph-block" data-refresh-url="http://127.0.0.1:8765/refresh?graph=prd-9&amp;'
@@ -229,3 +230,68 @@ def test_scripts_run_as_commands(graph, tmp_path):
     assert render.returncode == 0, render.stderr
     assert json.loads(render.stdout)["edges"] == 50
     assert helper_help.returncode == 0 and "--export-config" in helper_help.stdout
+
+
+def test_launcher_follows_plugin_update_after_old_cache_is_removed(graph, tmp_path, monkeypatch):
+    codex_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    def cached_helper(version):
+        script = (codex_home / "plugins" / "cache" / "closedloop-ai" / "closedloop-core" / version
+                  / "skills" / "prd-dependency-graph" / "scripts" / "refresh_server.py")
+        script.parent.mkdir(parents=True)
+        script.write_text("import json, sys\nprint(json.dumps({'version': %r, 'args': sys.argv[1:]}))\n" % version,
+                          encoding="utf-8")
+        return script
+
+    old_script = cached_helper("1.5.1")
+    graph.server.install_launcher()
+    new_script = cached_helper("1.5.3")
+    shutil.rmtree(old_script.parents[3])
+    launcher_env = dict(os.environ, PATH=os.path.dirname(sys.executable) + os.pathsep + os.environ["PATH"])
+
+    result = subprocess.run([str(graph.render.LAUNCHER), "--ensure"], capture_output=True, text=True, timeout=30,
+                            env=launcher_env)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"version": "1.5.3", "args": ["--ensure"]}
+    assert new_script.exists()
+
+    shutil.rmtree(new_script.parents[3])
+    fallback = subprocess.run([str(graph.render.LAUNCHER), "--help"], capture_output=True, text=True, timeout=30,
+                              env=launcher_env)
+    assert fallback.returncode == 0, fallback.stderr
+    assert "--export-config" in fallback.stdout
+
+
+def test_running_helper_refreshes_after_its_plugin_cache_is_removed(tmp_path, monkeypatch):
+    install = tmp_path / "cache" / "closedloop-core" / "1.5.1"
+    scripts = install / "skills" / "prd-dependency-graph" / "scripts"
+    shutil.copytree(SCRIPTS, scripts)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.syspath_prepend(str(scripts))
+    for name in ("render_graph", "refresh_server"):
+        sys.modules.pop(name, None)
+    server = __import__("refresh_server")
+    api = FakeClosedLoop()
+    monkeypatch.setattr(server, "Api", api.client)
+    monkeypatch.setattr(server, "api_key", lambda: API_KEY)
+    monkeypatch.setattr(server, "GATE", server.Gate())
+    page = tmp_path / "prd-9-dependency-graph.html"
+    server.create(SimpleNamespace(new="PRD-9", graph_id=None, output=str(page), embed_into=None, port=8765,
+                                  include_plans=False, outside_depth="1", me=None))
+
+    try:
+        with serving(server) as request:
+            shutil.rmtree(install)
+            api.tickets["ISS-3"] = ("Ship the page", "Ada", "IN_REVIEW")
+            response = request("POST", "/v2/refresh", refresh_body(page))
+
+        assert response.status == 200, response.json
+        config = server.render_graph.read_embedded(page.read_text(encoding="utf-8"), "prd-9")
+        assert next(node for node in config["nodes"] if node["id"] == "ISS-3")["status"] == "IN_REVIEW"
+    finally:
+        for name in ("render_graph", "refresh_server"):
+            sys.modules.pop(name, None)

@@ -21,6 +21,12 @@ The open lessons and operator rulings from the 2026-10-22 fleet run, each with a
 - `rollout-gate.mjs` (handoff) needs each flag, rollback or rollout requirement in the ticket and its PRD backed by code at HEAD or a human ruling that names the ticket or PRD; `rulings-check.mjs --ruling --scope`, `executed-check.mjs --kind ticket --slug` and `status-audit.mjs` (`UNSCOPED`) refuse a ruling that names neither, and `qa-plan-check.mjs --criteria` makes each rollout requirement a checkpoint.
 - fleet-orchestrator Program practices: green watch, load-aware placement (`fleet.sh slot heavy` refuses a machine over `MAX_LOAD_PER_CORE`), repo knowledge capture, close-out, deadline mode and runtime choice; `board.mjs status` prints `MISSING-DUTY` for a required duty (green-watch by default) with no owner.
 
+### closedloop-core v1.5.2
+
+#### Fixed
+- `prd-graph-helper` resolves the newest usable `closedloop-core` installation from the Codex and Claude plugin caches each time it runs instead of pinning itself to the versioned cache path that created it. Source checkouts remain a version-aware fallback, so deleting an old plugin cache no longer leaves the launcher unable to start.
+- A dependency-graph helper whose plugin cache is removed while it is running keeps refreshing with its renderer already loaded in memory and logs a one-time upgrade hint. Regression tests remove both a launcher's original cache and a live helper's cache before exercising their command and HTTP refresh surfaces.
+
 ### vibe v1.0.75
 
 The open fleet lessons from the 2026-10-21 and 2026-10-22 orchestration runs, each with a mechanical check where one fits, and a watcher bug found while checking them.
