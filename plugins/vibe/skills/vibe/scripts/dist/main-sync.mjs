@@ -7270,7 +7270,7 @@ var require_public_api = __commonJS({
       }
       return doc;
     }
-    function parse4(src, reviver, options) {
+    function parse5(src, reviver, options) {
       let _reviver = void 0;
       if (typeof reviver === "function") {
         _reviver = reviver;
@@ -7311,7 +7311,7 @@ var require_public_api = __commonJS({
         return value.toString(options);
       return new Document.Document(value, _replacer, options).toString(options);
     }
-    exports.parse = parse4;
+    exports.parse = parse5;
     exports.parseAllDocuments = parseAllDocuments;
     exports.parseDocument = parseDocument;
     exports.stringify = stringify;
@@ -8227,7 +8227,7 @@ var require_parse = __commonJS({
       }
       return { risky: false };
     };
-    var parse4 = (input, options) => {
+    var parse5 = (input, options) => {
       if (typeof input !== "string") {
         throw new TypeError("Expected a string");
       }
@@ -8397,7 +8397,7 @@ var require_parse = __commonJS({
             output = token.close = `)$))${extglobStar}`;
           }
           if (token.inner.includes("*") && (rest = remaining()) && /^\.[^\\/.]+$/.test(rest)) {
-            const expression = parse4(rest, { ...options, fastpaths: false }).output;
+            const expression = parse5(rest, { ...options, fastpaths: false }).output;
             output = token.close = `)${expression})${extglobStar})`;
           }
           if (token.prev.type === "bos") {
@@ -8920,7 +8920,7 @@ var require_parse = __commonJS({
       }
       return state;
     };
-    parse4.fastpaths = (input, options) => {
+    parse5.fastpaths = (input, options) => {
       const opts = { ...options };
       const max = typeof opts.maxLength === "number" ? Math.min(MAX_LENGTH, opts.maxLength) : MAX_LENGTH;
       const len = input.length;
@@ -8985,7 +8985,7 @@ var require_parse = __commonJS({
       }
       return source;
     };
-    module.exports = parse4;
+    module.exports = parse5;
   }
 });
 
@@ -8994,7 +8994,7 @@ var require_picomatch = __commonJS({
   "node_modules/picomatch/lib/picomatch.js"(exports, module) {
     "use strict";
     var scan = require_scan();
-    var parse4 = require_parse();
+    var parse5 = require_parse();
     var utils = require_utils();
     var constants = require_constants();
     var isObject = (val) => val && typeof val === "object" && !Array.isArray(val);
@@ -9082,7 +9082,7 @@ var require_picomatch = __commonJS({
     picomatch3.isMatch = (str, patterns, options) => picomatch3(patterns, options)(str);
     picomatch3.parse = (pattern, options) => {
       if (Array.isArray(pattern)) return pattern.map((p) => picomatch3.parse(p, options));
-      return parse4(pattern, { ...options, fastpaths: false });
+      return parse5(pattern, { ...options, fastpaths: false });
     };
     picomatch3.scan = (input, options) => scan(input, options);
     picomatch3.compileRe = (state, options, returnOutput = false, returnState = false) => {
@@ -9108,10 +9108,10 @@ var require_picomatch = __commonJS({
       }
       let parsed = { negated: false, fastpaths: true };
       if (options.fastpaths !== false && (input[0] === "." || input[0] === "*")) {
-        parsed.output = parse4.fastpaths(input, options);
+        parsed.output = parse5.fastpaths(input, options);
       }
       if (!parsed.output) {
-        parsed = parse4(input, options);
+        parsed = parse5(input, options);
       }
       return picomatch3.compileRe(parsed, options, returnOutput, returnState);
     };
@@ -196034,7 +196034,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         return ts_textChanges_exports.ChangeTracker.with(
           { host, formatContext, preferences },
           (changeTracker) => {
-            const parsed = contents.map((c) => parse4(sourceFile, c));
+            const parsed = contents.map((c) => parse5(sourceFile, c));
             const flattenedLocations = focusLocations && flatten(focusLocations);
             for (const nodes of parsed) {
               placeNodeGroup(
@@ -196047,7 +196047,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
           }
         );
       }
-      function parse4(sourceFile, content) {
+      function parse5(sourceFile, content) {
         const nodeKinds = [
           {
             parse: () => createSourceFile(
@@ -226172,6 +226172,7 @@ import { existsSync as existsSync6, lstatSync as lstatSync4, readFileSync as rea
 import { createRequire } from "node:module";
 import { dirname as dirname6, join as join8, relative as relative3, sep as sep2 } from "node:path";
 import { realpathSync as realpathSync6 } from "node:fs";
+var import_yaml4 = __toESM(require_dist(), 1);
 
 // src/main-sync-input-files.ts
 import { lstatSync as lstatSync3, readFileSync as readFileSync8, readdirSync, realpathSync as realpathSync5 } from "node:fs";
@@ -226432,37 +226433,38 @@ function refuse() {
 
 // src/main-sync-input-catalog.ts
 var DESKTOP = "apps/desktop";
+var WORKSPACE = "pnpm-workspace.yaml";
 var inputProducers = [
   {
     id: "shared-prisma",
     roots: ["packages/database/generated"],
-    inputs: ["packages/database/prisma", "packages/database/prisma.config.ts", "packages/database/package.json"],
+    inputs: ["packages/database/prisma", "packages/database/prisma.config.ts", "packages/database/package.json", WORKSPACE],
     argv: ["pnpm", "--dir", "packages/database", "run", "db:generate"],
-    package: { dir: "packages/database", name: "prisma", version: "7.10.0" },
+    package: { dir: "packages/database", name: "prisma" },
     strategy: "pristine"
   },
   {
     id: "desktop-prisma",
     roots: [`${DESKTOP}/src/main/database/generated`],
-    inputs: [`${DESKTOP}/prisma`, `${DESKTOP}/prisma.config.ts`, `${DESKTOP}/package.json`, `${DESKTOP}/scripts/generate-prisma-client-lib.mjs`],
+    inputs: [`${DESKTOP}/prisma`, `${DESKTOP}/prisma.config.ts`, `${DESKTOP}/package.json`, `${DESKTOP}/scripts/generate-prisma-client-lib.mjs`, WORKSPACE],
     argv: ["pnpm", "--dir", DESKTOP, "exec", "prisma", "generate"],
-    package: { dir: DESKTOP, name: "prisma", version: "7.10.0" },
+    package: { dir: DESKTOP, name: "prisma" },
     strategy: "pristine"
   },
   ...["api", "app"].map((app) => ({
     id: `next-${app}`,
     roots: [`apps/${app}/next-env.d.ts`, `apps/${app}/.next/types`],
-    inputs: [`apps/${app}/app`, `apps/${app}/next.config.ts`, `apps/${app}/tsconfig.json`, `apps/${app}/package.json`],
+    inputs: [`apps/${app}/app`, `apps/${app}/next.config.ts`, `apps/${app}/tsconfig.json`, `apps/${app}/package.json`, WORKSPACE],
     argv: ["pnpm", "--dir", `apps/${app}`, "exec", "next", "typegen"],
-    package: { dir: `apps/${app}`, name: "next", version: "16.3.6" },
+    package: { dir: `apps/${app}`, name: "next" },
     strategy: "pristine"
   })),
   {
     id: "fumadocs",
     roots: ["apps/web/.source"],
-    inputs: ["apps/web/content/docs", "apps/web/source.config.ts", "apps/web/package.json"],
+    inputs: ["apps/web/content/docs", "apps/web/source.config.ts", "apps/web/package.json", WORKSPACE],
     argv: ["pnpm", "--dir", "apps/web", "exec", "fumadocs-mdx"],
-    package: { dir: "apps/web", name: "fumadocs-mdx", version: "14.3.1" },
+    package: { dir: "apps/web", name: "fumadocs-mdx" },
     strategy: "full-write"
   },
   { id: "desktop-build", roots: [`${DESKTOP}/src/shared/build-info.ts`], inputs: [`${DESKTOP}/package.json`, `${DESKTOP}/scripts/write-build-info-lib.mjs`], strategy: "pure" },
@@ -226477,11 +226479,11 @@ var inputProducers = [
   {
     id: "desktop-auth",
     roots: [`${DESKTOP}/src/shared/auth-handoff-assets.generated.ts`],
-    inputs: ["packages/design-system/styles/globals.css", "packages/design-system/brand/logos/Horizontal", `${DESKTOP}/scripts/generate-auth-handoff-assets-lib.mjs`],
-    package: { dir: "packages/design-system", name: "geist", version: "1.7.2" },
+    inputs: ["packages/design-system/styles/globals.css", "packages/design-system/brand/logos/Horizontal", `${DESKTOP}/scripts/generate-auth-handoff-assets-lib.mjs`, "packages/design-system/package.json", WORKSPACE],
+    package: { dir: "packages/design-system", name: "geist" },
     strategy: "pure"
   },
-  { id: "husky", roots: [".husky/_/husky.sh"], inputs: ["package.json"], package: { dir: ".", name: "husky", version: "9.1.7" }, strategy: "pure" }
+  { id: "husky", roots: [".husky/_/husky.sh"], inputs: ["package.json", WORKSPACE], package: { dir: ".", name: "husky" }, strategy: "pure" }
 ];
 var reportOutputs = /* @__PURE__ */ new Set([
   ".vitest/blob/blob.json",
@@ -226494,6 +226496,12 @@ var reportOutputs = /* @__PURE__ */ new Set([
   `${DESKTOP}/playwright-report-e2e/dd-quarantine.json`
 ]);
 var packageSchema2 = external_exports.object({ name: external_exports.string(), version: external_exports.string() }).passthrough();
+var manifestSchema2 = external_exports.object({
+  dependencies: external_exports.record(external_exports.string()).optional(),
+  devDependencies: external_exports.record(external_exports.string()).optional(),
+  optionalDependencies: external_exports.record(external_exports.string()).optional()
+}).passthrough();
+var workspaceSchema = external_exports.object({ catalog: external_exports.record(external_exports.string()).optional(), catalogs: external_exports.record(external_exports.record(external_exports.string())).optional() }).passthrough();
 function producerFor(path2) {
   return inputProducers.find((producer) => producer.roots.some((root) => path2 === root || path2.startsWith(`${root}/`)));
 }
@@ -226514,8 +226522,22 @@ function producerPackage(root, producer) {
     throw new MainSyncError(`Canonical installed producer resolves outside the owned validation checkout: ${producer.id}`, "NEEDS_CHANGE");
   }
   const data = packageSchema2.parse(JSON.parse(readFileSync9(canonical, "utf8")));
-  if (data.name !== owner.name || data.version !== owner.version) throw new MainSyncError(`Installed producer contract changed: ${producer.id}`, "NEEDS_CHANGE");
+  if (data.name !== owner.name || data.version !== targetPackageVersion(root, owner, data.version)) {
+    throw new MainSyncError(`Installed producer contract changed: ${producer.id}`, "NEEDS_CHANGE");
+  }
   return { path: relative3(root, canonical), directory: dirname6(canonical), version: data.version };
+}
+function targetPackageVersion(root, owner, installed) {
+  const manifest = manifestSchema2.parse(JSON.parse(readFileSync9(join8(root, owner.dir, "package.json"), "utf8")));
+  const specifier = manifest.dependencies?.[owner.name] ?? manifest.devDependencies?.[owner.name] ?? manifest.optionalDependencies?.[owner.name];
+  if (!specifier?.startsWith("catalog:")) return installed;
+  const file = join8(root, WORKSPACE);
+  if (!existsSync6(file)) throw new MainSyncError(`Catalog-backed producer has no pnpm workspace: ${owner.name}`, "NEEDS_CHANGE");
+  const workspace = workspaceSchema.parse((0, import_yaml4.parse)(readFileSync9(file, "utf8")));
+  const catalogName = specifier.slice("catalog:".length);
+  const version = (catalogName ? workspace.catalogs?.[catalogName] : workspace.catalog)?.[owner.name];
+  if (!version) throw new MainSyncError(`Catalog has no producer version: ${owner.name}`, "NEEDS_CHANGE");
+  return version;
 }
 function producerOwnerInputs(root, producer, allowed) {
   const owner = producerPackage(root, producer);

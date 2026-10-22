@@ -153,18 +153,21 @@ for(let index=0;index<Number(process.argv[2])-2;index++) fs.writeFileSync(path.j
 }
 
 /** Synthetic finite Next IO contract proves shared-package refs, not framework/config safety. */
-export function nextInputFixture(value: ReturnType<typeof syncFixture>) {
+export function nextInputFixture(value: ReturnType<typeof syncFixture>, options: { version?: string; catalog?: boolean } = {}) {
+  const version = options.version ?? "16.3.6";
+  const specifier = options.catalog ? "catalog:" : version;
   const files: string[] = [];
   value.write(".gitignore", `${readFileSync(join(value.worktree, ".gitignore"), "utf8")}\napps/api/next-env.d.ts\napps/app/next-env.d.ts\napps/api/.next/\napps/app/.next/\n`);
+  if (options.catalog) value.write("pnpm-workspace.yaml", `packages:\n  - apps/*\ncatalog:\n  next: ${version}\n`);
   for (const app of ["api", "app"]) {
-    value.write(`apps/${app}/package.json`, JSON.stringify({ name: app, dependencies: { next: "16.3.6" } }));
+    value.write(`apps/${app}/package.json`, JSON.stringify({ name: app, dependencies: { next: specifier } }));
     value.write(`apps/${app}/next.config.ts`, "export default {};\n");
     value.write(`apps/${app}/tsconfig.json`, "{\"include\":[\"next-env.d.ts\",\".next/types/**/*.ts\"]}\n");
     value.write(`apps/${app}/app/page.tsx`, "export default function Page(){return null;}\n");
     files.push(`apps/${app}/next-env.d.ts`, ...["routes.d.ts", "validator.ts", "cache-life.d.ts", "root-params.d.ts"].map((file) => `apps/${app}/.next/types/${file}`));
   }
   const owner = String.raw`const fs=require('node:fs');const path=require('node:path');const app=process.argv[2];
-if(app==='setup') {fs.mkdirSync('node_modules/next',{recursive:true});fs.writeFileSync('node_modules/next/package.json',JSON.stringify({name:'next',version:'16.3.6',main:'index.js'}));fs.writeFileSync('node_modules/next/index.js','module.exports = {};\n');}
+if(app==='setup') {fs.mkdirSync('node_modules/next',{recursive:true});fs.writeFileSync('node_modules/next/package.json',JSON.stringify({name:'next',version:${JSON.stringify(version)},main:'index.js'}));fs.writeFileSync('node_modules/next/index.js','module.exports = {};\n');}
 else {const root=path.join('apps',app);fs.mkdirSync(path.join(root,'.next/types'),{recursive:true});fs.writeFileSync(path.join(root,'next-env.d.ts'),'export {};\n');for(const file of ['routes.d.ts','validator.ts','cache-life.d.ts','root-params.d.ts'])fs.writeFileSync(path.join(root,'.next/types',file),'export {};\n');}
 `;
   value.write("scripts/fixture-next.cjs", owner);

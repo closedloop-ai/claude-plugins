@@ -283,6 +283,20 @@ describe("production committed-input privacy and origin boundaries", () => {
     try { expect(invokeSync(value, "prepare", publisher.context).status).toBe(0); } finally { publisher.finish(); }
   }, 30000);
 
+  it.each([{ source: "pnpm catalog", catalog: true }, { source: "installed package", catalog: false }])(
+    "resolves a changed Next version from the target repository $source", ({ catalog }) => {
+      const value = setup();
+      nextInputFixture(value, { version: "16.4.1", catalog });
+      const source = value.sourceTurn();
+      try {
+        const result = invokeSync(value, "inputs", source.context);
+        expect(result.status, result.stdout).toBe(0);
+        const state = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8"));
+        expect(state.inputs.packages).toHaveLength(1);
+        expect(state.inputs.packages[0].version).toBe("16.4.1");
+      } finally { source.finish(); }
+    }, 30000);
+
   it("refuses an oversized fresh capture before atomic save and retains the exact prior receipt and feature tree", () => {
     const value = setup();
     finalMerge(value);
