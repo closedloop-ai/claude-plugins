@@ -160,6 +160,13 @@ F. Status. The PLN's status follows the work:
    external dependency evidence. A ticket that still says the collector,
    selector, monitor or other dependency is missing keeps that task open and
    the PLN `DRAFT`; return `NEEDS_CHANGE` rather than approving it.
+   You never set a PLN's approver, so the `APPROVED` you set means built
+   and checked, never a human approval. Before setting it, save the PLN's
+   `get-document` JSON and its latest text and run
+   `node ../skills/handoff/scripts/rulings-check.mjs --plan <json> --plan-body <text>`;
+   each exclusion it names (out of scope, deferred, not covered, a GAP line)
+   goes back to the writer as `NEEDS_CHANGE`: cite the ticket AC, PRD or
+   operator ruling behind it, or bring the work back into scope.
 
 ## Create mode
 

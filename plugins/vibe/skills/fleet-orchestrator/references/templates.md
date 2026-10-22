@@ -21,12 +21,13 @@ Requirement: <ticket, PRD or acceptance criterion this proves>
 
 ## Worker preamble
 
-Prepend to every Claude writer prompt; keep the `Takeover` line only when replacing a dead Codex writer. A Codex writer's prompt starts with `$vibe <ticket or PRD>` instead of the first line.
+Prepend to every Claude writer prompt; keep the `Takeover` line only when replacing a dead Codex writer, and the `Inherited scope` line whenever the writer continues another writer's branch. A Codex writer's prompt starts with `$vibe <ticket or PRD>` instead of the first line.
 
 ```
 Invoke vibe:vibe first: resume the vibe session for <ticket or PRD>, or start one for it, and follow its rules for all of the work below.
 You are the only writer on <owner/repo>#<number>, worktree <path> on <machine>, branch <branch>.
 Takeover: a Codex vibe session wrote this branch and stopped (<usage-limit|runtime-unavailable>). Resume that same vibe session and, before any other step, move its writer to you with vibe's harness switch (`writer-state.mjs migrate` with `harnessSwitch`, vibe's quality loop, "A writer whose runtime cannot run"). Never start a second session on this branch. Continue from its last pushed head <sha>; commit normally.
+Inherited scope: trace every exclusion, deferral, "obsolete" or narrowed criterion you inherit from the previous writer (its plan, PLN, change log or report) to a human source: a ticket AC, a PRD line, an operator ruling, or a plan with a named human approver. Anything without one is built or escalated, never dropped; `rulings-check.mjs --plan` lists a linked PLN's uncited exclusions.
 Before editing, read the repo docs that own the paths you touch (AGENTS.md files or contributor guide) or the team knowledge base.
 Research graph-first with closedloop-graph before searching files by hand, as vibe requires: ticket_detail for the ticket and its PRD, query_collisions and blast_radius_tickets for overlapping work, code_callers and code_importers before a shared change.
 Tests: after any change, fix or merge (a conflict resolution included), run exactly the tests code_tests_for maps to the files it touched, nothing broader by default; files that map to no tests (changelog, README, version text) run none and CI confirms.
@@ -53,6 +54,7 @@ $vibe resume the vibe session for <ticket or PRD>.
 Worktree <path> on <machine>, branch <branch>, PR <owner/repo>#<number>, pushed head <full sha>. You are its only writer.
 Done: <what is finished and pushed>
 Left: <what remains, in order>
+Inherited scope: trace every exclusion, deferral, "obsolete" or narrowed criterion the previous writer left (its plan, PLN, change log or report) to a human source: a ticket AC, a PRD line, an operator ruling, or a plan with a named human approver. Anything without one is built or escalated, never dropped; `rulings-check.mjs --plan` lists a linked PLN's uncited exclusions.
 Rulings in force: read <orchDir>/rulings.md; the ticket carries the applicable per-ticket rulings through handoff's rulings check.
 Research graph-first with closedloop-graph before searching files by hand, as vibe requires: ticket_detail for the ticket and its PRD, query_collisions and blast_radius_tickets for overlapping work, code_callers and code_importers before a shared change.
 Tests: after any change, fix or merge (a conflict resolution included), run exactly the tests code_tests_for maps to the files it touched, nothing broader by default; files that map to no tests (changelog, README, version text) run none and CI confirms.

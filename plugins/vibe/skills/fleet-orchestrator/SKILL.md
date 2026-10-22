@@ -53,6 +53,7 @@ The closedloop-graph MCP server is required; decide from it, not from guesses. T
 
 - Before assigning work or ruling between PRs, check open-PR and ticket overlap with `query_collisions` and `blast_radius_tickets`; read a ticket's PRD lineage and children with `ticket_detail`.
 - Before dispatching a ticket, and in every QA-prep brief, run vibe's newest-ruling search ([requirements worker](../../agents/vibe-requirements-worker.md), Newest ruling). On a hit, stop and ask the operator.
+- In the same step, check every plan linked to the ticket (`list-artifact-links`, PRODUCES): save its `get-document` JSON and latest text and run `node ../handoff/scripts/rulings-check.mjs --plan <json> --plan-body <text>`. A plan with no human approver is not a ruling, so each exclusion it reports is scope the brief tells the writer to build or you escalate, never one to skip. A writer once skipped two tickets on an uncited Out-of-scope line of a plan vibe itself had marked approved.
 - Before a shared change, read its callers and importers (`code_callers`, `code_importers`).
 - Which tests to run, or rerun, after any change, fix or merge (a conflict resolution included) is decided by `code_tests_for`, the only route to tests, over the files that change touched: run exactly those and nothing broader by default. Files that map to no tests (changelog, README, version text) run none, and CI confirms.
 - Trace a surprising difference in a before and after comparison to the commit and ticket that introduced it before blaming the PR.

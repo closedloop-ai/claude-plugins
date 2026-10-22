@@ -87,3 +87,12 @@ def test_vibe_writers_never_wait_for_authorization_on_in_scope_work() -> None:
     assert "permission to do in-scope work" in _text(VIBE / "SKILL.md")
     assert "asksLeaveForInScopeWork" in (VIBE / "scripts" / "session-questions.mjs").read_text()
     assert "executed-check.mjs --kind plan" in _text(PLUGIN / "agents" / "vibe-ticket-worker.md")
+
+
+def test_a_plan_no_human_approved_is_never_a_scope_ruling() -> None:
+    assert "planProblems" in (PLUGIN / "skills" / "handoff" / "scripts" / "rulings-check.mjs").read_text()
+    assert "rulings-check.mjs --plan <json> --plan-body <text>" in _text(PLUGIN / "agents" / "vibe-ticket-worker.md")
+    assert "--plan <each linked PLN's get-document JSON>" in _text(PLUGIN / "skills" / "handoff" / "SKILL.md")
+    assert "rulings-check.mjs --plan <json> --plan-body <text>" in _text(FLEET / "SKILL.md")
+    templates = _text(FLEET / "references" / "templates.md")
+    assert templates.count("Inherited scope: trace every exclusion") == 2, "takeover preamble and resume prompt"
