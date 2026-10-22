@@ -1,12 +1,13 @@
 // Reads a pull request's review threads through `gh api graphql`, for the
 // fleet board (unresolved human threads on a slow writer) and the writer's
-// shepherd (an unresolved thread waiting on the writer is work).
+// shepherd (an unresolved thread waiting on the writer is round-one work or
+// a later-round thread to triage).
 
 import { execFileSync } from "node:child_process";
 
-const QUERY = "query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}} latest:comments(last:1){nodes{author{login}}}}}}}}";
+const QUERY = "query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login} createdAt}} latest:comments(last:1){nodes{author{login}}}}}}}}";
 
-/** Each thread as `{ resolved, opener, lastAuthor }`, or null when gh cannot answer. */
+/** Each thread as `{ resolved, opener, lastAuthor, createdAt }`, or null when gh cannot answer. */
 export function readThreads(repo, pr, gh = "gh") {
   const [owner, name] = repo.split("/");
   try {
@@ -18,6 +19,7 @@ export function readThreads(repo, pr, gh = "gh") {
       resolved: node?.isResolved === true,
       opener: node?.comments?.nodes?.[0]?.author?.login ?? null,
       lastAuthor: node?.latest?.nodes?.[0]?.author?.login ?? node?.comments?.nodes?.[0]?.author?.login ?? null,
+      createdAt: node?.comments?.nodes?.[0]?.createdAt ?? null,
     }));
   } catch {
     return null;

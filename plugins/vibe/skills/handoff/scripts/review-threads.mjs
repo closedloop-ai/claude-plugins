@@ -8,12 +8,18 @@
 // their reply and stay open. A flag-gated fix names the test or missing-tests
 // entry pinning flag-off behavior to main. Every unresolved thread read from
 // the pull request needs a result. Any problem resolves nothing.
+// One review round per pull request (operator ruling, 2026-10-22): a thread
+// raised after the round-one fixes were pushed (`"round": "later"`) is never
+// fixed in it; its result is `followup` (`followupUrl`, the pull request's one
+// follow-up ticket, from review-followup.mjs) or `invalid` (`reason`), and it
+// is resolved after that reply, so it never blocks the merge.
 //
 // Usage:
 //   review-threads.mjs resolve --results <results.json> --threads <threads.json> [--gh <gh CLI>]
 //
 // results.json: {"writer": "<writer id>", "threads": [{"threadId", "commentId",
 //   "result": "fixed"|"partial"|"reason", "fixingCommit", "remaining", "reason",
+//   "round": "later" with "result": "followup"|"invalid" and "followupUrl" or "reason",
 //   "verification": {"by", "verdict": "verified"|"not-verified", "evidence"},
 //   "flagGated", "flagOffEqualsMain": "test:<path>"|"missing-test:<entry>"}]}
 // threads.json: the environment worker's `reviewThreads: read` list.
@@ -46,7 +52,7 @@ export function checkThreads(results, unresolved) {
     }
     const found = problemsFor(thread, writer);
     problems.push(...found.map((problem) => `${id}: ${problem}`));
-    if (!found.length) (thread.result === "fixed" ? resolve : replyOnly).push(id);
+    if (!found.length) (thread.result === "fixed" || thread.round === "later" ? resolve : replyOnly).push(id);
   }
   const answered = new Set(threads.map((thread) => thread?.threadId));
   for (const thread of unresolved) {
@@ -71,6 +77,11 @@ export function resolveThreads(results, unresolved, gh = "gh") {
 }
 
 function problemsFor(thread, writer) {
+  if (thread.round === "later") {
+    if (thread.result === "followup") return /^https:\/\/\S+$/.test(thread.followupUrl ?? "") ? [] : ["a later-round finding replies with its follow-up ticket's link (followupUrl)"];
+    if (thread.result === "invalid") return text(thread.reason) ? [] : ["an invalid later-round finding carries its reason"];
+    return ["a later-round thread is never fixed in this pull request; its result is followup (the one follow-up ticket) or invalid"];
+  }
   if (!["fixed", "partial", "reason"].includes(thread.result)) return [`result must be fixed, partial or reason, not ${JSON.stringify(thread.result)}`];
   const problems = [];
   if (thread.result === "partial" && !text(thread.remaining)) problems.push("a partial fix names what remains");
