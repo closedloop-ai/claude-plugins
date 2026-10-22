@@ -202,7 +202,7 @@ The terminal artifact of every review run.
 
   // ── Verdict ───────────────────────────────────────────────
   "verdict": "APPROVED | NEEDS_ATTENTION | CHANGES_REQUESTED",
-  "verdict_reason": "<one of the verdict precedence rules; cites the gating finding(s)>",
+  "verdict_reason": "<the gating finding(s); on APPROVED, the discarded bucket — see §5>",
 
   // ── Stats ─────────────────────────────────────────────────
   "stats": {
@@ -301,6 +301,14 @@ The `verdict` subcommand applies these rules in order; the first match wins.
 6. Otherwise → **APPROVED**
 
 `verdict_reason` cites the specific finding(s) that produced the verdict.
+
+**On APPROVED there is no gating finding, so `verdict_reason` reports the
+discarded bucket instead** (ISS-10711): empty when verification rejected
+nothing, and otherwise `"<N> finding(s) rejected by verification (<class>
+x<n>, ...)"` with classes ranked by frequency. The class list is elided with
+`, ...` to fit an 80-character cap, so a reader must not treat it as
+exhaustive; the count is never dropped. A rejected finding is not gating, so
+this text never changes which verdict is returned.
 
 **Numbering note.** This list is a clean sequential summary. The implementation (`_compute_canonical_verdict`) carries plan-derived rule labels — including the `2.5` (mandatory-human-review short-circuit) and `3.5` (TENTATIVE fall-through) sub-rules, and the cumulative Impact gate labeled **Rule 6** (PLN-726 OQ#6) — so the code's labels do not map 1:1 to the numbers above (e.g. the Impact gate is item 4 here but "Rule 6" in code).
 
