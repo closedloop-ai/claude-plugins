@@ -80,6 +80,15 @@ test("an answer needs a recorded question and keys stay plain identifiers", () =
     answer: null, answeredAt: null }]);
 });
 
+test("a product question is refused until it cites the code or data model checked first", () => {
+  assert.throws(() => askQuestion([], { key: "bulk-owner", question: "Can owners change in bulk?", product: true }), /--code-evidence/);
+  const { questions } = askQuestion([], {
+    key: "bulk-owner", question: "Can owners change in bulk?", product: true, codeEvidence: "packages/branches/schema.ts:42",
+  });
+  assert.equal(questions[0].product, true);
+  assert.equal(questions[0].codeEvidence, "packages/branches/schema.ts:42");
+});
+
 test("answering an unrecorded question is refused", (t) => {
   const { home } = setup(t);
   const result = questions(home, ["answer", "--key", "button-label", "--answer", "Proceed"]);

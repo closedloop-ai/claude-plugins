@@ -5,9 +5,11 @@
 // writer stalled asking for the story and the evidence.
 //
 // Usage: finding-brief.mjs <orchDir> --findings <findings.json> --prompt <prompt .md> [--where local|remote]
+//        finding-brief.mjs <orchDir> --findings <findings.json> --require-disposition
 //
 // findings.json: {"head": "<sha>", "findings": [{"id", "summary", "story" or "route",
-//   "viewport", "selector" and/or "screenshots": [paths]}]}
+//   "viewport", "selector" and/or "screenshots": [paths], "touchedSurface": true|false,
+//   "disposition": "fixed: <sha>"|"ticket: <id>" when touched}]}
 // Each finding needs a summary, a story id or route, a viewport, and a
 // selector or at least one screenshot that exists; any other finding is
 // refused (exit 1) and nothing is written. Screenshots are copied into
@@ -34,8 +36,21 @@ export function findingProblems(findings, exists = existsSync) {
       ...(finding?.story || finding?.route ? [] : [`${name}: no story id or route`]),
       ...(finding?.viewport ? [] : [`${name}: no viewport`]),
       ...(finding?.selector || screenshots.length > 0 ? [] : [`${name}: no selector or screenshot`]),
+      ...(typeof finding?.touchedSurface === "boolean" ? [] : [`${name}: touchedSurface must say true or false`]),
       ...screenshots.filter((file) => !exists(file)).map((file) => `${name}: screenshot ${file} does not exist here`),
     ];
+  });
+}
+
+/** Touched-surface findings that have neither a fixing commit nor a follow-up ticket. */
+export function dispositionProblems(findings) {
+  if (!Array.isArray(findings) || findings.length === 0) return ["no findings"];
+  return findings.flatMap((finding, index) => {
+    const name = finding?.id ?? `finding ${index + 1}`;
+    if (typeof finding?.touchedSurface !== "boolean") return [`${name}: touchedSurface must say true or false`];
+    if (!finding.touchedSurface) return [];
+    if (/^(?:fixed:\s*[0-9a-f]{7,40}|ticket:\s*[A-Z]+-\d+)$/i.test(finding?.disposition ?? "")) return [];
+    return [`${name}: a finding on a touched surface needs disposition "fixed: <sha>" or "ticket: <id>"`];
   });
 }
 
@@ -67,11 +82,18 @@ function remoteDir(orchDir) {
 
 function main(argv) {
   const [orchDir, ...rest] = argv;
-  const { values } = parseArgs({ args: rest, options: { findings: { type: "string" }, prompt: { type: "string" }, where: { type: "string" } } });
-  if (!orchDir || !values.findings || !values.prompt) {
-    throw new Error("Usage: finding-brief.mjs <orchDir> --findings <findings.json> --prompt <prompt .md> [--where local|remote]");
+  const { values } = parseArgs({ args: rest, options: {
+    findings: { type: "string" }, prompt: { type: "string" }, where: { type: "string" }, "require-disposition": { type: "boolean" },
+  } });
+  if (!orchDir || !values.findings || (!values.prompt && !values["require-disposition"])) {
+    throw new Error("Usage: finding-brief.mjs <orchDir> --findings <findings.json> (--prompt <prompt .md> [--where local|remote] | --require-disposition)");
   }
   const { head, findings } = JSON.parse(readFileSync(values.findings, "utf8"));
+  if (values["require-disposition"]) {
+    const problems = dispositionProblems(findings);
+    process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, problems })}\n`);
+    return problems.length === 0 ? 0 : 1;
+  }
   const problems = findingProblems(findings);
   if (problems.length > 0) {
     process.stdout.write(`${JSON.stringify({ ok: false, problems })}\n`);

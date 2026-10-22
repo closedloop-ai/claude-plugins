@@ -2,5 +2,5 @@
 type: regex
 match: contains
 flags: i
-pattern: 'ROUTE:\s*research-further\b'
+pattern: 'ROUTE:\s*ask-question\b'
 ---

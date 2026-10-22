@@ -513,7 +513,10 @@ evidence is visible. Each skill dispatches its own read-only agents. Confirmed
 findings resume the SAME writer in fix mode for every touched surface, even when
 they predate the branch, already exist on main or were called the component
 owner's decision; approved copy is reused and unsourced wording is escalated. Then
-steps 3 to 6 run again on the result. Their reports feed the Design Review evidence in step 8. Owned
+steps 3 to 6 run again on the result. Before handoff, the findings file must pass
+`node ../fleet-orchestrator/scripts/finding-brief.mjs <orchDir> --findings
+<findings.json> --require-disposition`; every finding on a touched surface has
+`fixed: <sha>` or a follow-up `ticket: <id>`. Their reports feed the Design Review evidence in step 8. Owned
 prototype sessions keep their canonical single design review instead.
 
 Every new or changed Storybook `play` runs awaited in a real browser, and any
@@ -880,6 +883,7 @@ resumes and every fix goes through this path, never around it:
    writer until all of them are clean. The guardrails reviewer marks each
    `fixed` thread `verified` or `not-verified` with `file:line` evidence;
    the writer's own report is never that verification.
+   The VQA findings file must also pass `node ../fleet-orchestrator/scripts/finding-brief.mjs <orchDir> --findings <findings.json> --require-disposition`; a finding on a touched surface cannot be handed off without its fixing SHA or follow-up ticket.
 5. Step 7: ROOT commits the fixes, the main-sync publication gate runs, and
    `vibe-environment-worker` in redeploy mode pushes the validated commit to
    the SAME branch through the normal pre-push hook. Never a force push,

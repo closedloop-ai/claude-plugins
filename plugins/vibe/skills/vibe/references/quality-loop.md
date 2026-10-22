@@ -70,7 +70,7 @@ once, for both harnesses:
 
 - Claude Code: whichever actor has the operator's signed-in Chrome runs
   `node scripts/precedent-check.mjs run --question
-  "<question>" --situation "<what to reproduce>"` in the background. It
+  "<question>" --code-evidence "<file:line>" --situation "<what to reproduce>"` in the background. It
   starts a separate headless `claude -p --chrome` limited to the Chrome tools
   with the brief on stdin.
 - Codex: no computer use (`guardrails.md`, "Processes and state"). The
@@ -92,8 +92,7 @@ on-screen wording is quoted exactly as evidence, and a situation Asana does
 not settle is reported as `undocumented`, never guessed. A failed or
 `undocumented` run leaves the question to the person.
 Before an answer is recorded, `node scripts/precedent-check.mjs check
---report <report>` must pass. Do not pass `--no-browser`; public material is
-not precedent evidence. Pass each disputed
+--report <report>` must pass. Public material is not precedent evidence. Pass each disputed
 behavior the question turns on as `--behavior "<the interaction to perform>"`
 to `run`: `check` then refuses a report until every one is observed with a
 screenshot or marked `needs a write to test` for the operator.

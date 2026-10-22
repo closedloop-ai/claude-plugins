@@ -19,7 +19,7 @@ Session state:
 - App session `invoice-credit-line` (worktree recorded), live ticket ISS-5333. The person is a product manager.
 - The writer's open question: "When a seat is removed mid-month, should the next invoice show the credit as its own line or fold it into the subscription line?"
 - Graph research: `ticket_detail` ISS-5333, `fts_search` "seat credit invoice line", `search_memory_facts` "mid-month seat removal credit": no ruling anywhere.
-- `precedent-check.mjs run` checked Asana, then Linear, then GitHub's own billing screens, then their public help centers: every one reported `undocumented` (none shows how a credit line is laid out on the next invoice). Cleanup: nothing created.
+- The code/data model, ticket/PRD/rulings, graph/live decisions, product-owner direction and prototype did not settle the question. `precedent-check.mjs run --code-evidence "packages/billing/invoice.ts:42"` then checked live Asana, which reported `undocumented` (it has no comparable credit line on the next invoice). Cleanup: nothing created.
 - `session-questions.mjs ask --key seat-credit-line --question "<the question>" --worktree "<wt>"` returned `{"ask":true}`.
 
 The person has not said anything new.

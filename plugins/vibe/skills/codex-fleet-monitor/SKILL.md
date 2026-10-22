@@ -63,7 +63,7 @@ The label is what appears in the output lines.
 scripts/watch.sh <workDir> [intervalSeconds]
 ```
 
-Start it with `run_in_background`. You are notified when it exits. Read its output, handle every line, then start it again; it only watches while running. `watch.sh` records its pid, each tick and its exit in `<workDir>/watcher.json`, and `node scripts/watcher.mjs <workDir>` prints `watcher ok` or `watcher MISSING(<why>)` (exit 1): check it before ending any turn that handled an event, and re-arm on `MISSING`. Editing `sessions.txt` or `prs.txt` takes effect on the next re-arm. `scripts/snapshot.sh <workDir>` prints the current state once.
+Start it with `run_in_background`. You are notified when it exits. Read its output, handle every line, then start it again; it only watches while running. An `IDLE` line includes the writer's final message tail and says `NEEDS-REPLY` when it ends in a question or permission request; classify that message before re-arming. `watch.sh` records its pid, each tick and its exit in `<workDir>/watcher.json`, and `node scripts/watcher.mjs <workDir>` prints `watcher ok` or `watcher MISSING(<why>)` (exit 1): check it before ending any turn that handled an event, and re-arm on `MISSING`. Editing `sessions.txt` or `prs.txt` takes effect on the next re-arm. `scripts/snapshot.sh <workDir>` prints the current state once.
 
 ## Reading the output
 

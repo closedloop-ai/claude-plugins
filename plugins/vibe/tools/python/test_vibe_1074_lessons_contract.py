@@ -130,6 +130,16 @@ def test_program_rulings_attention_budget_and_stable_findings_are_wired() -> Non
     assert "D###" in templates and "R###" in templates
     assert "reports high Claude usage" in skill
     assert "keep `<orchDir>/attention.md` current" in skill
+    assert "review-page-check.mjs <orchDir>/review.md" in skill
+    assert "rulings-check.mjs --program" in skill
+
+
+def test_long_commands_do_not_hide_orchestrator_messages() -> None:
+    templates = _text(FLEET / "references" / "templates.md")
+    skill = _text(FLEET / "SKILL.md")
+    assert "more than a few minutes run in the background" in templates
+    assert "Check the worker inbox between steps" in templates
+    assert "interrupt after the second unanswered delivery" in skill
 
 
 def test_visual_findings_on_touched_surfaces_are_required_fixes() -> None:
@@ -137,6 +147,8 @@ def test_visual_findings_on_touched_surfaces_are_required_fixes() -> None:
     handoff = _text(HANDOFF / "SKILL.md")
     assert "visual-QA finding on a surface the change touches is a required fix" in fleet
     assert "findings resume the SAME writer in fix mode for every touched surface" in handoff
+    assert "--require-disposition" in fleet
+    assert "--require-disposition" in handoff
 
 
 def test_product_questions_use_the_shared_live_precedent_order() -> None:
@@ -148,3 +160,4 @@ def test_product_questions_use_the_shared_live_precedent_order() -> None:
     assert "never a public help center or documentation page" in quality
     assert "return `NEEDS_PERSON` to the orchestrator" in requirements
     assert "do not copy or reorder it here" in fleet
+    assert "--product --code-evidence" in _text(VIBE / "SKILL.md")

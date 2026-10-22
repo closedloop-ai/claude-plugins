@@ -78,6 +78,9 @@ session() {
       esac
     done
   fi
+  # The program rulings are a shared spec, not resume-log status. Mirror the
+  # current index whenever work is sent to another host.
+  if [ -f "$orch/rulings.md" ]; then extra+=("-C" "$orch" "rulings.md"); fi
   run_remote "$(printf '%q ' node "$remote_dir/fleet-orchestrator/scripts/codex-session.mjs" "$command" "$REMOTE_STATE_DIR" "$name" ${args[@]+"${args[@]}"})"
 }
 

@@ -10,6 +10,7 @@ import { makeHome } from "./test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "precedent-check.mjs");
 const QUESTION = "What should the settings page show when someone cancels the GitHub authorization halfway?";
+const CODE_EVIDENCE = "packages/integrations/state.ts:42";
 const REPORT = [
   "Answer: Returns to the integrations page with nothing connected and no error",
   "Source: Asana, observed 2026-10-16",
@@ -47,13 +48,14 @@ function workspace(t) {
   return fixture.root;
 }
 
-test("the brief checks Asana first, then another app, then help centers, and carries every safety rule", () => {
-  const prompt = precedentPrompt({ question: QUESTION, today: new Date("2026-10-16T12:00:00Z") });
-  const order = ["1. Asana, in Chrome", "2. When Asana does not have this situation", "3. When Chrome is not available"];
+test("the brief checks live Asana only and carries every safety rule", () => {
+  const prompt = precedentPrompt({ question: QUESTION, codeEvidence: CODE_EVIDENCE, today: new Date("2026-10-16T12:00:00Z") });
+  const order = ["1. Asana, in Chrome", "2. If this actor cannot use that signed-in browser"];
   const positions = order.map((line) => prompt.indexOf(line));
   assert.ok(positions.every((position) => position >= 0), "every step is present");
-  assert.deepEqual([...positions].sort((a, b) => a - b), positions, "Asana, then another app, then help centers");
-  assert.match(prompt, /Linear, then the service's own screens \(for example GitHub's own authorization screens\)/);
+  assert.deepEqual([...positions].sort((a, b) => a - b), positions);
+  assert.match(prompt, new RegExp(`Code/data-model check: ${CODE_EVIDENCE}`));
+  assert.match(prompt, /Never use a public help center or documentation page as precedent/);
   for (const rule of [
     "Never sign in, create an account or type a credential.",
     "Never touch anything that already exists",
@@ -63,24 +65,23 @@ test("the brief checks Asana first, then another app, then help centers, and car
     "delete every task you created and then the project, check that they are gone",
     "Verify every state before you record it",
     "A hover can look like a completed task",
-    "Keep what you observed directly separate from what a help center or forum says",
     "Quote on-screen wording exactly",
     'write "undocumented"; never guess',
-    "Source: <app>, observed 2026-10-16 | <help-center or documentation URL> | undocumented",
+    "Source: Asana, observed 2026-10-16 | undocumented",
     "Cleanup:",
   ]) {
     assert.ok(prompt.includes(rule), rule);
   }
 });
 
-test("the named apps replace the default fallback and the question is required", () => {
-  assert.match(precedentPrompt({ question: QUESTION, apps: "Notion" }), /same flow: Notion\./);
+test("the question and code evidence are required", () => {
   assert.throws(() => precedentPrompt({ question: "  " }), /--question/);
+  assert.throws(() => precedentPrompt({ question: QUESTION }), /--code-evidence/);
   assert.equal(run(["prompt"]).status, 1);
 });
 
 test("prompt mode prints the brief for the Codex orchestrator and starts nothing", () => {
-  const { status, json } = run(["prompt", "--question", QUESTION, "--situation", "Start connecting GitHub, then cancel"]);
+  const { status, json } = run(["prompt", "--question", QUESTION, "--code-evidence", CODE_EVIDENCE, "--situation", "Start connecting GitHub, then cancel"]);
   assert.equal(status, 0);
   assert.equal(json.ok, true);
   assert.equal(json.liveLook, false, "the fallback brief is not a live look");
@@ -91,7 +92,7 @@ test("run mode starts headless claude with Chrome and only the research tools, t
   const dir = workspace(t);
   const claude = fakeClaude(dir);
   const out = path.join(dir, "out");
-  const { status, json } = run(["run", "--question", QUESTION, "--claude", claude, "--out", out]);
+  const { status, json } = run(["run", "--question", QUESTION, "--code-evidence", CODE_EVIDENCE, "--claude", claude, "--out", out]);
   assert.equal(status, 0);
   assert.deepEqual(json, {
     ok: true,
@@ -110,16 +111,17 @@ test("run mode starts headless claude with Chrome and only the research tools, t
 
 test("a failed, empty or slow run is not an answer", (t) => {
   const dir = workspace(t);
-  const failed = run(["run", "--question", QUESTION, "--claude", fakeClaude(dir, { code: 1 }), "--out", path.join(dir, "a")]);
+  const base = ["run", "--question", QUESTION, "--code-evidence", CODE_EVIDENCE];
+  const failed = run([...base, "--claude", fakeClaude(dir, { code: 1 }), "--out", path.join(dir, "a")]);
   assert.equal(failed.json.ok, false);
   assert.match(failed.json.error, /exited 1/);
-  const empty = run(["run", "--question", QUESTION, "--claude", fakeClaude(dir, { output: "I looked around." }), "--out", path.join(dir, "b")]);
+  const empty = run([...base, "--claude", fakeClaude(dir, { output: "I looked around." }), "--out", path.join(dir, "b")]);
   assert.equal(empty.json.ok, false);
   assert.match(empty.json.error, /no Answer or Source line/);
-  const slow = run(["run", "--question", QUESTION, "--claude", fakeClaude(dir, { sleep: 5 }), "--out", path.join(dir, "c"), "--timeout-seconds", "1"]);
+  const slow = run([...base, "--claude", fakeClaude(dir, { sleep: 5 }), "--out", path.join(dir, "c"), "--timeout-seconds", "1"]);
   assert.equal(slow.json.ok, false);
   assert.match(slow.json.error, /timed out after 1s/);
-  const missing = run(["run", "--question", QUESTION, "--claude", path.join(dir, "no-claude"), "--out", path.join(dir, "d")]);
+  const missing = run([...base, "--claude", path.join(dir, "no-claude"), "--out", path.join(dir, "d")]);
   assert.equal(missing.json.ok, false);
   assert.match(missing.json.error, /could not start/);
 });
@@ -139,7 +141,7 @@ test("without --out the report folder is under the vibe home a reboot keeps, nev
   const fixture = makeHome("vibe-precedent-home-");
   t.after(fixture.cleanup);
   const claude = fakeClaude(fixture.root);
-  const { status, json } = run(["run", "--question", QUESTION, "--claude", claude], { ...process.env, HOME: fixture.home });
+  const { status, json } = run(["run", "--question", QUESTION, "--code-evidence", CODE_EVIDENCE, "--claude", claude], { ...process.env, HOME: fixture.home });
   assert.equal(status, 0);
   const root = path.join(fixture.home, ".codex", "vibe", "precedent");
   assert.equal(path.dirname(path.dirname(json.report)), root);
@@ -147,7 +149,7 @@ test("without --out the report folder is under the vibe home a reboot keeps, nev
   assert.ok(!precedentRoot().startsWith(os.tmpdir()));
 });
 
-test("check refuses an undocumented or help-center-only answer until a live look ran, unless no browser can look", (t) => {
+test("check always refuses an undocumented or help-center-only answer until a live look ran", (t) => {
   const dir = workspace(t);
   const write = (name, text) => {
     const file = path.join(dir, name);
@@ -163,30 +165,26 @@ test("check refuses an undocumented or help-center-only answer until a live look
     const refused = run(["check", "--report", file]);
     assert.equal(refused.status, 1, file);
     assert.equal(refused.json.ok, false);
-    assert.match(refused.json.error, /run precedent-check\.mjs run for a live look in the signed-in browser first/);
+    assert.match(refused.json.error, /return NEEDS_PERSON to the browser-holder/);
   }
-  const accepted = run(["check", "--report", publicOnly, "--no-browser", "no signed-in claude CLI on this machine"]);
-  assert.equal(accepted.status, 0);
-  assert.equal(accepted.json.sourceKind, "public");
-  assert.equal(accepted.json.noBrowser, "no signed-in claude CLI on this machine");
   assert.equal(checkReport("I looked around.").ok, false);
   assert.equal(run(["check"]).status, 1);
 });
 
 test("a disputed behavior is a required checklist item: the report must observe it with a screenshot or mark it for the operator", () => {
   const behaviors = ["select a collapsed parent, then run a bulk action: does it reach the hidden children?", "select all with a filter applied"];
-  const prompt = precedentPrompt({ question: "Does select-all reach hidden rows?", behaviors });
+  const prompt = precedentPrompt({ question: "Does select-all reach hidden rows?", codeEvidence: CODE_EVIDENCE, behaviors });
   assert.match(prompt, /^B1\. select a collapsed parent/m);
   assert.match(prompt, /^B2\. select all with a filter applied$/m);
   const headline = "Answer: no select-all\nSource: Asana, observed 2026-10-21\n";
-  const refused = checkReport(headline, undefined, behaviors);
+  const refused = checkReport(headline, behaviors);
   assert.equal(refused.ok, false);
   assert.deepEqual(refused.missing.map((item) => item.id), ["B1", "B2"]);
-  const partial = checkReport(`${headline}B1: observed: the action reached all 4 children; screenshot: b1.png\nB2: observed: nothing happened\n`, undefined, behaviors);
+  const partial = checkReport(`${headline}B1: observed: the action reached all 4 children; screenshot: b1.png\nB2: observed: nothing happened\n`, behaviors);
   assert.deepEqual(partial.missing.map((item) => item.id), ["B2"], "an observation without a screenshot does not settle it");
-  const settled = checkReport(`${headline}B1: observed: the action reached all 4 children; screenshot: b1.png\nB2: needs a write to test: only a filter on real tasks shows it\n`, undefined, behaviors);
+  const settled = checkReport(`${headline}B1: observed: the action reached all 4 children; screenshot: b1.png\nB2: needs a write to test: only a filter on real tasks shows it\n`, behaviors);
   assert.equal(settled.ok, true);
-  assert.equal(checkReport(headline, undefined, []).ok, true, "no disputed behaviors, no checklist");
+  assert.equal(checkReport(headline, []).ok, true, "no disputed behaviors, no checklist");
 });
 
 test("run saves the disputed behaviors beside the report, and check reads them", (t) => {
@@ -196,7 +194,7 @@ test("run saves the disputed behaviors beside the report, and check reads them",
   writeFileSync(claude, "#!/bin/sh\ncat >/dev/null\nprintf 'Answer: no select-all\\nSource: Asana, observed 2026-10-21\\n'\n");
   chmodSync(claude, 0o755);
   const out = path.join(dir, "run");
-  const ran = spawnSync(process.execPath, [SCRIPT, "run", "--question", "q", "--behavior", "select a collapsed parent", "--out", out, "--claude", claude], { encoding: "utf8" });
+  const ran = spawnSync(process.execPath, [SCRIPT, "run", "--question", "q", "--code-evidence", "src/model.ts:1", "--behavior", "select a collapsed parent", "--out", out, "--claude", claude], { encoding: "utf8" });
   assert.equal(JSON.parse(ran.stdout).ok, true, ran.stdout);
   assert.deepEqual(JSON.parse(readFileSync(path.join(out, "checklist.json"), "utf8")).behaviors, ["select a collapsed parent"]);
   const checked = spawnSync(process.execPath, [SCRIPT, "check", "--report", path.join(out, "report.md")], { encoding: "utf8" });

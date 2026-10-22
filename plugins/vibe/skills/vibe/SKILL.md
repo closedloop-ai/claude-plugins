@@ -35,7 +35,7 @@ work itself. Under all circumstances:
   when the person chose to update (section 1, "Plugin version"); call
   ClosedLoop `get-me` and closedloop-graph `sync_status` to check the
   connectors; open, reload, and inspect the in-app browser, including the
-  precedent check in another app (`references/quality-loop.md`, "Precedent
+  live-Asana precedent check (`references/quality-loop.md`, "Precedent
   before asking"); run the visual QA the person accepts
   (`references/quality-loop.md`, "Visual QA during the session"); and
   dispatch workers.
@@ -840,7 +840,9 @@ except the startup version question, which runs once per conversation
 (section 1, "Plugin version"):
 
 1. Before asking, run `node scripts/session-questions.mjs ask --key <topic>
-   --question "<exact words>" [--worktree "<wt>"]`, with a short stable key
+   --question "<exact words>" [--worktree "<wt>"]`. For a product question,
+   also pass `--product --code-evidence "<file:line>"`; the command refuses it
+   without the required code/data-model check. Use a short stable key
    for the topic (`sample-data`, `page-wording`, `button-label`). Before the
    session exists leave `--worktree` out; `vibe-sessions.mjs new` moves those
    questions onto the session. In "Starting new", run

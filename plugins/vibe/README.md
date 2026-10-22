@@ -160,18 +160,16 @@ only from the successful discard receipt.
 
 Technical plans, questions, and upfront summaries never go to the person running the session. Updates
 identify only completed requested features and next work in the person's own
-words. Product questions are researched through closedloop-graph and live
-decision evidence first, then through how a mature app handles the same
-situation (operator ruling, 2026-10-16): Asana first, then another
-established app with the same flow (Linear, or GitHub's own screens), then
-their public help centers when no browser can look. `scripts/precedent-check.mjs`
+words. Product questions follow one order: code and data model; ticket, PRD
+and rulings; graph plus live decisions; product-owner direction; approved
+prototype; then live Asana in the operator's signed-in Chrome. Public help
+centers are never precedent. `scripts/precedent-check.mjs`
 holds the research brief and its safety rules: a separate headless
 `claude -p --chrome` run in both harnesses (Codex never uses computer use;
-without a signed-in `claude` CLI the requirements worker reads the help
-centers); nothing that exists is touched, test data lives
+without a signed-in browser the worker returns to the orchestrator); nothing that exists is touched, test data lives
 only in a `zz vibe precedent check (temp)` private project that is deleted
 afterwards, and every state is verified before it is recorded. The answer
-and its source (`Asana, observed <date>`, a help-center URL, or the ticket
+and its source (`Asana, observed <date>`, a code path, or the ticket
 slug) go into the session decision table. A question is raised, one at a
 time with full context, only when none of these settles it and the answer
 is absolutely necessary. Existing product and design approvals remain intact.
@@ -476,8 +474,8 @@ goes back to the writer.
 
 The cases tagged `precedent`, `visual-qa` and `version-check` rehearse the
 2026-10-16 operator rulings: a product question the graph or a precedent
-already answers is not asked, Asana is checked before another app and a
-question is asked only when neither settles it; visual QA is offered at a
+already answers is not asked, live Asana is checked after the other ordered
+sources and a question is asked only when none settles it; visual QA is offered at a
 visible milestone and not on a small edit, a polish request runs it before
 handoff (against the criteria, or the design pack's review without them)
 and skips it after the person declined; and the startup version check asks

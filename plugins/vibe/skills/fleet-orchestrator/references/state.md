@@ -40,13 +40,14 @@ Read it top to bottom after any restart or compaction before acting.
 
 `rulings.md` is the program-wide index, separate from the status-oriented
 resume log. Each entry records the ruling, date and source: a quoted operator
-message, an AskUserQuestion answer or a ticket. Mirror it to every worker host
+message, an AskUserQuestion answer or a ticket, as `- Ruling YYYY-MM-DD
+(operator message|AskUserQuestion|ticket: <source>): <decision>`. Mirror it to every worker host
 after each edit and point every worker and QA-prep prompt at it. Per-ticket
 rulings still go through handoff's `rulings-check.mjs`.
 
 Before an audit, reconcile operator chat and AskUserQuestion results plus guide
-and QA records into this file; audit the acceptance criteria and these rulings
-together.
+and QA records into this file and prove the reconciliation with handoff's
+`rulings-check.mjs --program`; audit the acceptance criteria and these rulings together.
 
 ## Operator attention and review
 

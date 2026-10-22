@@ -7,7 +7,7 @@
 //
 // Usage:
 //   session-questions.mjs reset                                   (start of a new session)
-//   session-questions.mjs ask    --key <key> --question <text> [--worktree <path>]
+//   session-questions.mjs ask    --key <key> --question <text> [--product --code-evidence <file:line>] [--worktree <path>]
 //   session-questions.mjs answer --key <key> --answer <text>   [--worktree <path>]
 //   session-questions.mjs list   [--worktree <path>]
 //
@@ -36,14 +36,17 @@ export function startupFile(home = os.homedir()) {
 }
 
 /** Records a question once; a repeated key returns the existing entry instead. */
-export function askQuestion(questions, { key, question, now = new Date().toISOString() }) {
+export function askQuestion(questions, { key, question, product = false, codeEvidence, now = new Date().toISOString() }) {
   requireKey(key);
   requireText("--question", question);
+  if (product && !/^\S.*:\d+(?:-\d+)?$/.test(codeEvidence ?? "")) {
+    throw new Error("a product question needs --code-evidence <file:line> proving the code and data model were checked first");
+  }
   const existing = questions.find((entry) => entry.key === key);
   if (existing) {
     return { questions, result: { ask: false, ...existing } };
   }
-  const entry = { key, question, askedAt: now, answer: null, answeredAt: null };
+  const entry = { key, question, ...(product ? { product: true, codeEvidence } : {}), askedAt: now, answer: null, answeredAt: null };
   return { questions: [...questions, entry], result: { ask: true, ...entry } };
 }
 
@@ -135,6 +138,8 @@ function run(argv, home = os.homedir()) {
       key: { type: "string" },
       question: { type: "string" },
       answer: { type: "string" },
+      product: { type: "boolean" },
+      "code-evidence": { type: "string" },
     },
   });
   const worktree = values.worktree;
@@ -146,7 +151,9 @@ function run(argv, home = os.homedir()) {
       rmSync(startupFile(home), { force: true });
       return { questions: [] };
     case "ask": {
-      const { questions, result } = askQuestion(load(worktree, home), { key: values.key, question: values.question });
+      const { questions, result } = askQuestion(load(worktree, home), {
+        key: values.key, question: values.question, product: values.product, codeEvidence: values["code-evidence"],
+      });
       if (result.ask) {
         store(worktree, home, questions);
       }

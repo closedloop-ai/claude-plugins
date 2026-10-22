@@ -6,12 +6,12 @@
 // live here once, for both harnesses.
 //
 // Usage:
-//   precedent-check.mjs prompt --question <text> [--situation <text>] [--apps <list>]
+//   precedent-check.mjs prompt --question <text> --code-evidence <file:line> [--situation <text>]
 //       Prints {"ok":true,"prompt":...}: the brief for the read-only requirements
 //       worker's precedent mode when no signed-in `claude` CLI can run it. Codex
 //       never follows it with computer use (`references/guardrails.md`,
 //       "Processes and state").
-//   precedent-check.mjs run --question <text> [--situation <text>] [--apps <list>]
+//   precedent-check.mjs run --question <text> --code-evidence <file:line> [--situation <text>]
 //                          [--out <dir>] [--claude <CLI>] [--timeout-seconds <n>]
 //       Both harnesses: the look runs as a separate headless `claude -p --chrome`
 //       run with the brief on stdin (a Claude Code session's Chrome tools are
@@ -26,19 +26,17 @@
 //       A check once answered the headline question and never tried the
 //       sub-question in dispute. `run` saves them as checklist.json beside the
 //       report.
-//   precedent-check.mjs check --report <file> [--no-browser <reason>] [--behavior <text>]...
+//   precedent-check.mjs check --report <file> [--behavior <text>]...
 //       Refuses (exit 1) a report not settled by a live look: an `undocumented`
-//       answer or a public-material source. Precedent means the named product's
-//       live app in the operator's signed-in browser; a help-center search once
-//       came back undocumented while the live app had the answer. `--no-browser`
-//       with the reason no browser could look accepts a public or undocumented
-//       report and echoes the reason. It also refuses a report missing a line
+//       answer or a public-material source. Precedent means live Asana in the
+//       operator's signed-in browser; public help centers are never precedent.
+//       When this actor has no browser, it returns NEEDS_PERSON to the actor that
+//       does instead of accepting public material. It also refuses a report missing a line
 //       for any disputed behavior (--behavior, or else checklist.json beside the
 //       report): `B<n>: observed: <what happened>; screenshot: <capture>`, or
 //       `B<n>: needs a write to test: <why>` for the operator.
 //
-// `--apps` names the apps to try after Asana, in order (default: Linear, then
-// the service's own screens). Every command prints one JSON object.
+// Every command prints one JSON object.
 
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, createWriteStream } from "node:fs";
@@ -49,8 +47,7 @@ import { parseArgs } from "node:util";
 
 export const TEMP_PROJECT = "zz vibe precedent check (temp)";
 export const TASK_PREFIX = "zz test";
-export const CLAUDE_TOOLS = "mcp__claude-in-chrome__*,WebFetch,WebSearch,Read,Write";
-const DEFAULT_APPS = "Linear, then the service's own screens (for example GitHub's own authorization screens)";
+export const CLAUDE_TOOLS = "mcp__claude-in-chrome__*,Read,Write";
 const DEFAULT_TIMEOUT_SECONDS = 900;
 const MAX_TEXT = 2000;
 const ANSWER_LINE = /^Answer:\s*(.+)$/m;
@@ -60,8 +57,11 @@ const UNDOCUMENTED = /^undocumented\b/i;
 const CHECKLIST_FILE = "checklist.json";
 
 /** The research brief for one product question. */
-export function precedentPrompt({ question, situation, apps = DEFAULT_APPS, behaviors = [], today = new Date() }) {
+export function precedentPrompt({ question, situation, codeEvidence, behaviors = [], today = new Date() }) {
   requireText("question", question);
+  if (!/^\S.*:\d+(?:-\d+)?$/.test(codeEvidence ?? "")) {
+    throw new Error("--code-evidence <file:line> is required before precedent research");
+  }
   const date = today.toISOString().slice(0, 10);
   const disputed = behaviors.length === 0 ? "" : `
 Disputed behaviors, every one required. Perform each interaction in the app, verify the result, and capture a screenshot of it. One that only a change to existing data could show is not performed: mark it for the operator.
@@ -71,12 +71,11 @@ ${behaviors.map((behavior, index) => `B${index + 1}. ${behavior}`).join("\n")}
 
 Question: ${question}
 Situation to reproduce: ${situation || question}
+Code/data-model check: ${codeEvidence}
 ${disputed}
 Order:
 1. Asana, in Chrome, with the account already signed in there. Never sign in, create an account or type a credential.
-2. When Asana does not have this situation, another established app with the same flow: ${apps}.
-3. When Chrome is not available, or an app has no account signed in, that app's public help center and documentation (WebSearch, WebFetch), Asana's first.
-Stop at the first app that settles it.
+2. If this actor cannot use that signed-in browser, stop with NEEDS_PERSON so the orchestrator or browser-holder can run the live check. Never use a public help center or documentation page as precedent.
 
 Safety, in every app:
 - Never touch anything that already exists: no edits, moves, completions, comments, invitations or setting changes.
@@ -87,16 +86,14 @@ Safety, in every app:
 Evidence:
 - Verify every state before you record it: reload or reopen and look again. A hover can look like a completed task.
 - For a narrow-layout judgment, first capture the app as found. Then close every navigation sidebar or drawer, dismiss banners and overlays, and capture the same viewport again. Judge support from the cleared state and report both captures.
-- Keep what you observed directly separate from what a help center or forum says.
 - Quote on-screen wording exactly, as evidence only.
 - When nothing settles it, write "undocumented"; never guess.
 
 Reply with only this report:
 Answer: <the behavior, in one plain line, or "undocumented">
-Source: <app>, observed ${date} | <help-center or documentation URL> | undocumented
+Source: Asana, observed ${date} | undocumented
 Observed directly: <what you saw, with quoted wording>
-Help center / forum: <what public material says, with URLs>
-Apps without this situation: <each app checked that does not have it>
+Asana lacks this situation: <what was checked, or none>
 Cleanup: <what you created and deleted, confirmed gone, or "nothing created">
 ${behaviors.map((_, index) => `B${index + 1}: observed: <what happened>; screenshot: <capture file> | B${index + 1}: needs a write to test: <why>`).join("\n")}
 `;
@@ -126,8 +123,8 @@ export function missingBehaviors(report, behaviors) {
   });
 }
 
-/** Whether a report is settled by a live look; `noBrowser` names why none could look. */
-export function checkReport(report, noBrowser, behaviors = []) {
+/** Whether a report is settled by a live look. */
+export function checkReport(report, behaviors = []) {
   const { answer, source, sourceKind: kind } = summarize(report);
   if (!answer || !source) {
     return { ok: false, error: "the report has no Answer or Source line" };
@@ -147,15 +144,12 @@ export function checkReport(report, noBrowser, behaviors = []) {
   if (settledLive) {
     return { ok: true, answer, source, sourceKind: kind };
   }
-  if (typeof noBrowser === "string" && noBrowser.trim() !== "") {
-    return { ok: true, answer, source, sourceKind: kind, noBrowser: noBrowser.trim() };
-  }
   return {
     ok: false,
     answer,
     source,
     sourceKind: kind,
-    error: `the answer is ${UNDOCUMENTED.test(answer) ? "undocumented" : `from ${kind === "public" ? "public material" : "no source"}`}, not a live look; run precedent-check.mjs run for a live look in the signed-in browser first, or pass --no-browser <reason> when no browser can look`,
+    error: `the answer is ${UNDOCUMENTED.test(answer) ? "undocumented" : `from ${kind === "public" ? "public material" : "no source"}`}, not a live look; return NEEDS_PERSON to the browser-holder and run precedent-check.mjs run in the signed-in browser`,
   };
 }
 
@@ -238,12 +232,11 @@ async function main() {
     options: {
       question: { type: "string" },
       situation: { type: "string" },
-      apps: { type: "string" },
+      "code-evidence": { type: "string" },
       out: { type: "string" },
       claude: { type: "string" },
       "timeout-seconds": { type: "string" },
       report: { type: "string" },
-      "no-browser": { type: "string" },
       behavior: { type: "string", multiple: true },
     },
   });
@@ -251,14 +244,14 @@ async function main() {
     if (!values.report) {
       throw new Error("check needs --report <file>");
     }
-    const result = checkReport(readFileSync(values.report, "utf8"), values["no-browser"], values.behavior?.length ? values.behavior : savedBehaviors(values.report));
+    const result = checkReport(readFileSync(values.report, "utf8"), values.behavior?.length ? values.behavior : savedBehaviors(values.report));
     if (!result.ok) {
       process.exitCode = 1;
     }
     return result;
   }
   const behaviors = values.behavior ?? [];
-  const prompt = precedentPrompt({ question: values.question, situation: values.situation, apps: values.apps, behaviors });
+  const prompt = precedentPrompt({ question: values.question, situation: values.situation, codeEvidence: values["code-evidence"], behaviors });
   if (command === "prompt") {
     return { ok: true, liveLook: false, prompt };
   }

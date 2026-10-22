@@ -17,9 +17,9 @@ script you would have run.
 
 Session state:
 - App session `github-connect-settings` (worktree recorded), live ticket ISS-5201. The person is an executive.
-- The writer's open question, already researched in the graph with no ruling found: "If someone starts connecting GitHub and cancels on GitHub's authorization screen, what should the settings page show when they come back?"
-- You ran `node scripts/precedent-check.mjs prompt --question "<that question>"` and followed its brief in a tab of your own in the in-app Browser. Asana does not have this situation: its integrations do not connect a GitHub account through GitHub's authorization screen (observed 2026-10-16). Nothing was created.
-- No other app has been checked yet. `session-questions.mjs list --worktree "<wt>"` returns `[]`.
+- The writer's open question, already checked against the code and data model, ticket, PRD, rulings, graph/live decisions, product-owner direction and approved prototype with no answer: "If someone starts connecting GitHub and cancels on GitHub's authorization screen, what should the settings page show when they come back?"
+- You ran `node scripts/precedent-check.mjs prompt --question "<that question>" --code-evidence "packages/integrations/state.ts:42"` and followed its brief through the browser-holder. Asana does not have this situation: its integrations do not connect a GitHub account through GitHub's authorization screen (observed 2026-10-16). Nothing was created.
+- `session-questions.mjs list --worktree "<wt>"` returns `[]`.
 
 The person has not said anything new.
 

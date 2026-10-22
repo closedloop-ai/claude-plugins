@@ -31,6 +31,7 @@ Before editing, read the repo docs that own the paths you touch (AGENTS.md files
 Research graph-first with closedloop-graph before searching files by hand, as vibe requires: ticket_detail for the ticket and its PRD, query_collisions and blast_radius_tickets for overlapping work, code_callers and code_importers before a shared change.
 Tests: after any change, fix or merge (a conflict resolution included), run exactly the tests code_tests_for maps to the files it touched, nothing broader by default; files that map to no tests (changelog, README, version text) run none and CI confirms.
 Heavy checks go through <fleet.sh slot command for the chosen machine>. Never run e2e that opens windows on the operator's daily machine.
+Commands expected to take more than a few minutes run in the background. Check the worker inbox between steps so orchestration rulings are applied before more work.
 Git: commit messages per the repo's conventions; regular push only, never force or amend after push.
 Review threads: reply on the thread naming the fixing SHA and resolve it only after the fix is verified in code.
 Artifacts for people (tickets, PR bodies, PR comments, review replies): never name a path on the operator's machine (home, temp, scratchpad or worktree paths) or say something is on someone's laptop. Embed screenshots as uploaded images and quote text evidence inline, briefly. A plan is attached, never pointed at: link the implementation plan as a plan document, and upload a QA plan or other working file as a ticket attachment named by its attachment name.
@@ -80,6 +81,7 @@ Record each result in the plan. Append each failure (checkpoint, what the operat
 Keep all findings the operator reviews on one page. Assign each a stable,
 never-reused ID: `D###` decision needed, `X###` fixing, `N###` stands,
 `S###` superseded or `R###` ruling. Preserve the ID when its status changes.
+Run `node scripts/review-page-check.mjs <orchDir>/review.md` before showing it.
 
 ```
 <ID> | <status> | <PR or surface> | <finding and evidence> | <recommendation or resolution>

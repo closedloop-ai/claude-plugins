@@ -261,11 +261,24 @@ export function parseSession(spec, dir) {
 }
 
 /** The default turn and progress read a full thread (`includeTurns`), as fleet-orchestrator's `last` does. */
-export function summarize(label, thread, turn = (thread?.turns ?? []).at(-1), progress = String((turn?.items ?? []).length)) {
+export function summarize(label, thread, turn = (thread?.turns ?? []).at(-1), progress = String((turn?.items ?? []).length), lastItem = (turn?.items ?? []).at(-1)) {
   let flag = '-';
   if (thread?.status?.type === 'systemError') flag = Failure.SystemError;
   else if (turn?.error) flag = classifyTurnError(turn.error);
-  return `${label} ${turn?.status ?? 'none'} ${progress} ${flag}`;
+  const base = `${label} ${turn?.status ?? 'none'} ${progress} ${flag}`;
+  if (turn?.status !== 'completed') return base;
+  const tail = assistantTail(lastItem);
+  return tail ? `${base} ${needsReply(tail) ? 'NEEDS-REPLY' : 'LAST'} ${JSON.stringify(tail)}` : base;
+}
+
+/** Final three non-empty lines of the newest assistant message. */
+export function assistantTail(item) {
+  if (item?.type !== 'agentMessage' || typeof item.text !== 'string') return '';
+  return item.text.split('\n').map((line) => line.trim()).filter(Boolean).slice(-3).join(' / ').slice(-500);
+}
+
+export function needsReply(text) {
+  return /(?:\?|\bpermission\b)\s*$/i.test(text.trim());
 }
 
 const UNKNOWN_METHOD = /unknown variant|method not found/i;
@@ -284,12 +297,13 @@ export async function readThreadState(client, threadId, { progress = false } = {
     if (!UNKNOWN_METHOD.test(error.message)) throw error;
     const full = (await client.request('thread/read', { threadId, includeTurns: true })).thread;
     const turn = (full?.turns ?? []).at(-1) ?? null;
-    return { thread, turn, progress: String((turn?.items ?? []).length) };
+    return { thread, turn, progress: String((turn?.items ?? []).length), lastItem: [...(turn?.items ?? [])].reverse().find((item) => item?.type === 'agentMessage') };
   }
   const turn = turns?.data?.[0] ?? null;
-  if (!progress || !turn) return { thread, turn, progress: '-' };
-  const items = await client.request('thread/items/list', { threadId, turnId: turn.id, limit: 1, sortDirection: 'desc' });
-  return { thread, turn, progress: items?.data?.[0]?.item?.id ?? '-' };
+  if (!progress || !turn) return { thread, turn, progress: '-', lastItem: null };
+  const items = await client.request('thread/items/list', { threadId, turnId: turn.id, limit: 20, sortDirection: 'desc' });
+  const loaded = (items?.data ?? []).map((entry) => entry.item);
+  return { thread, turn, progress: loaded[0]?.id ?? '-', lastItem: loaded.find((item) => item?.type === 'agentMessage') };
 }
 
 export async function readSessions(client, dir, specs) {
@@ -299,8 +313,8 @@ export async function readSessions(client, dir, specs) {
     try {
       const session = parseSession(spec, dir);
       label = session.label;
-      const { thread, turn, progress } = await readThreadState(client, session.threadId, { progress: true });
-      lines.push(summarize(label, thread, turn, progress));
+      const { thread, turn, progress, lastItem } = await readThreadState(client, session.threadId, { progress: true });
+      lines.push(summarize(label, thread, turn, progress, lastItem));
     } catch {
       lines.push(`${label} unreadable 0 READFAIL`);
     }

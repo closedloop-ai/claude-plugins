@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import {
-  classifyTurnError, connectDirect, decodeFrames, encodeFrame, Failure, parseSession, readSessions, readThreadState, summarize,
+  assistantTail, classifyTurnError, connectDirect, decodeFrames, encodeFrame, Failure, needsReply, parseSession, readSessions, readThreadState, summarize,
 } from './liveness.mjs';
 import { answerThreadRead } from './test-support.mjs';
 
@@ -77,6 +77,14 @@ test('summarize classifies limit, transient, system-error, error and running tur
   assert.equal(summarize('a', { turns: [] }), 'a none 0 -');
 });
 
+test('an idle writer prints its final message lines and flags a question or permission request', () => {
+  const message = { id: 'i-1', type: 'agentMessage', text: 'done\nWaiting for permission?' };
+  assert.equal(assistantTail(message), 'done / Waiting for permission?');
+  assert.equal(needsReply(assistantTail(message)), true);
+  assert.equal(summarize('w1', {}, { status: 'completed', items: [message] }, 'i-1', message),
+    'w1 completed i-1 - NEEDS-REPLY "done / Waiting for permission?"');
+});
+
 test('classifyTurnError keeps usage limits apart from transient provider failures', () => {
   const table = [
     [{ message: 'Selected model is at capacity', codexErrorInfo: 'serverOverloaded' }, Failure.Transient],
@@ -107,7 +115,7 @@ test('parseSession accepts label=threadId and a state file name', () => {
   assert.deepEqual(parseSession('w1', dir), { label: 'w1', threadId: 'T-file' });
 });
 
-const item = (id) => ({ id, type: 'agentMessage', text: 'x'.repeat(10) });
+const item = (id, text = 'finished') => ({ id, type: 'agentMessage', text });
 
 test('reads threads over a fake server and reports READFAIL for failures', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'fleet-'));
@@ -150,7 +158,7 @@ test('a read never loads a thread history: status, the newest turn without items
     const reads = calls.filter((c) => c.id !== undefined && c.method !== 'initialize');
     assert.ok(reads.every((c) => c.params.includeTurns !== true), 'no thread/read asks for the history');
     assert.deepEqual(reads.find((c) => c.method === 'thread/turns/list').params, { threadId: 'T1', limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' });
-    assert.deepEqual(reads.find((c) => c.method === 'thread/items/list').params, { threadId: 'T1', turnId: 't-last', limit: 1, sortDirection: 'desc' });
+    assert.deepEqual(reads.find((c) => c.method === 'thread/items/list').params, { threadId: 'T1', turnId: 't-last', limit: 20, sortDirection: 'desc' });
   } finally {
     client.close();
     server.close();
@@ -167,7 +175,7 @@ test('an App Server without thread/turns/list gets the full read and the item co
     await client.initialize();
     const state = await readThreadState(client, 'T1', { progress: true });
     assert.equal(state.turn.id, 't-1');
-    assert.equal(summarize('w1', state.thread, state.turn, state.progress), 'w1 completed 2 -');
+    assert.equal(summarize('w1', state.thread, state.turn, state.progress, state.lastItem), 'w1 completed 2 - LAST "finished"');
   } finally {
     client.close();
     server.close();

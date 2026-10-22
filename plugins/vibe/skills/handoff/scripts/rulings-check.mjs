@@ -5,6 +5,7 @@
 // changes as misses.
 //
 // Usage: rulings-check.mjs --ticket <ticket body .md> --record <QA record or resume log> [--record <file>]...
+//        rulings-check.mjs --program <rulings.md> --record <orchestrator transcript or QA record> [--record <file>]...
 //
 // A ruling in a record is a line `Ruling <anything>: <decision>` (the resume
 // log's `- Ruling (operator): ...`, or the same line in a QA record). The
@@ -20,6 +21,7 @@ import { parseArgs } from "node:util";
 const RECORD_RULING = /^\s*[-*]?\s*Ruling\b[^:\n]*:\s*(.+?)\s*$/gm;
 const TICKET_RULING = /^\s*[-*]\s*Ruling\b[^:\n]*:\s*(.+?)\s*$/gm;
 const AMENDS = /;\s*amends:\s*(\S.*)$/;
+const PROGRAM_RULING = /^\s*[-*]\s*Ruling\s+(\d{4}-\d{2}-\d{2})\s+\((operator message|AskUserQuestion|ticket):\s*(\S.*?)\):\s*(\S.*)$/gm;
 
 function normalize(text) {
   return text.replace(/["“”']/g, "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -44,12 +46,33 @@ export function rulingProblems(ticket, records) {
   return problems;
 }
 
-function main(argv) {
-  const { values } = parseArgs({ args: argv, options: { ticket: { type: "string" }, record: { type: "string", multiple: true } } });
-  if (!values.ticket || !values.record?.length) {
-    throw new Error("Usage: rulings-check.mjs --ticket <ticket body .md> --record <file> [--record <file>]...");
+/** Problems with the program-wide ruling index and the records it reconciles. */
+export function programRulingProblems(program, records) {
+  const entries = [...program.matchAll(PROGRAM_RULING)].map((match) => match[4]);
+  const rulingLines = program.split("\n").filter((line) => /^\s*[-*]\s*Ruling\b/.test(line));
+  const problems = rulingLines.length === entries.length ? [] : [
+    "each program ruling must be `- Ruling YYYY-MM-DD (operator message|AskUserQuestion|ticket: <source>): <decision>`",
+  ];
+  const decisions = entries.map(normalize);
+  for (const ruling of records.flatMap(recordRulings)) {
+    if (!decisions.some((decision) => decision.includes(normalize(ruling)))) {
+      problems.push(`ruling "${ruling}" is not in the program rulings index`);
+    }
   }
-  const problems = rulingProblems(readFileSync(values.ticket, "utf8"), values.record.map((file) => readFileSync(file, "utf8")));
+  return problems;
+}
+
+function main(argv) {
+  const { values } = parseArgs({ args: argv, options: {
+    ticket: { type: "string" }, program: { type: "string" }, record: { type: "string", multiple: true },
+  } });
+  if ((!values.ticket && !values.program) || !values.record?.length || (values.ticket && values.program)) {
+    throw new Error("Usage: rulings-check.mjs (--ticket <ticket body .md> | --program <rulings.md>) --record <file> [--record <file>]...");
+  }
+  const records = values.record.map((file) => readFileSync(file, "utf8"));
+  const problems = values.program
+    ? programRulingProblems(readFileSync(values.program, "utf8"), records)
+    : rulingProblems(readFileSync(values.ticket, "utf8"), records);
   process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, problems }, null, 2)}\n`);
   return problems.length === 0 ? 0 : 1;
 }

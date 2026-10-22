@@ -2,5 +2,5 @@
 type: regex
 match: contains
 flags: i
-pattern: 'NEXT:[^\n]*(Linear|GitHub|another app)'
+pattern: 'NEXT:\s*none\b'
 ---
