@@ -36,7 +36,7 @@ test('a remote brief copies the screenshots beside the prompt, names them at the
   const findings = join(f.root, 'findings.json');
   writeFileSync(findings, JSON.stringify({ head: 'abc', findings: [{ id: 'F7', summary: 'drag chip renders a full-row copy', story: 'tree-grid--drag', viewport: '1440x900', screenshots: [f.shot], touchedSurface: true }] }));
   const prompt = join(f.orch, 'prompts', 'w2-03-findings.md');
-  writeFileSync(join(f.orch, 'rulings.md'), '- Ruling 2026-10-21 (ticket: ISS-1): keep the prototype order\n');
+  writeFileSync(join(f.orch, 'rulings.md'), '- Ruling 2026-10-21 (ticket: source-1): keep the prototype order\n');
   const built = spawnSync(process.execPath, [SCRIPT, f.orch, '--findings', findings, '--prompt', prompt, '--where', 'remote'], { encoding: 'utf8' });
   assert.equal(built.status, 0, built.stderr + built.stdout);
   const shipped = join(f.root, 'remote', 'sessions', '.fleet-orchestrator');
@@ -74,7 +74,7 @@ test('a VQA finding on a touched surface blocks closeout without a fix or ticket
     'X001: a finding on a touched surface needs disposition "fixed: <sha>" or "ticket: <id>"',
   ]);
   assert.deepEqual(dispositionProblems([{ ...base, disposition: 'fixed: deadbee' }]), []);
-  assert.deepEqual(dispositionProblems([{ ...base, disposition: 'ticket: ISS-123' }]), []);
+  assert.deepEqual(dispositionProblems([{ ...base, disposition: 'ticket: XY-1' }]), []);
   assert.deepEqual(dispositionProblems([{ ...base, touchedSurface: false }]), []);
   assert.deepEqual(dispositionProblems([{ id: 'X002' }]), ['X002: touchedSurface must say true or false']);
 });
