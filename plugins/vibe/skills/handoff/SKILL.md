@@ -928,5 +928,6 @@ criteria it amends, and a plan no human approved excludes nothing without
 citing a ticket AC, PRD or operator ruling. From then on the pull request is shepherded:
 `node ../vibe/scripts/shepherd.mjs --pr <n> --repo <owner/repo>` polls it
 every two minutes and stops on a conflict (merge main at once in final-merge
-mode, push, run it again), failed checks (the SAME writer fixes them), a
-merge or a close.
+mode, push, run it again), failed checks (the SAME writer fixes them), an
+unresolved review thread the writer has not answered last (armed auto-merge
+is not done), a merge or a close.

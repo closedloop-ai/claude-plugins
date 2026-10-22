@@ -137,3 +137,14 @@ test('a second watch.sh on the same work dir is refused while the first runs, an
   }
   assert.equal(state?.pid, third.pid);
 });
+
+test('an armed watcher with no change exits with HEARTBEAT after HEARTBEAT_SECONDS (7 quiet hours overnight)', { timeout: 30_000 }, (t) => {
+  const dir = workDir(t);
+  const snapshot = join(dir, 'fake-snapshot.sh');
+  writeFileSync(snapshot, 'print "session local a RUN"\n');
+  writeFileSync(join(dir, 'config.env'), 'HEARTBEAT_SECONDS=2\n');
+  const run = spawnSync('zsh', [WATCH, dir, '1'], { encoding: 'utf8', timeout: 20_000, env: { ...process.env, WATCH_SNAPSHOT: snapshot } });
+  assert.equal(run.status, 0);
+  assert.match(run.stdout, /^HEARTBEAT no change for 2s: read every teammate message/m);
+  assert.ok(JSON.parse(readFileSync(join(dir, 'watcher.json'), 'utf8')).exitedAt, 'the heartbeat exit is recorded, so watcher.mjs says to re-arm');
+});

@@ -111,9 +111,11 @@ Backend, built by that same writer using canonical backend guidance, each under 
   canonical place for them.
 - `packages/database/**`: Prisma schema changes with a generated migration
   (`packages/database/AGENTS.md`); never edit a migration that has landed on
-  main; never apply a migration to a shared database from this Mac (the API's
-  Vercel build applies it to the session's own data on redeploy); every new
-  model gets a seed coverage file and seed data in the vibe seed.
+  main; never apply a migration to a shared database from this Mac; every new
+  model gets a seed coverage file and seed data in the vibe seed. Pushing a
+  migration publishes it to shared preview schemas, so record its
+  `Migration test:` (and for per-row work a measured `Scale test:`) first;
+  `scripts/migration-publish.mjs` refuses the push without them.
 - `apps/desktop/src/main/**` and `apps/desktop/prisma/**`, when the change is a
   Desktop feature (`apps/desktop/AGENTS.md`; gateway operations stay in
   `apps/desktop/src/server/operations/`).

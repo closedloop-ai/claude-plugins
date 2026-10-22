@@ -6,24 +6,33 @@
 // someone else can visual-QA the work in production.
 // A PRD is also executed only when every child it PRODUCES is DONE or
 // CANCELED: a PRD was once marked EXECUTED with four children still open.
-// Prints one JSON object; exits 0 when the document may be marked EXECUTED and
-// 1 otherwise. Changes nothing.
+// A ticket (`--kind ticket`) is DONE only when every acceptance criterion box
+// is checked, or the unchecked one names `Follow-up: <slug>` (the ticket that
+// carries it) or `Excluded: <human name or operator ruling>, <YYYY-MM-DD>`:
+// about sixty children were once swept to DONE with their criteria unchecked,
+// minutes after a merge.
+// Prints one JSON object; exits 0 when the document may be marked EXECUTED (a
+// ticket DONE) and 1 otherwise. Changes nothing.
 //
 // Usage: executed-check.mjs --kind plan --file <document body .md> --last-merge <iso time of the last merged pull request>
 //        executed-check.mjs --kind prd --file <...> --last-merge <...> --children <children.json>
+//        executed-check.mjs --kind ticket --file <ticket body .md, read just now>
 // children.json: the PRODUCES children read just now, `[{"slug", "status"}]`.
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { criteriaStates } from "./criteria-audit.mjs";
 
 export const SECTION = "Production visual QA";
 const HEADING = /^##\s+(.+?)\s*$/;
 const CHECKED = /^\s*(?:[-*]\s+)?Checked:\s*(\S+)/m;
 const FLAG_ROW = /^\s*(?:[-*]\s+`[^`]+`|\|\s*`[^`]+`\s*\|)/m;
 const NO_FLAGS = /^\s*(?:[-*]\s+)?No flags:\s*\S/m;
-const KINDS = new Set(["plan", "prd"]);
+const KINDS = new Set(["plan", "prd", "ticket"]);
+const FOLLOW_UP = /\bFollow-up:\s*(?:ISS|PRD|PLN|FEA)-\d+/;
+const EXCLUDED = /\bExcluded:\s*(?:operator ruling|[A-Z][\w'.-]+(?:\s+[A-Z][\w'.-]+)+),\s*\d{4}-\d{2}-\d{2}/;
 const FINISHED = new Set(["DONE", "CANCELED"]);
 
 /** Problems with a PRD's children: each one not DONE or CANCELED. */
@@ -34,6 +43,17 @@ export function childProblems(children) {
   return children
     .filter((child) => !FINISHED.has(child?.status))
     .map((child) => `child ${child?.slug ?? "?"} is ${child?.status ?? "missing a status"}; a PRD is executed only when every PRODUCES child is DONE or CANCELED`);
+}
+
+/** Problems that keep a ticket from DONE: no criteria read, or an unchecked one with no follow-up or human exclusion. */
+export function ticketProblems(body) {
+  const criteria = criteriaStates(body);
+  if (criteria.length === 0) {
+    return ["no acceptance criteria checkboxes found; read the ticket body just now (its latest version) and pass it with --file"];
+  }
+  return criteria
+    .filter((criterion) => !criterion.checked && !FOLLOW_UP.test(criterion.text) && !EXCLUDED.test(criterion.text))
+    .map((criterion) => `${criterion.id} is unchecked: "${criterion.text.slice(0, 120)}"; check it against the merged code, or name \`Follow-up: <slug>\` or \`Excluded: <human name or operator ruling>, <YYYY-MM-DD>\` on it`);
 }
 
 /** Problems that keep `body` from being marked EXECUTED after a merge at `lastMerge`. */
@@ -63,16 +83,18 @@ export function executedProblems(body, lastMerge) {
 
 function main() {
   const { values } = parseArgs({ options: { kind: { type: "string" }, file: { type: "string" }, "last-merge": { type: "string" }, children: { type: "string" } } });
-  const error = !KINDS.has(values.kind) ? "--kind plan or --kind prd is required."
-    : !values.file || !values["last-merge"] ? "--file and --last-merge are required."
+  const error = !KINDS.has(values.kind) ? "--kind plan, --kind prd or --kind ticket is required."
+    : !values.file ? "--file is required."
+    : values.kind !== "ticket" && !values["last-merge"] ? "--last-merge is required."
     : values.kind === "prd" && !values.children ? "--kind prd needs --children <file> with its PRODUCES children read just now."
     : null;
   if (error) {
     process.stdout.write(`${JSON.stringify({ ok: false, error })}\n`);
     process.exit(1);
   }
-  const problems = [
-    ...executedProblems(readFileSync(path.resolve(values.file), "utf8"), values["last-merge"]),
+  const body = readFileSync(path.resolve(values.file), "utf8");
+  const problems = values.kind === "ticket" ? ticketProblems(body) : [
+    ...executedProblems(body, values["last-merge"]),
     ...(values.kind === "prd" ? childProblems(JSON.parse(readFileSync(path.resolve(values.children), "utf8"))) : []),
   ];
   process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, problems }, null, 2)}\n`);

@@ -4,6 +4,8 @@
 //   node codex-session.mjs last  <stateDir> <name> [--count <n>]
 // `turn` starts a thread bound to --cwd when <stateDir>/<name>.json does not exist (a new session also needs
 // --model, --effort and a prompt that starts with `$vibe`, since every writer is a vibe session), otherwise resumes the thread it names, then starts a turn with the prompt file's text. `steer` adds the prompt to the active turn.
+// A prompt that hands over another writer's work (a `Done:` line) also needs a `Re-verify:` line: takeover
+// writers found a half-fixed thread, six broken tests and a 10 s per insert trigger behind "done" claims.
 // `last` prints the thread's status line and its last <n> agent messages (default 1).
 // The state file is the one codex-fleet-monitor reads for a `local|remote <name>` session line.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -23,6 +25,8 @@ const SANDBOX_POLICIES = {
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const EFFORT_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
 const VIBE_PROMPT = /^\s*\$vibe\b/;
+const DONE_CLAIMS = /^\s*Done:/m;
+const REVERIFY = /^\s*Re-verify:\s*\S/m;
 
 export function parseCli(argv) {
   const { values, positionals } = parseArgs({
@@ -185,6 +189,9 @@ export async function run(client, options) {
   if (!prompt.trim()) throw new Error(`${options.promptFile} is empty`);
   if (options.command === 'turn' && !saved && !VIBE_PROMPT.test(prompt)) {
     throw new Error(`a new session's prompt must start with $vibe; ${options.promptFile} does not`);
+  }
+  if (DONE_CLAIMS.test(prompt) && !REVERIFY.test(prompt)) {
+    throw new Error(`${options.promptFile} hands over "Done:" claims with no "Re-verify:" line; the writer re-verifies each with a test or a measurement before building on it`);
   }
   const promptFile = resolve(options.promptFile);
   let state;

@@ -4,7 +4,7 @@
 // threads, so a later audit against the written criteria reported deliberate
 // changes as misses.
 //
-// Usage: rulings-check.mjs --ticket <ticket body .md> --record <QA record or resume log> [--record <file>]...
+// Usage: rulings-check.mjs --ticket <ticket body .md> --record <QA record or resume log> [--record <file>]... [--criteria-before <earlier body>]
 //        rulings-check.mjs --program <rulings.md> --record <orchestrator transcript or QA record> [--record <file>]...
 //        rulings-check.mjs --plan <get-document JSON of a PLN> [--plan-body <its latest version text>] [--plan ...]
 //
@@ -13,7 +13,11 @@
 // ticket's Scope and acceptance criteria section carries each one as
 // `- Ruling <date> (<who>): "<decision>"; amends: <criteria, or none>`. Prints
 // {"ok","problems"} and exits 1 when a record's ruling is missing from the
-// ticket or a ticket ruling names no amended criteria.
+// ticket or a ticket ruling names no amended criteria. With
+// `--criteria-before`, every acceptance criterion of the earlier ticket body
+// that the ticket no longer carries word for word needs a ticket ruling that
+// amends it by its earlier id: an agent once reworded a human's "reject moves
+// beyond four levels" to "display-only" to match its code.
 //
 // A plan with no human approver (`approverId` null; vibe sets a PLN's status
 // but never its approver) is not a ruling, so each exclusion in it must cite
@@ -30,6 +34,7 @@
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { criteriaStates } from "./criteria-audit.mjs";
 
 const RECORD_RULING = /^\s*[-*]?\s*Ruling\b[^:\n]*:\s*(.+?)\s*$/gm;
 const TICKET_RULING = /^\s*[-*]\s*Ruling\b[^:\n]*:\s*(.+?)\s*$/gm;
@@ -115,6 +120,16 @@ export function rulingProblems(ticket, records) {
   return problems;
 }
 
+/** Criteria of `before` reworded or dropped in `ticket` that no ticket ruling amends by id. */
+export function criteriaChangeProblems(before, ticket) {
+  const now = new Set(criteriaStates(ticket).map((criterion) => normalize(criterion.text)));
+  const amended = new Set([...ticket.matchAll(TICKET_RULING)]
+    .flatMap((match) => AMENDS.exec(match[1])?.[1].match(/\bAC-\d+\b/g) ?? []));
+  return criteriaStates(before)
+    .filter((criterion) => !now.has(normalize(criterion.text)) && !amended.has(criterion.id))
+    .map((criterion) => `${criterion.id} "${criterion.text.slice(0, 120)}" was reworded or dropped with no ticket ruling amending ${criterion.id}; restore it, or add - Ruling <date> (<who>): "<decision>"; amends: ${criterion.id} from a human source`);
+}
+
 /** Problems with the program-wide ruling index and the records it reconciles. */
 export function programRulingProblems(program, records) {
   const entries = [...program.matchAll(PROGRAM_RULING)].map((match) => match[4]);
@@ -134,18 +149,20 @@ export function programRulingProblems(program, records) {
 function main(argv) {
   const { values } = parseArgs({ args: argv, options: {
     ticket: { type: "string" }, program: { type: "string" }, record: { type: "string", multiple: true },
-    plan: { type: "string", multiple: true }, "plan-body": { type: "string", multiple: true },
+    plan: { type: "string", multiple: true }, "plan-body": { type: "string", multiple: true }, "criteria-before": { type: "string" },
   } });
   const plans = values.plan ?? [];
   const bodies = values["plan-body"] ?? [];
   const rulingMode = Boolean(values.ticket || values.program);
-  if ((rulingMode && (!values.record?.length || (values.ticket && values.program))) || (!rulingMode && plans.length === 0) || bodies.length > plans.length) {
-    throw new Error("Usage: rulings-check.mjs (--ticket <ticket body .md> | --program <rulings.md>) --record <file>... | --plan <get-document JSON> [--plan-body <text>]...");
+  const before = values["criteria-before"];
+  if ((before && !values.ticket) || (rulingMode && ((!values.record?.length && !before) || (values.ticket && values.program))) || (!rulingMode && plans.length === 0) || bodies.length > plans.length) {
+    throw new Error("Usage: rulings-check.mjs (--ticket <ticket body .md> [--criteria-before <earlier body>] | --program <rulings.md>) --record <file>... | --plan <get-document JSON> [--plan-body <text>]...");
   }
   const records = (values.record ?? []).map((file) => readFileSync(file, "utf8"));
   const problems = [];
   if (values.program) problems.push(...programRulingProblems(readFileSync(values.program, "utf8"), records));
   else if (values.ticket) problems.push(...rulingProblems(readFileSync(values.ticket, "utf8"), records));
+  if (before) problems.push(...criteriaChangeProblems(readFileSync(before, "utf8"), readFileSync(values.ticket, "utf8")));
   plans.forEach((file, index) => {
     const doc = JSON.parse(readFileSync(file, "utf8"));
     problems.push(...planProblems(doc, bodies[index] === undefined ? undefined : readFileSync(bodies[index], "utf8")));

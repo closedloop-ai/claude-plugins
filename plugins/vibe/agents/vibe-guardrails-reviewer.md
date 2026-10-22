@@ -303,7 +303,8 @@ path merely because another rule describes how its content should look.
     to the copy rule),
     numeric limit, criterion worded more strongly than its source and removed
     accessibility behavior; a shared-module edit lists its callers in the
-    change log.
+    change log. A spec or criterion edited to match the code is blocking
+    without a human source (`spec-change` diff rule).
 16. Tech debt and flag keys (`guardrails.md`, "No new tech debt" and
     "Feature flags"): each item of a kind that section lists with no
     `Debt:` reason is blocking: a mechanism checks 1, 7, 8 or 12 find, a

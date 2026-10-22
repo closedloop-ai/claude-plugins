@@ -5,6 +5,10 @@
 // is resumed after a backoff with a continue prompt. A thread still in systemError after the retries needs
 // the App Server daemon restarted: that happens only with AUTO_RESTART_DAEMON=1, otherwise it is an ALERT.
 // After a restart only sessions whose turn was active or failed are resumed; idle sessions stay idle.
+// An idle session whose final message ends a question with `If no answer by <ISO time>: <default>` (the line
+// vibe's session-questions.mjs returns) is resumed once that time passes, told to go ahead on the default,
+// unless the question waits for a person (flag, copy, destructive, credential, scope): writers once sat seven
+// hours overnight on stated defaults with nobody answering.
 // Every action prints an EVENT line and is appended to <stateDir>/.fleet-recovery/events.log, which rotates
 // to events.log.1 at LOG_MAX_BYTES. A pass that outlasts PASS_TIMEOUT_SECONDS is abandoned with a
 // pass-timeout EVENT: its App Server connections are closed and its pass lock is released.
@@ -19,6 +23,7 @@ import { homedir, hostname } from 'node:os';
 import {
   classifyTurnError, connectViaProxy, daemonSocket, Failure, isEntryPoint, parseSession, readThreadState,
 } from './liveness.mjs';
+import { waitsForPerson } from '../../vibe/scripts/session-questions.mjs';
 
 export const DEFAULT_BACKOFF_SECONDS = [120, 300, 600];
 export const DEFAULT_RESTART_COOLDOWN_SECONDS = 1800;
@@ -33,6 +38,24 @@ export const DEFAULT_CONTINUE_PROMPT = [
   'Before you continue, check your real state: git status and HEAD, whether a merge or rebase is in progress, your background jobs and any slot or lock entries you hold, and what you last pushed.',
   'Do not redo steps that are already finished. Then continue the task from where it actually stands.',
 ].join('\n');
+
+const IF_NO_ANSWER = /^\s*If no answer by (\S+): (.+?)\s*$/m;
+
+/** The default an idle writer asked to proceed on and when, or null; never for a question that waits for a person. */
+export function statedDefault(text) {
+  const match = IF_NO_ANSWER.exec(String(text ?? ''));
+  const deadline = Date.parse(match?.[1] ?? '');
+  if (!match || !Number.isFinite(deadline) || waitsForPerson(text.slice(0, match.index))) return null;
+  return { deadline, fallback: match[2] };
+}
+
+export function defaultPrompt(fallback, deadline) {
+  return [
+    `Nobody answered your question by ${new Date(deadline).toISOString()}, its deadline.`,
+    `Go ahead on your stated default: ${fallback}`,
+    'Say in your next report that you proceeded on the default, so the person can override it.',
+  ].join('\n');
+}
 
 export function supervisorLockPath(env = process.env) {
   return env.FLEET_SUPERVISOR_LOCK || `${homedir()}/.codex/fleet-supervisor.lock`;
@@ -122,9 +145,9 @@ export function recoveryDir(stateDir) {
 function loadState(stateDir) {
   try {
     const state = JSON.parse(readFileSync(`${recoveryDir(stateDir)}/state.json`, 'utf8'));
-    return { sessions: state.sessions ?? {}, lastRestartAt: state.lastRestartAt ?? null, alerted: state.alerted ?? null, beforeRestart: state.beforeRestart ?? null };
+    return { sessions: state.sessions ?? {}, lastRestartAt: state.lastRestartAt ?? null, alerted: state.alerted ?? null, beforeRestart: state.beforeRestart ?? null, defaults: state.defaults ?? {} };
   } catch {
-    return { sessions: {}, lastRestartAt: null, alerted: null, beforeRestart: null };
+    return { sessions: {}, lastRestartAt: null, alerted: null, beforeRestart: null, defaults: {} };
   }
 }
 
@@ -259,6 +282,7 @@ export async function recoverPass({ stateDir, specs, config, connect, restart, n
         emit(`${label} gave-up after ${plural(retries, 'retry', 'retries')}; needs a human`);
       }
     }
+    await proceedOnDefaults({ client, sessions, state, now, emit });
     if (stuck.length) client = await handleStuck({ stuck, sessions, state, config, connect, restart, now, host, emit, client });
     else state.alerted = null;
   } finally {
@@ -266,6 +290,27 @@ export async function recoverPass({ stateDir, specs, config, connect, restart, n
     saveState(stateDir, state);
   }
   return events;
+}
+
+/**
+ * Resumes each idle session whose completed turn ended on a question with a passed `If no answer by` deadline,
+ * once per turn. A finished turn's final message is read once, or until its deadline passes.
+ */
+async function proceedOnDefaults({ client, sessions, state, now, emit }) {
+  for (const { label, threadId, options, thread, turn } of sessions) {
+    const idle = ['idle', 'notLoaded'].includes(thread?.status?.type);
+    if (!idle || turn?.status !== 'completed' || turn.error || state.defaults[label] === turn.id) continue;
+    try {
+      const { lastItem } = await readThreadState(client, threadId, { progress: true });
+      const stated = statedDefault(lastItem?.text);
+      if (stated && now < stated.deadline) continue;
+      state.defaults[label] = turn.id;
+      if (!stated) continue;
+      emit(`${label} proceeded-on-default turn=${await resumeSession(client, threadId, defaultPrompt(stated.fallback, stated.deadline), options)} asked=${turn.id}: ${oneLine(stated.fallback)}`);
+    } catch (error) {
+      emit(`${label} default-resume-failed: ${oneLine(error.message)}`);
+    }
+  }
 }
 
 /** A turn the restart interrupts (active) or that already failed needs the continue prompt; an idle one does not. */

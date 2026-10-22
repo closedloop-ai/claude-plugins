@@ -122,3 +122,17 @@ test('unresolved human threads are read with gh for a Codex row with a PR and re
   const slow = run([dir, 'status', '--now', '2026-10-21T13:00:00Z'], { BOARD_GH: gh });
   assert.match(slow.stdout, /^SLOW w1 no push for 60m with 2 unresolved human threads; hand it to a Claude writer$/m);
 });
+
+test('a work dir that watches sessions or PRs fails status while its watcher is missing (7 quiet hours overnight)', (t) => {
+  const dir = tempDir(t);
+  assert.equal(run([dir, 'status']).status, 0, 'no watch list, no watcher expected');
+  writeFileSync(path.join(dir, 'prs.txt'), 'acme/app 7\n');
+  const missing = run([dir, 'status', '--now', '2026-10-22T06:00:00Z']);
+  assert.equal(missing.status, 1);
+  assert.match(missing.stdout, /^WATCHER-MISSING \(no watcher\.json\): re-arm watch\.sh now/m);
+  writeFileSync(path.join(dir, 'watcher.json'), JSON.stringify({ pid: process.pid, startedAt: '2026-10-22T05:50:00Z', lastTickAt: '2026-10-22T05:59:00Z', intervalSeconds: 120 }));
+  const armed = run([dir, 'status', '--now', '2026-10-22T06:00:00Z']);
+  assert.equal(armed.status, 0, armed.stdout);
+  writeFileSync(path.join(dir, 'watcher.json'), JSON.stringify({ pid: process.pid, startedAt: '2026-10-22T05:50:00Z', lastTickAt: '2026-10-22T05:59:00Z', intervalSeconds: 120, exitedAt: '2026-10-22T05:59:00Z' }));
+  assert.match(run([dir, 'status', '--now', '2026-10-22T13:00:00Z']).stdout, /^WATCHER-MISSING \(exited 421m ago\)/m);
+});

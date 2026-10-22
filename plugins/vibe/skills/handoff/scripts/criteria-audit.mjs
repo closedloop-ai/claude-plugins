@@ -27,7 +27,10 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 const CRITERIA_START = /^\s*-\s*Acceptance criteria:\s*$/;
-const CHECKBOX = /^\s+-\s*\[[ xX]\]\s*(\S.*)$/;
+const CRITERIA_HEADING = /^(#{1,6})\s+Acceptance criteria\b/i;
+const HEADING = /^(#{1,6})\s/;
+const CHECKBOX = /^\s+-\s*\[([ xX])\]\s*(\S.*)$/;
+const TOP_CHECKBOX = /^\s*[-*]\s*\[([ xX])\]\s*(\S.*)$/;
 const AUDIT_ROW = /^\|\s*(AC-\d+)\s*\|\s*(MET|PARTIAL|MISSED)\s*\|\s*(.*?)\s*\|\s*$/gm;
 const AUDIT_HEAD = /^Head:\s*([0-9a-f]{7,40})\s*$/m;
 const FLAG_OFF_EVIDENCE = /^(?:no behavior change:|ruling:)\s*\S/;
@@ -35,16 +38,33 @@ const ANY_INPUT_EVIDENCE = /^not input-driven:\s*\S/;
 
 /** The ticket's acceptance criteria as AC-n ids with their text. */
 export function ticketCriteria(ticket) {
+  return criteriaStates(ticket).map(({ id, text }) => ({ id, text }));
+}
+
+/**
+ * The acceptance criteria with whether each box is checked: the template's
+ * `- Acceptance criteria:` list, or the checkboxes under an `Acceptance
+ * criteria` heading up to the next heading of the same or a higher level.
+ */
+export function criteriaStates(ticket) {
   const criteria = [];
+  const push = (match) => criteria.push({ id: `AC-${criteria.length + 1}`, text: match[2], checked: match[1] !== " " });
   let inList = false;
+  let headingLevel = 0;
   for (const line of ticket.split("\n")) {
+    const heading = HEADING.exec(line);
+    if (heading) {
+      inList = false;
+      headingLevel = CRITERIA_HEADING.test(line) ? heading[1].length : headingLevel && heading[1].length > headingLevel ? headingLevel : 0;
+      continue;
+    }
     if (CRITERIA_START.test(line)) {
       inList = true;
       continue;
     }
-    const item = CHECKBOX.exec(line);
-    if (inList && item) {
-      criteria.push({ id: `AC-${criteria.length + 1}`, text: item[1] });
+    const item = inList ? CHECKBOX.exec(line) : headingLevel ? TOP_CHECKBOX.exec(line) : null;
+    if (item) {
+      push(item);
     } else if (inList && line.trim() !== "" && !/^\s{4,}\S/.test(line)) {
       inList = false;
     }

@@ -31,13 +31,18 @@
 // while its PR has unresolved human review threads (`--threads`, or read with
 // `gh api graphql` for rows with a PR and repo) prints `SLOW <writer> ...`:
 // hand it to a Claude writer. One spent 35 minutes on nine threads without a push.
-// Both count toward the exit status.
+// Both count toward the exit status, as does `WATCHER-MISSING(<why>)` when the
+// work dir watches sessions or PRs (sessions.txt or prs.txt) and its watcher is
+// not running: a watcher left unarmed overnight let writers' questions sit
+// unanswered for 7 hours.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { watcherState } from "../../codex-fleet-monitor/scripts/watcher.mjs";
+import { readThreads } from "../../vibe/scripts/pr-threads.mjs";
 
 const STATE = "board.json";
 const PAGE = "board.md";
@@ -135,19 +140,10 @@ function ghHead(row) {
   }
 }
 
-const THREADS_QUERY = "query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login}}}}}}}}";
-
 /** Unresolved review threads a human opened, or null when gh cannot answer. */
 function ghThreads(row) {
-  const [owner, name] = row.repo.split("/");
-  try {
-    const out = execFileSync(process.env.BOARD_GH || "gh", ["api", "graphql", "-f", `query=${THREADS_QUERY}`, "-F", `o=${owner}`, "-F", `n=${name}`, "-F", `p=${row.pr}`],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30_000 });
-    const nodes = JSON.parse(out)?.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
-    return nodes.filter((node) => !node.isResolved && !BOTS.test(node.comments?.nodes?.[0]?.author?.login ?? "bot")).length;
-  } catch {
-    return null;
-  }
+  const threads = readThreads(row.repo, row.pr, process.env.BOARD_GH || "gh");
+  return threads === null ? null : threads.filter((thread) => !thread.resolved && !BOTS.test(thread.opener ?? "bot")).length;
 }
 
 function pairs(texts, flag) {
@@ -216,8 +212,11 @@ function main(argv) {
     }
     const duties = unownedDuties(board, readHelpers(orchDir));
     for (const entry of duties) process.stdout.write(`UNOWNED-DUTY ${entry.duty} owner ${entry.owner} ${entry.why}\n`);
-    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length} unowned duties\n`);
-    return stale.length + open.length + slow.length + duties.length === 0 ? 0 : 1;
+    const watched = ["sessions.txt", "prs.txt"].some((file) => existsSync(path.join(orchDir, file)));
+    const watcher = watched ? watcherState(orchDir, now) : { ok: true };
+    if (!watcher.ok) process.stdout.write(`WATCHER-MISSING ${watcher.line.replace("watcher MISSING", "")}: re-arm watch.sh now (run_in_background)\n`);
+    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length} unowned duties${watcher.ok ? "" : ", watcher missing"}\n`);
+    return stale.length + open.length + slow.length + duties.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
   }
   const [name, recipient] = positionals;
   if (!name) {

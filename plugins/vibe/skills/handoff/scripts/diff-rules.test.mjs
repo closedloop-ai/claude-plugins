@@ -63,10 +63,24 @@ test("migrations: an existing table needs its recorded precedent, a full-table b
     "ALTER TABLE \"y\" ADD CONSTRAINT \"y_fk\" FOREIGN KEY (\"a\") REFERENCES \"z\"(\"id\") ON UPDATE CASCADE;",
   ].join("\n");
   const bare = run(t, { head: { [file]: sql } });
-  assert.deepEqual(bare.found, [["migration-precedent", file], ["migration-precedent", file], ["migration-backfill", file]]);
+  assert.deepEqual(bare.found, [["migration-precedent", file], ["migration-precedent", file], ["migration-backfill", file], ["migration-test", file]]);
   assert.deepEqual(bare.requiredChecks.map((check) => check.command), ["pnpm check:destructive-migrations", "pnpm check:migration-immutability"]);
-  const logged = run(t, { head: { [file]: sql }, changeLog: "Migration precedent: artifact_links: a, b, c\nMigration precedent: y: d, e, f\n" });
+  const test = "packages/database/__tests__/link-kind.test.ts";
+  const logged = run(t, { head: { [file]: sql, [test]: "test();\n" }, changeLog: `Migration precedent: artifact_links: a, b, c\nMigration precedent: y: d, e, f\nMigration test: 20261021000000_link_kind: ${test}\n` });
   assert.deepEqual(logged.found, []);
+});
+
+test("a new migration needs a recorded test before it is pushed, and a trigger a measured scale test (preview CI, 726-F1)", (t) => {
+  const file = "packages/database/prisma/migrations/20261022000000_projection/migration.sql";
+  const sql = "CREATE FUNCTION refresh_projection() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql;\nCREATE TRIGGER t AFTER INSERT ON \"fresh\" FOR EACH ROW EXECUTE FUNCTION refresh_projection();\nCREATE TABLE \"fresh\" (id int);\n";
+  const test = "packages/database/__tests__/projection.test.ts";
+  const tested = `Migration test: 20261022000000_projection: ${test}\n`;
+  const rules = (options) => run(t, options).blocking.filter((finding) => finding.rule === "migration-test").map((finding) => finding.problem);
+  assert.equal(rules({ head: { [file]: sql } }).length, 2, "no test and no scale test");
+  assert.match(rules({ head: { [file]: sql }, changeLog: tested }).join(), /recorded migration test .* is not a test file at HEAD/);
+  assert.match(rules({ head: { [file]: sql, [test]: "t\n" }, changeLog: tested }).join(), /no `Scale test/);
+  assert.match(rules({ head: { [file]: sql, [test]: "t\n" }, changeLog: `${tested}Scale test: 20261022000000_projection: ${test}: fast\n` }).join(), /needs a test file at HEAD and a measurement/);
+  assert.deepEqual(rules({ head: { [file]: sql, [test]: "t\n" }, changeLog: `${tested}Scale test: 20261022000000_projection: ${test}: 100,000 rows, 2.1 ms per insert\n` }), []);
 });
 
 test("backend writes: uncaptured artifact fields, errors after a transaction write, and unscoped link deletes block", (t) => {
@@ -101,8 +115,8 @@ test("a new Desktop sync lane needs the shared give-up, the shared backoff, a Su
   const bare = run(t, { head: { [lane]: "export const delay = (attempt) => 1000 * 2 ** attempt;\n", ...table } });
   assert.equal(bare.found.filter(([rule]) => rule === "desktop-sync-lane").length, 4);
   const done = run(t, {
-    head: { [lane]: "import { LaneGiveUpStampDefect } from \"../../shared/lane-give-up.js\";\nexport const delay = (n) => exponentialBackoffMs(n + 1);\n", ...table },
-    changeLog: "Synchronizing-susan: no findings\nEngineering needed (forbidden path): apps/desktop/src/main/sync/AGENTS.md; why: roster\n",
+    head: { [lane]: "import { LaneGiveUpStampDefect } from \"../../shared/lane-give-up.js\";\nexport const delay = (n) => exponentialBackoffMs(n + 1);\n", ...table, "apps/desktop/test/placement.test.ts": "test();\n" },
+    changeLog: "Synchronizing-susan: no findings\nEngineering needed (forbidden path): apps/desktop/src/main/sync/AGENTS.md; why: roster\nMigration test: 20261021000000_placement: apps/desktop/test/placement.test.ts\n",
   });
   assert.deepEqual(done.found, []);
 });
@@ -477,4 +491,18 @@ test("a shared component's change requires every host's suites, in both flag sta
 
   const single = run(t, { base, head: { "packages/ui/only.tsx": "export const Only = 2;\n" }, commit: true });
   assert.deepEqual(single.requiredTests, [], "a component one host imports is not shared");
+});
+
+test("a change to a spec the base has needs a dated human source; a new spec or a test named .spec. does not (#8963)", (t) => {
+  const spec = "apps/prototypes/projects/project-hierarchy-spec.ts";
+  const base = { [spec]: "/**\n * Reject cycles and moves beyond four levels by withholding the drop target.\n */\nexport {};\n", "e2e/board.spec.ts": "test();\n" };
+  const head = { [spec]: base[spec].replace("Reject cycles and moves beyond four levels", "Reject cycles; four levels is display-only"), "e2e/board.spec.ts": "test(1);\n", "docs/prd/new-thing.md": "# New\n" };
+  const found = run(t, { base, head }).found.filter(([rule]) => rule === "spec-change");
+  assert.deepEqual(found, [["spec-change", spec]]);
+  const plan = `Spec change: ${spec}: the session plan PLN-1\n`;
+  assert.equal(run(t, { base, head, changeLog: plan }).found.filter(([rule]) => rule === "spec-change").length, 1, "a plan is not a human source");
+  const ruled = `Spec change: ${spec}: Pat Example, 2026-10-21, ISS-6560 comment\n`;
+  assert.deepEqual(run(t, { base, head, changeLog: ruled }).found.filter(([rule]) => rule === "spec-change"), []);
+  const prd = run(t, { base: { "docs/prds/board.md": "- Reject deep moves\n" }, head: { "docs/prds/board.md": null } }).found.filter(([rule]) => rule === "spec-change");
+  assert.deepEqual(prd, [["spec-change", "docs/prds/board.md"]], "deleting a spec is a change");
 });

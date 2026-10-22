@@ -1,6 +1,11 @@
 #!/bin/zsh
-# Usage: watch.sh <workDir> [intervalSeconds]. Exits with the diff on the first change.
+# Usage: watch.sh <workDir> [intervalSeconds]. Exits with the diff on the first change, or with HEARTBEAT
+# after HEARTBEAT_SECONDS (config.env or environment, default 1800) with none, so an armed watcher wakes its
+# orchestrator at least that often to read teammate messages: writers' questions once sat unread for 7 hours.
 K=${0:A:h}; W=${1:?workDir}; I=${2:-120}
+H=${HEARTBEAT_SECONDS:-$([ -f $W/config.env ] && sed -n 's/^HEARTBEAT_SECONDS=\([0-9][0-9]*\).*/\1/p' $W/config.env | tail -1)}
+H=${H:-1800}; T=$(( H / I )); (( T < 1 )) && T=1
+S=${WATCH_SNAPSHOT:-$K/snapshot.sh}
 # One watcher per work dir. A second copy (one started with `&` in a foreground shell, then started again)
 # double-reports every event and outlives the turn that started it, so it is refused, not run.
 lock=$W/watch.lock
@@ -23,15 +28,15 @@ beat() {
 }
 beat
 # Compare against the last snapshot the previous run saw, so a change between runs is still reported.
-if [ -s $W/last-snapshot.txt ]; then base=$(cat $W/last-snapshot.txt); else base=$(zsh $K/snapshot.sh $W); echo "$base" > $W/last-snapshot.txt; fi
-for _ in $(seq 1 200); do
+if [ -s $W/last-snapshot.txt ]; then base=$(cat $W/last-snapshot.txt); else base=$(zsh $S $W); echo "$base" > $W/last-snapshot.txt; fi
+for _ in $(seq 1 $T); do
   sleep $I
   # Each tick runs a recovery pass first (recover.mjs), so a transient failure is resumed without you.
-  now=$(RECOVER=1 zsh $K/snapshot.sh $W)
+  now=$(RECOVER=1 zsh $S $W)
   beat
   if [ -n "$now" ] && [ "$now" != "$base" ]; then
     echo "$now" > $W/last-snapshot.txt; beat ",\"exitedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""; echo EVENT; diff <(echo "$base") <(echo "$now") | grep '^[<>]'; exit 0
   fi
 done
 beat ",\"exitedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""
-echo TIMEOUT; cat $W/last-snapshot.txt
+echo "HEARTBEAT no change for ${H}s: read every teammate message and each idle writer's question, then re-arm"; cat $W/last-snapshot.txt

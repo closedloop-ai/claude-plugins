@@ -8,11 +8,13 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { migrationId, migrationProblems } from "../../vibe/scripts/migration-publish.mjs";
 import { git } from "../../vibe/scripts/session-record.mjs";
 import { E2E_ROOT_PATHSPECS, isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { pathGateTests } from "./path-gates.mjs";
 import { checkComparators, checkUnusedExports } from "./review-gap-rules.mjs";
 import { sharedComponentTests } from "./shared-consumers.mjs";
+import { checkSpecChanges } from "./spec-rules.mjs";
 import { routeSpecs } from "./route-specs.mjs";
 import { escapeRegExp, IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
 import { checkStorybookRules, storybookRuleTests } from "./storybook-rules.mjs";
@@ -131,6 +133,10 @@ export function evaluateDiff(files, changeLog, repo) {
   const live = files.filter((file) => file.status !== "D");
 
   checkMigrations(live, repo, logged, add, requiredChecks);
+  const newMigrations = live.filter((file) => file.status === "A" && migrationId(file.path)).map((file) => ({ path: file.path, sql: repo.head(file.path) ?? "" }));
+  for (const problem of migrationProblems(newMigrations, changeLog, (file) => repo.headFiles.includes(file) || repo.head(file) !== null)) {
+    add("migration-test", problem.slice(0, problem.indexOf(":")), 1, problem.slice(problem.indexOf(":") + 2), "add the test (and the measured scale test for per-row work) and record it; vibe-environment-worker runs migration-publish.mjs before every push");
+  }
   const shared = live.filter((file) => file.status === "M" && SHARED_PATH.test(file.path) && !logged("Shared path:", file.path));
   const importers = shared.length ? repo.importerCounts(shared.map((file) => file.path)) : new Map();
   for (const file of shared.filter((entry) => (importers.get(entry.path) ?? 0) >= 2)) {
@@ -154,6 +160,7 @@ export function evaluateDiff(files, changeLog, repo) {
   checkLostStoryIds(files, repo, add);
   checkCopyProvenance(live, files, repo, logged, add);
   checkCapabilityRemovals(live, files, repo, logged, add);
+  checkSpecChanges(files, changeLog, add);
   checkRestoredRemovalsDeepening(live, files, repo, changeLog, add);
   checkComparators(live, repo, logged, add, changeLog);
   checkUnusedExports(live, repo, logged, add);

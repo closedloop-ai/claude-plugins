@@ -174,3 +174,14 @@ test('a new session refuses a prompt that does not start with $vibe; a saved one
   saveState(dir, 'w1', { threadId: 'T1', cwd: '/wt', effort: 'high', turns: [] });
   assert.equal(await run(client, parseCli(['turn', dir, 'w1', '--prompt-file', plain])), 'w1 turn T1 U1');
 });
+
+test('a prompt carrying another writer\'s Done: claims needs a Re-verify: line (takeover claims)', async () => {
+  const { dir } = workDir();
+  const handover = join(dir, 'resume.md');
+  writeFileSync(handover, '$vibe resume the vibe session for ISS-1.\nDone: threads fixed, migration ready\nLeft: QA\n');
+  const client = stubClient({ 'thread/start': { thread: { id: 'T1' } }, 'turn/start': { turn: { id: 'U1' } } });
+  await assert.rejects(run(client, parseCli(['turn', dir, 'w1', '--prompt-file', handover, '--cwd', '/wt', '--model', 'm', '--effort', 'high'])), /no "Re-verify:" line/);
+  assert.deepEqual(client.calls, []);
+  writeFileSync(handover, '$vibe resume the vibe session for ISS-1.\nDone: threads fixed, migration ready\nRe-verify: each Done claim with a test or a measurement before building on it\nLeft: QA\n');
+  assert.equal(await run(client, parseCli(['turn', dir, 'w1', '--prompt-file', handover, '--cwd', '/wt', '--model', 'm', '--effort', 'high'])), 'w1 turn T1 U1');
+});

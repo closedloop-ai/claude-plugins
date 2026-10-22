@@ -232,7 +232,9 @@ flag keys, each read now from the flag service), and rerun it. Only once it
 passes, set `EXECUTED` through step F (with `expectedStatus` the status you
 read) and record it. For a source PRD, move each claimed child the
 handoff gate put in `IN_REVIEW` to `DONE` with the merge URL and commit as
-evidence; change nothing else.
+evidence, each only once
+`node ../skills/handoff/scripts/executed-check.mjs --kind ticket --file <its latest text>`
+passes (return the ones it refuses). Change nothing else.
 
 ## Handoff mode
 
@@ -402,7 +404,9 @@ historical inspections accurately. Preserve the existing grading block.
    the PLN matches the current local plans: repair whatever is missing or
    stale here; it is never a question for the person. A `NEEDS_CHANGE` from
    step B goes back to the same writer like any other.
-8. Write the body back with `create-document-version`, then save it to
+8. `node ../skills/handoff/scripts/rulings-check.mjs --ticket <new body> --criteria-before <current latest text>`
+   must pass (a reworded or dropped criterion is restored unless a human
+   ruling amends it). Write the body back with `create-document-version`, then save it to
    `$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-live-ticket.md` and run
    `node ../skills/handoff/scripts/live-ticket-check.mjs --file "<that file>" --base-commit <inventory baseCommit> --worktree "<wt>"`.
    Fix every problem you can from the session; a problem only the person can

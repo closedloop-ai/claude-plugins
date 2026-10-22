@@ -10,10 +10,11 @@ import { auditStatuses, childFinding } from './status-audit.mjs';
 const SCRIPT = fileURLToPath(new URL('./status-audit.mjs', import.meta.url));
 const merged = { url: 'https://example.test/pull/1', state: 'MERGED' };
 const open = { url: 'https://example.test/pull/2', state: 'OPEN' };
+const body = '- Acceptance criteria:\n  - [x] Rows reorder\n  - [ ] Keyboard reorder; Follow-up: ISS-12001\n';
 
 test('a merged pull request means DONE, an open one or a writer means in progress or review, and neither means unowned', () => {
-  assert.deepEqual(childFinding({ slug: 'a', status: 'IN_REVIEW', pullRequests: [merged] }), { kind: 'MISMATCH', expected: 'DONE', evidence: 'https://example.test/pull/1 merged' });
-  assert.equal(childFinding({ slug: 'a', status: 'DONE', pullRequests: [merged, open] }), null);
+  assert.deepEqual(childFinding({ slug: 'a', status: 'IN_REVIEW', pullRequests: [merged], body }), { kind: 'MISMATCH', expected: 'DONE', evidence: 'https://example.test/pull/1 merged' });
+  assert.equal(childFinding({ slug: 'a', status: 'DONE', pullRequests: [merged, open], body }), null);
   assert.deepEqual(childFinding({ slug: 'b', status: 'BACKLOG', pullRequests: [open] }), { kind: 'MISMATCH', expected: 'IN_PROGRESS or IN_REVIEW', evidence: 'https://example.test/pull/2 open' });
   assert.deepEqual(childFinding({ slug: 'c', status: 'BACKLOG', writer: 'w2', pullRequests: [] }), { kind: 'MISMATCH', expected: 'IN_PROGRESS or IN_REVIEW', evidence: 'writer w2 assigned' });
   assert.equal(childFinding({ slug: 'd', status: 'IN_PROGRESS', writer: 'w2' }), null);
@@ -24,7 +25,7 @@ test('a merged pull request means DONE, an open one or a writer means in progres
 
 test('a mismatch ruled out of scope with a reason no longer fails; one without a reason still does', () => {
   const snapshot = {
-    prds: [{ slug: 'P1', children: [{ slug: 'a', status: 'IN_REVIEW', pullRequests: [merged] }, { slug: 'f', status: 'BACKLOG' }] }],
+    prds: [{ slug: 'P1', children: [{ slug: 'a', status: 'IN_REVIEW', pullRequests: [merged], body }, { slug: 'f', status: 'BACKLOG' }] }],
     outOfScope: [{ slug: 'f', reason: 'operator, 2026-10-21: parked for next sprint' }, { slug: 'a', reason: ' ' }],
   };
   const result = auditStatuses(snapshot);
@@ -37,8 +38,10 @@ test('the command prints each finding and exits 1 until the statuses match', (t)
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'snapshot.json');
   writeFileSync(file, JSON.stringify({ prds: [{ slug: 'P1', children: [
-    { slug: 'a', status: 'IN_REVIEW', pullRequests: [merged] },
+    { slug: 'a', status: 'IN_REVIEW', pullRequests: [merged], body },
     { slug: 'c', status: 'BACKLOG', writer: 'w2' },
+    { slug: 'd', status: 'DONE', pullRequests: [merged], body: body.replace('[x] Rows', '[ ] Rows') },
+    { slug: 'e', status: 'DONE' },
     { slug: 'f', status: 'BACKLOG' },
   ] }] }));
   const failing = spawnSync(process.execPath, [SCRIPT, '--snapshot', file], { encoding: 'utf8' });
@@ -46,12 +49,23 @@ test('the command prints each finding and exits 1 until the statuses match', (t)
   assert.equal(failing.stdout, [
     'MISMATCH a IN_REVIEW, expected DONE (https://example.test/pull/1 merged)',
     'MISMATCH c BACKLOG, expected IN_PROGRESS or IN_REVIEW (writer w2 assigned)',
+    'UNCHECKED d DONE: AC-1; check each against the merged code, or name its follow-up or human exclusion, before DONE (executed-check.mjs --kind ticket)',
+    'UNREAD e DONE: no ticket body in the snapshot; read it so its acceptance criteria are checked',
     'UNOWNED f BACKLOG',
-    'status audit: 3 children, 2 mismatched, 1 unowned',
+    'status audit: 5 children, 2 mismatched, 1 unowned, 2 unchecked',
     '',
   ].join('\n'));
-  writeFileSync(file, JSON.stringify({ prds: [{ slug: 'P1', children: [{ slug: 'a', status: 'DONE', pullRequests: [merged] }] }] }));
+  writeFileSync(file, JSON.stringify({ prds: [{ slug: 'P1', children: [{ slug: 'a', status: 'DONE', pullRequests: [merged], body }] }] }));
   const clean = spawnSync(process.execPath, [SCRIPT, '--snapshot', file], { encoding: 'utf8' });
   assert.equal(clean.status, 0);
-  assert.equal(clean.stdout, 'status audit: 1 children, 0 mismatched, 0 unowned\n');
+  assert.equal(clean.stdout, 'status audit: 1 children, 0 mismatched, 0 unowned, 0 unchecked\n');
+});
+
+test('a merged or DONE child needs its body read and every criterion checked before DONE (bulk DONE sweep)', () => {
+  const unchecked = body.replace('[x] Rows', '[ ] Rows');
+  assert.deepEqual(childFinding({ slug: 'a', status: 'IN_REVIEW', pullRequests: [merged] }), { kind: 'UNREAD' });
+  assert.deepEqual(childFinding({ slug: 'a', status: 'IN_REVIEW', pullRequests: [merged], body: unchecked }), { kind: 'UNCHECKED', criteria: 'AC-1' });
+  assert.deepEqual(childFinding({ slug: 'a', status: 'DONE', body: unchecked }), { kind: 'UNCHECKED', criteria: 'AC-1' });
+  assert.equal(childFinding({ slug: 'a', status: 'DONE', body }), null);
+  assert.equal(childFinding({ slug: 'g', status: 'CANCELED' }), null);
 });

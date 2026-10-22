@@ -3,7 +3,10 @@
 // once final-merge mode is set): it polls the pull request every two minutes
 // and stops at the first thing it must act on, so a conflict with main is
 // merged at once instead of waiting for someone to notice it. A pull request
-// that went conflicting once sat for hours with nobody watching it.
+// that went conflicting once sat for hours with nobody watching it. Armed
+// auto-merge is not the end: an unresolved review thread whose latest comment
+// is not the writer's is work, and two approved pull requests once sat blocked
+// for hours on new threads while their writers waited for the merge.
 //
 // Usage: shepherd.mjs --pr <number> --repo <owner/repo> [--interval-seconds 120] [--max-polls <n>]
 //
@@ -13,17 +16,21 @@
 //   {"event":"waiting","polls":n}              exit 3  (--max-polls reached)
 //   {"event":"conflict","head":sha}            exit 10 (merge main now in final-merge mode, push, run shepherd again)
 //   {"event":"checks-failed","failed":[...]}   exit 11 (fix on the branch, push, run shepherd again)
+//   {"event":"threads","unresolved":n}         exit 13 (fix or answer each thread, then run shepherd again)
 //   {"event":"unreadable","error":...}         exit 12 (three reads in a row failed)
 // `gh` is read from PATH; a single failed read is retried on the next poll.
+// Threads whose latest comment is the writer's (`gh api user`) wait on the
+// reviewer and do not stop the shepherd.
 
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { readThreads } from "./pr-threads.mjs";
 
 const FIELDS = "state,mergeable,headRefOid,statusCheckRollup";
 const FAILED = new Set(["FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "ERROR", "STARTUP_FAILURE"]);
 const MAX_READ_FAILURES = 3;
-export const EXIT = { merged: 0, closed: 2, waiting: 3, conflict: 10, "checks-failed": 11, unreadable: 12 };
+export const EXIT = { merged: 0, closed: 2, waiting: 3, conflict: 10, "checks-failed": 11, unreadable: 12, threads: 13 };
 
 /** What one pull request read asks the writer to do, or null to keep waiting. */
 export function shepherdEvent(pr) {
@@ -33,7 +40,8 @@ export function shepherdEvent(pr) {
   const failed = (pr.statusCheckRollup ?? [])
     .filter((check) => FAILED.has(check.conclusion ?? check.state))
     .map((check) => check.name ?? check.context);
-  return failed.length > 0 ? { event: "checks-failed", head: pr.headRefOid, failed } : null;
+  if (failed.length > 0) return { event: "checks-failed", head: pr.headRefOid, failed };
+  return pr.waitingThreads > 0 ? { event: "threads", head: pr.headRefOid, unresolved: pr.waitingThreads } : null;
 }
 
 /** Polls until an event; resolves with it. */
@@ -55,8 +63,16 @@ export async function shepherd({ pr, repo, intervalSeconds = 120, maxPolls = Inf
   }
 }
 
+let writerLogin;
+
 function readPr(pr, repo) {
-  return JSON.parse(execFileSync("gh", ["pr", "view", String(pr), "--repo", repo, "--json", FIELDS], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  const view = JSON.parse(execFileSync("gh", ["pr", "view", String(pr), "--repo", repo, "--json", FIELDS], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  writerLogin ??= execFileSync("gh", ["api", "user", "-q", ".login"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const threads = readThreads(repo, pr);
+  if (threads === null) {
+    throw new Error("gh could not read the review threads");
+  }
+  return { ...view, waitingThreads: threads.filter((thread) => !thread.resolved && thread.lastAuthor !== writerLogin).length };
 }
 
 async function main() {

@@ -20,6 +20,8 @@ test("each pull request state maps to the action the writer takes", () => {
     { event: "checks-failed", head: "abc", failed: ["lint", "deploy"] }
   );
   assert.equal(shepherdEvent({ ...OPEN, mergeable: "UNKNOWN" }), null, "unknown mergeability keeps waiting");
+  assert.deepEqual(shepherdEvent({ ...OPEN, waitingThreads: 2 }), { event: "threads", head: "abc", unresolved: 2 });
+  assert.deepEqual(shepherdEvent({ ...OPEN, state: "MERGED", waitingThreads: 2 }), { event: "merged" });
 });
 
 test("it keeps polling until a conflict appears, and a single failed read is retried", async () => {
@@ -37,11 +39,27 @@ test("the command reads the pull request through gh and exits with the event's c
   const dir = mkdtempSync(path.join(os.tmpdir(), "vibe-shepherd-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(path.join(dir, "pr.json"), JSON.stringify({ ...OPEN, mergeable: "CONFLICTING" }));
-  writeFileSync(path.join(dir, "gh"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${dir}/args.txt"\ncat "${dir}/pr.json"\n`);
+  writeFileSync(path.join(dir, "threads.json"), JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: [] } } } } }));
+  writeFileSync(path.join(dir, "gh"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${dir}/args.txt"\ncase "$1 $2" in\n  "api user") echo writer ;;\n  "api graphql") cat "${dir}/threads.json" ;;\n  *) cat "${dir}/pr.json" ;;\nesac\n`);
   chmodSync(path.join(dir, "gh"), 0o755);
   const env = { ...process.env, PATH: `${dir}:${process.env.PATH}` };
-  const result = spawnSync(process.execPath, [SCRIPT, "--pr", "42", "--repo", "o/r", "--interval-seconds", "0"], { encoding: "utf8", env });
+  const shepherdRun = () => spawnSync(process.execPath, [SCRIPT, "--pr", "42", "--repo", "o/r", "--interval-seconds", "0", "--max-polls", "1"], { encoding: "utf8", env });
+  const result = shepherdRun();
   assert.equal(result.status, EXIT.conflict);
   assert.deepEqual(JSON.parse(result.stdout), { event: "conflict", head: "abc" });
   assert.equal(spawnSync(process.execPath, [SCRIPT, "--pr", "x"], { encoding: "utf8" }).status, 64);
+
+  // An approved pull request with auto-merge armed and a new reviewer thread is work, not waiting.
+  writeFileSync(path.join(dir, "pr.json"), JSON.stringify({ ...OPEN, reviewDecision: "APPROVED" }));
+  const thread = (login, latest) => ({ isResolved: false, comments: { nodes: [{ author: { login } }] }, latest: { nodes: [{ author: { login: latest } }] } });
+  writeFileSync(path.join(dir, "threads.json"), JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: [
+    thread("reviewer", "reviewer"),
+    thread("reviewer", "writer"),
+    { ...thread("reviewer", "reviewer"), isResolved: true },
+  ] } } } } }));
+  const threads = shepherdRun();
+  assert.equal(threads.status, EXIT.threads);
+  assert.deepEqual(JSON.parse(threads.stdout), { event: "threads", head: "abc", unresolved: 1 });
+  writeFileSync(path.join(dir, "threads.json"), JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: [thread("reviewer", "writer")] } } } } }));
+  assert.equal(shepherdRun().status, EXIT.waiting, "a thread the writer answered last waits on the reviewer");
 });

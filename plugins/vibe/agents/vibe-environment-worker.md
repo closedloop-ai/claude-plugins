@@ -18,9 +18,10 @@ worker an exclusive session-record and ticket-writing turn; never race another
 writer. Product questions use the graph/live-decision research and necessity
 gate, technical choices stay internal, and local plans are never deployed.
 Before every push or deployment request run
-`node <plugin-root>/skills/vibe/scripts/local-plans.mjs --worktree "<wt>"`.
-If it fails, return `BLOCKED` and publish nothing; an unchanged committed plan
-is unsafe too. Do not rewrite branch history to hide the leak.
+`node <plugin-root>/skills/vibe/scripts/local-plans.mjs --worktree "<wt>"` and
+`node <plugin-root>/skills/vibe/scripts/migration-publish.mjs --worktree "<wt>" --since <vercel.lastDeployedCommit, or baseCommit before the first push>`.
+If either fails, return `BLOCKED` with its problems and publish nothing; an
+unchanged committed plan is unsafe too. Do not rewrite branch history to hide the leak.
 Use `environment.md`, "Main-sync before publication", for EVERY create,
 redeploy, flags/Desktop request and handoff. Root supplies the exact granted
 `operationContext`, purpose and current transaction in private stdin data;

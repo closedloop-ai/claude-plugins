@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { planProblems, programRulingProblems, recordRulings, rulingProblems, uncitedExclusions } from "./rulings-check.mjs";
+import { planProblems, programRulingProblems, recordRulings, rulingProblems, uncitedExclusions, criteriaChangeProblems } from "./rulings-check.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./rulings-check.mjs", import.meta.url));
 
@@ -104,4 +104,16 @@ test("the command fails on a PLN-2212-shaped plan and passes once it is marked a
   const body = path.join(dir, "body.md");
   writeFileSync(body, `${MARKER}\n\n- Out-of-scope: ISS-9381 per ISS-9381 AC-2 (operator ruling 2026-10-21)\n`);
   assert.equal(spawnSync(process.execPath, [SCRIPT, "--plan", doc, "--plan-body", body], { encoding: "utf8" }).status, 0);
+});
+
+test("a reworded or dropped acceptance criterion needs a ticket ruling amending it by id (#8963, ISS-6560)", () => {
+  const before = "- Acceptance criteria:\n  - [ ] Drag reorders rows\n  - [ ] Reject moves beyond four levels\n";
+  const reworded = "- Acceptance criteria:\n  - [ ] Drag reorders rows\n  - [ ] Four levels is a display-only cap\n";
+  assert.deepEqual(criteriaChangeProblems(before, before), []);
+  assert.match(criteriaChangeProblems(before, reworded).join(), /^AC-2 "Reject moves beyond four levels" was reworded or dropped/);
+  assert.equal(criteriaChangeProblems(before, reworded).length, 1, "the unchanged criterion passes");
+  const ruled = `${reworded}- Ruling 2026-10-21 (Pat Example): "depth is display-only"; amends: AC-2\n`;
+  assert.deepEqual(criteriaChangeProblems(before, ruled), []);
+  assert.equal(criteriaChangeProblems(before, ruled.replace("amends: AC-2", "amends: AC-1")).length, 1, "a ruling amending another criterion does not cover it");
+  assert.equal(criteriaChangeProblems(before, "- Acceptance criteria:\n  - [ ] Drag reorders rows\n").length, 1, "a dropped criterion is a change");
 });

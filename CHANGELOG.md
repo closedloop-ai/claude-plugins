@@ -4,6 +4,19 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.76
+
+The six open lessons from the 2026-10-22 fleet run, each with a mechanical check.
+
+#### Added
+- Questions carry a default and a deadline: `session-questions.mjs ask` needs `--default` and `--deadline-minutes` and returns the `If no answer by <time>: <default>` line that ends the message; a flag, copy, destructive, credential or scope-narrowing question waits with none. The recovery pass resumes an idle Codex writer on its default once the deadline passes (`proceeded-on-default`). Writers' questions once sat unanswered for seven hours overnight.
+- `watch.sh` exits with `HEARTBEAT` after `HEARTBEAT_SECONDS` (default 30 minutes) with no change, instead of `TIMEOUT` after about 6.7 hours, and `board.mjs status` fails with `WATCHER-MISSING` when a work dir that watches sessions or PRs has no running watcher.
+- `fleet.sh` refuses a prompt that hands over `Done:` claims without a `Re-verify:` line, and the takeover prompt makes the incoming writer re-verify each claim with a test or a measurement.
+- `migration-publish.mjs` refuses a push that adds a migration without a recorded `Migration test:`, or one with a trigger, function or per-row work without a measured `Scale test:`; the environment worker runs it before every push, and handoff's diff rules run the same check. A pushed migration reaches shared preview schemas.
+- Handoff's `spec-change` diff rule blocks a change to an existing `*-spec` file or PRD Markdown without `Spec change: <path>: <human>, <date>, <where>`, and `rulings-check.mjs --criteria-before` blocks a ticket version that rewords or drops an acceptance criterion no human ruling amends.
+- `executed-check.mjs --kind ticket` refuses DONE while an acceptance criterion is unchecked without a follow-up ticket or a dated human exclusion; the ticket worker, cl-execute and cl-sweep run it before DONE, and `status-audit.mjs` needs each merged or DONE child's body and prints `UNREAD` and `UNCHECKED`.
+- `shepherd.mjs` stops with `threads` (exit 13) on an unresolved review thread the writer has not answered last, so armed auto-merge no longer reads as done. The board and the shepherd share one thread reader (`pr-threads.mjs`).
+
 ### vibe v1.0.75
 
 The open fleet lessons from the 2026-10-21 and 2026-10-22 orchestration runs, each with a mechanical check where one fits, and a watcher bug found while checking them.

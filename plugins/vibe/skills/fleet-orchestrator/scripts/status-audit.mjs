@@ -8,18 +8,26 @@
 //
 // snapshot.json, gathered from the ticket tool and the code host:
 //   {"prds": [{"slug", "children": [{"slug", "status", "writer": <name or null>,
-//     "pullRequests": [{"url", "state": "MERGED" | "OPEN" | "CLOSED"}]}]}],
+//     "pullRequests": [{"url", "state": "MERGED" | "OPEN" | "CLOSED"}],
+//     "body": "<the ticket's latest text>"}]}],
 //    "outOfScope": [{"slug", "reason": "<who ruled it out, and where>"}]}
 // For each child: a merged pull request means DONE; an open pull request or an
 // assigned writer means IN_PROGRESS or IN_REVIEW; not DONE or CANCELED with
-// neither means UNOWNED. Prints `MISMATCH <slug> <status>, expected <status>
-// (<evidence>)`, `UNOWNED <slug> <status>` and `OUT-OF-SCOPE <slug>: <reason>`
-// lines, then `status audit: <n> children, <m> mismatched, <u> unowned`; exits
-// 1 until every mismatch is fixed or ruled out of scope with a reason.
+// neither means UNOWNED. A merged pull request is not DONE on its own: a child
+// that is DONE or has one merged needs its `body`, and every acceptance
+// criterion in it checked, followed up or excluded by a human (executed-check
+// --kind ticket); about sixty children were swept to DONE minutes after their
+// merges with criteria unchecked. Prints `MISMATCH <slug> <status>, expected
+// <status> (<evidence>)`, `UNOWNED <slug> <status>`, `UNREAD <slug> <status>`,
+// `UNCHECKED <slug> <status>: <criteria>` and `OUT-OF-SCOPE <slug>: <reason>`
+// lines, then `status audit: <n> children, <m> mismatched, <u> unowned,
+// <c> unchecked`; exits 1 until every finding is fixed or ruled out of scope
+// with a reason.
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { ticketProblems } from "../../handoff/scripts/executed-check.mjs";
 
 const ACTIVE = ["IN_PROGRESS", "IN_REVIEW"];
 const FINISHED = new Set(["DONE", "CANCELED"]);
@@ -28,6 +36,10 @@ const FINISHED = new Set(["DONE", "CANCELED"]);
 export function childFinding(child) {
   const pulls = Array.isArray(child?.pullRequests) ? child.pullRequests : [];
   const merged = pulls.find((pull) => pull?.state === "MERGED");
+  if (merged || child?.status === "DONE") {
+    const criteria = criteriaFinding(child);
+    if (criteria) return criteria;
+  }
   if (merged) {
     return child.status === "DONE" ? null : { kind: "MISMATCH", expected: "DONE", evidence: `${merged.url ?? "a pull request"} merged` };
   }
@@ -40,6 +52,15 @@ export function childFinding(child) {
     };
   }
   return FINISHED.has(child?.status) ? null : { kind: "UNOWNED" };
+}
+
+/** A DONE or merged child whose body was not read, or whose criteria are not all checked. */
+function criteriaFinding(child) {
+  if (typeof child?.body !== "string" || child.body.trim() === "") {
+    return { kind: "UNREAD" };
+  }
+  const unchecked = ticketProblems(child.body);
+  return unchecked.length === 0 ? null : { kind: "UNCHECKED", criteria: unchecked.map((problem) => problem.split(" ")[0]).join(", ") };
 }
 
 /** Every child that disagrees with its evidence, and every one ruled out of scope. */
@@ -65,14 +86,16 @@ function main(argv) {
     throw new Error("Usage: status-audit.mjs --snapshot <snapshot.json>");
   }
   const { children, findings, outOfScope } = auditStatuses(JSON.parse(readFileSync(values.snapshot, "utf8")));
-  for (const finding of findings) {
-    process.stdout.write(finding.kind === "UNOWNED"
-      ? `UNOWNED ${finding.slug} ${finding.status}\n`
-      : `MISMATCH ${finding.slug} ${finding.status}, expected ${finding.expected} (${finding.evidence})\n`);
-  }
+  const lines = {
+    UNOWNED: (finding) => `UNOWNED ${finding.slug} ${finding.status}`,
+    UNREAD: (finding) => `UNREAD ${finding.slug} ${finding.status}: no ticket body in the snapshot; read it so its acceptance criteria are checked`,
+    UNCHECKED: (finding) => `UNCHECKED ${finding.slug} ${finding.status}: ${finding.criteria}; check each against the merged code, or name its follow-up or human exclusion, before DONE (executed-check.mjs --kind ticket)`,
+    MISMATCH: (finding) => `MISMATCH ${finding.slug} ${finding.status}, expected ${finding.expected} (${finding.evidence})`,
+  };
+  for (const finding of findings) process.stdout.write(`${lines[finding.kind](finding)}\n`);
   for (const entry of outOfScope) process.stdout.write(`OUT-OF-SCOPE ${entry.slug}: ${entry.reason}\n`);
-  const mismatched = findings.filter((finding) => finding.kind === "MISMATCH").length;
-  process.stdout.write(`status audit: ${children} children, ${mismatched} mismatched, ${findings.length - mismatched} unowned\n`);
+  const count = (kind) => findings.filter((finding) => finding.kind === kind).length;
+  process.stdout.write(`status audit: ${children} children, ${count("MISMATCH")} mismatched, ${count("UNOWNED")} unowned, ${count("UNREAD") + count("UNCHECKED")} unchecked\n`);
   return findings.length === 0 ? 0 : 1;
 }
 

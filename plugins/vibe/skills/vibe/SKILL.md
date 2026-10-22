@@ -840,7 +840,10 @@ except the startup version question, which runs once per conversation
 (section 1, "Plugin version"):
 
 1. Before asking, run `node scripts/session-questions.mjs ask --key <topic>
-   --question "<exact words>" [--worktree "<wt>"]`. For a product question,
+   --question "<exact words>" --default "<what you do without an answer>"
+   --deadline-minutes <n> [--worktree "<wt>"]` and end the message with the
+   `ifNoAnswer` line it returns; past it, go ahead on the default and say so.
+   For a product question,
    also pass `--product --code-evidence "<file:line>"`; the command refuses it
    without the required code/data-model check. It also refuses a request for
    permission to do in-scope work (a test repair, a main merge, a push, a fix):

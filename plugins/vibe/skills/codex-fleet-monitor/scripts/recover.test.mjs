@@ -355,3 +355,30 @@ test('the events log moves to events.log.1 at LOG_MAX_BYTES', async () => {
     h.close();
   }
 });
+
+test('an idle writer whose question passed its deadline is resumed once on its stated default; a flag question is not (7 quiet hours)', async () => {
+  const asked = (text) => ({ id: 'q-1', status: 'completed', error: null, items: [{ id: 'i-1', type: 'agentMessage', text }] });
+  const threads = {
+    T1: { status: { type: 'idle' }, turns: [asked('Sort the board by rank or by updated time?\nIf no answer by 2026-10-22T06:15:00.000Z: sort by rank')] },
+    T2: { status: { type: 'notLoaded' }, turns: [asked('May I add the feature flag key board-v2?\nIf no answer by 2026-10-22T06:15:00.000Z: add it')] },
+    T3: { status: { type: 'idle' }, turns: [asked('Pushed abc123; QA ready.')] },
+  };
+  const h = await harness(threads);
+  const at = (iso) => Date.parse(iso);
+  try {
+    assert.deepEqual(await h.pass(at('2026-10-22T06:14:00Z')), [], 'before the deadline nothing moves');
+    const events = await h.pass(at('2026-10-22T06:16:00Z'));
+    assert.deepEqual(events, ['EVENT recovery t1 proceeded-on-default turn=new-1 asked=q-1: sort by rank']);
+    const [start] = turnStarts(h.fake.calls);
+    assert.equal(start.params.threadId, 'T1');
+    assert.match(start.params.input[0].text, /Go ahead on your stated default: sort by rank/);
+    threads.T1.turns.at(-1).status = 'completed';
+    threads.T1.status = { type: 'idle' };
+    threads.T1.turns.at(-1).items = threads.T1.turns[0].items;
+    threads.T1.turns.at(-1).id = 'q-1';
+    assert.deepEqual(await h.pass(at('2026-10-22T07:00:00Z')), [], 'once per asking turn');
+    assert.equal(turnStarts(h.fake.calls).length, 1);
+  } finally {
+    h.close();
+  }
+});

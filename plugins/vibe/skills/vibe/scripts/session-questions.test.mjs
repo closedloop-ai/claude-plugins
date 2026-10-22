@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { askQuestion, asksLeaveForInScopeWork } from "./session-questions.mjs";
+import { askQuestion, asksLeaveForInScopeWork, waitsForPerson } from "./session-questions.mjs";
 import { makeCheckout, makeHome, mainSyncRecipeFiles, runNode } from "./test-fixtures.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -65,9 +65,10 @@ test("questions asked before the session exists move onto the new session and su
 
 test("reset clears only the questions kept before a session exists", (t) => {
   const { home } = setup(t);
-  questions(home, ["ask", "--key", "sample-data", "--question", "Start with example data?"]);
+  const sample = ["ask", "--key", "sample-data", "--question", "Start with example data?", "--default", "start with example data", "--deadline-minutes", "30"];
+  questions(home, sample);
   assert.equal(questions(home, ["reset"]).json.ok, true);
-  assert.equal(questions(home, ["ask", "--key", "sample-data", "--question", "Start with example data?"]).json.ask, true);
+  assert.equal(questions(home, sample).json.ask, true);
   const refused = questions(home, ["reset", "--worktree", home]);
   assert.equal(refused.status, 1);
 });
@@ -76,14 +77,15 @@ test("an answer needs a recorded question and keys stay plain identifiers", () =
   assert.throws(() => askQuestion([], { key: "Page Wording", question: WORDING }), /--key/);
   assert.throws(() => askQuestion([], { key: "page-wording", question: " " }), /--question/);
   const { questions: recorded } = askQuestion([], { key: "page-wording", question: WORDING, now: "2026-10-15T00:00:00.000Z" });
-  assert.deepEqual(recorded, [{ key: "page-wording", question: WORDING, askedAt: "2026-10-15T00:00:00.000Z",
+  assert.deepEqual(recorded, [{ key: "page-wording", question: WORDING, waitsForPerson: true, askedAt: "2026-10-15T00:00:00.000Z",
     answer: null, answeredAt: null }]);
 });
 
 test("a product question is refused until it cites the code or data model checked first", () => {
-  assert.throws(() => askQuestion([], { key: "bulk-owner", question: "Can owners change in bulk?", product: true }), /--code-evidence/);
+  const fallback = { fallback: "allow it, as the schema does", deadlineMinutes: "30" };
+  assert.throws(() => askQuestion([], { key: "bulk-owner", question: "Can owners change in bulk?", product: true, ...fallback }), /--code-evidence/);
   const { questions } = askQuestion([], {
-    key: "bulk-owner", question: "Can owners change in bulk?", product: true, codeEvidence: "packages/branches/schema.ts:42",
+    key: "bulk-owner", question: "Can owners change in bulk?", product: true, codeEvidence: "packages/branches/schema.ts:42", ...fallback,
   });
   assert.equal(questions[0].product, true);
   assert.equal(questions[0].codeEvidence, "packages/branches/schema.ts:42");
@@ -117,4 +119,25 @@ test("permission to do in-scope engineering work is refused; flags, product call
   ];
   for (const question of waits) assert.equal(asksLeaveForInScopeWork(question), false, question);
   assert.equal(askQuestion([], { key: "flag-key", question: waits[0] }).result.ask, true);
+});
+
+test("a question carries a default and a deadline, except flag, copy, destructive, credential and scope questions (7 quiet hours)", (t) => {
+  const sort = "Sort the board by rank or by updated time?";
+  assert.equal(waitsForPerson(sort), false);
+  assert.throws(() => askQuestion([], { key: "board-sort", question: sort }), /--default .* --deadline-minutes/);
+  assert.throws(() => askQuestion([], { key: "board-sort", question: sort, fallback: "rank", deadlineMinutes: "0" }), /--deadline-minutes/);
+  const { result } = askQuestion([], { key: "board-sort", question: sort, fallback: "sort by rank, as the shipped list does", deadlineMinutes: "30", now: "2026-10-22T05:45:00.000Z" });
+  assert.equal(result.deadlineAt, "2026-10-22T06:15:00.000Z");
+  assert.equal(result.ifNoAnswer, "If no answer by 2026-10-22T06:15:00.000Z: sort by rank, as the shipped list does");
+  for (const question of ["May I add the new feature flag key for this screen?", "Which wording should the empty state use?", "Should I delete the old branch?", "Should I skip the two tickets?"]) {
+    assert.equal(waitsForPerson(question), true, question);
+    const waiting = askQuestion([], { key: "waits", question }).result;
+    assert.equal(waiting.waitsForPerson, true);
+    assert.equal(waiting.ifNoAnswer, undefined, "no default is applied without the person");
+  }
+  const { home } = setup(t);
+  const cli = questions(home, ["ask", "--key", "board-sort", "--question", sort, "--default", "rank", "--deadline-minutes", "20"]);
+  assert.equal(cli.json.ok, true);
+  assert.match(cli.json.ifNoAnswer, /^If no answer by \S+Z: rank$/);
+  assert.equal(questions(home, ["ask", "--key", "other", "--question", sort]).status, 1);
 });

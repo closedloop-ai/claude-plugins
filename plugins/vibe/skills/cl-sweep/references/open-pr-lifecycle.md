@@ -428,7 +428,9 @@ A closed-unmerged child must return one of: a new open PR handoff;
 `BLOCKED_SKIP`/`MANUAL_INTERVENTION` after normal routing; or `CANCELED` only
 with explicit current abandonment evidence, live canceled ClosedLoop state,
 and reconciled plan state. A merged child must verify acceptance and
-requirements evidence, mark included features `DONE`, mark linked plans
+requirements evidence, mark included features `DONE` (each only once
+`../../handoff/scripts/executed-check.mjs --kind ticket` passes on its latest
+body), mark linked plans
 `EXECUTED`, verify canonical manual QA and integrated feature acceptance on the
 applicable final head, reconcile legacy split parents if present and workflow memory, and return the final
 structured result. The parent writes `DONE` only after verifying that result.
