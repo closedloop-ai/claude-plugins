@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { checkPublishableText } from "./publishable-text.mjs";
-import { localPlanFiles, planDigest, renderSessionPlan } from "./session-plan.mjs";
+import { localPlanFiles, planDigest, renderSessionPlan, SELF_APPROVED_MARKER } from "./session-plan.mjs";
 import { git, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "session-plan.mjs");
@@ -78,7 +78,7 @@ test("plans are the top-level markdown files in request ID order; subfolders sta
   writePlan(checkout, "notes.txt", "not a plan\n");
   assert.deepEqual(localPlanFiles(checkout), [".closedloop-ai/vibe-plans/request-2.md", ".closedloop-ai/vibe-plans/request-10.md"]);
   const rendered = renderSessionPlan(checkout, { roots: [checkout] });
-  assert.equal(rendered.body, "# Two\n\n---\n\n# Ten\n");
+  assert.equal(rendered.body, `${SELF_APPROVED_MARKER}\n\n# Two\n\n---\n\n# Ten\n`);
   assert.deepEqual(rendered.problems, []);
 });
 
@@ -95,9 +95,9 @@ test("the CLI writes the sanitized body and reports whether the published versio
   writePlan(checkout, "request-1.md", `# Implementation Plan: Board chips\n\nChange \`${checkout}/apps/app/board.tsx\`.\n`);
   const first = runNode(SCRIPT, ["--worktree", checkout, "--out", out], home);
   assert.equal(first.status, 0, JSON.stringify(first.json));
-  assert.equal(readFileSync(out, "utf8"), "# Implementation Plan: Board chips\n\nChange `apps/app/board.tsx`.\n");
+  assert.equal(readFileSync(out, "utf8"), `${SELF_APPROVED_MARKER}\n\n# Implementation Plan: Board chips\n\nChange \`apps/app/board.tsx\`.\n`);
   const published = path.join(path.dirname(out), "vibe-live-plan-published.md");
-  writeFileSync(published, "# Implementation Plan: Board chips\n\n\nChange `apps/app/board.tsx`.   \n");
+  writeFileSync(published, `${SELF_APPROVED_MARKER}\n\n# Implementation Plan: Board chips\n\n\nChange \`apps/app/board.tsx\`.   \n`);
   assert.equal(runNode(SCRIPT, ["--worktree", checkout, "--out", out, "--published", published], home).json.current, true);
   writePlan(checkout, "request-2.md", "# Implementation Plan: Selected chip fill\n");
   assert.equal(runNode(SCRIPT, ["--worktree", checkout, "--out", out, "--published", published], home).json.current, false);

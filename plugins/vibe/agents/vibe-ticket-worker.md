@@ -161,7 +161,10 @@ F. Status. The PLN's status follows the work:
    selector, monitor or other dependency is missing keeps that task open and
    the PLN `DRAFT`; return `NEEDS_CHANGE` rather than approving it.
    You never set a PLN's approver, so the `APPROVED` you set means built
-   and checked, never a human approval. Before setting it, save the PLN's
+   and checked, never a human approval: set it only when `get-document`
+   shows a human `approverId`, or when the published text starts with the
+   `Self-approved` line `session-plan.mjs` renders (version an older text
+   in D first). Before setting it, save the PLN's
    `get-document` JSON and its latest text and run
    `node ../skills/handoff/scripts/rulings-check.mjs --plan <json> --plan-body <text>`;
    each exclusion it names (out of scope, deferred, not covered, a GAP line)

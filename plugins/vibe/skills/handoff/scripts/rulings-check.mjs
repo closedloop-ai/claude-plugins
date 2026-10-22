@@ -19,9 +19,11 @@
 // but never its approver) is not a ruling, so each exclusion in it must cite
 // a human source: a ticket AC (`<slug> AC-<n>`), a PRD, an operator ruling, or
 // a plan approved by a named human. An exclusion is an item on an
-// Out-of-scope, Non-goals, Excluded, Deferred, Descoped or Not covered line, a
+// Out-of-scope, Non-goals, Excluded, Deferred, Descoped, Obsolete or Not covered line, a
 // GAP line, a bullet under such a heading, or a clause saying out of scope,
-// outside this scope, not covered, deferred or descoped. A writer once skipped
+// outside this scope, not covered, deferred, descoped or obsolete. An APPROVED
+// or EXECUTED plan with no approver must also carry the self-approved marker
+// session-plan.mjs renders. A writer once skipped
 // two tickets on an uncited Out-of-scope line of a plan vibe itself had set to
 // APPROVED, against a direct instruction to build them.
 
@@ -34,10 +36,11 @@ const TICKET_RULING = /^\s*[-*]\s*Ruling\b[^:\n]*:\s*(.+?)\s*$/gm;
 const AMENDS = /;\s*amends:\s*(\S.*)$/;
 const PROGRAM_RULING = /^\s*[-*]\s*Ruling\s+(\d{4}-\d{2}-\d{2})\s+\((operator message|AskUserQuestion|ticket):\s*(\S.*?)\):\s*(\S.*)$/gm;
 
-const EXCLUSION_LABEL = /^\s*(?:[-*]\s+)?(?:\[[ xX]\]\s*)?\**\s*(out[- ]of[- ]scope|non-?goals?|excluded|exclusions?|deferred|descoped|not covered|GAP(?:-\d+)?)\s*\**\s*:\s*\**\s*(.*)$/i;
-const EXCLUSION_HEADING = /^#{2,6}\s+(?:out[- ]of[- ]scope|non-?goals?|excluded|exclusions|deferred|descoped|not covered|gaps?)\b/i;
-const EXCLUSION_PHRASE = /\b(?:out[- ]of[- ]scope|outside (?:of )?(?:this|the) (?:\w+ )?scope|not covered|deferred|descoped)\b/i;
+const EXCLUSION_LABEL = /^\s*(?:[-*]\s+)?(?:\[[ xX]\]\s*)?\**\s*(out[- ]of[- ]scope|non-?goals?|excluded|exclusions?|deferred|descoped|obsolete|not covered|GAP(?:-\d+)?)\s*\**\s*:\s*\**\s*(.*)$/i;
+const EXCLUSION_HEADING = /^#{2,6}\s+(?:out[- ]of[- ]scope|non-?goals?|excluded|exclusions|deferred|descoped|obsolete|not covered|gaps?)\b/i;
+const EXCLUSION_PHRASE = /\b(?:out[- ]of[- ]scope|outside (?:of )?(?:this|the) (?:\w+ )?scope|not covered|deferred|descoped|obsolete)\b/i;
 const HUMAN_SOURCE = /\bPRD-\d+\b|\b[A-Z]{2,}-\d+\s+AC-?\d+\b|\bacceptance criteri(?:on|a)\b|\boperator\b|\brulings?\b|\bruled\b|\bapproved by\b/i;
+const SELF_APPROVED = /^>\s*Self-approved:/m;
 const NOTHING = /^(?:none|nothing|n\/a|-)\.?$/i;
 
 /** The exclusions in a plan body that cite no human source. */
@@ -82,8 +85,11 @@ export function planProblems(doc, body = doc?.version?.content) {
   if (typeof body !== "string" || (body === doc?.version?.content && doc?.version?.contentTruncated)) {
     return [`${name}: pass its full latest version text with --plan-body`];
   }
-  return uncitedExclusions(body).map((item) =>
-    `${name} is ${doc?.status ?? "unapproved"} with no human approver, so its exclusion "${item.slice(0, 160)}" is not a ruling; cite a ticket AC, PRD or operator ruling for it, or build it or escalate it`);
+  const unmarked = ["APPROVED", "EXECUTED"].includes(doc?.status) && !SELF_APPROVED.test(body)
+    ? [`${name} is ${doc.status} with no human approver and is not marked self-approved; publish it from session-plan.mjs, which renders the marker, or have a human approve it`]
+    : [];
+  return [...unmarked, ...uncitedExclusions(body).map((item) =>
+    `${name} is ${doc?.status ?? "unapproved"} with no human approver, so its exclusion "${item.slice(0, 160)}" is not a ruling; cite a ticket AC, PRD or operator ruling for it, or build it or escalate it`)];
 }
 
 function normalize(text) {

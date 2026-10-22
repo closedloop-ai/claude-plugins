@@ -41,60 +41,67 @@ test("the program index requires dated sources and contains every reconciled rul
   assert.match(programRulingProblems(program, [QA_RECORD])[0], /not in the program rulings index/);
 });
 
-// Shaped like the plan vibe set to APPROVED with no approver, whose uncited
-// Out-of-scope line a writer used to skip two tickets it was told to build.
-const SELF_APPROVED_PLAN = [
-  "# Implementation Plan: PRD-7 Responsive Narrow List",
+// Shaped like PLN-2212 v2: APPROVED by vibe's own handoff with approverId null,
+// whose uncited Out-of-scope line a writer used to skip ISS-9381 and ISS-9522
+// after the orchestrator told it to build both.
+const PLN_2212_SHAPED = [
+  "# Implementation Plan: PRD-727 Responsive Narrow Gridview",
   "",
   "**Scope:**",
-  "- In-scope: ISS-1; ISS-2, ISS-3 and the shared responsive branch.",
-  "- Out-of-scope: ISS-4 prototype recomposition, ISS-5 responsive preference versioning, public documentation, and broad local suites assigned by the operator to automatic CI.",
+  "- In-scope: ISS-12683; ISS-9377, ISS-9380 and ISS-12631; the shared responsive branch.",
+  "- Out-of-scope: ISS-9381 prototype recomposition, ISS-9522 responsive preference versioning, public documentation, and broad local suites assigned by the operator to automatic CI.",
   "",
   "## Acceptance Criteria",
   "",
   "| ID | Criterion | Source |",
   "|----|-----------|--------|",
-  "| AC-001 | The ledger maps every approved behavior to a component, defect, or non-goal. | PRD-7 |",
-  "| AC-004 | The preserved prototype imports the mastered implementation. | PRD-7; ISS-4 is explicitly outside this build scope and remains untouched |",
+  "| AC-001 | The ledger maps every approved behavior to a component, defect, or non-goal. | PRD-727 |",
+  "| AC-004 | The preserved prototype imports the mastered implementation. | PRD-727; ISS-9381 is explicitly outside this build scope and remains untouched |",
   "",
   "## Implementation Notes",
   "",
-  "- Child mapping at handoff: covered are ISS-2 and ISS-3. Not covered and unchanged are ISS-4 and ISS-5.",
+  "- Child mapping at handoff: covered are ISS-9377 and ISS-9380. Not covered and unchanged are ISS-9381 and ISS-9522.",
+  "- The card fallback tests are obsolete and deleted, as PRD-727 retires that fallback.",
   "",
   "## Gaps",
   "",
-  "- [ ] **GAP-001**: ISS-4 prototype recomposition is explicitly outside this build scope.",
-  "- [ ] **GAP-002**: ISS-5 responsive preference versioning is deferred per operator ruling 2026-10-19.",
+  "- [ ] **GAP-001**: ISS-9381 prototype recomposition is explicitly outside this build scope.",
+  "- [ ] **GAP-002**: ISS-9522 responsive preference versioning is deferred per operator ruling 2026-10-19.",
 ].join("\n");
-const planDoc = (extra = {}) => ({ slug: "PLN-1", status: "APPROVED", approverId: null, version: { content: SELF_APPROVED_PLAN, contentTruncated: false }, ...extra });
+const planDoc = (extra = {}) => ({ slug: "PLN-2212", status: "APPROVED", approverId: null, version: { content: PLN_2212_SHAPED, contentTruncated: false }, ...extra });
+const MARKER = "> Self-approved: vibe sets this plan's status and no human approved it.";
 
 test("a plan no human approved cannot exclude work without citing a human source for each exclusion", () => {
-  assert.deepEqual(uncitedExclusions(SELF_APPROVED_PLAN), [
-    "ISS-4 prototype recomposition",
-    "ISS-5 responsive preference versioning",
+  assert.deepEqual(uncitedExclusions(PLN_2212_SHAPED), [
+    "ISS-9381 prototype recomposition",
+    "ISS-9522 responsive preference versioning",
     "public documentation",
-    "ISS-4 is explicitly outside this build scope and remains untouched",
-    "- Child mapping at handoff: covered are ISS-2 and ISS-3. Not covered and unchanged are ISS-4 and ISS-5.",
-    "ISS-4 prototype recomposition is explicitly outside this build scope.",
+    "ISS-9381 is explicitly outside this build scope and remains untouched",
+    "- Child mapping at handoff: covered are ISS-9377 and ISS-9380. Not covered and unchanged are ISS-9381 and ISS-9522.",
+    "ISS-9381 prototype recomposition is explicitly outside this build scope.",
   ]);
   const problems = planProblems(planDoc());
-  assert.equal(problems.length, 6);
-  assert.match(problems[0], /PLN-1 is APPROVED with no human approver, so its exclusion "ISS-4 prototype recomposition" is not a ruling/);
+  assert.equal(problems.length, 7);
+  assert.match(problems[0], /PLN-2212 is APPROVED with no human approver and is not marked self-approved/);
+  assert.match(problems[1], /PLN-2212 is APPROVED with no human approver, so its exclusion "ISS-9381 prototype recomposition" is not a ruling/);
+  assert.equal(planProblems(planDoc(), `${MARKER}\n\n${PLN_2212_SHAPED}`).length, 6, "the marker says it is self-approved; its exclusions still need sources");
   assert.deepEqual(planProblems(planDoc({ approverId: "user-1" })), [], "a plan a named human approved is a source");
+  assert.equal(planProblems(planDoc({ status: "DRAFT" })).length, 6, "a draft is not a ruling either, and needs no marker");
   assert.deepEqual(uncitedExclusions("- Out-of-scope: none\n- Non-goals: ISS-9 per ISS-8 AC-3; offline sync (PRD-4)\n"), []);
   assert.deepEqual(uncitedExclusions("## Out of scope\n\n- the export menu\n- bulk delete, per operator ruling 2026-10-20\n"), ["the export menu"]);
+  assert.deepEqual(uncitedExclusions("- Obsolete: the RTL criterion\n"), ["the RTL criterion"]);
   assert.match(planProblems(planDoc({ version: { content: "truncated", contentTruncated: true } })).join(), /--plan-body/);
 });
 
-test("the command fails on a self-approved plan with an uncited exclusion and passes once each one is cited", (t) => {
+test("the command fails on a PLN-2212-shaped plan and passes once it is marked and each exclusion is cited", (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "rulings-plan-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const doc = path.join(dir, "plan.json");
   writeFileSync(doc, JSON.stringify(planDoc()));
   const refused = spawnSync(process.execPath, [SCRIPT, "--plan", doc], { encoding: "utf8" });
   assert.equal(refused.status, 1);
-  assert.equal(JSON.parse(refused.stdout).problems.length, 6);
+  assert.equal(JSON.parse(refused.stdout).problems.length, 7);
   const body = path.join(dir, "body.md");
-  writeFileSync(body, "- Out-of-scope: ISS-4 per ISS-4 AC-2 (operator ruling 2026-10-21)\n");
+  writeFileSync(body, `${MARKER}\n\n- Out-of-scope: ISS-9381 per ISS-9381 AC-2 (operator ruling 2026-10-21)\n`);
   assert.equal(spawnSync(process.execPath, [SCRIPT, "--plan", doc, "--plan-body", body], { encoding: "utf8" }).status, 0);
 });

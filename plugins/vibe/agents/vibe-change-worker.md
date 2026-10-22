@@ -567,7 +567,8 @@ asks for placement advice and continues the same request; `NEEDS_REVIEW` waits f
 human-only action, never a test or engineering choice. Never stop for
 authorization on in-scope work (repairing tests your change broke, a main
 merge, a push, an in-scope fix): do it and report it afterwards; only a flag
-key, a product question, a destructive action or a credential waits, and
+key, a product question, dropping or narrowing scope, a destructive action
+or a credential waits, and
 `session-questions.mjs ask` refuses any other permission question. `NEEDS_COMMIT` waits
 for the orchestrator; `DONE` means the whole requested feature passed its
 quick checks in the loop, or its checks and reviews at handoff, and always

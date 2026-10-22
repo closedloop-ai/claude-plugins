@@ -96,3 +96,6 @@ def test_a_plan_no_human_approved_is_never_a_scope_ruling() -> None:
     assert "rulings-check.mjs --plan <json> --plan-body <text>" in _text(FLEET / "SKILL.md")
     templates = _text(FLEET / "references" / "templates.md")
     assert templates.count("Inherited scope: trace every exclusion") == 2, "takeover preamble and resume prompt"
+    assert "SELF_APPROVED_MARKER}" in (VIBE / "scripts" / "session-plan.mjs").read_text()
+    assert "starts with the `Self-approved` line" in _text(PLUGIN / "agents" / "vibe-ticket-worker.md")
+    assert "A self-approved plan or a handoff note never counts" in _text(FLEET / "SKILL.md")

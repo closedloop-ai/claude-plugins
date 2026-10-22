@@ -113,6 +113,7 @@ test("permission to do in-scope engineering work is refused; flags, product call
     "Can owners change in bulk?",
     "Which wording should the empty state use?",
     "May I sign in to the preview with your account?",
+    "Should I skip the tests for the two tickets the plan calls out of scope?",
   ];
   for (const question of waits) assert.equal(asksLeaveForInScopeWork(question), false, question);
   assert.equal(askQuestion([], { key: "flag-key", question: waits[0] }).result.ask, true);

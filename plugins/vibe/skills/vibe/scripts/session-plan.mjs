@@ -15,6 +15,12 @@
 // worker): true when it matches the rendered body apart from whitespace, so a
 // whitespace-only edit is not a material change. `empty: true` means the
 // session has no plan yet and nothing is written.
+//
+// The body starts with SELF_APPROVED_MARKER: vibe sets a PLN's status but
+// never its approver, so its APPROVED means built and checked, not a human
+// approval, and none of its exclusions is a ruling unless it cites a human
+// source (handoff's rulings-check.mjs --plan). A writer once skipped two
+// tickets on an uncited Out-of-scope line of such a plan.
 
 import { createHash } from "node:crypto";
 import { chmodSync, lstatSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -27,6 +33,7 @@ import { checkPublishableText } from "./publishable-text.mjs";
 import { git } from "./session-record.mjs";
 
 const PLAN_SEPARATOR = "\n\n---\n\n";
+export const SELF_APPROVED_MARKER = "> Self-approved: vibe sets this plan's status and no human approved it; an exclusion here counts only where it cites a ticket AC, a PRD or an operator ruling.";
 
 /** The session's plans: top-level regular `.md` files of the local plan folder, in request ID order. */
 export function localPlanFiles(worktree) {
@@ -69,7 +76,7 @@ export function renderSessionPlan(worktree, { roots, privateWords }) {
     problems.push(...checked.problems.map((problem) => ({ file, ...problem })));
     return checked.text.trim();
   });
-  return { plans, body: plans.length ? `${bodies.join(PLAN_SEPARATOR)}\n` : "", problems };
+  return { plans, body: plans.length ? `${SELF_APPROVED_MARKER}\n\n${bodies.join(PLAN_SEPARATOR)}\n` : "", problems };
 }
 
 /** The checkout paths that become repo-relative: the session worktree, then the main checkout. */
