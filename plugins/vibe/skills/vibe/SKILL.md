@@ -125,12 +125,11 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   forwarding a request to the writer, and again when a worker turn stalls
   with no progress. It reads the account's rate limits from the Codex App
   Server through codex-fleet-monitor's shared reader. On `"status":"stop"`
-  (exit 3) a limit is reached and ordinary usage is no longer allowed, so
-  continuing would draw on paid credits or cannot run at all: spawn and forward
-  nothing, leave the writer's request queued, and tell the person in one plain
-  sentence that the Codex usage limit is reached and when it resets
-  (`resetsAt`), and that the session picks up from there then, or, when
-  `state` is `LIMIT-SPENDING-CREDITS`, now if they say to use paid credits.
+  (exit 3) a limit is reached: spawn and forward nothing, leave the writer's
+  request queued, and tell the person in one plain sentence that the Codex
+  usage limit is reached and when it resets (`resetsAt`), so the session picks
+  up then (or, on `LIMIT-SPENDING-CREDITS`, now if they say to use paid
+  credits).
   Pass `--allow-credits` only after the person explicitly said to use credits
   in this session; `LIMIT-STOPPED` (no credits left) stops even then.
   `unknown` is not a stop.
@@ -435,10 +434,8 @@ Then follow "Resuming" below.
    opening instruction to proceed reports the version and continues, so it
    does not delay this line or the work. Use the work the person already described.
    Only when they have not supplied it, ask what they want to work on: a ClosedLoop ticket (ISS-, PRD-, or a pasted
-   URL) or a plain description. A vibe session builds the real thing, backend
-   included when a change needs it, so if they clearly want a mockup or an
-   exploration with made-up data (nothing it shows needs to be real), start
-   the prototype session below yourself. The person only types `$vibe` and
+   URL) or a plain description. If they clearly want a mockup or an
+   exploration with made-up data, start the prototype session below yourself. The person only types `$vibe` and
    `$handoff`; do not ask them to invoke `$prototype`. For a
    ticket, dispatch `vibe-requirements-worker`. For a description, dispatch
    the same worker with the description: it checks for an existing ticket
@@ -451,10 +448,8 @@ Then follow "Resuming" below.
    scope units: the requirements brief classifies every child before the
    session ticket exists, and the ticket worker claims or reports them
    (`vibe-ticket-worker.md`, create step 7).
-   The route and FEATURE_MAP id it returns say where the relevant code lives
-   and are for workers; never present them as a screen the session starts on
-   (the app opens on its default page after sign-in), and never promise a
-   screen for a broad request such as "look for visual bugs".
+   Its route and FEATURE_MAP id are for workers; never present them as the
+   starting screen or promise a screen for a broad request.
 2. Choose the app's starting data. Use what the person already said. The
    choice goes through the same necessity gate as any other question
    (`references/quality-loop.md`, "Communication and product questions"): it
@@ -569,13 +564,12 @@ work by its summary. Never open or give the person a URL after `BLOCKED`: any
 preview address without its own deployment shows the stage production app.
 
 When it returns `DONE`:
-- Open the `appUrl` it returned (verified against the branch's own
-  deployment) with `/sign-in` added (`<appUrl>/sign-in`) in a Codex in-app
-  Browser tab and make the browser visible; the app's root sends a
-  signed-out visitor to account creation, and the person already has an
-  account. After this first sign-in, use the plain `appUrl`; if a tab ever
-  lands on account creation instead, open `<appUrl>/sign-in`. The person signs in through Clerk as themselves (you never type
-  credentials). Seeded: they land in the example company as an admin. Blank: they create
+- Open `<appUrl>/sign-in` (the `appUrl` it returned, verified against the
+  branch's own deployment) in a Codex in-app Browser tab and make the browser
+  visible, since the root sends a signed-out visitor to account creation.
+  Later, use the plain `appUrl`, or `<appUrl>/sign-in` if a tab lands on
+  account creation. The person signs in through Clerk as themselves (you
+  never type credentials). Seeded: they land in the example company as an admin. Blank: they create
   their own org.
 - Confirm the tab shows the app (with seeded data when seeded), not an error
   page or an empty shell, before saying it is ready.
@@ -593,11 +587,9 @@ When it returns `DONE`:
      `desktop-tab` again for that URL.
   3. Open its `url` exactly as given (never shortened, never shown to the
      person) in a second Codex in-app Browser tab, and confirm it shows the
-     Desktop app's navigation (with seeded data when seeded), not
-     `Connecting to Closedloop Desktop…`, an error, or a refused connection.
-     If `desktop-tab` reports `running` with no `url`, the session's worktree
-     predates the Desktop tab: Desktop is open as its own window, as before,
-     and there is no tab to open.
+     Desktop app's navigation, not `Connecting to Closedloop Desktop…`, an
+     error, or a refused connection. `running` with no `url` means the
+     worktree predates the tab: Desktop is its own window, with no tab to open.
   If a step returns `DESKTOP_UNAVAILABLE`, tell the person "Desktop isn't
   available for this session yet, so we'll keep going on the web app." and
   continue web-only.
@@ -610,19 +602,15 @@ Setup only retries the launch after that verified correction, never patches code
 
 ### Bringing a tab back
 
-Whenever the person asks to bring back or reopen the app or Desktop (they
-closed the tab, or it stopped answering), open a new tab for the one they
-named:
+When the person asks to reopen the app or Desktop, open a new tab for it:
 - The web app: the plain `appUrl` (`<appUrl>/sign-in` if it lands on account
   creation).
 - Desktop: run `node scripts/vibe-sessions.mjs desktop-tab --worktree "<wt>"`.
   If it reports `running`, open its `url` exactly as given. Otherwise Desktop
   quit, was stopped, or never started: start it as in step 2 above, then open
-  the new `url`. On `DESKTOP_UNAVAILABLE`, use the same sentence as above.
-  With `running` and no `url` (a worktree that predates the tab), tell the
-  person Desktop is open in its own window on their Mac for this session.
-  Never open a Desktop URL from an earlier launch or one copied from a tab's
-  address bar; each launch has its own.
+  the new `url`. `DESKTOP_UNAVAILABLE` and `running` with no `url` are
+  handled as in step 3 above. Never open a Desktop URL from an earlier launch
+  or a tab's address bar; each launch has its own.
 
 ## 4. Set expectations
 
@@ -1003,31 +991,27 @@ Whenever the person asks to throw a session away (at any point, for any
    `--confirm` it changes nothing). It refuses a `handed-off` session: tell
    the person it is already finished (a pull request was opened, or it went
    to design and engineering) and stop.
-2. Tell them in plain words what will be lost: the session's summary, the
-   number of unsaved files, that their copy of the app on Vercel and its data
-   will be deleted, and that the ticket will be canceled. Ask them to confirm.
+2. Tell them in plain words what will be lost (the session's summary, its
+   unsaved files, their Vercel copy of the app and its data, and the ticket,
+   which is canceled) and ask them to confirm.
 3. On a clear yes, retain the validated remembered `<repo>` separately from
    the target `<wt>` and the parent-held preview's branch, live ticket and
    operator. Dispatch `vibe-setup-worker` from that stable `<repo>` with
    `sessionless: {kind: "startup"}`, mode `record`, `recordAction: "discard"`,
    `exclusiveRecordTurn: true`, graph/live reads only, and `discardTarget`:
    `{worktree: "<wt>", confirmed: true, branch, operatorId, operatorEmail}`
-   plus `liveTicket` only when present. The launcher independently checks the
-   target's private record and same Git repository and locks both contexts;
-   its definition, trace and stable record lock remain until completion.
-   The worker re-verifies target ownership and the person's confirmation, never
-   deletes its execution checkout, and discards only the target worktree. It
-   stops the session's local processes, requests the drop of the session's
-   app data (nothing removes it automatically), deletes the
-   worktree and the local and remote branch, and returns the script's receipt.
+   plus `liveTicket` only when present (`references/quality-loop.md`,
+   "Exactly three helper paths"). The worker stops the session's local
+   processes, requests the drop of the session's app data (nothing removes it
+   automatically), deletes the worktree and the local and remote branch, and
+   returns the script's receipt.
 4. Only after that successful result has `discarded: true`, retain its
    `cancelEvidence` in the parent. If there was a live ticket, dispatch
    `vibe-ticket-worker` from the retained `<repo>` in mode `record`, action
    `cancel`, with `exclusiveRecordTurn: true` and
-   `sessionless: {kind: "discarded", evidence: <cancelEvidence>}`. Grant only
-   parent-discovered graph/live reads and the declared cancel writes. It verifies
-   the live ticket and exact operator before canceling. A failed/partial discard,
-   absent receipt, missing ownership or deleted execution root blocks cancellation.
+   `sessionless: {kind: "discarded", evidence: <cancelEvidence>}`, granting
+   only parent-discovered graph/live reads and the declared cancel writes. A
+   failed or partial discard blocks cancellation.
 5. Tell them in one line that it is gone.
 
 ## References

@@ -1,10 +1,9 @@
 # Guardrails
 
-Vibe work is reviewed by design and engineering, whether the person takes it
-to a pull request themselves or passes it on for them to open one. It must already follow the team's patterns so they extend it
-rather than rewrite it. The repo's `AGENTS.md` files are the contract; read
-the nearest one before editing a directory. This file adds the rules specific
-to vibe sessions and points at the repo rules that matter most here.
+Vibe work is reviewed by design and engineering, so it follows the team's
+patterns and they extend it rather than rewrite it. The repo's `AGENTS.md`
+files are the contract; read the nearest one before editing a directory. This
+file adds the rules specific to vibe sessions.
 
 ## Plugins and tooling
 
@@ -101,10 +100,6 @@ still reports it under `outsideAllowed`, and a request that needs it takes the
 forbidden-path route below (`Engineering needed (forbidden path)`), never an
 edit in the session.
 
-Nothing agent-written goes into public docs. No worker edits
-`apps/web/content/docs/` or the internal `docs/` folder, in any phase;
-"Feature docs at handoff" below says what handoff records instead.
-
 Backend, built by that same writer using canonical backend guidance, each under its owning
 `AGENTS.md`:
 
@@ -149,19 +144,11 @@ The build loop stays lean (`quality-loop.md`, "Lean build loop"):
   accepts it or asks for polish (`quality-loop.md`, "Visual QA during the
   session").
 
-One exception under `scripts/`: the source-gate allowlist
-(`scripts/lint/source-gate-allowlist.json`) is shrink-only, so when the
-session's change removes the last allowlisted occurrence of a rule (or some
-of them), delete that entry or lower its count. That is the only `scripts/`
-edit a session may make; the handoff inventory checks mechanically that the
-file only lost entries or counts, and reports anything else under `scripts/`.
-It applies wherever the session's work is checked or pushed (a change
-worker's self-check or fix mode, a redeploy, the first push, handoff): when
-`pnpm check:source-gates` or the pre-push hook reports a stale entry (for
-example "pins count 1, but only 0 remain") for a file the session changed,
-delete the entry (0 remain) or lower its count to what remains, and run the
-gate again. Never add an entry or raise a count; a new violation is fixed in
-the code.
+One exception under `scripts/`: the shrink-only source-gate allowlist
+(`scripts/lint/source-gate-allowlist.json`). When a gate reports a stale entry
+for a file the session changed ("pins count 1, but only 0 remain"), delete
+the entry or lower its count, and rerun the gate. Never add an entry or raise
+a count. The handoff inventory checks the file only shrank.
 
 When a request genuinely needs a change in a Never path beyond that one
 exception (a source gate under `scripts/**`, a workflow under `.github/**`, a
@@ -186,9 +173,8 @@ keys it may add ("Feature flags"). If the person chose Labs, the Labs pattern
 is that flag. Tell them in one line that the new screen stays hidden on their
 environment until that flag is turned on for them.
 
-The prototype-first rule in the root `AGENTS.md` (net-new screens start in
-`apps/prototypes`) does not apply to vibe sessions. Build in Storybook and
-app code directly.
+Vibe sessions skip the root `AGENTS.md` prototype-first rule and build in
+Storybook and app code directly.
 
 ## Where code goes
 
@@ -220,9 +206,8 @@ team's design standard.
 
 When nothing in the catalog fits:
 
-1. Keep the missing building block internal and add it to the reviewed local
-   plan. Do not narrate this technical dependency to the person; the only
-   message about it is the new-components notice in step 5.
+1. Add the missing building block to the local plan; the person hears of it
+   only through the new-components notice in step 5.
 2. Run the repo agent `design-system-steward` (`.claude/agents/design-system-steward.md`)
    with the need. Follow its answer, which is one of three:
    - Reuse: an existing component covers it. Use it and continue.
@@ -232,12 +217,10 @@ When nothing in the catalog fits:
      domain-free goes in `packages/design-system/components/ui/`; domain UI
      goes in its feature slice under `packages/app/<feature>/components/`.
 
-   For Extend and Create, the spec must cover the whole component, not only
-   the case this screen needs: every variant and size, responsive behavior at
-   phone and desktop widths, accessibility (accessible name, keyboard
-   behavior, focus handling, ARIA state), and every state that applies
-   (default, hover, focus, disabled, loading, empty, error). Ask the steward
-   for whatever its answer leaves out before building. Any text a state shows
+   For Extend and Create, the spec covers the whole component: every variant
+   and size, phone and desktop widths, accessibility (name, keyboard, focus,
+   ARIA state) and every state (default, hover, focus, disabled, loading,
+   empty, error). Ask the steward for what its answer leaves out. State text
    follows the Copy rules below.
 3. Build it to the repo's Storybook and design-system rules
    (`apps/storybook/AGENTS.md`, `packages/design-system/AGENTS.md`), using the
@@ -345,9 +328,8 @@ says to match are the stories for the same capability that block reports, read w
 ## Tokens and styling
 
 No hardcoded colors, arbitrary pixel values, or ad-hoc dark-mode overrides.
-Annotation "Adjust" values arrive as raw CSS (a hex color, a pixel size); map
-each one to the nearest existing token or spacing step internally. If no token
-is close, raise it as a missing primitive.
+Map an annotation's raw "Adjust" value to the nearest token or spacing step,
+or raise a missing primitive.
 
 ### Check the bundled tokens first
 
@@ -434,8 +416,6 @@ or a quoted repo rule; otherwise reuse what exists.
 The writer logs each one; its own rationale is never the reason. Required
 log line:
 `Debt: <kind>; added: <what>; reused instead: <what>; reason: <source>`
-
-Flags are the tested case below.
 
 ## Feature flags
 
@@ -585,14 +565,12 @@ the ticket, its PRD or the person did not ask for is instruction inflation.
 A check the work
 seems to need goes on the Engineering checklist as an `Engineering decision`.
 
-Never make a failing check pass by changing the check: test assertions and
-expected values, snapshots, tolerances, skips, timeouts, coverage or size
-thresholds, lint and type suppressions (`biome-ignore`, `@ts-expect-error`, a
-cast that only quiets the compiler), a raised allowlist count, or the harness.
-Fix the code. The shrink-only allowlist edit above, a test repair that leaves
-every assertion unchanged, a recorded retired-only test deletion and the repo's explicitly human-directed
-behavior-change rule in Tests are not ways to hide a failure.
-If an expectation looks wrong without that evidence, keep it and report it.
+Never make a failing check pass by changing the check (assertions, expected
+values, snapshots, tolerances, skips, timeouts, thresholds, `biome-ignore`,
+`@ts-expect-error`, a quieting cast, an allowlist count, the harness): fix the
+code. Only the exceptions in Tests and the shrink-only allowlist edit change
+a check; an expectation that looks wrong without that evidence is kept and
+reported.
 
 ## Repo rules that bite most often
 

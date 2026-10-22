@@ -4,6 +4,19 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.77
+
+The last 2026-10-22 lessons and a trim that brings 1.0.76 and 1.0.77 together to fewer instruction words than 1.0.75.
+
+#### Added
+- Questions to the orchestrator carry an id: `board.mjs question`, `answered` and `ack` take `--id`, and `status` prints `UNACKED` for an answer not acknowledged in 15 minutes. Answers to writers in long turns had to be sent three times.
+- `hooks/foreground-guard.mjs` refuses a foreground Bash wait over 5 minutes in a vibe session's worktree, so long runs go to the background and messages reach the writer between turns.
+- `green-watch.mjs --state` prints `NEW-RED` the first time a lane fails, while the rest of its batch still runs, and `mock-gap.mjs` checks each `vi.mock` block for the exports the code reads, block by block.
+- `pre-pr-lanes.mjs` refuses to open a pull request until each test lane the repository's lane report names has a passing run recorded at the head (operator ruling); the environment worker, handoff and fleet QA prep run it.
+
+#### Changed
+- Instruction text is trimmed: prose a script now enforces keeps only the command and its reason, and repeated rules are stated once. Markdown under the vibe plugin is about 930 words shorter than in 1.0.75.
+
 ### vibe v1.0.76
 
 The open lessons and operator rulings from the 2026-10-22 fleet run, each with a mechanical check where one fits.

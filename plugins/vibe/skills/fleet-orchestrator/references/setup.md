@@ -7,7 +7,7 @@
 
 ## config.env
 
-`<orchDir>/config.env` holds every machine-specific value. codex-fleet-monitor reads the same file; its own keys are documented in that skill. Use absolute paths: a `~` would expand to this machine's home, not the other machine's.
+`<orchDir>/config.env` holds every machine-specific value; codex-fleet-monitor reads the same file and documents its own keys. Use absolute paths, since `~` expands to this machine's home.
 
 ```sh
 WRITERS=<claude, codex or both>
@@ -40,7 +40,7 @@ REMOTE_HEAVY_SLOTS=<concurrent heavy checks that machine can take>
 REMOTE_MAX_LOAD_PER_CORE=1.5
 ```
 
-`fleet.sh` uses `LOCAL_STATE_DIR` (default `<orchDir>/sessions`), `CODEX_MODEL` and `CODEX_EFFORT` as `turn` defaults, the slot counts, and the `REMOTE_*` keys. Sub-agent models are not configured here: vibe's worker-model policy owns them. `MOVE_AT_PERCENT` is for you: compare it with each `codex-usage` line.
+`fleet.sh` uses `LOCAL_STATE_DIR` (default `<orchDir>/sessions`), `CODEX_MODEL` and `CODEX_EFFORT` as `turn` defaults, the slot and load keys, and the `REMOTE_*` keys. Vibe's worker-model policy owns sub-agent models. `MOVE_AT_PERCENT` is yours to compare with each `codex-usage` line.
 
 ## First-run interview
 

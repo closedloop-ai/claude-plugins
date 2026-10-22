@@ -268,23 +268,22 @@ bug-ticket writes require mode `record`, exclusive record ownership and action
 `create` or `progress`; setup never authors the workaround itself. Once the
 session exists, use its strict owned context instead.
 
-Setup's confirmed `discard` action alone keeps `worktree` as the retained
-validated checkout and supplies separate parent-held `discardTarget` facts:
-target worktree, branch, operator, optional live ticket and `confirmed: true`.
-The launcher independently verifies the target private session in that same
-repository, waits for its source mutex, and locks target and stable records.
-The setup worker rechecks ownership/confirmation and deletes only the target.
-Private definitions, traces and the stable lock survive until the turn finishes.
-Never use the target as execution root or claim success after partial deletion.
+Setup's confirmed `discard` action keeps `worktree` as the validated
+checkout and passes the target separately (`discardTarget`: worktree,
+branch, operator, optional live ticket, `confirmed: true`). The launcher
+verifies the target session in the same repository and locks target and
+stable records until the turn finishes; the setup worker rechecks ownership
+and confirmation and deletes only the target. Never use the target as
+execution root or claim success after partial deletion.
 
 After confirmed discard, ticket cancel alone uses a stable existing checkout,
 mode `record`, action `cancel`, exclusive record ownership and
 `sessionless: {kind: "discarded", evidence: {discarded: true, branch,
-liveTicket, operatorId, operatorEmail}}`. Retain those facts from the confirmed
-discard result before its worktree is removed; never invent them or cancel
-without live ticket/operator verification. This does not perform a discard or
-authorize one. Neither path fabricates a session or registers a source writer.
-Writers, prototypes and environment publication have no sessionless fallback.
+liveTicket, operatorId, operatorEmail}}`, facts retained from the confirmed
+discard result, never invented; it verifies the live ticket and operator
+before canceling. Neither path fabricates a session or registers a source
+writer; writers, prototypes and environment publication have no sessionless
+fallback.
 
 Main-sync readiness (`main-sync-inputs`, once, after the Root-owned merge/fix
 commit) runs in the SAME registered actor's exclusive progress turn; its
@@ -553,9 +552,8 @@ never wait") stay as they are.
 ## Acceptance criteria before ready
 
 Nothing is called ready until every acceptance criterion the change touches
-has been checked against the code. For example, a criterion that holds on
-one list view and was never built on a sibling view is not ready. Heavy QA
-still waits for handoff. This section is the rule's one canonical statement; the skills and
+has been checked against the code, on every view it names. Heavy QA still
+waits for handoff. This section is the rule's one canonical statement; the skills and
 workers point at it.
 
 The list lives in the session decision table, not a new artifact: one
@@ -578,8 +576,7 @@ names: each view (a list and a board are two), web and Desktop where their
 adapters differ, and the mechanism its words require (a URL, a saved view, a
 reload, a shared link, Back). A criterion is met only when every surface on
 that line has its own `met` check; a check on one surface never stands in for
-another. For example, a list view that keeps its collapse state in the URL
-does not meet that criterion for a board view that does not.
+another.
 
 After each build or fix and its quick checks, before returning `DONE`, the
 writer checks every unsuperseded criterion the change touches, including
@@ -634,11 +631,8 @@ never counts as met.
 ## Visual references
 
 A reference the person gives reaches the writer as an image it reads, and
-every visual and UX property it shows becomes an acceptance criterion.
-Without this, a session misses properties such as a drop shadow, a larger
-text size or bold type: the writer builds from the orchestrator's text
-description without reading the image, and reference research scoped to
-behaviors never turns those properties into criteria. This
+every visual and UX property it shows becomes an acceptance criterion (a
+drop shadow, a larger text size, bold type). This
 section is the rule's one canonical statement; the skills and workers point
 at it. The build loop stays lean: the reference check below is the one
 exception to its no-automated-visual-QA rule, and it runs only when there is
@@ -808,16 +802,14 @@ engineering note under the existing rules.
 
 The orchestrator never tells the person the result matches the reference,
 or that a visible property is done, when it has seen a gap, in a screenshot
-or anywhere else. A gap it sees goes back to the SAME writer in the same
-request; the ready message names it plainly as not done yet until the writer
-has fixed it.
+or anywhere else: the gap goes back to the SAME writer in the same request
+and the ready message names it as not done yet.
 
 ## Visual QA during the session
 
 This section adds an opt-in visual QA the orchestrator offers during the
-session, in Codex and Claude Code alike. It takes precedence over the lean
-build loop's rule that leaves visual QA to handoff alone; the build loop above
-is otherwise unchanged. This section
+session, in Codex and Claude Code alike; it takes precedence over the lean build loop's rule that leaves
+visual QA to handoff alone. This section
 is the rule's one canonical statement, and handoff's visual QA compares
 against the same basis.
 
@@ -921,9 +913,9 @@ status write so the session's own e2e test passes).
 
 ## Failures already on main
 
-This applies to handoff in Codex and Claude Code alike. A handoff check can fail because it is already red on main, not because of
-anything the session did. `main-sync-validate` settles which, so neither the
-orchestrator nor the writer judges it:
+This applies to handoff in Codex and Claude Code alike. A handoff check can
+fail because it is already red on main. `main-sync-validate` settles which, so neither the orchestrator nor the
+writer judges it:
 
 - When a handoff check fails, the executor runs that same check on the main
   the session captured (the transaction's `mainSha`) in a disposable checkout

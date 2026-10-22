@@ -2,7 +2,7 @@
 
 ## Layout
 
-One directory per program on each machine, in a path that survives a reboot (under your home, never `/tmp` or a session scratchpad). The orchestrating machine's dir is also the codex-fleet-monitor work dir.
+One directory per program on each machine, in a path that survives a reboot. The orchestrating machine's dir is also the codex-fleet-monitor work dir.
 
 ```
 <orchDir>/
@@ -43,18 +43,8 @@ resume log. Each entry records the ruling, date and source: a quoted operator
 message, an AskUserQuestion answer or a ticket, as `- Ruling YYYY-MM-DD
 (operator message|AskUserQuestion|ticket: <source>): <decision>`. Mirror it to every worker host
 after each edit and point every worker and QA-prep prompt at it. Per-ticket
-rulings still go through handoff's `rulings-check.mjs`.
-
-Before an audit, reconcile operator chat and AskUserQuestion results plus guide
-and QA records into this file and prove the reconciliation with handoff's
-`rulings-check.mjs --program`; audit the acceptance criteria and these rulings together.
-
-## Operator attention and review
-
-While the operator is away, keep `attention.md` current with each decision
-needed, the recommendation and what it blocks. `review.md` is the one page for
-findings the operator reviews; use the stable IDs from the operator review
-template and never reuse an ID.
+rulings still go through handoff's `rulings-check.mjs`. The pre-audit
+reconciliation is in SKILL.md, Quality gates and QA.
 
 ## Lessons ledger
 

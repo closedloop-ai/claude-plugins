@@ -25,3 +25,13 @@ def test_vibe_worktrees_refuse_long_foreground_waits() -> None:
     hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]["PreToolUse"]
     commands = [hook["command"] for entry in hooks if entry.get("matcher") == "Bash" for hook in entry["hooks"]]
     assert any("foreground-guard.mjs" in command for command in commands)
+
+
+def test_every_pr_open_step_requires_the_lanes_ci_would_run() -> None:
+    for path in (PLUGIN / "agents" / "vibe-environment-worker.md", PLUGIN / "skills" / "handoff" / "SKILL.md", FLEET / "SKILL.md"):
+        assert "pre-pr-lanes.mjs check" in _text(path), path.name
+
+
+def test_green_watch_triages_each_lane_and_mocks_per_block() -> None:
+    fleet = _text(FLEET / "SKILL.md")
+    assert "`NEW-RED`" in fleet and "mock-gap.mjs" in fleet

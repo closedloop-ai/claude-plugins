@@ -5,7 +5,12 @@
 // the runs for main from the code host, and every lane (job) of every run whose
 // commit contains a program PR's merge commit is reported.
 //
-// Usage: green-watch.mjs --repo <owner/repo> --worktree <a clone with main fetched> --program <merge sha>[,<merge sha>...] [--branch main]
+// Each lane is triaged as it finishes, not when its batch does: a long lane once
+// left two finished reds untriaged. With `--state <file>`, a red lane seen for
+// the first time prints `NEW-RED` instead of `RED`, so every finished red is
+// an event while the rest of its batch still runs.
+//
+// Usage: green-watch.mjs --repo <owner/repo> --worktree <a clone with main fetched> --program <merge sha>[,<merge sha>...] [--branch main] [--state <file>]
 //
 // Prints `RED <workflow> #<run> <sha> <job>` for each failed lane,
 // `PENDING <workflow> #<run> <sha> <job>` for each unfinished one, `NO-RUN <sha>`
@@ -14,13 +19,14 @@
 // git cannot answer. `GREEN_WATCH_GH` overrides the gh binary.
 
 import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 const FAILED = new Set(["failure", "cancelled", "timed_out", "action_required", "startup_failure"]);
 
 /** The report lines for runs whose commit contains a program PR, read fresh each time. */
-export function greenReport({ runs, jobsOf, head, includesProgram }) {
+export function greenReport({ runs, jobsOf, head, includesProgram, seen = new Set() }) {
   const watched = runs.filter((run) => includesProgram(run.headSha));
   const lines = [];
   let red = 0;
@@ -33,7 +39,8 @@ export function greenReport({ runs, jobsOf, head, includesProgram }) {
         lines.push(`PENDING ${where}`);
       } else if (FAILED.has(job.conclusion)) {
         red += 1;
-        lines.push(`RED ${where}`);
+        lines.push(`${seen.has(where) ? "RED" : "NEW-RED"} ${where}`);
+        seen.add(where);
       }
     }
   }
@@ -56,7 +63,7 @@ function isAncestor(worktree, ancestor, sha) {
 }
 
 function main(argv) {
-  const { values } = parseArgs({ args: argv, options: { repo: { type: "string" }, worktree: { type: "string" }, program: { type: "string" }, branch: { type: "string" } } });
+  const { values } = parseArgs({ args: argv, options: { repo: { type: "string" }, worktree: { type: "string" }, program: { type: "string" }, branch: { type: "string" }, state: { type: "string" } } });
   const program = (values.program ?? "").split(",").map((sha) => sha.trim()).filter(Boolean);
   if (!values.repo || !values.worktree || program.length === 0) {
     throw new Error("Usage: green-watch.mjs --repo <owner/repo> --worktree <clone> --program <merge sha>[,...] [--branch main]");
@@ -64,12 +71,15 @@ function main(argv) {
   const branch = values.branch ?? "main";
   const runs = gh(["run", "list", "-R", values.repo, "--branch", branch, "--limit", "100", "--json", "databaseId,headSha,status,conclusion,name,workflowName,event,createdAt"]);
   const head = gh(["api", `repos/${values.repo}/commits/${branch}`]).sha;
+  const seen = new Set(values.state && existsSync(values.state) ? JSON.parse(readFileSync(values.state, "utf8")) : []);
   const { lines, ok } = greenReport({
+    seen,
     runs,
     head,
     jobsOf: (id) => gh(["run", "view", String(id), "-R", values.repo, "--json", "jobs"]).jobs ?? [],
     includesProgram: (sha) => program.some((merge) => isAncestor(values.worktree, merge, sha)),
   });
+  if (values.state) writeFileSync(values.state, `${JSON.stringify([...seen])}\n`);
   process.stdout.write(`${lines.join("\n")}\n`);
   return ok ? 0 : 1;
 }

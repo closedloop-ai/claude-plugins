@@ -41,12 +41,8 @@ below says. Every word the person sees follows
 asked once" says, so nothing settled in the session is asked again. Updates mention only completed features and next work; planning,
 reviews and the checklist stay internal. Every
 worker brief says closedloop-graph is required
-(`../vibe/references/closedloop-graph.md`): each worker that locates,
-changes, or reviews code makes its required calls and ends its result with a
-Graph block. A result without one, or with one that lists no calls, is
-incomplete; dispatch the worker again saying so. A Graph block that says
-`unreachable` keeps that step moving; dispatch `vibe-setup-worker` to restore
-the connection before the next step. Every worker that edits the live ticket
+(`../vibe/references/closedloop-graph.md`): a worker that locates, changes or
+reviews code ends with a Graph block listing its calls; otherwise dispatch the worker again saying so. On `unreachable` the step goes on; dispatch `vibe-setup-worker` to restore the connection before the next one. Every worker that edits the live ticket
 follows `../vibe/references/ticket-template.md`. You and every worker leave
 plugins, plugin marketplaces and plugin caches alone, and never clone the
 plugin's repository to run other tooling (`../vibe/references/guardrails.md`,
@@ -56,23 +52,11 @@ fix and never stops the handoff: it is recorded for engineering and the handoff
 goes on (`../vibe/references/quality-loop.md`, "Failures already on main").
 Only a failure the session caused blocks.
 
-Handoff authors no tests (`../vibe/references/guardrails.md`, "Tests"). It runs the existing affected tests, and when one
-fails the SAME persistent `vibe-change-worker` fixes the session's own code,
-never what the test asserts; it only repairs an existing test or fixture the
-session's change broke ("Repair, don't author"). The tests the session still
-needs go on the live ticket under Missing tests as engineering's scope of
-work. Verification/review helpers are read-only. Preserve test integrity and
-fix implementation defects rather than weakening a check. Never ask the
-person about tests or any other engineering choice: those rules decide it, or
-it goes to engineering.
+Handoff authors no tests (`../vibe/references/guardrails.md`, "Tests"). It runs the existing affected tests; on a failure the SAME persistent `vibe-change-worker` fixes the session's own code, never what the test asserts, and repairs only an existing test or fixture the change broke ("Repair, don't author"). Tests still needed go on the live ticket under Missing tests. Verification/review helpers are read-only, and no check is weakened. Never ask the person about tests or any other engineering choice.
 
 The build loop is lean (`../vibe/references/quality-loop.md`, "Lean build
-loop"), so handoff is where the session's reviews and heavy validation run:
-the guardrails and adversarial reviews, browser E2E, visual QA, logical QA,
-product-contract QA, the existing tests, Storybook footprint and the running app
-checks. Handoff opens a pull request only when the person asks for one ("A
-requested pull request" below), which is also the one exception to the
-no-tests rule.
+loop"), so the guardrails and adversarial reviews, browser E2E, visual QA, logical QA and product-contract QA run here. Handoff opens a pull request only when the person asks for one ("A
+requested pull request" below), the one exception to the no-tests rule.
 
 Harness notes match the `vibe` skill: in Codex invoke as `$handoff` and spawn
 plugin agents from `../../agents/<name>.md` with the file's body as the
@@ -118,9 +102,8 @@ which step 8 asks and routes itself.
 
 A behavior answer resumes the SAME `vibe-change-worker` in fix mode first, with the
 question and the person's answer verbatim. It checks the code against the
-answer on every screen it touches and either reports the code already meets
-it (with the evidence, no file changed) or builds it under its usual rules
-(backend guidance may be read-only; this writer builds the backend too). If
+answer on every screen it touches and reports it already met (with evidence)
+or builds it under its usual rules. If
 it changed any file, re-run before the ticket is finished: step 3 (inventory
 and guardrails), step 4 when a component or story changed, step 5 (checks),
 step 6 on the result (lighter: both reviewers; backend: one
@@ -134,11 +117,10 @@ earlier frozen targets. Handoff reruns use the whole table, not just this answer
 
 A wording answer goes straight to `vibe-ticket-worker`.
 
-Every `vibe-ticket-worker` handoff dispatch carries all the answers so far,
-each with the question, the person's exact words, and how it was handled:
-`built` (with the change worker's one-line summary), `already met` (with its
-evidence), or `wording`. Never send the ticket worker a behavior answer the
-change worker has not handled; it refuses one with `NEEDS_CHANGE`.
+Every `vibe-ticket-worker` handoff dispatch carries all the answers so far:
+the question, the person's exact words, and `built` (with the change worker's
+summary), `already met` (with evidence) or `wording`. A behavior answer the
+change worker has not handled is refused with `NEEDS_CHANGE`.
 
 ## Workers
 
@@ -162,13 +144,11 @@ change worker has not handled; it refuses one with `NEEDS_CHANGE`.
 ## A requested pull request
 
 Without the person's explicit request for a pull request, nothing in vibe or
-handoff writes a test. The person asks in plain words, and plain-language
-intent to take the work through review and merge themselves IS that request
-(`../vibe/references/guardrails.md`, "Tests"):
+handoff writes a test. The person's plain-language intent to take the work through review
+and merge themselves IS that request (`../vibe/references/guardrails.md`, "Tests"):
 "raise a PR", "open a pull request", "I'll get the PR merged", "I'll get it
 merged", "I'll ship it myself", "I want to take it through review", or
-choosing the pull request in step 0's question. Words like these take this
-path wherever they come, during the session or at any step here, and are
+choosing the pull request in step 0's question, whenever it comes; it is
 never answered with a branch to merge.
 
 When the person explicitly asks for a pull request to
@@ -184,11 +164,8 @@ on those tests, then step 7's commit and its push and publication through
 `vibe-environment-worker` in redeploy mode. The pull request does not open
 until those tests pass, their independent review is clean and step 9's gate passes.
 
-From the request on, every brief in this handoff (the writer, the reviewers,
-the verify and environment workers, the ticket worker) carries the
-`pull-request` phase. No brief may say both that the person takes the work to
-a pull request and that no tests are authored: a requested pull request is the
-one case where the SAME writer authors them.
+From the request on, every brief in this handoff carries the `pull-request`
+phase. No brief may say both that the person takes the work to a pull request and that no tests are authored.
 
 On this path the ticket stays with the person: step 8 skips the next-owner
 question and lookup and gives the ticket worker the session's operator as the
@@ -295,12 +272,8 @@ The checklist stops immediately when `blocking.forbiddenPaths` is false
 false: each `diffRules` finding goes to the SAME writer, which fixes it or
 records the change log line it names.
 
-Keep the remaining checklist internal: inventory and shared-owner checks,
-Storybook coverage and footprint, existing tests and the missing tests list,
-validation, integrated review and corrections, browser E2E and the
-repository's QA passes, publication, running app checks
-with control, next-owner lookup, ticket completion and assignment. Do not show
-the person a technical task list, upfront summary or plan to approve. Preserve
+Keep the remaining checklist internal; never show the person a technical
+task list, upfront summary or plan to approve. Preserve
 the lighter versus backend validation and review weights below.
 
 ## 2. Summarize internally
@@ -310,14 +283,11 @@ not committed yet. Dispatch `vibe-handoff-summarizer` with the worktree and
 the inventory path.
 
 The inventory's `localFixes` are managed local workarounds for repository
-bugs, each with its owning ticket. Historical entries may be setup-authored;
-new entries are authored only by the SAME persistent implementation writer. They
-are not the person's work: the inventory already leaves them out of
-`changedFiles` and its guardrail checks, and every worker brief from here on
-(summarizer, guardrails reviewer, change and backend workers, decomposer,
-verify worker, reviewers, environment worker, ticket worker) lists their paths
-as out of scope, not to be described, reviewed, edited, or committed. Keep the
-summary internal for the ticket; it is not a technical approval request.
+bugs, each with its owning ticket; new entries come only from the SAME
+persistent writer. They are not the person's work: the inventory leaves them
+out of `changedFiles` and its checks, and every worker brief from here on lists
+their paths as out of scope (never described, reviewed, edited or committed).
+Keep the summary internal for the ticket.
 Route any correction the person volunteers as "Answers from the person" says: a correction that changes what
 the product does goes to the change worker now; the rest go to the ticket
 worker in step 8.
@@ -809,7 +779,8 @@ worktree, the live ticket slug, the confirmed summary, the final verified
 published commit from step 7, the tests the `pull-request` turn wrote and
 step 5's check results, and the ticket's Production impact and Flag changes
 and gates fields. It opens the pull request on the already pushed branch,
-blocked until the inventory's `blocking.prBody` and `blocking.prEvidence` pass
+blocked until the inventory's `blocking.prBody` and `blocking.prEvidence` and
+`../vibe/scripts/pre-pr-lanes.mjs check` pass
 (`NEEDS_CHANGE`: runs to the verify worker, the rest to the SAME writer), and
 returns its URL; it never enqueues or merges it. On `BLOCKED`, tell the
 person in one plain line that the pull request could not be opened and

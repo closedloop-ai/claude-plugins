@@ -18,7 +18,7 @@ test('every call reports every lane of every run containing a program PR, includ
   assert.deepEqual(first, { lines: ['green-watch: 1 runs, 0 red, 0 pending'], ok: true });
   const later = [run(1, 'merge1'), run(2, 'head2', 'ci-push', '2026-10-22T11:00:00Z'), run(3, 'before')];
   const second = greenReport({ runs: later, head: 'head2', jobsOf: (id) => jobs[id], includesProgram });
-  assert.deepEqual(second.lines, ['RED ci-push #2 head2 a11y', 'green-watch: 2 runs, 1 red, 0 pending']);
+  assert.deepEqual(second.lines, ['NEW-RED ci-push #2 head2 a11y', 'green-watch: 2 runs, 1 red, 0 pending']);
   assert.equal(second.ok, false, 'a red lane in a later push-triggered batch is reported');
   const noRun = greenReport({ runs: later, head: 'head3', jobsOf: (id) => jobs[id], includesProgram });
   assert.match(noRun.lines.join('\n'), /^NO-RUN head3$/m);
@@ -49,5 +49,15 @@ test('the command re-lists runs through gh on every call and reads ancestry from
   writeFileSync(path.join(dir, 'runs.json'), JSON.stringify([run(1, before), run(2, merge), run(3, head, 'ci-push')]));
   const late = call();
   assert.equal(late.status, 1);
-  assert.match(late.stdout, /^RED ci-push #3 \S+ a11y$/m);
+  assert.match(late.stdout, /^NEW-RED ci-push #3 \S+ a11y$/m);
+});
+
+test('a finished red lane is an event while another lane of its batch still runs, once (green watcher sat on reds)', () => {
+  const seen = new Set();
+  const jobs = [job('desktop-e2e', null, 'in_progress'), job('vitest-shard-2', 'failure'), job('lint', 'success')];
+  const report = () => greenReport({ runs: [run(7, 'h7')], head: 'h7', jobsOf: () => jobs, includesProgram: () => true, seen });
+  const first = report();
+  assert.deepEqual(first.lines, ['PENDING ci-batch #7 h7 desktop-e2e', 'NEW-RED ci-batch #7 h7 vitest-shard-2', 'green-watch: 1 runs, 1 red, 1 pending']);
+  assert.equal(first.ok, false, 'the red is reported before the batch finishes');
+  assert.deepEqual(report().lines.filter((line) => line.includes('RED')), ['RED ci-batch #7 h7 vitest-shard-2'], 'the same red is not a new event');
 });

@@ -4,7 +4,7 @@ Fill every `<field>`; delete a line only when it does not apply.
 
 ## Visual request
 
-A Codex session drafts this and files it only with `node scripts/request-visual.mjs <requestsDir> <draft> [--worktree <dir>]`, which names it `<session>-<yyyymmdd-hhmm>-<slug>.md`. The script refuses, naming both SHAs, unless `Pushed head` equals the PR's current head (read with `gh`) and the worktree's HEAD, and refuses when `gh` cannot answer or a field is unfilled. On a remote machine `fleet.sh` ships it to `<REMOTE_STATE_DIR>/.fleet-orchestrator/fleet-orchestrator/scripts/`. A Claude worker does the work and writes its result to `findings/` under the same name; you steer the result back to the session as text.
+A Codex session drafts this and files it only with `node scripts/request-visual.mjs <requestsDir> <draft> [--worktree <dir>]`, which refuses an unpushed or stale head and an unfilled field (on a remote machine `fleet.sh` ships it to `<REMOTE_STATE_DIR>/.fleet-orchestrator/fleet-orchestrator/scripts/`). A Claude worker writes its result to `findings/` under the same name; you steer it back to the session as text.
 
 ```
 # Visual request: <short title>
@@ -21,7 +21,7 @@ Requirement: <ticket, PRD or acceptance criterion this proves>
 
 ## Worker preamble
 
-Prepend to every Claude writer prompt; keep the `Takeover` line only when replacing a dead Codex writer, and the `Inherited scope` line whenever the writer continues another writer's branch. A Codex writer's prompt starts with `$vibe <ticket or PRD>` instead of the first line.
+Prepend to every Claude writer prompt; keep `Takeover` only when replacing a dead Codex writer and `Inherited scope` whenever the writer continues another writer's branch. A Codex writer's prompt starts with `$vibe <ticket or PRD>` instead of the first line.
 
 ```
 Invoke vibe:vibe first: resume the vibe session for <ticket or PRD>, or start one for it, and follow its rules for all of the work below.
@@ -48,7 +48,7 @@ Task:
 
 ## Resume prompt
 
-Starts a Codex writer on work another writer began, or a fresh thread after a move or reboot. Fill it from the resume log and the last writer's report; for a Claude writer use the worker preamble with its `Takeover` line instead. `fleet.sh` refuses a prompt with a `Done:` line and no `Re-verify:` line.
+Starts a Codex writer on work another writer began, or a fresh thread after a move or reboot, filled from the resume log and the last writer's report; a Claude writer gets the worker preamble with its `Takeover` line instead. `fleet.sh` refuses a `Done:` line without `Re-verify:`.
 
 ```
 $vibe resume the vibe session for <ticket or PRD>.
@@ -68,7 +68,7 @@ Artifacts for people (tickets, PR bodies, PR comments, review replies): never na
 
 ## QA guide prompt
 
-Primes a headless Claude session the operator resumes for one PR's human QA. Allow it to read files, run `gh pr view`, use the skill, and write only the plan and the findings file.
+Primes the headless Claude session the operator resumes for one PR's human QA. Allow it to read files, run `gh pr view`, use the skill, and write only the plan and the findings file.
 
 ```
 You are the QA guide for <owner/repo>#<number>. You never edit code.
@@ -82,11 +82,11 @@ Record each result in the plan. Append each failure (checkpoint, what the operat
 
 ## Operator review page
 
-Keep all findings the operator reviews on one page. Assign each a stable,
-never-reused ID: `D###` decision needed, `X###` fixing, `N###` stands,
-`S###` superseded or `R###` ruling. Preserve the ID when its status changes.
-Run `node scripts/review-page-check.mjs <orchDir>/review.md` before showing it;
-a `D###` row also says `checked in code: <file>:<line>`.
+One page for every finding the operator reviews, each with a stable,
+never-reused ID kept through status changes: `D###` decision needed,
+`X###` fixing, `N###` stands, `S###` superseded or `R###` ruling. A `D###`
+row says `checked in code: <file>:<line>`; run
+`node scripts/review-page-check.mjs <orchDir>/review.md` before showing it.
 
 ```
 <ID> | <status> | <PR or surface> | <finding and evidence; for a decision, checked in code: <file>:<line>> | <recommendation or resolution>
@@ -94,7 +94,7 @@ a `D###` row also says `checked in code: <file>:<line>`.
 
 ## Flag approval
 
-Send to the operator before any worker adds a feature flag key; nothing is gated until they approve that key.
+Send before any worker adds a feature flag key; nothing is gated until the operator approves that key.
 
 ```
 Flag approval: <key>
