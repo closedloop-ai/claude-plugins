@@ -9553,6 +9553,41 @@ class TestArbitrateBudget:
         assert len(selected) == 3
         assert plan["budget"]["domain_critic_cap"] == 3
 
+    def test_cap_above_headroom_does_not_drop_required_critics(
+        self, tmp_path: Path,
+    ) -> None:
+        """A cap raised past the budget headroom must defer the surplus,
+        never drop it as a ``budget_exceeded`` coverage gap.
+
+        Those gaps carry ``required: True``, which
+        ``_compute_canonical_verdict`` Rule 1 turns into
+        CHANGES_REQUESTED — so before the clamp, raising the knob flipped
+        the verdict on a run that would otherwise have been APPROVED.
+        Measured: ``--cap 20`` with 25 required rule critics and
+        ``domain_critic_cap: 25`` produced 6 dropped_required and 6
+        required gaps.
+        """
+        from code_review_helpers import _compute_canonical_verdict
+        diff = _make_diff_data(files=["src/app.ts"])
+        _, plan, gaps = _run_arbitrate_budget(
+            tmp_path, self._critic_plan(25), diff, cap=20, depth="standard",
+            settings={"domain_critic_cap": 25},
+        )
+        assert plan["dropped_required"] == []
+        assert gaps["findings"] == []
+        assert _compute_canonical_verdict([], gaps["findings"])[0] == "APPROVED"
+        # The surplus is still accounted for, under the cap's own reason.
+        capped = [
+            e for e in plan["deferred_for_budget"]
+            if e.get("defer_reason") == "domain_critic_cap"
+        ]
+        bha = plan["budget"]["bha_partitions"]
+        headroom = 20 - bha  # this plan has no non-critic required entries
+        assert len(capped) == 25 - headroom
+        # The plan reports the cap that actually governed selection, not
+        # the unreachable 25 the operator asked for.
+        assert plan["budget"]["domain_critic_cap"] == headroom
+
     def test_invalid_cap_returns_error(self, tmp_path: Path) -> None:
         diff = _make_diff_data(files=["src/app.ts"])
         plan_in = {"required": [], "best_effort": []}
@@ -9572,6 +9607,180 @@ class TestArbitrateBudget:
         )
         rc = cmd_arbitrate_budget(ns)
         assert rc == 1
+
+
+class TestDomainCriticCapTrustBoundary:
+    """ISS-5122: where the domain-critic cap may legitimately come from.
+
+    Every test here drives ``arbitrate-budget`` through the REAL argparse
+    wiring (``_register_subparsers`` → ``parse_args`` → ``args.func``) with
+    no ``--settings`` flag, because that is how the production stage runs
+    it. The sibling ``TestArbitrateBudget`` cases hand-build a namespace
+    and always pass ``--settings``, so they cannot see a regression in the
+    parser default or in the default-path resolution this class covers.
+    """
+
+    _CRITICS = 5
+    _SETTINGS_REL = Path(".closedloop-ai/settings/code-review.json")
+
+    def _seed(
+        self, repo: Path, *, scope: dict[str, Any] | None = None,
+    ) -> Path:
+        """Seed a cr_dir inside *repo* with ``self._CRITICS`` rule critics."""
+        from code_review_helpers import _write_coverage_section
+        cr_dir = repo / ".cr"
+        cr_dir.mkdir(parents=True, exist_ok=True)
+        _write_coverage_section(cr_dir, "final", {
+            "required": [
+                {"reviewer": f"domain-{i}", "priority": 1, "source": "rule"}
+                for i in range(self._CRITICS)
+            ],
+            "best_effort": [],
+        })
+        dd = cr_dir / "diff_data.json"
+        dd.write_text(json.dumps(_make_diff_data(files=["src/app.ts"])))
+        if scope is not None:
+            (cr_dir / "scope.json").write_text(json.dumps(scope))
+        return cr_dir
+
+    def _write_settings(self, repo: Path, cap: int) -> None:
+        path = repo / self._SETTINGS_REL
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"domain_critic_cap": cap}))
+
+    def _run(self, cr_dir: Path) -> dict[str, Any]:
+        """Invoke the stage exactly as ``main()`` does, minus ``--settings``."""
+        import io
+        import sys as _sys
+
+        from code_review_helpers import _read_coverage_state, _register_subparsers
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers(dest="command", required=True)
+        _register_subparsers(sub)
+        args = parser.parse_args([
+            "arbitrate-budget",
+            "--cr-dir", str(cr_dir),
+            "--diff-data", str(cr_dir / "diff_data.json"),
+            "--cap", "20",
+            "--depth", "standard",
+        ])
+        # Proves the parser default is what feeds the default-path branch;
+        # if a future change makes --settings required or non-None by
+        # default, the production path stops being the one under test.
+        assert args.settings is None
+        assert args.domain_critic_cap is None
+        old = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            assert args.func(args) == 0
+        finally:
+            _sys.stdout = old
+        plan = _read_coverage_state(cr_dir).get("final")
+        assert isinstance(plan, dict)
+        return plan
+
+    @staticmethod
+    def _selected(plan: dict[str, Any]) -> int:
+        return len([r for r in plan["required"] if r.get("source") == "rule"])
+
+    def _init_repo(self, repo: Path, *, base_cap: int | None) -> None:
+        """A repo whose ``origin/main`` is the trusted base of a PR branch.
+
+        When *base_cap* is None, ``main`` carries no settings file at all —
+        the shape that matters most, since that is every repo that has
+        never tuned the cap.
+        """
+        repo.mkdir(parents=True, exist_ok=True)
+        git_fixture(repo, "init", "--quiet", "-b", "main")
+        if base_cap is not None:
+            self._write_settings(repo, base_cap)
+        _commit_file(repo, "base.txt", "base\n")
+        git_fixture(repo, "update-ref", "refs/remotes/origin/main", "main")
+        git_fixture(repo, "checkout", "--quiet", "-b", "contributor-branch")
+
+    # --- off a PR: the working tree is the operator's own checkout -------
+
+    def test_default_path_settings_raise_the_cap_on_a_local_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The operator-tunable knob reached through the production path.
+
+        No ``--settings``, no PR: the stage must find
+        ``.closedloop-ai/settings/code-review.json`` by its own default
+        and honor it.
+        """
+        monkeypatch.chdir(tmp_path)
+        self._write_settings(tmp_path, 5)
+        plan = self._run(self._seed(tmp_path))
+        assert self._selected(plan) == 5
+        assert plan["budget"]["domain_critic_cap"] == 5
+
+    def test_default_path_zero_cap_is_honored_on_a_local_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """0 is the kill switch, and it must survive the default-path
+        resolution rather than being read as "absent, use 3"."""
+        monkeypatch.chdir(tmp_path)
+        self._write_settings(tmp_path, 0)
+        plan = self._run(self._seed(tmp_path))
+        assert self._selected(plan) == 0
+        assert plan["budget"]["domain_critic_cap"] == 0
+
+    # --- on a PR: the working tree is contributor-authored --------------
+
+    def test_head_only_settings_cannot_suppress_the_fleet(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """THE trust-boundary case: a settings file that exists only on the
+        reviewed head must not change that PR's fleet.
+
+        Otherwise the author of the diff under review commits
+        ``domain_critic_cap: 0`` alongside it and every rule/critic
+        reviewer silently stops spawning — silently because cap drops
+        deliberately emit no coverage gap, so nothing downstream reports
+        the missing coverage.
+        """
+        repo = tmp_path / "repo"
+        self._init_repo(repo, base_cap=None)
+        monkeypatch.chdir(repo)
+        self._write_settings(repo, 0)  # uncommitted: head-only
+        cr_dir = self._seed(repo, scope={"pr_number": 42, "base_ref": "main"})
+
+        # Guard the fixture: the file really is there to be read, so a pass
+        # below is the trust check and not a missing-file no-op.
+        assert (repo / self._SETTINGS_REL).exists()
+
+        plan = self._run(cr_dir)
+        assert self._selected(plan) == 3
+        assert plan["budget"]["domain_critic_cap"] == 3
+
+    def test_head_only_settings_cannot_amplify_the_fleet(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The same boundary in the other direction: a contributor must not
+        be able to inflate review cost on their own PR either."""
+        repo = tmp_path / "repo"
+        self._init_repo(repo, base_cap=None)
+        monkeypatch.chdir(repo)
+        self._write_settings(repo, self._CRITICS)
+        cr_dir = self._seed(repo, scope={"pr_number": 42, "base_ref": "main"})
+        plan = self._run(cr_dir)
+        assert self._selected(plan) == 3
+
+    def test_base_committed_settings_are_honored_on_a_pr(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The knob is not merely disabled under review: a cap the operator
+        committed on the base ref still applies, and still wins over the
+        head's copy of the same file."""
+        repo = tmp_path / "repo"
+        self._init_repo(repo, base_cap=5)
+        monkeypatch.chdir(repo)
+        self._write_settings(repo, 0)  # head tries to override to the kill switch
+        cr_dir = self._seed(repo, scope={"pr_number": 42, "base_ref": "main"})
+        plan = self._run(cr_dir)
+        assert self._selected(plan) == 5
+        assert plan["budget"]["domain_critic_cap"] == 5
 
 
 class TestArbitrateBudgetVerdict:

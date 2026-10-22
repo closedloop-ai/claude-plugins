@@ -3848,13 +3848,23 @@ def _load_code_review_settings(path: Path | None) -> dict[str, Any]:
     fall back to the default — the file is operator-authored and should
     not crash the pipeline on a typo.
     """
+    return _code_review_settings_from_data(_read_optional_json(path, None) if path else None)
+
+
+def _code_review_settings_from_data(data: Any) -> dict[str, Any]:
+    """Validate an already-read ``code-review.json`` object.
+
+    Split from :func:`_load_code_review_settings` so a blob read from a git
+    ref (:func:`_load_code_review_settings_at_ref`) gets the identical
+    per-key validation rather than a second, driftable copy of it.
+    """
     defaults: dict[str, Any] = {
         "bha_unified_threshold_loc": BHA_UNIFIED_THRESHOLD_LOC,
         "out_of_hunk_confidence_floor": OUT_OF_HUNK_CONFIDENCE_FLOOR,
         "domain_critic_cap": DOMAIN_CRITIC_CAP,
     }
-    data, out = _load_optional_settings_dict(path, defaults)
-    if data is None:
+    _, out = _load_optional_settings_dict(None, defaults)
+    if not isinstance(data, dict):
         return out
     raw_threshold = data.get("bha_unified_threshold_loc")
     if (
@@ -3882,6 +3892,45 @@ def _load_code_review_settings(path: Path | None) -> dict[str, Any]:
     ):
         out["domain_critic_cap"] = raw_critic_cap
     return out
+
+
+def _trusted_settings_ref(cr_dir: Path) -> str | None:
+    """Return the git ref whose ``code-review.json`` blob is trusted, or None.
+
+    The plugin is trusted; the tree it reviews is not. On a PR review the
+    working tree is contributor-authored content, so a settings file
+    committed on the head may have been written by the author of the very
+    diff under review. ``origin/<base_ref>`` is the merge target — already
+    reviewed and operator-controlled — so it is the trust anchor for any
+    setting that steers the reviewer fleet.
+
+    None means "no PR under review": a local run's working tree IS the
+    operator's own checkout, so there is nothing to anchor against.
+    """
+    scope = _read_optional_json(cr_dir / "scope.json", {})
+    if not isinstance(scope, dict) or not scope.get("pr_number"):
+        return None
+    base_ref = str(scope.get("base_ref") or "")
+    return f"origin/{base_ref}" if base_ref else None
+
+
+def _load_code_review_settings_at_ref(ref: str, rel_path: Path) -> dict[str, Any]:
+    """Read ``code-review.json`` from a git ref. Unreadable → built-in defaults.
+
+    Falls back to the built-in defaults rather than the working-tree file:
+    a missing blob on the base ref means the operator never committed the
+    setting, and reading the head copy instead is the exposure
+    :func:`_trusted_settings_ref` exists to close.
+    """
+    try:
+        blob = _run_git(["show", f"{ref}:{rel_path.as_posix()}"])
+    except (subprocess.CalledProcessError, OSError):
+        return _code_review_settings_from_data(None)
+    try:
+        data = json.loads(blob)
+    except json.JSONDecodeError:
+        return _code_review_settings_from_data(None)
+    return _code_review_settings_from_data(data if isinstance(data, dict) else None)
 
 
 def _load_verification_gates(path: Path | None) -> dict[str, list[str]]:
@@ -12882,12 +12931,22 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         print(err, file=sys.stderr)
         return 1
 
-    # Domain-critic cap precedence, mirroring bha_unified_threshold_loc:
-    #   1. ``--domain-critic-cap`` — explicit namespace override (tests,
-    #      one-off runs).
-    #   2. ``.closedloop-ai/settings/code-review.json`` →
-    #      ``domain_critic_cap`` — operator-tunable settings file.
-    #   3. :data:`DOMAIN_CRITIC_CAP` (3) — built-in default.
+    # Domain-critic cap precedence. The cap decides which reviewers run, so
+    # unlike bha_unified_threshold_loc its source has to be trustworthy:
+    #   1. ``--domain-critic-cap`` — passed on the stage's own command line
+    #      by the plugin (tests, one-off operator runs), never by the tree
+    #      under review.
+    #   2. An explicit ``--settings`` path — same provenance as (1).
+    #   3. On a PR review, ``domain_critic_cap`` as committed on
+    #      ``origin/<base_ref>``. The head tree is contributor-authored:
+    #      honoring a settings file from it would let the author of the
+    #      diff under review set ``domain_critic_cap: 0`` and silently
+    #      suppress every rule/critic reviewer (cap drops emit no
+    #      coverage gap), or raise it to amplify review cost.
+    #   4. Off a PR, the working-tree
+    #      ``.closedloop-ai/settings/code-review.json`` — a local run's
+    #      checkout is the operator's own.
+    #   5. :data:`DOMAIN_CRITIC_CAP` (3) — built-in default.
     #
     # Operator-tunable because the cap drops by (priority asc, reviewer
     # asc): a repo whose critic-gates.json uses the legacy moduleCritics[]
@@ -12896,17 +12955,20 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     # proposed FOR the diff. Raising the cap is the blunt fix; assigning
     # explicit priorities on canonical coverage[] rules is the precise one.
     cap_override = getattr(args, "domain_critic_cap", None)
+    settings_arg = getattr(args, "settings", None)
     if cap_override is not None:
         critic_cap = int(cap_override)
     else:
-        cap_settings_path = Path(
-            getattr(args, "settings", None) or _CODE_REVIEW_SETTINGS_DEFAULT_PATH,
-        )
-        critic_cap = int(
-            _load_code_review_settings(cap_settings_path).get(
-                "domain_critic_cap", DOMAIN_CRITIC_CAP,
-            ),
-        )
+        trusted_ref = None if settings_arg else _trusted_settings_ref(cr_dir)
+        if trusted_ref is not None:
+            cap_settings = _load_code_review_settings_at_ref(
+                trusted_ref, _CODE_REVIEW_SETTINGS_DEFAULT_PATH,
+            )
+        else:
+            cap_settings = _load_code_review_settings(
+                Path(settings_arg or _CODE_REVIEW_SETTINGS_DEFAULT_PATH),
+            )
+        critic_cap = int(cap_settings.get("domain_critic_cap", DOMAIN_CRITIC_CAP))
     if critic_cap < 0:
         print(
             f"Error: domain_critic_cap must be >= 0, got {critic_cap}",
@@ -13072,31 +13134,41 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     # required domain critics on a single PR. The BLOCKING branch already does
     # the right thing (deferred, no gap); this matches that behavior on
     # the PASS path.
+    # The cap is a soft budget, so it cannot exceed the capacity actually
+    # left after the reservations that outrank it (BHA partitions and the
+    # non-critic required core). Past that headroom the surplus critics
+    # would be selected here and then dropped by Step 3 below as
+    # ``budget_exceeded`` coverage gaps carrying ``required: True`` —
+    # which ``_compute_canonical_verdict`` Rule 1 turns into
+    # CHANGES_REQUESTED. Measured on the 3-critic default that was
+    # unreachable; once the cap became operator-tunable, raising it past
+    # the headroom silently flipped a run that would have been APPROVED.
+    # Clamping keeps the surplus in ``deferred_for_budget`` under
+    # ``defer_reason: "domain_critic_cap"``, which is how every other cap
+    # drop already reports itself.
+    critic_cap_headroom = max(0, cap - bha_target - len(required_non_critic))
+    effective_critic_cap = min(critic_cap, critic_cap_headroom)
     sel_req_critics, sel_be_critics, def_req_critics, def_be_critics = (
         _select_domain_critics(
-            required_critics_in, best_effort_critics_in, critic_cap,
+            required_critics_in, best_effort_critics_in, effective_critic_cap,
         )
     )
 
     # PLN-807 Phase 4 Step 3: required overflow against the reduced
-    # available_for_critics. Required-bucket critics already capped at
-    # DOMAIN_CRITIC_CAP, so this branch normally doesn't fire — but it
-    # remains the safety net for the cap=tiny edge case (a smaller
-    # ``--cap`` override could leave less than required_non_critic +
-    # bha_target slots). Drop selected critics FIRST, then non-critic
-    # required (which includes core reviewers — operators shouldn't
-    # lose BHB/auditor to budget overflow before they lose a
-    # non-essential critic).
+    # available_for_critics. The clamp above leaves no room for a critic
+    # to overflow, so only the non-critic tail can land here, and only
+    # when ``--cap`` is smaller than bha_target + the required core
+    # itself. Core reviewers are dropped last on purpose: operators
+    # shouldn't lose BHB/auditor to budget overflow.
     required = required_non_critic + sel_req_critics
     required_overflow = len(required) + bha_target - cap
     if required_overflow > 0:
-        # Drop selected required critics first.
-        drop_critics_n = min(required_overflow, len(sel_req_critics))
-        if drop_critics_n:
-            dropped_critics = sel_req_critics[-drop_critics_n:]
-            sel_req_critics = sel_req_critics[:-drop_critics_n]
+        drop_core_n = min(required_overflow, len(required_non_critic))
+        if drop_core_n:
+            dropped_core = required_non_critic[-drop_core_n:]
+            required_non_critic = required_non_critic[:-drop_core_n]
             for idx, entry in enumerate(
-                dropped_critics, start=len(coverage_gaps),
+                dropped_core, start=len(coverage_gaps),
             ):
                 coverage_gaps.append(
                     _make_coverage_gap_finding(
@@ -13106,26 +13178,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
                         emitted_at=now_iso,
                     ),
                 )
-            dropped_required.extend(dropped_critics)
-            required_overflow -= drop_critics_n
-        # If still over, drop non-critic required tail (rare).
-        if required_overflow > 0:
-            drop_core_n = min(required_overflow, len(required_non_critic))
-            if drop_core_n:
-                dropped_core = required_non_critic[-drop_core_n:]
-                required_non_critic = required_non_critic[:-drop_core_n]
-                for idx, entry in enumerate(
-                    dropped_core, start=len(coverage_gaps),
-                ):
-                    coverage_gaps.append(
-                        _make_coverage_gap_finding(
-                            entry,
-                            reason="budget_exceeded",
-                            index=idx,
-                            emitted_at=now_iso,
-                        ),
-                    )
-                dropped_required.extend(dropped_core)
+            dropped_required.extend(dropped_core)
         required = required_non_critic + sel_req_critics
 
     # PLN-807 Phase 4 Step 4: best-effort prune against remaining cap.
@@ -13189,7 +13242,10 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
             "required_count": len(required),
             "best_effort_count": len(best_effort_final),
             "bha_partitions": bha_partitions,
-            "domain_critic_cap": critic_cap,
+            # The cap that actually governed selection, i.e. post-clamp.
+            # A requested cap above the headroom reads back as the
+            # headroom so the plan doesn't claim a budget it never had.
+            "domain_critic_cap": effective_critic_cap,
             "domain_critic_cap_fired": bool(def_req_critics or def_be_critics),
         },
         "dropped_required": dropped_required,
