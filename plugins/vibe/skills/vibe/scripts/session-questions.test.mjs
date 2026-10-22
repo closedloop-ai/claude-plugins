@@ -129,7 +129,7 @@ test("a question carries a default and a deadline, except flag, copy, destructiv
   const { result } = askQuestion([], { key: "board-sort", question: sort, fallback: "sort by rank, as the shipped list does", deadlineMinutes: "30", now: "2026-10-22T05:45:00.000Z" });
   assert.equal(result.deadlineAt, "2026-10-22T06:15:00.000Z");
   assert.equal(result.ifNoAnswer, "If no answer by 2026-10-22T06:15:00.000Z: sort by rank, as the shipped list does");
-  for (const question of ["May I add the new feature flag key for this screen?", "Which wording should the empty state use?", "Should I delete the old branch?", "Should I skip the two tickets?"]) {
+  for (const question of ["May I add the new feature flag key for this screen?", "Add the new feature switch `branches-list-v2`?", "Which wording should the empty state use?", "Should I delete the old branch?", "Should I skip the two tickets?"]) {
     assert.equal(waitsForPerson(question), true, question);
     const waiting = askQuestion([], { key: "waits", question }).result;
     assert.equal(waiting.waitsForPerson, true);

@@ -44,8 +44,8 @@ const KEY_PATTERN = /^[a-z0-9]+(?:[-:][a-z0-9]+)*$/;
 const MAX_TEXT = 4000;
 const ASKS_LEAVE = /\b(?:may|can|shall|should) i\b|\b(?:ok|okay|fine) (?:for me )?to\b|\bpermission\b|\bauthori[sz](?:e|ation)\b|\bapprov(?:e|al)\b|\bgo-?ahead\b/i;
 const IN_SCOPE_WORK = /\b(?:tests?|fixtures?|specs?|snapshots?|merge (?:main|the base)|main merge|rebase|push|commit|rerun|re-run|lint|typecheck|fix(?:es)?|repair)\b/i;
-const HUMAN_ONLY = /\b(?:flags?|feature flag|credentials?|password|token|sign(?:ed)?[ -]?in|log ?in|delete|discard|destroy|drop|force|wording|copy|say|says|label|product|skip|narrow|defer|exclude|descope|obsolete|out of scope)\b/i;
-const WAITS_FOR_PERSON = /\b(?:flags?|feature flag|credentials?|password|token|sign(?:ed)?[ -]?in|log ?in|delete|discard|destroy|drop|force|wording|copy|say|says|label|skip|narrow|defer|exclude|descope|obsolete|out of scope)\b/i;
+const HUMAN_ONLY = /\b(?:flags?|feature flag|switch(?:es)?|toggles?|credentials?|password|token|sign(?:ed)?[ -]?in|log ?in|delete|discard|destroy|drop|force|wording|copy|say|says|label|product|skip|narrow|defer|exclude|descope|obsolete|out of scope)\b/i;
+const WAITS_FOR_PERSON = /\b(?:flags?|feature flag|switch(?:es)?|toggles?|credentials?|password|token|sign(?:ed)?[ -]?in|log ?in|delete|discard|destroy|drop|force|wording|copy|say|says|label|skip|narrow|defer|exclude|descope|obsolete|out of scope)\b/i;
 const MAX_DEADLINE_MINUTES = 24 * 60;
 
 /** In-scope engineering work asked as permission; it never waits for the person. */

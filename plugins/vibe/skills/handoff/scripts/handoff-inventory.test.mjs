@@ -359,12 +359,13 @@ test("frontend-only work reports no backend change", (t) => {
 });
 
 test("backend work is allowed and reported for the full checks", (t) => {
-  const { home, worktree } = setup(t, "backend");
+  const { home, worktree } = setup(t, "backend", { "packages/database/__tests__/migrations.test.ts": "test();\n" });
   write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
   write(worktree, "apps/api/app/tags/route.ts", "export const GET = 1;\n");
   write(worktree, "packages/api/src/types/tag.ts", "type Tag = string;\n");
   write(worktree, "packages/database/prisma/migrations/1_tags/migration.sql", "select 1;\n");
   write(worktree, "apps/desktop/src/main/tags.ts", "const tags = 1;\n");
+  writeFileSync(path.join(git(worktree, ["rev-parse", "--absolute-git-dir"], home), "vibe-changes.md"), "Migration test: 1_tags: packages/database/__tests__/migrations.test.ts\n");
 
   const result = runNode(INVENTORY, ["--worktree", worktree], home);
   assert.equal(result.status, 0, JSON.stringify(result.json));

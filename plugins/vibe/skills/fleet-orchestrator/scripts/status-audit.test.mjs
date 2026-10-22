@@ -10,7 +10,7 @@ import { auditStatuses, childFinding } from './status-audit.mjs';
 const SCRIPT = fileURLToPath(new URL('./status-audit.mjs', import.meta.url));
 const merged = { url: 'https://example.test/pull/1', state: 'MERGED' };
 const open = { url: 'https://example.test/pull/2', state: 'OPEN' };
-const body = '- Acceptance criteria:\n  - [x] Rows reorder\n  - [ ] Keyboard reorder; Follow-up: ISS-12001\n';
+const body = '- Acceptance criteria:\n  - [x] Rows reorder\n  - [ ] Keyboard reorder; Follow-up: ABC-1\n';
 
 test('a merged pull request means DONE, an open one or a writer means in progress or review, and neither means unowned', () => {
   assert.deepEqual(childFinding({ slug: 'a', status: 'IN_REVIEW', pullRequests: [merged], body }), { kind: 'MISMATCH', expected: 'DONE', evidence: 'https://example.test/pull/1 merged' });

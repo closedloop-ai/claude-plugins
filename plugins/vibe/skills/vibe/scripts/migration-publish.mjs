@@ -8,7 +8,9 @@
 // per-row work needs a measured scale test, both recorded in the change log:
 //   Migration test: <migration id>: <test file>
 //   Scale test: <migration id>: <test file>: <n> rows, <time per write or total>
-// The test file must exist at HEAD. The migration id is its folder name
+// The test file must exist at HEAD; an existing test that applies every
+// migration counts, since a vibe session writes no tests unless asked for a
+// pull request. The migration id is its folder name
 // (`migrations/<id>/migration.sql`) or its file name without `.sql`.
 //
 // Usage: migration-publish.mjs --worktree <path> --since <the last pushed commit, or the session's base commit> [--change-log <file>]

@@ -31,7 +31,7 @@ const CHECKED = /^\s*(?:[-*]\s+)?Checked:\s*(\S+)/m;
 const FLAG_ROW = /^\s*(?:[-*]\s+`[^`]+`|\|\s*`[^`]+`\s*\|)/m;
 const NO_FLAGS = /^\s*(?:[-*]\s+)?No flags:\s*\S/m;
 const KINDS = new Set(["plan", "prd", "ticket"]);
-const FOLLOW_UP = /\bFollow-up:\s*(?:ISS|PRD|PLN|FEA)-\d+/;
+const FOLLOW_UP = /\bFollow-up:\s*[A-Z][A-Z0-9]+-\d+/;
 const EXCLUDED = /\bExcluded:\s*(?:operator ruling|[A-Z][\w'.-]+(?:\s+[A-Z][\w'.-]+)+),\s*\d{4}-\d{2}-\d{2}/;
 const FINISHED = new Set(["DONE", "CANCELED"]);
 
