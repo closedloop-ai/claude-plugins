@@ -17,12 +17,23 @@ own words; after visual QA they also say what it found and changed ("Visual QA
 during the session").
 Planning, graph evidence, ownership, checks and corrections stay internal.
 
-Before any product question, research `ticket_detail`, `fts_search` and
-`search_memory_facts` for the relevant request and prior decisions. Fetch
-material decisions/comments through live ClosedLoop and verify current source
-when relevant. An empty graph result is not proof that nobody answered it.
-Apply settled decisions; never ask them again. Return the sources checked and
-why an unresolved answer is absolutely necessary.
+Before any product question, use this order and stop as soon as it settles the
+answer:
+
+1. Current code and data model, for what is physically possible.
+2. The ticket's acceptance criteria, its PRD and sourced rulings.
+3. `ticket_detail`, `fts_search`, `search_memory_facts` and material decisions
+   or comments fetched through live ClosedLoop; an empty graph result proves
+   nothing.
+4. The product owner's recorded direction.
+5. The approved prototype.
+6. Live Asana in the operator's signed-in Chrome, run by whichever actor has
+   the browser; never a public help center or documentation page.
+
+Apply settled decisions and never ask them again. Only after all six fail,
+ask one absolutely necessary question with the checked sources and a
+recommendation. Under fleet orchestration a writer returns `NEEDS_PERSON` to
+the orchestrator, which finishes the remaining steps before asking.
 
 A ticket's or plan's Decisions section is a record, not a ruling. Text the
 session wrote (its live ticket, PLN, plan, table, change log) is never a
@@ -49,33 +60,23 @@ and so does each flag key's approval (`guardrails.md`, "Feature flags").
 
 ### Precedent before asking
 
-Walk a fine line on product questions during a session. A question is asked only when neither the graph research above nor
-another app's precedent answers it. When the graph and live decisions do not
-settle how the product should behave in a situation (someone cancels a GitHub
-authorization halfway, a list is empty, an action is undone), what a mature
-app does in the same situation is the default answer. The order is Asana, the
-reference app the operator named; then, when Asana does not have the
-situation, another established app with the same flow (for example Linear,
-or GitHub's own authorization screens); then, when no browser can look, those
-apps' public help centers, Asana's first. Only when none of these settles it
-does the question go to the person, under the gate above.
+The ordered list above is the only product-question research order. When the
+first five sources do not settle how the product should behave, live Asana is
+the precedent. Public help centers, documentation and search results are not a
+substitute for observing the interaction in the operator's signed-in Chrome.
 
 `scripts/precedent-check.mjs` holds the research brief and its safety rules
 once, for both harnesses:
 
-- Claude Code: a session's Claude in Chrome tools are bound when it starts,
-  so the orchestrator runs `node scripts/precedent-check.mjs run --question
+- Claude Code: whichever actor has the operator's signed-in Chrome runs
+  `node scripts/precedent-check.mjs run --question
   "<question>" --situation "<what to reproduce>"` in the background. It
-  starts a separate headless `claude -p --chrome` limited to the Chrome
-  tools, web search and fetch, with the brief on stdin, and that run falls
-  back to the help centers itself when Chrome is not available.
+  starts a separate headless `claude -p --chrome` limited to the Chrome tools
+  with the brief on stdin.
 - Codex: no computer use (`guardrails.md`, "Processes and state"). The
-  orchestrator runs the same `run` command, so a headless Claude does the
-  looking, never the in-app Browser or the Computer Use plugin. Without a
-  signed-in `claude` CLI, `node scripts/precedent-check.mjs prompt
-  --question "<question>" --situation "<what to reproduce>"` prints the
-  brief for read-only `vibe-requirements-worker` in precedent mode, which
-  works from the help centers.
+  orchestrator runs the same `run` command through an actor with the signed-in
+  browser. Without one, the worker returns `NEEDS_PERSON` to the orchestrator;
+  nobody falls back to public material.
 
 The brief's rules bind every look: the account already signed in is used,
 and nobody signs in, creates an account or types a credential. Nothing that
@@ -86,22 +87,21 @@ the end and confirmed gone in the report. A flow that would connect an app,
 invite or notify someone, share, pay or change a setting goes only as far as
 its confirmation step and is canceled there. Every state is verified (reload
 and look again; a hover can look like a completed task) before it is
-recorded, what was observed directly stays separate from help center or
-forum material, on-screen wording is quoted exactly as evidence, and a
-situation nothing settles is reported as `undocumented`, never guessed. A failed run, or an
-`undocumented` answer from every app, leaves the question to the person.
+recorded, only what was observed directly counts as precedent evidence,
+on-screen wording is quoted exactly as evidence, and a situation Asana does
+not settle is reported as `undocumented`, never guessed. A failed or
+`undocumented` run leaves the question to the person.
 Before an answer is recorded, `node scripts/precedent-check.mjs check
---report <report>` must pass: it refuses an answer from public material or
-`undocumented` unless `--no-browser <reason>` says why no browser could look
-(precedent mode's public-material path passes that reason). Pass each disputed
+--report <report>` must pass. Do not pass `--no-browser`; public material is
+not precedent evidence. Pass each disputed
 behavior the question turns on as `--behavior "<the interaction to perform>"`
 to `run`: `check` then refuses a report until every one is observed with a
 screenshot or marked `needs a write to test` for the operator.
 
 The answer goes to the SAME writer, which records it in the session decision
 table as the decision for the affected rows, with its source: the ticket or
-PRD slug for a graph answer, `Asana, observed <date>` or `<app>, observed
-<date>` for a look in the browser, or the help-center URL. A precedent is the
+PRD slug for a requirements answer, a code path for a feasibility answer, or
+`Asana, observed <date>` for the live precedent. A precedent is the
 default, not a human ruling: it never overrides a settled decision, a later
 human statement supersedes it with an explicit `Superseded` entry, and it
 settles behavior, never user-visible words (`guardrails.md`, "Copy").

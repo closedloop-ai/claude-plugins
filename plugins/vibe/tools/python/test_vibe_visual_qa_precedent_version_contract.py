@@ -4,10 +4,8 @@
    or its PRD has them, and otherwise is the design pack's best-practice review.
 2. When the product's behavior in a situation is unspecified, how a mature app
    handles the same situation is the default answer.
-3. A product question is asked only when neither the graph nor that precedent
-   settles it: Asana first, then another established app with the same flow,
-   then their public help centers, with the source recorded and the person's
-   real data never touched.
+3. A product question follows one shared order ending in live Asana in the
+   operator's signed-in browser; public help centers are never precedent.
 4. Every vibe start checks the plugin version, asks "keep going or update" when
    it is outdated, helps with the update and asks for a reopen, and carries on
    when the check cannot run.
@@ -130,19 +128,14 @@ def test_the_build_loop_is_otherwise_unchanged() -> None:
 def test_precedent_is_checked_in_order_before_any_question() -> None:
     rule = precedent()
     assert_all(rule, (
-        "Walk a fine line on product questions during a session.",
-        "A question is asked only when neither the graph research above nor another app's precedent answers it",
-        "what a mature app does in the same situation is the default answer",
-        "The order is Asana",
-        "another established app with the same flow (for example Linear, or GitHub's own authorization screens)",
-        "public help centers, Asana's first",
-        "Only when none of these settles it does the question go to the person",
+        "The ordered list above is the only product-question research order",
+        "live Asana is the precedent",
+        "Public help centers, documentation and search results are not a substitute",
     ))
-    assert rule.index("The order is Asana") < rule.index("another established app") < rule.index("public help centers")
     communication = section(QUALITY.read_text(), "## Communication and product questions")
     assert "runs the precedent check below before asking any question it can settle" in communication
     skill = flat(VIBE_SKILL.read_text())
-    assert "then through how Asana, or another established app with the same flow, handles the same situation" in skill
+    assert "Research product questions in the single order" in skill
     assert "and the precedent check (`references/quality-loop.md`, \"Communication and product questions\")" in skill
     assert 'then the precedent check ("Precedent before asking")' in flat(HANDOFF_SKILL.read_text())
 
@@ -150,22 +143,19 @@ def test_precedent_is_checked_in_order_before_any_question() -> None:
 def test_each_harness_has_its_precedent_path() -> None:
     assert_all(precedent(), (
         "`scripts/precedent-check.mjs` holds the research brief and its safety rules once, for both harnesses",
-        "Claude Code: a session's Claude in Chrome tools are bound when it starts",
+        "whichever actor has the operator's signed-in Chrome",
         "`node scripts/precedent-check.mjs run --question",
         "headless `claude -p --chrome`",
         "Codex: no computer use",
-        "never the in-app Browser or the Computer Use plugin",
-        "`node scripts/precedent-check.mjs prompt --question",
-        "read-only `vibe-requirements-worker` in precedent mode",
+        "returns `NEEDS_PERSON` to the orchestrator",
     ))
     assert "`scripts/precedent-check.mjs`" in section(VIBE_SKILL.read_text(), "## Your role: orchestrate, never do the work")
     mode = section(agent("vibe-requirements-worker"), "## Precedent mode")
     assert_all(mode, (
-        "`../skills/vibe/scripts/precedent-check.mjs prompt`",
-        "Asana's help center and documentation first",
-        "Never sign in, create an account or type credentials.",
+        "live Asana in the operator's signed-in Chrome",
+        "never a public help center",
+        "return `NEEDS_PERSON` to the orchestrator",
         "never its wording as our copy",
-        "the answer is `undocumented`",
     ))
 
 
@@ -179,7 +169,7 @@ def test_precedent_research_never_touches_real_data() -> None:
         "goes only as far as its confirmation step and is canceled there",
         "Every state is verified",
         "a hover can look like a completed task",
-        "what was observed directly stays separate from help center or forum material",
+        "only what was observed directly counts as precedent evidence",
         "reported as `undocumented`, never guessed",
     ))
     brief = PRECEDENT.read_text()
@@ -191,7 +181,6 @@ def test_a_precedent_is_recorded_with_its_source_and_is_not_a_human_ruling() -> 
     assert_all(precedent(), (
         "records it in the session decision table as the decision for the affected rows, with its source",
         "`Asana, observed <date>`",
-        "the help-center URL",
         "A precedent is the default, not a human ruling",
         "a later human statement supersedes it with an explicit `Superseded` entry",
         "settles behavior, never user-visible words",

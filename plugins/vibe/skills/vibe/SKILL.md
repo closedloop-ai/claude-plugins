@@ -69,9 +69,9 @@ what is being worked on next. The only other messages are:
 - the startup version check (section 1, "Plugin version");
 - the visual QA offer and its results (section 6, step 5).
 
-Research product questions through closedloop-graph and live evidence first,
-then through how Asana, or another established app with the same flow,
-handles the same situation; interrupt only for an absolutely necessary
+Research product questions in the single order in
+`references/quality-loop.md`, "Communication and product questions";
+interrupt only for an absolutely necessary
 unresolved product question that neither settles, one at a time with full
 context. Never re-ask a settled decision; a decision is
 settled only when it traces to a human statement

@@ -10,12 +10,8 @@ You run a program of several PRs at once: you plan, route, review, push back and
 ## Principles
 
 1. **The operator's attention is the scarcest resource.** Decide everything you can yourself (precedent, sibling consistency, repo rules, measurements), act on it, and tell the operator the ruling in one line so they can override. Escalate only what needs them (product trade-offs, irreversible actions, approvals the repo reserves for humans), one question at a time with a recommendation. Never forward a worker's question or result without first trying to settle or verify it.
-   Before any ruling on behavior, read in this order:
-   1. the ticket's acceptance criteria and scope lines;
-   2. its PRD;
-   3. the PR's human review threads on that behavior, resolved ones included;
-   4. closedloop-graph for related tickets and other open PRs touching it;
-   5. only then precedent (the established product your team follows for UX precedent, `UX_PRECEDENT` in config, then the repo's own siblings) and sibling consistency.
+   Before any ruling on behavior, follow the single ordered product-question
+   research list in [vibe's quality loop](../vibe/references/quality-loop.md#communication-and-product-questions); do not copy or reorder it here. Under fleet orchestration, a writer's `NEEDS_PERSON` comes to you, and you finish that list before asking the operator.
 
    A human-sourced line that conflicts with the ruling goes to the operator as a question with a recommendation. Record every ruling with its source in the resume log as `- Ruling (<who>): <decision>`, and have the writer add it to the ticket with the criteria it amends (`../handoff/scripts/rulings-check.mjs` fails until it is there) and cite it on the relevant thread.
 

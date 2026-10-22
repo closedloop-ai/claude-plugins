@@ -137,3 +137,14 @@ def test_visual_findings_on_touched_surfaces_are_required_fixes() -> None:
     handoff = _text(HANDOFF / "SKILL.md")
     assert "visual-QA finding on a surface the change touches is a required fix" in fleet
     assert "findings resume the SAME writer in fix mode for every touched surface" in handoff
+
+
+def test_product_questions_use_the_shared_live_precedent_order() -> None:
+    quality = _text(VIBE / "references" / "quality-loop.md")
+    requirements = flat(agent("vibe-requirements-worker"))
+    fleet = _text(FLEET / "SKILL.md")
+    for step in ("Current code and data model", "The ticket's acceptance criteria", "The product owner's recorded direction", "The approved prototype", "Live Asana"):
+        assert step in quality
+    assert "never a public help center or documentation page" in quality
+    assert "return `NEEDS_PERSON` to the orchestrator" in requirements
+    assert "do not copy or reorder it here" in fleet
