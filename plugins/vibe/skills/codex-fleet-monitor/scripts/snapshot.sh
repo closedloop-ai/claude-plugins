@@ -56,12 +56,16 @@ zsh $K/classify.sh $W/item-history.txt $STALL_SECONDS ${QUESTION_SECONDS:-900} <
 # The watch set is prs.txt plus every open PR in WATCH_NEW_PR_REPOS that PR_SEARCH lists or that
 # WATCH_PR_AUTHOR (default the gh account) opened, whatever its branch prefix: a hand-kept prs.txt once held
 # only merged PRs while a writer sat silent for 1h40m on two live ones, so STALE-PR never ran on them.
+# A PR another chat owns is never added: one listed in prs-ignore.txt, or in another program's prs.txt in the same
+# fleet home. Discovery once put a PR another chat was shepherding in this fleet's watch set.
 touch $W/prs.txt
+others=$({ cat $W/prs-ignore.txt; [ -n "$FLEET_HOME" ] && for p in $FLEET_HOME/programs/*/prs.txt(N); do [ $p != $W/prs.txt ] && cat $p; done } 2>/dev/null | awk '{print $1" "$2}')
 for r in ${=WATCH_NEW_PR_REPOS}; do
   op=$(gh pr list -R $r --state open --search "${PR_SEARCH:-}" --json number --jq '.[].number' 2>/dev/null | sort -n | tr '\n' ' ')
   echo "open-prs $r $(keep open-$r "$op")"
   mine=$(gh pr list -R $r --state open --author "${WATCH_PR_AUTHOR:-@me}" --json number --jq '.[].number' 2>/dev/null)
   for n in ${=op} ${(f)mine}; do
+    [[ $'\n'$others$'\n' == *$'\n'"$r $n"$'\n'* ]] && continue
     grep -Eq "^$r $n( |\$)" $W/prs.txt || echo "$r $n" >> $W/prs.txt
   done
 done

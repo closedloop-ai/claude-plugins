@@ -61,7 +61,7 @@ REMOTE_REQUESTS_DIR=/path/on/remote/requests  # optional: the same on REMOTE_HOS
 
 The label is what appears in the output lines.
 
-`prs.txt`: the watch set, one line per PR, `owner/repo <number> [<writer>]`. The snapshot adds open PRs from `WATCH_NEW_PR_REPOS` on any branch, and drops a merged or closed PR after reporting it once; add the writer column when you assign a PR so `STALE-PR` names whom to nudge. A Claude pane writer has no turn state to read, so `STALE-PR` on its PR is its liveness signal.
+`prs.txt`: the watch set, one line per PR, `owner/repo <number> [<writer>]`. The snapshot adds open PRs from `WATCH_NEW_PR_REPOS` on any branch, except one in `prs-ignore.txt` or another program's `prs.txt` (another chat owns it), and drops a merged or closed PR after reporting it once; add the writer column when you assign a PR so `STALE-PR` names whom to nudge. A Claude pane writer has no turn state to read, so `STALE-PR` on its PR is its liveness signal.
 
 ## Run
 
