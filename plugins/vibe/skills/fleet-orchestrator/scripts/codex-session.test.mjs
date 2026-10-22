@@ -71,8 +71,9 @@ test('state files round trip, are absent until saved, and must name a thread and
 test('nextState binds a session to its first cwd and keeps model and effort between turns', () => {
   assert.throws(() => nextState(null, { effort: 'high' }), /a new session needs --cwd/);
   assert.throws(() => nextState(null, { cwd: '/wt' }), /a new session needs --effort/);
-  assert.deepEqual(nextState(null, { cwd: '/wt', effort: 'high' }), {
-    threadId: undefined, cwd: '/wt', model: undefined, effort: 'high', sandbox: undefined, turns: [],
+  assert.throws(() => nextState(null, { cwd: '/wt', effort: 'high' }), /a new session needs --model/);
+  assert.deepEqual(nextState(null, { cwd: '/wt', model: 'm1', effort: 'high' }), {
+    threadId: undefined, cwd: '/wt', model: 'm1', effort: 'high', sandbox: undefined, turns: [],
   });
   const saved = { threadId: 'T1', cwd: '/wt', model: 'm1', effort: 'medium', sandbox: 'workspace-write', turns: [{ turnId: 'u1' }] };
   assert.deepEqual(nextState(saved, { cwd: '/wt' }), saved);
@@ -117,7 +118,7 @@ test('turn on a saved session resumes its thread with the saved options', async 
 test('a failed turn/start leaves the state file unchanged', async () => {
   const { dir, promptFile } = workDir();
   const client = stubClient({ 'thread/start': { thread: { id: 'T1' } }, 'turn/start': {} });
-  await assert.rejects(run(client, parseCli(['turn', dir, 'w1', '--prompt-file', promptFile, '--cwd', '/wt', '--effort', 'high'])), /no turn id/);
+  await assert.rejects(run(client, parseCli(['turn', dir, 'w1', '--prompt-file', promptFile, '--cwd', '/wt', '--model', 'm', '--effort', 'high'])), /no turn id/);
   assert.equal(loadState(dir, 'w1'), null);
 });
 
@@ -168,7 +169,7 @@ test('a new session refuses a prompt that does not start with $vibe; a saved one
   const plain = join(dir, 'plain.md');
   writeFileSync(plain, 'Fix the failing check.\n');
   const client = stubClient({ 'thread/resume': {}, 'turn/start': { turn: { id: 'U1' } } });
-  await assert.rejects(run(client, parseCli(['turn', dir, 'w1', '--prompt-file', plain, '--cwd', '/wt', '--effort', 'high'])), /must start with \$vibe/);
+  await assert.rejects(run(client, parseCli(['turn', dir, 'w1', '--prompt-file', plain, '--cwd', '/wt', '--model', 'm', '--effort', 'high'])), /must start with \$vibe/);
   assert.deepEqual(client.calls, []);
   saveState(dir, 'w1', { threadId: 'T1', cwd: '/wt', effort: 'high', turns: [] });
   assert.equal(await run(client, parseCli(['turn', dir, 'w1', '--prompt-file', plain])), 'w1 turn T1 U1');

@@ -2,6 +2,7 @@
 // A session is "<name>" (reads <stateDir>/<name>.json, which holds a threadId) or "<label>=<threadId>".
 // Prints "<label> <lastTurnStatus> <progress> <flag>"; progress is the id of the last turn's newest item (it
 // changes while the turn works), flag is LIMIT, TRANSIENT, SYSTEM-ERROR, ERROR, READFAIL or -.
+// With CODEX_MODEL or CODEX_EFFORT set, a thread on another model or effort adds MODEL(<model>/<effort>!=<want>).
 // It never loads a thread's history: a long thread's full read is tens of MB of JSON.
 // Self-contained: speaks the Codex App Server protocol to the managed daemon through
 // `codex app-server proxy`, so a single file is all a remote host needs.
@@ -260,15 +261,33 @@ export function parseSession(spec, dir) {
   return { label: spec, threadId: JSON.parse(readFileSync(`${dir}/${spec}.json`, 'utf8')).threadId };
 }
 
-/** The default turn and progress read a full thread (`includeTurns`), as fleet-orchestrator's `last` does. */
-export function summarize(label, thread, turn = (thread?.turns ?? []).at(-1), progress = String((turn?.items ?? []).length), lastItem = (turn?.items ?? []).at(-1)) {
+/**
+ * The default turn and progress read a full thread (`includeTurns`), as fleet-orchestrator's `last` does.
+ * A completed turn reads the same whether the App Server still holds the thread (`idle`) or has unloaded
+ * it (`notLoaded`), so a finished writer is IDLE with its final message either way.
+ */
+export function summarize(label, thread, turn = (thread?.turns ?? []).at(-1), progress = String((turn?.items ?? []).length), lastItem = (turn?.items ?? []).at(-1), want = {}) {
   let flag = '-';
   if (thread?.status?.type === 'systemError') flag = Failure.SystemError;
   else if (turn?.error) flag = classifyTurnError(turn.error);
-  const base = `${label} ${turn?.status ?? 'none'} ${progress} ${flag}`;
+  const drift = modelDrift(thread, want);
+  const base = `${label} ${turn?.status ?? 'none'} ${progress} ${flag}${drift ? ` ${drift}` : ''}`;
   if (turn?.status !== 'completed') return base;
   const tail = assistantTail(lastItem);
   return tail ? `${base} ${needsReply(tail) ? 'NEEDS-REPLY' : 'LAST'} ${JSON.stringify(tail)}` : base;
+}
+
+/**
+ * `MODEL(<model>/<effort>!=<want model>/<want effort>)` when the thread runs on another model or effort than
+ * `want` (CODEX_MODEL, CODEX_EFFORT), else ''. Sessions started without an explicit model once came up on a
+ * slower model and on the default effort. A value the App Server does not report is not judged.
+ */
+export function modelDrift(thread, { model, effort } = {}) {
+  const actual = { model: thread?.model, effort: thread?.reasoningEffort };
+  const off = (wanted, value) => Boolean(wanted) && typeof value === 'string' && value !== wanted;
+  if (!off(model, actual.model) && !off(effort, actual.effort)) return '';
+  const pair = (m, e) => `${m || '?'}/${e || '?'}`.replace(/\s+/g, '_');
+  return `MODEL(${pair(actual.model, actual.effort)}!=${pair(model || actual.model, effort || actual.effort)})`;
 }
 
 /** Final three non-empty lines of the newest assistant message. */
@@ -277,9 +296,16 @@ export function assistantTail(item) {
   return item.text.split('\n').map((line) => line.trim()).filter(Boolean).slice(-3).join(' / ').slice(-500);
 }
 
+/**
+ * A final message that asks something: a question mark ending any of its lines or sentences, or a request
+ * for permission, authorization or approval anywhere in it. A writer that asked "May I ...?" and then
+ * ended on a status sentence once waited unread while the operator was away.
+ */
 export function needsReply(text) {
-  return /(?:\?|\bpermission\b)\s*$/i.test(text.trim());
+  return /\?(?=\s|$)/.test(text) || ASKING.test(text);
 }
+
+const ASKING = /\b(?:permission|authori[sz](?:e|ation)|approval|approve|may i|shall i|should i|do you want)\b/i;
 
 const UNKNOWN_METHOD = /unknown variant|method not found/i;
 
@@ -306,7 +332,7 @@ export async function readThreadState(client, threadId, { progress = false } = {
   return { thread, turn, progress: loaded[0]?.id ?? '-', lastItem: loaded.find((item) => item?.type === 'agentMessage') };
 }
 
-export async function readSessions(client, dir, specs) {
+export async function readSessions(client, dir, specs, want = {}) {
   const lines = [];
   for (const spec of specs) {
     let label = spec.split('=')[0];
@@ -314,7 +340,7 @@ export async function readSessions(client, dir, specs) {
       const session = parseSession(spec, dir);
       label = session.label;
       const { thread, turn, progress, lastItem } = await readThreadState(client, session.threadId, { progress: true });
-      lines.push(summarize(label, thread, turn, progress, lastItem));
+      lines.push(summarize(label, thread, turn, progress, lastItem, want));
     } catch {
       lines.push(`${label} unreadable 0 READFAIL`);
     }
@@ -332,12 +358,11 @@ async function main() {
     for (const spec of specs) console.log(`${spec.split('=')[0]} unreadable 0 READFAIL`);
     process.exit(0);
   }
-  for (const line of await readSessions(client, dir, specs)) console.log(line);
+  const want = { model: process.env.CODEX_MODEL || undefined, effort: process.env.CODEX_EFFORT || undefined };
+  for (const line of await readSessions(client, dir, specs, want)) console.log(line);
   client.close();
   process.exit(0);
 }
-
-if (isEntryPoint(import.meta.url)) await main();
 
 /** Bounds the whole run from inside node; macOS has no `timeout` or `gtimeout` command. */
 export function exitAfterTotalTimeout() {
@@ -383,3 +408,7 @@ export function classifyTurnError(error) {
   if (LIMIT_MESSAGE.test(text)) return Failure.Limit;
   return Failure.Error;
 }
+
+// Last, after every declaration: a top-level await pauses this module, so a const declared below it would
+// still be uninitialized while main runs, and classifying a failed turn would throw.
+if (isEntryPoint(import.meta.url)) await main();

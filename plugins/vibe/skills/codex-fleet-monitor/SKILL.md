@@ -36,6 +36,8 @@ WATCH_NEW_PR_REPOS="owner/repo"  # optional: list open PRs here to spot new ones
 PR_SEARCH="head:feature/"        # optional: search filter for that list
 BOT_LOGIN_REGEX="vercel|codex|github-actions|copilot|bot"  # authors not counted as human feedback
 # USAGE_HIGH_PERCENT=80         # usage below this prints one band (default MOVE_AT_PERCENT, else 80)
+# CODEX_MODEL=<model>            # with CODEX_EFFORT, a thread on another model or effort gets a MODEL(...) word
+# CODEX_EFFORT=high
 RECOVERY_BACKOFF_SECONDS="120 300 600"  # wait before each resume of a transient failure; one retry per value
 # CONTINUE_PROMPT_FILE=/path/to/continue.md  # replaces the built-in continue prompt (REMOTE_CONTINUE_PROMPT_FILE on REMOTE_HOST)
 # AUTO_RESTART_DAEMON=1          # allow restarting the App Server daemon for threads stuck in systemError; off by default
@@ -63,7 +65,7 @@ The label is what appears in the output lines.
 scripts/watch.sh <workDir> [intervalSeconds]
 ```
 
-Start it with `run_in_background`. You are notified when it exits. Read its output, handle every line, then start it again; it only watches while running. An `IDLE` line includes the writer's final message tail and says `NEEDS-REPLY` when it ends in a question or permission request; classify that message before re-arming. `watch.sh` records its pid, each tick and its exit in `<workDir>/watcher.json`, and `node scripts/watcher.mjs <workDir>` prints `watcher ok` or `watcher MISSING(<why>)` (exit 1): check it before ending any turn that handled an event, and re-arm on `MISSING`. Editing `sessions.txt` or `prs.txt` takes effect on the next re-arm. `scripts/snapshot.sh <workDir>` prints the current state once.
+Start it with `run_in_background`, never with `&`; a second copy for the same work dir exits 3 and says how to re-arm. You are notified when it exits. Read its output, handle every line, then start it again; it only watches while running. An `IDLE` line includes the writer's final message tail, the same once the App Server unloads the thread (`notLoaded`), and says `NEEDS-REPLY` when any of its lines asks a question or asks for permission, authorization or approval; classify that message before re-arming. `watch.sh` records its pid, each tick and its exit in `<workDir>/watcher.json`, and `node scripts/watcher.mjs <workDir>` prints `watcher ok` or `watcher MISSING(<why>)` (exit 1): check it before ending any turn that handled an event, and re-arm on `MISSING`. Editing `sessions.txt` or `prs.txt` takes effect on the next re-arm. `scripts/snapshot.sh <workDir>` prints the current state once.
 
 ## Reading the output
 
@@ -71,6 +73,7 @@ Start it with `run_in_background`. You are notified when it exits. Read its outp
 |---|---|---|
 | `session <where> <name> RUN` | turn in progress and producing items | none |
 | `session ... IDLE` | turn completed; the session is waiting for you | read its last message, give it the next turn |
+| `session ... MODEL(<model>/<effort>!=<want>)` | the thread runs on another model or effort than `CODEX_MODEL` and `CODEX_EFFORT` | restart it on the configured one; other models were far slower |
 | `session ... STALLED(...)` | turn open but silent | check for a usage limit or a hung command; tell the user if it needs them |
 | `session ... FAILED(LIMIT)` | turn errored on a usage limit | tell the user right away; a reset or second account is theirs to do |
 | `session ... FAILED(TRANSIENT)` | turn errored on a transient provider failure: model at capacity, rate limit, 5xx or a dropped connection | none; recovery resumes it after the backoff (watch the `recovery` line) |
@@ -81,7 +84,7 @@ Start it with `run_in_background`. You are notified when it exits. Read its outp
 | `supervisor ... STALE(>Ns)` / `MISSING` / `UNREADABLE` | no heartbeat for 3 intervals (a hung or dead supervisor), the lock exists with no heartbeat, or the heartbeat cannot be parsed | read `supervisor.log` there; restart the supervisor |
 | `supervisor ... RSS-HIGH(>NMB)` | the supervisor's RSS is over `SUPERVISOR_RSS_CAP_MB` | read its hourly summary lines; restart it and report the leak |
 | `session remote <host> UNREACHABLE` | ssh failed | check the host |
-| `codex-usage <local\|remote> under80% ok resets=<n>` / `HIGH(<band>%)` | Codex account usage on that machine: one band below `USAGE_HIGH_PERCENT` (80 here) used, so ordinary use is not an event, then the used percent floored to 10; `resets` is the count of available limit resets | none below it; on `HIGH`, warn the user with the rate |
+| `codex-usage <local\|remote> under80% ok resets=<n>` / `HIGH(<band>%)` | Codex account usage on that machine: one band below `USAGE_HIGH_PERCENT` (80 here) used, so ordinary use is not an event, then the used percent floored to 10; `resets` is the count of available limit resets | none below it; on `HIGH`, warn the user at once with the band and `resets`, since applying a reset is theirs; if they are away, move the busiest writers to Claude writers |
 | `codex-usage ... LIMIT` / `LIMIT-STOPPED` | usage limit reached; `LIMIT` means ordinary usage is still allowed, `LIMIT-STOPPED` means sessions cannot run | tell the user right away; a reset or second account is theirs to do |
 | `codex-usage ... LIMIT-SPENDING-CREDITS` | limit reached and turns are now consuming paid credits | tell the user at once and stop sending turns unless they approve paid credits |
 | `codex-usage ... unknown` / `unreadable READFAIL` | the App Server answered without rate limits, or it or the remote host could not be read | check `codex` on that machine |
@@ -130,4 +133,4 @@ Every action is an `EVENT recovery ...` line in the events log, which the `recov
 - Item history lives in `<workDir>/item-history.txt`; delete it to reset stall timers. Settled check counts live in `<workDir>/checks-*.txt`. The `keep-*`, `merge-*` and `checks-*` files of a PR are removed once it leaves `prs.txt`.
 - On the remote host the scripts are copied to `<REMOTE_STATE_DIR>/.fleet-monitor/` on every snapshot.
 - A failed or empty `gh` read repeats that field's last value, so an API blip is not an event.
-- Don't run two copies on the same work dir.
+- `watch.sh` holds `<workDir>/watch.lock`; a second copy exits 3, and a lock whose pid died is taken over.

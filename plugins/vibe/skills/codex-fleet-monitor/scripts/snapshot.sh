@@ -13,6 +13,7 @@ remote_node() {
   local e="USAGE_HIGH_PERCENT=$HIGH AUTO_RESTART_DAEMON=${AUTO_RESTART_DAEMON:-} RECOVERY_BACKOFF_SECONDS=${${RECOVERY_BACKOFF_SECONDS:-}// /,}"
   e+=" RESTART_COOLDOWN_SECONDS=${RESTART_COOLDOWN_SECONDS:-} CONTINUE_PROMPT_FILE=${REMOTE_CONTINUE_PROMPT_FILE:-}"
   e+=" PASS_TIMEOUT_SECONDS=${PASS_TIMEOUT_SECONDS:-} LOG_MAX_BYTES=${LOG_MAX_BYTES:-} SUPERVISOR_RSS_CAP_MB=${SUPERVISOR_RSS_CAP_MB:-}"
+  e+=" CODEX_MODEL=${CODEX_MODEL:-} CODEX_EFFORT=${CODEX_EFFORT:-}"
   COPYFILE_DISABLE=1 tar -C $K -cf - liveness.mjs ratelimit.mjs recover.mjs 2>/dev/null | ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 \
     ${REMOTE_HOST:?set REMOTE_HOST} "mkdir -p $d && tar -C $d -xf - && $REMOTE_SHELL 'env $e node $d/$*'" 2>/dev/null
 }
@@ -36,7 +37,7 @@ if [ "${RECOVER:-}" = 1 ]; then
 fi
 if [ -n "${L// }" ]; then
   SUPERVISOR_RSS_CAP_MB=${SUPERVISOR_RSS_CAP_MB:-} node $K/recover.mjs --report $LOCAL_STATE_DIR local
-  node $K/liveness.mjs ${LOCAL_STATE_DIR:?set LOCAL_STATE_DIR} ${=L} | sed 's/^/local /' >> $W/live.txt
+  CODEX_MODEL=${CODEX_MODEL:-} CODEX_EFFORT=${CODEX_EFFORT:-} node $K/liveness.mjs ${LOCAL_STATE_DIR:?set LOCAL_STATE_DIR} ${=L} | sed 's/^/local /' >> $W/live.txt
 fi
 if [ -n "${R// }" ]; then
   out=$(remote_node recover.mjs --report $REMOTE_STATE_DIR remote); echo "${out:-recovery remote unreadable}"

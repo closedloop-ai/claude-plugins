@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { executedProblems } from "./executed-check.mjs";
+import { childProblems, executedProblems } from "./executed-check.mjs";
 import { makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "executed-check.mjs");
@@ -36,8 +36,31 @@ test("the CLI exits 1 on a document missing the section", (t) => {
   const bad = path.join(home.root, "bad.md");
   writeFileSync(good, SECTION);
   writeFileSync(bad, "# PRD\n\n## Problem\n");
-  assert.equal(runNode(SCRIPT, ["--file", good, "--last-merge", MERGED], home.home).status, 0);
-  const refused = runNode(SCRIPT, ["--file", bad, "--last-merge", MERGED], home.home);
+  assert.equal(runNode(SCRIPT, ["--kind", "plan", "--file", good, "--last-merge", MERGED], home.home).status, 0);
+  const refused = runNode(SCRIPT, ["--kind", "plan", "--file", bad, "--last-merge", MERGED], home.home);
   assert.equal(refused.status, 1);
   assert.equal(refused.json.ok, false);
+});
+
+test("a PRD is executed only when every PRODUCES child is DONE or CANCELED", (t) => {
+  assert.deepEqual(childProblems([{ slug: "A-1", status: "DONE" }, { slug: "A-2", status: "CANCELED" }]), []);
+  assert.deepEqual(childProblems([{ slug: "A-1", status: "DONE" }, { slug: "A-3", status: "IN_REVIEW" }, { slug: "A-4", status: "BACKLOG" }]), [
+    "child A-3 is IN_REVIEW; a PRD is executed only when every PRODUCES child is DONE or CANCELED",
+    "child A-4 is BACKLOG; a PRD is executed only when every PRODUCES child is DONE or CANCELED",
+  ]);
+  const home = makeHome("vibe-executed-check-");
+  t.after(home.cleanup);
+  const prd = path.join(home.root, "prd.md");
+  const open = path.join(home.root, "open.json");
+  const done = path.join(home.root, "done.json");
+  writeFileSync(prd, SECTION);
+  writeFileSync(open, JSON.stringify([{ slug: "A-1", status: "DONE" }, { slug: "A-3", status: "IN_PROGRESS" }]));
+  writeFileSync(done, JSON.stringify([{ slug: "A-1", status: "DONE" }]));
+  const args = ["--kind", "prd", "--file", prd, "--last-merge", MERGED];
+  assert.match(runNode(SCRIPT, args, home.home).json.error, /--kind prd needs --children/);
+  assert.match(runNode(SCRIPT, ["--file", prd, "--last-merge", MERGED], home.home).json.error, /--kind plan or --kind prd is required/);
+  const refused = runNode(SCRIPT, [...args, "--children", open], home.home);
+  assert.equal(refused.status, 1);
+  assert.deepEqual(refused.json.problems, ["child A-3 is IN_PROGRESS; a PRD is executed only when every PRODUCES child is DONE or CANCELED"]);
+  assert.equal(runNode(SCRIPT, [...args, "--children", done], home.home).status, 0);
 });

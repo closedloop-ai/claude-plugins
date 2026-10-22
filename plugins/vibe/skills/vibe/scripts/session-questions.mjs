@@ -18,6 +18,12 @@
 // `ask` answers whether to ask: {"ask":true} only for a key never asked. A key
 // already asked returns {"ask":false} with its pending question or its answer,
 // so the caller uses the answer or keeps waiting, and never repeats it.
+// `ask` also refuses a request for permission to do in-scope engineering work
+// (repair a test the change broke, merge main, push, rerun a check, fix a
+// finding): that work never waits, so the writer does it and reports it. A
+// writer once sat idle for an hour "pending authorization" to repair tests.
+// Only a flag key, a product question, a destructive action or a credential
+// waits for the person.
 // Every command prints one JSON object; errors print {"ok":false,"error":...}.
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -29,6 +35,14 @@ import { readSessionRecord, writeSessionRecord } from "./session-record.mjs";
 
 const KEY_PATTERN = /^[a-z0-9]+(?:[-:][a-z0-9]+)*$/;
 const MAX_TEXT = 4000;
+const ASKS_LEAVE = /\b(?:may|can|shall|should) i\b|\b(?:ok|okay|fine) (?:for me )?to\b|\bpermission\b|\bauthori[sz](?:e|ation)\b|\bapprov(?:e|al)\b|\bgo-?ahead\b/i;
+const IN_SCOPE_WORK = /\b(?:tests?|fixtures?|specs?|snapshots?|merge (?:main|the base)|main merge|rebase|push|commit|rerun|re-run|lint|typecheck|fix(?:es)?|repair)\b/i;
+const HUMAN_ONLY = /\b(?:flags?|feature flag|credentials?|password|token|sign(?:ed)?[ -]?in|log ?in|delete|discard|destroy|drop|force|wording|copy|product)\b/i;
+
+/** In-scope engineering work asked as permission; it never waits for the person. */
+export function asksLeaveForInScopeWork(question) {
+  return ASKS_LEAVE.test(question) && IN_SCOPE_WORK.test(question) && !HUMAN_ONLY.test(question);
+}
 
 /** Where questions asked before the session exists are kept. */
 export function startupFile(home = os.homedir()) {
@@ -39,6 +53,9 @@ export function startupFile(home = os.homedir()) {
 export function askQuestion(questions, { key, question, product = false, codeEvidence, now = new Date().toISOString() }) {
   requireKey(key);
   requireText("--question", question);
+  if (asksLeaveForInScopeWork(question)) {
+    throw new Error("in-scope work never waits for authorization: repairing tests the change broke, a main merge, a push, a rerun or an in-scope fix goes ahead now and is reported afterwards; only a flag key, a product question, a destructive action or a credential waits");
+  }
   if (product && !/^\S.*:\d+(?:-\d+)?$/.test(codeEvidence ?? "")) {
     throw new Error("a product question needs --code-evidence <file:line> proving the code and data model were checked first");
   }

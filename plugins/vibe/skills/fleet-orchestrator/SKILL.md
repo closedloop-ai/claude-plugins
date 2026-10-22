@@ -12,6 +12,7 @@ You run a program of several PRs at once: you plan, route, review, push back and
 1. **The operator's attention is the scarcest resource.** Decide everything you can yourself (precedent, sibling consistency, repo rules, measurements), act on it, and tell the operator the ruling in one line so they can override. Escalate only what needs them (product trade-offs, irreversible actions, approvals the repo reserves for humans), one question at a time with a recommendation. Never forward a worker's question or result without first trying to settle or verify it.
    Before any ruling on behavior, follow the single ordered product-question
    research list in [vibe's quality loop](../vibe/references/quality-loop.md#communication-and-product-questions); do not copy or reorder it here. Under fleet orchestration, a writer's `NEEDS_PERSON` comes to you, and you finish that list before asking the operator.
+   Every question to the operator names where you checked the code first (`checked in code: <file>:<line>`); drop one the code already answers. `scripts/review-page-check.mjs` refuses a decision row without it.
 
    A human-sourced line that conflicts with the ruling goes to the operator as a question with a recommendation. Record every ruling with its source in the resume log as `- Ruling (<who>): <decision>`, and have the writer add it to the ticket with the criteria it amends (`../handoff/scripts/rulings-check.mjs` fails until it is there) and cite it on the relevant thread.
 
@@ -71,7 +72,7 @@ The closedloop-graph MCP server is required; decide from it, not from guesses. T
 Run [codex-fleet-monitor](../codex-fleet-monitor/SKILL.md) (`vibe:codex-fleet-monitor`) on the same `<orchDir>` in the background for the whole program and act on its lines as its table says, including usage bands, paid-credit spending and request files. It reads the session state files `fleet.sh` writes, listed as `local|remote <name>` in `sessions.txt`.
 
 - The watcher resumes a session after a transient provider failure on its own; read its `recovery` lines when you wake. Run its supervisor on every machine that hosts Codex writers, so recovery also happens while you are not running. Set `AUTO_RESTART_DAEMON=1` in `config.env` only when the operator agrees that a stuck daemon may be restarted unattended.
-- Re-arm the watcher in the same step you read each event. It only watches while running, and it costs nothing while waiting. Before ending any turn that handled an event, `node ../codex-fleet-monitor/scripts/watcher.mjs <orchDir>` must print `watcher ok`; on `MISSING`, re-arm it. A lost re-arm once left pushes unhandled for two hours.
+- Re-arm the watcher in the same step you read each event. It only watches while running, and it costs nothing while waiting. Before ending any turn that handled an event, `node ../codex-fleet-monitor/scripts/watcher.mjs <orchDir>` must print `watcher ok`; on `MISSING`, re-arm it. A lost re-arm once left pushes unhandled for two hours. Start it with the harness's background option (`run_in_background`), never with `&`, which left a stray copy twice; `watch.sh` refuses a second copy for the same work dir.
 - Before you or a reviewer inspect a head, check it equals the pushed PR head (`gh pr view <n> --json headRefOid`). Sessions sometimes report local, unpushed commits.
 
 ## Codex sessions
@@ -86,7 +87,8 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 
 - `turn` starts a thread bound to `--cwd` the first time (refusing a different cwd later) and resumes it afterwards, then starts a turn.
   - `--model` and `--effort` default to `CODEX_MODEL` and `CODEX_EFFORT`.
-  - A new session refuses to start without an effort or with a prompt that does not start with `$vibe`.
+  - A new session refuses to start without a model or an effort, or with a prompt that does not start with `$vibe`.
+  - Start every Codex writer this way, never through a bare thread start without both: one came up on a model that ran about 17 tokens per second and another on the default effort. The watcher marks a thread on another model or effort `MODEL(...)`; restart it on the configured one.
   - Model, effort, sandbox and each prompt file sent persist in the session's state file.
 - `steer` adds to the active turn and fails when none is running.
 - `last` prints the monitor's status line and the last agent messages.
@@ -100,6 +102,7 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 - Launch each Claude writer with the [worker preamble](./references/templates.md#worker-preamble) saved to `prompts/`. It starts with invoking vibe and carries the worktree, PR, reading, test, git, thread-reply and report rules so no writer improvises them.
 - A message to a busy worker arrives only when it goes idle; if it idles without acting on one, resend it once, then interrupt after the second unanswered delivery instead of sending a third.
 - A pane teammate sees your messages only when its current turn ends. For an urgent redirect, ask the operator to press Esc in the named pane, which ends the turn and delivers them; otherwise expect delivery at the next turn boundary. Keep long briefs in a file and send its path.
+- A standing duty (main's post-merge health, a PR shepherd, the watcher) always has a live owner: `board.mjs <orchDir> duty <duty> --owner <writer or helper>`. Name the replacement in the same step you stop or move its owner; `helpers.mjs stopped` refuses an owner, and `board.mjs status` prints `UNOWNED-DUTY`. Main's health once went unwatched for an hour after its watcher was stopped to save budget.
 - Stop a helper (reviewer, verifier, QA prep, poller) as soon as you accept its result; its brief and findings are on disk, so the next trigger launches a fresh one. Idle helper panes hide the active ones from the operator. Record each with `scripts/helpers.mjs <orchDir> start|accepted|stopped <name>`, and run `scripts/helpers.mjs <orchDir> status` with every monitor event: each `STOP` line is a helper to stop now, each `ORPHAN` line a stopped helper whose processes still run. A helper records every process it starts (dev servers, app stacks) with `helpers.mjs <orchDir> pid <name> <pid...>`, adding `--group` only for one it spawned detached; `stopped` ends them and refuses while any lives. Stopped QA agents once left dev servers running for 13 to 16 hours.
 
 ## Fleet board and direct messages
@@ -107,15 +110,15 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 Writers that could not see each other's work collided, a QA guide never heard its checkpoint was ready, and a UX ruling reached one writer while another PR rendered the same behavior. `scripts/board.mjs` keeps `<orchDir>/board.md`, the page every writer reads:
 
 - At every writer assignment and every merge, gather each in-scope PRD's children (status, assigned writer, linked pull requests and their state) into a snapshot and run `node scripts/status-audit.mjs --snapshot <file>`. It fails until each `MISMATCH` (a merged PR means DONE; an open PR or a writer means IN_PROGRESS or IN_REVIEW) and `UNOWNED` child (not done, no writer) is fixed, or listed under `outOfScope` with who ruled it out. Statuses once drifted until the operator noticed.
-- When you launch a writer, add its row (`board.mjs <orchDir> writer <name> --pr <n> --repo <owner/repo> --head <sha> --status <text> --deps <a,b>`) and give it the board path and the messaging recipe ([worker preamble](./references/templates.md#worker-preamble)). Update the row on every push report.
+- When you launch a writer, add its row (`board.mjs <orchDir> writer <name> --runtime codex|claude --pr <n> --repo <owner/repo> --head <sha> --status <text> --deps <a,b>`) and give it the board path and the messaging recipe ([worker preamble](./references/templates.md#worker-preamble)). Update the row on every push report.
 - Writers message each other directly: Codex writers through the `app-server-orchestrator` skill's send, Claude workers and QA guides through SendMessage.
 - A settled UX ruling is saved once as a reference file with its screenshots in a shared evidence location. Find every renderer of the behavior with `code_grep` across each open PR's diff and main, then `board.mjs <orchDir> deliver <ruling> --kind ruling --reference <file> --to <every owning writer and QA guide>`. Every QA plan for that behavior cites the reference, and one shared component beats each PR building its own.
 - When QA prep marks a human checkpoint ready, or rebinds results, `deliver <checkpoint> --kind checkpoint --head <sha> --to <guide>` and message the guide yourself with the checkpoint, its launch steps and the head.
-- After each message, `board.mjs <orchDir> told <item> <recipient>`. Run `board.mjs <orchDir> status` with every monitor event: each `STALE` row is a writer whose pushed head the board does not show, each `UNTOLD` line someone still to tell.
+- After each message, `board.mjs <orchDir> told <item> <recipient>`. Run `board.mjs <orchDir> status` with every monitor event: each `STALE` row is a writer whose pushed head the board does not show, each `UNTOLD` line someone still to tell, each `UNOWNED-DUTY` a duty to give an owner now. A `SLOW` row is a Codex writer 30 minutes without a push on a PR with unresolved human threads: have it push and hand the branch to a Claude writer (Codex to Claude, below), as for a dead writer.
 
 ## Moving work between runtimes and accounts
 
-- Move a machine's busiest writers when its `codex-usage` band reaches `MOVE_AT_PERCENT`, or its trend says it will before the work is done, and on any `LIMIT` or `LIMIT-SPENDING-CREDITS` line. Move a Claude writer when it hits its usage or rate limit; the monitor cannot read Claude usage, so you learn it from the worker's errors or from the operator.
+- When a machine's `codex-usage` band reaches `MOVE_AT_PERCENT`, or its trend says it will before the work is done, tell the operator at once with the band and `resets=<n>`: applying a limit reset is theirs. When they are away, move its busiest writers to Claude writers now instead of waiting for an answer. Move them on any `LIMIT` or `LIMIT-SPENDING-CREDITS` line too. Move a Claude writer when it hits its usage or rate limit; the monitor cannot read Claude usage, so you learn it from the worker's errors or from the operator.
 - When the operator reports high Claude usage, stop idle and polling Claude workers first, ask active ones to push a checkpoint and end, move their remaining work to Codex writers, and widen the Claude polling interval.
 - Before any move the old writer stops, or is confirmed dead, after committing and pushing or reporting its uncommitted state. One writer per branch holds through every move.
 - Codex to another Codex machine or account: a fresh thread through `fleet.sh` in the branch's worktree there, with a [resume prompt](./references/templates.md#resume-prompt).
@@ -160,6 +163,7 @@ Writers that could not see each other's work collided, a QA guide never heard it
 
   Send QA findings to a writer only through `node scripts/finding-brief.mjs <orchDir> --findings <findings.json> --prompt <prompt> [--where remote]`: it refuses a finding with no story id or route, viewport, selector or screenshot, or explicit `touchedSurface`, and puts the screenshots where the writer's machine can open them (`fleet.sh` ships them with the prompt).
   You alone file a ticket for a QA finding (the QA guide never does), and only after searching open tickets created in the last day for the same subject. Two actors once filed the same follow-up a minute apart.
+  Group audit and bug fixes into as few tickets and PRs as speed allows (operator ruling): one umbrella ticket, with PRs split by code area so writers work in parallel, never one ticket and PR per finding or per PRD.
   Before filing a ticket or moving one to in review, run `node ../vibe/scripts/ticket-write-check.mjs` with its project, parents and status; it refuses a past sprint, a parent that is executed, obsolete, done or canceled, and in review without the delivering pull request. Set the project explicitly rather than taking the default.
 - Check the test selection in each push report (the PR evidence file's selected tests and their runs) and have QA compare it with the specs the PR edits; selection covers the whole branch diff, not the latest push.
 - Every PR gets an independent review, then a verification pass of the fixes, before it is QA-ready. Resolve a thread only after the fix is verified in code, with a reply naming the fixing SHA.
@@ -178,13 +182,14 @@ Pushback applies principle 2; more judgment patterns from past programs: [refere
 - An instruction to match a prototype or design never removes what main ships: diff main's shipped controls and items against the target before you brief a writer, and keep any the target leaves out unless a human source retires it.
 - Never invent product behavior or user-facing copy; cite the human source. Never write a row the repo reserves for human attestation; read the owning check's header and ask the operator.
 - Respect operator boundaries on other teams' work, such as "don't fix main" while another owner is fixing it.
+- Work outside the program goes to its owner (operator ruling): a security or infrastructure finding outside its scope, such as a runtime advisory, becomes a ticket assigned to that owner, and the worker investigating it stops. The program does not take the fix.
 
 ## Lessons loop
 
 - Log every finding you route to a writer in the lessons ledger at the same moment, tagged new or repeat, with owner and fix. Batched later, they get lost. Format: [references/state.md](./references/state.md#lessons-ledger).
 - A repeat after a shipped fix means the earlier encoding did not bite: make it a gate, not more prose.
 - A plugin PR that encodes lessons replaces the prose its gate enforces and reports the net change in instruction length. The plugin must not get heavier.
-- Batch lesson and tooling fixes into one open PR per repo and add to it until it merges, never one PR per lesson: each PR costs a full CI run.
+- Batch lesson and tooling fixes into one open PR per repo and add to it until it merges, never one PR per lesson: each PR costs a full CI run. Before opening one, `node scripts/lessons-pr.mjs --repo <owner/repo>` must print `no open lessons PR`; otherwise push the batch onto the branch it names. Four stacked lessons PRs once had to be restacked onto main.
 - A lesson's primary fix lives in vibe itself, its writer instructions plus a mechanical check, because many people run vibe without an orchestrator; a rule here is only a second layer.
 - A lessons PR encodes general rules only. One repo's product rules, paths and component names go in that repo's own instruction files, gates or knowledge base, never in this plugin.
 
@@ -203,4 +208,4 @@ Hard rule. A ticket, PR body, PR comment, review reply or any other artifact wri
 - When the operator steps away, keep `<orchDir>/attention.md` current (decision needed, recommendation, what is blocked), keep reading idle writers' last messages, and lead with that list on return.
 - Put every finding the operator reviews on one page using the stable `D`, `X`, `N`, `S` and `R` IDs in the [operator review template](./references/templates.md#operator-review-page); never restart numbering across audits.
 - The final report lists, per PRD, which flags must be on to see each change.
-- Before a PRD is marked executed, its first section is `## Production visual QA`: each feature flag its shipped changes rely on, where to see it in production and its current production state (or `No flags: <why>`), then `Checked: <ISO time>` taken after the last merge, so someone else can visual-QA it in production. `node ../handoff/scripts/executed-check.mjs --file <PRD text> --last-merge <time>` must pass first.
+- Before a PRD is marked executed, its first section is `## Production visual QA`: each feature flag its shipped changes rely on, where to see it in production and its current production state (or `No flags: <why>`), then `Checked: <ISO time>` taken after the last merge, so someone else can visual-QA it in production. `node ../handoff/scripts/executed-check.mjs --kind prd --file <PRD text> --last-merge <time> --children <its PRODUCES children read now>` must pass first; it also refuses while any child is not DONE or CANCELED, so report the open ones instead. A PRD was once marked executed with four children open.

@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 // Validates the single operator review page. Duplicate F1-style IDs across
 // audits made findings ambiguous, so IDs are globally unique and encode kind.
+// A decision row (D###) also names where the code was checked first
+// (`checked in code: <file>:<line>`): questions the schema already answered
+// (an owner that comes from the code host cannot be reassigned) once reached
+// the operator.
 // Usage: review-page-check.mjs <review.md>
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const ROW = /^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|/gm;
+const ROW = /^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|(.*)$/gm;
+const CODE_EVIDENCE = /checked in code:\s*[^\s|:]+:\d+/i;
 const ID = /^[DXNSR]\d{3,}$/;
 const STATUS = { D: "decision needed", X: "fixing", N: "stands", S: "superseded", R: "ruling" };
 
@@ -21,6 +26,9 @@ export function reviewPageProblems(text) {
     if (!ID.test(id)) problems.push(`${id}: ID must be D###, X###, N###, S### or R###`);
     else if (seen.has(id)) problems.push(`${id}: duplicate ID; review IDs are never reused`);
     else if (status !== STATUS[id[0]]) problems.push(`${id}: status must be ${STATUS[id[0]]}`);
+    else if (id[0] === "D" && !CODE_EVIDENCE.test(match[3])) {
+      problems.push(`${id}: a decision names where the code was checked first (checked in code: <file>:<line>); drop it if the code already answers it`);
+    }
     seen.add(id);
   }
   if (seen.size === 0) problems.push("no operator review rows");

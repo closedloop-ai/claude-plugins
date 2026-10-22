@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { askQuestion } from "./session-questions.mjs";
+import { askQuestion, asksLeaveForInScopeWork } from "./session-questions.mjs";
 import { makeCheckout, makeHome, mainSyncRecipeFiles, runNode } from "./test-fixtures.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -94,4 +94,26 @@ test("answering an unrecorded question is refused", (t) => {
   const result = questions(home, ["answer", "--key", "button-label", "--answer", "Proceed"]);
   assert.equal(result.status, 1);
   assert.match(result.json.error, /record it with ask first/);
+});
+
+test("permission to do in-scope engineering work is refused; flags, product calls, destruction and credentials still wait", () => {
+  const goAhead = [
+    "May I update the two other test files my change broke?",
+    "Pending authorization to repair five stale Desktop tests; OK to proceed?",
+    "Should I merge main now or hold the push for the other PR?",
+    "Do I have approval to rerun the failing check?",
+  ];
+  for (const question of goAhead) {
+    assert.equal(asksLeaveForInScopeWork(question), true, question);
+    assert.throws(() => askQuestion([], { key: "go-ahead", question }), /in-scope work never waits for authorization/);
+  }
+  const waits = [
+    "May I add the new feature flag key for this screen?",
+    "Should I delete the old branch and discard its stash?",
+    "Can owners change in bulk?",
+    "Which wording should the empty state use?",
+    "May I sign in to the preview with your account?",
+  ];
+  for (const question of waits) assert.equal(asksLeaveForInScopeWork(question), false, question);
+  assert.equal(askQuestion([], { key: "flag-key", question: waits[0] }).result.ask, true);
 });

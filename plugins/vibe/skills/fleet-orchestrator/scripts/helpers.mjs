@@ -27,6 +27,10 @@
 // lstart=,command=`), refusing one it cannot read, and every signal re-reads
 // them first: a pid whose identity differs, cannot be read, or was never
 // recorded is treated as not ours and never signalled, alone or as a group.
+// `stopped` also refuses, before ending anything, a helper that owns a standing
+// duty on the fleet board (board.mjs `duty`): it prints `OWNS <duty>` and exits
+// 1 until the duty has another owner. Main's post-merge health once went
+// unwatched for an hour after its watcher was stopped with no replacement.
 // `hand` marks a running app stack (a worktree path, port or URL) as handed to
 // a human QA guide; `start --stack` on a handed stack exits 1, so a rerun that
 // toggles flags or moves data launches its own stack.
@@ -161,6 +165,13 @@ function write(orchDir, ledger) {
   renameSync(`${file}.tmp`, file);
 }
 
+/** Standing duties on the fleet board (board.json) that `name` owns. */
+export function ownedDuties(orchDir, name) {
+  const file = path.join(orchDir, "board.json");
+  const duties = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")).duties ?? {} : {};
+  return Object.entries(duties).filter(([, duty]) => duty?.owner === name).map(([duty]) => duty);
+}
+
 function requireName(action, name) {
   if (!name) {
     throw new Error(`${action} needs a name.`);
@@ -245,6 +256,13 @@ async function main(argv) {
   } else if (action === "accepted") {
     ledger[name] = { ...(ledger[name] ?? {}), acceptedAt: at };
   } else {
+    const owned = ownedDuties(orchDir, name);
+    if (owned.length > 0) {
+      for (const duty of owned) {
+        process.stdout.write(`OWNS ${duty}; give it a new owner first: board.mjs <orchDir> duty ${duty} --owner <replacement>\n`);
+      }
+      return 1;
+    }
     const grace = values["grace-seconds"] === undefined ? DEFAULT_GRACE_SECONDS : Number(values["grace-seconds"]);
     const entry = ledger[name] ?? {};
     const groups = new Set(entry.groups ?? []);

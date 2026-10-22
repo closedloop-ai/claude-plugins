@@ -81,10 +81,11 @@ Record each result in the plan. Append each failure (checkpoint, what the operat
 Keep all findings the operator reviews on one page. Assign each a stable,
 never-reused ID: `D###` decision needed, `X###` fixing, `N###` stands,
 `S###` superseded or `R###` ruling. Preserve the ID when its status changes.
-Run `node scripts/review-page-check.mjs <orchDir>/review.md` before showing it.
+Run `node scripts/review-page-check.mjs <orchDir>/review.md` before showing it;
+a `D###` row also says `checked in code: <file>:<line>`.
 
 ```
-<ID> | <status> | <PR or surface> | <finding and evidence> | <recommendation or resolution>
+<ID> | <status> | <PR or surface> | <finding and evidence; for a decision, checked in code: <file>:<line>> | <recommendation or resolution>
 ```
 
 ## Flag approval

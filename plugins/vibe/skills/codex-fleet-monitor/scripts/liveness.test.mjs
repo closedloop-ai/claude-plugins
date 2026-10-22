@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import {
-  assistantTail, classifyTurnError, connectDirect, decodeFrames, encodeFrame, Failure, needsReply, parseSession, readSessions, readThreadState, summarize,
+  assistantTail, classifyTurnError, connectDirect, decodeFrames, encodeFrame, Failure, modelDrift, needsReply, parseSession, readSessions, readThreadState, summarize,
 } from './liveness.mjs';
 import { answerThreadRead } from './test-support.mjs';
 
@@ -196,4 +198,107 @@ test('a request times out while the connection never opens', async () => {
     for (const socket of sockets) socket.destroy();
     silent.close();
   }
+});
+
+const LIVENESS = fileURLToPath(new URL('./liveness.mjs', import.meta.url));
+const CLASSIFY = fileURLToPath(new URL('./classify.sh', import.meta.url));
+
+async function withFakeServer(threads, body) {
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-'));
+  const { server, calls } = fakeServer(threads);
+  const sock = join(dir, 's.sock');
+  await new Promise((resolve) => server.listen(sock, resolve));
+  try {
+    return await body({ dir, sock, calls });
+  } finally {
+    server.close();
+  }
+}
+
+test('a finished writer whose thread the App Server unloaded (notLoaded) still reads IDLE with its final message', async () => {
+  const done = item('i-9', 'Pushed the fix.\nPR is mergeable; waiting for the merge.');
+  const turns = [{ id: 't-1', status: 'completed', items: [item('i-8'), done] }];
+  await withFakeServer({ LOADED: { status: { type: 'idle' }, turns }, UNLOADED: { status: { type: 'notLoaded' }, turns } }, async ({ dir, sock }) => {
+    const client = connectDirect(sock);
+    try {
+      await client.initialize();
+      const [loaded, unloaded] = await readSessions(client, dir, ['w=LOADED', 'w=UNLOADED']);
+      assert.equal(unloaded, 'w completed i-9 - LAST "Pushed the fix. / PR is mergeable; waiting for the merge."');
+      assert.equal(unloaded, loaded, 'unloading a finished thread is neither an event nor a lost message');
+      const classified = spawnSync('zsh', [CLASSIFY, join(dir, 'history.txt'), '720'], { input: `remote ${unloaded}\n`, encoding: 'utf8' });
+      assert.equal(classified.stdout, 'session remote w IDLE LAST "Pushed the fix. / PR is mergeable; waiting for the merge."\n');
+    } finally {
+      client.close();
+    }
+  });
+});
+
+test('NEEDS-REPLY catches a question or permission request anywhere in the final lines, not only at the end', () => {
+  const asks = [
+    '1. Should the depth limit apply within one project only? / 2. May I use the plain-push fallback here? Publication was refused. / The PR has not been opened yet.',
+    'Draft PR open. Repairing the five stale tests is pending authorization.',
+    'Everything else is done; approval needed before I merge main.',
+    'Which option do you want?',
+  ];
+  for (const text of asks) assert.equal(needsReply(text), true, text);
+  const reports = [
+    'Auto-merge armed. / QA is document review; no UI applies.',
+    'Opened https://example.test/pull/7?tab=checks and all checks passed.',
+    'Approved stories were left unchanged.',
+  ];
+  for (const text of reports) assert.equal(needsReply(text), false, text);
+});
+
+test('a thread on another model or effort than the configured one is flagged on every state', () => {
+  const want = { model: 'fast-model', effort: 'high' };
+  assert.equal(modelDrift({ model: 'fast-model', reasoningEffort: 'high' }, want), '');
+  assert.equal(modelDrift({ model: 'slow-model', reasoningEffort: 'high' }, want), 'MODEL(slow-model/high!=fast-model/high)');
+  assert.equal(modelDrift({ model: 'fast-model', reasoningEffort: 'medium' }, want), 'MODEL(fast-model/medium!=fast-model/high)');
+  assert.equal(modelDrift({ model: 'slow-model', reasoningEffort: 'medium' }, {}), '', 'nothing configured, nothing judged');
+  assert.equal(modelDrift({}, want), '', 'a value the App Server does not report is not judged');
+  const running = { status: 'inProgress', items: [item('i-1')] };
+  assert.equal(summarize('w', { model: 'slow-model', reasoningEffort: 'medium' }, running, 'i-1', null, want), 'w inProgress i-1 - MODEL(slow-model/medium!=fast-model/high)');
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-'));
+  const lines = [
+    'local a inProgress i-1 - MODEL(slow-model/medium!=fast-model/high)',
+    'local b completed i-2 - MODEL(slow-model/high!=fast-model/high) LAST "done"',
+    'local c completed i-3 - LAST "done"',
+  ];
+  const classified = spawnSync('zsh', [CLASSIFY, join(dir, 'history.txt'), '720'], { input: `${lines.join('\n')}\n`, encoding: 'utf8' });
+  assert.deepEqual(classified.stdout.trim().split('\n'), [
+    'session local a RUN MODEL(slow-model/medium!=fast-model/high)',
+    'session local b IDLE LAST "done" MODEL(slow-model/high!=fast-model/high)',
+    'session local c IDLE LAST "done"',
+  ]);
+});
+
+test('run as a command, it classifies a failed turn and flags model drift from CODEX_MODEL and CODEX_EFFORT', { timeout: 30_000 }, async () => {
+  const threads = {
+    T1: { status: { type: 'notLoaded' }, model: 'slow-model', reasoningEffort: 'medium', turns: [{ id: 't-1', status: 'completed', items: [item('i-1', 'May I repair the tests?')] }] },
+    T2: { status: { type: 'idle' }, model: 'fast-model', reasoningEffort: 'high', turns: [{ id: 't-2', status: 'failed', items: [item('i-2')], error: { message: 'You hit your usage limit', codexErrorInfo: 'usageLimitExceeded' } }] },
+  };
+  await withFakeServer(threads, async ({ dir, sock }) => {
+    // A fake codex: `app-server daemon start` names the fake server's socket, `app-server proxy` pipes stdio to it.
+    const codex = join(dir, 'codex');
+    writeFileSync(codex, `#!/usr/bin/env node
+const net = require('node:net');
+const args = process.argv.slice(2).join(' ');
+if (args.startsWith('app-server daemon start')) { process.stdout.write(JSON.stringify({ socketPath: ${JSON.stringify(sock)} })); process.exit(0); }
+if (args.startsWith('app-server proxy')) { const s = net.connect(process.argv.at(-1)); process.stdin.pipe(s); s.pipe(process.stdout); s.on('close', () => process.exit(0)); }
+else process.exit(1);
+`);
+    chmodSync(codex, 0o755);
+    const child = spawn(process.execPath, [LIVENESS, dir, 'one=T1', 'two=T2'], {
+      env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, CODEX_MODEL: 'fast-model', CODEX_EFFORT: 'high' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    const status = await new Promise((resolve) => child.on('exit', resolve));
+    assert.equal(status, 0);
+    assert.deepEqual(stdout.trim().split('\n'), [
+      'one completed i-1 - MODEL(slow-model/medium!=fast-model/high) NEEDS-REPLY "May I repair the tests?"',
+      'two failed i-2 LIMIT',
+    ]);
+  });
 });

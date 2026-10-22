@@ -216,7 +216,7 @@ With `mergeCheck: true`, change nothing else: run
 `gh pr list --repo closedloop-ai/symphony-alpha --head <session branch> --state merged --json number,url,mergedAt`
 from the worktree. When it lists a merged pull request and the PLN is not
 `EXECUTED`, run
-`node ../skills/handoff/scripts/executed-check.mjs --file <its saved latest text> --last-merge <mergedAt>`;
+`node ../skills/handoff/scripts/executed-check.mjs --kind plan --file <its saved latest text> --last-merge <mergedAt>`;
 when it fails, append a version adding the section it names (the session's
 flag keys, each read now from the flag service), and rerun it. Only once it
 passes, set `EXECUTED` through step F (with `expectedStatus` the status you

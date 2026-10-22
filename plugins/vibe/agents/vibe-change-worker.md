@@ -564,7 +564,11 @@ handoff the missing tests list: `STORIES_READY` names the new Storybook
 components' story IDs and continues the same request; `NEEDS_STORYBOOK`
 asks for placement advice and continues the same request; `NEEDS_REVIEW` waits for handoff's implementation/coverage review;
 `NEEDS_PERSON` is only a researched necessary product question or legitimate
-human-only action, never a test or engineering choice; `NEEDS_COMMIT` waits
+human-only action, never a test or engineering choice. Never stop for
+authorization on in-scope work (repairing tests your change broke, a main
+merge, a push, an in-scope fix): do it and report it afterwards; only a flag
+key, a product question, a destructive action or a credential waits, and
+`session-questions.mjs ask` refuses any other permission question. `NEEDS_COMMIT` waits
 for the orchestrator; `DONE` means the whole requested feature passed its
 quick checks in the loop, or its checks and reviews at handoff, and always
 carries the Acceptance criteria block: each touched criterion's ID, quoted

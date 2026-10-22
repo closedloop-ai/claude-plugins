@@ -3,7 +3,7 @@
 //   node codex-session.mjs steer <stateDir> <name> --prompt-file <file>
 //   node codex-session.mjs last  <stateDir> <name> [--count <n>]
 // `turn` starts a thread bound to --cwd when <stateDir>/<name>.json does not exist (a new session also needs
-// --effort and a prompt that starts with `$vibe`, since every writer is a vibe session), otherwise resumes the thread it names, then starts a turn with the prompt file's text. `steer` adds the prompt to the active turn.
+// --model, --effort and a prompt that starts with `$vibe`, since every writer is a vibe session), otherwise resumes the thread it names, then starts a turn with the prompt file's text. `steer` adds the prompt to the active turn.
 // `last` prints the thread's status line and its last <n> agent messages (default 1).
 // The state file is the one codex-fleet-monitor reads for a `local|remote <name>` session line.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -104,6 +104,8 @@ export function nextState(saved, options) {
   }
   if (!saved && !options.cwd) throw new Error('a new session needs --cwd');
   if (!saved && !options.effort) throw new Error('a new session needs --effort');
+  // Sessions started without a model once came up on a slower one and had to be restarted.
+  if (!saved && !options.model) throw new Error('a new session needs --model (set CODEX_MODEL in config.env)');
   return {
     threadId: saved?.threadId,
     cwd: saved?.cwd ?? options.cwd,

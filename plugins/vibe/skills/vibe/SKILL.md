@@ -842,7 +842,9 @@ except the startup version question, which runs once per conversation
 1. Before asking, run `node scripts/session-questions.mjs ask --key <topic>
    --question "<exact words>" [--worktree "<wt>"]`. For a product question,
    also pass `--product --code-evidence "<file:line>"`; the command refuses it
-   without the required code/data-model check. Use a short stable key
+   without the required code/data-model check. It also refuses a request for
+   permission to do in-scope work (a test repair, a main merge, a push, a fix):
+   tell the writer to go ahead and report it. Use a short stable key
    for the topic (`sample-data`, `page-wording`, `button-label`). Before the
    session exists leave `--worktree` out; `vibe-sessions.mjs new` moves those
    questions onto the session. In "Starting new", run

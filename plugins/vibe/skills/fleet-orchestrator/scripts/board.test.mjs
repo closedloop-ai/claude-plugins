@@ -63,3 +63,62 @@ test('a ruling and a ready checkpoint stay untold until each recipient is told d
   }
   assert.match(run([dir, 'status']).stdout, /board: 0 writers, 0 stale, 0 untold/);
 });
+
+test('a standing duty whose owner is stopped or unknown is UNOWNED-DUTY, and its owner cannot be stopped until it moves', (t) => {
+  const dir = tempDir(t);
+  const helpers = (args) => spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), dir, ...args], { encoding: 'utf8' });
+  assert.equal(run([dir, 'duty', 'main-health']).status, 2, 'a duty always names an owner');
+  assert.equal(helpers(['start', 'main-ci-watch']).status, 0);
+  assert.equal(run([dir, 'duty', 'main-health', '--owner', 'main-ci-watch']).status, 0);
+  assert.equal(run([dir, 'duty', 'pr-shepherd', '--owner', 'w1']).status, 0);
+  assert.equal(run([dir, 'writer', 'w1', '--head', 'aaa']).status, 0);
+  assert.match(run([dir, 'status']).stdout, /board: 1 writers, 0 stale, 0 untold, 0 slow, 0 unowned duties/);
+  assert.match(readFileSync(path.join(dir, 'board.md'), 'utf8'), /^- main-health: main-ci-watch \(since /m);
+
+  const refused = helpers(['stopped', 'main-ci-watch']);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stdout, /^OWNS main-health; give it a new owner first/m);
+  assert.equal(JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'))['main-ci-watch'].stoppedAt, undefined);
+
+  assert.equal(run([dir, 'duty', 'main-health', '--owner', 'gone-helper']).status, 0);
+  const unowned = run([dir, 'status']);
+  assert.equal(unowned.status, 1);
+  assert.match(unowned.stdout, /^UNOWNED-DUTY main-health owner gone-helper is not a writer or a running helper$/m);
+  assert.equal(helpers(['stopped', 'main-ci-watch']).status, 0, 'once the duty moved, the old owner stops');
+  assert.equal(run([dir, 'duty', 'main-health', '--owner', 'main-ci-watch']).status, 0);
+  assert.match(run([dir, 'status']).stdout, /^UNOWNED-DUTY main-health owner main-ci-watch stopped /m);
+});
+
+test('a Codex writer with no push for 30 minutes on a PR with unresolved human threads is SLOW', (t) => {
+  const dir = tempDir(t);
+  assert.equal(run([dir, 'writer', 'w1', '--runtime', 'codex', '--head', 'aaa', '--now', '2026-10-21T12:00:00Z']).status, 0);
+  assert.equal(run([dir, 'writer', 'w2', '--runtime', 'claude', '--head', 'bbb', '--now', '2026-10-21T12:00:00Z']).status, 0);
+  assert.equal(run([dir, 'writer', 'w1', '--status', 'review fixes', '--now', '2026-10-21T12:20:00Z']).status, 0, 'a status update is not a push');
+  const at = (time, threads = 'w1=9') => run([dir, 'status', '--threads', threads, '--threads', 'w2=4', '--now', time]);
+  assert.equal(at('2026-10-21T12:29:00Z').status, 0);
+  const slow = at('2026-10-21T12:35:00Z');
+  assert.equal(slow.status, 1);
+  assert.deepEqual(slow.stdout.split('\n').filter((line) => line.startsWith('SLOW')), [
+    'SLOW w1 no push for 35m with 9 unresolved human threads; hand it to a Claude writer',
+  ]);
+  assert.equal(at('2026-10-21T12:35:00Z', 'w1=0').status, 0, 'no unresolved human thread, nothing to hand over');
+  assert.equal(run([dir, 'writer', 'w1', '--head', 'ccc', '--now', '2026-10-21T12:40:00Z']).status, 0);
+  assert.equal(at('2026-10-21T12:41:00Z').status, 0, 'a push restarts the clock');
+  assert.equal(run([dir, 'writer', 'w3', '--runtime', 'gemini']).status, 2);
+});
+
+test('unresolved human threads are read with gh for a Codex row with a PR and repo; bot threads do not count', (t) => {
+  const dir = tempDir(t);
+  const gh = path.join(dir, 'gh');
+  const nodes = [
+    { isResolved: false, comments: { nodes: [{ author: { login: 'reviewer' } }] } },
+    { isResolved: false, comments: { nodes: [{ author: { login: 'review-bot' } }] } },
+    { isResolved: true, comments: { nodes: [{ author: { login: 'reviewer' } }] } },
+    { isResolved: false, comments: { nodes: [{ author: { login: 'lead' } }] } },
+  ];
+  writeFileSync(gh, `#!/bin/sh\ncase "$*" in\n  "api graphql"*) echo '${JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes } } } } })}' ;;\n  *) echo aaa ;;\nesac\n`);
+  chmodSync(gh, 0o755);
+  assert.equal(run([dir, 'writer', 'w1', '--runtime', 'codex', '--pr', '7', '--repo', 'acme/app', '--head', 'aaa', '--now', '2026-10-21T12:00:00Z']).status, 0);
+  const slow = run([dir, 'status', '--now', '2026-10-21T13:00:00Z'], { BOARD_GH: gh });
+  assert.match(slow.stdout, /^SLOW w1 no push for 60m with 2 unresolved human threads; hand it to a Claude writer$/m);
+});
