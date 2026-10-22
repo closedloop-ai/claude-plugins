@@ -58,7 +58,7 @@ plugins/code-review/
     python/fixtures/<name>/              Per-fixture directory (config.yaml + inputs/ + expected/); 4 full scenarios + 3 README-stubs for future coverage
     python/prefix_golden_harness.py      Prefix golden harness + subprocess A/B parity oracle: walks the deterministic prefix against real git fixtures — in-process for golden snapshots, and per-stage-subprocess vs `run-prefix` for byte-equal parity (PLN-1229 Phase 0/1)
     python/test_prefix_golden.py         Pytest driver for the prefix harness: determinism oracle + golden diff across the prefix_fixtures/ matrix
-    python/prefix_fixtures/<name>/       Per-fixture directory (expected/ golden snapshots); 7 branch scenarios (standard, fast-path, hygiene-only, empty-diff, cache-hit, since-last-review, coverage-critic)
+    python/prefix_fixtures/<name>/       Per-fixture directory (expected/ golden snapshots); 8 branch scenarios (standard, fast-path, hygiene-only, empty-diff, cache-hit, since-last-review, coverage-critic, deleted-file)
 ```
 
 ### Foundation (PLN-719, schema_version 1)
