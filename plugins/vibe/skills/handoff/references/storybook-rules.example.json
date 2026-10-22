@@ -1,0 +1,56 @@
+{
+  "release": {
+    "versionFile": "apps/storybook/package.json",
+    "versionField": "version",
+    "historyFiles": ["apps/storybook/stories/start-here-version-history*"]
+  },
+  "frozenRoots": {
+    "titlePattern": "^(?:Foundations|Primitives|Composites|Patterns|Surfaces) v1\\.0/",
+    "tags": ["deprecated"]
+  },
+  "tagRoots": {
+    "preview": "(?:^|/)Labs(?:/|$)"
+  },
+  "noOpHandler": {
+    "pattern": "\\bon(?:Update|Change|Edit|Rename|Save|Commit|Set|Toggle|Select)\\w*\\s*(?::|=\\{?)\\s*(?:async\\s*)?\\(\\s*\\)\\s*=>\\s*(?:undefined|null|void 0|\\{\\s*\\})",
+    "exemptPaths": ["apps/desktop/src/renderer/**"]
+  },
+  "handRolledCells": {
+    "patterns": [
+      "<(?:table|thead|tbody|tr|td|th)\\b",
+      "\\srole=[\"'](?:grid|row|gridcell|rowheader|columnheader)[\"']",
+      "\\brenderCell=\\{\\s*\\([^)]*\\)\\s*=>\\s*[\\w$]+(?:\\.[\\w$]+)+\\s*\\}",
+      "\\brenderCell:\\s*\\([^)]*\\)\\s*=>\\s*[\\w$]+(?:\\.[\\w$]+)+\\s*,?\\s*$"
+    ],
+    "canonical": "GridTableV2 (@repo/design-system/components/ui/grid-table-v2) with the Table*Cell primitives in @repo/design-system/components/ui/table-cell-primitives, table-cell-list-primitives and table-cell-semantic-primitives, and GridEmptyValue from grid-table-card; apps/storybook/AGENTS.md, Table cell contract"
+  },
+  "controlsDecision": {
+    "comment": "No controls:",
+    "exemptTags": ["deprecated"],
+    "allowlist": "scripts/lint/source-gate-allowlist.json"
+  },
+  "literalOptions": true,
+  "storySupportPaths": [
+    "apps/storybook/**",
+    "packages/app/**/storybook/**",
+    "packages/app/**/*story*",
+    "apps/desktop/src/renderer/**/*story*"
+  ],
+  "checks": [
+    {
+      "name": "validate-catalog",
+      "command": "pnpm --filter storybook validate:catalog",
+      "paths": ["apps/storybook/scripts/**", "apps/storybook/.storybook/**", "packages/design-system/components/ui/**", "packages/design-system/storybook/**"]
+    },
+    {
+      "name": "catalog-drift",
+      "command": "pnpm --filter storybook catalog:sync && git diff --exit-code packages/design-system/storybook/component-catalog.ts",
+      "paths": ["apps/storybook/scripts/**", "apps/storybook/.storybook/**", "packages/design-system/components/ui/**", "packages/design-system/storybook/**"]
+    },
+    {
+      "name": "storybook-state-order",
+      "command": "pnpm check:storybook-state-order",
+      "paths": ["scripts/lint/check-storybook-state-order.ts", "apps/storybook/TAXONOMY.md"]
+    }
+  ]
+}

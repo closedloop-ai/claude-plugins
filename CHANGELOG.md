@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.78
+
+Storybook rule violations vibe pull requests merged into symphony-alpha while every repo check stayed green (storybook audit, 2026-10-21: #8953, #8959, #8960, #8962, #8963, #8980).
+
+#### Added
+- handoff diff rules: `storybook-rules.mjs` reads the repository's `.vibe/storybook-rules.json` and blocks a story change that needs a Storybook release and has none or a lower semver level (a removed or renamed story needs a major, a new entry or lifecycle tag change a minor, a story on an existing entry a patch), a release record that reuses a version or lacks exactly one entry for the new one, new stories under a frozen root, an edit handler wired to a no-op, a hand-rolled table row or cell, a story the diff adds or edits that names a component with no controls decision (a gate allowlist does not count), a lifecycle tag outside its declared roots, a control's computed options list, and a story-local copy of a component the diff deletes. The options rule counts only an `argTypes` entry with a select, radio or check control, never a prop named `options` or a value under `args`, and the no-op rule skips frozen files, which are restored rather than edited. Each finding names its change log escape line. Every repository fact is in the declaration; a repository without one runs none of these.
+- The declaration's `checks` (the repository's own Storybook commands) become required tests whenever a story file or a listed path changes, so the evidence gate needs a passing run of each on the published commit. `skills/handoff/references/storybook-rules.example.json` is symphony-alpha's declaration.
+
 ### vibe v1.0.77
 
 #### Added
