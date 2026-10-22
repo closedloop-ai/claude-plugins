@@ -132,7 +132,9 @@ path merely because another rule describes how its content should look.
      file whose exports only forward to the new owner (a pass-through or
      wrapper), a re-export alias, an export with no remaining importer, a
      prop no caller passes, and a loop or `each` table over one remaining
-     arm are each blocking, cited at `file:line`.
+     arm are each blocking, cited at `file:line`. So is a changed literal or
+     contract value whose old value `rg` still finds anywhere in the repo,
+     and a test locator widened to a page-wide match that is not unique.
 9. Tests and checks: an added or deleted test file (`*.test.*`, `*.spec.*`,
    `__tests__/`, `e2e/`, or a snapshot or fixture a test reads), a changed
    snapshot, or a changed test that is not a pure repair is blocking in the

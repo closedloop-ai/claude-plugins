@@ -60,3 +60,17 @@ def test_the_2026_10_22_open_lessons_are_wired() -> None:
     hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())
     commands = [hook["command"] for entry in hooks["hooks"]["PreToolUse"] for hook in entry["hooks"]]
     assert any("hooks/merge-guard.mjs" in command for command in commands)
+
+
+def test_green_watch_fixes_pass_vibe_gates_and_results_name_their_commit() -> None:
+    skill = flat((FLEET / "SKILL.md").read_text())
+    assert "a vibe writer (Claude `vibe:vibe`, Codex `$vibe`) briefed by `GREEN_WATCH_AGENT`" in skill
+    assert "`gh pr view <n> --json author,headRefName`, never a worker's word" in skill
+    assert "e2e-lock.mjs run --head <sha>" in skill
+    environment = flat((PLUGIN / "agents" / "vibe-environment-worker.md").read_text())
+    assert "pr-preflight.mjs --title" in environment
+    reviewer = flat((PLUGIN / "agents" / "vibe-guardrails-reviewer.md").read_text())
+    assert "whose old value `rg` still finds anywhere in the repo" in reviewer
+    scripts = PLUGIN / "skills" / "vibe" / "scripts"
+    for name in ("pre-pr-lanes.mjs", "e2e-lock.mjs"):
+        assert "testedHead" in (scripts / name).read_text(), name

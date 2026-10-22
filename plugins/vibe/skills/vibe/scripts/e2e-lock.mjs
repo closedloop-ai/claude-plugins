@@ -7,7 +7,7 @@
 // stack to be free, runs the command, and releases the lock when the command
 // ends. A lock left by a process that no longer exists is taken over.
 //
-// Usage: e2e-lock.mjs run [--wait-seconds <n>] [--lock-dir <dir>] [--foreign-compose <project>]... <command> [args...]
+// Usage: e2e-lock.mjs run --head <sha> [--wait-seconds <n>] [--lock-dir <dir>] [--foreign-compose <project>]... <command> [args...]
 //        e2e-lock.mjs status [--lock-dir <dir>]
 //
 // The lock's own options come first; the first other word starts the command,
@@ -27,6 +27,11 @@
 // this lock: while `docker compose ls` shows it running, the stack counts as
 // busy. Without Docker, or when the listing fails, nothing is checked.
 //
+// `run` starts only when the worktree's HEAD is `--head` with no modified
+// tracked file (tested-head.mjs), prints `e2e-lock: testing <sha>` and fails
+// (exit 1) when HEAD moved during the run: runs once went on at an old commit
+// after every checkout failed, and passes were reported for a commit never tested.
+//
 // `run` exits with the command's own code. When the stack stays busy past
 // `--wait-seconds` (default 3600) it runs nothing, prints
 // {"status":"busy","holder":{...}} and exits 75. `status` prints
@@ -38,6 +43,7 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync }
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { testedHead } from "./tested-head.mjs";
 
 export const BUSY_EXIT = 75;
 export const DUPLICATE_EXIT = 76;
@@ -165,7 +171,7 @@ function isAlive(pid) {
   }
 }
 
-const OWN_OPTIONS = new Set(["--wait-seconds", "--lock-dir", "--foreign-compose"]);
+const OWN_OPTIONS = new Set(["--head", "--wait-seconds", "--lock-dir", "--foreign-compose"]);
 const REPEATED_OPTIONS = new Set(["--foreign-compose"]);
 
 /** The first of `projects` that `docker compose ls` lists as running, or null; no Docker means none. */
@@ -240,8 +246,9 @@ async function main(argv) {
     return 0;
   }
   if (action !== "run" || !command) {
-    throw new Error("Usage: e2e-lock.mjs run [--wait-seconds <n>] [--lock-dir <dir>] [--foreign-compose <project>]... <command> [args...]");
+    throw new Error("Usage: e2e-lock.mjs run --head <sha> [--wait-seconds <n>] [--lock-dir <dir>] [--foreign-compose <project>]... <command> [args...]");
   }
+  const tested = testedHead(worktreeOf(process.cwd()), values.head);
   const waitSeconds = values["wait-seconds"] === undefined ? DEFAULT_WAIT_SECONDS : Number(values["wait-seconds"]);
   if (!Number.isFinite(waitSeconds) || waitSeconds < 0) {
     throw new Error("--wait-seconds must be zero or a positive number of seconds.");
@@ -291,9 +298,13 @@ async function main(argv) {
     return BUSY_EXIT;
   }
   const composeProject = composeProjectFor(process.env, owner.token);
-  process.stderr.write(`e2e-lock: compose project ${composeProject}\n`);
+  process.stderr.write(`e2e-lock: compose project ${composeProject}\ne2e-lock: testing ${tested}\n`);
   try {
-    return await runCommand(command, args, { ...process.env, COMPOSE_PROJECT_NAME: composeProject });
+    const code = await runCommand(command, args, { ...process.env, COMPOSE_PROJECT_NAME: composeProject });
+    const after = execFileSync("git", ["-C", worktreeOf(process.cwd()), "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    if (after === tested) return code;
+    process.stderr.write(`HEAD-MOVED from ${tested.slice(0, 12)} to ${after.slice(0, 12)} during the run; its result is not for ${tested.slice(0, 12)}\n`);
+    return code || 1;
   } finally {
     release(lockDir, owner);
   }

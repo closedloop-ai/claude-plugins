@@ -92,7 +92,7 @@ def test_handoff_recipe_runs_no_test_suite() -> None:
 
 def test_e2e_runs_one_stack_per_machine_and_only_needed_specs() -> None:
     checks = section(agent("vibe-verify-worker"), "## Existing checks")
-    assert "node ../skills/vibe/scripts/e2e-lock.mjs run <the e2e command>" in checks
+    assert "node ../skills/vibe/scripts/e2e-lock.mjs run --head <sha> <the e2e command>" in checks
     assert "only those specs, never the whole e2e suite" in checks
     assert "never start the stack around the lock" in checks
     handoff = flat(HANDOFF_SKILL.read_text())

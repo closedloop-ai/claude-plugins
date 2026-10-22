@@ -100,8 +100,8 @@ rules:
   head: the lock refuses a second entry from the same worktree (exit 76). The containerized stack
   is one per machine (one compose project name, fixed ports and shared
   Dagger cache volumes), so start it only through
-  `node ../skills/vibe/scripts/e2e-lock.mjs run <the e2e command>`, which
-  waits until no other session's stack is running. Its exit 75 means the
+  `node ../skills/vibe/scripts/e2e-lock.mjs run --head <sha> <the e2e command>`, which
+  waits until no other session's stack is running and runs only that clean commit. Its exit 75 means the
   stack stayed busy past the wait: record that limitation with the holder it
   prints, never a pass, and never start the stack around the lock.
   When Docker or Dagger is missing, record that exact limitation; never claim

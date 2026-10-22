@@ -392,7 +392,8 @@ changes and gates fields.
    inline, briefly. `blocking.prBody` refuses a line naming one.
 4. Title: `<live ticket slug>: <plain imperative summary>`, at most 72
    characters including the ` (#NNNN)` GitHub appends, with no mention of AI
-   tools. First `node ../skills/vibe/scripts/pre-pr-lanes.mjs check --worktree "<wt>" --report <the repo's lane report output>`
+   tools; `node ../skills/vibe/scripts/pr-preflight.mjs --title "<title>" --body-file <file>`
+   must pass. First `node ../skills/vibe/scripts/pre-pr-lanes.mjs check --worktree "<wt>" --report <the repo's lane report output>`
    must pass (each test lane the report names has a passing run recorded at
    HEAD; `BLOCKED` with its `MISSING-LANE` lines otherwise). Create it with
    `gh pr create --repo closedloop-ai/symphony-alpha --base main --head <branch> --title "<title>" --body-file <file>`,
