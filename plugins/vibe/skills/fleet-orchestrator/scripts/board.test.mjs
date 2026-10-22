@@ -142,14 +142,29 @@ test('a work dir that watches sessions or PRs fails status while its watcher is 
 
 test('a writer question waiting 15 minutes is QUESTION-UNANSWERED until answered (#9118)', (t) => {
   const dir = tempDir(t);
-  assert.equal(run([dir, 'question', 'w1', '--text', 'Sort by rank or updated? If no answer by 09:04Z: rank', '--now', '2026-10-22T08:34:00Z']).status, 0);
+  assert.equal(run([dir, 'question', 'w1', '--id', 'q1', '--text', 'Sort by rank or updated? If no answer by 09:04Z: rank', '--now', '2026-10-22T08:34:00Z']).status, 0);
   assert.equal(run([dir, 'status', '--now', '2026-10-22T08:48:00Z']).status, 0, 'fourteen minutes is not yet late');
   const late = run([dir, 'status', '--now', '2026-10-22T08:49:00Z']);
   assert.equal(late.status, 1);
-  assert.match(late.stdout, /^QUESTION-UNANSWERED w1 15m: Sort by rank or updated\?/m);
-  assert.equal(run([dir, 'answered', 'w1', '--now', '2026-10-22T08:50:00Z']).status, 0);
+  assert.match(late.stdout, /^QUESTION-UNANSWERED w1 q1 15m: Sort by rank or updated\?/m);
+  assert.equal(run([dir, 'answered', 'w1', '--id', 'q1', '--now', '2026-10-22T08:50:00Z']).status, 0);
+  assert.equal(run([dir, 'ack', 'w1', '--id', 'q1', '--now', '2026-10-22T08:52:00Z']).status, 0);
   assert.equal(run([dir, 'status', '--now', '2026-10-22T13:00:00Z']).status, 0);
-  assert.equal(run([dir, 'question', 'w1']).status, 2);
+  assert.equal(run([dir, 'question', 'w1', '--text', 'x']).status, 2, 'a question carries an id');
+});
+
+test('an answer the writer has not acknowledged in 15 minutes is UNACKED (answers sent three times)', (t) => {
+  const dir = tempDir(t);
+  assert.equal(run([dir, 'question', 'w2', '--id', 'url-cap', '--text', 'Cap URLs at 2000? Default: yes', '--now', '2026-10-22T10:00:00Z']).status, 0);
+  assert.equal(run([dir, 'answered', 'w2', '--id', 'url-cap', '--now', '2026-10-22T10:05:00Z']).status, 0);
+  assert.equal(run([dir, 'status', '--now', '2026-10-22T10:19:00Z']).status, 0, 'an answer has 15 minutes to be acknowledged');
+  const unacked = run([dir, 'status', '--now', '2026-10-22T10:20:00Z']);
+  assert.equal(unacked.status, 1);
+  assert.match(unacked.stdout, /^UNACKED w2 url-cap 15m: the writer has not acknowledged your answer/m);
+  assert.doesNotMatch(unacked.stdout, /QUESTION-UNANSWERED/, 'an answered question is no longer unanswered');
+  assert.equal(run([dir, 'ack', 'w2', '--id', 'other']).status, 2, 'an ack names a recorded question');
+  assert.equal(run([dir, 'ack', 'w2', '--id', 'url-cap', '--now', '2026-10-22T10:21:00Z']).status, 0);
+  assert.equal(run([dir, 'status', '--now', '2026-10-22T11:00:00Z']).status, 0);
 });
 
 test('a watched program needs a green-watch owner; REQUIRED_DUTIES names others', (t) => {

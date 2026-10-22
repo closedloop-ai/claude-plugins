@@ -9,7 +9,7 @@
 //        board.mjs <orchDir> deliver <item> --to <a,b> [--kind ruling|checkpoint|note] [--reference <file>] [--head <sha>]
 //        board.mjs <orchDir> told <item> <recipient>
 //        board.mjs <orchDir> duty <duty> --owner <writer or helper>
-//        board.mjs <orchDir> question <writer> --text <the question and its default> | answered <writer>
+//        board.mjs <orchDir> question|answered|ack <writer> --id <question id> [--text <the question and its default>]
 //        board.mjs <orchDir> status [--pushed <name>=<sha>]... [--threads <name>=<n>]...
 //
 // `writer` adds or updates a writer's row (owner, PR, head, status,
@@ -42,9 +42,14 @@
 // <sha>`); `push-check` exits 1 unless the head you are about to push for it
 // is that one. The orchestrator once pushed a writer's committed head while the
 // writer was still fixing two regressions in it, and auto-merge took it.
-// A writer records each question it sends you (`question`); `status` prints
-// `QUESTION-UNANSWERED <writer> <m>m: <text>` once one waited 15 minutes, until
-// `answered`. A writer once held its PR six hours on an unanswered question.
+// A writer records each question it sends you under an id (`question`), your
+// answer echoes that id (`answered`), and the writer acknowledges it in its next
+// status (`ack`). `status` prints `QUESTION-UNANSWERED <writer> <id> <m>m:
+// <text>` once a question waited 15 minutes, and `UNACKED <writer> <id> <m>m`
+// once an answer waited 15 minutes unacknowledged: escalate, for example by
+// asking the operator to press Esc in that pane. A writer once held its PR six
+// hours on an unanswered question, and answers to writers in long turns had to
+// be sent three times.
 // All of these count toward the exit status, as does `WATCHER-MISSING(<why>)` when the
 // work dir watches sessions or PRs (sessions.txt or prs.txt) and its watcher is
 // not running: a watcher left unarmed overnight let writers' questions sit
@@ -91,11 +96,16 @@ export function unownedDuties(board, helpers) {
   });
 }
 
-/** Writers whose recorded question has waited QUESTION_MINUTES or more. */
-export function unansweredQuestions(board, now) {
-  return Object.entries(board.questions)
-    .map(([writer, { text, at }]) => ({ writer, text, minutes: Math.floor((now - Date.parse(at)) / 60_000) }))
-    .filter((entry) => entry.minutes >= QUESTION_MINUTES);
+/** Questions unanswered, and answers unacknowledged, for QUESTION_MINUTES or more. */
+export function lateQuestions(board, now) {
+  const minutesSince = (at) => Math.floor((now - Date.parse(at)) / 60_000);
+  const entries = Object.entries(board.questions).map(([key, entry]) => ({ writer: entry.writer ?? key, id: entry.id ?? "-", ...entry }));
+  return {
+    unanswered: entries.filter((entry) => !entry.answeredAt && minutesSince(entry.at) >= QUESTION_MINUTES)
+      .map((entry) => ({ ...entry, minutes: minutesSince(entry.at) })),
+    unacked: entries.filter((entry) => entry.answeredAt && minutesSince(entry.answeredAt) >= QUESTION_MINUTES)
+      .map((entry) => ({ ...entry, minutes: minutesSince(entry.answeredAt) })),
+  };
 }
 
 /** Required duties with no owner recorded. */
@@ -226,11 +236,11 @@ function main(argv) {
       pr: { type: "string" }, repo: { type: "string" }, head: { type: "string" }, status: { type: "string" }, deps: { type: "string" },
       to: { type: "string" }, kind: { type: "string" }, reference: { type: "string" },
       pushed: { type: "string", multiple: true }, threads: { type: "string", multiple: true }, now: { type: "string" },
-      runtime: { type: "string" }, owner: { type: "string" }, text: { type: "string" }, ready: { type: "string" },
+      runtime: { type: "string" }, owner: { type: "string" }, text: { type: "string" }, ready: { type: "string" }, id: { type: "string" },
     },
   });
-  if (!orchDir || !["writer", "deliver", "told", "duty", "question", "answered", "push-check", "status"].includes(action)) {
-    throw new Error("Usage: board.mjs <orchDir> writer|deliver|told|duty|question|answered|push-check|status ...");
+  if (!orchDir || !["writer", "deliver", "told", "duty", "question", "answered", "ack", "push-check", "status"].includes(action)) {
+    throw new Error("Usage: board.mjs <orchDir> writer|deliver|told|duty|question|answered|ack|push-check|status ...");
   }
   const board = read(orchDir);
   const now = values.now ? Date.parse(values.now) : Date.now();
@@ -248,12 +258,14 @@ function main(argv) {
     for (const entry of duties) process.stdout.write(`UNOWNED-DUTY ${entry.duty} owner ${entry.owner} ${entry.why}\n`);
     const missing = missingDuties(board, requiredDuties(orchDir));
     for (const duty of missing) process.stdout.write(`MISSING-DUTY ${duty}: give it an owner with board.mjs <orchDir> duty ${duty} --owner <writer or helper>\n`);
-    const asked = unansweredQuestions(board, now);
-    for (const entry of asked) process.stdout.write(`QUESTION-UNANSWERED ${entry.writer} ${entry.minutes}m: ${entry.text.slice(0, 160)}\n`);
+    const { unanswered, unacked } = lateQuestions(board, now);
+    for (const entry of unanswered) process.stdout.write(`QUESTION-UNANSWERED ${entry.writer} ${entry.id} ${entry.minutes}m: ${entry.text.slice(0, 160)}\n`);
+    for (const entry of unacked) process.stdout.write(`UNACKED ${entry.writer} ${entry.id} ${entry.minutes}m: the writer has not acknowledged your answer; it is likely in a long turn, so escalate\n`);
+    const asked = [...unanswered, ...unacked];
     const watched = ["sessions.txt", "prs.txt"].some((file) => existsSync(path.join(orchDir, file)));
     const watcher = watched ? watcherState(orchDir, now) : { ok: true };
     if (!watcher.ok) process.stdout.write(`WATCHER-MISSING ${watcher.line.replace("watcher MISSING", "")}: re-arm watch.sh now (run_in_background)\n`);
-    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${asked.length} unanswered${watcher.ok ? "" : ", watcher missing"}\n`);
+    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${unanswered.length} unanswered, ${unacked.length} unacked${watcher.ok ? "" : ", watcher missing"}\n`);
     return stale.length + open.length + slow.length + duties.length + missing.length + asked.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
   }
   const [name, recipient] = positionals;
@@ -272,17 +284,22 @@ function main(argv) {
     process.stdout.write(`READY ${name} ${values.head}\n`);
     return 0;
   }
-  if (action === "question") {
-    if (!values.text?.trim()) {
-      throw new Error("question needs --text <the question and the default you proceed on>.");
+  if (["question", "answered", "ack"].includes(action)) {
+    if (!/^[\w.:-]{1,40}$/.test(values.id ?? "")) {
+      throw new Error(`${action} needs --id <question id>; the answer echoes it and the writer acknowledges it.`);
     }
-    board.questions[name] = { text: values.text.trim(), at };
-    write(orchDir, board, `${name} asked: ${values.text.trim().slice(0, 80)}`, at);
-    return 0;
-  }
-  if (action === "answered") {
-    delete board.questions[name];
-    write(orchDir, board, `${name} answered`, at);
+    const key = `${name}/${values.id}`;
+    if (action === "question") {
+      if (!values.text?.trim()) throw new Error("question needs --text <the question and the default you proceed on>.");
+      board.questions[key] = { writer: name, id: values.id, text: values.text.trim(), at };
+    } else if (!board.questions[key]) {
+      throw new Error(`no question ${values.id} from ${name} is recorded.`);
+    } else if (action === "answered") {
+      board.questions[key].answeredAt = at;
+    } else {
+      delete board.questions[key];
+    }
+    write(orchDir, board, `${name} ${action} ${values.id}`, at);
     return 0;
   }
   if (action === "duty") {

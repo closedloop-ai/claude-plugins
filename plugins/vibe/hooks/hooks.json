@@ -4,7 +4,14 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/kill-guard.mjs\"" }
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/kill-guard.mjs\""
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/foreground-guard.mjs\""
+          }
         ]
       }
     ]
