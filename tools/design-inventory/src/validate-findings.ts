@@ -14,7 +14,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
 import { validateDecisions, validateFindings } from "./design-findings-schema.js";
-import { runWhenMain } from "./cli.js";
+import { runWhenMain } from "../../shared/cli.js";
 
 export function main(argv: string[]): number {
   const { values, positionals } = parseArgs({

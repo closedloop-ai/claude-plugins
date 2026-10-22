@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { join, relative, dirname } from "node:path";
 import { parseArgs } from "node:util";
 
-import { runWhenMain } from "./cli.js";
+import { runWhenMain } from "../../shared/cli.js";
 import { walkFiles } from "./fs-walk.js";
 
 export const SPEC_SCHEMA_VERSION = 1;

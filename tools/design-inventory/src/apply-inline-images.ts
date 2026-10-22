@@ -22,7 +22,7 @@ import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, normalize, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
-import { runWhenMain } from "./cli.js";
+import { runWhenMain } from "../../shared/cli.js";
 
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for tests)

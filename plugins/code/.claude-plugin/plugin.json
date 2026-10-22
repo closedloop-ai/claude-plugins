@@ -1,7 +1,8 @@
 {
   "name": "code",
   "description": "Code and planning framework plugin",
-  "version": "1.14.11",
+  "version": "2.0.1",
+  "dependencies": ["closedloop-core"],
   "author": {
     "name": "ClosedLoop",
     "email": "support@closedloop.ai"

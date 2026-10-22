@@ -258,6 +258,33 @@ class TestParseU0Output:
         assert ranges["f.ts"]["removed"] == [[5, 5]]
         assert ranges["f.ts"]["added"] == [[5, 5]]
 
+    def test_pure_deletion_hunk_records_deletion_point(self) -> None:
+        """ISS-12737: ``@@ -10,3 +9,0 @@`` removes old lines 10-12; the new
+        file's lines 9 and 10 sit on either side of the gap."""
+        raw = (
+            "diff --git a/mod.py b/mod.py\n"
+            "@@ -10,3 +9,0 @@\n"
+            "-if x is None:\n"
+            "-    return\n"
+            "-\n"
+        )
+        ranges, _ = _parse_u0_output(raw)
+        assert ranges["mod.py"]["removed"] == [[10, 12]]
+        assert ranges["mod.py"]["added"] == []
+        assert ranges["mod.py"]["deletion_points"] == [[9, 10]]
+
+    def test_mixed_hunk_records_no_deletion_point(self) -> None:
+        raw = (
+            "diff --git a/mod.py b/mod.py\n"
+            "@@ -5,2 +5,1 @@\n"
+            "-a\n"
+            "-b\n"
+            "+ab\n"
+        )
+        ranges, _ = _parse_u0_output(raw)
+        assert ranges["mod.py"]["added"] == [[5, 5]]
+        assert "deletion_points" not in ranges["mod.py"]
+
 
 # ---------------------------------------------------------------------------
 # Utility functions
@@ -2386,10 +2413,78 @@ class TestValidate:
         assert len(result["validated"]) == 1
         assert result["stats"]["validated"] == 1
 
-    def test_file_not_in_scope(self, tmp_path: Path) -> None:
+    def test_out_of_diff_finding_kept_and_tagged(self, tmp_path: Path) -> None:
+        """ISS-12737: a finding on a file outside the diff is kept, not
+        discarded, and tagged ``out_of_diff``. A P2 at 0.65 clears the
+        normal 0.5 floor; the 0.80 out-of-hunk floor does not apply."""
+        diff_data = _make_diff_data(files=["src/app.ts"])
+        findings = [{
+            "file": "src/other.test.ts",
+            "line": 500,
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "Stale mock of a symbol this diff deleted",
+            "priority": 2,
+            "confidence": 0.65,
+            "out_of_hunk_kept": True,
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert len(result["validated"]) == 1
+        kept = result["validated"][0]
+        assert kept["out_of_diff"] is True
+        assert "out_of_hunk_kept" not in kept
+        assert result["discarded"] == []
+        assert result["stats"]["kept_out_of_diff"] == 1
+        assert result["stats"]["kept_out_of_hunk"] == 0
+        assert "discarded_file_not_changed" not in result["stats"]
+
+    def test_out_of_diff_low_confidence_discarded(self, tmp_path: Path) -> None:
         diff_data = _make_diff_data(files=["src/app.ts"])
         findings = [{
             "file": "src/other.ts",
+            "line": 5,
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "Weak guess",
+            "priority": 2,
+            "confidence": 0.4,
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert result["validated"] == []
+        assert [d["reason"] for d in result["discarded"]] == ["DISCARD_LOW_CONFIDENCE"]
+        assert "out_of_diff" not in result["discarded"][0]["finding"]
+        assert result["stats"]["discarded_low_confidence"] == 1
+        assert result["stats"]["kept_out_of_diff"] == 0
+
+    def test_validator_strips_reviewer_supplied_out_of_diff(
+        self, tmp_path: Path,
+    ) -> None:
+        """The validator OWNS ``out_of_diff``: a reviewer-set value on a
+        finding inside the diff must not survive."""
+        diff_data = _make_diff_data(
+            files=["src/app.ts"],
+            ranges={"src/app.ts": {"added": [[10, 20]], "removed": []}},
+        )
+        findings = [{
+            "file": "src/app.ts",
+            "line": 15,
+            "severity": "HIGH",
+            "category": "Correctness",
+            "issue": "Bug",
+            "priority": 1,
+            "confidence": 0.9,
+            "out_of_diff": True,
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert len(result["validated"]) == 1
+        assert "out_of_diff" not in result["validated"][0]
+        assert result["stats"]["kept_out_of_diff"] == 0
+
+    def test_diff_finding_without_file_discarded(self, tmp_path: Path) -> None:
+        """A diff-scope finding with no ``file`` cannot be located and must
+        not be kept as "outside the diff"."""
+        diff_data = _make_diff_data(files=["src/app.ts"])
+        findings = [{
             "line": 5,
             "severity": "HIGH",
             "category": "Correctness",
@@ -2397,8 +2492,9 @@ class TestValidate:
             "priority": 1,
         }]
         result = self._run_validate(findings, diff_data, tmp_path)
-        assert len(result["validated"]) == 0
-        assert result["stats"]["discarded_file_not_changed"] == 1
+        assert result["validated"] == []
+        assert [d["reason"] for d in result["discarded"]] == ["DISCARD_MISSING_FILE"]
+        assert result["stats"]["kept_out_of_diff"] == 0
 
     def test_out_of_hunk_high_confidence_survives(self, tmp_path: Path) -> None:
         """v2.21.0 relaxation: a P2+ MEDIUM finding outside the changed
@@ -2679,10 +2775,15 @@ class TestValidate:
         result = self._run_validate(findings, diff_data, tmp_path)
         assert len(result["validated"]) == 1
 
-    def test_removed_range_check(self, tmp_path: Path) -> None:
+    def test_modified_file_line_matching_only_removed_range_is_out_of_range(
+        self, tmp_path: Path,
+    ) -> None:
+        """ISS-12737: ``removed`` ranges are old-file numbers. A new-file
+        line that only coincides with one is out of range, so a P2 at 0.8
+        takes the out-of-hunk path (and fails its 0.80 floor)."""
         diff_data = _make_diff_data(
             files=["src/app.ts"],
-            ranges={"src/app.ts": {"added": [], "removed": [[50, 55]]}},
+            ranges={"src/app.ts": {"added": [[10, 12]], "removed": [[50, 55]]}},
         )
         findings = [{
             "file": "src/app.ts",
@@ -2694,7 +2795,59 @@ class TestValidate:
             "confidence": 0.8,
         }]
         result = self._run_validate(findings, diff_data, tmp_path)
+        assert result["validated"] == []
+        assert [d["reason"] for d in result["discarded"]] == [
+            "DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE",
+        ]
+
+    def test_line_at_deletion_point_is_in_range(self, tmp_path: Path) -> None:
+        """A finding on the surviving line beside a pure deletion is in range."""
+        diff_data = _make_diff_data(
+            files=["src/app.ts"],
+            ranges={"src/app.ts": {
+                "added": [], "removed": [[50, 55]], "deletion_points": [[30, 31]],
+            }},
+        )
+        findings = [{
+            "file": "src/app.ts",
+            "line": 31,
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "Guard removed",
+            "priority": 2,
+            "confidence": 0.8,
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
         assert len(result["validated"]) == 1
+        assert "out_of_hunk_kept" not in result["validated"][0]
+        assert result["discarded"] == []
+
+    def test_deleted_file_line_checked_against_old_numbering(
+        self, tmp_path: Path,
+    ) -> None:
+        """A finding on a file deleted outright is numbered in the old file:
+        inside the removed range it is in range, past it it is out of hunk."""
+        diff_data = _make_diff_data(
+            files=["src/gone.ts"],
+            statuses={"src/gone.ts": "removed"},
+            ranges={"src/gone.ts": {
+                "added": [], "removed": [[1, 120]], "deletion_points": [[0, 1]],
+            }},
+        )
+        findings = [
+            {"file": "src/gone.ts", "line": 80, "severity": "MEDIUM",
+             "category": "Correctness", "issue": "Public route removed",
+             "priority": 2, "confidence": 0.8},
+            {"file": "src/gone.ts", "line": 200, "severity": "MEDIUM",
+             "category": "Correctness", "issue": "Past the end",
+             "priority": 2, "confidence": 0.8},
+        ]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert [f["line"] for f in result["validated"]] == [80]
+        assert "out_of_hunk_kept" not in result["validated"][0]
+        assert [d["reason"] for d in result["discarded"]] == [
+            "DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE",
+        ]
 
     def test_low_confidence_discard(self, tmp_path: Path) -> None:
         diff_data = _make_diff_data(
@@ -3701,8 +3854,8 @@ class TestCmdPostComments:
             )
             rc = self._run(path, dry_run=True)
         assert rc == 0
-        # Only the GET call should have been made (dedup fetch), no POSTs
-        assert mock_run.call_count == 1
+        # Only the GETs (dedup fetch + PR files lookup), no POSTs
+        assert mock_run.call_count == 2
 
     def test_posts_each_finding(self, tmp_path: Path) -> None:
         findings = [
@@ -3711,15 +3864,15 @@ class TestCmdPostComments:
         ]
         path = _make_findings_file(tmp_path, findings)
         with patch("code_review_helpers.subprocess.run") as mock_run:
-            # First call: GET existing comments (returns [])
+            # First calls: GET existing comments + GET PR files (both [])
             # Subsequent calls: POST comments (returns success)
             mock_run.return_value = subprocess.CompletedProcess(
                 args=[], returncode=0, stdout="[]", stderr=""
             )
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 2 POSTs
-        assert mock_run.call_count == 3
+        # 2 GETs + 2 POSTs
+        assert mock_run.call_count == 4
 
     def test_dedup_skips_existing(self, tmp_path: Path) -> None:
         findings = [{"file": "a.ts", "line": 10, "severity": "HIGH", "category": "Bug", "issue": "dup"}]
@@ -3743,11 +3896,11 @@ class TestCmdPostComments:
         success = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
         fail_422 = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="422 Validation Failed")
         with patch("code_review_helpers.subprocess.run") as mock_run:
-            # GET returns [], first POST fails 422, second POST succeeds
-            mock_run.side_effect = [success, fail_422, success]
+            # GETs return [], first POST fails 422, second POST succeeds
+            mock_run.side_effect = [success, success, fail_422, success]
             rc = self._run(path)
         assert rc == 0
-        assert mock_run.call_count == 3
+        assert mock_run.call_count == 4
 
     def test_422_counted_as_skip_not_failure(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -3762,11 +3915,11 @@ class TestCmdPostComments:
         success = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
         fail_422 = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="422 Validation Failed")
         with patch("code_review_helpers.subprocess.run") as mock_run:
-            mock_run.side_effect = [success, fail_422]
+            mock_run.side_effect = [success, success, fail_422]
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST (the POST is attempted, then 422'd into the skip bucket).
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST (the POST is attempted, then 422'd into the skip bucket).
+        assert mock_run.call_count == 3
         out = capsys.readouterr().out
         assert "out-of-hunk=1" in out
         assert "failed 0" in out
@@ -3784,11 +3937,11 @@ class TestCmdPostComments:
         success = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
         fail_401 = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="HTTP 401: Bad credentials")
         with patch("code_review_helpers.subprocess.run") as mock_run:
-            mock_run.side_effect = [success, fail_401]
+            mock_run.side_effect = [success, success, fail_401]
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST (the POST is attempted and fails auth).
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST (the POST is attempted and fails auth).
+        assert mock_run.call_count == 3
         out = capsys.readouterr().out
         assert "failed 1" in out
         assert "out-of-hunk=0" in out
@@ -3812,13 +3965,212 @@ class TestCmdPostComments:
             )
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST (only b.ts:20 is posted; the out-of-hunk finding never
+        # 2 GETs + 1 POST (only b.ts:20 is posted; the out-of-hunk finding never
         # reaches the API).
-        assert mock_run.call_count == 2
+        assert mock_run.call_count == 3
         out = capsys.readouterr().out
         assert "Posted 1" in out
         assert "out-of-hunk=1" in out
         assert "failed 0" in out
+
+    def test_line_out_of_range_skips_inline_post(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A finding the validator tagged ``line_out_of_range`` has no real
+        line to comment on (it is past the end of its file), so it is never
+        posted inline — not even through an ``out_of_diff`` evidence anchor
+        — and is left for the summary."""
+        findings = [
+            {"file": "src/a.ts", "line": 267, "severity": "HIGH", "category": "Bug",
+             "issue": "bogus line", "line_out_of_range": True},
+            {"file": "src/c.ts", "line": 400, "severity": "HIGH", "category": "Bug",
+             "issue": "bogus line outside the diff", "out_of_diff": True,
+             "line_out_of_range": True,
+             "evidence": [{"file": "src/a.ts", "line": 2, "note": "caller"}]},
+            {"file": "b.ts", "line": 20, "severity": "HIGH", "category": "Bug",
+             "issue": "real inline"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="[]", stderr=""
+            )
+            rc = self._run(path)
+        assert rc == 0
+        posts = [
+            c for c in mock_run.call_args_list
+            if any("body=" in str(a) for a in c.args[0])
+        ]
+        assert [p for p in posts if "path=src/a.ts" in p.args[0] or "path=src/c.ts" in p.args[0]] == []
+        out = capsys.readouterr().out
+        assert "Posted 1" in out
+        assert "line-out-of-range=2" in out
+        assert "failed 0" in out
+
+    @staticmethod
+    def _pr_files_pages() -> str:
+        """``gh api --paginate`` output for ``pulls/{pr}/files``: two pages
+        printed back to back. ``src/b.ts`` (page 2) adds lines 11-12 under
+        a hunk starting at new line 10; line 13 is context, then a removal."""
+        page1 = [{"filename": "src/a.ts", "patch": "@@ -1,1 +1,2 @@\n a\n+b"}]
+        page2 = [{
+            "filename": "src/b.ts",
+            "patch": "@@ -10,3 +10,4 @@\n ctx\n+new1\n+new2\n ctx2\n-gone",
+        }]
+        return json.dumps(page1) + json.dumps(page2)
+
+    def test_out_of_diff_posts_inline_at_cited_diff_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """ISS-12737: an ``out_of_diff`` finding posts inline at the first
+        ``evidence[]`` location inside the PR diff, and the body opens with
+        the affected file:line."""
+        findings = [{
+            "file": "src/other.test.ts", "line": 40, "severity": "HIGH",
+            "category": "Bug", "issue": "stale mock", "out_of_diff": True,
+            "evidence": [
+                {"file": "src/other.test.ts", "line": 40, "claim": "mock"},
+                {"file": "src/b.ts", "line": 99, "claim": "outside hunk"},
+                {"file": "src/b.ts", "line": 12, "claim": "symbol deleted"},
+            ],
+        }]
+        path = _make_findings_file(tmp_path, findings)
+        existing = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        files = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=self._pr_files_pages(), stderr="",
+        )
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [existing, files]
+            rc = self._run(path, dry_run=True)
+        assert rc == 0
+        # 1 GET existing comments + 1 GET PR files; the dry-run POST makes no call.
+        assert mock_run.call_count == 2
+        out = capsys.readouterr().out
+        assert "POST comment src/b.ts:12" in out
+        assert "body=**Affected location:** `src/other.test.ts:40`" in out
+        assert "Posted 1" in out
+        assert "out-of-diff=0" in out
+
+    @pytest.mark.parametrize(("verdict", "label"), [
+        ("CONFIRMED", "caused by this change"),
+        ("DOWNGRADE", "caused by this change"),
+        ("TENTATIVE", "causation unconfirmed"),
+        (None, "causation unconfirmed"),
+    ])
+    def test_out_of_diff_label_follows_verifier_verdict(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+        verdict: str | None, label: str,
+    ) -> None:
+        """Only a verdict that upheld the finding lets the body claim this
+        change caused it."""
+        findings = [{
+            "file": "src/other.test.ts", "line": 40, "severity": "HIGH",
+            "category": "Bug", "issue": "stale mock", "out_of_diff": True,
+            "verifier_verdict": verdict,
+            "evidence": [{"file": "src/b.ts", "line": 12, "claim": "symbol deleted"}],
+        }]
+        path = _make_findings_file(tmp_path, findings)
+        existing = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        files = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=self._pr_files_pages(), stderr="",
+        )
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [existing, files]
+            rc = self._run(path, dry_run=True)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert f"`src/other.test.ts:40` (outside the diff — {label})" in out
+        assert "Posted 1" in out
+
+    def test_out_of_diff_without_diff_evidence_is_summary_only(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        findings = [
+            {"file": "src/other.ts", "line": 40, "severity": "HIGH",
+             "category": "Bug", "issue": "stale comment", "out_of_diff": True,
+             "evidence": [{"file": "src/b.ts", "line": 15, "claim": "removed line"}]},
+            {"file": "src/a.ts", "line": 2, "severity": "HIGH",
+             "category": "Bug", "issue": "real inline"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        existing = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        files = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=self._pr_files_pages(), stderr="",
+        )
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [existing, files]
+            rc = self._run(path, dry_run=True)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "src/other.ts" not in out.split("Posted")[0]
+        assert "POST comment src/a.ts:2" in out
+        assert "Posted 1" in out
+        assert "out-of-diff=1" in out
+        assert "failed 0" in out
+
+    def test_removed_file_posts_on_left_side(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """ISS-12737: a finding on a file the PR deletes posts with
+        ``side=LEFT`` (old-file line); other findings stay on RIGHT."""
+        findings = [
+            {"file": "src/gone.ts", "line": 40, "severity": "HIGH",
+             "category": "Bug", "issue": "public route deleted"},
+            {"file": "src/a.ts", "line": 2, "severity": "HIGH",
+             "category": "Bug", "issue": "real inline"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        existing = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        pr_files = json.dumps([
+            {"filename": "src/gone.ts", "status": "removed",
+             "patch": "@@ -1,2 +0,0 @@\n-a\n-b"},
+            {"filename": "src/a.ts", "status": "modified",
+             "patch": "@@ -1,1 +1,2 @@\n a\n+b"},
+        ])
+        files = subprocess.CompletedProcess(args=[], returncode=0, stdout=pr_files, stderr="")
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [existing, files]
+            rc = self._run(path, dry_run=True)
+        assert rc == 0
+        # Dry-run prints "[dry-run] POST comment <path>:<line>: gh api ...".
+        posts = {
+            seg.split(": gh api", 1)[0]: seg
+            for seg in capsys.readouterr().out.split("[dry-run] ")
+            if seg.startswith("POST comment ")
+        }
+        assert set(posts) == {"POST comment src/gone.ts:40", "POST comment src/a.ts:2"}
+        assert "side=LEFT" in posts["POST comment src/gone.ts:40"]
+        assert "side=RIGHT" in posts["POST comment src/a.ts:2"]
+
+    def test_out_of_diff_anchors_on_deleted_file_old_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """ISS-12737: an ``out_of_diff`` finding whose evidence cites the
+        deleted declaration posts inline at that old-file line, LEFT side."""
+        findings = [{
+            "file": "src/caller.ts", "line": 7, "severity": "HIGH",
+            "category": "Bug", "issue": "imports deleted module", "out_of_diff": True,
+            "evidence": [
+                {"file": "src/gone.ts", "line": 9, "claim": "past the old file"},
+                {"file": "src/gone.ts", "line": 2, "claim": "export deleted"},
+            ],
+        }]
+        path = _make_findings_file(tmp_path, findings)
+        existing = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        pr_files = json.dumps([
+            {"filename": "src/gone.ts", "status": "removed",
+             "patch": "@@ -1,3 +0,0 @@\n-a\n-export b\n-c"},
+        ])
+        files = subprocess.CompletedProcess(args=[], returncode=0, stdout=pr_files, stderr="")
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [existing, files]
+            rc = self._run(path, dry_run=True)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "POST comment src/gone.ts:2" in out
+        assert "side=LEFT" in out
+        assert "Posted 1" in out
+        assert "out-of-diff=0" in out
 
     def test_null_line_does_not_crash(self, tmp_path: Path) -> None:
         """PLN-719: schema permits ``line: int | None`` for system + pr_metadata
@@ -3836,8 +4188,8 @@ class TestCmdPostComments:
             rc = self._run(path)
         # Must succeed; the null-line finding is skipped, the inline finding posts.
         assert rc == 0
-        # 1 GET + 1 POST (null-line finding counted in `failed`, not posted)
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST (null-line finding counted in `failed`, not posted)
+        assert mock_run.call_count == 3
 
     def test_bool_line_does_not_post(self, tmp_path: Path) -> None:
         """`bool` is a subclass of `int` in Python, so a naive `isinstance(x, int)`
@@ -3855,8 +4207,8 @@ class TestCmdPostComments:
             )
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST (only c.ts:5 is a valid inline). True/False both skip.
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST (only c.ts:5 is a valid inline). True/False both skip.
+        assert mock_run.call_count == 3
 
     def test_missing_line_key_does_not_crash(self, tmp_path: Path) -> None:
         """A finding lacking the ``line`` key entirely also skips cleanly."""
@@ -3871,7 +4223,7 @@ class TestCmdPostComments:
             )
             rc = self._run(path)
         assert rc == 0
-        assert mock_run.call_count == 2
+        assert mock_run.call_count == 3
 
     def test_string_line_is_coerced_to_int(self, tmp_path: Path) -> None:
         """The original ``int(finding.get("line", 0))`` coerced legacy
@@ -3893,8 +4245,8 @@ class TestCmdPostComments:
             )
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST — string "42" must coerce to 42 and post inline.
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST — string "42" must coerce to 42 and post inline.
+        assert mock_run.call_count == 3
 
     def test_garbage_string_line_does_not_crash(self, tmp_path: Path) -> None:
         """A non-numeric string ``"line": "abc"`` would have crashed the
@@ -3913,8 +4265,8 @@ class TestCmdPostComments:
             )
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST (garbage skipped, b.ts:10 posts)
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST (garbage skipped, b.ts:10 posts)
+        assert mock_run.call_count == 3
 
     def test_inline_false_skipped(self, tmp_path: Path) -> None:
         findings = [
@@ -6255,6 +6607,105 @@ class TestCacheUpdatePartitionsFile:
         # Both files cached because the partition is NOT test_only
         assert "src/app.ts" in manifest
         assert "src/app.test.ts" in manifest
+
+
+class TestCacheUpdateOutOfDiff:
+    """ISS-12737: a BHA finding on a file outside the diff is cached under
+    diff files, so a cache hit brings it back — on both cache paths."""
+
+    _OUT_OF_DIFF = {
+        "file": "src/other.test.ts", "line": 40, "category": "Correctness",
+        "severity": "HIGH", "issue": "stale mock",
+    }
+
+    @staticmethod
+    def _round_trip(
+        tmp_path: Path, global_cache: int, finding: dict[str, Any],
+        check_files: list[str] | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """cache-update a two-file partition, then cache-check ``check_files``
+        (default: the same diff)."""
+        import argparse
+
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        bha_dir = tmp_path / "bha"
+        bha_dir.mkdir()
+        out = tmp_path / "out"
+        out.mkdir()
+        partitions_file = tmp_path / "partitions.json"
+        partitions_file.write_text(json.dumps({"partitions": [
+            {"id": 0, "files": [{"file": "src/a.ts"}, {"file": "src/b.ts"}]},
+        ]}))
+        (bha_dir / "agent_bha_p0.json").write_text(json.dumps({"findings": [finding]}))
+        diff_path = bha_dir / "diff_data.json"
+        diff_path.write_text(json.dumps(_make_cache_diff_data(files=["src/a.ts", "src/b.ts"])))
+        common = {
+            "cache_dir": str(cache_dir), "diff_data": str(diff_path),
+            "prompt_hash": "abc123", "model_id": "opus",
+            "schema_version": 2 if global_cache else 1,
+            "global_cache": global_cache, "context_key": "ctx123",
+        }
+        cmd_cache_update(argparse.Namespace(
+            **common, bha_dir=str(bha_dir), reviewed_files=[],
+            partitions_file=str(partitions_file),
+        ))
+        manifest = _load_manifest(cache_dir)
+        if check_files is not None:
+            diff_path.write_text(json.dumps(_make_cache_diff_data(files=check_files)))
+        cmd_cache_check(argparse.Namespace(**common, output_dir=str(out)))
+        cached = json.loads((out / "agent_cached_bha.json").read_text())["findings"]
+        return manifest, cached
+
+    @staticmethod
+    def _stored_under(manifest: dict[str, Any], global_cache: int) -> set[str]:
+        def findings_of(slot: dict[str, Any]) -> list[Any]:
+            if global_cache:
+                return [f for entry in slot.values() for f in entry["findings"]]
+            return slot["findings"]
+        return {fp for fp, slot in manifest.items() if findings_of(slot)}
+
+    @pytest.mark.parametrize("global_cache", [0, 1])
+    def test_filed_under_cited_diff_file(
+        self, tmp_path: Path, global_cache: int,
+    ) -> None:
+        finding = {**self._OUT_OF_DIFF, "evidence": [
+            {"file": "src/unrelated.ts", "line": 1, "claim": "not in diff"},
+            {"file": "src/b.ts", "line": 7, "claim": "symbol deleted here"},
+        ]}
+        manifest, cached = self._round_trip(tmp_path, global_cache, finding)
+        assert self._stored_under(manifest, global_cache) == {"src/b.ts"}
+        assert cached == [finding]
+
+    @pytest.mark.parametrize("global_cache", [0, 1])
+    def test_uncited_filed_under_every_partition_file(
+        self, tmp_path: Path, global_cache: int,
+    ) -> None:
+        from code_review_helpers import _merge_duplicates
+
+        manifest, cached = self._round_trip(tmp_path, global_cache, dict(self._OUT_OF_DIFF))
+        assert self._stored_under(manifest, global_cache) == {"src/a.ts", "src/b.ts"}
+        # One copy per partition file comes back; validate's dedup collapses them.
+        assert cached == [self._OUT_OF_DIFF, self._OUT_OF_DIFF]
+        discarded: list[dict[str, Any]] = []
+        assert _merge_duplicates(cached, discarded) == [self._OUT_OF_DIFF]
+        assert [d["reason"] for d in discarded] == ["DISCARD_DUPLICATE"]
+
+    @pytest.mark.parametrize("global_cache", [0, 1])
+    def test_not_served_once_its_file_enters_the_diff(
+        self, tmp_path: Path, global_cache: int,
+    ) -> None:
+        """The author fixes the out-of-diff file, so it joins the diff while
+        src/a.ts and src/b.ts stay unchanged: their cache hits must not bring
+        back the finding about the line that was just fixed."""
+        _, cached = self._round_trip(
+            tmp_path, global_cache, dict(self._OUT_OF_DIFF),
+            check_files=["src/a.ts", "src/b.ts", "src/other.test.ts"],
+        )
+        assert cached == []
+        result = json.loads((tmp_path / "out" / "cache_result.json").read_text())
+        assert result["cached_files"] == ["src/a.ts", "src/b.ts"]
+        assert result["uncached_files"] == ["src/other.test.ts"]
 
 
 # ---------------------------------------------------------------------------
@@ -10175,6 +10626,38 @@ class TestVerifyPrepareReviewRoot:
 
         assert rc == 0
 
+    def test_finding_citing_removed_file_gets_patches_path(
+        self, tmp_path: Path,
+    ) -> None:
+        # ISS-12737: a deleted file is readable only from its patch, so an
+        # in-diff finding on it, or one whose evidence cites it, carries the
+        # patch path; a finding touching no deleted file does not.
+        cr_dir = tmp_path / "cr"
+        _seed_scope_review_root(cr_dir, tmp_path / "checkout")
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["src/gone.py"],
+            "file_statuses": {"src/gone.py": "removed"},
+        }))
+        on_deleted = _make_validated_finding("bha_1", file="src/gone.py", line=3)
+        cites_deleted = _make_validated_finding(
+            "bha_2", evidence=[{"file": "src/gone.py", "line": 3, "claim": "removed"}],
+        )
+        plain = _make_validated_finding("bha_3")
+
+        rc, _manifest = _run_verify_prepare(
+            tmp_path, [on_deleted, cites_deleted, plain], cr_dir=cr_dir,
+        )
+
+        assert rc == 0
+        patches = str(cr_dir / "patches_all.txt")
+        inputs = {
+            fid: json.loads((cr_dir / "verifier_inputs" / f"{fid}.json").read_text())
+            for fid in ("bha_1", "bha_2", "bha_3")
+        }
+        assert inputs["bha_1"]["patches_path"] == patches
+        assert inputs["bha_2"]["patches_path"] == patches
+        assert "patches_path" not in inputs["bha_3"]
+
     def test_pr_head_worktree_moved_off_the_resolved_commit_errors(
         self, tmp_path: Path,
     ) -> None:
@@ -11266,6 +11749,18 @@ class TestVerifyTierTable:
         }
         assert _needs_verification(f_inj) is False
 
+    def test_out_of_diff_always_verified_even_at_low_severity(self) -> None:
+        """ISS-12737: the verifier is the only causation check for findings
+        outside the diff, so LOW (normally skipped) still verifies."""
+        f = {
+            "severity": "LOW",
+            "confidence": 0.99,
+            "category": "Documentation",
+            "source": "agent",
+            "out_of_diff": True,
+        }
+        assert _needs_verification(f) is True
+
     def test_priority_ranking_higher_severity_first(self) -> None:
         blocking_lo = {"severity": "BLOCKING", "confidence": 0.5}
         medium_hi = {"severity": "MEDIUM", "confidence": 0.84}
@@ -11392,6 +11887,46 @@ class TestVerifyPrepare:
             (tmp_path / "cr" / "agent_verifier_bha_p0_f0.json").read_text(),
         )
         assert materialized["verifier_verdict"] == "CONFIRMED"
+
+    def test_out_of_diff_sent_below_threshold_past_cap_and_cache(
+        self, tmp_path: Path,
+    ) -> None:
+        """ISS-12737: an ``out_of_diff`` finding reaches the verifier even
+        when its severity would skip verification, the budget cap is full,
+        and a fresh cached verdict exists — and its input carries the patch."""
+        from code_review_helpers import _write_cached_verification
+
+        ood = _make_validated_finding(
+            "auditor_f0", file="src/other.test.ts", severity="LOW", confidence=0.6,
+        )
+        ood["out_of_diff"] = True
+        fillers = [
+            _make_validated_finding(f"bha_p0_f{i:03d}", severity="BLOCKING", confidence=1.0)
+            for i in range(VERIFY_MAX_VERIFICATIONS + 5)
+        ]
+        cache_dir = tmp_path / "cache"
+        _write_cached_verification(
+            cache_dir, ood, "sonnet", "phash_v1",
+            {"verifier_verdict": "CONFIRMED", "verifier_confidence": 0.9,
+             "verifier_reasoning": "cached", "evidence_checks": [],
+             "rejection_class": None},
+        )
+
+        _, manifest = _run_verify_prepare(
+            tmp_path, [*fillers, ood], cache_dir=cache_dir, prompt_hash="phash_v1",
+        )
+        to_verify = {e["finding_id"]: e for e in manifest["to_verify"]}
+        assert "auditor_f0" in to_verify
+        assert "auditor_f0" not in manifest["deferred_budget"]
+        assert manifest["cache_hits"] == []
+        # The out-of-diff finding sits outside the budget: the in-diff
+        # fillers still get all VERIFY_MAX_VERIFICATIONS slots.
+        assert len(manifest["to_verify"]) == VERIFY_MAX_VERIFICATIONS + 1
+        assert len(manifest["deferred_budget"]) == 5
+        payload = json.loads(Path(to_verify["auditor_f0"]["input_path"]).read_text())
+        assert payload["patches_path"] == str(tmp_path / "cr" / "patches_all.txt")
+        in_diff = json.loads(Path(to_verify["bha_p0_f000"]["input_path"]).read_text())
+        assert "patches_path" not in in_diff
 
 
 class TestOverrideCache:
@@ -13379,6 +13914,199 @@ class TestUnifiedPartitionThreshold:
         assert result["partition_mode"] == "partitioned"
 
 
+class TestPartitionExcludesDeletedFiles:
+    """ISS-12737: files deleted outright are not partitioned for BHA and do
+    not count toward ``total_changed_loc``; the cross-file reviewers own them.
+    """
+
+    def _run(
+        self, diff_data: dict[str, Any], *, bha_unified_threshold_loc: int = 5000,
+    ) -> dict[str, Any]:
+        return TestPartition()._run_partition(
+            diff_data, bha_unified_threshold_loc=bha_unified_threshold_loc,
+        )
+
+    def test_deleted_files_excluded_from_partitions_and_total_loc(self) -> None:
+        data = _make_diff_data(
+            files=["mod.py", "gone.py", "tests/test_gone.py"],
+            statuses={
+                "mod.py": "modified", "gone.py": "removed",
+                "tests/test_gone.py": "removed",
+            },
+            loc={
+                "mod.py": {"added": 0, "removed": 2},
+                "gone.py": {"added": 0, "removed": 800},
+                "tests/test_gone.py": {"added": 0, "removed": 50},
+            },
+        )
+        result = self._run(data)
+        assert [f["file"] for p in result["partitions"] for f in p["files"]] == ["mod.py"]
+        assert result["total_changed_loc"] == 2
+        assert result["test_file_paths"] == []
+
+    def test_large_deletion_does_not_flip_small_change_to_partitioned(self) -> None:
+        data = _make_diff_data(
+            files=["a.ts", "old/big.ts"],
+            statuses={"a.ts": "modified", "old/big.ts": "removed"},
+            loc={
+                "a.ts": {"added": 300, "removed": 0},
+                "old/big.ts": {"added": 0, "removed": 6000},
+            },
+        )
+        result = self._run(data)
+        assert result["partition_mode"] == "unified"
+        assert result["partition_count"] == 1
+        assert result["total_changed_loc"] == 300
+
+    def test_deletion_only_diff_yields_zero_partitions(self) -> None:
+        data = _make_diff_data(
+            files=["gone.py"],
+            statuses={"gone.py": "removed"},
+            loc={"gone.py": {"added": 0, "removed": 800}},
+        )
+        result = self._run(data)
+        assert result["partitions"] == []
+        assert result["partition_count"] == 0
+        assert result["total_changed_loc"] == 0
+
+
+def _moved_diff_data(old_line: str = "guard()") -> dict[str, Any]:
+    """diff_data for ``old/a.py`` moved to ``new/a.py`` plus an unrelated ``c.ts``."""
+    data = _make_cache_diff_data(
+        files=["new/a.py", "old/a.py", "c.ts"],
+        patch_lines={
+            "new/a.py": {"added_lines": {"1": "def run():"}, "removed_lines": {}},
+            "old/a.py": {"added_lines": {}, "removed_lines": {"1": old_line}},
+            "c.ts": {"added_lines": {"1": "x"}, "removed_lines": {}},
+        },
+    )
+    data["file_statuses"].update({"new/a.py": "added", "old/a.py": "removed"})
+    data["moved_from"] = {"new/a.py": "old/a.py"}
+    return data
+
+
+class TestMovedFromContext:
+    """ISS-12737 PR 3: a file moved and heavily edited is paired with its old
+    path, Bug Hunter A gets the old file's patch as context, and that patch
+    feeds the BHA cache key."""
+
+    def test_parse_diff_pairs_at_30_percent_and_not_below(self, tmp_path: Path) -> None:
+        import contextlib
+        import io
+
+        from code_review_helpers import cmd_parse_diff
+
+        def original(name: str) -> str:
+            return "".join(f"{name} line {i} of the original module\n" for i in range(1, 21))
+
+        repo = tmp_path / "repo"
+        _make_review_root(
+            repo, {"a.py": original("alpha"), "b.py": original("bravo"), "c.py": original("charlie")},
+        )
+        git_fixture(repo, "checkout", "--quiet", "-b", "feat")
+        rewritten = [f"rewritten {i} entirely different content\n" for i in range(1, 17)]
+        (repo / "pkg").mkdir()
+        # ~33% similar: paired only below git's default 50% floor.
+        (repo / "pkg" / "a.py").write_text(
+            "".join(original("alpha").splitlines(keepends=True)[:8] + rewritten[:12]),
+        )
+        # ~15% similar: below the 30% floor, never paired.
+        (repo / "pkg" / "b.py").write_text(
+            "".join(original("bravo").splitlines(keepends=True)[:4] + rewritten),
+        )
+        # Identical: the default view already reports it as a rename.
+        (repo / "pkg" / "c.py").write_text(original("charlie"))
+        for name in ("a.py", "b.py", "c.py"):
+            (repo / name).unlink()
+        git_fixture(repo, "add", "-A")
+        git_fixture(repo, "commit", "--quiet", "-m", "move")
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = cmd_parse_diff(argparse.Namespace(scope="main...feat", workdir=str(repo)))
+        assert rc == 0
+        diff_data = json.loads(out.getvalue())
+        assert diff_data["moved_from"] == {"pkg/a.py": "a.py"}
+        # The pairing is extra: the default-similarity view is unchanged.
+        assert diff_data["file_statuses"] == {
+            "a.py": "removed", "b.py": "removed",
+            "pkg/a.py": "added", "pkg/b.py": "added", "pkg/c.py": "modified",
+        }
+        assert sorted(diff_data["files_to_review"]) == [
+            "a.py", "b.py", "pkg/a.py", "pkg/b.py", "pkg/c.py",
+        ]
+
+    def test_context_patch_written_only_for_partitions_with_paired_files(
+        self, tmp_path: Path,
+    ) -> None:
+        from unittest.mock import patch as mock_patch
+
+        from code_review_helpers import _write_per_partition_patches
+
+        captured: list[list[str]] = []
+
+        def mock_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
+            captured.append(cmd)
+            return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+        partitions: list[dict[str, Any]] = [
+            {"id": 0, "files": [{"file": "c.ts"}]},
+            {"id": 1, "files": [{"file": "new/a.py"}, {"file": "d.ts"}]},
+        ]
+        with mock_patch("code_review_helpers.subprocess.run", side_effect=mock_run):
+            written = _write_per_partition_patches(
+                partitions, "main...HEAD", tmp_path,
+                moved_from={"new/a.py": "old/a.py"},
+            )
+
+        assert written == ["patches_p0.txt", "patches_p1.txt"]
+        assert not (tmp_path / "patches_p0_context.txt").exists()
+        assert "moved_from" not in partitions[0]
+        assert (tmp_path / "patches_p1_context.txt").exists()
+        assert partitions[1]["moved_from"] == {"new/a.py": "old/a.py"}
+        assert partitions[1]["context_patch"] == "patches_p1_context.txt"
+        assert captured[-1] == [
+            "git", "diff", "--no-renames", "main...HEAD", "--", "old/a.py",
+        ]
+        assert len(captured) == 3
+
+    def test_partition_reads_moved_from_from_diff_data(self, tmp_path: Path) -> None:
+        result, captured = TestPartitionPatches()._run(
+            tmp_path, with_patches=True, diff_data=_moved_diff_data(),
+        )
+        [part] = result["partitions"]
+        assert [f["file"] for f in part["files"]] == ["c.ts", "new/a.py"]
+        assert part["moved_from"] == {"new/a.py": "old/a.py"}
+        assert part["context_patch"] == "patches_p0_context.txt"
+        assert captured[-1][-2:] == ["--", "old/a.py"]
+
+    @pytest.mark.parametrize("version", ["v1", "v2"])
+    def test_changing_the_paired_deleted_file_invalidates_the_cache(
+        self, tmp_path: Path, version: str,
+    ) -> None:
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        bha_dir = tmp_path / "bha"
+        bha_dir.mkdir()
+        (bha_dir / "agent_bha_p0.json").write_text(json.dumps({"findings": []}))
+        if version == "v1":
+            update, check = TestCmdCacheUpdate()._run_cache_update, TestCmdCacheCheck()._run_cache_check
+        else:
+            update, check = TestCmdCacheUpdateV2()._run, TestCmdCacheCheckV2()._run
+        update(cache_dir, _moved_diff_data(), bha_dir, reviewed_files=["new/a.py", "c.ts"])
+
+        out = tmp_path / "out"
+        out.mkdir()
+        same = check(cache_dir, _moved_diff_data(), out)
+        assert sorted(same["cached_files"]) == ["c.ts", "new/a.py"]
+
+        changed = check(cache_dir, _moved_diff_data(old_line="other()"), out)
+        assert changed["cached_files"] == ["c.ts"]
+        assert "new/a.py" in changed["uncached_files"]
+        uncached = json.loads((out / "uncached_diff_data.json").read_text())
+        assert uncached["moved_from"] == {"new/a.py": "old/a.py"}
+
+
 class TestLoadCodeReviewSettings:
     """``_load_code_review_settings`` shape pinning + per-key validation."""
 
@@ -13707,30 +14435,30 @@ class TestSignalTaxonomy:
 
 
 class TestSignalExtractionCacheKey:
-    """Cache key contract: tuple of (diff_tip, taxonomy_hash, prompt_hash)."""
+    """Cache key contract: tuple of (input_hash, taxonomy_hash, prompt_hash)."""
 
     def test_same_inputs_same_key(self) -> None:
         from code_review_helpers import signal_extraction_cache_key
-        a = signal_extraction_cache_key("dt", "tax", "ph")
-        b = signal_extraction_cache_key("dt", "tax", "ph")
+        a = signal_extraction_cache_key("ih", "tax", "ph")
+        b = signal_extraction_cache_key("ih", "tax", "ph")
         assert a == b
 
-    def test_diff_tip_flip_changes_key(self) -> None:
+    def test_input_hash_flip_changes_key(self) -> None:
         from code_review_helpers import signal_extraction_cache_key
-        a = signal_extraction_cache_key("dt1", "tax", "ph")
-        b = signal_extraction_cache_key("dt2", "tax", "ph")
+        a = signal_extraction_cache_key("ih1", "tax", "ph")
+        b = signal_extraction_cache_key("ih2", "tax", "ph")
         assert a != b
 
     def test_taxonomy_hash_flip_changes_key(self) -> None:
         from code_review_helpers import signal_extraction_cache_key
-        a = signal_extraction_cache_key("dt", "tax1", "ph")
-        b = signal_extraction_cache_key("dt", "tax2", "ph")
+        a = signal_extraction_cache_key("ih", "tax1", "ph")
+        b = signal_extraction_cache_key("ih", "tax2", "ph")
         assert a != b
 
     def test_prompt_hash_flip_changes_key(self) -> None:
         from code_review_helpers import signal_extraction_cache_key
-        a = signal_extraction_cache_key("dt", "tax", "ph1")
-        b = signal_extraction_cache_key("dt", "tax", "ph2")
+        a = signal_extraction_cache_key("ih", "tax", "ph1")
+        b = signal_extraction_cache_key("ih", "tax", "ph2")
         assert a != b
 
 
@@ -13902,7 +14630,6 @@ class TestExtractSignalsPrepare:
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="ph0",
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -13927,9 +14654,95 @@ class TestExtractSignalsPrepare:
         ts_entry = next(f for f in agent_input["files"] if f["path"].endswith(".ts"))
         assert ts_entry["language_hint"] == "typescript"
 
+    def test_manifest_paths_are_absolute_for_relative_cr_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The singleton Task resolves manifest paths from the session's
+        checkout, not the review root, so a relative --cr-dir must not leak
+        relative paths into the manifest.
+        """
+        from code_review_helpers import cmd_extract_signals_prepare
+        monkeypatch.chdir(tmp_path)
+        diff_path = _build_diff_data(tmp_path)
+        args = argparse.Namespace(
+            cr_dir="cr",
+            diff_data=str(diff_path),
+            prompt_hash="ph0",
+            cache_dir=None,
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        assert cmd_extract_signals_prepare(args) == 0
+
+        cr_abs = (tmp_path / "cr").resolve()
+        manifest = json.loads((cr_abs / "extract_signals_manifest.json").read_text())
+        assert manifest["status"] == "needs_agent"
+        assert manifest["input_path"] == str(cr_abs / "extract_signals_input.json")
+        assert manifest["taxonomy_path"] == str(cr_abs / "extract_signals_taxonomy.json")
+        assert manifest["output_path"] == str(cr_abs / "extract_signals.json")
+        assert Path(manifest["prompt_path"]).is_absolute()
+
+    def _prepare_in(
+        self, base: Path, cache_dir: Path, diff_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        from code_review_helpers import cmd_extract_signals_prepare
+        base.mkdir(parents=True)
+        diff_path = base / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+        args = argparse.Namespace(
+            cr_dir=str(base / "cr"),
+            diff_data=str(diff_path),
+            prompt_hash="ph0",
+            cache_dir=str(cache_dir),
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        assert cmd_extract_signals_prepare(args) == 0
+        return json.loads((base / "cr" / "extract_signals_manifest.json").read_text())
+
+    def test_changed_diff_misses_a_prior_runs_cache_entry(self, tmp_path: Path) -> None:
+        """Regression: the key used the literal ``HEAD`` diff tip, so a
+        re-review after new commits (or a staged vs working-tree review of
+        the same branch) reused the first run's signals. The key now
+        content-addresses the agent's input bundle.
+        """
+        from code_review_helpers import CACHE_NAMESPACE_SIGNALS
+        cache_dir = tmp_path / "cache"
+        (cache_dir / CACHE_NAMESPACE_SIGNALS).mkdir(parents=True)
+        diff_a = json.loads(_build_diff_data(tmp_path).read_text())
+        first = self._prepare_in(tmp_path / "a", cache_dir, diff_a)
+        assert first["status"] == "needs_agent"
+        (cache_dir / CACHE_NAMESPACE_SIGNALS / f"{first['cache_key']}.json").write_text(
+            json.dumps({
+                "status": "ok", "signals": [], "errors": [],
+                "written_at": datetime.now(timezone.utc).isoformat(),
+            }),
+        )
+
+        # Same files, one changed line: a new commit on the branch, or the
+        # working tree differing from the index.
+        diff_b = json.loads(json.dumps(diff_a))
+        diff_b["patch_lines"]["src/auth/login.ts"]["added_lines"]["42"] = (
+            "const session = await issueToken(user, { mfa: true });"
+        )
+        second = self._prepare_in(tmp_path / "b", cache_dir, diff_b)
+        assert second["status"] == "needs_agent"
+        assert second["cache_key"] != first["cache_key"]
+
+        # Positive control: the unchanged diff still hits.
+        again = self._prepare_in(tmp_path / "c", cache_dir, diff_a)
+        assert again["status"] == "cache_hit"
+        assert again["cache_key"] == first["cache_key"]
+
     def test_cache_hit_serves_directly_without_agent(self, tmp_path: Path) -> None:
         from code_review_helpers import (
             CACHE_NAMESPACE_SIGNALS,
+            _build_signal_input,
+            _stable_json_hash,
             cmd_extract_signals_prepare,
             load_signal_taxonomy,
             signal_extraction_cache_key,
@@ -13943,7 +14756,10 @@ class TestExtractSignalsPrepare:
         _, raw = load_signal_taxonomy()
         import hashlib
         taxonomy_hash = hashlib.sha256(raw).hexdigest()
-        key = signal_extraction_cache_key("abcdef1234", taxonomy_hash, "ph0")
+        input_hash = _stable_json_hash(
+            _build_signal_input(json.loads(diff_path.read_text()), None),
+        )
+        key = signal_extraction_cache_key(input_hash, taxonomy_hash, "ph0")
         cached_payload = {
             "status": "ok",
             "signals": [
@@ -13964,7 +14780,6 @@ class TestExtractSignalsPrepare:
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="ph0",
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -13999,7 +14814,6 @@ class TestExtractSignalsConsolidate:
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="ph0",
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -14289,7 +15103,6 @@ class TestPR121PromptIsContentAddressed:
         return argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="",  # No override — exercise content-addressing.
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -14359,7 +15172,6 @@ class TestPR121AgentInputBundle:
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="",
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -15253,7 +16065,7 @@ class TestCoverageCriticPromptHash:
 
 class TestCoverageCriticCacheKey:
     """Cache key tuple invariants: ``(plan_initial_hash, signals_hash,
-    diff_tip, prompt_hash, available_reviewers_hash)``.
+    diff_summary_hash, prompt_hash, available_reviewers_hash)``.
 
     Every dimension must flip the key — otherwise a stale cache entry
     could be served when one of these inputs changes between runs. The
@@ -15283,11 +16095,11 @@ class TestCoverageCriticCacheKey:
             != coverage_critic_cache_key("p", "s2", "t", "h", "a")
         )
 
-    def test_diff_tip_flip_changes_key(self) -> None:
+    def test_diff_summary_hash_flip_changes_key(self) -> None:
         from code_review_helpers import coverage_critic_cache_key
         assert (
-            coverage_critic_cache_key("p", "s", "t1", "h", "a")
-            != coverage_critic_cache_key("p", "s", "t2", "h", "a")
+            coverage_critic_cache_key("p", "s", "d1", "h", "a")
+            != coverage_critic_cache_key("p", "s", "d2", "h", "a")
         )
 
     def test_prompt_hash_flip_changes_key(self) -> None:
@@ -15747,7 +16559,6 @@ class TestCoverageCriticPrepareCLI:
             "extract_signals": str(inputs["paths"]["signals"]) if inputs["paths"]["signals"].exists() else None,
             "diff_data": str(inputs["paths"]["diff_data"]),
             "available_reviewers": str(inputs["paths"]["available"]),
-            "diff_tip": "abc123",
             "cache_dir": str(cache_dir),
             "prompt": None,
             "model": COVERAGE_CRITIC_MODEL_DEFAULT,
@@ -15774,6 +16585,30 @@ class TestCoverageCriticPrepareCLI:
         bundle = json.loads((cr_dir / "coverage_critic_input.json").read_text())
         assert bundle["available_reviewers"] == inputs["available"]
         assert "coverage_plan_initial" in bundle
+
+    def test_manifest_paths_are_absolute_for_relative_cr_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Same contract as the stage_11 manifest: the singleton Task runs in
+        the session's checkout, so every manifest path must be absolute.
+        """
+        from code_review_helpers import cmd_coverage_critic_prepare
+        inputs = _write_coverage_critic_inputs(
+            tmp_path, signals={"signals": []},
+        )
+        monkeypatch.chdir(tmp_path)
+        args = self._args(tmp_path, inputs, cr_dir="cr")
+        assert cmd_coverage_critic_prepare(args) == 0
+
+        cr_abs = (tmp_path / "cr").resolve()
+        manifest = _read_coverage_section(cr_abs, "critic")
+        assert manifest["status"] == "needs_agent"
+        assert manifest["input_path"] == str(cr_abs / "coverage_critic_input.json")
+        assert manifest["diff_summary_path"] == str(
+            cr_abs / "coverage_critic_diff_summary.json",
+        )
+        assert manifest["coverage_state"] == str(cr_abs / "coverage.json")
+        assert Path(manifest["prompt_path"]).is_absolute()
 
     def test_prepare_filters_existing_reviewers_from_available(self, tmp_path: Path) -> None:
         """If the AVAILABLE list contains a reviewer already in the
@@ -15970,6 +16805,7 @@ class TestCoverageCriticPrepareCLI:
         from code_review_helpers import (
             CACHE_NAMESPACE_COVERAGE_CRITIC,
             _available_reviewers_hash,
+            _build_signal_input,
             _stable_json_hash,
             cmd_coverage_critic_prepare,
             coverage_critic_cache_key,
@@ -15991,8 +16827,11 @@ class TestCoverageCriticPrepareCLI:
         # no-op against the default fixture (which lists
         # accessibility-expert + i18n-expert).
         available_hash = _available_reviewers_hash(inputs["available"])
+        diff_summary_hash = _stable_json_hash(_build_signal_input(
+            json.loads(inputs["paths"]["diff_data"].read_text()), None,
+        ))
         key = coverage_critic_cache_key(
-            plan_hash, signals_hash, "abc123", prompt_hash, available_hash,
+            plan_hash, signals_hash, diff_summary_hash, prompt_hash, available_hash,
         )
         cached_payload = {
             "required": inputs["plan_initial"]["required"],
@@ -16018,6 +16857,42 @@ class TestCoverageCriticPrepareCLI:
         # written_at metadata stripped from canonical output
         assert "written_at" not in final
 
+    def test_changed_diff_misses_a_prior_runs_cache_entry(self, tmp_path: Path) -> None:
+        """Regression: the key used the diff tip, the literal ``HEAD`` on a
+        branch review, so a later review with the same plan, signals and
+        roster reused the first run's plan even though the diff changed.
+        The key now content-addresses the diff summary the critic is given.
+        """
+        from code_review_helpers import (
+            CACHE_NAMESPACE_COVERAGE_CRITIC,
+            cmd_coverage_critic_prepare,
+        )
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        args = self._args(tmp_path, inputs)
+        cache_dir = Path(args.cache_dir)
+        (cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC).mkdir(parents=True)
+        assert cmd_coverage_critic_prepare(args) == 0
+        first = _read_coverage_section(inputs["cr_dir"], "critic")
+        assert first["status"] == "needs_agent"
+        (cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC / f"{first['cache_key']}.json").write_text(
+            json.dumps({
+                "required": inputs["plan_initial"]["required"],
+                "best_effort": [], "warnings": [],
+                "stats": {"required_count": 1, "best_effort_count": 0},
+                "written_at": datetime.now(timezone.utc).isoformat(),
+            }),
+        )
+
+        diff_data = json.loads(inputs["paths"]["diff_data"].read_text())
+        diff_data["patch_lines"]["src/Modal.tsx"]["added_lines"]["42"] = (
+            "<div role='alertdialog'>"
+        )
+        inputs["paths"]["diff_data"].write_text(json.dumps(diff_data))
+        assert cmd_coverage_critic_prepare(args) == 0
+        second = _read_coverage_section(inputs["cr_dir"], "critic")
+        assert second["status"] == "needs_agent"
+        assert second["cache_key"] != first["cache_key"]
+
     def test_roster_shrink_misses_prior_cache(self, tmp_path: Path) -> None:
         """Concrete failure mode the PR comment described: same diff,
         same plan_initial, same signals, same prompt, but the
@@ -16029,6 +16904,7 @@ class TestCoverageCriticPrepareCLI:
         from code_review_helpers import (
             CACHE_NAMESPACE_COVERAGE_CRITIC,
             _available_reviewers_hash,
+            _build_signal_input,
             _stable_json_hash,
             cmd_coverage_critic_prepare,
             coverage_critic_cache_key,
@@ -16051,8 +16927,11 @@ class TestCoverageCriticPrepareCLI:
         prompt_hash = _coverage_critic_prompt_hash(
             _default_coverage_critic_prompt_path(),
         )
+        diff_summary_hash = _stable_json_hash(_build_signal_input(
+            json.loads(inputs["paths"]["diff_data"].read_text()), None,
+        ))
         old_key = coverage_critic_cache_key(
-            plan_hash, signals_hash, "abc123", prompt_hash,
+            plan_hash, signals_hash, diff_summary_hash, prompt_hash,
             _available_reviewers_hash(["accessibility-expert", "i18n-expert"]),
         )
         # Seed a cache entry under the OLD roster that proposes the
@@ -16111,7 +16990,6 @@ class TestCoverageCriticPrepareCrDirDefault:
             "extract_signals": None,
             "diff_data": str(diff_data),
             "available_reviewers": str(available),
-            "diff_tip": "abc123",
             "cache_dir": None,
             "prompt": None,
             "model": COVERAGE_CRITIC_MODEL_DEFAULT,
@@ -16226,7 +17104,6 @@ class TestCoverageCriticConsolidateCLI:
             extract_signals=str(inputs["paths"]["signals"]),
             diff_data=str(inputs["paths"]["diff_data"]),
             available_reviewers=str(inputs["paths"]["available"]),
-            diff_tip="abc123",
             cache_dir=str(cache_dir),
             prompt=None,
             model=COVERAGE_CRITIC_MODEL_DEFAULT,
@@ -16364,7 +17241,6 @@ class TestStage15Alignment:
         assert "--cr-dir" in args
         assert "--available-reviewers" in args
         assert "--diff-data" in args
-        assert "--diff-tip" in args
         # --extract-signals is optional but always wired for the
         # pipeline (no reason to skip when stage_11 produced it).
         assert "--extract-signals" in args
@@ -16598,17 +17474,15 @@ class TestPLN725Phase5PostMergeHardening:
                 f"must not start with `agent_`"
             )
 
-    # --- Fix 2: walker-resolved diff_tip + cache-dir on prepare ------------
+    # --- Fix 2: content-addressed cache keys + cache-dir on prepare --------
 
-    def test_stage_11_prepare_uses_walker_diff_tip_token(self) -> None:
-        # Literal "HEAD" would make the cache key constant across
-        # reviews — every entry written under the same diff_tip,
-        # cache_hit path unreachable through the walker. The walker
-        # substitutes <DIFF_TIP> from scope.json before dispatch.
+    def test_stage_11_prepare_takes_no_diff_tip(self) -> None:
+        # A branch scope's <DIFF_TIP> resolves to the literal "HEAD", so a
+        # key built from it was constant across reviews. stage_11's key
+        # content-addresses the agent input bundle instead, and prepare
+        # no longer accepts a diff tip at all.
         args = self._stage("stage_11_extract_signals")["args"]
-        idx = args.index("--diff-tip")
-        assert args[idx + 1] == "<DIFF_TIP>"
-        assert args[idx + 1] != "HEAD"
+        assert "--diff-tip" not in args
 
     def test_stage_11_prepare_receives_cache_dir(self) -> None:
         # Without --cache-dir, prepare runs cache-blind and the
@@ -16618,11 +17492,11 @@ class TestPLN725Phase5PostMergeHardening:
         assert "--cache-dir" in args
         assert args[args.index("--cache-dir") + 1] == "<CACHE_DIR>"
 
-    def test_stage_15_prepare_uses_walker_diff_tip_token(self) -> None:
+    def test_stage_15_prepare_takes_no_diff_tip(self) -> None:
+        # Same reason as stage_11: the critic key content-addresses the
+        # diff summary instead of the (often literal "HEAD") diff tip.
         args = self._stage("stage_15_coverage_critic")["args"]
-        idx = args.index("--diff-tip")
-        assert args[idx + 1] == "<DIFF_TIP>"
-        assert args[idx + 1] != "HEAD"
+        assert "--diff-tip" not in args
 
     def test_stage_15_prepare_receives_cache_dir(self) -> None:
         args = self._stage("stage_15_coverage_critic")["args"]
@@ -18276,6 +19150,7 @@ class TestArbitrateBudgetCrDirDefault:
         final = _read_coverage_section(cr_dir, "final")
         assert final["arbitrate_status"] == "blocked_by_verify"
         assert final["budget"]["bha_partitions"] == 0
+        assert final["budget"]["docs_only"] is True
 
     def test_writes_coverage_gaps_alongside_aggregate(self, tmp_path: Path) -> None:
         """``coverage_gaps.json`` stays standalone (multi-writer). On
@@ -19132,10 +20007,11 @@ class TestPLN725Phase8DeriveSpawnSpecBudgetCap:
         assert capped[0]["partition_count"] == 3
 
     def test_bha_partitions_zero_suppresses_all_bha(self, tmp_path: Path) -> None:
-        """Docs-only post-arbitrate sets ``bha_partitions: 0``. No BHA
-        descriptors emit even when the partitioner produced
-        partitions (e.g. on a mixed docs+code diff where docs
-        dominate the LOC cap).
+        """``bha_partitions: 0`` suppresses every BHA descriptor even
+        when the partitioner produced partitions. Without the
+        ``budget.docs_only`` marker the zero is a cap, so the one
+        skipped entry stays ``budget_capped`` (the docs-only case is
+        ``TestISS10869DocsOnlyBhaSkip``).
         """
         plan = {
             "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
@@ -19173,6 +20049,142 @@ class TestPLN725Phase8DeriveSpawnSpecBudgetCap:
         assert len(bha_agents) == 3
         capped = [s for s in spec["skipped"] if s["reason"] == "budget_capped"]
         assert capped == []
+
+
+class TestISS10869DocsOnlyBhaSkip:
+    """ISS-10869: arbitrate-budget deliberately zeroes BHA on a docs-only
+    diff. derive-spawn-spec used to report that zero as a
+    ``budget_capped`` drop of a required reviewer, so finalize-result
+    carried a HIGH coverage gap and the verdict was CHANGES_REQUESTED.
+    Each case drives arbitrate-budget -> derive-spawn-spec ->
+    finalize-result -> verdict against a review root that holds the
+    diff's files.
+    """
+
+    _CORE_PLAN: dict[str, Any] = {
+        "required": [
+            {"reviewer": r, "source": "core"}
+            for r in (
+                "bug_hunter_a", "bug_hunter_b", "unified_auditor",
+                "test_quality",
+            )
+        ],
+        "best_effort": [],
+    }
+
+    @staticmethod
+    def _partitions(files: list[str]) -> dict[str, Any]:
+        return {
+            "partitions": [
+                {"id": i, "files": [{"file": f}], "is_test_only": False}
+                for i, f in enumerate(files)
+            ],
+            "test_file_paths": [],
+            "force_merged_count": 0,
+        }
+
+    def _run_chain(
+        self, tmp_path: Path, files: list[str], partition_files: list[str],
+    ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+        from code_review_helpers import cmd_finalize_result, cmd_verdict
+        from golden_fixture_harness import run_with_stdout_capture
+
+        root = tmp_path / "review_root_repo"
+        resolved = _make_review_root(root, {f: "x\n" for f in files})
+        (tmp_path / "scope.json").write_text(json.dumps({
+            "review_root": resolved,
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+        }))
+        _, final, _ = _run_arbitrate_budget(
+            tmp_path, self._CORE_PLAN, _make_diff_data(files=files),
+        )
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, final, self._partitions(partition_files),
+            {"fast_path": False, "models": {}},
+        )
+        validated = tmp_path / "findings_validated.json"
+        validated.write_text(json.dumps({"validated": [], "discarded": [], "stats": {}}))
+        run_with_stdout_capture(cmd_finalize_result, argparse.Namespace(
+            cr_dir=str(tmp_path), findings_validated=str(validated),
+            mode="local", diff_tip="abc1234", pr_number=None,
+        ))
+        verdict = json.loads(run_with_stdout_capture(cmd_verdict, argparse.Namespace(
+            findings_validated=str(validated),
+            review_result=str(tmp_path / "review_result.json"),
+        )))
+        gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())["findings"]
+        return final, spec, gaps, verdict
+
+    def test_docs_only_diff_skips_bha_without_coverage_gap(
+        self, tmp_path: Path,
+    ) -> None:
+        doc = "docs/runbooks/production-branch-cutover-reset.md"
+        final, spec, gaps, verdict = self._run_chain(tmp_path, [doc], [doc])
+        assert final["budget"]["bha_partitions"] == 0
+        assert final["budget"]["docs_only"] is True
+        bha_skips = [s for s in spec["skipped"] if s["reviewer"] == "bug_hunter_a"]
+        assert bha_skips == [
+            {"reviewer": "bug_hunter_a", "bucket": "required", "reason": "docs_only",
+             "budget_cap": 0, "partition_count": 1},
+        ]
+        assert spec["stats"]["required_coverage_gaps"] == 0
+        assert gaps == []
+        assert verdict["canonical_verdict"] == "APPROVED"
+        assert "- ℹ️ BHA skipped on a docs-only diff." in _run_render_fleet_summary(tmp_path)
+
+    def test_mixed_docs_and_code_diff_keeps_bha_floor(
+        self, tmp_path: Path,
+    ) -> None:
+        final, spec, gaps, verdict = self._run_chain(
+            tmp_path, ["docs/guide.md", "src/app.ts"], ["src/app.ts"],
+        )
+        assert final["budget"]["bha_partitions"] >= 1
+        assert "docs_only" not in final["budget"]
+        assert [a["agent_id"] for a in spec["agents"] if a["reviewer"] == "bug_hunter_a"] == ["bha_p0"]
+        assert [s for s in spec["skipped"] if s["reviewer"] == "bug_hunter_a"] == []
+        assert gaps == []
+        assert verdict["canonical_verdict"] == "APPROVED"
+
+    def test_bha_partition_cap_still_reports_high_gap(
+        self, tmp_path: Path,
+    ) -> None:
+        """Counterfactual for the docs-only case: partitions the budget
+        could not fit are a real required-reviewer drop and still block.
+        """
+        files = ["src/a.ts", "src/b.ts", "src/c.ts"]
+        final, spec, gaps, verdict = self._run_chain(tmp_path, files, files)
+        assert final["budget"]["bha_partitions"] == 1
+        capped = [s for s in spec["skipped"] if s["reason"] == "budget_capped"]
+        assert [s["partition_id"] for s in capped] == [1, 2]
+        assert len(gaps) == 2
+        for gap in gaps:
+            assert gap["severity"] == "HIGH"
+            assert gap["issue"] == "Required reviewer dropped: bug_hunter_a"
+            assert "budget capped" in gap["explanation"]
+        assert verdict["canonical_verdict"] == "CHANGES_REQUESTED"
+
+    def test_zero_cap_without_docs_only_marker_still_reports_high_gap(
+        self, tmp_path: Path,
+    ) -> None:
+        """A zero ``bha_partitions`` is only benign when arbitrate-budget
+        marked the diff docs-only. A zero from anywhere else (the
+        pre-fix BLOCKING path hardcoded one on code PRs) stays a
+        ``budget_capped`` drop with a HIGH gap.
+        """
+        plan = {
+            "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
+            "best_effort": [],
+            "budget": {"total_cap": 20, "bha_partitions": 0},
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._partitions(["src/a.ts"]),
+            {"fast_path": False, "models": {}},
+        )
+        assert [s["reason"] for s in spec["skipped"]] == ["budget_capped"]
+        gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())["findings"]
+        assert [(g["severity"], g["issue"]) for g in gaps] == [
+            ("HIGH", "Required reviewer dropped: bug_hunter_a"),
+        ]
 
 
 class TestPLN725Phase8DeriveSpawnSpecBlockingSanitization:
@@ -20502,11 +21514,11 @@ class TestPLN725Phase9RenderFleetSummaryNotes:
         assert "2 partition(s)" in out
         assert "(2/3)" in out
 
-    def test_budget_capped_docs_only_aggregate_uses_partition_count(
+    def test_budget_capped_zero_cap_aggregate_uses_partition_count(
         self, tmp_path: Path,
     ) -> None:
-        """When the post-arbitrate cap is 0 (docs-only),
-        ``_derive_spawn_agents_from_plan`` emits ONE aggregate
+        """When the post-arbitrate cap is 0 without the docs-only
+        marker, ``_derive_spawn_agents_from_plan`` emits ONE aggregate
         ``budget_capped`` entry covering all N suppressed
         partitions (no ``partition_id``, ``partition_count`` =
         N). Pre-v2.23.3 the renderer counted
@@ -23427,17 +24439,21 @@ class TestFEA1401CoverageCoreConditional:
         assert impact["min_depth"] == "deep"
         assert impact["source"] == "core"
         assert impact["required"] is False  # PLN-725 determinism enforcement
-        triggers = list(impact["triggers"])
-        assert len(triggers) >= 2
-        names = {t["name"] for t in triggers if isinstance(t, dict)}
+        triggers = [t for t in impact["triggers"] if isinstance(t, dict)]
+        signal_triggers = [t for t in triggers if t["type"] == "signal"]
+        names = {t["name"] for t in signal_triggers}
         assert "exported_symbol_change" in names
         assert "symbol_deletion" in names
-        # The min_confidence on each trigger must be >= the taxonomy floor
-        # so the per-signal floor in the prompt is actually enforced at
-        # coverage-resolution time.
-        for trigger in triggers:
-            assert trigger["type"] == "signal"
+        # The min_confidence on each signal trigger must be >= the taxonomy
+        # floor so the per-signal floor in the prompt is actually enforced
+        # at coverage-resolution time.
+        for trigger in signal_triggers:
             assert isinstance(trigger.get("min_confidence"), (int, float))
+        # ISS-12737: the one non-signal trigger is the deterministic
+        # file_deletion change_class.
+        assert [t for t in triggers if t["type"] != "signal"] == [
+            {"type": "change_class", "class": "file_deletion"},
+        ]
 
 
 class _ConditionalCoreFixtures:
@@ -23558,6 +24574,56 @@ class TestFEA1401ResolveCoverage(_ConditionalCoreFixtures):
             critic_gates=self._empty_critic_gates(),
             diff_data=self._diff(),
             extract_signals=self._signals("exported_symbol_change", 0.95),
+        )
+        assert "impact" not in {e["reviewer"] for e in plan["best_effort"]}
+
+    def _deletion_diff(self, status: str) -> dict[str, Any]:
+        return {
+            "files_to_review": ["src/gone.ts"],
+            "file_statuses": {"src/gone.ts": status},
+            "patch_lines": {},
+        }
+
+    def test_impact_added_at_deep_on_file_deletion_without_signals(self) -> None:
+        """ISS-12737: deleting a file selects the Impact Analyzer at deep
+        depth through the deterministic ``file_deletion`` change_class, with
+        no signal from the extractor."""
+        from code_review_helpers import resolve_coverage
+
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._deletion_diff("removed"),
+            extract_signals={"signals": []},
+            invocation_depth="deep",
+        )
+        impact_entry = next(
+            e for e in plan["best_effort"] if e["reviewer"] == "impact"
+        )
+        assert impact_entry["trigger"] == {
+            "type": "change_class", "class": "file_deletion",
+        }
+        assert "file_deletion" in plan["stats"]["detected_change_classes"]
+
+    def test_file_deletion_does_not_fire_on_modified_file(self) -> None:
+        from code_review_helpers import resolve_coverage
+
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._deletion_diff("modified"),
+            extract_signals={"signals": []},
+            invocation_depth="deep",
+        )
+        assert "file_deletion" not in plan["stats"]["detected_change_classes"]
+        assert "impact" not in {e["reviewer"] for e in plan["best_effort"]}
+
+    def test_file_deletion_does_not_add_impact_below_deep(self) -> None:
+        from code_review_helpers import resolve_coverage
+
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._deletion_diff("removed"),
+            extract_signals={"signals": []},
+            invocation_depth="standard",
         )
         assert "impact" not in {e["reviewer"] for e in plan["best_effort"]}
 
@@ -25116,3 +26182,303 @@ class TestRunPrefixRoutePartition:
             json.dumps({"status_message": "1/2 files cached"}),
         )
         assert _rp_cache_status_message(tmp_path) == "1/2 files cached"
+
+
+class TestPluginRootResolutionContract:
+    """Claude Code fills in ``${CLAUDE_PLUGIN_ROOT}`` only in the text of the
+    command or skill being invoked. It is not filled in a file the agent opens
+    with Read, and it is not a Bash environment variable. /code-review:deep and
+    /code-review:shallow reach start.md through Read, so they must bind the
+    resolved root for it; Read-loaded files must not rely on the token.
+    """
+
+    _ROOT = Path(__file__).parents[2]
+
+    def _read_loaded_files(self) -> list[Path]:
+        root = self._ROOT
+        return sorted([
+            root / "README.md",
+            root / "SCHEMA.md",
+            *(root / "prompts").glob("*.md"),
+            *(root / "tools" / "prompts").glob("*.txt"),
+            *(root / "agents").glob("*.md"),
+        ])
+
+    @pytest.mark.parametrize("command", ["deep.md", "shallow.md"])
+    def test_wrapper_commands_bind_plugin_root(self, command: str) -> None:
+        text = (self._ROOT / "commands" / command).read_text()
+        assert "**`PLUGIN_ROOT` = `${CLAUDE_PLUGIN_ROOT}`**" in text
+
+    def test_start_md_uses_the_token_only_as_its_own_candidate(self) -> None:
+        text = _start_command_text()
+        assert text.count("CLAUDE_PLUGIN_ROOT") == 1
+        candidate = _extract_section(text, "2. **This file's own text**", "\n")
+        assert "`${CLAUDE_PLUGIN_ROOT}`" in candidate
+
+    def test_start_md_checks_a_literal_plugin_root_path(self) -> None:
+        stage_0b = _extract_section(
+            _start_command_text(), "**0b. Resolve plugin paths", "**Four resolution outcomes",
+        )
+        assert "test -f <PLUGIN_ROOT>/tools/python/code_review_helpers.py" in stage_0b
+
+    def test_read_loaded_files_do_not_rely_on_the_token(self) -> None:
+        offenders = [
+            str(p.relative_to(self._ROOT)) for p in self._read_loaded_files()
+            if "CLAUDE_PLUGIN_ROOT" in p.read_text()
+        ]
+        assert offenders == []
+
+    def test_skills_use_the_substituted_token_form(self) -> None:
+        offenders = [
+            str(p.relative_to(self._ROOT))
+            for p in (self._ROOT / "skills").glob("*/SKILL.md")
+            if "<CLAUDE_PLUGIN_ROOT>" in p.read_text()
+        ]
+        assert offenders == []
+
+
+class TestSingletonDispatchInputsContract:
+    """Each singleton agent is handed every file its manifest declares in
+    ``extra_inputs`` (stage_11: the taxonomy snapshot; stage_15: the diff
+    summary), and each prompt names the files prepare actually writes.
+    """
+
+    _ROOT = Path(__file__).parents[2]
+
+    def _signals_manifest(self, tmp_path: Path) -> dict[str, Any]:
+        from code_review_helpers import cmd_extract_signals_prepare
+        cr_dir = tmp_path / "cr"
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(_build_diff_data(tmp_path)),
+            prompt_hash="ph0",
+            cache_dir=None,
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        assert cmd_extract_signals_prepare(args) == 0
+        return json.loads((cr_dir / "extract_signals_manifest.json").read_text())
+
+    def _critic_manifest(self, tmp_path: Path) -> dict[str, Any]:
+        from code_review_helpers import (
+            COVERAGE_CRITIC_MODEL_DEFAULT,
+            cmd_coverage_critic_prepare,
+        )
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        args = argparse.Namespace(
+            cr_dir=str(inputs["cr_dir"]),
+            extract_signals=str(inputs["paths"]["signals"]),
+            diff_data=str(inputs["paths"]["diff_data"]),
+            available_reviewers=str(inputs["paths"]["available"]),
+            cache_dir=None,
+            prompt=None,
+            model=COVERAGE_CRITIC_MODEL_DEFAULT,
+            no_critic=False,
+        )
+        assert cmd_coverage_critic_prepare(args) == 0
+        return _read_coverage_section(inputs["cr_dir"], "critic")
+
+    def test_spawn_template_passes_every_declared_extra_input(self) -> None:
+        skill = (self._ROOT / "skills" / "singleton-dispatch" / "SKILL.md").read_text()
+        template = _extract_section(skill, "3. Prompt template:", "4. After the Task returns")
+        assert "{EXTRA_INPUTS}" in template
+        assert "| `{EXTRA_INPUTS}` | `manifest.extra_inputs`" in template
+        assert "[stage_11 only]" not in template
+
+    def test_signal_manifest_declares_the_taxonomy_snapshot(self, tmp_path: Path) -> None:
+        manifest = self._signals_manifest(tmp_path)
+        assert manifest["extra_inputs"] == [manifest["taxonomy_path"]]
+        prompt = (self._ROOT / "tools" / "prompts" / "signal_extraction_prompt.txt").read_text()
+        assert f"`{Path(manifest['taxonomy_path']).name}`" in prompt
+        assert "`signal_taxonomy.json`" not in prompt
+
+    def test_critic_manifest_declares_the_diff_summary(self, tmp_path: Path) -> None:
+        manifest = self._critic_manifest(tmp_path)
+        assert manifest["status"] == "needs_agent"
+        assert manifest["extra_inputs"] == [manifest["diff_summary_path"]]
+        assert Path(manifest["diff_summary_path"]).is_absolute()
+        prompt = (self._ROOT / "tools" / "prompts" / "coverage_critic_prompt.txt").read_text()
+        for path in (manifest["input_path"], *manifest["extra_inputs"]):
+            assert f"`{Path(path).name}`" in prompt
+        assert "`diff_summary.json`" not in prompt
+
+
+class TestVerificationStatsCounts:
+    """``stats.verification`` tentative/downgrade/skipped counts and the
+    ``by_reviewer`` tentative bucket are derived from the verifier verdicts
+    on verified[], not hard-coded to zero.
+    """
+
+    def _verified(self) -> list[dict[str, Any]]:
+        from code_review_helpers import _merge_verifier_fields
+        downgraded = minimal_diff_finding(id="bha_p0_f2", severity="HIGH")
+        _merge_verifier_fields(downgraded, {
+            "verifier_verdict": "DOWNGRADE", "verifier_severity": "MEDIUM",
+        })
+        return [
+            minimal_diff_finding(id="bha_p0_f0", verifier_verdict="CONFIRMED"),
+            minimal_diff_finding(id="bha_p0_f1", verifier_verdict="TENTATIVE"),
+            downgraded,
+            minimal_diff_finding(
+                id="bhb_f0", reviewer="bhb", verifier_verdict="TENTATIVE",
+            ),
+            minimal_diff_finding(id="bhb_f1", reviewer="bhb", verifier_verdict=None),
+            minimal_diff_finding(
+                id="bhb_f2", reviewer="bhb", verifier_verdict="RE_ASSERTED",
+            ),
+        ]
+
+    def test_verification_counts_follow_verdicts(self) -> None:
+        from code_review_helpers import _stats_from_findings
+        verification = _stats_from_findings(self._verified(), [], [], [])["verification"]
+        assert verification["verified_count"] == 6
+        assert verification["tentative_count"] == 2
+        assert verification["downgrade_count"] == 1
+        assert verification["skipped_count"] == 1
+
+    def test_by_reviewer_tentative_bucket_counts_tentative_findings(self) -> None:
+        from code_review_helpers import _stats_from_findings
+        by_reviewer = _stats_from_findings(self._verified(), [], [], [])["by_reviewer"]
+        assert by_reviewer["bha_p0"]["verified"] == 3
+        assert by_reviewer["bha_p0"]["tentative"] == 1
+        assert by_reviewer["bhb"]["tentative"] == 1
+
+    def test_presenter_formulas_subtract_every_non_confirmed_bucket(self) -> None:
+        root = Path(__file__).parents[2]
+        formula = (
+            "{verified_count - tentative_count - re_asserted"
+            " - justified_invalid_count - skipped_count}"
+        )
+        for doc in (
+            root / "skills" / "present-local" / "SKILL.md",
+            root / "prompts" / "github-review.md",
+        ):
+            assert formula in doc.read_text(), doc.name
+
+
+class TestValidateLineReanchor:
+    """A diff-scope line past the end of its file (e.g. a reviewer citing its
+    position in ``patches_all.txt``) is re-anchored on ``code_snippet`` before
+    range filtering and duplicate merging, or kept and tagged
+    ``line_out_of_range``.
+    """
+
+    _FILE = "src/persistence/records.py"
+
+    def _records_source(self) -> str:
+        lines = [f"# line {n}" for n in range(1, 23)]
+        lines[16] = "        return self._rows[key]"
+        lines[19] = "        self._rows.clear()"
+        lines[20] = "        self._rows.clear()"
+        return "\n".join(lines) + "\n"
+
+    def _finding(self, **overrides: Any) -> dict[str, Any]:
+        base: dict[str, Any] = {
+            "file": self._FILE, "line": 17, "severity": "HIGH",
+            "category": "Correctness", "priority": 1, "confidence": 0.95,
+            "issue": "KeyError on a missing record",
+            "recommendation": "Use self._rows.get(key)",
+            "code_snippet": "\n        return self._rows[key]\n",
+        }
+        base.update(overrides)
+        return base
+
+    def _run(
+        self, tmp_path: Path, findings: list[dict[str, Any]],
+        diff_data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        import io
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        root = tmp_path / "root"
+        resolved = _make_review_root(root, {self._FILE: self._records_source()})
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": resolved,
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+        }))
+        diff_data = diff_data or _make_diff_data(
+            files=[self._FILE], ranges={self._FILE: {"added": [[15, 19]], "removed": []}},
+        )
+        (cr_dir / "findings.json").write_text(json.dumps(findings))
+        (cr_dir / "diff_data.json").write_text(json.dumps(diff_data))
+        ns = argparse.Namespace(
+            findings=str(cr_dir / "findings.json"),
+            diff_data=str(cr_dir / "diff_data.json"),
+            settings=None,
+            cr_dir=str(cr_dir),
+        )
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            assert cmd_validate(ns) == 0
+        return json.loads(buf.getvalue())
+
+    def test_reanchored_finding_merges_with_its_duplicate(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path, [
+            self._finding(reviewer="bha_p0"),
+            self._finding(reviewer="unified_auditor", line=267),
+        ])
+        assert result["stats"]["discarded_duplicate"] == 1
+        assert [f["line"] for f in result["validated"]] == [17]
+        reanchored = [
+            d["finding"] for d in result["discarded"] if d["reason"] == "DISCARD_DUPLICATE"
+        ] + result["validated"]
+        assert any(f.get("line_reanchored_from") == 267 for f in reanchored)
+        assert result["stats"]["lines_reanchored"] == 1
+
+    def test_reanchor_sets_line_and_keeps_the_original(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path, [self._finding(line=267)])
+        (finding,) = result["validated"]
+        assert finding["line"] == 17
+        assert finding["line_reanchored_from"] == 267
+        assert "line_out_of_range" not in finding
+        assert "out_of_hunk_kept" not in finding
+
+    def test_unmatched_snippet_is_kept_and_tagged(self, tmp_path: Path) -> None:
+        # P2 at 0.6: the out-of-hunk floor (0.80) would discard it on
+        # location alone; an unanchorable line must not.
+        result = self._run(tmp_path, [self._finding(
+            line=267, priority=2, severity="MEDIUM", confidence=0.6,
+            code_snippet="not in the file",
+        )])
+        (finding,) = result["validated"]
+        assert finding["line"] == 267
+        assert finding["line_out_of_range"] is True
+        assert "line_reanchored_from" not in finding
+        assert "out_of_hunk_kept" not in finding
+        assert result["stats"]["kept_line_out_of_range"] == 1
+
+    def test_ambiguous_snippet_is_tagged_not_moved(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path, [self._finding(
+            line=267, code_snippet="self._rows.clear()",
+        )])
+        (finding,) = result["validated"]
+        assert finding["line"] == 267
+        assert finding["line_out_of_range"] is True
+
+    def test_in_range_line_strips_reviewer_supplied_tags(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path, [self._finding(
+            line_out_of_range=True, line_reanchored_from=3,
+        )])
+        (finding,) = result["validated"]
+        assert finding["line"] == 17
+        assert "line_out_of_range" not in finding
+        assert "line_reanchored_from" not in finding
+
+    def test_deleted_file_is_measured_from_the_patch(self, tmp_path: Path) -> None:
+        gone = "src/old.py"
+        removed = {str(n): f"old {n}" for n in range(1, 6)}
+        removed["3"] = "def legacy_entry():"
+        diff_data = _make_diff_data(
+            files=[gone],
+            statuses={gone: "removed"},
+            ranges={gone: {"added": [], "removed": [[1, 5]]}},
+            patch_lines={gone: {"added_lines": {}, "removed_lines": removed}},
+        )
+        result = self._run(tmp_path, [self._finding(
+            file=gone, line=40, code_snippet="def legacy_entry():",
+        )], diff_data)
+        (finding,) = result["validated"]
+        assert finding["line"] == 3
+        assert finding["line_reanchored_from"] == 40

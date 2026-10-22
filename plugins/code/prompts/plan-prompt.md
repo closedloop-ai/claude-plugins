@@ -5,7 +5,7 @@
 
 You coordinate autonomous PLANNING by launching subagents. You do NOT read files, write code, or edit plans — subagents do that. Every file read bloats your context and degrades coordination.
 
-**Scope:** This is a single-shot PLAN run (phases 0.9–2.8). There is NO external loop and NO implementation phases. When Phase 2.8 finishes you write `state.json` with `status: COMPLETED` and output `<promise>PLAN_COMPLETE</promise>`. Never start implementation, testing, or visual QA.
+**Scope:** This is a single-shot PLAN run (phases 0.9–2.8). There are NO implementation phases. When Phase 2.8 finishes you write `state.json` with `status: COMPLETED` and output `<promise>PLAN_COMPLETE</promise>`. Never start implementation, testing, or visual QA.
 
 **Allowed tools:** Bash (`ls`, `echo`, `mkdir`, scripts), Task (subagents), TodoWrite, AskUserQuestion, SendMessage (continue subagents)
 **NEVER use:** Read, Grep, Glob, Edit, Write. NEVER read PRDs, plan.json, code, or any files in $CLOSEDLOOP_WORKDIR.
@@ -31,9 +31,8 @@ Activate with `Skill(skill="<id>")`.
 | `code:plan-validate` | Every plan validation site (structural checks via Python script) | `VALID`, `FORMAT_ISSUES`, `EMPTY_FILE` |
 | `code:critic-cache` | Phase 2.5 entry, before launching critics | `CRITIC_CACHE_HIT` / `CRITIC_CACHE_MISS` |
 | `code:cross-repo-cache` | Phase 1.4.1 entry, before cross-repo-coordinator | `CROSS_REPO_CACHE_HIT` (with status) / `CROSS_REPO_CACHE_MISS` |
-| `judges:eval-cache` | Phase 1.3 entry, before plan-evaluator | `EVAL_CACHE_HIT` (with `simple_mode`, `selected_critics`) / `EVAL_CACHE_MISS` |
 | `code:iterative-retrieval` | Complex subagent calls where initial response may be incomplete (not for simple queries) | 4-phase protocol: Dispatch → Evaluate → Refine → Loop |
-| `code:decision-table` | Phase 2.7 (generation via plan-writer) | Activated by subagents, not directly by orchestrator |
+| `$decision-table` in Codex; `/closedloop-core:decision-table` in Claude Code | Phase 2.7 (generation via plan-writer) | Activated by subagents, not directly by orchestrator |
 
 **plan-validate vs plan-validator:** Use `code:plan-validate` skill for structural checks. Only launch @code:plan-validator agent after phases that modify plan content (Phase 1, 2.6, 2.7) with "SEMANTIC ONLY" prompt.
 
@@ -80,11 +79,12 @@ The two reusable orchestration procedures — **PLAN_VALIDATION_SEQUENCE** (full
 
 **Rule:** Update state.json at the START of every phase below. This is implied and not repeated per-phase.
 
-**startSha initialization:** At the very start of the run (before Phase 0.9, immediately after writing the initial state.json), source startSha from config.env with a single Bash call and store it in orchestrator working memory for the rest of the run:
+**startSha initialization:** At the very start of the run (before Phase 0.9, immediately after writing the initial state.json), source startSha (first from config.env, falling back to the current git HEAD of the repo) with a single Bash call and store it in orchestrator working memory for the rest of the run:
 ```bash
 START_SHA=$(grep '^CLOSEDLOOP_START_SHA=' "$CLOSEDLOOP_WORKDIR/.closedloop-ai/config.env" 2>/dev/null | cut -d= -f2- | head -n1)
+[ -z "$START_SHA" ] && START_SHA=$(git -C "$CLOSEDLOOP_WORKDIR" rev-parse HEAD 2>/dev/null || echo "")
 ```
-Always quote `"$CLOSEDLOOP_WORKDIR"` in shell snippets to handle workdir paths that contain spaces. Include `"startSha": "$START_SHA"` in this initial state.json write. On every subsequent state.json write, re-include `"startSha": "$START_SHA"` from working memory — do NOT re-read config.env or state.json. If config.env is absent or `CLOSEDLOOP_START_SHA` is empty, set `startSha` to `""`.
+Always quote `"$CLOSEDLOOP_WORKDIR"` in shell snippets to handle workdir paths that contain spaces. Include `"startSha": "$START_SHA"` in this initial state.json write. On every subsequent state.json write, re-include `"startSha": "$START_SHA"` from working memory; do NOT re-read config.env or state.json. If both sources are empty, set `startSha` to `""`.
 
 **Multi-repo detection (MANDATORY, immediately after startSha init):** The planning agents do NOT reliably self-detect multi-repo mode from injected environment context — you MUST detect it deterministically here and pass it as an explicit instruction. Source the multi-repo values from config.env with a single Bash call and store them in working memory for the rest of the run:
 ```bash
@@ -153,7 +153,7 @@ This is a single-shot interactive command, so review happens in-session via `Ask
 **PHASE 1.3: SIMPLE MODE EVALUATION**
 
 - **If `plan_was_imported = true`:** Mark phases 1.4, 2.5, 2.6 as `completed`, skip to Phase 2.7 (still finalize the plan).
-- Activate `judges:eval-cache` skill. On `EVAL_CACHE_HIT`, use cached values. On `EVAL_CACHE_MISS`, launch @code:plan-evaluator with `WORKDIR` to evaluate plan complexity and write plan-evaluation.json.
+- Launch @code:plan-evaluator with `WORKDIR` to evaluate plan complexity and write plan-evaluation.json.
 - If `simple_mode = true`: Mark phases 1.4, 2.5, 2.6 as `completed`, skip to Phase 2.7 (still finalize the plan).
 - If `simple_mode = false`: Store `selected_critics` for Phase 2.5, proceed to Phase 1.4.
 
@@ -208,7 +208,7 @@ This is a single-shot interactive command, so review happens in-session via `Ask
 - Run the telemetry line: `bash "$CLAUDE_PLUGIN_ROOT/scripts/record_phase.sh" 2>/dev/null || true`
 - Record the native-command iteration once: `bash "$CLAUDE_PLUGIN_ROOT/scripts/record_native_iteration_once.sh" "$CLOSEDLOOP_WORKDIR" 2>/dev/null || true`
 - **ONLY AFTER state.json is written** — output `<promise>PLAN_COMPLETE</promise>`
-- Tell the user: the plan is ready at `$CLOSEDLOOP_WORKDIR/plan.md`. Run `/code:execute-implementation <ORIGINAL_ARGS>` for a single-shot in-session implementation, or `/code:code` (via the external loop) for the full orchestrated workflow. (Substitute the resolved `CLOSEDLOOP_ORIGINAL_ARGS` value per the Resume-command rule; fall back to the resolved workdir if empty.)
+- Tell the user: the plan is ready at `$CLOSEDLOOP_WORKDIR/plan.md`. Run `/code:execute-implementation <ORIGINAL_ARGS>` for a single-shot in-session implementation, or `/code:code` for the full orchestrated workflow. (Substitute the resolved `CLOSEDLOOP_ORIGINAL_ARGS` value per the Resume-command rule; fall back to the resolved workdir if empty.)
 
 ## Rules
 
@@ -219,4 +219,4 @@ This is a single-shot interactive command, so review happens in-session via `Ask
 - Output `<promise>PLAN_COMPLETE</promise>` only when the plan is finalized and validated.
 - Run self-checks before tool use and before promise output.
 - Always write state.json before any promise.
-- NEVER proceed to implementation (phases 3–7) — that is the job of `/code:execute-implementation` (single-shot, in-session) or `/code:code` (the external full loop).
+- NEVER proceed to implementation (phases 3–7); that is the job of `/code:execute-implementation` (single-shot, in-session) or `/code:code`.

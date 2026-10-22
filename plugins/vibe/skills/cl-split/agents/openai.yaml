@@ -1,0 +1,4 @@
+interface:
+  display_name: "CL Split"
+  short_description: "Split complex ClosedLoop tickets safely"
+  default_prompt: "Use $cl-split <ClosedLoop feature URL or FEA slug> to decompose a top-level high-complexity ticket only along genuine risk, ownership, dependency, validation, deployment, or rollback boundaries. Do not split merely to create smaller tickets or PRs. Never create grandchildren; compatible ready children may later share a merge batch after independent analysis."

@@ -1,0 +1,376 @@
+import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { z } from "zod";
+import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
+import { requirePrototypePublication } from "../../../plugins/vibe/skills/vibe/scripts/prototype-session.mjs";
+import { readInput } from "./contracts.js";
+import { verifyExternalCi } from "./main-sync-ci.js";
+import { isPublisherContext } from "./record-context.js";
+import { committedInputs, executeChecks, checkRecipe, inspectInputInventory } from "./main-sync-checks.js";
+import { prepareInputOrigins, reusableInputOrigin } from "./main-sync-input-origin.js";
+import { storedRecipe, verifyRecipeWitness, recipeIdentity } from "./main-sync-validation-recipe.js";
+import { MainSyncError, mainSyncInputSchema, mainSyncReceiptSchema, mainSyncStateSchema, type MainSyncReceipt, type MainSyncSession } from "./main-sync-contracts.js";
+import { comparisonLogs } from "./main-sync-main-comparison.js";
+import { digest, requireSyncReceipt, saveSyncReceipt, syncContext, syncLocation, readPrivateJson, MAIN_SYNC_FILE } from "./main-sync-state.js";
+
+const GIT_NETWORK_MS = 15 * 60 * 1000;
+const desktopSchema = z.object({ ok: z.boolean(), running: z.boolean() }).passthrough();
+const TEST_HISTORY_PATH = /(?:\.(?:test|spec)\.[cm]?[jt]sx?$|\.snap$|(?:^|\/)(?:__tests__|__fixtures__|__snapshots__|e2e)\/|^apps\/desktop\/test\/)/;
+export { MainSyncError };
+export { mainSyncFailure } from "./main-sync-failure.js";
+
+/** Reuses bounded stdin input rather than source authority or success claims supplied in argv/task text. */
+export async function readMainSyncInput(worktree: string) {
+  const input = mainSyncInputSchema.parse(await readInput());
+  if (realpathSync(input.context.worktree) !== realpathSync(worktree)) throw new MainSyncError("CLI worktree and owned operation context differ");
+  return input;
+}
+
+/** The same source turn prepares input evidence without inventing a main capture or validation result. */
+export function prepareMainSyncInputs(raw: unknown) {
+  const value = syncContext(raw, "inputs");
+  const identity = inspectInputInventory(value.place.root);
+  const file = join(value.place.dir, MAIN_SYNC_FILE);
+  const prior = existsSync(file) ? mainSyncStateSchema.parse(readPrivateJson(file)) : undefined;
+  if (prior && (prior.worktree !== value.place.root || prior.branch !== value.place.branch
+    || prior.operator.id !== value.place.session.operator.id || prior.operator.email !== value.place.session.operator.email
+    || prior.originalBase !== value.place.session.baseCommit)) throw new MainSyncError("Input readiness belongs to another owned session");
+  const previous = prior?.phase === "input-readiness" ? prior.previous : prior;
+  if (previous && (!value.context.mainSyncTransactionId || previous.transactionId !== value.context.mainSyncTransactionId)) {
+    throw new MainSyncError("Input readiness requires the current captured transaction", "NEEDS_CHANGE");
+  }
+  const inputs = reusableInputOrigin(value, identity, prior?.inputs) ?? prepareInputOrigins(value, identity, identity.producers);
+  const state = { version: 1 as const, phase: "input-readiness" as const,
+    transactionId: previous?.transactionId ?? prior?.transactionId ?? randomUUID(), worktree: value.place.root,
+    branch: value.place.branch, operator: { id: value.place.session.operator.id, email: value.place.session.operator.email },
+    originalBase: value.place.session.baseCommit, purpose: value.purpose, inputs, ...(previous ? { previous } : {}) };
+  syncContext(raw, "inputs");
+  saveSyncReceipt(value.place.dir, state);
+  let witness;
+  if (previous && previous.purpose === value.purpose && isAncestor(value.place.root, previous.mainSha)) {
+    const identity = committedInputs(value.place.root);
+    const selection = checkRecipe(value, previous);
+    const recipe = storedRecipe(identity, selection);
+    state.previous = { ...previous, inputs, recipe };
+    saveSyncReceipt(value.place.dir, state);
+    witness = { operation: "main-sync-validate", transactionId: previous.transactionId, ...identity, recipeSha256: recipe.recipeSha256 };
+  }
+  return { status: "DONE", phase: state.phase, transactionId: state.transactionId,
+    headSha: identity.headSha, treeSha: identity.treeSha, inputSha256: inputs.inputSha256, generatedFiles: inputs.files.length,
+    ...(witness ? { validationWitness: witness } : {}) };
+}
+
+/**
+ * Captures fresh main once, then stages an ordinary merge only in final-merge mode (`mainMergeDecision`);
+ * otherwise the branch's own merge-base with main stands in as its main. Never commits or pushes.
+ */
+export function prepareMainSync(raw: unknown) {
+  const value = syncContext(raw, "prepare");
+  const root = value.place.root;
+  const inventory = inspectInputInventory(root);
+  const previousFile = join(value.place.dir, MAIN_SYNC_FILE);
+  const state = existsSync(previousFile) ? mainSyncStateSchema.parse(readPrivateJson(previousFile)) : undefined;
+  // Generated inputs are proven once, after the merge; only a proof already recorded for this exact commit is rechecked here.
+  if (state?.inputs?.headSha === inventory.headSha && state.inputs.treeSha === inventory.treeSha) committedInputs(root);
+  const previous = state?.phase === "input-readiness" ? state.previous : state;
+  if (previous && (previous.worktree !== root || previous.branch !== value.place.branch
+    || previous.originalBase !== value.place.session.baseCommit || previous.operator.id !== value.place.session.operator.id
+    || previous.operator.email !== value.place.session.operator.email)) {
+    throw new MainSyncError("Previous main-sync provenance belongs to another session; preserve it and inspect the owned evidence");
+  }
+  const desktopScript = fileURLToPath(new URL("../vibe-sessions.mjs", import.meta.url));
+  const desktop = spawnSync(process.execPath, [desktopScript, "desktop-tab", "--worktree", root], {
+    encoding: "utf8", timeout: 30000, maxBuffer: 1024 * 1024,
+  });
+  if (desktop.error || desktop.status !== 0) throw new MainSyncError("Could not verify the owned Desktop before changing its source");
+  if (desktopSchema.parse(JSON.parse(desktop.stdout)).running) throw new MainSyncError("Stop only this session's owned Desktop before main-sync", "NEEDS_DESKTOP_STOP");
+  try { git(root, ["fetch", "origin", "main"], { timeout: GIT_NETWORK_MS }); }
+  catch { throw new MainSyncError("Fresh main fetch failed; nothing was published"); }
+  const fetchedMain = git(root, ["rev-parse", "FETCH_HEAD^{commit}"]);
+  const startingHead = git(root, ["rev-parse", "HEAD"]);
+  const common = git(root, ["merge-base", startingHead, fetchedMain]);
+  const decision = mainMergeDecision(root, value.place.session, fetchedMain);
+  const mainSha = decision.merge ? fetchedMain : common;
+  const importedFiles = git(root, ["diff", "--name-status", "--no-renames", common, mainSha]).split("\n").filter(Boolean)
+    .map((line) => { const tab = line.indexOf("\t"); return { status: line.slice(0, tab), path: line.slice(tab + 1) }; });
+  const validationSince = value.place.session.vercel?.lastDeployedCommit
+    ?? value.place.session.prototype?.deployedCommit ?? value.place.session.baseCommit;
+  git(root, ["cat-file", "-e", `${validationSince}^{commit}`]);
+  const receipt: MainSyncReceipt = { version: 1, transactionId: randomUUID(), worktree: root,
+    branch: value.place.branch, operator: { id: value.place.session.operator.id, email: value.place.session.operator.email },
+    purpose: value.purpose, mainSha, startingHead, originalBase: value.place.session.baseCommit,
+    validationSince, fetchedAt: new Date().toISOString(), importedFiles,
+    importedCommits: [...new Set([...(previous?.importedCommits ?? []),
+      ...git(root, ["rev-list", `${common}..${mainSha}`]).split("\n").filter(Boolean)])],
+    featureTestHistory: featureTestHistory(root, value.place.session.baseCommit, startingHead, previous), requestContinuations: [],
+    ...(state?.inputs ? { inputs: state.inputs } : {}),
+    ...(decision.merge ? {} : { deferredMain: { mainSha: fetchedMain, reason: decision.reason } }) };
+  saveSyncReceipt(value.place.dir, receipt);
+  if (!isAncestor(root, mainSha)) {
+    try { git(root, ["merge", "--no-commit", "--no-ff", mainSha], { timeout: GIT_NETWORK_MS }); }
+    catch {
+      const conflicts = git(root, ["diff", "--name-only", "--diff-filter=U"]);
+      throw new MainSyncError(`Ordinary main merge needs the SAME writer's conflict/source correction${conflicts ? `: ${conflicts}` : ""}; ROOT alone commits`, "NEEDS_CHANGE");
+    }
+  }
+  const requiresCommit = existsSync(join(value.place.dir, "MERGE_HEAD"));
+  return { status: requiresCommit ? "NEEDS_COMMIT" : "DONE", transactionId: receipt.transactionId,
+    mainSha, headSha: git(root, ["rev-parse", "HEAD"]), requiresCommit, importedFiles,
+    mainMerge: decision.merge ? "merged" : "deferred", mainMergeReason: decision.reason };
+}
+
+/** Only the same active source writer executes checks and creates the exact committed-result receipt. */
+export function validateMainSync(raw: unknown) {
+  const value = syncContext(raw, "validate");
+  const receipt = requireSyncReceipt(value);
+  if (!isAncestor(value.place.root, receipt.mainSha)) throw new MainSyncError("Captured main is not merged into the result", "NEEDS_CHANGE");
+  let identity = committedInputs(value.place.root);
+  if (value.context.runtime === "claude") {
+    if (!value.context.mainSyncValidation || !receipt.recipe) throw new MainSyncError("Canonical Claude validation requires the Root readiness witness", "NEEDS_CHANGE");
+    verifyRecipeWitness(receipt.recipe, value.context.mainSyncValidation, receipt.transactionId);
+  }
+  const recipe = checkRecipe(value, receipt);
+  const selectedIdentity = committedInputs(value.place.root);
+  if (selectedIdentity.headSha !== identity.headSha || selectedIdentity.treeSha !== identity.treeSha
+    || selectedIdentity.inputSha256 !== identity.inputSha256) throw new MainSyncError("Validation inputs changed during canonical recipe discovery", "NEEDS_CHANGE");
+  if (value.context.runtime === "claude") {
+    if (!receipt.recipe) throw new MainSyncError("Canonical validation recipe is missing", "NEEDS_CHANGE");
+    if (receipt.recipe.headSha !== identity.headSha || receipt.recipe.treeSha !== identity.treeSha || receipt.recipe.inputSha256 !== identity.inputSha256
+      || recipeIdentity(recipe) !== receipt.recipe.recipeSha256) throw new MainSyncError("Actual validation inputs or selected recipe changed after launch", "NEEDS_CHANGE");
+  }
+  let validation = receipt.validation;
+  if (!value.context.mainSyncCiRun || !validation || !validationMatches(value, receipt, identity)) {
+    validation = executeChecks(value, receipt, recipe);
+    identity = { headSha: validation.headSha, treeSha: validation.treeSha, inputSha256: validation.inputSha256 };
+  }
+  let ciEvidence = receipt.ciEvidence;
+  if (ciEvidence && (ciEvidence.checkoutSha !== identity.headSha || ciEvidence.treeSha !== identity.treeSha
+    || ciEvidence.inputSha256 !== identity.inputSha256)) ciEvidence = undefined;
+  if (value.context.mainSyncCiRun) {
+    if (remoteHead(value.place.root, value.place.branch) !== identity.headSha
+      || (receipt.pushedHead !== identity.headSha && !alreadyPublished(value.place.session, identity.headSha))) {
+      throw new MainSyncError("Exact handoff snapshot must be safely published before external coverage completion");
+    }
+    if (validation.e2eLimitations.some((item) => item.argv[1] !== "--dir" || item.argv[2] !== "apps/desktop")) {
+      throw new MainSyncError("Selected required E2E has no verified external checked-source interface; handoff remains incomplete");
+    }
+    ciEvidence = verifyExternalCi(value, identity);
+  }
+  const after = committedInputs(value.place.root);
+  if (after.headSha !== identity.headSha || after.treeSha !== identity.treeSha || after.inputSha256 !== identity.inputSha256) {
+    throw new MainSyncError("Source changed during actual CI verification; no handoff completion was issued", "NEEDS_CHANGE");
+  }
+  // Recheck the current source owner too: a stopped turn cannot issue a late success receipt.
+  syncContext(raw, "validate");
+  const next = { ...requireSyncReceipt(value), validation, ...(ciEvidence ? { ciEvidence } : {}) };
+  delete next.failedChecks;
+  if (!ciEvidence) delete next.ciEvidence;
+  if (receipt.pushedHead !== identity.headSha) delete next.pushedHead;
+  saveSyncReceipt(value.place.dir, next);
+  const requiredE2eComplete = validation.e2eLimitations.length === 0 || Boolean(ciEvidence);
+  const { mainPreexistingFailures, flakyChecks } = comparedChecks(validation.commands);
+  return { status: value.purpose === "handoff" && !requiredE2eComplete ? "NEEDS_REVIEW" : "DONE",
+    publicationReady: true, requiredE2eComplete, transactionId: receipt.transactionId, mainSha: receipt.mainSha,
+    headSha: validation.headSha, treeSha: validation.treeSha, commandCount: validation.commands.length,
+    purpose: value.purpose, validationScope: "publication-preparation", e2eLimitations: validation.e2eLimitations,
+    ...(mainPreexistingFailures.length ? { mainPreexistingFailures } : {}), ...(flakyChecks.length ? { flakyChecks } : {}),
+    ...(ciEvidence ? { ciEvidence } : {}) };
+}
+
+/** Pushes only the explicit admitted commit through normal hooks; it never force-pushes or commits. */
+export function pushMainSync(raw: unknown) {
+  const { value, receipt, identity } = admitted(raw, "push");
+  const consumed = consumePublication(value, receipt);
+  if (alreadyPublished(value.place.session, identity.headSha) && remoteHead(value.place.root, value.place.branch) === identity.headSha) {
+    return { status: "DONE", pushed: false, alreadyPublished: true, transactionId: receipt.transactionId,
+      headSha: identity.headSha, mainSha: receipt.mainSha };
+  }
+  try { git(value.place.root, ["push", "-u", "origin", `${identity.headSha}:refs/heads/${value.place.branch}`], { timeout: GIT_NETWORK_MS }); }
+  catch { throw new MainSyncError("Normal pre-push/push refused the exact validated result; nothing was requested"); }
+  const current = committedInputs(value.place.root);
+  if (current.headSha !== identity.headSha || current.inputSha256 !== identity.inputSha256) {
+    throw new MainSyncError("Source changed during push; the validated commit was pushed but no current environment request is authorized", "NEEDS_CHANGE");
+  }
+  syncContext(raw, "push");
+  saveSyncReceipt(value.place.dir, { ...consumed, pushedHead: identity.headSha });
+  return { status: "DONE", pushed: true, alreadyPublished: false, transactionId: receipt.transactionId,
+    headSha: identity.headSha, mainSha: receipt.mainSha };
+}
+
+/** Distinct request-only flags/Desktop grants consume matching state; they never acquire publisher rights. */
+export function admitMainSyncRequest(raw: unknown) {
+  const { value, receipt, identity } = admitted(raw, "request");
+  if (remoteHead(value.place.root, value.place.branch) !== identity.headSha
+    || (receipt.pushedHead !== identity.headSha && !alreadyPublished(value.place.session, identity.headSha))) {
+    throw new MainSyncError("Canonical redeploy required before this request-only action: validated result is not published", "NEEDS_CHANGE");
+  }
+  const publisher = isPublisherContext({ ...value.context, exclusiveRecordTurn: true });
+  if (publisher) consumePublication(value, receipt);
+  else consumeRequestContinuation(value, receipt);
+  return { transactionId: receipt.transactionId, headSha: identity.headSha, mainSha: receipt.mainSha,
+    alreadyPublished: publisher && value.purpose === "handoff" && alreadyPublished(value.place.session, identity.headSha) };
+}
+
+/** Canonical prototype sharing consumes the same proof without inventing an app environment or alias. */
+export function admitMainSyncShare(raw: unknown) {
+  const { value, receipt, identity } = admitted(raw, "share");
+  if (!value.place.branch.startsWith("prototype/")) throw new MainSyncError("Canonical share requires an owned prototype branch");
+  consumePublication(value, receipt);
+  return { transactionId: receipt.transactionId, headSha: identity.headSha, mainSha: receipt.mainSha,
+    alreadyPublished: alreadyPublished(value.place.session, identity.headSha) && remoteHead(value.place.root, value.place.branch) === identity.headSha };
+}
+
+/** Read-only inventory uses the captured main, never a later tracking-ref value masquerading as its sync base. */
+export function readMainSyncProvenance(worktree: string) {
+  const place = syncLocation(worktree);
+  const file = join(place.dir, MAIN_SYNC_FILE);
+  if (!existsSync(file)) return undefined;
+  const state = mainSyncStateSchema.parse(readPrivateJson(file));
+  const value = state.phase === "input-readiness" ? state.previous : state;
+  if (!value) return undefined;
+  if (value.worktree !== place.root || value.branch !== place.branch || value.originalBase !== place.session.baseCommit
+    || value.operator.id !== place.session.operator.id || value.operator.email !== place.session.operator.email) return undefined;
+  const merge = join(place.dir, "MERGE_HEAD");
+  const pendingMerge = existsSync(merge) && git(place.root, ["rev-parse", "MERGE_HEAD"]) === value.mainSha;
+  if (!pendingMerge && !isAncestor(place.root, value.mainSha)) return undefined;
+  return { mainSha: value.mainSha, originalBase: value.originalBase, importedFiles: value.importedFiles,
+    featureTestHistory: value.featureTestHistory, transactionId: value.transactionId, pendingMerge };
+}
+
+function admitted(raw: unknown, operation: "push" | "request" | "share") {
+  const value = syncContext(raw, operation);
+  const receipt = requireSyncReceipt(value);
+  if (receipt.publicationTurn && (operation !== "request" || isPublisherContext({ ...value.context, exclusiveRecordTurn: true }))
+    && JSON.stringify(receipt.publicationTurn) !== JSON.stringify(publicationTurn(value))) {
+    throw new MainSyncError("Canonical redeploy requires fresh preparation for this distinct publication turn", "NEEDS_CHANGE");
+  }
+  const identity = committedInputs(value.place.root);
+  if (!validationMatches(value, receipt, identity)) {
+    throw new MainSyncError("Canonical redeploy required: exact committed validation proof is missing or stale", "NEEDS_CHANGE");
+  }
+  return { value, receipt, identity };
+}
+
+function validationMatches(value: ReturnType<typeof syncContext>, receipt: MainSyncReceipt,
+  identity: ReturnType<typeof committedInputs>) {
+  const proof = receipt.validation;
+  if (!proof || proof.headSha !== identity.headSha || proof.treeSha !== identity.treeSha
+    || proof.inputSha256 !== identity.inputSha256 || !isAncestor(value.place.root, receipt.mainSha)) {
+    return false;
+  }
+  const expected = checkRecipe(value, receipt);
+  const commandIdentity = (item: { argv: string[]; bindings?: Record<string, string>; cwd?: string }) => ({ argv: item.argv,
+    ...(item.bindings ? { bindings: item.bindings } : {}), ...(item.cwd ? { cwd: item.cwd } : {}) });
+  if (JSON.stringify(expected.commands.map(commandIdentity)) !== JSON.stringify(proof.commands.map(commandIdentity))
+    || JSON.stringify(expected.e2eLimitations) !== JSON.stringify(proof.e2eLimitations)) {
+    return false;
+  }
+  for (const [index, command] of proof.commands.entries()) {
+    const prefix = `vibe-main-sync-${receipt.transactionId}-`;
+    const permitted = [`${prefix}${index}.log`, ...[0, 1].flatMap((attempt) => ["", "-rerun", "-main"]
+      .map((suffix) => `${prefix}${attempt}-${index}${suffix}.log`)), `${prefix}main-bootstrap.log`]
+      .map((name) => join(value.place.dir, name));
+    const evidence = [{ log: command.log, sha256: command.sha256 }, ...(command.comparison ? comparisonLogs(command.comparison) : [])];
+    for (const { log: file, sha256 } of evidence) {
+      if (!permitted.includes(file)) throw new MainSyncError("Actual command evidence path changed", "NEEDS_CHANGE");
+      const stat = lstatSync(file, { throwIfNoEntry: false });
+      if (!stat || !stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024
+        || digest(readFileSync(file)) !== sha256) throw new MainSyncError("Actual command evidence changed; validation is required", "NEEDS_CHANGE");
+    }
+    if (command.comparison && command.comparison.mainSha !== receipt.mainSha) throw new MainSyncError("Main comparison names another main", "NEEDS_CHANGE");
+  }
+  return true;
+}
+
+function publicationTurn(value: ReturnType<typeof syncContext>) {
+  const { runtime, workerId, requestId, lease } = value.context;
+  return { runtime, workerId, requestId, lease };
+}
+
+function consumePublication(value: ReturnType<typeof syncContext>, receipt: MainSyncReceipt) {
+  const consumed = { ...receipt, publicationTurn: publicationTurn(value),
+    requestContinuations: receipt.publicationTurn ? receipt.requestContinuations : value.context.mainSyncRequestContinuations ?? [] };
+  saveSyncReceipt(value.place.dir, consumed);
+  return consumed;
+}
+
+function consumeRequestContinuation(value: ReturnType<typeof syncContext>, receipt: MainSyncReceipt) {
+  const index = receipt.requestContinuations.findIndex((intent) => intent.runtime === value.context.runtime
+    && intent.requestId === value.context.requestId && intent.recordAction === value.context.recordAction);
+  const intent = receipt.requestContinuations[index];
+  const turn = publicationTurn(value);
+  if (!receipt.publicationTurn || !intent || (intent.turn && JSON.stringify(intent.turn) !== JSON.stringify(turn))) {
+    throw new MainSyncError("Canonical redeploy requires fresh preparation: no parent-authorized current-operation continuation", "NEEDS_CHANGE");
+  }
+  const continuations = [...receipt.requestContinuations];
+  continuations[index] = { ...intent, turn };
+  saveSyncReceipt(value.place.dir, { ...receipt, requestContinuations: continuations });
+}
+
+/**
+ * Whether a publication merges fresh main (operator ruling, 2026-10-21: QA the feature-complete head,
+ * conflicts included, then merge main once). Only final-merge mode (`vibe-sessions.mjs touch
+ * --main-merge final`, set once QA passes or when the person asks for a main merge now) merges it.
+ */
+function mainMergeDecision(root: string, session: MainSyncSession, mainSha: string) {
+  if (isAncestor(root, mainSha)) return { merge: true, reason: "main is already merged" };
+  if (session.mainMerge === "final") return { merge: true, reason: "final-merge mode" };
+  return { merge: false, reason: "main waits for final-merge mode" };
+}
+
+function isAncestor(root: string, commit: string) {
+  try { git(root, ["merge-base", "--is-ancestor", commit, "HEAD"]); return true; }
+  catch { return false; }
+}
+function remoteHead(root: string, branch: string) {
+  try { return git(root, ["ls-remote", "origin", `refs/heads/${branch}`], { timeout: GIT_NETWORK_MS }).split("\t")[0] ?? ""; }
+  catch { throw new MainSyncError("Could not verify the exact remote branch result"); }
+}
+function alreadyPublished(session: ReturnType<typeof syncLocation>["session"], head: string) {
+  if (session.branch.startsWith("prototype/")) {
+    try { return requirePrototypePublication(session, head).deployedCommit === head; }
+    catch { return false; }
+  }
+  return session.vercel?.lastDeployedCommit === head && Boolean(session.vercel.verifiedAt && session.vercel.verifiedRequestId)
+    && (!session.lastRequestId || session.lastRequestId === session.vercel.verifiedRequestId);
+}
+
+function featureTestHistory(root: string, originalBase: string, startingHead: string, previous?: MainSyncReceipt) {
+  const entries = new Map((previous?.featureTestHistory ?? []).map((entry) => [`${entry.commit}:${entry.path}`, entry]));
+  const knownImports = new Set(previous?.importedCommits ?? []);
+  const commits = git(root, ["rev-list", "--first-parent", `${originalBase}..${startingHead}`]).split("\n").filter(Boolean);
+  for (const commit of commits) {
+    if (knownImports.has(commit)) continue;
+    const parents = git(root, ["rev-list", "--parents", "-n", "1", commit]).split(" ").slice(1);
+    const paths = git(root, ["diff", "--name-only", parents[0]!, commit]).split("\n").filter(Boolean);
+    for (const path of paths) {
+      if (!TEST_HISTORY_PATH.test(path)) continue;
+      // Exact non-first-parent adoption is import; a newly combined assertion remains feature evidence.
+      const result = git(root, ["ls-tree", commit, "--", path]);
+      if (parents.slice(1).some((parent) => git(root, ["ls-tree", parent, "--", path]) === result)) continue;
+      entries.set(`${commit}:${path}`, { commit, path });
+    }
+  }
+  return [...entries.values()].sort((left, right) => left.commit.localeCompare(right.commit) || left.path.localeCompare(right.path));
+}
+
+/** Failures that also fail on the captured main go on the ticket for engineering; they never block publication. */
+function comparedChecks(commands: NonNullable<MainSyncReceipt["validation"]>["commands"]) {
+  const mainPreexistingFailures = [];
+  const flakyChecks = [];
+  for (const command of commands) {
+    const comparison = command.comparison;
+    if (comparison?.classification === "main-preexisting") {
+      mainPreexistingFailures.push({ check: command.argv.join(" "), mainSha: comparison.mainSha,
+        sessionExitCode: command.exitCode, mainExitCode: comparison.main.exitCode, mainArgv: comparison.main.argv,
+        log: command.log, mainLog: comparison.main.log });
+    } else if (comparison?.classification === "flaky") {
+      flakyChecks.push({ check: command.argv.join(" "), mainSha: comparison.mainSha,
+        logs: comparison.sessionRuns.map((run) => run.log), mainLog: comparison.main.log });
+    }
+  }
+  return { mainPreexistingFailures, flakyChecks };
+}

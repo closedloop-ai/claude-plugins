@@ -43,7 +43,7 @@
       "generated": "2026-06-02T09:22:41Z",
       "domain": "domain-expert",
       "specialization": {
-        "technologies": ["code_review_schema", "code_review_helpers", "cmd_finalize_result", "cmd_footer", "run-loop.sh", "toon", "fcntl", "self-learning-pipeline"],
+        "technologies": ["code_review_schema", "code_review_helpers", "cmd_finalize_result", "cmd_footer", "toon", "fcntl", "self-learning-pipeline"],
         "complexity": "high"
       },
       "generation_hash": "a5eb1abfd832a3a5"

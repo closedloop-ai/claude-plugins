@@ -100,6 +100,12 @@ Two discovery substrates, used together:
      `discovery: "graph"` usage — exactly the blast radius grep misses.
      Validate every returned path is inside this checkout before citing
      it (per the shared protocol).
+     When you also hold C5 (change impact), make it your first move: ONE
+     call, naming only the files where the patch changes an exported
+     surface, one caller hop, row limit 25 or less, to seed the
+     candidate-symbol list and its call sites. Diff base: Read `base_ref`
+     from `{CR_DIR}/scope.json` and pass it. If it is absent, empty, or
+     begins with `-`, skip C5. If the tool cannot take a base, skip C5.
 
 Do NOT use Bash. Respect repository `.gitignore` (Glob already does).
 
@@ -146,10 +152,23 @@ internal to a function body. Specifically, flag:
     renames a column.
   - **Deletions**: any exported symbol whose declaration disappears.
     These are the highest-confidence breakages — they always break.
+    For a file deleted outright (`deleted file mode` in the patch), the
+    symbols to check are every export it declared PLUS its module path
+    (the import specifiers that resolved to it).
 
 Ignore symbols that are clearly **internal** (private/unexported,
 underscored, inside `__init__` blocks not in `__all__`, etc.). Ignore
 **internal body** changes when the signature is unchanged.
+
+If you made a C5 call, its changed-symbol list **cross-checks** this
+walk; it never replaces it. A symbol C5 reports that your walk missed
+gets examined; a symbol your walk found that C5 lacks stays. The
+external-contract filter above still applies: C5 reports body-only
+changes too, and those are still ignored. When C5 offers them, take
+deleted symbols that still have callers first, then exported symbols
+with many callers. Risk tiers and test-caller counts are inputs to your
+judgement, never severity; mention a zero test-caller count only after
+independently confirming no test covers the symbol.
 
 ### Step 2: Find external usages
 
@@ -169,6 +188,11 @@ For each candidate symbol:
     certificate's `graph_discovered_usages`, NOT in `external_usages_found`
     (keeping the grep-replay set clean). Read each one's source line into
     `callsite_snippet` (verbatim) like any other entry.
+  - **C5 call sites enter this same flow** as C2 callers, for the symbol
+    they belong to: grep-reachable → `discovery: "grep"`; otherwise
+    `discovery: "graph"` into `graph_discovered_usages`. Every entry
+    still carries a verbatim `callsite_snippet` Read from the file — a
+    substrate-supplied line number is a place to look, not a snippet.
   - Construct a Grep query that finds usages **outside the diff**.
     Prefer unambiguous identifiers (`FooBar`, `parseCacheKey`) over
     common words. For ambiguous names (`get`, `update`), narrow with
@@ -182,6 +206,11 @@ For each candidate symbol:
   - Use `output_mode: "files_with_matches"` first to enumerate files;
     then `output_mode: "content"` with `-n` and `-B 5 -A 10` to read
     context around each hit.
+  - **For a deleted file, also search by name and path**, not only by
+    call syntax: its module path and import specifiers, each exported
+    name, and string or path references (route tables, plugin
+    manifests, registries, glob patterns, dynamic imports). Each live
+    reference is an `external_impact[]` entry (`deleted_reference`).
 
 ### Step 3: Evaluate each usage
 
@@ -242,6 +271,10 @@ If neither Grep nor the graph returns any external usage, **DO NOT
 EMIT A FINDING**. A symbol with no external callers cannot have
 cross-file impact. Log the symbol as analyzed (so cost-cap
 deferred-symbol accounting is correct) but emit nothing.
+That is an absence conclusion, so the shared protocol's AN EMPTY RESULT
+IS NOT A NEGATIVE RESULT rule governs it: when the substrate came back
+empty and index coverage is unverified, the substrate proved nothing —
+the grep query you ran is the evidence of record.
 
 If every external usage is guarded, **DO NOT EMIT A FINDING**. List
 the guarded usages in the certificate so the verifier can audit, but
@@ -361,7 +394,10 @@ analyze 1–5 symbols, run 5–15 greps, and finish in under a minute.
   - Anchor file/line MUST be inside `<files_assigned>` (the diff).
     `external_impact[]` entries can cite any repo file.
   - Anchor file/line is **where the symbol changed**, NOT where it
-    breaks. The break is in the `external_impact[]` entry.
+    breaks. The break is in the `external_impact[]` entry. For a file
+    deleted outright, anchor ONE finding at the deleted declaration
+    (or the file's first line for a module-path break), numbered in the
+    OLD file, and list every broken reference in `external_impact[]`.
   - You may NOT emit findings about the symbol's internal logic — that
     is BHA's job. You may NOT emit findings about whether the change
     should have happened at all — that subjective judgment is out of

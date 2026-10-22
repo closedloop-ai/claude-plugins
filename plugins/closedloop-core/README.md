@@ -1,0 +1,152 @@
+# closedloop-core Plugin
+
+Shared ClosedLoop planning, intelligence, diagrams, review, QA, measurement,
+and PR monitoring skills.
+
+## Installation
+
+Codex installs `closedloop-core@closedloop-ai` explicitly. Claude Code resolves
+core automatically through the `code`, `vibe`, and `platform` dependencies.
+Skills use `$<name>` in Codex and `/closedloop-core:<name>` in Claude Code.
+Always load these skills by name, then read resources from the loaded skill's own folder.
+
+## Skills
+
+### `closedloop-intel`
+
+Read-only ticket and codebase intelligence through the dynamically discovered
+`closedloop-graph` MCP server. Fetches the live routing protocol before answering
+ticket lookup, lineage, overlap, rollup, architecture, dependency, and blast-radius
+questions. Reports cited ticket slugs and source paths, and stops if the server
+is unavailable.
+
+### `plan-structure`
+
+Provides reusable guidance for plan creation and updates. When activated, agents must read the `resources/playbook.md` (conventions and quality bar) and `resources/plan_template.md` (required structure and sections). Used by `plan-draft-writer` and `plan-writer`.
+
+### `decision-table`
+
+Generates a repo-local decision-table artifact that makes control-flow and stateful edge cases reviewable. Used when the user wants a code-grounded table for current behavior, wants to compare current behavior against a plan or work item, or needs a control-flow artifact for recovery, retry, finalization, validation, state-machine, or review-heavy edge cases. Writes one artifact per work item under `.closedloop-ai/decision-tables/` (`<plan-id>.md` for plan-scoped work, `<short-work-name>.md` otherwise) using the format defined in `references/artifact-format.md`. Builds the `Current Code` table from code (not expectations), captures the target behavior in `Intended Change`, and freezes both once implementation begins; post-implementation drift is recorded in append-only `Verification Findings`, `Adversarial Review`, `Fixes Applied`, `Final Alignment Status`, and optional `Plan Clarifications` sections. Includes a behavioral edge-case expansion pass that explicitly models structured-result setup failures, shared host reachability, library-managed lifecycle re-entry, published contract compatibility, CLI flag parsing, filesystem read/write safety, time-bound credentials/signatures, durable finalization and replay eligibility, diagnostic reason taxonomies, and side-effect boundaries for validation failures. The artifact also records `Evidence Artifacts` for high-yield coverage and non-applicability claims, distinguishing named fail-closed test coverage from source-backed `not applicable` evidence, and supports coordinator-run adversarial lanes with a sequential fallback for subagents that cannot delegate.
+
+### mermaid-visualizer
+
+**Trigger conditions**: When a user asks to explain a complex idea, concept, or system architecture, or when a diagram would help visualize control flows, system architectures, data flows, state machines, sequence diagrams, or entity relationships.
+
+**What it provides**:
+
+A comprehensive guide for creating Mermaid diagrams embedded in markdown. Covers six diagram types with syntax reference and best practices:
+
+| Diagram Type | Best For |
+|---|---|
+| Flowcharts | Decision trees, process flows, control flows |
+| Sequence Diagrams | Component/system interactions over time |
+| State Diagrams | State transitions and triggers |
+| Class Diagrams | Object-oriented relationships and hierarchies |
+| Entity Relationship Diagrams | Database schemas and data relationships |
+| System Architecture Diagrams | Component relationships and service interactions |
+
+**References**:
+
+| File | Contents |
+|------|----------|
+| `references/mermaid-syntax.md` | Complete Mermaid syntax reference: node syntax (rectangular, diamond, rounded, stadium), edge syntax (solid, dotted, thick arrows with labels), prohibited symbols and safe alternatives, all six diagram types with examples, and 10 best practices for clarity |
+
+### `workflow-code-review`
+
+Worker-backed review of a requested PR, branch, diff, file list, or uncommitted
+changes. Grounds reviewers in requirements, source evidence, repository
+guardrails, and graph intelligence, then consolidates actionable findings across
+approach, correctness, guardrail, compatibility, database, security, and existing
+E2E coverage. Uses only the review lenses bundled in `references/lenses/` and
+never reads prompt files from outside the skill. Review alone does not authorize
+implementation, commits, pushes, PR lifecycle actions, or merges.
+
+### `guided-manual-qa`
+
+Prepares a repository-supported test environment and records evidence for a
+code change, ticket, branch, or PR. Establishes each checkpoint's requirement
+and runtime before testing, credits exact passing E2E and conclusive agent
+observations separately, and presents only checkpoints that need human judgment
+one at a time. Keeps the QA record and its evidence outside disposable
+worktrees. Findings do not authorize source changes or external writes.
+
+### `measurement-discipline`
+
+Guides performance diagnosis and experiments with repeated baselines, measured
+noise floors, one-variable changes, and controls when the harness can drift.
+Requires a mechanism and product-level evidence for claimed improvements,
+records unsuccessful experiments as refutations, and maintains a dated,
+append-only measurement log with reproducible commands and re-check conditions.
+
+### `prevent-recurrence`
+
+For any agent correcting an issue or failure that reveals a reusable prevention
+lesson, including code, setup, measurement, validation, workflow, agent mistakes,
+or accepted review findings. Fixes the instance with a failing-first test where
+practical, finds and fixes the same mistake elsewhere, then adds the highest
+prevention that can catch it: architecture or types, static analysis, a guard
+test, a rule in the owning AGENTS.md, or an advisory memory hint. Skips ordinary
+feature work, rejected findings, and external outages or flaky infrastructure
+with no agent or system mistake. Uses the repository's own instruction files,
+checks, and test conventions, never loosens an existing check, and routes larger
+prevention work to a follow-up instead of dropping it. Examples for each rung are
+in `references/rung-examples.md`.
+
+### `repo-hardening`
+
+Audits a repository read-only and writes an evidence-backed hardening plan as a
+self-contained HTML page plus a Markdown twin, outside the analyzed repository.
+Asks which repository to analyze and where to write the plan, investigates
+instruction files, checks and gates, types, tests, CI, review habits, and
+recurring mistakes in history, and evaluates them against engineering
+principles and a trust ladder of prevention mechanisms. The plan gives findings
+with evidence and the strongest prevention rung, small ordered units of work
+split into quick wins and structural changes, what not to do, and decisions for
+a human with a recommendation. Its playbooks can also be used directly for one
+rigorous task such as a bug fix with runtime evidence or a blast-radius check.
+Adapted from pstack under the MIT License; see `NOTICE.md` in the skill folder.
+
+### `gh-monitor-pr`
+
+Runs a detached GitHub PR monitor that notifies the exact launching Codex
+Desktop or CLI thread through the managed App Server. Observes review, CI,
+conflict, queue, closure, and merge events with durable delivery and ownership
+records. Registration verifies the thread and process identity; stopping a
+monitor never stops the shared daemon.
+
+Other plugins load this skill by name and invoke its public entry points from
+the loaded skill's own folder, without importing core implementation files.
+`scripts/client-process-api.mjs` exposes the versioned
+`CLOSEDLOOP_APP_SERVER_CLIENT v1` contract through private stdin/stdout JSONL
+pipes for daemon and native-client operations. Caller inputs stay out of
+process arguments and diagnostic logs. The named-skill adapter resolves the
+actual enabled installation and stops on missing or incompatible core rather
+than substituting a copied transport.
+
+### `prd-dependency-graph`
+
+Builds an interactive HTML dependency graph of ClosedLoop tickets for a PRD or
+other document (`PRD-751`, `ISS-123`) or a whole project (`PRO-67`), as a
+standalone page or embedded in an existing report between `depgraph` markers.
+Solid arrows are live BLOCKS links, red while the blocker is still open; a
+document scope is drawn as a root box with dotted PRODUCES arrows to its
+tickets; tickets outside the scope are dashed and keep their status colors.
+Hover and click highlight upstream and downstream chains, and the graph opens
+zoomed to fit its frame. A save menu downloads the whole graph as a PNG or copies
+it to the clipboard for sharing.
+
+`scripts/refresh_server.py` builds the graph from the ClosedLoop REST API
+(`CLOSEDLOOP_API_KEY`) and is also the local helper behind the page's refresh
+button, listening on `127.0.0.1` only. Each graph carries its own config inside
+the page (no token, paths or viewer), so a copied page or report refreshes in
+place on any machine with the skill and its own API key, and "yours" follows
+whoever refreshes. A page opened from a file sends its own path; the helper
+validates the file, rewrites only that graph, and answers without ticket data
+so the page reloads from disk. The threat model is in the skill's `SKILL.md`.
+Graphs made by earlier versions keep refreshing from their configs in
+`~/.local/share/prd-dependency-graph/` and move to the portable format on their
+next refresh. Creating or refreshing a graph starts the helper in the background
+and replaces one left running from another install. It also writes a
+`~/.local/bin/prd-graph-helper` launcher that follows plugin updates, which the
+page shows when the helper is not running. `scripts/check_graph.cjs` is a
+headless browser check of a rendered graph.

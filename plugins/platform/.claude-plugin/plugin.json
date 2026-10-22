@@ -1,7 +1,8 @@
 {
   "name": "platform",
   "description": "ClosedLoop Platform plugin",
-  "version": "1.1.4",
+  "version": "1.1.5",
+  "dependencies": ["closedloop-core"],
   "author": {
     "name": "ClosedLoop",
     "email": "support@closedloop.ai"

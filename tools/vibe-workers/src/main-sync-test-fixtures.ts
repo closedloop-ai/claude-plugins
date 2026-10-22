@@ -1,0 +1,271 @@
+import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { acquireNativeRecord, releaseNativeRecord } from "./native-record.js";
+import { changeWriter, registerWriter } from "./ledger.js";
+import { bundleDirectory, fixture, graph, keepFixtureMaintenanceForeground, writeAgent } from "./test-fixtures.js";
+import type { RequestContinuation } from "./record-context.js";
+import { z } from "zod";
+
+const producerFixtureSchema = z.object({ purpose: z.string(), origin: z.object({ repository: z.literal("closedloop-ai/symphony-alpha"),
+  commit: z.literal("3dd896dfcecd5b14940fbebe3a10f969bcb8c93e"), license: z.literal("Apache-2.0"), copyright: z.string() }).strict(),
+  files: z.array(z.object({ path: z.enum(["lint-staged.config.js", "scripts/exec-git.ts", "LICENSE"]), gitBlob: z.string(), sha256: z.string(), content: z.string() }).strict()).length(3) }).strict();
+
+/** Delegates real native Git in disposable fixtures; never part of timing or runtime entrypoints. */
+export function probeNativeGit(value: Pick<ReturnType<typeof fixture>, "bin" | "metadata">,
+  intercept?: { argv: string[]; output: string; status?: number }) {
+  const previousPath = process.env.PATH;
+  const realGit = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8", maxBuffer: 1024 * 1024 }).trim();
+  const log = join(value.metadata, "native-git-calls.jsonl");
+  const wrapper = join(value.bin, "git");
+  writeFileSync(wrapper, `#!${process.execPath}\nconst fs=require('node:fs');const args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(args)+'\\n');if(${intercept !== undefined}&&JSON.stringify(args)===${JSON.stringify(JSON.stringify(intercept?.argv ?? []))}){process.stdout.write(${JSON.stringify(intercept?.output ?? "")});process.exit(${intercept?.status ?? 0});}const result=require('node:child_process').spawnSync(${JSON.stringify(realGit)},args,{stdio:'inherit'});if(result.error)throw result.error;process.exit(result.status??1);\n`);
+  chmodSync(wrapper, 0o700);
+  process.env.PATH = `${value.bin}:${previousPath ?? ""}`;
+  return { calls: () => readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line)),
+    restore: () => {
+      if (previousPath === undefined) Reflect.deleteProperty(process.env, "PATH");
+      else process.env.PATH = previousPath;
+    } };
+}
+
+export function syncFixture(source = "committed-good") {
+  const value = fixture();
+  const git = (args: string[]) => execFileSync("git", ["-c", "user.name=Fixture", "-c",
+    "user.email=fixture@example.invalid", ...args], { cwd: value.worktree, encoding: "utf8", maxBuffer: 1024 * 1024 }).trim();
+  const write = (file: string, text: string) => {
+    const target = join(value.worktree, file);
+    mkdirSync(resolve(target, ".."), { recursive: true });
+    writeFileSync(target, text);
+  };
+  git(["config", "user.name", "Fixture"]); git(["config", "user.email", "fixture@example.invalid"]);
+  write(".gitignore", ".closedloop-ai/\n.control/\nnode_modules/\n");
+  write("apps/app/probe.ts", `export const answer = '${source}';\n`);
+  write("package.json", JSON.stringify({ scripts: { "test:affected": "fixture", "typecheck:affected": "sh scripts/typecheck-affected.sh",
+    "check:source-gates": "fixture", "test:lanes": "fixture", verify: "fixture", test: "fixture" } }));
+  write("scripts/lint/affected-test-lanes.ts", String.raw`
+export async function loadOutOfGraphLanes() {return [{script:'test:skills', roots:['scripts/']}];}
+export function lanesCoveringPaths(paths, lanes) {return lanes.flatMap(lane => {const found=paths.filter(path => path.startsWith('scripts/')); return found.length ? [{lane,paths:found}] : [];});}
+export function referencedLanes() {return [];}
+`);
+  write("scripts/lint/report-test-lanes.ts", "export function laneCiCommand(script) {return {script};}\nexport function execPlan(_, commands) {return commands;}\n");
+  write("scripts/lint/desktop-e2e-lane.ts", "export function desktopE2eLane(paths) {return paths.includes('apps/desktop/test/reveal-window.spec.ts') ? {ci:{script:'test:e2e',dir:'apps/desktop'},paths} : undefined;}\n");
+  write("scripts/lint/workflow-shell-harness.ts", "export function loadWorkflowOrThrow() {return {jobs:{'desktop-e2e':{steps:[{name:'Run Electron e2e','working-directory':'apps/desktop',run:'unsupported bare Electron fixture'}]}}};}\n");
+  write("scripts/affected-filter.sh", "#!/bin/sh\nset -eu\nbase=$(git merge-base origin/main HEAD)\nprintf '...[%s]\\n' \"$base\"\n");
+  const wrapper = z.object({ content: z.string(), sha256: z.string() }).passthrough().parse(
+    JSON.parse(readFileSync(new URL("./fixtures/symphony-affected-typecheck.json", import.meta.url), "utf8")));
+  if (createHash("sha256").update(wrapper.content).digest("hex") !== wrapper.sha256) throw new Error("Opaque affected wrapper fixture changed");
+  write("scripts/typecheck-affected.sh", wrapper.content);
+  write(".github/workflows/pr-test.yml", JSON.stringify({ jobs: {
+    "test-shard": { "timeout-minutes": 22, strategy: { matrix: { shard: [1, 2, 3] } } },
+    "desktop-node": { "timeout-minutes": 30, strategy: { matrix: { shard: [1, 2, 3] } } },
+    "desktop-renderer": { "timeout-minutes": 30 },
+  } }));
+  git(["add", "."]);
+  git(["commit", "-m", "Committed validation fixture"]);
+  git(["branch", "main"]);
+  const origin = join(value.base, "origin.git");
+  git(["init", "--bare", "--initial-branch=main", origin]);
+  keepFixtureMaintenanceForeground(origin);
+  git(["remote", "add", "origin", origin]);
+  git(["push", "origin", "main"]);
+  const baseCommit = git(["rev-parse", "HEAD"]);
+  const record = { worktree: value.worktree, branch: "vibe/test", slug: "test", status: "active", mode: "blank",
+    baseCommit, createdAt: "2026-10-09T00:00:00Z", operator: { id: "fixture-owner", email: "owner@example.invalid", name: "Fixture" },
+    localFixes: [] as { ticket: string; paths: string[] }[], vercel: { lastDeployedCommit: null },
+    flagSnapshot: { takenAt: "2026-10-09T00:00:00Z", distinctId: "fixture", flagCount: 0,
+      file: join(value.metadata, "vibe-flag-snapshot.json") } };
+  const save = () => writeFileSync(join(value.metadata, "vibe-session.json"), JSON.stringify(record));
+  save();
+  writeFileSync(record.flagSnapshot.file, JSON.stringify({ takenAt: record.flagSnapshot.takenAt,
+    distinctId: "fixture", flags: {} }));
+  writeFileSync(join(value.bin, "pnpm"), String.raw`#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+// A linked checkout (the captured-main comparison) logs beside the session's calls in the common Git directory.
+const dotGit = path.join(process.cwd(), '.git');
+const linked = fs.existsSync(dotGit) && fs.statSync(dotGit).isFile();
+const gitDir = linked ? path.resolve(process.cwd(), require('node:child_process').execFileSync('git', ['rev-parse', '--git-common-dir'], {encoding:'utf8'}).trim()) : dotGit;
+fs.appendFileSync(path.join(gitDir, linked ? 'main-checkout-calls.jsonl' : 'validation-calls.jsonl'), JSON.stringify(args) + '\n');
+if (args[0] === 'exec' && args[1] === 'node') {
+  const cp = require('node:child_process');
+  const run = cp.spawnSync(process.execPath, args.slice(4), {cwd:process.cwd(), encoding:'utf8', input:fs.readFileSync(0,'utf8')});
+  process.stdout.write(run.stdout || ''); process.stderr.write(run.stderr || ''); process.exit(run.status ?? 1);
+}
+if (args[0] === 'test:lanes' && args.includes('--exec') && fs.existsSync(path.join(process.cwd(), 'apps/desktop/test/reveal-window.spec.ts'))) {
+  fs.writeFileSync(path.join(process.cwd(), '.git', 'unsafe-lane-spawned'), 'bare Electron lane invoked');
+}
+if (args.includes('--dry=json')) {
+  process.stdout.write(JSON.stringify({ tasks: [{ taskId: 'app#' + (args[1] || args[0]), package: 'app' }] }));
+  process.exit(0);
+}
+const command = args[0];
+if (!['exec', 'check:source-gates', 'typecheck:affected', 'test:affected', 'test:lanes', 'turbo', 'verify', 'test', '--filter', 'vibe', 'test:lint', 'test:skills'].includes(command)) process.exit(2);
+// fixture-failures.json maps a check (its first word, or "turbo <task>") to always (every checkout),
+// session (only the session checkout) or once (only its first session run).
+const key = command === 'turbo' ? 'turbo ' + args[1] : command;
+const modes = fs.existsSync('fixture-failures.json') ? JSON.parse(fs.readFileSync('fixture-failures.json', 'utf8')) : {};
+const mode = modes[key];
+const counter = path.join(gitDir, 'fixture-runs-' + key.replace(/[^a-z]/g, '-'));
+const runs = !linked && fs.existsSync(counter) ? Number(fs.readFileSync(counter, 'utf8')) : 0;
+if (!linked) fs.writeFileSync(counter, String(runs + 1));
+if (mode === 'always' || (mode === 'session' && !linked) || (mode === 'once' && !linked && runs === 0)) {
+  process.stderr.write('fixture failure for ' + command + '\n'); process.exit(1);
+}
+if (fs.readFileSync(path.join(process.cwd(), 'apps/app/probe.ts'), 'utf8').includes('committed-bad')) {
+  process.stderr.write('committed behavior fails\n'); process.exit(1);
+}
+process.stdout.write(command === 'test:lanes' ? 'pnpm --filter app test\n' : 'actual fixture check passed\n');
+`, { mode: 0o700 });
+  let sequence = 0;
+  const transaction = () => {
+    const file = join(value.metadata, "vibe-main-sync.json");
+    return existsSync(file) ? String(JSON.parse(readFileSync(file, "utf8")).transactionId) : undefined;
+  };
+  const start = (action: "create" | "redeploy" | "flags" | "desktop" | "share", purpose?: "build" | "handoff",
+    agentRoot = value.agentRoot, options?: { requestId?: string; continuations?: RequestContinuation[] }) => {
+    const number = ++sequence;
+    const mainSyncTransactionId = transaction();
+    const grant = { worktree: value.worktree, agentRoot, agentName: action === "share" ? "vibe-prototype-worker" : "vibe-environment-worker",
+      mode: "record" as const, recordAction: action, exclusiveRecordTurn: true as const,
+      workerId: `fixture-helper-${number}`, requestId: options?.requestId ?? `helper-request-${number}`,
+      ...(purpose ? { publicationPurpose: purpose } : {}), ...(mainSyncTransactionId ? { mainSyncTransactionId } : {}),
+      ...(options?.continuations ? { mainSyncRequestContinuations: options.continuations } : {}) };
+    const acquired = acquireNativeRecord(grant);
+    return { context: { runtime: "codex", worktree: value.worktree, agentName: grant.agentName,
+      mode: grant.mode, recordAction: action, workerId: grant.workerId, requestId: grant.requestId,
+      lease: acquired.lease, ...(purpose ? { publicationPurpose: purpose } : {}), ...(mainSyncTransactionId ? { mainSyncTransactionId } : {}),
+      ...(options?.continuations ? { mainSyncRequestContinuations: options.continuations } : {}) },
+      finish: () => releaseNativeRecord({ ...grant, lease: acquired.lease,
+        stoppedTurn: { runtime: "codex", workerId: grant.workerId, requestId: grant.requestId,
+          lease: acquired.lease, state: "completed" } }) };
+  };
+  let registered = false;
+  const sourceTurn = (purpose?: "build" | "handoff", agentRoot = value.agentRoot,
+    options?: { ciRun?: { runId: number; attempt: number } }) => {
+    if (!registered) {
+      registerWriter({ worktree: value.worktree, runtime: "codex", workerId: "fixture-source",
+        agentRoot: value.agentRoot, agentName: "vibe-change-worker", capabilities: graph });
+      registered = true;
+    }
+    const requestId = `validation-${++sequence}`;
+    const mainSyncTransactionId = transaction();
+    const source = { worktree: value.worktree, workerId: "fixture-source", requestId };
+    changeWriter("enqueue", { ...source, input: "Validate exact committed fixture" });
+    const claimed = changeWriter("claim", source);
+    const lease = claimed.turn?.lease;
+    if (!lease) throw new Error("Fixture source claim has no lease");
+    const grant = { ...source, agentRoot, agentName: "vibe-change-worker", mode: "record" as const,
+      recordAction: "progress" as const, exclusiveRecordTurn: true as const,
+      primaryOwner: { workerId: source.workerId, lease }, ...(purpose ? { publicationPurpose: purpose } : {}),
+      ...(mainSyncTransactionId ? { mainSyncTransactionId } : {}),
+      ...(options?.ciRun ? { mainSyncCiRun: options.ciRun } : {}) };
+    const acquired = acquireNativeRecord(grant);
+    return { context: { runtime: "codex", worktree: value.worktree, agentName: grant.agentName, mode: grant.mode,
+      recordAction: grant.recordAction, workerId: source.workerId, requestId, lease: acquired.lease,
+      ...(purpose ? { publicationPurpose: purpose } : {}), ...(mainSyncTransactionId ? { mainSyncTransactionId } : {}),
+      ...(options?.ciRun ? { mainSyncCiRun: options.ciRun } : {}) }, finish: () => {
+        releaseNativeRecord({ ...grant, lease: acquired.lease,
+          stoppedTurn: { runtime: "codex", workerId: source.workerId, requestId, lease: acquired.lease, state: "completed" } });
+        changeWriter("finish", { ...source, lease, status: "DONE",
+          stoppedTurn: { runtime: "codex", workerId: source.workerId, requestId, lease, state: "completed" } });
+      } };
+  };
+  return { ...value, git, write, origin, baseCommit, record, save, start, sourceTurn,
+    calls: () => readFileSync(join(value.metadata, "validation-calls.jsonl"), "utf8") };
+}
+
+/** Runs a complete prepared/check/push fixture using the same registered source identity throughout. */
+export function validateFixture(value: ReturnType<typeof syncFixture>, purpose?: "build" | "handoff") {
+  const prepare = value.start("redeploy", purpose);
+  try {
+    const result = invokeSync(value, "prepare", prepare.context);
+    if (result.status !== 0) throw new Error(result.stdout || result.stderr);
+  } finally { prepare.finish(); }
+  const source = value.sourceTurn(purpose);
+  try {
+    const result = invokeSync(value, "validate", source.context);
+    if (result.status !== 0) throw new Error(result.stdout || result.stderr);
+    return result;
+  } finally { source.finish(); }
+}
+
+/** Selects a fixture entry at the real fixed-check boundary; fake pnpm never executes the example body. */
+export function selectedReportFixture(value: ReturnType<typeof syncFixture>, entry?: string) {
+  if (entry) {
+    const pkg = z.object({ scripts: z.record(z.string()) }).passthrough().parse(JSON.parse(readFileSync(join(value.worktree, "package.json"), "utf8")));
+    pkg.scripts["check:source-gates"] = `node ${JSON.stringify(entry)}`;
+    value.write("package.json", JSON.stringify(pkg));
+    value.git(["add", "package.json"]);
+    value.git(["commit", "-m", "Synthetic selected report check"]);
+  }
+  // Selected report entries run only in the handoff matrix; build deploys run the commit-hook checks alone.
+  const prepare = value.start("redeploy", "handoff");
+  try {
+    const result = invokeSync(value, "prepare", prepare.context);
+    if (result.status !== 0) return result;
+  } finally { prepare.finish(); }
+  const source = value.sourceTurn("handoff");
+  try { return invokeSync(value, "validate", source.context); }
+  finally { source.finish(); }
+}
+
+export function invokeSync(value: ReturnType<typeof syncFixture>, command: string, context: unknown,
+  extra: Record<string, unknown> = {}) {
+  const script = command === "prepare" ? join(bundleDirectory, "../commit-worktree.mjs")
+    : join(bundleDirectory, "../vibe-sessions.mjs");
+  const args = command === "prepare" ? ["--prepare-main-sync", "--worktree", value.worktree]
+    : command === "request" ? ["dispatch-inputs", "--worktree", value.worktree, "--out", join(value.metadata, "request.json")]
+    : [`main-sync-${command}`, "--worktree", value.worktree];
+  const result = spawnSync(process.execPath, [script, ...args], { input: JSON.stringify({ context, ...extra }),
+    cwd: value.worktree, encoding: "utf8", timeout: 20000,
+    env: { ...process.env, PATH: `${value.bin}:${process.env.PATH}` } });
+  if (result.error) throw result.error;
+  return { ...result, json: result.stdout.trim() ? JSON.parse(result.stdout) as Record<string, unknown> : undefined };
+}
+
+/** Synthetic current helper definitions deliberately differ from retained native registration metadata. */
+export function currentSyncDefinitions(value: ReturnType<typeof syncFixture>) {
+  const currentRoot = join(value.base, "current-vibe");
+  mkdirSync(join(currentRoot, "agents"), { recursive: true });
+  mkdirSync(join(currentRoot, ".claude-plugin"));
+  writeFileSync(join(currentRoot, ".claude-plugin/plugin.json"), JSON.stringify({ name: "vibe" }));
+  writeAgent(currentRoot, "vibe-change-worker", "Read, Write, Edit, Grep, Glob, Bash, Skill");
+  writeAgent(currentRoot, "vibe-environment-worker", "Read, Write, Grep, Glob, Bash");
+  return currentRoot;
+}
+
+/** Seeds only temporary synthetic Git with opaque reviewed Source test data and invokes its real pure export. */
+export function generatedBiomeFixture(value: ReturnType<typeof syncFixture>) {
+  const data = producerFixtureSchema.parse(JSON.parse(readFileSync(new URL("./fixtures/symphony-biome-noscan-producer.json", import.meta.url), "utf8")));
+  for (const file of data.files) {
+    const bytes = Buffer.from(file.content);
+    if (createHash("sha256").update(bytes).digest("hex") !== file.sha256
+      || createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex") !== file.gitBlob) {
+      throw new Error("Opaque Source producer fixture identity changed");
+    }
+    value.write(file.path, file.content);
+  }
+  value.write(".gitignore", `${readFileSync(join(value.worktree, ".gitignore"), "utf8")}\n/.biome-noscan.jsonc*\n`);
+  const config = '{\n  "linter": {\n    "domains": {\n      "project": "all",\n      "types": "all"\n    },\n    "rules": {"first": "error", "second": "warn"}\n  }\n}\n\n';
+  value.write("biome.jsonc", config);
+  value.git(["add", "."]); value.git(["commit", "-m", "Canonical Source producer test data"]);
+  const derive = () => {
+    const result = spawnSync(process.execPath, ["--input-type=module", "--eval",
+      "import {readFileSync} from 'node:fs'; import {noScanBiomeConfig} from './lint-staged.config.js'; process.stdout.write(noScanBiomeConfig(readFileSync('biome.jsonc','utf8')));"],
+      { cwd: value.worktree, encoding: "utf8", timeout: 10000, maxBuffer: 1024 * 1024 });
+    if (result.error || result.status !== 0) throw new Error(result.stderr || "Actual Source fixture pure transform failed");
+    return result.stdout;
+  };
+  const artifact = join(value.worktree, ".biome-noscan.jsonc");
+  const output = derive();
+  writeFileSync(artifact, output);
+  return { artifact, config, output, derive };
+}
+
+/** Final-merge mode, set once QA passes: the next publication merges fresh main. */
+export function finalMerge(value: ReturnType<typeof syncFixture>) {
+  const file = join(value.metadata, "vibe-session.json");
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), mainMerge: "final" }, null, 2));
+}

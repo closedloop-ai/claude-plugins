@@ -24,10 +24,8 @@ __pycache__/
 .claude/scheduled_tasks.lock
 
 # ClosedLoop session-level artifacts (cleaned up by SessionEnd hook)
-.claude/closedloop-loop.local.md
 .closedloop/
 .agent-types/
-.claude/closedloop-progress.log
 
 # Runs directory (implementation plans, staged plans, etc.)
 .claude/runs/*

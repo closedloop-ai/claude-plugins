@@ -32,7 +32,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseArgs } from "node:util";
 
-import { runWhenMain } from "./cli.js";
+import { runWhenMain } from "../../shared/cli.js";
 
 // ---------------------------------------------------------------------------
 // Types (wire-format shapes read from JSON)

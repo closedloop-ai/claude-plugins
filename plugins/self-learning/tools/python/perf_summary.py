@@ -110,7 +110,7 @@ def _agent_events(events: list[dict[str, object]]) -> list[dict[str, object]]:
 def _candidate_claude_output_paths(workdir: Path) -> list[Path]:
     """Return adjacent Claude output JSONL files that may contain agent usage.
 
-    Newer Loop runs can archive the parent stream to `claude-output-<run>.jsonl`
+    Newer runs can archive the parent stream to `claude-output-<run>.jsonl`
     and record the chosen filename in `claude-output.name.txt`; older or active
     runs may still have `claude-output.jsonl`. Search both shapes so historical
     perf files can recover token data when the agent perf rows predate token

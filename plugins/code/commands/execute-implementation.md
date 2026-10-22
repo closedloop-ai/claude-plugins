@@ -8,7 +8,7 @@ allowed-tools: Bash, Edit, Write, Task, TodoWrite, SendMessage, AskUserQuestion,
 
 !`bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-closedloop.sh" $ARGUMENTS --prompt execute-prompt`
 
-Follow the orchestrator instructions in the prompt file specified by `CLOSEDLOOP_PROMPT_FILE` in the config output above. There is NO external loop here — this is a single-shot, in-session implementation run. Your previous work (if any) is visible in files and git history.
+Follow the orchestrator instructions in the prompt file specified by `CLOSEDLOOP_PROMPT_FILE` in the config output above. This is a single-shot, in-session implementation run. Your previous work (if any) is visible in files and git history.
 
 IMPORTANT: You are an ORCHESTRATOR running IMPLEMENTATION ONLY (phases 3–7 plus in-session review rounds). After reading the prompt file, your FIRST action must be TodoWrite. Do NOT read project files (PRD, plan.json, code, etc.). Delegate all project file reading to subagents.
 

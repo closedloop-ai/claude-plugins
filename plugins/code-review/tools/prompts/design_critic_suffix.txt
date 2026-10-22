@@ -17,13 +17,13 @@ Ousterhout defines complexity as anything about a system's structure that makes 
 What new files/directories were created? What interfaces/APIs were added or changed? What new dependencies between modules does it introduce? What abstractions are added or modified?
 
 ### Step 2 — Audit project structure (when the diff adds files/dirs)
-- **Tooling:** Follow the OPTIONAL — CODE INTELLIGENCE protocol in `shared_prompt.txt`. If your roster holds a tool answering capability C4 (structure: module/layer layout), use it to read the actual layout instead of inferring it from Glob — it is the precise substrate for this step. Fall back to Glob when it is unavailable.
+- **Tooling:** Follow the OPTIONAL — CODE INTELLIGENCE protocol in `shared_prompt.txt`. If your roster holds a tool answering capability C4 (structure: module/layer layout), use it to read the actual layout instead of inferring it from Glob — it is the precise substrate for this step. If nothing visible answers C4, make the protocol's one broker search for it first. Fall back to Glob when it is unavailable.
 - **Screaming Architecture:** Do top-level folders reveal the business domain (`orders/`, `billing/`, `patients/`) or the framework (`controllers/`, `services/`, `models/`, `repositories/`)? Flag new structure that organizes by technical layer rather than domain.
 - **Package cohesion (CRP):** Flag new files added to dumping-ground packages — `utils`, `common`, `helpers`, `misc`, `shared`, `core` — that force callers to depend on unrelated things.
 - **Co-change (CCP):** If one logical change is smeared across 4+ directories, files that change together don't live together.
 
 ### Step 3 — Audit the dependency graph
-A code-intelligence substrate is the precise substrate for this step when your session has one: capability C2 (usage/caller enumeration) surfaces real import/call edges including the aliases and re-exports grep misses, and capability C4 (structure) answers dependency-direction and import-cycle questions directly — some servers expose C4 as a query language over the dependency graph, which is the sharpest form of it. Discover what you hold per the shared protocol; grep imports of the changed files when nothing does. Either way, every finding still cites a concrete file:line.
+A code-intelligence substrate is the precise substrate for this step when your session has one: capability C2 (usage/caller enumeration) surfaces real import/call edges including the aliases and re-exports grep misses, and capability C4 (structure) answers dependency-direction and import-cycle questions directly — some servers expose C4 as a query language over the dependency graph, which is the sharpest form of it. Discover what you hold per the shared protocol — including its one broker search when nothing visible answers C4; grep imports of the changed files when nothing does. Either way, every finding still cites a concrete file:line.
 - **Dependency Rule:** Inner layers (domain, entities, use-cases) must not import outer layers (frameworks, infra, HTTP, DB). Framework/infra import signals: `express`, `flask`, `django`, `fastapi`, `spring`, `prisma`, `sqlalchemy`, `typeorm`, `mongoose`, `boto3`, HTTP clients, DB drivers, cloud SDKs, ORM annotations (`@Entity`, `@Column`, `@Table`, `__tablename__`), HTTP types (`Request`, `Response`). Flag any such import added to a domain/use-case file.
 - **Boundary data-format leak:** Flag an inner-layer function that accepts/returns an ORM model instance, DB row/`QuerySet`, HTTP `Request`/`Response`, or framework DTO — across a boundary the payload should be a plain struct shaped for the inner layer.
 - **Abstraction ownership (DIP):** The interface should be defined by the CONSUMER (inner layer), not the provider. If an interface lives beside its single implementation in `infrastructure/` and is imported inward, ownership is inverted — it belongs in `domain/` or `application/ports/`.
@@ -31,7 +31,7 @@ A code-intelligence substrate is the precise substrate for this step when your s
 - **Cycles (ADP):** A↔B import cycle (directly or via a chain). Import-cycle workarounds in the diff are a tell — a function-local/deferred import or `TYPE_CHECKING`-only import added to dodge a circular import.
 
 ### Step 4 — Evaluate module depth (for each new module/class/interface)
-A **deep** module has a simple interface over a powerful implementation; a **shallow** one has an interface nearly as complex as its implementation. Flag:
+A **deep** module has a simple interface over a powerful implementation; a **shallow** one has an interface nearly as complex as its implementation. For each new module/class, consult capability C7 (duplication) when you hold it, per the shared protocol: a hit is a candidate for "wrapper adds no abstraction" or information leakage — read both sides before reporting. Flag:
 - A new class/wrapper that adds no abstraction over what it wraps
 - A constructor taking 6+ params assigned straight to fields with no logic
 - A pass-through method (body is a single delegating call with a similar signature)
@@ -68,6 +68,8 @@ CAUSATION: Which part of THIS diff introduced or worsened it? (If it's pre-exist
 COST: Which symptom does it impose — change amplification, cognitive load, or unknown unknowns?
 CONCLUSION: DESIGN FLAW CONFIRMED (with the corrective refactor named) or DISCARDED (with why it's acceptable).
 
+A design finding that rests on absence — an unused interface, a single-implementation abstraction, a dead module — is governed by the shared protocol's AN EMPTY RESULT IS NOT A NEGATIVE RESULT rule: an empty substrate answer with unverified index coverage proves nothing, so confirm with Grep across `<review_root>` or do not assert it.
+
 Emit only findings where CONCLUSION = DESIGN FLAW CONFIRMED. Do not report style preferences, hypothetical future issues, or design debt outside the diff's blast radius.
 
 ## Severity (use the shared tiers; design findings are mostly MEDIUM/HIGH)
@@ -86,4 +88,4 @@ SOLID (Martin): SRP (one actor), OCP (extension without modification), LSP (beha
 
 Clean Architecture (Martin): Dependency Rule (source dependencies point only inward), Screaming Architecture (structure reveals domain not framework), Humble Object (split testable behavior from the hard-to-test shell), REP/CCP/CRP (component cohesion), ADP/SDP/SAP (component coupling — no cycles; depend toward stability; stable components are abstract).
 
-Use Read, Grep, and Glob for codebase context — plus whatever code-intelligence MCP tools your session provides, per the OPTIONAL — CODE INTELLIGENCE protocol in `shared_prompt.txt` (capabilities C1–C4; load deferred tool schemas with `ToolSearch` first). Scope every call to `<review_root>` and validate returned paths resolve under it, as that protocol requires. Do NOT use Bash.
+Use Read, Grep, and Glob for codebase context — plus whatever code-intelligence MCP tools your session provides, per the OPTIONAL — CODE INTELLIGENCE protocol in `shared_prompt.txt` (capabilities C1–C7; load deferred tool schemas with `ToolSearch` first). Scope every call to `<review_root>` and validate returned paths resolve under it, as that protocol requires. Do NOT use Bash.

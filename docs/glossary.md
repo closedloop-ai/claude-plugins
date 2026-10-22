@@ -4,17 +4,8 @@ A comprehensive guide to ClosedLoop terminology and concepts.
 
 ## Orchestration
 
-**Closed Loop**
-The external bash loop (`run-loop.sh`) that drives fresh-context Claude iterations. Each iteration launches `claude -p` with a clean context window, preventing context exhaustion on long tasks. State persists between iterations in `.closedloop-ai/closedloop-loop.local.md`.
-
 **Orchestrator**
-The `prompt.md` system prompt loaded by `run-loop.sh` at the start of each iteration. Coordinates 8 workflow phases (discovery, planning, judge review, plan refinement, implementation, verification, build validation, and learning capture) entirely through subagent delegation. The orchestrator never reads project files directly.
-
-**Loop Step**
-A single `claude -p` invocation within the Closed Loop. Each step gets a fresh 200k token context window purely for the current phase of work.
-
-**run-loop.sh**
-The core bash script (~1100 lines) that drives the Closed Loop. Manages lock files, agent snapshots, goal configuration, and runs an 11-step post-iteration pipeline including pattern relevance scoring, goal evaluation, citation verification, learning processing, and judge execution.
+The `prompt.md` system prompt loaded by `/code`. Coordinates 8 workflow phases (discovery, planning, critic review, plan refinement, implementation, verification, build validation, and learning capture) entirely through subagent delegation. The orchestrator never reads project files directly.
 
 ## Agents
 
@@ -23,12 +14,6 @@ A specialized Claude instance defined by a `.md` file with YAML frontmatter spec
 
 **Subagent**
 An agent invoked by the orchestrator (or another agent) via Claude Code's Task tool to handle a specific phase. Subagents run in isolated contexts and return results to the caller.
-
-**Judge**
-A read-only evaluation agent that scores implementation plans or code against quality principles (DRY, KISS, SOLID, readability, goal alignment, etc.). Judges produce structured `CaseScore` JSON reports with `final_status` (1=PASS, 2=FAIL, 3=ERROR) consumed by `plan-writer` to refine the plan. The closedloop plugin includes 13 judge agents.
-
-**Context Manager for Judges**
-The support agent (`context-manager-for-judges`) in the `judges` plugin that prepares compressed context within a 30K token budget. Handles both plan-type and code-type evaluations with different budget allocations.
 
 ## Planning
 
@@ -53,7 +38,7 @@ Lightweight agent (haiku model) that investigates the codebase before planning b
 ## Learning System
 
 **Self-Learning System**
-The feedback loop that captures patterns from runs and injects them into future contexts. The `learning-capture` agent records patterns after each run. Hooks re-inject relevant patterns into future subagent contexts. Success rates are computed deterministically against configurable goals. This is the "closed loop" that gives the project its name.
+The feedback loop that captures patterns from runs and injects them into future contexts. The `learning-capture` agent records patterns. Hooks re-inject relevant patterns into future subagent contexts. This is the "closed loop" that gives the project its name.
 
 **org-patterns.toon**
 The primary learning store — a TOON-format file containing extracted patterns indexed by context. Each pattern has fields: `id`, `category`, `summary`, `confidence`, `seen_count`, `success_rate`, `flags`, `applies_to`, `context`, `repo`. Capped at 50 patterns.
@@ -100,9 +85,7 @@ Hook that fires before a `Bash`, `Write`, or `Edit` tool call. Provides just-in-
 
 ## Commands
 
-**`/code`** — Bootstraps the Closed Loop. Sets up the environment, reads the orchestrator prompt, and begins the phase-based workflow.
-
-**`/cancel-code`** — Stops the running Closed Loop by removing the state file.
+**`/code`**: Sets up the environment, reads the orchestrator prompt, and begins the phase-based workflow.
 
 **`/code-review`** — Multi-agent code review with modes: local (default) and `--github`. Flags: `--hygiene-only` (zero-LLM fast checks), `--since-last-review` (auto-incremental), `--full-review`, `--base <ref>`. Uses a V2 content-addressed cache for cross-PR reuse.
 
@@ -125,15 +108,11 @@ Hook that fires before a `Bash`, `Write`, or `Edit` tool call. Provides just-in-
 **Skill**
 A reusable instruction set loaded into an agent's context via the `skills:` frontmatter field. Skill identifiers use the format `plugin-name:skill-name` (e.g., `closedloop:toon-format`).
 
-**artifact-type-tailored-context** — Compresses artifacts to fit within a token budget using three tiers: full content, intelligent compression, and hard truncation.
-
 **build-status-cache** — Skips rebuild when no code changed since last passing build. Uses git diff hash comparison.
 
 **critic-cache** — Skips critic reviews when plan hash matches stored hash from previous review.
 
 **cross-repo-cache** — Skips cross-repo coordinator when peer repo git hashes are unchanged.
-
-**eval-cache** — Skips plan-evaluator when `plan-evaluation.json` is newer than `plan.json`.
 
 **extract-plan-md** — Syncs `plan.md` with `plan.json` content field. Required after any edit to `plan.json`.
 
@@ -146,8 +125,6 @@ A reusable instruction set loaded into an agent's context via the `skills:` fron
 **plan-structure** — Reusable guidance for plan creation phases. References the plan template and conventions playbook.
 
 **plan-validate** — Deterministic Python script validation replacing most `plan-validator` agent calls. Validates JSON parsing, schema fields, task format, required headers, and array sync.
-
-**run-judges** — Orchestrates parallel judge execution. Plan mode: 13 judges in 4 batches. Code mode: 11 judges in 3 batches.
 
 **closedloop-env** — Provides ClosedLoop environment paths (`CLOSEDLOOP_WORKDIR`, `CLAUDE_PLUGIN_ROOT`, `CLOSEDLOOP_PRD_FILE`, `CLOSEDLOOP_MAX_ITERATIONS`) to agents.
 

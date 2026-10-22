@@ -2,7 +2,7 @@
 
 # Process Chat Learnings
 # Lightweight script that processes pending learnings from a chat session.
-# Extracted from run-loop.sh Step 7 for standalone use when the chat dialog closes.
+# For standalone use when the chat dialog closes.
 #
 # Usage: process-chat-learnings.sh <workdir>
 #   workdir: The .closedloop-ai/work directory containing .learnings/pending/*.json
