@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { BUSY_EXIT, DUPLICATE_EXIT, composeProjectFor, defaultLockDir, readHolder, release, runningForeignCompose, sameWorktreeEntry, tryAcquire } from "./e2e-lock.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "e2e-lock.mjs");
-const root = mkdtempSync(path.join(os.tmpdir(), "vibe-e2e-lock-"));
+const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "vibe-e2e-lock-")));
 after(() => rmSync(root, { recursive: true, force: true }));
 // `run` tests a named commit of a clean worktree, so every run happens in a repository at a known HEAD.
 const commitAt = (dir) => {
@@ -81,7 +81,7 @@ test("run keeps the command's exit code and runs nothing when the stack stays bu
   const lockDir = path.join(root, "busy");
   const code = spawnSync(process.execPath, [SCRIPT, "run", "--head", SHA, "--lock-dir", lockDir, process.execPath, "-e", "process.exit(4)"]);
   assert.equal(code.status, 4);
-  assert.equal(tryAcquire(lockDir, owner(process.pid, "holder")).acquired, true);
+  assert.equal(tryAcquire(lockDir, { ...owner(process.pid, "holder"), worktree: path.join(root, "another-worktree") }).acquired, true);
   const marker = path.join(root, "should-not-exist");
   const busy = spawnSync(process.execPath, [SCRIPT, "run", "--head", SHA, "--wait-seconds", "0", "--lock-dir", lockDir,
     process.execPath, "-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran")`], { encoding: "utf8" });
