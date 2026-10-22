@@ -18,6 +18,7 @@ remote_node() {
     ${REMOTE_HOST:?set REMOTE_HOST} "mkdir -p $d && tar -C $d -xf - && $REMOTE_SHELL 'env $e node $d/$*'" 2>/dev/null
 }
 # A failed gh call prints nothing; keep the last non-empty value for that key so a blip is not an event.
+zmodload zsh/datetime
 keep() { local f=$W/keep-${1//[^A-Za-z0-9_-]/_}.txt; if [ -n "$2" ]; then echo "$2" > $f; echo "$2"; elif [ -f $f ]; then cat $f; fi; }
 # "requests <where> <count> <newest file>" from a newest-first listing command.
 requests() {
@@ -49,7 +50,7 @@ USAGE_HIGH_PERCENT=$HIGH node $K/ratelimit.mjs local 2>/dev/null
 if [ -n "${REMOTE_HOST:-}" ]; then out=$(remote_node ratelimit.mjs remote); echo "${out:-codex-usage remote unreadable READFAIL}"; fi
 if [ -n "${REQUESTS_DIR:-}" ]; then requests local ls -t $REQUESTS_DIR; fi
 if [ -n "${REMOTE_REQUESTS_DIR:-}" ]; then requests remote ssh -o ConnectTimeout=10 ${REMOTE_HOST:?set REMOTE_HOST} "ls -t $REMOTE_REQUESTS_DIR"; fi
-zsh $K/classify.sh $W/item-history.txt $STALL_SECONDS < $W/live.txt
+zsh $K/classify.sh $W/item-history.txt $STALL_SECONDS ${QUESTION_SECONDS:-900} < $W/live.txt
 for r in ${=WATCH_NEW_PR_REPOS}; do
   op=$(gh pr list -R $r --state open --search "${PR_SEARCH:-}" --json number --jq '.[].number' 2>/dev/null | sort -n | tr '\n' ' ')
   echo "open-prs $r $(keep open-$r "$op")"
@@ -58,7 +59,7 @@ done
 prune_pr_state() {
   local -A live; local r n f rest
   [ -f $W/prs.txt ] && while read r n; do [ -n "$n" ] && live[${r//[^A-Za-z0-9_-]/_}-$n]=1 && live[${r//\//_}-$n]=1; done < $W/prs.txt
-  for f in $W/keep-(st|c|v|i|t|ck)-*.txt(N) $W/merge-*.txt(N) $W/checks-*.txt(N); do
+  for f in $W/keep-(st|c|v|i|t|ck|pu)-*.txt(N) $W/merge-*.txt(N) $W/checks-*.txt(N); do
     rest=${${f:t:r}#keep-}; rest=${rest#*-}
     [ -n "${live[$rest]:-}" ] || rm -f $f
   done
@@ -89,5 +90,14 @@ while read r n; do
   elif [[ "$ck" == *pending* ]]; then ck=$(keep ck-$r-$n "$(cat $kc 2>/dev/null) (running)")
   else echo "$ck" > $kc; ck=$(keep ck-$r-$n "$ck"); fi
   blocked=; [[ ${st%% *} == OPEN && ${t:-0} -gt 0 ]] && blocked=" BLOCKED(unresolved threads)"
-  echo "pr $r#$n $st comments=$c reviews=$v inline=$i threads=$t checks=$ck$blocked"
+  # An open PR that needs its writer (threads, a conflict, a draft, a failed check) with no push for
+  # STALE_PR_SECONDS is STALE-PR, however busy the writer looks: one sat 6 hours on 5 threads with no push.
+  pu=$(gh pr view $n -R $r --json isDraft,commits --jq '"\(.isDraft) \(.commits[-1].commit.committedDate)"' 2>/dev/null); pu=$(keep pu-$r-$n "$pu")
+  stale=; pushed=0
+  [[ -n ${pu#* } ]] && TZ=UTC strftime -r -s pushed '%Y-%m-%dT%H:%M:%SZ' "${pu#* }" 2>/dev/null
+  if [[ ${st%% *} == OPEN && $pushed -gt 0 && $(( EPOCHSECONDS - pushed )) -ge ${STALE_PR_SECONDS:-2700} ]] &&
+     [[ ${t:-0} -gt 0 || $m == CONFLICTING || ${pu%% *} == true || $ck == *fail* ]]; then
+    stale=" STALE-PR(no push for ${STALE_PR_SECONDS:-2700}s+)"
+  fi
+  echo "pr $r#$n $st comments=$c reviews=$v inline=$i threads=$t checks=$ck$blocked$stale"
 done < $W/prs.txt

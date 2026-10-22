@@ -45,19 +45,19 @@ test("nothing unpushed is never due", (t) => {
   assert.deepEqual(unpushedAge(work, { now: minutes(500) }), { minutes: 0, due: false, since: null, reason: "nothing unpushed" });
 });
 
-test("the oldest unpushed commit sets the age, and 90 minutes makes the push due", (t) => {
+test("the oldest unpushed commit sets the age, and 45 minutes makes the push due", (t) => {
   const { work, commit } = repos(t);
   commit("b.txt", minutes(10));
-  commit("c.txt", minutes(60));
-  const early = unpushedAge(work, { now: minutes(80) });
-  assert.equal(early.minutes, 70);
+  commit("c.txt", minutes(30));
+  const early = unpushedAge(work, { now: minutes(54) });
+  assert.equal(early.minutes, 44);
   assert.equal(early.due, false);
   assert.match(early.reason, /2 unpushed commit/);
-  const late = unpushedAge(work, { now: minutes(100) });
-  assert.equal(late.minutes, 90);
+  const late = unpushedAge(work, { now: minutes(55) });
+  assert.equal(late.minutes, 45);
   assert.equal(late.due, true);
   assert.equal(late.since, new Date(minutes(10)).toISOString());
-  assert.equal(unpushedAge(work, { now: minutes(100), limitMinutes: 120 }).due, false);
+  assert.equal(unpushedAge(work, { now: minutes(55), limitMinutes: 120 }).due, false);
 });
 
 test("an uncommitted file counts by its modification time, and ignored paths do not", (t) => {

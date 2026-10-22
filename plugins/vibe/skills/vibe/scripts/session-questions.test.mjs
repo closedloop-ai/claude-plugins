@@ -126,6 +126,7 @@ test("a question carries a default and a deadline, except flag, copy, destructiv
   assert.equal(waitsForPerson(sort), false);
   assert.throws(() => askQuestion([], { key: "board-sort", question: sort }), /--default .* --deadline-minutes/);
   assert.throws(() => askQuestion([], { key: "board-sort", question: sort, fallback: "rank", deadlineMinutes: "0" }), /--deadline-minutes/);
+  assert.throws(() => askQuestion([], { key: "board-sort", question: sort, fallback: "rank", deadlineMinutes: "31" }), /--deadline-minutes <1 to 30>/, "a default applies within 30 minutes");
   const { result } = askQuestion([], { key: "board-sort", question: sort, fallback: "sort by rank, as the shipped list does", deadlineMinutes: "30", now: "2026-10-22T05:45:00.000Z" });
   assert.equal(result.deadlineAt, "2026-10-22T06:15:00.000Z");
   assert.equal(result.ifNoAnswer, "If no answer by 2026-10-22T06:15:00.000Z: sort by rank, as the shipped list does");
@@ -140,4 +141,16 @@ test("a question carries a default and a deadline, except flag, copy, destructiv
   assert.equal(cli.json.ok, true);
   assert.match(cli.json.ifNoAnswer, /^If no answer by \S+Z: rank$/);
   assert.equal(questions(home, ["ask", "--key", "other", "--question", sort]).status, 1);
+});
+
+test("a question never holds a pull request (#9118)", () => {
+  const fallback = { fallback: "rank", deadlineMinutes: "30" };
+  for (const question of [
+    "Sort by rank or updated? Holding auto-merge on #9118 pending your answer.",
+    "Rank or updated? I'm keeping the PR on hold until you answer.",
+    "Rank or updated? We should hold the PR until you pick the sort.",
+  ]) {
+    assert.throws(() => askQuestion([], { key: "board-sort", question, ...fallback }), /never holds a pull request/, question);
+  }
+  assert.equal(askQuestion([], { key: "board-sort", question: "Sort by rank or updated? The PR ships with rank; the other order is a follow-up.", ...fallback }).result.ask, true);
 });

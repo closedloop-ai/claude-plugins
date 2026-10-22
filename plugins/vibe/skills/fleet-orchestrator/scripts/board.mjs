@@ -8,6 +8,7 @@
 //        board.mjs <orchDir> deliver <item> --to <a,b> [--kind ruling|checkpoint|note] [--reference <file>] [--head <sha>]
 //        board.mjs <orchDir> told <item> <recipient>
 //        board.mjs <orchDir> duty <duty> --owner <writer or helper>
+//        board.mjs <orchDir> question <writer> --text <the question and its default> | answered <writer>
 //        board.mjs <orchDir> status [--pushed <name>=<sha>]... [--threads <name>=<n>]...
 //
 // `writer` adds or updates a writer's row (owner, PR, head, status,
@@ -31,7 +32,10 @@
 // while its PR has unresolved human review threads (`--threads`, or read with
 // `gh api graphql` for rows with a PR and repo) prints `SLOW <writer> ...`:
 // hand it to a Claude writer. One spent 35 minutes on nine threads without a push.
-// Both count toward the exit status, as does `WATCHER-MISSING(<why>)` when the
+// A writer records each question it sends you (`question`); `status` prints
+// `QUESTION-UNANSWERED <writer> <m>m: <text>` once one waited 15 minutes, until
+// `answered`. A writer once held its PR six hours on an unanswered question.
+// All of these count toward the exit status, as does `WATCHER-MISSING(<why>)` when the
 // work dir watches sessions or PRs (sessions.txt or prs.txt) and its watcher is
 // not running: a watcher left unarmed overnight let writers' questions sit
 // unanswered for 7 hours.
@@ -50,6 +54,7 @@ const KINDS = new Set(["ruling", "checkpoint", "note"]);
 const LOG_LINES = 50;
 const RUNTIMES = new Set(["codex", "claude"]);
 const SLOW_MINUTES = 30;
+const QUESTION_MINUTES = 15;
 const BOTS = new RegExp(process.env.BOT_LOGIN_REGEX || "vercel|codex|github-actions|copilot|bot", "i");
 
 /** Rows whose recorded head differs from the pushed head; a row with no known pushed head is not judged. */
@@ -74,6 +79,13 @@ export function unownedDuties(board, helpers) {
     if (helper?.startedAt && !helper.stoppedAt) return [];
     return [{ duty, owner, why: helper?.stoppedAt ? `stopped ${helper.stoppedAt}` : "is not a writer or a running helper" }];
   });
+}
+
+/** Writers whose recorded question has waited QUESTION_MINUTES or more. */
+export function unansweredQuestions(board, now) {
+  return Object.entries(board.questions)
+    .map(([writer, { text, at }]) => ({ writer, text, minutes: Math.floor((now - Date.parse(at)) / 60_000) }))
+    .filter((entry) => entry.minutes >= QUESTION_MINUTES);
 }
 
 /** Every recipient of every delivery not yet told. */
@@ -114,7 +126,7 @@ export function render(board) {
 function read(orchDir) {
   const file = path.join(orchDir, STATE);
   const board = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
-  return { writers: board.writers ?? {}, deliveries: board.deliveries ?? {}, duties: board.duties ?? {}, log: board.log ?? [] };
+  return { writers: board.writers ?? {}, deliveries: board.deliveries ?? {}, duties: board.duties ?? {}, questions: board.questions ?? {}, log: board.log ?? [] };
 }
 
 function write(orchDir, board, line, at) {
@@ -192,11 +204,11 @@ function main(argv) {
       pr: { type: "string" }, repo: { type: "string" }, head: { type: "string" }, status: { type: "string" }, deps: { type: "string" },
       to: { type: "string" }, kind: { type: "string" }, reference: { type: "string" },
       pushed: { type: "string", multiple: true }, threads: { type: "string", multiple: true }, now: { type: "string" },
-      runtime: { type: "string" }, owner: { type: "string" },
+      runtime: { type: "string" }, owner: { type: "string" }, text: { type: "string" },
     },
   });
-  if (!orchDir || !["writer", "deliver", "told", "duty", "status"].includes(action)) {
-    throw new Error("Usage: board.mjs <orchDir> writer|deliver|told|duty|status ...");
+  if (!orchDir || !["writer", "deliver", "told", "duty", "question", "answered", "status"].includes(action)) {
+    throw new Error("Usage: board.mjs <orchDir> writer|deliver|told|duty|question|answered|status ...");
   }
   const board = read(orchDir);
   const now = values.now ? Date.parse(values.now) : Date.now();
@@ -212,15 +224,30 @@ function main(argv) {
     }
     const duties = unownedDuties(board, readHelpers(orchDir));
     for (const entry of duties) process.stdout.write(`UNOWNED-DUTY ${entry.duty} owner ${entry.owner} ${entry.why}\n`);
+    const asked = unansweredQuestions(board, now);
+    for (const entry of asked) process.stdout.write(`QUESTION-UNANSWERED ${entry.writer} ${entry.minutes}m: ${entry.text.slice(0, 160)}\n`);
     const watched = ["sessions.txt", "prs.txt"].some((file) => existsSync(path.join(orchDir, file)));
     const watcher = watched ? watcherState(orchDir, now) : { ok: true };
     if (!watcher.ok) process.stdout.write(`WATCHER-MISSING ${watcher.line.replace("watcher MISSING", "")}: re-arm watch.sh now (run_in_background)\n`);
-    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length} unowned duties${watcher.ok ? "" : ", watcher missing"}\n`);
-    return stale.length + open.length + slow.length + duties.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
+    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length} unowned duties, ${asked.length} unanswered${watcher.ok ? "" : ", watcher missing"}\n`);
+    return stale.length + open.length + slow.length + duties.length + asked.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
   }
   const [name, recipient] = positionals;
   if (!name) {
     throw new Error(`${action} needs a name.`);
+  }
+  if (action === "question") {
+    if (!values.text?.trim()) {
+      throw new Error("question needs --text <the question and the default you proceed on>.");
+    }
+    board.questions[name] = { text: values.text.trim(), at };
+    write(orchDir, board, `${name} asked: ${values.text.trim().slice(0, 80)}`, at);
+    return 0;
+  }
+  if (action === "answered") {
+    delete board.questions[name];
+    write(orchDir, board, `${name} answered`, at);
+    return 0;
   }
   if (action === "duty") {
     if (!values.owner) {

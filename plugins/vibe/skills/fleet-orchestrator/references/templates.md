@@ -33,13 +33,13 @@ Research graph-first with closedloop-graph before searching files by hand, as vi
 Tests: after any change, fix or merge (a conflict resolution included), run exactly the tests code_tests_for maps to the files it touched, nothing broader by default; files that map to no tests (changelog, README, version text) run none and CI confirms.
 Heavy checks go through <fleet.sh slot command for the chosen machine>. Never run e2e that opens windows on the operator's daily machine.
 Commands expected to take more than a few minutes run in the background. Check the worker inbox between steps so orchestration rulings are applied before more work.
-Questions to the orchestrator end with `If no answer by <time, 30 minutes on>: <your default>`; keep working meanwhile and past it proceed on the default (never for a flag, copy, destructive, credential or scope question).
+Questions to the orchestrator end with `If no answer by <time, 30 minutes on>: <your default>` and are recorded with `board.mjs <orchDir> question <you> --text <question>`; keep working meanwhile and past it proceed on the default (never for a flag, copy, destructive, credential or scope question). A question never holds your PR: ship what is done, arm auto-merge, put the answer-dependent part in a follow-up.
 Git: commit messages per the repo's conventions; regular push only, never force or amend after push.
 Review threads: reply on the thread naming the fixing SHA and resolve it only after the fix is verified in code.
 Artifacts for people (tickets, PR bodies, PR comments, review replies): never name a path on the operator's machine (home, temp, scratchpad or worktree paths) or say something is on someone's laptop. Embed screenshots as uploaded images and quote text evidence inline, briefly. A plan is attached, never pointed at: link the implementation plan as a plan document, and upload a QA plan or other working file as a ticket attachment named by its attachment name.
 Fleet board: <orchDir>/board.md shows every writer's PR, head, status and dependencies. Message another writer directly when your work touches theirs: Codex writers through the app-server-orchestrator skill's send, Claude workers and QA guides through SendMessage.
 Program rulings: read <orchDir>/rulings.md before planning, editing or auditing; the ticket carries the applicable per-ticket rulings through handoff's rulings check.
-Push a tested checkpoint at least every 90 minutes of active work; send review findings after that as follow-up commits, and add no new scope to an unpushed checkpoint.
+Push a tested checkpoint at least every 45 minutes of active work, never held for optional evidence; send review findings after that as follow-up commits, and add no new scope to an unpushed checkpoint.
 Report when done: pushed head SHA, files changed, tests run and results, open items, anything that needs the operator.
 
 Task:

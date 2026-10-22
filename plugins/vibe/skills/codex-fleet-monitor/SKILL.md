@@ -32,6 +32,8 @@ REMOTE_HOST=user@host            # omit when there are no remote sessions
 REMOTE_STATE_DIR=/path/on/remote # remote scratch dir; also holds state files for two-column sessions
 REMOTE_SHELL="zsh -lic"          # login shell so node/codex are on PATH (default)
 STALL_SECONDS=720                # no new thread items for this long means STALLED (default 12m)
+# QUESTION_SECONDS=900          # an idle writer's question unanswered this long is QUESTION-UNANSWERED (default 15m)
+# STALE_PR_SECONDS=2700         # a PR needing its writer with no push this long is STALE-PR (default 45m)
 # HEARTBEAT_SECONDS=1800         # with no change, watch.sh exits with HEARTBEAT after this long (default 30m)
 WATCH_NEW_PR_REPOS="owner/repo"  # optional: list open PRs here to spot new ones
 PR_SEARCH="head:feature/"        # optional: search filter for that list
@@ -75,6 +77,7 @@ Start it with `run_in_background`, never with `&`; a second copy for the same wo
 | `HEARTBEAT ...` | nothing changed for `HEARTBEAT_SECONDS` | read every teammate message and idle writer question, then re-arm |
 | `session <where> <name> RUN` | turn in progress and producing items | none |
 | `session ... IDLE` | turn completed; the session is waiting for you | read its last message, give it the next turn |
+| `session ... IDLE QUESTION-UNANSWERED(15m+) ...` | the writer asked something and has waited `QUESTION_SECONDS` (15 minutes) | answer it now, or tell it to proceed on its default |
 | `session ... MODEL(<model>/<effort>!=<want>)` | the thread runs on another model or effort than `CODEX_MODEL` and `CODEX_EFFORT` | restart it on the configured one; other models were far slower |
 | `session ... STALLED(...)` | turn open but silent | check for a usage limit or a hung command; tell the user if it needs them |
 | `session ... FAILED(LIMIT)` | turn errored on a usage limit | tell the user right away; a reset or second account is theirs to do |
@@ -93,6 +96,7 @@ Start it with `run_in_background`, never with `&`; a second copy for the same wo
 | `requests <local\|remote> <count> <newest file>` / `requests ... UNREADABLE` | a session dropped (or you removed) a delegated-work request file | hand the new request to a Claude worker, then steer its result back to the session that asked |
 | `open-prs <repo> <numbers>` | open PR list changed | add the new PR to `prs.txt` and start its review |
 | `pr ... BLOCKED(unresolved threads)` | an open PR has unresolved review threads (`threads=<n>`), which block its merge even when it is approved with auto-merge armed | treat each thread as work: route it to the owning writer now, and never read the block as a missing approval |
+| `pr ... STALE-PR(...)` | an open PR with unresolved threads, a conflict, a draft flag or a failed check has had no push for `STALE_PR_SECONDS` (45 minutes) | ask its writer for an ETA, unblock it, or reassign it, however busy the writer looks |
 | `pr ... <state> <head> <reviewDecision> <mergeable> comments= reviews= inline= threads= checks=` | any field changed | new head: re-review; count up: read the feedback; `CONFLICTING`: tell the owning session to merge the base branch; checks: act on failures. Check counts change only once settled; while any check is pending the last settled counts show with ` (running)` |
 
 Surface everything that needs a human to the user immediately: limits, paid-credit spending, stalls, failures, and new human review comments.

@@ -16,7 +16,8 @@ case "$*" in
   "api user"*) echo me ;;
   "api graphql"*) cat "$FAKE_ROOT/threads" 2>/dev/null || echo 0 ;;
   "pr list"*) printf '5\\n7\\n' ;;
-  "pr view"*) echo "OPEN abcdef12 APPROVED MERGEABLE" ;;
+  "pr view"*isDraft*) cat "$FAKE_ROOT/push" 2>/dev/null || echo "false $(date -u +%Y-%m-%dT%H:%M:%SZ)" ;;
+  "pr view"*) cat "$FAKE_ROOT/view" 2>/dev/null || echo "OPEN abcdef12 APPROVED MERGEABLE" ;;
   "pr checks"*) printf 'build\\tpass\\t1m\\nlint\\tpass\\t1m\\n' ;;
   *"/issues/"*) echo 2 ;;
   *"/reviews"*) echo 1 ;;
@@ -124,4 +125,22 @@ test('an approved PR with unresolved review threads is BLOCKED, apart from its r
   const clear = f.run('ok');
   assert.match(clear, /^pr acme\/app#42 .* threads=0 checks=/m);
   assert.doesNotMatch(clear, /BLOCKED/);
+});
+
+test('an open PR needing its writer with no push for 45 minutes is STALE-PR, however busy the writer looks (#9123)', TIMEOUT, () => {
+  const f = fixture();
+  const ago = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  writeFileSync(join(f.root, 'threads'), '5\n');
+  writeFileSync(join(f.root, 'push'), `false ${ago(46)}\n`);
+  assert.match(f.run('ok'), /^pr acme\/app#42 .* threads=5 .*BLOCKED\(unresolved threads\) STALE-PR\(no push for 2700s\+\)$/m);
+  writeFileSync(join(f.root, 'push'), `false ${ago(30)}\n`);
+  assert.doesNotMatch(f.run('ok'), /STALE-PR/, 'a push within 45 minutes is fresh');
+  writeFileSync(join(f.root, 'threads'), '0\n');
+  writeFileSync(join(f.root, 'push'), `false ${ago(300)}\n`);
+  assert.doesNotMatch(f.run('ok'), /STALE-PR/, 'an old PR with nothing for its writer to do is not stale');
+  writeFileSync(join(f.root, 'push'), `true ${ago(60)}\n`);
+  assert.match(f.run('ok'), /STALE-PR/, 'a draft needs its writer');
+  writeFileSync(join(f.root, 'push'), `false ${ago(60)}\n`);
+  writeFileSync(join(f.root, 'view'), 'OPEN abcdef12 APPROVED CONFLICTING\n');
+  assert.match(f.run('ok'), /STALE-PR/, 'a conflict needs its writer');
 });

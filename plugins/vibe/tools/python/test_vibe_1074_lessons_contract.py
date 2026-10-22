@@ -49,7 +49,7 @@ def test_push_cadence_and_shepherding_are_wired() -> None:
     assert "pushDue" in (VIBE / "scripts" / "commit-worktree.mjs").read_text()
     assert "`pushDue: true`" in _text(VIBE / "SKILL.md")
     assert "shepherd.mjs --pr <n> --repo <owner/repo>" in _text(HANDOFF / "SKILL.md")
-    assert "every 90 minutes" in _text(FLEET / "SKILL.md")
+    assert "every 45 minutes" in _text(FLEET / "SKILL.md"), "operator ruling 2026-10-22 moved the cadence from 90 to 45 minutes"
 
 
 def test_migration_order_compose_projects_precedent_and_path_gates_are_wired() -> None:

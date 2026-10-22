@@ -302,3 +302,16 @@ else process.exit(1);
     ]);
   });
 });
+
+test('an idle writer whose question waited 15 minutes is QUESTION-UNANSWERED; a report is not (#9118)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-ask-'));
+  const history = join(dir, 'history.txt');
+  const asked = 'w completed i-9 - NEEDS-REPLY "Sort by rank or updated? / If no answer by 2026-10-22T09:04:00Z: rank"';
+  const now = Math.floor(Date.now() / 1000);
+  writeFileSync(history, `remote:w i-9 ${now - 16 * 60}\nremote:r i-3 ${now - 60 * 60}\n`);
+  const run = (line) => spawnSync('zsh', [CLASSIFY, history, '720', '900'], { input: `remote ${line}\n`, encoding: 'utf8' }).stdout;
+  assert.equal(run(asked), `session remote w IDLE QUESTION-UNANSWERED(15m+) ${asked.slice('w completed i-9 - '.length)}\n`);
+  assert.equal(run('r completed i-3 - LAST "Pushed abc; QA ready."'), 'session remote r IDLE LAST "Pushed abc; QA ready."\n', 'a report waits on nobody');
+  writeFileSync(history, `remote:w i-9 ${now - 5 * 60}\n`);
+  assert.doesNotMatch(run(asked), /QUESTION-UNANSWERED/, 'a fresh question is not flagged yet');
+});

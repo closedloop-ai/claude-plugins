@@ -30,7 +30,11 @@
 // ends the message asking it; with no answer by then the writer proceeds on
 // the default and says so, and codex-fleet-monitor's recovery pass resumes an
 // idle Codex writer with it. Writers' questions once sat unanswered for seven
-// hours overnight while their writers waited on stated defaults.
+// hours overnight while their writers waited on stated defaults. The deadline
+// is at most 30 minutes, and a question never holds a pull request: the
+// writer ships what is done, arms auto-merge and puts the answer-dependent
+// part in a follow-up (operator ruling, 2026-10-22), so `ask` refuses one
+// that says it holds a merge, a push or the PR.
 // Every command prints one JSON object; errors print {"ok":false,"error":...}.
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -46,7 +50,8 @@ const ASKS_LEAVE = /\b(?:may|can|shall|should) i\b|\b(?:ok|okay|fine) (?:for me 
 const IN_SCOPE_WORK = /\b(?:tests?|fixtures?|specs?|snapshots?|merge (?:main|the base)|main merge|rebase|push|commit|rerun|re-run|lint|typecheck|fix(?:es)?|repair)\b/i;
 const HUMAN_ONLY = /\b(?:flags?|feature flag|switch(?:es)?|toggles?|credentials?|password|token|sign(?:ed)?[ -]?in|log ?in|delete|discard|destroy|drop|force|wording|copy|say|says|label|product|skip|narrow|defer|exclude|descope|obsolete|out of scope)\b/i;
 const WAITS_FOR_PERSON = /\b(?:flags?|feature flag|switch(?:es)?|toggles?|credentials?|password|token|sign(?:ed)?[ -]?in|log ?in|delete|discard|destroy|drop|force|wording|copy|say|says|label|skip|narrow|defer|exclude|descope|obsolete|out of scope)\b/i;
-const MAX_DEADLINE_MINUTES = 24 * 60;
+const MAX_DEADLINE_MINUTES = 30;
+const HOLDS_PR = /\b(?:hold(?:s|ing)?|block(?:s|ing)?|paus(?:e|es|ing)|park(?:ed|ing)?)\b[^.?!\n]{0,40}\b(?:auto-?merge|merge|pr|pull request|push)\b|\b(?:auto-?merge|merge|pr|pull request|push)\b[^.?!\n]{0,20}\b(?:on hold|held|until you answer|pending your answer)\b/i;
 
 /** In-scope engineering work asked as permission; it never waits for the person. */
 export function asksLeaveForInScopeWork(question) {
@@ -74,6 +79,9 @@ export function askQuestion(questions, { key, question, product = false, codeEvi
   requireText("--question", question);
   if (asksLeaveForInScopeWork(question)) {
     throw new Error("in-scope work never waits for authorization: repairing tests the change broke, a main merge, a push, a rerun or an in-scope fix goes ahead now and is reported afterwards; only a flag key, a product question, dropping or narrowing scope, a destructive action or a credential waits");
+  }
+  if (HOLDS_PR.test(question)) {
+    throw new Error("a question never holds a pull request: ship what is done, arm auto-merge, put the part that depends on the answer in a follow-up, and ask without holding anything");
   }
   if (product && !/^\S.*:\d+(?:-\d+)?$/.test(codeEvidence ?? "")) {
     throw new Error("a product question needs --code-evidence <file:line> proving the code and data model were checked first");

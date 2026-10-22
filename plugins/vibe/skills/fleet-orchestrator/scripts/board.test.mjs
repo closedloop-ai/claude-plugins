@@ -136,3 +136,15 @@ test('a work dir that watches sessions or PRs fails status while its watcher is 
   writeFileSync(path.join(dir, 'watcher.json'), JSON.stringify({ pid: process.pid, startedAt: '2026-10-22T05:50:00Z', lastTickAt: '2026-10-22T05:59:00Z', intervalSeconds: 120, exitedAt: '2026-10-22T05:59:00Z' }));
   assert.match(run([dir, 'status', '--now', '2026-10-22T13:00:00Z']).stdout, /^WATCHER-MISSING \(exited 421m ago\)/m);
 });
+
+test('a writer question waiting 15 minutes is QUESTION-UNANSWERED until answered (#9118)', (t) => {
+  const dir = tempDir(t);
+  assert.equal(run([dir, 'question', 'w1', '--text', 'Sort by rank or updated? If no answer by 09:04Z: rank', '--now', '2026-10-22T08:34:00Z']).status, 0);
+  assert.equal(run([dir, 'status', '--now', '2026-10-22T08:48:00Z']).status, 0, 'fourteen minutes is not yet late');
+  const late = run([dir, 'status', '--now', '2026-10-22T08:49:00Z']);
+  assert.equal(late.status, 1);
+  assert.match(late.stdout, /^QUESTION-UNANSWERED w1 15m: Sort by rank or updated\?/m);
+  assert.equal(run([dir, 'answered', 'w1', '--now', '2026-10-22T08:50:00Z']).status, 0);
+  assert.equal(run([dir, 'status', '--now', '2026-10-22T13:00:00Z']).status, 0);
+  assert.equal(run([dir, 'question', 'w1']).status, 2);
+});

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // How long a worktree's work has waited unpushed. A writer kept a validated
 // checkpoint unpushed for hours while each review pass added scope, so QA
-// could not start; a tested checkpoint is pushed at least every 90 minutes of
-// active work, and review findings after that go out as follow-up commits.
+// could not start; a tested checkpoint is pushed at least every 45 minutes of
+// active work (operator ruling, 2026-10-22: an open PR once went six hours
+// with no push), and review findings after that go out as follow-up commits.
 //
-// Usage: push-cadence.mjs --worktree <path> [--limit-minutes <n, default 90>] [--now <iso>]
+// Usage: push-cadence.mjs --worktree <path> [--limit-minutes <n, default 45>] [--now <iso>]
 //
 // The age is measured from the oldest work not on the remote: the committer
 // time of the oldest commit missing from the upstream (or from origin/<branch>,
@@ -19,7 +20,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
-export const DEFAULT_LIMIT_MINUTES = 90;
+export const DEFAULT_LIMIT_MINUTES = 45;
 
 /** Minutes since the oldest unpushed work in `worktree`, and whether a push is due. */
 export function unpushedAge(worktree, { now = Date.now(), limitMinutes = DEFAULT_LIMIT_MINUTES, ignore = [] } = {}) {

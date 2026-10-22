@@ -99,7 +99,7 @@ function commitWorktree() {
   return { committed: true, commit: git(worktree, ["rev-parse", "HEAD"]), subject, merge: merging, files, excluded, ...pushCadence(worktree, [...excluded, ...localFixes]) };
 }
 
-// A tested checkpoint is pushed at least every 90 minutes (`push-cadence.mjs`); the commit never fails on it.
+// A tested checkpoint is pushed at least every 45 minutes (`push-cadence.mjs`); the commit never fails on it.
 function pushCadence(worktree, ignore) {
   try {
     const { minutes, due } = unpushedAge(worktree, { ignore });
