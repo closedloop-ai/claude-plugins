@@ -44,6 +44,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 
 const LEDGER = "helpers.json";
 const STACKS = "#stacks";
@@ -183,7 +184,7 @@ function requireName(action, name) {
 }
 
 async function main(argv) {
-  const [orchDir, action, ...rest] = argv;
+  const [workDir, action, ...rest] = argv;
   const { values, positionals } = parseArgs({
     args: rest,
     allowPositionals: true,
@@ -197,9 +198,10 @@ async function main(argv) {
       now: { type: "string" },
     },
   });
-  if (!orchDir || !["start", "pid", "accepted", "stopped", "hand", "unhand", "status"].includes(action)) {
+  if (!workDir || !["start", "pid", "accepted", "stopped", "hand", "unhand", "status"].includes(action)) {
     throw new Error("Usage: helpers.mjs <orchDir> start|pid|accepted|stopped|hand|unhand <name> | status [--idle-minutes <n>]");
   }
+  const orchDir = resolveWorkDir(workDir).dir;
   const ledger = read(orchDir);
   const now = values.now ? Date.parse(values.now) : Date.now();
   const at = new Date(now).toISOString();

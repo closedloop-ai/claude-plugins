@@ -14,6 +14,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { resolveWorkDir } from "./work-dir.mjs";
 
 const TICK_SLACK_SECONDS = 120;
 
@@ -59,10 +60,10 @@ function main() {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: { now: { type: "string" } } });
   const [workDir] = positionals;
   if (!workDir) {
-    process.stderr.write("Usage: watcher.mjs <workDir> [--now <iso>]\n");
+    process.stderr.write("Usage: watcher.mjs <workDir: a fleet home, program dir or flat work dir> [--now <iso>]\n");
     return 2;
   }
-  const { ok, line } = watcherState(workDir, values.now ? Date.parse(values.now) : Date.now());
+  const { ok, line } = watcherState(resolveWorkDir(workDir).dir, values.now ? Date.parse(values.now) : Date.now());
   process.stdout.write(`${line}\n`);
   return ok ? 0 : 1;
 }

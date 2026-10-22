@@ -20,7 +20,7 @@ A Codex turn that hits a usage limit stays open and stops producing items, so "i
 
 ## Set up a work dir
 
-Pick a scratch dir (one per orchestration) and create:
+Use fleet-orchestrator's fleet home (its active program; `scripts/work-dir.mjs` resolves it and derives the state dirs) or a dir of your own per orchestration, and create:
 
 `config.env`
 
@@ -28,6 +28,7 @@ Pick a scratch dir (one per orchestration) and create:
 LOCAL_STATE_DIR=/path/to/local/state/files   # only for two-column sessions
 REMOTE_HOST=user@host            # omit when there are no remote sessions
 REMOTE_STATE_DIR=/path/on/remote # remote scratch dir; also holds state files for two-column sessions
+# REMOTE_FLEET_HOME=/path/on/remote  # in a fleet home, replaces REMOTE_STATE_DIR and REMOTE_REQUESTS_DIR
 REMOTE_SHELL="zsh -lic"          # login shell so node/codex are on PATH (default)
 STALL_SECONDS=720                # no new thread items for this long means STALLED (default 12m)
 # CLAUDE_USAGE=0                 # turn off the claude-usage line; CLAUDE_USAGE_SECONDS=600 sets how often it is read

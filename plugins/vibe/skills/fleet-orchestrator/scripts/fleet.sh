@@ -2,7 +2,8 @@
 # Usage: fleet.sh <orchDir> <local|remote> session <turn|steer|last> <name> [codex-session.mjs options]
 #        fleet.sh <orchDir> <local|remote> slot <lockName> <owner> <dir> <command...>
 # A heavy slot first runs load-check.sh on that machine and refuses (exit 4) when its load per core is over MAX_LOAD_PER_CORE.
-# Settings come from <orchDir>/config.env (references/setup.md); without the REMOTE_* keys only `local` works.
+# <orchDir> is a fleet home (its active program) or a program dir; codex-fleet-monitor/scripts/work-dir.mjs
+# resolves it and loads config.env (references/setup.md); without the REMOTE_* keys only `local` works.
 # `remote` copies the scripts it needs, and a session's prompt file (with its <prompt>.evidence/ folder), to <REMOTE_STATE_DIR>/.fleet-orchestrator/
 # on REMOTE_HOST over ssh and runs them there in REMOTE_SHELL.
 set -euo pipefail
@@ -16,9 +17,11 @@ usage() {
 orch=$1 where=$2 action=$3
 shift 3
 [ -d "$orch" ] || { echo "fleet: no orchestration dir $orch" >&2; exit 2; }
-if [ -f "$orch/config.env" ]; then . "$orch/config.env"; fi
 here=$(cd "$(dirname "$0")" && pwd)
 skills=$(cd "$here/../.." && pwd)
+env_lines=$(node "$skills/codex-fleet-monitor/scripts/work-dir.mjs" sh "$orch") || exit 2
+eval "$env_lines"
+orch=$W
 case "$where" in
   local) ;;
   remote)
@@ -28,7 +31,7 @@ case "$where" in
   *) usage ;;
 esac
 
-ship=(codex-fleet-monitor/scripts/liveness.mjs fleet-orchestrator/scripts/codex-session.mjs fleet-orchestrator/scripts/slot-lock.sh fleet-orchestrator/scripts/load-check.sh fleet-orchestrator/scripts/request-visual.mjs)
+ship=(codex-fleet-monitor/scripts/liveness.mjs codex-fleet-monitor/scripts/work-dir.mjs fleet-orchestrator/scripts/codex-session.mjs fleet-orchestrator/scripts/slot-lock.sh fleet-orchestrator/scripts/load-check.sh fleet-orchestrator/scripts/request-visual.mjs)
 extra=()
 
 # Runs a shell command line on REMOTE_HOST after unpacking the shipped scripts (and `extra`) into remote_dir.
@@ -61,6 +64,11 @@ session() {
     mkdir -p "$state"
     exec node "$here/codex-session.mjs" "$command" "$state" "$name" ${args[@]+"${args[@]}"}
   fi
+  # fleet-home.mjs check reports a remote session in sessions.txt without this marker as started outside fleet.sh.
+  if [ "$command" = turn ]; then
+    mkdir -p "$orch/sessions"
+    printf '{"host":"%s","stateDir":"%s"}\n' "$REMOTE_HOST" "$REMOTE_STATE_DIR" > "$orch/sessions/$name.remote.json"
+  fi
   for i in "${!args[@]}"; do
     case "${args[$i]}" in
       --prompt-file) prompt=${args[$((i + 1))]:-} ;;
@@ -79,9 +87,10 @@ session() {
       esac
     done
   fi
-  # The program rulings are a shared spec, not resume-log status. Mirror the
-  # current index whenever work is sent to another host.
+  # The standing and program rulings are a shared spec, not resume-log status. Mirror
+  # both whenever work is sent to another host.
   if [ -f "$orch/rulings.md" ]; then extra+=("-C" "$orch" "rulings.md"); fi
+  if [ -n "$FLEET_HOME" ] && [ -f "$FLEET_HOME/standing-rulings.md" ]; then extra+=("-C" "$FLEET_HOME" "standing-rulings.md"); fi
   run_remote "$(printf '%q ' node "$remote_dir/fleet-orchestrator/scripts/codex-session.mjs" "$command" "$REMOTE_STATE_DIR" "$name" ${args[@]+"${args[@]}"})"
 }
 

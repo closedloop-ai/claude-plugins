@@ -14,12 +14,14 @@ const REPORT = [
   "",
   "OUTSIDE THE TURBO GRAPH: 2 lane(s).",
   "    pnpm test:desktop-renderer      (3 changed path(s) under apps/desktop/src/renderer)",
-  "    pnpm test:desktop-e2e           (1 changed path(s) in e2e-test.yml's desktop_e2e filter)",
+  "    DESKTOP_E2E_SPECS='e2e/branches-grid.spec.ts e2e/it'\\''s.spec.ts' DESKTOP_E2E_PROJECTS='desktop' pnpm --filter desktop test:e2e (1 changed path(s) in e2e-test.yml's desktop_e2e filter)",
+  "      CI runs it whole, the selector widened.",
   "",
 ].join("\n");
+const DESKTOP_E2E = "DESKTOP_E2E_SPECS='e2e/branches-grid.spec.ts e2e/it'\\''s.spec.ts' DESKTOP_E2E_PROJECTS='desktop' pnpm --filter desktop test:e2e";
 
-test("the lanes come from the report's commands; e2e lanes are skipped by default", () => {
-  assert.deepEqual(reportLanes(REPORT), ["pnpm --filter @repo/app test", "pnpm test:desktop-renderer"]);
+test("every lane the report names is required, e2e lanes and lanes with the step's variables included (#9116 merged with Desktop E2E reds)", () => {
+  assert.deepEqual(reportLanes(REPORT), ["pnpm --filter @repo/app test", "pnpm test:desktop-renderer", DESKTOP_E2E]);
   assert.deepEqual(reportLanes("No paths changed against origin/main; there is nothing to cover.\n"), []);
   assert.equal(reportLanes("something went wrong\n"), null, "an unreadable report is never read as no lanes");
 });
@@ -44,6 +46,10 @@ test("the PR-open check refuses a diff naming desktop-renderer with no recorded 
   const refused = run("check", "--worktree", worktree, "--report", report);
   assert.equal(refused.status, 1);
   assert.match(refused.stdout, /^MISSING-LANE pnpm test:desktop-renderer:/m);
+  assert.match(refused.stdout, /^MISSING-LANE DESKTOP_E2E_SPECS=.* pnpm --filter desktop test:e2e:/m);
+  assert.equal(run("check", "--worktree", worktree, "--report", report, "--skip", "e2e").status, 2, "a skip needs the operator ruling that waives it");
+  const waived = run("check", "--worktree", worktree, "--report", report, "--skip", "test:e2e", "--skip-ruling", "deadline mode, operator, 2026-10-22, rulings.md");
+  assert.match(waived.stdout, /^SKIPPED-LANE DESKTOP_E2E_SPECS=.* \(deadline mode, operator, 2026-10-22, rulings.md\)$/m);
   for (const lane of reportLanes(REPORT)) assert.equal(run("record", "--worktree", worktree, "--command", lane, "--result", "pass").status, 0);
   assert.equal(run("check", "--worktree", worktree, "--report", report).status, 0);
   git(worktree, ["commit", "--quiet", "--allow-empty", "-m", "more"], home);

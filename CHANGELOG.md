@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### vibe v1.0.78
 
+The fleet runs from one fleet home, and the open 2026-10-22 lessons each get a check where one fits.
+
+#### Added
+- One fleet home (`FLEET_HOME`, default `~/fleet-orchestrator`) holds what every orchestrator chat reuses at its top (`config.env`, `standing-rulings.md`, the lessons ledger, `handover.md` and `current`, the active program) and each program's state under `programs/<slug>/`. `fleet-home.mjs start` begins a program that reads nothing of an earlier one; `resume` lists what a new chat reads, the Claude writers to relaunch from their saved prompts and a watcher another chat still holds; `migrate` turns a flat work dir into a home. Every fleet and monitor script resolves the home through `work-dir.mjs`, with session, request and remote state dirs derived per program (`REMOTE_FLEET_HOME` on the other machine). A new chat once inherited only part of a program: its resume log and ledger lived outside the work dir and its Codex writers' state in other directories.
+- `board.mjs status` fails on state written outside the home: program files at its top, a symlink leaving it, a per-program key in its `config.env`, a shared remote state dir, a session in `sessions.txt` that `fleet.sh` did not start, and Codex thread state outside `sessions/`.
+- `hooks/merge-guard.mjs`, a PreToolUse hook, refuses `gh pr merge` (a merge, an enqueue or armed auto-merge) on a pull request another account authored until the operator approves it (`MERGE_AUTHOR_OK=<author>`). An orchestrator once enqueued a teammate's pull request on a worker's misattribution.
+
+#### Changed
+- `pre-pr-lanes.mjs` requires every lane the lane report names, e2e lanes included, and reads lane lines that start with the step's variables; `--skip` needs `--skip-ruling`. A pull request merged with two Desktop E2E reds because the check skipped e2e lanes by default.
+- fleet-orchestrator: review threads are findings to verify on their merits, never human rulings, since scheduled review bots post under teammates' accounts; the green watch is a Sonnet watcher that starts an Opus fixer only for a red that needs attribution or a fix; once core work is done the full e2e suites run on main before the batches find the reds, and an e2e fix PR gets auto-merge only after its specs and the lane's latest red set pass on the CI-identical runner (operator rulings).
+- Instruction text the new checks enforce is trimmed so the release adds no words: Markdown under the vibe plugin is about 9 words shorter than in 1.0.77.
+
 #### Fixed
 - The v1.0.77 entry said Markdown was about 930 words shorter than in 1.0.75; the merged change is about 830 shorter. The count was taken before the release's last commits. `instruction-words.mjs` (fleet-orchestrator) now measures the net change between two refs and, with `--changelog`, fails when an entry states a number the measurement does not match; the lessons loop runs it at the final head.
 

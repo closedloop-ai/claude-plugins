@@ -2,24 +2,28 @@
 
 ## Layout
 
-One directory per program on each machine, in a path that survives a reboot. The orchestrating machine's dir is also the codex-fleet-monitor work dir.
+One fleet home per machine holds everything (`FLEET_HOME`, default `~/fleet-orchestrator`); `scripts/fleet-home.mjs` documents it, and every script given the home works in its active program.
 
 ```
-<orchDir>/
-  config.env  sessions.txt  prs.txt   monitor inputs (see codex-fleet-monitor)
-  last-snapshot.txt  item-history.txt  checks-*.txt   monitor-owned; leave alone
-  sessions/<name>.json   session state written by fleet.sh: threadId, cwd, model, effort, sandbox, turns
-  prompts/<name>-<nn>-<slug>.md   every prompt sent to any worker, written before sending
-  requests/                       REQUESTS_DIR: visual-work request files from Codex sessions
-  findings/                       review, verification, QA and visual results, one file per task
-  rulings.md                      program rulings, dated and sourced; mirrored to every worker host
-  attention.md                    operator decisions needed, recommendations and blocked work
-  review.md                       one operator review page with stable finding IDs
-  resume-log.md
-  lessons.md
+<fleetHome>/
+  config.env  standing-rulings.md  lessons.md  handover.md   reused by every program
+  current                                                    the active program's slug
+  programs/<slug>/
+    sessions.txt  prs.txt  board.md  watcher and monitor files (codex-fleet-monitor)
+    sessions/<name>.json        written by fleet.sh; a remote session leaves <name>.remote.json
+    prompts/<name>-<nn>-<slug>.md   every prompt sent to any worker, written before sending
+    requests/  findings/  evidence/
+    resume-log.md  rulings.md  attention.md  review.md
 ```
 
-A remote machine keeps `sessions/` and `requests/` under its own persistent dir (`REMOTE_STATE_DIR` and `REMOTE_REQUESTS_DIR`). Prompts stay in this machine's `prompts/`; `fleet.sh` copies each one over when it sends it.
+`fleet-home.mjs start <slug>` makes a program current; it reads nothing of an earlier one. A remote machine keeps its sessions under `REMOTE_FLEET_HOME` the same way, and `fleet.sh` copies each prompt there when it sends it. `fleet-home.mjs migrate` moves a flat work dir in.
+
+## A new chat
+
+1. `fleet-home.mjs resume`: read each `READ` file in order. On `NO-ACTIVE-PROGRAM`, `start` a fresh one.
+2. `WATCHER-LIVE <pid>`: the previous chat still holds the watch lock; stop its watcher there (or close that chat), then arm yours.
+3. Relaunch each `RELAUNCH <writer> <prompt>` Claude worker from that saved prompt; resume Codex writers through `fleet.sh`.
+4. Run `fleet-home.mjs check` and fix every line before acting.
 
 ## Resume log
 
@@ -36,15 +40,9 @@ A remote machine keeps `sessions/` and `requests/` under its own persistent dir 
 
 Read it top to bottom after any restart or compaction before acting.
 
-## Program rulings
+## Rulings
 
-`rulings.md` is the program-wide index, separate from the status-oriented
-resume log. Each entry records the ruling, date and source: a quoted operator
-message, an AskUserQuestion answer or a ticket, as `- Ruling YYYY-MM-DD
-(operator message|AskUserQuestion|ticket: <source>): <decision>`. Mirror it to every worker host
-after each edit and point every worker and QA-prep prompt at it. Per-ticket
-rulings still go through handoff's `rulings-check.mjs`. The pre-audit
-reconciliation is in SKILL.md, Quality gates and QA.
+`standing-rulings.md` holds operator rulings for every program (models, review rounds, test lanes); the program's `rulings.md` holds the rest, separate from the resume log. Each entry is `- Ruling YYYY-MM-DD (operator message|AskUserQuestion|ticket: <source>): <decision>`. `fleet.sh` mirrors both to every worker host; point every worker and QA-prep prompt at them. Per-ticket rulings still go through handoff's `rulings-check.mjs`.
 
 ## Lessons ledger
 

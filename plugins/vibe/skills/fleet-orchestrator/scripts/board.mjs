@@ -50,6 +50,8 @@
 // asking the operator to press Esc in that pane. A writer once held its PR six
 // hours on an unanswered question, and answers to writers in long turns had to
 // be sent three times.
+// <orchDir> is a fleet home or a program dir (work-dir.mjs). `status` also prints
+// fleet-home.mjs check's lines for a home, or for a flat dir that watches sessions or PRs.
 // All of these count toward the exit status, as does `WATCHER-MISSING(<why>)` when the
 // work dir watches sessions or PRs (sessions.txt or prs.txt) and its watcher is
 // not running: a watcher left unarmed overnight let writers' questions sit
@@ -61,6 +63,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { watcherState } from "../../codex-fleet-monitor/scripts/watcher.mjs";
+import { readConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
+import { homeProblems } from "./fleet-home.mjs";
 import { readThreads } from "../../vibe/scripts/pr-threads.mjs";
 
 const STATE = "board.json";
@@ -114,8 +118,7 @@ export function missingDuties(board, required) {
 }
 
 function requiredDuties(orchDir) {
-  const file = path.join(orchDir, "config.env");
-  const configured = existsSync(file) ? /^REQUIRED_DUTIES=["']?([^"'\n]*)["']?\s*$/m.exec(readFileSync(file, "utf8"))?.[1] : undefined;
+  const configured = readConfig(resolveWorkDir(orchDir)).REQUIRED_DUTIES;
   if (configured !== undefined) return configured.split(/\s+/).filter(Boolean);
   return existsSync(path.join(orchDir, "prs.txt")) ? ["green-watch", "status-sweep"] : [];
 }
@@ -228,7 +231,7 @@ function pushedHeads(board, texts) {
 }
 
 function main(argv) {
-  const [orchDir, action, ...rest] = argv;
+  const [workDir, action, ...rest] = argv;
   const { values, positionals } = parseArgs({
     args: rest,
     allowPositionals: true,
@@ -239,9 +242,10 @@ function main(argv) {
       runtime: { type: "string" }, owner: { type: "string" }, text: { type: "string" }, ready: { type: "string" }, id: { type: "string" },
     },
   });
-  if (!orchDir || !["writer", "deliver", "told", "duty", "question", "answered", "ack", "push-check", "status"].includes(action)) {
+  if (!workDir || !["writer", "deliver", "told", "duty", "question", "answered", "ack", "push-check", "status"].includes(action)) {
     throw new Error("Usage: board.mjs <orchDir> writer|deliver|told|duty|question|answered|ack|push-check|status ...");
   }
+  const orchDir = resolveWorkDir(workDir).dir;
   const board = read(orchDir);
   const now = values.now ? Date.parse(values.now) : Date.now();
   const at = new Date(now).toISOString();
@@ -265,8 +269,10 @@ function main(argv) {
     const watched = ["sessions.txt", "prs.txt"].some((file) => existsSync(path.join(orchDir, file)));
     const watcher = watched ? watcherState(orchDir, now) : { ok: true };
     if (!watcher.ok) process.stdout.write(`WATCHER-MISSING ${watcher.line.replace("watcher MISSING", "")}: re-arm watch.sh now (run_in_background)\n`);
-    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${unanswered.length} unanswered, ${unacked.length} unacked${watcher.ok ? "" : ", watcher missing"}\n`);
-    return stale.length + open.length + slow.length + duties.length + missing.length + asked.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
+    const home = watched || resolveWorkDir(workDir).home ? homeProblems(orchDir) : [];
+    for (const line of home) process.stdout.write(`${line}\n`);
+    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${unanswered.length} unanswered, ${unacked.length} unacked${watcher.ok ? "" : ", watcher missing"}${home.length > 0 ? `, ${home.length} outside the fleet home` : ""}\n`);
+    return stale.length + open.length + slow.length + duties.length + missing.length + asked.length + home.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
   }
   const [name, recipient] = positionals;
   if (!name) {

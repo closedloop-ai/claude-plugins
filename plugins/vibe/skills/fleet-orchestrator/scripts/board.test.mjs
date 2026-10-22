@@ -1,16 +1,19 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+// A fleet home's active program dir (fleet-home.mjs), so a watched program is not reported as a flat layout.
 const tempDir = (t) => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  return dir;
+  const home = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  mkdirSync(path.join(home, 'programs', 'p1'), { recursive: true });
+  writeFileSync(path.join(home, 'current'), 'p1\n');
+  return path.join(home, 'programs', 'p1');
 };
 const run = (args, env = {}) => spawnSync(process.execPath, [path.join(HERE, 'board.mjs'), ...args], { encoding: 'utf8', env: { ...process.env, ...env } });
 
@@ -195,4 +198,26 @@ test('a head is pushed for a writer only when the writer declared it ready (a pa
   assert.equal(run([dir, 'push-check', 'w1', '--head', '5ec6633da7']).status, 0);
   assert.equal(run([dir, 'push-check', 'w1', '--head', '5ec']).status, 1, 'a short prefix proves nothing');
   assert.match(readFileSync(path.join(dir, 'board.md'), 'utf8'), /\| w1 \|  \| a77421d8fa00 \| 5ec6633da7ff \|/);
+});
+
+test('status fails on state outside the fleet home: a flat watched dir, and a session not started through fleet.sh', (t) => {
+  const flat = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-flat-'));
+  t.after(() => rmSync(flat, { recursive: true, force: true }));
+  writeFileSync(path.join(flat, 'prs.txt'), '');
+  const watcher = JSON.stringify({ pid: process.pid, startedAt: '2026-10-22T05:50:00Z', lastTickAt: '2026-10-22T05:59:00Z', intervalSeconds: 120 });
+  writeFileSync(path.join(flat, 'watcher.json'), watcher);
+  writeFileSync(path.join(flat, 'config.env'), 'REQUIRED_DUTIES=""\n');
+  const now = ['--now', '2026-10-22T06:00:00Z'];
+  const flatStatus = run([flat, 'status', ...now]);
+  assert.equal(flatStatus.status, 1);
+  assert.match(flatStatus.stdout, /^FLAT-LAYOUT /m);
+  const dir = tempDir(t);
+  writeFileSync(path.join(dir, 'watcher.json'), watcher);
+  writeFileSync(path.join(dir, 'config.env'), 'REQUIRED_DUTIES=""\n');
+  writeFileSync(path.join(dir, 'sessions.txt'), 'remote prd723-vibe\n');
+  const home = path.dirname(path.dirname(dir));
+  assert.match(run([home, 'status', ...now]).stdout, /^UNMANAGED remote prd723-vibe: not started through fleet.sh/m, 'the home resolves to its active program');
+  mkdirSync(path.join(dir, 'sessions'));
+  writeFileSync(path.join(dir, 'sessions', 'prd723-vibe.remote.json'), '{}\n');
+  assert.equal(run([home, 'status', ...now]).status, 0);
 });

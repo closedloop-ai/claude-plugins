@@ -18,13 +18,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { commandSegments } from "./command-segments.mjs";
 
-const SEPARATOR = /\|\||&&|[;|&\n]|\$\(|`|\(|\)/;
 const SIGNAL_OPTION = /^-(?:[A-Za-z][A-Za-z0-9+-]*|\d+)$/;
 const SUBSTITUTED_KILL = /(?:^|[\s;&|(])kill\b[^;&|\n]*(?:\$\(|`)/;
 const BY_NAME = /^p?kill(?:all)?$/;
-const ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
-const WRAPPERS = new Set(["sudo", "command", "exec", "nohup", "time", "builtin", "env"]);
 
 /** The file recording the pids each session called its own. */
 export function ledgerFile(home = os.homedir()) {
@@ -36,9 +34,7 @@ export function killProblems(command, isOwn) {
   const problems = SUBSTITUTED_KILL.test(command)
     ? ["kill with a command substitution signals whatever a search matched; kill only a pid you recorded as your own"]
     : [];
-  for (const segment of command.split(SEPARATOR)) {
-    const words = segment.trim().split(/\s+/).filter((word) => word && !/[<>]/.test(word)).map((word) => word.replace(/^["']|["']$/g, ""));
-    while (words.length > 0 && (ENV_ASSIGN.test(words[0]) || WRAPPERS.has(path.basename(words[0])))) words.shift();
+  for (const { words } of commandSegments(command)) {
     const name = path.basename(words[0] ?? "");
     if (name !== "kill" && BY_NAME.test(name)) {
       problems.push(`${name} signals by pattern, which can end other sessions' processes; record your own pid when you start a process and run kill <pid>`);

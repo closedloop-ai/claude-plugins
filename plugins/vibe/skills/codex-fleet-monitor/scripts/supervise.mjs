@@ -13,6 +13,7 @@ import {
   supervisorLockPath, timedPass, writeHeartbeat,
 } from './recover.mjs';
 import { isEntryPoint } from './liveness.mjs';
+import { resolveWorkDir } from './work-dir.mjs';
 
 export const DEFAULT_INTERVAL_SECONDS = 60;
 export const SUMMARY_INTERVAL_MS = 3_600_000;
@@ -64,8 +65,8 @@ async function tick(workDir, stateDir, config) {
 }
 
 async function main() {
-  const [workDir, intervalArg] = process.argv.slice(2);
-  if (!workDir) {
+  const [workDirArg, intervalArg] = process.argv.slice(2);
+  if (!workDirArg) {
     console.error('Usage: supervise.mjs <workDir> [intervalSeconds]');
     process.exit(2);
   }
@@ -83,6 +84,7 @@ async function main() {
     console.error(`supervise: ${error.message}`);
     process.exit(2);
   }
+  const workDir = resolveWorkDir(workDirArg).dir;
   const stateDir = process.env.LOCAL_STATE_DIR || workDir;
   const logPath = process.env.SUPERVISOR_LOG || `${workDir}/supervisor.log`;
   const log = (line) => {

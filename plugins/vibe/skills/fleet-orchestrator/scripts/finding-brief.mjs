@@ -22,6 +22,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { readConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 
 /** What is missing from each finding, or an empty list when every finding can be acted on. */
 export function findingProblems(findings, exists = existsSync) {
@@ -72,8 +73,7 @@ function evidenceName(finding, index, file) {
 }
 
 function remoteDir(orchDir) {
-  const config = existsSync(path.join(orchDir, "config.env")) ? readFileSync(path.join(orchDir, "config.env"), "utf8") : "";
-  const value = /^REMOTE_STATE_DIR=(.*)$/m.exec(config)?.[1]?.trim().replace(/^["']|["']$/g, "");
+  const value = readConfig(resolveWorkDir(orchDir)).REMOTE_STATE_DIR;
   if (!value) {
     throw new Error("--where remote needs REMOTE_STATE_DIR in config.env");
   }

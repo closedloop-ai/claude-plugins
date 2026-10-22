@@ -2,7 +2,8 @@
 # Usage: snapshot.sh <workDir>. One line per watched item; any changed line is an event.
 # With RECOVER=1 (watch.sh sets it) it first runs a recover.mjs pass on each machine that has sessions.
 # State files of PRs no longer in prs.txt are removed. prs.txt lines are `<owner/repo> <number> [<writer>]`.
-K=${0:A:h}; W=${1:?workDir}; [ -f $W/config.env ] && source $W/config.env
+# <workDir> is a fleet home (its active program), a program dir or a flat work dir; work-dir.mjs resolves it.
+K=${0:A:h}; env_lines=$(node $K/work-dir.mjs sh ${1:?workDir}) || exit 2; eval "$env_lines"
 : ${STALL_SECONDS:=720} ${BOT_LOGIN_REGEX:=vercel|codex|github-actions|copilot|bot} ${REMOTE_SHELL:=zsh -lic}
 : > $W/live.txt
 HIGH=${USAGE_HIGH_PERCENT:-${MOVE_AT_PERCENT:-}}

@@ -13,6 +13,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isEntryPoint } from './liveness.mjs';
+import { resolveWorkDir } from './work-dir.mjs';
 import { highUsagePercent, usageBand } from './ratelimit.mjs';
 
 const LINE = /^\s*Current (session|week \(all models\)):\s*(\d+(?:\.\d+)?)%\s*used(?:\s*·\s*resets\s+(.+?))?\s*$/gim;
@@ -51,7 +52,7 @@ function main() {
     process.stderr.write('Usage: claude-usage.mjs <workDir> [label]\n');
     process.exit(2);
   }
-  const file = join(workDir, 'claude-usage.txt');
+  const file = join(resolveWorkDir(workDir).dir, 'claude-usage.txt');
   const interval = Number(process.env.CLAUDE_USAGE_SECONDS) > 0 ? Number(process.env.CLAUDE_USAGE_SECONDS) : DEFAULT_INTERVAL_SECONDS;
   let line = cachedLine(file, interval);
   if (!line) {

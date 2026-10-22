@@ -2,9 +2,10 @@
 # Usage: watch.sh <workDir> [intervalSeconds]. Exits with the diff on the first change, or with HEARTBEAT
 # after HEARTBEAT_SECONDS (config.env or environment, default 1800) with none, so an armed watcher wakes its
 # orchestrator at least that often to read teammate messages: writers' questions once sat unread for 7 hours.
-K=${0:A:h}; W=${1:?workDir}; I=${2:-120}
-H=${HEARTBEAT_SECONDS:-$([ -f $W/config.env ] && sed -n 's/^HEARTBEAT_SECONDS=\([0-9][0-9]*\).*/\1/p' $W/config.env | tail -1)}
-H=${H:-1800}; T=$(( H / I )); (( T < 1 )) && T=1
+# <workDir> resolves through work-dir.mjs, so a fleet home watches its active program's dir.
+K=${0:A:h}; I=${2:-120}; H=${HEARTBEAT_SECONDS:-}
+env_lines=$(node $K/work-dir.mjs sh ${1:?workDir}) || exit 2; eval "$env_lines"
+H=${H:-${HEARTBEAT_SECONDS:-1800}}; T=$(( H / I )); (( T < 1 )) && T=1
 S=${WATCH_SNAPSHOT:-$K/snapshot.sh}
 # One watcher per work dir. A second copy (one started with `&` in a foreground shell, then started again)
 # double-reports every event and outlives the turn that started it, so it is refused, not run.

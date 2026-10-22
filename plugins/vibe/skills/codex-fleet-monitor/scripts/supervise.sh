@@ -1,9 +1,10 @@
 #!/bin/sh
-# Usage: supervise.sh <workDir> [intervalSeconds]. Loads <workDir>/config.env, then runs supervise.mjs,
+# Usage: supervise.sh <workDir> [intervalSeconds]. Resolves <workDir> and loads its config.env (work-dir.mjs), then runs supervise.mjs,
 # which loops until stopped. Start it from launchd or systemd (templates/), or by hand in a terminal.
 K=$(cd "$(dirname "$0")" && pwd)
-W=${1:?workDir}
+env_lines=$(node "$K/work-dir.mjs" sh "${1:?workDir}") || exit 2
 set -a
-if [ -f "$W/config.env" ]; then . "$W/config.env"; fi
+eval "$env_lines"
 set +a
-exec node "$K/supervise.mjs" "$@"
+shift
+exec node "$K/supervise.mjs" "$W" "$@"

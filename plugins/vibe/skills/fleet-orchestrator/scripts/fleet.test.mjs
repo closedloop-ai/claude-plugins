@@ -21,7 +21,8 @@ function fixture(config) {
   mkdirSync(orch);
   mkdirSync(bin);
   if (config !== undefined) writeFileSync(join(orch, 'config.env'), config);
-  writeFileSync(join(bin, 'node'), '#!/usr/bin/env bash\nprintf "arg:%s\\n" "$@"\n');
+  // work-dir.mjs resolves the orchestration dir with the real node; every other node call is recorded.
+  writeFileSync(join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs) exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
   writeFileSync(join(bin, 'ssh'), `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > ${root}/ssh-args\nexec bash -c "\${@: -1}"\n`);
   chmodSync(join(bin, 'node'), 0o755);
   chmodSync(join(bin, 'ssh'), 0o755);

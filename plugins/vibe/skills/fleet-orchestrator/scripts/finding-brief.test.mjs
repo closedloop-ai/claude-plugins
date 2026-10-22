@@ -47,7 +47,7 @@ test('a remote brief copies the screenshots beside the prompt, names them at the
 
   const bin = join(f.root, 'bin');
   mkdirSync(bin);
-  writeFileSync(join(bin, 'node'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+  writeFileSync(join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs) exec ${JSON.stringify(process.execPath)} "$@";; esac\nexit 0\n`, { mode: 0o755 });
   writeFileSync(join(bin, 'ssh'), '#!/usr/bin/env bash\nexec bash -c "${@: -1}"\n', { mode: 0o755 });
   const sent = spawnSync('bash', [FLEET, f.orch, 'remote', 'session', 'turn', 'w2', '--prompt-file', prompt, '--cwd', '/wt'], {
     encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CODEX_EFFORT: 'high' },
