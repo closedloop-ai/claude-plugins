@@ -52,7 +52,10 @@ def test_the_2026_10_22_open_lessons_are_wired() -> None:
     assert "a Sonnet watcher" in skill and "starts an Opus fixer" in skill
     assert "run the full e2e suites on main yourself" in skill
     assert "--skip-ruling" in skill
-    assert "once that PR's ticket, PRD and design rulings show the change was not asked for" in skill
+    assert "once that PR's ticket, PRD and design rulings show the change was not asked for (a requested change is accepted and cited)" in skill
+    assert "One review round per PR (operator ruling) holds only in the delivery phase" in skill
+    assert "--single-review-ruling" in flat((PLUGIN / "skills" / "handoff" / "SKILL.md").read_text())
+    assert "only while an operator's single-review ruling is in force" in flat((PLUGIN / "skills" / "vibe" / "SKILL.md").read_text())
     assert "`prs-ignore.txt` or another program's `prs.txt`" in flat((MONITOR / "SKILL.md").read_text())
     hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())
     commands = [hook["command"] for entry in hooks["hooks"]["PreToolUse"] for hook in entry["hooks"]]

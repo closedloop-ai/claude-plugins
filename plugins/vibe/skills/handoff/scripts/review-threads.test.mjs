@@ -79,9 +79,13 @@ test("the writer's own word, an unverified verdict, a short SHA or a missing res
 test("a later-round thread is answered with the follow-up ticket's link, or why it is invalid, and resolved; never fixed here", () => {
   const later = (extra) => ({ threadId: "T9", commentId: 9, round: "later", ...extra });
   const unresolved = [{ threadId: "T9" }];
-  const followup = checkThreads({ writer: "w", threads: [later({ result: "followup", followupUrl: "https://app.example.test/issues/ISS-2" })] }, unresolved);
+  const ruling = { writer: "w", singleReviewRuling: "operator, 2026-10-22, program rulings" };
+  const followup = checkThreads({ ...ruling, threads: [later({ result: "followup", followupUrl: "https://app.example.test/issues/ISS-2" })] }, unresolved);
   assert.deepEqual([followup.ok, followup.resolve, followup.replyOnly], [true, ["T9"], []]);
-  assert.deepEqual(checkThreads({ writer: "w", threads: [later({ result: "invalid", reason: "already covered by AC-3" })] }, unresolved).resolve, ["T9"]);
-  assert.match(checkThreads({ writer: "w", threads: [later({ result: "followup" })] }, unresolved).problems.join(), /follow-up ticket's link/);
-  assert.match(checkThreads({ writer: "w", threads: [later({ result: "fixed", fixingCommit: "a".repeat(40) })] }, unresolved).problems.join(), /never fixed in this pull request/);
+  assert.deepEqual(checkThreads({ ...ruling, threads: [later({ result: "invalid", reason: "already covered by AC-3" })] }, unresolved).resolve, ["T9"]);
+  assert.match(checkThreads({ ...ruling, threads: [later({ result: "followup" })] }, unresolved).problems.join(), /follow-up ticket's link/);
+  assert.match(checkThreads({ ...ruling, threads: [later({ result: "fixed", fixingCommit: "a".repeat(40) })] }, unresolved).problems.join(), /never fixed in this pull request/);
+  const retired = checkThreads({ writer: "w", threads: [later({ result: "followup", followupUrl: "https://app.example.test/issues/ISS-2" })] }, unresolved);
+  assert.equal(retired.ok, false, "after core work the single round is retired, so a later round is fixed here");
+  assert.match(retired.problems.join(), /single-review ruling is in force/);
 });

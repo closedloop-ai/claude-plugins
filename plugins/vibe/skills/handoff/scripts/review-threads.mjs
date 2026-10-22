@@ -12,7 +12,10 @@
 // raised after the round-one fixes were pushed (`"round": "later"`) is never
 // fixed in it; its result is `followup` (`followupUrl`, the pull request's one
 // follow-up ticket, from review-followup.mjs) or `invalid` (`reason`), and it
-// is resolved after that reply, so it never blocks the merge.
+// is resolved after that reply, so it never blocks the merge. That holds only
+// during the delivery phase: once the program's core work is done the ruling
+// is retired (operator, 2026-10-22) and every valid finding is fixed here, so
+// a `later` result needs `singleReviewRuling` (the ruling in force) in results.json.
 //
 // Usage:
 //   review-threads.mjs resolve --results <results.json> --threads <threads.json> [--gh <gh CLI>]
@@ -21,7 +24,7 @@
 //   "result": "fixed"|"partial"|"reason", "fixingCommit", "remaining", "reason",
 //   "round": "later" with "result": "followup"|"invalid" and "followupUrl" or "reason",
 //   "verification": {"by", "verdict": "verified"|"not-verified", "evidence"},
-//   "flagGated", "flagOffEqualsMain": "test:<path>"|"missing-test:<entry>"}]}
+//   "flagGated", "flagOffEqualsMain": "test:<path>"|"missing-test:<entry>"}], "singleReviewRuling"}
 // threads.json: the environment worker's `reviewThreads: read` list.
 // Prints {"ok", "resolved", "replyOnly", "problems"}; exits 1 on any problem.
 
@@ -51,6 +54,9 @@ export function checkThreads(results, unresolved) {
       continue;
     }
     const found = problemsFor(thread, writer);
+    if (thread.round === "later" && !text(results.singleReviewRuling)) {
+      found.push("a later round is deferred only while the single-review ruling is in force (singleReviewRuling); after core work, fix it here");
+    }
     problems.push(...found.map((problem) => `${id}: ${problem}`));
     if (!found.length) (thread.result === "fixed" || thread.round === "later" ? resolve : replyOnly).push(id);
   }

@@ -905,7 +905,8 @@ every two minutes and stops on a conflict (merge main at once in final-merge
 mode, push, run it again), failed checks (the SAME writer fixes them), an
 unresolved round-one review thread the writer has not answered last (armed
 auto-merge is not done), a later-round thread (pass `--round-one-fixed-at`
-once round one is pushed; triage it into the one follow-up ticket with
+and `--single-review-ruling` once round one is pushed, only while that ruling
+is in force; triage it into the one follow-up ticket with
 `../vibe/scripts/review-followup.mjs`, reply with its link or why it is
 invalid, and resolve it with `review-threads.mjs`, round `later`), a merge or
 a close.

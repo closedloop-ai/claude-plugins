@@ -29,7 +29,11 @@ test("a second later round reuses the recorded ticket and a second ticket is ref
   git(root, ["init", "--quiet", "--initial-branch=main", worktree], home);
   const findings = path.join(root, "findings.json");
   writeFileSync(findings, JSON.stringify(ROUND_TWO));
-  const plan = (...extra) => runNode(SCRIPT, ["plan", "--worktree", worktree, "--pr", "9118", "--pr-ticket", "ISS-1", "--findings", findings, ...extra], home);
+  const base = ["plan", "--worktree", worktree, "--pr", "9118", "--pr-ticket", "ISS-1", "--findings", findings];
+  const retired = runNode(SCRIPT, base, home);
+  assert.equal(retired.status, 1, "after core work the single round is retired: no follow-up ticket without the ruling in force");
+  assert.match(retired.json.error, /--single-review-ruling/);
+  const plan = (...extra) => runNode(SCRIPT, [...base, "--single-review-ruling", "operator, 2026-10-22, program rulings", ...extra], home);
   assert.equal(plan().json.action, "create");
   assert.equal(runNode(SCRIPT, ["record", "--worktree", worktree, "--pr", "9118", "--slug", "ISS-2"], home).status, 0);
   writeFileSync(findings, JSON.stringify(ROUND_THREE));

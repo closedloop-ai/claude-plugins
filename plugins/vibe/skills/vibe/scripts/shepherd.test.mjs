@@ -67,7 +67,11 @@ test("the command reads the pull request through gh and exits with the event's c
   writeFileSync(path.join(dir, "threads.json"), JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: [
     thread("review-bot", "review-bot", "2026-10-22T10:30:00Z"),
   ] } } } } }));
-  const roundTwo = spawnSync(process.execPath, [SCRIPT, "--pr", "42", "--repo", "o/r", "--interval-seconds", "0", "--max-polls", "1", "--round-one-fixed-at", "2026-10-22T10:00:00Z"], { encoding: "utf8", env });
+  const roundTwoArgs = [SCRIPT, "--pr", "42", "--repo", "o/r", "--interval-seconds", "0", "--max-polls", "1", "--round-one-fixed-at", "2026-10-22T10:00:00Z"];
+  const retired = spawnSync(process.execPath, roundTwoArgs, { encoding: "utf8", env });
+  assert.equal(retired.status, 64, "after core work the single round is retired: a later round needs the ruling in force");
+  assert.match(JSON.parse(retired.stdout).error, /--single-review-ruling/);
+  const roundTwo = spawnSync(process.execPath, [...roundTwoArgs, "--single-review-ruling", "operator, 2026-10-22, program rulings"], { encoding: "utf8", env });
   assert.equal(roundTwo.status, EXIT["later-threads"]);
   assert.deepEqual(JSON.parse(roundTwo.stdout), { event: "later-threads", head: "abc", unresolved: 1 });
   assert.equal(shepherdRun().status, EXIT.threads, "without a round-one fix push every thread is round one");

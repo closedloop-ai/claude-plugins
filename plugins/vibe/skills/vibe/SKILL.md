@@ -409,7 +409,9 @@ Only after the person chose resume, run `node scripts/vibe-sessions.mjs list`
   - the fixes are pushed to the same branch (never forced);
   - the pull request body is refreshed from the session record;
   - each review thread is answered with the fixing commit and resolved once
-    fixed, in round one. One review round per pull request: a thread raised
+    fixed, in round one. One review round per pull request, only while an
+    operator's single-review ruling is in force (otherwise every valid thread
+    is fixed, every round): a thread raised
     after the round-one fixes are pushed is never fixed in it; a valid one
     becomes a criterion on the pull request's one follow-up ticket
     (`scripts/review-followup.mjs`), and the thread gets that ticket's link

@@ -11,9 +11,13 @@
 // fixed here; a later one is triaged, never fixed here and never a merge
 // blocker: a valid finding joins the pull request's one follow-up ticket
 // (review-followup.mjs), the thread gets a reply with that ticket's link or
-// why it is invalid, and is resolved.
+// why it is invalid, and is resolved. The single round holds only during the
+// delivery phase: once the program's core work is done the ruling is retired
+// (operator, 2026-10-22) and every valid finding is fixed in its pull request,
+// every round. So `--round-one-fixed-at` needs `--single-review-ruling <the
+// ruling in force>`; without it every thread is fixed here.
 //
-// Usage: shepherd.mjs --pr <number> --repo <owner/repo> [--round-one-fixed-at <iso time of the round-one fix push>] [--interval-seconds 120] [--max-polls <n>]
+// Usage: shepherd.mjs --pr <number> --repo <owner/repo> [--round-one-fixed-at <iso time> --single-review-ruling "<who, date, where>"] [--interval-seconds 120] [--max-polls <n>]
 //
 // Prints one JSON object when it stops:
 //   {"event":"merged"}                         exit 0
@@ -92,10 +96,14 @@ function readPr(pr, repo, roundOneFixedAt) {
 
 async function main() {
   const { values } = parseArgs({
-    options: { pr: { type: "string" }, repo: { type: "string" }, "interval-seconds": { type: "string" }, "max-polls": { type: "string" }, "round-one-fixed-at": { type: "string" } },
+    options: { pr: { type: "string" }, repo: { type: "string" }, "interval-seconds": { type: "string" }, "max-polls": { type: "string" }, "round-one-fixed-at": { type: "string" }, "single-review-ruling": { type: "string" } },
   });
   if (!/^\d+$/.test(values.pr ?? "") || !/^[\w.-]+\/[\w.-]+$/.test(values.repo ?? "") || (values["round-one-fixed-at"] !== undefined && !Number.isFinite(Date.parse(values["round-one-fixed-at"])))) {
     process.stdout.write(`${JSON.stringify({ event: "usage", error: "--pr <number> and --repo <owner/repo> are required" })}\n`);
+    process.exit(64);
+  }
+  if (values["round-one-fixed-at"] !== undefined && !values["single-review-ruling"]?.trim()) {
+    process.stdout.write(`${JSON.stringify({ event: "usage", error: "--round-one-fixed-at needs --single-review-ruling: after core work every valid finding is fixed here, every round" })}\n`);
     process.exit(64);
   }
   const interval = Number(values["interval-seconds"] ?? 120);

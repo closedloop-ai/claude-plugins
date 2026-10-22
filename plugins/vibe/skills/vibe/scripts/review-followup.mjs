@@ -5,9 +5,13 @@
 // follow-up ticket for that pull request. Later rounds append criteria to the
 // same ticket (a new document version), never a second ticket; each thread is
 // then answered with the ticket's link (or why it is invalid) and resolved.
+// The single round holds only during the delivery phase; once the program's
+// core work is done the ruling is retired (operator, 2026-10-22) and every
+// valid finding is fixed in its pull request, so `plan` needs
+// `--single-review-ruling <the ruling in force>`.
 //
 // Usage:
-//   review-followup.mjs plan   --worktree <path> --pr <n> --pr-ticket <slug> --findings <findings.json> [--found <search.json>]
+//   review-followup.mjs plan   --worktree <path> --pr <n> --pr-ticket <slug> --findings <findings.json> --single-review-ruling "<who, date, where>" [--found <search.json>]
 //   review-followup.mjs record --worktree <path> --pr <n> --slug <ticket slug>
 //
 // findings.json: [{"thread": "<thread url or id>", "finding": "<one checkable line>"}], the valid ones only.
@@ -63,7 +67,7 @@ function readRecords(worktree) {
 function main(argv) {
   const [command, ...rest] = argv;
   const { values } = parseArgs({ args: rest, options: {
-    worktree: { type: "string" }, pr: { type: "string" }, "pr-ticket": { type: "string" }, findings: { type: "string" }, found: { type: "string" }, slug: { type: "string" },
+    worktree: { type: "string" }, pr: { type: "string" }, "pr-ticket": { type: "string" }, findings: { type: "string" }, found: { type: "string" }, slug: { type: "string" }, "single-review-ruling": { type: "string" },
   } });
   if (!values.worktree || !/^\d+$/.test(values.pr ?? "")) {
     throw new Error("--worktree and --pr <number> are required");
@@ -71,6 +75,7 @@ function main(argv) {
   const records = readRecords(values.worktree);
   if (command === "plan") {
     if (!values["pr-ticket"] || !values.findings) throw new Error("plan needs --pr-ticket and --findings");
+    if (!values["single-review-ruling"]?.trim()) throw new Error("plan needs --single-review-ruling: after core work every valid finding is fixed in its pull request, every round, with no follow-up ticket");
     return planFollowup({
       recorded: records[values.pr]?.slug,
       found: values.found ? JSON.parse(readFileSync(values.found, "utf8")) : [],

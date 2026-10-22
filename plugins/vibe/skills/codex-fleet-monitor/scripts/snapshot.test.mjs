@@ -177,12 +177,16 @@ test('the watch set adds open PRs on any branch prefix and drops a merged PR aft
   assert.doesNotMatch(f.run('ok'), /#42 /, 'and then it leaves the watch set');
 });
 
-test('a PR another chat owns is never added: prs-ignore.txt, or another program in the same fleet home (#9058)', TIMEOUT, () => {
+test('a PR another chat owns is never added or reported: prs-ignore.txt, or another program in the same fleet home (#9058)', TIMEOUT, () => {
   const f = fixture();
-  writeFileSync(join(f.work, 'prs.txt'), '');
+  const ago = new Date(Date.now() - 100 * 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  writeFileSync(join(f.work, 'prs.txt'), 'acme/app 9058 their-writer\n');
+  writeFileSync(join(f.root, 'view-9058'), 'OPEN abcdef12 REVIEW_REQUIRED CONFLICTING\n');
+  writeFileSync(join(f.root, 'push-9058'), `false ${ago}\n`);
   writeFileSync(join(f.root, 'mine'), '9058\n9149\n');
   writeFileSync(join(f.work, 'prs-ignore.txt'), 'acme/app 9058\n');
-  f.run('ok');
+  const out = f.run('ok');
+  assert.doesNotMatch(out, /#9058 /, 'an ignored PR is never reported, so never STALE-PR, even when listed by hand');
   const watched = readFileSync(join(f.work, 'prs.txt'), 'utf8');
   assert.doesNotMatch(watched, /^acme\/app 9058$/m);
   assert.match(watched, /^acme\/app 9149$/m);
