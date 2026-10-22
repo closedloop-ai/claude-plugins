@@ -510,9 +510,9 @@ has them and otherwise as the design pack's best-practice review
 "What it checks"), logical QA (`/logical-qa`, `$logical-qa`) for a data or metric
 surface, then product-contract QA (`/metal-andrew`, `$metal-andrew`) once that
 evidence is visible. Each skill dispatches its own read-only agents. Confirmed
-findings on a touched surface resume the SAME writer in fix mode even when they
-predate the branch, already exist on main or were called the component owner's
-decision; approved copy is reused and unsourced wording is escalated. Then
+findings resume the SAME writer in fix mode for every touched surface, even when
+they predate the branch, already exist on main or were called the component
+owner's decision; approved copy is reused and unsourced wording is escalated. Then
 steps 3 to 6 run again on the result. Their reports feed the Design Review evidence in step 8. Owned
 prototype sessions keep their canonical single design review instead.
 

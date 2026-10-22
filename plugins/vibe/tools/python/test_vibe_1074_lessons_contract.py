@@ -136,4 +136,4 @@ def test_visual_findings_on_touched_surfaces_are_required_fixes() -> None:
     fleet = _text(FLEET / "SKILL.md")
     handoff = _text(HANDOFF / "SKILL.md")
     assert "visual-QA finding on a surface the change touches is a required fix" in fleet
-    assert "findings on a touched surface resume the SAME writer" in handoff
+    assert "findings resume the SAME writer in fix mode for every touched surface" in handoff
