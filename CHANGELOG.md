@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.14.0
+
+#### Added
+- `.closedloop-ai/settings/code-review.json` accepts `domain_critic_cap`, the number of domain critics that may spawn across the required and best-effort buckets combined (default 3; `source: "core"` reviewers stay exempt). `0` is a kill switch; invalid entries fall back to the default. `arbitrate-budget --domain-critic-cap` overrides it per run, and takes precedence over the settings file.
+
+#### Fixed
+- On a PR review, `domain_critic_cap` is read from the settings file as committed on `origin/<base_ref>` rather than from the checked-out head. The reviewed tree is contributor-authored, so a head-only copy could set the budget deciding which reviewers inspect that same diff — `domain_critic_cap: 0` suppressed every rule and critic reviewer, and because cap drops emit no coverage gap, nothing downstream reported the absent coverage. A cap the operator committed on the base branch still applies; one present only on the head is ignored, and off a PR the working tree is read as before. `bha_unified_threshold_loc` and `out_of_hunk_confidence_floor` are still read from the working tree on every run.
+- `domain_critic_cap` is clamped to the budget headroom left after BHA partitions and the non-critic required core are reserved. Above that headroom the surplus critics were selected and then dropped as `budget_exceeded` coverage gaps carrying `required: True`, which canonical verdict Rule 1 turns into CHANGES_REQUESTED — so raising the cap flipped the verdict on a run that would otherwise have been APPROVED. The surplus now defers under `defer_reason: "domain_critic_cap"`, and `budget.domain_critic_cap` reports the cap that actually governed selection.
+- `README.md` and `commands/start.md` no longer state that required critics dropped by the domain-critic cap emit coverage-gap findings. They have not since cap drops began reporting only through `deferred_for_budget`, so an operator lowering the cap was pointed at a safety signal that never appears. Both now also record the cap's effective ceiling and the base-ref trust anchor.
+
 ### code-review v3.13.0
 
 #### Fixed
