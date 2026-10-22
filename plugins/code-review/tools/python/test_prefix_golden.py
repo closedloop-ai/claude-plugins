@@ -16,19 +16,27 @@ to survive human review of the committed golden.
 
 from __future__ import annotations
 
+import argparse
 import difflib
+import os
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from prefix_golden_harness import (
     PREFIX_ARTIFACTS,
     PRE_SINGLETON_STOP_STAGE,
+    PrefixContext,
     PrefixFixture,
     PrefixRun,
+    _build_cli_parser,
+    _execute_stage,
+    _execute_stage_subprocess,
     cache_hit_fixture,
     coverage_critic_fixture,
+    deleted_file_fixture,
     empty_diff_fixture,
     fast_path_fixture,
     hygiene_only_fixture,
@@ -51,6 +59,7 @@ _FIXTURE_FACTORIES: dict[str, Callable[[], PrefixFixture]] = {
     "golden_prefix_cache_hit": cache_hit_fixture,
     "golden_prefix_since_last_review": since_last_review_fixture,
     "golden_prefix_coverage_critic": coverage_critic_fixture,
+    "golden_prefix_deleted_file": deleted_file_fixture,
 }
 
 _ALL_FIXTURES = list(_FIXTURE_FACTORIES)
@@ -62,6 +71,104 @@ def _expected_dir(name: str) -> Path:
 
 def _statuses(run: PrefixRun) -> dict[str, str]:
     return {r.stage_id: r.status for r in run.results}
+
+
+# ---------------------------------------------------------------------------
+# Review-root refusal (exit 3) overrides on_failure in BOTH harness walkers
+# ---------------------------------------------------------------------------
+#
+# Production's ``_execute_stage_inprocess`` aborts on exit 3 regardless of the
+# stage's ``on_failure``. The fixture matrix above only walks provable roots, so
+# without these a walker that continued past a wrong-worktree refusal would
+# still claim parity with production.
+
+
+def _review_root_refusal_stage(cr_dir: Path) -> dict[str, Any]:
+    """stage_19b as stages.json declares it (``on_failure: continue``), aimed at
+    a cr_dir with no scope.json, so the real review-root guard exits 3."""
+    return {
+        "id": "stage_19b_derive_spawn_spec",
+        "kind": "helper",
+        "subcommand": "derive-spawn-spec",
+        "args": [
+            "--cr-dir", str(cr_dir), "--partitions", str(cr_dir / "partitions.json"),
+        ],
+        "stdout": None,
+        "expected_outputs": [str(cr_dir / "spawn.json")],
+        "depends_on": [],
+        "on_failure": "continue",
+        "enabled": True,
+    }
+
+
+def test_inprocess_walker_aborts_on_review_root_refusal(tmp_path: Path) -> None:
+    cr_dir = tmp_path / "cr"
+    cr_dir.mkdir()
+
+    with pytest.raises(AssertionError, match=r"rc=3"):
+        _execute_stage(
+            _review_root_refusal_stage(cr_dir),
+            PrefixContext(cr_dir=cr_dir, flags={}),
+            _build_cli_parser(),
+            set(),
+        )
+
+
+def test_inprocess_walker_still_continues_other_failures(tmp_path: Path) -> None:
+    # Sibling: the override is scoped to exit 3, so an ordinary non-zero exit on
+    # the same continue stage must still degrade rather than abort.
+    cr_dir = tmp_path / "cr"
+    cr_dir.mkdir()
+    parser = argparse.ArgumentParser()
+    stub = parser.add_subparsers(dest="command", required=True).add_parser(
+        "derive-spawn-spec",
+    )
+    stub.add_argument("--cr-dir")
+    stub.add_argument("--partitions")
+    stub.set_defaults(func=lambda _ns: 1)
+
+    result = _execute_stage(
+        _review_root_refusal_stage(cr_dir),
+        PrefixContext(cr_dir=cr_dir, flags={}),
+        parser,
+        set(),
+    )
+
+    assert result.status == "failed_continue"
+    assert result.returncode == 1
+
+
+def test_subprocess_walker_aborts_on_review_root_refusal(tmp_path: Path) -> None:
+    cr_dir = tmp_path / "cr"
+    cr_dir.mkdir()
+
+    with pytest.raises(AssertionError, match=r"rc=3"):
+        _execute_stage_subprocess(
+            _review_root_refusal_stage(cr_dir),
+            PrefixContext(cr_dir=cr_dir, flags={}),
+            tmp_path,
+            dict(os.environ),
+            set(),
+        )
+
+
+def test_subprocess_walker_still_continues_other_failures(tmp_path: Path) -> None:
+    # Sibling: an argparse rejection exits 2, which must still degrade.
+    cr_dir = tmp_path / "cr"
+    cr_dir.mkdir()
+    stage = _review_root_refusal_stage(cr_dir)
+    stage["args"] = [*stage["args"], "--no-such-flag"]
+
+    result = _execute_stage_subprocess(
+        stage,
+        PrefixContext(cr_dir=cr_dir, flags={}),
+        tmp_path,
+        dict(os.environ),
+        set(),
+    )
+
+    assert result.status == "failed_continue"
+    assert result.returncode == 2
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +258,23 @@ def test_coverage_critic_singleton_consolidates(tmp_path: Path) -> None:
     assert '"source": "critic"' in coverage
     assert "agent_coverage-critic-failed.json" not in run.all_artifacts
     assert "security-critic" in run.snapshots["available_reviewers.json"]
+
+
+def test_deleted_file_yields_zero_bha_partitions(tmp_path: Path) -> None:
+    """ISS-12737: a delete-only diff partitions nothing, skips BHA with
+    ``no_partitions``, and still spawns the cross-file reviewers."""
+    run = run_prefix_fixture(tmp_path, deleted_file_fixture())
+    statuses = _statuses(run)
+    assert statuses.get("stage_17_partition") == "ran"
+    assert statuses.get("stage_19b_derive_spawn_spec") == "ran"
+    assert '"src/legacy.py": "removed"' in run.snapshots["diff_data.json"]
+    partitions = run.snapshots["partitions.json"]
+    assert '"partitions": []' in partitions
+    assert '"total_changed_loc": 0' in partitions
+    spawn = run.snapshots["spawn.json"]
+    assert '"reason": "no_partitions"' in spawn
+    assert '"agent_id": "bhb"' in spawn
+    assert '"agent_id": "bha_p' not in spawn
 
 
 def test_since_last_review_overrides_diff_scope(tmp_path: Path) -> None:
@@ -284,6 +408,9 @@ _EXPECTED_SEGMENTS: dict[str, list[str]] = {
         "needs_singleton:extract_signals",
         "needs_singleton:coverage_critic",
         "ready_for_reviewers",
+    ],
+    "golden_prefix_deleted_file": [
+        "needs_singleton:extract_signals", "ready_for_reviewers",
     ],
 }
 

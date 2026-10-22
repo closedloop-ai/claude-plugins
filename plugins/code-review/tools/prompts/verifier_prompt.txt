@@ -22,7 +22,8 @@ The input file is JSON with shape:
     "finding": { ... canonical finding ... },
     "verifier_prompt_path": "<this file>",
     "output_path": "<where to write your verdict>",
-    "review_root": "<absolute dir to read source from, or empty string>"
+    "review_root": "<absolute dir to read source from — always populated>",
+    "patches_path": "<full-diff patch file — present only when finding.out_of_diff is true, or when the finding or an evidence[] entry cites a file this diff deleted outright>"
   }
 
 Read the input file. The `finding` field contains the full canonical
@@ -38,18 +39,23 @@ output_path).
 
 Every file path in the finding (`finding.file`, each `finding.evidence[].file`,
 each `finding.external_impact[].file`) is **repo-relative**. Resolve them
-against `review_root` from the input file:
+against `review_root` from the input file. It is an absolute path and is
+ALWAYS populated:
 
-  - **`review_root` is a non-empty path** (local PR review where the PR head
-    is checked out into a worktree, because the operator is on a different
-    branch): read every repo-relative source path as
-    `<review_root>/<finding.file>`, and pass `path: "<review_root>"` to Grep
-    and Glob so your searches scope to the code under review — NOT the
-    operator's working tree, which holds different content. Reading the
-    working tree here would make the snippet vanish and you would wrongly
-    REJECT on `evidence_not_found`.
-  - **`review_root` is empty or absent** (the normal case): read repo-relative
-    paths as-is from the current working directory.
+  - Read every repo-relative source path as `<review_root>/<finding.file>`,
+    and pass `path: "<review_root>"` to Grep and Glob so your searches scope
+    to the code under review — NOT your current working directory, which is
+    the invoking session's checkout and on any worktree-based run holds
+    different content. Reading it would make the snippet vanish and you would
+    wrongly REJECT on `evidence_not_found`. If you already resolved anything
+    elsewhere, discard it and re-read it under `review_root`.
+  - **If `review_root` is empty, absent, or does not exist**: STOP. Write your
+    output with verdict `TENTATIVE` (the closed-vocabulary "could not settle
+    it" verdict — an invented one is discarded by consolidation), give the
+    reason as the missing review root, and say so in your final message. Do
+    NOT verify against the working directory instead: a REJECTED verdict
+    reached because the snippet was absent from the wrong tree is worse than
+    no verdict.
 
 This only changes WHERE you read; it does not change the verdict logic or the
 shape of your output. Do not rewrite paths in your output — `evidence_checks[]`
@@ -151,9 +157,12 @@ Look at `finding.file` and `finding.line`. Read the file. Compare
       multiline snippet text). A hash match wins regardless of line drift.
 
 If `finding.code_snippet` is multiline, hash the full multiline text
-verbatim and compare against the stored hash. If the finding targets a
-removed line (the snippet is no longer present at HEAD), look at the
-pre-change content via the patch hunks.
+verbatim and compare against the stored hash. If `finding.file` was
+deleted outright by this diff (it no longer exists under `<review_root>`
+and its patch shows `deleted file mode`), `finding.line` is numbered in
+the old file: look at the pre-change content via that file's patch
+hunks in `patches_path`. On a file that still exists, `finding.line` is a new-file line;
+do not match it against removed lines.
 
   - NO match anywhere AND no snippet_hash match → REJECTED,
     `rejection_class: "evidence_not_found"`.
@@ -166,13 +175,48 @@ pre-change content via the patch hunks.
 For each entry in `finding.evidence[]`:
   - If the entry has a `snippet_hash`, hash-match wins.
   - Else, read the cited `file:line ± 20` and verify the content matches
-    what the entry claims.
+    what the entry claims. For a file this diff deleted outright, read
+    the old content from its patch hunks in `patches_path` instead
+    (old-file numbering).
 
   - Any one entry whose content contradicts what's actually at the cited
     location → REJECTED, `rejection_class: "evidence_contradicted"`.
   - One entry can't be read (file missing, etc.) AND another verifies →
     TENTATIVE.
   - All entries verify (or evidence[] is empty) → continue.
+
+### 2b. CAUSATION CHECK (only when `finding.out_of_diff == true`)
+
+The finding points at a file outside the diff. The validator kept it
+without asking whether this change caused it; you are the only causation
+check. Skip this step for every other finding.
+
+  1. **Find the causing change.** Read the patch at `patches_path` (fall
+     back to `<review_root>` and the diff files in `finding.evidence[]`
+     when it is missing) and find the change — an added, modified or
+     deleted line — that the finding's problem follows from: a renamed or
+     deleted symbol, a changed signature or contract, a removed file, a
+     changed default. Search the patch yourself: Grep `patches_path` for
+     each identifier, path or string the cited code depends on, and page
+     through the whole file with Read `offset`/`limit` — one Read call
+     returns only the first ~2000 lines. A missing `evidence[]` citation
+     of the diff line is NOT a reason to reject; reviewers often omit it.
+  2. **Confirm the dependency.** Read the cited code at `finding.file:line`
+     and confirm it depends on that change (imports, calls, mocks,
+     describes, or configures the thing that changed).
+  3. **Verdict.**
+     - Causing change found and the dependency holds → continue with the
+       remaining checks. Record the causing `file:line` in
+       `evidence_checks[]` (claim = "caused by change at <file:line>").
+     - You read the whole patch and no change in it touches what the cited
+       code depends on (the problem is pre-existing or unrelated) →
+       REJECTED, `rejection_class: "not_caused_by_diff"`. The
+       `evidence_checks[]` entry must state what the cited code depends on
+       and what the patch actually changes, so the rejection rests on what
+       you read, not on a missing citation.
+     - The patch could not be read, or was read only in part (a
+       truncated Read you did not page past, a search you could not
+       run), or the link is plausible but unproven → TENTATIVE.
 
 ### 3. GUARD CHECK
 
@@ -252,12 +296,14 @@ identification step failed → REJECTED,
 ### Per-entry callsite audit
 
 This audit is substrate-agnostic: it verifies EVERY entry the same way
-whether the reviewer found it via grep or via the knowledge graph
+whether the reviewer found it via grep or via a code-intelligence
+substrate
 (`external_impact[i].discovery` ∈ {`"grep"`, `"graph"`}, default
 `"grep"`). Reading the cited file:line and content-matching the snippet
-is the canonical proof — a `discovery: "graph"` entry (an alias,
-re-export, or dynamic-dispatch caller grep cannot surface) is verified
-HERE, not in the grep replay below.
+is the canonical proof — a `discovery: "graph"` entry (a caller the
+replay cannot reproduce: an alias, re-export or dynamic-dispatch caller
+grep cannot surface, or any caller found in a session with no
+text-search tool) is verified HERE, not in the grep replay below.
 
 For EACH entry in `finding.external_impact[]`:
 
@@ -373,7 +419,7 @@ shape is:
       "source": "<file:line, or 'grep across repo'>"
     }
   ],
-  "rejection_class": "evidence_not_found" | "evidence_contradicted" | "guard_exists" | "unreachable" | null
+  "rejection_class": "evidence_not_found" | "evidence_contradicted" | "guard_exists" | "unreachable" | "not_caused_by_diff" | null
 }
 ```
 
@@ -385,7 +431,8 @@ Rules:
   - **TENTATIVE**: `verifier_severity` is null. `rejection_class` is null.
     Use this when ambiguity remains after checks 1–5.
   - **REJECTED**: `verifier_severity` is null. `rejection_class` is one of
-    the four enumerated classes. At least one `evidence_checks[]` entry
+    the five enumerated classes (`not_caused_by_diff` only for
+    `out_of_diff` findings). At least one `evidence_checks[]` entry
     must have `verified: false` with a concrete `actual_read`.
   - **JUSTIFIED-VALID** (PLN-721): the author's justification passed both
     J1 (existence) and J2 (responsiveness). `verifier_severity` is null.

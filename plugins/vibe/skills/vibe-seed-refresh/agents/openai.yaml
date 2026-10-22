@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vibe Seed Refresh"
+  short_description: "Keep the vibe seed in step with main and ship the fix"
+  default_prompt: "Use $vibe-seed-refresh to check the vibe seed against main and fix any drift."

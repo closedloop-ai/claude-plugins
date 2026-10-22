@@ -4,6 +4,1431 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.74
+
+Signal safety after a plugin test ended every process on an operator's machine, the open 2026-10-21 fleet lessons, and Storybook guard rules found by the 2026-10-21 audit (#8953, #8959, #8960, #8962, #8963, #8980). Each lesson has a mechanical check where one fits.
+
+#### Fixed
+- `helpers.mjs stopped` no longer signals a process group it does not own. A test recorded pid 1 and stopped it; `endProcesses` sent `kill(-1)`, which signals every process the user owns, twice. Pids of 1 or lower are refused at record time and never signalled, nor is the stopper's own pid or its parent. A whole group is signalled only for a pid recorded with `--group` whose process group id still equals the pid; any other pid is signalled alone. A pid the system reports as not ours (EPERM) is never signalled and does not block `stopped`. `pid` records each process's start time and command, and every signal re-reads them first: a reused pid (even one of the user's own apps, which launchd makes a group leader), a changed or unreadable identity, or an older record without one is never signalled. `endProcesses` takes an injected `kill`, so its tests check every decision without a real signal.
+- Every group signal in the plugin (`run-bounded.mjs`, `precedent-check.mjs`, the vibe-workers ledger and Claude worker, and their tests) checks the pid above 1 first. The dist bundles are rebuilt.
+- `native-app-server-orchestrator.mjs turn-start` on a record left RUNNING while its thread is idle with no active turn reconciles against the thread first (`reconcileSession`) and then starts the turn; a thread with a turn in progress is still refused.
+
+#### Added
+- `test_vibe_signal_safety_contract.py`: no plugin test passes 0, 1, a negative literal, its own pid or its parent's pid to a call that sends a signal, writes one into a `pids` ledger, or calls `endProcesses` without an injected `kill`; no plugin source signals a group (`process.kill(-x)`, `kill(-x)`, `kill -- -x`) unless `x` is checked above 1 just before.
+- fleet-orchestrator: `board.mjs` keeps the fleet board every writer reads, flags rows behind the pushed head, and tracks rulings (saved once as a reference file) and ready QA checkpoints until each writer and QA guide is told directly; writers message each other (Codex through the app-server orchestrator's send, Claude through SendMessage).
+- fleet-orchestrator: `qa-plan-check.mjs` makes zero human checkpoints the default and refuses a human checkpoint without a reason an agent cannot cover, a visual judgment included (agents compare screenshots with the reference). `helpers.mjs` records the processes a helper starts (`pid`), ends them on `stopped`, lists `ORPHAN` helpers, and keeps a stack handed to a QA guide (`hand`, `unhand`) from QA reruns.
+- codex-fleet-monitor: `watch.sh` writes `watcher.json` and `watcher.mjs` reports a lapsed watcher; the supervisor template restarts with bootout then bootstrap, never kickstart, and respawns after 30 seconds.
+- vibe: `push-cadence.mjs` and `pushDue` on every commit (a tested checkpoint is pushed at least every 90 minutes); `shepherd.mjs` polls a pull request every two minutes in the final stage and stops on a conflict; `main-sync-push` refuses a migration that sorts before main's newest (`migration-order.mjs`); `e2e-lock.mjs` gives each run its own compose project and honors `--foreign-compose`; `precedent-check.mjs` requires code evidence, never accepts public material, and makes each disputed behavior a required checklist item.
+- Publication main-sync resolves generator-owner versions from the target repository's pnpm catalog or installed package instead of plugin-pinned Next, Prisma, Fumadocs, Geist and Husky versions. A package upgrade no longer makes every affected publish return `NEEDS_CHANGE`; the rebuilt bundle and a different-version catalog fixture guard the boundary.
+- handoff: a repository can declare gates required when paths match (`.vibe/path-gates.json`); each matching gate is a required run on the published commit.
+- handoff: `criteria-audit.mjs` needs a fresh-context MET/PARTIAL/MISSED audit of every acceptance criterion on the final head and a criteria x surface x input x flag matrix with evidence in every cell, while `rulings-check.mjs` fails until every ruling is on the ticket with the criteria it amends.
+- handoff diff rules: a new sort comparator needs a recorded tie test that exists, and a new export no other file uses blocks unless recorded. A changed UI component two or more hosts import requires every covering test and story, with flag-on and flag-off evidence when applicable.
+- fleet-orchestrator: `finding-brief.mjs` refuses findings without reproducible evidence, and `status-audit.mjs` fails when an in-scope PRD child's status disagrees with its pull-request or writer evidence, or when unfinished work has no owner.
+- fleet-orchestrator: program rulings live in one sourced file mirrored to every worker host and are reconciled by `rulings-check.mjs` before audits; operator-away decisions stay on an attention list and idle watcher lines include their final message plus `NEEDS-REPLY`; high Claude usage moves remaining work to Codex; `review-page-check.mjs` enforces stable typed IDs; touched-surface VQA findings block handoff without a fixing SHA or follow-up ticket. Guard fixtures remain generic and carry no real ticket-shaped values.
+- Product questions use one ordered research list: feasibility in code, sourced requirements and live decisions, recorded product direction, the approved prototype, then live Asana in the operator's signed-in browser. Settled decisions are not asked again; narrow-layout precedent records both obstructed and cleared states. Public help centers are never precedent evidence; fleet writers return unresolved browser work to the orchestrator.
+- `story-play-verdict.mjs` judges Storybook plays from recorded channel events and reports PASS only when completion was observed without an exception or error event; `storyFinished` status is never trusted.
+- handoff diff rules: `storybook-rules.mjs` reads the repository's `.vibe/storybook-rules.json` and enforces declared Storybook release levels and history, frozen roots, real edit handlers, canonical table cells, controls decisions, lifecycle tag roots, literal list-control options, and reuse of source components. The options rule applies only to select, radio, and check controls, and frozen files are restored rather than edited. Repositories without a declaration run none of these rules.
+- The Storybook declaration's `checks` become required tests whenever a story file or listed path changes, and `skills/handoff/references/storybook-rules.example.json` provides symphony-alpha's declaration.
+
+### code v2.0.1
+
+#### Changed
+- Phase 1.3 (Simple Mode Evaluation) in `prompts/prompt.md` and `prompts/plan-prompt.md` launches `@code:plan-evaluator` directly. The `judges:eval-cache` skill and its row in the Available Skills table are gone, so a re-entered Phase 1.3 always re-runs the evaluator.
+- `test_install_script.py` expects the four plugins `install.sh` now installs; `hooks/tests/test_spawn_event.sh` uses `code:code-reviewer` as its example `subagent_type`.
+- README no longer lists `code-context.json` in the work directory or names judge workflows as the consumer of `count_tokens.py` and `investigation-log.md`.
+
+### judges (removed)
+
+#### Removed
+- The `judges` plugin (all judge agents, `context-manager-for-judges`, the `run-judges`, `eval-cache` and `artifact-type-tailored-context` skills, `judge-input.schema.json`, and its Python tools and tests) is deleted, and its entry is removed from `.claude-plugin/marketplace.json`.
+- `install.sh` no longer installs or verifies `judges@closedloop-ai`, and its repair instructions no longer name it. An existing install is not uninstalled.
+
+### vibe v1.0.73
+
+The open lessons from the 2026-10-20 and 2026-10-21 ledger entries, with a mechanical check wherever the lesson had a checkable shape.
+
+#### Fixed
+- The route rule requires only the specs that import a helper export reaching the changed endpoint: an export whose declaration names it, or references a constant, function or import that does, followed across re-exports within three files. A route named in a large shared fixture no longer requires every spec importing that fixture (62 specs to 2 on the incident route). Namespace, dynamic and indirect default imports, a helper whose top level runs on load and a file the splitter cannot read fall back to file level, with the reason in the requirement (`route-specs.mjs`, `module-symbols.mjs`).
+- `isRootTest` and the `e2e` evidence lane cover every e2e root, not only `e2e/`; the verify worker searches every e2e root for specs covering a touched screen.
+- In a shallow clone the restored-removal rule deepens the history in steps (`--deepen=1000`, `--deepen=10000`, then `--unshallow`) until its lookups resolve, and blocks only when a fetch fails, with git's reason.
+- Publication main-sync no longer merges main on every push (operator ruling: QA the feature-complete head, then merge main once). `prepareMainSync` merges only in final-merge mode (`vibe-sessions.mjs touch --main-merge final`, set once QA passes or when the person asks for a main merge now); otherwise, conflicts and failing checks included, the branch's own base stands in as its main and the receipt records the waiting main as `deferredMain`. The dist bundle is rebuilt.
+
+#### Added
+- The pull-request evidence gate checks test selection over the whole branch diff: each changed source file needs an import selection (`code_tests_for` with tests, or the repo's related-test selection) and an e2e by-reference selection, and every selected, required or edited test needs a passing run on the published commit (`testSelection` and `testRuns` in `vibe-pr-evidence.json`).
+- The body gate refuses a pull request body missing a heading of the repo's pull request template.
+- `executed-check.mjs` refuses to mark a plan or PRD executed until its first section is `## Production visual QA` with each flag, where to see it and its state, checked after the last merge; the ticket worker adds the section before setting EXECUTED.
+- A delivered PRD child moves to IN_REVIEW only with the pull request that delivers it; without one it is `awaitingPullRequest` and keeps its status.
+- Writer rules: every new user-visible element needs a source naming it, a capability list is not one, absorbed tickets are recorded, and matching a prototype never removes what main ships. Handoff QAs the feature-complete head and makes the last main merge one pass right before enqueue.
+- `diff-rules.mjs` blocks a removed component mount or user-visible string the base ships, added nowhere else, without a `Removal:` line citing the human source that retires it.
+- `e2e-lock.mjs` refuses a second entry from a worktree that already holds or waits for the stack (exit 76), so a session runs its selected specs as one entry per head.
+- `ticket-write-check.mjs` refuses a ticket in a past sprint, linked under an EXECUTED, OBSOLETE, DONE or CANCELED parent, or moved to IN_REVIEW without its pull request.
+- `qa-merge-order.mjs` passes only when the branch is the QA'd head plus at most one merge of main.
+- fleet-orchestrator: `helpers.mjs` lists helpers whose result was accepted and that still run as `STOP` lines; `history-origin.mjs` refuses to attribute history in a shallow clone. The skill points at these checks and at `executed-check.mjs`, and keeps lessons general with their primary fix in vibe.
+
+### vibe v1.0.72
+
+codex-fleet-monitor stays cheap and says when it is in trouble. A supervisor with four long-lived sessions sat near 1 GB of RSS because every pass read each thread's full history; a pass waiting on a stuck daemon connection could block forever without a line; and its logs and per-PR state files grew without bound.
+
+#### Changed
+- `liveness.mjs` and `recover.mjs` never load a thread's history: `thread/read` without turns gives the status, `thread/turns/list` the newest turn without items, and `thread/items/list` that turn's newest item id. On four real threads (29 to 53 MB rollouts) one supervisor pass went from about 1 GB resident (1.4 to 1.7 GB peak) to 18 MB (50 MB peak), and one `liveness.mjs` run from 1.46 GB peak to 52 MB. An App Server without `thread/turns/list` gets the full read.
+- The `session` liveness column is the newest item id instead of the item count; `STALLED` means it has not changed for `STALL_SECONDS`.
+- A request's timeout also covers the connection, so a daemon that never answers the upgrade cannot hang a caller.
+- The systemd template appends stdout and stderr to `supervisor.log`, like the launchd one.
+
+#### Added
+- `PASS_TIMEOUT_SECONDS` (default 300): a recovery pass, in the supervisor or a watcher tick, that runs longer gets a `pass-timeout` event, its App Server connections are closed so it unwinds and releases its lock, and the loop goes on.
+- Supervisor heartbeat: after every pass `<stateDir>/.fleet-recovery/heartbeat.json` records time, pid, interval, pass count, last pass duration, last error and RSS, and an hourly summary line goes to the log. The watcher prints `supervisor <where> ok`, `STALE` (older than 3 intervals), `MISSING` (lock without heartbeat), `UNREADABLE` or `RSS-HIGH` (over `SUPERVISOR_RSS_CAP_MB`, default 300).
+- `LOG_MAX_BYTES` (default 1 MB): `events.log` rotates to `events.log.1`, and the supervisor copies the `supervisor.log` its stdout appends to into `supervisor.log.1` and empties it.
+- `snapshot.sh` removes the `keep-*`, `merge-*` and `checks-*` files of a PR that left `prs.txt`.
+- Tests: a pass on a daemon that never answers times out and the loop continues; both logs rotate at the cap; stale, missing and high-RSS heartbeats; pruning; no read asks for a thread's turns.
+
+### vibe v1.0.71
+
+The handoff's route rule (`diffRules.requiredTests`) now finds every e2e spec that reaches a changed API route. It scanned only the root `e2e/` directory and matched the endpoint against each file's own text, so a spec that reached the endpoint through a helper was missed and the helper itself was listed, though it cannot run. Two specs that pinned a changed route's request body this way went red on main after merge.
+
+#### Fixed
+- `routeSpecs` (`diff-rules.mjs`) scans every e2e suite root: any directory named `e2e`, `e2e-*` or `*-e2e`, at any depth, so Desktop, smoke and walk suites count. When a helper names the endpoint, it follows imports back up to three hops to the specs that use it and requires those; a helper is never listed. Each entry says which helper connects it.
+- The lost-story-ID reference scan searches the same e2e roots instead of root `e2e/` alone, so a Desktop e2e helper still naming a removed story ID blocks.
+
+#### Added
+- `test-files.mjs` exports `isE2ePath` and `E2E_ROOT_PATHSPECS`, the one definition of an e2e root both rules use.
+- Tests: a changed route with a web helper and a Desktop helper naming its endpoint, each imported by one spec, requires both specs and neither helper; a two-hop helper chain and an `e2e-*` root are followed; a Desktop e2e helper naming a lost story ID blocks.
+
+### vibe v1.0.70
+
+codex-fleet-monitor recovers Codex sessions after a transient provider failure on its own, instead of printing `FAILED(ERROR)` and waiting for an orchestrator to wake. A provider overload ("Selected model is at capacity", `serverOverloaded`) left two writers' threads in the App Server's `systemError` state, where resume and new turns fail; only a daemon restart cleared them, hours later.
+
+#### Added
+- `recover.mjs`: one recovery pass over a host's sessions. A turn that failed with a transient provider error is resumed after a backoff (`RECOVERY_BACKOFF_SECONDS`, default 120, 300 and 600 seconds, one retry per value) with `thread/resume` and a `turn/start` carrying a continue prompt (`CONTINUE_PROMPT_FILE` replaces the built-in one), which tells the session to check its real state and not redo finished steps. A thread still in `systemError` after the retries gets an `ALERT`; with `AUTO_RESTART_DAEMON=1` (off by default) it prints a loud line, restarts the App Server daemon at most once per `RESTART_COOLDOWN_SECONDS`, records each session's state, and resumes only the sessions on that host whose turn was active or failed; idle sessions stay idle. Every action is an `EVENT recovery` line in `<stateDir>/.fleet-recovery/events.log`, reported by a new `recovery <where> <count> <last event>` snapshot line.
+- `watch.sh` runs a recovery pass on each machine every tick.
+- `supervise.sh` and `supervise.mjs`: run recovery on the host that owns the sessions, independent of any orchestrator session, one per host through a lock file that a dead holder's successor takes over. While it runs, the watcher's pass on that host steps aside. `templates/` has a launchd agent and a systemd user unit; nothing is installed.
+- Tests: a stateful fake App Server walks overloaded, then `systemError`, through the retries to a restart that resumes the active and failed sessions and sends no prompt to an idle one, and with the switch off to one alert and no restart; a second supervisor is refused; a blank `gh` read is not an event.
+
+#### Changed
+- `liveness.mjs` classifies a failed turn by `codexErrorInfo`, falling back to the message: `FAILED(TRANSIENT)` for capacity, rate limits, 5xx and dropped connections; `FAILED(LIMIT)` only for usage limits; `FAILED(SYSTEM-ERROR)` for a thread in `systemError`. A rate limit was `LIMIT` before.
+- `snapshot.sh` repeats the last value of a `gh` field whose read failed or came back empty, so an API blip is not an event.
+- The `codex-usage` line prints one `under<N>%` band below `USAGE_HIGH_PERCENT` (default `MOVE_AT_PERCENT`, else 80) and `HIGH(<band>%)` from there, so ordinary usage no longer wakes the watcher every 10 percent.
+- `fleet-orchestrator` Monitoring: run the supervisor on every machine that hosts Codex writers; enable the daemon restart only with the operator's agreement.
+- CI installs zsh for the snapshot tests.
+
+### judges v1.7.3
+
+#### Changed
+- The plugin is marked deprecated: its `plugin.json` and marketplace descriptions and its README now say it will be removed from the marketplace in a later release, and the README says to keep it installed until then. No behavior changes.
+
+### self-learning v1.2.7
+
+#### Changed
+- The plugin is marked deprecated: its `plugin.json` and marketplace descriptions and its README now say it will be removed from the marketplace in a later release, and the README says to keep it installed until then. No behavior changes.
+
+### vibe v1.0.69
+
+Prose cleanup of the vibe agents and skills, fleet-orchestrator included, so they read cleanly on any repository. No rule is added, dropped or loosened; this entry and the lessons ledger keep the provenance the instructions no longer carry.
+
+#### Changed
+- Agent, skill and reference markdown no longer cites dated operator or design rulings, PR numbers, ticket slugs, or symphony-alpha paths, component names and flag keys as examples. Generic examples replace the ones that helped.
+- Dense run-on rules are split into short steps. Inline log templates (`Engineering decision:`, `Engineering needed (token not bundled):`, `Debt:`, `Known main failure`, `harnessSwitch`) become a step plus a separate required log line with the unchanged literal format. The cl-analyze GO decision paragraph keeps its original text.
+- Places that named symphony-alpha only as the working repository now say "the repository"; the `gh --repo`, preflight remote and workflow commands the workers actually run are unchanged.
+- Five symphony-alpha specific rules leave the plugin, which keeps the general form of each. The Branch PRD-600/601/602 contract check and the Labs destination's container flag and example files move to that repository's `AGENTS.md` files in closedloop-ai/symphony-alpha#9028, which also documents the branch analytics perf fixture so the generic perf fixture rule applies there. The shared app package's forbidden imports were already in `packages/app/AGENTS.md`, and the code style list was already in the root `AGENTS.md`.
+- Contract tests that pinned a citation now pin the rule's own sentence; no assertion was removed.
+
+### vibe v1.0.68
+
+Lessons appended to the vibe lessons ledger on the evening of 2026-10-20, in one release. The repeat lesson and the copy provenance repeat become checks, not more prose. Every check here works on any repository; rules specific to one repository belong in that repository (its AGENTS.md, source gates and repo memory), not in vibe.
+
+#### Added
+- `handoff/scripts/narrow-controls.mjs`: compares the interactive controls in Playwright accessibility snapshots of one row at wide and narrow width and fails on any wide control with no narrow home. A change log line `Narrow home: <role> "<name>" -> <role> "<name>"` must name a control the narrow row has; `Narrow ruling: <role> "<name>": <source>` records a human ruling. The adversarial reviewer runs it on each touched list surface (symphony-alpha #8962: narrow rows replaced the editable status pill with a read-only glyph after a one-line rule asked for this comparison).
+- `diff-rules.mjs` `copy-provenance`: a new toast, label, title, placeholder, description, tooltip or aria string, or JSX text, in any `.jsx` or `.tsx` file that the base tree never had and the diff did not move blocks until the change log records `Copy: "<text>": <source>`; guardrails check 9 already opens each cited source (symphony-alpha #8956: an agent-written removal toast).
+- `live-ticket-check.mjs`: Scope and acceptance criteria needs `- Newest ruling:` with a dated ruling or `none found (searched: ...)`. The requirements worker searches the tracker for later rulings on the capability (`fts_search` with refusal words, `search_memory_facts`, ticket and PRD comments) before scope; a newer contradicting ruling makes old ticket text a question for the operator.
+- `diff-rules.mjs` `restored-removal`: a component newly mounted in a `.jsx` or `.tsx` file that did not mount it, or such a file added back, that a base commit removed (`git log -G` on the JSX mount, `--diff-filter=D` on the path) blocks until the change log records `Restore authorization: <name or path>: <human name or operator ruling>, <YYYY-MM-DD>, <where>; overrides <removal ticket>` (symphony-alpha #8957). The live ticket's Scope also needs `- Prior removal:` with the removing ticket or `none found (searched: ...)`, from the requirements worker's search; the change worker runs the same search before adding an element the ticket does not name verbatim.
+- `diff-rules.mjs` `env-dump`: a script line that prints or serializes the whole environment (`JSON.stringify(process.env)`, `Object.entries(process.env)`, a bare `env` or `printenv`, `print(os.environ)`) blocks (symphony-alpha #8960 captured an API key in a diagnostic report this way).
+
+#### Fixed
+- Main sync Biome runs split the changed paths into commands of at most 120 paths, so a change set past the argv bound no longer fails `schema: argv too_big` and falls back to a plain push (symphony-alpha #8960).
+- `writer-state.mjs release-record` frees a stopped helper's grant whose recorded plugin version directory was deleted by an upgrade, against the root recorded at acquisition, instead of failing with `ENOENT`. The writer's own continuation keeps the stranded `migrate` path.
+
+#### Changed
+- `INSTALL.md`: `plugin add` deletes every older vibe version's cache; nothing needs restoring, because helper locks release without the old version and the writer migrates. Install between turns. `migrate` itself never needed the old directory (the recorded definition is only observed, and absent reads as missing); it was blocked by the helper lock, and a test now deletes the recorded version directory, releases the helper and migrates.
+- Data direction (requirements worker, cl-execute readiness gate and plan review): a new mechanism that moves data between surfaces along an existing direction needs a traced human decision too, and an agent-written ticket is not one.
+- The writer's layout fix claim carries a measurement of the named element at the named viewport; guardrails check 9 blocks a session-written assertion that pins the opposite of its brief.
+- `fleet-orchestrator`: the orchestrator alone files a ticket for a QA finding, after searching open tickets from the last day for the same subject; the QA guide never files. Before dispatch and in every QA-prep brief it runs the newest-ruling search and stops for the operator on a hit; a pane teammate sees messages only at its turn boundary, so an urgent redirect asks the operator to press Esc in that pane, and long briefs go in a file.
+
+### vibe v1.0.67
+
+Lessons appended to the vibe lessons ledger on 2026-10-20 after v1.0.66, in one release.
+
+#### Added
+- Hard rule (operator ruling, 2026-10-20): a ticket, PR body, PR comment or review reply never references a path on the operator's machine or says something is on someone's laptop; screenshots are embedded (`create-document-version` `inlineImages`), text evidence is quoted inline, an implementation plan is the linked PLN and a QA plan or other working file is a ticket attachment named by its attachment name. Stated in `fleet-orchestrator` (its own section and both worker templates), the live ticket rules in `ticket-template.md` and the environment worker's pull request body step.
+- `publishable-text.mjs pointerProblems`: refuses a line naming a local absolute or home path, a `.control/` capture or the local plans folder. `live-ticket-check.mjs` reports each as a `Body` problem and `pr-facts.mjs` adds each to `blocking.prBody`, without echoing the path.
+
+#### Changed
+- Design Review's Visual evidence and the Handoff running app checks carry embedded captures instead of `.control/` artifact paths.
+- `fleet-orchestrator` Codex to Claude takeover resumes the same vibe session and moves its writer with the `harnessSwitch` migration before any other step, instead of starting a second session beside a ledger that still names the stopped Codex writer.
+- `environment.md`: a seeded or blank mode change is recorded with `touch --mode` and the environment requested again.
+- `fleet-orchestrator`: before enqueue, run the lanes the diff can affect rather than full suites; a shared release-version bump is made only at enqueue with auto-merge armed in the same minute; a main fix reaches a preview only once the preview's deploy ref contains it; stop a stale worker and its processes rather than messaging it; being on main is not evidence of the final design; withdraw an instruction as soon as a worker's alternative is accepted.
+
+### code-review v3.12.2
+
+#### Fixed
+- A file moved and heavily edited (below git's default 50% rename similarity) no longer reaches Bug Hunter A without its old version. `parse-diff` runs `git diff --name-status -M30%` over the same range and records `moved_from` (`{added path: deleted path}`) for each rename whose new path is `added` and old path `removed`; `files_to_review` and `file_statuses` are unchanged. `partition` writes the deleted file's patch to `patches_p<N>_context.txt` for each partition holding a paired file and adds `moved_from` and `context_patch` to that partition's entry; `uncached_diff_data.json` keeps the pairs whose added file missed the cache.
+- The reviewer prompt template gains a `<moved_from_context>` element for Bug Hunter A when its partition has a context patch: the old version is reference only, the pairing is heuristic and the old file may be unrelated, and findings on behavior dropped in the move point at the new file.
+- The BHA cache key for a paired added file folds in the paired deleted file's patch, so editing the old file invalidates the entry. Unpaired files keep their existing key.
+- `SCHEMA.md` documents `moved_from`, the context patch and the cache-key change.
+
+### vibe v1.0.66
+
+Lessons ledger from symphony-alpha #8947 to #8987 and the 2026-10-20 operator rulings, in one release. Gates replace the prose rules they enforce: across vibe's agents and skills the instruction text stays about the same length.
+
+#### Added
+- `handoff/scripts/diff-rules.mjs`, run inside `handoff-inventory.mjs` and reported as `diffRules` with `blocking.diffRulesClear`: blocks a migration on an existing table without a recorded lock-strategy precedent or with a full-table backfill, a raw write of a captured artifact field without the canonical activity capture, an error returned inside `withDb.tx` after a write, a Desktop sync lane without the shared give-up and a synchronizing-susan pass, an artifact link delete not scoped to its edge, a dropped ticketed comment whose code survives, a changed story assertion without a Storybook release, a story entry beside a component's current one, a change in a frozen v1.0 story's import closure, and a lost story ID still referenced. It lists the tests the graph does not map (GridTableV2 parity tests, Storybook sort-order tests, e2e specs naming a changed endpoint) and the repo's migration checks.
+- `handoff/scripts/pr-facts.mjs`, imported by the inventory: `serverOnly`, required evidence lanes, assertion and export changes, new `apps/api` refusals, ticket asks and open pull request overlap. In the pull-request phase `--body` adds `blocking.prBody` and `--runs` with `--commit` adds `blocking.prEvidence`; the environment worker builds the body from these facts and creates nothing while either fails.
+- `live-ticket-check.mjs --child-evidence`: a claimed PRD child moves to In Review only when the ticket worker's evidence map (never the writer's audit) shows every acceptance criterion and work item met by an added diff line, a tracked changed file, a merged pull request in history or a final-commit report; "active elsewhere" needs real activity and a supersession needs a human ruling outside the session's own ticket and plan.
+- `handoff/scripts/review-threads.mjs resolve`: resolves review threads only when each fixed thread has its full fixing SHA, a `verified` verdict from a reviewer other than the writer, and, for a flag-gated fix, its flag-off-equals-main test or missing-tests entry; anything else stays open.
+- `writer-state.mjs migrate` takes `harnessSwitch`, so a Codex writer stopped by a usage limit continues as a Claude writer with the same queue, plan, decision table and change log.
+
+#### Changed
+- Publication runs input readiness once, after the committed merge: the pre-capture `main-sync-inputs` turn and its extra bootstrapped checkout are removed, capture checks tracked parity only, and a failing producer reports its command, exit code, last error line and log instead of running to its bound.
+- Tests run after any change, fix or main merge (conflict resolutions included) are exactly the `code_tests_for` set for the touched files plus the inventory's required tests; files that map to no tests run none and CI confirms them.
+- Requirements quote PRD flag, rollout, rollback, parity, boundary and non-goal clauses as criteria and never narrow PRD targets. The session's own ticket, PLN, plan, table and change log are never a source; a writer never builds behavior only its own test expects; guardrails rule provenance covers every new user-reachable capability, refusal rule, visual element, numeric limit and removed accessibility behavior. Guardrails check 16 (now the tech debt and flag keys check) replaces the old child reconciliation prose.
+- Review rules from the feature pull request reviews are one line each in their owners (adversarial reviewer, verify worker, Storybook decomposer), including flag-off parity at 390, 412, 1024 and 1280 px against main's render of the exact shipped story or route, play counts only from real-browser runs, a Desktop launch only after its main bundle's workspace imports resolve, axe contrast on changed story states and migration checks rerun after every main sync. A server-only diff skips Storybook, Desktop runs and visual QA.
+- New guardrails section "Processes and state": stop only processes the session started; keep records out of temp folders; in Codex no computer use, GitHub only through `gh`, visual checks handed to a Claude worker after the push naming the pushed head. A dependency on an open pull request no longer pauses a session, and merged work is pushed once it compiles and its targeted tests pass.
+- Handoff reads an open pull request's human threads on every later look and, in Codex, arms the core PR monitor when it is set up.
+- `fleet-orchestrator`: acceptance criteria are fixed in the plan before a writer starts, the QA plan is a two-way trace between criteria and the diff (each checkpoint cites a criterion ID, regression checks labeled separately), a role table names the specialist agents and skills with fallbacks, lesson and tooling fixes batch into one open PR per repo, and no agent writes a row the repo reserves for human attestation.
+
+
+### code-review v3.12.1
+
+#### Fixed
+- `/code-review:deep` and `/code-review:shallow` now state the plugin root as a `PLUGIN_ROOT` binding for `start.md`, because Claude Code fills in `${CLAUDE_PLUGIN_ROOT}` only in the invoked command's text, not in a file opened with Read or in the Bash environment. `start.md` stage 0b resolves `PLUGIN_ROOT` from that binding, or from its own substituted text when invoked directly as `/code-review:start`, checks it with a literal-path `test -f`, and falls back to the in-repo tree or the marketplace cache only when neither yields a real path. Its GitHub-mode reads use `<PLUGIN_ROOT>`, and the `fix` skill reads its templates from `${CLAUDE_PLUGIN_ROOT}` instead of the never-substituted `<CLAUDE_PLUGIN_ROOT>`.
+- The signal-extraction and coverage-critic agents are handed every file they read. `needs_agent` manifests from `extract-signals-prepare` and `coverage-critic-prepare` now list those files in `extra_inputs` (the taxonomy snapshot `extract_signals_taxonomy.json` for stage_11, the diff summary `coverage_critic_diff_summary.json` for stage_15), and the `singleton-dispatch` spawn template passes every listed path as `{EXTRA_INPUTS}`. `signal_extraction_prompt.txt` and `coverage_critic_prompt.txt` name the files the agent actually receives. Both prepare commands resolve `--cr-dir` and the prompt path, so every path in their manifests is absolute.
+- The signal-extraction and coverage-critic cache keys no longer include the diff tip, which is the literal `HEAD` for branch reviews. The signals key hashes the agent input bundle `extract-signals-prepare` builds, together with the taxonomy and prompt hashes; the critic key replaces the diff tip with a hash of the diff summary the critic is given. A review of a changed diff no longer reuses an earlier run's signals or coverage plan. Neither prepare command takes `--diff-tip` any more.
+- `stats.verification` in `review_result.json` counts `tentative_count` (TENTATIVE verdicts), `downgrade_count` (DOWNGRADE verdicts) and `skipped_count` (verified findings with no verifier verdict) instead of reporting zero, and `stats.by_reviewer[].tentative` counts each reviewer's TENTATIVE findings. The `present-local` skill and `github-review.md` compute CONFIRMED + DOWNGRADE as `verified_count - tentative_count - re_asserted - justified_invalid_count - skipped_count` and list the skipped count.
+- `validate` checks each diff-scope finding's `line` against the length of the file it names (the new file under `scope.json`'s `review_root`, read through the new optional `--cr-dir` flag that stage_22 now passes, or the old file rebuilt from the patch for a deleted file). A line past the end of the file is moved to the one line containing the first non-blank line of the finding's `code_snippet`, with the original kept in `line_reanchored_from`, before range filtering and duplicate merging, so it merges with a duplicate at the real line. With no single match the finding is kept, tagged `line_out_of_range`, and held only to the normal confidence floor rather than the out-of-hunk floor. `post-comments` never posts a `line_out_of_range` finding inline (it is counted as `line-out-of-range` and left to the summary). Both fields are documented in SCHEMA.md and added to the finding schema, and `validate` stats report `lines_reanchored` and `kept_line_out_of_range`.
+
+### vibe v1.0.65
+
+#### Added
+- `fleet-orchestrator` skill: rules, each with its reason, for a Claude Code session that runs several Codex and Claude workers on parallel PRs on one or more machines for an operator who does QA and merges. It opens with two principles (decide and verify what you can and escalate only what needs the operator, one question at a time, with a numbered pre-ruling checklist: acceptance criteria and scope, PRD, human review threads including resolved ones, closedloop-graph for related tickets and open PRs, and only then precedent, with a conflicting human-sourced line going to the operator and every ruling recorded with its source; sanity-check every worker output and push back before the operator sees it), then covers a QA-guide session per PR (a headless `claude -p` session primed with a QA guide prompt template that the operator resumes, presenting one checkpoint at a time, recording results in the plan and appending failures to a findings file the orchestrator watches, never editing code), heavy runs sent to the machine with the lower measured load per core, graph-first research with the required closedloop-graph MCP server (overlap and collisions before assigning or ruling, ticket lineage, callers and importers before a shared change, `code_tests_for` deciding exactly which tests run after any change, fix or merge, with none for files that map to no tests, tracing a surprising diff to its ticket, and the same requirement in every worker prompt), roles (every writer is a vibe session, Codex through a `$vibe` prompt and Claude through `vibe:vibe`, with reviews, handoff, ticket, environment and seed work on vibe's own workers and scripts; the orchestrator never edits a product repo; one writer per branch; read-only reviewers), persistent orchestration state with saved prompts and a resume log, Codex budget rules (the high effort level rather than the maximum, sub-agent models left to vibe's worker-model policy, no computer use, visual work as request files for Claude workers), moving work between runtimes and accounts in both directions (triggered by a `MOVE_AT_PERCENT` usage band, a Codex limit line or a Claude worker's limit errors; Codex to another machine or account, Codex to Claude still inside vibe with the missing migration logged as a gap, Claude to Codex; the old writer always stops first) with a resume prompt template, heavy-check placement and slot locks, agent-first QA with independent review and fix verification before merge, the order each PR moves through up to the operator's enqueue (a head change sends it back to the earliest affected step), fresh resume threads when a remote machine loses its Codex threads, pushback on unapproved flag keys and parallel code paths, a lessons ledger, and operator reporting. It points to `codex-fleet-monitor` for watching and to the target repo's own docs for repo specifics. Everything machine-specific (hosts, paths, model names, slot counts) comes from `<orchDir>/config.env`, which a first-run interview writes when it is missing or lacks a needed key (machines, Claude or Codex writers, Codex budget and move threshold, the UX precedent product; defaults one machine and Claude only), then verifies and reports, asking again only when a verification fails; the same file the monitor reads; one machine needs no remote keys, and more machines need only ssh key auth plus `codex`, `node`, `gh`, this plugin and the closedloop-graph MCP server on each. `references/` holds the setup checklist and placeholder config, judgment patterns from past programs (verify worker claims before relaying them, stop runs pinned to a stale head, one owner per behavior across PRs, question every test or fixture change, check parity at several widths and both flag states), the state layout, resume log and lessons ledger formats, and the visual request, worker preamble and flag approval templates.
+- `fleet-orchestrator/scripts/fleet.sh <orchDir> local|remote session turn|steer|last <name>` drives a Codex session on this machine or on `REMOTE_HOST`; for a remote one it copies the scripts and the prompt file to `<REMOTE_STATE_DIR>/.fleet-orchestrator/` over ssh and runs them in `REMOTE_SHELL`. `turn` defaults `--model` and `--effort` to `CODEX_MODEL` and `CODEX_EFFORT`. `fleet.sh <orchDir> local|remote slot <lockName> <owner> <dir> <command...>` runs a command in that machine's slots, `HEAVY_SLOTS` or `REMOTE_HEAVY_SLOTS` for `heavy` and one for any other lock. A shared e2e stack runs only under vibe's own machine-wide `e2e-lock.mjs`, so there is one lock per stack.
+- `fleet-orchestrator/scripts/codex-session.mjs` underneath: `turn` starts a thread bound to a worktree cwd (a new session also needs an effort and a prompt that starts with `$vibe`) or resumes the one in `<stateDir>/<name>.json`, then starts a turn from a prompt file with the saved model, effort and sandbox; `steer` adds a prompt file to the active turn; `last` prints the monitor's status line and the last agent messages. It reuses the App Server client and in-process timeout exported by `codex-fleet-monitor`'s `liveness.mjs`, sets approval policy `never` because it disconnects once a turn is accepted, writes the state file atomically, and records every prompt file sent. The state file is the one `codex-fleet-monitor` reads for a `local|remote <name>` session line.
+- `fleet-orchestrator/scripts/slot-lock.sh [--slots N] <lockName> <owner> <command...>` runs a command once one of N named slots is free on the machine, records the owner, reclaims a slot whose holder pid is dead, and frees the slot when the command exits or the script is interrupted (the command is stopped too). `--status <lockName>` lists holders. It and `fleet.sh` run on the bash 3.2 that macOS ships.
+- `fleet-orchestrator/scripts/request-visual.mjs <requestsDir> <draft> [--worktree <dir>]` files a visual-work request drafted from the template as `<session>-<yyyymmdd-hhmm>-<slug>.md`, and refuses (exit 1, naming both SHAs) unless the draft's pushed head equals the PR's current head from `gh` and the worktree's HEAD, so a request cannot name an unpushed commit. It also refuses when `gh` is missing or fails, a field is missing or still a placeholder, or the head is not a full SHA. Codex sessions write requests only through it, and `fleet.sh` ships it to remote machines.
+- `generic.test.mjs` fails when any file in the skill carries an absolute home path, an IPv4 address, an email address, a ticket id, an `owner/repo#number` reference or this organization's or repository's name (the plugin family's own `closedloop-graph`, `closedloop-core` and `vibe` stay allowed), so the skill stays usable on any machine.
+
+### vibe v1.0.61
+
+#### Added
+- `skills/vibe/scripts/flag-keys.mjs` (`record`, `question`, `approve`, `show`). No agent creates or adds a feature flag on its own: the writer records a justified proposal (reason, the target repo's flag rule sentence quoted from its `AGENTS.md`, and a human source; a spec rollout must name its slug), `question` prints the exact approval question (the key, why, what it gates per surface and host, and every other key the same work sits behind), and `approve` saves the person's answer only after that exact question was asked and answered through `session-questions.mjs`, recording who and when. An approval covers one key and the proposal it answered; a changed surface, stack, reason or source needs a new question. `record` refuses a read of an unapproved key, a declined key, a second new key on one surface, and a proposal without its justification.
+- The live ticket's Production flag snapshot section renders "Keys to see this work": per surface and host, every key that must be on, new and existing, with the person's approval and each key's value in their snapshot. `vibe-sessions.mjs list` shows each session's keys and approvals.
+- `live-ticket-check.mjs` fails a ticket without the keys block and, with `--worktree`, a session with no recorded keys, a proposed key without the person's yes, or an approved key no file reads.
+- A `pm-flag-key-sprawl-blocked` eval case and `test_vibe_flag_keys_contract.py`.
+
+#### Changed
+- `guardrails.md` states two rules once. "No new tech debt": a new flag key, parallel path, shim or code kept for a deprecated story, second owner, duplicated helper, type, constant, validator or bound, new config, or growth of a file near the repo's size ceiling needs a human source or a quoted repo rule, logged as a `Debt:` line; otherwise the writer reuses what exists. "Feature flags": no agent creates or adds a flag on its own; a key is proposed only for what the target repo's own flag rule allows, one behavior gets one key, an existing key for the surface is reused, the person approves each key, and an agent never adds or edits a flag registration attestation. The writer, the vibe and handoff skills, the guardrails reviewer, the ticket template, the quality loop and the environment worker each point at these sections in a line instead of restating them; `flag-keys.mjs` messages carry the procedure.
+- The writer returns `NEEDS_FLAG_APPROVAL` instead of gating; the vibe skill asks the printed question and records the answer; handoff asks a pending approval once and names the keys to see the work; the guardrails reviewer gains check 17 for tech debt without a `Debt:` reason (mechanisms checks 1, 7, 8 and 12 find, copied or divergent types, constants, validators and bounds, exports only tests or deprecated stories import, and growth of a file near the size ceiling) and for flag keys `flag-keys.mjs show` reports, that the repo rule does not support, that split one behavior, gate a change the rule ships directly or duplicate an existing key.
+
+### vibe v1.0.60
+
+#### Changed
+- Codex workers default to reasoning effort `high` instead of `xhigh`: new cl-sweep ticket-owner sessions, cl-execute and cl-sweep support lanes, and the vibe skills' native workers. `xhigh` stays available when raised explicitly, and an existing session's persisted effort is never rewritten.
+- Worker models follow their role from one policy per harness. In Codex, `cl-sweep/scripts/model-policy.mjs` puts explorer and research lanes on `gpt-5.6-terra`, keeps writers, reviewers and verifiers on `gpt-6-sol`, and leaves mechanical lanes on `gpt-6-luna`; the vibe, handoff and seed-refresh skills take each spawn's model and effort from `vibe/scripts/worker-model.mjs`. In Claude Code, `vibe-backend-worker` moves from opus to sonnet like the other read-only explorers.
+- Vibe validation is targeted: the verify worker runs only the tests closedloop-graph's `code_tests_for` returns for each changed file, with Biome, source gates and the affected typecheck. Its full-suite mode is removed, the handoff publication recipe no longer runs `test:affected`, test lanes, `turbo test`, `pnpm verify`, `pnpm test`, `test:lint`, `test:skills`, the Desktop renderer lane or the whole Storybook suite, and Storybook checks run only the new or changed story files. Required browser and Desktop e2e lanes are still recorded for CI evidence.
+- Containerized e2e runs only the specs the change needs, one stack per machine.
+
+#### Added
+- `vibe/scripts/codex-usage.mjs` reads the Codex account's rate limits through the App Server `account/rateLimits/read` method before workers spawn and when a turn stalls; a reached limit that no longer allows ordinary usage stops the session with a plain message unless the person explicitly allowed credits. A reached limit that still allows ordinary usage continues, with `state` `LIMIT` in the output. With no credits left (`LIMIT-STOPPED`) it stops even when credits were allowed. The read and its classification are codex-fleet-monitor's `ratelimit.mjs` (`readRateLimits` and `classifyUsage`), so the gate and the monitor's `codex-usage` line share one reader and one set of states; the check uses its private stdio App Server transport and never starts the managed daemon.
+- The Claude worker launcher reports each turn's last `rate_limit_event` as `rateLimit` and stops a turn that reaches the limit or starts paid extra usage (`USAGE_LIMIT_REACHED`) unless the launch input sets `allowCredits`.
+- `vibe/scripts/e2e-lock.mjs`, a machine-wide lock the verify worker runs every containerized e2e command through, taking over a lock left by a process that no longer exists.
+
+#### Removed
+- The test-selection budgeting and report admission that only the removed handoff test commands used (`main-sync-budget-ref-read.ts`, the affected test wrapper pin, the `test:lint` budget and the captured-main mapping of `test:affected`).
+
+### code-review v3.12.0
+
+#### Changed
+- `partition` no longer assigns files deleted outright (`file_statuses` value `removed`) to Bug Hunter A. Their lines count toward neither `total_changed_loc` (the unified-mode decision) nor the bin-packing, and they are left out of `test_file_paths`. A diff that only deletes files yields zero partitions, and `derive-spawn-spec` skips Bug Hunter A with `no_partitions`. The `spawn-reviewers` skill now skips Bug Hunter A on zero partitions rather than on an empty uncached file list.
+- `parse-diff` records `changed_ranges[<file>].deletion_points`: for each pure-deletion hunk (`+c,0`), the new-file lines `[c, c + 1]` on either side of the removed block.
+- `post-comments` posts a finding on a file the PR deletes with `side=LEFT`, at its old-file line. It learns which files are deleted from the same PR-files lookup it already used for out-of-diff findings, now read once before the first inline post. On a deleted file the lines a comment can anchor on are the old-file (LEFT-side) lines of its patch, so an out-of-diff finding whose evidence cites a deleted file's old line posts inline there instead of falling back to summary-only.
+- Deleting a file selects the Impact Analyzer at deep depth without any signal: `resolve-coverage` adds the new `file_deletion` change class when any file is `removed`, and the Impact Analyzer has a matching `change_class` trigger. It stays best-effort and deep-only.
+- Reviewer prompts give deletions an owner. Removed files are not review targets for single-file reviewers; Bug Hunter B and the fast-path reviewer get a deletions section listing the deleted files and asking what still references them (module path, exported names, string and path references), what relied on them existing, and where to point each finding. The shared FILE SCOPE rules say lines deleted from a surviving file are evidence and a finding points at the surviving line beside them. The Impact Analyzer checks every export and the module path of a deleted file, searches by name and path, and anchors at the deleted declaration in old-file numbering. The verifier reads old-file content only for files the diff deleted, from the patch hunks in `patches_path`; `verify-prepare` now passes `patches_path` whenever the finding's file or an `evidence[]` file was deleted outright, not only for out-of-diff findings.
+- `SCHEMA.md` documents `diff_data.json` line numbering, including `deletion_points`.
+- New `golden_prefix_deleted_file` prefix golden covers a delete-only diff.
+
+#### Fixed
+- `validate` no longer compares a new-file line against `removed` ranges, which are numbered in the old file and accepted lines by numeric coincidence. On an added or modified file a line is in range only within `added` ranges or `deletion_points` (±3 lines); on a deleted file it is checked against `removed` ranges. An out-of-range line takes the existing out-of-hunk path; nothing new is discarded for its location.
+
+### vibe v1.0.59
+
+#### Added
+- `codex-fleet-monitor` skill: a background event watcher for a fleet of Codex App Server threads (local and one ssh host) plus the pull requests they produce. It exits with a diff on the first change and flags IDLE, STALLED, FAILED, merge conflicts, review and comment counts, check changes and new PRs. Liveness is read from each thread's last turn and item count rather than the turn id alone, so a turn left open by a silent Codex usage limit is reported as STALLED. It needs only the vibe plugin and the `codex` CLI: `liveness.mjs` is a single self-contained file that talks to the managed App Server through `codex app-server proxy`, and `sessions.txt` lists sessions as `local|remote <label> <threadId>` (the two-column `<name>` form that reads a `<name>.json` state file with a `threadId` still works). The skill description tells agents to reach for it whenever two or more Codex or vibe sessions are running.
+- `codex-fleet-monitor` prints `codex-usage <local|remote> <band>% <state> resets=<n>` for this machine and the ssh host from `account/rateLimits/read`, where the state is `ok`, `LIMIT`, `LIMIT-SPENDING-CREDITS` (the limit is reached and turns are consuming paid credits) or `LIMIT-STOPPED`. `ratelimit.mjs` reuses the App Server client exported by `liveness.mjs` and is bounded by the same in-process timeout; both files are copied to `<REMOTE_STATE_DIR>/.fleet-monitor/` on the remote host. The skill tells agents to warn the user when the band rises fast and to stop sending turns on `LIMIT-SPENDING-CREDITS` unless the user approves paid credits.
+- Optional `REQUESTS_DIR` and `REMOTE_REQUESTS_DIR` print `requests <where> <count> <newest file>`, so the watcher wakes when a Codex session drops a delegated-work request for a Claude worker.
+- `codex-fleet-monitor`'s `watch.sh` compares each run against the previous run's `last-snapshot.txt`, so a change between a watcher exit and its re-arm (such as a session switching to paid credits) is still reported. PR check counts are reported only once settled: while `gh` lists no checks or any check is pending, the line keeps the last settled counts with a ` (running)` suffix instead of flapping on every CI run.
+
+### code-review v3.11.0
+
+#### Changed
+- `validate` no longer discards a finding because its file is outside the diff. Such a finding is kept and tagged `out_of_diff: true` (the validator owns the tag and strips any value a reviewer set), skips the line-range check, and is held only to the normal 0.5 confidence floor for P2 and below, not the 0.80 out-of-hunk floor. The validate stats gain `kept_out_of_diff` and drop `discarded_file_not_changed`. A diff-scope finding with no `file` is now discarded as `DISCARD_MISSING_FILE`.
+- `verify-prepare` always sends `out_of_diff` findings to the verifier, whatever their severity or confidence, ranks them first and outside the verification cap so they are never deferred and in-diff findings keep the full `VERIFY_MAX_VERIFICATIONS` budget, never serves them from the verification cache, and passes them the full-diff patch (`patches_path`).
+- The verifier prompt has a causation check for `out_of_diff` findings: find the change in the patch that caused the problem, confirm the cited code depends on it, and otherwise reject with the new `rejection_class: "not_caused_by_diff"`. The verifier must grep the patch and page through all of it before rejecting; a partial read yields TENTATIVE. A missing `evidence[]` citation is not by itself a reason to reject.
+- `cache-update` files a Bug Hunter A finding on a file outside the diff under the first diff file its `evidence[]` cites, or else under every file in the partition that produced it, so a cache hit brings it back; repeated copies collapse in `validate`'s duplicate merge. Both cache paths (per-run and global) do this. `cache-check` drops such a cached finding once its own file is in the diff, so a fix to that file is not contradicted by the stale cached copy.
+- `post-comments` posts an `out_of_diff` finding inline at the first `evidence[]` line that lies in the PR diff (read from the PR's files), with a body that opens with the affected `file:line` and says "caused by this change" only when the verifier upheld the finding (`CONFIRMED`, `DOWNGRADE` or `RE_ASSERTED`), "causation unconfirmed" otherwise; otherwise the finding is summary-only. The posting tally adds `out-of-diff=N`.
+- Reviewer prompts (the per-agent template, Bug Hunter B, the fast-path reviewer and the shared FILE SCOPE rules) now say findings on code outside the diff are in scope when this diff caused them, and must cite the causing diff line in `evidence[]` as a `{file, line, claim}` object (the shared prompt documents the shape and shows it in its example). Pre-existing bugs the diff did not cause stay out of scope.
+- The local and GitHub presenters label `out_of_diff` findings "outside the diff — caused by this change" when the verifier upheld them and "outside the diff — causation unconfirmed" otherwise, explain `not_caused_by_diff` dismissals, and show "Kept — outside the diff" in place of "Discarded — file not changed". `SCHEMA.md` and the finding JSON schema document `out_of_diff`, `out_of_hunk_kept` and the new rejection class.
+
+### vibe v1.0.58
+
+#### Changed
+- PRD starts now treat existing child tickets as scope units: requirements classifies every child, untouched included work is claimed and linked to the session, active work owned elsewhere is reported and excluded, and handoff reconciles delivered, superseded and uncovered children through merge.
+- Handoff now fails closed on every path outside the writer allowlist except a mechanically verified shrink-only source-gate edit, verifies Desktop build output before any Electron launch, and gates pull request creation on real web-host plus WebKit iPhone and Chromium Pixel interaction evidence.
+- Storybook checks now compare every deprecated story's rendered dependency closure and stable output, and recheck release history, version, component and story counts, and in-flight train reservations against the pinned pull request base immediately before creation.
+- Precedent research clears narrow-layout drawers, sidebars, banners and overlays and captures both states. Malformed telemetry tests must assert the existing monitored corruption event, and external dependencies need deployed evidence before acceptance criteria or plan tasks can complete.
+- An outdated version question is asked only once at a fresh start. Resumed sessions and opening instructions that already say to proceed report the installed and latest versions and continue in the same turn.
+
+#### Added
+- Twelve contract tests for the open lesson ledger and four shared Claude Code and Codex eval cases covering PRD child ownership, the Desktop build precondition, explicit proceed instructions and resumed-session version checks.
+
+### closedloop-core v1.5.1
+
+#### Fixed
+- The `prd-dependency-graph` helper's `GET /health` no longer reveals the user's home path, and so their username, to websites. 1.5.0 still sent the script path and pid to Origin `null`, which any website can send from a sandboxed frame. Any request with an Origin now gets only `{ok, protocol}`; the script path and pid go only to a local program (no Origin, addressed to loopback), which `--ensure` needs to recognize and replace a helper from another install. Refresh errors name a file as the request gave it, never a symlink's target. New tests in `test_prd_dependency_graph_security.py` cover each origin, a DNS-rebound request, the symlink error, and `--ensure` replacing a running helper from another install.
+
+### closedloop-core v1.5.0
+
+#### Added
+- `prd-dependency-graph` pages are portable. Each graph block carries its own config (scope, options, labels, columns, nodes and links, and the last refresh's changes) in an inert `<template class="dg-config">`, with no token, output paths, API base or viewer. A copied page or report refreshes in place on any machine with the skill and its own `CLOSEDLOOP_API_KEY`; nothing is saved outside the page.
+- The helper's `POST /v2/refresh` takes the page's graph id and scope plus, for a page opened from a file, the file's own path. It rewrites only that graph's block in the file and answers `{ok, written, refresh_id}` with no ticket data; the page reloads from disk, keeps its zoom, and shows the change dialog from its embedded config. A page served from `http://localhost` gets the graph back, swaps it in place, and says no file on disk changed.
+- "Yours" follows whoever refreshes: the helper looks up the API key's owner with `GET /me`, so `--me` is now only a fallback.
+- `--once <page.html>` refreshes a page or report directly (`--graph` picks one graph), `--export-config <page.html>` prints a page's config, and `--once <page.html> --apply-config <json>` refreshes from an edited one. `render_graph.py --print-columns` reads a page too. Standalone pages now have depgraph markers like reports.
+- A threat model in `SKILL.md`, enforced in code: ticket data goes back only to pages served from this machine (never to Origin `null` or other websites); writes go only to an existing `.html` file of the user that holds the graph's markers and config for the requested scope, atomically and only between the markers; requests must be JSON (so browsers preflight them, granted only to file pages and pages from this machine), name a strictly formatted scope the file holds, and are rate limited (3 seconds per target, two at once); the API key is only ever sent to `https://api.closedloop.ai`, whatever a page says.
+- `tools/python/test_prd_dependency_graph_security.py` and `test_prd_dependency_graph_portable.py`, with a stubbed ClosedLoop API, cover each security rule, a copied page refreshing from another folder with no config, reports with several graphs, the CLI paths, and older graphs. `check_graph.cjs` now runs on a copy and checks the file refresh with reload and the served-page swap.
+
+#### Changed
+- Graphs made by earlier versions keep working: old pages' token URLs, `--once <graph-id>`, and any file an older config lists still refresh from `~/.local/share/prd-dependency-graph/<graph-id>.json`, and each refresh writes the portable format into those files, removing the token from the page. A page whose helper is older than the page says so and shows `prd-graph-helper --ensure`.
+- The "helper not running" dialog names `prd-graph-helper` or `~/.local/bin/prd-graph-helper` instead of an absolute path from the machine that rendered the page.
+
+#### Fixed
+- The helper's `/health` and old token endpoint no longer reveal the user's home path to other websites: `/health` shares its details only with file pages and pages from this machine, and the token endpoint's errors name no paths.
+
+### vibe v1.0.56
+
+#### Changed
+- Handoff verification now executes touched Storybook plays in a real browser with awaited interactions, requires WebKit iPhone and Chromium Pixel touch runs for cards and narrow layouts, compares narrow layout geometry with main, and permits `Missing tests: None` only with executed web and Desktop host-adapter coverage for every acceptance criterion.
+- Storybook review now validates fixture slug and type consistency, uses distinct non-default values for value-dependent columns, and forbids `!dev` sidebar folds unless the person explicitly requested sidebar reduction. Guardrails also preserve acceptance-criterion provenance and reject exemptions or product rules sourced only from agent rationale.
+- Requirements research now runs collision and file blast-radius checks for every request, reports open pull requests touching the same files, and includes shipped rules from matched executed PRDs and their done children. Handoff records other open pull requests claiming the same Storybook version, and ticket creation falls back to the latest weekly project when none covers the current date.
+
+#### Added
+- Contract coverage for all 11 QA lessons and five shared Claude Code and Codex eval cases for real-browser story plays, real touch devices, overlap research, host-adapter test coverage, and weekly-project fallback.
+
+### vibe v1.0.55
+
+#### Added
+- Operator ruling, 2026-10-19: a vibe session's live ticket links back to the document it was started from, and the session's plan is published as one implementation plan document (PLN) the ticket produces. `vibe-ticket-worker` gains a "Source link and session plan" procedure (list before every write, so a resumed session or a rerun never duplicates a link or a PLN): the record's originating document PRODUCES the live ticket; the local plans render to one PLN in the ticket's project, assigned to the ticket's assignee, linked ticket PRODUCES PLN, and given a new version only when the plan changed materially.
+- `vibe-ticket-worker` plan mode, dispatched by the vibe skill after each request's plan in its own record turn. The PLN's status follows the work: DRAFT while its latest plan is not built, APPROVED once the code is written and checked (at the latest when handoff opens the pull request), EXECUTED once the pull request merged (plan mode with `mergeCheck: true`, run when a handed-off session with an APPROVED PLN is looked at again). Every `update-document` carries `expectedStatus`.
+- `scripts/session-plan.mjs` renders the session's top-level local plans in request ID order and reports whether the published PLN is current, ignoring whitespace-only edits. `scripts/publishable-text.mjs` applies the live ticket's safety rules to it: paths in the session's checkout become repo-relative and bare angle-bracketed names become code spans; a local absolute path, the local username, a personal email, a secret or credential, or a private session input is refused with its file and line, nothing is published, and the same writer fixes its local plan.
+- The session record keeps `livePlan` and `livePlanStatus` next to `liveTicket` (`vibe-sessions.mjs touch --live-plan PLN-123 --live-plan-status DRAFT|APPROVED|EXECUTED`; `list` and `show` report them; older records read them as null).
+- The owned worker launcher grants `create_artifact_link` to the ticket worker's create, plan and handoff actions, `create_document`, `create_document_version` and `update_document` to the new plan action, `create_document` and `update_document` to handoff, and `get_document_content` as a live read.
+
+#### Changed
+- Handoff mode verifies the source link, the PLN, its ticket link and that the PLN matches the current local plans, repairs whatever is missing or stale, and leaves the PLN APPROVED before the ticket is complete; `live-ticket-check.mjs --worktree` refuses a session with local plans and no APPROVED or EXECUTED PLN recorded. Assign mode hands the PLN to the next owner with the ticket.
+- The rule that a technical plan is never uploaded is retired in the ticket worker, the vibe and handoff skills, `quality-loop.md`, `ticket-template.md`, the change, backend and prototype workers and the README. Plans are still never committed, deployed, attached or pasted into the ticket body, and the person running the session still never sees or approves one. Revisions and review evidence go in subfolders of `.closedloop-ai/vibe-plans/` and stay local.
+
+#### Tests
+- `test_vibe_plan_links_contract.py` (9 cases, all failing on 1.0.54) pins the retired rule's absence, the source and plan links with listing first, the single PLN, the safety rules, the status transitions with `expectedStatus`, handoff repair and APPROVED, assign, the vibe skill dispatch, and the session record's PLN field. `session-plan.test.mjs` covers rendering, order, currency, refusals and symlinks; `live-ticket-check.test.mjs` the APPROVED gate; `vibe-sessions.test.mjs` the record fields; `claude-worker.test.ts` the per-action grants.
+- Five eval cases tagged `plan-links` (Claude, and Codex through the runner): a PRD-started session links PRD to ticket and ticket to PLN and approves it once built, a resumed session duplicates nothing, handoff repairs a missing link, a plan with a local path is refused without quoting it, and handoff moves a DRAFT PLN to APPROVED before the pull request opens.
+
+### vibe v1.0.54
+
+#### Changed
+- Lessons from the reviews of the first two vibe feature pull requests in symphony-alpha (#8885 grouped list sections, #8886 bulk add tag), operator ruling, 2026-10-16. Each lands in the section that owns the behavior; where a rule already existed and was not followed, the owner now runs a concrete check and quotes its evidence.
+- Guardrails reviewer: reuse (check 1) greps `packages/app/shared`, `shared/auth` and the existing `use-*` hooks before accepting a new hook, helper or inline query; copy (check 4) blocks a second spelling of wording a shared helper renders; conventions (check 7) block any `as` cast, stories included, and a URL, storage or route key literal that a shared constant exports or that web and Desktop spell separately; shared owner (check 8) runs a slot-without-an-owner check (two children each holding selection state behind the parent's slot, the ISS-12137 red flag), a private-copies check, and a leftovers check over every deleted, renamed or extracted file (pass-through files, re-export aliases, orphaned exports, unused props, one-arm loops); tests and checks (check 9) block a new gate, validator or widened shared test helper nobody asked for, report tests named after deleted modules, and in a pull-request turn block expected values computed by production code; Storybook (check 10) reads compile-only repairs word by word, blocks more than one Version History entry or a duplicate-key special case, blocks a whole-page flow filed as a Composite, and blocks every story ID the session lost and every reference to an old ID still in e2e specs, tests or docs. New check 13 inspects every main-sync merge for capability removal against main's side, and new check 14 reads the linked tickets' comments before a flag is retired and treats a recorded hold with no human answer as a blocking engineering decision.
+- Adversarial reviewer: acceptance criteria are attacked per surface (each view, web and Desktop, and the mechanism the words require, such as a URL), selections must account for every selected row, gates follow host capability rather than page data and match on web and Desktop, and server enums are parsed per row for version-skewed clients.
+- Storybook decomposer: PRD-required states go on the consumed component's stories, windowed fixtures come from the real paging helper, story names say only what the story shows and asserts, and handoff mode reports lost story IDs with the `rg` hits for each old ID and the Version History entries.
+- Change worker: greps shared owners and existing hooks first, reads linked-ticket comments before deleting a flag, never resolves a main-sync conflict by removing what main ships, accounts for every selected row and settles unspecified handling through "Precedent before asking", cleans up every leftover of an extraction, keeps one Version History entry and prose-free compile-only repairs, and in a pull-request turn writes every missing test in its owning lane, with literal oracles, acceptance criterion lineage, and URL-synced tests through the real web and Desktop host adapters including a same-route link and Back.
+- Verify worker: runs the Storybook preview sort-order tests when sidebar order or story titles change, runs touched e2e specs through the containerized `dagger call e-2-e` path, reads `.github/pr-test-event-tiers.md` before any claim about what CI runs, and checks the missing tests list for lineage, lanes and host adapters.
+- `quality-loop.md`: each acceptance criterion carries a `Surfaces:` line and is met only when every surface on it has its own check; check lines name the surface.
+- Nothing agent-written goes into public docs. The 2026-10-13 docs-draft exception is retired: no worker edits `apps/web/content/docs/` or the internal `docs/` folder in any phase, handoff only lists the existing pages a human needs to update on the ticket's Feature docs line, and `handoff-inventory.mjs` reports any docs change as outside the allowed paths in every phase.
+- PR body files are named per ticket and read back right before `gh pr create` or `gh pr edit --body-file` (environment worker, seed PR worker and cl-execute), after one pull request's body overwrote another's in a shared scratchpad.
+
+#### Fixed
+- At session start an outdated plugin's version question comes first, on its own; the new session's endings line goes in the first reply after the person answers it, or in the very first reply when the version is current or unknown.
+
+#### Tests
+- `test_vibe_review_lessons_contract.py` (18 cases) pins each rule in its owning section and the version-question ordering; 17 fail on 1.0.53. The retired docs-draft contract tests are removed and the docs and acceptance criteria contract tests follow the new wording. `handoff-inventory.test.mjs` asserts a docs page is outside the allowed paths in every phase (fails on 1.0.53).
+- Seven eval cases tagged `review-lessons` (Claude, and Codex through the runner), one per highest-value lesson: main-sync capability removal, Version History and compile-only prose, a stale story ID, the shared selection owner, a criterion checked on one surface only, an agent-drafted docs paragraph, and a flag retired against a hold. A new `pm-version-kept-then-endings-line` case and a grader on `pm-version-outdated-asks-keep-going-or-update` check the version-question ordering. One run each on this branch: Claude Sonnet 12 of 12 and Codex 9 of 9 on the new and version cases. On 1.0.53 the docs case fails on both harnesses; the other six review cases pass there too, because the prompt hands the reviewer the evidence the new checks collect, so on those cases they guard the behavior without separating the versions.
+
+### vibe v1.0.53
+
+#### Added
+- A startup version check (operator ruling, 2026-10-16). Every `$vibe` start, new or resume, runs `scripts/plugin-version.mjs`, which compares the running plugin's own manifest (`.codex-plugin` in Codex, `.claude-plugin` in Claude Code) with the same manifest on claude-plugins `main`. When the install is older, the person is asked "keep going with this one, or update now?"; on update the orchestrator runs the harness's update commands (`claude plugin marketplace update closedloop-ai` and `claude plugin update vibe@closedloop-ai`; in Codex `plugin marketplace upgrade closedloop-ai` then `plugin add` for vibe and closedloop-core, or a `git pull --ff-only` of a local folder marketplace, as `INSTALL.md` describes) and asks them to reopen the app. The check never blocks: no network, a refused, slow (5 second limit) or garbled answer, or a missing manifest prints status `unknown`, exit 0, and the session carries on and says so. `guardrails.md` ("Plugins and tooling") allows exactly this person-chosen update and nothing else.
+- A precedent check before any product question (operator ruling, 2026-10-16). When the graph does not settle how the product should behave in a situation, how a mature app handles it is the default answer: Asana first, then another established app with the same flow (for example Linear, or GitHub's own authorization screens), then their public help centers. `scripts/precedent-check.mjs` holds the research brief and its safety rules once: in Claude Code it starts a separate headless `claude -p --chrome` run limited to the Chrome tools, web search and fetch (a session's Chrome tools are bound when it starts); in Codex it prints the brief the orchestrator follows in its own in-app Browser tab or with Computer Use, and `vibe-requirements-worker` gains a precedent mode for the help centers when no browser can look. The brief never touches existing data, keeps test data in one private `zz vibe precedent check (temp)` project with `zz test` tasks that is deleted and confirmed gone, cancels any connect, invite, share, pay or settings flow at its confirmation step, verifies every state before recording it, separates direct observation from help-center material and reports `undocumented` rather than guessing. The answer and its source (`Asana, observed <date>`, a help-center URL or a ticket slug) are recorded in the session decision table as a default, never a human ruling or user-visible words; only when nothing settles it is the person asked.
+- Visual QA during the session (operator ruling, 2026-10-16). `quality-loop.md` gains "Visual QA during the session": at each visible milestone (a user-visible change first ready to look at, or a later major visible change, never a small edit) the ready message offers visual QA through `session-questions.mjs` (key `visual-qa:<request ID>`), and "looks good, make it polished" runs it before handoff without asking, unless the change shows nothing visible or the person declined it for that version. It runs the repository's design pack visual QA skill (`/visual-qa`, `$visual-qa`) between requests after a deploy: against the session's acceptance criteria when the ticket or its PRD has them, otherwise as the design pack's best-practice review against `.claude/design/soul.md`. Findings go to the same writer as one fix request.
+
+#### Changed
+- The build loop is otherwise unchanged: visual QA still never runs inside a request's build or holds a deploy back, and the reference check stays the loop's one exception. The vibe skill (sections 1, 5 and 6, "Questions are asked once"), `guardrails.md`, the handoff skill (its visual QA now uses the same criteria-or-design-pack basis, and its question gate includes the precedent check), the change and requirements workers, `INSTALL.md` and the README follow, and sentences saying visual QA runs only at handoff are reworded.
+
+#### Tests
+- `plugin-version.test.mjs` (8 cases): outdated with each harness's commands (Git and local Codex marketplaces), current and newer, each harness reading its own manifest, unreachable, 404, garbled, unversioned and slow marketplaces all `unknown` with exit 0, a missing manifest or runtime, and quoting of paths with spaces. `precedent-check.test.mjs` (6 cases): the brief's order and every safety and evidence rule, the headless Claude arguments and stdin, and failed, empty, slow and missing runs never counting as an answer.
+- `test_vibe_visual_qa_precedent_version_contract.py` (11 cases) pins the prose in the skills, references and workers; all 11 fail on 1.0.52. `test_vibe_test_repair_lean_loop_contract.py` now pins "run at `$handoff`, never during the loop" and keeps the QA skill names out of the lean loop section, since visual QA may now also run outside the loop.
+- 15 eval cases tagged `precedent`, `visual-qa` and `version-check` (Claude, and Codex through the runner; the Codex count test moves to 48). With Sonnet in Claude and the runner's default model in Codex, all 15 pass in both harnesses here. On 1.0.52 the four visual QA offer and polish cases, the outdated and unreachable version cases and the Asana-first case fail in both harnesses; the update-done case fails there in Claude (no reopen step) and in Codex only on its tool-call cap. The graph-answered, no-precedent, small-edit, declined and current-version cases pass on 1.0.52 too, as expected, since they guard behavior 1.0.52 already had or never offered; so do the two Codex precedent follow-up cases, whose session state already describes the precedent steps (the recorded-answer one failed one of two Claude runs on 1.0.52).
+
+### vibe v1.0.52
+
+#### Fixed
+- A handoff check that is already red on main no longer stops the handoff (operator ruling, 2026-10-16). Three times in two days a handoff stopped on a check that failed on main itself, not because of the session: the API path filter, the e2e volume guard and a capability-parity fixture. Each time the session ended with "a needed fix stops the handoff".
+- `main-sync-validate` now compares every failing handoff check against the main the session captured. It runs the same check on the transaction's `mainSha` in one disposable checkout of that commit, bootstrapped once with the repository's own `.closedloop-ai/loops-setup.sh` (the pristine bootstrap input readiness already uses) and removed afterwards. A check whose selection follows the session's diff (`typecheck:affected`, `test:affected`, the pinned Turbo filter) runs the same task over the packages the session selected, so main is not asked a different question. A check that also fails there is `main-preexisting`: publication proceeds and the result lists it under `mainPreexistingFailures`. One that passes on main gets one rerun on the session commit: it is `session-caused` and blocks when it fails again, and `flaky` (counted as passed, listed under `flakyChecks`) when it passes. A check that cannot run on main (no bootstrap, a failed bootstrap, a time limit, a checked file main does not have) is `session-caused`, the conservative reading.
+- The receipt keeps the classification and every run's private log and digest: on each command of a successful validation, and under `failedChecks` for a blocked one. Consumption re-verifies those logs like the command logs. Checks that passed are never rerun, every new run is bounded by that check's own time limit through `scripts/run-bounded.mjs`, and the handoff recipe binds a comparison reserve (one bootstrap plus a main run and a rerun per check) so the Claude validation envelope covers it. Build-loop deploys are unchanged: a failing quick check still blocks. Dist bundles rebuilt.
+
+#### Changed
+- `quality-loop.md` gains "Failures already on main", the one statement of the rule. `guardrails.md` ("Plugins and tooling") and the handoff skill say a main-only failure is not a needed fix and never stops the handoff; only a failure the session caused blocks. Handoff step 7 continues when the result lists `mainPreexistingFailures` and passes each entry to step 8's ticket worker; a `session-caused` refusal goes back to the same writer. The change worker returns those entries unchanged and never fixes, skips or weakens such a check; the environment worker pushes and requests as usual for them.
+- The ticket template and the ticket worker place each one once at the end of the Engineering checklist, `- [ ] Known main failure: <check>; fails on captured main <mainSha>; evidence: ...`, never also on the Pre-existing failures line and never routed to the person. The person's update stays plain and never presents it as a stop.
+
+#### Tests
+- `main-sync-main-comparison.test.ts` (7 cases): checks failing on both (including `typecheck:affected` and the pinned Turbo filter, run on main over the session's selected package), publication then pushing; a check failing only on the session commit, blocked with all three runs recorded; a flaky check passing on its one rerun; a check that cannot run on main because its bootstrap fails, blocked with no rerun; a build-loop failure still blocking with no comparison; plus the pinned main command and the recipe-bound Claude envelope reserve. The four classification cases fail on 1.0.50's bundle. The checkout is removed in every case.
+- `test_vibe_main_only_failures_contract.py` (6 cases) pins the prose and the ticket placement in quality-loop, guardrails, handoff, the ticket template and the change, environment and ticket workers; all six fail on 1.0.50. Three contract tests and one budget test that pin the Engineering checklist row and the handoff recipe's keys follow the new row and the `comparison` reserve.
+- Two eval cases tagged `main-failures` (Claude, and Codex through the runner): a check that also fails on the captured main after the writer reported it as "a needed fix", and a session-caused failure. One run each: both pass on both harnesses here. On 1.0.50 the main-only case fails on both harnesses (Claude Sonnet 0.67, Codex fail: neither placed it as a Known main failure); the session-caused case passes on 1.0.50 too, as expected, since 1.0.50 blocks every failure.
+
+### vibe v1.0.51
+
+#### Added
+- A Data direction readiness item in cl-execute's `planning-and-gates.md`: a new direction of data flow between surfaces (cloud to an installed client, a client into another tool's data, one service writing into another's store) needs a cited human decision or approved document traced per Decision provenance; an earlier document that restricts the direction is a conflict, and with no traced decision it is a numbered human decision. The plan-review prompt mirrors it in one DECISIONS line.
+- `cl-analyze` gains Decision provenance and Data direction readiness checks that point to those cl-execute definitions, and both items in its result's Readiness list.
+- cl-execute's `CL Execute Gate Result` Readiness list reports Decision provenance and Data direction, so the gate reports the items it checks.
+- In vibe, the requirements worker flags a new data direction in its brief as `data direction (new)` with its source or `untraced`; the change worker builds only along directions already allowed and logs an untraced one as an `Engineering decision`, never a question for the person; the guardrails reviewer treats an untraced new direction in the diff as a blocking `engineering decision` finding.
+- `test_vibe_data_direction_contract.py` and a `skill-contract.test.mjs` case pin these rules; both fail on 1.0.50.
+
+#### Changed
+- A write into another tool's data covers its files and its API or IPC (for example a method that changes that tool's stored state). A supported interface lowers the risk but does not remove the need for a traced human decision. The guardrails reviewer's Mechanisms check (item 12) and cl-execute's Data direction item state both, the plan-review prompt names API and IPC writes as mechanisms and says a supported interface is not the decision, the change and requirements workers name API and IPC writes, and planning step 13 adds that moving such a write to a supported interface does not settle whether the write is allowed.
+- `cl-analyze` counts a decision as documented for the `EXTREME` risk rule only when it traces to a human statement (who, where, which question); a ticket's or plan's Decisions section alone is a record, not a ruling.
+
+### vibe v1.0.50
+
+#### Fixed
+- Handoff no longer reads symphony-alpha's current Storybook roots as frozen v1.0. symphony-alpha #8867 (ISS-12610, Storybook 3.0.0) made the `<Level> v2.0` roots the plain roots, moved the old plain roots to `<Level> v1.0`, and replaced the `v1.0`/`v2.0` tags with one lifecycle tag per story file (`stable`, `preview`, `experimental`, `deprecated`). 1.0.49 and earlier still treated every plain-root title as v1.0, so a session that synced main and moved its own entries to `Composites/...` with a `stable` tag was blocked, and an edit of a `Surfaces v1.0/` file went unchecked.
+- `handoff-inventory.mjs` now judges story files by the scheme of the session's base, reported as `storybookScheme`. A new `storybook-taxonomy.mjs` reads the base's own `apps/storybook/story-group-order.ts`: when it exports `StorybookLifecycle`, the frozen tag is its `Deprecated` value and every frozen root ends in `storybookBaselineVersion`, the same test symphony-alpha's `validate:catalog` applies, so the next rename there moves these checks with it. A base without it keeps the version scheme (plain roots and the `v1.0` tag frozen). A lifecycle export this script cannot read blocks a session that changed a story file (`storybookSchemeRecognized`) instead of guessing.
+- Every earlier ruling carries over on both schemes: v1.0 story files stay frozen apart from the compile-only repair (same meta title, tags and story exports as the base), a retitle is judged against the main the session last synced so a sync is never blamed for #8867's renames, and `Start Here/` stays exempt. The inventory's output keys are unchanged.
+
+#### Changed
+- `guardrails.md` ("Storybook taxonomy"), the Storybook decomposer, the change and primitive workers, the guardrails reviewer (check 10), `design-pass.md`, the handoff skill and the README place new stories in the current roots with one lifecycle tag (`stable` shipped, `preview` under Labs, `experimental` design-only or not in the live app), put new states of a deprecated component in a new entry in the current root with a permanent name and no version number, keep an existing non-deprecated file's title and tag, and tell a session on a pre-#8867 base to follow that base's `v2.0` rules until it syncs.
+
+#### Tests
+- `handoff-inventory-storybook-scheme.test.mjs` (5 cases): scheme detection from the real constant shapes and from a renamed scheme; current-root files new and edited on a lifecycle base (the failure on 1.0.47 to 1.0.49: both edited `stable` files were listed as `frozen`); the v1.0 roots and `deprecated` tag frozen with the compile-only repair kept; a session based before #8867 that syncs main and is not blamed for its renames; an unreadable lifecycle export. Four of the five fail on 1.0.47 and on 1.0.49.
+- The Storybook contract tests follow the new wording, plus one for the base-scheme rule.
+- Two eval cases tagged `storybook` (Claude, and Codex through the runner): new states for a deprecated component, and a synced session's own `v2.0` entry. One run each: both pass on both harnesses here; on 1.0.48 Codex failed both and Claude (Opus) failed the first (score 0.2) and passed the second.
+
+### vibe v1.0.49
+
+#### Fixed
+- Five gaps a review of a product manager's vibe pull request found, all still open on 1.0.47 (operator ruling, 2026-10-16). She built a static Desktop sign-in return page with vibe 1.0.36 and took it to a pull request.
+- Tokens: her button got a page-local `--button-shadow` with hardcoded `rgb()` values and its own dark-mode override, and the pull request said no bundled elevation token existed, while `--shadow-inset` sat in the `:root` and `.dark` blocks of the design system's `globals.css`; the guardrails reviewer only called it advisory. `guardrails.md` gains "Check the bundled tokens first": the writer and the guardrails reviewer read the tokens the touched surface actually bundles, in each stylesheet's `:root` and `.dark` blocks, before writing or accepting any hardcoded color, shadow or dark override. A raw value, a page-local re-declaration or an own dark override where a bundled token exists is blocking, never advisory. The all-or-nothing "tokens not bundled" note is now per token, `Engineering needed (token not bundled): <surface>; <token>; checked <each stylesheet and block searched>; uses <the token's exact value>`, and a claim without that evidence, or about a whole surface, is a finding.
+- Rendering: the reference check renders the final state in both light and dark wherever the surface supports both, with a Reference check line per theme (`environment.md` names how: the Storybook theme global, Playwright's `colorScheme`, or a component's story for a Desktop screen control cannot switch). Handoff's verify step no longer accepts "could not drive" for a static or generated page: it produces the page's HTML with the repo's own generator, opens it headless and captures it in light and dark. The build loop still renders nothing without a reference image.
+- Post-PR fixes: a pull request handoff opened was the end of vibe, so review fixes happened outside it, the body went stale and nothing reran the guardrails. Handoff gains "Changes on the open pull request": when the person asks for changes on it, the session resumes, the environment worker reads the unresolved review threads, the SAME writer fixes them in its `pull-request` turn, the guardrails review and checks rerun (with `review-soul` on the tests), the environment worker pushes to the same branch through the normal hook (never a force push), the ticket is refreshed, and the pull request body is rebuilt from the session record and each thread answered with the fixing commit through the REST review-comment reply endpoint and resolved once fixed. `guardrails.md` names `apps/desktop/scripts/**` in the Never column; behavior is unchanged (the inventory still reports it under `outsideAllowed`, and a need there takes the forbidden-path route).
+- PR-path tests: on a requested pull request the repo's `review-soul` critic is required on the tests the writer wrote, not optional. The writer's `pull-request` mode adds two rules: a test name never claims more than its assertions pin, and assertions prefer tokens, structure and behavior over raw CSS or style-string pins.
+- Main moving during validation: `main-sync-validate` threw "Affected test selection owner changed" or "Test selection refs changed during the owning budget child" whenever `origin/main` moved between test selection and the report check, which on symphony-alpha happens every few minutes. The affected selection is now pinned to the transaction's captured `mainSha`: the wrapper's filter must be `...[<mainSha>]`, and before the report check the wrapper's base (`git merge-base origin/main HEAD`) must still be that commit, so a fast-forward of main no longer invalidates it while a rewritten main still does. The session's own HEAD changing still refuses. Dist bundles rebuilt.
+- Coverage: a new contract test file (`test_vibe_pm_review_gaps_contract.py`, 12 cases, all failing on 1.0.47 and on 1.0.48), which reads the docs through the shared contract-test helpers in `vibe_contract_text.py`. Vitest: validation passes while `origin/main` advances during the selection and before the report check (both failing on 1.0.47), a rewound main still refuses, and an unpinned wrapper filter refuses. Three eval cases for both harnesses: `pm-hardcoded-shadow-blocked-at-review`, `pm-static-page-light-and-dark` and `pm-review-comments-fix-the-pr`; the stand-in repository's tokens gain a `.dark` block and its screenshot tool a `--theme dark` option, the Codex runner maps the new checks-log grader, and its `tool_used` graders count each command in a batched Codex code-mode call. One run each: Claude (Opus) 3 of 3 cases and 22 of 22 graders here, 1 of 3 and 10 of 22 on 1.0.47; Codex 3 of 3 and 28 of 28 here, 0 of 3 and 16 of 28 on 1.0.47 (two earlier Codex runs here left thread resolution out of their plan until the vibe skill's summary named it). The light-and-dark case also passes on Claude with 1.0.47, so on Claude it guards the behavior without separating the versions.
+- The writer also states that dark mode comes from the bundled tokens' `.dark` values, so a surface's own CSS adds no `.dark` or `prefers-color-scheme` rule; one Codex eval run had added one for button contrast.
+
+### vibe v1.0.48
+
+#### Added
+- The handoff guardrails reviewer checks each new poller, interval, background lane, socket, cross-process channel, route, table, cursor, or write into another tool's files: the existing mechanism that could do the job and why it was not used, what its cost scales with at 10x and 100x, and its per-device idle cost. Idle-scaled cost when an activity-scaled design meets the outcome, or a write into another tool's data with no cited human decision, is blocking; a ticket's Decisions section counts as that decision only when it traces to a human statement, and an untraced one is an `engineering decision` finding. It checks the session plan's Cost Scaling table against the diff.
+- An `Engineering decision: <question>; built: <...>; evidence: <...>` item on the live ticket's Engineering checklist, with placement rules in the ticket template and the ticket worker.
+- A closedloop-graph route for channels that already connect two surfaces, with an existing-channels `code_grep` in the change and backend workers' required calls when the work is periodic or cross-surface.
+- `test_vibe_mechanism_provenance_contract.py` pins these rules.
+- `tools/python/vibe_contract_text.py` holds the `flat`, `section`, `paragraph`, and `agent` helpers every vibe contract test now imports instead of keeping its own copy. `section` stops at the next heading of the same or a higher level and matches its heading at the start of a line, preferring an exact line; `paragraph` also splits list items; `agent` returns the raw text.
+
+#### Changed
+- The change worker treats a mechanism a ticket or PRD names as a proposal: when it is dominated, it builds the better option that meets the outcome and logs the swap as an `Engineering decision`, never as a question for the person. Plans that add periodic or cross-surface work carry a Cost Scaling table per cl-execute's `planning-and-gates.md`.
+- The requirements worker tags ticket text that names a mechanism `mechanism (proposal)` instead of an acceptance criterion.
+- A handoff finding that a mechanism, a one-way door, or an unratified or conflicting decision needs a human decision is never resolved, downgraded, or absorbed by the writer; it goes on the Engineering checklist.
+- `quality-loop.md` defines a settled decision as one that traces to a human statement (who, where, which question). An unratified or conflicting one goes through the product necessity gate or becomes an `Engineering decision`, and conflicts are never resolved by recency. Every "never re-ask a settled decision" points to this definition.
+- Frozen rows describe user-visible behavior, never mechanism.
+
+### vibe v1.0.47
+
+#### Added
+- `cl-execute` ships its plan-review prompt as `references/plan-review-prompt.md`. Planning step 20 gives the single independent plan reviewer that prompt verbatim, followed by the plan path, ticket, PRD slugs, and a private path for the review file. The prompt checks scope exclusions and mechanisms equally hard, scores cost by what it scales with at 10x and 100x plus the per-device idle term, requires decision provenance, and ends with numbered HUMAN DECISIONS. Its worker section gives both the Claude Code and the Codex (`spawn_agent`, `send_input`) forms.
+- Plans that introduce periodic or cross-surface work carry a `### Cost Scaling` table (Option, Cost scales with, Per-device idle cost, At 10x / 100x, Existing mechanism reused) with at least two rows, one naming an existing mechanism. `scripts/check-plan.mjs` requires it when prose outside code fences names polling, intervals, cron, heartbeats, background lanes, sockets, subscriptions, feeds, or watchers, and `--no-periodic` waives it on the record.
+- A readiness item, Decision provenance: each recorded decision needs a traceable human statement, a newer ticket supersedes an earlier ruling only by addressing it, and conflicting records go to the human instead of being settled by recency.
+- A Discovery Routes row for existing channels between two surfaces (socket emit and subscribe calls, signal emitters, command dispatchers, interval lanes).
+
+#### Changed
+- Planning step 13 treats only the outcome a ticket asks for as binding. A mechanism the ticket names is held to the same test as one the plan invents; a dominated one keeps the outcome and goes to the human as one numbered decision, and raising it is stated to be neither instruction inflation nor manufactured ambiguity.
+- Planning step 20: a finding the plan reviewer lists under HUMAN DECISIONS is never resolved, downgraded, or absorbed by the worker; each becomes a numbered decision returned with `MANUAL_INTERVENTION_REQUIRED`, with the worker's view beside it.
+
+### vibe v1.0.46
+
+#### Fixed
+- Codex now gets the writer's rules. Codex reads a skill through shell output, which keeps the start and end of a long file and drops the middle; the vibe SKILL.md is about 14,400 tokens, so one read lost the build loop, and a Codex context doing the writer's work never opened `vibe-change-worker.md` or `quality-loop.md`. On main `642d235` that is why all four visual-cues Codex evals failed: a render with no reference image, criteria that paraphrased the person's words with no source or result, and no `Reference read` lines or token-mapped criteria for a reference. A new harness note near the top of SKILL.md tells Codex to read long files to their last line in parts of at most 200 lines, and in both harnesses whatever context does the writer's work reads the writer's definition and the "Acceptance criteria before ready" and "Visual references" sections first. The writer's own definition tells a Codex writer the same.
+- `quality-loop.md`, "Visual references", now opens with "Recording it in the table": the exact line shapes for a `Reference read` (one per reference image on the session, a screenshot of our page as it is now included, on a correction too), a criterion per reference property naming its token or component (a shadow, a type size and a type weight are three criteria), the reference check after the last edit, and, with no reference, a criterion quoting the person's words and never a render. Criterion lines sit above `### Checks`.
+- Eval fixtures: the stand-in screenshot tool read a CSS file's `@import` line as part of the first selector and silently dropped that rule, so a card that imported the tokens rendered with no shadow; it now strips `@import` lines and comments. The stand-in catalog names the selected-state contract the renderer and graders already used (`aria-selected="true"` or `is-selected`). The hover and selected graders accept a grouped selector (`.meeting-card:hover, .meeting-card:focus-visible { ... }`), which applies the same token on hover, and the outside-product criteria grader fails only when one of its four required criteria lacks a token, not when another criterion records something the design system has no token for.
+- Coverage: a new contract test file (`test_vibe_codex_reading_contract.py`, 8 cases, all failing on 1.0.44). Codex evals for the four visual-cues cases, one run each: 0 of 4 on 1.0.44, 4 of 4 here. Claude (`claude plugin eval`, Opus, one run each): 1 of 4 on 1.0.44, 3 of 4 here; `pm-two-screenshot-page` still fails its criteria grader on Claude because in that case Claude opened no plugin file in any run, on 1.0.44 or here.
+
+### vibe v1.0.45
+
+#### Fixed
+- Handoff readiness (`main-sync-inputs`) no longer outruns the 15-minute worker turn after a main import. On the ISS-12305 session it took 831 to 1,285 seconds, and the Codex writer stopped it at 900. Three causes, each measured on that session's commit (`7ddb1604`, 21,821 tracked files) on a laptop:
+  - The producer import-closure walk ran a full `git ls-tree` and reparsed every workspace `package.json` for each `@repo/` import, and spawned `git ls-tree` once per module to prove it was committed: 17,805 git spawns and 1,133 seconds for all producers. One walk now reads HEAD's file list and workspace names once (`main-sync-committed-tree.ts`): 6 spawns and 32 to 50 seconds. Verifying the 138 selected Turbo test tasks went from 82 seconds to 9.
+  - Lane discovery diffed from the last deployed commit, so it re-examined the whole main import (2,585 paths, 153 seconds). It now diffs from the captured main the session merged, which leaves the session's own 84 paths (7 seconds). The recorded argument is still one commit id.
+  - A rerun with the same HEAD, tree and tracked inputs reuses the stored generated-input origin when it still verifies in full (same writer, same generated bytes, package refs and evidence log), instead of rebuilding the pristine checkout. Any mismatch falls back to the full preparation.
+- With the unchanged pristine bootstrap and producers (about 50 seconds) and the tracked-input hashing, the measured parts add up to roughly two to three minutes, so the 15-minute default stays as it is.
+- Coverage: a 400-import closure that must stay within 8 git spawns while still refusing a workspace package that reads a retained report, lane selection after a 300-file main import with a one-file session change, and a second readiness run that reuses the origin, then regenerates and refuses once the generated bytes change. All five cases fail on 1.0.42.
+
+### vibe v1.0.44
+
+#### Added
+- A manual Codex eval runner mirrors all 26 Claude cases with executive and product-manager IDs, shared prompts, histories, images, scaffolds and regex graders. Each run installs worktree snapshots in a private local marketplace, caps concurrency at two and total wall time, and records per-case failures, tokens and elapsed time.
+- Deterministic route, wording-presence, file, tool-use and reference-evidence checks run before the cheap model grader, which judges plain-language wording only. Runner regression tests cover case parity, grading, deadlines, process cleanup and the image argument boundary. Neither model suite is added to CI.
+- The plugin README links the Codex run command beside the Claude suite; the Codex eval README explains setup, limits and artifacts. A recorded main `642d235` baseline lists all 26 results: 22 passed and four scaffolded build cases failed, with per-grader reasons and usage.
+
+### vibe v1.0.43
+
+#### Fixed
+- A reference image now reaches the writer as an image it reads (operator ruling, 2026-10-15: "we're missing visual cues"). In a product-manager session built from two screenshots, one of another product, the session missed a drop shadow, a larger text size and bold type. The writer got the saved path beside the orchestrator's own description and did not read the image before its first build, reference mode was scoped to behaviors, every criterion was "met by source trace", and the first ready message said it matched.
+- New `scripts/reference-images.mjs`: `attached` decodes the images on the person's latest message from the harness's own transcript (the Codex rollout for `CODEX_THREAD_ID`, or the Claude Code transcript for `CLAUDE_CODE_SESSION_ID`), `save --file` stores an image file, and both record it on the session as `referenceImages` in private Git metadata. Images a tool returned are never taken for the person's attachments. The Claude launcher (`claude-worker.mjs`) adds the recorded paths to every writer, requirements and verify turn, and the Codex `writer-state.mjs take-input` returns them with the claimed input. The orchestrator forwards every saved path and never its own description in place of it.
+- Reading a reference is a required, recorded step: the writer opens each image (`Read` in Claude Code, `view_image` in Codex) and logs a `Reference read` line before it plans or builds. A screenshot of another product goes through reference mode whether or not the product is named; `vibe-requirements-worker` reads the image itself and always returns visual (elevation, type size and weight, color, spacing, radius, borders, icons, density) and UX (hierarchy, emphasis, hover, selected, disabled, empty, loading and overflow states) requirements, each mapped to a catalog component and design token. The orchestrator may not scope the visual list out. Each requirement becomes an acceptance criterion; one with no design-system equivalent takes the missing-primitive path, and a surface that does not bundle the tokens uses the named token's value and is logged for engineering.
+- The reference check before ready (operator ruling, 2026-10-15), the one exception to the lean loop's no-visual-QA rule and only when there is a reference image: before `DONE` on a UI change the writer screenshots each touched screen at the reference's viewport, compares the properties the reference shows plus regressions on the touched element (such as a lost tap-target minimum height), fixes each difference with tokens and screenshots again. The result gates the ready message, and the orchestrator never says the result matches when it has seen a gap. It is not a design review. With no reference image there is no render or compare. `environment.md` gains "Capturing a reference" and "Capturing for the reference check" for both harnesses.
+- A visible change the person already saw is never reverted silently. A path outside the allowed table is not edited in the loop either, its criterion stays `not met yet` and the ready message says engineering must make it; when handoff removes such a path it tells the person in one plain line, puts the criterion back to `not met yet` and renders the screen again.
+- Coverage: a new contract test file (`test_vibe_visual_cues_contract.py`, 13 cases, all failing on 1.0.41), node tests for `reference-images.mjs` on Claude Code and Codex transcripts, vitest cases showing the saved path reaches the Claude writer and requirements turns and Codex `take-input` (all three failing on the 1.0.41 bundles), and four `claude plugin eval` cases tagged `visual-cues` (`pm-reference-card`, `pm-outside-product-cards`, `pm-two-screenshot-page`, `exec-described-change-no-reference`) that build in a stand-in repository with a Pillow screenshot tool, since the eval sandbox has no browser.
+
+### vibe v1.0.42
+
+#### Fixed
+- `cl-execute` no longer marks a ticket `IN_PROGRESS` before its readiness gate. Intake step 7 said to set the status when evaluation started, while a gate that blocks returns `BLOCKED_BEFORE_START` with the status unchanged, so a run blocked at the gate got both instructions. Step 7 now leaves the status alone through intake and the gate, and step 10 sets `IN_PROGRESS` only after the gate returns `GO`, or `GO_WITH_UI_PLAN_APPROVAL` and planning proceeds. `cl-sweep` states the same rule for its ticket workers.
+
+### vibe v1.0.41
+
+#### Fixed
+- Setup no longer stalls a session on the Claude worker launcher (operator ruling, 2026-10-15). In the product-manager session that prompted this, about 15 of the 19 minutes before the first preview were setup. `claude-worker.mjs` now binds its own installed plugin root when `agentRoot` is left out, reads a supplied `<root>/agents` as `<root>` (the session passed that and every launch failed with a generic `WORKER_TURN_FAILED`), keeps a resumed writer on its recorded root, and refuses another release's root as `STALE_PLUGIN_ROOT`. `writer-state.mjs register` and `acquire-record` resolve the root the same way for Codex.
+- The launcher checks the standalone Claude sign-in (`claude auth status`, from the home folder) before any writer state changes, and classifies a sign-in the CLI only rejects at start. Both return `CLAUDE_SIGN_IN_NEEDED` with one plain step for the person: `claude auth login` in the Terminal app. The Claude preflight reports the same as `claude-login`. Nothing tells the person to run `claude /login` any more, which opened a full Claude session that printed the project's permission rules and asked about its MCP servers.
+- Claude Code workers launch only through the launcher. A plugin agent dispatched through the native Agent tool has none of the ClosedLoop or closedloop-graph tools, which is why the ticket worker came back `BLOCKED` and the verify worker could not reach the graph. The launcher refuses a requirements or ticket launch without its ClosedLoop reads (`MISSING_CAPABILITIES`) and stops a worker as soon as its own start event shows a granted connection did not load, before it does any work (`MCP_TOOLS_MISSING`).
+- macOS has no GNU `timeout`, and workers that bounded a check with it failed with "command not found". The new `scripts/run-bounded.mjs <seconds> <command>` stops the command and everything it started and exits 124; the skill, setup and verify workers point to it, and no plugin file uses `timeout <n>`.
+
+#### Changed
+- Questions are asked once. `scripts/session-questions.mjs` records every question and answer on the session (before the session exists, in a startup file that `vibe-sessions.mjs new` moves onto it), and the skill asks only when a key was never asked, never repeats one that is waiting, and gives recorded answers to every brief, relaunch and resumed conversation. The page-wording question had gone out three times while it waited for one answer.
+- The sample-data question goes through the existing necessity gate: it is asked only for a request about what a new, empty account looks like, in plain words, and never names a company after the person's email. Elsewhere the session starts with example data and asks nothing.
+- One list of banned person-facing terms with plain replacements, `references/plain-words.md`, referenced by both skills and the setup worker. Setup, progress, the component-gallery notice, sample-data and error messages use it; "message engineering with the session slug" becomes naming the work by its summary, and organization questions no longer say "<email> Co".
+- Not changed here: the stage seed itself names the example organization "<email> Co" (symphony-alpha `seed-load.ts`), and the dark-mode preview in that session was an improvised static copy shown in the host's browser pane, not a plugin preview; the page's own theme follows `prefers-color-scheme`.
+- Coverage: launcher tests for the root resolution, sign-in, connection and capability checks, and the Codex `register` root; node tests for `run-bounded.mjs`, `session-questions.mjs` and the Claude preflight check; a contract test file for the prose; and seven `claude plugin eval` cases (`exec-` and `pm-`, tags `setup`, `sample-data` and `questions`). On 1.0.39 the seven contract tests and nine of the ten launcher tests fail (the tenth unit-tests the new root resolver, which 1.0.39 lacks), the preflight test fails, and the `run-bounded` and `session-questions` tests have no script to run.
+
+### vibe v1.0.39
+
+#### Changed
+- Plain words ask for a pull request (operator ruling, 2026-10-15). "Raise a PR", "open a pull request", "I'll get the PR merged", "I'll get it merged", "I'll ship it myself" and "I want to take it through review" are an explicit request and take handoff's requested pull request path. `guardrails.md` ("Tests") states it once; the vibe and handoff skills, the change worker and `quality-loop.md` point to it. Tests are still written only on that request, and the person is never offered the branch to merge.
+- A requested pull request runs the whole path: the same writer's `pull-request` turn writes the tests, step 7 commits, pushes and publishes through `vibe-environment-worker` in redeploy mode, and from the request on every handoff brief carries the `pull-request` phase. No brief may say both that the person takes the work to a pull request and that no tests are authored.
+- Handoff now opens the requested pull request as its last step. A new `pull-request` mode in `vibe-environment-worker` (its own launcher record action, with no record writes, no push and no commit) checks the branch is at the verified published commit, fills symphony-alpha's current PR template from the session's own record (Summary, an honest Breaking changes answer, the UI Feature Flag attestation only from the flag record, a Test plan of 20 lines or fewer, and a note for the reviewer where the record cannot support an answer), titles it with the ticket slug within 72 characters, and runs `gh pr create`. It never enqueues, merges, requests reviewers, triggers CI or adds the `warning-acknowledged` label. The ticket stays with the person, In Progress, its Next line says they take the pull request through review and merge, and the closing message gives them the pull request link. The old "handoff opens none" wording is gone.
+- "Who should pick this up next?" is replaced by one plain two-way question, asked only when the person's words do not already answer it: "Do you want me to open a pull request so you can take it through review and merge, or pass it to someone, usually design and then engineering, to finish?" Handoff settles it before the checks (new step 0, "Settle how it ends") because a pull request changes what they run. Passing it on without a name asks "Who should I pass it to? A name or email is fine." right away, then uses the existing lookup. A confused reply ("oh i thought you were going to code it") gets the two endings explained plainly, never a name prompt. The vibe skill's section 8 asks the same question, adding the existing keep and throw away options.
+- A new session's first reply carries one line, as a notice that never waits: "When you're done, I can either open a pull request for you, or pass it to design or engineering to finish." A resumed session does not get it.
+- Person-facing text no longer uses "handoff" as an unexplained term. The stale-session line, the already-finished replies and the closing reminder say what happens in plain words. The `$handoff` skill name and its triggers are unchanged. The vibe skill and `guardrails.md` no longer assume every session goes to design and engineering, or that the person is always an executive.
+- Both harnesses get the same behavior: the prose is shared, and the new `pull-request` record action is declared once in the launcher's record modes, which the Claude launcher (`claude-worker.mjs`) and the Codex native record grant (`writer-state.mjs acquire-record`) both read.
+- Coverage: a new contract test file (`test_vibe_session_endings_contract.py`) whose ten tests all fail on 1.0.38; the two existing tests that pinned the old question and "handoff opens none" now pin the new wording; a Claude launcher test admits the environment worker's `pull-request` action with no record writes, and a Codex native record test grants it to that worker only. A new `evals/` suite of 15 cases for `claude plugin eval` (Claude Code only) checks each ending for both an executive and a product manager, including the real exchange that prompted this change (the README says how to run it).
+
+### vibe v1.0.38
+
+#### Changed
+- `$vibe` no longer searches for previous sessions when it starts (operator ruling, 2026-10-15). It first settles whether the person is resuming or starting new, asking one plain question only when their own words do not already say. A new session skips the search entirely; the session list runs only after the person chose to resume, and what it finds is offered then. Handoff's use of the list is unchanged.
+- The plugin README's v1.0 freeze sentence now matches `guardrails.md`: handoff blocks any other edit of a v1.0 story file except a compile-only repair, and story files under the `Start Here/` root are exempt from the freeze.
+
+### vibe v1.0.37
+
+#### Fixed
+- Story files under the Storybook's `Start Here/` root are exempt from the v1.0 freeze (design ruling, 2026-10-06). 1.0.33 froze every story file that was v1.0 at the base, which included `Start Here/Version History`. symphony-alpha's `apps/storybook/TAXONOMY.md` makes adding, moving or removing stories a Storybook release with a Version History entry in the same change, so the freeze blocked every Storybook-changing handoff. Start Here is unversioned (`.storybook/manager.ts` shows no version under that root), so a tag there is not a version claim.
+- `handoff-inventory.mjs` leaves a story file whose meta title's first segment is `Start Here`, at the base or now, out of `v1Stories` (the freeze and the title and tag checks) and `retitledStories`. The exemption follows the title root, not a file name. Every other v1.0 story file stays frozen with the compile-only exception. `guardrails.md`, `vibe-storybook-decomposer`'s v1.0 rule and the handoff Storybook paragraph each state it in one line.
+- Coverage: a node test where editing the Version History page's content and changing its tag from v1.0 to v2.0, and retitling another Start Here page, pass while an edit to a v1.0 file outside Start Here still blocks as `frozen`; a new contract test file for the prose and the inventory's title-root check. Both fail on 1.0.36.
+
+### closedloop-core v1.4.1
+
+#### Fixed
+- `prevent-recurrence` now activates when correcting an issue or failure reveals a reusable prevention lesson across code, setup, measurement, validation, or workflow work. Its frontmatter keeps ordinary feature work, rejected findings, and external outages or flaky infrastructure with no agent or system mistake out of scope, and its contract test pins both the broader triggers and those exclusions.
+
+### vibe v1.0.36
+
+#### Changed
+- `cl-work-report` protects one owner from ownership transfer instead of two (operator ruling, 2026-10-15). The other user id was removed because that person is no longer with the company, so their remaining tickets are eligible for reassignment recommendations under the normal evidence and authorization gates.
+
+### vibe v1.0.35
+
+#### Fixed
+- The plugin no longer names people (operator ruling, 2026-10-14). Skills, agents, references, scripts, tests, comments, the README and this plugin's CHANGELOG entries state each rule on its own; a ruling is cited as "operator ruling, <date>". The person running a vibe session is "the person running the session" (the `vibe` skill description now reads "for a non-engineer (such as a CEO)"), the contact for blocked sessions and setup failures is "engineering", and in the `cl-*` skills the human who approves plans, grants exceptions and merges UI PRs is "the operator". The cl-sweep summary heading is now `Needs you:`.
+- The design visual-QA gate in `cl-execute` is the "Design Visual-QA Gate" (anchor `#design-visual-qa-gate`), and the heavy handoff checks list "product-contract QA" for the repository's `/metal-andrew` skill, whose command name is unchanged.
+- Routing that used a name now uses the stable ClosedLoop user id it already resolved to: `vibe-setup-worker` assigns a symphony-alpha bug ticket to the vibe engineering owner by id, and `cl-work-report` matches its two protected owners by id. The legacy repo-memory keys `cl-policy` reads from older records are unchanged.
+- Coverage: contract tests assert the new wording, test fixtures use neutral operators and owners, and a new contract test (`test_vibe_no_person_names_contract.py`) fails when a known person's name appears anywhere under `plugins/vibe/`. It fails on 1.0.33 with 331 hits.
+
+### vibe v1.0.34
+
+#### Changed
+- Compile-only repairs to frozen v1.0 story files are allowed (design ruling, 2026-10-15). The freeze protects what a story shows and its link, not the code wording, so a rename elsewhere may repair a v1.0 story file with only mechanical changes (prop renames, imports, types): no story added or removed, no title, story ID or tag change and no visual change. Sessions no longer avoid a rename to protect a v1.0 story file.
+- `handoff-inventory.mjs` lists an in-place edit of a v1.0 story file whose meta title, meta tags and set of exported story names (and so its story IDs) match the base under a new non-blocking `compileOnlyV1Repairs`. Any change to the title, tags or exported stories, or a move, stays in `v1Stories` with the reason `frozen` and blocks. A visual change cannot be proven mechanically and is left to the reviewer and the engineer.
+- The ticket worker puts each `compileOnlyV1Repairs` file on the live ticket's Engineering checklist as `- [ ] Check compile-only repair to v1.0: <file>; confirm only prop, import or type changes and no visual change` (`ticket-template.md`, "Compile-only v1.0 repairs"). `vibe-storybook-decomposer` states the exception; `guardrails.md`, `design-pass.md`, handoff and the README carry it; the writer repairs and logs it; `vibe-guardrails-reviewer` check 10 confirms each repair is purely mechanical with no visual change and blocks anything else.
+- Coverage: a node test for a v1.0 file where a prop rename passes into `compileOnlyV1Repairs` while an added, removed or renamed story export, a title change, a tag change and a move each block; a new contract test file for the prose and the ticket placement. Both fail on 1.0.33.
+
+### vibe v1.0.33
+
+#### Fixed
+- v1.0 story files are frozen again (design ruling, 2026-10-15). 1.0.31 let a session add stories for an existing component's new states to its v1.0 story file; a v1.0 file is now never edited, retitled, re-tagged or given new stories. The new states go in a new v2.0 entry for that component holding only the new states, named descriptively and permanently per `apps/storybook/TAXONOMY.md` with no version number in the name, and the v1.0 stories stay where they are so their links keep working. `vibe-storybook-decomposer` decides it first in its placement order; the 1.0.31 rule of extra stories in the existing file now covers only non-v1.0 files. `guardrails.md`, `design-pass.md`, the writer, handoff, the README and `vibe-guardrails-reviewer` check 10 carry the same rule.
+- `handoff-inventory.mjs` lists every modified or moved story file that was v1.0 at the base under `v1Stories` with the reason `frozen`, blocking on `storiesInV2Taxonomy`. The `retitledStories` / `existingStoryTitlesKept` check stays for non-v1.0 files.
+- Coverage: the node test that let a story be added to an existing v1.0 file now expects a block (an edit and a move) and passes once the new state sits in a new v2.0 entry; the retitle test's fixtures are now v2.0 files. Contract tests updated for the new wording. The changed node test and the updated contract tests fail on 1.0.32.
+
+### vibe v1.0.32
+
+#### Fixed
+- A vibe request that needs a change in a path the session may never edit (a source gate under the repo-root `scripts/**`, a workflow under `.github/**`, a rule in an `AGENTS.md`) is now routed to engineering instead of dropped, worked around or left to stop the session. `guardrails.md` ("What may change") has the writer leave the path untouched, build no substitute for it in an allowed path, log `Engineering needed (forbidden path): <path or area>; why: <need>` in the change log and keep building every allowed part; it is never `BLOCKED` or a question for the person. `ticket-template.md` gets an "Engineering needed" rule, and the ticket worker places each logged need once as an unchecked item at the end of the live ticket's Engineering checklist. Handoff's guardrail check removes a forbidden or outside-allowed edit the request needed and logs it the same way. A needed fix to vibe's own tooling still stops the session ("Plugins and tooling").
+- The "What may change" table now allows all of `apps/storybook/**` explicitly, including the `.storybook/` config (`main.ts`, `preview.tsx`, `manager.ts`, decorators, toolbar globals), `TAXONOMY.md` and `apps/storybook/scripts/` (catalog sync and the taxonomy classification sets the placement rules already have the writer edit), instead of only "story wiring". The Never column's `scripts/**` is the repo-root folder; `apps/storybook/AGENTS.md` stays off limits and its story validators stay checks. This matches what `handoff-inventory.mjs` already allowed.
+- Coverage: a new contract test file for both rules, failing on 1.0.31's wording, and a node test pinning that the inventory admits `.storybook/` config, `TAXONOMY.md` and `apps/storybook/scripts/` while root `scripts/**` stays outside the allowed paths and `.github/**` and `apps/storybook/AGENTS.md` block.
+
+### vibe v1.0.31
+
+#### Fixed
+- New states of an existing component no longer move its story file. The PRD-720 session added grouping states to GridTableV2 and the placement owner retitled its whole existing story file from the v1.0 "Composites/Data Display/Tables/Grid Table V2" to a v2.0 title, which changes every story ID and breaks every link to those stories. Per the design ruling of 2026-10-15, `vibe-storybook-decomposer` now decides that case first: a change to an existing component (new states or variants, a column action, a footer) goes in as extra stories in its existing file, with its title, tag and story names unchanged; only a new component or a sibling replacement such as a V3 gets a new entry and v2.0 placement. `guardrails.md`, `design-pass.md`, the writer and handoff carry the same rule, and touched stories are no longer sent to v2.0.
+- The handoff inventory compares each existing story file's meta title against the base, in place or moved, and lists a change under `retitledStories`, blocking on `existingStoryTitlesKept` unless the writer recorded the file as a replacement's entry with the new `vibe-sessions.mjs story-replacement` command. `v1Stories` now flags only new story files, or existing ones that gain a v1.0 title or tag, so adding a story to an existing v1.0 file passes. `vibe-guardrails-reviewer` blocks a retitled, re-tagged or moved existing story file unless it is a recorded replacement.
+- Coverage: node tests for the retitle check (in place, moved, a `title` arg that is not the meta title, a recorded replacement) and the narrowed v1.0 check, both failing on 1.0.30; a new contract test file plus updated taxonomy and placement contract tests, failing on 1.0.30's wording.
+
+### closedloop-core v1.4.0
+
+#### Added
+- `prd-dependency-graph` pages have a save button with a menu: Save Image downloads the whole graph (legend included, as currently shown) as a 2x PNG named after the graph's title, and Copy Image puts the same PNG on the clipboard. The status line confirms each, and a failure opens a dialog. `check_graph.cjs` now checks both actions.
+
+#### Fixed
+- The `prd-dependency-graph` gear button finds its options menu by `aria-controls` instead of taking the first menu in the graph, and opening either toolbar menu closes the other.
+
+### closedloop-core v1.3.0
+
+#### Added
+- `prd-dependency-graph` skill: an interactive HTML graph of ClosedLoop tickets and their BLOCKS links for a document or project scope, written as a standalone page or embedded in an existing report. `scripts/refresh_server.py` builds the graph from the ClosedLoop REST API and serves the page's refresh button on `127.0.0.1` with a per-graph token; `scripts/render_graph.py` draws it; `scripts/check_graph.cjs` checks a rendered page in a headless browser.
+- A document scope is drawn as a root box with dotted PRODUCES arrows to its tickets, counted separately from BLOCKS links. BLOCKS arrows are red while the blocker is still open. Tickets outside the scope keep their status colors under a dashed border. The graph opens zoomed to fit its frame, and the zoom reset fits it again.
+- `refresh_server.py --new` and `--once` start the refresh helper in the background when it is not running and replace a helper running from another install; `--ensure` does only that. Each run writes a `~/.local/bin/prd-graph-helper` launcher pointing at the installed script, and the page's "helper not running" dialog shows that command.
+
+### vibe v1.0.30
+
+#### Fixed
+- Handoff readiness no longer fails when a main import brings in thousands of changed paths. Structured lane discovery put the whole changed-path list since `validationSince` into one argv element as JSON (2,549 paths, 159,526 characters on the ISS-12305 handoff), and the stored validation recipe caps each argument at 8,192 characters, so readiness stopped before any recipe or validation witness existed. Discovery now passes only the `validationSince` commit and derives the same `git diff --name-only <validationSince> HEAD` set in its own child, against the HEAD the recipe already binds. The 8,192-character bound on recorded arguments is unchanged.
+- Vitest coverage: a 2,549-path main import produces a discovery command whose recorded argument is the commit id, the owner still sees the whole changed set, and the stored recipe parses. The test fails on 1.0.29 with the schema's 8,192 error.
+
+### closedloop-core v1.2.7
+
+#### Removed
+- `workflow-code-review` lens files no longer tell planning, plan-review, implementation-review, fix and re-check subagents to post ClosedLoop loop events (`add_loop_event` with a `planning_loop_id` or `execution_loop_id`). `plan-review-lanes/common.md` drops its `Loop Events` section, and the numbered steps in `planning-phase.md` and `implementation-quality-gate.md` are renumbered.
+
+#### Changed
+- `workflow-code-review` `SKILL.md` and `review-lens-map.md` no longer list manual loops or loop instructions among the things the skill must not create or execute.
+
+### code v2.0.0
+
+#### Removed
+- `scripts/run-loop.sh`, the external runner that relaunched `/code:code` with fresh context on each iteration, with the tests that existed only for it (`test_loop_contract_*.py`, `test_run_loop_*.py`, `test_self_learning_flag.py`, `scripts/tests/test_spurious_complete.sh`, `tools/python/fixtures/loop_contracts/`) and its README section.
+- `/code:cancel-code`, which only read and deleted the state file `run-loop.sh` wrote, with its README sections.
+- `/code:code` no longer records a perf `run` event in `perf.jsonl`; `run-loop.sh` recorded it, and the prompt-expansion hook that records it for `/code:create-plan` and `/code:execute-implementation` does not match `/code:code`.
+- `setup-closedloop.sh` no longer carries `CLOSEDLOOP_SELF_LEARNING` from an existing `config.env` into the rewritten one; `run-loop.sh` was its only writer. The self-learning hooks still run when `CLOSEDLOOP_SELF_LEARNING=true` is set in the environment.
+
+#### Changed
+- `/code:code` runs as a single in-session pass. The command, the orchestrator prompt and the README no longer say an external runner relaunches it. When the final gate finds a failed build or pending tasks, the orchestrator runs `AWAITING_USER_SEQUENCE` with `/code:code` as the resume command (pending tasks keep `pendingTasks` in `state.json`). The prompt drops the note that `run-loop.sh` calls `record_run.sh`.
+- `setup-closedloop.sh` writes one `CLOSEDLOOP_START_SHA` per run: it keeps the value already in `config.env` while the workdir's `state.json` holds a status other than `COMPLETED`, so a resumed `/code:code` run keeps its baseline for Phase 5.5 and Phase 6.5, and otherwise (no `state.json`, a completed run, or an unreadable `state.json`) writes the current git HEAD when there is one. Tests cover each case and a workdir outside git.
+- `prompts/prompt.md` and `prompts/plan-prompt.md` fall back to the current git HEAD when `config.env` has no `CLOSEDLOOP_START_SHA`, as `execute-prompt.md` already did, so Phase 5.5 behavioral verification has a baseline for committed changes.
+- `/code:create-plan`, `/code:execute-implementation`, their prompts, `plan-prompt.md`'s closing instructions and the `orchestrator-sequences` skill no longer contrast themselves with an external loop. The README drops the runner as the `stream_formatter.py` consumer and says runs instead of iterations for caches and answered questions.
+- The README self-learning bullet says the hooks are enabled by setting `CLOSEDLOOP_SELF_LEARNING=true` in the environment, and `record_run.sh` and its README entry describe one `run` event per run instead of per Loop.
+- Comments and docstrings in `harness/types.py`, `test_harness_types.py`, `subagent-stop-hook.sh`, `test_subagent_stop_hook.py`, `debate-loop.sh`, `behavior-verifier.md`, `execute-prompt.md` and `test_setup_closedloop.py` no longer cite `run-loop.sh`. `test_subagent_stop_hook.py` also stops calling the parent session a Loop. `TerminalFailure` validation is unchanged.
+
+### code-review v3.10.5
+
+#### Changed
+- Docs and comments for the legacy `verdict` string in `verdict.json` and for `fix_result.json` no longer name `run-loop.sh` as their consumer (`SCHEMA.md`, `README.md`, `commands/start.md`, `skills/fix/SKILL.md`, `code_review_schema.py`, `code_review_helpers.py`). Both artifacts and their fields are unchanged.
+
+### judges v1.7.2
+
+#### Changed
+- `run-judges` perf instrumentation says its `CLOSEDLOOP_*` context variables are read from the environment instead of naming the run-loop as their source.
+
+### self-learning v1.2.6
+
+#### Changed
+- The `export-closedloop-learnings` usage example, the `process-chat-learnings.sh` header and the `perf_summary.py` output-path docstring no longer refer to `run-loop.sh` or Loop runs, and `process-learnings` no longer says `compute_success_rates.py` runs as a step of the post-iteration pipeline.
+
+### vibe v1.0.29
+
+#### Removed
+- `vibe-seed-refresh` no longer creates a ClosedLoop loop, posts loop events or completes a loop. Its state file drops `loopId`, the `Walk:` evidence line is kept in state and the PR's Test plan only, and the done step goes straight to `update-document`. `vibe-seed-fix-worker` returns its summary for the PR body only. The walk-linux contract test asserts the state and Test plan halves instead of the loop events.
+- The "do not create loops" boundary lines in `cl-analyze`, `cl-execute`, `cl-split`, `cl-sweep`, `cl-find-related-tickets` and `cl-work-report`. `cl-execute` keeps its rule that ticket status, linked plan, pull request, validation evidence, structured result and workflow repo memory are the execution record.
+
+### closedloop-core v1.2.6
+
+#### Changed
+- `measurement-discipline` bounds measurement harness work. Before building, repairing, or elaborating a harness, name the decision it must unlock, the maximum elapsed time, and the attempt limit; use the minimum instrumentation that can rank contributors or decide the next material experiment. Pivot to another attribution route or contributor when the budget is spent, harness defects repeat, or existing tools already answer the decision. A broken or unvalidated harness supplies no positive evidence: the one-variable comparison is preserved and any result whose setup, control, or measurement path is not trustworthy fails closed.
+- Contract tests (`test_measurement_discipline_skill_contract.py`) check that the harness budget follows contributor ranking and precedes the comparison rules, and that the harness exit keeps the fail-closed and one-variable requirements.
+
+### vibe v1.0.28
+
+#### Fixed
+- A writer turn stranded by a plugin install can be recovered. When a human installs a vibe release while a Codex writer turn runs, the cache root the writer was registered with disappears; the turn stops, but `release-record` for the writer's own record continuation fails with `ENOENT`, so the grant stays retained and `migrate` refused both the lock and the `BLOCKED` request, leaving no supported recovery. `writer-state.mjs migrate` now accepts an optional `retainedRecord` (`lease` plus `stoppedTurn` evidence). Under the writer mutex it accepts only the registered writer's own record continuation for its current or just completed request, issued under the exact recorded `binding.agentRoot` whose definition is absent, with matching stopped-turn evidence, then releases that grant and migrates in one atomic ledger update. The migration entry records `releasedRecord` (request, action, stopped state; never the lease) and keeps every existing history field. Another actor's grant, any other root, a present definition, a running lease, missing or mismatched evidence and stale identity are refused with the ledger and grant unchanged.
+- `finish` records a machine-readable block reason. `"blockReason": "recorded-definition-removed"` is accepted only for a `BLOCKED` finish whose recorded definition is actually absent; every other `BLOCKED` is stored as `other` and stays unmigratable. A writer blocked before this release carries no reason and migrates only with its retained grant under an absent definition, which then records the proven reason.
+- Root recovers a stranded turn itself, internally and without asking the person or sending them to engineering (`quality-loop.md`, "Recorded definition migration"; `guardrails.md`, "Plugins and tooling"; the vibe and handoff skills; the change worker). The recovered writer and helpers take fresh grants from the current plugin root and rerun source readiness and validation; old grants, leases and validation witnesses are never reused.
+- Vitest coverage for the new path, each refusal with its exact guard, and a native handoff session that is stranded mid-turn, recovered through the shipped command, revalidated by the new writer, published, and recorded with fresh ticket grants. Contract tests for the prose.
+
+### vibe v1.0.27
+
+#### Changed
+- Conflicts go on the live ticket by audience. Each conflict the session records (the Storybook decomposer's Placement block Conflict line, or a precedent that disagrees with the owner rules in owner prep) carries an audience, `design` or `engineering`. The decomposer's Conflict field and the change worker's change log entry (`Conflict (design|engineering): what disagreed; decided: how; evidence: doc section or precedent paths`) name it. `ticket-template.md` gains one "Conflicts" rule: design conflicts (Storybook sidebar placement, taxonomy and story granularity, visual or UX choices) go on a new Design Review "Design conflicts" line; everything else (code ownership, which package or shared parent owns behavior, duplication) and any entry without a clear audience goes at the end of the Engineering checklist as an unchecked item to resolve. Each entry states the conflict, how the session decided it, and its evidence. The Handoff section's Storybook placement line now records placements only. `vibe-ticket-worker` (handoff mode) and the handoff skill place each entry once, by audience; none goes to the person running the session.
+- Precedent mirroring copies structure only, never location or version: the component that carries the stories, their granularity and which states get variants. The root, version tag and v2.0 tree position always come from `apps/storybook/TAXONOMY.md`, so a precedent in a v1.0 root never puts new work in v1.0. The decomposer's Stories line takes root and tag from that doc; `design-pass.md`, `guardrails.md`, the change worker and the README say "structure, never its root or version".
+- Disagreeing precedents, where the docs say nothing, are broken in one stated order in `vibe-storybook-decomposer`: built on the same providing component, then already in the v2.0 tree, then most recently changed (the latest commit on main to its story file).
+- Contract tests for audience routing in the template, the Handoff section no longer collecting conflicts, producers carrying the audience, consumers placing each conflict once, mirroring never setting root or version, and the tiebreak order stated once.
+
+### vibe v1.0.26
+
+#### Changed
+- `vibe-storybook-decomposer` is the Storybook placement owner (operator ruling, 2026-10-14). It stays read-only and keeps its name; the same writer applies its advice. During `$vibe`, before the writer creates, retitles or moves a story or adds a shared component, the writer returns the new `NEEDS_STORYBOOK` status, the orchestrator runs the decomposer in placement mode, and the writer copies its Placement block (capability, precedents, owner, stories, conflict) into its local plan before writing. It is a read-only lookup in quick prep, not a review. At handoff the decomposer checks every placed story and shared component against those blocks.
+- Precedent search. The decomposer finds every place a sibling entity already has the same capability through `code_symbols`, `code_importers` on the providing component, and the built Storybook index (`<storybookUrl>/index.json`, or the component catalog and story files on main), matching story names as well as titles, and reports the providing component, how each host consumes it, and every story that exercises it with title, story names, version tag and file. It decides in order: the repo's `apps/storybook/TAXONOMY.md` and `.claude/skills/storybook/` where they say how, otherwise mirror the precedent. Stories document the components consumers render, one story per state, never internal render pieces; a shared capability's generic mechanics stay in the shared component's stories and the page-level component gets only its domain-specific variants. Placements are never invented. A conflict between a precedent and the docs, or between precedents, is decided by the same order and recorded on the live ticket's new Storybook placement line for engineering and design; it is never a question for the person.
+- The decomposer uses symphony-alpha's own Storybook skill (`.claude/skills/storybook/`) for placement instead of restating it: `references/governance.md` ("Taxonomy") and `workflows/curate-sidebar.md` step 2 before every placement, `workflows/plan-structure.md` only when no existing group fits, `scripts/index-diff.mjs` and `scripts/sidebar-audit.mjs` at handoff, and `references/docs-and-ai-context.md` (`!autodocs`, `!manifest`) for an internal piece that keeps a story. `guardrails.md` ("Storybook taxonomy") states once that the "existing story files in the same area" that the skill's `workflows/author-stories.md` step 1 says to match are the same capability's stories with `apps/storybook/TAXONOMY.md`, never the neighbors in the same folder; the writer and the decomposer point at it.
+- The writer's owner prep (`design-pass.md`, Prep step 5) looks first for where a sibling entity already implements the capability and mirrors its ownership, component and Storybook placement where the owner rules and repo docs do not already decide, pointing at symphony-alpha's AGENTS.md shared-parent rule (ISS-12135). The Prep block gains Precedent and Placement lines, and `precedent` is a valid deciding Rule.
+- The guardrails reviewer gains a judgment-only, advisory Storybook placement check: a story or shared component placed without or against its Placement block, a page-scoped story or page-specific composite for a capability a shared design-system component provides, a story for an internal render piece or a page-level story repeating shared mechanics, and a conflict missing from the change log. It stays out of `handoff-inventory.mjs` because stories for one shared capability can legitimately live both beside the shared component and in page sections.
+- `NEEDS_STORYBOOK` joins the worker status contract in `tools/vibe-workers` and the rebuilt `claude-worker.mjs`, `writer-state.mjs` and `main-sync.mjs` bundles; a vitest case proves the request stays active and the same writer resumes after it. Contract tests for the placement owner, the precedent search, the decision order, the consumed-components story rule, the no-ask-the-person rule and the judgment-only check.
+
+### closedloop-core v1.2.5
+
+#### Changed
+- `measurement-discipline` separates measured bottlenecks from unmeasured hypotheses and quantifies attributable cost, removable fraction, and whole-target saving bounds before optimization comparisons. Missing attribution calls for bounded observation; a large process or module alone does not establish removable cost. Discovery follows profile evidence into relevant code, with distinct ownership for authorized parallel read-only questions, proportional time and compute budgets, and recorded screening decisions or evidence gaps. Exploratory diagnostics can obtain attribution without exact accounting first; unavailable attribution is not a refutation or proof that the performance target was met.
+
+### vibe v1.0.25
+
+#### Changed
+- Nothing is called ready before its acceptance criteria are checked (operator ruling, 2026-10-14, after the PRD-720 live test, where ISS-12462 was reported ready while a deep link never restored the Documents grouped view's collapse state). The session decision table gains one `## Acceptance Criteria` list, authored by the same writer: every criterion of the linked ticket and its PRD, which `vibe-requirements-worker` now quotes with its source, each concrete requirement in the person's own words, and handoff behavior answers. After each build or fix and before `DONE`, the writer checks every criterion the change touches with cheap concrete evidence (an existing test run alone, a throwaway script, one bounded `pnpm control` read, or an end-to-end source trace across every view the criterion names) and appends criterion, check and result to the list's checks log. A criterion not met is fixed, or the ready message tells the person plainly it is not done yet; it is never claimed, never an engineering question, and no test is authored for it. A `DONE` without the Acceptance criteria block is incomplete. No QA pass, suite or long-running command joins the loop. Handoff's checks and whole-table alignment start from the list. The rule lives once in `quality-loop.md` ("Acceptance criteria before ready"); both skills, `guardrails.md`, the README and the change, requirements and verify workers point at it.
+- Storybook links open the full Storybook UI (operator ruling, 2026-10-14): every link given to the person or written on the live ticket is the Storybook base or `<storybook-base>/?path=/story/<story-id>`, never the bare canvas `iframe.html?id=<story-id>&viewMode=story`, which the PRD-720 session sent. The rule lives once in `environment.md` ("Storybook links"); the vibe skill's new-components notice, the handoff Design Review and final message, the ticket template's Storybook inventory, and the ticket, Storybook decomposer, handoff summarizer and primitive workers point at it.
+- Stories go in the v2.0 Storybook taxonomy (operator ruling, 2026-10-14, after the PRD-720 session titled its new stories under v1.0 roots and tagged them `v1.0`). The writer, the Storybook decomposer and the primitive advisor read symphony-alpha's `apps/storybook/TAXONOMY.md` and follow it; the plugin restates only the minimum (a `<Level> v2.0/` root, the page tree, the `v2.0` tag, the release bump) in `guardrails.md` ("Storybook taxonomy"). `handoff-inventory.mjs` lists a new or touched story file titled under or tagged for a v1.0 root under `v1Stories` and blocks on `storiesInV2Taxonomy`; the guardrails reviewer gains a Storybook taxonomy check and the handoff skill's Storybook step points at both.
+- Contract tests for the three rules and an inventory test for v1.0 story placement; the control contract test now allows the one acceptance read in the build loop and nothing else.
+
+### vibe v1.0.23
+
+#### Changed
+- Sessions never change plugins (operator ruling, 2026-10-13). A vibe or handoff session, orchestrator and every worker, never installs, updates, reinstalls, uninstalls or repoints a plugin, changes a plugin marketplace, or modifies a plugin cache, in Codex or Claude Code, and never clones or vendors claude-plugins to run a different version of its tooling. When continuing needs a vibe tooling fix, the session stops, keeps the request `BLOCKED` in its ledger with the reason, adds a Progress line to the live ticket and reports it to engineering; it is never a question for the person. `writer-state.mjs migrate` stays allowed only after a human or the engineering orchestrator installed the new release. The rule lives once in `guardrails.md` ("Plugins and tooling"); both skills, the migration section of `quality-loop.md`, and the setup, environment, change and verify workers point at it.
+- The preflight no longer installs a plugin itself: a missing `closedloop-core` or Codex Browser plugin stops the session for a human to install.
+- Contract test for the rule.
+
+### vibe v1.0.22
+
+#### Changed
+- The seed refresh runs its required full screen walk itself on a Mac. On macOS `vibe-seed-fix-worker` runs `pnpm vibe walk-linux --out .control/vibe/seed-walk-result.json` from the fix worktree (symphony-alpha #8792: `vibe up --ci`, the full web and Desktop walk and `vibe down` in a Linux container on the local Docker) instead of the native up, walk and down sequence, whose Desktop half needs a displayless Linux harness; Linux keeps the native sequence. Only exit 0 with `"ok":true` passes, and the walk keeps its own timeouts and assertions. A refused run (Docker not running or its VM too small, the `cl-ai-stage` AWS sign-in expired, another run active) is `BLOCKED` with the tool's exact message, never a pass and never worked around.
+- Walk evidence. The fix worker returns a `Walk:` line (route, web and Desktop screen counts, failures, result file). The vibe-seed-refresh skill keeps it in state, posts it as a loop event and in the completed loop, and `vibe-seed-pr-worker` puts it in the seed PR's Test plan, refuses to open the PR without it, and updates it when a follow-up re-runs the walk.
+- Contract tests for both rules.
+
+### vibe v1.0.21
+
+#### Changed
+- Build-loop deploys run only what the commit hooks run (operator ruling, 2026-10-13): the publish-time validation recipe for `build` purpose is Biome on the changed source plus `pnpm typecheck:affected`. Source gates, `test:affected`, the owning test lanes, the pinned Turbo typecheck and test matrix, the Desktop renderer and Storybook suites run only for `handoff` purpose, which keeps its full matrix. `vibe-environment-worker` says so.
+
+#### Fixed
+- Canonical input readiness no longer refuses a worktree with the generic "Main-sync context or private evidence is invalid" once it reaches the `desktop-auth` and `husky` producers. The installed producer package is located through Node's `node_modules` lookup instead of resolving `<name>/package.json`, which `geist` and `husky` refuse because their `exports` maps omit that subpath (`ERR_PACKAGE_PATH_NOT_EXPORTED`). The package boundary, version contract and pristine owner comparison are unchanged.
+- `mainSyncFailure` no longer reports every non-canonical exception as invalid context or evidence. A schema-invalid context or private record still gets that refusal, now naming the failing key paths and issue codes; malformed private JSON names its read site. Any other exception reports a secret-free operational cause: an authored error's first line (for example a missing `--worktree`), a Node error's code, syscall and file name, or a subprocess's command words and exit status, each with the plugin source line. Stdin context, leases, command output and private file contents are never echoed. The generated Biome input refusal names the same cause.
+- Native expression discovery no longer treats a member name as a reference to a same-named local: `const href = pathToFileURL(...).href` in symphony-alpha's `scripts/lint/affected-test-lanes.ts` was read as a self-cycle and refused the validation recipe with "Native expression discovery is unproved".
+- Owning test-lane discovery accepts the reporter's `widenReason` field, which it emits when a changed `package.json` widens a lane to its whole suite; the strict schema refused the whole discovery.
+- Owning test-lane discovery is bounded by the fixed 15-minute check budget it later runs under as a selected command, instead of 2 minutes. After a main import the reporter runs one `git grep` per changed path; on the ISS-12305 acceptance copy 2,178 paths took 141 s to 8.5 min. The Claude validation envelope counts the same bound.
+
+#### Added
+- Tests: `geist` and `husky` fixtures carry their real `exports` maps; unit tests per failure class with lease-bearing inputs and a CLI test for a missing `--worktree`; a `.href`-named local; a widened lane; the discovery bound; build-loop versus handoff recipes.
+
+### vibe v1.0.20
+
+#### Changed
+- Retired-only tests may be deleted. The writer may delete a test file or test case that covers only code the request itself retires, citing the ticket or PRD that retires it, and records each deletion with the new `skills/vibe/scripts/retired-tests.mjs` (private Git metadata beside the session record). A test that still covers live behavior is only repaired, never deleted. The handoff inventory admits a deleted test file outside `--phase pull-request` only with a whole-file record and lists every recorded deletion under `retiredTests`; the guardrails reviewer verifies each deleted file or case covered only retired code and blocks unrecorded deletions; the live ticket gains a Retired tests deleted line next to Missing tests. Test-file classification moves to the shared `skills/vibe/scripts/test-files.mjs`, and the launcher's writer prompt names the deletion rule.
+- Auto-deploy. After each change in the build loop the orchestrator commits and deploys to the session's Vercel preview without being asked, then tells the person it is ready to look at. Saying "redeploy" still runs the same steps. One deploy runs at a time; requests that arrive while one runs wait in the writer's queue and go out together in the next deploy. The vibe skill's section 6 is now "Deploy each change", and the quality loop, environment reference and README follow it.
+- Contract tests for both rules, recorder tests, and an inventory test for recorded and unrecorded test deletions.
+
+### closedloop-core v1.2.4
+
+#### Changed
+- `measurement-discipline` prioritizes the largest measured contributors and ranks mechanisms by credible whole-target impact, evidence, and experiment cost. Bounded diagnostics screen mechanisms before expensive repeated comparisons; explicitly requested small scopes and evidence of compounding gains remain valid. Encourages creative architecture and lifecycle experiments within scope while preserving functionality, data, responsiveness, repeated controls, and product-level proof. Measurement entries record the impact ceiling and experiment cost, and remaining opportunities are ranked again after each adopted improvement.
+
+### vibe v1.0.19
+
+#### Changed
+- Repair, don't author. When the session's own change breaks an existing test or fixture (an import, a renamed or retired symbol, setup, a type error), the same writer may mechanically update that file so the tree compiles and the commit hooks pass, in the build loop or at handoff, without changing what any test asserts: no weakened or deleted assertion, changed expected value or snapshot, new skip, or loosened matcher, tolerance or timeout. New tests and coverage still go on the ticket's Missing tests line. A test that cannot compile without changing its assertions stays unedited, goes on Missing tests and is escalated to engineering. Nobody asks the person about tests or any other engineering choice. The Claude launcher adds `authority.testRepairAuthorized`, true only for the writer's `request`, `fix`, `handoff` and `pull-request` turns, while `testAuthoringAuthorized` stays true only for `pull-request`. The handoff inventory lists modified existing tests and fixtures under `testRepairs` and, outside `--phase pull-request`, reports an added or deleted test file or a changed snapshot as outside the allowed paths, including co-located tests under the allowed app paths. The guardrails reviewer reads each repair's diff and blocks any changed assertion or an unrecorded repair; the change worker, verify worker, adversarial reviewer, quality loop, guardrails, design pass, both skills and the README follow the same rule.
+- Lean build loop. The loop is quick prep, the build, the quick checks the commit hooks need (Biome on the changed files, the affected typecheck, the source gates), the orchestrator's commit, deploy and showing the person. The adversarial plan review is gone (the writer builds right after its plan and table rows), and the adversarial reviewer loses its plan mode. Browser E2E, visual QA, logical QA, product-contract QA, the guardrails and adversarial reviews, `workflow-code-review`, the existing test suite and other heavy validation run only at handoff, which gains a step that runs the repository's visual QA, logical QA and product-contract QA skills where its AGENTS.md calls for them. The reference-product and new Storybook components notices are unchanged.
+- Contract tests for both rules, launcher tests for the repair authority per turn mode, and inventory tests for repairs, authored test files, snapshots and harness files. The cl-sweep skill contract test now pins that vibe has no plan review.
+
+### vibe v1.0.17
+
+#### Changed
+- Product docs only. Handoff docs drafts now cover only existing product docs pages under `apps/web/content/docs/` that describe the changed feature. The internal engineering `docs/` folder (PRDs, runbooks, schema and design notes) is left to engineering's pull request: `guardrails.md`, the handoff skill, the change worker, the guardrails reviewer (which now blocks any `docs/` edit), the ticket template's Feature docs line and the handoff inventory (which reports a `docs/` edit as outside the allowed paths in every phase) drop it.
+- No test writing in vibe or handoff. No worker writes or edits a test in the build loop or at handoff. Handoff runs the existing affected tests, the same writer fixes the session's own code when one fails, never the test, and the live ticket's new Missing tests (engineering scope) line lists each behavior, row ID and file that still needs a test, plus any existing test a human ruling made obsolete; it replaces the Tests authored at handoff line. The Engineering checklist and `cl-execute` have engineering write those tests in its pull request alongside the frozen-row tests. A missing test is never counted as coverage and no longer blocks final alignment by itself. The only exception is the person explicitly asking for a pull request: then the same writer writes full tests for every change in a `pull-request` turn before it opens. The Claude launcher's `testAuthoringAuthorized` is now true only for that new `pull-request` mode, never for `handoff`, and the handoff inventory admits root web and Desktop test specs only with `--phase pull-request`. The change worker, verify worker, guardrails and adversarial reviewers, backend, prototype, environment and Storybook workers, quality loop, design pass and vibe skill follow the same rule.
+- Running app checks at handoff. After the final publication, `vibe-verify-worker` in its new control mode drives the running web app and Desktop with symphony-alpha's control skill (`pnpm control`) for each touched screen: capture, console and page errors, network, API reads and Desktop IPC reads, before and after when a baseline exists, hidden and read-only per that skill's rules. Artifact paths and what each proves go into the Design Review's Visual evidence and the ticket's new Running app checks line, apart from source-only claims; a surface control cannot drive is recorded with the exact command and reason. A defect it finds goes back to the same writer. The build loop has no control step.
+- Contract tests for each rule above, a launcher test that only a `pull-request` turn grants test authority, and inventory tests for the `docs/` exclusion and the pull-request phase.
+
+### vibe v1.0.16
+
+#### Added
+- New Storybook components first. When a request's reviewed plan needs new Storybook components, the writer builds them and their stories before the feature and returns the new `STORIES_READY` status with their story IDs. The orchestrator sends the person one plain message with the local Storybook links and resumes the same writer to build the feature without waiting; the person can interrupt to change a component. A change that only reuses existing components skips the notice. The Claude launcher accepts `STORIES_READY` and keeps the request active, like the other non-final statuses.
+- Reference product research. When the person names an outside product as the reference ("make bulk labels work like Asana"), `vibe-requirements-worker` reference mode researches its public documentation (it now declares `WebSearch` and `WebFetch`, which the launcher accepts as built-ins) and returns a bulleted behavior list with sources. The person sees the list while the writer builds it, and can interrupt to cut or change items. The list carries behaviors only, never the product's wording.
+- Feature docs at handoff. The same writer edits existing documentation pages for the features the session changed (`apps/web/content/docs/` `.mdx` or `docs/` `.md`) on the vibe branch, wraps each edit in agent-draft markers for design or engineering to approve before merge, and never creates a page, edits navigation or touches generated API reference pages. The ticket's new Feature docs line records the pages. `guardrails.md`, the guardrails reviewer, the change worker, the handoff skill and Grading item 6 state this as a scoped exception to the rule that agents do not author user-visible words, not a general license. The handoff inventory accepts modified existing docs pages only in the handoff phase of an app session; new, generated, navigation and build-phase docs edits stay outside the allowed paths.
+- Frozen behavior. At handoff the same writer adds a `## Frozen Behavior` section to the session decision table listing the rows the person accepted. The ticket worker refuses to attach a table without it and names the attachment and frozen row IDs on the ticket. `cl-execute` reads that attachment for a vibe-built ticket, keeps every frozen row passing with tests in its pull request, changes one only with the explicit OK of the person who ran the session, and treats a missing attachment or section as not ready.
+- Contract tests for each rule above, a launcher test that `STORIES_READY` keeps the same writer's request active and a test that only a role declaring web research gets those tools, and inventory tests for docs edits.
+
+#### Changed
+- New primitive components no longer wait for the person's Storybook approval before use; the new-components notice replaces that wait.
+
+### vibe v1.0.15
+
+#### Fixed
+- Canonical input readiness no longer refuses every worktree with "Selected installed producer differs from the pristine locked owner". The pristine owner comparison skips the selected package's own `node_modules/.bin` launcher shims, which pnpm writes at install time with the checkout's absolute path, so an install at another checkout path now matches. Every other file in the package, including executables it ships and anything else under its `node_modules`, is still compared by path, size, sha256 and mode.
+
+#### Added
+- Readiness tests: an installed producer whose launcher shim embeds its checkout path matches the pristine install and is consumed by prepare; a changed `build/index.js` is still refused as differing from the pristine owner; an unexpected module under the package's `node_modules` is still refused as an unknown directory.
+
+### vibe v1.0.14
+
+#### Fixed
+- Readiness no longer rejects a legitimate large selected source graph at 4,096 files. File coverage remains bounded by the committed tree, while the existing 4,096 ceiling applies to distinct cwd/argv contexts. Retained-report readers, replay and private planning inputs retain their existing rejection rules.
+- Relative and workspace data imports, such as stylesheets, use the shared code/config path predicate instead of entering the executable-module parser; an imported private planning path still reaches the selected-entry refusal.
+
+#### Added
+- Closure tests reproduce 3,339 initial producer inputs expanding to 4,239 committed modules, reject a retained-report reader beyond the former cutoff, preserve distinct native contexts and their finite bound, and verify imported stylesheets, refusal of a selected import of committed private planning evidence, and global private-input protection.
+- Shared Git fixtures configure their own repository-local author identity, with a regression that makes a real commit while ambient Git configuration and author environment fields are unavailable.
+
+### closedloop-core v1.2.3
+
+#### Added
+- `plan-structure` plan template gains an `## Implementation Notes` section after `## Tasks`, where detail-level plan-review suggestions go; the playbook's section order lists it. Plans linted against the template must now include it (write none when there are no suggestions).
+- Contract test that pins the section's place in the template and playbook.
+- Contract tests that fail when `workflow-code-review` names a prompt-file environment variable, an external prompt pack, `SOUL.md`, `orchestrator.md`, a home or absolute user path, or a `../` path, or when its bundled lens files differ from the ones the lens map names.
+
+#### Changed
+- `workflow-code-review` is self-contained. It reads its review lenses only from its own `references/lenses/` folder (renamed from `references/prompt-pack/sections/`); the `WORKFLOW_PROMPT_PACK_ROOT` lookup and the external `SOUL.md` voice-profile lookup are gone, along with the `soul_md` packet field and the `SOUL.md` Review Coverage line. Lens cross-references point at bundled files, and knowledge-capture steps that wrote to the workflow memory root are dropped from the lens files.
+
+#### Removed
+- `workflow-code-review` lens files the lens map never used as lenses: `planning-quality-gate.md`, `post-pr-lifecycle-gate.md`, and `lightweight-knowledge-capture.md`.
+
+### vibe v1.0.13
+
+#### Changed
+- `cl-execute` gives a plan exactly one independent same-family review, replacing the two-round plan-review cap. After that review the worker verifies each finding against the code, fixes outline-level findings in the plan (a wrong premise or root cause, a missing outcome or acceptance criterion, an unjustified scope exclusion, a guardrail violation, or a stated detail that is wrong), puts detail-level suggestions into the plan's `## Implementation Notes` section, and never runs a second plan-review round. A finding that needs a product or scope call goes to the human as a numbered decision with the plan, returned as `MANUAL_INTERVENTION_REQUIRED`. Code review stays at two generations.
+- A plan found wrong during implementation is fixed at outline level under the same rule instead of going back through plan review.
+- `cl-execute` writing rules no longer expect a `SOUL.md` voice card from `workflow-code-review`; a repository's own card still applies.
+- Vibe sessions also give a plan exactly one review. The `vibe` skill, `quality-loop.md`, `vibe-adversarial-reviewer` and `vibe-change-worker` drop the recheck of plan corrections: the writer verifies each finding against the code, applies outline-level corrections, puts detail-level suggestions into the plan's `## Implementation Notes` section, and moves on to code. A material approach change found later is corrected in the plan by the same writer without another plan review. The implementation review before handoff is unchanged.
+
+#### Added
+- Contract tests that pin the single plan-review rule and fail when any `cl-execute`, `cl-sweep` or `vibe` skill reference, or any `vibe` agent, allows a second, third, or repeated plan-review round or a recheck of plan corrections.
+
+### vibe v1.0.12
+
+#### Fixed
+- Plugin upgrades no longer strand a session writer whose recorded definition is missing or provably upgraded. Both Codex and Claude Code use the current release's `writer-state.mjs migrate` command to record old/new writer IDs, bindings and digests, reason and time in append-only ledger history, preserving the session worktree, plan, decision table, checkpoint, change log and request queue. Matching definitions, running turns, unproven upgrades and writer refusals still block replacement; recovery stays internal without asking the person running the session.
+
+#### Added
+- Migration tests cover missing and upgraded definitions, matching-definition rejection, retained history and checkpoints, ownership/refusal protections, and fresh Claude launch followed by resume through the shipped command.
+
+### closedloop-core v1.2.2
+
+#### Fixed
+- `workflow-code-review` states that reviewer workers are always the same model family as the caller (Codex reviewers under Codex, Claude Code reviewers under Claude Code) and never run through another harness's CLI.
+- `repo-hardening` no longer recommends a reviewer from a second model family. Its delegation guide and plan self-review use fresh same-family subagents.
+
+#### Added
+- Contract test that fails when any `closedloop-core` skill asks for a reviewer from another model family, or when `workflow-code-review` launches a reviewer through `codex exec` or `claude -p`.
+
+### vibe v1.0.11
+
+#### Fixed
+- `cl-execute` reviews with the worker's own model family only. Each of the two coordinated review generations is the default `workflow-code-review` lane set with no extra lane, and the cross-family lane, its `Cross-family review` result field, and its same-family fallback are gone. Plan review runs at most two same-family rounds per approval cycle: a second round only for outline-level problems, detail-level suggestions carried into implementation, and a stop for the human when blocking findings remain after round two. The one-way-door "design it twice" step gets its second approach from a fresh same-family sub-agent.
+- The reviewer questions (root cause or symptom, reverted-test failure, rerun or crash halfway, structural serialization, real artifact or proxy) now ride on every lane's packet, and the second generation's decision-log audit moves to the Guardrail / Validation lane.
+- Support-lane model names are documented as Codex models for a Codex worker; a Claude Code worker uses its own sub-agents instead of routing through Codex.
+
+#### Removed
+- `cl-execute/references/cross-family-review.md`.
+
+#### Added
+- Contract tests that fail when any `vibe` skill asks for a reviewer from another model family or when `cl-execute` runs `codex exec` or `claude -p`, and that pin the same-family rule, the two review generations, and the two-round plan-review cap.
+
+### closedloop-core v1.2.1
+
+#### Fixed
+- The `repo-hardening` skill's frontmatter now loads with a strict YAML parser; the description no longer contains an unquoted `: ` sequence, and its triggers are unchanged.
+- `repo-hardening` gives the analyzed or changed repository's own instruction files precedence over its playbook and principle defaults. In an audit, a finding whose fix a repo rule forbids goes to the decisions for a human instead of a unit of work, and the plan template's decisions section allows that case.
+- `repo-hardening` step 1 no longer waits on a question in non-interactive runs: when the harness cannot ask or nobody answers, it takes the default repository and plan path and records in the plan that they were defaults, and it stops when there is no repository to default to.
+- `repo-hardening` read-only rules now apply to the analyzed repository: each investigating worker may write only its own scratch notes file outside it, or return the notes in its final reply when its tools cannot write. The audit brief skeleton adds the CONTEXT, ACCEPTANCE and VERIFY fields the delegation guide requires.
+
+#### Added
+- Contract test that strict-parses the frontmatter of every `closedloop-core` skill with PyYAML and checks each has a name matching its folder and a description of at most 1024 characters, failing with the skill file's path.
+
+### vibe v1.0.10
+
+#### Fixed
+- Retained-report admission follows selected command, task, config, collector and producer input boundaries instead of unrelated committed reader capability. Private planning guards remain independent, and meaningful report inputs, default verdicts and replay remain blocked before their consumer.
+- Ordinary prerequisite setup cannot create validation proof from its output. Same-call native test allocations bind explicit report and adjacent quarantine operands without treating missing-file failure tests as coverage or admitting retained verdicts.
+- Affected-test checks reuse their existing guarded budget selection under current command, wrapper and Git identity; no extra selector, caller proof field or validation deadline is introduced.
+
+### closedloop-core v1.2.0
+
+#### Added
+- New `repo-hardening` skill that audits a repository read-only and writes an evidence-backed hardening plan: a self-contained HTML page plus a Markdown twin, written outside the analyzed repository. It asks which repository to analyze and where to write the plan, investigates instruction files, static checks and gates, types and boundaries, tests, CI and merge flow, review habits, and recurring mistakes in history, and evaluates them against a set of engineering principles and a trust ladder of prevention mechanisms. The plan lists findings with evidence and the strongest prevention rung, small ordered units of work with quick wins separated from structural changes, what not to do, and decisions for a human with a recommendation. Its playbooks (investigation, bug fix, perf fix, hillclimb, refactor, feature, adversarial review, blast radius, unattended run, landing) can also be used directly for one rigorous task. The HTML template uses inline CSS and a single print script pinned by a Content-Security-Policy hash, and opens collapsed evidence when printed. `NOTICE.md` carries the MIT attribution for the adapted pstack material.
+- Contract tests check the skill's frontmatter and triggers, its read-only and escaping rules, that its files name no harness, vendor, model, or private path outside `NOTICE.md`, that relative links and anchors resolve inside the skill folder, that its text has no em dashes or double hyphens, and that the HTML template makes no network requests and its policy hash matches its only script.
+
+### vibe v1.0.9
+
+#### Fixed
+- Private-input checks preserve recognized Vite glob groups, importer-relative paths, positive unions, exclusions and collection options instead of treating negative members as independent readers.
+- Private and retained-report checks share complete Node reader targets, path operations and bounded bindings. Settings siblings and encoding options no longer become planning references, while relevant unresolved paths and genuinely consumed private evidence remain blocked.
+
+### vibe v1.0.8
+
+#### Fixed
+- Main-sync preserves canonical ignored private diagnostics independently of file extension only when committed imports, readers and finite collectors exclude them. Retained reports remain evidence outputs, never replay inputs or current coverage assertions.
+- Source-owned readiness verifies known generated dependencies through existing pure owners or a pristine committed validation checkout before consuming retained bytes. Complete set, content, semantic mode, producer input and canonical package checks reject stale, edited, aliased or extra inputs without deleting feature artifacts.
+- Selected installed package identities use bounded deduplicated relative names and complete byte/mode/set digests inside the existing receipt. Oversized state is refused before atomic replacement, preserving prior evidence and the private size cap.
+
+#### Changed
+- The same source actor prepares input readiness before capture and after the committed merge. A Root-bound opaque recipe witness derives only its authenticated Claude validation envelope, with no prelaunch discovery child or caller timeout override; actual inputs and selection are rechecked after launch.
+- Fixed affected and deployment-pinned aggregate budgets follow their distinct owning selections. FULL local lint-scripts gets a bounded 30-minute outer process budget; test assertions, individual cases, hooks, CI and general-worker limits remain unchanged.
+- Canonically verified changed selected owners invalidate prior check evidence and permit one whole-matrix restart within the original command budgets, preserving untouched origin proof. The recipe binds its finite recovery lifecycle reserve. An empty affected-wrapper selection is a no-op, not coverage; later deployment-pinned checks still execute. Unsafe retained-report isolation remains explicit incomplete E2E coverage rather than a local spawn or PASS.
+
+### vibe v1.0.7
+
+#### Fixed
+- Main-sync recognizes the existing ignored root `.biome-noscan.jsonc` only when its bytes match the reviewed canonical pure producer applied to the complete committed `biome.jsonc`, including trailing newlines. The writing hook is never invoked, and the artifact remains untouched.
+- Canonical producer/import identity, tracked input parity and post-probe rechecks reject modified, stale, deceptive, nested, temporary, symlinked or oversized generated inputs. Unrelated executable overlays remain blocked before validation or publication.
+
+### vibe v1.0.6
+
+#### Added
+- Shared publication admission captures fresh main, prepares an ordinary noncommitting merge, and binds actual fixed validation commands to the exact committed tree before the first remote push, environment request or canonical prototype share. The orchestrator alone commits and normal hooks guard explicit-SHA pushes.
+- Private provenance retains the original session base, captured upstream imports and original feature test history, including newly combined merge assertions. Later main absorption does not erase authorship evidence; phase classification still requires actual authorization records.
+- A read-only handoff evidence consumer binds real canonical GitHub run, attempt, job and step identity to actual checkout-action and pre-test runner source evidence. Workflow main SHA and caller success assertions are not tested-source proof.
+
+#### Changed
+- Handoff repeats synchronization and checks, then avoids another push or deployment request when the exact validated result is already verified as published. Flags and Desktop retain distinct request-only grants; missing or stale proof returns to canonical redeploy without granting push rights.
+- Validation rejects dirty tracked local fixes and other executable overlays that differ from the committed result, preserving them for the same writer rather than checking different bytes or discarding a workaround. Build, backend handoff and prototype command matrices retain their existing scope.
+- Reviewed deliverables are committed locally by the orchestrator before preparation, still unpushed. Flags/Desktop deployment-capable requests require fresh preparation or an exact publisher-reserved continuation bound to its actual consumer turn. Structured lane discovery prevents unsafe Electron launches; publication readiness preserves incomplete E2E evidence separately from final handoff coverage for the same exact snapshot.
+
+#### Fixed
+- Claude publication helpers no longer receive the contradictory no-push footer for their existing create, redeploy and prototype-share grants. Source writers, read-only roles and request-only helpers keep the original no-commit/no-push restrictions.
+
+### vibe v1.0.5
+
+#### Changed
+- Correction-event producers inspect root and applicable owning `AGENTS.md` instructions, including events without files, and record optional `existingRule` metadata with the actual rule file and bare closest-heading text. Repository-owned schemas and consumer-first rollout preserve older producers.
+- Symphony correction sources lead with the ticket slug; repeated fixes belong to a later ticket, while another review round on the same PR remains a review finding.
+
+### vibe v1.0.4
+
+#### Changed
+- Handoff records production-only added/changed/removed component paths and effects if merged, including shared-parent consumers and relevant web/Desktop consequences, separately from Storybook and prototype evidence.
+- Flag handoff metadata names exact new, existing modified and removed keys and entry/read/mutation/host gates. Source defaults, timestamped verified production values and local QA settings remain distinct; no-new-flag outcomes retain existing gate evidence without changing the generated snapshot.
+- Final Open Questions include researched Product/Design/Scope context, sources and the decision needed, exclude settled answers and engineering limitations, and explicitly state None when no questions remain. Existing summary, verification and ticket briefs preserve detailed final evidence without claiming shipped or visually verified results.
+
+### vibe v1.0.3
+
+#### Changed
+- Decision tables are required before code for every Vibe request, including frontend-only, prototype and trivial work. One session artifact uses the named core format, stable row IDs, request provenance, grouped behavior sections and cross-request interactions.
+- Later requests append sourced baseline/target rows without rewriting frozen expectations. Superseded human decisions remain explicit, and the same writer verifies affected and interacting prior rows after implementation and every correction.
+- Handoff plans, authors and independently verifies coverage from the whole session table. Planned tests remain distinct from executed coverage; required source, test or review gaps block final table alignment and handoff.
+- Existing sessions retain their original recorded definition binding and writer ID. Root continuation supplies the new table policy without changed-digest registration, replacement writers or copied legacy definitions; an unverifiable original binding blocks new code.
+- Handoff populates a live-ticket Design Review section with verified final previews/deployed commit/protection, scope and host states, detailed Storybook inventory and identity/sidebar changes, actual footprint/catalog and design/visual evidence, known gaps and remaining design decisions. Source-only and unverified inspection remain explicit; private technical plans and approval requests are excluded.
+
+#### Fixed
+- Guardrails and verification roles retain the Skill built-in needed for their named core decision-table review calls. Caller briefs carry the shared table path and row evidence while preserving private technical plans and behavior-table attachments.
+
+#### Added
+- Prompt contract guards cover the mandatory before-code artifact, living history, source-versus-planned-test evidence, actual role/tool binding, legacy continuation and whole-session handoff coverage.
+- The existing final-ticket section inventory and real CLI tests require Design Review to be present and filled at handoff; this structural check does not prove appearance or Storybook quality.
+
+### closedloop-core v1.1.0
+
+#### Added
+- New `prevent-recurrence` skill for any agent fixing a bug or an accepted review finding caused by an agent mistake or a pattern agents repeat. It fixes the instance with a failing-first test where practical, searches for and fixes the same mistake elsewhere, and adds the highest prevention the repository supports, in order: architecture or types, static analysis, a guard test, a rule in the owning AGENTS.md, then an advisory memory or notes hint. It discovers each repository's own instruction files, lint and source gates, allowlists and test conventions instead of assuming them, never loosens an existing check, moves an ignored written rule up to a mechanical check, routes large prevention work to a follow-up with evidence, and records a correction event only where the repository or workflow defines a log. `references/rung-examples.md` gives labeled examples for each rung.
+- Contract tests check the skill's triggers, the ladder order, that its files name no workflow-specific skills, private local paths or plugin-root variables, that relative links resolve inside the skill folder, and that its text has no em dashes or double hyphens. A workflow-code-review contract test pins the new pointer.
+
+#### Changed
+- `workflow-code-review` points the Guardrail Automation Gap Assessment at `prevent-recurrence` for carrying out the recommended prevention when a finding is fixed.
+
+### vibe v1.0.2
+
+#### Changed
+- Requests use a worktree-local canonical plan loaded through the named core plan-structure skill, a separate adversarial plan review, and independent implementation reviews and corrections before feature completion.
+- One persistent implementation writer handles each session's requests, plans, code, stories, corrections and handoff tests in the same worktree and branch. Incoming requests remain queued through review and commit waits; specialists and reviewers are read-only, and shared records stay serialized.
+- Product questions are researched through graph and live prior decisions before an absolutely necessary unresolved question reaches the person. Technical plans, upfront summaries and intermediate engineering updates stay internal; updates report completed features and next work.
+- Test authoring happens only at handoff for app and prototype sessions. Existing tests may run during building; handoff records coverage and exact human rulings for obsolete expectations without weakening live contracts. Automated browser/Electron validation remains headless/displayless.
+- Initial prototype publication and handoff recovery require separate current-result quality evidence before commit/share, while preserving canonical product/design approvals and metadata ownership.
+
+#### Added
+- A shared local-plan boundary excludes only the exact private planning folder from commits and deliverable inventory, blocks already committed plans before publication, and retains unrelated artifact visibility.
+- Owned worker-state and Claude CLI bundles bind the canonical agent and exact discovered capabilities, preserve the underlying session on resume, and retain unsafe turns until owned process cleanup is proven. Both CLIs execute through symlinked paths; standalone resources remain in their owning plugin.
+- The retained writer binding is phase-neutral, with handoff test authority supplied by the root per turn. Existing pre-session requirements/setup and post-discard ticket cancellation use explicit bounded checkout contexts, without relaxing source or publication ownership.
+- Native Codex helpers acquire the same source/record mutex through an exact role, action and worker lease, and release only with matching stopped-turn evidence. Confirmed discard retains launcher state in a separate checkout, verifies the target's private ownership, and returns cancellation evidence only after successful removal; historical ticket records keep their canonical fallback.
+
+### closedloop-core v1.0.1
+
+#### Changed
+- Moved `gh-monitor-pr`, `guided-manual-qa`, and `measurement-discipline` from vibe into core without duplicate resources. Guided QA build output, contract tests, and CI bundle checks follow the core-owned skill.
+
+#### Added
+- A public client process API reuses the existing App Server transport, thread-state, and exactly-once input-delivery implementation through private pipes, preserving request errors, timeouts, notifications, connection events, and caller-owned cleanup.
+
+### vibe v1.0.1
+
+#### Changed
+- ClosedLoop ticket workflows load the shared monitor and guided QA skills by name. Sweep scripts use a thin process adapter to the core-owned App Server client instead of cross-plugin imports; all ClosedLoop ticket skills remain in vibe.
+- Core discovery verifies an enabled installed plugin and resolves the named skill through Codex's actual `skills/list` path or Claude Code's scoped plugin registry. Missing or incompatible core stops the workflow without guessing cache or marketplace paths.
+
+### closedloop-core v1.0.0
+
+#### Added
+- Shared `decision-table`, `workflow-code-review`, `mermaid-visualizer`, `closedloop-intel`, and `plan-structure` skills, moved to their own plugin with Claude Code and Codex manifests and marketplace entries. Consumers load them by name and read resources from the loaded skill's own folder.
+
+### code v1.19.24
+
+#### Changed
+- Moved vibe sessions, ticket workflows, PR monitoring, manual QA, and shared instruction skills into `vibe` and `closedloop-core`. Planning agents, prompts and schema metadata name shared skills for both runtimes. Claude Code installs core through the plugin dependency; Codex installs it explicitly.
+
+### platform v1.1.5
+
+#### Changed
+- Mermaid visualization uses the `closedloop-core` dependency instead of a second bundled copy.
+
+### vibe v1.0.0
+
+#### Added
+- Vibe and handoff, vibe seed refresh, the ClosedLoop ticket skills, PR monitoring, guided manual QA, measurement discipline, and their workers and tests, moved together into an independently installable plugin for Codex and Claude Code.
+- Codex preflight stops before session setup when `closedloop-core` is missing or disabled and prints its install command using the resolved PATH or app-bundled CLI. Missing Node retains its existing prerequisite repair. The selected runtime argument preserves Claude Code's manifest dependency behavior.
+
+#### Changed
+- Plan lint requires the template path supplied by the loaded `plan-structure` skill. Guided manual QA build output and CI checks follow its new plugin location.
+
+### code v1.19.23
+
+#### Added
+- `skills/vibe/references/design-pass.md`: owner rules for vibe changes. For any component that composes or inherits from a shared parent, behavior the children share goes into the parent as a generic, domain-free slot or extension point, a child keeps only what is specific to it, domain wiring stays in the owning feature package, and nothing copies an existing shared component. The build loop's prep step (one or two minutes, no questions) reads the FEATURE_MAP entry, the component catalog, `packages/app/AGENTS.md`, one `workflow-memory` query when installed, and the required closedloop-graph calls, then picks the owner by rule and reports a `Prep` block. Handoff carries the depth: the red-flag screen (shallow module, information leakage, temporal decomposition, pass-through, copy), restructuring to the right owner with a named shape and rejected alternative, and a sibling sweep, reported as a `Design` block.
+- `skills/vibe/scripts/commit-worktree.mjs`: the orchestrators' only way to commit. It stages everything except the session's `localFixes` and files that never belong in a commit, concludes a staged merge, runs the repository's commit hooks, and returns short JSON. Node tests cover exclusions, nothing to commit, subject limits, a refusing hook, and a staged merge.
+
+#### Changed
+- closedloop-graph is required for every vibe and handoff worker that locates, changes, or reviews code. `closedloop-graph.md` lists each worker's required calls and the Graph block every result ends with; the vibe and handoff orchestrators send back a result without one. An unreachable server is a setup problem: the worker says so explicitly, keeps that change moving, and `vibe-setup-worker` restores the connection. `INSTALL.md` no longer calls the graph optional.
+- No worker commits. The vibe orchestrator commits before `vibe-environment-worker` pushes on redeploy, handoff commits before its last push, and `vibe-seed-refresh` commits for `vibe-seed-pr-worker` (new push mode; sync stages a merge without committing) and `vibe-seed-fix-worker`. `vibe-environment-worker` returns `NEEDS_COMMIT` for uncommitted work and no longer edits the source-gate allowlist; `vibe-prototype-worker` returns `NEEDS_COMMIT` where the canonical prototype procedure commits.
+- No vibe or handoff worker writes or edits a test; tests are engineering's. The only exception is a pull request the person explicitly asks for, which needs full tests first, and neither skill opens one. `vibe-primitive-worker`, `vibe-backend-worker`, `vibe-storybook-decomposer`, `vibe-verify-worker`, and `guardrails.md` drop their test-writing steps; handoff still runs the existing tests and fixes the session's code, never a test. A build-loop redeploy runs no tests. `vibe-guardrails-reviewer` flags any test file the session changed, and the live ticket lists failing tests that assert what the person deliberately changed for engineering instead of recording test edits.
+- `vibe-change-worker` runs the prep step in its plan dispatch, builds at the chosen owner, and reports `Owner` and its Graph block. `vibe-guardrails-reviewer` checks placement and the red flags at handoff, `vibe-adversarial-reviewer` checks whether repeated copies disagree, and handoff tells the person up front that the review takes a while. `guardrails.md` adds Tests and Checks sections (never make a failing check pass by changing the check). The ticket template's Handoff section gains a Design decisions line. New Python contract tests pin the Prep and Design block fields, the Graph block, the commit ownership, and the test rule.
+
+### code v1.19.22
+
+#### Added
+- `vibe-prototype-worker` delegates owned mockup sessions to symphony-alpha's canonical prototype skill, always shares on Vercel, and records the immutable preview URL, full deployed SHA, and slug. `new-prototype` reuses private session ownership and fresh-main worktree creation on `prototype/<slug>`; `prototype-result` records only a matching canonical publication.
+
+#### Changed
+- `vibe` invokes the canonical prototype workflow itself for mockups and routes resume, annotations, iteration, and sharing through the same worker. Pure mockups require no seeded or blank mode, app environment, backend stubs, or PostHog snapshot. Selected preflight arguments survive setup repairs and repository choice.
+- `handoff` accepts only privately owned prototype sessions, preserves complete repair inventory when publication is stale, admits only the session's sandbox host and exact portable-surface allowlist additions, and verifies current publication in the live ticket. Canonical design review and metadata transitions remain intact; the same live ticket is assigned to the chosen next owner with status In Progress, without opening a pull request. Existing app URL and flag requirements are unchanged.
+
+### code v1.19.21
+
+#### Fixed
+- Seeded Vercel environment instructions use `<email> Co` from the signed-in person's Clerk primary email for the organization name. Sample-data names stay unchanged; local `pnpm vibe up` keeps Acme Co.
+
+#### Changed
+- Vibe sessions use `vibe/<slug>` branches instead of `andy/<slug>`, so the rules symphony-alpha keys off them hold for anyone running the skill (meeting requirement A5, symphony-alpha ISS-12135). `vibe-sessions.mjs` creates and lists `vibe/` branches in `.claude/worktrees/vibe-<slug>` worktrees, and `handoff-inventory.mjs` reads the same prefix; sessions on `andy/` branches are no longer listed. Requires symphony-alpha with ISS-12135's `vibe/` workflows. The skill, references, INSTALL.md and agents say `vibe/`.
+- `vibe-sessions.mjs discard --confirm` now requests the drop of a pushed session's preview schema and stored files (`gh workflow run cleanup-preview-schemas.yml --repo closedloop-ai/symphony-alpha --ref main -f branch=<branch>`) before deleting the remote branch, because symphony-alpha's daily sweep no longer drops a `vibe/` schema. A failed request deletes nothing. The result carries `schemaCleanupRequested`. `vibe` SKILL.md, `vibe-setup-worker` and `references/environment.md` say a session's data stays until it is thrown away. Node tests cover the request, a failed request, and an unpushed session.
+
+### code v1.19.20
+
+#### Changed
+- `vibe` no longer asks whether a session is a draft or full scope: every session builds the real thing, and a change that needs data or an action the API lacks gets that backend built by `vibe-backend-worker`. A request that is clearly a mockup or an exploration with made-up data is pointed at `$prototype` in one line instead. `vibe-sessions.mjs` drops `--scope` from `new` and `touch`, stops recording `scope`, and drops a `scope` left on an older record.
+- `handoff` picks how hard it checks from what the session changed rather than a declared scope. `handoff-inventory.mjs` reports `backendChanged` and `backendFiles` (anything under `apps/api`, `apps/mcp`, `apps/relay`, `apps/realtime`, `packages/api`, `packages/database`, `apps/desktop/src/main`, `apps/desktop/src/server`, `apps/desktop/prisma`, or any `prisma/` or `migrations/` folder). With no backend change, handoff runs the affected checks plus `review-soul` and `vibe-adversarial-reviewer`; with one, the full suite and two `workflow-code-review` passes, switching to that from the first inventory run that reports a backend change. The inventory always applies the frontend plus backend path rules that full scope used.
+- `live-ticket-check.mjs` takes no `--scope` and always requires Backend built and Backend still missing. The ticket template, `vibe-ticket-worker`, `vibe-change-worker`, `vibe-backend-worker`, `vibe-environment-worker`, `vibe-verify-worker`, `vibe-guardrails-reviewer`, `vibe-adversarial-reviewer`, `vibe-handoff-summarizer`, `vibe-storybook-decomposer`, and `references/guardrails.md` drop their draft-only paths. Node and Python contract tests updated.
+
+#### Removed
+- Draft-scope stubs: `references/stubs.md`, the `vibe-api-requirements-writer` agent, the inventory's `stubs` and `stubImportViolations` output and stub-import blocking check, and the ticket template's API requirements section and draft-only Engineering checklist lines.
+
+### code v1.19.19
+
+#### Added
+- The vibe live ticket template (`references/ticket-template.md`) has a Grading section after Handoff: whoever picks the work up (design, then engineering) grades it at pickup by setting the `Design grade` or `Eng grade` custom field (High / Medium / Low) and posting one comment from the seven-item yes/no checklist the section carries, with engineering adding what had to be fixed before merge. The template's outer fence is now four backticks so the comment template sits in its own code block. `vibe-ticket-worker` writes `Pending.` for it at create, fills it with the template's text unchanged at handoff (adding it to tickets that predate it), and never re-derives it. `live-ticket-check.mjs` requires the section in both scopes. Node and Python contract tests updated.
+
+### code v1.19.18
+
+#### Changed
+- `vibe-environment-worker` no longer asks which org should own Acme Co when the stage API chose it: the API binds the person's only admin org, otherwise the org their Clerk session last had active (symphony-alpha ISS-12135). When an older API still refuses with exactly one admin org listed, the worker records that org with `touch --clerk-org-id` and requests the environment once more instead of asking. When the API cannot choose, the question is "Which one should own Acme Co: <names>?", with no words about organizations or Clerk. `vibe` SKILL.md and `references/environment.md` say the same.
+
+### code v1.19.17
+
+#### Fixed
+- A vibe session whose worktree predates symphony-alpha ISS-12182 keeps Desktop as its own window instead of reporting it unavailable. `vibe-sessions.mjs desktop-launched` records a launch whose log shows `Desktop window visible` but no `Desktop browser URL:` line with no URL (and still refuses a log showing neither), and `desktop-tab` reports `running` from the launch's pid alone, with a `url` only when the launch printed one. `vibe` opens no Desktop tab for such a launch, and a request to bring the Desktop tab back says Desktop is open in its own window. Node test added.
+- Merging main into a session worktree, or any other swap of its commit, while its Desktop runs crashed the Desktop tab (React `insertBefore` NotFoundError, "Maximum update depth exceeded", Dashboard stuck loading) until Desktop restarted. `references/environment.md` adds "Never swap the worktree under a running Desktop": stop Desktop before such a step, then start it again and open the new tab URL. `vibe-environment-worker` returns the new `NEEDS_DESKTOP_STOP` status instead of doing such a step while Desktop runs; `vibe` and `handoff` handle it by having `vibe-setup-worker` stop Desktop only (a new dispatch that leaves Storybook and the stack alone), and `vibe` relaunches it afterwards. No step in either skill merges main or swaps the worktree's commit today.
+
+### code v1.19.16
+
+#### Added
+- `vibe-sessions.mjs desktop-launched --worktree --pid --log` records a running `vibe:profile launch` on the session's stack (its pid, its log, and the `Desktop browser URL:` the launch printed), keeping what else the stack lists. It takes the log's last URL line and refuses one that is not a loopback `/design-system/browser.html` URL with a `closedloopBridgeToken`, a log without the line, and a bad pid. `desktop-tab --worktree` returns that URL only while the recorded launch is still running, and `running: false` otherwise. Node tests cover both. The session record is now written owner-only (0600), since its stack can carry the bridge token.
+
+#### Changed
+- `vibe` starts Desktop for every session, not only for work that touches Desktop, and opens it through Desktop's browser bridge as a second in-app Browser tab once Desktop reports ready (in a blank session, only after the person has signed in and created their org, as before). The web app tab still opens first at `<appUrl>/sign-in`. A new "Bringing a tab back" path reopens either tab when the person asks, starting Desktop again when `desktop-tab` says it is not running. The "Desktop isn't available for this session yet, so we'll keep going on the web app." fallback is unchanged; annotation instructions cover either tab, and a redeploy reloads the Desktop tab too.
+- `references/environment.md` Desktop section: `vibe:profile launch` runs the dev launcher with the browser bridge (symphony-alpha ISS-12182), logs owner-only, and step 6 records the launch with `desktop-launched`. A new "The Desktop tab" part says how the URL is opened (exactly as recorded, a new port and token per launch, never in chat or on the ticket, read-only), how `desktop-tab` decides a reopen, and that a launch without the URL line (a worktree before ISS-12182) is reported as Desktop unavailable.
+- `vibe-setup-worker` launches Desktop for every session, skips a launch when `desktop-tab` reports one running, signs in only a profile that is not signed in yet, records the launch with `desktop-launched`, and never returns the URL or its token. `vibe/INSTALL.md` says Desktop runs for every session as a second tab.
+
+### code v1.19.15
+
+#### Fixed
+- `.codex-plugin/plugin.json` carries the same version as `.claude-plugin/plugin.json` (1.19.15). The Codex manifest was left at 1.19.13 when the Claude manifest moved to 1.19.14, and Codex installs into a cache folder named by the Codex manifest version, so an install could stay on the 1.19.13 folder's content.
+
+### code-review v3.10.4
+
+#### Fixed
+- `.codex-plugin/plugin.json` carries the same version as `.claude-plugin/plugin.json` (3.10.4). The Codex manifest had stayed at 2.34.0 since it was added, so Codex installs kept using the 2.34.0 cache folder.
+
+### code v1.19.14
+
+#### Fixed
+- `cl-sweep/scripts/app-server-worker-session.mjs launch` passes its `--codex` executable to the detached `run` or `supervise` runner. The runner used to fall back to `codex` on PATH, so a launch given an explicit `--codex` drove a different binary, and failed with `spawn codex ENOENT` where `codex` was not installed.
+
+### code v1.19.13
+
+#### Changed
+- `vibe` start-new step 1 tells the person only the requirements worker's brief, in two or three sentences. The route and FEATURE_MAP id the worker returns are described as where the relevant code lives, for workers; the orchestrator never presents them as a screen the session starts on (the app opens on its default page after sign-in) and never promises a screen for a broad request such as "look for visual bugs". The Workers table row says the same.
+- `vibe-requirements-worker` locates the route and FEATURE_MAP id where the relevant code lives instead of mapping the request to a screen to start on. Its returned summary is the part relayed to the person and never names a screen to start on; the route and FEATURE_MAP id are still returned, for change workers, and are not shown to the person.
+
+### code v1.19.12
+
+#### Added
+- `handoff/scripts/match-assignee.mjs` (with node tests) resolves the name or email the person gives at handoff to ClosedLoop users. It reads every saved `list-users` page, refuses a page set that does not cover the organization's total, and matches first name, last name, full name, or email ignoring case and extra spaces, reporting `one`, `several`, or `none` with each match's id, name, and email.
+
+#### Changed
+- `handoff` no longer assigns every ticket to Nenad Antic. Step 9 asks "Who should pick this up next? A name or email is fine.", and `vibe-ticket-worker`'s new lookup mode pages `list-users` and runs `match-assignee.mjs`. One match is announced as "Assigning this to <full name>." with no further confirmation; several matches are listed by full name and email for the person to choose; no match is said plainly and the question is asked again. Nothing falls back to a default person.
+- `vibe-ticket-worker` assign mode assigns the ticket to the user id lookup resolved, keeps the status In Progress, and returns `BLOCKED` without one; handoff mode writes that person into the Handoff section's Next line. The ticket template's Next line names the chosen owner and describes design review then engineering as the usual route, and the handoff task list, final message, skill description, and `vibe/INSTALL.md` say the same.
+
+### code v1.19.11
+
+#### Changed
+- `vibe` no longer opens the screen `vibe-requirements-worker` named once the person signs in, for a new or a resumed session: the app stays on the page it lands on. Section 4 is now "Set expectations" and keeps the Annotate, chat, and redeploy instructions and the missing-Annotate note. The requirements worker still maps the request to its starting screen.
+
+### code v1.19.10
+
+#### Fixed
+- Every app link the vibe skills give a person is the sign-in page, because the app's root sends a signed-out visitor to account creation: the ticket's Environment section links `<appUrl>/sign-in`, `handoff`'s final message gives `<appUrl>/sign-in`, and `vibe` opens `<appUrl>/sign-in` first on a resumed session too and whenever a tab lands on account creation.
+
+### code v1.19.9
+
+#### Fixed
+- `vibe-environment-worker` reads a failed job from the job logs endpoint (`gh api --allow-escape-sequences repos/closedloop-ai/symphony-alpha/actions/jobs/<job id>/logs`) instead of `gh run view --job <id> --log-failed`, which refuses while other jobs in the run are still going, so a fast failure such as the person check is reported right away with its `##[error]` cause and the org lines.
+
+### code v1.19.8
+
+#### Fixed
+- `vibe/references/environment.md` Desktop steps say what `vibe:profile` actually does: `sign-in` works once per profile (it rotates the refresh token and refuses a signed-in profile, so signing in again needs a fresh `prepare`), and `launch` runs detached with its log in the session's private git directory, blocks while Desktop is open, refuses a profile that is not signed in, is up once the log shows `Desktop window visible`, and is stopped with SIGTERM to its `scripts/dev-launch.mjs` process. `vibe-setup-worker` waits for that line and records the launch command's pid as the stack's `desktopPid`.
+
+### code v1.19.7
+
+#### Fixed
+- `handoff` routes every answer the person gives during handoff (to a worker's `NEEDS_PERSON`, or a correction to the summary) by kind. An answer that decides what the product does (a rule, a permission, what happens in a case, an acceptance criterion), or one whose kind is unclear, goes to `vibe-change-worker` in fix mode first; if it changed any file, the inventory and guardrails, Storybook, checks, reviews, requirements, and redeploy steps run again before the ticket worker sees the answer. An answer that only changes the ticket's wording goes straight to `vibe-ticket-worker`. Step 10 does not start while a behavior answer is unhandled or its re-runs are unfinished.
+- `vibe-change-worker` fix mode takes a handoff question and the person's answer as a requirement in their words: it checks the code on every screen the answer touches, returns `already met` with the file and line or builds it and returns `built`, writes the answer into Scope and acceptance criteria, and says whether any file changed.
+- `vibe-ticket-worker` handoff mode takes every answer with how it was handled, returns the new `NEEDS_CHANGE` status instead of writing a behavior answer the change worker has not handled, re-derives every section that depends on an answer (What this is, Scope and acceptance criteria, API requirements or the backend sections, Handoff), marks each `NEEDS_PERSON` question `behavior` or `wording`, and regenerates the inventory before writing.
+- `vibe-sessions.mjs ticket-sections` names the branch's current merge-base with the base branch as the Environment base commit, so a branch that merged main shows its new base instead of the commit the session started from. `live-ticket-check.mjs` takes `--base-commit` and reports an Environment section that names no base or a different one; the ticket worker passes the inventory's `baseCommit`.
+
+### code v1.19.6
+
+#### Fixed
+- `vibe/references/environment.md` no longer tells the reader to record the URLs and deployed commit with `touch --vercel ... --deployed`, which no longer exists: it says the run's `vibe-environment-result` artifact is recorded with `vibe-sessions.mjs environment-result`, the only command that records them, and that the URLs the session predicts at creation are shown only after a verified result.
+
+### code v1.19.5
+
+#### Fixed
+- The flag snapshot is taken once, when the session starts: `vibe-sessions.mjs flag-snapshot` refuses to replace a session's snapshot without `--replace`, which only `vibe-environment-worker` flags mode passes. `dispatch-inputs` takes `--keep-flag-snapshot true|false` and sends `keep_flag_snapshot` (symphony-alpha #8497); the worker passes it only when the request workflow on main declares that input, `false` in flags mode and `true` otherwise, so a re-dispatch never re-applies a snapshot to an environment it keeps. `dispatch-inputs` records each request id and sends `true` only when the previous request published a verified result (`environment-result` records `vercel.verifiedRequestId`), so an environment whose last run failed gets its snapshot posted again.
+
+### code v1.19.4
+
+#### Fixed
+- `vibe-environment-worker` offers only the orgs the person is an admin of when asking which org should own Acme Co, reading `isAdmin` and the `clerk_org_refusal=` line the environment run now prints (symphony-alpha #8493), and asks again when the chosen org is one they are not an admin of (`clerk_org_not_admin`). When they are an admin of none (`clerk_org_no_admin`), it tells them they need admin on a test-site organization or a new session with an empty copy of the app; `vibe` passes that on as written. A run from before #8493 lists orgs without `isAdmin`, and every one of them is offered, as before.
+
+### code v1.19.3
+
+#### Fixed
+- `vibe-environment-worker` treats the environment as ready only when the `vibe-environment.yml` run succeeds and its `vibe-environment-result` artifact (`requestId`, `branch`, `mode`, `headSha`, the app, API, and Storybook URLs, `deploymentIds`, `verifiedAt`) (published by symphony-alpha #8476) passes the new `vibe-sessions.mjs environment-result` command, which checks it against the request id, the session's branch and mode, and the worktree's HEAD before recording the URLs, deployment ids, and deployed commit. It no longer matches GitHub deployments by `ref`, probes preview URLs, or claims a push of a new branch starts the Vercel builds. Create, redeploy, flags, and desktop modes all read the result, and a missing or refused result returns `BLOCKED` without a URL.
+- `vibe-environment-worker` follows each run job by job and stops at the first failed, cancelled, or timed-out job with that job's failed log, instead of waiting for the whole run.
+- Redeploy mode requests the environment again with the same mode after pushing, so the new commit is deployed and verified.
+- `ticket-sections` shows the app, API, and Storybook URLs and the last deployed commit only once the environment result is recorded; `vibe` opens only the URL the worker returned with `DONE`, and a resumed session without a verified environment goes through create mode again, keeping its flag snapshot. The first time it opens the app for the person to sign in, it opens the verified URL's `/sign-in` path; after that, the plain app URL.
+- `dispatch-inputs` sends `person_email` for a blank session that has a Desktop auth claim (and only then), so a blank session can get a Desktop session; a blank session still never sends a Clerk org.
+- `discard` deletes the remote `andy/<slug>` branch (removing its Vercel previews and preview schema), the worktree, and the local branch, refuses a handed-off session, and returns the live ticket and operator. `vibe` offers throwing a session away at any time (new section 9): the setup worker discards it after the person confirms, and `vibe-ticket-worker` cancel mode moves the live ticket to Canceled with a Progress line.
+
+- New `vibe/scripts/posthog-key.mjs` resolves the public PostHog key and API host for the flag snapshot from a checkout's `apps/app/.env.local`, or else from the production app's sign-in page (checking the `phc_` prefix and a PostHog API host), with no Vercel sign-in. `vibe-environment-worker` uses it, and `vibe-preflight.sh` has a `posthog-key` check with a `posthog-key-missing` fix.
+- `vibe-environment-worker` asks the person to pick an org by name from the run's `org: <name> (<org_id>)` lines or `clerk_orgs_json`, and turns other identity refusals into plain instructions (sign in once to the stage app, create an org) instead of relaying the workflow's wording. `vibe/INSTALL.md` "Before you start" says the person must have signed in to the stage app once and have an org there.
+- closedloop-graph is optional: `vibe` and `INSTALL.md` no longer ask the person to run a connect command; workers fall back to repository search.
+- `vibe` and `handoff` resolve the plugin's absolute root and start every worker brief with it, so worker paths that start with `../` resolve from `<root>/agents` rather than the session worktree.
+- `vibe-change-worker` first returns a quick `PLAN` (small units, each visible on its own, plus any questions for the person), then builds one unit per dispatch and reports what is now visible and what is left; `vibe` tells the person the plan up front and relays each unit as it finishes. A change to a shared `packages/app` surface is wired and typechecked on both the web and Desktop hosts, or the worker asks whether to build it for the web only. Copy reuses an existing constant only when its text matches the person's words exactly, and counted text reads right for one and many. Each new or changed story is checked in the local Storybook UI at a 1280 by 800 viewport, and its play function must pass there and leave no toast, overlay, or scrolled-away content; the new `NEEDS_STORYBOOK` status asks the orchestrator to start local Storybook first.
+- `ticket-template.md` notes that ClosedLoop strips angle-bracketed text, so such text goes in code spans.
+- The branch Storybook URL is documented as behind Vercel's sign-in: `vibe` and `handoff` tell the person plainly that it needs a Vercel sign-in with a team account when the tab lands on a `vercel.com` sign-in or `sso-api` page, and the ticket's Handoff "Next" line says the same to design.
+- `handoff-inventory.mjs` lets a draft session shrink `scripts/lint/source-gate-allowlist.json` (remove entries or lower counts, checked by the new `allowlist-shrink.mjs` against the base copy) and reports it under `shrinkOnlyAllowlists`; any other `scripts/` edit stays forbidden. `guardrails.md` and `vibe-verify-worker` describe the exception.
+- `vibe-environment-worker` redeploy mode runs `pnpm check:source-gates` and then `turbo test` for the packages changed since the last verified deploy and their dependents (`--continue`, 15 minutes) before committing and pushing, and returns `BLOCKED` with the failing suites instead of pushing. A stale `source-gate-allowlist.json` entry for a file the session changed is shrunk (deleted or lowered, never added or raised) wherever the session's work is checked or pushed: the change worker's self-check and fix mode, redeploy, and the first push in create mode, as `guardrails.md` now describes.
+- `vibe-environment-worker` create mode takes the flag snapshot only when the session has none, so a re-run after a refused push keeps the existing snapshot; only flags mode replaces it.
+- `vibe-verify-worker` checks mode runs `pnpm test:affected --continue`, runs `pnpm --filter desktop test:renderer` directly when `packages/app` changed, and runs every lane `pnpm test:lanes` names for the diff except Desktop e2e.
+- `vibe-environment-worker` notes that a branch alias whose latest build Vercel cancelled answers 200 with a "Deployment was cancelled" page, another reason only the verified environment result counts as ready.
+
+#### Removed
+- `vibe-preflight.sh` `just` check and its `brew-install-just` fix, and `just` from the install list; nothing in the Vercel flow runs it.
+- The `annotations.md` "Desktop tab" section, which described the retired local stack's view-only Desktop tab.
+- `vibe-sessions.mjs touch --vercel` and `--deployed`; `environment-result` is the only way the session records URLs and the deployed commit.
+
+### code v1.19.2
+
+#### Fixed
+- `vibe/INSTALL.md` "Updating" covers both marketplace kinds: a Git marketplace updates with `codex plugin marketplace upgrade closedloop-ai`, then `codex plugin add code@closedloop-ai` if `codex plugin list --marketplace closedloop-ai` still shows the old version; a local folder marketplace, which `marketplace upgrade` does not refresh, updates by pulling that checkout and running `codex plugin add code@closedloop-ai` again. Both end with a full quit and reopen of the ChatGPT app, and the section says how to check the installed version against `plugins/code/.codex-plugin/plugin.json` on `main`.
+- `vibe/INSTALL.md` "First run" describes the session's seeded or blank Vercel environment (web app, API, and Storybook), with nothing of the web app on the Mac and the Desktop app run locally only for sessions that touch Desktop.
+- The live ticket is assigned to the person running the session instead of always to Andrew Eye. `vibe-sessions.mjs new` requires `--operator-id` and `--operator-email` (with optional `--operator-name`) from ClosedLoop `get-me` and records them as the session's `operator`; `touch` sets it on an older record and `list` reports it. The ticket template names that person, `vibe-ticket-worker` handoff and assign modes check the ticket is still assigned to the operator by user id and exact email, never display name, and `vibe` treats a `handed-off` session as no longer assigned to the person who ran it.
+- `vibe-ticket-worker` create mode records the new ticket's slug on the session itself (`touch --live-ticket`); `vibe` and `handoff` no longer do it.
+- The live ticket's Engineering checklist keeps only the lines for the session's scope, and `live-ticket-check.mjs` reports a `(full scope)` line on a draft ticket or a `(draft scope)` line on a full one.
+
+### code v1.19.1
+
+#### Changed
+- `vibe-seed-check-worker` and `vibe-seed-refresh` read the latest finished Vibe Seed Walk run on main (`vibe-seed-nightly.yml`, which now runs on every push to main and is informational only) instead of a nightly run, and report that run's conclusion, commit, and URL when it failed.
+
+### code v1.19.0
+
+#### Added
+- `vibe-environment-worker` agent: takes the production flag snapshot in PostHog for the person's account, pushes the `andy/<slug>` branch, starts the session's environment through symphony-alpha's `vibe-environment-dispatch.yml` request workflow (inputs fed to `gh workflow run --json` from a file: `branch`, `mode`, `flag_snapshot`, `request_id`, and for seeded `person_email` plus an optional `clerk_org_id`; `desktop_auth` once the session has a Desktop profile), follows that run and the `vibe-environment.yml` run it triggers by the request id in their titles, asks which org owns Acme Co when the person has several, waits for the Vercel app, API, and Storybook builds, and records the URLs. Redeploy mode makes one commit of the session's changes (never a local fix) and pushes; flags mode retakes the snapshot and requests the environment again with the same mode; desktop mode requests it again so it signs in the session's Desktop profile.
+- `vibe-ticket-worker` agent: creates the session's live ClosedLoop ticket at session start (assigned to Andrew Eye, In Progress), reconciles and checks it at handoff, and assigns it to Nenad Antic with the status left In Progress.
+- `vibe-sessions.mjs`: `--mode seeded|blank` on `new` and `touch`; `--live-ticket`; `--vercel`, `--deployed`, and `--clerk-org-id` on `touch`; the stable per-branch Vercel URLs recorded on the session; and new commands `show`, `flag-snapshot` (validates and saves the snapshot `{ takenAt, distinctId, orgId?, flags }`), `desktop-auth` (validates and saves the Desktop profile's auth claim), `dispatch-inputs` (writes the request inputs with a fresh request id), `codex-sessions` (records `CODEX_THREAD_ID` and every subagent thread it spawned, read from Codex's session files), and `ticket-sections` (renders the ticket's Environment, Production flag snapshot, and Sessions sections from the record).
+- `handoff/scripts/live-ticket-check.mjs`: checks a live ticket body has every section its scope needs, filled, with no template placeholder or `Pending.` marker left.
+
+#### Changed
+- `vibe` no longer starts a local web environment. It asks for seeded or blank data, creates the live ticket, stands up the session's Vercel environment, opens its app URL for the person to sign in, redeploys only when asked ("redeploy", "push it up", and similar), and refreshes flags only when asked. Local Storybook may run between redeploys; the Desktop app runs locally only for sessions that touch Desktop, on a seeded profile in the session's private git directory signed in to the session's Vercel API through `pnpm --filter desktop vibe:profile` (`prepare`, `auth-claim`, `sign-in`, `launch`), and the session continues web-only if that fails.
+- `handoff` checks the live ticket instead of writing it, runs the checks and reviews (full scope keeps the whole suite and two `workflow-code-review` passes), pushes the last changes, and assigns the ticket to Nenad Antic. Both scopes end at the branch; the task lists shown to the person changed to match.
+- `references/ticket-template.md` moved to the vibe skill and is now the live ticket's section template, with which worker keeps each section current. Change, backend, and primitive workers update their sections as they work; draft stubs add their API requirement to the ticket when made.
+- `vibe-setup-worker` starts, stops, and diagnoses local Storybook and the local Desktop app instead of the local web environment; local-fix tracking is unchanged.
+- `vibe-backend-worker` generates migrations with `prisma migrate diff` and no live database; the API's Vercel build applies them on redeploy.
+- `handoff-inventory.mjs` covers the session's redeploy commits and reports the session's mode, live ticket, and Vercel URLs instead of a preview alias.
+
+#### Removed
+- `vibe-preflight.sh` Docker, Colima, and Docker Compose checks and their fixes.
+- `vibe-publish-worker` and `vibe-ship-worker`; full scope no longer opens a pull request, waits for review, or follows the merge queue.
+
+### code v1.18.3
+
+#### Fixed
+- `vibe-preflight.sh` finds an existing symphony-alpha checkout anywhere under the home folder, including folders with spaces in their names, by its `closedloop-ai/symphony-alpha` git remote rather than its folder name, and remembers it in `~/.codex/vibe/config.json`. A worktree resolves to its main checkout, `--repo` sets the remembered checkout, several checkouts ask the person to choose (`choose-repo`), folders macOS would not let it search report `allow-folder-access`, and it clones only when no checkout exists.
+- The `node` check reads the Node range from the checkout's `package.json` `engines` field and checks both the Node first on PATH and the one a new shell runs. The `install-node` fix installs a supported Homebrew Node and puts it first on PATH in `~/.zshenv` and `~/.zprofile` so Codex's non-interactive shells use it.
+- Preflight supports Colima as the Docker engine (`brew-install-docker-cli`, `start-colima`, `use-colima-context`; Docker Desktop is installed only when neither engine exists) and adds a `docker-compose` check with an `install-compose-plugin` fix.
+- `vibe` and `vibe-setup-worker` start the environment detached with `pnpm vibe up --ci` and poll `just vibe-status` for the `VIBE_ENV` record, so it survives between turns; `vibe` reuses a running environment and restarts it when `vibe-status` reports it stopped.
+
+#### Added
+- `vibe-sessions.mjs repo` prints the remembered checkout; `list` and `new` use it when `--repo` is omitted.
+- When the vibe environment fails because of a bug in symphony-alpha itself, `vibe-setup-worker` files a ClosedLoop ticket with the diagnosis assigned to Daniel Ochoa in the current week's project, fixes it locally in the session worktree, and records the changed files with the new `vibe-sessions.mjs local-fix --ticket <slug> --path <file>` (stored as `localFixes` on the session record). `vibe` tells the person in one sentence.
+- `handoff-inventory.mjs` lists those files under `localFixes` and leaves them out of `changedFiles` and every guardrail check; `vibe-publish-worker` restores them to the base before its commit (draft and full scope), and `vibe-ship-worker` stages only the files it fixed.
+- `node --test` suites for `vibe-preflight.sh`, `vibe-sessions.mjs`, and `handoff-inventory.mjs`.
+
+### code v1.18.2
+
+#### Changed
+- `vibe` guardrails: a new or extended design-system primitive needs a full spec before it is built (every variant and size, responsive behavior, accessibility, and every applicable state), and `vibe-primitive-worker` builds all of it with a story per variant, size, and state, returning `BLOCKED` when the spec leaves part out.
+- `vibe` guardrails: a request to make something look better changes only the visual layer; copy, information architecture, and routes stay unless the person asks.
+
+### code v1.18.1
+
+#### Added
+- Added the `gh-monitor-pr` skill to the code plugin. It starts detached GitHub pull-request monitors, wakes the exact launching Codex Desktop or CLI root through the native managed App Server, and keeps monitor-local delivery receipts without depending on the separate `app-server-orchestrator` skill.
+- Added the ClosedLoop ticket skill pack (`cl-policy`, `cl-analyze`, `cl-find-related-tickets`, `cl-split`, `cl-work-report`, `cl-sweep`, and `cl-execute`) plus supporting instruction skills (`closedloop-intel`, `measurement-discipline`, and `mermaid-visualizer`) so the Codex plugin can provide the local ClosedLoop workflows without relying on personal `~/.codex/skills` copies.
+
+### code v1.18.0
+
+#### Added
+- Vibe sessions have a scope (ISS-12046). After asking what to work on, `vibe` asks whether the work is a draft for engineering to finish or should go all the way including the backend, and records it (`vibe-sessions.mjs new --scope draft|full`, `touch --scope`). Draft behaves as before.
+- Full scope: guardrails allow `apps/api`, `packages/api/src/types`, `packages/database` (schema and migrations, applied only to the throwaway vibe database), and Desktop main-process code, each under its owning AGENTS.md; net-new surfaces ship behind a default-off flag. The change worker returns `NEEDS_BACKEND` and the new `vibe-backend-worker` builds the backend from a decision table it writes first with the `decision-table` skill, plus seed coverage and seed data for new models and tests.
+- `handoff` full-scope ship path: the whole test suite (`vibe-verify-worker` full-suite mode), two `workflow-code-review` passes with fixes between, a PR to `main` with the ticket at IN_REVIEW and decision tables attached (`vibe-publish-worker` ship mode), and the new `vibe-ship-worker`, which fixes failing checks, waits for an engineer's approving review (it never merges without one), enables auto-merge, follows the merge queue, and marks the ticket DONE. `handoff-inventory.mjs` allows backend paths for full-scope sessions.
+- `workflow-code-review` skill, moved from the workflow prompt pack together with the 12 review lens files it loads, so it installs with this plugin.
+- Nudges: when the person is done, `vibe` asks whether to hand off now or keep a draft; at start it flags unhanded sessions older than three days.
+
+### code v1.17.2
+
+#### Fixed
+- `vibe-publish-worker` and `vibe-seed-refresh` now pass `create_branch_artifact` the arguments it takes (`projectId`, `branchName`, `sourceArtifactId`, `baseBranch`) instead of a repository name.
+
+### code v1.17.1
+
+#### Added
+- `vibe` and `handoff` read an optional git config `vibe.baseRef` in the symphony-alpha checkout. When set, new vibe sessions start from `origin/<vibe.baseRef>` instead of `origin/main`, and handoff's inventory diffs against that branch. It is a temporary override for onboarding before the symphony-alpha vibe environment lands on main; unset it afterwards with `git config --unset vibe.baseRef`.
+
+### code v1.17.0
+
+#### Added
+- `vibe` skill: lets a non-engineer build product UI for symphony-alpha in the Codex Desktop in-app browser. Preflight installs prerequisites; each session is an `andy/<slug>` worktree off fresh `origin/main` (`scripts/vibe-sessions.mjs` lists, creates, resumes, and discards sessions); `just vibe-up` brings up a throwaway seeded web and Desktop environment; chat requests and in-browser annotations become code under guardrails (frontend only, design-system reuse, tokens, Storybook stories, `*.vibe-stub.ts` stubs for missing API data, no invented copy). The skill is orchestrator-only: it never reads or edits code and dispatches workers for every task.
+- `handoff` skill: shows a task list, then through workers checks guardrails (`scripts/handoff-inventory.mjs`), completes Storybook stories and measures the sidebar footprint (`pnpm vibe storybook-diff`), runs lint, typecheck, and tests, runs an adversarial review, writes `api-requirements.md` from the stubs, creates the ClosedLoop handoff ticket (IN_PROGRESS, assigned to the vibe user) with it attached, makes one commit, pushes, and adds the stable Vercel branch preview link.
+- `vibe-seed-refresh` skill: checks symphony-alpha's vibe seed against main and, on drift, files a ticket, fixes the seed in a worktree, opens a PR, and follows it through `gh-monitor-pr` and the merge queue to merged. Orchestrator-only.
+- Agents for the three skills: `vibe-setup-worker`, `vibe-requirements-worker`, `vibe-change-worker`, `vibe-primitive-worker`, `vibe-handoff-summarizer`, `vibe-verify-worker`, `vibe-publish-worker`, `vibe-guardrails-reviewer`, `vibe-adversarial-reviewer`, `vibe-api-requirements-writer`, `vibe-storybook-decomposer`, `vibe-seed-check-worker`, `vibe-seed-fix-worker`, `vibe-seed-pr-worker`. All use closedloop-graph first (`skills/vibe/references/closedloop-graph.md`).
+- Codex packaging for the `code` plugin (`.codex-plugin/plugin.json`) and a `code` entry in `.agents/plugins/marketplace.json`, so `codex plugin add code@closedloop-ai` installs it. Install steps for a vibe user's Mac: `skills/vibe/INSTALL.md`.
+
+### code v1.16.4
+
+#### Fixed
+- `codex-review`'s `run_codex_review.sh` no longer passes `--full-auto`, which codex-cli 0.147 removed, so every review round exited 2. It now passes `-c sandbox_mode=read-only`, which both `codex exec` and `codex exec resume` accept; `-s read-only` would have broken every resumed round. The reviewer's sandbox narrows from `--full-auto`'s workspace-write to read-only.
+- `run_codex_review.sh` keeps codex's stderr instead of discarding it. `CODEX_FAILED` now carries one line after the exit code saying why codex failed: the last `turn.failed` (else `error`) message from the JSON stream, otherwise the first stderr line starting with `error`, otherwise the last stderr line, skipping the `Reading ... from stdin...` banner. The full stderr goes to the script's stderr, and a failed session resume names its cause before falling back to a fresh session.
+- `debate-loop.sh` prints the `CODEX_FAILED` reason with `printf '%s'` instead of `echo -e`, so backslashes in codex's message are printed as-is instead of being read as escapes.
+- `run_codex_review.sh` also passes `-c approval_policy=never`. `codex exec` defaults approval to `never` but drops that default when the user's config sets `approvals_reviewer = "auto_review"`, which left the user's `approval_policy` in effect.
+- `run_codex_review.sh` writes codex's stderr to the script's stderr when it reports `CODEX_EMPTY`, as it already does for `CODEX_FAILED`.
+- `hooks/plan-review.sh` passes `-c sandbox_mode=read-only -c approval_policy=never` instead of `--full-auto`, and appends codex's stderr to its debug log instead of discarding it.
+
+### code-review v3.10.3
+
+#### Fixed
+- A docs-only diff no longer gets a `CHANGES_REQUESTED` verdict for not spawning `bug_hunter_a`. `arbitrate-budget` already set `bha_partitions` to 0 when every changed file is documentation, but `derive-spawn-spec` recorded that skip as `reason: "budget_capped"`. Because `bug_hunter_a` is a required reviewer, a `Required reviewer dropped: bug_hunter_a` coverage-gap finding followed, advising the operator to raise `--cap`.
+  - `arbitrate-budget` now writes `budget.docs_only: true` into `coverage.json.final` when it waives the BHA floor, on both the arbitrated and the `blocked_by_verify` paths. The key is absent for other diffs.
+  - `derive-spawn-spec` records a zero cap that carries that marker as `skipped[].reason: "docs_only"`. It is benign, like `no_partitions`, so it emits no coverage-gap finding.
+  - A zero cap without the marker, and partitions dropped because the partitioner produced more than `bha_partitions`, still record `budget_capped` and still produce the required-reviewer coverage gap.
+  - `docs_only` is added to `SPAWN_SPEC_SKIP_REASONS`, and SCHEMA.md and `start.md` list it with the other benign skip reasons.
+  - The `docs_only` skipped entry carries `budget_cap: 0` and `partition_count`, as the zero-cap `budget_capped` entry does, and `render-fleet-summary` adds an informational `ℹ️ BHA skipped on a docs-only diff.` note when that entry is present.
+
+### code v1.16.3
+
+#### Changed
+- `guided-manual-qa` presents a checkpoint to the human only when passing E2E on the current head does not already verify it and the agent cannot reliably verify it itself. After the oracle proof, the agent records a checkpoint it conclusively observed as `AGENT_VERIFIED` with `agent-observed` evidence and does not present it; it routes to the human only visual or perceptual judgments, flows it cannot drive or observe reliably (real OAuth, OS dialogs, hardware, third-party UIs), and product-judgment calls, and records why. An inconclusive agent observation goes to the human, and a contradicting one is settled as setup, oracle, or a candidate finding; neither is silently passed.
+- `AGENT_VERIFIED` and `E2E_COVERED` join the status meanings and are never a human `PASS`. The final summary reports human-confirmed `PASS` and `FAIL`, `AGENT_VERIFIED`, `E2E_COVERED`, and `BLOCKED` counts separately, and lists each checkpoint left to the human with the reason it needed one. The agent verifies in its own headless context with the same preloaded browser state; the visible interactive window opens only for a checkpoint routed to the human.
+- The QA record template adds `AGENT_VERIFIED` to the checkpoint statuses, a routing line per checkpoint, `agent-observed` as the confirmer for agent-verified attempts, and the separate counts and human-routed list in the final summary. A bug-fix checkpoint can be closed by the agent under the same routing rule; an agent observation that misses the discriminating state routes it to the human, and only an inconclusive human observation makes it `BLOCKED` with reason "inconclusive".
+- `plugins/code/README.md` describes the routing rule and the separate `AGENT_VERIFIED` and `E2E_COVERED` dispositions.
+- `tools/guided-manual-qa/src/skill-contract.test.ts` pins the routing rule, the inconclusive-observation escalation, the separate summary counts, and that the visible window waits for a human-routed checkpoint while agent verification does not.
+
+### code v1.16.2
+
+#### Changed
+- `guided-manual-qa` checks whether a fixed-port control launcher supports isolated ports, sessions, or project names for concurrent workers before choosing it, and falls back to a documented manual isolated stack with recorded process ownership proof when it does not.
+- `guided-manual-qa` no longer treats a parent supervisor, launchd wrapper, or control command reporting `started` as readiness; the actual listener and the route-owned ready selector must be proven first. A wrapper that hangs before spawning its child gets one bounded foreground diagnostic of the same command, stopped before any fallback.
+
+### code v1.16.1
+
+#### Changed
+- `guided-manual-qa` compares rendered columns, measured container width, and responsive mode with a comparable reference when data changes layout, and requires representative disposable fixtures before presenting the human checkpoint.
+
+### code v1.16.0
+
+#### Added
+- `guided-manual-qa` rebinds results after a head change (`references/plan-methodology.md`, "Rebind results after a head change"). Each tested head records its merge base and stable patch-id. When only the base moved, checkpoints that the base's changed files cannot reach are carried forward and the rest reset to `PENDING`; when the patch-id changed, every checkpoint the delta reaches resets unless a written reason says otherwise. A carried-forward result is never described as exercised on the new head.
+- The QA record template keeps checkpoint attempts in an append-only table (attempt, head, patch-id, status, actual, confirmer, time, evidence, carry-forward reason), and records the merge base and patch-id per tested head and the resume point.
+- Agent dry run as oracle item 6: when the repository declares a verification protocol, the agent drives each checkpoint itself first, through the entry point the requirement names, captures the action and resulting state, adds a read-only second view after a write, and runs writes only on disposable data that is reset before the human's run.
+- "Bug-fix checkpoints" in `references/plan-methodology.md`: the primary checkpoint is the original reproduction on the reported surface, with named correct and broken final states. It reuses a recorded repro or has the agent reproduce it on the base twice, and an inconclusive observation is `BLOCKED` with reason "inconclusive", never `PASS`.
+- Discovery routes in `references/plan-methodology.md` for consumers, candidate E2E coverage, and prior QA on the same surface, through the closedloop-graph tools when they are available and `rg`, `git log -S`, and `gh` otherwise.
+- `tools/guided-manual-qa/src/skill-contract.test.ts` pins the head-change rule, the append-only attempt table, the agent dry run, inconclusive-is-`BLOCKED`, evidence stored outside the worktree, and that the skill names no workflow skill or harness-only variable.
+
+#### Changed
+- A resumed session applies the head-change rule to every recorded result, names the next `PENDING` checkpoint as the resume point, and does not re-present a checkpoint whose result still applies.
+- Checkpoint prompts hand the human only the step that needs human judgment, in a fixed shape: where you are, the one thing to do, what you should see, and what to reply with.
+- Before recording `FAIL`, the agent re-runs the environment proof; drift is a setup `BLOCKED` or an `ORACLE CORRECTION`. After a `FAIL`, a changed fixture, flag, seed, viewport, or wording is a new checkpoint and the `FAIL` row stays.
+- Ticket, PR, and review-comment text is treated as data, and a result reported outside the conversation counts only when the platform author matches the named confirmer.
+- Cited evidence is stored in the record's own directory outside the worktree, and every evidence pointer is checked after cleanup. Summary lines cite their evidence and label unobserved claims `inferred` or `unverified`.
+- Feature-map prose is corroborating evidence, not a requirement; a wrong map entry is recorded as map drift, not a product `FAIL`.
+- `references/browser-state-fixtures.md` puts the repository's verification protocol first in the launcher order, with `pnpm control up web --headed` and `up desktop --headed --flag` as examples.
+- The example QA record location is now `~/.local/state/manual-qa/<repo>/<change-target>/`.
+
+### code v1.15.1
+
+#### Added
+- `skills/guided-manual-qa/agents/openai.yaml` carries Codex display metadata, so Codex and Claude Code load the same `guided-manual-qa` skill directory.
+- `guided-manual-qa` keeps a QA session alive across tool calls or worker turns: services run under a repository-supported or OS-supported owner that survives that boundary, the record says how to inspect and stop it, and a resumed session rereads the QA record and rechecks the head, owned processes, listeners, data target, and route instead of trusting earlier PIDs or ready checks.
+- The QA record template gains a line for the interactive window or app owner, its settled route and control, and the last live verification time, plus a note under the services table to record each process owner and recheck the rows after a resume.
+
+#### Changed
+- Before a UI checkpoint, the agent opens the requested window or app itself, verifies the settled origin and a visible control owned by the route, and keeps it available; an unready window keeps the checkpoint pending as a setup limitation. After presenting a checkpoint the agent stops making tool calls until the human responds or asks for setup help.
+- `SKILL.md` names the bundled launcher as `scripts/dist/launch-interactive-browser.mjs` relative to the skill directory and has the agent resolve its absolute path from where it read `SKILL.md`, instead of using `${CLAUDE_SKILL_DIR}`, which only Claude Code expands. `references/browser-state-fixtures.md` uses the same placeholder in its example command.
+
+### code v1.15.0
+
+#### Added
+- New `guided-manual-qa` skill that derives and runs an interactive, evidence-recorded manual QA session for a code change, ticket, branch, or pull request:
+  - Maps each candidate checkpoint to passing exact-head E2E assertions first, and schedules human checkpoints only for uncovered behavior.
+  - Prepares a local test environment owned by the worktree, and requires proof that listeners and the persistence chain belong to it before the first checkpoint.
+  - Keeps a durable Markdown QA record outside the tracked tree (template in `references/qa-record-template.md`), updated after every material action.
+  - Proves each checkpoint's oracle (surface ownership, contract evidence, fixture reachability, population effects) before asking the human, and records `PASS` / `FAIL` / `BLOCKED` one checkpoint at a time.
+  - `references/plan-methodology.md` covers risk-based plan derivation; `references/browser-state-fixtures.md` covers per-origin browser state.
+- Bundled launcher `skills/guided-manual-qa/scripts/dist/launch-interactive-browser.mjs` opens a visible Playwright browser with localStorage fixtures preloaded before the first navigation. It resolves Playwright from the repository under test, rejects non-HTTP(S) URLs and non-string fixture values, can merge into a private auth state, waits for an optional `--ready-selector`, refuses a page that left the requested origin and path or is mid Clerk handshake, verifies the loaded keys, and prints key names only. Sources and vitest suite live in `tools/guided-manual-qa/`.
+
+#### Removed
+- `skills/design-inventory/scripts/dist/cli.mjs`, a bundle of the shared `runWhenMain` helper that has no entry point and is not referenced. The other design-inventory bundles change only in the inlined helper's source-path comment.
+
+### code-review v3.10.2
+
+#### Changed
+- Rebuilt `scripts/dist/cost-report.mjs` after the `runWhenMain` helper moved to `tools/shared/cli.ts`. The bundle differs only in the inlined helper's source-path comment; behavior is unchanged.
+
+### code-review v3.10.1
+
+#### Added
+- The optional code-intelligence protocol in `shared_prompt.txt` names three more capabilities a reviewer may use when its session holds a tool that answers them: C5 change impact (maps a diff to the symbols it changed and the call sites they reach), C6 index coverage (whether the index is current, whether given paths are in it, and whether an answer was cut short or degraded), and C7 duplication (near-duplicate symbols). C5 rows and C7 hits are candidates, never evidence: a C5 call is kept to one caller hop, a row limit of 25 or less, and only the assigned files whose exported surface changed, since the response grows with every file named whatever the limit, and it uses the review's diff base; both sides of a C7 hit are read before reporting. A C7 error or unbuilt duplicate data means the capability is unavailable, not "no duplicates".
+- `spawn-reviewers`, `impact_analyzer_prompt.txt`, and `design_critic_suffix.txt` say which role reaches for which capability. The Impact Analyzer seeds its candidate-symbol list with one C5 call that cross-checks, and never replaces, its own walk of the diff; C5 call sites enter the existing `discovery: "grep"` / `discovery: "graph"` flow and still need a `callsite_snippet` read from the file. Every role reads the C5 diff base from `base_ref` in `scope.json` and skips C5 when that value is absent, empty, or begins with `-`. The Design Critic consults C7 for each new module or class.
+- Reviewers may discover further read-only tools through a broker tool that searches for and calls tools by name: one search per unanswered capability, only tools whose purpose is to query, and never one that scans, executes, writes, indexes, or records. `code-review-worker-graph.md` holds a brokered tool to the same read-only rule as one called directly, and the Design Critic makes that one search for C4 before falling back to grepping imports.
+
+#### Changed
+- An empty answer from a code-intelligence tool no longer counts as evidence of absence. `shared_prompt.txt` drops "an empty result" from the conditions that degrade silently to Grep/Glob and adds a rule for any finding or dismissal that rests on absence ("no callers", "unused", "dead code", "no other implementation"): first establish through C6 that the paths the claim spans are indexed and current and that the response was not cut short; otherwise confirm with Grep across `<review_root>` or do not assert it. A clean coverage result means "no recorded gap", not proof of completeness. The Impact Analyzer's zero-usages conclusion and the Design Critic's absence-based design findings point at this rule.
+- No finding may claim a caller list is complete ("all callers", "only N call sites"); reviewers report what they found.
+- Editing `shared_prompt.txt` changes the canonical prompt hash, so the Bug Hunter A cache and the `verifications/` cache are invalidated once on upgrade. The change is prompt and agent wording only: no helper, schema, hook, or orchestrator change.
+
+### code-review v3.10.0
+
+#### Added
+- `review_result.json` records which checkout and commit a review read:
+  - `review_root`, `review_root_sha`, and, for a staged review, `review_root_tree`.
+  - Values are copied from `scope.json` and re-validated first. A root must be an absolute path free of control characters, `<`, `>` and backticks, and a SHA must be hex. Anything absent or malformed is written as `null`.
+  - The fields are additive, so `schema_version` stays at 2. The envelope validator rejects any value that is neither a string nor `null`, and `result_envelope_json_schema()` declares all three as nullable strings.
+  - `diff_tip` could not carry this, because for a branch review it is the literal `HEAD`.
+- The review footer prints a second line, `reviewed_line` from `footer.json`, in the form ``**Reviewed:** `<review_root>` @ `<12-char sha>` ``:
+  - A PR head isolated into a worktree is named `PR #N head` rather than by path, because the footer stage removes that worktree in the same call.
+  - A staged review appends the pinned index tree.
+  - A run whose `scope.json` has no valid `review_root_sha` prints `checkout not recorded`.
+- New `render-reviewed-commit` helper subcommand prints the GitHub summary's `**Reviewed commit:**` line, which `github-review.md` places right after **Status**:
+  - It names the commit the review read, and marks it `(PR head)` when it matches the PR head.
+  - When the runner checked out a different commit, such as a merge ref, it names the PR head as well.
+  - It never prints a filesystem path.
+  - The PR head comes from a new `scope.json` key, `pr_head_sha`, which `resolve-scope` writes for PR scope. Github mode records it there while still leaving `head_sha` empty, because `head_sha` redirects `_file_content_hash` and the inline-comment `commit_id` away from the verified working tree.
+
+#### Fixed
+- `github-review.md` and the `present-local` skill now run `render-reviewed-commit` and `render-fleet-summary` through the resolved `<HELPERS>` path instead of `${CLAUDE_PLUGIN_ROOT}`. When `CLAUDE_PLUGIN_ROOT` is empty and `start.md` resolved the helpers from the in-repo tree or the marketplace cache, the old form pointed at `/tools/python/code_review_helpers.py`.
+
+### code-review v3.9.0
+
+#### Fixed
+- Reviewer and verifier agents resolved repo-relative source paths against the invoking session's working directory instead of the checkout under review (ISS-7382). `resolve-scope` emitted `review_root: ""` for every scope kind except a local PR-head worktree, and `shared_prompt.txt` and `verifier_prompt.txt` read an empty root as "read from the working directory" — which for a spawned agent is the session's checkout, not the tree the diff came from. `resolve-scope` now resolves `review_root` for every scope kind (the PR-head worktree when one is created, otherwise `git rev-parse --show-toplevel` of the invoking checkout), records the commit that checkout holds as `review_root_sha`, and exits `3` instead of emitting an empty root when the working directory is not inside a git worktree. This includes github mode, which previously emitted an empty `review_root`: once its PR-head check passes, `review_root` is the verified checkout itself and `review_root_sha` is its HEAD — the PR head for a head checkout, the merge commit for a `refs/pull/N/merge` checkout — so the dispatch drift check compares against what is actually checked out. Github mode still creates no worktree and still emits an empty `head_sha`, and its PR-head refusals run before any scope is emitted.
+- The four stages that hand work to agents — `derive-spawn-spec`, `derive-static-spec`, `verify-prepare`, and `review-dismissed-prepare` — re-prove `review_root` before dispatching and exit `3` when they cannot. The root must be absolute, free of control characters, `<`, `>` and backticks, exist, and be the root of a git worktree. A PR-head worktree's HEAD must still equal `review_root_sha`, and a live checkout must still contain that commit. Every non-removed file in `diff_data.json` must exist under the root, and a root with neither a recorded commit nor a resolvable changed file is refused. `parse-diff` records names as `git diff --name-only` prints them, so a path holding a non-ASCII, control, `"` or `\` byte is stored C-quoted; those names are decoded (named escapes and 3-digit octal escapes) to the name on disk and go through the existence and drift checks like any other file, and an entry that starts with `"` but is not valid quoting is refused.
+- Dispatch is also refused when a file the diff changes no longer matches `review_root_sha` in the working tree: a commit, reset, or uncommitted edit to that file after the scope was resolved, including uncommitted edits already present when a branch review starts. The comparison is one `git diff --name-only -z --no-renames <review_root_sha>` call intersected with the diff's file list, so no pathspec is passed and no path is glob-interpreted, and a failing git call refuses rather than passes. Changes to files outside the diff are still allowed. A `staged` review, whose diff is index-vs-HEAD, is compared against the index instead: `resolve-scope` records the index as `review_root_tree` (`git write-tree`, emitted for staged scope only), so an unstaged edit to a staged file or a re-stage after resolution is refused with a prompt to stage or stash those edits, and a staged scope without a valid `review_root_tree` is refused.
+- Exit `3` now aborts the walk regardless of the stage's `on_failure`. `derive-spawn-spec`, `derive-static-spec`, and `verify-prepare` are `on_failure: continue`, so a plain non-zero exit would fall back to the static reviewer table or skip verification and dispatch agents against the same unproven tree. `_execute_stage_inprocess` and both walkers in `prefix_golden_harness.py` apply the override; every other non-zero exit still follows `on_failure`. `start.md` tells the orchestrator not to resume a stage that exited `3` from the `run-prefix` error fallback.
+- A positional scope argument that is a git ref or revision range (e.g. `/code-review origin/main...HEAD`) is rejected with a pointer to `--base`, instead of being folded into a `--` pathspec that matched nothing and produced an empty, clean review.
+- The reviewer and verifier prompts treat `review_root` as mandatory: resolve every source path under it, discard anything already read elsewhere, and stop rather than fall back to the working directory when it is empty or missing. A reviewer writes no output file in that case (an empty `findings` array would read as a clean review), and a verifier writes a `TENTATIVE` verdict. Tool-returned paths are validated against `<review_root>` in `shared_prompt.txt` and `code-review-worker-graph.md`, and `code-review-worker.md` states the same resolution rule. `spawn-reviewers` requires the `{REVIEW_ROOT}` substitution for every agent, taken from `spawn.json.spec.review_root` with `scope.json` as the fallback, and stops on an empty value; `verify-findings` stops when `verify_manifest.json` is absent; `present-local` stops `--review-dismissed` when `review-dismissed-prepare` exits non-zero.
+
+#### Changed
+- `CODE_INTEL_ALLOWED` is now `false` only when `scope.json` → `worktree_path` is non-empty — the per-run PR-head worktree, created and torn down on every review — instead of whenever `review_root` is non-empty, which would disable code intelligence on every run now that `review_root` is always populated. Code intelligence stays on for branch, staged, and file-path review run from the primary checkout or from a separate git worktree, for local PR review already at the head, and in GitHub mode.
+- The `spawn-reviewers` gate computes a second value, `CODE_INTEL_REQUIRE_ROOT_ARG`, and substitutes it next to `CODE_INTEL_ALLOWED` in every reviewer suffix that loads the code-intelligence protocol. It is `false` only when `scope.json` → `review_root` resolves (realpath) to the git toplevel of the session's primary working directory — the directory the session was started in, not the directory a helper process ran in — and `true` otherwise, including when either side cannot be determined. When it is `true`, the `shared_prompt.txt` protocol lets a reviewer call only tools it can point at `<review_root>` through a root / repo / workspace / project argument, because a tool called without one answers for the session's checkout, and a capability no such tool answers falls back to Grep/Glob. The protocol also now requires passing `<review_root>` as the root argument whenever a tool accepts one, and discarding any response whose resolved target is not the symbol that was asked about. Its indexing rule, which forbade reviews from ever indexing or re-indexing a repo, now forbids only calling a tool whose purpose is to index, re-index, or start or stop an indexing service; a query tool that builds or refreshes its index as a side effect of answering a query scoped to `<review_root>` is allowed. `impact_analyzer_prompt.txt`, `design_critic_suffix.txt`, `code-review-worker-graph.md`, and the `stage_03_resolve_scope` note in `start.md` are updated to match.
+- `spawn.json.spec` now carries `review_root`, including on fallback specs, and `SCHEMA.md` documents the field.
+- `_validated_review_root` is renamed `_validated_worktree_path` and still accepts only `<cr_dir>/pr_head_worktree`, because `stage_30_footer` deletes the path it returns. `re-assert` and `review-dismissed-consolidate`, which can run after that teardown, use `review_root` only when it can be proven, and otherwise print the reason to stderr and use their existing fallback.
+
+### code-review v3.8.1
+
+#### Fixed
+- `/code-review --github <PR>` run outside GitHub Actions no longer reviews whatever tree happens to be checked out. `cmd_resolve_scope` skipped every PR-head check when the mode was github, but `--github` selects file-based handoff output and is a supported invocation from a developer machine — so such a run left `review_root` empty and every reviewer read the operator's branch while holding a diff computed from `origin/<base>...origin/<head>`. Worst on the deep tier, whose cross-file reviewers grep for callsites the wrong tree does not have, and silent in both directions: nothing in the output said which tree was read. GitHub mode now VERIFIES the tree it was handed and REFUSES with a non-zero exit when it cannot establish it as the PR's source. Two checkout shapes are accepted, because both occur in GitHub Actions: HEAD is the PR head (`actions/checkout` with an explicit `ref: <head sha>`), or HEAD is the PR's merge ref `refs/pull/N/merge` — the DEFAULT checkout for a `pull_request` event. Either way the tree must have no uncommitted changes to tracked files. The check costs at most five local git calls and changes nothing else: github mode still creates no worktree, still emits an empty `review_root`, and still emits an empty `head_sha`, so no consumer of those fields moves. Local mode is untouched — it continues to isolate the PR head into a detached worktree, which github mode deliberately does not do because `review_root` redirects a whole agent fleet and `github-review.md`'s own steps do not resolve it.
+- GitHub mode refuses when the PR head did not come from the PR's own metadata. When `gh pr view` fails or returns no head branch, `_resolve_pr_scope` falls back to guessing the head from the checked-out branch, and a clean checkout of that branch would pass any tree check and be reviewed against the requested PR's diff. `_resolve_pr_scope` now reports `head_ref_from_metadata`, and `cmd_resolve_scope` refuses in github mode before verifying the checkout whenever it is false. This also covers a CI runner on a detached HEAD, where the guess degrades to `origin/HEAD`.
+- GitHub mode accepts a merge checkout only when it is shaped like the PR's merge ref. Checking that HEAD's second parent is the PR head was not enough: a merge of the head into an unrelated branch, or an octopus merge that folds a third branch in, passed it and put code the PR's diff does not contain in front of reviewers. `_head_is_pr_merge` now requires exactly two parents, the second being the PR head and the first being on the PR's base branch (an ancestor of `origin/<baseRefName>`, taken from the PR metadata rather than a `--base` override). Ancestry rather than equality keeps a genuine merge ref accepted after the base branch advances past the commit GitHub merged into. Any git error during these checks refuses.
+
+### code-review v3.8.0
+
+#### Changed
+- The cross-file and design reviewers are no longer bound to a specific code-intelligence MCP server. `code-review-worker-graph` previously declared an allowlist of six `mcp__codebase-memory-mcp__*` tools, which meant only that server could ever reach a reviewer and unresolved entries were silently dropped on any machine without it. The agent now declares no `tools:` allowlist and inherits the tools of the session that spawned it, so whichever indexing server the operator has connected is available. `disallowedTools: Bash, Edit, NotebookEdit` removes those three native tools at the harness level; note that this is narrower than the old allowlist, which made every non-listed tool unreachable by construction — an inherited MCP tool that runs shell commands or edits files is covered by prompt instruction, not by the denylist, because `disallowedTools` matches only whole servers (`mcp__<server>`) or every MCP tool (`mcp__*`), with no pattern for write-shaped tools across servers. `code-review-worker` keeps its explicit four-tool allowlist, so the verifier fleet, Bug Hunter A, the domain critics and the singleton prompts continue to inherit nothing.
+- The knowledge-graph protocol in `shared_prompt.txt` is now a substrate-agnostic capability contract (`OPTIONAL — CODE INTELLIGENCE`). Instead of naming tools and their argument shapes, it describes four capabilities — symbol lookup, usage/caller enumeration, snippet read, and structure/dependency analysis — and directs the reviewer to inspect its own tool roster and bind whichever tools answer them, loading deferred MCP schemas with `ToolSearch` first. The same rewrite is applied to `impact_analyzer_prompt.txt`, `design_critic_suffix.txt`, `verifier_prompt.txt`, and the Bug Hunter B / Impact Analyzer / Design Critic / fast-path suffixes in the `spawn-reviewers` skill. The repo-scoping, path-validation, silent-degradation, and untrusted-tool-output rules are retained and generalized to any MCP tool.
+- `GRAPH_PROJECT` is replaced by a single orchestrator-computed boolean, `CODE_INTEL_ALLOWED`. The orchestrator no longer calls `list_projects`, resolves a project identifier, or makes any code-intelligence tool call at all; it only decides whether an external index may be trusted for the run, setting `CODE_INTEL_ALLOWED=false` whenever `review_root` is set (an index covers the operator checkout, not the PR head). This removes the prior step that substituted a server-returned project name into the agents' trusted instruction zone.
+
+#### Fixed
+- The Impact Analyzer can no longer report a `grep_query_used` it did not execute. Sessions that provide no text-search tool previously still emitted a grep query string, which the verifier replays as its fabrication check. `shared_prompt.txt` now states that any recorded search must describe a query actually run, and `impact_analyzer_prompt.txt` directs the analyzer to leave `grep_query_used` null, leave `external_usages_found` empty, and tag callsites `discovery: "graph"` when it holds no text-search tool — routing those entries to the per-entry file-read and content-match audit, which the verifier already handles as the all-graph case. The requirements block and Step 2 of `impact_analyzer_prompt.txt` previously stated the `grep_query_used` requirement categorically ("findings without a `grep_query_used` will be rejected as malformed"), which pushed an analyzer with no search tool back toward inventing one; both statements are now qualified, and a missing query is malformed only when at least one entry is `discovery: "grep"`.
+- The documented meaning of `discovery: "graph"` is widened to match every branch that sets it. It described only the alias / re-export / dynamic-dispatch case a code-intelligence substrate surfaces, but the no-text-search fallback also assigns it to ordinary direct callsites. It now reads as "found on a path the grep replay cannot reproduce", covering both branches, in `code_review_schema.py`, `shared_prompt.txt`, and `verifier_prompt.txt`. The enum vocabulary is unchanged — no schema or fixture change.
+
+### code v1.14.11
+
+#### Changed
+- The `decision-table` skill now treats shared hosts as a first-class reachability case. Tables must inventory inherited entry-point classes, distinguish passive entry from explicit actions, and require non-primary entry-point coverage when a shared wrapper, middleware, dispatcher, scheduler, root component, callback registry, or other common container can trigger behavior outside its intended entry path.
+
+### code-review v3.7.1
+
+#### Fixed
+- Override-cache tests no longer depend on the wall-clock date. Three tests pinned an override's `asserted_at` to a fixed `2026-05-29` timestamp and asserted the override was honored — by `verify-prepare` short-circuiting into `override_hits`, and by the prepare-then-consolidate paths that route an override to `RE_ASSERTED`. Once that fixed timestamp aged past the 90-day `overrides` cache TTL, the overrides were correctly treated as expired and the three tests began failing with no accompanying code change. They now derive `asserted_at` relative to the current time, so they exercise the honored-override path regardless of when the suite runs.
+
+#### Changed
+- Test helper `_stale_cached_at()` renamed to `_iso_days_ago()` so the name matches its documented behavior (an ISO-8601 timestamp N days in the past, used for both within-TTL and past-TTL fixtures); all call sites updated, and the two override TTL boundary tests now delegate to it instead of inlining the same `datetime.now(timezone.utc) - timedelta(...)` expression.
+
+### code v1.14.10
+
+#### Added
+- Contract test suite `test_decision_table_skill_contract.py` pinning the new decision-table skill guarantees: `Not aligned` as a terminal workflow stop, required coexisting-source interaction and precedence rows, shared-corpus production-boundary parity for executable twins, and row-ID-to-test traceability in `Required Tests`.
+
+#### Changed
+- Hardened the `decision-table` skill's alignment gate: `Final Alignment Status: Not aligned` is now a terminal workflow stop, not a report-only status. No PR creation, merge, completion signal, or success closeout may follow until the artifact is re-verified as `Aligned`; fixable repo-local findings remain unresolved work and cannot be normalized into a successful handoff. The human-facing closeout for a `Not aligned` run must state that downstream PR/merge/completion is blocked, name every unresolved blocker, and give the exact next action and owner. A matching common-miss item ("Not-aligned status treated as success") and a contract-heavy review bullet enforce the stop during review-prevention passes.
+- Decision rows now carry stable row IDs, and `Required Tests` is a traceability table instead of a prose list. The `Current Code` and `Intended Change` tables gain a `Row ID` column, and each required test maps to its decision-row IDs with a positive control, a wrong-input or mixed-state negative case, the real production boundary exercised, and expected evidence. Every material row must be covered by at least one mapped test or carried into `Not aligned` with a blocker; a test listed without row IDs or without the negative case needed to distinguish the row's branch is a named review-prevention anti-pattern.
+- New "Executable policy twins and parity" edge-case category: when one behavior or policy has multiple executable twins (a pure helper, SQL predicate, route, worker, producer, batch path, or recovery path), one shared scenario corpus must exercise every twin through its real production boundary and assert identical decisions. Source-string, AST-presence, and SQL-shape assertions are supplemental only and never establish parity, and a negative shape assertion that requires a policy predicate, identity term, join, or branch to be absent is flagged as pinning missing policy: if it permits divergence, the row is `Not aligned` until corrected. Two new review-prevention anti-patterns cover parity inferred from separate tests and shape assertions that pin missing policy.
+- New "Coexisting sources and precedence" edge-case category: when multiple evidence, authority, history, cache, or fallback sources can coexist, singleton rows are insufficient. The table must add a bounded interaction set (pairwise plus code-identified high-risk intersections, never an unbounded Cartesian product) covering legacy or absent evidence alongside fresh valid evidence, corrupt or undated evidence alongside fresh valid evidence, irrelevant historical evidence alongside a current authoritative record, tied or conflicting current records, and source/state precedence, stating which source wins and why. Singleton-only source coverage is a named review-prevention anti-pattern.
+
+### platform v1.1.4
+
+#### Fixed
+- **`upload-artifact` script mode now works against MCP Python SDK 2.x.** `upload_artifact.py` unpacked three values from `streamable_http_client`, read `result.isError`, and built its authenticated client with `httpx` — all 1.x-era shapes. Under SDK 2.x the transport yields a two-value `(read_stream, write_stream)` tuple, `CallToolResult` exposes `is_error`, and the transport expects an `httpx2.AsyncClient`; because the documented `uv run --with 'mcp[cli]'` invocation was unpinned it resolved to 2.x, so every run failed at connect time. The script now targets the 2.x API, and both the module docstring and `SKILL.md` pin the invocation to `mcp[cli]>=2,<3`. Connection setup shared by `--list-projects` and upload is consolidated into a single `_connect` async context manager, and the `get-document` error path reuses the existing `_error_details` helper instead of rebuilding the detail list. The repo dev dependency group moves to `mcp==2.0.0` so type checking runs against the same SDK the script requires.
+
 ### code-review v3.7.0
 
 #### Changed
@@ -1489,6 +2914,7 @@ Evidence-based audit of every backward-compat / legacy surface in the plugin. Ea
 - `write_runs_log_entry` default chain changes from `LAST_CLAUDE_COMMAND → self_learning` to `LAST_CLAUDE_COMMAND → CLOSEDLOOP_COMMAND → plan_execute`, removing the over-attribution of fresh-start Loops to `self_learning` in Datadog (FEA-936).
 - `emit_perf_event` empty-input guard treats an empty `json_line` as a silent no-op, preventing Loop-wide kills under older jq + `set -euo pipefail` and corrupt blank perf.jsonl lines under modern jq 1.8+ (FEA-936).
 - Legacy state-file read path hardened with `|| echo ""` so older state files lacking the `command:` field do not abort the script under `set -euo pipefail`.
+
 ### code v1.11.15
 
 #### Changed

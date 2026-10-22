@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A monorepo of open-source Claude Code plugins by ClosedLoop. Six plugins — `bootstrap`, `code`, `code-review`, `judges`, `platform`, `self-learning` — each under `plugins/<name>/` with a standard layout: `.claude-plugin/plugin.json`, `agents/`, `commands/`, `skills/`, `hooks/`, `tools/python/`, `scripts/`.
+A monorepo of open-source Claude Code plugins by ClosedLoop. Seven plugins (`bootstrap`, `closedloop-core`, `code`, `code-review`, `platform`, `self-learning`, `vibe`), each under `plugins/<name>/` with a standard layout: `.claude-plugin/plugin.json`, `agents/`, `commands/`, `skills/`, `hooks/`, `tools/python/`, `scripts/`.
 
 ## Commands
 
@@ -36,7 +36,7 @@ npm run build      # rebuild committed dist/*.mjs (written to plugins/code/skill
 
 ### Plugin Structure
 
-Each plugin's manifest lives at `plugins/<name>/.claude-plugin/plugin.json` with `name`, `description`, `version`, and `author` fields. The `.claude-plugin/marketplace.json` at repo root registers all six plugins.
+Each plugin's manifest lives at `plugins/<name>/.claude-plugin/plugin.json` with `name`, `description`, `version`, and `author` fields. The `.claude-plugin/marketplace.json` at repo root registers all seven plugins.
 
 ### Agent Definitions
 
@@ -48,11 +48,11 @@ Always use `plugin-name:skill-name` format (e.g., `self-learning:learning-qualit
 
 ### The `code` Plugin is the Hub
 
-`code` depends on both `judges` and `self-learning`. `judges` depends back on `code` (circular). `bootstrap` depends on `code`. `code-review`, `platform`, and `self-learning` are standalone. See `docs/dependencies.md` for the full dependency map.
+`code` depends on `closedloop-core` and `self-learning`. `bootstrap` depends on `code`. `vibe` and `platform` depend on `closedloop-core`. `closedloop-core`, `code-review`, and `self-learning` are standalone. See `docs/dependencies.md` for the full dependency map.
 
-### Closed Loop (run-loop.sh)
+### Orchestrator
 
-The core orchestration loop in `plugins/code/scripts/run-loop.sh`. Drives fresh-context Claude iterations — each `claude -p` invocation gets a clean context window. The orchestrator prompt at `plugins/code/prompts/prompt.md` coordinates 8 workflow phases via subagent delegation. Post-iteration, `run-loop.sh` runs an 11-step pipeline calling Python scripts from `self-learning/tools/python/`. Multi-repo behavior lives in the agents themselves (`pre-explorer`, `plan-draft-writer`, `cross-repo-coordinator`, `cross-repo-prd-writer`), which read `CLOSEDLOOP_REPO_MAP`, `CLOSEDLOOP_ADD_DIRS`, and the `local` flag on peers — no orchestrator-level branching is required.
+The orchestrator prompt at `plugins/code/prompts/prompt.md` coordinates 8 workflow phases via subagent delegation. Multi-repo behavior lives in the agents themselves (`pre-explorer`, `plan-draft-writer`, `cross-repo-coordinator`, `cross-repo-prd-writer`), which read `CLOSEDLOOP_REPO_MAP`, `CLOSEDLOOP_ADD_DIRS`, and the `local` flag on peers; no orchestrator-level branching is required.
 
 ### Hooks
 
@@ -64,7 +64,7 @@ Token-Oriented Object Notation — ~40% token reduction vs JSON, used for `org-p
 
 ### Tool Scripts (TypeScript policy)
 
-**Team policy: no new Python.** New tool scripts are TypeScript; existing Python tools remain until ported. The reference TS toolchain lives at `tools/design-inventory/`: strict `tsconfig` (`noUncheckedIndexedAccess`), sources in `src/` with co-located vitest suites (`*.test.ts`), esbuild-bundled CLIs committed under the owning plugin at `plugins/code/skills/design-inventory/scripts/dist/*.mjs` so consumers need only Node 18+ (runtime deps like fflate are bundled; prefer node stdlib). After editing sources run `npm run build` from `tools/design-inventory` and commit `dist/` — CI fails on stale bundles. CLI entries use `parseArgs` + the shared `runWhenMain` helper; shared wire-format contracts live in a schema module (`design-findings-schema.ts`) that tool scripts may import but which never calls into a tool script.
+**Team policy: no new Python.** New tool scripts are TypeScript; existing Python tools remain until ported. The reference TS toolchain lives at `tools/design-inventory/`: strict `tsconfig` (`noUncheckedIndexedAccess`), sources in `src/` with co-located vitest suites (`*.test.ts`), esbuild-bundled CLIs committed under the owning plugin at `plugins/code/skills/design-inventory/scripts/dist/*.mjs` so consumers need only Node 18+ (runtime deps like fflate are bundled; prefer node stdlib). After editing sources run `npm run build` from `tools/design-inventory` and commit `dist/` — CI fails on stale bundles. CLI entries use `parseArgs` + the shared `runWhenMain` helper from `tools/shared/cli.ts`, and each package's `build.mjs` delegates to `tools/shared/build-bundles.mjs` (import both by relative path; never copy them into a package). A new toolchain also gets a row in the `tools-ts` CI matrix; shared wire-format contracts live in a schema module (`design-findings-schema.ts`) that tool scripts may import but which never calls into a tool script.
 
 **Plugin payload rule (official-repo pattern): plugins ship ONLY runtime payload.** A plugin directory must NEVER contain `package.json`, `package-lock.json`, `node_modules/`, or TypeScript sources — the plugin installer runs `npm install` when it finds a `package.json` plus lockfile anywhere inside the plugin tree, which dumps a large `node_modules` into every user's plugin cache. Dev toolchains (sources, tests, lockfiles, `node_modules`) live OUTSIDE the plugin tree (e.g. `tools/<name>/`); only the committed build output (e.g. `dist/*.mjs`) lives inside the plugin.
 
@@ -80,12 +80,12 @@ All commits MUST follow the conventions in `CONTRIBUTING.md`. Specifically:
 
 - Use conventional commit format: `type(scope): description`
 - Valid types: `feat`, `fix`, `docs`, `refactor`
-- Valid scopes: `bootstrap`, `code`, `code-review`, `judges`, `platform`, `self-learning`
+- Valid scopes: `bootstrap`, `code`, `code-review`, `platform`, `self-learning`
 - Examples: `feat(code): add visual-qa-subagent`, `fix(platform): correct tool list`
 
 ### Version Bumps (Required)
 
-**Any branch that changes a plugin's files MUST bump that plugin's `plugin.json` version exactly ONCE relative to `main`.** Bump once per branch/PR, not once per commit: pick the right semver level for the branch's overall change and keep it for the life of the branch (CI compares base vs HEAD). Semver rules: PATCH for bug fixes/prompt wording, MINOR for new agents/skills/commands, MAJOR for breaking changes to orchestration/hook API/skill interfaces.
+**Any branch that changes a plugin's files MUST bump that plugin's `plugin.json` version exactly ONCE relative to `main`.** Bump once per branch/PR, not once per commit: pick the right semver level for the branch's overall change and keep it for the life of the branch (CI compares base vs HEAD). Semver rules: PATCH for bug fixes/prompt wording, MINOR for new agents/skills/commands, MAJOR for breaking changes to orchestration/hook API/skill interfaces. A plugin that also ships `.codex-plugin/plugin.json` must carry the same version there; the `Plugin Manifest Versions` CI job (`tools/plugin-manifests`) fails when the two differ.
 
 ### Documentation (CHANGELOG.md, README.md)
 
@@ -107,7 +107,7 @@ All commits MUST follow the conventions in `CONTRIBUTING.md`. Specifically:
 - **[mistake]**: When narrowing an `Any`-typed value with `isinstance`, bind it to a local first; calling the source twice in one expression (e.g. `d.get(k) if isinstance(d.get(k), dict) else {}`) makes pyright treat the two calls as separate evaluations so the narrowing doesn't carry to downstream `.get()` accesses — `reportOptionalMemberAccess` fires under stricter CI pyright settings even when local pyright misses it. (context: pyright|narrowing|ci-divergence)
 
 ### Orchestration & State
-- **[mistake]**: When changing run-loop or self-learning resume/rate-limit logic, preserve persisted state contracts: iteration rows, session IDs, success counts, and terminal statuses. (context: run-loop|resume|state|rate-limit)
+- **[mistake]**: When changing self-learning resume/rate-limit logic, preserve persisted state contracts: iteration rows, session IDs, success counts, and terminal statuses. (context: resume|state|rate-limit)
 
 ### Correctness & Data Invariants
 - **[mistake]**: Guard boundary data before narrowing filters or status checks; failed reads, malformed entries, and defaulted fields can invert success/failure handling. (context: invariants|filters|error-handling)

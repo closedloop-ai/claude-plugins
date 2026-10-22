@@ -1,0 +1,4 @@
+interface:
+  display_name: "Guided Manual QA"
+  short_description: "Run evidence-based interactive manual QA"
+  default_prompt: "Use $guided-manual-qa to derive and guide a manual QA session for this change set."

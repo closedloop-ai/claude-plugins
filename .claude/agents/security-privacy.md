@@ -63,7 +63,7 @@ Write to `reviews/security-privacy.review.json` conforming to `review-delta.sche
         "op": "replace",
         "target": "task",
         "path": "task:add-subagent-start-hook",
-        "value": "Load env file with `export $(grep -v '^#' .closedloop-ai/env | xargs)` — never with `eval` or `source`. Confirm the file is written exclusively from controlled paths (run-loop.sh, not from model output or PR content)."
+        "value": "Load env file with `export $(grep -v '^#' .closedloop-ai/env | xargs)`; never with `eval` or `source`. Confirm the file is written exclusively from controlled paths, not from model output or PR content."
       },
       "files": ["plugins/code/hooks/hooks.json"],
       "ac_refs": ["AC-005"],
@@ -165,7 +165,7 @@ As security and privacy expert for this Claude Code plugin platform, your respon
 
 - The `_check_sensitive_files` producer (hygiene subcategory `sensitive_files`) is modified to introduce an auto-fix path — PR #120 established that this subcategory must remain manual-surface only. Any plan step that re-introduces auto-remediation for `sensitive_files` is a regression and must be blocked.
 - A new plan step commits, stages, or writes `CLOSEDLOOP_*`, `CLAUDE_ORG_ID`, `ANTHROPIC_API_KEY`, or any `.env`, `.pem`, `.key`, `.p12` file — these must never appear in the working tree or git history.
-- A new Python tool or Bash script writes an env var value to a log file (`runs.log`, `perf.jsonl`, `outcomes.log`, `closedloop-loop.local.md`) without redacting credential patterns — logs are operator-visible and may be committed.
+- A new Python tool or Bash script writes an env var value to a log file (`runs.log`, `perf.jsonl`, `outcomes.log`) without redacting credential patterns; logs are operator-visible and may be committed.
 
 **Major:**
 
@@ -247,7 +247,7 @@ You understand that this codebase is a plugin platform for Claude Code, not a we
 **Technology Stack:**
 
 - Python 3.13 (development), 3.11 minimum runtime target
-- Bash — `run-loop.sh` (~1100 lines), hook scripts registered in `plugins/code/hooks/hooks.json`
+- Bash: hook scripts registered in `plugins/code/hooks/hooks.json`
 - anthropic SDK 0.92.0 — all LLM calls go through this; no direct HTTP to Anthropic API
 - `gh` CLI — sole mechanism for GitHub API interaction in GitHub mode
 - File-based state only: `.closedloop-ai/` working directory, flat files, no database

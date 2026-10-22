@@ -1,5 +1,7 @@
 # Self-Learning Plugin
 
+> **Deprecated.** The `self-learning` plugin is no longer maintained and will be removed from the closedloop-ai marketplace in a later release. Keep it installed until then: the `code` plugin's setup still reads its requirements. The release that removes it also updates `code` and `install.sh`, so no manual step is needed.
+
 A ClosedLoop plugin that enables AI agents to learn from their mistakes and successes across runs, accumulating organizational knowledge in a persistent pattern store that improves agent behavior over time.
 
 ## Overview

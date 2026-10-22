@@ -38,6 +38,11 @@ jobs:
           while IFS= read -r plugin; do
             manifest="plugins/$plugin/.claude-plugin/plugin.json"
 
+            if [ ! -e "plugins/$plugin" ]; then
+              echo "Plugin $plugin removed; no version bump required."
+              continue
+            fi
+
             if [ ! -f "$manifest" ]; then
               echo "::error::plugins/$plugin/ changed but $manifest is missing. Each plugin must include a .claude-plugin/plugin.json manifest."
               exit 1
@@ -67,6 +72,25 @@ jobs:
               echo "Plugin $plugin version added: $new_version"
             fi
           done <<< "$changed_plugins"
+
+  plugin-manifest-versions:
+    name: Plugin Manifest Versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: tools/plugin-manifests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tools/plugin-manifests/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      # Fails when any plugin's .claude-plugin and .codex-plugin versions differ.
+      - run: npm test
 
   lint:
     name: Lint
@@ -101,28 +125,82 @@ jobs:
       - run: uv sync --frozen --group dev
       - run: uv run pytest plugins/
 
-  design-inventory-ts:
-    name: TypeScript (design-inventory)
+  node-tests:
+    name: Node Tests (skill scripts)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install zsh for the shell script tests
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zsh
+      - name: Run node:test suites under plugins/
+        run: |
+          files=()
+          while IFS= read -r file; do
+            files+=("$file")
+          done < <(git ls-files -- \
+            ':(glob)plugins/**/*.test.mjs' \
+            ':(glob)plugins/**/*.test.cjs' \
+            ':(glob)plugins/**/*.test.js')
+          # node --test exits 0 when nothing matches, so an empty set must fail here.
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::no *.test.{mjs,cjs,js} files found under plugins/; the discovery glob is broken."
+            exit 1
+          fi
+          echo "Running ${#files[@]} test files:"
+          printf '  %s\n' "${files[@]}"
+          node --test --test-reporter=spec "${files[@]}"
+
+  tools-ts:
+    name: TypeScript (${{ matrix.tool }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tool: design-inventory
+            dist: plugins/code/skills/design-inventory/scripts/dist
+            min_bundles: 10
+          - tool: code-review-cost
+            dist: plugins/code-review/scripts/dist
+            min_bundles: 1
+          - tool: guided-manual-qa
+            dist: plugins/closedloop-core/skills/guided-manual-qa/scripts/dist
+            min_bundles: 1
+          - tool: vibe-workers
+            dist: plugins/vibe/skills/vibe/scripts/dist
+            min_bundles: 2
     defaults:
       run:
-        working-directory: tools/design-inventory
+        working-directory: tools/${{ matrix.tool }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: tools/design-inventory/package-lock.json
+          cache-dependency-path: tools/${{ matrix.tool }}/package-lock.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
       - name: Verify committed dist bundles are up to date
+        env:
+          DIST: ${{ matrix.dist }}
+          MIN_BUNDLES: ${{ matrix.min_bundles }}
+          TOOL: ${{ matrix.tool }}
         run: |
-          DIST=plugins/code/skills/design-inventory/scripts/dist
           tracked=$(git -C ../.. ls-files "$DIST/*.mjs" | wc -l)
-          if [ "$tracked" -lt 10 ]; then
-            echo "::error::only $tracked tracked bundles under $DIST; bundles are missing or ignored (root .gitignore dist/ rule?). The skill cannot run without them."
+          if [ "$tracked" -lt "$MIN_BUNDLES" ]; then
+            echo "::error::only $tracked tracked bundles under $DIST; bundles are missing or ignored (root .gitignore dist/ rule?). The plugin cannot run without them."
+            exit 1
+          fi
+          npm run build
+          if ! git -C ../.. diff --exit-code -- "$DIST" || [ -n "$(git -C ../.. status --porcelain -- "$DIST")" ]; then
+            git -C ../.. status --porcelain -- "$DIST"
+            echo "::error::$DIST is stale or contains untracked bundles. Run 'npm run build' in tools/$TOOL and commit the result."
             exit 1
           fi
           npm run build

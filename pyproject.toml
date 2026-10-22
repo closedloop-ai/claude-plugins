@@ -18,6 +18,14 @@ extraPaths = [
 # conftest.py and same-directory modules resolve correctly without colliding
 # with other plugins' identically-named files (e.g. conftest.py).
 [[tool.pyright.executionEnvironments]]
+root = "plugins/vibe/tools/python"
+extraPaths = ["plugins/vibe/tools/python"]
+
+[[tool.pyright.executionEnvironments]]
+root = "plugins/closedloop-core/tools/python"
+extraPaths = ["plugins/closedloop-core/tools/python"]
+
+[[tool.pyright.executionEnvironments]]
 root = "plugins/code-review/tools/python"
 extraPaths = ["plugins/code-review/tools/python"]
 
@@ -50,7 +58,7 @@ extraPaths = ["plugins/code/skills/plan-validate/scripts"]
 [dependency-groups]
 dev = [
   "anthropic==0.92.0",
-  "mcp==1.27.0",
+  "mcp==2.0.0",
   "pyright==1.1.408",
   "pytest==9.0.3",
   "PyYAML==6.0.3",

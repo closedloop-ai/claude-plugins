@@ -33,7 +33,7 @@ shape. Producers may emit dicts directly; the Python convenience type lives in
   // ── Anchor (depends on finding_scope) ─────────────────────
   "finding_scope": "diff | system | pr_metadata",
   "file": "<repo-relative path; null when finding_scope != 'diff'>",
-  "line": <int|null>,
+  "line": <int|null>,          // new-file line; old-file line when `file` was deleted outright (status "removed")
   "system_marker": "<from the canonical enum (Section 3); null when finding_scope == 'diff'>",
 
   // ── Classification ────────────────────────────────────────
@@ -104,13 +104,37 @@ shape. Producers may emit dicts directly; the Python convenience type lives in
       "actual_read": "<what verifier read at the cited location>"
     }
   ],
-  "rejection_class": "evidence_not_found | guard_exists | unreachable | out_of_scope | severity_overstated | null",
+  "rejection_class": "evidence_not_found | evidence_contradicted | guard_exists | unreachable | not_caused_by_diff | out_of_scope | severity_overstated | null",
+  // not_caused_by_diff: an out_of_diff finding whose problem the verifier
+  // could not trace to any change in the patch (pre-existing, unrelated).
   "human_review_recommended": <bool>,
 
   // ── Cross-file grouping ───────────────────────────────────
   "other_locations": [
     {"file": "<path>", "line": <int>, "issue": "<short>"}
-  ]
+  ],
+
+  // ── Validator-owned location tags (stage_22 validate) ─────
+  // Present (and true) only when the validator set them; any value a
+  // reviewer emits is stripped. Never both on one finding.
+  "out_of_hunk_kept": true,  // file is in the diff, line is outside its changed ranges
+  "out_of_diff": true,        // file is outside the diff (ISS-12737): kept under the
+                              // normal 0.5 confidence floor, always verified (never
+                              // from the verify cache); the verifier rejects it with
+                              // rejection_class "not_caused_by_diff" when no change in
+                              // the patch caused it
+
+  // Line-range tags (stage_22 validate, before range filtering and duplicate
+  // merging). A diff-scope line past the end of its file (the new file under
+  // review_root, or for a file deleted outright the old file rebuilt from the
+  // patch) is re-anchored to the one line containing the first non-blank
+  // line of code_snippet. Validator-owned like the tags above; at most one of
+  // the two is present.
+  "line_reanchored_from": <int>, // the reviewer's original line; `line` now holds
+                                 // the re-anchored line
+  "line_out_of_range": true      // no single line matched: kept (location is never a
+                                 // discard reason) under the normal 0.5 confidence
+                                 // floor, never posted inline, shown in the summary
 }
 ```
 
@@ -136,13 +160,16 @@ The terminal artifact of every review run.
 
 ```jsonc
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "review_id": "<uuid v4>",
 
   // ── Run context ───────────────────────────────────────────
   "pr_number": <int|null>,
   "head_sha": "<sha|null>",
   "diff_tip": "<sha>",
+  "review_root": "<absolute path|null>",     // checkout the review read (ISS-9137)
+  "review_root_sha": "<sha|null>",           // commit that checkout held at resolve-scope
+  "review_root_tree": "<tree sha|null>",     // staged scope only: the pinned index tree
   "review_branch": "<branch>",
   "base_ref": "<ref>",
   "diff_scope": "<as resolved by resolve-scope>",
@@ -167,7 +194,8 @@ The terminal artifact of every review run.
       "total_cap": <int>,
       "required_count": <int>,
       "best_effort_count": <int>,
-      "bha_partitions": <int>
+      "bha_partitions": <int>,
+      "docs_only": true                // only when arbitrate-budget waived the BHA floor
     }
   },
   "coverage_gaps": [<finding with category=Coverage and finding_scope=system>, ...],
@@ -185,11 +213,11 @@ The terminal artifact of every review run.
     "verification": {
       "verified_count": <int>,
       "rejected_count": <int>,
-      "tentative_count": <int>,
-      "downgrade_count": <int>,
+      "tentative_count": <int>,         // verified[] with verifier_verdict TENTATIVE (subset of verified_count)
+      "downgrade_count": <int>,         // verified[] with verifier_verdict DOWNGRADE
       "justified_valid_count": <int>,
       "justified_invalid_count": <int>,
-      "skipped_count": <int>,
+      "skipped_count": <int>,           // verified[] no verifier ruled on (verifier_verdict null: tier-skipped, or no verify run)
       "false_positive_rate": <float>
     },
     "impact_cumulative_count": <int>,
@@ -276,7 +304,7 @@ The `verdict` subcommand applies these rules in order; the first match wins.
 
 **Numbering note.** This list is a clean sequential summary. The implementation (`_compute_canonical_verdict`) carries plan-derived rule labels — including the `2.5` (mandatory-human-review short-circuit) and `3.5` (TENTATIVE fall-through) sub-rules, and the cumulative Impact gate labeled **Rule 6** (PLN-726 OQ#6) — so the code's labels do not map 1:1 to the numbers above (e.g. the Impact gate is item 4 here but "Rule 6" in code).
 
-The verdict subcommand writes `<CR_DIR>/verdict.json` with both the canonical verdict and a `verdict` string compatible with `run-loop.sh` (which keys on the legacy form):
+The verdict subcommand writes `<CR_DIR>/verdict.json` with both the canonical verdict and a legacy `verdict` string:
 - APPROVED → approve
 - NEEDS_ATTENTION → needs_attention
 - CHANGES_REQUESTED → decline
@@ -316,6 +344,12 @@ ignored at spawn time.
   "fallback_reason": "<string>",       // only present when arbitrate_status="fallback"
   "cr_dir": "<absolute path>",
   "generated_at": "<ISO-8601 timestamp>",
+  "review_root": "<absolute path>",    // the checkout the diff was PROVEN
+                                       // against; present on fallback specs
+                                       // too, and the primary source for the
+                                       // mandatory {REVIEW_ROOT} substitution
+                                       // at stage_20. Never empty — derivation
+                                       // exits 3 instead of emitting one.
 
   // ── Agents to spawn ──────────────────────────────────────
   "agents": [
@@ -338,11 +372,11 @@ ignored at spawn time.
     {
       "reviewer": "<name>",
       "bucket": "required | best_effort",
-      "reason": "deferred_pln723 | no_partitions | unknown_reviewer | missing_reviewer_name | duplicate_agent_id | budget_capped | gated_by_verify",
+      "reason": "deferred_pln723 | no_partitions | docs_only | unknown_reviewer | missing_reviewer_name | duplicate_agent_id | budget_capped | gated_by_verify",
       "agent_id": "<id>",              // only on duplicate_agent_id
       "partition_id": 0,               // only on budget_capped (BHA)
-      "budget_cap": 0,                 // only on budget_capped
-      "partition_count": 0,            // only on budget_capped
+      "budget_cap": 0,                 // only on budget_capped and docs_only
+      "partition_count": 0,            // only on budget_capped and docs_only
       "source": "rule | critic"        // only on gated_by_verify (preserved for presenters)
     }
   ],
@@ -367,7 +401,7 @@ constants in `code_review_schema.py`):
 | `arbitrate_status` | `ok`, `blocked_by_verify`, `fallback`, `static` | `ok` = normal arbitration ran; `blocked_by_verify` = Phase 7 BLOCKING gate fired upstream and the plan passed through unchanged; `fallback` = derive failed, orchestrator must walk the static reviewer table in the `code-review:spawn-reviewers` skill; `static` (PLN-807) = shallow tier — the spec was emitted by `derive-static-spec` (fixed BHA + BHB + unified_auditor fleet) without consulting a coverage plan, and `stage_20` treats it identically to `fallback` (use the spec verbatim, skip the bucket walk); the distinct status is a telemetry signal that distinguishes user intent (shallow) from upstream derive failure |
 | `source` | `core`, `rule`, `critic`, `fast_path` | Selects the prompt-suffix dispatch in the `code-review:spawn-reviewers` skill (`source: "core"` further branches on `reviewer`; `rule` and `critic` both map to the Domain Critic suffix — `rule` for deterministically matched critic-gates rules including migrated `moduleCritics[]`, `critic` for LLM-proposed additions) |
 | `bucket` | `required`, `best_effort`, `fast_path` | Mirrors the source bucket in `coverage_plan.json` |
-| `skipped[].reason` | `deferred_pln723`, `no_partitions`, `unknown_reviewer`, `missing_reviewer_name`, `duplicate_agent_id`, `budget_capped`, `gated_by_verify` | Reasons surfaced so operators see why a reviewer was omitted |
+| `skipped[].reason` | `deferred_pln723`, `no_partitions`, `docs_only`, `unknown_reviewer`, `missing_reviewer_name`, `duplicate_agent_id`, `budget_capped`, `gated_by_verify` | Reasons surfaced so operators see why a reviewer was omitted |
 | `fallback_reason` | `coverage_plan_missing_or_malformed`, `partitions_missing_or_malformed` | Only set when `arbitrate_status == "fallback"`; names the specific upstream-artifact failure |
 
 **Fallback sentinel invariant:** when `arbitrate_status == "fallback"`,
@@ -394,12 +428,15 @@ does not duplicate it. Presenters use `gated_by_verify` to surface
 by the count of partitions in `partitions.json`. When the partitioner
 emitted more partitions than the budget reserved, the first `cap`
 partitions spawn and the rest land in `skipped[]` with
-`reason: "budget_capped"`. A cap of 0 (docs-only post-arbitrate)
-suppresses all BHA spawns regardless of partition count.
+`reason: "budget_capped"`. A cap of 0 suppresses all BHA spawns
+regardless of partition count. When arbitrate-budget set the cap to 0
+because the diff is docs-only (`coverage_plan.budget.docs_only: true`),
+the single skipped entry carries `reason: "docs_only"`; a cap of 0
+without that marker keeps `reason: "budget_capped"`.
 
 **Required coverage-gap invariant:** every entry in `skipped[]`
 with `bucket == "required"` and a non-benign reason
-(everything except `deferred_pln723`, `no_partitions`,
+(everything except `deferred_pln723`, `no_partitions`, `docs_only`,
 `gated_by_verify`) produces a coverage-gap finding appended to
 `coverage_gaps.json`. `cmd_finalize_result` reads that file into the
 envelope's coverage-gap bucket where it contributes to the canonical
@@ -472,7 +509,7 @@ finding — best-effort omissions are budget-driven, not coverage gaps.
 | 15 | coverage-critic (plan 05)    | `coverage-critic`        | `coverage.json` (`critic` section, `final` on cache_hit/skipped) |
 | 15c| verify-coverage (plan 05)    | `verify-coverage`        | `coverage.json` (`verify` section)                             |
 | 16 | arbitrate-budget             | `arbitrate-budget`       | `coverage.json` (`final` section, in-place), `coverage_gaps.json` |
-| 17 | partition                    | `partition`              | `partitions.json`, `patches_p<N>.txt`                          |
+| 17 | partition                    | `partition`              | `partitions.json`, `patches_p<N>.txt`, `patches_p<N>_context.txt` (moved files only) |
 | 18 | compute-hashes               | `compute-hashes`         | `hashes.json`                                                 |
 | 19 | cache-check                  | `cache-check`            | `cache_result.json`                                            |
 | 19b| derive-spawn-spec (plan 05)  | `derive-spawn-spec`      | `spawn.json` (`spec` section)                                  |
@@ -486,10 +523,52 @@ finding — best-effort omissions are budget-driven, not coverage gaps.
 | 27 | review-state-write           | `review-state-write`     | Review state                                                  |
 | 28 | verdict                      | `verdict`                | `verdict.json`                                                |
 | 29 | present                      | (present)                | Local or GitHub output                                        |
-| 30 | footer                       | `footer`                 | Footer line                                                   |
+| 30 | footer                       | `footer`                 | Footer line + `reviewed_line` (checkout and commit read)      |
 
 Stages from plans 01/03/05/06 are present in `run_plan.json` but marked
 `enabled: false` until those plans land.
+
+### 7a. `diff_data.json` line numbering (ISS-12737)
+
+`parse-diff` records, per file, `changed_ranges[<file>]`:
+
+```jsonc
+{
+  "added":   [[start, end], ...],   // new-file line numbers
+  "removed": [[start, end], ...],   // OLD-file line numbers
+  "deletion_points": [[c, c + 1], ...] // new-file lines either side of a pure
+                                       // deletion (hunk `+c,0`); present only
+                                       // when the file has such a hunk
+}
+```
+
+`validate` checks a finding's `line` in the numbering of the file it names.
+On a file whose `file_statuses` value is `removed` it is the old file, checked
+against `removed`. On every other file it is the new file, checked against
+`added` and `deletion_points` (both ±3 lines); `removed` ranges are never
+compared there. An out-of-range line takes the out-of-hunk path; nothing is
+discarded for its location alone. `partition` never assigns a `removed` file
+to Bug Hunter A, and `resolve-coverage` adds the `file_deletion` change class
+when any file is `removed`.
+
+`diff_data.json` also carries `moved_from` (ISS-12737), present only when a
+pair exists:
+
+```jsonc
+"moved_from": { "<added path>": "<deleted path>", ... }
+```
+
+A file moved and heavily edited falls below git's default 50% rename
+similarity, so the default view reports it as a `removed` file plus an
+`added` one. `parse-diff` runs `git diff --name-status -M30%` over the same
+range and records each rename whose new path is `added` and old path
+`removed`; `files_to_review` and `file_statuses` are unchanged. The pairing is
+heuristic and occasionally joins unrelated files. `partition` writes the
+deleted files' patch to `patches_p<N>_context.txt` for each partition holding a
+paired added file, and adds `moved_from` (that partition's pairs) and
+`context_patch` (the filename) to its `partitions.json` entry; Bug Hunter A
+reads it as reference only and anchors findings on the new file.
+`uncached_diff_data.json` keeps the pairs whose added file missed the cache.
 
 ---
 
@@ -585,8 +664,8 @@ A MAJOR `schema_version` bump invalidates every cache namespace at once.
 | Namespace           | Path                                              | Key inputs                                                    | TTL    |
 | ------------------- | ------------------------------------------------- | ------------------------------------------------------------- | ------ |
 | BHA findings        | `<CACHE_DIR>/bha/<file_hash>.json`                | file_content_hash + prompt_hash + model_id + schema_version   | 30 d   |
-| Signal extraction   | `<CACHE_DIR>/signals/<diff_tip>.json`             | diff_tip + taxonomy_hash + signal_prompt_hash                 | 7 d    |
-| Coverage critic     | `<CACHE_DIR>/coverage_critic/<diff_tip>.json`     | coverage_plan_initial_hash + signals_hash + critic_prompt_hash | 7 d   |
+| Signal extraction   | `<CACHE_DIR>/signals/<cache_key>.json`            | agent input bundle hash + taxonomy_hash + signal_prompt_hash  | 7 d    |
+| Coverage critic     | `<CACHE_DIR>/coverage_critic/<cache_key>.json`    | coverage_plan_initial_hash + signals_hash + diff_summary_hash + critic_prompt_hash + available_reviewers_hash | 7 d |
 | Verification        | `<CACHE_DIR>/verifications/<finding_id>.json`     | finding_id + file_content_hash + verifier_model + verifier_prompt_hash | 30 d |
 | Overrides           | `<CACHE_DIR>/overrides/<finding_id>.json`         | finding_id (file content change invalidates)                  | 90 d   |
 
@@ -601,6 +680,12 @@ from `cache_result.json` by `finalize-result`). The other four
 namespaces have their key inputs, paths, and TTLs declared but ship
 real producers with plans 03 (verifications, overrides) and 05
 (signals, coverage_critic).
+
+In the BHA manifest the per-file `patch_hash` is a hash of the file's
+`patch_lines`. For an added file paired in `diff_data.json` `moved_from`, it
+also folds in the paired deleted file's `patch_lines`, because Bug Hunter A
+reviews it with that patch as context: editing the old file invalidates the
+entry.
 
 The canonical on-disk file layout `<CACHE_DIR>/bha/<file_hash>.json`
 (per-file caches) is a future migration; the current implementation

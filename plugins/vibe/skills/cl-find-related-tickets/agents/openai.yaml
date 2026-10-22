@@ -1,0 +1,4 @@
+interface:
+  display_name: "Find Related ClosedLoop Tickets"
+  short_description: "Map code blast area and find related tickets"
+  default_prompt: "Use $cl-find-related-tickets to inspect the code blast area first, then find nonterminal ClosedLoop tickets related to the concern and briefly explain each match."

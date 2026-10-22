@@ -449,10 +449,13 @@ def _execute_stage(
     outputs_ok = _expected_outputs_present(stage)
     if rc != 0 or not outputs_ok:
         on_failure = stage.get("on_failure", "abort")
-        if on_failure == "abort":
+        # Exit 3 (review-root refusal) overrides on_failure, exactly as
+        # production's ``_execute_stage_inprocess`` does — an oracle that
+        # continued here would stop being a parity oracle.
+        if on_failure == "abort" or rc == code_review_helpers.REVIEW_ROOT_EXIT_CODE:
             raise AssertionError(
                 f"stage {stage_id!r} failed (rc={rc}, outputs_ok={outputs_ok}) "
-                f"with on_failure=abort",
+                f"with on_failure={on_failure}",
             )
         # continue / continue_with_coverage_gap: proceed, but do NOT mark the
         # stage as satisfying its dependents' inputs.
@@ -1014,10 +1017,13 @@ def _execute_stage_subprocess(
     outputs_ok = _expected_outputs_present(stage)
     if rc != 0 or not outputs_ok:
         on_failure = stage.get("on_failure", "abort")
-        if on_failure == "abort":
+        # Exit 3 (review-root refusal) overrides on_failure, exactly as
+        # production's ``_execute_stage_inprocess`` does — an oracle that
+        # continued here would stop being a parity oracle.
+        if on_failure == "abort" or rc == code_review_helpers.REVIEW_ROOT_EXIT_CODE:
             raise AssertionError(
                 f"stage {stage_id!r} failed (rc={rc}, outputs_ok={outputs_ok}) "
-                f"with on_failure=abort",
+                f"with on_failure={on_failure}",
             )
         return StageResult(stage_id, "failed_continue", rc)
 
@@ -1267,6 +1273,33 @@ def empty_diff_fixture() -> PrefixFixture:
                 writes={"src/app.py": "def greet(name):\n    return name\n"},
             ),
             head=None,
+        ),
+    )
+
+
+def deleted_file_fixture() -> PrefixFixture:
+    """ISS-12737: a diff that only deletes a file → zero BHA partitions.
+
+    Deleting 250 lines clears ``FAST_PATH_MAX_LOC`` (route still counts
+    removed lines), so partition runs; it never assigns a ``removed`` file to
+    Bug Hunter A, so it emits zero partitions and derive-spawn-spec skips BHA
+    with ``no_partitions`` while the cross-file reviewers still spawn.
+    """
+    return PrefixFixture(
+        name="golden_prefix_deleted_file",
+        repo=FixtureRepoSpec(
+            base=Commit(
+                message="chore: initial project skeleton",
+                writes={
+                    "src/app.py": "def greet(name):\n    return name\n",
+                    "src/legacy.py": _numbered_lines("L", 250),
+                },
+            ),
+            head=Commit(
+                message="chore: drop the legacy constants module",
+                deletes=["src/legacy.py"],
+                date="2020-01-02T00:00:00 +0000",
+            ),
         ),
     )
 

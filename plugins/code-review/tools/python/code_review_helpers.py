@@ -32,7 +32,7 @@ from collections.abc import Generator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from code_review_schema import (
     CACHE_NAMESPACE_BHA,
@@ -112,6 +112,7 @@ U0_FILE_THRESHOLD = 200
 
 # Parsing thresholds
 NAME_STATUS_MIN_FIELDS = 2
+NAME_STATUS_RENAME_FIELDS = 3
 NUMSTAT_MIN_FIELDS = 3
 DIFF_HEADER_PARTS = 2
 
@@ -240,7 +241,7 @@ def _resolve_pr_scope(
     current_branch: str,
     *,
     allow_guess_fallback: bool,
-) -> dict[str, str | int]:
+) -> dict[str, str | int | bool]:
     """Resolve diff scope fields for a given PR number.
 
     When *allow_guess_fallback* is ``True`` (explicit ``--pr-number``), a
@@ -248,6 +249,12 @@ def _resolve_pr_scope(
     default branch / ``head_ref=current_branch``.  When ``False``
     (auto-detect path), errors propagate so the caller can revert to branch
     scope.
+
+    ``head_ref_from_metadata`` is ``True`` only when ``gh pr view`` returned
+    both the base and the head branch names, and ``False`` whenever
+    ``head_ref`` is the ``current_branch`` guess. A guess names whatever
+    branch is checked out, not this PR, so github mode refuses on it rather
+    than verify a checkout against it (ISS-8769).
     """
     try:
         result = subprocess.run(
@@ -258,11 +265,13 @@ def _resolve_pr_scope(
         lines = result.stdout.strip().splitlines()
         base_ref = lines[0].strip() if len(lines) > 0 else _resolve_default_base_ref()
         head_ref = lines[1].strip() if len(lines) > 1 else current_branch
+        head_ref_from_metadata = len(lines) > 1
     except subprocess.CalledProcessError:
         if not allow_guess_fallback:
             raise
         base_ref = _resolve_default_base_ref()
         head_ref = current_branch
+        head_ref_from_metadata = False
 
     return {
         "diff_scope": f"origin/{base_ref}...origin/{head_ref}",
@@ -273,16 +282,19 @@ def _resolve_pr_scope(
         "path_filter": "",
         "scope_kind": "pr",
         "pr_number": pr_number,
+        "head_ref_from_metadata": head_ref_from_metadata,
     }
 
 
 def _git_rev_parse(ref: str) -> str | None:
     """Resolve *ref* to a commit SHA, or ``None`` if it does not exist.
 
-    Used to compare the PR head commit against the working-tree HEAD when
-    deciding whether local PR review needs a worktree. Never raises — an
-    unresolvable ref (e.g. ``origin/<branch>`` that was never fetched)
-    returns ``None`` so the caller falls back to reading the working tree.
+    Never raises: an unresolvable ref (``origin/<branch>`` that was never
+    fetched, an unborn ``HEAD``) is a ``None``, not an error.
+    What ``None`` MEANS is the caller's to decide and they differ —
+    ``_resolve_default_base_ref`` reads it as "try the next candidate",
+    ``_tree_holds_pr_head`` as "not this shape", ``cmd_resolve_scope`` as
+    "cannot establish the PR head", which it refuses on.
     """
     try:
         result = subprocess.run(
@@ -426,23 +438,415 @@ def _git_show_lines(head_sha: str, file: str) -> list[str] | None:
     return result.stdout.splitlines(keepends=True)
 
 
-def _validated_review_root(cr_dir: str | Path, raw: object) -> str:
-    """Return a trusted ``review_root`` / ``worktree_path`` or ``""``.
+def _validated_worktree_path(cr_dir: str | Path, raw: object) -> str:
+    """Return a trusted ``worktree_path`` or ``""``.
 
-    ``review_root`` is read from ``scope.json`` (operator-writable) and then
-    substituted into agent prompts, used as the base for file reads, and
-    (for ``worktree_path``) passed to a destructive ``rmtree`` teardown. The
-    ONLY legitimate value is the canonical worktree path under ``cr_dir``, so
-    accept exactly that and reject everything else — forged paths, newline /
-    angle-bracket prompt-injection markup, and ``..`` path escapes all fail
-    the equality check and collapse to ``""`` (read the working tree / skip
-    teardown). Returns the canonical path (not the raw input) so even a
-    benign ``..``-normalized match is laundered to the clean form.
+    ``worktree_path`` is read from ``scope.json`` (operator-writable) and
+    passed to a destructive ``rmtree`` teardown, so the ONLY legitimate value
+    is the canonical worktree path under ``cr_dir``: accept exactly that and
+    reject everything else — forged paths, newline / angle-bracket
+    prompt-injection markup, and ``..`` path escapes all fail the equality
+    check and collapse to ``""`` (skip teardown). Returns the canonical path
+    (not the raw input) so even a benign ``..``-normalized match is laundered
+    to the clean form.
+
+    This is deliberately NOT the validator for ``review_root``: teardown
+    deletes what it accepts, so widening it to any checkout would let the
+    footer delete the operator's repository. See ``_require_review_root``.
     """
     if not isinstance(raw, str) or not raw:
         return ""
     expected = _expected_worktree_path(cr_dir)
     return expected if os.path.abspath(raw) == expected else ""
+
+
+class ReviewRootError(RuntimeError):
+    """The review root cannot be shown to hold the diff under review."""
+
+
+# Exit code a stage uses when it could not prove its ``review_root``. The
+# walker aborts on it regardless of the stage's ``on_failure``, because every
+# path a "continue" would degrade to — the static reviewer table, "no verifier
+# this run" — dispatches the same agents against the same wrong tree.
+REVIEW_ROOT_EXIT_CODE = 3
+
+# The root is substituted into the TRUSTED instruction zone of every agent
+# prompt, so reject the markup and control bytes that could restructure it.
+_REVIEW_ROOT_FORBIDDEN = re.compile(r"[\x00-\x1f\x7f<>`]")
+
+
+def _git_toplevel(start: str | Path | None = None) -> str:
+    """Absolute root of the git worktree containing *start* (cwd if None), or ""."""
+    cmd = ["git"]
+    if start is not None:
+        cmd += ["-C", str(start)]
+    cmd += ["rev-parse", "--show-toplevel"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return ""
+    top = result.stdout.strip()
+    return os.path.realpath(top) if top else ""
+
+
+def _git_head_at(root: str | Path) -> str:
+    """The HEAD commit SHA of the checkout at *root*, or ""."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--verify", "--quiet", "HEAD"],
+            capture_output=True, text=True, check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return ""
+    return result.stdout.strip()
+
+
+def _git_index_tree(root: str | Path) -> str:
+    """The tree object id of the index at *root* (``git write-tree``), or "".
+
+    Pins what a staged review reads: ``--cached`` diffs the index against
+    HEAD, so no commit holds that content. ``write-tree`` stores only the tree
+    objects (the blobs are already stored by ``git add``), unreferenced, so
+    ``git gc`` prunes them on its normal schedule. An index with unmerged
+    entries cannot be written and yields "", which the dispatch guard refuses.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "write-tree"],
+            capture_output=True, text=True, check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return ""
+    return _validated_head_sha(result.stdout)
+
+
+def _git_commit_present(root: str | Path, sha: str) -> bool:
+    """True when *sha* names a commit object the repository at *root* holds."""
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root), "cat-file", "-e", f"{sha}^{{commit}}"],
+            capture_output=True, text=True,
+        ).returncode == 0
+    except (FileNotFoundError, OSError):
+        return False
+
+
+def _git_drifted_paths(
+    root: str | Path, sha: str, paths: list[str],
+) -> list[str] | None:
+    """The *paths* whose content at *root* differs from *sha*, or None.
+
+    *sha* is a commit, or for staged scope the index tree ``git write-tree``
+    recorded. Compares it against the WORKING TREE, so a later commit, a reset,
+    and an uncommitted (staged or unstaged) edit all count as drift. No
+    pathspec is passed — ``git diff`` has no ``--pathspec-from-file`` — so
+    argv stays the same size however large the diff, and no path is
+    glob-interpreted: membership is an exact match against git's
+    NUL-delimited output. Returns None when git fails, so the caller can fail
+    closed.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "git", "-C", str(root), "diff", "--name-only", "-z",
+                "--no-renames", "--no-ext-diff", sha, "--",
+            ],
+            capture_output=True,
+        )
+    except (FileNotFoundError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    differing = {os.fsdecode(p) for p in result.stdout.split(b"\0") if p}
+    return [p for p in paths if p in differing]
+
+
+# Named escapes git's C-style path quoting emits; every other control or
+# non-ASCII byte becomes a 3-digit octal escape.
+_GIT_C_QUOTE_ESCAPES: dict[str, int] = {
+    "a": 0x07, "b": 0x08, "t": 0x09, "n": 0x0A, "v": 0x0B, "f": 0x0C,
+    "r": 0x0D, '"': 0x22, "\\": 0x5C,
+}
+
+
+def _git_unquote_path(recorded: str) -> str | None:
+    """The on-disk name for a path as ``git diff --name-only`` printed it.
+
+    Without ``-z`` git C-quotes any path holding a non-ASCII, control, double
+    quote or backslash byte: the name is wrapped in double quotes, each such
+    byte becomes one of ``_GIT_C_QUOTE_ESCAPES`` or a 3-digit octal escape,
+    and the escapes spell raw bytes, not text. An unquoted name is returned
+    unchanged. Returns None when a quoted name is not valid quoting
+    (unterminated, a bare inner quote, an unknown or truncated escape, an
+    out-of-range octal, or an empty name), so the caller refuses rather than
+    guesses.
+    """
+    if not recorded.startswith('"'):
+        return recorded
+    if len(recorded) < 3 or not recorded.endswith('"'):
+        return None
+    body = recorded[1:-1]
+    raw = bytearray()
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch == '"':
+            return None
+        if ch != "\\":
+            raw += ch.encode("utf-8", "surrogateescape")
+            i += 1
+            continue
+        escape = body[i + 1:i + 2]
+        if escape in _GIT_C_QUOTE_ESCAPES:
+            raw.append(_GIT_C_QUOTE_ESCAPES[escape])
+            i += 2
+            continue
+        octal = body[i + 1:i + 4]
+        if (
+            len(octal) == 3
+            and all(c in "01234567" for c in octal)
+            and int(octal, 8) <= 0xFF
+        ):
+            raw.append(int(octal, 8))
+            i += 4
+            continue
+        return None
+    return os.fsdecode(bytes(raw))
+
+
+def _diff_changed_files(cr_dir: str | Path) -> list[str]:
+    """On-disk names of the repo-relative diff files that must exist at the tip.
+
+    Removals are excluded — they are absent from the head by definition.
+    Empty when ``diff_data.json`` has not been written yet (stages that run
+    before ``parse-diff``), which makes the containment check additive rather
+    than a precondition on stage order.
+
+    ``parse-diff`` records names as ``git diff --name-only`` prints them, so a
+    path holding a non-ASCII, control, double quote or backslash byte is
+    stored C-quoted. It is decoded to the name on disk, never skipped: a
+    skipped entry would drop that file from both the containment and the drift
+    check, so an edit to it after resolution would go unnoticed. An entry that
+    looks quoted but does not decode raises ``ReviewRootError``.
+    """
+    data = _read_optional_json(Path(cr_dir) / "diff_data.json", None)
+    if not isinstance(data, dict):
+        return []
+    raw_statuses = data.get("file_statuses")
+    statuses = raw_statuses if isinstance(raw_statuses, dict) else {}
+    files = data.get("files_to_review")
+    if not isinstance(files, list):
+        return []
+    changed: list[str] = []
+    for recorded in files:
+        if not isinstance(recorded, str) or not recorded:
+            continue
+        # file_statuses is keyed by the same quoted string parse-diff recorded.
+        if statuses.get(recorded) == "removed":
+            continue
+        name = _git_unquote_path(recorded)
+        if name is None:
+            raise ReviewRootError(
+                f"diff_data.json lists {recorded!r}, which is not valid git "
+                "path quoting, so it cannot be resolved to a file on disk and "
+                "the root cannot be proven to hold it.",
+            )
+        changed.append(name)
+    return changed
+
+
+def _require_review_root(cr_dir: str | Path, scope_meta: object) -> str:
+    """Return the proven review root, or raise ``ReviewRootError``.
+
+    Reviewers and verifiers are spawned agents: their working directory is the
+    INVOKING SESSION's checkout, which for any worktree-based run is a
+    different tree than the diff came from. So an absent or wrong root does
+    not degrade to "reads the working tree" — it reads unrelated code and
+    reports clean, which is the signal a caller uses to decide it is done.
+    The root is therefore proven rather than assumed, and every failure here
+    is fatal to the run by design.
+
+    Proving the right checkout is not enough: the files the diff changes must
+    also still hold the content they had at ``review_root_sha`` (for staged
+    scope, whose diff is index-vs-HEAD: the index tree pinned as
+    ``review_root_tree``). A commit, a
+    reset, or an uncommitted edit after resolution can keep that commit
+    reachable and every changed path present while moving the source
+    reviewers read, so the fleet would publish a clean review of a snapshot
+    the diff never contained. Drift on paths outside the diff is allowed.
+
+    Unlike ``_validated_worktree_path``, ``cr_dir`` does NOT confine the value:
+    it only locates ``diff_data.json``. Any git worktree root that holds the
+    diff is legitimate, which is why no destructive path may consume this.
+    """
+    changed_files = _diff_changed_files(cr_dir)
+    meta: dict[str, Any] = scope_meta if isinstance(scope_meta, dict) else {}
+    raw = meta.get("review_root")
+    if not isinstance(raw, str) or not raw.strip():
+        raise ReviewRootError(
+            "review_root is empty or absent in scope.json. Spawned reviewers "
+            "would resolve source paths against their own working directory — "
+            "the invoking session's checkout, not the code under review. A "
+            "scope.json from plugin < 3.9.0 always looks like this; the walker "
+            "will not re-run resolve-scope over an existing one, so start a "
+            "fresh review from the checkout that holds the diff.",
+        )
+    raw = raw.strip()
+    if _REVIEW_ROOT_FORBIDDEN.search(raw):
+        raise ReviewRootError(f"review_root contains illegal characters: {raw!r}")
+    if not os.path.isabs(raw):
+        raise ReviewRootError(f"review_root is not an absolute path: {raw!r}")
+    root = os.path.realpath(raw)
+    if not os.path.isdir(root):
+        raise ReviewRootError(f"review_root does not exist on disk: {raw!r}")
+    if _git_toplevel(root) != root:
+        raise ReviewRootError(
+            f"review_root is not the root of a git worktree: {raw!r}",
+        )
+    recorded_sha = _validated_head_sha(meta.get("review_root_sha"))
+    pinned = bool(str(meta.get("worktree_path") or ""))
+    if recorded_sha and pinned:
+        # A PR-head worktree is a detached checkout nobody commits into, so its
+        # HEAD must still be the commit the diff was resolved at.
+        actual = _git_head_at(root)
+        if actual != recorded_sha:
+            raise ReviewRootError(
+                f"review_root {raw!r} is at commit {actual or '<unresolvable>'} but "
+                f"the diff under review was resolved at {recorded_sha}. It is not "
+                "the checkout that produced this diff.",
+            )
+    elif recorded_sha and not _git_commit_present(root, recorded_sha):
+        # A live checkout's tip moves — the operator may legitimately commit
+        # mid-review — so require only that the resolved commit is REACHABLE
+        # here. A different clone does not have it.
+        raise ReviewRootError(
+            f"review_root {raw!r} does not contain commit {recorded_sha}, which "
+            "the diff under review was resolved at. It is a different "
+            "repository than the one that produced this diff.",
+        )
+    missing = [
+        f for f in changed_files if not os.path.lexists(os.path.join(root, f))
+    ]
+    if missing:
+        raise ReviewRootError(
+            f"review_root {raw!r} is missing {len(missing)} of the "
+            f"{len(changed_files)} files this diff changes "
+            f"(e.g. {missing[:3]}). It is a different checkout than the one "
+            "under review.",
+        )
+    scope_kind = meta.get("scope_kind")
+    if scope_kind == "staged":
+        # A staged review diffs the index against HEAD, so every staged file
+        # already differs from review_root_sha. What it reviews is the index as
+        # resolve-scope found it, pinned as the tree object review_root_tree;
+        # without that pin an edit or a re-stage after resolution goes unseen.
+        baseline = _validated_head_sha(meta.get("review_root_tree"))
+        if not baseline:
+            raise ReviewRootError(
+                "scope.json records no valid review_root_tree for the staged "
+                f"review of {raw!r}, so the staged snapshot under review cannot "
+                "be pinned. Start a fresh review.",
+            )
+        snapshot = f"the staged snapshot (tree {baseline})"
+        remedy = (
+            "Stage or stash edits to the files under review and start a fresh "
+            "review."
+        )
+    else:
+        baseline = recorded_sha
+        snapshot = f"commit {recorded_sha}"
+        remedy = "Commit or stash those edits and start a fresh review."
+    if baseline and changed_files:
+        drifted = _git_drifted_paths(root, baseline, changed_files)
+        if drifted is None:
+            raise ReviewRootError(
+                f"could not compare review_root {raw!r} against {snapshot}, "
+                "which the diff under review was resolved at (git diff "
+                "failed). Refusing rather than dispatch agents against a "
+                "snapshot nobody verified.",
+            )
+        if drifted:
+            raise ReviewRootError(
+                f"review_root {raw!r} no longer holds the snapshot under "
+                f"review: {len(drifted)} of the {len(changed_files)} files this "
+                f"diff changes differ from {snapshot} (e.g. {drifted[:3]}) — "
+                "committed, reset, staged, or edited after the scope was "
+                f"resolved. Agents would read source that is not the diff. {remedy}",
+            )
+    if not recorded_sha and not changed_files:
+        # Neither proof ran: "is a git worktree root" alone is true of every
+        # checkout on the box, so returning here would report proven when
+        # nothing about THIS diff was checked.
+        raise ReviewRootError(
+            f"review_root {raw!r} could not be proven to hold this diff — "
+            "scope.json records no review_root_sha and diff_data.json lists no "
+            "resolvable changed files. Start a fresh review rather than resume "
+            "this one.",
+        )
+    return root
+
+
+def _require_review_root_or_report(
+    cr_dir: str | Path, scope_meta: object,
+) -> tuple[str | None, int]:
+    """Prove the review root for a dispatch stage, returning ``(root, 0)`` or
+    ``(None, REVIEW_ROOT_EXIT_CODE)``.
+
+    Every stage that hands work to an agent refuses the same way — the reason
+    on stderr and exit ``REVIEW_ROOT_EXIT_CODE``, which the walker aborts on
+    regardless of ``on_failure`` — so the try/except is shared. Stages that
+    run after the review use ``_degraded_review_root`` instead.
+    """
+    try:
+        return _require_review_root(cr_dir, scope_meta), 0
+    except ReviewRootError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return None, REVIEW_ROOT_EXIT_CODE
+
+
+def _degraded_review_root(cr_dir: str | Path, scope_meta: object) -> str:
+    """The review root for stages that run AFTER the review, or "" — DEGRADED.
+
+    NOT a substitute for ``_require_review_root``: a stage that hands work to
+    an agent must use the strict form, because "" there means every agent
+    silently reads its own working directory. Only ``cmd_re_assert`` and the
+    dismissed-review consolidation may call this — they run once the footer
+    may already have torn the PR-head worktree down, and both carry a
+    ``git show`` / working-tree fallback for the anchor hash they compute.
+
+    The reason is written to stderr rather than swallowed, so a refusal that
+    is NOT the sanctioned "worktree already gone" case is still visible.
+    """
+    try:
+        return _require_review_root(cr_dir, scope_meta)
+    except ReviewRootError as exc:
+        print(
+            f"Warning: reading source without a proven review root — {exc}",
+            file=sys.stderr,
+        )
+        return ""
+
+
+def _ref_like_scope_arg(scope_args: str) -> str:
+    """The first positional scope token that is a git ref or range, not a path.
+
+    ``/code-review origin/main...HEAD`` parses positionally and is folded into
+    a ``--`` pathspec that matches nothing, so the review runs on an empty
+    diff and reports clean. Returns the offending token, or "".
+    """
+    for token in scope_args.split():
+        if os.path.exists(token):
+            continue
+        # A range is ref-like only when git can actually resolve a side of it;
+        # ".." alone also appears in ordinary relative pathspecs.
+        parts = (
+            token.split("...", 1) if "..." in token
+            else token.split("..", 1) if ".." in token
+            else [token]
+        )
+        if any(side and _git_rev_parse(f"{side}^{{commit}}") for side in parts):
+            return token
+    return ""
 
 
 def _working_tree_clean() -> bool:
@@ -460,6 +864,73 @@ def _working_tree_clean() -> bool:
         return result.stdout.strip() == ""
     except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         return False
+
+
+def _head_is_pr_merge(pr_head: str, pr_base: str) -> bool:
+    """True when HEAD is a merge of *pr_head* into the PR's base branch.
+
+    ``HEAD^2 == pr_head`` alone does not identify ``refs/pull/N/merge``: any
+    merge that takes the head as its second parent passes it, including one
+    whose first parent is an unrelated branch and an octopus that folds a
+    third branch in, and reviewers would then read code this PR's diff does
+    not contain. GitHub's merge ref has exactly two parents, the base tip it
+    merged into and then the head, so all of these must hold:
+
+      - exactly two parents (no octopus),
+      - the second parent is *pr_head*, and
+      - the first parent is on the PR's base branch: *pr_base*
+        (``origin/<baseRefName>``) is it or descends from it.
+
+    Ancestry, not equality, on the first parent: the merge ref records the
+    base tip at the moment GitHub computed it, and the runner fetches the base
+    later, so ``origin/<base>`` is routinely ahead of it. The PR metadata's
+    ``baseRefOid`` is no better a pin — it would be read at resolve time,
+    after the checkout, so equality with it refuses every run in which the
+    base moved in between,
+    and ancestry against it needs a commit the runner may never have fetched.
+    ``origin/<base>`` is the ref the review diff is computed from, and the
+    walk to the first parent stays inside history that diff already needs.
+
+    Fails closed: any git error (unresolvable base, shallow history, git
+    missing) is ``False``.
+    """
+    try:
+        # Plumbing, so user log config cannot reshape the output:
+        # "<HEAD> <parent 1> <parent 2> ...".
+        parents = _run_git(["rev-list", "--parents", "-n", "1", "HEAD"]).split()[1:]
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return False
+    if len(parents) != 2 or parents[1] != pr_head:
+        return False
+    return _is_ancestor(parents[0], pr_base)
+
+
+def _tree_holds_pr_head(pr_head: str, pr_base: str) -> bool:
+    """True when the working tree holds *pr_head*'s content (ISS-8769).
+
+    Two checkout shapes legitimately hold a PR's source, and BOTH occur in
+    GitHub Actions, so neither may be treated as the only one:
+
+      - the head commit itself (``actions/checkout`` with an explicit
+        ``ref: <head sha>``), and
+      - the PR's merge ref ``refs/pull/N/merge`` — the DEFAULT checkout for a
+        ``pull_request`` event — a two-parent merge of the head into a commit
+        on *pr_base* (see ``_head_is_pr_merge`` for why each part is needed).
+
+    Anything else (another branch, a stale head, an unresolvable ref, a merge
+    that is not this PR's) is not established, and a caller must refuse rather
+    than review it. Uncommitted changes to tracked files disqualify either
+    shape: the tree then holds content that is in no commit this PR contains.
+    Untracked files do not, matching ``_working_tree_clean``.
+
+    Costs one ``rev-parse`` plus one ``status`` on the head checkout, and two
+    more git calls (parents, ancestry) on the merge-ref shape.
+    """
+    if not pr_head:
+        return False
+    if _git_rev_parse("HEAD") != pr_head and not _head_is_pr_merge(pr_head, pr_base):
+        return False
+    return _working_tree_clean()
 
 
 def _git_worktree_quiet(args: list[str]) -> None:
@@ -587,7 +1058,7 @@ def _remove_pr_head_worktree(worktree_path: str) -> None:
     Defensive guard: this runs ``git worktree remove --force`` and
     ``shutil.rmtree`` (destructive), so it refuses any path whose basename
     is not ``pr_head_worktree``. Every caller already passes a path
-    validated by ``_validated_review_root`` / ``_gc_stale_pr_head_worktrees``;
+    validated by ``_validated_worktree_path`` / ``_gc_stale_pr_head_worktrees``;
     this guard is the last line so a future caller cannot weaponize it
     against an arbitrary directory.
     """
@@ -693,6 +1164,43 @@ def _parse_name_status(raw: str) -> dict[str, str]:
     return statuses
 
 
+# Rename-similarity floor for pairing a deleted file with an added one. Git's
+# default (50%) already reports lighter moves as renames; this catches files
+# moved and heavily edited, which the default reports as a delete plus an add.
+MOVED_FROM_SIMILARITY = "30%"
+
+
+def _parse_moved_from(raw: str, file_statuses: dict[str, str]) -> dict[str, str]:
+    """Pair added files with the deleted files they were moved from.
+
+    *raw* is ``git diff --name-status -M<MOVED_FROM_SIMILARITY>`` output.
+    Only renames whose new path is ``added`` and old path ``removed`` in
+    *file_statuses* (the default-similarity view) are recorded: a rename
+    the default already detected is diffed in place and needs no pairing.
+    Returns ``{added path: deleted path}``.
+    """
+    moved_from: dict[str, str] = {}
+    for line in raw.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) != NAME_STATUS_RENAME_FIELDS or not parts[0].startswith("R"):
+            continue
+        old_path, new_path = parts[1], parts[2]
+        if file_statuses.get(new_path) == "added" and file_statuses.get(old_path) == "removed":
+            moved_from[new_path] = old_path
+    return moved_from
+
+
+def _moved_from_pairs(diff_data: dict[str, Any]) -> dict[str, str]:
+    """``diff_data["moved_from"]`` as ``{added path: deleted path}``; ``{}`` when absent or malformed."""
+    raw = diff_data.get("moved_from")
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        new: old for new, old in raw.items()
+        if isinstance(new, str) and isinstance(old, str)
+    }
+
+
 def _parse_numstat(raw: str) -> dict[str, dict[str, int]]:
     """Parse git diff --numstat output into {path: {added, removed}}."""
     loc: dict[str, dict[str, int]] = {}
@@ -723,8 +1231,14 @@ def _parse_u0_output(
 
     Returns:
         (changed_ranges, patch_lines)
-        changed_ranges: {filepath: {"added": [[s,e],...], "removed": [[s,e],...]}}
+        changed_ranges: {filepath: {"added": [[s,e],...], "removed": [[s,e],...],
+                                    "deletion_points": [[c,c+1],...]}}
         patch_lines: {filepath: {"added_lines": {"line": "content"}, "removed_lines": {"line": "content"}}}
+
+    ``added`` ranges and ``deletion_points`` are numbered in the new file;
+    ``removed`` ranges are numbered in the old file. ``deletion_points`` is
+    present only for files with a pure-deletion hunk (``+c,0``): ``[c, c+1]``
+    are the surviving new-file lines on either side of the removed block.
     """
     changed_ranges: dict[str, dict[str, list[list[int]]]] = {}
     patch_lines: dict[str, dict[str, dict[str, str]]] = {}
@@ -768,6 +1282,10 @@ def _parse_u0_output(
                 changed_ranges[current_file]["added"].append(
                     [current_added_start, end]
                 )
+            elif current_removed_count > 0:
+                changed_ranges[current_file].setdefault("deletion_points", []).append(
+                    [current_added_start, current_added_start + 1]
+                )
 
             removed_line_counter = 0
             added_line_counter = 0
@@ -803,6 +1321,12 @@ def cmd_parse_diff(args: argparse.Namespace) -> int:
     name_status_raw = _run_git(["diff", "--name-status"] + scope_args, workdir)
     file_statuses = _parse_name_status(name_status_raw)
 
+    # 2b. --name-status at the moved-file similarity floor
+    moved_raw = _run_git(
+        ["diff", "--name-status", f"-M{MOVED_FROM_SIMILARITY}"] + scope_args, workdir,
+    )
+    moved_from = _parse_moved_from(moved_raw, file_statuses)
+
     # 3. --numstat
     numstat_raw = _run_git(["diff", "--numstat"] + scope_args, workdir)
     file_loc = _parse_numstat(numstat_raw)
@@ -835,6 +1359,8 @@ def cmd_parse_diff(args: argparse.Namespace) -> int:
         "changed_ranges": changed_ranges,
         "patch_lines": patch_lines,
     }
+    if moved_from:
+        result["moved_from"] = moved_from
 
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")
@@ -1214,12 +1740,19 @@ def _write_per_partition_patches(
     diff_scope: str,
     cr_dir: Path,
     workdir: str | None = None,
+    moved_from: dict[str, str] | None = None,
 ) -> list[str]:
     """Write ``patches_p<N>.txt`` for each partition and return their filenames.
 
     The ``partition`` helper is the canonical producer of per-partition patch
     files. Strips any embedded pathspec (``-- file1 file2``) from ``diff_scope``
     since we always supply our own explicit file list.
+
+    When a partition holds files paired in *moved_from* (``{added: deleted}``),
+    the deleted files' patch is also written to ``patches_p<N>_context.txt``,
+    and the partition entry gains ``moved_from`` (its pairs) and
+    ``context_patch`` (that filename). The returned list names only the
+    ``patches_p<N>.txt`` files.
     """
     run_kwargs: dict[str, Any] = {"capture_output": False, "text": True, "check": False}
     if workdir:
@@ -1249,16 +1782,38 @@ def _write_per_partition_patches(
         with open(patch_path, "w") as out:
             subprocess.run(cmd, stdout=out, stderr=subprocess.DEVNULL, **run_kwargs)
         written.append(patch_name)
+
+        pairs = {f: moved_from[f] for f in files_in_part if moved_from and f in moved_from}
+        if pairs:
+            context_name = f"patches_p{part_id}_context.txt"
+            context_cmd = (
+                ["git", "diff", "--no-renames"] + range_parts
+                + ["--"] + sorted(set(pairs.values()))
+            )
+            with open(cr_dir / context_name, "w") as out:
+                subprocess.run(context_cmd, stdout=out, stderr=subprocess.DEVNULL, **run_kwargs)
+            part["moved_from"] = pairs
+            part["context_patch"] = context_name
     return written
 
 
 def cmd_partition(args: argparse.Namespace) -> int:
-    """Execute partition subcommand."""
+    """Execute partition subcommand.
+
+    Files deleted outright (``file_statuses`` value ``"removed"``) are not
+    partitioned: Bug Hunter A reviews code that still exists, so their lines
+    count toward neither ``total_changed_loc`` (the unified-mode decision)
+    nor the bin-packing, and they are left out of ``test_file_paths``. The
+    cross-file reviewers own deletions. A diff that only deletes files
+    therefore yields zero partitions.
+    """
     diff_data_path: str | None = getattr(args, "diff_data", None)
     diff_data = json.load(open(diff_data_path)) if diff_data_path else json.load(sys.stdin)
     file_loc: dict[str, dict[str, int]] = diff_data.get("file_loc", {})
     changed_ranges: dict[str, dict[str, list[list[int]]]] = diff_data.get("changed_ranges", {})
     files_to_review: list[str] = diff_data.get("files_to_review", [])
+    file_statuses: dict[str, str] = diff_data.get("file_statuses", {}) or {}
+    moved_from = _moved_from_pairs(diff_data)
 
     loc_budget = args.loc_budget
     max_files = args.max_files
@@ -1266,6 +1821,8 @@ def cmd_partition(args: argparse.Namespace) -> int:
     # Build file entries with LOC, sorted descending
     file_entries: list[dict[str, Any]] = []
     for f in files_to_review:
+        if file_statuses.get(f) == "removed":
+            continue
         loc_info = file_loc.get(f, {"added": 0, "removed": 0})
         total = loc_info["added"] + loc_info["removed"]
         file_entries.append({"file": f, "loc": total, "is_test": _is_test_file(f)})
@@ -1337,6 +1894,7 @@ def cmd_partition(args: argparse.Namespace) -> int:
             partition_mode="unified",
             unified_threshold=unified_threshold,
             total_changed_loc=total_changed_loc,
+            moved_from=moved_from,
         )
 
     current_files: list[dict[str, Any]] = []
@@ -1552,6 +2110,7 @@ def cmd_partition(args: argparse.Namespace) -> int:
         partition_mode="partitioned",
         unified_threshold=unified_threshold,
         total_changed_loc=total_changed_loc,
+        moved_from=moved_from,
     )
 
 
@@ -1564,6 +2123,7 @@ def _emit_partitions(
     partition_mode: str,
     unified_threshold: int,
     total_changed_loc: int,
+    moved_from: dict[str, str] | None = None,
 ) -> int:
     """Materialize per-partition patches (when requested), build the
     ``partitions.json`` output payload, and emit it to stdout.
@@ -1586,7 +2146,7 @@ def _emit_partitions(
     partition_patches: list[str] = []
     if diff_scope and cr_dir_arg:
         partition_patches = _write_per_partition_patches(
-            partitions, diff_scope, Path(cr_dir_arg), workdir,
+            partitions, diff_scope, Path(cr_dir_arg), workdir, moved_from,
         )
 
     output: dict[str, Any] = {
@@ -1792,6 +2352,87 @@ def _normalize_findings(
     return normalized, warnings, non_standard
 
 
+def _snippet_anchor(code_snippet: object) -> str:
+    """First non-blank line of a finding's ``code_snippet``, stripped."""
+    if not isinstance(code_snippet, str):
+        return ""
+    for raw in code_snippet.splitlines():
+        stripped = raw.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+def _reanchor_out_of_range_lines(
+    findings: list[dict[str, Any]],
+    file_statuses: dict[str, str],
+    patch_lines: dict[str, dict[str, dict[str, str]]],
+    review_root: str,
+) -> None:
+    """Re-anchor diff-scope findings whose ``line`` is past the end of the file.
+
+    A reviewer can cite a line from the wrong numbering (e.g. its position
+    in ``patches_all.txt``). Such a line is checked against the file it
+    names: the old file, rebuilt from the patch's removed lines, for a file
+    deleted outright (``file_statuses`` value ``"removed"``); otherwise the
+    new file under ``review_root``, whether or not it is in the diff. When
+    the first non-blank line of ``code_snippet`` occurs on exactly one line
+    of that file, ``line`` moves there and the original is kept in
+    ``line_reanchored_from``. Otherwise the finding is kept and tagged
+    ``line_out_of_range: True``. Runs before range filtering and duplicate
+    merging, so a re-anchored finding is range-checked and merged at its real
+    line.
+
+    The validator OWNS both fields: any reviewer-supplied value is stripped.
+    A file that cannot be read (no proven ``review_root``, or missing on
+    disk) is left unjudged.
+    """
+    for finding in findings:
+        finding.pop("line_out_of_range", None)
+        finding.pop("line_reanchored_from", None)
+        if (finding.get("finding_scope") or "diff") != "diff":
+            continue
+        filepath = finding.get("file")
+        raw_line = finding.get("line")
+        if not isinstance(filepath, str) or not filepath:
+            continue
+        if isinstance(raw_line, str) and raw_line.strip().isdigit():
+            line = int(raw_line)
+        elif isinstance(raw_line, int) and not isinstance(raw_line, bool):
+            line = raw_line
+        else:
+            continue
+        if line < 1:
+            continue
+
+        file_lines: list[str] | None = None
+        if file_statuses.get(filepath) == "removed":
+            removed = (patch_lines.get(filepath) or {}).get("removed_lines") or {}
+            numbered = {int(k): v for k, v in removed.items() if str(k).isdigit()}
+            if numbered:
+                file_lines = [numbered.get(n, "") for n in range(1, max(numbered) + 1)]
+        elif review_root:
+            try:
+                file_lines = (Path(review_root) / filepath).read_text(
+                    errors="replace",
+                ).splitlines()
+            except OSError:
+                file_lines = None
+        if file_lines is None or line <= len(file_lines):
+            continue
+
+        anchor = _snippet_anchor(finding.get("code_snippet"))
+        matches = (
+            [n for n, text in enumerate(file_lines, start=1) if anchor in text]
+            if anchor else []
+        )
+        if len(matches) == 1:
+            finding["line_reanchored_from"] = line
+            finding["line"] = matches[0]
+        else:
+            finding["line_out_of_range"] = True
+
+
 def _filter_scope_and_range(
     findings: list[dict[str, Any]],
     files_to_review: set[str],
@@ -1799,16 +2440,44 @@ def _filter_scope_and_range(
     discarded: list[dict[str, Any]],
     *,
     out_of_hunk_confidence_floor: float = OUT_OF_HUNK_CONFIDENCE_FLOOR,
+    file_statuses: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Filter by file scope, line range, and confidence.
 
     Honors ``finding_scope``:
-      - ``diff`` (default): file-in-diff check applies; line-in-changed-range
-        check is confidence-gated for P2+ (see below).
+      - ``diff`` (default): file-in-diff decides which path applies (see
+        below); the line-in-changed-range check is confidence-gated for
+        P2+ on files in the diff.
       - ``system`` / ``pr_metadata``: file/line checks bypassed; finding must
         carry a canonical ``system_marker``.
 
-    Out-of-hunk P2+ semantics (in-hunk and P1 paths unchanged):
+    Out-of-diff semantics (ISS-12737): a diff-scope finding whose ``file``
+    is not in ``files_to_review`` is KEPT and tagged ``out_of_diff: True``.
+    Callers, test mocks, comments and configs outside the diff are often
+    what a change breaks, so where a finding points is never by itself a
+    reason to discard it. The line-range check is skipped (a file outside
+    the diff has no changed ranges) and the normal in-hunk confidence rule
+    applies: P2+ below ``CONFIDENCE_DISCARD_THRESHOLD`` is discarded with
+    ``DISCARD_LOW_CONFIDENCE``; the out-of-hunk floor does NOT apply.
+    Whether the diff caused the problem is the verifier's call
+    (``rejection_class: "not_caused_by_diff"``), not the validator's — no
+    ``evidence[]`` citation is required here. The validator OWNS the tag:
+    every other exit path pops a reviewer-supplied value. A diff-scope
+    finding with no ``file`` at all cannot be located anywhere and is
+    discarded with ``DISCARD_MISSING_FILE``.
+
+    Line numbering (ISS-12737): a finding's line is numbered in the file
+    it names. On a file deleted outright (``file_statuses`` value
+    ``"removed"``) that is the old file, so the line is checked against
+    the ``removed`` ranges. On every other file (``added``, ``modified``,
+    or no recorded status) it is the new file, so the line is in range
+    only within ``added`` ranges or ``deletion_points`` (the surviving
+    lines beside a pure deletion); ``removed`` ranges are old-file numbers
+    and are not compared. Both checks use the ±3 ``_line_in_range``
+    tolerance. A line out of range takes the out-of-hunk path below.
+
+    Out-of-hunk P2+ semantics (files in the diff; in-hunk and P1 paths
+    unchanged):
       - confidence > ``out_of_hunk_confidence_floor`` (default 0.80) →
         the finding survives and is tagged ``out_of_hunk_kept: True`` so
         presenters can distinguish in-hunk from companion-change findings
@@ -1852,27 +2521,53 @@ def _filter_scope_and_range(
             if priority > 1 and confidence < CONFIDENCE_DISCARD_THRESHOLD:
                 discarded.append({"finding": finding, "reason": "DISCARD_LOW_CONFIDENCE"})
                 continue
-            # system/pr_metadata findings can never be "companion-change" —
-            # the field is meaningless for them. Pop any reviewer-supplied
-            # value so the schema convention (present iff companion-change)
-            # holds universally.
+            # system/pr_metadata findings can never be "companion-change"
+            # or "out of diff" — the fields are meaningless for them. Pop
+            # any reviewer-supplied value so the schema convention
+            # (present iff the validator set it) holds universally.
             finding.pop("out_of_hunk_kept", None)
+            finding.pop("out_of_diff", None)
             result.append(finding)
             continue
 
         # diff scope (default): apply file + line filters.
-        filepath = str(finding.get("file", ""))
-        if filepath not in files_to_review:
-            discarded.append({"finding": finding, "reason": "DISCARD_FILE_NOT_CHANGED"})
+        filepath = str(finding.get("file") or "")
+        if not filepath:
+            discarded.append({"finding": finding, "reason": "DISCARD_MISSING_FILE"})
             continue
 
+        if filepath not in files_to_review:
+            finding.pop("out_of_hunk_kept", None)
+            if priority > 1 and confidence < CONFIDENCE_DISCARD_THRESHOLD:
+                finding.pop("out_of_diff", None)
+                discarded.append({"finding": finding, "reason": "DISCARD_LOW_CONFIDENCE"})
+                continue
+            finding["out_of_diff"] = True
+            result.append(finding)
+            continue
+
+        finding.pop("out_of_diff", None)
         line = int(finding.get("line", 0))
 
-        file_ranges = changed_ranges.get(filepath, {})
-        added = file_ranges.get("added", [])
-        removed = file_ranges.get("removed", [])
+        # A line past the end of its file (``_reanchor_out_of_range_lines``
+        # found no unique re-anchor) has no position to range-check. Where a
+        # finding points is never by itself a reason to discard it, so only
+        # the normal confidence rule applies.
+        if finding.get("line_out_of_range") is True:
+            finding.pop("out_of_hunk_kept", None)
+            if priority > 1 and confidence < CONFIDENCE_DISCARD_THRESHOLD:
+                discarded.append({"finding": finding, "reason": "DISCARD_LOW_CONFIDENCE"})
+                continue
+            result.append(finding)
+            continue
 
-        in_range = _line_in_range(line, added) or _line_in_range(line, removed)
+        file_ranges = changed_ranges.get(filepath, {})
+        if (file_statuses or {}).get(filepath) == "removed":
+            in_range = _line_in_range(line, file_ranges.get("removed", []))
+        else:
+            in_range = _line_in_range(
+                line, file_ranges.get("added", []),
+            ) or _line_in_range(line, file_ranges.get("deletion_points", []))
         if not in_range and priority > 1:
             # Confidence must STRICTLY EXCEED the floor (``>``, not ``>=``)
             # so ``floor=1.0`` is a real kill switch — reviewer confidence
@@ -2088,6 +2783,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     )
     files_to_review: set[str] = set(diff_data.get("files_to_review", []))
     changed_ranges: dict[str, dict[str, list[list[int]]]] = diff_data.get("changed_ranges", {})
+    file_statuses: dict[str, str] = diff_data.get("file_statuses", {}) or {}
 
     # Read the operator-tunable out-of-hunk confidence floor from
     # code-review.json (same file that hosts bha_unified_threshold_loc).
@@ -2109,18 +2805,45 @@ def cmd_validate(args: argparse.Namespace) -> int:
     normalized, normalization_warnings, non_standard_values = _normalize_findings(
         raw_findings, discarded
     )
+    # New-file contents are read from the review root, the tree the reviewers
+    # read. Without a proven root, lines on surviving files are left unjudged
+    # rather than checked against some other checkout.
+    review_root = ""
+    cr_dir_arg = getattr(args, "cr_dir", None)
+    if cr_dir_arg:
+        scope_meta = _read_optional_json(Path(cr_dir_arg) / "scope.json", {})
+        try:
+            review_root = _require_review_root(cr_dir_arg, scope_meta)
+        except ReviewRootError as exc:
+            print(
+                f"Warning: line-range re-anchoring skipped for surviving files — {exc}",
+                file=sys.stderr,
+            )
+    _reanchor_out_of_range_lines(
+        normalized, file_statuses, diff_data.get("patch_lines", {}) or {}, review_root,
+    )
     filtered = _filter_scope_and_range(
         normalized, files_to_review, changed_ranges, discarded,
         out_of_hunk_confidence_floor=out_of_hunk_floor,
+        file_statuses=file_statuses,
     )
-    # Count out-of-hunk findings that survived the confidence floor.
+    # Count out-of-hunk / out-of-diff findings that survived the filter.
     # Counted on ``filtered`` (post-filter, pre-grouping) because
     # ``_group_cross_file`` absorbs sibling findings into the primary's
-    # ``other_locations`` where the ``out_of_hunk_kept`` tag is lost;
-    # post-grouping would silently undercount companion-change findings
-    # that happened to be grouped with another.
+    # ``other_locations`` where the tags are lost; post-grouping would
+    # silently undercount tagged findings that happened to be grouped
+    # with another.
     kept_out_of_hunk = sum(
         1 for f in filtered if f.get("out_of_hunk_kept") is True
+    )
+    kept_out_of_diff = sum(
+        1 for f in filtered if f.get("out_of_diff") is True
+    )
+    lines_reanchored = sum(
+        1 for f in filtered if "line_reanchored_from" in f
+    )
+    kept_line_out_of_range = sum(
+        1 for f in filtered if f.get("line_out_of_range") is True
     )
 
     deduped = _merge_duplicates(filtered, discarded)
@@ -2135,7 +2858,9 @@ def cmd_validate(args: argparse.Namespace) -> int:
         "validated": len(validated),
         "cross_file_grouped": cross_file_grouped,
         "kept_out_of_hunk": kept_out_of_hunk,
-        "discarded_file_not_changed": sum(1 for d in discarded if d["reason"] == "DISCARD_FILE_NOT_CHANGED"),
+        "kept_out_of_diff": kept_out_of_diff,
+        "lines_reanchored": lines_reanchored,
+        "kept_line_out_of_range": kept_line_out_of_range,
         "discarded_out_of_hunk_low_confidence": sum(
             1 for d in discarded
             if d["reason"] == "DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE"
@@ -2337,8 +3062,8 @@ def _file_content_hash(
          The worktree is a detached checkout of ``head_sha``, so (1) and (2)
          yield identical content.
       3. working tree / repo root — the no-isolation default.
-    Callers MUST pass values already vetted by ``_validated_review_root`` /
-    ``_validated_head_sha``.
+    Callers MUST pass values already vetted by ``_require_review_root`` /
+    ``_degraded_review_root`` / ``_validated_head_sha``.
     """
     if not file or not line:
         return ""
@@ -2641,11 +3366,14 @@ def _verification_priority(finding: dict[str, Any]) -> float:
 def _needs_verification(finding: dict[str, Any]) -> bool:
     """Apply the PLN-722 'What gets verified' tier table to one finding.
 
-    Out-of-hunk findings (``out_of_hunk_kept: True``) ALWAYS verify
-    regardless of confidence. Their causal claim — that the diff broke
-    nearby unchanged code — is exactly the cross-region reasoning LLM
-    reviewers are weakest on, so the high-confidence MEDIUM skip rule
-    (confidence ≥ 0.85 → no verification) is the wrong default for them.
+    Out-of-hunk findings (``out_of_hunk_kept: True``) and findings outside
+    the diff (``out_of_diff: True``) ALWAYS verify regardless of severity
+    or confidence. Their causal claim — that the diff broke unchanged
+    code — is exactly the cross-region reasoning LLM reviewers are
+    weakest on, so the high-confidence MEDIUM skip rule (confidence ≥
+    0.85 → no verification) is the wrong default for them. For
+    ``out_of_diff`` findings the verifier is also the only causation
+    check (ISS-12737): the validator does not discard on location.
     """
     category = str(finding.get("category", ""))
     source = str(finding.get("source", ""))
@@ -2662,12 +3390,12 @@ def _needs_verification(finding: dict[str, Any]) -> bool:
     if source == "injection-detector":
         return False
 
-    # Out-of-hunk-kept backstop: every such finding gets verified.
-    # Placed after the deterministic-producer guards (Hygiene findings
-    # never carry the tag in practice, but the ordering keeps the
-    # never-verify producers absolute) and before the severity tiers
+    # Out-of-hunk-kept / out-of-diff backstop: every such finding gets
+    # verified. Placed after the deterministic-producer guards (Hygiene
+    # findings never carry the tags in practice, but the ordering keeps
+    # the never-verify producers absolute) and before the severity tiers
     # so confidence-based skips don't apply.
-    if finding.get("out_of_hunk_kept") is True:
+    if finding.get("out_of_hunk_kept") is True or finding.get("out_of_diff") is True:
         return True
 
     if severity in ("BLOCKING", "HIGH"):
@@ -2686,6 +3414,35 @@ def _select_verifier_model(finding: dict[str, Any]) -> str:
     # routing seam for when v2 splits Opus-cross-verification back out.
     del finding
     return _VERIFY_MODEL_DEFAULT
+
+
+def _diff_removed_files(cr_dir: Path) -> frozenset[str]:
+    """On-disk names of the files ``diff_data.json`` records as deleted outright."""
+    data = _read_optional_json(cr_dir / "diff_data.json", None)
+    if not isinstance(data, dict):
+        return frozenset()
+    statuses = data.get("file_statuses")
+    if not isinstance(statuses, dict):
+        return frozenset()
+    names = (
+        _git_unquote_path(recorded)
+        for recorded, status in statuses.items()
+        if status == "removed" and isinstance(recorded, str)
+    )
+    return frozenset(name for name in names if name)
+
+
+def _cites_file_in(finding: dict[str, Any], files: frozenset[str]) -> bool:
+    """Whether the finding's own file or any ``evidence[]`` file is in ``files``."""
+    if not files:
+        return False
+    evidence = finding.get("evidence")
+    cited = [finding.get("file")] + [
+        entry.get("file")
+        for entry in (evidence if isinstance(evidence, list) else [])
+        if isinstance(entry, dict)
+    ]
+    return any(isinstance(path, str) and path in files for path in cited)
 
 
 def cmd_verify_prepare(args: argparse.Namespace) -> int:
@@ -2711,7 +3468,8 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
         containing the canonical finding + the path the verifier should
         write its verdict to (``<cr_dir>/agent_verifier_<finding_id>.json``).
 
-    Always exits 0; an empty validated set produces an empty manifest. The
+    Exits ``REVIEW_ROOT_EXIT_CODE`` when the review root cannot be proven and
+    0 otherwise; an empty validated set produces an empty manifest. The
     walker's Verifier Fleet section spawns one ``code:code-review-worker``
     Task per ``to_verify`` entry; each agent reads its input file and
     writes its verdict to the canonical output path.
@@ -2721,17 +3479,14 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
     cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
     prompt_hash = str(getattr(args, "prompt_hash", "") or "")
 
-    # PR-head worktree isolation (local PR review). When scope resolution
-    # created a worktree at the PR head, every verifier must read source
-    # under that root instead of the working tree — otherwise the existence
-    # check fails and the finding is wrongly rejected. Empty when no
-    # worktree (the common case: read paths as-is from the working tree).
-    # Validated against the canonical path so a forged scope.json cannot
-    # redirect reads or inject prompt markup through this field.
+    # Every verifier resolves source paths under this root. A spawned agent's
+    # own cwd is the invoking session's checkout, so a root that does not hold
+    # this diff makes the existence check read unrelated code and REJECT every
+    # finding — a clean report on source nobody opened. Fail the stage instead.
     scope_meta = _read_optional_json(cr_dir / "scope.json", {})
-    review_root = _validated_review_root(
-        cr_dir, scope_meta.get("review_root") if isinstance(scope_meta, dict) else None,
-    )
+    review_root, refusal_rc = _require_review_root_or_report(cr_dir, scope_meta)
+    if review_root is None:
+        return refusal_rc
     head_sha = _validated_head_sha(
         scope_meta.get("head_sha") if isinstance(scope_meta, dict) else None,
     )
@@ -2778,23 +3533,32 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
                 "confidence": f.get("confidence"),
                 "category": f.get("category"),
                 "_priority_score": _verification_priority(f),
+                "_out_of_diff": f.get("out_of_diff") is True,
             })
         else:
             skipped.append(fid)
 
     # Rank by priority; stable secondary sort by finding_id so a tie
     # doesn't make the cutoff non-deterministic across runs (cache
-    # invalidation cares about ordering).
-    eligible.sort(key=lambda e: (-e["_priority_score"], e["finding_id"]))
+    # invalidation cares about ordering). Out-of-diff findings rank
+    # first and are never deferred: the verifier is their only causation
+    # check. They sit outside the budget, so VERIFY_MAX_VERIFICATIONS
+    # still bounds the in-diff findings verified and the cap trims only
+    # those.
+    eligible.sort(
+        key=lambda e: (not e["_out_of_diff"], -e["_priority_score"], e["finding_id"]),
+    )
 
     deferred: list[str] = []
-    if len(eligible) > VERIFY_MAX_VERIFICATIONS:
-        deferred = [e["finding_id"] for e in eligible[VERIFY_MAX_VERIFICATIONS:]]
-        eligible = eligible[:VERIFY_MAX_VERIFICATIONS]
+    cap = VERIFY_MAX_VERIFICATIONS + sum(1 for e in eligible if e["_out_of_diff"])
+    if len(eligible) > cap:
+        deferred = [e["finding_id"] for e in eligible[cap:]]
+        eligible = eligible[:cap]
 
     inputs_dir = cr_dir / "verifier_inputs"
     inputs_dir.mkdir(parents=True, exist_ok=True)
     verifier_prompt_path = cr_dir / "verifier_prompt.txt"
+    removed_files = _diff_removed_files(cr_dir)
 
     to_verify: list[dict[str, Any]] = []
     cache_hits: list[str] = []
@@ -2827,8 +3591,10 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
         # (finding_id, snippet_hash, model, prompt_hash) tuple, materialize
         # the cached verdict at the canonical output path and skip
         # spawning the agent. cmd_verify_consolidate reads the same file
-        # regardless of source.
-        cached = _read_cached_verification(
+        # regardless of source. Out-of-diff findings skip the cache: its
+        # key covers the cited snippet, not the diff whose causation the
+        # verifier must re-establish on every run.
+        cached = None if entry["_out_of_diff"] else _read_cached_verification(
             cache_dir, finding, entry["model"], prompt_hash,
         )
         if cached is not None:
@@ -2844,17 +3610,20 @@ def cmd_verify_prepare(args: argparse.Namespace) -> int:
                 pass
 
         input_path = inputs_dir / f"{fid}.json"
+        input_path = inputs_dir / f"{fid}.json"
+        verifier_input: dict[str, Any] = {
+            "finding": finding,
+            "verifier_prompt_path": str(verifier_prompt_path),
+            "output_path": str(output_path),
+            "review_root": review_root,
+        }
+        if entry["_out_of_diff"] or _cites_file_in(finding, removed_files):
+            # The causation check searches the patch for the change that
+            # broke the cited code, and a file this diff deleted can only be
+            # read from its patch; hand the verifier the full-diff patch.
+            verifier_input["patches_path"] = str(cr_dir / "patches_all.txt")
         with open(input_path, "w") as fh:
-            json.dump(
-                {
-                    "finding": finding,
-                    "verifier_prompt_path": str(verifier_prompt_path),
-                    "output_path": str(output_path),
-                    "review_root": review_root,
-                },
-                fh,
-                indent=2,
-            )
+            json.dump(verifier_input, fh, indent=2)
         to_verify.append({
             "finding_id": fid,
             "model": entry["model"],
@@ -3625,6 +4394,25 @@ def _compute_patch_hash(file_path: str, patch_data: dict[str, dict[str, str]]) -
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def _bha_patch_hash(
+    file_path: str,
+    patch_lines: dict[str, dict[str, dict[str, str]]],
+    moved_from: dict[str, str],
+) -> str:
+    """BHA cache patch hash for *file_path*.
+
+    A file paired in ``moved_from`` is reviewed with its deleted file's patch
+    as context, so that patch folds into the key; editing the old file
+    invalidates the entry. Unpaired files keep the plain patch hash.
+    """
+    patch_hash = _compute_patch_hash(file_path, patch_lines.get(file_path, {}))
+    old_path = moved_from.get(file_path)
+    if old_path is None:
+        return patch_hash
+    old_hash = _compute_patch_hash(old_path, patch_lines.get(old_path, {}))
+    return hashlib.sha256(f"{patch_hash}\0{old_hash}".encode()).hexdigest()
+
+
 def _load_manifest(cache_dir: Path) -> dict[str, Any]:
     """Load manifest.json from cache_dir, return {} on missing/corrupt/non-dict."""
     manifest_path = cache_dir / CACHE_MANIFEST_FILENAME
@@ -3895,6 +4683,24 @@ def _is_global_cache_enabled(is_github_mode: bool) -> bool:
     return not is_github_mode
 
 
+def _cached_findings_for(
+    entry: dict[str, Any], hit_file: str, review_set: set[str],
+) -> list[Any]:
+    """Findings a cache hit on ``hit_file`` brings back.
+
+    Drops an out-of-diff finding filed under ``hit_file`` once its own
+    file is in the diff: that file is reviewed in its own right this run,
+    and the cached copy may describe code the author has since fixed.
+    """
+    kept: list[Any] = []
+    for finding in entry.get("findings", []):
+        fpath = finding.get("file") if isinstance(finding, dict) else None
+        if fpath != hit_file and fpath in review_set:
+            continue
+        kept.append(finding)
+    return kept
+
+
 def _write_cache_output_files(  # noqa: PLR0913
     output_dir: Path,
     cached_files: list[str],
@@ -3949,6 +4755,12 @@ def _write_cache_output_files(  # noqa: PLR0913
             fp: p for fp, p in diff_data["patch_lines"].items()
             if fp in uncached_set
         }
+    uncached_moved_from = {
+        new: old for new, old in _moved_from_pairs(diff_data).items()
+        if new in uncached_set
+    }
+    if uncached_moved_from:
+        uncached_diff_data["moved_from"] = uncached_moved_from
     with open(output_dir / "uncached_diff_data.json", "w") as f:
         json.dump(uncached_diff_data, f, indent=2)
         f.write("\n")
@@ -4053,14 +4865,15 @@ def _cmd_cache_check_v1(  # noqa: PLR0913
     """Per-cr-dir cache-check path (non-global-cache fallback)."""
     manifest_file_existed = (cache_dir / CACHE_MANIFEST_FILENAME).exists()
     manifest = _load_manifest(cache_dir)
+    review_set = set(files_to_review)
+    moved_from = _moved_from_pairs(diff_data)
 
     cached_files: list[str] = []
     uncached_files: list[str] = []
     cached_findings: list[dict[str, Any]] = []
 
     for filepath in files_to_review:
-        file_patch = patch_lines.get(filepath, {})
-        patch_hash = _compute_patch_hash(filepath, file_patch)
+        patch_hash = _bha_patch_hash(filepath, patch_lines, moved_from)
         entry = manifest.get(filepath)
 
         if (
@@ -4070,7 +4883,7 @@ def _cmd_cache_check_v1(  # noqa: PLR0913
             and _is_entry_fresh(entry, CACHE_NAMESPACE_BHA)
         ):
             cached_files.append(filepath)
-            cached_findings.extend(entry.get("findings", []))
+            cached_findings.extend(_cached_findings_for(entry, filepath, review_set))
         else:
             uncached_files.append(filepath)
 
@@ -4105,6 +4918,8 @@ def _cmd_cache_check_v2(  # noqa: PLR0913
     fallback: str | None = None
     manifest: dict[str, Any] = {}
     manifest_file_existed = (cache_dir / CACHE_MANIFEST_FILENAME).exists()
+    review_set = set(files_to_review)
+    moved_from = _moved_from_pairs(diff_data)
 
     try:
         with _manifest_lock(lock_path, exclusive=False):
@@ -4116,8 +4931,7 @@ def _cmd_cache_check_v2(  # noqa: PLR0913
             now_iso = datetime.now(timezone.utc).isoformat()
 
             for filepath in files_to_review:
-                file_patch = patch_lines.get(filepath, {})
-                patch_hash = _compute_patch_hash(filepath, file_patch)
+                patch_hash = _bha_patch_hash(filepath, patch_lines, moved_from)
                 composite = _compute_composite_key(
                     model_id, prompt_hash, patch_hash, context_key,
                 )
@@ -4131,7 +4945,9 @@ def _cmd_cache_check_v2(  # noqa: PLR0913
                     and _is_entry_fresh(entry, CACHE_NAMESPACE_BHA)
                 ):
                     cached_files.append(filepath)
-                    cached_findings.extend(entry.get("findings", []))
+                    cached_findings.extend(
+                        _cached_findings_for(entry, filepath, review_set),
+                    )
                     entry["last_hit_at"] = now_iso
                     entry["hit_count"] = entry.get("hit_count", 0) + 1
                 else:
@@ -4166,12 +4982,75 @@ def _cmd_cache_check_v2(  # noqa: PLR0913
     return 0
 
 
-def _collect_bha_findings(bha_dir: Path) -> dict[str, list[dict[str, Any]]]:
-    """Glob BHA findings from agent_bha_*.json files, grouped by filepath."""
+_BHA_PARTITION_FILE_RE = re.compile(r"agent_bha_p(\d+)\.json$")
+
+
+def _read_partition_files(partitions_file: str | None) -> dict[int, list[str]]:
+    """Map partition id → its files from ``partitions.json``; ``{}`` on any read error."""
+    if not partitions_file:
+        return {}
+    pdata = _read_optional_json(Path(partitions_file), None)
+    if not isinstance(pdata, dict):
+        return {}
+    out: dict[int, list[str]] = {}
+    partitions = pdata.get("partitions")
+    for part in partitions if isinstance(partitions, list) else []:
+        if not isinstance(part, dict):
+            continue
+        pid = part.get("id")
+        files = part.get("files")
+        if not isinstance(pid, int) or not isinstance(files, list):
+            continue
+        out[pid] = [
+            str(entry["file"]) for entry in files
+            if isinstance(entry, dict) and entry.get("file")
+        ]
+    return out
+
+
+def _out_of_diff_cache_keys(
+    finding: dict[str, Any],
+    diff_files: set[str],
+    partition_files: list[str],
+) -> list[str]:
+    """Diff files to cache an out-of-diff BHA finding under.
+
+    Cache entries exist only for reviewed diff files, so a finding whose
+    ``file`` is outside the diff is filed under the first diff file its
+    ``evidence[]`` cites, else under every file of the partition whose
+    agent produced it. A cache hit on any of those files brings it back.
+    """
+    evidence = finding.get("evidence")
+    for entry in evidence if isinstance(evidence, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        cited = entry.get("file")
+        if isinstance(cited, str) and cited in diff_files:
+            return [cited]
+    return [f for f in partition_files if f in diff_files]
+
+
+def _collect_bha_findings(
+    bha_dir: Path,
+    diff_files: set[str] | None = None,
+    partition_files: dict[int, list[str]] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Glob BHA findings from agent_bha_*.json files, grouped by cache filepath.
+
+    A finding is grouped under its own ``file``. When ``diff_files`` is
+    given, a finding whose ``file`` is outside the diff is grouped under
+    the diff files :func:`_out_of_diff_cache_keys` picks instead, so it
+    survives the next cache hit (ISS-12737).
+    """
     import glob as glob_mod
     findings_by_file: dict[str, list[dict[str, Any]]] = {}
     for bha_path_str in sorted(glob_mod.glob(str(bha_dir / "agent_bha_*.json"))):
         bha_path = Path(bha_path_str)
+        pid_match = _BHA_PARTITION_FILE_RE.search(bha_path.name)
+        own_partition: list[str] = (
+            (partition_files or {}).get(int(pid_match.group(1)), [])
+            if pid_match else []
+        )
         try:
             with open(bha_path) as f:
                 bha_data = json.load(f)
@@ -4180,8 +5059,13 @@ def _collect_bha_findings(bha_dir: Path) -> dict[str, list[dict[str, Any]]]:
             )
             for finding in bha_findings:
                 fpath = finding.get("file", "")
-                if fpath:
+                if not fpath:
+                    continue
+                if diff_files is None or fpath in diff_files:
                     findings_by_file.setdefault(fpath, []).append(finding)
+                    continue
+                for key in _out_of_diff_cache_keys(finding, diff_files, own_partition):
+                    findings_by_file.setdefault(key, []).append(finding)
         except (json.JSONDecodeError, OSError):
             continue
     return findings_by_file
@@ -4198,16 +5082,19 @@ def cmd_cache_update(args: argparse.Namespace) -> int:
     patch_lines: dict[str, dict[str, dict[str, str]]] = diff_data.get("patch_lines", {})
 
     # Compute current patch hashes for all files in the diff
-    current_hashes: dict[str, str] = {}
-    for filepath in files_to_review:
-        file_patch = patch_lines.get(filepath, {})
-        current_hashes[filepath] = _compute_patch_hash(filepath, file_patch)
+    moved_from = _moved_from_pairs(diff_data)
+    current_hashes: dict[str, str] = {
+        filepath: _bha_patch_hash(filepath, patch_lines, moved_from)
+        for filepath in files_to_review
+    }
 
     bha_dir = Path(args.bha_dir)
-    findings_by_file = _collect_bha_findings(bha_dir)
+    partitions_file: str | None = getattr(args, "partitions_file", None)
+    findings_by_file = _collect_bha_findings(
+        bha_dir, set(files_to_review), _read_partition_files(partitions_file),
+    )
 
     reviewed_files: list[str] = args.reviewed_files or []
-    partitions_file: str | None = getattr(args, "partitions_file", None)
     if not reviewed_files and partitions_file:
         try:
             with open(partitions_file) as pf:
@@ -4472,8 +5359,125 @@ def _gh_api(
     return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
 
+# Verdicts under which the verifier (or an operator override) upheld an
+# out-of-diff finding, so its label may say this change caused it.
+_CAUSATION_CONFIRMED_VERDICTS = frozenset({"CONFIRMED", "DOWNGRADE", "RE_ASSERTED"})
+
+
+def _patch_side_lines(patch: str, *, old_side: bool) -> set[int]:
+    """Lines GitHub can anchor an inline comment on, for one side of ``patch``.
+
+    ``patch`` is the unified diff GitHub returns per PR file. The RIGHT side
+    (``old_side=False``) is the new-file numbers of added and context lines;
+    the LEFT side (``old_side=True``) is the old-file numbers of removed and
+    context lines.
+    """
+    lines: set[int] = set()
+    line_no: int | None = None
+    skipped = "+" if old_side else "-"
+    for raw in patch.splitlines():
+        header = HUNK_RE.match(raw)
+        if header:
+            line_no = int(header.group(1) if old_side else header.group(3))
+            continue
+        if line_no is None or raw.startswith((skipped, "\\")):
+            continue
+        lines.add(line_no)
+        line_no += 1
+    return lines
+
+
+def _parse_paginated_json_arrays(text: str) -> list[Any]:
+    """Concatenate the JSON arrays ``gh api --paginate`` prints back to back."""
+    decoder = json.JSONDecoder()
+    items: list[Any] = []
+    idx = 0
+    text = text.strip()
+    while idx < len(text):
+        page, idx = decoder.raw_decode(text, idx)
+        if isinstance(page, list):
+            items.extend(page)
+        while idx < len(text) and text[idx].isspace():
+            idx += 1
+    return items
+
+
+class _PrFiles(NamedTuple):
+    """What ``pulls/{pr}/files`` says about the PR's files."""
+
+    #: Per file, the lines an inline comment can anchor on: new-file (RIGHT)
+    #: lines, or old-file (LEFT) lines on a file the PR deletes.
+    diff_lines: dict[str, set[int]]
+    #: Files the PR deletes (``status: "removed"``); comments on them post
+    #: on the LEFT side, at old-file line numbers.
+    removed: frozenset[str]
+
+
+def _fetch_pr_files(owner: str, repo_name: str, pr_number: Any) -> _PrFiles:
+    """Read ``pulls/{pr}/files`` once; empty on failure (every file then posts RIGHT)."""
+    empty = _PrFiles({}, frozenset())
+    result = _gh_api(
+        [f"/repos/{owner}/{repo_name}/pulls/{pr_number}/files?per_page=100", "--paginate"],
+        dry_run=False,
+        label="fetch PR files",
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return empty
+    try:
+        files = _parse_paginated_json_arrays(result.stdout)
+    except json.JSONDecodeError:
+        return empty
+    diff_lines: dict[str, set[int]] = {}
+    removed: set[str] = set()
+    for entry in files:
+        if not isinstance(entry, dict):
+            continue
+        filename = entry.get("filename")
+        if not isinstance(filename, str):
+            continue
+        is_removed = entry.get("status") == "removed"
+        if is_removed:
+            removed.add(filename)
+        patch = entry.get("patch")
+        if isinstance(patch, str):
+            diff_lines[filename] = _patch_side_lines(patch, old_side=is_removed)
+    return _PrFiles(diff_lines, frozenset(removed))
+
+
+def _out_of_diff_inline_anchor(
+    finding: dict[str, Any], diff_lines: dict[str, set[int]],
+) -> tuple[str, int] | None:
+    """First ``evidence[]`` location of an out-of-diff finding that lies in the PR diff."""
+    evidence = finding.get("evidence")
+    for entry in evidence if isinstance(evidence, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        cited_file = entry.get("file")
+        cited_line = entry.get("line")
+        if (
+            isinstance(cited_file, str)
+            and isinstance(cited_line, int)
+            and not isinstance(cited_line, bool)
+            and cited_line in diff_lines.get(cited_file, set())
+        ):
+            return cited_file, cited_line
+    return None
+
+
 def cmd_post_comments(args: argparse.Namespace) -> int:
     """Post inline review comments to a GitHub PR.
+
+    Findings outside the diff (``out_of_diff: True``) post inline at the
+    first ``evidence[]`` location that lies in the PR diff (fetched from
+    ``pulls/{pr}/files``), with a body that opens with the affected
+    ``file:line``. On a file the PR deletes that location is an old-file
+    line. With no such location they are summary-only, like out-of-hunk
+    findings.
+
+    A finding on a file the PR deletes (``status: "removed"`` in the same
+    ``pulls/{pr}/files`` lookup, read once before the first inline post)
+    posts with ``side=LEFT``: its line is numbered in the old file, which
+    is what GitHub expects on that side. Every other finding posts RIGHT.
 
     Out-of-hunk findings are never posted inline. GitHub's
     ``pulls/{pr}/comments`` API rejects any comment whose line is not part of
@@ -4484,6 +5488,10 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
     summary comment instead (the summary renders all validated findings). They
     are pre-skipped when tagged, and a runtime 422 is treated as a non-inline
     skip rather than a failure to cover parser/GitHub diff disagreements.
+
+    Findings the validator tagged ``line_out_of_range: True`` (line past the
+    end of the file, no unique re-anchor) have no real line to comment on and
+    are never posted inline either; they too surface only in the summary.
     """
     try:
         with open(args.findings) as f:
@@ -4534,7 +5542,10 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
     skipped_dedup = 0
     skipped_no_inline = 0
     skipped_out_of_hunk = 0
+    skipped_out_of_diff = 0
+    skipped_out_of_range = 0
     failed = 0
+    pr_files: _PrFiles | None = None
 
     for finding in findings:
         # Skip findings explicitly marked as non-inline
@@ -4547,6 +5558,14 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
         # post. Surface them in the summary only and skip the API call.
         if finding.get("out_of_hunk_kept") is True:
             skipped_out_of_hunk += 1
+            continue
+
+        # The validator found the line past the end of its file and could not
+        # re-anchor it, so there is no real line to comment on (even through
+        # an out_of_diff evidence anchor, whose body would cite the bogus
+        # line). Summary only.
+        if finding.get("line_out_of_range") is True:
+            skipped_out_of_range += 1
             continue
 
         path = finding.get("file") or ""
@@ -4570,12 +5589,34 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
             failed += 1
             continue
 
+        body = _format_comment_body(finding)
+
+        # Out-of-diff findings point at a line GitHub cannot anchor on;
+        # re-anchor at the diff line their evidence cites, or leave them
+        # to the summary.
+        if finding.get("out_of_diff") is True:
+            if pr_files is None:
+                pr_files = _fetch_pr_files(owner, repo_name, pr_number)
+            anchor = _out_of_diff_inline_anchor(finding, pr_files.diff_lines)
+            if anchor is None:
+                skipped_out_of_diff += 1
+                continue
+            causation = (
+                "caused by this change"
+                if finding.get("verifier_verdict") in _CAUSATION_CONFIRMED_VERDICTS
+                else "causation unconfirmed"
+            )
+            body = f"**Affected location:** `{path}:{line}` (outside the diff — {causation})\n\n{body}"
+            path, line = anchor
+
         # Dedup check
         if (path, line) in existing_comments:
             skipped_dedup += 1
             continue
 
-        body = _format_comment_body(finding)
+        if pr_files is None:
+            pr_files = _fetch_pr_files(owner, repo_name, pr_number)
+        side = "LEFT" if path in pr_files.removed else "RIGHT"
 
         api_result = _gh_api(
             [
@@ -4584,7 +5625,7 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
                 "-f", f"path={path}",
                 "-F", f"line={line}",
                 "-f", f"commit_id={head_sha}",
-                "-f", "side=RIGHT",
+                "-f", f"side={side}",
             ],
             dry_run=dry_run,
             label=f"POST comment {path}:{line}",
@@ -4617,11 +5658,16 @@ def cmd_post_comments(args: argparse.Namespace) -> int:
 
         posted += 1
 
-    total_skipped = skipped_dedup + skipped_no_inline + skipped_out_of_hunk
+    total_skipped = (
+        skipped_dedup + skipped_no_inline + skipped_out_of_hunk + skipped_out_of_diff
+        + skipped_out_of_range
+    )
     print(
         f"Posted {posted}, skipped {total_skipped} "
         f"(dedup={skipped_dedup}, non-inline={skipped_no_inline}, "
-        f"out-of-hunk={skipped_out_of_hunk}), failed {failed}"
+        f"out-of-hunk={skipped_out_of_hunk}, out-of-diff={skipped_out_of_diff}, "
+        f"line-out-of-range={skipped_out_of_range}), "
+        f"failed {failed}"
     )
     return 0
 
@@ -4947,6 +5993,11 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
     scope_kind = "branch"
 
     pr_auto_detected = False
+    # Github mode verifies the checkout against the PR's OWN metadata, so it
+    # needs to know whether the head was read from ``gh pr view`` or guessed,
+    # and which base the PR targets before ``--base`` overrides ``base_ref``.
+    pr_head_from_metadata = False
+    pr_base_ref = ""
 
     if pr_number is not None:
         # Explicit --pr-number: use _resolve_pr_scope with guess fallback.
@@ -4959,6 +6010,8 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
         review_branch = str(pr_scope["review_branch"])
         path_filter = str(pr_scope["path_filter"])
         scope_kind = str(pr_scope["scope_kind"])
+        pr_head_from_metadata = bool(pr_scope["head_ref_from_metadata"])
+        pr_base_ref = base_ref
 
         # Fetch origin head (allow failure for explicit PR)
         subprocess.run(
@@ -5008,6 +6061,18 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
         else:
             # Treat scope_args as file paths
             files = scope_args.strip()
+            ref_like = _ref_like_scope_arg(files)
+            if ref_like:
+                print(
+                    f"Error: positional scope argument {ref_like!r} is a git "
+                    "ref or revision range, not a path. It would be folded "
+                    "into a '--' pathspec that matches nothing, and the "
+                    "review would run on an empty diff and report clean. "
+                    "Use --base to change the diff base "
+                    "(e.g. /code-review --base origin/main).",
+                    file=sys.stderr,
+                )
+                return 1
             diff_scope = f"{_base_rev(base_ref)}...HEAD -- {files}"
             path_filter = f"-- {files}"
             scope_kind = "file_paths"
@@ -5034,18 +6099,21 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
     # the operator is on a different branch (or behind the pushed head), or
     # the tree is dirty, those reads see the wrong content and the verifier
     # rejects every finding on the existence check. Materialize a detached
-    # worktree at the PR head SHA and surface it as ``review_root`` so agents
-    # read the code they are actually reviewing.
+    # worktree at the PR head SHA and use it as ``review_root`` so agents read
+    # the code they are actually reviewing.
     #
     # FAIL CLOSED: reading the working tree is safe ONLY when it already IS
     # the PR head with no uncommitted modifications. In every other case we
     # MUST isolate; if isolation cannot be established (head unresolvable, or
     # ``git worktree add`` fails) we abort rather than silently review the
-    # wrong source against a remote PR diff. GitHub CI mode already checks
-    # out the PR head, so this is local-only. Hygiene-only runs read no
-    # source (and Gate A exits before the footer teardown), so they skip it.
+    # wrong source against a remote PR diff. Isolation stays LOCAL-ONLY: a
+    # worktree moves where a whole agent fleet reads from, and github mode has
+    # prompts that do not resolve ``review_root``. Github mode instead VERIFIES
+    # the tree it was handed and refuses — see the ISS-8769 block below.
+    # Hygiene-only runs read no source (and Gate A exits before the footer
+    # teardown), so they skip it.
     head_sha = ""
-    review_root = ""
+    pr_head = ""
     worktree_path = ""
     if mode == "local" and scope_kind == "pr" and not hygiene_only:
         cr_dir = os.path.dirname(os.path.abspath(setup_json_path))
@@ -5079,8 +6147,93 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 1
-            review_root = created
             worktree_path = created
+
+    # ISS-8769 — github mode VERIFIES the tree it was handed, and refuses.
+    #
+    # ``--github`` selects file-based handoff output. It does NOT declare "I am
+    # running inside GitHub Actions", and running it from a developer machine is
+    # supported — so the old code, which skipped every check whenever the mode
+    # was github, silently reviewed whatever branch happened to be checked out
+    # while holding a diff computed from the PR's remote refs. Nothing in the
+    # run said which tree was read, and the deep tier's cross-file reviewers
+    # (Impact Analyzer, Design Critic, Bug Hunter B) are exactly the ones a
+    # wrong tree makes confidently wrong.
+    #
+    # This block ADDS a refusal and creates no worktree, and ``head_sha`` stays
+    # out of the emitted scope, so ``_file_content_hash`` and the inline-comment
+    # ``commit_id`` keep reading the working tree. ``review_root`` is resolved
+    # below exactly as for every non-isolated scope: the invoking checkout,
+    # which is the tree this block verifies. It runs BEFORE any scope is
+    # emitted, so either the tree is established as this PR's source or the
+    # run stops with nothing on stdout.
+    #
+    # "This PR" means the PR's own metadata, checked FIRST. When ``gh pr view``
+    # fails, ``_resolve_pr_scope`` guesses ``head_ref`` from the checked-out
+    # branch, and a clean checkout of that branch trivially holds the guessed
+    # head — so verifying the tree against it would pass and review that
+    # branch against the requested PR's diff.
+    if mode == "github" and scope_kind == "pr" and not hygiene_only:
+        if not pr_head_from_metadata:
+            print(
+                f"Error: cannot resolve PR #{pr_number}'s head from its "
+                f"metadata (`gh pr view {pr_number}` failed or returned no "
+                "head branch), so the only head available is a guess "
+                f"({diff_tip}, from the checked-out branch). A tree that "
+                "matches a guess proves nothing about this PR, and continuing "
+                "could review the wrong code against its diff. Check "
+                "`gh auth status` (GH_TOKEN on a CI runner) and that PR "
+                f"#{pr_number} exists in this repository, then retry.",
+                file=sys.stderr,
+            )
+            return 1
+        pr_head = _git_rev_parse(diff_tip) or ""  # diff_tip == origin/<head_ref>
+        if not _tree_holds_pr_head(pr_head, f"origin/{pr_base_ref}"):
+            print(
+                "Error: cannot establish that the checked-out tree is PR "
+                f"#{pr_number}'s source ({diff_tip} = "
+                f"{pr_head or 'unresolvable'}). Reviewers read the working "
+                "tree, so continuing would review the wrong code against this "
+                "PR's diff — the exact failure this check exists to stop. A "
+                "CI runner satisfies it by checking out the PR head, or the "
+                "PR's merge ref (exactly the head merged into a commit on "
+                f"origin/{pr_base_ref}), with a clean tree; locally, check out "
+                "the PR branch (or drop --github and run the local flow, which "
+                "isolates the head into a worktree for you).",
+                file=sys.stderr,
+            )
+            return 1
+
+    # The review root is resolved HERE, once, for every scope kind — not left
+    # for each spawned agent to infer from its own cwd. A reviewer/verifier
+    # Task inherits the invoking SESSION's working directory, so on any
+    # worktree-based run "read the working tree" means reading a different
+    # checkout than the diff came from, and a clean report on code the agent
+    # never opened is indistinguishable from a real pass.
+    # realpath, because every downstream guard canonicalizes the same way and
+    # a symlinked cr_dir would otherwise make scope.json and spawn.json.spec
+    # disagree on the "same" root.
+    # In github mode there is no worktree, so this is the invoking checkout the
+    # ISS-8769 block above just verified, and review_root_sha is its HEAD: the
+    # PR head for a head checkout, the MERGE commit for a merge-ref checkout.
+    # The dispatch drift check must compare against what is checked out, not
+    # against the PR head.
+    review_root = os.path.realpath(worktree_path) if worktree_path else _git_toplevel()
+    if not review_root:
+        print(
+            f"Error: cannot resolve the review root — {os.getcwd()!r} is not "
+            "inside a git worktree. Run /code-review from the checkout that "
+            "holds the diff under review.",
+            file=sys.stderr,
+        )
+        return REVIEW_ROOT_EXIT_CODE
+    review_root_sha = _git_head_at(review_root)
+    # Staged scope diffs the INDEX against HEAD, so no commit pins the content
+    # under review. Pin the index itself as a tree object; the dispatch drift
+    # check compares the working tree against it, which catches an unstaged
+    # edit to a staged file and a re-stage after resolution. Every other scope
+    # kind is pinned by review_root_sha and emits no tree.
+    review_root_tree = _git_index_tree(review_root) if scope_kind == "staged" else None
 
     result_out = {
         "diff_scope": diff_scope,
@@ -5094,8 +6247,18 @@ def cmd_resolve_scope(args: argparse.Namespace) -> int:
         "pr_auto_detected": pr_auto_detected,
         "head_sha": head_sha,
         "review_root": review_root,
+        "review_root_sha": review_root_sha,
         "worktree_path": worktree_path,
     }
+    if review_root_tree is not None:
+        result_out["review_root_tree"] = review_root_tree
+    # ISS-9137: the PR head this scope reviews, for provenance. Kept apart from
+    # ``head_sha``, which github mode must leave empty (it re-routes
+    # ``_file_content_hash`` and the inline-comment ``commit_id``) even though
+    # the verification block above resolved the head.
+    pr_head_sha = head_sha or pr_head
+    if pr_head_sha:
+        result_out["pr_head_sha"] = pr_head_sha
     json.dump(result_out, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0
@@ -5594,8 +6757,117 @@ def _format_elapsed(seconds: int) -> str:
     return " ".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# Review provenance (ISS-9137): which checkout and commit a review read
+# ---------------------------------------------------------------------------
+
+_PROVENANCE_SHA_LEN = 12
+
+
+def _review_provenance(cr_dir: str | Path, scope_meta: object) -> dict[str, Any]:
+    """Validated record, from ``scope.json``, of the checkout and commit a review read.
+
+    ``scope.json`` is operator-writable, and these values are printed into the
+    footer, the GitHub summary, and ``review_result.json``, so each is
+    re-validated: a root that is not an absolute path free of control bytes,
+    ``<``, ``>`` and backticks, or a SHA that is not hex, becomes ``None``.
+    ``isolated`` is true only when ``worktree_path`` is this run's canonical
+    PR-head worktree. ``pr_head_sha`` reads ``resolve-scope``'s ``pr_head_sha``,
+    which github mode records while leaving ``head_sha`` empty.
+    """
+    scope = scope_meta if isinstance(scope_meta, dict) else {}
+    raw_root = scope.get("review_root")
+    root = (
+        raw_root
+        if isinstance(raw_root, str)
+        and os.path.isabs(raw_root)
+        and not _REVIEW_ROOT_FORBIDDEN.search(raw_root)
+        else None
+    )
+    raw_pr = str(scope.get("pr_number") or "")
+    return {
+        "review_root": root,
+        "review_root_sha": _validated_head_sha(scope.get("review_root_sha")) or None,
+        "review_root_tree": _validated_head_sha(scope.get("review_root_tree")) or None,
+        "pr_head_sha": (
+            _validated_head_sha(scope.get("pr_head_sha"))
+            or _validated_head_sha(scope.get("head_sha"))
+            or None
+        ),
+        "pr_number": raw_pr if re.fullmatch(r"[0-9]+", raw_pr) else None,
+        "isolated": bool(_validated_worktree_path(cr_dir, scope.get("worktree_path"))),
+    }
+
+
+def _same_commit(a: str, b: str) -> bool:
+    """Whether two validated hex SHAs, either possibly abbreviated, name one commit."""
+    a, b = a.lower(), b.lower()
+    return a.startswith(b) or b.startswith(a)
+
+
+def _render_reviewed_line(provenance: dict[str, Any]) -> str:
+    """The footer line naming the checkout and commit a review read.
+
+    A PR head isolated into ``<cr_dir>/pr_head_worktree`` is named as the PR
+    head rather than by path, because the footer removes that worktree in the
+    same call. A staged review also names the index tree it pinned: the
+    content under review is the index, not the commit.
+    """
+    sha = provenance["review_root_sha"]
+    if not sha:
+        return "**Reviewed:** checkout not recorded (scope.json has no valid review_root_sha)"
+    short = f"`{sha[:_PROVENANCE_SHA_LEN]}`"
+    if provenance["isolated"]:
+        pr_number = provenance["pr_number"]
+        subject = f"PR #{pr_number} head" if pr_number else "PR head"
+        return f"**Reviewed:** {subject} @ {short} (isolated worktree, removed after review)"
+    root = provenance["review_root"]
+    subject = f"`{root}`" if root else "checkout (path not recorded)"
+    line = f"**Reviewed:** {subject} @ {short}"
+    tree = provenance["review_root_tree"]
+    if tree:
+        line += f" + staged index (tree `{tree[:_PROVENANCE_SHA_LEN]}`)"
+    return line
+
+
+def _render_reviewed_commit_line(provenance: dict[str, Any]) -> str:
+    """The GitHub summary line naming the reviewed commit, never a path.
+
+    In github mode ``review_root`` is the runner's filesystem path, which means
+    nothing on a PR. When the runner checked out a commit other than the PR
+    head (GitHub's merge ref), both commits are named so a reader can tell
+    which one was read.
+    """
+    sha = provenance["review_root_sha"]
+    if not sha:
+        return "**Reviewed commit:** not recorded (scope.json has no valid review_root_sha)"
+    line = f"**Reviewed commit:** `{sha[:_PROVENANCE_SHA_LEN]}`"
+    head = provenance["pr_head_sha"]
+    if head and _same_commit(sha, head):
+        return f"{line} (PR head)"
+    if head:
+        return f"{line} (PR head is `{head[:_PROVENANCE_SHA_LEN]}`)"
+    return line
+
+
+def cmd_render_reviewed_commit(args: argparse.Namespace) -> int:
+    """Print the GitHub summary's ``**Reviewed commit:**`` line (ISS-9137).
+
+    Reads ``<cr-dir>/scope.json``. Always exits 0: a run with no recorded
+    commit prints a line that says so, which the summary shows rather than
+    drops.
+    """
+    cr_dir = Path(args.cr_dir)
+    provenance = _review_provenance(
+        cr_dir, _read_optional_json(cr_dir / "scope.json", {}),
+    )
+    print(_render_reviewed_commit_line(provenance))
+    return 0
+
+
 def cmd_footer(args: argparse.Namespace) -> int:
-    """Compute review footer with timing, cache stats, and token usage."""
+    """Compute the review footer (timing, cache stats, token usage) and the
+    ``reviewed_line`` naming the checkout and commit the review read."""
     import time
 
     start_time: float = args.start_time
@@ -5653,6 +6925,13 @@ def cmd_footer(args: argparse.Namespace) -> int:
 
     footer_line = f"**Review complete** — {elapsed_str} | {cache_str} | {mode_str} | {token_str}"
 
+    scope_meta: object = {}
+    if cr_dir:
+        scope_meta = _read_optional_json(Path(cr_dir) / "scope.json", {})
+    # ISS-9137: name the checkout and commit the review read. Resolved before
+    # the teardown below removes an isolated PR-head worktree.
+    reviewed_line = _render_reviewed_line(_review_provenance(cr_dir or "", scope_meta))
+
     # Teardown: remove any PR-head worktree created during scope resolution
     # (local PR review isolation). The path is validated against the
     # canonical ``<cr_dir>/pr_head_worktree`` before this destructive
@@ -5662,14 +6941,17 @@ def cmd_footer(args: argparse.Namespace) -> int:
     # gitignored CR_DIR for the next run's startup GC, and never affects
     # footer output.
     if cr_dir:
-        scope_meta = _read_optional_json(Path(cr_dir) / "scope.json", {})
-        wt = _validated_review_root(
+        wt = _validated_worktree_path(
             cr_dir, scope_meta.get("worktree_path") if isinstance(scope_meta, dict) else None,
         )
         if wt:
             _remove_pr_head_worktree(wt)
 
-    json.dump({"footer_line": footer_line}, sys.stdout, indent=2)
+    json.dump(
+        {"footer_line": footer_line, "reviewed_line": reviewed_line},
+        sys.stdout,
+        indent=2,
+    )
     sys.stdout.write("\n")
     return 0
 
@@ -6352,20 +7634,24 @@ def _signal_extraction_prompt_hash(path: Path) -> str:
 
 
 def signal_extraction_cache_key(
-    diff_tip: str, taxonomy_hash: str, prompt_hash: str,
+    input_hash: str, taxonomy_hash: str, prompt_hash: str,
 ) -> str:
     """Cache key for the ``signals`` namespace (PLN-725).
 
-    Tuple ``(diff_tip, taxonomy_hash, prompt_hash)`` is the complete set
-    of inputs the extraction is a pure function of. Both
-    ``taxonomy_hash`` and ``prompt_hash`` are content-addressed hashes of
+    Tuple ``(input_hash, taxonomy_hash, prompt_hash)`` is the complete set
+    of inputs the extraction is a pure function of. Every member is a
+    content hash: ``input_hash`` is ``_stable_json_hash`` of the agent
+    input bundle ``_build_signal_input`` renders (the only view of the diff
+    and intent the agent gets), and ``taxonomy_hash`` / ``prompt_hash`` hash
     the on-disk asset bytes (``_taxonomy_hash`` and
-    ``_signal_extraction_prompt_hash``), computed inside
+    ``_signal_extraction_prompt_hash``). All three are computed inside
     ``cmd_extract_signals_prepare`` rather than taken on faith from
-    caller-supplied flags. Editing either asset flips the key for real.
+    caller-supplied flags. Never key on a ref name: a branch review's diff
+    tip is the literal ``HEAD``, which would let every later review reuse
+    the first run's signals.
     """
     payload = (
-        (diff_tip or "") + "\0"
+        (input_hash or "") + "\0"
         + (taxonomy_hash or "") + "\0"
         + (prompt_hash or "")
     )
@@ -6555,8 +7841,9 @@ def fail_closed_signal_set(taxonomy: dict[str, Any]) -> list[dict[str, Any]]:
 def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
     """PLN-725 Stage 1a: prep the signal-extraction agent input + check cache.
 
-    Reads ``diff_data.json`` and (optionally) an intent summary, computes
-    the ``(diff_tip, taxonomy_hash, prompt_hash)`` cache key, and either:
+    Reads ``diff_data.json`` and (optionally) an intent summary, renders
+    the agent input bundle, computes the ``(input_hash, taxonomy_hash,
+    prompt_hash)`` cache key, and either:
 
       - **Cache hit** — writes the cached extraction directly to
         ``<cr_dir>/extract_signals.json`` and emits a manifest with
@@ -6571,16 +7858,18 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
     Always exits 0; structural failures (no diff_data, malformed
     taxonomy) print to stderr and return 1.
     """
-    cr_dir = Path(args.cr_dir)
+    # Absolute paths: the singleton Task that reads this manifest runs in the
+    # session's checkout, which is not the review root on a worktree run, so a
+    # relative --cr-dir would resolve against the wrong tree.
+    cr_dir = Path(args.cr_dir).resolve()
     diff_data_path = Path(args.diff_data)
     cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
-    diff_tip = str(args.diff_tip)
     taxonomy_path = (
         Path(args.taxonomy) if getattr(args, "taxonomy", None) else _default_signal_taxonomy_path()
     )
     prompt_path = (
         Path(args.prompt) if getattr(args, "prompt", None) else _default_signal_extraction_prompt_path()
-    )
+    ).resolve()
     intent_path = Path(args.intent) if getattr(args, "intent", None) else None
     model = str(getattr(args, "model", None) or SIGNAL_EXTRACTION_MODEL_DEFAULT)
 
@@ -6618,8 +7907,22 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
         print(f"Error reading prompt asset: {exc}", file=sys.stderr)
         return 1
 
+    # Build the bundle before the cache lookup: the key content-addresses it.
+    intent_summary: dict[str, Any] | None = None
+    if intent_path is not None:
+        try:
+            with open(intent_path) as f:
+                intent_summary = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            intent_summary = None
+        if not isinstance(intent_summary, dict):
+            intent_summary = None
+    agent_input = _build_signal_input(diff_data, intent_summary)
+
     taxonomy_hash = _taxonomy_hash(taxonomy_bytes)
-    key = signal_extraction_cache_key(diff_tip, taxonomy_hash, prompt_hash)
+    key = signal_extraction_cache_key(
+        _stable_json_hash(agent_input), taxonomy_hash, prompt_hash,
+    )
 
     output_path = cr_dir / "extract_signals.json"
 
@@ -6643,17 +7946,6 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
             "model": model,
         })
 
-    intent_summary: dict[str, Any] | None = None
-    if intent_path is not None:
-        try:
-            with open(intent_path) as f:
-                intent_summary = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            intent_summary = None
-        if not isinstance(intent_summary, dict):
-            intent_summary = None
-
-    agent_input = _build_signal_input(diff_data, intent_summary)
     input_path = cr_dir / "extract_signals_input.json"
     with open(input_path, "w") as f:
         json.dump(agent_input, f, indent=2)
@@ -6670,6 +7962,9 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
         "prompt_hash": prompt_hash,
         "input_path": str(input_path),
         "taxonomy_path": str(taxonomy_snapshot_path),
+        # Every file the agent reads besides the prompt and input bundle;
+        # singleton-dispatch passes these through verbatim.
+        "extra_inputs": [str(taxonomy_snapshot_path)],
         "prompt_path": str(prompt_path),
         "output_path": str(output_path),
         "model": model,
@@ -6857,8 +8152,10 @@ def _emit_signal_extraction_failed_finding(
 #      of legacy ``moduleCritics[]`` entries is handled inline by
 #      ``migrate_legacy_module_critics``.
 
-# Canonical change_class → path glob patterns. Adding a class requires
-# an entry here AND in ``COVERAGE_CHANGE_CLASSES`` (schema module).
+# Canonical change_class → path glob patterns. Adding a path-based class
+# requires an entry here AND in ``COVERAGE_CHANGE_CLASSES`` (schema
+# module). ``file_deletion`` is status-based and added in
+# ``resolve_coverage`` instead.
 CHANGE_CLASS_PATH_PATTERNS: dict[str, tuple[str, ...]] = {
     "schema_change": (
         "**/migrations/**",
@@ -7173,7 +8470,8 @@ def resolve_coverage(
         ``migrate_legacy_module_critics`` so a file with only those
         entries keeps working.
       - ``diff_data``: parse-diff output. Uses ``files_to_review`` for
-        path/extension/change_class triggers and ``patch_lines`` for
+        path/extension/change_class triggers, ``file_statuses`` for the
+        ``file_deletion`` change_class, and ``patch_lines`` for
         content_signal triggers.
       - ``extract_signals``: optional Phase 1 output. When omitted,
         ``signal`` triggers cannot fire (the determinism enforcement
@@ -7191,9 +8489,10 @@ def resolve_coverage(
     core reviewers (``COVERAGE_CORE_CONDITIONAL``) appear in
     ``best_effort`` only when their tier band brackets
     ``invocation_depth`` AND at least one of their triggers fires —
-    either a ``signal`` trigger matching the extracted signals or an
-    unconditional ``{"type": "always"}`` trigger (e.g. the Design
-    Critic, gated by the tier band alone).
+    a ``signal`` trigger matching the extracted signals, a
+    ``change_class`` trigger (e.g. the Impact Analyzer on
+    ``file_deletion``), or an unconditional ``{"type": "always"}``
+    trigger (e.g. the Design Critic, gated by the tier band alone).
 
     Determinism enforcement: a rule with ``required: true`` whose
     triggers are entirely LLM-driven (only ``signal`` triggers) is
@@ -7207,6 +8506,9 @@ def resolve_coverage(
         patch_lines_raw if isinstance(patch_lines_raw, dict) else {}
     )
     change_classes = classify_file_changes(files)
+    file_statuses = diff_data.get("file_statuses")
+    if isinstance(file_statuses, dict) and "removed" in file_statuses.values():
+        change_classes.add("file_deletion")
     signals = signals_to_confidence_map(extract_signals)
 
     # Compose rule list: canonical coverage[] + migrated moduleCritics[].
@@ -7233,12 +8535,12 @@ def resolve_coverage(
         seen_required.add(core_name)
 
     # FEA-1401 / PLN-726: conditional core reviewers gated by tier band
-    # AND signal trigger. Eligibility requires BOTH (a)
+    # AND trigger. Eligibility requires BOTH (a)
     # ``_DEPTH_RANK[invocation_depth] >= _DEPTH_RANK[entry["min_depth"]]``
     # AND (b) at least one trigger fires. Today every entry has
-    # ``required: False`` (Impact Analyzer's signal triggers are LLM-
-    # driven; the PLN-725 determinism enforcement bars LLM-only triggers
-    # from solely driving required selection). All eligible conditional
+    # ``required: False``: the Impact Analyzer is best-effort even when
+    # its deterministic ``file_deletion`` trigger fires (ISS-12737 — at
+    # standard and shallow depth Bug Hunter B owns deletions). All eligible conditional
     # core reviewers land in ``best_effort`` with ``source: "core"`` so
     # downstream consumers can distinguish them from project-specific
     # critic-gates.json matches (``source: "rule"``).
@@ -7815,16 +9117,20 @@ def _stable_json_hash(payload: Any) -> str:
 def coverage_critic_cache_key(
     coverage_plan_initial_hash: str,
     signals_hash: str,
-    diff_tip: str,
+    diff_summary_hash: str,
     prompt_hash: str,
     available_reviewers_hash: str,
 ) -> str:
     """Cache key for the ``coverage_critic`` namespace (PLN-725).
 
-    Tuple ``(coverage_plan_initial_hash, signals_hash, diff_tip,
+    Tuple ``(coverage_plan_initial_hash, signals_hash, diff_summary_hash,
     prompt_hash, available_reviewers_hash)`` is the complete set of
     inputs the critic is a pure function of. All five are
-    content-addressed.
+    content-addressed: the plan, signals and roster hashes cover the
+    agent's input bundle, and ``diff_summary_hash`` covers the diff
+    summary it is given. Never key on a ref name: a branch review's diff
+    tip is the literal ``HEAD``, which would let every later review with
+    the same plan, signals and roster reuse the first run's plan.
 
     ``available_reviewers_hash`` is the deterministic hash of the
     AVAILABLE roster the agent will actually see (sorted, dedup'd, and
@@ -7837,7 +9143,7 @@ def coverage_critic_cache_key(
     payload = (
         (coverage_plan_initial_hash or "") + "\0"
         + (signals_hash or "") + "\0"
-        + (diff_tip or "") + "\0"
+        + (diff_summary_hash or "") + "\0"
         + (prompt_hash or "") + "\0"
         + (available_reviewers_hash or "")
     )
@@ -8164,7 +9470,7 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     Reads the rule-resolved plan from ``coverage.json``'s ``.initial``
     section, plus ``extract_signals.json``, ``diff_data.json``, and
     ``available_reviewers.json``. Computes the
-    ``(coverage_plan_initial_hash, signals_hash, diff_tip, prompt_hash,
+    ``(coverage_plan_initial_hash, signals_hash, diff_summary_hash, prompt_hash,
     available_reviewers_hash)`` cache key and either:
 
       - **Cache hit** — writes the merged plan into ``coverage.json``'s
@@ -8181,18 +9487,19 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
 
     Always exits 0; structural failures print to stderr and return 1.
     """
-    cr_dir = Path(args.cr_dir)
+    # Absolute: the singleton Task resolves manifest paths from the session's
+    # checkout, not the review root (see cmd_extract_signals_prepare).
+    cr_dir = Path(args.cr_dir).resolve()
     signals_path = (
         Path(args.extract_signals) if getattr(args, "extract_signals", None) else None
     )
     diff_data_path = Path(args.diff_data)
     available_path = Path(args.available_reviewers)
     cache_dir = Path(args.cache_dir) if getattr(args, "cache_dir", None) else None
-    diff_tip = str(args.diff_tip)
     no_critic = bool(getattr(args, "no_critic", False))
     prompt_path = (
         Path(args.prompt) if getattr(args, "prompt", None) else _default_coverage_critic_prompt_path()
-    )
+    ).resolve()
     model = str(getattr(args, "model", None) or COVERAGE_CRITIC_MODEL_DEFAULT)
 
     try:
@@ -8306,9 +9613,14 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     # stale (could propose a now-removed reviewer), so it must key
     # the cache.
     available_reviewers_hash = _available_reviewers_hash(available_reviewers)
+    # Build the bundle before the cache lookup: the key content-addresses
+    # the diff summary the agent is given.
+    main_input, diff_summary = _build_coverage_critic_input(
+        plan_initial, extract_signals, diff_data, available_reviewers,
+    )
     key = coverage_critic_cache_key(
-        plan_initial_hash, signals_hash, diff_tip, prompt_hash,
-        available_reviewers_hash,
+        plan_initial_hash, signals_hash, _stable_json_hash(diff_summary),
+        prompt_hash, available_reviewers_hash,
     )
 
     cached = _read_cached_coverage_critic(cache_dir, key)
@@ -8331,9 +9643,6 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
             return 1
         return _emit_summary(manifest)
 
-    main_input, diff_summary = _build_coverage_critic_input(
-        plan_initial, extract_signals, diff_data, available_reviewers,
-    )
     input_path = cr_dir / "coverage_critic_input.json"
     diff_summary_path = cr_dir / "coverage_critic_diff_summary.json"
     with open(input_path, "w") as f:
@@ -8350,6 +9659,9 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
         "available_reviewers_hash": available_reviewers_hash,
         "input_path": str(input_path),
         "diff_summary_path": str(diff_summary_path),
+        # Every file the agent reads besides the prompt and input bundle;
+        # singleton-dispatch passes these through verbatim.
+        "extra_inputs": [str(diff_summary_path)],
         "prompt_path": str(prompt_path),
         "coverage_state": str(cr_dir / _COVERAGE_STATE_FILENAME),
         "model": model,
@@ -9197,16 +10509,13 @@ def cmd_review_dismissed_prepare(args: argparse.Namespace) -> int:
         if isinstance(f, dict) and f.get("id")
     ]
 
-    # PR-head worktree isolation: the dismissed-finding verifiers read source
-    # too, so they must read under the same ``review_root`` as the primary
-    # verifier fleet — otherwise this second opinion reads the operator's
-    # working tree against a remote PR diff. Validated against the canonical
-    # path so a forged scope.json cannot redirect reads or inject markup.
+    # The dismissed-finding verifiers read source too, so they get the same
+    # proven root as the primary fleet — a second opinion formed against the
+    # wrong checkout promotes or sinks findings on code it never read.
     dismissed_scope = _read_optional_json(cr_dir / "scope.json", {})
-    review_root = _validated_review_root(
-        cr_dir,
-        dismissed_scope.get("review_root") if isinstance(dismissed_scope, dict) else None,
-    )
+    review_root, refusal_rc = _require_review_root_or_report(cr_dir, dismissed_scope)
+    if review_root is None:
+        return refusal_rc
 
     inputs_dir = cr_dir / "review_dismissed_inputs"
     inputs_dir.mkdir(parents=True, exist_ok=True)
@@ -9290,10 +10599,7 @@ def cmd_review_dismissed_consolidate(args: argparse.Namespace) -> int:
     # ``/start`` run's ``_override_is_valid`` (which hashes under its own
     # review_root) compares like-for-like.
     consolidate_scope = _read_optional_json(cr_dir / "scope.json", {})
-    review_root = _validated_review_root(
-        cr_dir,
-        consolidate_scope.get("review_root") if isinstance(consolidate_scope, dict) else None,
-    )
+    review_root = _degraded_review_root(cr_dir, consolidate_scope)
     head_sha = _validated_head_sha(
         consolidate_scope.get("head_sha") if isinstance(consolidate_scope, dict) else None,
     )
@@ -9462,10 +10768,7 @@ def cmd_re_assert(args: argparse.Namespace) -> int:
     # fallback the hash would anchor to the operator's working tree and the
     # override would be silently dropped on the next run.
     re_assert_scope = _read_optional_json(cr_dir / "scope.json", {})
-    review_root = _validated_review_root(
-        cr_dir,
-        re_assert_scope.get("review_root") if isinstance(re_assert_scope, dict) else None,
-    )
+    review_root = _degraded_review_root(cr_dir, re_assert_scope)
     head_sha = _validated_head_sha(
         re_assert_scope.get("head_sha") if isinstance(re_assert_scope, dict) else None,
     )
@@ -9557,8 +10860,7 @@ def cmd_re_assert(args: argparse.Namespace) -> int:
 _VERDICT_REASON_MAX = 80
 
 # Mapping between canonical envelope verdicts and the legacy verdict
-# strings consumed by run-loop.sh (`approve` / `needs_attention` /
-# `decline`).
+# strings (`approve` / `needs_attention` / `decline`).
 _CANONICAL_TO_LEGACY_VERDICT: dict[str, str] = {
     "APPROVED": "approve",
     "NEEDS_ATTENTION": "needs_attention",
@@ -9976,7 +11278,7 @@ def cmd_verdict(args: argparse.Namespace) -> int:
 
     Reads ``review_result.json`` (canonical envelope) when available; falls
     back to ``findings_validated.json`` otherwise. Emits a JSON object with
-    the canonical verdict, the run-loop-compatible legacy verdict string,
+    the canonical verdict, the legacy verdict string,
     and a reason.
     """
     findings_validated_path: str = args.findings_validated
@@ -10861,7 +12163,7 @@ def _execute_stage_inprocess(
         stderr_tail = stage_stderr.strip().splitlines()
         if stderr_tail:
             message = f"{message}; stderr: {stderr_tail[-1][:300]}"
-        if on_failure == "abort":
+        if on_failure == "abort" or rc == REVIEW_ROOT_EXIT_CODE:
             return "failed_abort", message
         if on_failure == "continue_with_coverage_gap":
             _emit_prefix_stage_failure_finding(ctx.cr_dir, stage_id, message)
@@ -11563,6 +12865,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         return 1
 
     diff_data = _read_optional_json(Path(args.diff_data), {}) or {}
+    docs_only = _is_docs_only(diff_data)
     cap: int = int(args.cap)
     if cap <= 0:
         print(f"Error: --cap must be > 0, got {cap}", file=sys.stderr)
@@ -11681,7 +12984,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         # leftover capacity, so a BLOCKING verdict on a critic-heavy
         # plan does not crush BHA to its floor=1 the same way the
         # pre-PLN-807 PASS path did. Docs-only PRs still get 0.
-        if _is_docs_only(diff_data):
+        if docs_only:
             blocking_bha_partitions = 0
         else:
             blocking_bha_partitions = max(
@@ -11707,6 +13010,8 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
             "arbitrate_status": "blocked_by_verify",
             "generated_at": now_iso_gate,
         }
+        if docs_only:
+            final_plan["budget"]["docs_only"] = True
         rc = _persist_plan(final_plan)
         if rc != 0:
             return rc
@@ -11733,7 +13038,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         sys.stdout.write("\n")
         return 0
 
-    bha_floor = 0 if _is_docs_only(diff_data) else BUDGET_BHA_FLOOR_DEFAULT
+    bha_floor = 0 if docs_only else BUDGET_BHA_FLOOR_DEFAULT
     max_bha = _max_bha_partitions_by_loc(diff_data)
 
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -11749,7 +13054,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     # coverage budget. ``_max_bha_partitions_by_loc`` already caps at
     # ``DEFAULT_MAX_BHA_AGENTS`` internally, so no second min() is
     # needed.
-    if _is_docs_only(diff_data):
+    if docs_only:
         bha_target = 0
     else:
         bha_target = max(bha_floor, max_bha)
@@ -11889,6 +13194,10 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
         },
         "dropped_required": dropped_required,
     }
+    # ISS-10869: records why ``bha_partitions`` is 0 so derive-spawn-spec
+    # can tell the deliberate docs-only skip from a budget-capped drop.
+    if docs_only:
+        final_plan["budget"]["docs_only"] = True
 
     rc = _persist_plan(final_plan)
     if rc != 0:
@@ -11906,7 +13215,7 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
             "deferred_count": len(deferred_for_budget),
             "dropped_required_count": len(dropped_required),
             "bha_partitions": bha_partitions,
-            "docs_only": _is_docs_only(diff_data),
+            "docs_only": docs_only,
         },
         sys.stdout,
         indent=2,
@@ -11962,7 +13271,8 @@ _SPAWN_CORE_ROLES: dict[str, dict[str, Any]] = {
     },
     # FEA-1401 Impact Analyzer. Conditional core reviewer (declared in
     # COVERAGE_CORE_CONDITIONAL); only lands in coverage plans when the
-    # invocation depth is ``deep`` AND a signal trigger fires. The
+    # invocation depth is ``deep`` AND one of its triggers fires (a
+    # signal, or the ``file_deletion`` change_class). The
     # spawn-spec walker treats it like any other core role once it
     # appears in the plan.
     "impact": {
@@ -12041,6 +13351,7 @@ def _derive_spawn_agents_from_plan(
     models: dict[str, Any],
     *,
     bha_partitions_cap: int | None = None,
+    docs_only: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Walk the post-arbitrate plan into a flat (agents, skipped) pair.
 
@@ -12056,9 +13367,11 @@ def _derive_spawn_agents_from_plan(
     and the post-arbitrate cap are computed at different times and
     can diverge), the first K partitions are spawned and the rest
     land in ``skipped[]`` with ``reason: "budget_capped"``. A cap of 0
-    suppresses all BHA spawns (docs-only post-arbitrate). ``None``
-    means "no cap" — only used by callers that pre-date the cap
-    parameter.
+    suppresses all BHA spawns: with ``docs_only`` (arbitrate-budget
+    waived the BHA floor) the one skipped entry carries
+    ``reason: "docs_only"``; without it the zero is a cap and keeps
+    ``reason: "budget_capped"``. ``None`` means "no cap" — only used by
+    callers that pre-date the cap parameter.
     """
     agents: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -12087,7 +13400,8 @@ def _derive_spawn_agents_from_plan(
         if role_cfg is not None:
             if role_cfg["partitioned"]:
                 # BHA expands per partition. When partitions is empty
-                # (all cached or docs-only post-arbitrate), no BHA spawn.
+                # (all files cached, or every uncached file was deleted),
+                # no BHA spawn.
                 if not partitions:
                     skipped.append({
                         "reviewer": reviewer,
@@ -12100,8 +13414,7 @@ def _derive_spawn_agents_from_plan(
                 # partitions on disk (the route-level
                 # ``max_bha_agents`` and the post-arbitrate cap are
                 # computed at different times and can diverge). When
-                # the cap is 0, no BHA agents spawn at all
-                # (docs-only post-arbitrate). When the cap is positive
+                # the cap is 0, no BHA agents spawn at all. When the cap is positive
                 # but < len(partitions), the first cap partitions
                 # spawn (partitions are bin-packed by the partitioner
                 # in roughly diff-LOC order, so prefix-take is the
@@ -12110,8 +13423,16 @@ def _derive_spawn_agents_from_plan(
                 dropped_for_cap: list[dict[str, Any]] = []
                 if bha_partitions_cap is not None:
                     cap = max(0, int(bha_partitions_cap))
+                    if cap == 0 and docs_only:
+                        skipped.append({
+                            "reviewer": reviewer,
+                            "bucket": bucket,
+                            "reason": "docs_only",
+                            "budget_cap": 0,
+                            "partition_count": len(partitions),
+                        })
+                        return
                     if cap == 0:
-                        # Docs-only post-arbitrate; skip BHA entirely.
                         skipped.append({
                             "reviewer": reviewer,
                             "bucket": bucket,
@@ -12303,17 +13624,25 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     (``arbitrate_status: "fallback"``) and returns 0. The orchestrator
     falls back to the static reviewer table in the
     code-review:spawn-reviewers skill on the fallback sentinel — a derive
-    failure must never block review.
+    failure must never block review. The ONE exception is an unprovable
+    ``review_root``: the fallback table spawns the same agents against the
+    same wrong tree, so that failure returns non-zero and halts the run.
     """
     cr_dir = Path(args.cr_dir)
     now_iso = datetime.now(timezone.utc).isoformat()
+
+    review_root, refusal_rc = _require_review_root_or_report(
+        cr_dir, _read_optional_json(cr_dir / "scope.json", {}),
+    )
+    if review_root is None:
+        return refusal_rc
 
     coverage_plan = _read_coverage_state(cr_dir).get("final")
     if not isinstance(coverage_plan, dict):
         spec = _spawn_spec_fallback(
             "coverage_plan_missing_or_malformed", cr_dir, now_iso,
         )
-        return _write_spawn_spec(spec, cr_dir)
+        return _write_spawn_spec(spec, cr_dir, review_root)
 
     route = _read_spawn_state(cr_dir).get("route", {}) or {}
     if not isinstance(route, dict):
@@ -12359,10 +13688,11 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
             },
             "generated_at": now_iso,
         }
-        return _write_spawn_spec(spec, cr_dir)
+        return _write_spawn_spec(spec, cr_dir, review_root)
 
     # Distinguish missing partitions.json (upstream stage_17 failure)
-    # from valid empty partitions (all files cached). A missing file
+    # from valid empty partitions (all files cached, or only deleted
+    # files left). A missing file
     # means the standard flow can't know if there's nothing to review
     # or if the partitioner crashed; silently skipping BHA in that
     # case would suppress coverage. Treat as a fallback sentinel so
@@ -12375,7 +13705,7 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
         spec = _spawn_spec_fallback(
             "partitions_missing_or_malformed", cr_dir, now_iso,
         )
-        return _write_spawn_spec(spec, cr_dir)
+        return _write_spawn_spec(spec, cr_dir, review_root)
     partitions = partitions_blob.get("partitions", []) or []
     partitions = [p for p in partitions if isinstance(p, dict)]
 
@@ -12428,6 +13758,7 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     agents, skipped = _derive_spawn_agents_from_plan(
         plan_for_spawn, partitions, models,
         bha_partitions_cap=bha_cap,
+        docs_only=budget.get("docs_only") is True,
     )
     skipped.extend(sanitized_extras)
 
@@ -12437,12 +13768,13 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     # missing required reviewer). The spawn-spec path now emits the
     # same canonical Coverage finding so finalize-result picks it up
     # via coverage_gaps.json. Benign reasons (test_quality deferral,
-    # all-cached/docs-only no_partitions, gated_by_verify suppression)
-    # are explicitly excluded — those are intentional omissions, not
+    # all-cached no_partitions, the docs_only BHA floor waiver,
+    # gated_by_verify suppression) are explicitly excluded — those are intentional omissions, not
     # coverage gaps.
     _SPAWN_BENIGN_REQUIRED_SKIPS = {
         "deferred_pln723",      # PLN-723 placeholder slot
-        "no_partitions",        # all-cached / docs-only
+        "no_partitions",        # all files cached, or only deleted files left
+        "docs_only",            # arbitrate-budget waived the BHA floor
         "gated_by_verify",      # BLOCKING sanitization
     }
     spawn_gap_findings = _build_spawn_required_gap_findings(
@@ -12479,7 +13811,7 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
         },
         "generated_at": now_iso,
     }
-    return _write_spawn_spec(spec, cr_dir)
+    return _write_spawn_spec(spec, cr_dir, review_root)
 
 
 def cmd_derive_static_spec(args: argparse.Namespace) -> int:
@@ -12507,10 +13839,18 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
     Failure modes: missing/malformed ``partitions.json`` emits a
     ``"fallback"`` sentinel (same as ``cmd_derive_spawn_spec``) so the
     orchestrator walks the static reviewer table — review must never be
-    blocked by an upstream stage's output failure.
+    blocked by an upstream stage's output failure. An unprovable
+    ``review_root`` is the one exception and returns non-zero, for the same
+    reason as ``cmd_derive_spawn_spec``.
     """
     cr_dir = Path(args.cr_dir)
     now_iso = datetime.now(timezone.utc).isoformat()
+
+    review_root, refusal_rc = _require_review_root_or_report(
+        cr_dir, _read_optional_json(cr_dir / "scope.json", {}),
+    )
+    if review_root is None:
+        return refusal_rc
 
     route = _read_spawn_state(cr_dir).get("route", {}) or {}
     if not isinstance(route, dict):
@@ -12543,7 +13883,7 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
             },
             "generated_at": now_iso,
         }
-        return _write_spawn_spec(spec, cr_dir)
+        return _write_spawn_spec(spec, cr_dir, review_root)
 
     partitions_path = Path(args.partitions)
     partitions_blob = _read_optional_json(partitions_path, None)
@@ -12551,14 +13891,14 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
         spec = _spawn_spec_fallback(
             "partitions_missing_or_malformed", cr_dir, now_iso,
         )
-        return _write_spawn_spec(spec, cr_dir)
+        return _write_spawn_spec(spec, cr_dir, review_root)
     partitions = [
         p for p in (partitions_blob.get("partitions") or []) if isinstance(p, dict)
     ]
 
     # Synthetic plan: shallow fleet is exactly BHA + BHB + unified_auditor.
     # Reusing _derive_spawn_agents_from_plan keeps BHA partition expansion,
-    # docs-only (no_partitions) handling, dedup, and patches-file naming
+    # all-cached (no_partitions) handling, dedup, and patches-file naming
     # in one place instead of duplicating per-tier logic.
     static_plan: dict[str, Any] = {
         "required": [
@@ -12592,7 +13932,7 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
         },
         "generated_at": now_iso,
     }
-    return _write_spawn_spec(spec, cr_dir)
+    return _write_spawn_spec(spec, cr_dir, review_root)
 
 
 def _build_spawn_required_gap_findings(
@@ -12613,9 +13953,11 @@ def _build_spawn_required_gap_findings(
 
     Benign reasons (intentional omissions, not coverage gaps): the
     PLN-723 ``deferred_pln723`` placeholder, ``no_partitions``
-    (all-cached / docs-only — BHA legitimately has nothing to do),
-    and ``gated_by_verify`` (BLOCKING sanitization already surfaces
-    via agent_coverage-verify-blocking.json).
+    (all files cached, or every uncached file was deleted outright — BHA
+    legitimately has nothing to do),
+    ``docs_only`` (arbitrate-budget waived the BHA floor for a
+    docs-only diff), and ``gated_by_verify`` (BLOCKING sanitization
+    already surfaces via agent_coverage-verify-blocking.json).
     """
     findings: list[dict[str, Any]] = []
     idx = 0
@@ -12671,13 +14013,18 @@ def _append_to_coverage_gaps(
         print(f"Warning: could not append spawn coverage gaps: {exc}", file=sys.stderr)
 
 
-def _write_spawn_spec(spec: dict[str, Any], cr_dir: Path) -> int:
+def _write_spawn_spec(
+    spec: dict[str, Any], cr_dir: Path, review_root: str,
+) -> int:
     """Write the spec into spawn.json.spec and emit a short summary to stdout.
 
     Writes via the atomic ``_write_spawn_section`` helper; the stdout
     summary points at ``<cr_dir>/spawn.json`` so operators know where
-    to look.
+    to look. ``review_root`` rides on the spec so the dispatching skill
+    substitutes the proven root rather than re-deriving one, including on the
+    fallback specs that route to the static reviewer table.
     """
+    spec["review_root"] = review_root
     try:
         _write_spawn_section(cr_dir, "spec", spec)
     except OSError as exc:
@@ -13143,11 +14490,12 @@ def _render_fleet_notes(
     # one note. Two emission shapes from _derive_spawn_agents_from_plan:
     #   - cap > 0: one capped entry per dropped partition (each
     #     carries ``partition_id``). Dropped count = len(entries).
-    #   - cap == 0 (docs-only post-arbitrate): a single aggregate
+    #   - cap == 0 without the docs-only marker: a single aggregate
     #     entry covers ALL N suppressed partitions (no
     #     ``partition_id``; ``partition_count`` reflects the total).
     #     Dropped count = ``partition_count`` from the aggregate.
-    # Counting len(capped_entries) under-reports the docs-only case
+    #     (A docs-only zero is ``reason: "docs_only"``, not counted here.)
+    # Counting len(capped_entries) under-reports the aggregate case
     # as "1 partition(s)" when N partitions were actually suppressed
     # via a single aggregate entry.
     capped_entries = [
@@ -13175,6 +14523,12 @@ def _render_fleet_notes(
         for s in skipped
     ):
         notes.append("- ℹ️ `test_quality` slot reserved for PLN-723.")
+
+    if any(
+        isinstance(s, dict) and s.get("reason") == "docs_only"
+        for s in skipped
+    ):
+        notes.append("- ℹ️ BHA skipped on a docs-only diff.")
 
     # Other skip reasons (unknown_reviewer / duplicate_agent_id /
     # missing_reviewer_name) → already produce coverage_gaps.json
@@ -13453,6 +14807,15 @@ def _stats_from_findings(
     for f in coverage_gaps:
         _bump(f, "verified")
 
+    # ``tentative`` / ``tentative_count`` are subsets of ``verified`` /
+    # ``verified_count``: a TENTATIVE finding stays in verified[].
+    for f in verified:
+        if f.get("verifier_verdict") == "TENTATIVE":
+            by_reviewer[str(f.get("reviewer", "unknown"))]["tentative"] += 1
+
+    def _count_verdict(verdict: str | None) -> int:
+        return sum(1 for f in verified if f.get("verifier_verdict") == verdict)
+
     return {
         "by_severity": by_severity,
         "by_category": by_category,
@@ -13461,8 +14824,11 @@ def _stats_from_findings(
         "verification": {
             "verified_count": len(verified),
             "rejected_count": len(rejected),
-            "tentative_count": 0,
-            "downgrade_count": 0,
+            "tentative_count": _count_verdict("TENTATIVE"),
+            # cmd_verify_consolidate overwrites ``severity`` with the
+            # verifier's tier on DOWNGRADE, so the verdict is the only
+            # surviving downgrade marker.
+            "downgrade_count": _count_verdict("DOWNGRADE"),
             "justified_valid_count": len(justified),
             # PLN-721: JUSTIFIED-INVALID lands in verified[] (the
             # justification was audited and refuted, original finding
@@ -13472,7 +14838,11 @@ def _stats_from_findings(
                 1 for f in verified
                 if f.get("verifier_verdict") == "JUSTIFIED-INVALID"
             ),
-            "skipped_count": 0,
+            # Findings in verified[] no verifier ruled on: tier-skipped by
+            # verify-prepare (``skipped_no_verification``), unkeyed, or the
+            # whole bucket when verify-consolidate did not run. Deferred and
+            # missing-output findings go to pending_verification[] instead.
+            "skipped_count": _count_verdict(None),
             "false_positive_rate": 0.0,
             # PLN-773 Phase 2 — per-reviewer FP rate + override counter.
             "by_reviewer": _verification_by_reviewer(verified, rejected),
@@ -13679,12 +15049,20 @@ def cmd_finalize_result(args: argparse.Namespace) -> int:
         or "unknown"
     )
 
+    # ISS-9137: which checkout and commit this review read, re-validated from
+    # scope.json (null when absent or malformed). ``diff_tip`` cannot say this:
+    # for a branch review it is the literal ``HEAD``.
+    provenance = _review_provenance(cr_dir, scope_data)
+
     envelope: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "review_id": str(uuid.uuid4()),
         "pr_number": args.pr_number if args.pr_number else scope_data.get("pr_number"),
         "head_sha": setup_data.get("head_sha") or scope_data.get("head_sha"),
         "diff_tip": str(diff_tip),
+        "review_root": provenance["review_root"],
+        "review_root_sha": provenance["review_root_sha"],
+        "review_root_tree": provenance["review_root_tree"],
         "review_branch": setup_data.get("current_branch") or scope_data.get("review_branch"),
         "base_ref": scope_data.get("base_ref"),
         "diff_scope": scope_data.get("diff_scope"),

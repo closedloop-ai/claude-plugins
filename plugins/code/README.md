@@ -4,6 +4,12 @@ The `code` plugin implements **ClosedLoop**, an autonomous software development 
 
 The plugin provides the orchestrator prompt, all specialized subagents, a hook system for session management and learning capture, skills for deterministic caching and validation, schemas for data contracts, and Python utilities used throughout the workflow.
 
+## Installation And Ownership
+
+Install and enable both `code` and `closedloop-core` from the ClosedLoop marketplace in Claude Code or Codex. The Claude Code manifest declares `closedloop-core` as a dependency; Codex installations must also include it so shared skill invocations resolve.
+
+`code` owns the planning and implementation framework described below. `closedloop-core` owns the shared `plan-structure`, `decision-table`, `closedloop-intel`, `workflow-code-review`, and `mermaid-visualizer` skills. Invoke them by skill name in Codex (for example, `$decision-table`) or through the `closedloop-core` namespace in Claude Code (for example, `/closedloop-core:decision-table`). Vibe sessions, handoff, ticket automation, guided manual QA, measurement discipline, and PR monitoring belong to the separate `vibe` plugin.
+
 ---
 
 ## Key Features
@@ -11,8 +17,8 @@ The plugin provides the orchestrator prompt, all specialized subagents, a hook s
 - **Plan-first workflow**: Generates a structured `plan.json` from a PRD, pauses for human review, then proceeds to implementation
 - **Multi-phase orchestration**: Sequenced phases covering pre-exploration, planning, critic review, implementation, code review, visual QA, and validation
 - **Loop agents**: Key agents (plan-draft-writer, implementation-subagent, etc.) self-validate and iterate until quality gates pass
-- **Caching layer**: Skills for critic, build, and cross-repo caches eliminate redundant expensive agent calls between iterations
-- **Self-learning system**: Agents capture learnings into pending JSON files; hooks inject relevant past patterns into new agent contexts
+- **Caching layer**: Skills for critic, build, and cross-repo caches eliminate redundant expensive agent calls
+- **Self-learning system**: Agents capture learnings into pending JSON files; hooks inject relevant past patterns into new agent contexts. The hooks are enabled by setting `CLOSEDLOOP_SELF_LEARNING=true` in the environment.
 - **Cross-repo coordination**: Discovers peer repositories, identifies missing capabilities, and generates cross-repo PRDs
 - **Visual QA**: Playwright-based browser automation agent validates UI changes against documented requirements
 - **Plan amendment**: The `/code:amend-plan` command supports natural conversation to modify an approved plan after implementation has started
@@ -74,8 +80,6 @@ State is maintained in `$CLOSEDLOOP_WORKDIR/state.json` at each phase transition
 2. Loads the orchestrator prompt specified by `CLOSEDLOOP_PROMPT_FILE`
 3. The orchestrator coordinates all phases until completion or a hard stop requiring user input
 
-The command runs inside a ClosedLoop loop — the external loop runner (`run-loop.sh`) relaunches it with fresh context on each iteration until `<promise>COMPLETE</promise>` is output.
-
 ### `/code:create-plan`
 
 **Description:** Create an implementation plan (planning only).
@@ -92,7 +96,7 @@ The command runs inside a ClosedLoop loop — the external loop runner (`run-loo
 
 **What it does:**
 
-Runs `setup-closedloop.sh` with the `plan-prompt` orchestrator prompt (`prompts/plan-prompt.md`) for a single-shot, in-session planning run — there is no external loop. The orchestrator runs PLAN ONLY (phases 0.9–2.8), delegating all project file reading to subagents. When the plan is finalized (`plan.json` + `plan.md` ready and validated), it writes `state.json` with `status: COMPLETED`, outputs `<promise>PLAN_COMPLETE</promise>`, and stops without proceeding to implementation.
+Runs `setup-closedloop.sh` with the `plan-prompt` orchestrator prompt (`prompts/plan-prompt.md`) for a single-shot, in-session planning run. The orchestrator runs PLAN ONLY (phases 0.9–2.8), delegating all project file reading to subagents. When the plan is finalized (`plan.json` + `plan.md` ready and validated), it writes `state.json` with `status: COMPLETED`, outputs `<promise>PLAN_COMPLETE</promise>`, and stops without proceeding to implementation.
 
 ### `/code:execute-implementation`
 
@@ -134,12 +138,6 @@ Supports four intent types:
 
 Conversation state is persisted across GitHub workflow runs via `amend_state.py`. After applying changes, records an amendment entry in `plan.json` and deletes the session file.
 
-### `/code:cancel-code`
-
-**Description:** Cancel an active ClosedLoop loop.
-
-Checks for `.closedloop-ai/closedloop-loop.local.md`, reads the current iteration, removes the file, and reports the cancellation. Hidden from the slash command picker.
-
 ### `/code:plan-with-codex`
 
 **Description:** Iterative plan refinement debate between Claude and Codex.
@@ -163,6 +161,20 @@ Checks for `.closedloop-ai/closedloop-loop.local.md`, reads the current iteratio
 5. Reports the final outcome and cleans up sidecar state files
 
 Supports resuming mid-session via a `{stem}.state` sidecar file that tracks the current round and Codex session ID.
+
+### `/code:design-inventory`
+
+**Description:** Run the Claude Design to ClosedLoop pipeline.
+
+**Usage:**
+```
+/code:design-inventory <export.zip> [--repo <path>] [--workdir <path>]
+/code:design-inventory --tickets <workdir> --review-doc <FEA-slug> --project <PRO-slug> [--repo <path>]
+```
+
+**What it does:**
+
+Activates the `code:design-inventory` skill with the given arguments. The first form runs Stage A (inventory a design export zip into schema-validated findings and publish a platform Design Review document); the `--tickets` form runs Stage C (derive decisions from the human-edited review document and generate DRAFT feature tickets).
 
 ---
 
@@ -206,7 +218,7 @@ Discovers and runs project-specific validation commands (test, lint, typecheck, 
 Reviews code changes for security vulnerabilities, correctness bugs, type safety issues, performance problems, and DRY violations. Operates on git diffs, applying a strict evidence standard: Critical/High findings require concrete proof, not speculation. Checks multi-tenant authorization on data-access endpoints. Runs as a loop agent (max 5 iterations) — only exits when no Critical/High findings remain.
 
 **`behavior-verifier`** (model: sonnet)
-Verifies that final code aligns with the intended behavior captured in the decision-table artifact. Activates `code:decision-table` in verification-only mode, appends verification/adversarial findings to the artifact, and returns a structured verdict (`ALIGNED` or `MISALIGNED` with typed `<drift_rows>` JSON: `code_drift`, `test_drift`, `plan_ambiguity`) for orchestrator routing in Phase 5.5. Read-and-report only — never modifies code or tests; drift remediation is owned by the orchestrator. Runs as a loop agent (max 3 iterations).
+Verifies that final code aligns with the intended behavior captured in the decision-table artifact. Activates `$decision-table` in Codex or `/closedloop-core:decision-table` in Claude Code in verification-only mode, appends verification/adversarial findings to the artifact, and returns a structured verdict (`ALIGNED` or `MISALIGNED` with typed `<drift_rows>` JSON: `code_drift`, `test_drift`, `plan_ambiguity`) for orchestrator routing in Phase 5.5. Read-and-report only; never modifies code or tests. Drift remediation is owned by the orchestrator. Runs as a loop agent (max 3 iterations).
 
 ### Cross-Repo Agents
 
@@ -226,6 +238,7 @@ Generates PRD documents for capabilities that need to be built in peer repositor
 Generates `api-requirements.md` from an approved plan. Extracts tasks requiring backend APIs and produces endpoint specifications with request/response TypeScript interfaces, error codes, auth requirements, and traceability to task IDs and acceptance criteria.
 
 ### Support Agents
+
 
 **`visual-qa-subagent`** (model: sonnet)
 Performs visual QA using Playwright browser automation. Reads test steps exclusively from `visual-requirements.md` — never from source code. Returns `SUCCESS`, `FAILURE`, `AUTH_REQUIRED`, `BLOCKED`, or `INCOMPLETE_DOCS`. Maintains `visual-qa-memory.md` throughout the session.
@@ -254,6 +267,8 @@ Per-design-unit state-vs-spec analyst for the `design-inventory` pipeline. Analy
 
 Skills are reusable, invocable units of functionality available to orchestrators and agents via the `Skill` tool.
 
+
+
 ### `plan-validate`
 
 Deterministic `plan.json` validation via Python script. Replaces most `plan-validator` agent calls for structural checks. Validates JSON parsing, schema fields, task checkbox format (`- [ ]` / `- [x]`), all 10 required section headers, and JSON-to-markdown sync. Returns the same output format as the plan-validator agent. Invoked with `Skill(skill="code:plan-validate")`.
@@ -270,9 +285,6 @@ Skips the Phase 7 final build check when no code has changed since Phase 5 build
 
 Checks whether cross-repo coordinator results can be reused by comparing peer repository git HEAD hashes to stored hashes. Returns `CROSS_REPO_CACHE_HIT` with the cached status or `CROSS_REPO_CACHE_MISS`. Prevents redundant cross-repo discovery when peers have not changed.
 
-### `plan-structure`
-
-Provides reusable guidance for plan creation and updates. When activated, agents must read the `resources/playbook.md` (conventions and quality bar) and `resources/plan_template.md` (required structure and sections). Used by `plan-draft-writer` and `plan-writer`.
 
 ### `plan-editing-conventions`
 
@@ -306,13 +318,13 @@ Single source of truth for the two reusable orchestration procedures shared by a
 
 Runs Codex to review a plan file and returns structured feedback with a verdict. Called once per debate round by the `plan-with-codex` command via `debate-loop.sh`. Supports session resume across rounds using a Codex thread ID. Returns `VERDICT:APPROVED` or `VERDICT:NEEDS_CHANGES` plus a `CODEX_SESSION` token. Emits `CODEX_FAILED` or `CODEX_EMPTY` tokens on error so the orchestrator can ask the user to retry or abort.
 
-### `decision-table`
-
-Generates a repo-local decision-table artifact that makes control-flow and stateful edge cases reviewable. Used when the user wants a code-grounded table for current behavior, wants to compare current behavior against a plan or work item, or needs a control-flow artifact for recovery, retry, finalization, validation, state-machine, or review-heavy edge cases. Writes one artifact per work item under `.closedloop-ai/decision-tables/` (`<plan-id>.md` for plan-scoped work, `<short-work-name>.md` otherwise) using the format defined in `references/artifact-format.md`. Builds the `Current Code` table from code (not expectations), captures the target behavior in `Intended Change`, and freezes both once implementation begins; post-implementation drift is recorded in append-only `Verification Findings`, `Adversarial Review`, `Fixes Applied`, `Final Alignment Status`, and optional `Plan Clarifications` sections. Includes a behavioral edge-case expansion pass that explicitly models structured-result setup failures, library-managed lifecycle re-entry, published contract compatibility, CLI flag parsing, filesystem read/write safety, time-bound credentials/signatures, durable finalization and replay eligibility, diagnostic reason taxonomies, and side-effect boundaries for validation failures. The artifact also records `Evidence Artifacts` for high-yield coverage and non-applicability claims, distinguishing named fail-closed test coverage from source-backed `not applicable` evidence, and supports coordinator-run adversarial lanes with a sequential fallback for subagents that cannot delegate.
 
 ### `design-inventory`
 
 Staged pipeline for inventorying a Claude Design export into reviewable findings, a human decision gate, and DRAFT ticket generation. Stage A extracts the zip, runs parallel `design-unit-analyst` agents per unit (screens, regions, standalone components) from per-unit context packs, emits schema-validated findings (each with a recommended action), and publishes a platform "Design Review" Feature document with inline images. Stage B is the human editing that document - delete a section to decline, edit a line to amend, leave to accept - with survival judged from heading-line id anchors. Stage C derives decisions from the edited document and generates DRAFT feature tickets grouped per screen (UI plus optional API, with BLOCKS edges) and workdir-only design packs, only for accepted units. Invoked via the `code:design-inventory` skill when users request a design handoff, design inventory, or ticket generation from a design review. Scripts are TypeScript under `tools/design-inventory/src/` with built `dist/` bundles committed to `skills/design-inventory/scripts/dist/`.
+
+
+
 
 ---
 
@@ -330,7 +342,7 @@ Cleans up session-level artifacts: removes the session workdir mapping file, cle
 
 ### `user-prompt-expansion-hook.sh` (UserPromptExpansion, matches create-plan/execute-implementation)
 
-Initializes native PLAN/EXECUTE perf metadata for the `/code:create-plan` and `/code:execute-implementation` commands (which run in-session without the external `run-loop.sh`). Resolves the session `config.env` from the command's workdir, documented `command_args`, legacy argument fields, or `cwd`; derives a `CLOSEDLOOP_COMMAND` value (`PLAN` or `EXECUTE`); assigns or reuses a `CLOSEDLOOP_RUN_ID`; sets `CLOSEDLOOP_ITERATION=0`; persists those values back into `config.env`; and invokes `record_run.sh` so the in-session run is attributable in `perf.jsonl`. It parses `config.env` as data rather than sourcing shell, and fails open on every error so prompt expansion never blocks the user command.
+Initializes native PLAN/EXECUTE perf metadata for the `/code:create-plan` and `/code:execute-implementation` commands. Resolves the session `config.env` from the command's workdir, documented `command_args`, legacy argument fields, or `cwd`; derives a `CLOSEDLOOP_COMMAND` value (`PLAN` or `EXECUTE`); assigns or reuses a `CLOSEDLOOP_RUN_ID`; sets `CLOSEDLOOP_ITERATION=0`; persists those values back into `config.env`; and invokes `record_run.sh` so the in-session run is attributable in `perf.jsonl`. It parses `config.env` as data rather than sourcing shell, and fails open on every error so prompt expansion never blocks the user command.
 
 ### `subagent-start-hook.sh` (SubagentStart)
 
@@ -416,10 +428,6 @@ Defines the structure of `code-map.json` produced by the `pre-explorer` agent. R
 
 Initializes a ClosedLoop session. Parses arguments (`--prd`, `--max-iterations`, `--prompt`, positional workdir), auto-detects the PRD file by checking common patterns (`prd.md`, `prd.pdf`, `requirements.md`, etc.), establishes the session-to-workdir mapping, validates the prompt name, and writes `{WORKDIR}/.closedloop-ai/config.env` with all environment variables.
 
-### `run-loop.sh`
-
-External loop runner. Launches `claude -p` in a loop, maintaining state in `.closedloop-ai/closedloop-loop.local.md`. Integrates with the self-learning system. Tracks run ID, start SHA, iteration count, and progress log. Continues until the orchestrator outputs `<promise>COMPLETE</promise>` or max iterations are reached.
-
 ### `setup-loop.sh`
 
 Sets up a ClosedLoop loop with initial configuration and state.
@@ -438,11 +446,11 @@ Shell harness for the Codex debate loop used by the `plan-with-codex` command. D
 
 ### `stamp_critic_cache.sh`
 
-Stamps the critic cache after Phase 2.5 reviews complete. Hashes `plan.json` (and `critic-gates.json` when present) and writes the hash to `{WORKDIR}/reviews/.plan-hash` so subsequent iterations can skip critics via the `code:critic-cache` skill.
+Stamps the critic cache after Phase 2.5 reviews complete. Hashes `plan.json` (and `critic-gates.json` when present) and writes the hash to `{WORKDIR}/reviews/.plan-hash` so subsequent runs can skip critics via the `code:critic-cache` skill.
 
 ### `stamp_cross_repo_cache.sh`
 
-Stamps the cross-repo cache after Phase 1.4 coordinator completes. Hashes peer-repo HEADs from `.workspace-repos.json` (falling back to `.cross-repo-needs.json`) and writes to `{WORKDIR}/.cross-repo-hash` so subsequent iterations skip cross-repo discovery via the `code:cross-repo-cache` skill.
+Stamps the cross-repo cache after Phase 1.4 coordinator completes. Hashes peer-repo HEADs from `.workspace-repos.json` (falling back to `.cross-repo-needs.json`) and writes to `{WORKDIR}/.cross-repo-hash` so subsequent runs skip cross-repo discovery via the `code:cross-repo-cache` skill.
 
 ### `closedloop_env.sh`
 
@@ -450,7 +458,7 @@ Shared library (sourced, not executed) that hydrates `CLOSEDLOOP_*` environment 
 
 ### `record_iteration.sh`
 
-Appends a single synthetic `iteration` event to `perf.jsonl` for native (in-session) command runs that lack the external loop's per-iteration accounting. Hydrates run context via `closedloop_env.sh`, derives `status`/`claude_exit_code` from `state.json` (`error`/`1` when `state.json` is missing or has not reached `COMPLETED`, otherwise `ok`/`0`), computes duration from the matching `run` event's `started_at`, and emits a JSON line with `event`, `run_id`, `iteration`, `started_at`, `ended_at`, `duration_s`, `claude_exit_code`, `status`, and `command` fields.
+Appends a single synthetic `iteration` event to `perf.jsonl` for native (in-session) command runs. Hydrates run context via `closedloop_env.sh`, derives `status`/`claude_exit_code` from `state.json` (`error`/`1` when `state.json` is missing or has not reached `COMPLETED`, otherwise `ok`/`0`), computes duration from the matching `run` event's `started_at`, and emits a JSON line with `event`, `run_id`, `iteration`, `started_at`, `ended_at`, `duration_s`, `claude_exit_code`, `status`, and `command` fields.
 
 ### `record_native_iteration_once.sh`
 
@@ -462,7 +470,7 @@ Appends a phase event to `perf.jsonl` from the current `state.json`. Called by t
 
 ### `record_run.sh`
 
-Appends a single `run` event to `perf.jsonl` once per Loop, capturing `command`, `repo`, `branch`, `run_id`, and `started_at` so every perf event can be attributed to the slash command that launched the Loop. Emitted unconditionally and fails open (exits 0) on any error so the caller loop is unaffected. Reads `CLOSEDLOOP_COMMAND` and `CLOSEDLOOP_RUN_ID` from the environment.
+Appends a single `run` event to `perf.jsonl` once per run, capturing `command`, `repo`, `branch`, `run_id`, and `started_at` so every perf event can be attributed to the slash command that launched the run. Emitted unconditionally and fails open (exits 0) on any error so the caller is unaffected. Reads `CLOSEDLOOP_COMMAND` and `CLOSEDLOOP_RUN_ID` from the environment.
 
 ### `loop-agents.json`
 
@@ -487,11 +495,11 @@ CLI state manager for the `amend-plan` command. Persists conversation state acro
 
 ### `count_tokens.py`
 
-Counts tokens in a file or stdin using the Anthropic API's token counting endpoint. Outputs JSON: `{"input_tokens": N}`. Used by judge context-compression workflows to measure artifact sizes before compression. Requires `ANTHROPIC_API_KEY`.
+Counts tokens in a file or stdin using the Anthropic API's token counting endpoint. Outputs JSON: `{"input_tokens": N}`. Requires `ANTHROPIC_API_KEY`.
 
 ### `stream_formatter.py`
 
-Formats Claude stream-JSON output (from `claude --output-format stream-json`) into human-readable terminal output with ANSI colors. Accumulates per-model token usage from assistant events and prints a summary at exit in the format the harness expects. Used in pipeline with the external loop runner to display progress and report token consumption.
+Formats Claude stream-JSON output (from `claude --output-format stream-json`) into human-readable terminal output with ANSI colors. Accumulates per-model token usage from assistant events and prints a summary at exit in the format the harness expects.
 
 ### `requirements.txt`
 
@@ -528,18 +536,12 @@ Python dependencies: `pyyaml>=6.0`, `tree-sitter>=0.20.0` (optional, for AST par
 
 ### Answering open questions
 
-Edit `plan.json` and change `openQuestions` entries to `answeredQuestions` with an `answer` field. The orchestrator processes them at Phase 1.2 on the next iteration.
+Edit `plan.json` and change `openQuestions` entries to `answeredQuestions` with an `answer` field. The orchestrator processes them at Phase 1.2 on the next run.
 
 ### Amending the plan during implementation
 
 ```
 /code:amend-plan --message "for T-1.2, don't remove the legacy compatibility check"
-```
-
-### Cancelling a session
-
-```
-/code:cancel-code
 ```
 
 ### Session state file
@@ -573,8 +575,7 @@ After a full run, the work directory will contain:
   plan.json                  # Structured implementation plan
   plan.md                    # Human-readable plan (synced from plan.json)
   plan-evaluation.json       # Simple mode evaluation results
-  investigation-log.md       # Codebase exploration findings (consumed by plan judges and as secondary context for code judges)
-  code-context.json          # Token-budgeted compressed code-judge context bundle
+  investigation-log.md       # Codebase exploration findings (from pre-explorer)
   requirements-extract.json  # PRD extraction (from pre-explorer)
   code-map.json              # Codebase file map (from pre-explorer)
   state.json                 # Current phase/status for monitoring

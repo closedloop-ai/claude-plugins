@@ -108,11 +108,11 @@ from code_review_helpers import (
 # A `cached_at` timestamp always within the BHA cache TTL (30 days).
 # PLN-719 Phase 7 added sweep-on-read TTL eviction; fixtures that want a hit
 # must use a fresh timestamp. Tests that want eviction behavior should use
-# an explicitly-stale timestamp via ``_stale_cached_at()``.
+# an explicitly-stale timestamp via ``_iso_days_ago()``.
 _FRESH_CACHED_AT = datetime.now(timezone.utc).isoformat()
 
 
-def _stale_cached_at(days_ago: int = 365) -> str:
+def _iso_days_ago(days_ago: int = 365) -> str:
     """Return an ISO timestamp ``days_ago`` days in the past (default: 1 year)."""
     return (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
 
@@ -256,6 +256,33 @@ class TestParseU0Output:
         ranges, _ = _parse_u0_output(raw)
         assert ranges["f.ts"]["removed"] == [[5, 5]]
         assert ranges["f.ts"]["added"] == [[5, 5]]
+
+    def test_pure_deletion_hunk_records_deletion_point(self) -> None:
+        """ISS-12737: ``@@ -10,3 +9,0 @@`` removes old lines 10-12; the new
+        file's lines 9 and 10 sit on either side of the gap."""
+        raw = (
+            "diff --git a/mod.py b/mod.py\n"
+            "@@ -10,3 +9,0 @@\n"
+            "-if x is None:\n"
+            "-    return\n"
+            "-\n"
+        )
+        ranges, _ = _parse_u0_output(raw)
+        assert ranges["mod.py"]["removed"] == [[10, 12]]
+        assert ranges["mod.py"]["added"] == []
+        assert ranges["mod.py"]["deletion_points"] == [[9, 10]]
+
+    def test_mixed_hunk_records_no_deletion_point(self) -> None:
+        raw = (
+            "diff --git a/mod.py b/mod.py\n"
+            "@@ -5,2 +5,1 @@\n"
+            "-a\n"
+            "-b\n"
+            "+ab\n"
+        )
+        ranges, _ = _parse_u0_output(raw)
+        assert ranges["mod.py"]["added"] == [[5, 5]]
+        assert "deletion_points" not in ranges["mod.py"]
 
 
 # ---------------------------------------------------------------------------
@@ -2385,10 +2412,78 @@ class TestValidate:
         assert len(result["validated"]) == 1
         assert result["stats"]["validated"] == 1
 
-    def test_file_not_in_scope(self, tmp_path: Path) -> None:
+    def test_out_of_diff_finding_kept_and_tagged(self, tmp_path: Path) -> None:
+        """ISS-12737: a finding on a file outside the diff is kept, not
+        discarded, and tagged ``out_of_diff``. A P2 at 0.65 clears the
+        normal 0.5 floor; the 0.80 out-of-hunk floor does not apply."""
+        diff_data = _make_diff_data(files=["src/app.ts"])
+        findings = [{
+            "file": "src/other.test.ts",
+            "line": 500,
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "Stale mock of a symbol this diff deleted",
+            "priority": 2,
+            "confidence": 0.65,
+            "out_of_hunk_kept": True,
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert len(result["validated"]) == 1
+        kept = result["validated"][0]
+        assert kept["out_of_diff"] is True
+        assert "out_of_hunk_kept" not in kept
+        assert result["discarded"] == []
+        assert result["stats"]["kept_out_of_diff"] == 1
+        assert result["stats"]["kept_out_of_hunk"] == 0
+        assert "discarded_file_not_changed" not in result["stats"]
+
+    def test_out_of_diff_low_confidence_discarded(self, tmp_path: Path) -> None:
         diff_data = _make_diff_data(files=["src/app.ts"])
         findings = [{
             "file": "src/other.ts",
+            "line": 5,
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "Weak guess",
+            "priority": 2,
+            "confidence": 0.4,
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert result["validated"] == []
+        assert [d["reason"] for d in result["discarded"]] == ["DISCARD_LOW_CONFIDENCE"]
+        assert "out_of_diff" not in result["discarded"][0]["finding"]
+        assert result["stats"]["discarded_low_confidence"] == 1
+        assert result["stats"]["kept_out_of_diff"] == 0
+
+    def test_validator_strips_reviewer_supplied_out_of_diff(
+        self, tmp_path: Path,
+    ) -> None:
+        """The validator OWNS ``out_of_diff``: a reviewer-set value on a
+        finding inside the diff must not survive."""
+        diff_data = _make_diff_data(
+            files=["src/app.ts"],
+            ranges={"src/app.ts": {"added": [[10, 20]], "removed": []}},
+        )
+        findings = [{
+            "file": "src/app.ts",
+            "line": 15,
+            "severity": "HIGH",
+            "category": "Correctness",
+            "issue": "Bug",
+            "priority": 1,
+            "confidence": 0.9,
+            "out_of_diff": True,
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert len(result["validated"]) == 1
+        assert "out_of_diff" not in result["validated"][0]
+        assert result["stats"]["kept_out_of_diff"] == 0
+
+    def test_diff_finding_without_file_discarded(self, tmp_path: Path) -> None:
+        """A diff-scope finding with no ``file`` cannot be located and must
+        not be kept as "outside the diff"."""
+        diff_data = _make_diff_data(files=["src/app.ts"])
+        findings = [{
             "line": 5,
             "severity": "HIGH",
             "category": "Correctness",
@@ -2396,8 +2491,9 @@ class TestValidate:
             "priority": 1,
         }]
         result = self._run_validate(findings, diff_data, tmp_path)
-        assert len(result["validated"]) == 0
-        assert result["stats"]["discarded_file_not_changed"] == 1
+        assert result["validated"] == []
+        assert [d["reason"] for d in result["discarded"]] == ["DISCARD_MISSING_FILE"]
+        assert result["stats"]["kept_out_of_diff"] == 0
 
     def test_out_of_hunk_high_confidence_survives(self, tmp_path: Path) -> None:
         """v2.21.0 relaxation: a P2+ MEDIUM finding outside the changed
@@ -2678,10 +2774,15 @@ class TestValidate:
         result = self._run_validate(findings, diff_data, tmp_path)
         assert len(result["validated"]) == 1
 
-    def test_removed_range_check(self, tmp_path: Path) -> None:
+    def test_modified_file_line_matching_only_removed_range_is_out_of_range(
+        self, tmp_path: Path,
+    ) -> None:
+        """ISS-12737: ``removed`` ranges are old-file numbers. A new-file
+        line that only coincides with one is out of range, so a P2 at 0.8
+        takes the out-of-hunk path (and fails its 0.80 floor)."""
         diff_data = _make_diff_data(
             files=["src/app.ts"],
-            ranges={"src/app.ts": {"added": [], "removed": [[50, 55]]}},
+            ranges={"src/app.ts": {"added": [[10, 12]], "removed": [[50, 55]]}},
         )
         findings = [{
             "file": "src/app.ts",
@@ -2693,7 +2794,59 @@ class TestValidate:
             "confidence": 0.8,
         }]
         result = self._run_validate(findings, diff_data, tmp_path)
+        assert result["validated"] == []
+        assert [d["reason"] for d in result["discarded"]] == [
+            "DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE",
+        ]
+
+    def test_line_at_deletion_point_is_in_range(self, tmp_path: Path) -> None:
+        """A finding on the surviving line beside a pure deletion is in range."""
+        diff_data = _make_diff_data(
+            files=["src/app.ts"],
+            ranges={"src/app.ts": {
+                "added": [], "removed": [[50, 55]], "deletion_points": [[30, 31]],
+            }},
+        )
+        findings = [{
+            "file": "src/app.ts",
+            "line": 31,
+            "severity": "MEDIUM",
+            "category": "Correctness",
+            "issue": "Guard removed",
+            "priority": 2,
+            "confidence": 0.8,
+        }]
+        result = self._run_validate(findings, diff_data, tmp_path)
         assert len(result["validated"]) == 1
+        assert "out_of_hunk_kept" not in result["validated"][0]
+        assert result["discarded"] == []
+
+    def test_deleted_file_line_checked_against_old_numbering(
+        self, tmp_path: Path,
+    ) -> None:
+        """A finding on a file deleted outright is numbered in the old file:
+        inside the removed range it is in range, past it it is out of hunk."""
+        diff_data = _make_diff_data(
+            files=["src/gone.ts"],
+            statuses={"src/gone.ts": "removed"},
+            ranges={"src/gone.ts": {
+                "added": [], "removed": [[1, 120]], "deletion_points": [[0, 1]],
+            }},
+        )
+        findings = [
+            {"file": "src/gone.ts", "line": 80, "severity": "MEDIUM",
+             "category": "Correctness", "issue": "Public route removed",
+             "priority": 2, "confidence": 0.8},
+            {"file": "src/gone.ts", "line": 200, "severity": "MEDIUM",
+             "category": "Correctness", "issue": "Past the end",
+             "priority": 2, "confidence": 0.8},
+        ]
+        result = self._run_validate(findings, diff_data, tmp_path)
+        assert [f["line"] for f in result["validated"]] == [80]
+        assert "out_of_hunk_kept" not in result["validated"][0]
+        assert [d["reason"] for d in result["discarded"]] == [
+            "DISCARD_OUT_OF_HUNK_LOW_CONFIDENCE",
+        ]
 
     def test_low_confidence_discard(self, tmp_path: Path) -> None:
         diff_data = _make_diff_data(
@@ -3385,14 +3538,14 @@ class TestCacheTtlEviction:
         from code_review_helpers import _is_entry_fresh, CACHE_NAMESPACE_BHA
 
         # 29 days old: under the 30-day BHA TTL.
-        entry = {"cached_at": _stale_cached_at(days_ago=29)}
+        entry = {"cached_at": _iso_days_ago(days_ago=29)}
         assert _is_entry_fresh(entry, CACHE_NAMESPACE_BHA) is True
 
     def test_stale_entry_past_ttl_misses(self, tmp_path: Path) -> None:
         from code_review_helpers import _is_entry_fresh, CACHE_NAMESPACE_BHA
 
         # 31 days old: past the 30-day BHA TTL.
-        entry = {"cached_at": _stale_cached_at(days_ago=31)}
+        entry = {"cached_at": _iso_days_ago(days_ago=31)}
         assert _is_entry_fresh(entry, CACHE_NAMESPACE_BHA) is False
 
     def test_missing_cached_at_treated_as_fresh(self, tmp_path: Path) -> None:
@@ -3406,7 +3559,7 @@ class TestCacheTtlEviction:
     def test_unknown_namespace_skips_ttl_check(self, tmp_path: Path) -> None:
         from code_review_helpers import _is_entry_fresh
 
-        entry = {"cached_at": _stale_cached_at(days_ago=365 * 10)}
+        entry = {"cached_at": _iso_days_ago(days_ago=365 * 10)}
         assert _is_entry_fresh(entry, "future-namespace") is True
 
     def test_v1_cache_check_evicts_stale_entry(self, tmp_path: Path) -> None:
@@ -3425,7 +3578,7 @@ class TestCacheTtlEviction:
                 "prompt_hash": "abc123",
                 "patch_hash": patch_hash,
                 "findings": [{"file": "a.ts", "line": 1, "issue": "stale"}],
-                "cached_at": _stale_cached_at(days_ago=45),
+                "cached_at": _iso_days_ago(days_ago=45),
             }
         }
         _write_manifest(cache_dir, manifest)
@@ -3443,7 +3596,7 @@ class TestCacheTtlEviction:
         patch_hash = _compute_patch_hash("a.ts", diff_data["patch_lines"]["a.ts"])
         composite = _compute_composite_key("opus", "abc123", patch_hash, "ctx")
 
-        stale = _stale_cached_at(days_ago=45)
+        stale = _iso_days_ago(days_ago=45)
         v2_manifest = {
             "a.ts": {
                 composite: {
@@ -3700,8 +3853,8 @@ class TestCmdPostComments:
             )
             rc = self._run(path, dry_run=True)
         assert rc == 0
-        # Only the GET call should have been made (dedup fetch), no POSTs
-        assert mock_run.call_count == 1
+        # Only the GETs (dedup fetch + PR files lookup), no POSTs
+        assert mock_run.call_count == 2
 
     def test_posts_each_finding(self, tmp_path: Path) -> None:
         findings = [
@@ -3710,15 +3863,15 @@ class TestCmdPostComments:
         ]
         path = _make_findings_file(tmp_path, findings)
         with patch("code_review_helpers.subprocess.run") as mock_run:
-            # First call: GET existing comments (returns [])
+            # First calls: GET existing comments + GET PR files (both [])
             # Subsequent calls: POST comments (returns success)
             mock_run.return_value = subprocess.CompletedProcess(
                 args=[], returncode=0, stdout="[]", stderr=""
             )
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 2 POSTs
-        assert mock_run.call_count == 3
+        # 2 GETs + 2 POSTs
+        assert mock_run.call_count == 4
 
     def test_dedup_skips_existing(self, tmp_path: Path) -> None:
         findings = [{"file": "a.ts", "line": 10, "severity": "HIGH", "category": "Bug", "issue": "dup"}]
@@ -3742,11 +3895,11 @@ class TestCmdPostComments:
         success = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
         fail_422 = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="422 Validation Failed")
         with patch("code_review_helpers.subprocess.run") as mock_run:
-            # GET returns [], first POST fails 422, second POST succeeds
-            mock_run.side_effect = [success, fail_422, success]
+            # GETs return [], first POST fails 422, second POST succeeds
+            mock_run.side_effect = [success, success, fail_422, success]
             rc = self._run(path)
         assert rc == 0
-        assert mock_run.call_count == 3
+        assert mock_run.call_count == 4
 
     def test_422_counted_as_skip_not_failure(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -3761,11 +3914,11 @@ class TestCmdPostComments:
         success = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
         fail_422 = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="422 Validation Failed")
         with patch("code_review_helpers.subprocess.run") as mock_run:
-            mock_run.side_effect = [success, fail_422]
+            mock_run.side_effect = [success, success, fail_422]
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST (the POST is attempted, then 422'd into the skip bucket).
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST (the POST is attempted, then 422'd into the skip bucket).
+        assert mock_run.call_count == 3
         out = capsys.readouterr().out
         assert "out-of-hunk=1" in out
         assert "failed 0" in out
@@ -3783,11 +3936,11 @@ class TestCmdPostComments:
         success = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
         fail_401 = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="HTTP 401: Bad credentials")
         with patch("code_review_helpers.subprocess.run") as mock_run:
-            mock_run.side_effect = [success, fail_401]
+            mock_run.side_effect = [success, success, fail_401]
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST (the POST is attempted and fails auth).
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST (the POST is attempted and fails auth).
+        assert mock_run.call_count == 3
         out = capsys.readouterr().out
         assert "failed 1" in out
         assert "out-of-hunk=0" in out
@@ -3811,13 +3964,212 @@ class TestCmdPostComments:
             )
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST (only b.ts:20 is posted; the out-of-hunk finding never
+        # 2 GETs + 1 POST (only b.ts:20 is posted; the out-of-hunk finding never
         # reaches the API).
-        assert mock_run.call_count == 2
+        assert mock_run.call_count == 3
         out = capsys.readouterr().out
         assert "Posted 1" in out
         assert "out-of-hunk=1" in out
         assert "failed 0" in out
+
+    def test_line_out_of_range_skips_inline_post(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A finding the validator tagged ``line_out_of_range`` has no real
+        line to comment on (it is past the end of its file), so it is never
+        posted inline — not even through an ``out_of_diff`` evidence anchor
+        — and is left for the summary."""
+        findings = [
+            {"file": "src/a.ts", "line": 267, "severity": "HIGH", "category": "Bug",
+             "issue": "bogus line", "line_out_of_range": True},
+            {"file": "src/c.ts", "line": 400, "severity": "HIGH", "category": "Bug",
+             "issue": "bogus line outside the diff", "out_of_diff": True,
+             "line_out_of_range": True,
+             "evidence": [{"file": "src/a.ts", "line": 2, "note": "caller"}]},
+            {"file": "b.ts", "line": 20, "severity": "HIGH", "category": "Bug",
+             "issue": "real inline"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="[]", stderr=""
+            )
+            rc = self._run(path)
+        assert rc == 0
+        posts = [
+            c for c in mock_run.call_args_list
+            if any("body=" in str(a) for a in c.args[0])
+        ]
+        assert [p for p in posts if "path=src/a.ts" in p.args[0] or "path=src/c.ts" in p.args[0]] == []
+        out = capsys.readouterr().out
+        assert "Posted 1" in out
+        assert "line-out-of-range=2" in out
+        assert "failed 0" in out
+
+    @staticmethod
+    def _pr_files_pages() -> str:
+        """``gh api --paginate`` output for ``pulls/{pr}/files``: two pages
+        printed back to back. ``src/b.ts`` (page 2) adds lines 11-12 under
+        a hunk starting at new line 10; line 13 is context, then a removal."""
+        page1 = [{"filename": "src/a.ts", "patch": "@@ -1,1 +1,2 @@\n a\n+b"}]
+        page2 = [{
+            "filename": "src/b.ts",
+            "patch": "@@ -10,3 +10,4 @@\n ctx\n+new1\n+new2\n ctx2\n-gone",
+        }]
+        return json.dumps(page1) + json.dumps(page2)
+
+    def test_out_of_diff_posts_inline_at_cited_diff_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """ISS-12737: an ``out_of_diff`` finding posts inline at the first
+        ``evidence[]`` location inside the PR diff, and the body opens with
+        the affected file:line."""
+        findings = [{
+            "file": "src/other.test.ts", "line": 40, "severity": "HIGH",
+            "category": "Bug", "issue": "stale mock", "out_of_diff": True,
+            "evidence": [
+                {"file": "src/other.test.ts", "line": 40, "claim": "mock"},
+                {"file": "src/b.ts", "line": 99, "claim": "outside hunk"},
+                {"file": "src/b.ts", "line": 12, "claim": "symbol deleted"},
+            ],
+        }]
+        path = _make_findings_file(tmp_path, findings)
+        existing = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        files = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=self._pr_files_pages(), stderr="",
+        )
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [existing, files]
+            rc = self._run(path, dry_run=True)
+        assert rc == 0
+        # 1 GET existing comments + 1 GET PR files; the dry-run POST makes no call.
+        assert mock_run.call_count == 2
+        out = capsys.readouterr().out
+        assert "POST comment src/b.ts:12" in out
+        assert "body=**Affected location:** `src/other.test.ts:40`" in out
+        assert "Posted 1" in out
+        assert "out-of-diff=0" in out
+
+    @pytest.mark.parametrize(("verdict", "label"), [
+        ("CONFIRMED", "caused by this change"),
+        ("DOWNGRADE", "caused by this change"),
+        ("TENTATIVE", "causation unconfirmed"),
+        (None, "causation unconfirmed"),
+    ])
+    def test_out_of_diff_label_follows_verifier_verdict(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+        verdict: str | None, label: str,
+    ) -> None:
+        """Only a verdict that upheld the finding lets the body claim this
+        change caused it."""
+        findings = [{
+            "file": "src/other.test.ts", "line": 40, "severity": "HIGH",
+            "category": "Bug", "issue": "stale mock", "out_of_diff": True,
+            "verifier_verdict": verdict,
+            "evidence": [{"file": "src/b.ts", "line": 12, "claim": "symbol deleted"}],
+        }]
+        path = _make_findings_file(tmp_path, findings)
+        existing = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        files = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=self._pr_files_pages(), stderr="",
+        )
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [existing, files]
+            rc = self._run(path, dry_run=True)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert f"`src/other.test.ts:40` (outside the diff — {label})" in out
+        assert "Posted 1" in out
+
+    def test_out_of_diff_without_diff_evidence_is_summary_only(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        findings = [
+            {"file": "src/other.ts", "line": 40, "severity": "HIGH",
+             "category": "Bug", "issue": "stale comment", "out_of_diff": True,
+             "evidence": [{"file": "src/b.ts", "line": 15, "claim": "removed line"}]},
+            {"file": "src/a.ts", "line": 2, "severity": "HIGH",
+             "category": "Bug", "issue": "real inline"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        existing = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        files = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=self._pr_files_pages(), stderr="",
+        )
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [existing, files]
+            rc = self._run(path, dry_run=True)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "src/other.ts" not in out.split("Posted")[0]
+        assert "POST comment src/a.ts:2" in out
+        assert "Posted 1" in out
+        assert "out-of-diff=1" in out
+        assert "failed 0" in out
+
+    def test_removed_file_posts_on_left_side(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """ISS-12737: a finding on a file the PR deletes posts with
+        ``side=LEFT`` (old-file line); other findings stay on RIGHT."""
+        findings = [
+            {"file": "src/gone.ts", "line": 40, "severity": "HIGH",
+             "category": "Bug", "issue": "public route deleted"},
+            {"file": "src/a.ts", "line": 2, "severity": "HIGH",
+             "category": "Bug", "issue": "real inline"},
+        ]
+        path = _make_findings_file(tmp_path, findings)
+        existing = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        pr_files = json.dumps([
+            {"filename": "src/gone.ts", "status": "removed",
+             "patch": "@@ -1,2 +0,0 @@\n-a\n-b"},
+            {"filename": "src/a.ts", "status": "modified",
+             "patch": "@@ -1,1 +1,2 @@\n a\n+b"},
+        ])
+        files = subprocess.CompletedProcess(args=[], returncode=0, stdout=pr_files, stderr="")
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [existing, files]
+            rc = self._run(path, dry_run=True)
+        assert rc == 0
+        # Dry-run prints "[dry-run] POST comment <path>:<line>: gh api ...".
+        posts = {
+            seg.split(": gh api", 1)[0]: seg
+            for seg in capsys.readouterr().out.split("[dry-run] ")
+            if seg.startswith("POST comment ")
+        }
+        assert set(posts) == {"POST comment src/gone.ts:40", "POST comment src/a.ts:2"}
+        assert "side=LEFT" in posts["POST comment src/gone.ts:40"]
+        assert "side=RIGHT" in posts["POST comment src/a.ts:2"]
+
+    def test_out_of_diff_anchors_on_deleted_file_old_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """ISS-12737: an ``out_of_diff`` finding whose evidence cites the
+        deleted declaration posts inline at that old-file line, LEFT side."""
+        findings = [{
+            "file": "src/caller.ts", "line": 7, "severity": "HIGH",
+            "category": "Bug", "issue": "imports deleted module", "out_of_diff": True,
+            "evidence": [
+                {"file": "src/gone.ts", "line": 9, "claim": "past the old file"},
+                {"file": "src/gone.ts", "line": 2, "claim": "export deleted"},
+            ],
+        }]
+        path = _make_findings_file(tmp_path, findings)
+        existing = subprocess.CompletedProcess(args=[], returncode=0, stdout="[]", stderr="")
+        pr_files = json.dumps([
+            {"filename": "src/gone.ts", "status": "removed",
+             "patch": "@@ -1,3 +0,0 @@\n-a\n-export b\n-c"},
+        ])
+        files = subprocess.CompletedProcess(args=[], returncode=0, stdout=pr_files, stderr="")
+        with patch("code_review_helpers.subprocess.run") as mock_run:
+            mock_run.side_effect = [existing, files]
+            rc = self._run(path, dry_run=True)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "POST comment src/gone.ts:2" in out
+        assert "side=LEFT" in out
+        assert "Posted 1" in out
+        assert "out-of-diff=0" in out
 
     def test_null_line_does_not_crash(self, tmp_path: Path) -> None:
         """PLN-719: schema permits ``line: int | None`` for system + pr_metadata
@@ -3835,8 +4187,8 @@ class TestCmdPostComments:
             rc = self._run(path)
         # Must succeed; the null-line finding is skipped, the inline finding posts.
         assert rc == 0
-        # 1 GET + 1 POST (null-line finding counted in `failed`, not posted)
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST (null-line finding counted in `failed`, not posted)
+        assert mock_run.call_count == 3
 
     def test_bool_line_does_not_post(self, tmp_path: Path) -> None:
         """`bool` is a subclass of `int` in Python, so a naive `isinstance(x, int)`
@@ -3854,8 +4206,8 @@ class TestCmdPostComments:
             )
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST (only c.ts:5 is a valid inline). True/False both skip.
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST (only c.ts:5 is a valid inline). True/False both skip.
+        assert mock_run.call_count == 3
 
     def test_missing_line_key_does_not_crash(self, tmp_path: Path) -> None:
         """A finding lacking the ``line`` key entirely also skips cleanly."""
@@ -3870,7 +4222,7 @@ class TestCmdPostComments:
             )
             rc = self._run(path)
         assert rc == 0
-        assert mock_run.call_count == 2
+        assert mock_run.call_count == 3
 
     def test_string_line_is_coerced_to_int(self, tmp_path: Path) -> None:
         """The original ``int(finding.get("line", 0))`` coerced legacy
@@ -3892,8 +4244,8 @@ class TestCmdPostComments:
             )
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST — string "42" must coerce to 42 and post inline.
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST — string "42" must coerce to 42 and post inline.
+        assert mock_run.call_count == 3
 
     def test_garbage_string_line_does_not_crash(self, tmp_path: Path) -> None:
         """A non-numeric string ``"line": "abc"`` would have crashed the
@@ -3912,8 +4264,8 @@ class TestCmdPostComments:
             )
             rc = self._run(path)
         assert rc == 0
-        # 1 GET + 1 POST (garbage skipped, b.ts:10 posts)
-        assert mock_run.call_count == 2
+        # 2 GETs + 1 POST (garbage skipped, b.ts:10 posts)
+        assert mock_run.call_count == 3
 
     def test_inline_false_skipped(self, tmp_path: Path) -> None:
         findings = [
@@ -6256,6 +6608,105 @@ class TestCacheUpdatePartitionsFile:
         assert "src/app.test.ts" in manifest
 
 
+class TestCacheUpdateOutOfDiff:
+    """ISS-12737: a BHA finding on a file outside the diff is cached under
+    diff files, so a cache hit brings it back — on both cache paths."""
+
+    _OUT_OF_DIFF = {
+        "file": "src/other.test.ts", "line": 40, "category": "Correctness",
+        "severity": "HIGH", "issue": "stale mock",
+    }
+
+    @staticmethod
+    def _round_trip(
+        tmp_path: Path, global_cache: int, finding: dict[str, Any],
+        check_files: list[str] | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """cache-update a two-file partition, then cache-check ``check_files``
+        (default: the same diff)."""
+        import argparse
+
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        bha_dir = tmp_path / "bha"
+        bha_dir.mkdir()
+        out = tmp_path / "out"
+        out.mkdir()
+        partitions_file = tmp_path / "partitions.json"
+        partitions_file.write_text(json.dumps({"partitions": [
+            {"id": 0, "files": [{"file": "src/a.ts"}, {"file": "src/b.ts"}]},
+        ]}))
+        (bha_dir / "agent_bha_p0.json").write_text(json.dumps({"findings": [finding]}))
+        diff_path = bha_dir / "diff_data.json"
+        diff_path.write_text(json.dumps(_make_cache_diff_data(files=["src/a.ts", "src/b.ts"])))
+        common = {
+            "cache_dir": str(cache_dir), "diff_data": str(diff_path),
+            "prompt_hash": "abc123", "model_id": "opus",
+            "schema_version": 2 if global_cache else 1,
+            "global_cache": global_cache, "context_key": "ctx123",
+        }
+        cmd_cache_update(argparse.Namespace(
+            **common, bha_dir=str(bha_dir), reviewed_files=[],
+            partitions_file=str(partitions_file),
+        ))
+        manifest = _load_manifest(cache_dir)
+        if check_files is not None:
+            diff_path.write_text(json.dumps(_make_cache_diff_data(files=check_files)))
+        cmd_cache_check(argparse.Namespace(**common, output_dir=str(out)))
+        cached = json.loads((out / "agent_cached_bha.json").read_text())["findings"]
+        return manifest, cached
+
+    @staticmethod
+    def _stored_under(manifest: dict[str, Any], global_cache: int) -> set[str]:
+        def findings_of(slot: dict[str, Any]) -> list[Any]:
+            if global_cache:
+                return [f for entry in slot.values() for f in entry["findings"]]
+            return slot["findings"]
+        return {fp for fp, slot in manifest.items() if findings_of(slot)}
+
+    @pytest.mark.parametrize("global_cache", [0, 1])
+    def test_filed_under_cited_diff_file(
+        self, tmp_path: Path, global_cache: int,
+    ) -> None:
+        finding = {**self._OUT_OF_DIFF, "evidence": [
+            {"file": "src/unrelated.ts", "line": 1, "claim": "not in diff"},
+            {"file": "src/b.ts", "line": 7, "claim": "symbol deleted here"},
+        ]}
+        manifest, cached = self._round_trip(tmp_path, global_cache, finding)
+        assert self._stored_under(manifest, global_cache) == {"src/b.ts"}
+        assert cached == [finding]
+
+    @pytest.mark.parametrize("global_cache", [0, 1])
+    def test_uncited_filed_under_every_partition_file(
+        self, tmp_path: Path, global_cache: int,
+    ) -> None:
+        from code_review_helpers import _merge_duplicates
+
+        manifest, cached = self._round_trip(tmp_path, global_cache, dict(self._OUT_OF_DIFF))
+        assert self._stored_under(manifest, global_cache) == {"src/a.ts", "src/b.ts"}
+        # One copy per partition file comes back; validate's dedup collapses them.
+        assert cached == [self._OUT_OF_DIFF, self._OUT_OF_DIFF]
+        discarded: list[dict[str, Any]] = []
+        assert _merge_duplicates(cached, discarded) == [self._OUT_OF_DIFF]
+        assert [d["reason"] for d in discarded] == ["DISCARD_DUPLICATE"]
+
+    @pytest.mark.parametrize("global_cache", [0, 1])
+    def test_not_served_once_its_file_enters_the_diff(
+        self, tmp_path: Path, global_cache: int,
+    ) -> None:
+        """The author fixes the out-of-diff file, so it joins the diff while
+        src/a.ts and src/b.ts stay unchanged: their cache hits must not bring
+        back the finding about the line that was just fixed."""
+        _, cached = self._round_trip(
+            tmp_path, global_cache, dict(self._OUT_OF_DIFF),
+            check_files=["src/a.ts", "src/b.ts", "src/other.test.ts"],
+        )
+        assert cached == []
+        result = json.loads((tmp_path / "out" / "cache_result.json").read_text())
+        assert result["cached_files"] == ["src/a.ts", "src/b.ts"]
+        assert result["uncached_files"] == ["src/other.test.ts"]
+
+
 # ---------------------------------------------------------------------------
 # Cache status message
 # ---------------------------------------------------------------------------
@@ -6307,6 +6758,35 @@ def _commit_file(repo: Path, name: str, content: str) -> str:
     git_fixture(repo, "add", "-A")
     git_fixture(repo, "commit", "--quiet", "-m", f"add {name}")
     return git_fixture(repo, "rev-parse", "HEAD").strip()
+
+
+def _make_review_root(root: Path, files: dict[str, str] | None = None) -> str:
+    """Build a real committed git worktree usable as a ``review_root``.
+
+    The dispatch stages refuse to run against a root they cannot prove, so
+    tests that are about something else need a genuine one. Returns the
+    realpath, which is what the production resolver records.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    git_fixture(root, "init", "--quiet", "-b", "main")
+    for name, content in (files or {"seed.txt": "seed\n"}).items():
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+    git_fixture(root, "add", "-A")
+    git_fixture(root, "commit", "--quiet", "-m", "seed")
+    return os.path.realpath(str(root))
+
+
+def _seed_scope_review_root(cr_dir: Path, root: Path) -> str:
+    """Write *cr_dir*/scope.json pointing at a fresh provable review root."""
+    cr_dir.mkdir(parents=True, exist_ok=True)
+    resolved = _make_review_root(root)
+    (cr_dir / "scope.json").write_text(json.dumps({
+        "review_root": resolved,
+        "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+    }))
+    return resolved
 
 
 def _build_stale_base_repo(
@@ -6709,6 +7189,12 @@ class TestResolveScope:
             # base resolution settles on the remote ref. Empty status → clean;
             # empty worktree list → no GC. Base-selection behavior itself is
             # covered against real repos in TestResolveDiffBase.
+            # Review-root resolution: resolve-scope always records the root of
+            # the checkout the diff came from.
+            if cmd_list[-1] == "--show-toplevel":
+                return subprocess.CompletedProcess(
+                    args=cmd, returncode=0, stdout="/repo\n",
+                )
             if cmd_list[:3] == ["git", "rev-parse", "--verify"]:
                 return subprocess.CompletedProcess(
                     args=cmd, returncode=0, stdout="deadbeefcafe\n",
@@ -6856,16 +7342,443 @@ class TestResolveScope:
         assert result["pr_auto_detected"] is True
 
 
-class TestResolveScopeWorktree:
-    """PR-head worktree isolation for local PR review (cmd_resolve_scope).
+_MOCK_TOPLEVEL = "/repo"
 
-    Local ``/code-review <PR>`` computes its diff from the fetched remote
-    refs but reviewer/verifier agents read source via Read/Grep against the
-    working tree. When the operator is on a different branch, those reads
-    see the wrong content and the verifier rejects every finding on the
-    existence check. These tests pin that resolve-scope materializes a
-    detached worktree at the PR head SHA (surfaced as ``review_root``)
-    exactly when it is needed — and degrades cleanly otherwise.
+
+class TestISS7382ReviewRootDispatch:
+    """ISS-7382 — reviewers resolved source paths against the wrong checkout.
+
+    A reviewer/verifier Task inherits the INVOKING SESSION's working
+    directory. Every worktree-based lane runs ``/code-review`` from a
+    non-session cwd, so "read the working tree" pointed the whole fleet at a
+    different checkout than the diff — and a reviewer that reads unrelated
+    code returns a confident clean report, which is the signal a lane uses to
+    decide it is done. These pin the dispatch-layer fix.
+    """
+
+    @staticmethod
+    def _resolve_scope_in(
+        repo: Path, tmp_path: Path, scope_args: str = "",
+    ) -> dict[str, Any]:
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_resolve_scope
+
+        setup_path = tmp_path / "setup.json"
+        setup_path.write_text(json.dumps({"current_branch": "feat-x"}))
+        old_stdout = _sys.stdout
+        old_cwd = os.getcwd()
+        _sys.stdout = io.StringIO()
+        try:
+            os.chdir(repo)
+            ns = argparse.Namespace(
+                mode="local", pr_number=None, scope_args=scope_args,
+                base_ref_override=None, setup_json=str(setup_path),
+                hygiene_only="false",
+            )
+            with patch("code_review_helpers._detect_open_pr", return_value=None):
+                rc = cmd_resolve_scope(ns)
+            _sys.stdout.seek(0)
+            captured = _sys.stdout.read()
+        finally:
+            _sys.stdout = old_stdout
+            os.chdir(old_cwd)
+        assert rc == 0, f"resolve-scope failed: rc={rc}"
+        return json.loads(captured)
+
+    @staticmethod
+    def _derive_spawn_spec_in(cwd: Path, cr_dir: Path) -> int:
+        """Run the reviewer-dispatch stage with the process cwd set to *cwd*."""
+        import io
+        import sys as _sys
+
+        from code_review_helpers import (
+            _write_coverage_section,
+            _write_spawn_section,
+            cmd_derive_spawn_spec,
+        )
+
+        _write_coverage_section(cr_dir, "final", {
+            "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
+            "best_effort": [],
+            "budget": {"total_cap": 20, "bha_partitions": 1},
+        })
+        _write_spawn_section(cr_dir, "route", {"fast_path": False, "models": {}})
+        partitions = cr_dir / "partitions.json"
+        partitions.write_text(json.dumps({
+            "partitions": [
+                {"id": 0, "files": [{"file": "src/a.py"}], "is_test_only": False},
+            ],
+        }))
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir), partitions=str(partitions),
+        )
+        old_cwd = os.getcwd()
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            os.chdir(cwd)
+            return cmd_derive_spawn_spec(ns)
+        finally:
+            _sys.stdout = old_stdout
+            os.chdir(old_cwd)
+
+    def test_branch_review_pins_the_invoking_checkout_as_review_root(
+        self, tmp_path: Path,
+    ) -> None:
+        # AC1: the root is decided once, at the dispatch layer, from the
+        # checkout that produced the diff — not left to each agent's cwd.
+        repo = tmp_path / "lane_worktree"
+        _build_stale_base_repo(repo)
+        expected_sha = git_fixture(repo, "rev-parse", "HEAD").strip()
+
+        scope = self._resolve_scope_in(repo, tmp_path)
+
+        assert scope["review_root"] == os.path.realpath(str(repo))
+        assert scope["review_root_sha"] == expected_sha
+
+    def test_resolve_scope_pins_the_index_tree_only_for_staged_scope(
+        self, tmp_path: Path,
+    ) -> None:
+        # A staged review diffs the index against HEAD, so no commit pins what
+        # it reviews; resolve-scope records the index as a tree object. Every
+        # other scope kind is pinned by review_root_sha and carries no tree.
+        repo = tmp_path / "lane_worktree"
+        _build_stale_base_repo(repo)
+        (repo / "MINE.txt").write_text("staged edit\n")
+        git_fixture(repo, "add", "MINE.txt")
+
+        staged = self._resolve_scope_in(repo, tmp_path, scope_args="staged")
+        branch = self._resolve_scope_in(repo, tmp_path)
+
+        assert staged["scope_kind"] == "staged"
+        assert staged["review_root_tree"] == git_fixture(repo, "write-tree").strip()
+        assert staged["review_root_tree"] != git_fixture(
+            repo, "rev-parse", "HEAD^{tree}",
+        ).strip()
+        assert branch["scope_kind"] == "branch"
+        assert "review_root_tree" not in branch
+
+    def test_reviewer_dispatch_against_a_mismatched_checkout_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # AC3: the run must ERROR, not emit a spec that spawns reviewers at a
+        # checkout without the diff (which reports zero findings).
+        lane = tmp_path / "lane_worktree"
+        _build_stale_base_repo(lane)
+        session = Path(_make_review_root(tmp_path / "session_checkout"))
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        # No review_root_sha: this pins the CONTAINMENT check alone, so the
+        # assertion cannot be satisfied by the commit check instead.
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(session),
+        }))
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["MINE.txt"],
+            "file_statuses": {"MINE.txt": "added"},
+        }))
+
+        rc = self._derive_spawn_spec_in(session, cr_dir)
+
+        assert rc == 3
+        spawn = json.loads((cr_dir / "spawn.json").read_text())
+        assert "spec" not in spawn, "a refused root must not publish a spawn spec"
+
+    def test_reviewer_dispatch_against_the_reviewed_checkout_succeeds(
+        self, tmp_path: Path,
+    ) -> None:
+        # Sibling of the case above in the opposite state. Without it, rc == 1
+        # there would also be satisfied by a stage that refuses every root.
+        lane = tmp_path / "lane_worktree"
+        _build_stale_base_repo(lane)
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(lane),
+            "review_root_sha": git_fixture(lane, "rev-parse", "HEAD").strip(),
+        }))
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["MINE.txt"],
+            "file_statuses": {"MINE.txt": "added"},
+        }))
+
+        # cwd is the WRONG checkout on purpose: the spec must still carry the
+        # lane worktree, because the root comes from scope.json, not cwd.
+        session = Path(_make_review_root(tmp_path / "session_checkout"))
+        rc = self._derive_spawn_spec_in(session, cr_dir)
+
+        assert rc == 0
+        spec = json.loads((cr_dir / "spawn.json").read_text())["spec"]
+        assert spec["review_root"] == os.path.realpath(str(lane))
+        assert spec["agents"], "expected the reviewer fleet to be described"
+
+    def test_empty_review_root_is_a_hard_error_not_a_cwd_fallback(
+        self, tmp_path: Path,
+    ) -> None:
+        # The pre-fix artifact: resolve-scope emitted review_root "" for every
+        # branch review, and every agent then read its own cwd.
+        lane = tmp_path / "lane_worktree"
+        _build_stale_base_repo(lane)
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        (cr_dir / "scope.json").write_text(json.dumps({"review_root": ""}))
+
+        rc = self._derive_spawn_spec_in(lane, cr_dir)
+
+        assert rc == 3
+        spawn = json.loads((cr_dir / "spawn.json").read_text())
+        assert "spec" not in spawn
+
+    def test_positional_revision_range_is_rejected(self, tmp_path: Path) -> None:
+        # `/code-review origin/main...HEAD` was folded into a `--` pathspec
+        # that matches nothing, so the review ran on an empty diff and
+        # reported clean.
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_resolve_scope
+
+        repo = tmp_path / "repo"
+        _build_stale_base_repo(repo)
+        setup_path = tmp_path / "setup.json"
+        setup_path.write_text(json.dumps({"current_branch": "feat-x"}))
+
+        old_stdout = _sys.stdout
+        old_cwd = os.getcwd()
+        _sys.stdout = io.StringIO()
+        try:
+            os.chdir(repo)
+            rc = cmd_resolve_scope(argparse.Namespace(
+                mode="local", pr_number=None, scope_args="origin/main...HEAD",
+                base_ref_override=None, setup_json=str(setup_path),
+                hygiene_only="false",
+            ))
+            _sys.stdout.seek(0)
+            captured = _sys.stdout.read()
+        finally:
+            _sys.stdout = old_stdout
+            os.chdir(old_cwd)
+
+        assert rc == 1
+        assert captured.strip() == "", "a rejected scope must not emit a scope.json payload"
+
+    def test_positional_bare_ref_is_rejected(self, tmp_path: Path) -> None:
+        # `/code-review origin/main` carries no "..", so a range-shaped check
+        # alone would let it through — and it is the same defect: a ref folded
+        # into a pathspec matches nothing and the review reports clean.
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_resolve_scope
+
+        repo = tmp_path / "repo"
+        _build_stale_base_repo(repo)
+        setup_path = tmp_path / "setup.json"
+        setup_path.write_text(json.dumps({"current_branch": "feat-x"}))
+
+        old_stdout = _sys.stdout
+        old_cwd = os.getcwd()
+        _sys.stdout = io.StringIO()
+        try:
+            os.chdir(repo)
+            rc = cmd_resolve_scope(argparse.Namespace(
+                mode="local", pr_number=None, scope_args="origin/main",
+                base_ref_override=None, setup_json=str(setup_path),
+                hygiene_only="false",
+            ))
+            _sys.stdout.seek(0)
+            captured = _sys.stdout.read()
+        finally:
+            _sys.stdout = old_stdout
+            os.chdir(old_cwd)
+
+        assert rc == 1
+        assert captured.strip() == ""
+
+    def test_positional_nonexistent_nonref_is_accepted(
+        self, tmp_path: Path,
+    ) -> None:
+        # A pathspec that matches nothing yet (a glob, a deleted file) is not
+        # a ref, so the guard must not refuse it — otherwise "reject every
+        # positional token" would satisfy the two rejection cases above.
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_resolve_scope
+
+        repo = tmp_path / "repo"
+        _build_stale_base_repo(repo)
+        setup_path = tmp_path / "setup.json"
+        setup_path.write_text(json.dumps({"current_branch": "feat-x"}))
+
+        old_stdout = _sys.stdout
+        old_cwd = os.getcwd()
+        _sys.stdout = io.StringIO()
+        try:
+            os.chdir(repo)
+            rc = cmd_resolve_scope(argparse.Namespace(
+                mode="local", pr_number=None, scope_args="src/*.ts",
+                base_ref_override=None, setup_json=str(setup_path),
+                hygiene_only="false",
+            ))
+            _sys.stdout.seek(0)
+            scope = json.loads(_sys.stdout.read())
+        finally:
+            _sys.stdout = old_stdout
+            os.chdir(old_cwd)
+
+        assert rc == 0
+        assert scope["path_filter"] == "-- src/*.ts"
+
+    def test_positional_file_paths_are_still_accepted(
+        self, tmp_path: Path,
+    ) -> None:
+        # Sibling of the rejection above: a real path must keep working, so
+        # the guard cannot be satisfied by refusing every positional arg.
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_resolve_scope
+
+        repo = tmp_path / "repo"
+        _build_stale_base_repo(repo)
+        setup_path = tmp_path / "setup.json"
+        setup_path.write_text(json.dumps({"current_branch": "feat-x"}))
+
+        old_stdout = _sys.stdout
+        old_cwd = os.getcwd()
+        _sys.stdout = io.StringIO()
+        try:
+            os.chdir(repo)
+            rc = cmd_resolve_scope(argparse.Namespace(
+                mode="local", pr_number=None, scope_args="MINE.txt",
+                base_ref_override=None, setup_json=str(setup_path),
+                hygiene_only="false",
+            ))
+            _sys.stdout.seek(0)
+            scope = json.loads(_sys.stdout.read())
+        finally:
+            _sys.stdout = old_stdout
+            os.chdir(old_cwd)
+
+        assert rc == 0
+        assert scope["path_filter"] == "-- MINE.txt"
+        assert scope["scope_kind"] == "file_paths"
+
+    def test_github_merge_ref_checkout_passes_the_dispatch_re_proof(
+        self, tmp_path: Path,
+    ) -> None:
+        # The default `actions/checkout` for a `pull_request` event is the PR's
+        # merge ref: HEAD merges the PR head into the base, so it never equals
+        # the head. review_root_sha must be that MERGE commit, because the
+        # dispatch drift check compares the diff's files against it. The base
+        # also edited the PR's file here (a clean merge), so src/a.py at the
+        # merge differs from the PR head: recording the head instead would
+        # refuse this correct checkout as drifted.
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_parse_diff, cmd_resolve_scope
+
+        repo = tmp_path / "runner_checkout"
+        lines = [f"line {i}\n" for i in range(20)]
+        _make_review_root(repo, {"src/a.py": "".join(lines)})
+        git_fixture(repo, "checkout", "--quiet", "-b", "feat-x")
+        pr_lines = list(lines)
+        pr_lines[15] = "pr change\n"
+        pr_head = _commit_file(repo, "src/a.py", "".join(pr_lines))
+        git_fixture(repo, "checkout", "--quiet", "main")
+        base_lines = list(lines)
+        base_lines[2] = "base change\n"
+        base_tip = _commit_file(repo, "src/a.py", "".join(base_lines))
+        git_fixture(repo, "update-ref", "refs/remotes/origin/main", base_tip)
+        git_fixture(repo, "update-ref", "refs/remotes/origin/feat-x", pr_head)
+        git_fixture(repo, "checkout", "--quiet", "--detach", base_tip)
+        git_fixture(repo, "merge", "--quiet", "--no-ff", "--no-edit", pr_head)
+        merge_sha = git_fixture(repo, "rev-parse", "HEAD").strip()
+
+        setup_path = tmp_path / "setup.json"
+        setup_path.write_text(json.dumps({"current_branch": "HEAD"}))
+        real_run = subprocess.run
+
+        def _gh_metadata_only(
+            cmd: list[str], *args: Any, **kwargs: Any,
+        ) -> subprocess.CompletedProcess[Any]:
+            # `gh pr view` answers with the PR's own base and head, and there
+            # is no remote to fetch from. Every other git call runs for real.
+            if cmd[:2] == ["gh", "pr"]:
+                return subprocess.CompletedProcess(cmd, 0, "main\nfeat-x\n", "")
+            if cmd[:2] == ["git", "fetch"]:
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            return real_run(cmd, *args, **kwargs)
+
+        old_stdout, old_cwd = _sys.stdout, os.getcwd()
+        _sys.stdout = io.StringIO()
+        try:
+            os.chdir(repo)
+            with patch(
+                "code_review_helpers.subprocess.run", side_effect=_gh_metadata_only,
+            ):
+                rc = cmd_resolve_scope(argparse.Namespace(
+                    mode="github", pr_number=42, scope_args="",
+                    base_ref_override=None, setup_json=str(setup_path),
+                    hygiene_only="false",
+                ))
+            scope_out = _sys.stdout.getvalue()
+            _sys.stdout = io.StringIO()
+            parse_rc = cmd_parse_diff(argparse.Namespace(
+                scope="origin/main...origin/feat-x", workdir=str(repo),
+            ))
+            diff_out = _sys.stdout.getvalue()
+        finally:
+            _sys.stdout = old_stdout
+            os.chdir(old_cwd)
+
+        assert rc == 0, "github mode refused a genuine merge-ref checkout"
+        scope = json.loads(scope_out)
+        assert scope["diff_scope"] == "origin/main...origin/feat-x"
+        assert scope["review_root"] == os.path.realpath(str(repo))
+        assert scope["review_root_sha"] == merge_sha
+        assert scope["review_root_sha"] != pr_head
+        assert scope["head_sha"] == ""
+        assert scope["worktree_path"] == ""
+        assert parse_rc == 0
+        diff_data = json.loads(diff_out)
+        assert diff_data["files_to_review"] == ["src/a.py"]
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        (cr_dir / "scope.json").write_text(json.dumps(scope))
+        (cr_dir / "diff_data.json").write_text(json.dumps(diff_data))
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        dispatch_rc, _manifest = _run_verify_prepare(
+            tmp_path, [finding], cr_dir=cr_dir,
+        )
+
+        assert dispatch_rc == 0
+
+
+class TestResolveScopeWorktree:
+    """PR-head source handling for PR review (cmd_resolve_scope).
+
+    ``/code-review <PR>`` computes its diff from the fetched remote refs but
+    reviewer/verifier agents read source via Read/Grep against the working
+    tree. When that tree is not the PR head, those reads see the wrong
+    content and the verifier rejects every finding on the existence check.
+
+    The two modes answer that differently and the cases below are split
+    accordingly. LOCAL mode ISOLATES: it materializes a detached worktree at
+    the PR head SHA (surfaced as ``review_root``) exactly when it is needed,
+    and aborts when it cannot. GITHUB mode VERIFIES AND REFUSES (ISS-8769):
+    it creates no worktree and emits no ``head_sha``, and its ``review_root``
+    is the invoking checkout it verified, but it will not proceed against a
+    tree it cannot establish as the PR's source. Coverage is deliberately NOT symmetric — the local-only
+    cases (hygiene-only, worktree-add failure) have no github analogue
+    because github mode creates no worktree.
     """
 
     def _invoke(
@@ -6879,6 +7792,11 @@ class TestResolveScopeWorktree:
         hygiene_only: str = "false",
         worktree_add_rc: int = 0,
         dirty: bool = False,
+        merge_parent: str = "",
+        first_parent: str = "main000",
+        extra_parent: str = "",
+        gh_stdout: str | None = "main\nfeat-x\n",
+        base_ref_override: str | None = None,
     ) -> tuple[int, str, list[list[str]]]:
         """Run cmd_resolve_scope with mocked git; return (rc, stdout, git_calls)."""
         import io
@@ -6896,17 +7814,55 @@ class TestResolveScopeWorktree:
             calls.append(cl)
             joined = " ".join(cl)
             if cl[:2] == ["gh", "pr"] and "baseRefName" in joined:
+                # `None` models `gh pr view` failing (auth, network, no such
+                # PR); `_resolve_pr_scope` then guesses head_ref from
+                # setup.json's `other-branch`.
+                if gh_stdout is None:
+                    raise subprocess.CalledProcessError(1, cl)
                 return subprocess.CompletedProcess(
-                    args=cl, returncode=0, stdout="main\nfeat-x\n",
+                    args=cl, returncode=0, stdout=gh_stdout,
                 )
             if cl[:2] == ["git", "fetch"]:
                 return subprocess.CompletedProcess(args=cl, returncode=0, stdout="")
+            if cl[-1] == "--show-toplevel":
+                return subprocess.CompletedProcess(
+                    args=cl, returncode=0, stdout=_MOCK_TOPLEVEL + "\n",
+                )
             if cl[:3] == ["git", "rev-parse", "--verify"]:
                 ref = cl[-1]
-                sha = {"origin/feat-x": head_sha, "HEAD": work_head}.get(ref, "")
+                # The operator's `other-branch` is pushed and checked out, so a
+                # guessed `origin/other-branch` head resolves to HEAD itself.
+                sha = {
+                    "origin/feat-x": head_sha,
+                    "origin/other-branch": work_head,
+                    "HEAD": work_head,
+                }.get(ref, "")
                 return subprocess.CompletedProcess(
-                    args=cl, returncode=0, stdout=(sha + "\n") if sha else "",
+                    args=cl,
+                    returncode=0 if sha else 1,
+                    stdout=(sha + "\n") if sha else "",
                 )
+            if cl[:3] == ["git", "rev-list", "--parents"]:
+                # "<HEAD> <parents...>". HEAD is a merge only when
+                # `merge_parent` (its second parent) is set: the PR's merge ref
+                # shape (refs/pull/N/merge, the DEFAULT `actions/checkout` for a
+                # `pull_request` event), with `first_parent` as the base tip it
+                # merged into and `extra_parent` making it an octopus.
+                tokens = (
+                    [work_head, first_parent, merge_parent, extra_parent]
+                    if merge_parent else [work_head, first_parent]
+                )
+                return subprocess.CompletedProcess(
+                    args=cl, returncode=0,
+                    stdout=" ".join(t for t in tokens if t) + "\n",
+                )
+            if cl[:3] == ["git", "merge-base", "--is-ancestor"]:
+                # Only `main000` is on the PR's base branch (`gh` says `main`).
+                # `_run_git` relies on check=True raising for git's non-zero
+                # exit, which a mocked subprocess.run does not do by itself.
+                if cl[3:] == ["main000", "origin/main"]:
+                    return subprocess.CompletedProcess(args=cl, returncode=0, stdout="")
+                raise subprocess.CalledProcessError(1, cl)
             if cl[:2] == ["git", "status"]:
                 return subprocess.CompletedProcess(
                     args=cl, returncode=0,
@@ -6929,7 +7885,7 @@ class TestResolveScopeWorktree:
         try:
             ns = argparse.Namespace(
                 mode=mode, pr_number=pr_number, scope_args="",
-                base_ref_override=None, setup_json=str(setup_path),
+                base_ref_override=base_ref_override, setup_json=str(setup_path),
                 hygiene_only=hygiene_only,
             )
             with patch(
@@ -6966,8 +7922,10 @@ class TestResolveScopeWorktree:
     ) -> None:
         result = self._run(head_sha="same999", work_head="same999", tmp_path=tmp_path)
         assert result["head_sha"] == "same999"
-        assert result["review_root"] == ""
         assert result["worktree_path"] == ""
+        # No worktree is needed, but the root is still pinned to the checkout
+        # the diff came from — agents must never be left to infer it.
+        assert result["review_root"] == _MOCK_TOPLEVEL
 
     def test_dirty_tree_isolates_even_when_head_matches(self, tmp_path: Path) -> None:
         # HEAD == PR head but the tree has uncommitted changes → the working
@@ -6986,32 +7944,224 @@ class TestResolveScopeWorktree:
             head_sha="aaa111", work_head="bbb222",
             hygiene_only="true", tmp_path=tmp_path,
         )
-        assert result["review_root"] == ""
+        assert result["review_root"] == _MOCK_TOPLEVEL
         assert result["worktree_path"] == ""
 
     def test_no_worktree_in_github_mode_no_pr(self, tmp_path: Path) -> None:
-        # GitHub CI without a PR number → scope_kind "github_pending"; the
-        # guard fails on both mode and scope_kind.
+        # GitHub mode without a PR number -> scope_kind "github_pending". There
+        # is no PR head to check a tree against, so neither the local isolation
+        # block nor the github verification block applies.
         result = self._run(
             head_sha="aaa111", work_head="bbb222",
             mode="github", pr_number=None, tmp_path=tmp_path,
         )
-        assert result["review_root"] == ""
+        assert result["review_root"] == _MOCK_TOPLEVEL
         assert result["worktree_path"] == ""
 
-    def test_no_worktree_github_mode_with_pr_scope(self, tmp_path: Path) -> None:
-        # GitHub mode WITH a PR number → scope_kind "pr", so the no-worktree
-        # behavior is carried solely by the ``mode == "local"`` guard. This
-        # isolates the mode check from the scope_kind check, so a regression
-        # that dropped the mode guard would surface here (the runner already
-        # checks out the PR head in CI).
-        result = self._run(
+    def test_github_mode_refuses_a_tree_that_is_not_the_pr_head(
+        self, tmp_path: Path,
+    ) -> None:
+        """ISS-8769 — `--github` outside CI must not review the wrong tree.
+
+        This case previously asserted the opposite: no worktree, rc 0, on a
+        tree whose HEAD is not the PR head. That expectation was wrong rather
+        than merely outdated — it encoded "github mode means a CI runner
+        already holding the PR head" while setting up the exact state where
+        that premise fails, so it pinned the defect. `--github` selects
+        file-based handoff output; it does not declare "I am inside GitHub
+        Actions", and running it from a developer machine is supported.
+
+        The refusal is the whole behavior change: no worktree is created and
+        `review_root` stays the invoking checkout in github mode, so no agent
+        is redirected. The two shapes a real runner produces are accepted by the two
+        cases below, which is what keeps this from breaking CI.
+        """
+        rc, _out, calls = self._invoke(
             head_sha="aaa111", work_head="bbb222",
             mode="github", pr_number=42, tmp_path=tmp_path,
         )
+        assert rc == 1
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
+    def test_github_mode_accepts_a_head_checkout(self, tmp_path: Path) -> None:
+        # Runner shape 1: `actions/checkout` with an explicit `ref: <head sha>`
+        # (what closedloop-ai/symphony-alpha's claude-code-review.yml does).
+        # The first positive control for the refusal above.
+        rc, out, calls = self._invoke(
+            head_sha="same999", work_head="same999",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 0
+        result = json.loads(out)
         assert result["scope_kind"] == "pr"
-        assert result["review_root"] == ""
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+        # Github mode creates no worktree and emits no `head_sha`: `head_sha`
+        # re-routes `_file_content_hash` and the inline-comment `commit_id`, so
+        # leaving it empty keeps both reading the verified working tree.
+        # `review_root` is the invoking checkout, as for every non-isolated scope.
+        assert result["review_root"] == _MOCK_TOPLEVEL
         assert result["worktree_path"] == ""
+        assert result["head_sha"] == ""
+
+    def test_github_mode_accepts_the_prs_merge_ref(self, tmp_path: Path) -> None:
+        # Runner shape 2, and the DEFAULT one: `actions/checkout` on a
+        # `pull_request` event checks out `refs/pull/N/merge`, a two-parent
+        # merge of the PR head (second parent) into the base tip GitHub merged
+        # into (first parent: the mock's default `main000`, on origin/main).
+        # HEAD therefore never equals the head SHA, and a check that only
+        # compared HEAD would refuse every such run — this case is what stops
+        # that.
+        rc, out, calls = self._invoke(
+            head_sha="aaa111", work_head="merge777", merge_parent="aaa111",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 0
+        assert json.loads(out)["review_root"] == _MOCK_TOPLEVEL
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
+    def test_github_merge_ref_records_the_pr_head_for_provenance(
+        self, tmp_path: Path,
+    ) -> None:
+        # ISS-9137: github mode leaves ``head_sha`` empty, so the PR head the
+        # verification block resolved is recorded as ``pr_head_sha``, and the
+        # summary line built from this resolved scope names both commits.
+        from code_review_helpers import _render_reviewed_commit_line, _review_provenance
+
+        head, merge = "a" * 40, "e" * 40
+        with patch("code_review_helpers._git_head_at", return_value=merge):
+            rc, out, _calls = self._invoke(
+                head_sha=head, work_head=merge, merge_parent=head,
+                mode="github", pr_number=42, tmp_path=tmp_path,
+            )
+        assert rc == 0
+        scope = json.loads(out)
+        assert (scope["head_sha"], scope["pr_head_sha"], scope["review_root_sha"]) == (
+            "", head, merge,
+        )
+        assert _render_reviewed_commit_line(_review_provenance(tmp_path, scope)) == (
+            "**Reviewed commit:** `eeeeeeeeeeee` (PR head is `aaaaaaaaaaaa`)"
+        )
+
+    def test_github_mode_refuses_a_merge_ref_for_a_different_head(
+        self, tmp_path: Path,
+    ) -> None:
+        # The merge-ref arm must check WHICH head it merged, not merely that
+        # HEAD has a second parent. Without this, any merge commit at all would
+        # be accepted as this PR's source.
+        rc, _out, _calls = self._invoke(
+            head_sha="aaa111", work_head="merge777", merge_parent="cccc33",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 1
+
+    def test_github_mode_refuses_a_merge_whose_first_parent_is_not_on_the_base(
+        self, tmp_path: Path,
+    ) -> None:
+        # Taking the PR head as second parent does not make a merge the PR's
+        # merge ref: a local `git merge` of the head into an unrelated branch
+        # has the same second parent, and its tree carries that branch's code,
+        # which this PR's diff does not contain. The first parent must be on
+        # the PR's base branch.
+        rc, _out, calls = self._invoke(
+            head_sha="aaa111", work_head="merge777", merge_parent="aaa111",
+            first_parent="side444",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 1
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
+    def test_github_mode_refuses_an_octopus_merge_of_the_head(
+        self, tmp_path: Path,
+    ) -> None:
+        # Base tip first, PR head second, and a third branch folded in. GitHub's
+        # merge ref has exactly two parents; a second-parent check alone would
+        # accept this and reviewers would read the third branch's code as the
+        # PR's.
+        rc, _out, calls = self._invoke(
+            head_sha="aaa111", work_head="merge777", merge_parent="aaa111",
+            extra_parent="side444",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 1
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
+    def test_github_mode_merge_check_uses_the_pr_base_under_a_base_override(
+        self, tmp_path: Path,
+    ) -> None:
+        # `--base develop` re-points the review diff, but GitHub built the merge
+        # ref against the PR's own base (`main` in its metadata), so that is the
+        # branch the first parent must be on. `main000` is on origin/main and
+        # NOT on origin/develop; checking against the overridden base would
+        # refuse every genuine merge-ref run that passes `--base`.
+        rc, out, calls = self._invoke(
+            head_sha="aaa111", work_head="merge777", merge_parent="aaa111",
+            base_ref_override="develop",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 0
+        result = json.loads(out)
+        assert result["base_ref"] == "develop"
+        assert result["review_root"] == _MOCK_TOPLEVEL
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
+    def test_github_mode_refuses_a_dirty_tree_at_the_head(
+        self, tmp_path: Path,
+    ) -> None:
+        # HEAD is the PR head but tracked files are modified, so the tree holds
+        # content that is in no commit this PR contains. Local mode isolates
+        # here (test_dirty_tree_isolates_even_when_head_matches); github mode
+        # has no worktree to isolate into, so it refuses.
+        rc, _out, _calls = self._invoke(
+            head_sha="same999", work_head="same999", dirty=True,
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 1
+
+    def test_github_mode_refuses_when_the_pr_head_is_unresolvable(
+        self, tmp_path: Path,
+    ) -> None:
+        # The head branch name came from the PR's metadata, but
+        # `origin/<head>` was never fetched (resolve-scope lets that fetch
+        # fail), so the PR head is not established. An unresolvable ref must
+        # refuse rather than fall through to "review whatever is here".
+        rc, _out, calls = self._invoke(
+            head_sha="", work_head="bbb222",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 1
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
+    @pytest.mark.parametrize(
+        "gh_stdout", [None, "main\n"],
+        ids=["gh_pr_view_fails", "gh_pr_view_returns_no_head"],
+    )
+    def test_github_mode_refuses_a_guessed_head_even_when_the_tree_matches_it(
+        self, tmp_path: Path, gh_stdout: str | None,
+    ) -> None:
+        # Without a head from `gh pr view`, the guess fallback takes head_ref
+        # from the checked-out branch. That branch is pushed, checked out, and
+        # clean here, so a tree check against the guess would pass and review
+        # `other-branch` against PR #42's diff. The head must come from the
+        # PR's own metadata before any checkout is verified against it.
+        rc, _out, calls = self._invoke(
+            head_sha="aaa111", work_head="bbb222", gh_stdout=gh_stdout,
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert rc == 1
+        assert not [c for c in calls if c[:3] == ["git", "worktree", "add"]]
+
+    def test_github_mode_hygiene_only_reads_no_source_and_is_not_checked(
+        self, tmp_path: Path,
+    ) -> None:
+        # Gate A runs deterministic hygiene checks and exits before any agent
+        # reads source, so there is no wrong tree to read and nothing to refuse.
+        # Without this case the verification block could be tightened to fire on
+        # hygiene-only runs and every case above would stay green.
+        result = self._run(
+            head_sha="aaa111", work_head="bbb222", hygiene_only="true",
+            mode="github", pr_number=42, tmp_path=tmp_path,
+        )
+        assert result["review_root"] == _MOCK_TOPLEVEL
 
     def test_fail_closed_when_worktree_add_fails(self, tmp_path: Path) -> None:
         # Head differs (isolation required) but ``git worktree add`` failed →
@@ -9255,8 +10405,13 @@ def _run_verify_prepare(
     cache_dir: Path | None = None,
     prompt_hash: str = "",
     cr_dir: Path | None = None,
+    seed_review_root: bool = True,
 ) -> tuple[int, dict[str, Any]]:
-    """Invoke ``cmd_verify_prepare`` with stdout captured into a dict."""
+    """Invoke ``cmd_verify_prepare`` with stdout captured into a dict.
+
+    ``seed_review_root=False`` leaves scope.json absent so the review-root
+    refusal path can be exercised.
+    """
     import io
     import sys as _sys
 
@@ -9264,6 +10419,8 @@ def _run_verify_prepare(
     if cr_dir is None:
         cr_dir = tmp_path / "cr"
     cr_dir.mkdir(parents=True, exist_ok=True)
+    if seed_review_root and not (cr_dir / "scope.json").exists():
+        _seed_scope_review_root(cr_dir, tmp_path / "review_root_repo")
     # The verifier_prompt.txt placeholder is referenced in the per-finding
     # input files; create a stub so the path the test inspects exists.
     (cr_dir / "verifier_prompt.txt").write_text("verifier prompt stub")
@@ -9279,8 +10436,10 @@ def _run_verify_prepare(
         )
         rc = cmd_verify_prepare(ns)
         _sys.stdout.seek(0)
-        manifest = json.load(_sys.stdout)
-        return rc, manifest
+        # A refused review root writes nothing to stdout (the manifest is the
+        # success artifact), so an empty capture is a legitimate outcome.
+        captured = _sys.stdout.read()
+        return rc, json.loads(captured) if captured.strip() else {}
     finally:
         _sys.stdout = old_stdout
 
@@ -9344,18 +10503,15 @@ def _run_verify_consolidate(
 class TestVerifyPrepareReviewRoot:
     """``review_root`` from scope.json is threaded into every verifier input.
 
-    Local PR-head worktree isolation: when scope resolution created a
-    worktree at the PR head, the verifier fleet must read source under that
-    root (not the operator's working tree). cmd_verify_prepare reads
-    ``scope.json`` and stamps ``review_root`` onto each per-finding input so
-    the verifier prompt resolves paths correctly.
+    A verifier Task inherits the invoking session's working directory, so a
+    root that does not hold the diff makes the existence check read unrelated
+    source and REJECT every finding. ``cmd_verify_prepare`` therefore proves
+    the root before it writes any input, and fails the stage when it cannot.
     """
 
     def test_review_root_written_into_verifier_input(self, tmp_path: Path) -> None:
         cr_dir = tmp_path / "cr"
-        cr_dir.mkdir(parents=True)
-        worktree = str(cr_dir / "pr_head_worktree")
-        (cr_dir / "scope.json").write_text(json.dumps({"review_root": worktree}))
+        root = _seed_scope_review_root(cr_dir, tmp_path / "worktree")
 
         finding = _make_validated_finding("bha_1", severity="HIGH")
         rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
@@ -9364,29 +10520,133 @@ class TestVerifyPrepareReviewRoot:
         input_data = json.loads(
             (cr_dir / "verifier_inputs" / "bha_1.json").read_text(),
         )
-        assert input_data["review_root"] == worktree
+        assert input_data["review_root"] == root
 
-    def test_review_root_empty_when_scope_absent(self, tmp_path: Path) -> None:
-        # No scope.json (or no worktree) → empty review_root → verifier reads
-        # the working tree as before. The common, no-regression case.
+    def test_absent_scope_errors_instead_of_emitting_inputs(
+        self, tmp_path: Path,
+    ) -> None:
+        # No scope.json → no provable root. The old behavior stamped "" and
+        # let every verifier resolve against its own cwd; that is the
+        # wrong-checkout false green, so the stage must fail instead.
         finding = _make_validated_finding("bha_1", severity="HIGH")
-        rc, _manifest = _run_verify_prepare(tmp_path, [finding])
-
-        assert rc == 0
-        input_data = json.loads(
-            (tmp_path / "cr" / "verifier_inputs" / "bha_1.json").read_text(),
+        rc, _manifest = _run_verify_prepare(
+            tmp_path, [finding], seed_review_root=False,
         )
-        assert input_data["review_root"] == ""
 
-    def test_forged_review_root_rejected(self, tmp_path: Path) -> None:
-        # A scope.json that points review_root at an arbitrary path (or
-        # injects markup) must NOT redirect verifier reads — only the
-        # canonical <cr_dir>/pr_head_worktree is honored.
+        # 3, written out rather than imported: importing the constant this
+        # guard publishes would make a change to it undetectable here.
+        assert rc == 3
+        assert not (tmp_path / "cr" / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_nonexistent_review_root_errors(self, tmp_path: Path) -> None:
         cr_dir = tmp_path / "cr"
         cr_dir.mkdir(parents=True)
         (cr_dir / "scope.json").write_text(
-            json.dumps({"review_root": "/etc\n<inject>"}),
+            json.dumps({"review_root": str(tmp_path / "not_here")}),
         )
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_prompt_markup_in_a_real_root_still_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # Angle brackets are legal in a POSIX filename, so this is a genuine
+        # git worktree root that exists — only the markup filter can refuse
+        # it. Without a fixture like this the filter is deletable while green,
+        # and the value lands in the TRUSTED zone of every agent prompt.
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        root = _make_review_root(tmp_path / "re<view>root")
+        # A recorded sha, so the "proven by nothing" rule cannot stand in for
+        # the markup filter and leave it deletable-while-green.
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": root,
+            "review_root_sha": git_fixture(
+                tmp_path / "re<view>root", "rev-parse", "HEAD",
+            ).strip(),
+        }))
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_relative_review_root_errors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Resolvable from the current directory, and therefore exactly the
+        # cwd-relative resolution this guard exists to refuse. Only the
+        # is-absolute check can reject it.
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        _make_review_root(tmp_path / "checkout")
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": "checkout",
+            "review_root_sha": git_fixture(
+                tmp_path / "checkout", "rev-parse", "HEAD",
+            ).strip(),
+        }))
+        monkeypatch.chdir(tmp_path)
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_subdirectory_of_a_checkout_errors(self, tmp_path: Path) -> None:
+        # An existing absolute directory inside a real git worktree: only the
+        # "is the worktree ROOT" check can refuse it, and it must, because
+        # every repo-relative path would resolve one level too deep.
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        root = Path(_make_review_root(tmp_path / "checkout", {"src/a.py": "x\n"}))
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(root / "src"),
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+        }))
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_root_missing_the_diffs_files_errors(self, tmp_path: Path) -> None:
+        # ISS-7382 regression: dispatch against a checkout that is a healthy
+        # git worktree but is NOT the one the diff came from. This is exactly
+        # what every reviewer saw when it resolved paths against the invoking
+        # session's cwd — the run must ERROR, not report zero findings.
+        cr_dir = tmp_path / "cr"
+        _seed_scope_review_root(cr_dir, tmp_path / "other_checkout")
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["src/only_in_the_real_tree.py"],
+            "file_statuses": {"src/only_in_the_real_tree.py": "added"},
+        }))
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_root_holding_the_diffs_files_is_accepted(self, tmp_path: Path) -> None:
+        # Sibling of the case above in the opposite state: same diff_data, but
+        # a root that DOES contain the changed file. Without this, "rc == 1"
+        # above would also be satisfied by a stage that rejects every root.
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        root = _make_review_root(
+            tmp_path / "real_checkout",
+            {"src/only_in_the_real_tree.py": "x = 1\n"},
+        )
+        (cr_dir / "scope.json").write_text(json.dumps({"review_root": root}))
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["src/only_in_the_real_tree.py"],
+            "file_statuses": {"src/only_in_the_real_tree.py": "added"},
+        }))
+
         finding = _make_validated_finding("bha_1", severity="HIGH")
         rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
 
@@ -9394,7 +10654,426 @@ class TestVerifyPrepareReviewRoot:
         input_data = json.loads(
             (cr_dir / "verifier_inputs" / "bha_1.json").read_text(),
         )
-        assert input_data["review_root"] == ""
+        assert input_data["review_root"] == root
+
+    def test_removed_file_does_not_have_to_exist_under_the_root(
+        self, tmp_path: Path,
+    ) -> None:
+        # A deletion is absent from the head by construction, so requiring it
+        # would fail every diff that removes a file.
+        cr_dir = tmp_path / "cr"
+        _seed_scope_review_root(cr_dir, tmp_path / "checkout")
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["src/gone.py"],
+            "file_statuses": {"src/gone.py": "removed"},
+        }))
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 0
+
+    def test_finding_citing_removed_file_gets_patches_path(
+        self, tmp_path: Path,
+    ) -> None:
+        # ISS-12737: a deleted file is readable only from its patch, so an
+        # in-diff finding on it, or one whose evidence cites it, carries the
+        # patch path; a finding touching no deleted file does not.
+        cr_dir = tmp_path / "cr"
+        _seed_scope_review_root(cr_dir, tmp_path / "checkout")
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["src/gone.py"],
+            "file_statuses": {"src/gone.py": "removed"},
+        }))
+        on_deleted = _make_validated_finding("bha_1", file="src/gone.py", line=3)
+        cites_deleted = _make_validated_finding(
+            "bha_2", evidence=[{"file": "src/gone.py", "line": 3, "claim": "removed"}],
+        )
+        plain = _make_validated_finding("bha_3")
+
+        rc, _manifest = _run_verify_prepare(
+            tmp_path, [on_deleted, cites_deleted, plain], cr_dir=cr_dir,
+        )
+
+        assert rc == 0
+        patches = str(cr_dir / "patches_all.txt")
+        inputs = {
+            fid: json.loads((cr_dir / "verifier_inputs" / f"{fid}.json").read_text())
+            for fid in ("bha_1", "bha_2", "bha_3")
+        }
+        assert inputs["bha_1"]["patches_path"] == patches
+        assert inputs["bha_2"]["patches_path"] == patches
+        assert "patches_path" not in inputs["bha_3"]
+
+    def test_pr_head_worktree_moved_off_the_resolved_commit_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # A PR-head worktree is a detached checkout nobody commits into, so
+        # its HEAD must still BE the commit the diff was resolved at.
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        root = Path(_make_review_root(cr_dir / "pr_head_worktree"))
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(root),
+            "review_root_sha": _commit_file(root, "later.txt", "later\n"),
+            "worktree_path": str(root),
+        }))
+        git_fixture(root, "reset", "--quiet", "--hard", "HEAD~1")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_live_checkout_may_commit_during_the_review(
+        self, tmp_path: Path,
+    ) -> None:
+        # Sibling of the case above, and the reason the two are not one rule:
+        # a live checkout's tip moves legitimately. Committing mid-review must
+        # not abort it, so the live-root check is reachability, not equality.
+        cr_dir = tmp_path / "cr"
+        root = Path(_seed_scope_review_root(cr_dir, tmp_path / "checkout"))
+        _commit_file(root, "later.txt", "later\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 0
+
+    @staticmethod
+    def _seed_live_root_with_changed_file(tmp_path: Path) -> tuple[Path, Path]:
+        """A live checkout, resolved at its HEAD, whose diff changes ``src/a.py``.
+
+        The drift check only compares the files the diff names, so every drift
+        case needs diff_data.json listing one that exists at the recorded
+        commit.
+        """
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        root = Path(_make_review_root(tmp_path / "checkout", {"src/a.py": "v1\n"}))
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(root),
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+        }))
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["src/a.py"],
+            "file_statuses": {"src/a.py": "modified"},
+        }))
+        return cr_dir, root
+
+    def test_commit_to_a_changed_file_after_resolution_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # Reachability alone passes here: the resolved commit is still an
+        # ancestor and src/a.py still exists, yet reviewers would read content
+        # the diff never contained.
+        cr_dir, root = self._seed_live_root_with_changed_file(tmp_path)
+        _commit_file(root, "src/a.py", "v2 committed after resolution\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_uncommitted_edit_to_a_changed_file_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # HEAD never moves, so no commit-level check can see this.
+        cr_dir, root = self._seed_live_root_with_changed_file(tmp_path)
+        (root / "src" / "a.py").write_text("edited, never committed\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_reset_that_moves_a_changed_file_back_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # Resolved at v2, then reset to v1: the v2 commit stays in the object
+        # store (so reachability passes) and src/a.py still exists (so
+        # containment passes), but its content is no longer the reviewed one.
+        cr_dir, root = self._seed_live_root_with_changed_file(tmp_path)
+        scope = json.loads((cr_dir / "scope.json").read_text())
+        scope["review_root_sha"] = _commit_file(root, "src/a.py", "v2\n")
+        (cr_dir / "scope.json").write_text(json.dumps(scope))
+        git_fixture(root, "reset", "--quiet", "--hard", "HEAD~1")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_drift_on_paths_outside_the_diff_is_accepted(
+        self, tmp_path: Path,
+    ) -> None:
+        # Sibling of the three drift refusals: the check is scoped to the
+        # diff's files, so a committed and an uncommitted change elsewhere in a
+        # live checkout must not abort the review.
+        cr_dir, root = self._seed_live_root_with_changed_file(tmp_path)
+        _commit_file(root, "later.txt", "later\n")
+        (root / "later.txt").write_text("edited, never committed\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 0
+        input_data = json.loads(
+            (cr_dir / "verifier_inputs" / "bha_1.json").read_text(),
+        )
+        assert input_data["review_root"] == str(root)
+
+    def _seed_staged_review(self, tmp_path: Path) -> tuple[Path, Path]:
+        """A staged review of ``src/a.py``, pinned the way resolve-scope pins it.
+
+        The repo also tracks an unrelated ``notes.txt``. The change to
+        ``src/a.py`` is staged, and scope.json records HEAD as
+        ``review_root_sha`` and the index as ``review_root_tree``.
+        """
+        cr_dir, root = self._seed_live_root_with_changed_file(tmp_path)
+        _commit_file(root, "notes.txt", "notes\n")
+        (root / "src" / "a.py").write_text("staged change\n")
+        git_fixture(root, "add", "src/a.py")
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(root),
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+            "scope_kind": "staged",
+            "review_root_tree": git_fixture(root, "write-tree").strip(),
+        }))
+        return cr_dir, root
+
+    def test_staged_scope_is_not_refused_for_its_own_staged_changes(
+        self, tmp_path: Path,
+    ) -> None:
+        # A staged review diffs the index against HEAD, so every changed file
+        # differs from review_root_sha by construction. Its baseline is the
+        # pinned index tree, which a staged file left untouched still matches.
+        cr_dir, root = self._seed_staged_review(tmp_path)
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 0
+        input_data = json.loads(
+            (cr_dir / "verifier_inputs" / "bha_1.json").read_text(),
+        )
+        assert input_data["review_root"] == str(root)
+
+    def test_staged_scope_unstaged_edit_to_a_staged_file_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # Agents read the working tree, so an edit on top of the staged content
+        # puts code in front of them that the staged diff never contained.
+        cr_dir, root = self._seed_staged_review(tmp_path)
+        (root / "src" / "a.py").write_text("edited after staging\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_staged_scope_restaged_after_resolution_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # Re-staging makes the index agree with the working tree again, but both
+        # now differ from the snapshot the diff was computed from.
+        cr_dir, root = self._seed_staged_review(tmp_path)
+        (root / "src" / "a.py").write_text("re-staged after resolution\n")
+        git_fixture(root, "add", "src/a.py")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_staged_scope_unrelated_unstaged_edit_is_accepted(
+        self, tmp_path: Path,
+    ) -> None:
+        # Sibling of the two refusals above: the staged comparison is limited to
+        # the diff's files, so an unstaged edit elsewhere must not abort it.
+        cr_dir, root = self._seed_staged_review(tmp_path)
+        (root / "notes.txt").write_text("edited, never staged\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 0
+
+    @pytest.mark.parametrize(
+        "tree", [None, "", "not-a-tree-id", "0" * 40],
+        ids=["absent", "empty", "invalid", "unknown_object"],
+    )
+    def test_staged_scope_without_a_valid_review_root_tree_errors(
+        self, tmp_path: Path, tree: str | None,
+    ) -> None:
+        # Without the pinned index a staged review has no baseline, so an edit
+        # after resolution could not be detected: refuse rather than pass.
+        cr_dir, _root = self._seed_staged_review(tmp_path)
+        scope = json.loads((cr_dir / "scope.json").read_text())
+        if tree is None:
+            del scope["review_root_tree"]
+        else:
+            scope["review_root_tree"] = tree
+        (cr_dir / "scope.json").write_text(json.dumps(scope))
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_drift_comparison_git_failure_fails_closed(
+        self, tmp_path: Path,
+    ) -> None:
+        # A drift check that cannot run has proven nothing, so it must refuse
+        # rather than read as "no drift".
+        cr_dir, _root = self._seed_live_root_with_changed_file(tmp_path)
+        real_run = subprocess.run
+
+        def _fail_the_drift_diff(
+            cmd: list[str], *args: Any, **kwargs: Any,
+        ) -> subprocess.CompletedProcess[Any]:
+            if "diff" in cmd and "--name-only" in cmd:
+                return subprocess.CompletedProcess(cmd, 128, b"", b"fatal")
+            return real_run(cmd, *args, **kwargs)
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        with patch(
+            "code_review_helpers.subprocess.run", side_effect=_fail_the_drift_diff,
+        ):
+            rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_live_checkout_without_the_resolved_commit_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # A different clone does not hold the commit the diff was resolved at,
+        # which is what distinguishes it from the same checkout moved forward.
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        elsewhere = Path(_make_review_root(tmp_path / "other_clone"))
+        reviewed = Path(_make_review_root(
+            tmp_path / "reviewed", {"unrelated.txt": "a different history\n"},
+        ))
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(elsewhere),
+            "review_root_sha": git_fixture(
+                reviewed, "rev-parse", "HEAD",
+            ).strip(),
+        }))
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_root_proven_by_nothing_errors(self, tmp_path: Path) -> None:
+        # No recorded commit and no resolvable changed files: "is a git
+        # worktree root" is true of every checkout on the box, so returning
+        # would report proven when nothing about THIS diff was checked.
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        root = _make_review_root(tmp_path / "checkout")
+        (cr_dir / "scope.json").write_text(json.dumps({"review_root": root}))
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+
+    @staticmethod
+    def _seed_root_with_git_quoted_changed_file(
+        tmp_path: Path,
+    ) -> tuple[Path, Path, str]:
+        """A live checkout whose diff changes a file git records C-quoted.
+
+        The recorded name comes from git itself (``ls-files`` quotes paths
+        exactly as ``diff --name-only`` does), so diff_data.json carries the
+        string parse-diff would store rather than a hand-written escape.
+        """
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        root = Path(_make_review_root(
+            tmp_path / "checkout", {"src/café.py": "v1\n"},
+        ))
+        recorded = next(
+            line for line in git_fixture(root, "ls-files").splitlines()
+            if "caf" in line
+        )
+        assert recorded.startswith('"'), f"git did not quote {recorded!r}"
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": str(root),
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+        }))
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": [recorded],
+            "file_statuses": {recorded: "added"},
+        }))
+        return cr_dir, root, recorded
+
+    def test_git_quoted_path_does_not_refuse_a_correct_root(
+        self, tmp_path: Path,
+    ) -> None:
+        # git C-quotes a non-ASCII path in `diff --name-only`, so the recorded
+        # string is not the name on disk. It is decoded, and a root holding the
+        # decoded file unchanged must not be refused.
+        cr_dir, root, _recorded = self._seed_root_with_git_quoted_changed_file(
+            tmp_path,
+        )
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 0
+        input_data = json.loads(
+            (cr_dir / "verifier_inputs" / "bha_1.json").read_text(),
+        )
+        assert input_data["review_root"] == str(root)
+
+    def test_git_quoted_changed_file_edited_after_resolution_errors(
+        self, tmp_path: Path,
+    ) -> None:
+        # Skipping quoted entries dropped this file from both the containment
+        # and the drift check, so an edit to it after resolution went unseen.
+        cr_dir, root, _recorded = self._seed_root_with_git_quoted_changed_file(
+            tmp_path,
+        )
+        (root / "src" / "café.py").write_text("edited, never committed\n")
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+
+    def test_malformed_git_quoted_entry_errors(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # An entry that looks quoted but does not decode cannot be resolved on
+        # disk, so it refuses rather than being skipped or guessed at.
+        cr_dir, _root = self._seed_live_root_with_changed_file(tmp_path)
+        (cr_dir / "diff_data.json").write_text(json.dumps({
+            "files_to_review": ["src/a.py", '"src/unterminated.py'],
+            "file_statuses": {
+                "src/a.py": "modified", '"src/unterminated.py': "added",
+            },
+        }))
+
+        finding = _make_validated_finding("bha_1", severity="HIGH")
+        rc, _manifest = _run_verify_prepare(tmp_path, [finding], cr_dir=cr_dir)
+
+        assert rc == 3
+        assert not (cr_dir / "verifier_inputs" / "bha_1.json").exists()
+        assert "not valid git path quoting" in capsys.readouterr().err
 
 
 class TestFooterWorktreeTeardown:
@@ -9472,6 +11151,148 @@ class TestFooterWorktreeTeardown:
         rc = self._run_footer(tmp_path, cr_dir)
         assert rc == 0
         assert removed == []
+
+
+class TestReviewProvenance:
+    """ISS-9137: the footer, GitHub summary, and envelope name what was read."""
+
+    SHA = "a" * 40
+    HEAD = "b" * 40
+    TREE = "c" * 40
+
+    def _footer(
+        self, tmp_path: Path, cr_dir: Path, scope: dict[str, Any],
+        monkeypatch: Any, capsys: Any,
+    ) -> str:
+        from code_review_helpers import cmd_footer
+
+        cr_dir.mkdir(parents=True, exist_ok=True)
+        (cr_dir / "scope.json").write_text(json.dumps(scope))
+        monkeypatch.setattr("code_review_helpers._remove_pr_head_worktree", lambda p: None)
+        ns = argparse.Namespace(
+            start_time=0.0, cache_result=None, review_mode_line="Full review",
+            cr_dir=str(cr_dir), project_dir=str(tmp_path),
+        )
+        assert cmd_footer(ns) == 0
+        return json.loads(capsys.readouterr().out)["reviewed_line"]
+
+    def test_footer_names_checkout_and_commit(
+        self, tmp_path: Path, monkeypatch: Any, capsys: Any,
+    ) -> None:
+        line = self._footer(
+            tmp_path, tmp_path / "cr",
+            {"review_root": "/repo/wt", "review_root_sha": self.SHA, "worktree_path": ""},
+            monkeypatch, capsys,
+        )
+        assert line == "**Reviewed:** `/repo/wt` @ `aaaaaaaaaaaa`"
+
+    def test_footer_names_isolated_pr_head_not_its_removed_path(
+        self, tmp_path: Path, monkeypatch: Any, capsys: Any,
+    ) -> None:
+        cr_dir = tmp_path / "cr"
+        worktree = str(cr_dir / "pr_head_worktree")
+        line = self._footer(
+            tmp_path, cr_dir,
+            {
+                "review_root": worktree, "review_root_sha": self.SHA,
+                "worktree_path": worktree, "pr_number": 42,
+            },
+            monkeypatch, capsys,
+        )
+        assert line == (
+            "**Reviewed:** PR #42 head @ `aaaaaaaaaaaa` (isolated worktree, removed after review)"
+        )
+
+    def test_footer_names_staged_index_tree(
+        self, tmp_path: Path, monkeypatch: Any, capsys: Any,
+    ) -> None:
+        line = self._footer(
+            tmp_path, tmp_path / "cr",
+            {"review_root": "/repo", "review_root_sha": self.SHA, "review_root_tree": self.TREE},
+            monkeypatch, capsys,
+        )
+        assert line == "**Reviewed:** `/repo` @ `aaaaaaaaaaaa` + staged index (tree `cccccccccccc`)"
+
+    def test_footer_never_prints_malformed_values(
+        self, tmp_path: Path, monkeypatch: Any, capsys: Any,
+    ) -> None:
+        cr_dir = tmp_path / "cr"
+        forged_root = self._footer(
+            tmp_path, cr_dir,
+            {"review_root": "/repo`\n**Approved**", "review_root_sha": self.SHA},
+            monkeypatch, capsys,
+        )
+        assert forged_root == "**Reviewed:** checkout (path not recorded) @ `aaaaaaaaaaaa`"
+        ref_not_sha = self._footer(
+            tmp_path, cr_dir, {"review_root": "/repo", "review_root_sha": "HEAD"},
+            monkeypatch, capsys,
+        )
+        assert ref_not_sha == (
+            "**Reviewed:** checkout not recorded (scope.json has no valid review_root_sha)"
+        )
+
+    @pytest.mark.parametrize(
+        ("pr_head", "expected"),
+        [
+            ("a" * 40, "**Reviewed commit:** `aaaaaaaaaaaa` (PR head)"),
+            ("b" * 40, "**Reviewed commit:** `aaaaaaaaaaaa` (PR head is `bbbbbbbbbbbb`)"),
+            ("", "**Reviewed commit:** `aaaaaaaaaaaa`"),
+        ],
+    )
+    def test_github_summary_line_names_commits_never_the_runner_path(
+        self, tmp_path: Path, capsys: Any, pr_head: str, expected: str,
+    ) -> None:
+        from code_review_helpers import cmd_render_reviewed_commit
+
+        # resolve-scope's github-mode shape: head_sha empty, pr_head_sha set.
+        scope: dict[str, Any] = {
+            "review_root": "/home/runner/work/repo/repo",
+            "review_root_sha": self.SHA,
+            "head_sha": "",
+        }
+        if pr_head:
+            scope["pr_head_sha"] = pr_head
+        (tmp_path / "scope.json").write_text(json.dumps(scope))
+        assert cmd_render_reviewed_commit(argparse.Namespace(cr_dir=str(tmp_path))) == 0
+        assert capsys.readouterr().out.strip() == expected
+
+    def _finalize(self, cr_dir: Path, scope: dict[str, Any], capsys: Any) -> dict[str, Any]:
+        from code_review_helpers import cmd_finalize_result
+
+        validated = cr_dir / "findings_validated.json"
+        validated.write_text(json.dumps({"validated": [], "discarded": [], "stats": {}}))
+        (cr_dir / "scope.json").write_text(json.dumps(scope))
+        ns = argparse.Namespace(
+            cr_dir=str(cr_dir), findings_validated=str(validated),
+            mode="local", diff_tip="HEAD", pr_number=None,
+        )
+        assert cmd_finalize_result(ns) == 0
+        capsys.readouterr()
+        return json.loads((cr_dir / "review_result.json").read_text())
+
+    def test_envelope_records_reviewed_checkout(self, tmp_path: Path, capsys: Any) -> None:
+        envelope = self._finalize(
+            tmp_path,
+            {"review_root": "/repo", "review_root_sha": self.SHA, "review_root_tree": self.TREE},
+            capsys,
+        )
+        assert (
+            envelope["review_root"], envelope["review_root_sha"], envelope["review_root_tree"],
+        ) == ("/repo", self.SHA, self.TREE)
+
+    def test_envelope_nulls_malformed_checkout_and_validator_rejects_non_strings(
+        self, tmp_path: Path, capsys: Any,
+    ) -> None:
+        from code_review_schema import validate_result_envelope
+
+        envelope = self._finalize(
+            tmp_path, {"review_root": "relative/path", "review_root_sha": "--output=x"}, capsys,
+        )
+        assert (
+            envelope["review_root"], envelope["review_root_sha"], envelope["review_root_tree"],
+        ) == (None, None, None)
+        envelope["review_root"] = 5
+        assert "review_root must be a string or null" in validate_result_envelope(envelope)
 
 
 class TestRemovePrHeadWorktree:
@@ -9637,9 +11458,7 @@ class TestReviewDismissedPrepareReviewRoot:
         from code_review_helpers import cmd_review_dismissed_prepare
 
         cr_dir = tmp_path / "cr"
-        cr_dir.mkdir(parents=True)
-        worktree = str(cr_dir / "pr_head_worktree")
-        (cr_dir / "scope.json").write_text(json.dumps({"review_root": worktree}))
+        root = _seed_scope_review_root(cr_dir, tmp_path / "worktree")
         (cr_dir / "verifier_prompt.txt").write_text("stub")
         (cr_dir / "review_result.json").write_text(json.dumps({
             "rejected": [_make_validated_finding("bha_9", severity="HIGH")],
@@ -9657,7 +11476,35 @@ class TestReviewDismissedPrepareReviewRoot:
         input_data = json.loads(
             (cr_dir / "review_dismissed_inputs" / "bha_9.json").read_text(),
         )
-        assert input_data["review_root"] == worktree
+        assert input_data["review_root"] == root
+
+    def test_absent_scope_errors_instead_of_emitting_dismissed_inputs(
+        self, tmp_path: Path,
+    ) -> None:
+        # The dismissed fleet is a second verifier dispatch; an unprovable
+        # root halts it for the same reason it halts the primary fleet.
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_review_dismissed_prepare
+
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir(parents=True)
+        (cr_dir / "verifier_prompt.txt").write_text("stub")
+        (cr_dir / "review_result.json").write_text(json.dumps({
+            "rejected": [_make_validated_finding("bha_9", severity="HIGH")],
+        }))
+
+        ns = argparse.Namespace(cr_dir=str(cr_dir), prior_result=None)
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            rc = cmd_review_dismissed_prepare(ns)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert rc == 3
+        assert not (cr_dir / "review_dismissed_inputs" / "bha_9.json").exists()
 
 
 class TestLocalPrWorktreeFlow:
@@ -9719,6 +11566,13 @@ class TestLocalPrWorktreeFlow:
             _sys.stdout = old_stdout
         assert rc == 0
         assert scope["review_root"] == expected_root
+        # ``git worktree add`` was mocked, so materialize the checkout it would
+        # have produced — verify-prepare re-proves the root against real git,
+        # including the commit resolve-scope would have recorded for it.
+        assert _make_review_root(cr_dir / "pr_head_worktree") == expected_root
+        scope["review_root_sha"] = git_fixture(
+            Path(expected_root), "rev-parse", "HEAD",
+        ).strip()
         (cr_dir / "scope.json").write_text(json.dumps(scope))
 
         # Stage 2: verify-prepare threads review_root into the verifier input
@@ -9942,6 +11796,18 @@ class TestVerifyTierTable:
         }
         assert _needs_verification(f_inj) is False
 
+    def test_out_of_diff_always_verified_even_at_low_severity(self) -> None:
+        """ISS-12737: the verifier is the only causation check for findings
+        outside the diff, so LOW (normally skipped) still verifies."""
+        f = {
+            "severity": "LOW",
+            "confidence": 0.99,
+            "category": "Documentation",
+            "source": "agent",
+            "out_of_diff": True,
+        }
+        assert _needs_verification(f) is True
+
     def test_priority_ranking_higher_severity_first(self) -> None:
         blocking_lo = {"severity": "BLOCKING", "confidence": 0.5}
         medium_hi = {"severity": "MEDIUM", "confidence": 0.84}
@@ -10068,6 +11934,46 @@ class TestVerifyPrepare:
             (tmp_path / "cr" / "agent_verifier_bha_p0_f0.json").read_text(),
         )
         assert materialized["verifier_verdict"] == "CONFIRMED"
+
+    def test_out_of_diff_sent_below_threshold_past_cap_and_cache(
+        self, tmp_path: Path,
+    ) -> None:
+        """ISS-12737: an ``out_of_diff`` finding reaches the verifier even
+        when its severity would skip verification, the budget cap is full,
+        and a fresh cached verdict exists — and its input carries the patch."""
+        from code_review_helpers import _write_cached_verification
+
+        ood = _make_validated_finding(
+            "auditor_f0", file="src/other.test.ts", severity="LOW", confidence=0.6,
+        )
+        ood["out_of_diff"] = True
+        fillers = [
+            _make_validated_finding(f"bha_p0_f{i:03d}", severity="BLOCKING", confidence=1.0)
+            for i in range(VERIFY_MAX_VERIFICATIONS + 5)
+        ]
+        cache_dir = tmp_path / "cache"
+        _write_cached_verification(
+            cache_dir, ood, "sonnet", "phash_v1",
+            {"verifier_verdict": "CONFIRMED", "verifier_confidence": 0.9,
+             "verifier_reasoning": "cached", "evidence_checks": [],
+             "rejection_class": None},
+        )
+
+        _, manifest = _run_verify_prepare(
+            tmp_path, [*fillers, ood], cache_dir=cache_dir, prompt_hash="phash_v1",
+        )
+        to_verify = {e["finding_id"]: e for e in manifest["to_verify"]}
+        assert "auditor_f0" in to_verify
+        assert "auditor_f0" not in manifest["deferred_budget"]
+        assert manifest["cache_hits"] == []
+        # The out-of-diff finding sits outside the budget: the in-diff
+        # fillers still get all VERIFY_MAX_VERIFICATIONS slots.
+        assert len(manifest["to_verify"]) == VERIFY_MAX_VERIFICATIONS + 1
+        assert len(manifest["deferred_budget"]) == 5
+        payload = json.loads(Path(to_verify["auditor_f0"]["input_path"]).read_text())
+        assert payload["patches_path"] == str(tmp_path / "cr" / "patches_all.txt")
+        in_diff = json.loads(Path(to_verify["bha_p0_f000"]["input_path"]).read_text())
+        assert "patches_path" not in in_diff
 
 
 class TestOverrideCache:
@@ -10217,7 +12123,7 @@ class TestOverrideCache:
             "finding_id": "bha_p0_f0",
             "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
             "override": "RE_ASSERT",
-            "asserted_at": "2026-05-29T22:00:00+00:00",
+            "asserted_at": _iso_days_ago(days_ago=1),
         })
         # PR #114 review fix — delegate to the shared helper with an
         # explicit cr_dir override so the per-test stdout/Namespace dance
@@ -10369,6 +12275,8 @@ class TestReviewDismissed:
         cr = tmp_path / ".closedloop-ai" / "code-review" / "cr-x"
         cr.mkdir(parents=True, exist_ok=True)
         (cr / "verifier_prompt.txt").write_text("stub")
+        if not (cr / "scope.json").exists():
+            _seed_scope_review_root(cr, tmp_path / "review_root_repo")
         return cr
 
     def _run_prepare(
@@ -11603,6 +13511,8 @@ class TestPR114ReviewFixes:
     def _cr_dir(tmp_path: Path) -> Path:
         cr = tmp_path / ".closedloop-ai" / "code-review" / "cr-x"
         cr.mkdir(parents=True, exist_ok=True)
+        if not (cr / "scope.json").exists():
+            _seed_scope_review_root(cr, tmp_path / "review_root_repo")
         return cr
 
     @staticmethod
@@ -11639,7 +13549,7 @@ class TestPR114ReviewFixes:
             "finding_id": "bha_p0_f0",
             "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
             "override": "RE_ASSERT",
-            "asserted_at": "2026-05-29T22:00:00+00:00",
+            "asserted_at": _iso_days_ago(days_ago=1),
         })
 
         # Phase 1 — prepare. Should record the fid in override_hits and
@@ -11688,7 +13598,7 @@ class TestPR114ReviewFixes:
             "finding_id": "bha_p0_f0",
             "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
             "override": "RE_ASSERT",
-            "asserted_at": "2026-05-29T22:00:00+00:00",
+            "asserted_at": _iso_days_ago(days_ago=1),
         })
 
         _, manifest = _run_verify_prepare(
@@ -11820,7 +13730,7 @@ class TestPR114ReviewFixes:
         self._write_target_file(tmp_path, "src/x.py", "a\nb\nc\nd\ne\n")
         cache = tmp_path / "cache"
         cache.mkdir()
-        old_ts = (datetime.now(timezone.utc) - timedelta(days=120)).isoformat()
+        old_ts = _iso_days_ago(days_ago=120)
         _write_override(cache, {
             "finding_id": "bha_p0_f0",
             "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
@@ -11846,7 +13756,7 @@ class TestPR114ReviewFixes:
         self._write_target_file(tmp_path, "src/x.py", "a\nb\nc\nd\ne\n")
         cache = tmp_path / "cache"
         cache.mkdir()
-        recent_ts = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        recent_ts = _iso_days_ago(days_ago=30)
         _write_override(cache, {
             "finding_id": "bha_p0_f0",
             "file_content_hash": _file_content_hash(cr, "src/x.py", 3),
@@ -11976,6 +13886,199 @@ class TestUnifiedPartitionThreshold:
         # state for a no-op review (the test_file_paths / hygiene flow
         # picks up any test-only or hygiene-only signal elsewhere).
         assert result["partition_mode"] == "partitioned"
+
+
+class TestPartitionExcludesDeletedFiles:
+    """ISS-12737: files deleted outright are not partitioned for BHA and do
+    not count toward ``total_changed_loc``; the cross-file reviewers own them.
+    """
+
+    def _run(
+        self, diff_data: dict[str, Any], *, bha_unified_threshold_loc: int = 5000,
+    ) -> dict[str, Any]:
+        return TestPartition()._run_partition(
+            diff_data, bha_unified_threshold_loc=bha_unified_threshold_loc,
+        )
+
+    def test_deleted_files_excluded_from_partitions_and_total_loc(self) -> None:
+        data = _make_diff_data(
+            files=["mod.py", "gone.py", "tests/test_gone.py"],
+            statuses={
+                "mod.py": "modified", "gone.py": "removed",
+                "tests/test_gone.py": "removed",
+            },
+            loc={
+                "mod.py": {"added": 0, "removed": 2},
+                "gone.py": {"added": 0, "removed": 800},
+                "tests/test_gone.py": {"added": 0, "removed": 50},
+            },
+        )
+        result = self._run(data)
+        assert [f["file"] for p in result["partitions"] for f in p["files"]] == ["mod.py"]
+        assert result["total_changed_loc"] == 2
+        assert result["test_file_paths"] == []
+
+    def test_large_deletion_does_not_flip_small_change_to_partitioned(self) -> None:
+        data = _make_diff_data(
+            files=["a.ts", "old/big.ts"],
+            statuses={"a.ts": "modified", "old/big.ts": "removed"},
+            loc={
+                "a.ts": {"added": 300, "removed": 0},
+                "old/big.ts": {"added": 0, "removed": 6000},
+            },
+        )
+        result = self._run(data)
+        assert result["partition_mode"] == "unified"
+        assert result["partition_count"] == 1
+        assert result["total_changed_loc"] == 300
+
+    def test_deletion_only_diff_yields_zero_partitions(self) -> None:
+        data = _make_diff_data(
+            files=["gone.py"],
+            statuses={"gone.py": "removed"},
+            loc={"gone.py": {"added": 0, "removed": 800}},
+        )
+        result = self._run(data)
+        assert result["partitions"] == []
+        assert result["partition_count"] == 0
+        assert result["total_changed_loc"] == 0
+
+
+def _moved_diff_data(old_line: str = "guard()") -> dict[str, Any]:
+    """diff_data for ``old/a.py`` moved to ``new/a.py`` plus an unrelated ``c.ts``."""
+    data = _make_cache_diff_data(
+        files=["new/a.py", "old/a.py", "c.ts"],
+        patch_lines={
+            "new/a.py": {"added_lines": {"1": "def run():"}, "removed_lines": {}},
+            "old/a.py": {"added_lines": {}, "removed_lines": {"1": old_line}},
+            "c.ts": {"added_lines": {"1": "x"}, "removed_lines": {}},
+        },
+    )
+    data["file_statuses"].update({"new/a.py": "added", "old/a.py": "removed"})
+    data["moved_from"] = {"new/a.py": "old/a.py"}
+    return data
+
+
+class TestMovedFromContext:
+    """ISS-12737 PR 3: a file moved and heavily edited is paired with its old
+    path, Bug Hunter A gets the old file's patch as context, and that patch
+    feeds the BHA cache key."""
+
+    def test_parse_diff_pairs_at_30_percent_and_not_below(self, tmp_path: Path) -> None:
+        import contextlib
+        import io
+
+        from code_review_helpers import cmd_parse_diff
+
+        def original(name: str) -> str:
+            return "".join(f"{name} line {i} of the original module\n" for i in range(1, 21))
+
+        repo = tmp_path / "repo"
+        _make_review_root(
+            repo, {"a.py": original("alpha"), "b.py": original("bravo"), "c.py": original("charlie")},
+        )
+        git_fixture(repo, "checkout", "--quiet", "-b", "feat")
+        rewritten = [f"rewritten {i} entirely different content\n" for i in range(1, 17)]
+        (repo / "pkg").mkdir()
+        # ~33% similar: paired only below git's default 50% floor.
+        (repo / "pkg" / "a.py").write_text(
+            "".join(original("alpha").splitlines(keepends=True)[:8] + rewritten[:12]),
+        )
+        # ~15% similar: below the 30% floor, never paired.
+        (repo / "pkg" / "b.py").write_text(
+            "".join(original("bravo").splitlines(keepends=True)[:4] + rewritten),
+        )
+        # Identical: the default view already reports it as a rename.
+        (repo / "pkg" / "c.py").write_text(original("charlie"))
+        for name in ("a.py", "b.py", "c.py"):
+            (repo / name).unlink()
+        git_fixture(repo, "add", "-A")
+        git_fixture(repo, "commit", "--quiet", "-m", "move")
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = cmd_parse_diff(argparse.Namespace(scope="main...feat", workdir=str(repo)))
+        assert rc == 0
+        diff_data = json.loads(out.getvalue())
+        assert diff_data["moved_from"] == {"pkg/a.py": "a.py"}
+        # The pairing is extra: the default-similarity view is unchanged.
+        assert diff_data["file_statuses"] == {
+            "a.py": "removed", "b.py": "removed",
+            "pkg/a.py": "added", "pkg/b.py": "added", "pkg/c.py": "modified",
+        }
+        assert sorted(diff_data["files_to_review"]) == [
+            "a.py", "b.py", "pkg/a.py", "pkg/b.py", "pkg/c.py",
+        ]
+
+    def test_context_patch_written_only_for_partitions_with_paired_files(
+        self, tmp_path: Path,
+    ) -> None:
+        from unittest.mock import patch as mock_patch
+
+        from code_review_helpers import _write_per_partition_patches
+
+        captured: list[list[str]] = []
+
+        def mock_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
+            captured.append(cmd)
+            return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+        partitions: list[dict[str, Any]] = [
+            {"id": 0, "files": [{"file": "c.ts"}]},
+            {"id": 1, "files": [{"file": "new/a.py"}, {"file": "d.ts"}]},
+        ]
+        with mock_patch("code_review_helpers.subprocess.run", side_effect=mock_run):
+            written = _write_per_partition_patches(
+                partitions, "main...HEAD", tmp_path,
+                moved_from={"new/a.py": "old/a.py"},
+            )
+
+        assert written == ["patches_p0.txt", "patches_p1.txt"]
+        assert not (tmp_path / "patches_p0_context.txt").exists()
+        assert "moved_from" not in partitions[0]
+        assert (tmp_path / "patches_p1_context.txt").exists()
+        assert partitions[1]["moved_from"] == {"new/a.py": "old/a.py"}
+        assert partitions[1]["context_patch"] == "patches_p1_context.txt"
+        assert captured[-1] == [
+            "git", "diff", "--no-renames", "main...HEAD", "--", "old/a.py",
+        ]
+        assert len(captured) == 3
+
+    def test_partition_reads_moved_from_from_diff_data(self, tmp_path: Path) -> None:
+        result, captured = TestPartitionPatches()._run(
+            tmp_path, with_patches=True, diff_data=_moved_diff_data(),
+        )
+        [part] = result["partitions"]
+        assert [f["file"] for f in part["files"]] == ["c.ts", "new/a.py"]
+        assert part["moved_from"] == {"new/a.py": "old/a.py"}
+        assert part["context_patch"] == "patches_p0_context.txt"
+        assert captured[-1][-2:] == ["--", "old/a.py"]
+
+    @pytest.mark.parametrize("version", ["v1", "v2"])
+    def test_changing_the_paired_deleted_file_invalidates_the_cache(
+        self, tmp_path: Path, version: str,
+    ) -> None:
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        bha_dir = tmp_path / "bha"
+        bha_dir.mkdir()
+        (bha_dir / "agent_bha_p0.json").write_text(json.dumps({"findings": []}))
+        if version == "v1":
+            update, check = TestCmdCacheUpdate()._run_cache_update, TestCmdCacheCheck()._run_cache_check
+        else:
+            update, check = TestCmdCacheUpdateV2()._run, TestCmdCacheCheckV2()._run
+        update(cache_dir, _moved_diff_data(), bha_dir, reviewed_files=["new/a.py", "c.ts"])
+
+        out = tmp_path / "out"
+        out.mkdir()
+        same = check(cache_dir, _moved_diff_data(), out)
+        assert sorted(same["cached_files"]) == ["c.ts", "new/a.py"]
+
+        changed = check(cache_dir, _moved_diff_data(old_line="other()"), out)
+        assert changed["cached_files"] == ["c.ts"]
+        assert "new/a.py" in changed["uncached_files"]
+        uncached = json.loads((out / "uncached_diff_data.json").read_text())
+        assert uncached["moved_from"] == {"new/a.py": "old/a.py"}
 
 
 class TestLoadCodeReviewSettings:
@@ -12371,30 +14474,30 @@ class TestSignalTaxonomy:
 
 
 class TestSignalExtractionCacheKey:
-    """Cache key contract: tuple of (diff_tip, taxonomy_hash, prompt_hash)."""
+    """Cache key contract: tuple of (input_hash, taxonomy_hash, prompt_hash)."""
 
     def test_same_inputs_same_key(self) -> None:
         from code_review_helpers import signal_extraction_cache_key
-        a = signal_extraction_cache_key("dt", "tax", "ph")
-        b = signal_extraction_cache_key("dt", "tax", "ph")
+        a = signal_extraction_cache_key("ih", "tax", "ph")
+        b = signal_extraction_cache_key("ih", "tax", "ph")
         assert a == b
 
-    def test_diff_tip_flip_changes_key(self) -> None:
+    def test_input_hash_flip_changes_key(self) -> None:
         from code_review_helpers import signal_extraction_cache_key
-        a = signal_extraction_cache_key("dt1", "tax", "ph")
-        b = signal_extraction_cache_key("dt2", "tax", "ph")
+        a = signal_extraction_cache_key("ih1", "tax", "ph")
+        b = signal_extraction_cache_key("ih2", "tax", "ph")
         assert a != b
 
     def test_taxonomy_hash_flip_changes_key(self) -> None:
         from code_review_helpers import signal_extraction_cache_key
-        a = signal_extraction_cache_key("dt", "tax1", "ph")
-        b = signal_extraction_cache_key("dt", "tax2", "ph")
+        a = signal_extraction_cache_key("ih", "tax1", "ph")
+        b = signal_extraction_cache_key("ih", "tax2", "ph")
         assert a != b
 
     def test_prompt_hash_flip_changes_key(self) -> None:
         from code_review_helpers import signal_extraction_cache_key
-        a = signal_extraction_cache_key("dt", "tax", "ph1")
-        b = signal_extraction_cache_key("dt", "tax", "ph2")
+        a = signal_extraction_cache_key("ih", "tax", "ph1")
+        b = signal_extraction_cache_key("ih", "tax", "ph2")
         assert a != b
 
 
@@ -12566,7 +14669,6 @@ class TestExtractSignalsPrepare:
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="ph0",
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -12591,9 +14693,95 @@ class TestExtractSignalsPrepare:
         ts_entry = next(f for f in agent_input["files"] if f["path"].endswith(".ts"))
         assert ts_entry["language_hint"] == "typescript"
 
+    def test_manifest_paths_are_absolute_for_relative_cr_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The singleton Task resolves manifest paths from the session's
+        checkout, not the review root, so a relative --cr-dir must not leak
+        relative paths into the manifest.
+        """
+        from code_review_helpers import cmd_extract_signals_prepare
+        monkeypatch.chdir(tmp_path)
+        diff_path = _build_diff_data(tmp_path)
+        args = argparse.Namespace(
+            cr_dir="cr",
+            diff_data=str(diff_path),
+            prompt_hash="ph0",
+            cache_dir=None,
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        assert cmd_extract_signals_prepare(args) == 0
+
+        cr_abs = (tmp_path / "cr").resolve()
+        manifest = json.loads((cr_abs / "extract_signals_manifest.json").read_text())
+        assert manifest["status"] == "needs_agent"
+        assert manifest["input_path"] == str(cr_abs / "extract_signals_input.json")
+        assert manifest["taxonomy_path"] == str(cr_abs / "extract_signals_taxonomy.json")
+        assert manifest["output_path"] == str(cr_abs / "extract_signals.json")
+        assert Path(manifest["prompt_path"]).is_absolute()
+
+    def _prepare_in(
+        self, base: Path, cache_dir: Path, diff_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        from code_review_helpers import cmd_extract_signals_prepare
+        base.mkdir(parents=True)
+        diff_path = base / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+        args = argparse.Namespace(
+            cr_dir=str(base / "cr"),
+            diff_data=str(diff_path),
+            prompt_hash="ph0",
+            cache_dir=str(cache_dir),
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        assert cmd_extract_signals_prepare(args) == 0
+        return json.loads((base / "cr" / "extract_signals_manifest.json").read_text())
+
+    def test_changed_diff_misses_a_prior_runs_cache_entry(self, tmp_path: Path) -> None:
+        """Regression: the key used the literal ``HEAD`` diff tip, so a
+        re-review after new commits (or a staged vs working-tree review of
+        the same branch) reused the first run's signals. The key now
+        content-addresses the agent's input bundle.
+        """
+        from code_review_helpers import CACHE_NAMESPACE_SIGNALS
+        cache_dir = tmp_path / "cache"
+        (cache_dir / CACHE_NAMESPACE_SIGNALS).mkdir(parents=True)
+        diff_a = json.loads(_build_diff_data(tmp_path).read_text())
+        first = self._prepare_in(tmp_path / "a", cache_dir, diff_a)
+        assert first["status"] == "needs_agent"
+        (cache_dir / CACHE_NAMESPACE_SIGNALS / f"{first['cache_key']}.json").write_text(
+            json.dumps({
+                "status": "ok", "signals": [], "errors": [],
+                "written_at": datetime.now(timezone.utc).isoformat(),
+            }),
+        )
+
+        # Same files, one changed line: a new commit on the branch, or the
+        # working tree differing from the index.
+        diff_b = json.loads(json.dumps(diff_a))
+        diff_b["patch_lines"]["src/auth/login.ts"]["added_lines"]["42"] = (
+            "const session = await issueToken(user, { mfa: true });"
+        )
+        second = self._prepare_in(tmp_path / "b", cache_dir, diff_b)
+        assert second["status"] == "needs_agent"
+        assert second["cache_key"] != first["cache_key"]
+
+        # Positive control: the unchanged diff still hits.
+        again = self._prepare_in(tmp_path / "c", cache_dir, diff_a)
+        assert again["status"] == "cache_hit"
+        assert again["cache_key"] == first["cache_key"]
+
     def test_cache_hit_serves_directly_without_agent(self, tmp_path: Path) -> None:
         from code_review_helpers import (
             CACHE_NAMESPACE_SIGNALS,
+            _build_signal_input,
+            _stable_json_hash,
             cmd_extract_signals_prepare,
             load_signal_taxonomy,
             signal_extraction_cache_key,
@@ -12607,7 +14795,10 @@ class TestExtractSignalsPrepare:
         _, raw = load_signal_taxonomy()
         import hashlib
         taxonomy_hash = hashlib.sha256(raw).hexdigest()
-        key = signal_extraction_cache_key("abcdef1234", taxonomy_hash, "ph0")
+        input_hash = _stable_json_hash(
+            _build_signal_input(json.loads(diff_path.read_text()), None),
+        )
+        key = signal_extraction_cache_key(input_hash, taxonomy_hash, "ph0")
         cached_payload = {
             "status": "ok",
             "signals": [
@@ -12628,7 +14819,6 @@ class TestExtractSignalsPrepare:
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="ph0",
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -12663,7 +14853,6 @@ class TestExtractSignalsConsolidate:
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="ph0",
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -12953,7 +15142,6 @@ class TestPR121PromptIsContentAddressed:
         return argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="",  # No override — exercise content-addressing.
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -13023,7 +15211,6 @@ class TestPR121AgentInputBundle:
         args = argparse.Namespace(
             cr_dir=str(cr_dir),
             diff_data=str(diff_path),
-            diff_tip="abcdef1234",
             prompt_hash="",
             cache_dir=str(cache_dir),
             taxonomy=None,
@@ -13917,7 +16104,7 @@ class TestCoverageCriticPromptHash:
 
 class TestCoverageCriticCacheKey:
     """Cache key tuple invariants: ``(plan_initial_hash, signals_hash,
-    diff_tip, prompt_hash, available_reviewers_hash)``.
+    diff_summary_hash, prompt_hash, available_reviewers_hash)``.
 
     Every dimension must flip the key — otherwise a stale cache entry
     could be served when one of these inputs changes between runs. The
@@ -13947,11 +16134,11 @@ class TestCoverageCriticCacheKey:
             != coverage_critic_cache_key("p", "s2", "t", "h", "a")
         )
 
-    def test_diff_tip_flip_changes_key(self) -> None:
+    def test_diff_summary_hash_flip_changes_key(self) -> None:
         from code_review_helpers import coverage_critic_cache_key
         assert (
-            coverage_critic_cache_key("p", "s", "t1", "h", "a")
-            != coverage_critic_cache_key("p", "s", "t2", "h", "a")
+            coverage_critic_cache_key("p", "s", "d1", "h", "a")
+            != coverage_critic_cache_key("p", "s", "d2", "h", "a")
         )
 
     def test_prompt_hash_flip_changes_key(self) -> None:
@@ -14411,7 +16598,6 @@ class TestCoverageCriticPrepareCLI:
             "extract_signals": str(inputs["paths"]["signals"]) if inputs["paths"]["signals"].exists() else None,
             "diff_data": str(inputs["paths"]["diff_data"]),
             "available_reviewers": str(inputs["paths"]["available"]),
-            "diff_tip": "abc123",
             "cache_dir": str(cache_dir),
             "prompt": None,
             "model": COVERAGE_CRITIC_MODEL_DEFAULT,
@@ -14438,6 +16624,30 @@ class TestCoverageCriticPrepareCLI:
         bundle = json.loads((cr_dir / "coverage_critic_input.json").read_text())
         assert bundle["available_reviewers"] == inputs["available"]
         assert "coverage_plan_initial" in bundle
+
+    def test_manifest_paths_are_absolute_for_relative_cr_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Same contract as the stage_11 manifest: the singleton Task runs in
+        the session's checkout, so every manifest path must be absolute.
+        """
+        from code_review_helpers import cmd_coverage_critic_prepare
+        inputs = _write_coverage_critic_inputs(
+            tmp_path, signals={"signals": []},
+        )
+        monkeypatch.chdir(tmp_path)
+        args = self._args(tmp_path, inputs, cr_dir="cr")
+        assert cmd_coverage_critic_prepare(args) == 0
+
+        cr_abs = (tmp_path / "cr").resolve()
+        manifest = _read_coverage_section(cr_abs, "critic")
+        assert manifest["status"] == "needs_agent"
+        assert manifest["input_path"] == str(cr_abs / "coverage_critic_input.json")
+        assert manifest["diff_summary_path"] == str(
+            cr_abs / "coverage_critic_diff_summary.json",
+        )
+        assert manifest["coverage_state"] == str(cr_abs / "coverage.json")
+        assert Path(manifest["prompt_path"]).is_absolute()
 
     def test_prepare_filters_existing_reviewers_from_available(self, tmp_path: Path) -> None:
         """If the AVAILABLE list contains a reviewer already in the
@@ -14634,6 +16844,7 @@ class TestCoverageCriticPrepareCLI:
         from code_review_helpers import (
             CACHE_NAMESPACE_COVERAGE_CRITIC,
             _available_reviewers_hash,
+            _build_signal_input,
             _stable_json_hash,
             cmd_coverage_critic_prepare,
             coverage_critic_cache_key,
@@ -14655,8 +16866,11 @@ class TestCoverageCriticPrepareCLI:
         # no-op against the default fixture (which lists
         # accessibility-expert + i18n-expert).
         available_hash = _available_reviewers_hash(inputs["available"])
+        diff_summary_hash = _stable_json_hash(_build_signal_input(
+            json.loads(inputs["paths"]["diff_data"].read_text()), None,
+        ))
         key = coverage_critic_cache_key(
-            plan_hash, signals_hash, "abc123", prompt_hash, available_hash,
+            plan_hash, signals_hash, diff_summary_hash, prompt_hash, available_hash,
         )
         cached_payload = {
             "required": inputs["plan_initial"]["required"],
@@ -14682,6 +16896,42 @@ class TestCoverageCriticPrepareCLI:
         # written_at metadata stripped from canonical output
         assert "written_at" not in final
 
+    def test_changed_diff_misses_a_prior_runs_cache_entry(self, tmp_path: Path) -> None:
+        """Regression: the key used the diff tip, the literal ``HEAD`` on a
+        branch review, so a later review with the same plan, signals and
+        roster reused the first run's plan even though the diff changed.
+        The key now content-addresses the diff summary the critic is given.
+        """
+        from code_review_helpers import (
+            CACHE_NAMESPACE_COVERAGE_CRITIC,
+            cmd_coverage_critic_prepare,
+        )
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        args = self._args(tmp_path, inputs)
+        cache_dir = Path(args.cache_dir)
+        (cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC).mkdir(parents=True)
+        assert cmd_coverage_critic_prepare(args) == 0
+        first = _read_coverage_section(inputs["cr_dir"], "critic")
+        assert first["status"] == "needs_agent"
+        (cache_dir / CACHE_NAMESPACE_COVERAGE_CRITIC / f"{first['cache_key']}.json").write_text(
+            json.dumps({
+                "required": inputs["plan_initial"]["required"],
+                "best_effort": [], "warnings": [],
+                "stats": {"required_count": 1, "best_effort_count": 0},
+                "written_at": datetime.now(timezone.utc).isoformat(),
+            }),
+        )
+
+        diff_data = json.loads(inputs["paths"]["diff_data"].read_text())
+        diff_data["patch_lines"]["src/Modal.tsx"]["added_lines"]["42"] = (
+            "<div role='alertdialog'>"
+        )
+        inputs["paths"]["diff_data"].write_text(json.dumps(diff_data))
+        assert cmd_coverage_critic_prepare(args) == 0
+        second = _read_coverage_section(inputs["cr_dir"], "critic")
+        assert second["status"] == "needs_agent"
+        assert second["cache_key"] != first["cache_key"]
+
     def test_roster_shrink_misses_prior_cache(self, tmp_path: Path) -> None:
         """Concrete failure mode the PR comment described: same diff,
         same plan_initial, same signals, same prompt, but the
@@ -14693,6 +16943,7 @@ class TestCoverageCriticPrepareCLI:
         from code_review_helpers import (
             CACHE_NAMESPACE_COVERAGE_CRITIC,
             _available_reviewers_hash,
+            _build_signal_input,
             _stable_json_hash,
             cmd_coverage_critic_prepare,
             coverage_critic_cache_key,
@@ -14715,8 +16966,11 @@ class TestCoverageCriticPrepareCLI:
         prompt_hash = _coverage_critic_prompt_hash(
             _default_coverage_critic_prompt_path(),
         )
+        diff_summary_hash = _stable_json_hash(_build_signal_input(
+            json.loads(inputs["paths"]["diff_data"].read_text()), None,
+        ))
         old_key = coverage_critic_cache_key(
-            plan_hash, signals_hash, "abc123", prompt_hash,
+            plan_hash, signals_hash, diff_summary_hash, prompt_hash,
             _available_reviewers_hash(["accessibility-expert", "i18n-expert"]),
         )
         # Seed a cache entry under the OLD roster that proposes the
@@ -14775,7 +17029,6 @@ class TestCoverageCriticPrepareCrDirDefault:
             "extract_signals": None,
             "diff_data": str(diff_data),
             "available_reviewers": str(available),
-            "diff_tip": "abc123",
             "cache_dir": None,
             "prompt": None,
             "model": COVERAGE_CRITIC_MODEL_DEFAULT,
@@ -14890,7 +17143,6 @@ class TestCoverageCriticConsolidateCLI:
             extract_signals=str(inputs["paths"]["signals"]),
             diff_data=str(inputs["paths"]["diff_data"]),
             available_reviewers=str(inputs["paths"]["available"]),
-            diff_tip="abc123",
             cache_dir=str(cache_dir),
             prompt=None,
             model=COVERAGE_CRITIC_MODEL_DEFAULT,
@@ -15028,7 +17280,6 @@ class TestStage15Alignment:
         assert "--cr-dir" in args
         assert "--available-reviewers" in args
         assert "--diff-data" in args
-        assert "--diff-tip" in args
         # --extract-signals is optional but always wired for the
         # pipeline (no reason to skip when stage_11 produced it).
         assert "--extract-signals" in args
@@ -15262,17 +17513,15 @@ class TestPLN725Phase5PostMergeHardening:
                 f"must not start with `agent_`"
             )
 
-    # --- Fix 2: walker-resolved diff_tip + cache-dir on prepare ------------
+    # --- Fix 2: content-addressed cache keys + cache-dir on prepare --------
 
-    def test_stage_11_prepare_uses_walker_diff_tip_token(self) -> None:
-        # Literal "HEAD" would make the cache key constant across
-        # reviews — every entry written under the same diff_tip,
-        # cache_hit path unreachable through the walker. The walker
-        # substitutes <DIFF_TIP> from scope.json before dispatch.
+    def test_stage_11_prepare_takes_no_diff_tip(self) -> None:
+        # A branch scope's <DIFF_TIP> resolves to the literal "HEAD", so a
+        # key built from it was constant across reviews. stage_11's key
+        # content-addresses the agent input bundle instead, and prepare
+        # no longer accepts a diff tip at all.
         args = self._stage("stage_11_extract_signals")["args"]
-        idx = args.index("--diff-tip")
-        assert args[idx + 1] == "<DIFF_TIP>"
-        assert args[idx + 1] != "HEAD"
+        assert "--diff-tip" not in args
 
     def test_stage_11_prepare_receives_cache_dir(self) -> None:
         # Without --cache-dir, prepare runs cache-blind and the
@@ -15282,11 +17531,11 @@ class TestPLN725Phase5PostMergeHardening:
         assert "--cache-dir" in args
         assert args[args.index("--cache-dir") + 1] == "<CACHE_DIR>"
 
-    def test_stage_15_prepare_uses_walker_diff_tip_token(self) -> None:
+    def test_stage_15_prepare_takes_no_diff_tip(self) -> None:
+        # Same reason as stage_11: the critic key content-addresses the
+        # diff summary instead of the (often literal "HEAD") diff tip.
         args = self._stage("stage_15_coverage_critic")["args"]
-        idx = args.index("--diff-tip")
-        assert args[idx + 1] == "<DIFF_TIP>"
-        assert args[idx + 1] != "HEAD"
+        assert "--diff-tip" not in args
 
     def test_stage_15_prepare_receives_cache_dir(self) -> None:
         args = self._stage("stage_15_coverage_critic")["args"]
@@ -16940,6 +19189,7 @@ class TestArbitrateBudgetCrDirDefault:
         final = _read_coverage_section(cr_dir, "final")
         assert final["arbitrate_status"] == "blocked_by_verify"
         assert final["budget"]["bha_partitions"] == 0
+        assert final["budget"]["docs_only"] is True
 
     def test_writes_coverage_gaps_alongside_aggregate(self, tmp_path: Path) -> None:
         """``coverage_gaps.json`` stays standalone (multi-writer). On
@@ -17242,6 +19492,10 @@ def _run_derive_spawn_spec(
         p_path.write_text(json.dumps(partitions))
     if route is not None:
         _write_spawn_section(tmp_path, "route", route)
+    # Spec derivation is a dispatch stage and refuses an unprovable review
+    # root; these tests are about the spec, so give them a real one.
+    if not (tmp_path / "scope.json").exists():
+        _seed_scope_review_root(tmp_path, tmp_path / "review_root_repo")
 
     ns = argparse.Namespace(
         cr_dir=str(tmp_path),
@@ -17662,6 +19916,7 @@ class TestPLN725Phase8DeriveSpawnSpec:
         p = tmp_path / "partitions.json"
         p.write_text(json.dumps(self._two_partitions()))
         _write_spawn_section(tmp_path, "route", self._route())
+        _seed_scope_review_root(tmp_path, tmp_path / "review_root_repo")
 
         ns = argparse.Namespace(
             cr_dir=str(tmp_path),
@@ -17791,10 +20046,11 @@ class TestPLN725Phase8DeriveSpawnSpecBudgetCap:
         assert capped[0]["partition_count"] == 3
 
     def test_bha_partitions_zero_suppresses_all_bha(self, tmp_path: Path) -> None:
-        """Docs-only post-arbitrate sets ``bha_partitions: 0``. No BHA
-        descriptors emit even when the partitioner produced
-        partitions (e.g. on a mixed docs+code diff where docs
-        dominate the LOC cap).
+        """``bha_partitions: 0`` suppresses every BHA descriptor even
+        when the partitioner produced partitions. Without the
+        ``budget.docs_only`` marker the zero is a cap, so the one
+        skipped entry stays ``budget_capped`` (the docs-only case is
+        ``TestISS10869DocsOnlyBhaSkip``).
         """
         plan = {
             "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
@@ -17832,6 +20088,142 @@ class TestPLN725Phase8DeriveSpawnSpecBudgetCap:
         assert len(bha_agents) == 3
         capped = [s for s in spec["skipped"] if s["reason"] == "budget_capped"]
         assert capped == []
+
+
+class TestISS10869DocsOnlyBhaSkip:
+    """ISS-10869: arbitrate-budget deliberately zeroes BHA on a docs-only
+    diff. derive-spawn-spec used to report that zero as a
+    ``budget_capped`` drop of a required reviewer, so finalize-result
+    carried a HIGH coverage gap and the verdict was CHANGES_REQUESTED.
+    Each case drives arbitrate-budget -> derive-spawn-spec ->
+    finalize-result -> verdict against a review root that holds the
+    diff's files.
+    """
+
+    _CORE_PLAN: dict[str, Any] = {
+        "required": [
+            {"reviewer": r, "source": "core"}
+            for r in (
+                "bug_hunter_a", "bug_hunter_b", "unified_auditor",
+                "test_quality",
+            )
+        ],
+        "best_effort": [],
+    }
+
+    @staticmethod
+    def _partitions(files: list[str]) -> dict[str, Any]:
+        return {
+            "partitions": [
+                {"id": i, "files": [{"file": f}], "is_test_only": False}
+                for i, f in enumerate(files)
+            ],
+            "test_file_paths": [],
+            "force_merged_count": 0,
+        }
+
+    def _run_chain(
+        self, tmp_path: Path, files: list[str], partition_files: list[str],
+    ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+        from code_review_helpers import cmd_finalize_result, cmd_verdict
+        from golden_fixture_harness import run_with_stdout_capture
+
+        root = tmp_path / "review_root_repo"
+        resolved = _make_review_root(root, {f: "x\n" for f in files})
+        (tmp_path / "scope.json").write_text(json.dumps({
+            "review_root": resolved,
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+        }))
+        _, final, _ = _run_arbitrate_budget(
+            tmp_path, self._CORE_PLAN, _make_diff_data(files=files),
+        )
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, final, self._partitions(partition_files),
+            {"fast_path": False, "models": {}},
+        )
+        validated = tmp_path / "findings_validated.json"
+        validated.write_text(json.dumps({"validated": [], "discarded": [], "stats": {}}))
+        run_with_stdout_capture(cmd_finalize_result, argparse.Namespace(
+            cr_dir=str(tmp_path), findings_validated=str(validated),
+            mode="local", diff_tip="abc1234", pr_number=None,
+        ))
+        verdict = json.loads(run_with_stdout_capture(cmd_verdict, argparse.Namespace(
+            findings_validated=str(validated),
+            review_result=str(tmp_path / "review_result.json"),
+        )))
+        gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())["findings"]
+        return final, spec, gaps, verdict
+
+    def test_docs_only_diff_skips_bha_without_coverage_gap(
+        self, tmp_path: Path,
+    ) -> None:
+        doc = "docs/runbooks/production-branch-cutover-reset.md"
+        final, spec, gaps, verdict = self._run_chain(tmp_path, [doc], [doc])
+        assert final["budget"]["bha_partitions"] == 0
+        assert final["budget"]["docs_only"] is True
+        bha_skips = [s for s in spec["skipped"] if s["reviewer"] == "bug_hunter_a"]
+        assert bha_skips == [
+            {"reviewer": "bug_hunter_a", "bucket": "required", "reason": "docs_only",
+             "budget_cap": 0, "partition_count": 1},
+        ]
+        assert spec["stats"]["required_coverage_gaps"] == 0
+        assert gaps == []
+        assert verdict["canonical_verdict"] == "APPROVED"
+        assert "- ℹ️ BHA skipped on a docs-only diff." in _run_render_fleet_summary(tmp_path)
+
+    def test_mixed_docs_and_code_diff_keeps_bha_floor(
+        self, tmp_path: Path,
+    ) -> None:
+        final, spec, gaps, verdict = self._run_chain(
+            tmp_path, ["docs/guide.md", "src/app.ts"], ["src/app.ts"],
+        )
+        assert final["budget"]["bha_partitions"] >= 1
+        assert "docs_only" not in final["budget"]
+        assert [a["agent_id"] for a in spec["agents"] if a["reviewer"] == "bug_hunter_a"] == ["bha_p0"]
+        assert [s for s in spec["skipped"] if s["reviewer"] == "bug_hunter_a"] == []
+        assert gaps == []
+        assert verdict["canonical_verdict"] == "APPROVED"
+
+    def test_bha_partition_cap_still_reports_high_gap(
+        self, tmp_path: Path,
+    ) -> None:
+        """Counterfactual for the docs-only case: partitions the budget
+        could not fit are a real required-reviewer drop and still block.
+        """
+        files = ["src/a.ts", "src/b.ts", "src/c.ts"]
+        final, spec, gaps, verdict = self._run_chain(tmp_path, files, files)
+        assert final["budget"]["bha_partitions"] == 1
+        capped = [s for s in spec["skipped"] if s["reason"] == "budget_capped"]
+        assert [s["partition_id"] for s in capped] == [1, 2]
+        assert len(gaps) == 2
+        for gap in gaps:
+            assert gap["severity"] == "HIGH"
+            assert gap["issue"] == "Required reviewer dropped: bug_hunter_a"
+            assert "budget capped" in gap["explanation"]
+        assert verdict["canonical_verdict"] == "CHANGES_REQUESTED"
+
+    def test_zero_cap_without_docs_only_marker_still_reports_high_gap(
+        self, tmp_path: Path,
+    ) -> None:
+        """A zero ``bha_partitions`` is only benign when arbitrate-budget
+        marked the diff docs-only. A zero from anywhere else (the
+        pre-fix BLOCKING path hardcoded one on code PRs) stays a
+        ``budget_capped`` drop with a HIGH gap.
+        """
+        plan = {
+            "required": [{"reviewer": "bug_hunter_a", "source": "core"}],
+            "best_effort": [],
+            "budget": {"total_cap": 20, "bha_partitions": 0},
+        }
+        _, spec = _run_derive_spawn_spec(
+            tmp_path, plan, self._partitions(["src/a.ts"]),
+            {"fast_path": False, "models": {}},
+        )
+        assert [s["reason"] for s in spec["skipped"]] == ["budget_capped"]
+        gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())["findings"]
+        assert [(g["severity"], g["issue"]) for g in gaps] == [
+            ("HIGH", "Required reviewer dropped: bug_hunter_a"),
+        ]
 
 
 class TestPLN725Phase8DeriveSpawnSpecBlockingSanitization:
@@ -19161,11 +21553,11 @@ class TestPLN725Phase9RenderFleetSummaryNotes:
         assert "2 partition(s)" in out
         assert "(2/3)" in out
 
-    def test_budget_capped_docs_only_aggregate_uses_partition_count(
+    def test_budget_capped_zero_cap_aggregate_uses_partition_count(
         self, tmp_path: Path,
     ) -> None:
-        """When the post-arbitrate cap is 0 (docs-only),
-        ``_derive_spawn_agents_from_plan`` emits ONE aggregate
+        """When the post-arbitrate cap is 0 without the docs-only
+        marker, ``_derive_spawn_agents_from_plan`` emits ONE aggregate
         ``budget_capped`` entry covering all N suppressed
         partitions (no ``partition_id``, ``partition_count`` =
         N). Pre-v2.23.3 the renderer counted
@@ -20138,7 +22530,7 @@ class TestCRSPhaseACLIConfigLoader:
         Catches: cli.json type/default/choices/action edits, $$ constant
         misroutes (the original false positive was --max-files = 20 vs
         BUDGET_TOTAL_CAP_DEFAULT = 20), missing required flags, mutex routing
-        drift, and func name drift across all 46 subparsers.
+        drift, and func name drift across all 47 subparsers.
         """
         expected = json.loads(
             (self._snapshot_dir() / "cli_parser_resolved.json").read_text(),
@@ -20908,6 +23300,8 @@ class TestPLN807Phase3StaticSpawnSpec:
             p_path.write_text(json.dumps({"partitions": partitions}))
         if route is not None:
             _write_spawn_section(tmp_path, "route", route)
+        if not (tmp_path / "scope.json").exists():
+            _seed_scope_review_root(tmp_path, tmp_path / "review_root_repo")
 
         ns = argparse.Namespace(
             cr_dir=str(tmp_path),
@@ -20933,6 +23327,34 @@ class TestPLN807Phase3StaticSpawnSpec:
             route={"max_bha_agents": 5, "fast_path": False},
         )
         assert spec["arbitrate_status"] == "static"
+
+    def test_unprovable_review_root_exits_3_without_a_spec(
+        self, tmp_path: Path,
+    ) -> None:
+        # Static derivation hands the reviewer fleet a root too, so an empty one
+        # must halt the run with exit 3 rather than emit a spec — the same
+        # refusal derive-spawn-spec makes. `_invoke` discards the return code and
+        # seeds a provable root, so this case builds its own arguments.
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_derive_static_spec
+
+        (tmp_path / "scope.json").write_text(json.dumps({"review_root": ""}))
+        p_path = tmp_path / "partitions.json"
+        p_path.write_text(json.dumps({
+            "partitions": [{"id": 0, "is_test_only": False}],
+        }))
+        ns = argparse.Namespace(cr_dir=str(tmp_path), partitions=str(p_path))
+        old_stdout = _sys.stdout
+        _sys.stdout = io.StringIO()
+        try:
+            rc = cmd_derive_static_spec(ns)
+        finally:
+            _sys.stdout = old_stdout
+
+        assert rc == 3
+        assert not (tmp_path / "spawn.json").exists()
 
     def test_emits_bha_bhb_auditor_only(self, tmp_path: Path) -> None:
         spec = self._invoke(
@@ -22056,17 +24478,21 @@ class TestFEA1401CoverageCoreConditional:
         assert impact["min_depth"] == "deep"
         assert impact["source"] == "core"
         assert impact["required"] is False  # PLN-725 determinism enforcement
-        triggers = list(impact["triggers"])
-        assert len(triggers) >= 2
-        names = {t["name"] for t in triggers if isinstance(t, dict)}
+        triggers = [t for t in impact["triggers"] if isinstance(t, dict)]
+        signal_triggers = [t for t in triggers if t["type"] == "signal"]
+        names = {t["name"] for t in signal_triggers}
         assert "exported_symbol_change" in names
         assert "symbol_deletion" in names
-        # The min_confidence on each trigger must be >= the taxonomy floor
-        # so the per-signal floor in the prompt is actually enforced at
-        # coverage-resolution time.
-        for trigger in triggers:
-            assert trigger["type"] == "signal"
+        # The min_confidence on each signal trigger must be >= the taxonomy
+        # floor so the per-signal floor in the prompt is actually enforced
+        # at coverage-resolution time.
+        for trigger in signal_triggers:
             assert isinstance(trigger.get("min_confidence"), (int, float))
+        # ISS-12737: the one non-signal trigger is the deterministic
+        # file_deletion change_class.
+        assert [t for t in triggers if t["type"] != "signal"] == [
+            {"type": "change_class", "class": "file_deletion"},
+        ]
 
 
 class _ConditionalCoreFixtures:
@@ -22187,6 +24613,56 @@ class TestFEA1401ResolveCoverage(_ConditionalCoreFixtures):
             critic_gates=self._empty_critic_gates(),
             diff_data=self._diff(),
             extract_signals=self._signals("exported_symbol_change", 0.95),
+        )
+        assert "impact" not in {e["reviewer"] for e in plan["best_effort"]}
+
+    def _deletion_diff(self, status: str) -> dict[str, Any]:
+        return {
+            "files_to_review": ["src/gone.ts"],
+            "file_statuses": {"src/gone.ts": status},
+            "patch_lines": {},
+        }
+
+    def test_impact_added_at_deep_on_file_deletion_without_signals(self) -> None:
+        """ISS-12737: deleting a file selects the Impact Analyzer at deep
+        depth through the deterministic ``file_deletion`` change_class, with
+        no signal from the extractor."""
+        from code_review_helpers import resolve_coverage
+
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._deletion_diff("removed"),
+            extract_signals={"signals": []},
+            invocation_depth="deep",
+        )
+        impact_entry = next(
+            e for e in plan["best_effort"] if e["reviewer"] == "impact"
+        )
+        assert impact_entry["trigger"] == {
+            "type": "change_class", "class": "file_deletion",
+        }
+        assert "file_deletion" in plan["stats"]["detected_change_classes"]
+
+    def test_file_deletion_does_not_fire_on_modified_file(self) -> None:
+        from code_review_helpers import resolve_coverage
+
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._deletion_diff("modified"),
+            extract_signals={"signals": []},
+            invocation_depth="deep",
+        )
+        assert "file_deletion" not in plan["stats"]["detected_change_classes"]
+        assert "impact" not in {e["reviewer"] for e in plan["best_effort"]}
+
+    def test_file_deletion_does_not_add_impact_below_deep(self) -> None:
+        from code_review_helpers import resolve_coverage
+
+        plan = resolve_coverage(
+            critic_gates=self._empty_critic_gates(),
+            diff_data=self._deletion_diff("removed"),
+            extract_signals={"signals": []},
+            invocation_depth="standard",
         )
         assert "impact" not in {e["reviewer"] for e in plan["best_effort"]}
 
@@ -23412,6 +25888,44 @@ class TestExecuteStageInprocess:
         assert status == "failed_continue"
         assert not list(tmp_path.glob("agent_*-failed.json"))
 
+    def test_review_root_exit_code_aborts_a_continue_stage(
+        self, tmp_path: Path,
+    ) -> None:
+        # ISS-7382: the dispatch stages that re-prove review_root are
+        # on_failure "continue", and every path a continue degrades to (the
+        # static reviewer table, "no verifier this run") spawns the same
+        # agents against the same wrong tree. The refusal exit code therefore
+        # overrides on_failure. 3 is written out rather than imported: the
+        # constant this rule publishes cannot also be its own expectation.
+        from code_review_helpers import _execute_stage_inprocess
+
+        out = tmp_path / "o.json"
+        parser = _fake_stage_parser(_fake_func(rc=3))
+        status, msg = _execute_stage_inprocess(
+            self._stage(out, on_failure="continue"), _rp_ctx(tmp_path), parser, set(),
+        )
+        assert status == "failed_abort"
+        assert msg is not None
+
+    def test_the_guarded_dispatch_stages_are_on_failure_continue(self) -> None:
+        # Sibling of the case above: it is only load-bearing while these
+        # stages would otherwise degrade. If they ever become "abort" on
+        # their own, this test says so instead of going quietly vacuous.
+        stages_path = (
+            Path(__file__).parent / "config" / "stages.json"
+        )
+        by_id = {
+            s["id"]: s
+            for s in json.loads(stages_path.read_text())["stages"]
+        }
+        for stage_id in (
+            "stage_19b_derive_spawn_spec",
+            "stage_19c_derive_static_spec",
+            "stage_22b_verify_prepare",
+        ):
+            assert by_id[stage_id].get("on_failure") == "continue", stage_id
+        assert by_id["stage_03_resolve_scope"].get("on_failure") == "abort"
+
     def test_continue_with_coverage_gap_emits_agent_failure_finding(
         self, tmp_path: Path,
     ) -> None:
@@ -23707,3 +26221,303 @@ class TestRunPrefixRoutePartition:
             json.dumps({"status_message": "1/2 files cached"}),
         )
         assert _rp_cache_status_message(tmp_path) == "1/2 files cached"
+
+
+class TestPluginRootResolutionContract:
+    """Claude Code fills in ``${CLAUDE_PLUGIN_ROOT}`` only in the text of the
+    command or skill being invoked. It is not filled in a file the agent opens
+    with Read, and it is not a Bash environment variable. /code-review:deep and
+    /code-review:shallow reach start.md through Read, so they must bind the
+    resolved root for it; Read-loaded files must not rely on the token.
+    """
+
+    _ROOT = Path(__file__).parents[2]
+
+    def _read_loaded_files(self) -> list[Path]:
+        root = self._ROOT
+        return sorted([
+            root / "README.md",
+            root / "SCHEMA.md",
+            *(root / "prompts").glob("*.md"),
+            *(root / "tools" / "prompts").glob("*.txt"),
+            *(root / "agents").glob("*.md"),
+        ])
+
+    @pytest.mark.parametrize("command", ["deep.md", "shallow.md"])
+    def test_wrapper_commands_bind_plugin_root(self, command: str) -> None:
+        text = (self._ROOT / "commands" / command).read_text()
+        assert "**`PLUGIN_ROOT` = `${CLAUDE_PLUGIN_ROOT}`**" in text
+
+    def test_start_md_uses_the_token_only_as_its_own_candidate(self) -> None:
+        text = _start_command_text()
+        assert text.count("CLAUDE_PLUGIN_ROOT") == 1
+        candidate = _extract_section(text, "2. **This file's own text**", "\n")
+        assert "`${CLAUDE_PLUGIN_ROOT}`" in candidate
+
+    def test_start_md_checks_a_literal_plugin_root_path(self) -> None:
+        stage_0b = _extract_section(
+            _start_command_text(), "**0b. Resolve plugin paths", "**Four resolution outcomes",
+        )
+        assert "test -f <PLUGIN_ROOT>/tools/python/code_review_helpers.py" in stage_0b
+
+    def test_read_loaded_files_do_not_rely_on_the_token(self) -> None:
+        offenders = [
+            str(p.relative_to(self._ROOT)) for p in self._read_loaded_files()
+            if "CLAUDE_PLUGIN_ROOT" in p.read_text()
+        ]
+        assert offenders == []
+
+    def test_skills_use_the_substituted_token_form(self) -> None:
+        offenders = [
+            str(p.relative_to(self._ROOT))
+            for p in (self._ROOT / "skills").glob("*/SKILL.md")
+            if "<CLAUDE_PLUGIN_ROOT>" in p.read_text()
+        ]
+        assert offenders == []
+
+
+class TestSingletonDispatchInputsContract:
+    """Each singleton agent is handed every file its manifest declares in
+    ``extra_inputs`` (stage_11: the taxonomy snapshot; stage_15: the diff
+    summary), and each prompt names the files prepare actually writes.
+    """
+
+    _ROOT = Path(__file__).parents[2]
+
+    def _signals_manifest(self, tmp_path: Path) -> dict[str, Any]:
+        from code_review_helpers import cmd_extract_signals_prepare
+        cr_dir = tmp_path / "cr"
+        args = argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(_build_diff_data(tmp_path)),
+            prompt_hash="ph0",
+            cache_dir=None,
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+        assert cmd_extract_signals_prepare(args) == 0
+        return json.loads((cr_dir / "extract_signals_manifest.json").read_text())
+
+    def _critic_manifest(self, tmp_path: Path) -> dict[str, Any]:
+        from code_review_helpers import (
+            COVERAGE_CRITIC_MODEL_DEFAULT,
+            cmd_coverage_critic_prepare,
+        )
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        args = argparse.Namespace(
+            cr_dir=str(inputs["cr_dir"]),
+            extract_signals=str(inputs["paths"]["signals"]),
+            diff_data=str(inputs["paths"]["diff_data"]),
+            available_reviewers=str(inputs["paths"]["available"]),
+            cache_dir=None,
+            prompt=None,
+            model=COVERAGE_CRITIC_MODEL_DEFAULT,
+            no_critic=False,
+        )
+        assert cmd_coverage_critic_prepare(args) == 0
+        return _read_coverage_section(inputs["cr_dir"], "critic")
+
+    def test_spawn_template_passes_every_declared_extra_input(self) -> None:
+        skill = (self._ROOT / "skills" / "singleton-dispatch" / "SKILL.md").read_text()
+        template = _extract_section(skill, "3. Prompt template:", "4. After the Task returns")
+        assert "{EXTRA_INPUTS}" in template
+        assert "| `{EXTRA_INPUTS}` | `manifest.extra_inputs`" in template
+        assert "[stage_11 only]" not in template
+
+    def test_signal_manifest_declares_the_taxonomy_snapshot(self, tmp_path: Path) -> None:
+        manifest = self._signals_manifest(tmp_path)
+        assert manifest["extra_inputs"] == [manifest["taxonomy_path"]]
+        prompt = (self._ROOT / "tools" / "prompts" / "signal_extraction_prompt.txt").read_text()
+        assert f"`{Path(manifest['taxonomy_path']).name}`" in prompt
+        assert "`signal_taxonomy.json`" not in prompt
+
+    def test_critic_manifest_declares_the_diff_summary(self, tmp_path: Path) -> None:
+        manifest = self._critic_manifest(tmp_path)
+        assert manifest["status"] == "needs_agent"
+        assert manifest["extra_inputs"] == [manifest["diff_summary_path"]]
+        assert Path(manifest["diff_summary_path"]).is_absolute()
+        prompt = (self._ROOT / "tools" / "prompts" / "coverage_critic_prompt.txt").read_text()
+        for path in (manifest["input_path"], *manifest["extra_inputs"]):
+            assert f"`{Path(path).name}`" in prompt
+        assert "`diff_summary.json`" not in prompt
+
+
+class TestVerificationStatsCounts:
+    """``stats.verification`` tentative/downgrade/skipped counts and the
+    ``by_reviewer`` tentative bucket are derived from the verifier verdicts
+    on verified[], not hard-coded to zero.
+    """
+
+    def _verified(self) -> list[dict[str, Any]]:
+        from code_review_helpers import _merge_verifier_fields
+        downgraded = minimal_diff_finding(id="bha_p0_f2", severity="HIGH")
+        _merge_verifier_fields(downgraded, {
+            "verifier_verdict": "DOWNGRADE", "verifier_severity": "MEDIUM",
+        })
+        return [
+            minimal_diff_finding(id="bha_p0_f0", verifier_verdict="CONFIRMED"),
+            minimal_diff_finding(id="bha_p0_f1", verifier_verdict="TENTATIVE"),
+            downgraded,
+            minimal_diff_finding(
+                id="bhb_f0", reviewer="bhb", verifier_verdict="TENTATIVE",
+            ),
+            minimal_diff_finding(id="bhb_f1", reviewer="bhb", verifier_verdict=None),
+            minimal_diff_finding(
+                id="bhb_f2", reviewer="bhb", verifier_verdict="RE_ASSERTED",
+            ),
+        ]
+
+    def test_verification_counts_follow_verdicts(self) -> None:
+        from code_review_helpers import _stats_from_findings
+        verification = _stats_from_findings(self._verified(), [], [], [])["verification"]
+        assert verification["verified_count"] == 6
+        assert verification["tentative_count"] == 2
+        assert verification["downgrade_count"] == 1
+        assert verification["skipped_count"] == 1
+
+    def test_by_reviewer_tentative_bucket_counts_tentative_findings(self) -> None:
+        from code_review_helpers import _stats_from_findings
+        by_reviewer = _stats_from_findings(self._verified(), [], [], [])["by_reviewer"]
+        assert by_reviewer["bha_p0"]["verified"] == 3
+        assert by_reviewer["bha_p0"]["tentative"] == 1
+        assert by_reviewer["bhb"]["tentative"] == 1
+
+    def test_presenter_formulas_subtract_every_non_confirmed_bucket(self) -> None:
+        root = Path(__file__).parents[2]
+        formula = (
+            "{verified_count - tentative_count - re_asserted"
+            " - justified_invalid_count - skipped_count}"
+        )
+        for doc in (
+            root / "skills" / "present-local" / "SKILL.md",
+            root / "prompts" / "github-review.md",
+        ):
+            assert formula in doc.read_text(), doc.name
+
+
+class TestValidateLineReanchor:
+    """A diff-scope line past the end of its file (e.g. a reviewer citing its
+    position in ``patches_all.txt``) is re-anchored on ``code_snippet`` before
+    range filtering and duplicate merging, or kept and tagged
+    ``line_out_of_range``.
+    """
+
+    _FILE = "src/persistence/records.py"
+
+    def _records_source(self) -> str:
+        lines = [f"# line {n}" for n in range(1, 23)]
+        lines[16] = "        return self._rows[key]"
+        lines[19] = "        self._rows.clear()"
+        lines[20] = "        self._rows.clear()"
+        return "\n".join(lines) + "\n"
+
+    def _finding(self, **overrides: Any) -> dict[str, Any]:
+        base: dict[str, Any] = {
+            "file": self._FILE, "line": 17, "severity": "HIGH",
+            "category": "Correctness", "priority": 1, "confidence": 0.95,
+            "issue": "KeyError on a missing record",
+            "recommendation": "Use self._rows.get(key)",
+            "code_snippet": "\n        return self._rows[key]\n",
+        }
+        base.update(overrides)
+        return base
+
+    def _run(
+        self, tmp_path: Path, findings: list[dict[str, Any]],
+        diff_data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        import io
+        cr_dir = tmp_path / "cr"
+        cr_dir.mkdir()
+        root = tmp_path / "root"
+        resolved = _make_review_root(root, {self._FILE: self._records_source()})
+        (cr_dir / "scope.json").write_text(json.dumps({
+            "review_root": resolved,
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+        }))
+        diff_data = diff_data or _make_diff_data(
+            files=[self._FILE], ranges={self._FILE: {"added": [[15, 19]], "removed": []}},
+        )
+        (cr_dir / "findings.json").write_text(json.dumps(findings))
+        (cr_dir / "diff_data.json").write_text(json.dumps(diff_data))
+        ns = argparse.Namespace(
+            findings=str(cr_dir / "findings.json"),
+            diff_data=str(cr_dir / "diff_data.json"),
+            settings=None,
+            cr_dir=str(cr_dir),
+        )
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            assert cmd_validate(ns) == 0
+        return json.loads(buf.getvalue())
+
+    def test_reanchored_finding_merges_with_its_duplicate(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path, [
+            self._finding(reviewer="bha_p0"),
+            self._finding(reviewer="unified_auditor", line=267),
+        ])
+        assert result["stats"]["discarded_duplicate"] == 1
+        assert [f["line"] for f in result["validated"]] == [17]
+        reanchored = [
+            d["finding"] for d in result["discarded"] if d["reason"] == "DISCARD_DUPLICATE"
+        ] + result["validated"]
+        assert any(f.get("line_reanchored_from") == 267 for f in reanchored)
+        assert result["stats"]["lines_reanchored"] == 1
+
+    def test_reanchor_sets_line_and_keeps_the_original(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path, [self._finding(line=267)])
+        (finding,) = result["validated"]
+        assert finding["line"] == 17
+        assert finding["line_reanchored_from"] == 267
+        assert "line_out_of_range" not in finding
+        assert "out_of_hunk_kept" not in finding
+
+    def test_unmatched_snippet_is_kept_and_tagged(self, tmp_path: Path) -> None:
+        # P2 at 0.6: the out-of-hunk floor (0.80) would discard it on
+        # location alone; an unanchorable line must not.
+        result = self._run(tmp_path, [self._finding(
+            line=267, priority=2, severity="MEDIUM", confidence=0.6,
+            code_snippet="not in the file",
+        )])
+        (finding,) = result["validated"]
+        assert finding["line"] == 267
+        assert finding["line_out_of_range"] is True
+        assert "line_reanchored_from" not in finding
+        assert "out_of_hunk_kept" not in finding
+        assert result["stats"]["kept_line_out_of_range"] == 1
+
+    def test_ambiguous_snippet_is_tagged_not_moved(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path, [self._finding(
+            line=267, code_snippet="self._rows.clear()",
+        )])
+        (finding,) = result["validated"]
+        assert finding["line"] == 267
+        assert finding["line_out_of_range"] is True
+
+    def test_in_range_line_strips_reviewer_supplied_tags(self, tmp_path: Path) -> None:
+        result = self._run(tmp_path, [self._finding(
+            line_out_of_range=True, line_reanchored_from=3,
+        )])
+        (finding,) = result["validated"]
+        assert finding["line"] == 17
+        assert "line_out_of_range" not in finding
+        assert "line_reanchored_from" not in finding
+
+    def test_deleted_file_is_measured_from_the_patch(self, tmp_path: Path) -> None:
+        gone = "src/old.py"
+        removed = {str(n): f"old {n}" for n in range(1, 6)}
+        removed["3"] = "def legacy_entry():"
+        diff_data = _make_diff_data(
+            files=[gone],
+            statuses={gone: "removed"},
+            ranges={gone: {"added": [], "removed": [[1, 5]]}},
+            patch_lines={gone: {"added_lines": {}, "removed_lines": removed}},
+        )
+        result = self._run(tmp_path, [self._finding(
+            file=gone, line=40, code_snippet="def legacy_entry():",
+        )], diff_data)
+        (finding,) = result["validated"]
+        assert finding["line"] == 3
+        assert finding["line_reanchored_from"] == 40

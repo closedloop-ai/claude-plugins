@@ -33,7 +33,7 @@ Output in this format:
 **Reviewer Fleet block (PLN-725 Phase 9 / v2.23.0).** Do NOT write the Reviewers / Model Routing / Fleet lines from scratch. Run the canonical renderer and embed its output verbatim:
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py" render-fleet-summary --cr-dir <CR_DIR>
+python <HELPERS> render-fleet-summary --cr-dir <CR_DIR>
 ```
 
 The renderer consumes `<CR_DIR>/spawn.json` (sections: `spec` — intended fleet from stage_19b; `verification` — runtime tally from stage_20b; `route` — model assignments from Gate B). The output is a deterministic markdown block of 2–9 lines — 2–4 for the core **Reviewers** / **Model Routing** / **Fleet** section, plus up to 5 conditional note bullets — covering:
@@ -76,6 +76,17 @@ Then continue with:
 **Reported by:** [agent(s)]
 **Issue:** [description]
 **Recommendation:** [fix]
+```
+
+**Findings outside the diff (ISS-12737):** when a finding has
+`out_of_diff: true`, label its **File:** line so the reader knows the
+cited file is not part of this change — in every severity section. Say
+"caused by this change" only when `verifier_verdict` is `CONFIRMED`,
+`DOWNGRADE` or `RE_ASSERTED`; otherwise say "causation unconfirmed":
+
+```markdown
+**File:** `path/other.ts:line` — outside the diff — caused by this change
+**File:** `path/other.ts:line` — outside the diff — causation unconfirmed
 ```
 
 **Impact Analyzer findings (FEA-1401):** when a finding has
@@ -157,6 +168,7 @@ For each rejected finding:
 **Original reviewer:** {REVIEWER}
 **Verifier verdict:** REJECTED (rejection_class: `{REJECTION_CLASS}`)
 **Verifier confidence:** {VERIFIER_CONFIDENCE}
+[If rejection_class is `not_caused_by_diff`, add: **Why dismissed:** outside the diff, and the verifier found no change in this diff that caused it]
 
 **Original issue:** [verbatim from finding.issue]
 
@@ -190,9 +202,10 @@ Read `<CR_DIR>/review_result.json` → `stats.verification`. Render the footer b
 ```
 === Verifier Stats ===
 Findings verified: {stats.verification.verified_count}
-  - CONFIRMED + DOWNGRADE: {verified_count - tentative_count - re_asserted}
+  - CONFIRMED + DOWNGRADE: {verified_count - tentative_count - re_asserted - justified_invalid_count - skipped_count}
   - TENTATIVE:             {tentative_count}
   - RE_ASSERTED:           sum over by_reviewer[].re_asserted
+  - Not verified (skipped): {skipped_count}
 Findings dismissed: {stats.verification.rejected_count}
 Findings justified: {stats.verification.justified_valid_count + stats.verification.justified_invalid_count}
   - JUSTIFIED-VALID:   {stats.verification.justified_valid_count}
@@ -229,7 +242,7 @@ If the verify-prepare manifest carried `override_hits` (operator `--re-assert` h
 
 - **`--justified-only`** — when present, render ONLY the Justified Findings section above. Suppress BLOCKING / HIGH / MEDIUM / Dismissed sections so the operator can audit justification usage without scrolling past every finding.
 - **`--re-assert <id>[,<id>...]`** — write operator overrides for the listed finding IDs via `code_review_helpers.py re-assert --cr-dir <CR_DIR> --cache-dir <CACHE_DIR> --finding-ids <ids> [--reason '<why>']`. Promotes from `rejected[]` / `pending_verification[]` back into `verified[]` on the next run. Persists across runs via `<CACHE_DIR>/overrides/<finding_id>.json` keyed on file-content hash — content drift auto-invalidates the override.
-- **`--review-dismissed`** — fetch a second opinion (haiku verifier) on prior `rejected[]`. Run `review-dismissed-prepare` to build the manifest, dispatch a haiku-verifier fleet against the per-finding inputs, then run `review-dismissed-consolidate` to auto-promote any non-REJECTED verdict via the same override file format (`override: "REVIEW_DISMISSED"`). Side-by-side diff lands at `<CR_DIR>/review_dismissed_diff.json`.
+- **`--review-dismissed`** — fetch a second opinion (haiku verifier) on prior `rejected[]`. Run `review-dismissed-prepare` to build the manifest — **if it exits non-zero, print its stderr and STOP: do not dispatch the fleet and do not run consolidate.** Exit `3` means the review root could not be proven (on a local PR review, `stage_30_footer` has already torn the PR-head worktree down, so a second opinion cannot be formed against the reviewed source; re-run `/code-review` instead). Otherwise dispatch a haiku-verifier fleet against the per-finding inputs, then run `review-dismissed-consolidate` to auto-promote any non-REJECTED verdict via the same override file format (`override: "REVIEW_DISMISSED"`). Side-by-side diff lands at `<CR_DIR>/review_dismissed_diff.json`.
 
 ### Override precedence in stage_22b
 
@@ -254,7 +267,7 @@ If `normalization_warnings > 0` in `findings_validated.json`, append this line d
 - **Total findings from agents:** X
 - **Hygiene findings:** H
 - **Validated (confirmed):** A
-- **Discarded — file not changed:** B
+- **Kept — outside the diff:** B *(reads `kept_out_of_diff`; these go to the verifier, which rejects them as `not_caused_by_diff` when this change did not cause them)*
 - **Discarded — line not changed:** C
 - **Discarded — low confidence:** D
 - **Discarded — rejected by validation:** E

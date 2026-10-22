@@ -1,0 +1,142 @@
+---
+name: vibe-seed-refresh
+description: Keep the repository's vibe seed (the throwaway, fully seeded data behind `just vibe-up` and the vibe skill's seeded Vercel environments) in step with main. Checks fresh main for seed drift (models marked todo, models with no coverage file, a failing seed, a red Vibe Seed Walk run on main); when drift exists it creates a ClosedLoop ticket and marks it IN_PROGRESS, has workers fix the seed in a fresh worktree and open a PR, monitors it with gh-monitor-pr until green, enables auto-merge into the merge queue, keeps monitoring until it merges, then marks the ticket DONE. Built for Codex Desktop. Use when asked to "refresh the vibe seed", "check the seed", "update the seeded db", or on a schedule.
+---
+
+# Vibe seed refresh
+
+The vibe seed fills a throwaway database and Desktop profile from code in
+the repository: locally for `just vibe-up`, and in each seeded vibe session's
+Vercel environment. Every Prisma model has a coverage file saying whether the
+seed fills it (`seeded`), deliberately leaves it empty (`skipped`, with a
+reason), or still owes it data (`todo`). Engineers add `todo` when they add a
+model; this skill pays that debt and repairs anything else that drifted.
+
+Run in Codex Desktop (`$vibe-seed-refresh`). It relies on the
+`gh-monitor-pr` skill, which wakes this thread when the PR needs attention, so
+each wake-up resumes from the state file instead of polling.
+
+## Your role: orchestrate, never do the work
+
+This thread can live for days across monitor wake-ups, so its context is for
+state and decisions only. Under all circumstances you never read source,
+search the codebase, edit files, read logs or diffs, or run seeds, builds,
+tests, git, or `gh` yourself. You read and write the state file, call the
+ClosedLoop MCP for the ticket, start and stop `gh-monitor-pr`,
+commit, and dispatch workers with short briefs. Committing is yours alone,
+because a commit runs the repository's commit hooks: use
+`node ../vibe/scripts/commit-worktree.mjs --worktree "<fix worktree>" --subject "<subject>" [--body "<text>"]`,
+which prints short JSON. No worker commits. A commit the hook refused
+(`"ok":false`) goes to `vibe-seed-fix-worker` in follow-up mode with the
+error, then you commit again. Workers return a short status (`DONE`,
+`BLOCKED`, or `DRIFT` / `CLEAN` from the check worker).
+
+Workers are this plugin's agents (`../../agents/<name>.md`; in Codex spawn a
+subagent with the file's body as its instructions and the `model` and
+`reasoning_effort` that `node ../vibe/scripts/worker-model.mjs codex <name>`
+prints, in Claude Code use `vibe:<name>`). Every worker uses closedloop-graph first, per
+`../vibe/references/closedloop-graph.md`; say so in each brief.
+
+| Worker | Job |
+|---|---|
+| `vibe-seed-check-worker` | refresh the check worktree to fresh main and report drift |
+| `vibe-seed-fix-worker` | fix the seed in the fix worktree until the checks pass; also fixes CI failures and review comments later |
+| `vibe-seed-pr-worker` | push and open the PR from the template; later push fixes and reply on review threads, stage a merge of main, re-enqueue, report PR state |
+
+## State
+
+Keep state in `~/.codex/vibe-seed-refresh/state.json`:
+`{ "phase", "ticket", "branch", "worktree", "pr", "lastCheck", "drift", "walk" }`,
+where `walk` is the fix worker's latest `Walk:` evidence line.
+Read it first on every run and every wake-up. Phases, in order:
+`checking`, `fixing`, `pr-open`, `queued`, `merged`, `done`. A missing file
+means `checking`.
+
+## 1. Check
+
+Dispatch `vibe-seed-check-worker` with the repository checkout path: the
+`repo` from `node ../vibe/scripts/vibe-sessions.mjs repo`, the checkout the
+vibe preflight remembered (if none is remembered, run
+`../vibe/scripts/vibe-preflight.sh --runtime codex` in Codex, or
+`../vibe/scripts/vibe-preflight.sh --runtime claude` in Claude Code, once; it
+finds and remembers it). Quote
+the path in every brief; it can contain spaces. It
+returns `CLEAN` with the main SHA, or `DRIFT` with the drift list. On `CLEAN`,
+record `lastCheck`, report "Seed is current with main (<sha>)", and stop.
+
+## 2. Ticket
+
+On `DRIFT`:
+1. ClosedLoop: `get-me` for the assignee and `list-projects` for the current
+   week's project (the date-range name covering today). Use `search` for an
+   open ticket titled "Vibe seed refresh" in that project and reuse it if one
+   is open.
+2. Otherwise `create-document` (`type: ISSUE`, `status: IN_PROGRESS`, assigned
+   to you, title "Vibe seed refresh: <short drift summary>", body listing every
+   drift item).
+3. Save state with phase `fixing` and the drift list.
+
+## 3. Fix
+
+Dispatch `vibe-seed-fix-worker` with the checkout path, the ticket slug, and
+the drift list. It creates the fix worktree from fresh main
+(`fix/<iss-slug>-vibe-seed`), fixes the seed, and runs every check until they
+pass, including the full web and Desktop screen walk, which it runs itself:
+on a Mac through `pnpm vibe walk-linux` (a Linux container on the local
+Docker), on Linux through the native `pnpm vibe up --ci`, `pnpm vibe walk`,
+`pnpm vibe down` sequence. Save its worktree, branch and `Walk:` evidence line
+(route, web and Desktop screen counts, failures, result file) in state. A
+`DONE` without a `Walk:` line is not done: send it back to the fix worker. On
+`BLOCKED`, tell the operator the reason and stop; a refused walk (Docker VM too
+small, the walk's AWS sign-in expired, another walk-linux run active)
+is reported with the tool's exact message, never as a pass and never worked
+around.
+
+## 4. Pull request
+
+Commit the fix worker's changes with the subject
+`<ISS-slug>: Refresh the vibe seed for <summary>` (64 characters or fewer, so
+it stays within 72 once GitHub appends ` (#NNNN)`; no mention of AI tools).
+Then dispatch `vibe-seed-pr-worker` in open mode with the worktree, ticket,
+the fix worker's summary, and the `Walk:` evidence line, which goes into the
+PR's Test plan. It pushes and returns the PR URL. Link it (ClosedLoop `create_branch_artifact` with the ticket's project UUID as
+`projectId`, the branch as `branchName`, and the ticket's UUID as
+`sourceArtifactId`),
+start the monitor per the `gh-monitor-pr` skill with the PR URL and
+`--stall-after 1800`, save phase `pr-open`, and end the turn.
+
+## 5. On each wake-up
+
+Read state. Dispatch `vibe-seed-pr-worker` in status mode for a one-line PR
+state, then act on it:
+
+- Failing check or new human review comment: dispatch `vibe-seed-fix-worker`
+  in follow-up mode with the PR URL. It fixes and returns the threads it
+  addressed with a one-line reply for each. Commit with the subject
+  `<ISS-slug>: <what the fix changed>`, then dispatch `vibe-seed-pr-worker`
+  in push mode with those threads and replies; it pushes, replies on each
+  thread with the fixing commit, and resolves them. When the fix worker
+  re-ran the walk, save its new `Walk:` line in state and pass it to push
+  mode, which updates the Test plan's walk line. A failure unrelated to
+  the diff gets one re-run; a second failure gets a note to
+  the operator instead of more re-runs.
+- Merge conflict: `vibe-seed-pr-worker` in sync mode (stage a merge of main
+  without committing, re-run the fix worker's checks through it). Commit with
+  the subject `Merge origin/main into <branch>`, then `vibe-seed-pr-worker`
+  in push mode.
+- Green and approved or not requiring review: `vibe-seed-pr-worker` in enqueue
+  mode (`gh pr merge --squash --auto`); save phase `queued`.
+- Removed from the queue: `vibe-seed-fix-worker` in follow-up mode to
+  diagnose per `docs/runbooks/merge-queue-operations.md`; commit and push as
+  for a failing check, then enqueue again.
+- Merged: save phase `merged` and continue to section 6.
+
+End every wake-up turn after acting; the monitor wakes the thread again.
+
+## 6. Done
+
+1. ClosedLoop: `update-document` to `DONE`.
+2. Stop the PR monitor per `gh-monitor-pr`.
+3. Dispatch `vibe-seed-pr-worker` in cleanup mode (remove the fix worktree
+   without forcing, delete the local branch).
+4. Save phase `done`, then reset the state file to `checking` for the next run.
