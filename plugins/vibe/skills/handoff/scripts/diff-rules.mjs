@@ -15,6 +15,7 @@ import { checkComparators, checkUnusedExports } from "./review-gap-rules.mjs";
 import { sharedComponentTests } from "./shared-consumers.mjs";
 import { routeSpecs } from "./route-specs.mjs";
 import { escapeRegExp, IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
+import { checkStorybookRules, storybookRuleTests } from "./storybook-rules.mjs";
 import { isUnversionedStory, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 
 const PRIVATE_PLANS = ".closedloop-ai/vibe-plans/";
@@ -156,7 +157,8 @@ export function evaluateDiff(files, changeLog, repo) {
   checkRestoredRemovalsDeepening(live, files, repo, changeLog, add);
   checkComparators(live, repo, logged, add, changeLog);
   checkUnusedExports(live, repo, logged, add);
-  requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo), ...sidebarOrderTests(files, repo), ...pathGateTests(live, (file) => repo.head(file)), ...sharedComponentTests(live, repo, logged, add));
+  checkStorybookRules(files, repo, logged, add);
+  requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo), ...sidebarOrderTests(files, repo), ...pathGateTests(live, (file) => repo.head(file)), ...storybookRuleTests(files, (file) => repo.head(file)), ...sharedComponentTests(live, repo, logged, add));
   return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks };
 }
 

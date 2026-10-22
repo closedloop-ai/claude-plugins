@@ -294,7 +294,15 @@ authorization:` (or a shallow clone that hides the removal), a shipped mount
 or user-visible string removed without a `Removal:` source, and a diagnostic that dumps the whole environment each block
 (`blocking.diffRulesClear`) until the writer fixes the code or records the
 change log line the finding names. It also lists tests the graph does not map,
-which the verify worker runs.
+which the verify worker runs. A repository that declares its Storybook rules in
+`.vibe/storybook-rules.json` (example: `skills/handoff/references/storybook-rules.example.json`)
+also blocks a story change that needs a Storybook release and has none or the
+wrong semver level, a reused release version, new stories under a frozen root,
+an edit handler wired to a no-op, a hand-rolled table row or cell, a new or
+story the diff adds or edits that names a component with no controls decision (a gate allowlist does not count), a
+lifecycle tag outside its roots, a control's computed options list, and a
+story-local copy of a component the diff deletes; its `checks` (the repo's
+own Storybook commands) become required runs whenever a story changes.
 Handoff also drives the running web app and Desktop for each touched screen
 with symphony-alpha's control skill (`pnpm control`, hidden and read-only),
 and records the artifact paths and what each proves in Design Review and the

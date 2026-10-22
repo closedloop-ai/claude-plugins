@@ -38,7 +38,8 @@ export function pathGateTests(files, read) {
   });
 }
 
-function pathMatcher(pattern) {
+/** A prefix, or a glob with `*` (one segment) and `**` (any depth), as a predicate over repo paths. */
+export function pathMatcher(pattern) {
   if (!pattern.includes("*")) {
     return (file) => file === pattern || file.startsWith(pattern.endsWith("/") ? pattern : `${pattern}/`);
   }

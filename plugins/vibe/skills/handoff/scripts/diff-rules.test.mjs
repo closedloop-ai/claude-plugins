@@ -421,6 +421,23 @@ test("a repo-declared path gate becomes a required run when the diff touches its
   assert.ok(!elsewhere.requiredTests.some((entry) => entry.path.includes("check-catalog-imports")));
 });
 
+test("the repo's Storybook rules block the session diff and require its Storybook checks (#8953, #8960)", (t) => {
+  const rules = JSON.stringify({
+    noOpHandler: { pattern: String.raw`\bonUpdate\w*:\s*\(\)\s*=>\s*undefined` },
+    checks: [{ name: "validate-catalog", command: "pnpm --filter storybook validate:catalog" }],
+  });
+  const file = "packages/app/documents/components/table/documents-view.stories.tsx";
+  const meta = "// No controls: fixture.\nconst meta = { title: \"Composites/Documents View\" };\nexport default meta;\n";
+  const result = run(t, {
+    base: { ".vibe/storybook-rules.json": rules, [file]: meta },
+    head: { [file]: `${meta}const editHandlers = { onUpdatePriority: () => undefined };\n` },
+  });
+  assert.deepEqual(result.found, [["story-no-op-handler", file]]);
+  assert.ok(result.requiredTests.some((entry) => entry.path === "pnpm --filter storybook validate:catalog"));
+  const undeclared = run(t, { base: { [file]: meta }, head: { [file]: `${meta}const editHandlers = { onUpdatePriority: () => undefined };\n` } });
+  assert.deepEqual(undeclared.found, []);
+});
+
 test("a new sort comparator needs a recorded tie test that exists", (t) => {
   const head = { "p/rank.ts": "export const ranked = (rows) => rows.sort((a, b) => b.score - a.score);\n", "p/use-rank.ts": "import { ranked } from \"./rank\";\n" };
   assert.deepEqual(run(t, { head }).found, [["comparator-tie", "p/rank.ts"]]);

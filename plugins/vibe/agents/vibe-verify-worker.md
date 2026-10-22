@@ -69,8 +69,10 @@ Validation is targeted, never a broad or full local suite. Run:
   `requiredChecks`, each through its owning package's runner on those test
   files alone (for example
   `pnpm --filter <package> exec vitest run <test files>`). A required test
-  whose path is a command comes from the repo's `.vibe/path-gates.json`: run
-  that command and record it in `testRuns` with the command as its `path`.
+  whose path is a command comes from the repo's `.vibe/path-gates.json` or
+  the `checks` of its `.vibe/storybook-rules.json` (required whenever a story
+  changes): run that command and record it in `testRuns` with the command as
+  its `path`.
   A required test with `flagStates` covers a host of a shared component the
   diff changed: run it with the flag on and with it off, and record each run
   with `flag: "on"` or `flag: "off"`.
