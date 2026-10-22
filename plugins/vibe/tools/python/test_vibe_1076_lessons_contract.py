@@ -114,3 +114,12 @@ def test_the_requirements_worker_never_reads_public_help_material() -> None:
     offenders = [sentence for sentence in sentences if public.search(sentence) and not re.search(r"\bnever\b|\bnot\b", sentence, re.IGNORECASE)]
     assert offenders == [], offenders
     assert "NEEDS_PERSON" in flat(worker) and "signed-in browser" in flat(worker)
+
+
+def test_ready_heads_green_watch_claude_usage_and_status_sweep_are_wired() -> None:
+    fleet = _text(FLEET / "SKILL.md")
+    for wired in ("push-check <writer> --head <sha>", "green-watch.mjs --repo", "claude -p \"/usage\"", "`status-sweep` duty", "`PLAN-OPEN`", "`ABSORBED-OPEN`"):
+        assert wired in fleet, wired
+    assert "the monitor cannot read Claude usage" not in fleet
+    assert "claude-usage.mjs" in (MONITOR / "scripts" / "snapshot.sh").read_text()
+    assert "--ready <sha>" in _text(FLEET / "references" / "templates.md")

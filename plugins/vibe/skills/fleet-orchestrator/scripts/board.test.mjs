@@ -128,6 +128,7 @@ test('a work dir that watches sessions or PRs fails status while its watcher is 
   assert.equal(run([dir, 'status']).status, 0, 'no watch list, no watcher expected');
   writeFileSync(path.join(dir, 'prs.txt'), 'acme/app 7\n');
   assert.equal(run([dir, 'duty', 'green-watch', '--owner', 'w1']).status, 0);
+  assert.equal(run([dir, 'duty', 'status-sweep', '--owner', 'w1']).status, 0);
   assert.equal(run([dir, 'writer', 'w1']).status, 0);
   const missing = run([dir, 'status', '--now', '2026-10-22T06:00:00Z']);
   assert.equal(missing.status, 1);
@@ -161,6 +162,8 @@ test('a watched program needs a green-watch owner; REQUIRED_DUTIES names others'
   assert.match(bare.stdout, /^MISSING-DUTY green-watch: give it an owner/m);
   assert.equal(run([dir, 'writer', 'keeper']).status, 0);
   assert.equal(run([dir, 'duty', 'green-watch', '--owner', 'keeper']).status, 0);
+  assert.match(run([dir, 'status', ...now]).stdout, /^MISSING-DUTY status-sweep/m, 'the status sweep is a standing duty too');
+  assert.equal(run([dir, 'duty', 'status-sweep', '--owner', 'keeper']).status, 0);
   assert.equal(run([dir, 'status', ...now]).status, 0);
   writeFileSync(path.join(dir, 'config.env'), 'REQUIRED_DUTIES="green-watch pr-shepherd"\n');
   assert.match(run([dir, 'status', ...now]).stdout, /^MISSING-DUTY pr-shepherd/m);

@@ -30,7 +30,8 @@
 // owner <who> <why>` when the owner is neither a board writer nor a running
 // helper in helpers.json, and helpers.mjs refuses to stop an owner.
 // Each duty in `REQUIRED_DUTIES` (config.env, space-separated; default
-// `green-watch` once the work dir watches PRs in prs.txt) must have one:
+// `green-watch` and `status-sweep` once the work dir watches PRs in prs.txt)
+// must have one:
 // `status` prints `MISSING-DUTY <duty>` until it does. Merged program PRs once
 // broke main's post-merge batch with nobody following it.
 // A Codex writer (`--runtime codex`) whose head has not moved for 30 minutes
@@ -106,7 +107,7 @@ function requiredDuties(orchDir) {
   const file = path.join(orchDir, "config.env");
   const configured = existsSync(file) ? /^REQUIRED_DUTIES=["']?([^"'\n]*)["']?\s*$/m.exec(readFileSync(file, "utf8"))?.[1] : undefined;
   if (configured !== undefined) return configured.split(/\s+/).filter(Boolean);
-  return existsSync(path.join(orchDir, "prs.txt")) ? ["green-watch"] : [];
+  return existsSync(path.join(orchDir, "prs.txt")) ? ["green-watch", "status-sweep"] : [];
 }
 
 /** Every recipient of every delivery not yet told. */

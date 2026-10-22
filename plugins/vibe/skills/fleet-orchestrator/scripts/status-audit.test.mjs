@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { auditStatuses, childFinding } from './status-audit.mjs';
+import { auditStatuses, childFinding, sweepFindings } from './status-audit.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./status-audit.mjs', import.meta.url));
 const merged = { url: 'https://example.test/pull/1', state: 'MERGED' };
@@ -52,13 +52,13 @@ test('the command prints each finding and exits 1 until the statuses match', (t)
     'UNCHECKED d DONE: AC-1; check each against the merged code, or name its follow-up or human exclusion, before DONE (executed-check.mjs --kind ticket)',
     'UNREAD e DONE: no ticket body in the snapshot; read it so its acceptance criteria are checked',
     'UNOWNED f BACKLOG',
-    'status audit: 5 children, 2 mismatched, 1 unowned, 2 unchecked, 0 unscoped',
+    'status audit: 5 children, 2 mismatched, 1 unowned, 2 unchecked, 0 unscoped, 0 open plans, 0 absorbed open',
     '',
   ].join('\n'));
   writeFileSync(file, JSON.stringify({ prds: [{ slug: 'P1', children: [{ slug: 'a', status: 'DONE', pullRequests: [merged], body }] }] }));
   const clean = spawnSync(process.execPath, [SCRIPT, '--snapshot', file], { encoding: 'utf8' });
   assert.equal(clean.status, 0);
-  assert.equal(clean.stdout, 'status audit: 1 children, 0 mismatched, 0 unowned, 0 unchecked, 0 unscoped\n');
+  assert.equal(clean.stdout, 'status audit: 1 children, 0 mismatched, 0 unowned, 0 unchecked, 0 unscoped, 0 open plans, 0 absorbed open\n');
 });
 
 test('a merged or DONE child needs its body read and every criterion checked before DONE (bulk DONE sweep)', () => {
@@ -81,4 +81,21 @@ test('a child ruled out of scope by a ruling about another surface is UNSCOPED (
   const result = auditStatuses(snapshot);
   assert.deepEqual(result.findings.map((finding) => [finding.slug, finding.kind]), [['ISS-8', 'UNSCOPED']]);
   assert.deepEqual(result.outOfScope.map((entry) => entry.slug), ['ISS-9']);
+});
+
+test('the status sweep flags plans left open behind DONE tickets and absorbed children left open (a PRD whose plans stayed open)', () => {
+  const body = '- Acceptance criteria:\n  - [x] Rows reorder\n';
+  const snapshot = { prds: [{ slug: 'PRD-8', children: [
+    { slug: 'ISS-1', status: 'DONE', body, pullRequests: [merged], plans: [{ slug: 'PLN-1', status: 'APPROVED' }, { slug: 'PLN-2', status: 'EXECUTED' }] },
+    { slug: 'ISS-2', status: 'DONE', body, pullRequests: [merged], plans: [{ slug: 'PLN-3', status: 'EXECUTED' }] },
+    { slug: 'ISS-3', status: 'IN_PROGRESS', writer: 'w1', absorbedBy: { slug: 'ISS-2', status: 'DONE' } },
+    { slug: 'ISS-4', status: 'DONE', body: '- Acceptance criteria:\n  - [ ] Keyboard reorder\n', pullRequests: [merged] },
+  ] }] };
+  const { findings } = auditStatuses(snapshot);
+  assert.deepEqual(findings.map((finding) => [finding.slug, finding.kind]), [
+    ['ISS-1', 'PLAN-OPEN'],
+    ['ISS-3', 'ABSORBED-OPEN'],
+    ['ISS-4', 'UNCHECKED'],
+  ]);
+  assert.deepEqual(sweepFindings({ status: 'IN_PROGRESS', plans: [{ slug: 'PLN-1', status: 'DRAFT' }] }), [], 'a plan may stay open while its ticket is');
 });

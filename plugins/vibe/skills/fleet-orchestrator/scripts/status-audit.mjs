@@ -9,7 +9,8 @@
 // snapshot.json, gathered from the ticket tool and the code host:
 //   {"prds": [{"slug", "children": [{"slug", "status", "writer": <name or null>,
 //     "pullRequests": [{"url", "state": "MERGED" | "OPEN" | "CLOSED"}],
-//     "body": "<the ticket's latest text>"}]}],
+//     "body": "<the ticket's latest text>", "plans": [{"slug", "status"}],
+//     "absorbedBy": {"slug", "status"} (the umbrella ticket that absorbed it)}]}],
 //    "outOfScope": [{"slug", "reason": "<who ruled it out, and where>"}]}
 // For each child: a merged pull request means DONE; an open pull request or an
 // assigned writer means IN_PROGRESS or IN_REVIEW; not DONE or CANCELED with
@@ -24,6 +25,13 @@
 // <c> unchecked, <s> unscoped`; exits 1 until every finding is fixed or ruled
 // out of scope by a reason that names the child or its PRD (`UNSCOPED`
 // otherwise: rollout tickets were once closed on a ruling about another surface).
+// It is also the program's status sweep, run at every merge and every status
+// report (the board's `status-sweep` duty): `PLAN-OPEN <slug>: <plan> <status>`
+// for a DONE ticket whose plan is not EXECUTED, and `ABSORBED-OPEN <slug>
+// <status>: absorbed by <umbrella> DONE` for a child still open after the
+// umbrella that absorbed it closed; close those children in the same step as
+// the umbrella, with its merge as evidence. Plans stayed open behind DONE
+// tickets and absorbed children stayed IN_PROGRESS until the operator noticed.
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -33,6 +41,21 @@ import { rulingNamesScope } from "../../handoff/scripts/rulings-check.mjs";
 
 const ACTIVE = ["IN_PROGRESS", "IN_REVIEW"];
 const FINISHED = new Set(["DONE", "CANCELED"]);
+const PLAN_CLOSED = new Set(["EXECUTED", "OBSOLETE"]);
+
+/** Plan and absorption drift for one child: its plans behind a DONE ticket, or an absorbed child left open. */
+export function sweepFindings(child) {
+  const findings = [];
+  if (child?.status === "DONE") {
+    for (const plan of Array.isArray(child.plans) ? child.plans : []) {
+      if (!PLAN_CLOSED.has(plan?.status)) findings.push({ kind: "PLAN-OPEN", plan: plan?.slug ?? "?", planStatus: plan?.status ?? "missing" });
+    }
+  }
+  if (child?.absorbedBy?.status === "DONE" && !FINISHED.has(child.status)) {
+    findings.push({ kind: "ABSORBED-OPEN", umbrella: child.absorbedBy.slug ?? "?" });
+  }
+  return findings;
+}
 
 /** What the evidence says one child's status should be, or null when it agrees. */
 export function childFinding(child, prdSlug) {
@@ -75,6 +98,7 @@ export function auditStatuses(snapshot) {
   const findings = [];
   const outOfScope = [];
   for (const { child, prdSlug } of children) {
+    findings.push(...sweepFindings(child).map((found) => ({ slug: child.slug, status: child.status, ...found })));
     const finding = childFinding(child, prdSlug);
     if (!finding) continue;
     const reason = ruled.get(child.slug);
@@ -93,6 +117,8 @@ function main(argv) {
   const { children, findings, outOfScope } = auditStatuses(JSON.parse(readFileSync(values.snapshot, "utf8")));
   const lines = {
     UNOWNED: (finding) => `UNOWNED ${finding.slug} ${finding.status}`,
+    "PLAN-OPEN": (finding) => `PLAN-OPEN ${finding.slug}: ${finding.plan} is ${finding.planStatus}; a DONE ticket's plan is EXECUTED`,
+    "ABSORBED-OPEN": (finding) => `ABSORBED-OPEN ${finding.slug} ${finding.status}: absorbed by ${finding.umbrella}, which is DONE; close it in the same step with that merge as evidence`,
     UNSCOPED: (finding) => `UNSCOPED ${finding.slug} ${finding.status}: the out-of-scope ruling "${finding.reason.slice(0, 120)}" names neither the ticket nor its PRD`,
     UNREAD: (finding) => `UNREAD ${finding.slug} ${finding.status}: no ticket body in the snapshot; read it so its acceptance criteria are checked`,
     UNCHECKED: (finding) => `UNCHECKED ${finding.slug} ${finding.status}: ${finding.criteria}; check each against the merged code, or name its follow-up or human exclusion, before DONE (executed-check.mjs --kind ticket)`,
@@ -101,7 +127,7 @@ function main(argv) {
   for (const finding of findings) process.stdout.write(`${lines[finding.kind](finding)}\n`);
   for (const entry of outOfScope) process.stdout.write(`OUT-OF-SCOPE ${entry.slug}: ${entry.reason}\n`);
   const count = (kind) => findings.filter((finding) => finding.kind === kind).length;
-  process.stdout.write(`status audit: ${children} children, ${count("MISMATCH")} mismatched, ${count("UNOWNED")} unowned, ${count("UNREAD") + count("UNCHECKED")} unchecked, ${count("UNSCOPED")} unscoped\n`);
+  process.stdout.write(`status audit: ${children} children, ${count("MISMATCH")} mismatched, ${count("UNOWNED")} unowned, ${count("UNREAD") + count("UNCHECKED")} unchecked, ${count("UNSCOPED")} unscoped, ${count("PLAN-OPEN")} open plans, ${count("ABSORBED-OPEN")} absorbed open\n`);
   return findings.length === 0 ? 0 : 1;
 }
 
