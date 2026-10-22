@@ -203,7 +203,7 @@ Hard rule. A ticket, PR body, PR comment, review reply or any other artifact wri
 ## Reporting to the operator
 
 - Surface every problem the moment you see it: limits, stalls, failures, new human review comments, blockers. Keep status updates short.
-- When the operator steps away, keep `<orchDir>/attention.md` current (decision needed, recommendation, what is blocked), keep reading idle writers' last messages, and lead with that list on return.
+- When the operator steps away (vibe's `away-protocol` hook puts this checklist in context on "brb", "stepping away" and the like, and the return checklist on "I'm back"), keep `<orchDir>/attention.md` current (decision needed, recommendation, what is blocked), keep reading idle writers' last messages, and lead with that list on return.
 - Put every finding the operator reviews on one page using the stable `D`, `X`, `N`, `S` and `R` IDs in the [operator review template](./references/templates.md#operator-review-page); never restart numbering across audits.
 - The final report lists, per PRD, which flags must be on to see each change.
 - Before a PRD is marked executed, `node ../handoff/scripts/executed-check.mjs --kind prd --file <PRD text> --last-merge <time> --children <its PRODUCES children read now>` must pass; report open children instead.

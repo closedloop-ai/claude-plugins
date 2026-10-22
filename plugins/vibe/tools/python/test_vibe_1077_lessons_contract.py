@@ -42,3 +42,9 @@ def test_the_watch_set_finds_every_open_pr_and_names_its_writer() -> None:
     assert "--author" in snapshot and "done_prs" in snapshot
     assert "liveness signal" in _text(PLUGIN / "skills" / "codex-fleet-monitor" / "SKILL.md")
     assert "<owner/repo> <n> <writer>" in _text(FLEET / "SKILL.md")
+
+
+def test_away_and_back_phrases_bring_the_away_protocol() -> None:
+    hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]
+    assert any("away-protocol.mjs" in hook["command"] for entry in hooks["UserPromptSubmit"] for hook in entry["hooks"])
+    assert "`away-protocol` hook" in _text(FLEET / "SKILL.md")

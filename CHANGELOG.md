@@ -13,6 +13,7 @@ The last 2026-10-22 lessons and a trim that brings 1.0.76 and 1.0.77 together to
 - `hooks/foreground-guard.mjs` refuses a foreground Bash wait over 5 minutes in a vibe session's worktree, so long runs go to the background and messages reach the writer between turns.
 - `green-watch.mjs --state` prints `NEW-RED` the first time a lane fails, while the rest of its batch still runs, and `mock-gap.mjs` checks each `vi.mock` block for the exports the code reads, block by block.
 - The watcher's PR set is `prs.txt` plus every open PR in `WATCH_NEW_PR_REPOS` that `PR_SEARCH` lists or `WATCH_PR_AUTHOR` opened, on any branch prefix; a merged or closed PR is reported once and dropped, and `STALE-PR` names the writer from an optional third `prs.txt` column. A writer sat silent for 1h40m on two PRs the hand-kept list did not hold.
+- A UserPromptSubmit hook (`hooks/away-protocol.mjs`) puts the fleet away checklist in context when the operator says they are stepping away ("brb", "stepping away", "afk") and the return checklist when they say they are back. An orchestrator once answered "brb" with a summary and ran none of the written away protocol.
 - `pre-pr-lanes.mjs` refuses to open a pull request until each test lane the repository's lane report names has a passing run recorded at the head (operator ruling); the environment worker, handoff and fleet QA prep run it.
 
 #### Changed
