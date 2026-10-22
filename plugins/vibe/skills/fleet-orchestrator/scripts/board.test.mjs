@@ -27,7 +27,7 @@ test('a writer row whose head is behind the pushed head is stale until the write
   assert.equal(run([dir, 'writer', 'w1', '--head', 'bbb', '--status', 'QA ready']).status, 0);
   assert.equal(run([dir, 'status', '--pushed', 'w1=bbb']).status, 0);
   const page = readFileSync(path.join(dir, 'board.md'), 'utf8');
-  assert.match(page, /^\| w1 \| #101 \| bbb \| QA ready \| w2 \| /m, 'the update keeps the PR and dependencies');
+  assert.match(page, /^\| w1 \| #101 \| bbb \|  \| QA ready \| w2 \| /m, 'the update keeps the PR and dependencies');
   assert.match(page, /w1: head bbb, status QA ready/);
 });
 
@@ -164,4 +164,17 @@ test('a watched program needs a green-watch owner; REQUIRED_DUTIES names others'
   assert.equal(run([dir, 'status', ...now]).status, 0);
   writeFileSync(path.join(dir, 'config.env'), 'REQUIRED_DUTIES="green-watch pr-shepherd"\n');
   assert.match(run([dir, 'status', ...now]).stdout, /^MISSING-DUTY pr-shepherd/m);
+});
+
+test('a head is pushed for a writer only when the writer declared it ready (a partial commit was pushed)', (t) => {
+  const dir = tempDir(t);
+  assert.equal(run([dir, 'writer', 'w1', '--head', 'a77421d8fa00']).status, 0);
+  const none = run([dir, 'push-check', 'w1', '--head', 'a77421d8fa00']);
+  assert.equal(none.status, 1);
+  assert.match(none.stdout, /^NOT-READY w1 head a77421d8fa00, declared ready none/);
+  assert.equal(run([dir, 'writer', 'w1', '--ready', '5ec6633da7ff']).status, 0);
+  assert.equal(run([dir, 'push-check', 'w1', '--head', 'a77421d8fa00']).status, 1, 'the committed head is not the ready one');
+  assert.equal(run([dir, 'push-check', 'w1', '--head', '5ec6633da7']).status, 0);
+  assert.equal(run([dir, 'push-check', 'w1', '--head', '5ec']).status, 1, 'a short prefix proves nothing');
+  assert.match(readFileSync(path.join(dir, 'board.md'), 'utf8'), /\| w1 \|  \| a77421d8fa00 \| 5ec6633da7ff \|/);
 });

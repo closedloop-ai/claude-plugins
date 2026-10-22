@@ -4,7 +4,8 @@
 // a QA guide never heard that its checkpoint was ready, and a UX ruling
 // reached one writer as text while another PR rendered the same behavior.
 //
-// Usage: board.mjs <orchDir> writer <name> [--pr <n>] [--repo <owner/repo>] [--head <sha>] [--status <text>] [--deps <a,b>] [--runtime codex|claude]
+// Usage: board.mjs <orchDir> writer <name> [--pr <n>] [--repo <owner/repo>] [--head <sha>] [--ready <sha>] [--status <text>] [--deps <a,b>] [--runtime codex|claude]
+//        board.mjs <orchDir> push-check <writer> --head <sha>
 //        board.mjs <orchDir> deliver <item> --to <a,b> [--kind ruling|checkpoint|note] [--reference <file>] [--head <sha>]
 //        board.mjs <orchDir> told <item> <recipient>
 //        board.mjs <orchDir> duty <duty> --owner <writer or helper>
@@ -36,6 +37,10 @@
 // while its PR has unresolved human review threads (`--threads`, or read with
 // `gh api graphql` for rows with a PR and repo) prints `SLOW <writer> ...`:
 // hand it to a Claude writer. One spent 35 minutes on nine threads without a push.
+// A writer declares the head it calls push-ready (`writer <name> --ready
+// <sha>`); `push-check` exits 1 unless the head you are about to push for it
+// is that one. The orchestrator once pushed a writer's committed head while the
+// writer was still fixing two regressions in it, and auto-merge took it.
 // A writer records each question it sends you (`question`); `status` prints
 // `QUESTION-UNANSWERED <writer> <m>m: <text>` once one waited 15 minutes, until
 // `answered`. A writer once held its PR six hours on an unanswered question.
@@ -113,15 +118,15 @@ export function untold(board) {
 /** The page writers read. */
 export function render(board) {
   const rows = Object.entries(board.writers).map(([name, row]) =>
-    `| ${name} | ${row.pr ? `${row.repo ?? ""}#${row.pr}` : ""} | ${row.head ?? ""} | ${row.status ?? ""} | ${(row.deps ?? []).join(", ")} | ${row.updatedAt} |`);
+    `| ${name} | ${row.pr ? `${row.repo ?? ""}#${row.pr}` : ""} | ${row.head ?? ""} | ${row.ready ?? ""} | ${row.status ?? ""} | ${(row.deps ?? []).join(", ")} | ${row.updatedAt} |`);
   const open = untold(board).map(({ item, recipient, delivery }) =>
     `- ${item} (${delivery.kind}) for ${recipient}${delivery.reference ? `: ${delivery.reference}` : ""}${delivery.head ? ` at ${delivery.head}` : ""}`);
   const duties = Object.entries(board.duties).map(([duty, { owner, at }]) => `- ${duty}: ${owner} (since ${at})`);
   return [
     "# Fleet board",
     "",
-    "| Writer | PR | Head | Status | Depends on | Updated |",
-    "|---|---|---|---|---|---|",
+    "| Writer | PR | Head | Ready | Status | Depends on | Updated |",
+    "|---|---|---|---|---|---|---|",
     ...rows,
     "",
     "## Standing duties",
@@ -220,11 +225,11 @@ function main(argv) {
       pr: { type: "string" }, repo: { type: "string" }, head: { type: "string" }, status: { type: "string" }, deps: { type: "string" },
       to: { type: "string" }, kind: { type: "string" }, reference: { type: "string" },
       pushed: { type: "string", multiple: true }, threads: { type: "string", multiple: true }, now: { type: "string" },
-      runtime: { type: "string" }, owner: { type: "string" }, text: { type: "string" },
+      runtime: { type: "string" }, owner: { type: "string" }, text: { type: "string" }, ready: { type: "string" },
     },
   });
-  if (!orchDir || !["writer", "deliver", "told", "duty", "question", "answered", "status"].includes(action)) {
-    throw new Error("Usage: board.mjs <orchDir> writer|deliver|told|duty|question|answered|status ...");
+  if (!orchDir || !["writer", "deliver", "told", "duty", "question", "answered", "push-check", "status"].includes(action)) {
+    throw new Error("Usage: board.mjs <orchDir> writer|deliver|told|duty|question|answered|push-check|status ...");
   }
   const board = read(orchDir);
   const now = values.now ? Date.parse(values.now) : Date.now();
@@ -254,6 +259,18 @@ function main(argv) {
   if (!name) {
     throw new Error(`${action} needs a name.`);
   }
+  if (action === "push-check") {
+    const ready = board.writers[name]?.ready;
+    if (!values.head) {
+      throw new Error("push-check needs --head <the sha you would push>.");
+    }
+    if (!ready || !(ready.startsWith(values.head) || values.head.startsWith(ready)) || Math.min(ready.length, values.head.length) < 7) {
+      process.stdout.write(`NOT-READY ${name} head ${values.head}, declared ready ${ready ?? "none"}: ask the writer for its push-ready head and wait for it; never push a head it has not called ready\n`);
+      return 1;
+    }
+    process.stdout.write(`READY ${name} ${values.head}\n`);
+    return 0;
+  }
   if (action === "question") {
     if (!values.text?.trim()) {
       throw new Error("question needs --text <the question and the default you proceed on>.");
@@ -280,7 +297,7 @@ function main(argv) {
       throw new Error("--runtime must be codex or claude.");
     }
     const row = board.writers[name] ?? {};
-    const update = Object.fromEntries(Object.entries({ pr: values.pr, repo: values.repo, head: values.head, status: values.status, runtime: values.runtime })
+    const update = Object.fromEntries(Object.entries({ pr: values.pr, repo: values.repo, head: values.head, ready: values.ready, status: values.status, runtime: values.runtime })
       .filter(([, value]) => value !== undefined));
     const moved = values.head !== undefined && values.head !== row.head;
     board.writers[name] = { ...row, ...update, ...(values.deps === undefined ? {} : { deps: list(values.deps) }), ...(moved ? { headAt: at } : {}), updatedAt: at };

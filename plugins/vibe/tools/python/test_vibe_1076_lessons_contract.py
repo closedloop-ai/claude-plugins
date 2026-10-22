@@ -103,3 +103,14 @@ def test_program_practices_and_rollout_gate_are_wired() -> None:
     assert "--criteria <ticket body>" in fleet and "--scope <ticket>,<PRD>" in fleet
     assert "rollout-gate.mjs --worktree" in _text(HANDOFF / "SKILL.md")
     assert "load-check.sh" in (FLEET / "scripts" / "fleet.sh").read_text()
+
+
+def test_the_requirements_worker_never_reads_public_help_material() -> None:
+    import re
+
+    worker = (AGENTS / "vibe-requirements-worker.md").read_text()
+    sentences = re.split(r"(?<=[.!?])\s+", flat(worker))
+    public = re.compile(r"help cent(?:er|re)|public documentation|release notes|web search", re.IGNORECASE)
+    offenders = [sentence for sentence in sentences if public.search(sentence) and not re.search(r"\bnever\b|\bnot\b", sentence, re.IGNORECASE)]
+    assert offenders == [], offenders
+    assert "NEEDS_PERSON" in flat(worker) and "signed-in browser" in flat(worker)

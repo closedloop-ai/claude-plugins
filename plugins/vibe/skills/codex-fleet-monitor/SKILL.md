@@ -32,6 +32,7 @@ REMOTE_HOST=user@host            # omit when there are no remote sessions
 REMOTE_STATE_DIR=/path/on/remote # remote scratch dir; also holds state files for two-column sessions
 REMOTE_SHELL="zsh -lic"          # login shell so node/codex are on PATH (default)
 STALL_SECONDS=720                # no new thread items for this long means STALLED (default 12m)
+# CLAUDE_USAGE=0                 # turn off the claude-usage line; CLAUDE_USAGE_SECONDS=600 sets how often it is read
 # QUESTION_SECONDS=900          # an idle writer's question unanswered this long is QUESTION-UNANSWERED (default 15m)
 # STALE_PR_SECONDS=2700         # a PR needing its writer with no push this long is STALE-PR (default 45m)
 # HEARTBEAT_SECONDS=1800         # with no change, watch.sh exits with HEARTBEAT after this long (default 30m)
@@ -90,6 +91,7 @@ Start it with `run_in_background`, never with `&`; a second copy for the same wo
 | `supervisor ... RSS-HIGH(>NMB)` | the supervisor's RSS is over `SUPERVISOR_RSS_CAP_MB` | read its hourly summary lines; restart it and report the leak |
 | `session remote <host> UNREACHABLE` | ssh failed | check the host |
 | `codex-usage <local\|remote> under80% ok resets=<n>` / `HIGH(<band>%)` | Codex account usage on that machine: one band below `USAGE_HIGH_PERCENT` (80 here) used, so ordinary use is not an event, then the used percent floored to 10; `resets` is the count of available limit resets | none below it; on `HIGH`, warn the user at once with the band and `resets`, since applying a reset is theirs; if they are away, move the busiest writers to Claude writers |
+| `claude-usage local session=<band> week=<band>` | Claude usage from `claude -p "/usage"` on the same bands (read at most every `CLAUDE_USAGE_SECONDS`, 600) | on `HIGH`, warn the user at once with its `resets=` time; if they are away, move the busiest Claude writers to Codex writers |
 | `codex-usage ... LIMIT` / `LIMIT-STOPPED` | usage limit reached; `LIMIT` means ordinary usage is still allowed, `LIMIT-STOPPED` means sessions cannot run | tell the user right away; a reset or second account is theirs to do |
 | `codex-usage ... LIMIT-SPENDING-CREDITS` | limit reached and turns are now consuming paid credits | tell the user at once and stop sending turns unless they approve paid credits |
 | `codex-usage ... unknown` / `unreadable READFAIL` | the App Server answered without rate limits, or it or the remote host could not be read | check `codex` on that machine |

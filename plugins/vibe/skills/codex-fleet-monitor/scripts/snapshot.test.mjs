@@ -35,7 +35,8 @@ function fixture() {
   writeFileSync(join(bin, 'gh'), FAKE_GH);
   // No App Server here: codex fails, so the usage line reads READFAIL on every run.
   writeFileSync(join(bin, 'codex'), '#!/bin/sh\nexit 1\n');
-  for (const name of ['gh', 'codex']) chmodSync(join(bin, name), 0o755);
+  writeFileSync(join(bin, 'claude'), `#!/bin/sh\ncat "${root}/claude-usage" 2>/dev/null || exit 1\n`);
+  for (const name of ['gh', 'codex', 'claude']) chmodSync(join(bin, name), 0o755);
   writeFileSync(join(work, 'config.env'), 'WATCH_NEW_PR_REPOS="acme/app"\n');
   writeFileSync(join(work, 'prs.txt'), 'acme/app 42\n');
   const env = { ...process.env, FAKE_ROOT: root, PATH: `${bin}:${process.env.PATH}`, FLEET_SUPERVISOR_LOCK: join(root, 'supervisor.lock') };
@@ -143,4 +144,12 @@ test('an open PR needing its writer with no push for 45 minutes is STALE-PR, how
   writeFileSync(join(f.root, 'push'), `false ${ago(60)}\n`);
   writeFileSync(join(f.root, 'view'), 'OPEN abcdef12 APPROVED CONFLICTING\n');
   assert.match(f.run('ok'), /STALE-PR/, 'a conflict needs its writer');
+});
+
+test('the Claude usage line reads claude -p /usage on the Codex bands, at most once per CLAUDE_USAGE_SECONDS', TIMEOUT, () => {
+  const f = fixture();
+  writeFileSync(join(f.root, 'claude-usage'), 'Current session: 51% used \u00b7 resets Oct 22 at 12:39pm (America/Chicago)\nCurrent week (all models): 69% used \u00b7 resets Oct 27 at 9am (America/Chicago)\n');
+  assert.match(f.run('ok'), /^claude-usage local session=under80% week=under80%$/m);
+  writeFileSync(join(f.root, 'claude-usage'), 'Current session: 91% used \u00b7 resets Oct 22 at 12:39pm (America/Chicago)\nCurrent week (all models): 69% used\n');
+  assert.match(f.run('ok'), /^claude-usage local session=under80%/m, 'the cached line holds within the interval');
 });

@@ -98,9 +98,12 @@ reference image paths of one (a screenshot, named or not), and the person's
 words. Open every reference image path yourself as an image (`Read` in
 Claude Code, `view_image` in Codex); never work from someone else's
 description of it. When the product is named or identifiable from the
-image, research how it does it from its public documentation, help center
-and release notes, using the harness's web search and fetch tools.
-Never sign in to it, create an account, or type credentials. Keep only the
+image, its behaviors come from the live product, observed by whoever has the
+operator's signed-in browser (`../skills/vibe/scripts/precedent-check.mjs`
+brief), never from public documentation, a help center or search results.
+When no actor here has that browser, return `NEEDS_PERSON` with the
+interactions still to observe; the image alone still gives the Visual and UX
+requirements. Never sign in to it, create an account, or type credentials. Keep only the
 behaviors the request covers, mapped onto the existing screen and the
 graph/live product decisions you would check for any request; a settled
 decision outranks the reference.
@@ -125,7 +128,7 @@ writer's existing missing-primitive path.
 Return `DONE` with a bulleted list of the behaviors to build, one plain line
 each in the person's terms, each with its source link or reference image
 path, then the Visual and UX requirements, each with its mapped component or
-token, then one line naming anything the public material or the image did
+token, then one line naming anything the live product or the image did
 not establish. The orchestrator shows the
 list to the person and keeps building without waiting, so the list is never a
 question. It names behaviors, not wording: never propose the product's labels

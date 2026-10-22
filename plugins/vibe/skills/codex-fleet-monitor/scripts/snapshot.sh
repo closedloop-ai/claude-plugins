@@ -47,6 +47,7 @@ if [ -n "${R// }" ]; then
   else echo "session remote $REMOTE_HOST UNREACHABLE"; fi
 fi
 USAGE_HIGH_PERCENT=$HIGH node $K/ratelimit.mjs local 2>/dev/null
+[ "${CLAUDE_USAGE:-1}" = 0 ] || USAGE_HIGH_PERCENT=$HIGH CLAUDE_USAGE_SECONDS=${CLAUDE_USAGE_SECONDS:-} node $K/claude-usage.mjs $W local 2>/dev/null
 if [ -n "${REMOTE_HOST:-}" ]; then out=$(remote_node ratelimit.mjs remote); echo "${out:-codex-usage remote unreadable READFAIL}"; fi
 if [ -n "${REQUESTS_DIR:-}" ]; then requests local ls -t $REQUESTS_DIR; fi
 if [ -n "${REMOTE_REQUESTS_DIR:-}" ]; then requests remote ssh -o ConnectTimeout=10 ${REMOTE_HOST:?set REMOTE_HOST} "ls -t $REMOTE_REQUESTS_DIR"; fi
