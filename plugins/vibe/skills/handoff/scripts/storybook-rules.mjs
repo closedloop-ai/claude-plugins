@@ -39,8 +39,8 @@ const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
 const HISTORY_VERSION = /\bversion:\s*(["'`])(\d+\.\d+\.\d+)\1/g;
 const OPTIONS = /\boptions:\s*(\S.*)$/;
 const LITERAL_OPTIONS = /^\[\s*(?:["'`\d\]-]|true\b|false\b|null\b|$)/;
-const CONTROL_KEY = /\bcontrol\s*:/;
-const OPTIONS_WINDOW = 5;
+const LIST_CONTROL = /\bcontrol\s*:\s*(?:\{[^{}]*?\btype\s*:\s*)?["'`](?:select|multi-select|radio|inline-radio|check|inline-check)["'`]/;
+const ARG_TYPES_KEY = /\bargTypes\s*[:=]\s*$/;
 const TAG_LIST = /\btags:\s*\[([^\]]*)\]/g;
 const STRING_LITERAL = /(["'`])((?:(?!\1).)*)\1/g;
 const EXPORTED_NAME = /\bexport\s+(?:default\s+)?(?:function|const|class)\s+([A-Z][\w$]*)/g;
@@ -230,8 +230,10 @@ function checkFrozenAdditions(file, head, base, config, logged, add) {
 }
 
 function checkAddedLines(file, head, config, logged, add) {
-  const exempt = (config.noOpHandler?.exemptPaths ?? []).map(pathMatcher).some((matches) => matches(file.path));
-  const lines = head.split("\n");
+  // A frozen file is restored to its earlier bytes, never edited, so its no-op handlers stay.
+  const frozen = Boolean(config.frozenRoots) && isFrozen(head, config.frozenRoots, config.frozenTitle);
+  const exempt = frozen || (config.noOpHandler?.exemptPaths ?? []).map(pathMatcher).some((matches) => matches(file.path));
+  const starts = lineStarts(head);
   for (const entry of file.added) {
     if (config.noOp?.test(entry.text) && !exempt && !logged("Story no-op:", file.path)) {
       add("story-no-op-handler", file.path, entry.line, "wires an editable story's handler to a no-op, so the edit shows no state transition", "hold the value in story state, update it from the handler, and assert the change in the play; or record `Story no-op: <path>: <why the handler is not an edit>`");
@@ -240,11 +242,57 @@ function checkAddedLines(file, head, config, logged, add) {
       add("story-hand-rolled-cell", file.path, entry.line, "hand-rolls a table row or cell in a story", `render the row through the repo's grid and canonical cells (${config.handRolledCells?.canonical ?? "see the repo's table cell contract"}), or record \`Story table: <path>: <reason>\``);
     }
     const options = config.literalOptions === true ? OPTIONS.exec(entry.text) : null;
-    const window = lines.slice(Math.max(0, entry.line - 1 - OPTIONS_WINDOW), entry.line + OPTIONS_WINDOW).join("\n");
-    if (options && !LITERAL_OPTIONS.test(options[1]) && CONTROL_KEY.test(window) && !logged("Story options:", file.path)) {
+    if (options && !LITERAL_OPTIONS.test(options[1]) && isControlOptionsList(head, (starts[entry.line - 1] ?? 0) + options.index, options[1]) && !logged("Story options:", file.path)) {
       add("story-computed-options", file.path, entry.line, `a control's options are computed (${options[1].replace(/,\s*$/, "")}), so the manifest gets no literal list`, "write the options as a literal array of the values, or record `Story options: <path>: <reason>`");
     }
   }
+}
+
+function lineStarts(text) {
+  const starts = [0];
+  for (let index = text.indexOf("\n"); index >= 0; index = text.indexOf("\n", index + 1)) {
+    starts.push(index + 1);
+  }
+  return starts;
+}
+
+/** The offset of the unmatched `{` that encloses `offset`, or -1. */
+function enclosingBrace(text, offset) {
+  let depth = 0;
+  for (let index = offset - 1; index >= 0; index -= 1) {
+    depth += text[index] === "}" ? 1 : text[index] === "{" ? -1 : 0;
+    if (depth < 0) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Whether an `options:` at `offset` is a control's options list: its value is
+ * not an object (a prop named `options` with `{ control: false }`), its object
+ * has a sibling list control (select, radio or check), and that object sits
+ * directly in `argTypes`, so a prop value under `args` never counts.
+ */
+function isControlOptionsList(head, offset, value) {
+  if (value.startsWith("{")) {
+    return false;
+  }
+  const open = enclosingBrace(head, offset);
+  const parent = open < 0 ? -1 : enclosingBrace(head, open);
+  if (parent < 0 || !ARG_TYPES_KEY.test(head.slice(Math.max(0, parent - 40), parent))) {
+    return false;
+  }
+  let depth = 0;
+  let close = open;
+  while (close < head.length) {
+    depth += head[close] === "{" ? 1 : head[close] === "}" ? -1 : 0;
+    if (depth === 0) {
+      break;
+    }
+    close += 1;
+  }
+  return LIST_CONTROL.test(head.slice(open, close + 1));
 }
 
 /** The default-exported meta object's text, by brace depth from its opening brace. */

@@ -103,6 +103,10 @@ test("(c) an edit handler wired to a no-op blocks; a non-edit handler and Deskto
   assert.deepEqual(edit.rules, ["story-no-op-handler"]);
   const other = run({ base, head: { ...base, [file]: `${base[file]}\n// <List onRetry={() => undefined} onOpenArtifact={() => undefined} />` } });
   assert.deepEqual(other.rules, []);
+  const frozen = "apps/storybook/stories/inline-scalar-cell.stories.tsx";
+  const restored = story({ title: "Composites v1.0/Data Display/Inline Scalar Cell", tags: ["deprecated"], extra: "  args: { onCommit: () => undefined }," });
+  const edited = restored.replace("onCommit: () => undefined", "onCommit: fn()");
+  assert.deepEqual(run({ base: { [frozen]: edited }, head: { [frozen]: restored } }).rules, [], "a frozen file restored to its earlier bytes keeps its no-op handlers (#9102)");
   const desktop = "apps/desktop/src/renderer/components/shell.stories.tsx";
   assert.deepEqual(run({ base: { [desktop]: "x" }, head: { [desktop]: "x\nconst onToggleSidebar = () => undefined;" } }).rules, []);
 });
@@ -155,6 +159,37 @@ test("(g) a control's computed options block; a literal list does not (#8953)", 
   assert.deepEqual(computed('[\n        "idle",\n      ]').rules, []);
   const prop = run({ base, head: { [file]: `${base[file]}\nexport const WithOptions: Story = { args: { options: fixtureOptions } };` }, config });
   assert.deepEqual(prop.rules, []);
+  assert.deepEqual(computed('{ control: false }').rules, []);
+});
+
+test("(g) only a list control's options under argTypes count, never a prop named options or an args value (#9102)", () => {
+  const file = "apps/storybook/stories/composites-v2/v2-inline-select-cell.stories.tsx";
+  const config = JSON.stringify({ literalOptions: true });
+  const meta = (valueOptions) => [
+    "// No controls: n/a",
+    "const meta = {",
+    "  title: \"Composites/Shared/Artifact List/Inline Select Cell\",",
+    "  component: InlineSelectCell,",
+    "  argTypes: {",
+    "    label: { control: \"text\", options: LABELS },",
+    "    value: {",
+    "      control: \"select\",",
+    `      options: ${valueOptions},`,
+    "    },",
+    "    options: { control: false },",
+    "    readOnly: { control: { type: \"radio\" }, options: READ_ONLY },",
+    "  },",
+    "  args: {",
+    "    value: \"urgent\",",
+    "    options: PRIORITIES,",
+    "    filter: { control: \"select\", options: FILTERS },",
+    "  },",
+    "};",
+  ].join("\n");
+  const real = run({ base: { [file]: "" }, head: { [file]: meta("[...PRIORITIES.map((option) => option.value)]") }, config });
+  assert.deepEqual(real.findings.map((finding) => [finding.rule, finding.line]), [["story-computed-options", 9], ["story-computed-options", 12]]);
+  const fixed = run({ base: { [file]: "" }, head: { [file]: meta('["urgent", "high"]').replace("options: READ_ONLY", 'options: ["yes", "no"]') }, config });
+  assert.deepEqual(fixed.rules, []);
 });
 
 test("(h) a story-local copy of a component the diff deletes blocks (#8962)", () => {
