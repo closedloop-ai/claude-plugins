@@ -510,8 +510,10 @@ has them and otherwise as the design pack's best-practice review
 "What it checks"), logical QA (`/logical-qa`, `$logical-qa`) for a data or metric
 surface, then product-contract QA (`/metal-andrew`, `$metal-andrew`) once that
 evidence is visible. Each skill dispatches its own read-only agents. Confirmed
-findings resume the SAME writer in fix mode, then steps 3 to 6 run again on
-the result. Their reports feed the Design Review evidence in step 8. Owned
+findings on a touched surface resume the SAME writer in fix mode even when they
+predate the branch, already exist on main or were called the component owner's
+decision; approved copy is reused and unsourced wording is escalated. Then
+steps 3 to 6 run again on the result. Their reports feed the Design Review evidence in step 8. Owned
 prototype sessions keep their canonical single design review instead.
 
 Every new or changed Storybook `play` runs awaited in a real browser, and any
@@ -918,9 +920,7 @@ must pass (every criterion MET, and every criterion x surface x input x flag
 cell evidenced, flag-off cells by a diff against the base or a ruling).
 `node scripts/rulings-check.mjs --ticket <body> --record <QA record>` must
 pass too: every ruling made during the work is on the ticket with the
-criteria it amends. That merge waits on no e2e
-run: push it first, then run only the e2e specs covering the files whose
-conflicts were resolved. From then on the pull request is shepherded:
+criteria it amends. From then on the pull request is shepherded:
 `node ../vibe/scripts/shepherd.mjs --pr <n> --repo <owner/repo>` polls it
 every two minutes and stops on a conflict (merge main at once in final-merge
 mode, push, run it again), failed checks (the SAME writer fixes them), a

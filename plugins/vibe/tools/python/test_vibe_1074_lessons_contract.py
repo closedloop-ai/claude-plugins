@@ -1,5 +1,6 @@
-"""Contract coverage for the vibe 1.0.74 lessons: each new check is wired where its reader acts."""
+"""Contract coverage for the combined vibe 1.0.74 lessons release."""
 
+import json
 from pathlib import Path
 
 from vibe_contract_text import agent, flat
@@ -44,12 +45,10 @@ def test_helpers_record_and_end_their_processes_and_the_watcher_is_checked() -> 
     assert "never `launchctl kickstart -k`" in monitor
 
 
-def test_push_cadence_final_merge_and_shepherding_are_wired() -> None:
+def test_push_cadence_and_shepherding_are_wired() -> None:
     assert "pushDue" in (VIBE / "scripts" / "commit-worktree.mjs").read_text()
     assert "`pushDue: true`" in _text(VIBE / "SKILL.md")
-    handoff = _text(HANDOFF / "SKILL.md")
-    assert "That merge waits on no e2e run" in handoff
-    assert "shepherd.mjs --pr <n> --repo <owner/repo>" in handoff
+    assert "shepherd.mjs --pr <n> --repo <owner/repo>" in _text(HANDOFF / "SKILL.md")
     assert "every 90 minutes" in _text(FLEET / "SKILL.md")
 
 
@@ -60,3 +59,81 @@ def test_migration_order_compose_projects_precedent_and_path_gates_are_wired() -
     assert "precedent-check.mjs check --report <report>" in _text(VIBE / "references" / "quality-loop.md")
     assert "pathGateTests" in (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
     assert ".vibe/path-gates.json" in flat(agent("vibe-verify-worker"))
+
+
+def test_criteria_audit_and_rulings_check_gate_the_handoff() -> None:
+    handoff = _text(HANDOFF / "SKILL.md")
+    for script in ("criteria-audit.mjs", "rulings-check.mjs"):
+        assert (HANDOFF / "scripts" / script).exists()
+        assert f"scripts/{script}" in handoff, script
+    assert "fresh-context reviewer given only the ticket's criteria and the diff" in handoff
+    assert '- Ruling <date> (<who>): "' in (VIBE / "references" / "ticket-template.md").read_text()
+
+
+def test_findings_reach_a_writer_with_their_evidence() -> None:
+    assert "finding-brief.mjs <orchDir> --findings" in _text(FLEET / "SKILL.md")
+    assert "$prompt.evidence" in (FLEET / "scripts" / "fleet.sh").read_text()
+
+
+def test_precedent_disputed_behaviors_and_review_gap_rules_are_wired() -> None:
+    assert '--behavior "<the interaction to perform>"' in _text(VIBE / "references" / "quality-loop.md")
+    rules = (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
+    assert "checkComparators" in rules
+    assert "checkUnusedExports" in rules
+
+
+def test_story_plays_are_judged_by_the_verdict_helper() -> None:
+    assert (VIBE / "scripts" / "story-play-verdict.mjs").exists()
+    assert "playVerdictProblems" in (HANDOFF / "scripts" / "pr-facts.mjs").read_text()
+    worker = flat(agent("vibe-verify-worker"))
+    assert "story-play-verdict.mjs" in worker
+    assert "never by `storyFinished`'s status" in worker
+
+
+def test_shared_component_changes_require_every_hosts_suites() -> None:
+    assert "sharedComponentTests" in (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
+    assert "flagStates" in (HANDOFF / "scripts" / "pr-facts.mjs").read_text()
+    assert 'with `flag: "on"` or `flag: "off"`' in flat(agent("vibe-verify-worker"))
+
+
+def test_status_audit_runs_at_every_merge_and_writer_assignment() -> None:
+    assert (FLEET / "scripts" / "status-audit.mjs").exists()
+    skill = _text(FLEET / "SKILL.md")
+    assert "At every writer assignment and every merge" in skill
+    assert "status-audit.mjs --snapshot <file>" in skill
+
+
+def test_storybook_rules_run_inside_the_handoff_diff_rules() -> None:
+    diff_rules = (HANDOFF / "scripts" / "diff-rules.mjs").read_text()
+    assert "checkStorybookRules(files, repo, logged, add);" in diff_rules
+    assert "...storybookRuleTests(files, (file) => repo.head(file))" in diff_rules
+
+
+def test_the_verify_worker_runs_the_declared_storybook_checks() -> None:
+    assert "`checks` of its `.vibe/storybook-rules.json`" in flat(agent("vibe-verify-worker"))
+
+
+def test_the_example_declaration_names_every_storybook_rule() -> None:
+    example = json.loads((HANDOFF / "references" / "storybook-rules.example.json").read_text())
+    for key in ("release", "frozenRoots", "tagRoots", "noOpHandler", "handRolledCells", "controlsDecision", "literalOptions", "storySupportPaths", "checks"):
+        assert key in example, key
+
+
+def test_program_rulings_attention_budget_and_stable_findings_are_wired() -> None:
+    state = _text(FLEET / "references" / "state.md")
+    templates = _text(FLEET / "references" / "templates.md")
+    skill = _text(FLEET / "SKILL.md")
+    for artifact in ("rulings.md", "attention.md", "review.md"):
+        assert artifact in state
+    assert "Per-ticket rulings still go through handoff's `rulings-check.mjs`" in state
+    assert "Program rulings: read <orchDir>/rulings.md" in templates
+    assert "D###" in templates and "R###" in templates
+    assert "reports high Claude usage" in skill
+    assert "keep `<orchDir>/attention.md` current" in skill
+
+
+def test_visual_findings_on_touched_surfaces_are_required_fixes() -> None:
+    fleet = _text(FLEET / "SKILL.md")
+    handoff = _text(HANDOFF / "SKILL.md")
+    assert "visual-QA finding on a surface the change touches is a required fix" in fleet
+    assert "findings on a touched surface resume the SAME writer" in handoff

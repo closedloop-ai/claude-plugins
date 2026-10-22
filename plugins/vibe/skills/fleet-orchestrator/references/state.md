@@ -12,6 +12,9 @@ One directory per program on each machine, in a path that survives a reboot (und
   prompts/<name>-<nn>-<slug>.md   every prompt sent to any worker, written before sending
   requests/                       REQUESTS_DIR: visual-work request files from Codex sessions
   findings/                       review, verification, QA and visual results, one file per task
+  rulings.md                      program rulings, dated and sourced; mirrored to every worker host
+  attention.md                    operator decisions needed, recommendations and blocked work
+  review.md                       one operator review page with stable finding IDs
   resume-log.md
   lessons.md
 ```
@@ -32,6 +35,25 @@ A remote machine keeps `sessions/` and `requests/` under its own persistent dir 
 ```
 
 Read it top to bottom after any restart or compaction before acting.
+
+## Program rulings
+
+`rulings.md` is the program-wide index, separate from the status-oriented
+resume log. Each entry records the ruling, date and source: a quoted operator
+message, an AskUserQuestion answer or a ticket. Mirror it to every worker host
+after each edit and point every worker and QA-prep prompt at it. Per-ticket
+rulings still go through handoff's `rulings-check.mjs`.
+
+Before an audit, reconcile operator chat and AskUserQuestion results plus guide
+and QA records into this file; audit the acceptance criteria and these rulings
+together.
+
+## Operator attention and review
+
+While the operator is away, keep `attention.md` current with each decision
+needed, the recommendation and what it blocks. `review.md` is the one page for
+findings the operator reviews; use the stable IDs from the operator review
+template and never reuse an ID.
 
 ## Lessons ledger
 

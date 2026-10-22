@@ -4,55 +4,29 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.0.78
-
-Storybook rule violations vibe pull requests merged into symphony-alpha while every repo check stayed green (storybook audit, 2026-10-21: #8953, #8959, #8960, #8962, #8963, #8980).
-
-#### Added
-- handoff diff rules: `storybook-rules.mjs` reads the repository's `.vibe/storybook-rules.json` and blocks a story change that needs a Storybook release and has none or a lower semver level (a removed or renamed story needs a major, a new entry or lifecycle tag change a minor, a story on an existing entry a patch), a release record that reuses a version or lacks exactly one entry for the new one, new stories under a frozen root, an edit handler wired to a no-op, a hand-rolled table row or cell, a story the diff adds or edits that names a component with no controls decision (a gate allowlist does not count), a lifecycle tag outside its declared roots, a control's computed options list, and a story-local copy of a component the diff deletes. The options rule counts only an `argTypes` entry with a select, radio or check control, never a prop named `options` or a value under `args`, and the no-op rule skips frozen files, which are restored rather than edited. Each finding names its change log escape line. Every repository fact is in the declaration; a repository without one runs none of these.
-- The declaration's `checks` (the repository's own Storybook commands) become required tests whenever a story file or a listed path changes, so the evidence gate needs a passing run of each on the published commit. `skills/handoff/references/storybook-rules.example.json` is symphony-alpha's declaration.
-
-### vibe v1.0.77
-
-#### Added
-- fleet-orchestrator: `status-audit.mjs` compares each in-scope PRD child's status with its evidence (a merged pull request means DONE; an open one or an assigned writer means IN_PROGRESS or IN_REVIEW; neither, while not done, means UNOWNED) and fails until each mismatch is fixed or ruled out of scope with a reason. The skill runs it at every writer assignment and every merge.
-
-### vibe v1.0.76
-
-Two more 2026-10-21 lessons: a play verdict read from an event that reports success for a play that threw, and a fix scoped to one host of a shared component that changed every host.
-
-#### Added
-- `story-play-verdict.mjs` judges each play from recorded Storybook channel events: PASS only when its completion was observed and no exception or error event fired; `storyFinished`'s status is never trusted. The evidence gate needs `playVerdicts`, all PASS, on the `storybook-plays` run.
-- handoff diff rules: a changed UI component two or more hosts import requires every test and story file that covers it or a host; when the change reads a flag, each is needed with the flag on and off (`flagStates`, runs recorded with `flag`), and the diff blocks until the change log records the host the behavior is keyed on (`shared-flag-branch`).
-
-### vibe v1.0.75
-
-The 2026-10-21 lessons after #331: a stale Codex session state, the audit findings a merged pull request carried, rulings that never reached the criteria, findings sent without evidence, and a precedent check that skipped the disputed case.
-
-#### Fixed
-- `native-app-server-orchestrator.mjs turn-start` on a record left RUNNING while its thread is idle with no active turn reconciles against the thread first (`reconcileSession`) and then starts the turn; a thread with a turn in progress is still refused.
-
-#### Added
-- handoff: `criteria-audit.mjs` needs a fresh-context MET/PARTIAL/MISSED audit of every acceptance criterion on the final head and a criteria x surface x input x flag matrix with evidence in every cell, flag-off cells proven by a diff against the base or a ruling. `rulings-check.mjs` fails until every ruling in the QA record or resume log is on the ticket with the criteria it amends; the ticket template carries the `Ruling` line.
-- handoff diff rules: a new sort comparator needs a recorded tie test that exists, and a new export no other file uses blocks unless recorded.
-- vibe: `precedent-check.mjs --behavior` makes each disputed behavior a required checklist item, observed with a screenshot or marked for the operator.
-- fleet-orchestrator: `finding-brief.mjs` refuses a finding without a story or route, viewport, and selector or screenshot, and `fleet.sh` ships its screenshots with the prompt to a remote writer.
-
 ### vibe v1.0.74
 
-Signal safety after a plugin test ended every process on an operator's machine, and the open lessons from the 2026-10-21 ledger entries, each with a mechanical check where one fits.
+Signal safety after a plugin test ended every process on an operator's machine, the open 2026-10-21 fleet lessons, and Storybook guard rules found by the 2026-10-21 audit (#8953, #8959, #8960, #8962, #8963, #8980). Each lesson has a mechanical check where one fits.
 
 #### Fixed
 - `helpers.mjs stopped` no longer signals a process group it does not own. A test recorded pid 1 and stopped it; `endProcesses` sent `kill(-1)`, which signals every process the user owns, twice. Pids of 1 or lower are refused at record time and never signalled, nor is the stopper's own pid or its parent. A whole group is signalled only for a pid recorded with `--group` whose process group id still equals the pid; any other pid is signalled alone. A pid the system reports as not ours (EPERM) is never signalled and does not block `stopped`. `pid` records each process's start time and command, and every signal re-reads them first: a reused pid (even one of the user's own apps, which launchd makes a group leader), a changed or unreadable identity, or an older record without one is never signalled. `endProcesses` takes an injected `kill`, so its tests check every decision without a real signal.
 - Every group signal in the plugin (`run-bounded.mjs`, `precedent-check.mjs`, the vibe-workers ledger and Claude worker, and their tests) checks the pid above 1 first. The dist bundles are rebuilt.
+- `native-app-server-orchestrator.mjs turn-start` on a record left RUNNING while its thread is idle with no active turn reconciles against the thread first (`reconcileSession`) and then starts the turn; a thread with a turn in progress is still refused.
 
 #### Added
 - `test_vibe_signal_safety_contract.py`: no plugin test passes 0, 1, a negative literal, its own pid or its parent's pid to a call that sends a signal, writes one into a `pids` ledger, or calls `endProcesses` without an injected `kill`; no plugin source signals a group (`process.kill(-x)`, `kill(-x)`, `kill -- -x`) unless `x` is checked above 1 just before.
 - fleet-orchestrator: `board.mjs` keeps the fleet board every writer reads, flags rows behind the pushed head, and tracks rulings (saved once as a reference file) and ready QA checkpoints until each writer and QA guide is told directly; writers message each other (Codex through the app-server orchestrator's send, Claude through SendMessage).
 - fleet-orchestrator: `qa-plan-check.mjs` makes zero human checkpoints the default and refuses a human checkpoint without a reason an agent cannot cover, a visual judgment included (agents compare screenshots with the reference). `helpers.mjs` records the processes a helper starts (`pid`), ends them on `stopped`, lists `ORPHAN` helpers, and keeps a stack handed to a QA guide (`hand`, `unhand`) from QA reruns.
 - codex-fleet-monitor: `watch.sh` writes `watcher.json` and `watcher.mjs` reports a lapsed watcher; the supervisor template restarts with bootout then bootstrap, never kickstart, and respawns after 30 seconds.
-- vibe: `push-cadence.mjs` and `pushDue` on every commit (a tested checkpoint is pushed at least every 90 minutes); `shepherd.mjs` polls a pull request every two minutes in the final stage and stops on a conflict; the final main merge pushes before its e2e run; `main-sync-push` refuses a migration that sorts before main's newest (`migration-order.mjs`); `e2e-lock.mjs` gives each run its own compose project and honors `--foreign-compose`; `precedent-check.mjs check` refuses a public-material or undocumented answer unless no browser could look.
+- vibe: `push-cadence.mjs` and `pushDue` on every commit (a tested checkpoint is pushed at least every 90 minutes); `shepherd.mjs` polls a pull request every two minutes in the final stage and stops on a conflict; `main-sync-push` refuses a migration that sorts before main's newest (`migration-order.mjs`); `e2e-lock.mjs` gives each run its own compose project and honors `--foreign-compose`; `precedent-check.mjs check` refuses a public-material or undocumented answer unless no browser could look, and `--behavior` makes each disputed behavior a required checklist item.
 - handoff: a repository can declare gates required when paths match (`.vibe/path-gates.json`); each matching gate is a required run on the published commit.
+- handoff: `criteria-audit.mjs` needs a fresh-context MET/PARTIAL/MISSED audit of every acceptance criterion on the final head and a criteria x surface x input x flag matrix with evidence in every cell, while `rulings-check.mjs` fails until every ruling is on the ticket with the criteria it amends.
+- handoff diff rules: a new sort comparator needs a recorded tie test that exists, and a new export no other file uses blocks unless recorded. A changed UI component two or more hosts import requires every covering test and story, with flag-on and flag-off evidence when applicable.
+- fleet-orchestrator: `finding-brief.mjs` refuses findings without reproducible evidence, and `status-audit.mjs` fails when an in-scope PRD child's status disagrees with its pull-request or writer evidence, or when unfinished work has no owner.
+- fleet-orchestrator: program rulings live in one sourced file mirrored to every worker host and are reconciled before audits; operator-away decisions stay on an attention list; high Claude usage moves remaining work to Codex; operator review findings use stable typed IDs; visual-QA findings on touched surfaces are fixed even when they predate the branch.
+- `story-play-verdict.mjs` judges Storybook plays from recorded channel events and reports PASS only when completion was observed without an exception or error event; `storyFinished` status is never trusted.
+- handoff diff rules: `storybook-rules.mjs` reads the repository's `.vibe/storybook-rules.json` and enforces declared Storybook release levels and history, frozen roots, real edit handlers, canonical table cells, controls decisions, lifecycle tag roots, literal list-control options, and reuse of source components. The options rule applies only to select, radio, and check controls, and frozen files are restored rather than edited. Repositories without a declaration run none of these rules.
+- The Storybook declaration's `checks` become required tests whenever a story file or listed path changes, and `skills/handoff/references/storybook-rules.example.json` provides symphony-alpha's declaration.
 
 ### vibe v1.0.73
 
