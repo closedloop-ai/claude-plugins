@@ -923,7 +923,10 @@ the MET/PARTIAL/MISSED audit, and
 must pass (every criterion MET, and every criterion x surface x input x flag
 cell evidenced, flag-off cells by a diff against the base or a ruling).
 `node scripts/rulings-check.mjs --ticket <body> --record <QA record> --plan <each linked PLN's get-document JSON> --plan-body <its latest text>`
-must pass too: every ruling made during the work is on the ticket with the
+must pass too, and so must
+`node scripts/rollout-gate.mjs --worktree "<wt>" --ticket <body> --slug <ticket> --prd <PRD body> --prd-slug <PRD>`
+(each flag, rollback or rollout requirement recorded as `Rollout: <id>:` with
+its code at HEAD or a human ruling that names the ticket or PRD). In the rulings check, every ruling made during the work is on the ticket with the
 criteria it amends, and a plan no human approved excludes nothing without
 citing a ticket AC, PRD or operator ruling. From then on the pull request is shepherded:
 `node ../vibe/scripts/shepherd.mjs --pr <n> --repo <owner/repo>` polls it

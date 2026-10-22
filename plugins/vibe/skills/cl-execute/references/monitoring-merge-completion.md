@@ -115,7 +115,7 @@ specific recheck condition until merge or explicit abandonment.
    acceptance criteria and requirements evidence pass and the integrated
    feature manual QA has current, responsible-human evidence for every required
    scenario. Merge evidence alone cannot substitute for missing or stale manual
-   QA evidence. `node ../../handoff/scripts/executed-check.mjs --kind ticket --file <its latest body>`
+   QA evidence. `node ../../handoff/scripts/executed-check.mjs --kind ticket --file <its latest body> --slug <its slug> [--prd <PRD slug>]`
    must pass first: every criterion box checked, or naming its follow-up or
    human exclusion.
 2. Mark every linked implementation plan `EXECUTED`. If already `EXECUTED`,

@@ -7,6 +7,7 @@
 // Usage: rulings-check.mjs --ticket <ticket body .md> --record <QA record or resume log> [--record <file>]... [--criteria-before <earlier body>]
 //        rulings-check.mjs --program <rulings.md> --record <orchestrator transcript or QA record> [--record <file>]...
 //        rulings-check.mjs --plan <get-document JSON of a PLN> [--plan-body <its latest version text>] [--plan ...]
+//        rulings-check.mjs --ruling <file with the cited ruling's words> --scope <ticket slug>[,<PRD slug>]
 //
 // A ruling in a record is a line `Ruling <anything>: <decision>` (the resume
 // log's `- Ruling (operator): ...`, or the same line in a QA record). The
@@ -30,6 +31,10 @@
 // session-plan.mjs renders. A writer once skipped
 // two tickets on an uncited Out-of-scope line of a plan vibe itself had set to
 // APPROVED, against a direct instruction to build them.
+//
+// A ruling cited to close, narrow or skip a ticket covers it only when the
+// ruling names that ticket or its PRD (`--ruling` with `--scope`): rollout
+// tickets were once closed DONE on a ruling about a different surface.
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -130,6 +135,11 @@ export function criteriaChangeProblems(before, ticket) {
     .map((criterion) => `${criterion.id} "${criterion.text.slice(0, 120)}" was reworded or dropped with no ticket ruling amending ${criterion.id}; restore it, or add - Ruling <date> (<who>): "<decision>"; amends: ${criterion.id} from a human source`);
 }
 
+/** Whether a ruling's words name one of the slugs it is applied to. */
+export function rulingNamesScope(text, slugs) {
+  return slugs.filter(Boolean).some((slug) => new RegExp(`(?:^|[^A-Za-z0-9-])${slug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![0-9])`, "i").test(text));
+}
+
 /** Problems with the program-wide ruling index and the records it reconciles. */
 export function programRulingProblems(program, records) {
   const entries = [...program.matchAll(PROGRAM_RULING)].map((match) => match[4]);
@@ -150,7 +160,15 @@ function main(argv) {
   const { values } = parseArgs({ args: argv, options: {
     ticket: { type: "string" }, program: { type: "string" }, record: { type: "string", multiple: true },
     plan: { type: "string", multiple: true }, "plan-body": { type: "string", multiple: true }, "criteria-before": { type: "string" },
+    ruling: { type: "string" }, scope: { type: "string" },
   } });
+  if (values.ruling || values.scope) {
+    if (!values.ruling || !values.scope) throw new Error("--ruling <file> and --scope <ticket slug>[,<PRD slug>] go together");
+    const slugs = values.scope.split(",").map((slug) => slug.trim()).filter(Boolean);
+    const problems = rulingNamesScope(readFileSync(values.ruling, "utf8"), slugs) ? [] : [`the ruling names neither ${slugs.join(" nor ")}; a ruling about another ticket or surface does not cover this one`];
+    process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, problems }, null, 2)}\n`);
+    return problems.length === 0 ? 0 : 1;
+  }
   const plans = values.plan ?? [];
   const bodies = values["plan-body"] ?? [];
   const rulingMode = Boolean(values.ticket || values.program);

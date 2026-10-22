@@ -6,7 +6,7 @@
 // technology, a flow an agent cannot drive (real sign-in, OS dialogs,
 // hardware, a third-party screen), or a product call no reference settles.
 //
-// Usage: qa-plan-check.mjs --plan <QA record>
+// Usage: qa-plan-check.mjs --plan <QA record> [--criteria <ticket body> [--prd <PRD body>]]
 //
 // Reads each `### <ID>: <title>` checkpoint and its `- Routing:` line (the
 // guided-manual-qa record). A routing that starts with AGENT_VERIFIED or
@@ -14,10 +14,15 @@
 // must give a reason from the list above. Prints `HUMAN <id>: <reason>` for
 // each accepted one and `REFUSED <id>: <why>` for each refused one, then
 // `human checkpoints: <n>, refused: <n>`; exits 1 when any is refused.
+// With --criteria, every rollout, flag and rollback requirement of the ticket
+// and its PRD (handoff's rollout-gate.mjs) must be a checkpoint the plan cites
+// by its ID; it prints `MISSING-ROLLOUT <id>: <text>` otherwise. A PRD's
+// rollout gate was once skipped and no QA step checked it.
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { rolloutRequirements } from "../../handoff/scripts/rollout-gate.mjs";
 
 const CHECKPOINT = /^###\s+([A-Za-z0-9_-]+):/;
 const ROUTING = /^-\s*Routing[^:]*:\s*(.*)$/;
@@ -42,6 +47,11 @@ export function checkpoints(text) {
   return found;
 }
 
+/** Rollout requirements no checkpoint in `plan` cites by ID. */
+export function missingRolloutCheckpoints(plan, ticket, prd = "") {
+  return rolloutRequirements(ticket, prd).filter(({ id }) => !new RegExp(`\\b${id}\\b`).test(plan));
+}
+
 /** The verdict for one checkpoint: agent, human (with its reason) or refused (with why). */
 export function verdict({ routing }) {
   if (routing === null || routing === "") {
@@ -60,13 +70,17 @@ export function verdict({ routing }) {
 }
 
 function main(argv) {
-  const { values } = parseArgs({ args: argv, options: { plan: { type: "string" } } });
+  const { values } = parseArgs({ args: argv, options: { plan: { type: "string" }, criteria: { type: "string" }, prd: { type: "string" } } });
   if (!values.plan) {
     throw new Error("Usage: qa-plan-check.mjs --plan <QA record>");
   }
   let human = 0;
   let refused = 0;
-  for (const checkpoint of checkpoints(readFileSync(values.plan, "utf8"))) {
+  const plan = readFileSync(values.plan, "utf8");
+  const missing = values.criteria ? missingRolloutCheckpoints(plan, readFileSync(values.criteria, "utf8"), values.prd ? readFileSync(values.prd, "utf8") : "") : [];
+  for (const requirement of missing) process.stdout.write(`MISSING-ROLLOUT ${requirement.id}: ${requirement.text.slice(0, 120)}\n`);
+  refused += missing.length;
+  for (const checkpoint of checkpoints(plan)) {
     const result = verdict(checkpoint);
     if (result.kind === "human") {
       human += 1;

@@ -21,23 +21,25 @@
 // <status> (<evidence>)`, `UNOWNED <slug> <status>`, `UNREAD <slug> <status>`,
 // `UNCHECKED <slug> <status>: <criteria>` and `OUT-OF-SCOPE <slug>: <reason>`
 // lines, then `status audit: <n> children, <m> mismatched, <u> unowned,
-// <c> unchecked`; exits 1 until every finding is fixed or ruled out of scope
-// with a reason.
+// <c> unchecked, <s> unscoped`; exits 1 until every finding is fixed or ruled
+// out of scope by a reason that names the child or its PRD (`UNSCOPED`
+// otherwise: rollout tickets were once closed on a ruling about another surface).
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ticketProblems } from "../../handoff/scripts/executed-check.mjs";
+import { rulingNamesScope } from "../../handoff/scripts/rulings-check.mjs";
 
 const ACTIVE = ["IN_PROGRESS", "IN_REVIEW"];
 const FINISHED = new Set(["DONE", "CANCELED"]);
 
 /** What the evidence says one child's status should be, or null when it agrees. */
-export function childFinding(child) {
+export function childFinding(child, prdSlug) {
   const pulls = Array.isArray(child?.pullRequests) ? child.pullRequests : [];
   const merged = pulls.find((pull) => pull?.state === "MERGED");
   if (merged || child?.status === "DONE") {
-    const criteria = criteriaFinding(child);
+    const criteria = criteriaFinding(child, prdSlug);
     if (criteria) return criteria;
   }
   if (merged) {
@@ -55,11 +57,11 @@ export function childFinding(child) {
 }
 
 /** A DONE or merged child whose body was not read, or whose criteria are not all checked. */
-function criteriaFinding(child) {
+function criteriaFinding(child, prdSlug) {
   if (typeof child?.body !== "string" || child.body.trim() === "") {
     return { kind: "UNREAD" };
   }
-  const unchecked = ticketProblems(child.body);
+  const unchecked = ticketProblems(child.body, [child.slug, prdSlug].filter(Boolean));
   return unchecked.length === 0 ? null : { kind: "UNCHECKED", criteria: unchecked.map((problem) => problem.split(" ")[0]).join(", ") };
 }
 
@@ -68,13 +70,16 @@ export function auditStatuses(snapshot) {
   const ruled = new Map((Array.isArray(snapshot?.outOfScope) ? snapshot.outOfScope : [])
     .filter((entry) => typeof entry?.slug === "string" && typeof entry.reason === "string" && entry.reason.trim() !== "")
     .map((entry) => [entry.slug, entry.reason.trim()]));
-  const children = (Array.isArray(snapshot?.prds) ? snapshot.prds : []).flatMap((prd) => (Array.isArray(prd?.children) ? prd.children : []));
+  const children = (Array.isArray(snapshot?.prds) ? snapshot.prds : [])
+    .flatMap((prd) => (Array.isArray(prd?.children) ? prd.children : []).map((child) => ({ child, prdSlug: prd?.slug })));
   const findings = [];
   const outOfScope = [];
-  for (const child of children) {
-    const finding = childFinding(child);
+  for (const { child, prdSlug } of children) {
+    const finding = childFinding(child, prdSlug);
     if (!finding) continue;
-    if (ruled.has(child.slug)) outOfScope.push({ slug: child.slug, reason: ruled.get(child.slug) });
+    const reason = ruled.get(child.slug);
+    if (reason && rulingNamesScope(reason, [child.slug, prdSlug])) outOfScope.push({ slug: child.slug, reason });
+    else if (reason) findings.push({ slug: child.slug, status: child.status, kind: "UNSCOPED", reason });
     else findings.push({ slug: child.slug, status: child.status, ...finding });
   }
   return { children: children.length, findings, outOfScope };
@@ -88,6 +93,7 @@ function main(argv) {
   const { children, findings, outOfScope } = auditStatuses(JSON.parse(readFileSync(values.snapshot, "utf8")));
   const lines = {
     UNOWNED: (finding) => `UNOWNED ${finding.slug} ${finding.status}`,
+    UNSCOPED: (finding) => `UNSCOPED ${finding.slug} ${finding.status}: the out-of-scope ruling "${finding.reason.slice(0, 120)}" names neither the ticket nor its PRD`,
     UNREAD: (finding) => `UNREAD ${finding.slug} ${finding.status}: no ticket body in the snapshot; read it so its acceptance criteria are checked`,
     UNCHECKED: (finding) => `UNCHECKED ${finding.slug} ${finding.status}: ${finding.criteria}; check each against the merged code, or name its follow-up or human exclusion, before DONE (executed-check.mjs --kind ticket)`,
     MISMATCH: (finding) => `MISMATCH ${finding.slug} ${finding.status}, expected ${finding.expected} (${finding.evidence})`,
@@ -95,7 +101,7 @@ function main(argv) {
   for (const finding of findings) process.stdout.write(`${lines[finding.kind](finding)}\n`);
   for (const entry of outOfScope) process.stdout.write(`OUT-OF-SCOPE ${entry.slug}: ${entry.reason}\n`);
   const count = (kind) => findings.filter((finding) => finding.kind === kind).length;
-  process.stdout.write(`status audit: ${children} children, ${count("MISMATCH")} mismatched, ${count("UNOWNED")} unowned, ${count("UNREAD") + count("UNCHECKED")} unchecked\n`);
+  process.stdout.write(`status audit: ${children} children, ${count("MISMATCH")} mismatched, ${count("UNOWNED")} unowned, ${count("UNREAD") + count("UNCHECKED")} unchecked, ${count("UNSCOPED")} unscoped\n`);
   return findings.length === 0 ? 0 : 1;
 }
 

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { checkpoints, verdict } from './qa-plan-check.mjs';
+import { missingRolloutCheckpoints, checkpoints, verdict } from './qa-plan-check.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const record = (sections) => sections.map(([id, routing]) => `### ${id}: title\n\n- Risk / requirement: AC-1\n${routing === null ? '' : `- Routing (\`AGENT_VERIFIED\` with its evidence, or the reason this checkpoint needs a human): ${routing}\n`}- Expected: x\n`).join('\n');
@@ -47,4 +47,12 @@ test('the command exits 1 on a refused checkpoint and 0 for a plan with zero hum
   const clean = spawnSync(process.execPath, [path.join(HERE, 'qa-plan-check.mjs'), '--plan', plan], { encoding: 'utf8' });
   assert.equal(clean.status, 0);
   assert.equal(clean.stdout, 'human checkpoints: 0, refused: 0\n');
+});
+
+test('every rollout, flag and rollback requirement is a cited QA checkpoint (a skipped PRD rollout gate)', () => {
+  const ticket = '- Acceptance criteria:\n  - [ ] The new list renders behind the closed-by-default flag\n  - [ ] The legacy list stays as the rollback path\n  - [ ] Rows sort by updated time\n';
+  const prd = '## Rollout\n\n- Staged cohort rollout with stop conditions\n';
+  const plan = '### Q1: Flag off shows the legacy list\n- Criterion: AC-1\n- Routing: AGENT_VERIFIED\n';
+  assert.deepEqual(missingRolloutCheckpoints(plan, ticket, prd).map(({ id }) => id), ['AC-2', 'PRD-1']);
+  assert.deepEqual(missingRolloutCheckpoints(`${plan}### Q2: Rollback\n- Criterion: AC-2\n### Q3: Cohorts\n- Criterion: PRD-1\n`, ticket, prd), []);
 });

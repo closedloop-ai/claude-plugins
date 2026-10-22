@@ -73,7 +73,7 @@ const TICKET = [
   "  - [x] Rows reorder by drag",
   "  - [ ] Moves beyond four levels are refused",
   "  - [ ] Keyboard reorder; Follow-up: ISS-12001",
-  "  - [ ] Touch reorder; Excluded: Pat Example, 2026-10-21, ticket comment",
+  "  - [ ] Touch reorder; Excluded: Pat Example, 2026-10-21, ISS-12001 comment",
   "",
   "## Environment",
 ].join("\n");
@@ -91,9 +91,17 @@ test("a ticket is DONE only when every acceptance criterion is checked, followed
   t.after(home.cleanup);
   const file = path.join(home.root, "ticket.md");
   writeFileSync(file, TICKET);
-  const refused = runNode(SCRIPT, ["--kind", "ticket", "--file", file], home.home);
+  assert.match(runNode(SCRIPT, ["--kind", "ticket", "--file", file], home.home).json.error, /--kind ticket needs --slug/);
+  const refused = runNode(SCRIPT, ["--kind", "ticket", "--file", file, "--slug", "ISS-12001"], home.home);
   assert.equal(refused.status, 1);
   assert.equal(refused.json.problems.length, 1);
   writeFileSync(file, TICKET.replace("- [ ] Moves", "- [x] Moves"));
-  assert.equal(runNode(SCRIPT, ["--kind", "ticket", "--file", file], home.home).status, 0);
+  assert.equal(runNode(SCRIPT, ["--kind", "ticket", "--file", file, "--slug", "ISS-77", "--prd", "PRD-5"], home.home).status, 1, "the exclusion names neither this ticket nor its PRD");
+  assert.equal(runNode(SCRIPT, ["--kind", "ticket", "--file", file, "--slug", "ISS-12001"], home.home).status, 0);
+});
+
+test("an exclusion closes a ticket only in a ruling that names the ticket or its PRD (PRD-729 rollout tickets)", () => {
+  const body = "- Acceptance criteria:\n  - [ ] Roll out to cohorts with stop conditions; Excluded: Pat Example, 2026-10-21, ruling on the Desktop Labs toggle\n";
+  assert.equal(ticketProblems(body, ["ISS-9538", "PRD-729"]).length, 1, "a ruling about another surface");
+  assert.deepEqual(ticketProblems(body.replace("ruling on the Desktop Labs toggle", "ruling on PRD-729 rollout"), ["ISS-9538", "PRD-729"]), []);
 });

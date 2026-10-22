@@ -26,11 +26,11 @@ test('a merged pull request means DONE, an open one or a writer means in progres
 test('a mismatch ruled out of scope with a reason no longer fails; one without a reason still does', () => {
   const snapshot = {
     prds: [{ slug: 'P1', children: [{ slug: 'a', status: 'IN_REVIEW', pullRequests: [merged], body }, { slug: 'f', status: 'BACKLOG' }] }],
-    outOfScope: [{ slug: 'f', reason: 'operator, 2026-10-21: parked for next sprint' }, { slug: 'a', reason: ' ' }],
+    outOfScope: [{ slug: 'f', reason: 'operator, 2026-10-21: P1 child parked for next sprint' }, { slug: 'a', reason: ' ' }],
   };
   const result = auditStatuses(snapshot);
   assert.deepEqual(result.findings.map((finding) => finding.slug), ['a']);
-  assert.deepEqual(result.outOfScope, [{ slug: 'f', reason: 'operator, 2026-10-21: parked for next sprint' }]);
+  assert.deepEqual(result.outOfScope, [{ slug: 'f', reason: 'operator, 2026-10-21: P1 child parked for next sprint' }]);
 });
 
 test('the command prints each finding and exits 1 until the statuses match', (t) => {
@@ -52,13 +52,13 @@ test('the command prints each finding and exits 1 until the statuses match', (t)
     'UNCHECKED d DONE: AC-1; check each against the merged code, or name its follow-up or human exclusion, before DONE (executed-check.mjs --kind ticket)',
     'UNREAD e DONE: no ticket body in the snapshot; read it so its acceptance criteria are checked',
     'UNOWNED f BACKLOG',
-    'status audit: 5 children, 2 mismatched, 1 unowned, 2 unchecked',
+    'status audit: 5 children, 2 mismatched, 1 unowned, 2 unchecked, 0 unscoped',
     '',
   ].join('\n'));
   writeFileSync(file, JSON.stringify({ prds: [{ slug: 'P1', children: [{ slug: 'a', status: 'DONE', pullRequests: [merged], body }] }] }));
   const clean = spawnSync(process.execPath, [SCRIPT, '--snapshot', file], { encoding: 'utf8' });
   assert.equal(clean.status, 0);
-  assert.equal(clean.stdout, 'status audit: 1 children, 0 mismatched, 0 unowned, 0 unchecked\n');
+  assert.equal(clean.stdout, 'status audit: 1 children, 0 mismatched, 0 unowned, 0 unchecked, 0 unscoped\n');
 });
 
 test('a merged or DONE child needs its body read and every criterion checked before DONE (bulk DONE sweep)', () => {
@@ -68,4 +68,17 @@ test('a merged or DONE child needs its body read and every criterion checked bef
   assert.deepEqual(childFinding({ slug: 'a', status: 'DONE', body: unchecked }), { kind: 'UNCHECKED', criteria: 'AC-1' });
   assert.equal(childFinding({ slug: 'a', status: 'DONE', body }), null);
   assert.equal(childFinding({ slug: 'g', status: 'CANCELED' }), null);
+});
+
+test('a child ruled out of scope by a ruling about another surface is UNSCOPED (a skipped PRD rollout gate)', () => {
+  const snapshot = {
+    prds: [{ slug: 'PRD-7', children: [{ slug: 'ISS-8', status: 'BACKLOG' }, { slug: 'ISS-9', status: 'BACKLOG' }] }],
+    outOfScope: [
+      { slug: 'ISS-8', reason: 'operator, 2026-10-21: the Desktop Labs toggle is retired' },
+      { slug: 'ISS-9', reason: 'operator, 2026-10-22: PRD-7 ships ungated, extending the Sessions ruling' },
+    ],
+  };
+  const result = auditStatuses(snapshot);
+  assert.deepEqual(result.findings.map((finding) => [finding.slug, finding.kind]), [['ISS-8', 'UNSCOPED']]);
+  assert.deepEqual(result.outOfScope.map((entry) => entry.slug), ['ISS-9']);
 });

@@ -233,7 +233,7 @@ passes, set `EXECUTED` through step F (with `expectedStatus` the status you
 read) and record it. For a source PRD, move each claimed child the
 handoff gate put in `IN_REVIEW` to `DONE` with the merge URL and commit as
 evidence, each only once
-`node ../skills/handoff/scripts/executed-check.mjs --kind ticket --file <its latest text>`
+`node ../skills/handoff/scripts/executed-check.mjs --kind ticket --file <its latest text> --slug <its slug> --prd <the PRD slug>`
 passes (return the ones it refuses). Change nothing else.
 
 ## Handoff mode
