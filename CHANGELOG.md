@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.13.0
+
+#### Fixed
+- `verifier_prompt.txt` EXISTENCE CHECK splits absence three ways instead of rejecting on all of it. A cited file that does not exist under `review_root` → TENTATIVE with the missing path named in `verifier_reasoning`, because a rename, a bad path, or a tree that is not the one the diff describes explain it equally well. A snippet present in the patch hunks as an ADDED line but absent from `review_root` → TENTATIVE, stating that the tree read disagrees with the diff under review, since a checkout holding none of the branch's new code makes every finding about it look fabricated. Only the third case — the file exists, was read, and neither the snippet nor any `snippet_hash` matches anywhere in it and it is not an added line in the patch — still yields REJECTED with `rejection_class: "evidence_not_found"`, the one branch carrying positive disconfirmation. Line-drift and match behaviour are unchanged.
+- An APPROVED verdict reached after verifiers discarded findings no longer carries an empty `verdict_reason`, which was indistinguishable from a review that found nothing. `_compute_canonical_verdict` takes the discarded bucket as a new optional `rejected` argument and `_approved_verdict_reason` composes a reason naming the rejected count and the rejection classes ranked by frequency. The text is composed to fit `_VERDICT_REASON_MAX` rather than truncated to it: classes are dropped and the elision marked with `, ...` before the count is, so a reason never reads as a different class. `rejected` never changes which verdict is returned — a rejected finding is by definition not gating — and `cmd_finalize_result` is the caller that passes it; `cmd_verdict`'s `findings_validated.json` fallback has no discarded bucket to pass.
+
+#### Changed
+- `SCHEMA.md` §5 states the `verdict_reason` contract for the APPROVED case, which previously only said the field cites the finding(s) that produced the verdict. On APPROVED there is no gating finding, so the field is empty when verification rejected nothing and otherwise names the rejected count and classes; the class list may be elided to fit the 80-character cap, so a reader must not treat it as exhaustive. The envelope's inline `verdict_reason` comment points at that section.
+
 ### vibe v1.0.74
 
 Signal safety after a plugin test ended every process on an operator's machine, the open 2026-10-21 fleet lessons, and Storybook guard rules found by the 2026-10-21 audit (#8953, #8959, #8960, #8962, #8963, #8980). Each lesson has a mechanical check where one fits.
