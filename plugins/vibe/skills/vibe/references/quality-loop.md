@@ -30,7 +30,7 @@ answer:
 6. Live Asana in the operator's signed-in Chrome, run by whichever actor has
    the browser; never a public help center or documentation page.
 
-Apply settled decisions and never ask them again. Only after all six fail,
+Apply settled decisions; never ask them again. Only after all six fail,
 ask one absolutely necessary question with the checked sources and a
 recommendation. Under fleet orchestration a writer returns `NEEDS_PERSON` to
 the orchestrator, which finishes the remaining steps before asking.

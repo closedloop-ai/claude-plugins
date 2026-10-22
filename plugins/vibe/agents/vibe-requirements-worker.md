@@ -145,7 +145,10 @@ orchestrator with the exact interaction still to observe. Under fleet
 orchestration the orchestrator performs it before asking the operator. If the
 live interaction is available, return `DONE` with the observed behavior in
 one plain line and source `Asana, observed <date>`; behavior only, never its
-wording as our copy. End with the Graph block.
+wording as our copy. For a narrow-layout judgment, capture the app as found,
+then close navigation sidebars and drawers, dismiss banners and overlays, and
+capture the same viewport again; report both states and judge the cleared
+state. End with the Graph block.
 
 ## Return (under 200 words, not counting the quoted acceptance criteria)
 
