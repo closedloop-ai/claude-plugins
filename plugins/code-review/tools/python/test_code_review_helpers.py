@@ -9576,12 +9576,18 @@ class TestArbitrateBudget:
         assert plan["dropped_required"] == []
         assert gaps["findings"] == []
         assert _compute_canonical_verdict([], gaps["findings"])[0] == "APPROVED"
+        # The clamp is now the only thing holding the cap to the budget, so
+        # pin the invariant the deleted overflow branch used to defend:
+        # selected required + reserved BHA never exceeds ``--cap``. Without
+        # it, removing the clamp trades the verdict flip for a silent
+        # over-allocation and the assertions above still pass.
+        bha = plan["budget"]["bha_partitions"]
+        assert len(plan["required"]) + bha <= 20
         # The surplus is still accounted for, under the cap's own reason.
         capped = [
             e for e in plan["deferred_for_budget"]
             if e.get("defer_reason") == "domain_critic_cap"
         ]
-        bha = plan["budget"]["bha_partitions"]
         headroom = 20 - bha  # this plan has no non-critic required entries
         assert len(capped) == 25 - headroom
         # The plan reports the cap that actually governed selection, not
