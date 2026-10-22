@@ -35,3 +35,10 @@ def test_every_pr_open_step_requires_the_lanes_ci_would_run() -> None:
 def test_green_watch_triages_each_lane_and_mocks_per_block() -> None:
     fleet = _text(FLEET / "SKILL.md")
     assert "`NEW-RED`" in fleet and "mock-gap.mjs" in fleet
+
+
+def test_the_watch_set_finds_every_open_pr_and_names_its_writer() -> None:
+    snapshot = (PLUGIN / "skills" / "codex-fleet-monitor" / "scripts" / "snapshot.sh").read_text()
+    assert "--author" in snapshot and "done_prs" in snapshot
+    assert "liveness signal" in _text(PLUGIN / "skills" / "codex-fleet-monitor" / "SKILL.md")
+    assert "<owner/repo> <n> <writer>" in _text(FLEET / "SKILL.md")

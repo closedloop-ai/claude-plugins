@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -15,9 +15,10 @@ const FAKE_GH = `#!/bin/sh
 case "$*" in
   "api user"*) echo me ;;
   "api graphql"*) cat "$FAKE_ROOT/threads" 2>/dev/null || echo 0 ;;
+  "pr list"*--author*) cat "$FAKE_ROOT/mine" 2>/dev/null ;;
   "pr list"*) printf '5\\n7\\n' ;;
-  "pr view"*isDraft*) cat "$FAKE_ROOT/push" 2>/dev/null || echo "false $(date -u +%Y-%m-%dT%H:%M:%SZ)" ;;
-  "pr view"*) cat "$FAKE_ROOT/view" 2>/dev/null || echo "OPEN abcdef12 APPROVED MERGEABLE" ;;
+  "pr view"*isDraft*) cat "$FAKE_ROOT/push-$3" 2>/dev/null || cat "$FAKE_ROOT/push" 2>/dev/null || echo "false $(date -u +%Y-%m-%dT%H:%M:%SZ)" ;;
+  "pr view"*) cat "$FAKE_ROOT/view-$3" 2>/dev/null || cat "$FAKE_ROOT/view" 2>/dev/null || echo "OPEN abcdef12 APPROVED MERGEABLE" ;;
   "pr checks"*) printf 'build\\tpass\\t1m\\nlint\\tpass\\t1m\\n' ;;
   *"/issues/"*) echo 2 ;;
   *"/reviews"*) echo 1 ;;
@@ -107,7 +108,8 @@ test('state files of a PR that left prs.txt are removed; those of a watched PR s
   const f = fixture();
   writeFileSync(join(f.work, 'prs.txt'), 'acme/app 42\n');
   f.run('ok');
-  const gone = ['keep-st-acme_app-7.txt', 'keep-c-acme_app-7.txt', 'keep-ck-acme_app-7.txt', 'merge-acme_app-7.txt', 'checks-acme_app-7.txt', 'keep-st-other_repo-42.txt'];
+  // PR 8 is neither in prs.txt nor open in a watched repo (the fake lists 5 and 7, which are now watched).
+  const gone = ['keep-st-acme_app-8.txt', 'keep-c-acme_app-8.txt', 'keep-ck-acme_app-8.txt', 'merge-acme_app-8.txt', 'checks-acme_app-8.txt', 'keep-st-other_repo-42.txt'];
   for (const name of gone) writeFileSync(join(f.work, name), 'x\n');
   f.run('ok');
   for (const name of gone) assert.equal(existsSync(join(f.work, name)), false, `${name} is pruned`);
@@ -152,4 +154,25 @@ test('the Claude usage line reads claude -p /usage on the Codex bands, at most o
   assert.match(f.run('ok'), /^claude-usage local session=under80% week=under80%$/m);
   writeFileSync(join(f.root, 'claude-usage'), 'Current session: 91% used \u00b7 resets Oct 22 at 12:39pm (America/Chicago)\nCurrent week (all models): 69% used\n');
   assert.match(f.run('ok'), /^claude-usage local session=under80%/m, 'the cached line holds within the interval');
+});
+
+test('the watch set adds open PRs on any branch prefix and drops a merged PR after reporting it once (silent writer on fix/ PRs)', TIMEOUT, () => {
+  const f = fixture();
+  const ago = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  writeFileSync(join(f.work, 'prs.txt'), 'acme/app 42\nacme/app 9116 writer-9098\n');
+  writeFileSync(join(f.root, 'view-42'), 'MERGED abcdef12 APPROVED UNKNOWN\n');
+  writeFileSync(join(f.root, 'view-9116'), 'OPEN abcdef12 REVIEW_REQUIRED CONFLICTING\n');
+  writeFileSync(join(f.root, 'mine'), '9149\n');
+  writeFileSync(join(f.root, 'threads'), '1\n');
+  writeFileSync(join(f.root, 'push-9149'), `false ${ago(100)}\n`);
+  writeFileSync(join(f.root, 'push-9116'), `false ${ago(100)}\n`);
+  const first = f.run('ok');
+  assert.match(first, /^pr acme\/app#9149 OPEN .*STALE-PR\(no push for 2700s\+\)$/m, 'a fix/ PR nobody listed is watched and stale');
+  assert.match(first, /^pr acme\/app#9116 .*STALE-PR\(no push for 2700s\+ owner=writer-9098\)$/m, 'the stale line names its writer');
+  assert.match(first, /^pr acme\/app#42 MERGED /m, 'a merged PR is reported once');
+  const watched = readFileSync(join(f.work, 'prs.txt'), 'utf8');
+  assert.doesNotMatch(watched, /^acme\/app 42$/m);
+  assert.match(watched, /^acme\/app 9149$/m);
+  assert.match(watched, /^acme\/app 9116 writer-9098$/m);
+  assert.doesNotMatch(f.run('ok'), /#42 /, 'and then it leaves the watch set');
 });

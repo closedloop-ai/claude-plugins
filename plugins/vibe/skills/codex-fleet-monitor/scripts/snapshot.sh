@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Usage: snapshot.sh <workDir>. One line per watched item; any changed line is an event.
 # With RECOVER=1 (watch.sh sets it) it first runs a recover.mjs pass on each machine that has sessions.
-# State files of PRs no longer in prs.txt are removed.
+# State files of PRs no longer in prs.txt are removed. prs.txt lines are `<owner/repo> <number> [<writer>]`.
 K=${0:A:h}; W=${1:?workDir}; [ -f $W/config.env ] && source $W/config.env
 : ${STALL_SECONDS:=720} ${BOT_LOGIN_REGEX:=vercel|codex|github-actions|copilot|bot} ${REMOTE_SHELL:=zsh -lic}
 : > $W/live.txt
@@ -52,14 +52,22 @@ if [ -n "${REMOTE_HOST:-}" ]; then out=$(remote_node ratelimit.mjs remote); echo
 if [ -n "${REQUESTS_DIR:-}" ]; then requests local ls -t $REQUESTS_DIR; fi
 if [ -n "${REMOTE_REQUESTS_DIR:-}" ]; then requests remote ssh -o ConnectTimeout=10 ${REMOTE_HOST:?set REMOTE_HOST} "ls -t $REMOTE_REQUESTS_DIR"; fi
 zsh $K/classify.sh $W/item-history.txt $STALL_SECONDS ${QUESTION_SECONDS:-900} < $W/live.txt
+# The watch set is prs.txt plus every open PR in WATCH_NEW_PR_REPOS that PR_SEARCH lists or that
+# WATCH_PR_AUTHOR (default the gh account) opened, whatever its branch prefix: a hand-kept prs.txt once held
+# only merged PRs while a writer sat silent for 1h40m on two live ones, so STALE-PR never ran on them.
+touch $W/prs.txt
 for r in ${=WATCH_NEW_PR_REPOS}; do
   op=$(gh pr list -R $r --state open --search "${PR_SEARCH:-}" --json number --jq '.[].number' 2>/dev/null | sort -n | tr '\n' ' ')
   echo "open-prs $r $(keep open-$r "$op")"
+  mine=$(gh pr list -R $r --state open --author "${WATCH_PR_AUTHOR:-@me}" --json number --jq '.[].number' 2>/dev/null)
+  for n in ${=op} ${(f)mine}; do
+    grep -Eq "^$r $n( |\$)" $W/prs.txt || echo "$r $n" >> $W/prs.txt
+  done
 done
 # keep-<field>-<repo>-<n>, merge-<repo>-<n> and checks-<repo>-<n> files of a PR that left prs.txt are removed.
 prune_pr_state() {
   local -A live; local r n f rest
-  [ -f $W/prs.txt ] && while read r n; do [ -n "$n" ] && live[${r//[^A-Za-z0-9_-]/_}-$n]=1 && live[${r//\//_}-$n]=1; done < $W/prs.txt
+  [ -f $W/prs.txt ] && while read r n _; do [ -n "$n" ] && live[${r//[^A-Za-z0-9_-]/_}-$n]=1 && live[${r//\//_}-$n]=1; done < $W/prs.txt
   for f in $W/keep-(st|c|v|i|t|ck|pu)-*.txt(N) $W/merge-*.txt(N) $W/checks-*.txt(N); do
     rest=${${f:t:r}#keep-}; rest=${rest#*-}
     [ -n "${live[$rest]:-}" ] || rm -f $f
@@ -70,7 +78,8 @@ prune_pr_state
 ME=${MY_GH_LOGIN:-$(gh api user --jq .login 2>/dev/null)}
 skip="(.user.login==\"$ME\" or (.user.login|test(\"$BOT_LOGIN_REGEX\";\"i\")))"
 THREADS='query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){reviewThreads(first:100){nodes{isResolved}}}}}'
-while read r n; do
+done_prs=()
+while read r n owner; do
   [ -z "$n" ] && continue
   st=$(gh pr view $n -R $r --json state,headRefOid,reviewDecision,mergeable --jq '"\(.state) \(.headRefOid[0:8]) \(.reviewDecision) \(.mergeable)"' 2>/dev/null); st=$(keep st-$r-$n "$st")
   m=${st##* }; k=$W/merge-${r//\//_}-$n.txt
@@ -98,7 +107,10 @@ while read r n; do
   [[ -n ${pu#* } ]] && TZ=UTC strftime -r -s pushed '%Y-%m-%dT%H:%M:%SZ' "${pu#* }" 2>/dev/null
   if [[ ${st%% *} == OPEN && $pushed -gt 0 && $(( EPOCHSECONDS - pushed )) -ge ${STALE_PR_SECONDS:-2700} ]] &&
      [[ ${t:-0} -gt 0 || $m == CONFLICTING || ${pu%% *} == true || $ck == *fail* ]]; then
-    stale=" STALE-PR(no push for ${STALE_PR_SECONDS:-2700}s+)"
+    stale=" STALE-PR(no push for ${STALE_PR_SECONDS:-2700}s+${owner:+ owner=$owner})"
   fi
+  # A merged or closed PR is reported this once, then leaves the watch set.
+  [[ ${st%% *} == (MERGED|CLOSED) ]] && done_prs+=("$r $n")
   echo "pr $r#$n $st comments=$c reviews=$v inline=$i threads=$t checks=$ck$blocked$stale"
 done < $W/prs.txt
+for d in $done_prs; do grep -Ev "^$d( |\$)" $W/prs.txt > $W/prs.txt.tmp; mv $W/prs.txt.tmp $W/prs.txt; done

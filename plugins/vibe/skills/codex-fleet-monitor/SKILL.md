@@ -34,7 +34,8 @@ STALL_SECONDS=720                # no new thread items for this long means STALL
 # QUESTION_SECONDS=900          # an idle writer's question unanswered this long is QUESTION-UNANSWERED (default 15m)
 # STALE_PR_SECONDS=2700         # a PR needing its writer with no push this long is STALE-PR (default 45m)
 # HEARTBEAT_SECONDS=1800         # with no change, watch.sh exits with HEARTBEAT after this long (default 30m)
-WATCH_NEW_PR_REPOS="owner/repo"  # optional: list open PRs here to spot new ones
+WATCH_NEW_PR_REPOS="owner/repo"  # open PRs here that PR_SEARCH lists or WATCH_PR_AUTHOR opened join the watch set
+# WATCH_PR_AUTHOR=@me            # author whose open PRs are watched on any branch prefix (default the gh account)
 PR_SEARCH="head:feature/"        # optional: search filter for that list
 BOT_LOGIN_REGEX="vercel|codex|github-actions|copilot|bot"  # authors not counted as human feedback
 # USAGE_HIGH_PERCENT=80         # usage below this prints one band (default MOVE_AT_PERCENT, else 80)
@@ -59,7 +60,7 @@ REMOTE_REQUESTS_DIR=/path/on/remote/requests  # optional: the same on REMOTE_HOS
 
 The label is what appears in the output lines.
 
-`prs.txt`: one line per PR to watch, `owner/repo <number>`. Add a PR when it opens, remove it when it merges.
+`prs.txt`: the watch set, one line per PR, `owner/repo <number> [<writer>]`. The snapshot adds open PRs from `WATCH_NEW_PR_REPOS` on any branch, and drops a merged or closed PR after reporting it once; add the writer column when you assign a PR so `STALE-PR` names whom to nudge. A Claude pane writer has no turn state to read, so `STALE-PR` on its PR is its liveness signal.
 
 ## Run
 

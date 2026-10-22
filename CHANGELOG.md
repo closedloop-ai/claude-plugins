@@ -12,6 +12,7 @@ The last 2026-10-22 lessons and a trim that brings 1.0.76 and 1.0.77 together to
 - Questions to the orchestrator carry an id: `board.mjs question`, `answered` and `ack` take `--id`, and `status` prints `UNACKED` for an answer not acknowledged in 15 minutes. Answers to writers in long turns had to be sent three times.
 - `hooks/foreground-guard.mjs` refuses a foreground Bash wait over 5 minutes in a vibe session's worktree, so long runs go to the background and messages reach the writer between turns.
 - `green-watch.mjs --state` prints `NEW-RED` the first time a lane fails, while the rest of its batch still runs, and `mock-gap.mjs` checks each `vi.mock` block for the exports the code reads, block by block.
+- The watcher's PR set is `prs.txt` plus every open PR in `WATCH_NEW_PR_REPOS` that `PR_SEARCH` lists or `WATCH_PR_AUTHOR` opened, on any branch prefix; a merged or closed PR is reported once and dropped, and `STALE-PR` names the writer from an optional third `prs.txt` column. A writer sat silent for 1h40m on two PRs the hand-kept list did not hold.
 - `pre-pr-lanes.mjs` refuses to open a pull request until each test lane the repository's lane report names has a passing run recorded at the head (operator ruling); the environment worker, handoff and fleet QA prep run it.
 
 #### Changed
