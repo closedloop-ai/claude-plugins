@@ -14,6 +14,7 @@ const FAKE_GH = `#!/bin/sh
 [ "$(cat "$FAKE_ROOT/gh-mode")" = ok ] || exit 1
 case "$*" in
   "api user"*) echo me ;;
+  "api graphql"*) cat "$FAKE_ROOT/threads" 2>/dev/null || echo 0 ;;
   "pr list"*) printf '5\\n7\\n' ;;
   "pr view"*) echo "OPEN abcdef12 APPROVED MERGEABLE" ;;
   "pr checks"*) printf 'build\\tpass\\t1m\\nlint\\tpass\\t1m\\n' ;;
@@ -50,7 +51,7 @@ test('a blank gh read keeps the last value for each key, so it is not an event',
   const f = fixture();
   const good = f.run('ok');
   assert.match(good, /^open-prs acme\/app 5 7 $/m);
-  assert.match(good, /^pr acme\/app#42 OPEN abcdef12 APPROVED MERGEABLE comments=2 reviews=1 inline=3 checks=/m);
+  assert.match(good, /^pr acme\/app#42 OPEN abcdef12 APPROVED MERGEABLE comments=2 reviews=1 inline=3 threads=0 checks=/m);
   assert.equal(f.run('fail'), good);
   assert.equal(f.run('ok'), good);
 });
@@ -111,4 +112,16 @@ test('state files of a PR that left prs.txt are removed; those of a watched PR s
   for (const name of ['keep-st-acme_app-42.txt', 'keep-ck-acme_app-42.txt', 'merge-acme_app-42.txt', 'checks-acme_app-42.txt', 'keep-open-acme_app.txt']) {
     assert.equal(existsSync(join(f.work, name)), true, `${name} stays`);
   }
+});
+
+test('an approved PR with unresolved review threads is BLOCKED, apart from its reviews and checks', TIMEOUT, () => {
+  const f = fixture();
+  writeFileSync(join(f.root, 'threads'), '2\n');
+  const blocked = f.run('ok');
+  assert.match(blocked, /^pr acme\/app#42 OPEN abcdef12 APPROVED MERGEABLE comments=2 reviews=1 inline=3 threads=2 checks=.*pass.* BLOCKED\(unresolved threads\)$/m);
+  assert.equal(f.run('fail'), blocked, 'a failed read keeps the block');
+  writeFileSync(join(f.root, 'threads'), '0\n');
+  const clear = f.run('ok');
+  assert.match(clear, /^pr acme\/app#42 .* threads=0 checks=/m);
+  assert.doesNotMatch(clear, /BLOCKED/);
 });

@@ -58,7 +58,7 @@ done
 prune_pr_state() {
   local -A live; local r n f rest
   [ -f $W/prs.txt ] && while read r n; do [ -n "$n" ] && live[${r//[^A-Za-z0-9_-]/_}-$n]=1 && live[${r//\//_}-$n]=1; done < $W/prs.txt
-  for f in $W/keep-(st|c|v|i|ck)-*.txt(N) $W/merge-*.txt(N) $W/checks-*.txt(N); do
+  for f in $W/keep-(st|c|v|i|t|ck)-*.txt(N) $W/merge-*.txt(N) $W/checks-*.txt(N); do
     rest=${${f:t:r}#keep-}; rest=${rest#*-}
     [ -n "${live[$rest]:-}" ] || rm -f $f
   done
@@ -67,6 +67,7 @@ prune_pr_state
 [ -s $W/prs.txt ] || exit 0
 ME=${MY_GH_LOGIN:-$(gh api user --jq .login 2>/dev/null)}
 skip="(.user.login==\"$ME\" or (.user.login|test(\"$BOT_LOGIN_REGEX\";\"i\")))"
+THREADS='query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n){pullRequest(number:$p){reviewThreads(first:100){nodes{isResolved}}}}}'
 while read r n; do
   [ -z "$n" ] && continue
   st=$(gh pr view $n -R $r --json state,headRefOid,reviewDecision,mergeable --jq '"\(.state) \(.headRefOid[0:8]) \(.reviewDecision) \(.mergeable)"' 2>/dev/null); st=$(keep st-$r-$n "$st")
@@ -77,6 +78,9 @@ while read r n; do
   c=$(gh api "repos/$r/issues/$n/comments" --jq "[.[]|select($skip|not)]|length" 2>/dev/null); c=$(keep c-$r-$n "$c")
   v=$(gh api "repos/$r/pulls/$n/reviews" --jq "[.[]|select($skip|not)]|length" 2>/dev/null); v=$(keep v-$r-$n "$v")
   i=$(gh api "repos/$r/pulls/$n/comments" --jq "[.[]|select($skip|not)]|length" 2>/dev/null); i=$(keep i-$r-$n "$i")
+  # Unresolved review threads block a merge on their own, with approvals and auto-merge in place; approved PRs once
+  # sat blocked for hours while their writers waited for auto-merge, so the block is its own word on the line.
+  t=$(gh api graphql -f query="$THREADS" -F o=${r%%/*} -F n=${r#*/} -F p=$n --jq '[.data.repository.pullRequest.reviewThreads.nodes[]|select(.isResolved|not)]|length' 2>/dev/null); t=$(keep t-$r-$n "$t")
   ck=$(gh pr checks $n -R $r 2>/dev/null | awk -F'\t' '{print $2}' | sort | uniq -c | tr -s ' ' | tr '\n' ',')
   # Report only settled results: while any check is pending, repeat the last settled value. An empty
   # answer (a failed call, or GitHub re-listing the checks) repeats the last printed value instead.
@@ -84,5 +88,6 @@ while read r n; do
   if [ -z "$ck" ]; then ck=$(keep ck-$r-$n "")
   elif [[ "$ck" == *pending* ]]; then ck=$(keep ck-$r-$n "$(cat $kc 2>/dev/null) (running)")
   else echo "$ck" > $kc; ck=$(keep ck-$r-$n "$ck"); fi
-  echo "pr $r#$n $st comments=$c reviews=$v inline=$i checks=$ck"
+  blocked=; [[ ${st%% *} == OPEN && ${t:-0} -gt 0 ]] && blocked=" BLOCKED(unresolved threads)"
+  echo "pr $r#$n $st comments=$c reviews=$v inline=$i threads=$t checks=$ck$blocked"
 done < $W/prs.txt

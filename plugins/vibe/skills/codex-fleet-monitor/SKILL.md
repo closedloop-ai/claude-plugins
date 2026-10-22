@@ -90,7 +90,8 @@ Start it with `run_in_background`, never with `&`; a second copy for the same wo
 | `codex-usage ... unknown` / `unreadable READFAIL` | the App Server answered without rate limits, or it or the remote host could not be read | check `codex` on that machine |
 | `requests <local\|remote> <count> <newest file>` / `requests ... UNREADABLE` | a session dropped (or you removed) a delegated-work request file | hand the new request to a Claude worker, then steer its result back to the session that asked |
 | `open-prs <repo> <numbers>` | open PR list changed | add the new PR to `prs.txt` and start its review |
-| `pr ... <state> <head> <reviewDecision> <mergeable> comments= reviews= inline= checks=` | any field changed | new head: re-review; count up: read the feedback; `CONFLICTING`: tell the owning session to merge the base branch; checks: act on failures. Check counts change only once settled; while any check is pending the last settled counts show with ` (running)` |
+| `pr ... BLOCKED(unresolved threads)` | an open PR has unresolved review threads (`threads=<n>`), which block its merge even when it is approved with auto-merge armed | treat each thread as work: route it to the owning writer now, and never read the block as a missing approval |
+| `pr ... <state> <head> <reviewDecision> <mergeable> comments= reviews= inline= threads= checks=` | any field changed | new head: re-review; count up: read the feedback; `CONFLICTING`: tell the owning session to merge the base branch; checks: act on failures. Check counts change only once settled; while any check is pending the last settled counts show with ` (running)` |
 
 Surface everything that needs a human to the user immediately: limits, paid-credit spending, stalls, failures, and new human review comments.
 

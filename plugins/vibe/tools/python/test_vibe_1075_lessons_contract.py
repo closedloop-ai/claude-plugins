@@ -52,8 +52,9 @@ def test_the_watcher_flags_model_drift_wider_questions_and_a_second_copy() -> No
     snapshot = (MONITOR / "scripts" / "snapshot.sh").read_text()
     assert snapshot.count("CODEX_MODEL=${CODEX_MODEL:-}") == 2, "local and remote liveness both get the configured model"
     assert "watch.lock" in (MONITOR / "scripts" / "watch.sh").read_text()
+    assert "BLOCKED(unresolved threads)" in snapshot
     monitor = _text(MONITOR / "SKILL.md")
-    for wired in ("MODEL(<model>/<effort>!=<want>)", "`notLoaded`", "permission, authorization or approval", "never with `&`", "resets"):
+    for wired in ("BLOCKED(unresolved threads)", "MODEL(<model>/<effort>!=<want>)", "`notLoaded`", "permission, authorization or approval", "never with `&`", "resets"):
         assert wired in monitor, wired
 
 

@@ -15,6 +15,7 @@ The open fleet lessons from the 2026-10-21 and 2026-10-22 orchestration runs, ea
 #### Added
 - A thread the App Server unloaded (`notLoaded`) after its turn finished reads `IDLE` with its final message, the same as a loaded one; a test proves it, so no code change was needed.
 - `liveness.mjs` adds `MODEL(<model>/<effort>!=<want>)` to a session whose thread runs on another model or effort than `CODEX_MODEL` and `CODEX_EFFORT`, and `fleet.sh` refuses a new Codex session without a model as well as an effort.
+- A watched PR line carries `threads=<n>` unresolved review threads and ends `BLOCKED(unresolved threads)` while an open PR has any, apart from its review decision and checks; approved PRs with auto-merge armed once sat blocked for hours.
 - `watch.sh` holds a lock per work dir; a second copy (one started with `&`) exits 3 and says to start it with the harness's background option, and a lock whose pid died is taken over.
 - fleet-orchestrator: `board.mjs duty` gives each standing duty (main's post-merge health, a PR shepherd, the watcher) an owner, `status` prints `UNOWNED-DUTY`, and `helpers.mjs stopped` refuses a helper that owns one. `status` also prints `SLOW` for a Codex writer 30 minutes without a push while its PR has unresolved human threads, the cue to hand it to a Claude writer.
 - `executed-check.mjs` takes `--kind plan|prd`; a PRD also needs `--children` and is refused while any PRODUCES child is not DONE or CANCELED.
