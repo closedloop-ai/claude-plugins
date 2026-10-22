@@ -7,9 +7,9 @@ running from another install of this skill. To start it by hand:
 
     prd-graph-helper
 
-That launcher, in ~/.local/bin, is rewritten on every run to point at this
-script, so it keeps working when the plugin updates. `--ensure` starts the
-helper in the background and exits; its log is
+That launcher, in ~/.local/bin, resolves the newest installed copy of this
+script each time it runs, so it keeps working when a versioned plugin cache is
+replaced. `--ensure` starts the helper in the background and exits; its log is
 ~/.local/share/prd-dependency-graph/helper.log.
 
 Pages are portable. Each graph block carries its own config (scope, options,
@@ -85,6 +85,7 @@ MAX_FILE_BYTES = 64 * 1024 * 1024
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 ME_TTL_SECONDS = 600
 LOG_HINT = "~/.local/share/prd-dependency-graph/helper.log"
+_RENDERER_SOURCE_WARNING_WRITTEN = False
 
 
 def api_key():
@@ -471,13 +472,37 @@ def config_path(graph_id):
     return DATA_DIR / f"{graph_id}.json"
 
 
+def reload_renderer() -> None:
+    """Reload the renderer when its install still exists, otherwise keep the loaded copy.
+
+    Plugin managers may remove a versioned cache directory while this helper is
+    still running. The module already in memory is complete, so losing its source
+    must not turn every subsequent page refresh into a 500 response.
+    """
+    global _RENDERER_SOURCE_WARNING_WRITTEN
+    source_name = getattr(render_graph, "__file__", None)
+    source = Path(source_name) if isinstance(source_name, str) and source_name else None
+    if source is not None and source.is_file():
+        try:
+            importlib.reload(render_graph)  # pick up renderer edits within the same install
+            return
+        except ModuleNotFoundError:
+            # The cache may have disappeared between the existence check and reload.
+            if source.is_file():
+                raise
+    if not _RENDERER_SOURCE_WARNING_WRITTEN:
+        sys.stderr.write("refresh-helper: the plugin install was removed; continuing with the loaded renderer. "
+                         "Run prd-graph-helper --ensure to start the newest installed helper.\n")
+        _RENDERER_SOURCE_WARNING_WRITTEN = True
+
+
 def refresh(graph_id, token=None, outside=None, gate=None) -> dict[str, Any]:
     """Refresh a graph that still has a config file (made before pages carried their own)."""
     path = config_path(graph_id)
     if not path.exists():
         raise FileNotFoundError(f"no graph config at {path}")
     cfg = json.loads(path.read_text(encoding="utf-8"))
-    importlib.reload(render_graph)  # pick up renderer edits without restarting the helper
+    reload_renderer()
     if token is not None and not hmac.compare_digest(str(cfg["refresh"].get("token", "")), token):
         raise PermissionError("bad token")
     if outside is not None:
@@ -650,7 +675,7 @@ def refresh_file(path, graph_id=None, scope=None, outside=None, replacement=None
     real, text, info = read_target(path)
     # Errors name the file as the request gave it: a symlink's target name is not the requester's to learn.
     name = Path(path).name
-    importlib.reload(render_graph)
+    reload_renderer()
     graph_id = choose_graph(text, graph_id, name)
     embedded = render_graph.read_embedded(text, graph_id)
     if scope is not None and (embedded is None or str((embedded.get("refresh") or {}).get("scope")) != scope):
@@ -978,11 +1003,65 @@ def main():
         pass
 
 
-def install_launcher():
-    """Write ~/.local/bin/prd-graph-helper pointing at this script; rewritten when the script moves."""
+def launcher_body() -> str:
+    """Return a launcher that resolves the newest surviving plugin cache at execution time."""
+    try:
+        fallback_version = json.loads((SCRIPT.parents[3] / ".claude-plugin" / "plugin.json")
+                                      .read_text(encoding="utf-8")).get("version")
+    except (OSError, ValueError, AttributeError):
+        fallback_version = None
+    if not isinstance(fallback_version, str):
+        fallback_version = "0.0.0-dev"
+    return f'''#!/usr/bin/env python3
+{LAUNCHER_MARK}: written by the prd-dependency-graph skill; resolves plugin updates at runtime.
+import os
+import re
+import sys
+from pathlib import Path
+
+FALLBACK = {str(SCRIPT)!r}
+FALLBACK_VERSION = {fallback_version!r}
+PLUGIN_CACHE = Path("plugins/cache/closedloop-ai/closedloop-core")
+HELPER = Path("skills/prd-dependency-graph/scripts/refresh_server.py")
+
+
+def version_key(name):
+    match = re.fullmatch(r"(\\d+)\\.(\\d+)\\.(\\d+)(?:-([0-9A-Za-z.-]+))?", name)
+    if not match:
+        return (-1, -1, -1, 0, name)
+    prerelease = match.group(4)
+    return (*(int(match.group(i)) for i in range(1, 4)), 1 if prerelease is None else 0, prerelease or "")
+
+
+roots = [
+    Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex"),
+    Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude"),
+]
+candidates = []
+if Path(FALLBACK).is_file():
+    candidates.append((version_key(FALLBACK_VERSION), 1, FALLBACK))
+for root in roots:
+    cache = root.expanduser() / PLUGIN_CACHE
+    try:
+        installs = list(cache.iterdir())
+    except OSError:
+        continue
+    for install in installs:
+        helper = install / HELPER
+        if helper.is_file():
+            candidates.append((version_key(install.name), 0, str(helper)))
+
+if not candidates:
+    raise SystemExit("prd-graph-helper: no installed dependency-graph helper was found; run the skill once to repair it")
+script = max(candidates)[2]
+os.execv(sys.executable, [sys.executable, script, *sys.argv[1:]])
+'''
+
+
+def install_launcher() -> None:
+    """Write ~/.local/bin/prd-graph-helper without pinning it to one cache version."""
     launcher = render_graph.LAUNCHER
-    body = (f"#!/bin/sh\n{LAUNCHER_MARK}: written by the prd-dependency-graph skill, rewritten on every run.\n"
-            f"exec python3 {shlex.quote(str(SCRIPT))} \"$@\"\n")
+    body = launcher_body()
     try:
         if launcher.exists():
             current = launcher.read_text(encoding="utf-8", errors="replace")

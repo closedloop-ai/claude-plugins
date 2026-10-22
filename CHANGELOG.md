@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.5.2
+
+#### Fixed
+- `prd-graph-helper` resolves the newest usable `closedloop-core` installation from the Codex and Claude plugin caches each time it runs instead of pinning itself to the versioned cache path that created it. Source checkouts remain a version-aware fallback, so deleting an old plugin cache no longer leaves the launcher unable to start.
+- A dependency-graph helper whose plugin cache is removed while it is running keeps refreshing with its renderer already loaded in memory and logs a one-time upgrade hint. Regression tests remove both a launcher's original cache and a live helper's cache before exercising their command and HTTP refresh surfaces.
+
 ### vibe v1.0.75
 
 The open fleet lessons from the 2026-10-21 and 2026-10-22 orchestration runs, each with a mechanical check where one fits, and a watcher bug found while checking them.
