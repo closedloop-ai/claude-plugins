@@ -187,7 +187,7 @@ Pushback applies principle 2; more patterns: [references/judgment.md](./referenc
 
 - Log every finding you route to a writer in the lessons ledger at the same moment, tagged new or repeat, with owner and fix. Format: [references/state.md](./references/state.md#lessons-ledger).
 - A repeat after a shipped fix means the earlier encoding did not bite: make it a gate, not more prose.
-- A plugin PR that encodes lessons replaces the prose its gate enforces and reports the net change in instruction length. The plugin must not get heavier.
+- A plugin PR that encodes lessons replaces the prose its gate enforces and reports the net change in instruction length, measured at the final head with `node scripts/instruction-words.mjs --base <last release> --changelog CHANGELOG.md --version <x.y.z>`. The plugin must not get heavier.
 - Batch lesson and tooling fixes into one open PR per repo until it merges. Before opening one, `node scripts/lessons-pr.mjs --repo <owner/repo>` must print `no open lessons PR`; otherwise push onto the branch it names.
 - A lesson's primary fix lives in vibe itself, its writer instructions plus a mechanical check, because many people run vibe without an orchestrator; a rule here is only a second layer.
 - A lessons PR encodes general rules only. One repo's product rules, paths and component names go in that repo's own instruction files, gates or knowledge base.

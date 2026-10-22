@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.78
+
+#### Fixed
+- The v1.0.77 entry said Markdown was about 930 words shorter than in 1.0.75; the merged change is about 830 shorter. The count was taken before the release's last commits. `instruction-words.mjs` (fleet-orchestrator) now measures the net change between two refs and, with `--changelog`, fails when an entry states a number the measurement does not match; the lessons loop runs it at the final head.
+
 ### vibe v1.0.77
 
 The last 2026-10-22 lessons and a trim that brings 1.0.76 and 1.0.77 together to fewer instruction words than 1.0.75.
@@ -17,7 +22,7 @@ The last 2026-10-22 lessons and a trim that brings 1.0.76 and 1.0.77 together to
 - `pre-pr-lanes.mjs` refuses to open a pull request until each test lane the repository's lane report names has a passing run recorded at the head (operator ruling); the environment worker, handoff and fleet QA prep run it.
 
 #### Changed
-- Instruction text is trimmed: prose a script now enforces keeps only the command and its reason, and repeated rules are stated once. Markdown under the vibe plugin is about 930 words shorter than in 1.0.75.
+- Instruction text is trimmed: prose a script now enforces keeps only the command and its reason, and repeated rules are stated once. Markdown under the vibe plugin is about 830 words shorter than in 1.0.75.
 
 ### vibe v1.0.76
 
