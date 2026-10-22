@@ -64,5 +64,42 @@ def test_every_path_that_sets_a_ticket_done_checks_its_criteria_first() -> None:
 
 
 def test_the_shepherd_stops_on_review_threads() -> None:
-    assert "an unresolved review thread the writer has not answered last" in _text(HANDOFF / "SKILL.md")
+    assert "an unresolved round-one review thread the writer has not answered last" in _text(HANDOFF / "SKILL.md")
     assert '"threads"' in (VIBE / "scripts" / "shepherd.mjs").read_text()
+
+
+def test_claude_sessions_run_the_kill_guard_on_every_bash_command() -> None:
+    import json
+
+    hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]["PreToolUse"]
+    assert any(entry.get("matcher") == "Bash" and any("kill-guard.mjs" in hook["command"] for hook in entry["hooks"]) for entry in hooks)
+    assert "kill-guard.mjs own <pid>" in _text(VIBE / "references" / "guardrails.md")
+
+
+def test_stale_prs_and_unanswered_questions_are_flagged_and_answered() -> None:
+    assert "STALE-PR" in (MONITOR / "scripts" / "snapshot.sh").read_text()
+    assert "QUESTION-UNANSWERED" in (MONITOR / "scripts" / "classify.sh").read_text()
+    monitor = _text(MONITOR / "SKILL.md")
+    for wired in ("STALE-PR(...)", "QUESTION-UNANSWERED(15m+)", "STALE_PR_SECONDS", "QUESTION_SECONDS"):
+        assert wired in monitor, wired
+    fleet = _text(FLEET / "SKILL.md")
+    assert "On `STALE-PR`" in fleet and "ask the owning writer for an ETA, unblock it, or reassign it" in fleet
+    assert "every 45 minutes" in fleet and "never hold one for optional evidence" in fleet
+    assert "A question never holds a pull request" in _text(VIBE / "SKILL.md")
+    assert "board.mjs <orchDir> question" in _text(FLEET / "references" / "templates.md")
+
+
+def test_one_review_round_with_one_follow_up_ticket() -> None:
+    for path in (VIBE / "SKILL.md", HANDOFF / "SKILL.md", FLEET / "SKILL.md"):
+        assert "review-followup.mjs" in _text(path), path.name
+    assert "--round-one-fixed-at" in _text(HANDOFF / "SKILL.md")
+    assert "follow-ups from #<PR> review" in _text(FLEET / "SKILL.md")
+
+
+def test_program_practices_and_rollout_gate_are_wired() -> None:
+    fleet = _text(FLEET / "SKILL.md")
+    for wired in ("## Program practices", "`MISSING-DUTY`", "MAX_LOAD_PER_CORE", "REPO_MEMORY_CMD", "Deadline mode", "Runtime choice"):
+        assert wired in fleet, wired
+    assert "--criteria <ticket body>" in fleet and "--scope <ticket>,<PRD>" in fleet
+    assert "rollout-gate.mjs --worktree" in _text(HANDOFF / "SKILL.md")
+    assert "load-check.sh" in (FLEET / "scripts" / "fleet.sh").read_text()

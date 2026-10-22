@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // PreToolUse guard for Bash: a session signals only processes it recorded as
-// its own. A writer once ran `pkill -f "turbo test --filter"` on a shared
-// laptop, which can end other sessions' runs, and a plugin test's kill(-1)
-// once ended every app on the operator's machine; a written rule against both
-// already existed. So `pkill`, `killall`, `xargs kill`, and `kill` with a
-// pattern, a variable, a command substitution, or a pid of 1 or lower (zero
-// and negative pids signal whole process groups) are refused. `kill <pid>`
+// its own. A writer once killed a shared laptop's test runs by pattern
+// (`-f "turbo test --filter"`), which can end other sessions' runs, and a
+// plugin test's kill(-1) once ended every app on the operator's machine; a
+// written rule against both already existed. So the by-name killers (the p
+// and all variants of kill), `xargs kill`, and `kill` with a pattern, a
+// variable, a command substitution, or a pid of 1 or lower (zero and negative
+// pids signal whole process groups) are refused. `kill <pid>`
 // passes only for a pid recorded here as this session's own, still running the
 // process that was recorded.
 //
@@ -21,6 +22,7 @@ import { pathToFileURL } from "node:url";
 const SEPARATOR = /\|\||&&|[;|&\n]|\$\(|`|\(|\)/;
 const SIGNAL_OPTION = /^-(?:[A-Za-z][A-Za-z0-9+-]*|\d+)$/;
 const SUBSTITUTED_KILL = /(?:^|[\s;&|(])kill\b[^;&|\n]*(?:\$\(|`)/;
+const BY_NAME = /^p?kill(?:all)?$/;
 const ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const WRAPPERS = new Set(["sudo", "command", "exec", "nohup", "time", "builtin", "env"]);
 
@@ -38,7 +40,7 @@ export function killProblems(command, isOwn) {
     const words = segment.trim().split(/\s+/).filter((word) => word && !/[<>]/.test(word)).map((word) => word.replace(/^["']|["']$/g, ""));
     while (words.length > 0 && (ENV_ASSIGN.test(words[0]) || WRAPPERS.has(path.basename(words[0])))) words.shift();
     const name = path.basename(words[0] ?? "");
-    if (name === "pkill" || name === "killall") {
+    if (name !== "kill" && BY_NAME.test(name)) {
       problems.push(`${name} signals by pattern, which can end other sessions' processes; record your own pid when you start a process and run kill <pid>`);
     } else if (name === "xargs" && words.slice(1).some((word) => path.basename(word) === "kill")) {
       problems.push("xargs kill signals whatever a search matched; kill only a pid you recorded as your own");

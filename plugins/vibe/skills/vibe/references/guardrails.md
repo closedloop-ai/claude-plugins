@@ -40,10 +40,10 @@ Codex and Claude Code, and this section is its one canonical statement:
 These rules bind every worker in both harnesses.
 
 - Stop only a pid this session recorded and still owns: record each process
-  you start with `node <plugin root>/hooks/kill-guard.mjs own <pid>`. In
-  Claude Code that hook refuses `pkill`, `killall`, `xargs kill` and `kill`
-  of a pattern, a pid of 1 or lower or an unrecorded pid; report what you did
-  not start.
+  you start with `node <plugin root>/hooks/kill-guard.mjs own <pid>`.
+  Never `pkill`, `killall` or `kill` by name or pattern; in Claude Code that
+  hook refuses them and a `kill` of a pid of 1 or lower or an unrecorded pid.
+  Report what you did not start.
 - Records, writer state, briefs, monitor config and reports a later step
   reads live in the session's Git metadata, `.claude/worktrees/` or
   `~/.codex/vibe/`, never `/tmp` or the system temp folder.
