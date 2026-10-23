@@ -7,7 +7,7 @@ import { z } from "zod";
 import { checkClaudeSignIn, checkRoleCapabilities, isAuthFailure, LaunchPrecheckError, missingMcpTools, missingServers,
   SIGN_IN_PERSON_ACTION } from "./claude-preflight.js";
 import { runFromCanonicalEntry } from "./cli.js";
-import { capabilitiesSchema, identifierSchema, readInput, statusSchema, type WorkerStatus } from "./contracts.js";
+import { capabilitiesSchema, identifierSchema, mcpToolAliases, readInput, statusSchema, type WorkerStatus } from "./contracts.js";
 import { readDefinition } from "./definition.js";
 import { acquireRecordTurnAt, attachClaudeProcess, changeWriter, markClaudeStarted, readWriterSummary, recordedWriterRoot,
   registerWriter } from "./ledger.js";
@@ -80,7 +80,7 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
   const roleTools = prototypeAdvice ? definition.tools.filter((tool) => tool !== "Write" && tool !== "Edit") : definition.tools;
   const tools = [...new Set([...roleTools, "ToolSearch", structuredOutputTool, ...input.capabilities
     .filter((capability) => capability.access === "read" || permittedWrites.includes(capability.operation))
-    .map((capability) => capability.name)])];
+    .flatMap((capability) => mcpToolAliases(capability.name))])];
   const persistent = input.agentName === "vibe-change-worker";
   const phasePolicy = persistent
     ? "Current phase, test-authoring and test-repair authority come only from the orchestrator's top-level turn envelope, separate from raw input text. "
@@ -181,7 +181,8 @@ export async function runWorker(rawInput: unknown) {
       "--agents", definitionFile, "--model", definition.metadata.model,
       "--tools", bound.tools.join(","), "--disallowedTools", bound.reader
         ? "Agent,Task,Write,Edit,NotebookEdit,EnterWorktree,ExitWorktree"
-        : "Agent,Task,EnterWorktree,ExitWorktree,NotebookEdit",
+        : bound.tools.includes("Agent") ? "Task,EnterWorktree,ExitWorktree,NotebookEdit"
+          : "Agent,Task,EnterWorktree,ExitWorktree,NotebookEdit",
       "--permission-mode", "default",
       "--allowedTools", bound.tools.join(","),
       resume ? "--resume" : "--session-id", workerId];

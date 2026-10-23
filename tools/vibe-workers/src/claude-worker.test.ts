@@ -102,6 +102,8 @@ describe("production Claude CLI adapter", () => {
     expect(proof.every((item) => item.args[item.args.indexOf("--agent") + 1] === "vibe:vibe-change-worker")).toBe(true);
     expect(proof[0]?.definition["vibe:vibe-change-worker"]?.model).toBe("sonnet");
     expect(proof[0]?.definition["vibe:vibe-change-worker"]?.tools).toContain(graph[0]?.name);
+    expect(proof[0]?.definition["vibe:vibe-change-worker"]?.tools).toEqual(expect.arrayContaining(["SendMessage", "Agent"]));
+    expect(proof[0]?.args[proof[0].args.indexOf("--disallowedTools") + 1]?.split(",")).not.toContain("Agent");
     expect(proof[0]?.definition["vibe:vibe-change-worker"]?.prompt).toContain("Canonical fixture prompt");
     expect(proof[0]?.args[proof[0].args.indexOf("--allowedTools") + 1]?.split(",")).toEqual(
       proof[0]?.definition["vibe:vibe-change-worker"]?.tools);
@@ -411,7 +413,8 @@ describe("production Claude CLI adapter", () => {
     const proof = readProof(value.metadata)[0];
     expect(proof?.args[proof.args.indexOf("--permission-mode") + 1]).toBe("default");
     expect(proof?.args[proof.args.indexOf("--disallowedTools") + 1]).toMatch(/Write,Edit/);
-    expect(proof?.definition["vibe:vibe-guardrails-reviewer"]?.tools).toEqual(["Read", "Grep", "Glob", "Bash", "Skill", "ToolSearch", "StructuredOutput", graph[0]?.name]);
+    expect(proof?.definition["vibe:vibe-guardrails-reviewer"]?.tools).toEqual(["Read", "Grep", "Glob", "Bash", "Skill", "ToolSearch", "StructuredOutput", graph[0]?.name,
+      "mcp__custom_graph__sync-status"]);
     expect(run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect", capabilities: [...graph, recordWrite] }).status).toBe(1);
     expect(readProof(value.metadata)).toHaveLength(1);
   });

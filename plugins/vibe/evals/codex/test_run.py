@@ -33,6 +33,14 @@ def test_one_case_per_claude_prompt_and_role_names() -> None:
     )
 
 
+@pytest.mark.parametrize("layout", [".codex-plugin", ".claude-plugin"])
+def test_plugin_version_accepts_either_runtime_manifest(tmp_path: Path, layout: str) -> None:
+    manifest = tmp_path / layout / "plugin.json"
+    manifest.parent.mkdir()
+    manifest.write_text(json.dumps({"version": "1.2.3"}))
+    assert runner.plugin_version(tmp_path) == "1.2.3"
+
+
 def test_every_model_grader_has_a_deterministic_or_wording_route() -> None:
     deterministic = {
         "explains-both-endings",

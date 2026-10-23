@@ -4,13 +4,15 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { capabilitiesSchema, type Capability } from "./contracts.js";
+import { readPluginManifest } from "./plugin-root.js";
 
 const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/;
 const metadataSchema = z.object({ name: z.string(), description: z.string().min(1),
   model: z.string().min(1), tools: z.union([z.string(), z.array(z.string())]),
   skills: z.union([z.string(), z.array(z.string())]).optional(),
 }).passthrough();
-const builtins = new Set(["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Skill", "ToolSearch", "WebSearch", "WebFetch"]);
+const builtins = new Set(["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Skill", "ToolSearch", "WebSearch", "WebFetch",
+  "SendMessage", "Agent"]);
 
 /** Reads the canonical own-plugin agent once, preserving its prompt, model and declared built-ins. */
 export function readDefinition(agentRoot: string, agentName: string, capabilityInput: Capability[]) {
@@ -19,7 +21,7 @@ export function readDefinition(agentRoot: string, agentName: string, capabilityI
   const file = realpathSync(join(root, "agents", `${agentName}.md`));
   if (file !== join(root, "agents", `${agentName}.md`)) throw new Error("Agent escapes its owning plugin");
   const manifest = z.object({ name: z.literal("vibe"), version: z.string().regex(/^\d+\.\d+\.\d+$/).optional() }).passthrough().parse(
-    JSON.parse(readFileSync(join(root, ".claude-plugin", "plugin.json"), "utf8")),
+    readPluginManifest(root),
   );
   const source = readFileSync(file, "utf8");
   const match = source.match(frontmatter);

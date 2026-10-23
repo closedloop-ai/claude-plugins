@@ -11,11 +11,13 @@ Shared-scope work now proves one owner, every inheriting consumer and page-by-pa
 #### Added
 - Handoff's `shared-capability-owner` diff rule rejects a capability-level design-system control newly composed by another page adapter when multiple page adapters already compose it directly. A broad acceptance criterion cannot waive the finding; only a ticket or operator ruling that explicitly requires separate compositions can.
 - Claude's Agent pre-tool guard refuses a fleet orchestrator's direct launch of an internal `vibe:vibe-*-worker` outside a vibe session, preserving the session record, environment setup, guardrails and adversarial review, PR preflight and SendMessage path supplied by `vibe:vibe`.
+- A cross-runtime worker contract enumerates every worker's built-ins and owned MCP operations against Codex and Claude fixtures, including `$vibe` versus `vibe:vibe` invocation and both plugin manifest layouts.
 
 #### Changed
 - When a ticket or PRD says "across all", or the person says "shared", the vibe plan names one owning parent component, every consumer that inherits it and each consumer's approved prototype route. The guardrails reviewer checks that inventory against the import graph.
 - Running-app and visual QA compare each consumer page with that page's approved prototype route and flag controls present in the prototype but missing in production, alongside rendered controls that lack a sourced requirement.
-- Instruction text is trimmed so the release adds no words: Markdown under the vibe plugin is about 7 words shorter than in 1.0.78.
+- The owned launcher accepts underscore or hyphen MCP operation names, binds both runtime aliases, and compares loaded tools by canonical identity. The Claude change worker keeps `SendMessage` and `Agent` for progress and read-only helpers, while the sole-writer rule still forbids nested writers.
+- Instruction text is trimmed so the release adds no words: Markdown under the vibe plugin is about 2 words shorter than in 1.0.78.
 
 ### vibe v1.0.78
 

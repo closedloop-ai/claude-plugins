@@ -7,6 +7,19 @@ export class AgentRootError extends Error {
   constructor(readonly code: "AGENT_ROOT_INVALID" | "STALE_PLUGIN_ROOT", message: string) { super(message); }
 }
 
+const manifestPaths = [".claude-plugin/plugin.json", ".codex-plugin/plugin.json"] as const;
+
+/** Reads the plugin manifest from either supported runtime layout. */
+export function readPluginManifest(root: string): Record<string, unknown> {
+  for (const relative of manifestPaths) {
+    try { return JSON.parse(readFileSync(join(root, relative), "utf8")) as Record<string, unknown>; }
+    catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+  }
+  throw Object.assign(new Error("No vibe plugin manifest exists"), { code: "ENOENT" });
+}
+
 /** The installed plugin root that owns a bundled entry (`<root>/skills/vibe/scripts/dist/<entry>.mjs`). */
 export function installedPluginRoot(metaUrl: string): string {
   return realpathSync(resolve(dirname(fileURLToPath(metaUrl)), "../../../.."));
@@ -39,15 +52,14 @@ export function resolveAgentRoot(supplied: string | undefined, installed: string
 }
 
 function isPluginRoot(root: string): boolean {
-  const manifest = join(root, ".claude-plugin", "plugin.json");
-  if (!existsSync(manifest) || !existsSync(join(root, "agents"))) return false;
-  try { return (JSON.parse(readFileSync(manifest, "utf8")) as { name?: unknown }).name === "vibe"; }
+  if (!existsSync(join(root, "agents"))) return false;
+  try { return readPluginManifest(root).name === "vibe"; }
   catch { return false; }
 }
 
 function pluginVersion(root: string): string | undefined {
   try {
-    const version = (JSON.parse(readFileSync(join(root, ".claude-plugin", "plugin.json"), "utf8")) as { version?: unknown }).version;
+    const version = readPluginManifest(root).version;
     return typeof version === "string" ? version : undefined;
   } catch { return undefined; }
 }

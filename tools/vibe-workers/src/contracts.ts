@@ -13,7 +13,23 @@ export const liveReadOperations = new Set([
   "get_document", "get_document_version", "get_document_content", "get_document_comments", "search", "list_documents", "list_document_versions", "list_users",
   "get_me", "list_projects", "get_project", "list_artifact_links", "list_templates", "get_template",
 ]);
-const capabilityName = /^mcp__[A-Za-z0-9_.:-]+__[A-Za-z0-9_]+$/;
+const capabilityName = /^mcp__[A-Za-z0-9_.:-]+__[A-Za-z0-9_-]+$/;
+
+/** Runtime-neutral identity for an MCP tool whose operation may use underscores or hyphens. */
+export function mcpToolIdentity(name: string): string | null {
+  if (!capabilityName.test(name)) return null;
+  const boundary = name.lastIndexOf("__");
+  return `${name.slice(0, boundary)}__${name.slice(boundary + 2).replaceAll("-", "_")}`;
+}
+
+/** Exact spellings accepted by Codex and Claude Code for one canonical MCP operation. */
+export function mcpToolAliases(name: string): string[] {
+  const identity = mcpToolIdentity(name);
+  if (!identity) return [name];
+  const boundary = identity.lastIndexOf("__");
+  const hyphenated = `${identity.slice(0, boundary)}__${identity.slice(boundary + 2).replaceAll("_", "-")}`;
+  return [...new Set([name, identity, hyphenated])];
+}
 export const capabilitySchema = z.object({
   name: z.string().regex(capabilityName),
   service: z.enum(["graph", "closedloop"]),
@@ -23,13 +39,13 @@ export const capabilitySchema = z.object({
   const validOperation = value.service === "graph"
     ? value.access === "read" && graphOperations.has(value.operation)
     : value.access === "read" ? liveReadOperations.has(value.operation) : recordOperations.has(value.operation);
-  if (!validOperation || !value.name.endsWith(`__${value.operation}`)) {
+  if (!validOperation || mcpToolIdentity(value.name)?.split("__").at(-1) !== value.operation) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Unsupported capability binding" });
   }
 });
 export type Capability = z.infer<typeof capabilitySchema>;
 export const capabilitiesSchema = z.array(capabilitySchema).max(48).refine(
-  (values) => new Set(values.map((value) => value.name)).size === values.length,
+  (values) => new Set(values.map((value) => mcpToolIdentity(value.name))).size === values.length,
   "Duplicate capability binding",
 );
 export const identifierSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:-]+$/);

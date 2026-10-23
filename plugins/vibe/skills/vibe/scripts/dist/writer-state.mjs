@@ -11489,7 +11489,12 @@ var liveReadOperations = /* @__PURE__ */ new Set([
   "list_templates",
   "get_template"
 ]);
-var capabilityName = /^mcp__[A-Za-z0-9_.:-]+__[A-Za-z0-9_]+$/;
+var capabilityName = /^mcp__[A-Za-z0-9_.:-]+__[A-Za-z0-9_-]+$/;
+function mcpToolIdentity(name) {
+  if (!capabilityName.test(name)) return null;
+  const boundary = name.lastIndexOf("__");
+  return `${name.slice(0, boundary)}__${name.slice(boundary + 2).replaceAll("-", "_")}`;
+}
 var capabilitySchema = external_exports.object({
   name: external_exports.string().regex(capabilityName),
   service: external_exports.enum(["graph", "closedloop"]),
@@ -11497,12 +11502,12 @@ var capabilitySchema = external_exports.object({
   access: external_exports.enum(["read", "write"])
 }).strict().superRefine((value, ctx) => {
   const validOperation = value.service === "graph" ? value.access === "read" && graphOperations.has(value.operation) : value.access === "read" ? liveReadOperations.has(value.operation) : recordOperations.has(value.operation);
-  if (!validOperation || !value.name.endsWith(`__${value.operation}`)) {
+  if (!validOperation || mcpToolIdentity(value.name)?.split("__").at(-1) !== value.operation) {
     ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: "Unsupported capability binding" });
   }
 });
 var capabilitiesSchema = external_exports.array(capabilitySchema).max(48).refine(
-  (values) => new Set(values.map((value) => value.name)).size === values.length,
+  (values) => new Set(values.map((value) => mcpToolIdentity(value.name))).size === values.length,
   "Duplicate capability binding"
 );
 var identifierSchema = external_exports.string().min(1).max(160).regex(/^[A-Za-z0-9_.:-]+$/);
@@ -11619,14 +11624,82 @@ async function readInput(stream = process.stdin) {
 // src/ledger.ts
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync as existsSync2, mkdirSync, readFileSync as readFileSync3, realpathSync as realpathSync3, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname as dirname2, isAbsolute, join as join3 } from "node:path";
+import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync4, realpathSync as realpathSync4, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename as basename2, dirname as dirname3, isAbsolute, join as join4 } from "node:path";
 
 // src/definition.ts
 var import_yaml = __toESM(require_dist(), 1);
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync as realpathSync2 } from "node:fs";
-import { join } from "node:path";
+import { readFileSync as readFileSync2, realpathSync as realpathSync3 } from "node:fs";
+import { join as join2 } from "node:path";
+
+// src/plugin-root.ts
+import { existsSync, readFileSync, realpathSync as realpathSync2 } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+var AgentRootError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+  code;
+};
+var manifestPaths = [".claude-plugin/plugin.json", ".codex-plugin/plugin.json"];
+function readPluginManifest(root) {
+  for (const relative of manifestPaths) {
+    try {
+      return JSON.parse(readFileSync(join(root, relative), "utf8"));
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+  }
+  throw Object.assign(new Error("No vibe plugin manifest exists"), { code: "ENOENT" });
+}
+function installedPluginRoot(metaUrl) {
+  return realpathSync2(resolve(dirname(fileURLToPath2(metaUrl)), "../../../.."));
+}
+function resolveAgentRoot(supplied, installed, recorded) {
+  const fallback = recorded && existsSync(recorded) ? recorded : installed;
+  if (supplied === void 0) return fallback;
+  let root;
+  try {
+    root = realpathSync2(supplied);
+  } catch {
+    throw new AgentRootError("AGENT_ROOT_INVALID", "The supplied agent root does not exist; omit agentRoot to use the installed plugin");
+  }
+  if (basename(root) === "agents" && isPluginRoot(dirname(root))) root = dirname(root);
+  if (!isPluginRoot(root)) {
+    throw new AgentRootError("AGENT_ROOT_INVALID", "The supplied agent root is not a vibe plugin root; omit agentRoot to use the installed plugin");
+  }
+  if (root === installed || root === recorded) return root;
+  const suppliedVersion = pluginVersion(root);
+  const installedVersion = pluginVersion(installed);
+  if (suppliedVersion && installedVersion && suppliedVersion !== installedVersion) {
+    throw new AgentRootError(
+      "STALE_PLUGIN_ROOT",
+      `The supplied agent root is vibe ${suppliedVersion}, but this launcher belongs to vibe ${installedVersion}; omit agentRoot`
+    );
+  }
+  return root;
+}
+function isPluginRoot(root) {
+  if (!existsSync(join(root, "agents"))) return false;
+  try {
+    return readPluginManifest(root).name === "vibe";
+  } catch {
+    return false;
+  }
+}
+function pluginVersion(root) {
+  try {
+    const version = readPluginManifest(root).version;
+    return typeof version === "string" ? version : void 0;
+  } catch {
+    return void 0;
+  }
+}
+
+// src/definition.ts
 var frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/;
 var metadataSchema = external_exports.object({
   name: external_exports.string(),
@@ -11635,16 +11708,29 @@ var metadataSchema = external_exports.object({
   tools: external_exports.union([external_exports.string(), external_exports.array(external_exports.string())]),
   skills: external_exports.union([external_exports.string(), external_exports.array(external_exports.string())]).optional()
 }).passthrough();
-var builtins = /* @__PURE__ */ new Set(["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Skill", "ToolSearch", "WebSearch", "WebFetch"]);
+var builtins = /* @__PURE__ */ new Set([
+  "Read",
+  "Write",
+  "Edit",
+  "Grep",
+  "Glob",
+  "Bash",
+  "Skill",
+  "ToolSearch",
+  "WebSearch",
+  "WebFetch",
+  "SendMessage",
+  "Agent"
+]);
 function readDefinition(agentRoot, agentName, capabilityInput) {
   if (!/^vibe-[a-z0-9-]+$/.test(agentName)) throw new Error("Only own-plugin vibe agents are supported");
-  const root = realpathSync2(agentRoot);
-  const file = realpathSync2(join(root, "agents", `${agentName}.md`));
-  if (file !== join(root, "agents", `${agentName}.md`)) throw new Error("Agent escapes its owning plugin");
+  const root = realpathSync3(agentRoot);
+  const file = realpathSync3(join2(root, "agents", `${agentName}.md`));
+  if (file !== join2(root, "agents", `${agentName}.md`)) throw new Error("Agent escapes its owning plugin");
   const manifest = external_exports.object({ name: external_exports.literal("vibe"), version: external_exports.string().regex(/^\d+\.\d+\.\d+$/).optional() }).passthrough().parse(
-    JSON.parse(readFileSync(join(root, ".claude-plugin", "plugin.json"), "utf8"))
+    readPluginManifest(root)
   );
-  const source = readFileSync(file, "utf8");
+  const source = readFileSync2(file, "utf8");
   const match = source.match(frontmatter);
   if (!match) throw new Error("Agent has no canonical frontmatter");
   const metadata = metadataSchema.parse((0, import_yaml.parse)(match[1] ?? ""));
@@ -11678,8 +11764,8 @@ function observeDefinitionDigest(agentRoot, agentName, capabilities) {
 }
 
 // src/reference-images.ts
-import { existsSync, readFileSync as readFileSync2, statSync } from "node:fs";
-import { dirname, join as join2, resolve } from "node:path";
+import { existsSync as existsSync2, readFileSync as readFileSync3, statSync } from "node:fs";
+import { dirname as dirname2, join as join3, resolve as resolve2 } from "node:path";
 var REFERENCE_DIR = "vibe-reference-images";
 var referenceSchema = external_exports.object({
   path: external_exports.string().min(1),
@@ -11688,17 +11774,17 @@ var referenceSchema = external_exports.object({
 }).passthrough();
 var recordSchema = external_exports.object({ referenceImages: external_exports.array(external_exports.unknown()).optional() }).passthrough();
 function readReferenceImages(metadataDir) {
-  const file = join2(metadataDir, "vibe-session.json");
-  if (!existsSync(file)) return [];
-  const record = recordSchema.safeParse(JSON.parse(readFileSync2(file, "utf8")));
+  const file = join3(metadataDir, "vibe-session.json");
+  if (!existsSync2(file)) return [];
+  const record = recordSchema.safeParse(JSON.parse(readFileSync3(file, "utf8")));
   if (!record.success) return [];
-  const owned = join2(metadataDir, REFERENCE_DIR);
+  const owned = join3(metadataDir, REFERENCE_DIR);
   const images = [];
   for (const raw of record.data.referenceImages ?? []) {
     const entry = referenceSchema.safeParse(raw);
     if (!entry.success) continue;
-    const path = resolve(entry.data.path);
-    if (dirname(path) !== owned || !existsSync(path) || !statSync(path).isFile()) continue;
+    const path = resolve2(entry.data.path);
+    if (dirname2(path) !== owned || !existsSync2(path) || !statSync(path).isFile()) continue;
     images.push({ path, mediaType: entry.data.mediaType, ...entry.data.requestId ? { requestId: entry.data.requestId } : {} });
   }
   return images;
@@ -11706,31 +11792,31 @@ function readReferenceImages(metadataDir) {
 
 // src/ledger.ts
 function checkoutLocation(worktree) {
-  const root = realpathSync3(git(worktree, ["rev-parse", "--show-toplevel"]));
-  if (realpathSync3(worktree) !== root) throw new Error("Use the session's exact worktree root");
+  const root = realpathSync4(git(worktree, ["rev-parse", "--show-toplevel"]));
+  if (realpathSync4(worktree) !== root) throw new Error("Use the session's exact worktree root");
   const metadata = git(root, ["rev-parse", "--absolute-git-dir", "--abbrev-ref", "HEAD"]);
   const separator = metadata.lastIndexOf("\n");
   if (separator < 0) throw new Error("Missing native checkout metadata boundary");
   const [dir, branch] = external_exports.tuple([external_exports.string().min(1).refine(isAbsolute), external_exports.string().min(1)]).parse([metadata.slice(0, separator).trim(), metadata.slice(separator + 1).trim()]);
-  return { root, dir, branch, file: join3(dir, "vibe-writer.json"), lock: join3(dir, "vibe-writer.lock") };
+  return { root, dir, branch, file: join4(dir, "vibe-writer.json"), lock: join4(dir, "vibe-writer.lock") };
 }
 function location(worktree) {
   const place = checkoutLocation(worktree);
   const record = external_exports.object({ worktree: external_exports.string().optional(), branch: external_exports.string() }).passthrough().parse(
-    JSON.parse(readFileSync3(join3(place.dir, "vibe-session.json"), "utf8"))
+    JSON.parse(readFileSync4(join4(place.dir, "vibe-session.json"), "utf8"))
   );
-  if (record.worktree && realpathSync3(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Session worktree or branch changed");
+  if (record.worktree && realpathSync4(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Session worktree or branch changed");
   return place;
 }
 function readWriterSummary(worktree) {
   const place = location(worktree);
-  if (!existsSync2(place.file)) return void 0;
+  if (!existsSync3(place.file)) return void 0;
   return summary(readLedger(place));
 }
 function recordedWriterRoot(worktree) {
   try {
     const place = location(worktree);
-    return existsSync2(place.file) ? readLedger(place).binding.agentRoot : void 0;
+    return existsSync3(place.file) ? readLedger(place).binding.agentRoot : void 0;
   } catch {
     return void 0;
   }
@@ -11758,7 +11844,7 @@ function registerWriter(input) {
   if (data.runtime === "codex" && !data.workerId) throw new Error("Native writer registration requires its worker ID");
   const place = location(data.worktree);
   return locked(place, () => {
-    if (existsSync2(place.file)) {
+    if (existsSync3(place.file)) {
       const ledger2 = readLedger(place);
       if (ledger2.runtime !== data.runtime || data.workerId && ledger2.workerId !== data.workerId || JSON.stringify(ledger2.binding) !== JSON.stringify(definition.binding)) {
         throw new Error("Persistent writer identity or capability binding changed");
@@ -11784,7 +11870,7 @@ function registerWriter(input) {
 function migrateWriter(input, currentPluginRoot, verifyRetained) {
   const data = migrateSchema.parse(input);
   const definition = readDefinition(currentPluginRoot, "vibe-change-worker", data.capabilities);
-  if (realpathSync3(data.agentRoot) !== definition.root || data.agentName !== "vibe-change-worker") {
+  if (realpathSync4(data.agentRoot) !== definition.root || data.agentName !== "vibe-change-worker") {
     throw new Error("Migration must use this command's current canonical plugin definition");
   }
   const currentVersion = definition.version;
@@ -11793,8 +11879,8 @@ function migrateWriter(input, currentPluginRoot, verifyRetained) {
   return locked(place, () => {
     const ledger = readLedger(place);
     if (ledger.runtime !== data.runtime || ledger.workerId !== data.previousWorkerId || ledger.binding.digest !== data.previousDigest) throw new Error("Migration requires the exact recorded writer and digest");
-    const lock = join3(place.dir, "vibe-record-turn.lock");
-    const retained = existsSync2(lock);
+    const lock = join4(place.dir, "vibe-record-turn.lock");
+    const retained = existsSync3(lock);
     if (ledger.active?.lease || retained && !(data.retainedRecord && verifyRetained)) {
       throw new Error("Wait for owned source and record turns to stop before migration");
     }
@@ -11848,7 +11934,7 @@ function migrateWriter(input, currentPluginRoot, verifyRetained) {
 function provenDefinitionChange(ledger, observedDigest, currentVersion) {
   if (observedDigest === ledger.binding.digest) throw new Error("Recorded definition is present and matching; resume the existing writer");
   if (observedDigest === null) return "definition-missing";
-  const oldVersion = basename(dirname2(ledger.binding.agentRoot)) === "vibe" ? basename(ledger.binding.agentRoot) : void 0;
+  const oldVersion = basename2(dirname3(ledger.binding.agentRoot)) === "vibe" ? basename2(ledger.binding.agentRoot) : void 0;
   if (!oldVersion || !isNewerRelease(currentVersion, oldVersion)) {
     throw new Error("Digest mismatch has no proven plugin version upgrade; retain the original writer");
   }
@@ -11885,7 +11971,7 @@ function changeWriter(action, input) {
       if (ledger.pending.length >= 32) throw new Error("Pending queue is full; keep the new input with the parent");
       ledger.pending.push({ id: requestId, input: data.input });
     } else if (action === "claim") {
-      if (existsSync2(join3(place.dir, "vibe-record-turn.lock"))) throw new Error("A record turn is already running; retain the queued writer request");
+      if (existsSync3(join4(place.dir, "vibe-record-turn.lock"))) throw new Error("A record turn is already running; retain the queued writer request");
       if (ledger.active?.lease) throw new Error("Writer already has an owned running turn");
       if (ledger.active) {
         if (ledger.active.id !== requestId || !data.continuation) throw new Error("Continue the active request before the next queued request");
@@ -11933,8 +12019,8 @@ function changeWriter(action, input) {
 }
 function acquireRecordTurnAt(place, owner) {
   return locked(place, () => {
-    const file = join3(place.dir, "vibe-record-turn.lock");
-    if (existsSync2(place.file)) {
+    const file = join4(place.dir, "vibe-record-turn.lock");
+    if (existsSync3(place.file)) {
       const ledger = readLedger(place);
       if (owner && !ledger.active?.lease) {
         throw new Error("Record continuation requires the exact current source lease");
@@ -11949,7 +12035,7 @@ function acquireRecordTurnAt(place, owner) {
 }
 function releaseRecordTurnAt(place, verify) {
   return locked(place, () => {
-    const lock = join3(place.dir, "vibe-record-turn.lock");
+    const lock = join4(place.dir, "vibe-record-turn.lock");
     verify(lock);
     rmSync(lock, { recursive: true });
   });
@@ -11963,7 +12049,7 @@ function git(cwd, args) {
   }).trim();
 }
 function readLedger(place) {
-  const ledger = ledgerSchema.parse(JSON.parse(readFileSync3(place.file, "utf8")));
+  const ledger = ledgerSchema.parse(JSON.parse(readFileSync4(place.file, "utf8")));
   if (ledger.worktree !== place.root || ledger.branch !== place.branch) throw new Error("Writer ledger does not belong to this session");
   return ledger;
 }
@@ -12021,12 +12107,12 @@ function proveGroupStopped(processGroupId) {
 
 // src/native-record.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { readFileSync as readFileSync5, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join5 } from "node:path";
+import { readFileSync as readFileSync6, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join6 } from "node:path";
 
 // src/record-context.ts
-import { existsSync as existsSync3, readFileSync as readFileSync4, realpathSync as realpathSync4 } from "node:fs";
-import { join as join4, sep } from "node:path";
+import { existsSync as existsSync4, readFileSync as readFileSync5, realpathSync as realpathSync5 } from "node:fs";
+import { join as join5, sep } from "node:path";
 
 // ../../plugins/vibe/skills/vibe/scripts/session-record.mjs
 function sessionLiveTicket(record) {
@@ -12170,7 +12256,7 @@ function resolveRecordContext(input) {
     const cancel = input.sessionless.kind === "discarded" && input.agentName === "vibe-ticket-worker" && input.mode === "record" && input.recordAction === "cancel" && input.exclusiveRecordTurn;
     if (!startup && !cancel) throw new Error("This role/action has no sessionless operation");
     place = checkoutLocation(input.worktree);
-    if (existsSync3(join4(place.dir, "vibe-session.json"))) throw new Error("A private session exists; use its strict owned operation");
+    if (existsSync4(join5(place.dir, "vibe-session.json"))) throw new Error("A private session exists; use its strict owned operation");
   } else place = location(input.worktree);
   return { place, target: discardLocation(input, place) };
 }
@@ -12185,12 +12271,12 @@ function discardLocation(input, stable) {
     handoffTicket: external_exports.string().nullable().optional(),
     operator: external_exports.object({ id: external_exports.string().min(1), email: external_exports.string().email() }).passthrough()
   }).passthrough().parse(
-    JSON.parse(readFileSync4(join4(target.dir, "vibe-session.json"), "utf8"))
+    JSON.parse(readFileSync5(join5(target.dir, "vibe-session.json"), "utf8"))
   );
-  if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`) || !existsSync3(join4(target.dir, "commondir"))) throw new Error("Discard must retain its execution checkout");
-  const common = readFileSync4(join4(target.dir, "commondir"), "utf8").trim();
-  const stableCommon = existsSync3(join4(stable.dir, "commondir")) ? realpathSync4(join4(stable.dir, readFileSync4(join4(stable.dir, "commondir"), "utf8").trim())) : realpathSync4(stable.dir);
-  if (realpathSync4(join4(target.dir, common)) !== stableCommon || record.branch !== evidence.branch || record.operator.id !== evidence.operatorId || record.operator.email !== evidence.operatorEmail || (sessionLiveTicket(record) ?? void 0) !== evidence.liveTicket) {
+  if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`) || !existsSync4(join5(target.dir, "commondir"))) throw new Error("Discard must retain its execution checkout");
+  const common = readFileSync5(join5(target.dir, "commondir"), "utf8").trim();
+  const stableCommon = existsSync4(join5(stable.dir, "commondir")) ? realpathSync5(join5(stable.dir, readFileSync5(join5(stable.dir, "commondir"), "utf8").trim())) : realpathSync5(stable.dir);
+  if (realpathSync5(join5(target.dir, common)) !== stableCommon || record.branch !== evidence.branch || record.operator.id !== evidence.operatorId || record.operator.email !== evidence.operatorEmail || (sessionLiveTicket(record) ?? void 0) !== evidence.liveTicket) {
     throw new Error("Discard target does not match the parent's owned session evidence");
   }
   return target;
@@ -12234,7 +12320,7 @@ function acquireNativeRecord(input) {
     if (target) targetLock = acquireRecordTurnAt(target);
     lock = acquireRecordTurnAt(place, grant.primaryOwner);
     const lease = randomUUID2();
-    writeFileSync2(join5(lock, ownerFile), JSON.stringify({
+    writeFileSync2(join6(lock, ownerFile), JSON.stringify({
       grant,
       lease,
       branch: place.branch,
@@ -12256,16 +12342,16 @@ function releaseNativeRecord(input) {
   const place = grant.sessionless ? checkoutLocation(grant.worktree) : location(grant.worktree);
   grant.worktree = place.root;
   releaseRecordTurnAt(place, (lock) => {
-    const owner = nativeRecordOwnerSchema.parse(JSON.parse(readFileSync5(join5(lock, ownerFile), "utf8")));
+    const owner = nativeRecordOwnerSchema.parse(JSON.parse(readFileSync6(join6(lock, ownerFile), "utf8")));
     if (owner.lease !== lease || owner.branch !== place.branch || JSON.stringify(owner.grant) !== JSON.stringify(grant) || stoppedTurn.workerId !== grant.workerId || stoppedTurn.requestId !== grant.requestId || stoppedTurn.lease !== lease) {
       throw new Error("Native record release requires the exact owner's stopped-turn completion evidence");
     }
-    if (owner.targetDir) rmSync2(join5(owner.targetDir, "vibe-record-turn.lock"), { recursive: true, force: true });
+    if (owner.targetDir) rmSync2(join6(owner.targetDir, "vibe-record-turn.lock"), { recursive: true, force: true });
   });
   return { workerId: grant.workerId, requestId: grant.requestId, released: true };
 }
 function verifyStrandedRecordGrant(lock, ledger, retained) {
-  const owner = nativeRecordOwnerSchema.parse(JSON.parse(readFileSync5(join5(lock, ownerFile), "utf8")));
+  const owner = nativeRecordOwnerSchema.parse(JSON.parse(readFileSync6(join6(lock, ownerFile), "utf8")));
   const { grant } = owner;
   const { stoppedTurn } = retained;
   const ownRequest = ledger.active ? ledger.active.id === grant.requestId : ledger.completed.includes(grant.requestId);
@@ -12276,62 +12362,6 @@ function verifyStrandedRecordGrant(lock, ledger, retained) {
     throw new Error("The grant's recorded definition is present; release it with release-record");
   }
   return { requestId: grant.requestId, recordAction: grant.recordAction, state: stoppedTurn.state };
-}
-
-// src/plugin-root.ts
-import { existsSync as existsSync4, readFileSync as readFileSync6, realpathSync as realpathSync5 } from "node:fs";
-import { basename as basename2, dirname as dirname3, join as join6, resolve as resolve2 } from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
-var AgentRootError = class extends Error {
-  constructor(code, message) {
-    super(message);
-    this.code = code;
-  }
-  code;
-};
-function installedPluginRoot(metaUrl) {
-  return realpathSync5(resolve2(dirname3(fileURLToPath2(metaUrl)), "../../../.."));
-}
-function resolveAgentRoot(supplied, installed, recorded) {
-  const fallback = recorded && existsSync4(recorded) ? recorded : installed;
-  if (supplied === void 0) return fallback;
-  let root;
-  try {
-    root = realpathSync5(supplied);
-  } catch {
-    throw new AgentRootError("AGENT_ROOT_INVALID", "The supplied agent root does not exist; omit agentRoot to use the installed plugin");
-  }
-  if (basename2(root) === "agents" && isPluginRoot(dirname3(root))) root = dirname3(root);
-  if (!isPluginRoot(root)) {
-    throw new AgentRootError("AGENT_ROOT_INVALID", "The supplied agent root is not a vibe plugin root; omit agentRoot to use the installed plugin");
-  }
-  if (root === installed || root === recorded) return root;
-  const suppliedVersion = pluginVersion(root);
-  const installedVersion = pluginVersion(installed);
-  if (suppliedVersion && installedVersion && suppliedVersion !== installedVersion) {
-    throw new AgentRootError(
-      "STALE_PLUGIN_ROOT",
-      `The supplied agent root is vibe ${suppliedVersion}, but this launcher belongs to vibe ${installedVersion}; omit agentRoot`
-    );
-  }
-  return root;
-}
-function isPluginRoot(root) {
-  const manifest = join6(root, ".claude-plugin", "plugin.json");
-  if (!existsSync4(manifest) || !existsSync4(join6(root, "agents"))) return false;
-  try {
-    return JSON.parse(readFileSync6(manifest, "utf8")).name === "vibe";
-  } catch {
-    return false;
-  }
-}
-function pluginVersion(root) {
-  try {
-    const version = JSON.parse(readFileSync6(join6(root, ".claude-plugin", "plugin.json"), "utf8")).version;
-    return typeof version === "string" ? version : void 0;
-  } catch {
-    return void 0;
-  }
 }
 
 // src/writer-state.ts

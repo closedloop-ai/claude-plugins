@@ -22,12 +22,22 @@ import yaml
 
 EVALS = Path(__file__).resolve().parents[1]
 PLUGIN = EVALS.parent
+MANIFESTS = (".codex-plugin/plugin.json", ".claude-plugin/plugin.json")
 
 
 def document(path: Path) -> tuple[dict[str, Any], str]:
     """Read the same YAML frontmatter used by the Claude suite."""
     _, header, body = path.read_text().split("---", 2)
     return yaml.safe_load(header), body.strip()
+
+
+def plugin_version(plugin: Path) -> str:
+    """Read the version from either supported runtime's plugin manifest."""
+    for relative in MANIFESTS:
+        manifest = plugin / relative
+        if manifest.is_file():
+            return str(json.loads(manifest.read_text())["version"])
+    raise FileNotFoundError("vibe has no Claude Code or Codex plugin manifest")
 
 
 def role_text(text: str) -> str:
@@ -667,9 +677,7 @@ def main() -> int:
                 (args.plugin / "skills/vibe/SKILL.md").read_bytes()
             ).hexdigest(),
             plugin=str(args.plugin.resolve()),
-            version=json.loads(
-                (args.plugin / ".claude-plugin/plugin.json").read_text()
-            )["version"],
+            version=plugin_version(args.plugin),
             model=args.model,
             grader_model=args.grader_model,
             concurrency=args.concurrency,

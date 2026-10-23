@@ -120,6 +120,14 @@ describe("launcher sign-in and connection prechecks (operator ruling, 2026-10-15
     // The brief is already piped at spawn, so the fixture may have recorded it; the process itself must be gone.
     for (const proof of proofCount(value) ? readProof(value.metadata) : []) expect(() => process.kill(proof.pid, 0)).toThrow();
   }, 20000);
+  it("launches when Claude reports the granted MCP operations with hyphens", () => {
+    const value = setup();
+    const result = launch(value, { agentRoot: value.agentRoot, agentName: "vibe-requirements-worker",
+      input: "Read scope", capabilities: [...graph, ...liveReads] }, { FAKE_CLAUDE_HYPHENATE_MCP: "1" });
+    expect(result.status, JSON.stringify(result.json)).toBe(0);
+    const proof = readProof(value.metadata)[0];
+    expect(proof?.definition["vibe:vibe-requirements-worker"]?.tools).toContain("mcp__live_workspace__get-document");
+  }, 20000);
   it("refuses a requirements or ticket launch without the ClosedLoop reads it needs", () => {
     const value = setup();
     const startup = { kind: "startup" };

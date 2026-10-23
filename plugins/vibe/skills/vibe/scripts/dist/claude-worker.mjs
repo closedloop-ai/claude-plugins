@@ -11421,86 +11421,6 @@ var NEVER = INVALID;
 // src/claude-preflight.ts
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
-var LaunchPrecheckError = class extends Error {
-  constructor(code, message, personAction) {
-    super(message);
-    this.code = code;
-    this.personAction = personAction;
-  }
-  code;
-  personAction;
-};
-var SIGN_IN_PERSON_ACTION = "Your Claude sign-in on this Mac has run out, so I can't start the helpers that build your change. Open the Terminal app (press Cmd and Space, type Terminal, press Return), type claude auth login and press Return, then finish signing in in the browser window that opens. Tell me when you're done.";
-var AUTH_FAILURE = /oauth (?:session|token)[^\n]*expired|failed to authenticate|please run \/login|invalid api key|not logged in|authentication_error/i;
-function isAuthFailure(text) {
-  return AUTH_FAILURE.test(text);
-}
-function checkClaudeSignIn(command = "claude") {
-  const status = spawnSync(command, ["auth", "status", "--json"], {
-    cwd: homedir(),
-    encoding: "utf8",
-    timeout: 2e4,
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-  if (status.error && "code" in status.error && status.error.code === "ENOENT") {
-    throw new LaunchPrecheckError("CLAUDE_CLI_MISSING", "The claude command is not on this shell's PATH");
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(status.stdout ?? "");
-  } catch {
-    return;
-  }
-  if (parsed && typeof parsed === "object" && parsed.loggedIn === false) {
-    throw new LaunchPrecheckError("CLAUDE_SIGN_IN_NEEDED", "The standalone Claude CLI is signed out", SIGN_IN_PERSON_ACTION);
-  }
-}
-var requiredLiveReads = {
-  "vibe-requirements-worker": ["get_document"],
-  "vibe-ticket-worker": ["get_document"]
-};
-function checkRoleCapabilities(agentName, capabilities) {
-  const missing = (requiredLiveReads[agentName] ?? []).filter((operation) => !capabilities.some((capability) => capability.service === "closedloop" && capability.access === "read" && capability.operation === operation));
-  if (missing.length) {
-    throw new LaunchPrecheckError(
-      "MISSING_CAPABILITIES",
-      `${agentName} needs ClosedLoop read capabilities: ${missing.join(", ")}; discover and pass them in the parent`
-    );
-  }
-}
-function missingMcpTools(initTools, granted) {
-  const available = new Set(initTools);
-  return granted.filter((name) => name.startsWith("mcp__") && !available.has(name));
-}
-function missingServers(missing) {
-  return [...new Set(missing.map((name) => name.slice("mcp__".length, name.lastIndexOf("__"))))];
-}
-
-// src/cli.ts
-import { realpathSync } from "node:fs";
-import { fileURLToPath, pathToFileURL as pathToFileURL2 } from "node:url";
-
-// ../shared/cli.ts
-import { pathToFileURL } from "node:url";
-function runWhenMain(metaUrl, main2) {
-  const entry = process.argv[1];
-  if (!entry) return;
-  if (metaUrl !== pathToFileURL(entry).href) return;
-  Promise.resolve(main2(process.argv.slice(2))).then(
-    (code) => process.exit(code),
-    (err) => {
-      console.error(err instanceof Error ? err.message : String(err));
-      process.exit(1);
-    }
-  );
-}
-
-// src/cli.ts
-function runFromCanonicalEntry(metaUrl, main2) {
-  const entry = process.argv[1];
-  if (!entry || realpathSync(fileURLToPath(metaUrl)) !== realpathSync(entry)) return;
-  runWhenMain(pathToFileURL2(entry).href, main2);
-}
 
 // src/contracts.ts
 var graphOperations = /* @__PURE__ */ new Set([
@@ -11549,7 +11469,19 @@ var liveReadOperations = /* @__PURE__ */ new Set([
   "list_templates",
   "get_template"
 ]);
-var capabilityName = /^mcp__[A-Za-z0-9_.:-]+__[A-Za-z0-9_]+$/;
+var capabilityName = /^mcp__[A-Za-z0-9_.:-]+__[A-Za-z0-9_-]+$/;
+function mcpToolIdentity(name) {
+  if (!capabilityName.test(name)) return null;
+  const boundary = name.lastIndexOf("__");
+  return `${name.slice(0, boundary)}__${name.slice(boundary + 2).replaceAll("-", "_")}`;
+}
+function mcpToolAliases(name) {
+  const identity = mcpToolIdentity(name);
+  if (!identity) return [name];
+  const boundary = identity.lastIndexOf("__");
+  const hyphenated = `${identity.slice(0, boundary)}__${identity.slice(boundary + 2).replaceAll("_", "-")}`;
+  return [.../* @__PURE__ */ new Set([name, identity, hyphenated])];
+}
 var capabilitySchema = external_exports.object({
   name: external_exports.string().regex(capabilityName),
   service: external_exports.enum(["graph", "closedloop"]),
@@ -11557,12 +11489,12 @@ var capabilitySchema = external_exports.object({
   access: external_exports.enum(["read", "write"])
 }).strict().superRefine((value, ctx) => {
   const validOperation = value.service === "graph" ? value.access === "read" && graphOperations.has(value.operation) : value.access === "read" ? liveReadOperations.has(value.operation) : recordOperations.has(value.operation);
-  if (!validOperation || !value.name.endsWith(`__${value.operation}`)) {
+  if (!validOperation || mcpToolIdentity(value.name)?.split("__").at(-1) !== value.operation) {
     ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: "Unsupported capability binding" });
   }
 });
 var capabilitiesSchema = external_exports.array(capabilitySchema).max(48).refine(
-  (values) => new Set(values.map((value) => value.name)).size === values.length,
+  (values) => new Set(values.map((value) => mcpToolIdentity(value.name))).size === values.length,
   "Duplicate capability binding"
 );
 var identifierSchema = external_exports.string().min(1).max(160).regex(/^[A-Za-z0-9_.:-]+$/);
@@ -11676,11 +11608,164 @@ async function readInput(stream = process.stdin) {
   return JSON.parse(Buffer.concat(buffers).toString("utf8"));
 }
 
+// src/claude-preflight.ts
+var LaunchPrecheckError = class extends Error {
+  constructor(code, message, personAction) {
+    super(message);
+    this.code = code;
+    this.personAction = personAction;
+  }
+  code;
+  personAction;
+};
+var SIGN_IN_PERSON_ACTION = "Your Claude sign-in on this Mac has run out, so I can't start the helpers that build your change. Open the Terminal app (press Cmd and Space, type Terminal, press Return), type claude auth login and press Return, then finish signing in in the browser window that opens. Tell me when you're done.";
+var AUTH_FAILURE = /oauth (?:session|token)[^\n]*expired|failed to authenticate|please run \/login|invalid api key|not logged in|authentication_error/i;
+function isAuthFailure(text) {
+  return AUTH_FAILURE.test(text);
+}
+function checkClaudeSignIn(command = "claude") {
+  const status = spawnSync(command, ["auth", "status", "--json"], {
+    cwd: homedir(),
+    encoding: "utf8",
+    timeout: 2e4,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (status.error && "code" in status.error && status.error.code === "ENOENT") {
+    throw new LaunchPrecheckError("CLAUDE_CLI_MISSING", "The claude command is not on this shell's PATH");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(status.stdout ?? "");
+  } catch {
+    return;
+  }
+  if (parsed && typeof parsed === "object" && parsed.loggedIn === false) {
+    throw new LaunchPrecheckError("CLAUDE_SIGN_IN_NEEDED", "The standalone Claude CLI is signed out", SIGN_IN_PERSON_ACTION);
+  }
+}
+var requiredLiveReads = {
+  "vibe-requirements-worker": ["get_document"],
+  "vibe-ticket-worker": ["get_document"]
+};
+function checkRoleCapabilities(agentName, capabilities) {
+  const missing = (requiredLiveReads[agentName] ?? []).filter((operation) => !capabilities.some((capability) => capability.service === "closedloop" && capability.access === "read" && capability.operation === operation));
+  if (missing.length) {
+    throw new LaunchPrecheckError(
+      "MISSING_CAPABILITIES",
+      `${agentName} needs ClosedLoop read capabilities: ${missing.join(", ")}; discover and pass them in the parent`
+    );
+  }
+}
+function missingMcpTools(initTools, granted) {
+  const available = new Set(initTools.map(mcpToolIdentity).filter((name) => name !== null));
+  return granted.filter((name) => {
+    const identity = mcpToolIdentity(name);
+    return identity !== null && !available.has(identity);
+  });
+}
+function missingServers(missing) {
+  return [...new Set(missing.map((name) => name.slice("mcp__".length, name.lastIndexOf("__"))))];
+}
+
+// src/cli.ts
+import { realpathSync } from "node:fs";
+import { fileURLToPath, pathToFileURL as pathToFileURL2 } from "node:url";
+
+// ../shared/cli.ts
+import { pathToFileURL } from "node:url";
+function runWhenMain(metaUrl, main2) {
+  const entry = process.argv[1];
+  if (!entry) return;
+  if (metaUrl !== pathToFileURL(entry).href) return;
+  Promise.resolve(main2(process.argv.slice(2))).then(
+    (code) => process.exit(code),
+    (err) => {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  );
+}
+
+// src/cli.ts
+function runFromCanonicalEntry(metaUrl, main2) {
+  const entry = process.argv[1];
+  if (!entry || realpathSync(fileURLToPath(metaUrl)) !== realpathSync(entry)) return;
+  runWhenMain(pathToFileURL2(entry).href, main2);
+}
+
 // src/definition.ts
 var import_yaml = __toESM(require_dist(), 1);
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync as realpathSync2 } from "node:fs";
-import { join } from "node:path";
+import { readFileSync as readFileSync2, realpathSync as realpathSync3 } from "node:fs";
+import { join as join2 } from "node:path";
+
+// src/plugin-root.ts
+import { existsSync, readFileSync, realpathSync as realpathSync2 } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+var AgentRootError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+  code;
+};
+var manifestPaths = [".claude-plugin/plugin.json", ".codex-plugin/plugin.json"];
+function readPluginManifest(root) {
+  for (const relative of manifestPaths) {
+    try {
+      return JSON.parse(readFileSync(join(root, relative), "utf8"));
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+  }
+  throw Object.assign(new Error("No vibe plugin manifest exists"), { code: "ENOENT" });
+}
+function installedPluginRoot(metaUrl) {
+  return realpathSync2(resolve(dirname(fileURLToPath2(metaUrl)), "../../../.."));
+}
+function resolveAgentRoot(supplied, installed, recorded) {
+  const fallback = recorded && existsSync(recorded) ? recorded : installed;
+  if (supplied === void 0) return fallback;
+  let root;
+  try {
+    root = realpathSync2(supplied);
+  } catch {
+    throw new AgentRootError("AGENT_ROOT_INVALID", "The supplied agent root does not exist; omit agentRoot to use the installed plugin");
+  }
+  if (basename(root) === "agents" && isPluginRoot(dirname(root))) root = dirname(root);
+  if (!isPluginRoot(root)) {
+    throw new AgentRootError("AGENT_ROOT_INVALID", "The supplied agent root is not a vibe plugin root; omit agentRoot to use the installed plugin");
+  }
+  if (root === installed || root === recorded) return root;
+  const suppliedVersion = pluginVersion(root);
+  const installedVersion = pluginVersion(installed);
+  if (suppliedVersion && installedVersion && suppliedVersion !== installedVersion) {
+    throw new AgentRootError(
+      "STALE_PLUGIN_ROOT",
+      `The supplied agent root is vibe ${suppliedVersion}, but this launcher belongs to vibe ${installedVersion}; omit agentRoot`
+    );
+  }
+  return root;
+}
+function isPluginRoot(root) {
+  if (!existsSync(join(root, "agents"))) return false;
+  try {
+    return readPluginManifest(root).name === "vibe";
+  } catch {
+    return false;
+  }
+}
+function pluginVersion(root) {
+  try {
+    const version = readPluginManifest(root).version;
+    return typeof version === "string" ? version : void 0;
+  } catch {
+    return void 0;
+  }
+}
+
+// src/definition.ts
 var frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/;
 var metadataSchema = external_exports.object({
   name: external_exports.string(),
@@ -11689,16 +11774,29 @@ var metadataSchema = external_exports.object({
   tools: external_exports.union([external_exports.string(), external_exports.array(external_exports.string())]),
   skills: external_exports.union([external_exports.string(), external_exports.array(external_exports.string())]).optional()
 }).passthrough();
-var builtins = /* @__PURE__ */ new Set(["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Skill", "ToolSearch", "WebSearch", "WebFetch"]);
+var builtins = /* @__PURE__ */ new Set([
+  "Read",
+  "Write",
+  "Edit",
+  "Grep",
+  "Glob",
+  "Bash",
+  "Skill",
+  "ToolSearch",
+  "WebSearch",
+  "WebFetch",
+  "SendMessage",
+  "Agent"
+]);
 function readDefinition(agentRoot, agentName, capabilityInput) {
   if (!/^vibe-[a-z0-9-]+$/.test(agentName)) throw new Error("Only own-plugin vibe agents are supported");
-  const root = realpathSync2(agentRoot);
-  const file = realpathSync2(join(root, "agents", `${agentName}.md`));
-  if (file !== join(root, "agents", `${agentName}.md`)) throw new Error("Agent escapes its owning plugin");
+  const root = realpathSync3(agentRoot);
+  const file = realpathSync3(join2(root, "agents", `${agentName}.md`));
+  if (file !== join2(root, "agents", `${agentName}.md`)) throw new Error("Agent escapes its owning plugin");
   const manifest = external_exports.object({ name: external_exports.literal("vibe"), version: external_exports.string().regex(/^\d+\.\d+\.\d+$/).optional() }).passthrough().parse(
-    JSON.parse(readFileSync(join(root, ".claude-plugin", "plugin.json"), "utf8"))
+    readPluginManifest(root)
   );
-  const source = readFileSync(file, "utf8");
+  const source = readFileSync2(file, "utf8");
   const match = source.match(frontmatter);
   if (!match) throw new Error("Agent has no canonical frontmatter");
   const metadata = metadataSchema.parse((0, import_yaml.parse)(match[1] ?? ""));
@@ -11734,12 +11832,12 @@ function observeDefinitionDigest(agentRoot, agentName, capabilities) {
 // src/ledger.ts
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync as existsSync2, mkdirSync, readFileSync as readFileSync3, realpathSync as realpathSync3, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname as dirname2, isAbsolute, join as join3 } from "node:path";
+import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync4, realpathSync as realpathSync4, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename as basename2, dirname as dirname3, isAbsolute, join as join4 } from "node:path";
 
 // src/reference-images.ts
-import { existsSync, readFileSync as readFileSync2, statSync } from "node:fs";
-import { dirname, join as join2, resolve } from "node:path";
+import { existsSync as existsSync2, readFileSync as readFileSync3, statSync } from "node:fs";
+import { dirname as dirname2, join as join3, resolve as resolve2 } from "node:path";
 var REFERENCE_DIR = "vibe-reference-images";
 var referenceSchema = external_exports.object({
   path: external_exports.string().min(1),
@@ -11748,17 +11846,17 @@ var referenceSchema = external_exports.object({
 }).passthrough();
 var recordSchema = external_exports.object({ referenceImages: external_exports.array(external_exports.unknown()).optional() }).passthrough();
 function readReferenceImages(metadataDir) {
-  const file = join2(metadataDir, "vibe-session.json");
-  if (!existsSync(file)) return [];
-  const record = recordSchema.safeParse(JSON.parse(readFileSync2(file, "utf8")));
+  const file = join3(metadataDir, "vibe-session.json");
+  if (!existsSync2(file)) return [];
+  const record = recordSchema.safeParse(JSON.parse(readFileSync3(file, "utf8")));
   if (!record.success) return [];
-  const owned = join2(metadataDir, REFERENCE_DIR);
+  const owned = join3(metadataDir, REFERENCE_DIR);
   const images = [];
   for (const raw of record.data.referenceImages ?? []) {
     const entry = referenceSchema.safeParse(raw);
     if (!entry.success) continue;
-    const path = resolve(entry.data.path);
-    if (dirname(path) !== owned || !existsSync(path) || !statSync(path).isFile()) continue;
+    const path = resolve2(entry.data.path);
+    if (dirname2(path) !== owned || !existsSync2(path) || !statSync(path).isFile()) continue;
     images.push({ path, mediaType: entry.data.mediaType, ...entry.data.requestId ? { requestId: entry.data.requestId } : {} });
   }
   return images;
@@ -11766,31 +11864,31 @@ function readReferenceImages(metadataDir) {
 
 // src/ledger.ts
 function checkoutLocation(worktree) {
-  const root = realpathSync3(git(worktree, ["rev-parse", "--show-toplevel"]));
-  if (realpathSync3(worktree) !== root) throw new Error("Use the session's exact worktree root");
+  const root = realpathSync4(git(worktree, ["rev-parse", "--show-toplevel"]));
+  if (realpathSync4(worktree) !== root) throw new Error("Use the session's exact worktree root");
   const metadata = git(root, ["rev-parse", "--absolute-git-dir", "--abbrev-ref", "HEAD"]);
   const separator = metadata.lastIndexOf("\n");
   if (separator < 0) throw new Error("Missing native checkout metadata boundary");
   const [dir, branch] = external_exports.tuple([external_exports.string().min(1).refine(isAbsolute), external_exports.string().min(1)]).parse([metadata.slice(0, separator).trim(), metadata.slice(separator + 1).trim()]);
-  return { root, dir, branch, file: join3(dir, "vibe-writer.json"), lock: join3(dir, "vibe-writer.lock") };
+  return { root, dir, branch, file: join4(dir, "vibe-writer.json"), lock: join4(dir, "vibe-writer.lock") };
 }
 function location(worktree) {
   const place = checkoutLocation(worktree);
   const record = external_exports.object({ worktree: external_exports.string().optional(), branch: external_exports.string() }).passthrough().parse(
-    JSON.parse(readFileSync3(join3(place.dir, "vibe-session.json"), "utf8"))
+    JSON.parse(readFileSync4(join4(place.dir, "vibe-session.json"), "utf8"))
   );
-  if (record.worktree && realpathSync3(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Session worktree or branch changed");
+  if (record.worktree && realpathSync4(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Session worktree or branch changed");
   return place;
 }
 function readWriterSummary(worktree) {
   const place = location(worktree);
-  if (!existsSync2(place.file)) return void 0;
+  if (!existsSync3(place.file)) return void 0;
   return summary(readLedger(place));
 }
 function recordedWriterRoot(worktree) {
   try {
     const place = location(worktree);
-    return existsSync2(place.file) ? readLedger(place).binding.agentRoot : void 0;
+    return existsSync3(place.file) ? readLedger(place).binding.agentRoot : void 0;
   } catch {
     return void 0;
   }
@@ -11802,7 +11900,7 @@ function registerWriter(input) {
   if (data.runtime === "codex" && !data.workerId) throw new Error("Native writer registration requires its worker ID");
   const place = location(data.worktree);
   return locked(place, () => {
-    if (existsSync2(place.file)) {
+    if (existsSync3(place.file)) {
       const ledger2 = readLedger(place);
       if (ledger2.runtime !== data.runtime || data.workerId && ledger2.workerId !== data.workerId || JSON.stringify(ledger2.binding) !== JSON.stringify(definition.binding)) {
         throw new Error("Persistent writer identity or capability binding changed");
@@ -11841,7 +11939,7 @@ function changeWriter(action, input) {
       if (ledger.pending.length >= 32) throw new Error("Pending queue is full; keep the new input with the parent");
       ledger.pending.push({ id: requestId, input: data.input });
     } else if (action === "claim") {
-      if (existsSync2(join3(place.dir, "vibe-record-turn.lock"))) throw new Error("A record turn is already running; retain the queued writer request");
+      if (existsSync3(join4(place.dir, "vibe-record-turn.lock"))) throw new Error("A record turn is already running; retain the queued writer request");
       if (ledger.active?.lease) throw new Error("Writer already has an owned running turn");
       if (ledger.active) {
         if (ledger.active.id !== requestId || !data.continuation) throw new Error("Continue the active request before the next queued request");
@@ -11889,8 +11987,8 @@ function changeWriter(action, input) {
 }
 function acquireRecordTurnAt(place, owner) {
   return locked(place, () => {
-    const file = join3(place.dir, "vibe-record-turn.lock");
-    if (existsSync2(place.file)) {
+    const file = join4(place.dir, "vibe-record-turn.lock");
+    if (existsSync3(place.file)) {
       const ledger = readLedger(place);
       if (owner && !ledger.active?.lease) {
         throw new Error("Record continuation requires the exact current source lease");
@@ -11936,7 +12034,7 @@ function git(cwd, args) {
   }).trim();
 }
 function readLedger(place) {
-  const ledger = ledgerSchema.parse(JSON.parse(readFileSync3(place.file, "utf8")));
+  const ledger = ledgerSchema.parse(JSON.parse(readFileSync4(place.file, "utf8")));
   if (ledger.worktree !== place.root || ledger.branch !== place.branch) throw new Error("Writer ledger does not belong to this session");
   return ledger;
 }
@@ -11990,62 +12088,6 @@ function proveGroupStopped(processGroupId) {
     throw new Error("Unable to prove the owned process group stopped; retain the lease");
   }
   throw new Error("Owned process group is still running; retain the lease");
-}
-
-// src/plugin-root.ts
-import { existsSync as existsSync3, readFileSync as readFileSync4, realpathSync as realpathSync4 } from "node:fs";
-import { basename as basename2, dirname as dirname3, join as join4, resolve as resolve2 } from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
-var AgentRootError = class extends Error {
-  constructor(code, message) {
-    super(message);
-    this.code = code;
-  }
-  code;
-};
-function installedPluginRoot(metaUrl) {
-  return realpathSync4(resolve2(dirname3(fileURLToPath2(metaUrl)), "../../../.."));
-}
-function resolveAgentRoot(supplied, installed, recorded) {
-  const fallback = recorded && existsSync3(recorded) ? recorded : installed;
-  if (supplied === void 0) return fallback;
-  let root;
-  try {
-    root = realpathSync4(supplied);
-  } catch {
-    throw new AgentRootError("AGENT_ROOT_INVALID", "The supplied agent root does not exist; omit agentRoot to use the installed plugin");
-  }
-  if (basename2(root) === "agents" && isPluginRoot(dirname3(root))) root = dirname3(root);
-  if (!isPluginRoot(root)) {
-    throw new AgentRootError("AGENT_ROOT_INVALID", "The supplied agent root is not a vibe plugin root; omit agentRoot to use the installed plugin");
-  }
-  if (root === installed || root === recorded) return root;
-  const suppliedVersion = pluginVersion(root);
-  const installedVersion = pluginVersion(installed);
-  if (suppliedVersion && installedVersion && suppliedVersion !== installedVersion) {
-    throw new AgentRootError(
-      "STALE_PLUGIN_ROOT",
-      `The supplied agent root is vibe ${suppliedVersion}, but this launcher belongs to vibe ${installedVersion}; omit agentRoot`
-    );
-  }
-  return root;
-}
-function isPluginRoot(root) {
-  const manifest = join4(root, ".claude-plugin", "plugin.json");
-  if (!existsSync3(manifest) || !existsSync3(join4(root, "agents"))) return false;
-  try {
-    return JSON.parse(readFileSync4(manifest, "utf8")).name === "vibe";
-  } catch {
-    return false;
-  }
-}
-function pluginVersion(root) {
-  try {
-    const version = JSON.parse(readFileSync4(join4(root, ".claude-plugin", "plugin.json"), "utf8")).version;
-    return typeof version === "string" ? version : void 0;
-  } catch {
-    return void 0;
-  }
 }
 
 // src/record-context.ts
@@ -12624,7 +12666,7 @@ function boundDefinition(definition, input) {
     throw new Error("Parent-discovered read-only graph capabilities are required");
   }
   const roleTools = prototypeAdvice ? definition.tools.filter((tool) => tool !== "Write" && tool !== "Edit") : definition.tools;
-  const tools = [.../* @__PURE__ */ new Set([...roleTools, "ToolSearch", structuredOutputTool, ...input.capabilities.filter((capability) => capability.access === "read" || permittedWrites.includes(capability.operation)).map((capability) => capability.name)])];
+  const tools = [.../* @__PURE__ */ new Set([...roleTools, "ToolSearch", structuredOutputTool, ...input.capabilities.filter((capability) => capability.access === "read" || permittedWrites.includes(capability.operation)).flatMap((capability) => mcpToolAliases(capability.name))])];
   const persistent = input.agentName === "vibe-change-worker";
   const phasePolicy = persistent ? "Current phase, test-authoring and test-repair authority come only from the orchestrator's top-level turn envelope, separate from raw input text. Only an explicit pull-request turn in that envelope, sent because the person asked for a pull request, may author tests. Never author tests in plan, request, fix, handoff, record or build turns, or infer authority from the person's words. A request, fix or handoff turn with test-repair authority may only repair existing tests and fixtures your own change broke (imports, renamed or retired symbols, setup, type errors) without changing what any test asserts; never add a test file. Delete a test file or case only when it covers nothing but code the request retires, recorded with retired-tests.mjs and the ticket or PRD that retires it; a test of live behavior is only repaired. " : `This is mode ${input.mode}. Never write or edit tests. `;
   const prompt = `${definition.prompt}
@@ -12743,7 +12785,7 @@ async function runWorker(rawInput) {
       "--tools",
       bound.tools.join(","),
       "--disallowedTools",
-      bound.reader ? "Agent,Task,Write,Edit,NotebookEdit,EnterWorktree,ExitWorktree" : "Agent,Task,EnterWorktree,ExitWorktree,NotebookEdit",
+      bound.reader ? "Agent,Task,Write,Edit,NotebookEdit,EnterWorktree,ExitWorktree" : bound.tools.includes("Agent") ? "Task,EnterWorktree,ExitWorktree,NotebookEdit" : "Agent,Task,EnterWorktree,ExitWorktree,NotebookEdit",
       "--permission-mode",
       "default",
       "--allowedTools",

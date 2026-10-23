@@ -224048,7 +224048,12 @@ var liveReadOperations = /* @__PURE__ */ new Set([
   "list_templates",
   "get_template"
 ]);
-var capabilityName = /^mcp__[A-Za-z0-9_.:-]+__[A-Za-z0-9_]+$/;
+var capabilityName = /^mcp__[A-Za-z0-9_.:-]+__[A-Za-z0-9_-]+$/;
+function mcpToolIdentity(name) {
+  if (!capabilityName.test(name)) return null;
+  const boundary = name.lastIndexOf("__");
+  return `${name.slice(0, boundary)}__${name.slice(boundary + 2).replaceAll("-", "_")}`;
+}
 var capabilitySchema = external_exports.object({
   name: external_exports.string().regex(capabilityName),
   service: external_exports.enum(["graph", "closedloop"]),
@@ -224056,12 +224061,12 @@ var capabilitySchema = external_exports.object({
   access: external_exports.enum(["read", "write"])
 }).strict().superRefine((value, ctx) => {
   const validOperation = value.service === "graph" ? value.access === "read" && graphOperations.has(value.operation) : value.access === "read" ? liveReadOperations.has(value.operation) : recordOperations.has(value.operation);
-  if (!validOperation || !value.name.endsWith(`__${value.operation}`)) {
+  if (!validOperation || mcpToolIdentity(value.name)?.split("__").at(-1) !== value.operation) {
     ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: "Unsupported capability binding" });
   }
 });
 var capabilitiesSchema = external_exports.array(capabilitySchema).max(48).refine(
-  (values) => new Set(values.map((value) => value.name)).size === values.length,
+  (values) => new Set(values.map((value) => mcpToolIdentity(value.name))).size === values.length,
   "Duplicate capability binding"
 );
 var identifierSchema = external_exports.string().min(1).max(160).regex(/^[A-Za-z0-9_.:-]+$/);

@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
-import type { Capability } from "./contracts.js";
+import { mcpToolIdentity, type Capability } from "./contracts.js";
 
 /** A launch refused before or at worker start, carrying the one plain step a person can take when there is one. */
 export class LaunchPrecheckError extends Error {
@@ -57,8 +57,11 @@ export function checkRoleCapabilities(agentName: string, capabilities: readonly 
 
 /** The granted MCP tools the started worker does not actually have, from its own init event. */
 export function missingMcpTools(initTools: readonly string[], granted: readonly string[]): string[] {
-  const available = new Set(initTools);
-  return granted.filter((name) => name.startsWith("mcp__") && !available.has(name));
+  const available = new Set(initTools.map(mcpToolIdentity).filter((name): name is string => name !== null));
+  return granted.filter((name) => {
+    const identity = mcpToolIdentity(name);
+    return identity !== null && !available.has(identity);
+  });
 }
 
 /** Names the connections behind missing tools, for the parent's diagnosis (never shown to the person). */
