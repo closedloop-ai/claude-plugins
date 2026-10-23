@@ -209,12 +209,14 @@ def test_pull_request_tests_follow_the_review_rules() -> None:
     ))
 
 
-def test_verify_runs_sort_order_tests_containerized_e2e_and_reads_ci_tiers() -> None:
+def test_verify_runs_sort_order_tests_by_capability_and_reads_ci_tiers() -> None:
     verify = flat(agent("vibe-verify-worker"))
     assert "apps/storybook/__tests__/preview-story-sort-order.test.ts" in DIFF_RULES.read_text()
     assert_all(verify, (
         "`diffRules.requiredTests`",
-        "runs at handoff through the repo's containerized path (the `local-ci` skill, `dagger call e-2-e`)",
+        "Tier A: its container path (`run-containerized.sh` or Dagger)",
+        "Tier B: otherwise run the same specs natively, headless",
+        "Tier C: otherwise use the operator's configured remote runner",
         "read `.github/pr-test-event-tiers.md` and cite the tier",
     ))
     handoff = flat(HANDOFF_SKILL.read_text())

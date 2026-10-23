@@ -18,7 +18,7 @@ worktree/branch.
 
 ## Inputs and references
 
-The owned worktree, mode (`checks`, `footprint`, `coverage`, or
+The owned worktree, mode (`checks`, `pre-pr`, `footprint`, `coverage`, or
 `control`), inventory, acceptance criteria and the sole writer's local plan and
 missing tests list.
 Read the actual table at the same session decision table path and affected/
@@ -58,54 +58,55 @@ automatic technical approval question for the vibe coder. Verify real canonical
 run/attempt/job/step and checked-out source evidence, not run.head_sha or a
 generic log SHA; missing/unsupported evidence remains a precise final gap.
 
-Validation is targeted, never a broad or full local suite. Run:
+Validation is targeted. Run nonwriting Biome on changed files, source gates
+and `pnpm typecheck:affected`. Only the tests closedloop-graph's
+`code_tests_for` returns for each changed file, plus
+`diffRules.requiredTests` and `requiredChecks`, through their owning package
+commands. Run a required
+`flagStates` test on and off. If graph coverage is empty or unknown, use the
+repository's related-test command, never a wider suite.
+Commands come from `.vibe/path-gates.json` or the `checks` of its
+`.vibe/storybook-rules.json`; record flag pairs with `flag: "on"` or `flag: "off"`.
 
-- Biome WITHOUT write/fix flags on the changed files.
-- The source gates.
-- `pnpm typecheck:affected` (the changed packages and their dependents).
-- Only the tests closedloop-graph's `code_tests_for` returns for each changed
-  file (any file a change, fix or main merge touched, conflict resolutions
-  included), plus the inventory's `diffRules.requiredTests` and
-  `requiredChecks`, each through its owning package's runner on those test
-  files alone (for example
-  `pnpm --filter <package> exec vitest run <test files>`). A required test
-  whose path is a command comes from the repo's `.vibe/path-gates.json` or
-  the `checks` of its `.vibe/storybook-rules.json` (required whenever a story
-  changes): run that command and record it in `testRuns` with the command as
-  its `path`.
-  A required test with `flagStates` covers a host of a shared component the
-  diff changed: run it with the flag on and with it off, and record each run
-  with `flag: "on"` or `flag: "off"`.
+Never run `pnpm test`, `pnpm verify`, `pnpm test:affected`,
+`pnpm test:lanes --exec`, a whole lane or package suite locally. Select over
+the whole branch diff. Record import and E2E-reference selections in
+`testSelection`, and commands, cases, flags, results and SHAs in `testRuns` of
+`<gitdir>/vibe-pr-evidence.json`. `blocking.prEvidence` names gaps; skipped CI
+is not a run or permission to write one.
 
-Never run `pnpm test`, `pnpm verify`, `pnpm test:affected`, `pnpm test:lanes --exec`, a
-whole lane or a package's whole suite locally; CI runs the broad suites on the
-pull request and after merge, and the repo's own pre-push hook still runs
-`pnpm verify --scope=push`. A requested pull request opens once these targeted
-checks pass. Select over the whole branch diff against the base. Where
-`code_tests_for` returns no test list for a file (`found: false`, empty or
-unknown), use the repo's related-test command (for example
-`vitest related <file> --run`), never a wider suite; also select e2e specs by
-reference across every e2e root (routes, request fields, test IDs, accessible
-names, channels and flag keys the file touches). Record both as `testSelection`
-and every run as `testRuns` in `<gitdir>/vibe-pr-evidence.json`;
-`blocking.prEvidence` names what is missing. Skipped CI is not a run. Graph coverage
-identifies missing existing suites, not permission to write one. Three more
-rules:
+In `pre-pr` mode, read the final committed diff, never the plan, and write
+`targetedInventory` in that file as a read-only actor. Run `pnpm test:lanes`
+for the repository-owned lane names and commands. Inventory exact commands,
+files and cases for every selected Vitest package, importing test, changed or
+importing Storybook story, referenced web/Desktop E2E spec and matching
+post-merge-only lane. Run that set once. After a writer fixes an isolated
+failure, refresh the inventory and rerun only that failed case and any target
+the fix newly reaches, never the whole set. Record every result and SHA. Carry
+an earlier pass only when its covered-file hashes match final HEAD.
 
-- Every e2e spec the session touched, and every spec that covers a touched
-  screen (`code_tests_for`, and `rg` of the screen's route and test IDs under
-  every e2e root: any directory named `e2e`, `e2e-*` or `*-e2e`), runs at handoff through the repo's containerized path (the
-  `local-ci` skill, `dagger call e-2-e`), never natively on the person's Mac,
-  and only those specs, never the whole e2e suite, all in one locked run per
-  head: the lock refuses a second entry from the same worktree (exit 76). The containerized stack
-  is one per machine (one compose project name, fixed ports and shared
-  Dagger cache volumes), so start it only through
-  `node ../skills/vibe/scripts/e2e-lock.mjs run --head <sha> <the e2e command>`, which
-  waits until no other session's stack is running and runs only that clean commit. Its exit 75 means the
-  stack stayed busy past the wait: record that limitation with the holder it
-  prints, never a pass, and never start the stack around the lock.
-  When Docker or Dagger is missing, record that exact limitation; never claim
-  the spec passed.
+For targeted E2E, record the repository's capability probe and choose:
+
+1. Tier A: its container path (`run-containerized.sh` or Dagger) only when
+   Docker is present and reachable and reported memory and disk meet the
+   repository's documented thresholds.
+2. Tier B: otherwise run the same specs natively, headless, against the local
+   stack with the CI sandbox identity, quarantine exclusion and retries off.
+   Do not run host-browser visual-regression specs against Linux baselines;
+   list them as `not run locally, covered by CI`.
+3. Tier C: otherwise use the operator's configured remote runner and its
+   tested-head lock.
+
+`git config --bool vibe.noNativeE2e` is the machine-local operator override;
+when true, skip Tier B and use C or report no tier. If no tier is available,
+list every unrun spec and its automatic CI lane. Never silently skip E2E.
+Three more rules:
+
+- Select every E2E spec the session touched or that references a touched
+  screen's route, test IDs, accessible names, channels, fields or flag keys
+  across every E2E root. Run only those specs through the chosen tier and the
+  repository's serialization lock; a busy or unavailable runner is a named
+  limitation, never a pass.
 - Before you claim that CI runs, or ran, a check or test, read
   `.github/pr-test-event-tiers.md` and cite the tier of the job that runs
   it. A `batch-only` job does not run on the pull request, and its `skipped`

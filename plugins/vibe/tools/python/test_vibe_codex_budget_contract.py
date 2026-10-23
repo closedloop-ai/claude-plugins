@@ -7,8 +7,7 @@ accounts' weekly Codex limits.
    `skills/vibe/scripts/worker-model.mjs`); Claude Code explorers on sonnet in agent frontmatter.
 3. Targeted validation: the tests `code_tests_for` returns per changed file plus typecheck and lint, never a
    broad or full local suite.
-4. One containerized e2e stack per machine, through `skills/vibe/scripts/e2e-lock.mjs`, running only the
-   specs the change needs.
+4. Targeted E2E uses the strongest capable container, native or remote tier and the repository's lock.
 5. Usage awareness: stop and tell the person when a usage limit is reached, unless they allowed credits.
 """
 
@@ -90,11 +89,13 @@ def test_handoff_recipe_runs_no_test_suite() -> None:
     assert '"typecheck:affected"' in recipe
 
 
-def test_e2e_runs_one_stack_per_machine_and_only_needed_specs() -> None:
+def test_e2e_uses_a_capability_tier_and_only_needed_specs() -> None:
     checks = section(agent("vibe-verify-worker"), "## Existing checks")
-    assert "node ../skills/vibe/scripts/e2e-lock.mjs run --head <sha> <the e2e command>" in checks
-    assert "only those specs, never the whole e2e suite" in checks
-    assert "never start the stack around the lock" in checks
+    assert "Tier A:" in checks
+    assert "Tier B:" in checks
+    assert "Tier C:" in checks
+    assert "Run only those specs through the chosen tier" in checks
+    assert "git config --bool vibe.noNativeE2e" in checks
     handoff = flat(HANDOFF_SKILL.read_text())
     assert "and no other spec" in handoff
     assert "one stack per machine through `../vibe/scripts/e2e-lock.mjs`" in handoff

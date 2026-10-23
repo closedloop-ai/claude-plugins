@@ -3,7 +3,7 @@ import { unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { evidenceProblems, pullRequestFacts, requiredLanes, selectionProblems, STACKED_BASE_STATEMENT, templateHeadingProblems } from "./pr-facts.mjs";
+import { evidenceProblems, pullRequestFacts, requiredLanes, selectionProblems, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
 import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -34,7 +34,17 @@ const COMPLETE_BODY = [
 const SOURCES = [ROUTE, "packages/api/src/types/links.ts", "packages/api/src/service.ts"];
 const SELECTED = {
   testSelection: SOURCES.flatMap((file) => [{ file, selector: "code_tests_for", tests: [TEST] }, { file, selector: "e2e-reference", tests: [] }]),
-  testRuns: [{ path: TEST, status: "passed", commit: "a".repeat(40), command: "vitest run" }],
+  targetedInventory: {
+    actor: "read-only", source: "final-committed-diff", commit: "a".repeat(40), laneReport: { command: "pnpm test:lanes", matches: [] },
+    entries: [{ kind: "vitest", path: TEST, cases: ["limits"], command: "vitest run" }],
+  },
+  rerunCycles: [],
+  e2eCapability: {
+    selectedTier: "A",
+    container: { dockerPresent: true, dockerReachable: true, memoryGiB: 24, diskGiB: 80, minimumMemoryGiB: 20, minimumDiskGiB: 64, command: "repo probe" },
+    native: { available: true, forbidden: false }, remote: { available: false },
+  },
+  testRuns: [{ path: TEST, cases: ["limits"], status: "passed", commit: "a".repeat(40), command: "vitest run" }],
 };
 
 function session(t) {
@@ -121,8 +131,8 @@ test("the inventory reports the facts and gates only the pull-request phase", (t
   assert.equal(handoff.json.serverOnly, true);
   assert.equal(handoff.json.overlap, null);
   assert.equal("prBody" in handoff.json.blocking, false);
-  const run = (body) => runNode(INVENTORY, ["--worktree", s.wt, "--phase", "pull-request", "--ticket", ticket, "--prs-json", prs,
-    "--body", s.file("body.md", body), "--runs", s.file("runs.json", { touchFlows: [], touchFlowsReason: "server only", runs: [], ...SELECTED }),
+  const run = (body, evidence = SELECTED) => runNode(INVENTORY, ["--worktree", s.wt, "--phase", "pull-request", "--ticket", ticket, "--prs-json", prs,
+    "--body", s.file("body.md", body), "--runs", s.file("runs.json", { touchFlows: [], touchFlowsReason: "server only", runs: [], ...evidence }),
     "--commit", "a".repeat(40)], s.home);
   const failing = run("Summary only.");
   assert.equal(failing.status, 1);
@@ -130,6 +140,9 @@ test("the inventory reports the facts and gates only the pull-request phase", (t
   const passing = run(COMPLETE_BODY);
   assert.equal(passing.json.blocking.prBody, true, JSON.stringify(passing.json.prBodyProblems));
   assert.equal(passing.json.blocking.prEvidence, true);
+  const noTargetedArtifact = run(COMPLETE_BODY, { testSelection: SELECTED.testSelection, testRuns: SELECTED.testRuns });
+  assert.equal(noTargetedArtifact.json.blocking.prEvidence, false);
+  assert.match(noTargetedArtifact.json.prEvidenceProblems.join(), /targeted inventory.*missing/);
   assert.match(runNode(INVENTORY, ["--worktree", s.wt, "--phase", "handoff", "--body", ticket], s.home).json.error, /--phase pull-request/);
 });
 
@@ -152,15 +165,15 @@ test("test selection covers the whole branch diff, and every selected, required 
     assert.ok(empty.some((problem) => problem.startsWith(`${file}: no import selection`)), file);
     assert.ok(empty.some((problem) => problem.startsWith(`${file}: no e2e by-reference selection`)), file);
   }
-  assert.ok(empty.some((problem) => problem.startsWith(`${TEST}: selected but no passing run`)), "an edited spec is always selected");
+  assert.ok(empty.some((problem) => problem.startsWith(`${TEST}: selected but no passing`)), "an edited spec is always selected");
   const unindexed = SELECTED.testSelection.map((entry) => (entry.file === "packages/api/src/service.ts" && entry.selector === "code_tests_for" ? { ...entry, tests: null } : entry));
   assert.match(gate({ ...SELECTED, testSelection: unindexed }).join(), /service\.ts: no import selection/);
   assert.deepEqual(gate({ ...SELECTED, testSelection: [...unindexed, { file: "packages/api/src/service.ts", selector: "related", tests: [] }] }), []);
   const emptyGraph = SELECTED.testSelection.map((entry) => (entry.selector === "code_tests_for" && entry.file === ROUTE ? { ...entry, tests: [] } : entry));
   assert.match(gate({ ...SELECTED, testSelection: emptyGraph }).join(), /route\.ts: no import selection/);
-  assert.match(gate(SELECTED, [{ path: "e2e/links.spec.ts", reason: "names the endpoint" }]).join(), /e2e\/links\.spec\.ts: selected but no passing run/);
-  assert.match(gate({ ...SELECTED, testRuns: [{ ...SELECTED.testRuns[0], commit: "b".repeat(40) }] }).join(), /links\.test\.ts: selected but no passing run/);
-  assert.match(gate({ ...SELECTED, testRuns: [{ ...SELECTED.testRuns[0], status: "skipped" }] }).join(), /links\.test\.ts: selected but no passing run/);
+  assert.match(gate(SELECTED, [{ path: "e2e/links.spec.ts", reason: "names the endpoint" }]).join(), /e2e\/links\.spec\.ts: selected but no passing/);
+  assert.match(gate({ ...SELECTED, testRuns: [{ ...SELECTED.testRuns[0], commit: "b".repeat(40) }] }).join(), /links\.test\.ts: selected but no passing/);
+  assert.match(gate({ ...SELECTED, testRuns: [{ ...SELECTED.testRuns[0], status: "skipped" }] }).join(), /links\.test\.ts: selected but no passing/);
   assert.match(selectionProblems({ testSelection: [{ file: ROUTE, selector: "guess", tests: [] }] }, [], [], commit).join(), /selector "guess"/);
 });
 
@@ -169,7 +182,55 @@ test("a required test with flag states needs a passing run with the flag on and 
   const required = [{ path: "apps/a/sessions.test.tsx", reason: "shared", flagStates: ["on", "off"] }];
   const run = (flag) => ({ path: "apps/a/sessions.test.tsx", status: "passed", commit, ...(flag ? { flag } : {}) });
   const problems = (testRuns) => selectionProblems({ testSelection: [], testRuns }, [], required, commit);
-  assert.deepEqual(problems([run("on")]), [`apps/a/sessions.test.tsx: no passing run with the flag off on ${commit} (testRuns entry with flag: "off")`]);
+  assert.deepEqual(problems([run("on")]), [`apps/a/sessions.test.tsx: no passing run with the flag off for ${commit} (testRuns entry with flag: "off")`]);
   assert.equal(problems([run()]).length, 2, "a run that names no flag state counts for neither");
   assert.deepEqual(problems([run("on"), run("off")]), []);
+});
+
+test("a pull request needs a read-only final-diff inventory and exact targeted results at its commit", () => {
+  const commit = "d".repeat(40);
+  const entry = { kind: "vitest", path: TEST, cases: ["limits"], command: `pnpm --filter api exec vitest run ${TEST} -t limits` };
+  const complete = {
+    targetedInventory: {
+      actor: "read-only",
+      source: "final-committed-diff",
+      commit,
+      laneReport: { command: "pnpm test:lanes", matches: [] },
+      entries: [entry],
+    },
+    testSelection: [{ file: ROUTE, selector: "code_tests_for", tests: [TEST] }],
+    testRuns: [{ path: TEST, cases: ["limits"], command: entry.command, status: "passed", commit }],
+    rerunCycles: [],
+  };
+  assert.deepEqual(targetedEvidenceProblems(complete, commit), []);
+  assert.match(targetedEvidenceProblems({}, commit).join(), /targeted inventory.*missing/);
+  assert.match(targetedEvidenceProblems({ ...complete, targetedInventory: { ...complete.targetedInventory, actor: "writer" } }, commit).join(), /read-only/);
+  assert.match(targetedEvidenceProblems({ ...complete, targetedInventory: { ...complete.targetedInventory, commit: "e".repeat(40) } }, commit).join(), /final committed SHA/);
+  assert.match(targetedEvidenceProblems({ ...complete, testRuns: [] }, commit).join(), /no passing targeted run/);
+});
+
+test("after a fix only failed and newly reached targets may be rerun", () => {
+  const before = "1".repeat(40);
+  const after = "2".repeat(40);
+  const sameHash = "a".repeat(64);
+  const entry = (path, extra = {}) => ({ kind: "vitest", path, cases: [path], command: `vitest ${path}`, ...extra });
+  const evidence = {
+    targetedInventory: { actor: "read-only", source: "final-committed-diff", commit: after,
+      fileHashes: { "src/passed.ts": sameHash },
+      laneReport: { command: "pnpm test:lanes", matches: [] }, entries: [
+        entry("passed.test.ts", { resultCommit: before, carriedTo: after, carryReason: "the isolated fix cannot reach this module",
+          coveredFiles: [{ path: "src/passed.ts", sha256: sameHash }] }),
+        entry("failed.test.ts"),
+      ] },
+    testRuns: [
+      { path: "passed.test.ts", cases: ["passed.test.ts"], command: "vitest passed.test.ts", status: "passed", commit: before },
+      { path: "failed.test.ts", cases: ["failed.test.ts"], command: "vitest failed.test.ts", status: "passed", commit: after },
+    ],
+    rerunCycles: [{ fromCommit: before, toCommit: after, failed: ["failed.test.ts"], newlyReached: [], rerun: ["failed.test.ts"] }],
+  };
+  assert.deepEqual(targetedEvidenceProblems(evidence, after), []);
+  const broad = { ...evidence, rerunCycles: [{ ...evidence.rerunCycles[0], rerun: ["failed.test.ts", "passed.test.ts"] }] };
+  assert.match(targetedEvidenceProblems(broad, after).join(), /only its failed cases/);
+  const changed = { ...evidence, targetedInventory: { ...evidence.targetedInventory, fileHashes: { "src/passed.ts": "b".repeat(64) } } };
+  assert.match(targetedEvidenceProblems(changed, after).join(), /src\/passed\.ts.*hash changed/);
 });

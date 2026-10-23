@@ -4,6 +4,21 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.80
+
+Targeted validation of the final committed diff is now a required gate before a vibe pull request opens.
+
+#### Added
+- Handoff's pull request evidence gate requires a read-only inventory of the final committed diff, with exact files, cases and commands from the repository's own lane tooling. Every inventoried target needs a passing result and SHA, and the validated artifact is posted as a pull request comment.
+- E2E selection records a capability probe and chooses containerized, native headless or configured remote execution. Native runs use CI-equivalent quarantine and sandbox settings with retries off, respect the machine-local native-run prohibition and leave host-incompatible visual baselines explicitly to CI.
+- The pull request handoff planner dispatches five nonauthoring prep lanes while the persistent writer is running: incremental test inventory, E2E runner warming, stable test lanes, local QA startup and draft PR evidence.
+
+#### Changed
+- After an isolated failure is fixed, only that case and newly reached targets rerun. Missing E2E capability is reported with the specs and automatic CI lanes instead of being skipped.
+- A carried test result names its source SHA and covered-file hashes. The final gate rejects it when any covered byte changed, preserving the sole-writer rule without turning orchestrator wait time into delivery latency.
+- This procedure kept the commits from symphony-alpha pull requests #9202, #9208, #9209 and #9210 green in every post-merge batch lane on 2026-10-22 and 2026-10-23; the batch reds were a pre-existing unrelated flaky test. It did not catch a hidden artifact slug because no test asserted it, so targeted tests do not replace visual QA.
+- Instruction text is about 3 words shorter than in 1.0.79.
+
 ### vibe v1.0.79
 
 Worker launches, shared ownership and operational evidence now have runtime checks instead of relying on prose alone.

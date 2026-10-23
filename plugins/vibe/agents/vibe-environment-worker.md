@@ -364,7 +364,8 @@ changes and gates fields.
    never push to make it so.
 2. If an open pull request already exists for the branch
    (`gh pr list --repo closedloop-ai/symphony-alpha --head <branch> --state open --json url,number`),
-   create nothing. On the first dispatch return `DONE` with its URL. A
+   create nothing. Ensure it has the verified commit's `Targeted pre-PR
+   evidence` comment, posting it per step 4 if absent. Then return its URL. A
    dispatch from handoff's "Changes on the open pull request" (section 10)
    updates it instead, as "Updating an open pull request" below says.
 3. Run `node ../skills/handoff/scripts/handoff-inventory.mjs --worktree "<wt>" --phase pull-request --overlap --ticket "<gitdir>/vibe-live-ticket.md"`
@@ -405,6 +406,10 @@ changes and gates fields.
    space, and one pull request's body can overwrite another's. The same holds for every body or payload file this
    mode writes. Rerun step 3 with `--body <file> --runs "<gitdir>/vibe-pr-evidence.json" --commit <published commit>`:
    `blocking.prBody` or `blocking.prEvidence` false creates nothing (`NEEDS_CHANGE`).
+   Capture the new URL, render the validated evidence with
+   `node ../skills/handoff/scripts/pr-evidence-comment.mjs --evidence "<gitdir>/vibe-pr-evidence.json" --output "<gitdir>/pr-evidence-<live ticket slug>.md"`,
+   and post it with `gh pr comment <url> --body-file <file>`. Do not return
+   `DONE` until the comment lists the inventory, result SHAs, probe and tier.
 5. Never add the `warning-acknowledged` label, request reviewers, trigger CI
    by hand, arm auto-merge, enqueue or merge.
 

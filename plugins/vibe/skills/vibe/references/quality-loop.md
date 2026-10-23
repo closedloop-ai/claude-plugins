@@ -110,37 +110,34 @@ requirement there wins.
 
 ## One persistent writer and a serial queue
 
-The orchestrator queues incoming requests/requirements and forwards them to the
-same writer in order. Use the owned `scripts/dist/writer-state.mjs` ledger:
-register the actual native Codex worker ID once, or the actual Claude session
-ID managed by `scripts/dist/claude-worker.mjs`. Both use the session's existing
-private Git metadata and verify the same worktree and branch. No new hidden
-environment variable or generic worker platform is involved.
+Queue requests to the same writer in order through `scripts/dist/writer-state.mjs`. Register one actual
+Codex ID or launcher-managed Claude ID, bound to private Git metadata,
+worktree and branch.
 
-Keep one active request. A plan, review finding, product answer or commit wait
-continues that request in the same context; it does not authorize starting the
-next queued request or a fresh writer. Claim/finish the queue through the owned
-state API. If identity, branch or resume cannot be verified, block internally
-rather than silently fork. Preserve pending inputs when interrupted.
+Keep one active request. Plans, findings, answers and commit waits continue it;
+this does not authorize starting the next queued request or a fresh writer. Use the owned state API and block on
+unverifiable identity, branch or resume.
 
-Codex: spawn the canonical writer once with a read-only hold brief: no source,
-test or record mutation until the coordinator registers its returned actual ID
-and claims the queued request. Then use native follow-up/resume for that same
-ID and the claimed input. Claude Code: use the owned launcher
-with the existing scoped name `vibe:vibe-change-worker`, canonical own-plugin
-definition and exact parent-discovered capabilities. The launcher binds at a
-supported fresh CLI launch and explicitly resumes the recorded session ID;
-native Agent per-call tool overriding is not assumed. Briefs and requests go
-through stdin, not sensitive argv. Preserve the same model, role and binding.
+During a requested pull-request writer turn, run
+`node ../handoff/scripts/parallel-prep.mjs --writer-state running --pull-request`
+and dispatch its lanes. Draft the targeted inventory from the live
+diff and later inspect only its committed delta. Configured E2E runner: fresh
+ref, install, bootstrap, prebuild app images; never force.
+Rebuild only when final build-input hashes differ. Run stable lanes for finished
+files; bind results to SHA and covered-file hashes. At turn end, start hidden
+local QA so visual QA overlaps tests. Draft the PR body and evidence comment as
+results land. Lanes are read-only or operational: no product-source/test edits
+or second writer. Carry a result only when its recorded hashes
+match final HEAD.
 
-For an already registered session, retain its actual recorded writer ID and
-original recorded binding: `binding.agentRoot`, role and exact
-`binding.capabilities`. Recover these only from the original registration
-evidence or a read-only helper's bounded private-ledger inspection; return
-binding/identity facts, never private queued inputs or credentials. Verify the
-original definition and recorded digest before new code. If it is present and
-matching, resume that writer with its original binding. Root supplies current
-policy through its continuation without changing test-authoring authority.
+Codex: hold, register and resume one canonical writer. Claude Code: launch and
+resume the canonical `vibe:vibe-change-worker` with parent-discovered
+capabilities. Briefs use stdin. Preserve model, role and binding.
+
+Retain the recorded writer ID, `binding.agentRoot`, role, exact
+`binding.capabilities` and original definition. Recover from registration or
+bounded read-only ledger inspection. If present and matching, verify its digest
+and resume it. Never return queued inputs or credentials.
 
 ### Recorded definition migration
 
@@ -156,7 +153,7 @@ Never use `register` to replace a writer or copy old agent definitions.
 1. Read `status` and the bounded binding facts from the private ledger. Wait
    for source and record turns to finish with actual stopped-turn evidence;
    a short-lived CLI PID exiting does not release an owned turn. Resolve any
-   writer refusal in the original request first. Migration rejects `BLOCKED`
+   writer refusal in the original request first. Never migrate around a refusal. Migration rejects `BLOCKED`
    (except a removed definition, below), running leases, matching definitions,
    unproven upgrades and stale identity.
 2. Codex: spawn one current canonical `vibe-change-worker` with a read-only

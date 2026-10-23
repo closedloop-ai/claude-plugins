@@ -164,6 +164,10 @@ on those tests, then step 7's commit and its push and publication through
 `vibe-environment-worker` in redeploy mode. The pull request does not open
 until those tests pass, their independent review is clean and step 9's gate passes.
 
+During that turn, run `node scripts/parallel-prep.mjs --writer-state running
+--pull-request` and dispatch each lane. Prep may draft evidence, warm E2E,
+hash stable results and ready hidden QA, but never edit source or start a writer.
+
 From the request on, every brief in this handoff carries the `pull-request`
 phase. No brief may say both that the person takes the work to a pull request and that no tests are authored.
 
@@ -776,7 +780,10 @@ lookup resolved to exactly one user.
 
 On a requested pull request, skip assign mode: the ticket stays with the
 person, In Progress. Before dispatch, require the refreshed pinned-base
-Storybook train check. Then dispatch
+Storybook train check. Dispatch `vibe-verify-worker` in `pre-pr` mode on final
+HEAD. It records read-only inventory, results, SHAs, E2E probe and tier in
+`<gitdir>/vibe-pr-evidence.json`; after a fix only failed cases rerun.
+Then dispatch
 `vibe-environment-worker` in `pull-request` mode (its own `pull-request`
 record action, an exclusive record turn with no record writes) with the
 worktree, the live ticket slug, the confirmed summary, the final verified

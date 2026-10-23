@@ -4,11 +4,13 @@
 // the evidence lanes, plus the body and evidence gates. No CLI of its own.
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
 import { playVerdictProblems } from "../../vibe/scripts/story-play-verdict.mjs";
 import { isE2ePath, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
+import { tierEvidenceProblems } from "./e2e-tier.mjs";
 
 const REPO = "closedloop-ai/symphony-alpha";
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -230,7 +232,12 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
   return {
     ...facts,
     ...(body === undefined ? {} : { prBodyProblems: bodyProblems(body, facts, files, prBase, template ?? readTemplate(worktree, base)) }),
-    ...(runs === undefined ? {} : { prEvidenceProblems: [...evidenceProblems(runs, changed, commit), ...selectionProblems(runs, files, requiredTests, commit)] }),
+    ...(runs === undefined ? {} : { prEvidenceProblems: [
+      ...evidenceProblems(runs, changed, commit),
+      ...selectionProblems(runs, files, requiredTests, commit),
+      ...targetedEvidenceProblems(runs, commit, worktree),
+      ...tierEvidenceProblems(runs.e2eCapability, (runs.targetedInventory?.entries ?? []).filter((entry) => entry?.kind === "e2e").map((entry) => entry.path)),
+    ] }),
   };
 }
 
@@ -285,19 +292,93 @@ export function selectionProblems(runsFile, files, requiredTests, commit) {
     ...live.filter((entry) => TEST_SPEC_PATTERN.test(entry.path)).map((entry) => entry.path),
   ]);
   const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
-  const passed = (test, flag) => runs.some((entry) => entry?.path === test && entry.status === "passed" && (!commit || entry.commit === commit)
+  const target = (test) => runsFile?.targetedInventory?.entries?.find((entry) => entry?.path === test);
+  const acceptedCommit = (test) => target(test)?.resultCommit ?? commit;
+  const carried = (test) => !commit || acceptedCommit(test) === commit
+    || (target(test)?.carriedTo === commit && typeof target(test)?.carryReason === "string" && target(test).carryReason.length > 0);
+  const passed = (test, flag) => carried(test) && runs.some((entry) => entry?.path === test && entry.status === "passed" && (!acceptedCommit(test) || entry.commit === acceptedCommit(test))
     && (flag === undefined || entry.flag === flag));
   for (const test of [...selected].sort()) {
     if (!passed(test)) {
-      problems.push(`${test}: selected but no passing run on ${commit ?? "the published commit"} in testRuns`);
+      problems.push(`${test}: selected but no passing or explicitly carried run for ${commit ?? "the published commit"} in testRuns`);
     }
   }
   for (const entry of requiredTests.filter((item) => Array.isArray(item.flagStates))) {
     for (const flag of entry.flagStates.filter((state) => !passed(entry.path, state))) {
-      problems.push(`${entry.path}: no passing run with the flag ${flag} on ${commit ?? "the published commit"} (testRuns entry with flag: "${flag}")`);
+      problems.push(`${entry.path}: no passing run with the flag ${flag} for ${commit ?? "the published commit"} (testRuns entry with flag: "${flag}")`);
     }
   }
   return problems;
+}
+
+/**
+ * A PR is gated on a read-only inventory of its final committed diff. Every
+ * inventory row names exact cases and a command, and has a passing result at
+ * that SHA unless the E2E capability record explicitly leaves it to CI.
+ */
+export function targetedEvidenceProblems(runsFile, commit, worktree) {
+  const inventory = runsFile?.targetedInventory;
+  if (!inventory || typeof inventory !== "object") return ["targeted inventory of the final committed diff is missing"];
+  const problems = [];
+  if (inventory.actor !== "read-only") problems.push("targeted inventory must come from a read-only subagent");
+  if (inventory.source !== "final-committed-diff") problems.push("targeted inventory must read the final committed diff, not the plan");
+  if (!commit || inventory.commit !== commit) problems.push(`targeted inventory does not name the final committed SHA ${commit ?? "required by the gate"}`);
+  if (inventory.laneReport?.command !== "pnpm test:lanes") problems.push("targeted inventory must use pnpm test:lanes as the repository lane source");
+  if (!Array.isArray(inventory.laneReport?.matches)) problems.push("targeted inventory must list the post-merge lane matches from pnpm test:lanes");
+  for (const lane of inventory.laneReport?.matches ?? []) {
+    if (!lane?.name || !lane?.command) problems.push("each matching post-merge lane needs its repository name and exact command");
+  }
+  if (!Array.isArray(inventory.entries) || (inventory.entries.length === 0 && !inventory.noTestsReason)) {
+    problems.push("targeted inventory needs exact entries or a no-tests reason");
+  }
+  const entries = Array.isArray(inventory.entries) ? inventory.entries : [];
+  const unavailable = new Set(runsFile?.e2eCapability?.unavailableSpecs ?? []);
+  const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
+  for (const entry of entries) {
+    if (!entry?.kind || !entry?.path || !entry?.command || !Array.isArray(entry?.cases) || entry.cases.length === 0) {
+      problems.push(`targeted inventory entry for ${entry?.path ?? "unknown path"} needs kind, path, cases and exact command`);
+      continue;
+    }
+    if (entry.kind === "e2e" && unavailable.has(entry.path)) continue;
+    const resultCommit = entry.resultCommit ?? commit;
+    if (resultCommit !== commit) {
+      if (entry.carriedTo !== commit || !entry.carryReason) problems.push(`${entry.path}: an earlier result needs the final SHA and a carry reason`);
+      if (!Array.isArray(entry.coveredFiles) || entry.coveredFiles.length === 0) {
+        problems.push(`${entry.path}: a carried result needs covered file hashes`);
+      }
+      for (const covered of entry.coveredFiles ?? []) {
+        const current = finalFileHash(inventory, worktree, covered?.path);
+        if (!covered?.path || !/^[a-f0-9]{64}$/i.test(covered?.sha256 ?? "")) problems.push(`${entry.path}: carried file hash is invalid`);
+        else if (current !== covered.sha256) problems.push(`${covered.path}: covered file hash changed before ${commit}`);
+      }
+    }
+    const passed = runs.some((run) => run?.path === entry.path && run.status === "passed" && run.commit === resultCommit
+      && run.command === entry.command && Array.isArray(run.cases) && entry.cases.every((name) => run.cases.includes(name)));
+    if (!passed) problems.push(`${entry.path}: no passing targeted run with its exact cases and command on ${resultCommit}`);
+  }
+  const selected = new Set((runsFile?.testSelection ?? []).flatMap((entry) => Array.isArray(entry?.tests) ? entry.tests : []));
+  const inventoried = new Set(entries.map((entry) => entry?.path));
+  for (const test of [...selected].filter(Boolean).filter((test) => !inventoried.has(test))) {
+    problems.push(`${test}: selected test is absent from the targeted inventory`);
+  }
+  if (!Array.isArray(runsFile?.rerunCycles)) problems.push("rerunCycles must record isolated reruns, or [] when none failed");
+  for (const cycle of runsFile?.rerunCycles ?? []) {
+    const failed = new Set(cycle?.failed ?? []);
+    const allowed = new Set([...(cycle?.failed ?? []), ...(cycle?.newlyReached ?? [])]);
+    const rerun = new Set(cycle?.rerun ?? []);
+    if (!cycle?.fromCommit || !cycle?.toCommit || failed.size === 0) problems.push("each rerun cycle needs its source SHA, fixed SHA and failed cases");
+    if (rerun.size !== allowed.size || [...rerun].some((item) => !allowed.has(item))) problems.push("a rerun cycle may contain only its failed cases and targets newly reached by the fix");
+  }
+  return problems;
+}
+
+function finalFileHash(inventory, worktree, file) {
+  if (!file) return undefined;
+  if (worktree) {
+    try { return createHash("sha256").update(readFileSync(path.join(worktree, file))).digest("hex"); }
+    catch { return undefined; }
+  }
+  return inventory.fileHashes?.[file];
 }
 
 function readTemplate(worktree, base) {
