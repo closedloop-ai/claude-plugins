@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.79
+
+Shared-scope work now proves one owner, every inheriting consumer and page-by-page prototype parity.
+
+#### Added
+- Handoff's `shared-capability-owner` diff rule rejects a capability-level design-system control newly composed by another page adapter when multiple page adapters already compose it directly. A broad acceptance criterion cannot waive the finding; only a ticket or operator ruling that explicitly requires separate compositions can.
+
+#### Changed
+- When a ticket or PRD says "across all", or the person says "shared", the vibe plan names one owning parent component, every consumer that inherits it and each consumer's approved prototype route. The guardrails reviewer checks that inventory against the import graph.
+- Running-app and visual QA compare each consumer page with that page's approved prototype route and flag controls present in the prototype but missing in production, alongside rendered controls that lack a sourced requirement.
+- Instruction text is trimmed so the release adds no words: Markdown under the vibe plugin is about 7 words shorter than in 1.0.78.
+
 ### vibe v1.0.78
 
 The fleet runs from one fleet home, and the open 2026-10-22 lessons each get a check where one fits.

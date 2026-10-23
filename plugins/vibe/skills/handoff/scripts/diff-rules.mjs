@@ -84,6 +84,10 @@ const DEEPEN_TIMEOUT_MS = 10 * 60 * 1000;
 const CONTROL_PROP = /\b((?:show|enable|allow|with|render|on)[A-Z][A-Za-z0-9]*)\s*(?::|=)/;
 const CONTROL_TERM = /selectall|checkbox|button|menu|action|toolbar|filter|search|picker|popover|dialog|drawer|toggle|favorite|star|bulk|control|disclosure|pagination/i;
 const CONTROL_MOUNT = /<([A-Z][A-Za-z0-9]*)\b/g;
+const IMPORT_DECLARATION = /\bimport\s+(?!["'])([\s\S]*?)\s+from\s+["']([^"']+)["'];?/g;
+const DESIGN_SYSTEM_CONTROL = /^@repo\/design-system\/components\/ui\//;
+const CAPABILITY_COMPONENT = /search|filter|sort|range|toolbar|pagination|control|picker|menu|popover/i;
+const PAGE_COMPOSER = /(?:^|\/)[^/]*(?:page|route|toolbar|list|shell|surface|adapter)[^/]*\.[jt]sx$/i;
 
 /** Parses `git diff --unified=0` output into per-file added and removed lines. */
 export function parseUnifiedDiff(text) {
@@ -164,6 +168,7 @@ export function evaluateDiff(files, changeLog, repo) {
   checkLostStoryIds(files, repo, add);
   checkCopyProvenance(live, files, repo, logged, add);
   checkNewControls(live, changeLog, add);
+  checkSharedCapabilityOwners(live, changeLog, repo, add);
   for (const problem of visualBaselineLedgerProblems(changeLog, live.filter((file) => isVisualBaseline(file.path)).map((file) => file.path))) {
     const file = problem.slice(0, problem.indexOf(":"));
     add("visual-baseline-ledger", file, 1, problem.slice(problem.indexOf(":") + 2), "compare the baseline diff with the requirement inventory; record its counted `Baseline inventory:` and one cited `Baseline element:` line per new element");
@@ -203,6 +208,61 @@ function checkNewControls(files, changeLog, add) {
       const record = changeLog.split("\n").find((entry) => entry.trimStart().startsWith(prefix));
       if (!record || !/^\s*[^:\n]+:\s*(?:(?:ISS|PRD|FEA)-\d+\s+(?:AC(?:-?\d+)?|acceptance criterion|ruling)\b|operator ruling\b)/i.test(record.slice(record.indexOf(prefix) + prefix.length))) {
         add("control-provenance", file.path, line, `newly enables ${signal} with no surface-specific ticket acceptance criterion or ruling`, `remove it, or record \`Control: ${file.path}: ${signal}: <surface>: <ticket AC or ruling that names this control on that surface>\`; "preserve" in another mode is not authorization`);
+      }
+    }
+  }
+}
+
+/** Import declarations with their original exported names and one-based line range. */
+function componentImports(source) {
+  const imports = [];
+  for (const match of source.matchAll(IMPORT_DECLARATION)) {
+    const clause = match[1].trim();
+    if (clause.startsWith("type ")) continue;
+    const names = [];
+    const named = /\{([\s\S]*?)\}/.exec(clause)?.[1];
+    if (named) {
+      for (const item of named.split(",")) {
+        const original = item.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0];
+        if (original) names.push(original);
+      }
+    }
+    const defaultName = clause.split(/[,{]/)[0].trim();
+    if (defaultName && !defaultName.startsWith("*")) names.push(defaultName);
+    const start = source.slice(0, match.index).split("\n").length;
+    const end = start + match[0].split("\n").length - 1;
+    imports.push({ source: match[2], names, start, end });
+  }
+  return imports;
+}
+
+/**
+ * A low-level capability newly composed by a second page adapter is visible
+ * in the import graph. It belongs behind one parent unless a human explicitly
+ * rules that the pages need separate compositions.
+ */
+function checkSharedCapabilityOwners(files, changeLog, repo, add) {
+  const checked = new Set();
+  for (const file of files.filter((entry) => PAGE_COMPOSER.test(entry.path) && !isTestFile(entry.path) && !STORY_FILE.test(entry.path))) {
+    const addedLines = new Set(file.added.map((entry) => entry.line));
+    for (const imported of componentImports(repo.head(file.path) ?? "").filter((entry) => DESIGN_SYSTEM_CONTROL.test(entry.source))) {
+      const changedImport = [...addedLines].some((line) => line >= imported.start && line <= imported.end);
+      const changedNames = imported.names.filter((name) =>
+        CAPABILITY_COMPONENT.test(name) && (changedImport || file.added.some((entry) => new RegExp(`<${escapeRegExp(name)}\\b`).test(entry.text)))
+      );
+      for (const name of changedNames) {
+        const key = `${imported.source}:${name}`;
+        if (checked.has(key)) continue;
+        checked.add(key);
+        const composers = repo.wordFiles(name).filter((candidate) =>
+          PAGE_COMPOSER.test(candidate) && !isTestFile(candidate) && !STORY_FILE.test(candidate) &&
+          componentImports(repo.head(candidate) ?? "").some((entry) => entry.source === imported.source && entry.names.includes(name))
+        );
+        if (composers.length < 2) continue;
+        const exception = new RegExp(String.raw`^\s*(?:[-*]\s+)?Shared capability exception:\s*${escapeRegExp(name)}:\s*(?:(?:ISS|PRD|PLN|FEA)-\d+\s+ruling\b|operator ruling\b)`, "im");
+        if (exception.test(changeLog)) continue;
+        const line = file.added.find((entry) => entry.line >= imported.start && entry.line <= imported.end)?.line ?? imported.start;
+        add("shared-capability-owner", file.path, line, `${name} is composed directly by ${composers.length} page-level adapters instead of one shared parent`, `move ${name} into one shared parent and make every consumer inherit it; only an explicit ruling for separate compositions may record \`Shared capability exception: ${name}: <ticket ruling or operator ruling>\``);
       }
     }
   }

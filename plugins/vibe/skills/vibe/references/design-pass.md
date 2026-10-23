@@ -1,21 +1,16 @@
 # Design pass
 
-Vibe requests arrive in the person's own words. The prep picks ownership by
-rule; `quality-loop.md` then keeps the local technical plan and the lean build
-loop internal, with independent reviews at handoff. Existing tests run at
-handoff; no tests are authored in vibe or handoff unless the person asks for a
-pull request, and the writer only repairs existing tests its change broke.
-Nothing here is shown to or asked of the person.
+Vibe keeps the lean build loop internal, with independent reviews at handoff.
+Existing tests run at handoff; no tests are authored in vibe or handoff unless
+the person asks for a pull request, and the writer only repairs existing tests
+its change broke. Nothing here is shown to or asked of the person.
 
 ## Owner rules
 
-The rule covers any component that composes or inherits from a shared parent
-(a screen built on a shared surface, a variant of a shared control, a hook or
-service built on a shared one): behavior the children share goes in the
-parent, and a child keeps only what is specific to that child. Applied in
-order; the first that fits decides. Nobody asks the person where code goes,
-and nobody asks the person to confirm the approach. Independent technical
-review follows `quality-loop.md` internally.
+For any component that composes or inherits from a shared parent, shared
+behavior goes in the parent and a child keeps only what is specific to that
+child. The first fitting rule decides without asking the person.
+Nobody asks the person where code goes.
 
 1. Behavior that the children of a shared parent share goes into that parent
    as a generic, domain-free slot or extension point, and each child opts in
@@ -40,14 +35,13 @@ review follows `quality-loop.md` internally.
    in `packages/app` (route shells stay thin), on the surface that already
    owns the entity (`guardrails.md`, "Where code goes").
 
-An opt-in slot that other children do not pass changes nothing on them, so it
-is not the "everywhere or just here" question; that question is only for a
-change that alters what other children already show.
+An opt-in slot changes nothing for children that do not pass it; only altering
+what they show raises the "everywhere or just here" question.
 
 ## Prep (build loop, one or two minutes)
 
-The change worker's plan dispatch does this before any edit. It is a lookup,
-not a design session: no second design, no questions, no approval.
+The change worker does this lookup before editing. It is not a design session:
+no second design, no questions, no approval.
 
 1. Screens and gates: the FEATURE_MAP entry for each screen the request
    touches (`pnpm control feature show <id>`, or the entry in
@@ -100,13 +94,16 @@ dispatch gets them verbatim:
 Prep:
 - Screens: <each screen and host, with its FEATURE_MAP id>
 - Gates: <flag gates the FEATURE_MAP lists for those screens, or none>
-- Shared parent: <path and component the touched components compose or inherit from, or none>
+- Shared parent: <path and component, or none>
+- Shared capability: <sourced behavior or none>
+- Owner: <one parent path and component>
+- Consumers: <every inheriting adapter>
+- Prototype routes: <each consumer -> approved route/component, or none>
 - Existing components: <catalog or packages/app components and helpers to reuse, or none>
 - Earlier work: <what this session already built for it, or none>
 - Memory: <pitfalls found, none found, or not installed>
 - Precedent: <the sibling entity, providing component and how hosts consume it, or none found>
 - Placement: <the decomposer's Owner, Stories and Conflict lines, or no story or shared component>
-- Owner: <path where the behavior goes>
 - Rule: <the owner rule number that decided it, or `precedent`>
 Graph:
 - <one line per required call and what it established>

@@ -335,6 +335,52 @@ test("a #8962-shaped prop that enables a control needs a source naming it on tha
   assert.deepEqual(run(t, { base, head, changeLog: cited }).found.filter(([rule]) => rule === "control-provenance"), []);
 });
 
+test("a #8922-shaped capability composed by sibling list adapters needs one shared owner", (t) => {
+  const component = "packages/design-system/components/ui/filter-popover.tsx";
+  const sessions = "packages/app/agents/components/sessions/sessions-list-toolbar-v2.tsx";
+  const artifacts = "packages/app/shared/components/generic-artifact-surface/artifact-list-shell-sections.tsx";
+  const projects = "packages/app/projects/components/project-list.tsx";
+  const base = {
+    [component]: "export function FilterPopover() { return null; }\n",
+    [artifacts]: 'import { FilterPopover } from "@repo/design-system/components/ui/filter-popover";\nexport const ArtifactToolbar = () => <FilterPopover />;\n',
+    [projects]: 'import { FilterPopover } from "@repo/design-system/components/ui/filter-popover";\nexport const ProjectList = () => <FilterPopover />;\n',
+  };
+  const head = {
+    [sessions]: 'import { FilterPopover } from "@repo/design-system/components/ui/filter-popover";\nexport const SessionsToolbar = () => <FilterPopover />;\n',
+  };
+
+  const result = run(t, { base, head });
+  assert.deepEqual(
+    result.blocking.filter((finding) => finding.rule === "shared-capability-owner").map((finding) => finding.file),
+    [sessions]
+  );
+  assert.deepEqual(
+    run(t, { base, head, changeLog: "Shared capability exception: FilterPopover: PRD-721 AC-1\n" })
+      .blocking.filter((finding) => finding.rule === "shared-capability-owner").map((finding) => finding.file),
+    [sessions],
+    "a broad acceptance criterion cannot authorize separate page compositions"
+  );
+  assert.deepEqual(
+    run(t, { base, head, changeLog: "Shared capability exception: FilterPopover: ISS-123 ruling for separate compositions\n" })
+      .blocking.filter((finding) => finding.rule === "shared-capability-owner"),
+    []
+  );
+
+  const owner = "packages/app/shared/components/generic-artifact-list-shell.tsx";
+  const inherited = {
+    [owner]: 'import { FilterPopover } from "@repo/design-system/components/ui/filter-popover";\nexport const GenericArtifactListShell = () => <FilterPopover />;\n',
+    [sessions]: 'import { GenericArtifactListShell } from "@repo/app/shared/components/generic-artifact-list-shell";\nexport const SessionsPage = GenericArtifactListShell;\n',
+    [artifacts]: 'import { GenericArtifactListShell } from "@repo/app/shared/components/generic-artifact-list-shell";\nexport const DocumentsPage = GenericArtifactListShell;\n',
+    [projects]: 'import { GenericArtifactListShell } from "@repo/app/shared/components/generic-artifact-list-shell";\nexport const ProjectsPage = GenericArtifactListShell;\n',
+  };
+  assert.deepEqual(
+    run(t, { base: { [component]: base[component] }, head: inherited })
+      .blocking.filter((finding) => finding.rule === "shared-capability-owner"),
+    [],
+    "one parent may own the control while every page inherits it"
+  );
+});
+
 test("a changed screenshot baseline needs its counted element ledger before handoff", (t) => {
   const file = "e2e/__screenshots__/visual-regression.spec.ts/branches-desktop.png";
   assert.deepEqual(run(t, { base: { [file]: "old\n" }, head: { [file]: "new\n" } }).found, [["visual-baseline-ledger", file]]);

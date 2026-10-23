@@ -104,16 +104,18 @@ path merely because another rule describes how its content should look.
 8. Shared owner and red flags: every item in `design-pass.md` "Review".
    Read the session change log
    (`$(git -C <wt> rev-parse --absolute-git-dir)/vibe-changes.md`) for each
-   request's `Owner` and `Rule`. Flag each red flag (shallow module,
-   information leakage, temporal decomposition, pass-through, copy) with
-   `file:line` for every site, and name the parent and the generic slot or
-   extension point the behavior belongs in. Any component that composes or
-   inherits from a shared parent keeps only what is specific to it: two
-   children of one parent that each implement the same behavior is blocking,
-   and so is a copy
-   of an existing shared component or domain code inside a design-system
-   slot. Code that is not in the `Owner` its change log entry names is
-   advisory. Run these checks and quote what each prints:
+   request's `Owner` and `Rule`. Report red flags with `file:line` and owner.
+   Any component that composes or inherits from a shared parent keeps only
+   what is specific to it: two children of one parent that each implement the
+   same behavior is blocking. Code outside its logged `Owner` is advisory.
+   Run and quote:
+   - Same capability component: treat every `shared-capability-owner` diff
+   finding as blocking when two or more page-level adapters compose it
+     instead of one shared parent. Compare the plan's Owner and Consumers
+     inventory with the import graph; an exception passes only when its cited
+     ruling explicitly requires separate compositions.
+   - Red flags: shallow module, information leakage, temporal decomposition,
+     pass-through and copy.
    - Slot without an owner: for each capability whose state the children
      share (selection, grouping, collapse, paging), `rg` its state and
      handlers (`useState`, a reducer, `selected`, `onSelect`, `toggle`) in

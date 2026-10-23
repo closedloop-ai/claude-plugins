@@ -479,7 +479,9 @@ change, against the session's acceptance criteria when the ticket or its PRD
 has them and otherwise as the design pack's best-practice review
 (`../vibe/references/quality-loop.md`, "Visual QA during the session",
 "What it checks"); its rendered-control inventory flags anything with no
-sourced requirement. Run logical QA (`/logical-qa`, `$logical-qa`) for a data or metric
+sourced requirement. For shared scope it compares each consumer page against
+that page's approved prototype route and flags every control present in the
+prototype but missing in production. Run logical QA (`/logical-qa`, `$logical-qa`) for a data or metric
 surface, then product-contract QA (`/metal-andrew`, `$metal-andrew`) once that
 evidence is visible. Each skill dispatches its own read-only agents. Confirmed
 findings resume the SAME writer in fix mode for every touched surface, even when

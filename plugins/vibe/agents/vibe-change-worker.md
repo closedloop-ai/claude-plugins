@@ -55,17 +55,17 @@ a needed vibe tooling fix returns `BLOCKED`.
 Run the prep step in `design-pass.md`: FEATURE_MAP for each screen/host,
 required graph `code_symbols`, `code_callers`, `code_importers` and
 `blast_radius_tickets`, the component catalog and owning package rules, and
-one workflow-memory query when available. Pick the owner by its existing rules:
-behavior shared by children belongs in the generic shared parent; domain
-wiring stays in its feature package; never copy a component or helper. Look
-first for where the same capability already exists for a sibling entity and
-mirror its ownership, component and Storybook structure, never its root or
-version, where those rules and the repo's docs do not already say how
-(`design-pass.md`, Prep step 5). Before you write a new hook, helper, query
-key or inline query, `rg` the repo's shared app hooks and helpers (its auth
-helpers included) and the existing `use-*` hooks for its endpoint, query key
-and subject, and use what exists. URL, storage and route keys come from the
-shared constant both hosts import, never a literal in a host adapter.
+one workflow-memory query when available. Apply its owner rules: behavior
+shared by children belongs in the generic shared parent; domain wiring stays
+in its feature package. Where no rule or repo doc decides, mirror a sibling's
+ownership and Storybook structure, never its root or version
+(`design-pass.md`, Prep step 5). Before a new hook, helper, query or key, `rg`
+the repo's shared app hooks and helpers (its auth helpers included) and the
+existing `use-*` hooks, then reuse the match. Both hosts import URL, storage
+and route keys from one constant.
+When a ticket or PRD says "across all" or the person says "shared", the plan
+must name one owning parent component and every consumer that inherits it,
+plus each consumer's approved prototype route.
 
 Before you delete a feature flag's read, key constant or gate, read the
 comments on every ticket linked to it (the live ticket, its PRD, and the
