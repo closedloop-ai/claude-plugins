@@ -1,4 +1,4 @@
-"""Contract coverage for the vibe 1.0.79 shared-owner lesson."""
+"""Contract coverage for the vibe 1.0.79 prevention lessons."""
 
 from pathlib import Path
 
@@ -36,3 +36,32 @@ def test_handoff_compares_each_consumer_with_its_prototype_route() -> None:
     for text in (verifier, handoff, quality):
         assert required in text
         assert "present in the prototype but missing in production" in text
+
+
+def test_worker_rules_forbid_credential_workarounds_and_force_push_everywhere() -> None:
+    hook_manifest = (PLUGIN / "hooks" / "hooks.json").read_text()
+    worker_preamble = flat(
+        (PLUGIN / "skills" / "fleet-orchestrator" / "references" / "templates.md").read_text()
+    )
+    vibe = flat((VIBE / "SKILL.md").read_text())
+    assert "shell-safety-guard.mjs" in hook_manifest
+    for text in (worker_preamble, vibe):
+        assert "first authentication failure" in text
+        assert "CI logs or the API" in text
+        assert "every remote" in text
+        assert "proof/<sha>-<n>" in text
+
+
+def test_message_less_watchers_use_the_watched_event_mailbox() -> None:
+    fleet = flat((PLUGIN / "skills" / "fleet-orchestrator" / "SKILL.md").read_text())
+    watch = (PLUGIN / "skills" / "codex-fleet-monitor" / "scripts" / "watch.sh").read_text()
+    assert "cannot SendMessage" in fleet
+    assert "<orchDir>/events/" in fleet
+    assert "events" in watch and "event" in watch
+
+
+def test_main_sync_has_a_bounded_no_grant_fallback() -> None:
+    environment = flat((VIBE / "references" / "environment.md").read_text())
+    assert "cannot mint a supported publisher grant" in environment
+    assert "git merge --no-commit --no-ff origin/main" in environment
+    assert "commit-worktree.mjs" in environment

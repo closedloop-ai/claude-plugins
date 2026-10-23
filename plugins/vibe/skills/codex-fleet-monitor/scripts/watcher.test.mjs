@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -147,4 +147,25 @@ test('an armed watcher with no change exits with HEARTBEAT after HEARTBEAT_SECON
   assert.equal(run.status, 0);
   assert.match(run.stdout, /^HEARTBEAT no change for 2s: read every teammate message/m);
   assert.ok(JSON.parse(readFileSync(join(dir, 'watcher.json'), 'utf8')).exitedAt, 'the heartbeat exit is recorded, so watcher.mjs says to re-arm');
+});
+
+test('a watcher without SendMessage surfaces a new event file', { timeout: 30_000 }, async (t) => {
+  const dir = workDir(t);
+  const snapshot = join(dir, 'fake-snapshot.sh');
+  writeFileSync(snapshot, 'print "session local a RUN"\n');
+  const child = spawn('zsh', [WATCH, dir, '1'], {
+    env: { ...process.env, WATCH_SNAPSHOT: snapshot }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(() => child.kill('SIGKILL'));
+  let stdout = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  for (let i = 0; i < 100 && !existsSync(join(dir, 'last-snapshot.txt')); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  mkdirSync(join(dir, 'events'), { recursive: true });
+  writeFileSync(join(dir, 'events', 'green-moved.md'), '# Green moved\n');
+  const status = await new Promise((resolve) => child.on('exit', resolve));
+  assert.equal(status, 0);
+  assert.match(stdout, /^EVENT$/m);
+  assert.match(stdout, /green-moved\.md/);
 });

@@ -82,6 +82,16 @@ describe("vibe worker cross-runtime tool contract", () => {
     ]).success).toBe(false);
   });
 
+  it("binds the ticket worker's exact Claude document tools", () => {
+    const capabilities = capabilitiesFor("vibe-ticket-worker", "claude");
+    expect(capabilities).toEqual(expect.arrayContaining([
+      { name: "mcp__closedloop__create-document", service: "closedloop", operation: "create_document", access: "write" },
+      { name: "mcp__closedloop__update-document", service: "closedloop", operation: "update_document", access: "write" },
+      { name: "mcp__closedloop__create-artifact-link", service: "closedloop", operation: "create_artifact_link", access: "write" },
+    ]));
+    expect(missingMcpTools(capabilities.map(({ name }) => name), ["mcp__closedloop__create_document"])).toEqual([]);
+  });
+
   it("loads a canonical definition from either runtime manifest", () => {
     const value = fixture();
     try {

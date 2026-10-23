@@ -299,6 +299,11 @@ not silently included or discarded. A clean result needs no extra local commit.
    (`mainMerge: "deferred"`), conflicts included, and the branch's own base
    stands in as its main; a failing check is fixed on that base. It never commits or pushes. Retain the
    returned `transactionId`, `mainSha`, original base and imported-file facts.
+   If the launcher cannot mint a supported publisher grant, ROOT does not
+   invent one: fetch `origin main`, stage `git merge --no-commit --no-ff
+   origin/main`, keep conflicts with the same writer, then finish through
+   `commit-worktree.mjs`. This fallback prepares only the merge; publication
+   still waits for a real grant.
 2. End that helper turn using actual stopped/completed evidence before any
    source continuation. The SAME registered writer extends its existing
    session table/local canonical plan before source fixes and checks frozen

@@ -33,7 +33,8 @@ Tests: after any change, fix or merge (a conflict resolution included), run exac
 Heavy checks go through <fleet.sh slot command for the chosen machine>; never run windowed e2e on the operator's daily machine.
 Commands expected to take more than a few minutes run in the background (never a foreground wait over 5 minutes), and you end the turn while they run, so messages reach you. Check the worker inbox between steps so orchestration rulings are applied before more work.
 Questions to the orchestrator end with `If no answer by <time, 30 minutes on>: <your default>` and an id, recorded with `board.mjs <orchDir> question <you> --id <id> --text <question>`; acknowledge each answer by its id (`board.mjs <orchDir> ack <you> --id <id>`) in your next status; keep working meanwhile and past it proceed on the default (never for a flag, copy, destructive, credential or scope question). A question never holds your PR: ship what is done, arm auto-merge, put the answer-dependent part in a follow-up.
-Git: commit messages per the repo's conventions; regular push only, never force or amend after push.
+Credentials: after the first authentication failure, use CI logs or the API for the same fact, or stop and ask. Never write, export or route around credentials.
+Git: commit messages per repo convention; regular push only, never force-push. This covers every remote. Proof and scratch commits use a fresh `proof/<sha>-<n>` ref; never amend after push.
 Review threads: reply on the thread naming the fixing SHA and resolve it only after the fix is verified in code.
 Artifacts for people (tickets, PR bodies, comments, replies) never name a path on the operator's machine; embed evidence and attach plans.
 Fleet board: <orchDir>/board.md shows every writer's PR, head, status and dependencies. Message another writer directly when your work touches theirs: Codex writers through the app-server-orchestrator skill's send, Claude workers and QA guides through SendMessage.

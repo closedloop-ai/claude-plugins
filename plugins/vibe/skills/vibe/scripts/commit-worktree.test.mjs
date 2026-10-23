@@ -186,3 +186,24 @@ test("concludes a merge a worker staged without committing", (t) => {
   assert.equal(result.json.merge, true);
   assert.equal(git(checkout, ["rev-list", "--parents", "-n", "1", "HEAD"], home).split(" ").length, 3);
 });
+
+test("concludes an origin/main merge staged by the no-grant fallback", (t) => {
+  const { home, checkout } = setup(t);
+  git(checkout, ["checkout", "-q", "-b", "fix/fallback"], home);
+  write(checkout, "apps/api/fallback.ts", "fallback\n");
+  git(checkout, ["add", "-A"], home);
+  git(checkout, ["commit", "-q", "-m", "Fallback change"], home);
+  git(checkout, ["checkout", "-q", "main"], home);
+  write(checkout, "README.md", "origin moved\n");
+  git(checkout, ["commit", "-q", "-am", "Origin change"], home);
+  git(checkout, ["branch", "-f", "origin/main", "main"], home);
+  git(checkout, ["checkout", "-q", "fix/fallback"], home);
+  git(checkout, ["merge", "--no-commit", "--no-ff", "origin/main"], home);
+
+  const result = runNode(SCRIPT, ["--worktree", checkout, "--subject", "Merge origin/main into fix/fallback"], home);
+
+  assert.equal(result.status, 0, JSON.stringify(result.json));
+  assert.equal(result.json.committed, true);
+  assert.equal(result.json.merge, true);
+  assert.equal(git(checkout, ["rev-list", "--parents", "-n", "1", "HEAD"], home).split(" ").length, 3);
+});

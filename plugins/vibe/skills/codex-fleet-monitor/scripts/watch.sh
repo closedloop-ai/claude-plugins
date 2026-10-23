@@ -7,6 +7,15 @@ K=${0:A:h}; I=${2:-120}; H=${HEARTBEAT_SECONDS:-}
 env_lines=$(node $K/work-dir.mjs sh ${1:?workDir}) || exit 2; eval "$env_lines"
 H=${H:-${HEARTBEAT_SECONDS:-1800}}; T=$(( H / I )); (( T < 1 )) && T=1
 S=${WATCH_SNAPSHOT:-$K/snapshot.sh}
+snapshot() {
+  local recover=${1:-0} event digest current
+  if (( recover )); then current=$(RECOVER=1 zsh $S $W); else current=$(zsh $S $W); fi
+  print -r -- "$current"
+  for event in $W/events/*(.N); do
+    digest=$(cksum < "$event")
+    print -r -- "event ${event:t} ${digest%% *}"
+  done
+}
 # One watcher per work dir. A second copy (one started with `&` in a foreground shell, then started again)
 # double-reports every event and outlives the turn that started it, so it is refused, not run.
 lock=$W/watch.lock
@@ -29,11 +38,11 @@ beat() {
 }
 beat
 # Compare against the last snapshot the previous run saw, so a change between runs is still reported.
-if [ -s $W/last-snapshot.txt ]; then base=$(cat $W/last-snapshot.txt); else base=$(zsh $S $W); echo "$base" > $W/last-snapshot.txt; fi
+if [ -s $W/last-snapshot.txt ]; then base=$(cat $W/last-snapshot.txt); else base=$(snapshot); echo "$base" > $W/last-snapshot.txt; fi
 for _ in $(seq 1 $T); do
   sleep $I
   # Each tick runs a recovery pass first (recover.mjs), so a transient failure is resumed without you.
-  now=$(RECOVER=1 zsh $S $W)
+  now=$(snapshot 1)
   beat
   if [ -n "$now" ] && [ "$now" != "$base" ]; then
     echo "$now" > $W/last-snapshot.txt; beat ",\"exitedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""; echo EVENT; diff <(echo "$base") <(echo "$now") | grep '^[<>]'; exit 0
