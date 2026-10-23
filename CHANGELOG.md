@@ -10,6 +10,7 @@ Shared-scope work now proves one owner, every inheriting consumer and page-by-pa
 
 #### Added
 - Handoff's `shared-capability-owner` diff rule rejects a capability-level design-system control newly composed by another page adapter when multiple page adapters already compose it directly. A broad acceptance criterion cannot waive the finding; only a ticket or operator ruling that explicitly requires separate compositions can.
+- Claude's Agent pre-tool guard refuses a fleet orchestrator's direct launch of an internal `vibe:vibe-*-worker` outside a vibe session, preserving the session record, environment setup, guardrails and adversarial review, PR preflight and SendMessage path supplied by `vibe:vibe`.
 
 #### Changed
 - When a ticket or PRD says "across all", or the person says "shared", the vibe plan names one owning parent component, every consumer that inherits it and each consumer's approved prototype route. The guardrails reviewer checks that inventory against the import graph.
