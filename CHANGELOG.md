@@ -20,7 +20,7 @@ The 2026-10-23 and 2026-10-24 fleet lessons now have hooks, launcher behavior an
 - A new writer request supersedes a FAILED turn, and a turn whose launcher process is gone is closed by the next claim, so a stopped or rejected turn no longer wedges the queue. The launcher caps an over-long result instead of rejecting it.
 - A session with no environment pushes through redeploy mode without requesting one. Human QA prep names `pnpm vibe up` and is ready only once a page loads past the org picker.
 - The watcher's second-copy refusal says how to stop a detached copy. Fleet and worker templates run every named lane instead of `code_tests_for` alone, hold an agent with TaskStop, and batch asks to a writer.
-- Instruction text is about 8 words shorter than in 1.0.80.
+- Instruction text is about 10 words shorter than in 1.0.80.
 
 ### vibe v1.0.80
 

@@ -39,7 +39,7 @@ mode or permission to change production flags or machine snapshot fields.
 ## Existing checks
 
 macOS has no `timeout` or `gtimeout` command. To bound or wait on a long check,
-use your tool's own timeout setting or `node ../skills/vibe/scripts/run-bounded.mjs <seconds> <command>` (exit 124 on time out), never `timeout <n> ...`.
+use your tool's own timeout setting or `node ../skills/vibe/scripts/run-bounded.mjs <seconds> <command>` (exit 124 on time out), never `timeout <n> ...`. Stop a hung run only by its own pid, never with `pkill`, `killall` or a pattern.
 
 Read `environment.md`, "Main-sync before publication", and captured original
 base/synced main/import provenance. Verify actual checked inputs equal committed
