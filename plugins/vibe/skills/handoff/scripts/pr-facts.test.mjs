@@ -238,7 +238,7 @@ test("after a fix only failed and newly reached targets may be rerun", () => {
 test("every lane pnpm test:lanes names needs a passing run of its own command, not a hand-picked subset (#9238)", () => {
   const commit = "f".repeat(40);
   const entry = { kind: "vitest", path: TEST, cases: ["limits"], command: "vitest run" };
-  const lane = { name: "app", command: "pnpm --filter app test -- packages/design-system" };
+  const lane = { name: "app", command: "pnpm --filter app test packages/design-system" };
   const evidence = (matches, testRuns) => ({
     targetedInventory: { actor: "read-only", source: "final-committed-diff", commit, laneReport: { command: "pnpm test:lanes", matches }, entries: [entry] },
     testRuns: [{ path: TEST, cases: ["limits"], command: "vitest run", status: "passed", commit }, ...testRuns], rerunCycles: [],
