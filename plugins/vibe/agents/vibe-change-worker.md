@@ -284,7 +284,7 @@ named or placed after the old module for engineering (a rename on the missing
 tests list, or done in a `pull-request` turn).
 
 A new prop on a shared component goes into every capability ledger or
-parity test listing a sibling prop, not only the one you edited (#9238).
+parity test listing a sibling prop, not only the one you edited.
 
 ## Checks, review and recording
 

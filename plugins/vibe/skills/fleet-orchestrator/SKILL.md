@@ -56,7 +56,7 @@ The closedloop-graph MCP server is required; decide from it, not from guesses. T
 - Before dispatching a ticket, and in every QA-prep brief, run vibe's newest-ruling search ([requirements worker](../../agents/vibe-requirements-worker.md), Newest ruling); on a hit, stop and ask the operator.
 - In the same step, check every plan linked to the ticket (`list-artifact-links`, PRODUCES) with `node ../handoff/scripts/rulings-check.mjs --plan <json> --plan-body <text>`. Each exclusion it reports is scope the brief tells the writer to build, or you escalate; never one to skip.
 - Before a shared change, read its callers and importers (`code_callers`, `code_importers`).
-- After any change, fix or merge, run every lane the repo's lane selector names for the diff, never a hand-picked subset (#9238), then rerun only failures.
+- After any change, fix or merge, run every lane the repo's lane selector names for the diff, never a hand-picked subset, then rerun only failures.
 - Trace a surprising difference in a before and after comparison to the commit and ticket that introduced it before blaming the PR.
 - Attribute a file's origin or a first failure from local history only through `scripts/history-origin.mjs --repo <repo> --path <file>`.
 
@@ -97,8 +97,8 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 ## Claude workers
 
 - Launch each Claude writer with the [worker preamble](./references/templates.md#worker-preamble) saved to `prompts/`.
-- Hold an agent with TaskStop, never a message, then check nothing it started still runs.
-- Batch asks to a writer into one list at milestones; side work goes to read-only workers.
+- Hold an agent with TaskStop, never a message; check nothing it started still runs.
+- Batch asks to a writer at milestones; side work goes to read-only workers.
 - A pane teammate sees messages only when its turn ends, so writers keep turns short (vibe's foreground guard refuses a foreground wait over 5 minutes in a vibe worktree). On `UNACKED`, or an idle worker that ignored a message, resend once, then interrupt after the second unanswered delivery: ask the operator to press Esc in the named pane. Keep long briefs in a file and send its path.
 - A standing duty (main's post-merge health, a PR shepherd, the watcher) always has a live owner: `board.mjs <orchDir> duty <duty> --owner <writer or helper>`. Name the replacement in the same step you stop or move its owner; `helpers.mjs stopped` refuses an owner, and `board.mjs status` prints `UNOWNED-DUTY`.
 - Stop a helper (reviewer, verifier, QA prep, poller) once you accept its result, recorded with `scripts/helpers.mjs <orchDir> start|accepted|stopped <name>`; run `helpers.mjs <orchDir> status` with every monitor event (`STOP`, `ORPHAN`). A helper records each process it starts with `helpers.mjs <orchDir> pid <name> <pid...>` (`--group` only for one it spawned detached), and `stopped` ends them.

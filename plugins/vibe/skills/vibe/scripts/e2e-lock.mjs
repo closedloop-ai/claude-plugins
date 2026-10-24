@@ -31,6 +31,9 @@
 // tracked file (tested-head.mjs), prints `e2e-lock: testing <sha>` and fails
 // (exit 1) when HEAD moved during the run: runs once went on at an old commit
 // after every checkout failed, and passes were reported for a commit never tested.
+// A `--no-build` run also needs its compose project's images recorded as built
+// from that HEAD in that worktree (image-head.mjs, beside the lock folder), and a
+// passing build records them.
 //
 // `run` exits with the command's own code. When the stack stays busy past
 // `--wait-seconds` (default 3600) it runs nothing, prints
@@ -43,6 +46,7 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync }
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { imageProblem, recordImages } from "./image-head.mjs";
 import { testedHead } from "./tested-head.mjs";
 
 export const BUSY_EXIT = 75;
@@ -299,10 +303,20 @@ async function main(argv) {
   }
   const composeProject = composeProjectFor(process.env, owner.token);
   process.stderr.write(`e2e-lock: compose project ${composeProject}\ne2e-lock: testing ${tested}\n`);
+  const images = { project: composeProject, worktree: owner.worktree, head: tested, command: [command, ...args].join(" "),
+    records: path.join(path.dirname(lockDir), "e2e-images") };
   try {
+    const stale = imageProblem(images);
+    if (stale) {
+      process.stderr.write(`${stale}\n`);
+      return 1;
+    }
     const code = await runCommand(command, args, { ...process.env, COMPOSE_PROJECT_NAME: composeProject });
     const after = execFileSync("git", ["-C", worktreeOf(process.cwd()), "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-    if (after === tested) return code;
+    if (after === tested) {
+      if (code === 0) recordImages(images);
+      return code;
+    }
     process.stderr.write(`HEAD-MOVED from ${tested.slice(0, 12)} to ${after.slice(0, 12)} during the run; its result is not for ${tested.slice(0, 12)}\n`);
     return code || 1;
   } finally {

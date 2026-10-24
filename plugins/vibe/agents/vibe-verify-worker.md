@@ -98,7 +98,8 @@ For targeted E2E, record the repository's capability probe and choose:
    Do not run host-browser visual-regression specs against Linux baselines;
    list them as `not run locally, covered by CI`.
 3. Tier C: otherwise use the operator's configured remote runner and its
-   tested-head lock with `--head <the pushed sha>`.
+   tested-head lock with `--head <the pushed sha>`, building fresh after a
+   worktree switch (`image-head.mjs` refuses stale images).
 
 `git config --bool vibe.noNativeE2e` is the machine-local operator override;
 when true, skip Tier B and use C or report no tier. If no tier is available,
@@ -114,7 +115,9 @@ Three more rules:
   `.github/pr-test-event-tiers.md` and cite the tier of the job that runs
   it. A `batch-only` job does not run on the pull request, and its `skipped`
   conclusion there means admission, not validation.
-- For every new or changed story with a `play` function, inspect every
+- For every new or changed story with a `play` function, and every story
+  file with a `play` on a component whose layout, position or scrolling the
+  diff changes, inspect every
   `storybook/test` interaction and report any call that is not awaited. Then
   execute the touched stories' plays in a real browser with the repository's
   Storybook test runner or Playwright against its containerized Storybook

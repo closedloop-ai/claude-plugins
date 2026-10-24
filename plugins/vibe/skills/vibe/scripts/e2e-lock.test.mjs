@@ -216,3 +216,30 @@ test("run tests only the named commit of a clean worktree and names it (23/23 re
   assert.equal(moved.status, 1);
   assert.match(moved.stderr, /^HEAD-MOVED /m);
 });
+
+test("a --no-build run needs images built from the head it tests in the same worktree (stale-image reruns, ISS-13067)", () => {
+  const lockDir = path.join(root, "image-head", "e2e-stack");
+  const wt = path.join(root, "wt-images");
+  const other = path.join(root, "wt-images-other");
+  mkdirSync(wt);
+  mkdirSync(other);
+  const first = commitAt(wt);
+  commitAt(other);
+  const env = { ...process.env, COMPOSE_PROJECT_NAME: "cl-e2e-fixture" };
+  Reflect.deleteProperty(env, "VIBE_E2E_FOREIGN_COMPOSE");
+  const run = (cwd, sha, ...flags) => spawnSync(process.execPath, [SCRIPT, "run", "--head", sha, "--lock-dir", lockDir,
+    process.execPath, "-e", "0", "--", ...flags], { encoding: "utf8", cwd, env });
+  assert.match(run(wt, first, "--no-build").stderr, /STALE-IMAGES no recorded build/);
+  assert.equal(run(wt, first).status, 0, "a build records its images");
+  assert.equal(run(wt, first, "--no-build").status, 0, "reuse at the same head and worktree");
+  const elsewhere = run(other, spawnSync("git", ["-C", other, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim(), "--no-build");
+  assert.equal(elsewhere.status, 1);
+  assert.match(elsewhere.stderr, /STALE-IMAGES .*(built from|built in)/);
+  spawnSync("git", ["-C", wt, "-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "--quiet", "--allow-empty", "-m", "fix"]);
+  const fix = spawnSync("git", ["-C", wt, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+  const reused = run(wt, fix, "--no-build");
+  assert.equal(reused.status, 1);
+  assert.match(reused.stderr, new RegExp(`STALE-IMAGES cl-e2e-fixture's images were built from ${first.slice(0, 12)}`));
+  assert.equal(run(wt, fix).status, 0);
+  assert.equal(run(wt, fix, "--no-build").status, 0);
+});

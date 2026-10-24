@@ -43,4 +43,8 @@ def test_env_less_sessions_push_and_qa_env_uses_vibe_up() -> None:
     environment = read("agents/vibe-environment-worker.md")
     assert "A session with no environment (no `lastRequestId`)" in environment
     assert 'command: "pnpm vibe up"' in read("skills/handoff/scripts/parallel-prep.mjs")
-    assert "--head <the pushed sha>" in read("agents/vibe-verify-worker.md")
+    verify = read("agents/vibe-verify-worker.md")
+    assert "--head <the pushed sha>" in verify
+    assert "`image-head.mjs` refuses stale images" in verify
+    assert "position or scrolling the\n  diff changes, inspect every" in verify
+    assert "imageProblem(images)" in read("skills/vibe/scripts/e2e-lock.mjs")

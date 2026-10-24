@@ -497,10 +497,9 @@ steps 3 to 6 run again on the result. Before handoff, the findings file must pas
 `fixed: <sha>` or a follow-up `ticket: <id>`. Their reports feed the Design Review evidence in step 8. Owned
 prototype sessions keep their canonical single design review instead.
 
-Every new or changed Storybook `play` runs awaited in a real browser, and any
-card or narrow-layout interaction on WebKit iPhone and Chromium Pixel, as the
-verify worker's checks mode says and records. For a requested pull request
-these are opening gates (step 9), not missing-test notes.
+Storybook plays run in a real browser, and card or narrow-layout
+interactions on WebKit iPhone and Chromium Pixel, as the verify worker's
+checks mode says; a requested pull request cannot open without them (step 9).
 
 ## 7. Upload the last changes
 
@@ -855,7 +854,7 @@ resumes and every fix goes through this path, never around it:
    flag-gated fix names the test or missing-tests entry pinning flag-off
    behavior to main. A `source: bot` thread is fixed only when it reproduces
    and stays contained, otherwise `reason` with `evidence`; bots contradict
-   themselves across pull requests. A
+   themselves across PRs. A
    product question a thread raises goes through "Answers from the person";
    a fix that needs a path the writer may never edit is logged as
    `Engineering needed (forbidden path)` and answered with that reason.

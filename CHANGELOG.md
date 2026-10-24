@@ -11,16 +11,18 @@ The 2026-10-23 and 2026-10-24 fleet lessons now have hooks, launcher behavior an
 #### Added
 - The pull request evidence gate requires a passing run of every lane `pnpm test:lanes` names for the diff, by the command it prints. A hand-picked subset no longer passes (#9238). A mention-only lane needs a recorded reason.
 - A diff that changes a check, CI script or workflow needs `ciCheckRepros`: a run in the CI job's own tier and checkout shape. The new `ci-job-shape.mjs` reports each job's tier, fetch depth, env names and `if` (#9230, fixed in #9237).
-- The Bash safety hook refuses three more things: starting `watch.sh` other than as its own `run_in_background` call, `set -- $var` (zsh does not word-split it), and `e2e-slot.sh` without `--head <sha>`. The remote `e2e-slot.sh` accepts `--head` and refuses a HEAD that differs from it.
-- A SendMessage hook refuses a message that opens with hold, pause or stop until the agent has been stopped with TaskStop.
+- The Bash safety hook refuses three more things: starting `watch.sh` other than as its own `run_in_background` call, `set -- $var` (zsh does not word-split it), and `e2e-slot.sh` without `--head <sha>`. The remote `e2e-slot.sh` accepts `--head` and refuses a HEAD that differs from it; a staged next version adds the image check.
+- A SendMessage hook adds a TaskStop reminder when a message asks its recipient to pause or hold itself. It never refuses, and ordinary freeze instructions such as "push nothing more" or "stop the investigation and report" get nothing.
+- `image-head.mjs` records, per compose project, the commit and worktree that built the e2e images. vibe's e2e lock refuses a `--no-build` run whose images came from another commit or worktree (ISS-13067, #9241), and a passing build records its images.
 - A writer turn that hits its time cap reports `CAP-HIT` with its changed-file count, whether it was mid-merge, and a saved patch of its tracked changes.
 
 #### Changed
 - A review thread marked `source: bot` is fixed only when it reproduces and stays contained; otherwise it is answered with evidence and resolved. A human's reasoned answer still stays open.
 - A new writer request supersedes a FAILED turn, and a turn whose launcher process is gone is closed by the next claim, so a stopped or rejected turn no longer wedges the queue. The launcher caps an over-long result instead of rejecting it.
 - A session with no environment pushes through redeploy mode without requesting one. Human QA prep names `pnpm vibe up` and is ready only once a page loads past the org picker.
+- The verify worker also runs the real-browser story test for every story file with a play on a component whose layout, position or scrolling changed, because the jsdom sweep passes those plays vacuously (#9238).
 - The watcher's second-copy refusal says how to stop a detached copy. Fleet and worker templates run every named lane instead of `code_tests_for` alone, hold an agent with TaskStop, and batch asks to a writer.
-- Instruction text is about 10 words shorter than in 1.0.80.
+- Instruction text is about 2 words shorter than in 1.0.80.
 
 ### vibe v1.0.80
 
