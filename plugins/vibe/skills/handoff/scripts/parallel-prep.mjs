@@ -10,8 +10,11 @@ const PREP = Object.freeze([
     purpose: "transport a fresh ref, install, bootstrap and prebuild without running final-SHA E2E" },
   { id: "run-stable-test-lanes", agent: "vibe-verify-worker", timing: "now", kind: "read-only",
     purpose: "run finished lanes and bind results to their SHA and covered-file hashes" },
+  // ISS-13043: `pnpm control up web --isolated` signs in the e2e org, so
+  // /organizations/current returned 403 and the org picker hung for the person.
   { id: "prepare-local-qa", agent: "vibe-setup-worker", timing: "writer-turn-ended", kind: "operational",
-    purpose: "bring up the hidden local QA environment as soon as the writer stops" },
+    purpose: "bring up the hidden local QA environment as soon as the writer stops", command: "pnpm vibe up",
+    readyCheck: "a page loads past the org picker, signed in as the seeded vibe user, before anyone hears it is ready" },
   { id: "draft-pr-evidence", agent: "vibe-environment-worker", timing: "now", kind: "read-only",
     purpose: "draft the PR body and targeted-test comment, filling results as they land" },
 ].map((entry) => Object.freeze({ ...entry, productSourceWrites: false })));

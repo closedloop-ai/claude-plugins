@@ -1,6 +1,6 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { closeSync, openSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, openSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod";
@@ -215,8 +215,14 @@ export async function runWorker(rawInput: unknown) {
       } catch { leaseRetained = true; }
     }
     const failure = safeFailure(error);
+    const capHit = persistent && failure.code === "TURN_TIMEOUT" ? capCheckpoint(place.root, place.dir, turnId) : undefined;
+    if (capHit) {
+      failure.summary = `CAP-HIT: the turn hit its time cap with ${capHit.dirtyFiles} changed files${capHit.midMerge ? ", mid-merge" : ""}`
+        + `${capHit.patch ? `; work saved as ${capHit.patch}` : ""}. Continue this request with the same writer.`;
+    }
     throw new WorkerLaunchError({ status: "BLOCKED", ...failure, workerId, sessionId: workerId,
-      requestId: input.requestId, tracePath, leaseRetained, recordLeaseRetained: recordLock && cleanupBlocked });
+      requestId: input.requestId, tracePath, leaseRetained, recordLeaseRetained: recordLock && cleanupBlocked,
+      ...(capHit ? { capHit } : {}) });
   } finally {
     process.removeListener("SIGTERM", cancelBeforeLaunch);
     process.removeListener("SIGINT", cancelBeforeLaunch);
@@ -315,8 +321,8 @@ async function launchProcess(args: string[], granted: readonly string[], cwd: st
         if (failed) { reject(failed); return; }
         if (code !== 0 || !final || final.is_error || (final.structured_output === undefined && !final.result)) { reject(new Error("Claude failed or returned no successful structured result")); return; }
         try {
-          const result = workerResultSchema.parse(final.structured_output !== undefined
-            ? final.structured_output : JSON.parse(final.result!));
+          const result = workerResultSchema.parse(capWorkerResult(final.structured_output !== undefined
+            ? final.structured_output : JSON.parse(final.result!)));
           resolve({ ...result, sessionId: final.session_id, ...(rateLimit ? { rateLimit } : {}) });
         } catch { reject(new Error("Worker returned no valid compact status object")); }
       }, reject);
@@ -328,7 +334,8 @@ async function launchProcess(args: string[], granted: readonly string[], cwd: st
 class OwnedCleanupError extends Error {}
 class WorkerLaunchError extends Error {
   constructor(readonly result: { status: "BLOCKED"; code: string; summary: string; personAction?: string; workerId: string;
-    sessionId: string; requestId: string; tracePath: string; leaseRetained: boolean; recordLeaseRetained: boolean }) {
+    sessionId: string; requestId: string; tracePath: string; leaseRetained: boolean; recordLeaseRetained: boolean;
+    capHit?: CapCheckpoint }) {
     super(result.summary);
   }
 }
@@ -417,4 +424,48 @@ function referenceImagesFor(agentName: string, metadataDir: string) {
 
 /** Writer turns that may mechanically repair existing tests the session's change broke (operator ruling, 2026-10-13). */
 const TEST_REPAIR_MODES: ReadonlySet<string> = new Set(["request", "fix", "handoff", "pull-request"]);
+const SUMMARY_LIMIT = 4096;
+const RESULT_LIMIT = 16 * 1024;
+const TRUNCATED = " [truncated by the launcher]";
+const DATA_DROPPED = " [data dropped by the launcher: over 16 KB; see the trace]";
+
+/**
+ * The launcher caps a result instead of rejecting it after the turn. A result
+ * rejected for length left its request open, and the writer refused the next
+ * request until a continuation nobody sent (ISS-13043).
+ */
+export function capWorkerResult(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const result = { ...(value as Record<string, unknown>) };
+  const clip = (summary: string, suffix: string) => summary.length + suffix.length <= SUMMARY_LIMIT ? `${summary}${suffix}`
+    : `${summary.slice(0, SUMMARY_LIMIT - suffix.length)}${suffix}`;
+  if (typeof result.summary === "string" && result.summary.length > SUMMARY_LIMIT) result.summary = clip(result.summary, TRUNCATED);
+  if (JSON.stringify(result).length > RESULT_LIMIT && "data" in result) {
+    delete result.data;
+    if (typeof result.summary === "string") result.summary = clip(result.summary, DATA_DROPPED);
+  }
+  return result;
+}
+
+type CapCheckpoint = { dirtyFiles: number; midMerge: boolean; patch?: string };
+
+/**
+ * A writer turn that hits its time cap leaves its edits uncommitted, twice
+ * mid-merge, with no report (vibe-13007, 2026-10-23). Before the turn is
+ * released, record what it left and save tracked changes as a patch in the
+ * git dir; nothing is committed, reset or discarded.
+ */
+function capCheckpoint(root: string, gitDir: string, turnId: string): CapCheckpoint | undefined {
+  try {
+    const run = (args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"] });
+    const dirtyFiles = run(["status", "--porcelain"]).split("\n").filter(Boolean).length;
+    const midMerge = existsSync(join(gitDir, "MERGE_HEAD"));
+    const diff = run(["diff", "--binary", "HEAD"]);
+    if (!diff) return { dirtyFiles, midMerge };
+    const patch = join(gitDir, `vibe-cap-${turnId}.patch`);
+    writeFileSync(patch, diff, { mode: 0o600, flag: "wx" });
+    return { dirtyFiles, midMerge, patch };
+  } catch { return undefined; }
+}
 runFromCanonicalEntry(import.meta.url, main);

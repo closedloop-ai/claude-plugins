@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { credentialProblem, forcePushProblem } from "./shell-safety-guard.mjs";
+import { credentialProblem, e2eSlotProblem, forcePushProblem, watcherLaunchProblem, wordSplitProblem } from "./shell-safety-guard.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const GUARD = path.join(HERE, "shell-safety-guard.mjs");
@@ -45,4 +45,31 @@ test("the PreToolUse hook denies unsafe Bash and is registered", () => {
   }
   assert.equal(run("gh run view 123 --log").stdout, "");
   assert.ok(readFileSync(path.join(HERE, "hooks.json"), "utf8").includes("hooks/shell-safety-guard.mjs"));
+});
+
+test("the fleet watcher starts only as its own background call (started with & twice, 2026-10-24)", () => {
+  const refused = [
+    { command: "zsh plugins/vibe/skills/codex-fleet-monitor/scripts/watch.sh orch 120 &", run_in_background: false },
+    { command: "cd orch && scripts/watch.sh orch", run_in_background: true },
+    { command: "scripts/watch.sh orch; echo done", run_in_background: true },
+    { command: "scripts/watch.sh orch" },
+  ];
+  for (const input of refused) assert.match(watcherLaunchProblem(input) ?? "", /run_in_background/, input.command);
+  for (const input of [{ command: "zsh scripts/watch.sh orch 120", run_in_background: true },
+    { command: "scripts/watch.sh orch 2>&1", run_in_background: true }, { command: "cat scripts/watch.sh" }]) {
+    assert.equal(watcherLaunchProblem(input), null, input.command);
+  }
+});
+
+test("set -- $var is refused because zsh does not split it (the merge watcher never fired, 2026-10-23)", () => {
+  assert.match(wordSplitProblem("st=$(gh pr view 1 --json state,headRefOid -q '.state+\" \"+.headRefOid'); set -- $st; [ \"$1\" = MERGED ]") ?? "", /read -r/);
+  for (const command of ["read -r state sha <<< \"$st\"", "set -- \"$st\"", "set -- ${=st}", "set -e"]) assert.equal(wordSplitProblem(command), null, command);
+});
+
+test("e2e-slot.sh runs only with the pushed commit named (two reruns tested a stale commit, ISS-13043)", () => {
+  for (const command of ["~/vibe-remote/e2e-slot.sh ISS-1 pnpm e2e", "ssh host 'zsh -lic \"cd ~/wt && ~/vibe-remote/e2e-slot.sh ISS-1 e2e/run.sh\"'",
+    "zsh e2e-slot.sh --head HEAD ISS-1 run"]) {
+    assert.match(e2eSlotProblem(command) ?? "", /--head <sha>/, command);
+  }
+  for (const command of ["~/vibe-remote/e2e-slot.sh --head 0123abc ISS-1 pnpm e2e", "cat ~/vibe-remote/e2e-slot.sh"]) assert.equal(e2eSlotProblem(command), null, command);
 });

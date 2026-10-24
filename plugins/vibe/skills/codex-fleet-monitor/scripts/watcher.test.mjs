@@ -114,6 +114,7 @@ test('a second watch.sh on the same work dir is refused while the first runs, an
   ]);
   assert.equal(status, 3);
   assert.match(stderr, new RegExp(`watcher pid ${child.pid} already runs`));
+  assert.match(stderr, new RegExp(`kill-guard\\.mjs own ${child.pid}' and 'kill ${child.pid}' as two steps`));
   assert.match(stderr, /run_in_background\), never with &/);
   assert.equal(JSON.parse(readFileSync(join(dir, 'watcher.json'), 'utf8')).pid, child.pid, 'the refused copy leaves the live watcher record alone');
   const exited = new Promise((resolve) => child.on('exit', resolve));

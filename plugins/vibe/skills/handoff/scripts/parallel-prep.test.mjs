@@ -16,3 +16,9 @@ test("a running persistent writer dispatches every independent pre-PR prep lane"
   assert.deepEqual(idlePrepDispatches({ writerState: "idle", pullRequestRequested: true }), []);
   assert.deepEqual(idlePrepDispatches({ writerState: "running", pullRequestRequested: false }), []);
 });
+
+test("human QA comes up with pnpm vibe up and is ready only past the org picker (ISS-13043)", () => {
+  const qa = idlePrepDispatches({ writerState: "running", pullRequestRequested: true }).find((entry) => entry.id === "prepare-local-qa");
+  assert.equal(qa.command, "pnpm vibe up");
+  assert.match(qa.readyCheck, /past the org picker/);
+});

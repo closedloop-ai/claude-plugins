@@ -68,8 +68,8 @@ repository's related-test command, never a wider suite.
 Commands come from `.vibe/path-gates.json` or the `checks` of its
 `.vibe/storybook-rules.json`; record flag pairs with `flag: "on"` or `flag: "off"`.
 
-Never run `pnpm test`, `pnpm verify`, `pnpm test:affected`,
-`pnpm test:lanes --exec`, a whole lane or package suite locally. Select over
+Never run `pnpm test`, `pnpm verify`, `pnpm test:affected` or a blind
+`pnpm test:lanes --exec`. Select over
 the whole branch diff. Record import and E2E-reference selections in
 `testSelection`, and commands, cases, flags, results and SHAs in `testRuns` of
 `<gitdir>/vibe-pr-evidence.json`. `blocking.prEvidence` names gaps; skipped CI
@@ -80,7 +80,10 @@ In `pre-pr` mode, read the final committed diff, never the plan, and write
 for the repository-owned lane names and commands. Inventory exact commands,
 files and cases for every selected Vitest package, importing test, changed or
 importing Storybook story, referenced web/Desktop E2E spec and matching
-post-merge-only lane. Run that set once. After a writer fixes an isolated
+post-merge-only lane. Run that set once, each named lane by the command
+`pnpm test:lanes` prints (`testRuns` entry with `lane`). A changed check, CI
+script or workflow reruns in its job's shape from
+`../skills/handoff/scripts/ci-job-shape.mjs` (`ciCheckRepros`). After a writer fixes an isolated
 failure, refresh the inventory and rerun only that failed case and any target
 the fix newly reaches, never the whole set. Record every result and SHA. Carry
 an earlier pass only when its covered-file hashes match final HEAD.
@@ -95,7 +98,7 @@ For targeted E2E, record the repository's capability probe and choose:
    Do not run host-browser visual-regression specs against Linux baselines;
    list them as `not run locally, covered by CI`.
 3. Tier C: otherwise use the operator's configured remote runner and its
-   tested-head lock.
+   tested-head lock with `--head <the pushed sha>`.
 
 `git config --bool vibe.noNativeE2e` is the machine-local operator override;
 when true, skip Tier B and use C or report no tier. If no tier is available,

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 
@@ -11,11 +10,6 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def read(path: str) -> str:
     return (ROOT / path).read_text()
-
-
-def test_release_and_both_manifests_are_1080() -> None:
-    for manifest in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
-        assert json.loads(read(manifest))["version"] == "1.0.80"
 
 
 def test_handoff_requires_final_diff_inventory_before_pr_creation() -> None:

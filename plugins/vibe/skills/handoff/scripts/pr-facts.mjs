@@ -32,6 +32,7 @@ const DESKTOP_HOST = ["apps/desktop/src/renderer/", "packages/app/"];
 const TEMPLATE_PATHS = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md", "pull_request_template.md"];
 const TEMPLATE_HEADING = /^#{1,6}\s+\S.*$/gm;
 const SELECTORS = ["code_tests_for", "related", "e2e-reference"];
+const CI_CHECK_PATH = /^(?:\.github\/(?:workflows|actions)\/|scripts\/)|(?:^|\/)(?:package\.json|turbo\.json|biome\.jsonc?)$|(?:^|\/)(?:lint|checks?|gates?)\//;
 
 export const STACKED_BASE_STATEMENT = "Stacked pull request: its base is not main, so no required CI lane runs on it; local evidence is listed below.";
 
@@ -236,6 +237,7 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
       ...evidenceProblems(runs, changed, commit),
       ...selectionProblems(runs, files, requiredTests, commit),
       ...targetedEvidenceProblems(runs, commit, worktree),
+      ...ciCheckProblems(runs, changed, commit),
       ...tierEvidenceProblems(runs.e2eCapability, (runs.targetedInventory?.entries ?? []).filter((entry) => entry?.kind === "e2e").map((entry) => entry.path)),
     ] }),
   };
@@ -325,15 +327,19 @@ export function targetedEvidenceProblems(runsFile, commit, worktree) {
   if (!commit || inventory.commit !== commit) problems.push(`targeted inventory does not name the final committed SHA ${commit ?? "required by the gate"}`);
   if (inventory.laneReport?.command !== "pnpm test:lanes") problems.push("targeted inventory must use pnpm test:lanes as the repository lane source");
   if (!Array.isArray(inventory.laneReport?.matches)) problems.push("targeted inventory must list the post-merge lane matches from pnpm test:lanes");
+  const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
   for (const lane of inventory.laneReport?.matches ?? []) {
     if (!lane?.name || !lane?.command) problems.push("each matching post-merge lane needs its repository name and exact command");
+    else if (!(lane.mentionOnly === true && text(lane.notRunReason))
+      && !runs.some((run) => run?.lane === lane.name && run.command === lane.command && run.status === "passed" && run.commit === commit)) {
+      problems.push(`lane ${lane.name}: no passing run of its test:lanes command on ${commit}; a hand-picked subset is not the lane (#9238)`);
+    }
   }
   if (!Array.isArray(inventory.entries) || (inventory.entries.length === 0 && !inventory.noTestsReason)) {
     problems.push("targeted inventory needs exact entries or a no-tests reason");
   }
   const entries = Array.isArray(inventory.entries) ? inventory.entries : [];
   const unavailable = new Set(runsFile?.e2eCapability?.unavailableSpecs ?? []);
-  const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
   for (const entry of entries) {
     if (!entry?.kind || !entry?.path || !entry?.command || !Array.isArray(entry?.cases) || entry.cases.length === 0) {
       problems.push(`targeted inventory entry for ${entry?.path ?? "unknown path"} needs kind, path, cases and exact command`);
@@ -372,6 +378,25 @@ export function targetedEvidenceProblems(runsFile, commit, worktree) {
   return problems;
 }
 
+/**
+ * A change to a check, a CI script or a workflow is reproduced in the shape of
+ * the CI job that runs it. #9230 added a gate inside a batch-only job that
+ * checks out at depth 1 with no base ref; it passed in a full local clone and
+ * turned every post-merge batch red. `ciCheckRepros` lists, per job,
+ * `{ job, tier, checkout, command, status, commit }` from `ci-job-shape.mjs`
+ * and a run in that shape, or is [] with `noCiCheckReason`.
+ */
+export function ciCheckProblems(runsFile, changed, commit) {
+  if (!changed.some((file) => CI_CHECK_PATH.test(file))) return [];
+  const repros = runsFile?.ciCheckRepros;
+  if (!Array.isArray(repros)) return ["the diff changes a check or CI script: record ciCheckRepros from ci-job-shape.mjs (each job's tier, checkout and a passing run in that shape), or [] with noCiCheckReason"];
+  if (repros.length === 0) return text(runsFile.noCiCheckReason) ? [] : ["ciCheckRepros is empty without a noCiCheckReason"];
+  return repros.flatMap((repro) => {
+    if (!text(repro?.job) || !text(repro?.tier) || !text(repro?.checkout) || !text(repro?.command)) return [`ciCheckRepros entry ${repro?.job ?? "unknown"} needs job, tier, checkout and command`];
+    return repro.status === "passed" && repro.commit === commit ? [] : [`${repro.job}: no passing run in its CI checkout shape on ${commit}`];
+  });
+}
+
 function finalFileHash(inventory, worktree, file) {
   if (!file) return undefined;
   if (worktree) {
@@ -390,4 +415,8 @@ function readTemplate(worktree, base) {
     }
   }
   return "";
+}
+
+function text(value) {
+  return typeof value === "string" && value.trim() !== "";
 }

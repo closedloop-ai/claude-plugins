@@ -283,6 +283,9 @@ collapse a loop or `each` table left with one arm; and record each test still
 named or placed after the old module for engineering (a rename on the missing
 tests list, or done in a `pull-request` turn).
 
+A new prop on a shared component goes into every capability ledger or
+parity test listing a sibling prop, not only the one you edited (#9238).
+
 ## Checks, review and recording
 
 Before publication/main-sync, read `environment.md`, "Main-sync before

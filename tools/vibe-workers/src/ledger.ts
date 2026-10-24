@@ -215,7 +215,21 @@ export function changeWriter(action: "enqueue" | "claim" | "finish", input: unkn
       ledger.pending.push({ id: requestId, input: data.input });
     } else if (action === "claim") {
       if (existsSync(join(place.dir, "vibe-record-turn.lock"))) throw new Error("A record turn is already running; retain the queued writer request");
+      if (ledger.active?.lease && ledger.runtime === "claude" && staleClaudeLease(ledger.active)) {
+        ledger.active.status = "FAILED";
+        ledger.active.resultSummary = "The launcher that owned this turn stopped; the turn was closed.";
+        delete ledger.active.lease;
+        delete ledger.active.ownerPid;
+        delete ledger.active.processGroupId;
+        delete ledger.active.continuation;
+      }
       if (ledger.active?.lease) throw new Error("Writer already has an owned running turn");
+      // A stopped or rejected turn finishes FAILED. A new request supersedes it
+      // instead of waiting on a continuation nobody sends (ISS-13043, ISS-13051).
+      if (ledger.active?.status === "FAILED" && !data.continuation && ledger.pending[0]?.id === requestId) {
+        ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
+        delete ledger.active;
+      }
       if (ledger.active) {
         if (ledger.active.id !== requestId || !data.continuation) throw new Error("Continue the active request before the next queued request");
         ledger.active.continuation = data.continuation;
@@ -346,6 +360,17 @@ function summary(ledger: Ledger) {
     status: ledger.active?.status, running: Boolean(ledger.active?.lease), processGroupId: ledger.active?.processGroupId,
     migrationCount: ledger.migrations.length,
     lastMigration: lastMigration ? { id: lastMigration.id, reason: lastMigration.reason, at: lastMigration.at } : undefined };
+}
+
+/** A Claude turn whose launcher process is gone and whose process group, if any, has stopped. */
+function staleClaudeLease(active: { ownerPid?: number | undefined; processGroupId?: number | undefined }) {
+  if (!(typeof active.ownerPid === "number" && active.ownerPid > 1) || signalReaches(active.ownerPid)) return false;
+  return !(typeof active.processGroupId === "number" && active.processGroupId > 1) || !signalReaches(-active.processGroupId);
+}
+
+function signalReaches(target: number) {
+  try { process.kill(target, 0); return true; }
+  catch (error) { return !(error instanceof Error && "code" in error && error.code === "ESRCH"); }
 }
 
 function proveGroupStopped(processGroupId: number) {

@@ -3,7 +3,7 @@ import { unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { evidenceProblems, pullRequestFacts, requiredLanes, selectionProblems, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
+import { ciCheckProblems, evidenceProblems, pullRequestFacts, requiredLanes, selectionProblems, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
 import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -233,4 +233,33 @@ test("after a fix only failed and newly reached targets may be rerun", () => {
   assert.match(targetedEvidenceProblems(broad, after).join(), /only its failed cases/);
   const changed = { ...evidence, targetedInventory: { ...evidence.targetedInventory, fileHashes: { "src/passed.ts": "b".repeat(64) } } };
   assert.match(targetedEvidenceProblems(changed, after).join(), /src\/passed\.ts.*hash changed/);
+});
+
+test("every lane pnpm test:lanes names needs a passing run of its own command, not a hand-picked subset (#9238)", () => {
+  const commit = "f".repeat(40);
+  const entry = { kind: "vitest", path: TEST, cases: ["limits"], command: "vitest run" };
+  const lane = { name: "app", command: "pnpm --filter app test packages/design-system" };
+  const evidence = (matches, testRuns) => ({
+    targetedInventory: { actor: "read-only", source: "final-committed-diff", commit, laneReport: { command: "pnpm test:lanes", matches }, entries: [entry] },
+    testRuns: [{ path: TEST, cases: ["limits"], command: "vitest run", status: "passed", commit }, ...testRuns], rerunCycles: [],
+  });
+  assert.match(targetedEvidenceProblems(evidence([lane], []), commit).join(), /lane app: no passing run/);
+  assert.match(targetedEvidenceProblems(evidence([lane], [{ lane: "app", command: "vitest run capability-parity", status: "passed", commit }]), commit).join(), /hand-picked/);
+  assert.match(targetedEvidenceProblems(evidence([lane], [{ lane: "app", command: lane.command, status: "passed", commit: "e".repeat(40) }]), commit).join(), /lane app/);
+  assert.deepEqual(targetedEvidenceProblems(evidence([lane], [{ lane: "app", command: lane.command, status: "passed", commit }]), commit), []);
+  assert.deepEqual(targetedEvidenceProblems(evidence([{ ...lane, mentionOnly: true, notRunReason: "only its AGENTS.md mentions the path" }], []), commit), []);
+});
+
+test("a changed check or CI script needs a run in its CI job's checkout shape (#9230)", () => {
+  const commit = "c".repeat(40);
+  const repro = { job: "pr-test.yml:storybook-build", tier: "batch-only", checkout: "fetch-depth 1, no CI_DIFF_BASE_REF", command: "GITHUB_ACTIONS=true pnpm --filter storybook validate:catalog", status: "passed", commit };
+  assert.deepEqual(ciCheckProblems({}, ["apps/app/page.tsx"], commit), []);
+  for (const file of ["scripts/lint/rules/story-rules.ts", "apps/storybook/package.json", ".github/workflows/pr-test.yml", "packages/design-system/checks/catalog.ts"]) {
+    assert.match(ciCheckProblems({}, [file], commit).join(), /ciCheckRepros/, file);
+  }
+  assert.match(ciCheckProblems({ ciCheckRepros: [] }, ["scripts/a.ts"], commit).join(), /noCiCheckReason/);
+  assert.deepEqual(ciCheckProblems({ ciCheckRepros: [], noCiCheckReason: "dependency version only" }, ["package.json"], commit), []);
+  assert.match(ciCheckProblems({ ciCheckRepros: [{ ...repro, status: "failed" }] }, ["scripts/a.ts"], commit).join(), /storybook-build: no passing run/);
+  assert.match(ciCheckProblems({ ciCheckRepros: [{ ...repro, checkout: "" }] }, ["scripts/a.ts"], commit).join(), /needs job, tier, checkout/);
+  assert.deepEqual(ciCheckProblems({ ciCheckRepros: [repro] }, ["scripts/a.ts"], commit), []);
 });

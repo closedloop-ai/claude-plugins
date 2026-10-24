@@ -2,7 +2,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { boundDefinition } from "./claude-worker.js";
+import { boundDefinition, capWorkerResult } from "./claude-worker.js";
 import { readDefinition } from "./definition.js";
 import { changeWriter, readWriterSummary, registerWriter } from "./ledger.js";
 import { bundleDirectory, fixture, graph, liveReads, readProof, recordWrite, writeAgent } from "./test-fixtures.js";
@@ -461,6 +461,36 @@ describe("production Claude CLI adapter", () => {
     expect(run(value, { continuation: "Continue after interruption" }).status).toBe(0);
     expect(readProof(value.metadata)[1]?.args).toContain("--resume");
   });
+  it("reports CAP-HIT with the saved patch when a writer turn hits its cap, and a new request still starts (vibe-13007)", () => {
+    const value = setup();
+    writeFileSync(join(value.worktree, "page.tsx"), "export const page = 1;\n");
+    execFileSync("git", ["add", "page.tsx"], { cwd: value.worktree });
+    execFileSync("git", ["commit", "-m", "page"], { cwd: value.worktree, stdio: "ignore" });
+    writeFileSync(join(value.worktree, "page.tsx"), "export const page = 2;\n");
+    const capped = run(value, { input: "WAIT_FOR_CANCEL", timeoutMs: 1000 });
+    expect(capped.status).toBe(1);
+    const result = JSON.parse(capped.stdout);
+    expect(result.code).toBe("TURN_TIMEOUT");
+    expect(result.summary).toMatch(/^CAP-HIT: .*1 changed files/);
+    expect(result.capHit.midMerge).toBe(false);
+    expect(readFileSync(result.capHit.patch, "utf8")).toContain("+export const page = 2;");
+    expect(readFileSync(join(value.worktree, "page.tsx"), "utf8")).toBe("export const page = 2;\n");
+    const next = run(value, { requestId: "after-cap", input: "A new request after the cap" });
+    expect(next.status, next.stdout).toBe(0);
+    expect(readWriterSummary(value.worktree)?.activeRequestId).toBeUndefined();
+  }, 20000);
+  it("caps an over-long result instead of rejecting it, so the request closes (ISS-13043)", () => {
+    const value = setup();
+    const long = run(value, { input: "LONG_SUMMARY" });
+    expect(long.status, long.stdout).toBe(0);
+    const summary = JSON.parse(long.stdout).summary as string;
+    expect(summary.length).toBe(4096);
+    expect(summary.endsWith("[truncated by the launcher]")).toBe(true);
+    const capped = capWorkerResult({ status: "DONE", summary: "ok", data: { blob: "y".repeat(20 * 1024) } }) as Record<string, unknown>;
+    expect(capped.data).toBeUndefined();
+    expect(capped.summary).toMatch(/data dropped by the launcher/);
+    expect(capWorkerResult({ status: "DONE", summary: "ok", data: { a: 1 } })).toEqual({ status: "DONE", summary: "ok", data: { a: 1 } });
+  }, 20000);
   it("serializes truly concurrent helper publication and native writer claims through the production CLIs", async () => {
     const value = setup();
     const registered = registerWriter({ worktree: value.worktree, runtime: "codex", workerId: "native-record-race",

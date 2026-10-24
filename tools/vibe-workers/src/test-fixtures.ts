@@ -113,6 +113,7 @@ process.stdin.on('end', () => {
   }
   const reportedId = payload.input.includes('WRONG_ID') ? '11111111-1111-4111-8111-111111111111' : id;
   const compact = { status, summary: 'fixture result', data: { inputSeen: true } };
+  if (payload.input.includes('LONG_SUMMARY')) compact.summary = 'x'.repeat(5000);
   if (mainSyncResult) compact.data.mainSyncResult = mainSyncResult;
   if (discardReceipt) compact.data.discardReceipt = discardReceipt;
   const result = { type: 'result', session_id: reportedId, is_error: false,

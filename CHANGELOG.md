@@ -4,6 +4,24 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.81
+
+The 2026-10-23 and 2026-10-24 fleet lessons now have hooks, launcher behavior and evidence gates instead of prose alone.
+
+#### Added
+- The pull request evidence gate requires a passing run of every lane `pnpm test:lanes` names for the diff, by the command it prints. A hand-picked subset no longer passes (#9238). A mention-only lane needs a recorded reason.
+- A diff that changes a check, CI script or workflow needs `ciCheckRepros`: a run in the CI job's own tier and checkout shape. The new `ci-job-shape.mjs` reports each job's tier, fetch depth, env names and `if` (#9230, fixed in #9237).
+- The Bash safety hook refuses three more things: starting `watch.sh` other than as its own `run_in_background` call, `set -- $var` (zsh does not word-split it), and `e2e-slot.sh` without `--head <sha>`. The remote `e2e-slot.sh` accepts `--head` and refuses a HEAD that differs from it.
+- A SendMessage hook refuses a message that opens with hold, pause or stop until the agent has been stopped with TaskStop.
+- A writer turn that hits its time cap reports `CAP-HIT` with its changed-file count, whether it was mid-merge, and a saved patch of its tracked changes.
+
+#### Changed
+- A review thread marked `source: bot` is fixed only when it reproduces and stays contained; otherwise it is answered with evidence and resolved. A human's reasoned answer still stays open.
+- A new writer request supersedes a FAILED turn, and a turn whose launcher process is gone is closed by the next claim, so a stopped or rejected turn no longer wedges the queue. The launcher caps an over-long result instead of rejecting it.
+- A session with no environment pushes through redeploy mode without requesting one. Human QA prep names `pnpm vibe up` and is ready only once a page loads past the org picker.
+- The watcher's second-copy refusal says how to stop a detached copy. Fleet and worker templates run every named lane instead of `code_tests_for` alone, hold an agent with TaskStop, and batch asks to a writer.
+- Instruction text is about 10 words shorter than in 1.0.80.
+
 ### vibe v1.0.80
 
 Targeted validation of the final committed diff is now a required gate before a vibe pull request opens.

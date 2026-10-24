@@ -165,6 +165,44 @@ describe("persistent writer ledger", () => {
   });
 });
 
+describe("closed writer turns never wedge the queue (ISS-13043, ISS-13051)", () => {
+  function claudeWriter() {
+    const value = setup();
+    const writer = registerWriter({ worktree: value.worktree, runtime: "claude", agentRoot: value.agentRoot,
+      agentName: "vibe-change-worker", capabilities: graph });
+    const start = (requestId: string) => {
+      changeWriter("enqueue", { worktree: value.worktree, workerId: writer.workerId, requestId, input: `${requestId} input` });
+      return changeWriter("claim", { worktree: value.worktree, workerId: writer.workerId, requestId });
+    };
+    return { value, writer, start };
+  }
+  it("a new request supersedes a FAILED turn, while any other open status still needs its continuation", () => {
+    const { value, writer, start } = claudeWriter();
+    const first = start("first");
+    changeWriter("finish", { worktree: value.worktree, workerId: writer.workerId, requestId: "first", lease: first.turn?.lease, status: "FAILED" });
+    expect(start("second").turn?.id).toBe("second");
+    changeWriter("finish", { worktree: value.worktree, workerId: writer.workerId, requestId: "second",
+      lease: readLedgerActiveLease(value.metadata), status: "NEEDS_PERSON" });
+    expect(() => start("third")).toThrow(/Continue the active request/);
+  });
+  it("a turn whose launcher process is gone is closed by the next claim", async () => {
+    const { value, start } = claudeWriter();
+    start("orphaned");
+    const gone = spawn(process.execPath, ["-e", "0"], { stdio: "ignore" });
+    await new Promise<void>((resolve) => gone.once("close", () => resolve()));
+    const file = join(value.metadata, "vibe-writer.json");
+    const ledger = JSON.parse(readFileSync(file, "utf8"));
+    ledger.active.ownerPid = gone.pid;
+    writeFileSync(file, JSON.stringify(ledger));
+    expect(start("after-stop").turn?.id).toBe("after-stop");
+    expect(readWriterSummary(value.worktree)?.running).toBe(true);
+  });
+});
+
+function readLedgerActiveLease(metadata: string) {
+  return JSON.parse(readFileSync(join(metadata, "vibe-writer.json"), "utf8")).active.lease as string;
+}
+
 describe("canonical capability boundaries", () => {
   it("retains body/model/skills and exact dynamic names while refusing arbitrary capabilities", () => {
     const value = setup();
