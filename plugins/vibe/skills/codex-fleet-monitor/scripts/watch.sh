@@ -22,7 +22,7 @@ lock=$W/watch.lock
 if ! mkdir $lock 2>/dev/null; then
   other=$(cat $lock/pid 2>/dev/null)
   if [ -n "$other" ] && [ "$other" -gt 1 ] && kill -0 $other 2>/dev/null; then
-    print -u2 "watch.sh: watcher pid $other already runs for $W; read its events when it exits, then start it again with your harness's background option (run_in_background), never with &"
+    print -u2 "watch.sh: watcher pid $other already runs for $W; read its events when it exits, then start it again with your harness's background option (run_in_background), never with &. A detached copy reports to nobody: stop it with 'node <vibe plugin>/hooks/kill-guard.mjs own $other' and 'kill $other' as two steps, then wait out its sleep tick before starting it again"
     exit 3
   fi
   rm -rf $lock; mkdir $lock || exit 3

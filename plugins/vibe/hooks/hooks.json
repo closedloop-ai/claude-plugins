@@ -30,6 +30,15 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-guard.mjs\""
           }
         ]
+      },
+      {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pause-guard.mjs\""
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [

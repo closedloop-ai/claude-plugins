@@ -263,7 +263,9 @@ every conflict/source problem. Do not run a raw merge/commit/push yourself.
    if it failed. If the log shows the session's preview schema was dropped and
    recreated (that script's recovery for a failed preview migration), the
    session's data is gone: say so in your result.
-7. Request the environment (below) again with the session's same mode (a
+7. A session with no environment (no `lastRequestId`) stops after the push
+   with a Progress line "Pushed `<short sha>`". Otherwise request the
+   environment (below) again with the session's same mode (a
    ready environment of the same mode is kept; only the deployments of the
    new branch head are made ready), read its result (below), then record and
    update the ticket (below), adding a Progress line "Redeployed `<short sha>`".
@@ -429,7 +431,9 @@ or `--body-file`).
   `gh api graphql` (`pullRequest.reviewThreads`, with `isResolved`, the
   thread `id`, and each comment's `databaseId`, author login and
   `__typename`, `path`, `line` and body) and return them, marking
-  `awaitingReply` each thread a human other than the author spoke last on.
+  `awaitingReply` each thread a human other than the author spoke last on,
+  and `source: bot` each opened by a `Bot`, a self-described automated review or a
+  `git config --get-all vibe.reviewBots` login.
   Change nothing.
 - Update, with the pushed fixing commit and the writer's per-thread results:
   1. Confirm the branch on `origin` is at that commit (step 1 above).

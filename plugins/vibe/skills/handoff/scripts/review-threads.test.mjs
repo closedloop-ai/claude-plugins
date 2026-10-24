@@ -89,3 +89,19 @@ test("a later-round thread is answered with the follow-up ticket's link, or why 
   assert.equal(retired.ok, false, "after core work the single round is retired, so a later round is fixed here");
   assert.match(retired.problems.join(), /single-review ruling is in force/);
 });
+
+test("a bot finding that does not reproduce is answered with evidence and resolved; a human's reasoned answer stays open (2026-10-24)", (t) => {
+  const { run, calls } = workspace(t);
+  const bot = { threadId: "B1", commentId: 9, result: "reason", source: "bot", reason: "does not reproduce",
+    evidence: "the story renders the empty state at HEAD; the bot's own #9190 thread asked for the opposite" };
+  const human = { threadId: "H1", commentId: 10, result: "reason", reason: "the ticket's AC-2 asks for it" };
+  const result = run({ writer: WRITER, threads: [bot, human] }, [{ threadId: "B1" }, { threadId: "H1" }]);
+  assert.equal(result.status, 0, JSON.stringify(result.json));
+  assert.deepEqual(result.json.resolved, ["B1"]);
+  assert.deepEqual(result.json.replyOnly, ["H1"]);
+  assert.match(calls(), /B1/);
+  assert.doesNotMatch(calls(), /H1/);
+  const unexplained = checkThreads({ writer: WRITER, threads: [{ ...bot, evidence: "" }] }, [{ threadId: "B1" }]);
+  assert.match(unexplained.problems.join(), /evidence/);
+  assert.match(checkThreads({ writer: WRITER, threads: [{ ...bot, source: "reviewer" }] }, [{ threadId: "B1" }]).problems.join(), /source must be bot or human/);
+});

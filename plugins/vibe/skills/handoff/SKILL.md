@@ -853,7 +853,8 @@ resumes and every fix goes through this path, never around it:
    (tests included, under that turn's rules), and returns, per thread, `fixed`
    with the files it changed, `partial` with what remains, or `reason`; a
    flag-gated fix names the test or missing-tests entry pinning flag-off
-   behavior to main. A
+   behavior to main. A `source: bot` thread is fixed only when it reproduces
+   and stays contained, otherwise `reason` with `evidence`. A
    product question a thread raises goes through "Answers from the person";
    a fix that needs a path the writer may never edit is logged as
    `Engineering needed (forbidden path)` and answered with that reason.
@@ -879,10 +880,8 @@ resumes and every fix goes through this path, never around it:
    request it refreshes the body from the session record so it matches the
    diff, with the same template and rules as opening one, then replies on
    every thread through the REST review-comment reply endpoint, a fixed one
-   with the fixing commit SHA. Only
-   `scripts/review-threads.mjs resolve` resolves, and only a `fixed` thread
-   the reviewer `verified`, after its check passes in the same run;
-   `partial`, `reason` and `not-verified` threads get a reply and stay open.
+   with the fixing commit SHA. Only `scripts/review-threads.mjs resolve`
+   resolves, by its own rules.
 8. `touch --status handed-off` again, stop local Storybook or Desktop if
    either runs, and tell the person in a line or two what changed and that the
    pull request is updated, with its link. Never a branch to merge.

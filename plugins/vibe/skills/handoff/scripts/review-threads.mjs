@@ -16,6 +16,11 @@
 // during the delivery phase: once the program's core work is done the ruling
 // is retired (operator, 2026-10-22) and every valid finding is fixed here, so
 // a `later` result needs `singleReviewRuling` (the ruling in force) in results.json.
+// A scheduled review bot posts under a teammate's account and can ask for a fix
+// on one pull request and the opposite on the next (2026-10-24). Its thread
+// (`"source": "bot"`) is fixed only when the finding reproduces and the fix
+// stays contained; otherwise it is answered `reason` with the `evidence` that
+// it does not, and resolved. A human's reasoned answer stays open.
 //
 // Usage:
 //   review-threads.mjs resolve --results <results.json> --threads <threads.json> [--gh <gh CLI>]
@@ -24,7 +29,8 @@
 //   "result": "fixed"|"partial"|"reason", "fixingCommit", "remaining", "reason",
 //   "round": "later" with "result": "followup"|"invalid" and "followupUrl" or "reason",
 //   "verification": {"by", "verdict": "verified"|"not-verified", "evidence"},
-//   "flagGated", "flagOffEqualsMain": "test:<path>"|"missing-test:<entry>"}], "singleReviewRuling"}
+//   "flagGated", "flagOffEqualsMain": "test:<path>"|"missing-test:<entry>",
+//   "source": "bot"|"human" (default human), "evidence" for a bot thread answered reason}], "singleReviewRuling"}
 // threads.json: the environment worker's `reviewThreads: read` list.
 // Prints {"ok", "resolved", "replyOnly", "problems"}; exits 1 on any problem.
 
@@ -58,7 +64,7 @@ export function checkThreads(results, unresolved) {
       found.push("a later round is deferred only while the single-review ruling is in force (singleReviewRuling); after core work, fix it here");
     }
     problems.push(...found.map((problem) => `${id}: ${problem}`));
-    if (!found.length) (thread.result === "fixed" || thread.round === "later" ? resolve : replyOnly).push(id);
+    if (!found.length) (thread.result === "fixed" || thread.round === "later" || botAnswered(thread) ? resolve : replyOnly).push(id);
   }
   const answered = new Set(threads.map((thread) => thread?.threadId));
   for (const thread of unresolved) {
@@ -92,6 +98,10 @@ function problemsFor(thread, writer) {
   const problems = [];
   if (thread.result === "partial" && !text(thread.remaining)) problems.push("a partial fix names what remains");
   if (thread.result === "reason" && !text(thread.reason)) problems.push("a reasoned answer carries its reason");
+  if (thread.source !== undefined && !["bot", "human"].includes(thread.source)) problems.push(`source must be bot or human, not ${JSON.stringify(thread.source)}`);
+  if (thread.source === "bot" && thread.result !== "fixed" && !text(thread.evidence)) {
+    problems.push("a bot finding left unfixed carries the evidence that it does not reproduce or would not stay contained");
+  }
   if (thread.result === "fixed") {
     const verification = thread.verification ?? {};
     if (!COMMIT.test(thread.fixingCommit ?? "")) problems.push("a fixed thread names the full fixing commit SHA");
@@ -105,6 +115,10 @@ function problemsFor(thread, writer) {
     problems.push("a flag-gated change names the flag-off-equals-main test or its missing-tests entry");
   }
   return problems;
+}
+
+function botAnswered(thread) {
+  return thread.source === "bot" && thread.result === "reason" && text(thread.evidence);
 }
 
 function text(value) {

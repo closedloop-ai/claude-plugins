@@ -7371,9 +7371,9 @@ var require_dist = __commonJS({
 });
 
 // src/claude-worker.ts
-import { spawn } from "node:child_process";
+import { execFileSync as execFileSync2, spawn } from "node:child_process";
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { closeSync, openSync, rmSync as rmSync2, writeFileSync as writeFileSync2, writeSync } from "node:fs";
+import { closeSync, existsSync as existsSync5, openSync, rmSync as rmSync2, writeFileSync as writeFileSync2, writeSync } from "node:fs";
 import { join as join7 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
@@ -11940,7 +11940,19 @@ function changeWriter(action, input) {
       ledger.pending.push({ id: requestId, input: data.input });
     } else if (action === "claim") {
       if (existsSync3(join4(place.dir, "vibe-record-turn.lock"))) throw new Error("A record turn is already running; retain the queued writer request");
+      if (ledger.active?.lease && ledger.runtime === "claude" && staleClaudeLease(ledger.active)) {
+        ledger.active.status = "FAILED";
+        ledger.active.resultSummary = "The launcher that owned this turn stopped; the turn was closed.";
+        delete ledger.active.lease;
+        delete ledger.active.ownerPid;
+        delete ledger.active.processGroupId;
+        delete ledger.active.continuation;
+      }
       if (ledger.active?.lease) throw new Error("Writer already has an owned running turn");
+      if (ledger.active?.status === "FAILED" && !data.continuation && ledger.pending[0]?.id === requestId) {
+        ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
+        delete ledger.active;
+      }
       if (ledger.active) {
         if (ledger.active.id !== requestId || !data.continuation) throw new Error("Continue the active request before the next queued request");
         ledger.active.continuation = data.continuation;
@@ -12077,6 +12089,18 @@ function summary(ledger) {
     migrationCount: ledger.migrations.length,
     lastMigration: lastMigration ? { id: lastMigration.id, reason: lastMigration.reason, at: lastMigration.at } : void 0
   };
+}
+function staleClaudeLease(active) {
+  if (!(typeof active.ownerPid === "number" && active.ownerPid > 1) || signalReaches(active.ownerPid)) return false;
+  return !(typeof active.processGroupId === "number" && active.processGroupId > 1) || !signalReaches(-active.processGroupId);
+}
+function signalReaches(target) {
+  try {
+    process.kill(target, 0);
+    return true;
+  } catch (error) {
+    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
+  }
 }
 function proveGroupStopped(processGroupId) {
   if (process.platform === "win32") throw new Error("Owned process-group proof is unsupported on this platform");
@@ -12847,6 +12871,10 @@ async function runWorker(rawInput) {
       }
     }
     const failure = safeFailure(error);
+    const capHit = persistent && failure.code === "TURN_TIMEOUT" ? capCheckpoint(place.root, place.dir, turnId) : void 0;
+    if (capHit) {
+      failure.summary = `CAP-HIT: the turn hit its time cap with ${capHit.dirtyFiles} changed files${capHit.midMerge ? ", mid-merge" : ""}${capHit.patch ? `; work saved as ${capHit.patch}` : ""}. Continue this request with the same writer.`;
+    }
     throw new WorkerLaunchError({
       status: "BLOCKED",
       ...failure,
@@ -12855,7 +12883,8 @@ async function runWorker(rawInput) {
       requestId: input.requestId,
       tracePath,
       leaseRetained,
-      recordLeaseRetained: recordLock && cleanupBlocked
+      recordLeaseRetained: recordLock && cleanupBlocked,
+      ...capHit ? { capHit } : {}
     });
   } finally {
     process.removeListener("SIGTERM", cancelBeforeLaunch);
@@ -12979,7 +13008,7 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowC
           return;
         }
         try {
-          const result = workerResultSchema.parse(final.structured_output !== void 0 ? final.structured_output : JSON.parse(final.result));
+          const result = workerResultSchema.parse(capWorkerResult(final.structured_output !== void 0 ? final.structured_output : JSON.parse(final.result)));
           resolve3({ ...result, sessionId: final.session_id, ...rateLimit ? { rateLimit } : {} });
         } catch {
           reject(new Error("Worker returned no valid compact status object"));
@@ -13083,9 +13112,44 @@ function referenceImagesFor(agentName, metadataDir) {
   return referenceImages.length ? { referenceImages } : {};
 }
 var TEST_REPAIR_MODES = /* @__PURE__ */ new Set(["request", "fix", "handoff", "pull-request"]);
+var SUMMARY_LIMIT = 4096;
+var RESULT_LIMIT = 16 * 1024;
+var TRUNCATED = " [truncated by the launcher]";
+var DATA_DROPPED = " [data dropped by the launcher: over 16 KB; see the trace]";
+function capWorkerResult(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const result = { ...value };
+  const clip = (summary2, suffix) => summary2.length + suffix.length <= SUMMARY_LIMIT ? `${summary2}${suffix}` : `${summary2.slice(0, SUMMARY_LIMIT - suffix.length)}${suffix}`;
+  if (typeof result.summary === "string" && result.summary.length > SUMMARY_LIMIT) result.summary = clip(result.summary, TRUNCATED);
+  if (JSON.stringify(result).length > RESULT_LIMIT && "data" in result) {
+    delete result.data;
+    if (typeof result.summary === "string") result.summary = clip(result.summary, DATA_DROPPED);
+  }
+  return result;
+}
+function capCheckpoint(root, gitDir, turnId) {
+  try {
+    const run = (args) => execFileSync2("git", args, {
+      cwd: root,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    const dirtyFiles = run(["status", "--porcelain"]).split("\n").filter(Boolean).length;
+    const midMerge = existsSync5(join7(gitDir, "MERGE_HEAD"));
+    const diff = run(["diff", "--binary", "HEAD"]);
+    if (!diff) return { dirtyFiles, midMerge };
+    const patch = join7(gitDir, `vibe-cap-${turnId}.patch`);
+    writeFileSync2(patch, diff, { mode: 384, flag: "wx" });
+    return { dirtyFiles, midMerge, patch };
+  } catch {
+    return void 0;
+  }
+}
 runFromCanonicalEntry(import.meta.url, main);
 export {
   boundDefinition,
+  capWorkerResult,
   main,
   runWorker
 };

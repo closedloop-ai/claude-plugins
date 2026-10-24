@@ -69,7 +69,7 @@ The label is what appears in the output lines.
 scripts/watch.sh <workDir> [intervalSeconds]
 ```
 
-Start it with `run_in_background`, never with `&` (a second copy for the same work dir exits 3). When it exits, handle every line, then start it again; it only watches while running. An `IDLE` line carries the writer's final message tail, also once the thread is unloaded (`notLoaded`), and says `NEEDS-REPLY` when any line asks a question or for permission, authorization or approval. Before ending any turn that handled an event, `node scripts/watcher.mjs <workDir>` must print `watcher ok`; re-arm on `MISSING`. `sessions.txt` and `prs.txt` edits take effect on the next re-arm; `scripts/snapshot.sh <workDir>` prints the state once.
+Start it only as its own `run_in_background` call, never with `&` (vibe's shell guard refuses it; a second copy exits 3). When it exits, handle every line, then start it again; it only watches while running. An `IDLE` line carries the writer's final message tail, also once the thread is unloaded (`notLoaded`), and says `NEEDS-REPLY` when any line asks a question or for permission, authorization or approval. Before ending any turn that handled an event, `node scripts/watcher.mjs <workDir>` must print `watcher ok`; re-arm on `MISSING`. `sessions.txt` and `prs.txt` edits take effect on the next re-arm; `scripts/snapshot.sh <workDir>` prints the state once.
 
 ## Reading the output
 
