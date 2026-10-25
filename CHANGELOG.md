@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.6.0
+
+#### Added
+- New `closedloop-core:agent-qa` skill for selected web/mobile tests, saved-run evidence review and memidex knowledge provenance. Preserves recorded verdicts, matches the requested target and build, and separates historical knowledge use from current status.
+
+#### Changed
+- The dependency-graph launcher test derives its replacement version from the current plugin manifest, preserving its cache-update and fallback assertions across version bumps.
+
 ### vibe v1.0.81
 
 The 2026-10-23 and 2026-10-24 fleet lessons now have hooks, launcher behavior and evidence gates instead of prose alone.

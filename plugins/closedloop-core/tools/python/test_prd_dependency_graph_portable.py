@@ -244,9 +244,14 @@ def test_launcher_follows_plugin_update_after_old_cache_is_removed(graph, tmp_pa
                           encoding="utf-8")
         return script
 
-    old_script = cached_helper("1.5.1")
+    # The replacement must outrank the real fallback after any plugin version bump.
+    manifest = SCRIPTS.parents[2] / ".claude-plugin" / "plugin.json"
+    current_version = json.loads(manifest.read_text(encoding="utf-8"))["version"]
+    major, minor, patch = map(int, current_version.split("-", 1)[0].split("."))
+    replacement_version = f"{major}.{minor}.{patch + 1}"
+    old_script = cached_helper(current_version)
     graph.server.install_launcher()
-    new_script = cached_helper("1.5.3")
+    new_script = cached_helper(replacement_version)
     shutil.rmtree(old_script.parents[3])
     launcher_env = dict(os.environ, PATH=os.path.dirname(sys.executable) + os.pathsep + os.environ["PATH"])
 
@@ -254,7 +259,7 @@ def test_launcher_follows_plugin_update_after_old_cache_is_removed(graph, tmp_pa
                             env=launcher_env)
 
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == {"version": "1.5.3", "args": ["--ensure"]}
+    assert json.loads(result.stdout) == {"version": replacement_version, "args": ["--ensure"]}
     assert new_script.exists()
 
     shutil.rmtree(new_script.parents[3])

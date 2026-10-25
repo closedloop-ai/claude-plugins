@@ -70,6 +70,16 @@ observations separately, and presents only checkpoints that need human judgment
 one at a time. Keeps the QA record and its evidence outside disposable
 worktrees. Findings do not authorize source changes or external writes.
 
+### `agent-qa`
+
+Guides selected web/mobile tests and saved-run review with
+[agent-qa](https://github.com/vostride/agent-qa) from vostride: natural-language
+tests, advanced memidex memory and self-improvement. Matches recorded evidence
+to the requested target/build, preserves verdicts, and distinguishes historical
+memory use from current status and provenance. Uses the project's configured
+external CLI; the runtime is not bundled. Test evidence does not replace a
+requested human QA session.
+
 ### `measurement-discipline`
 
 Guides performance diagnosis and experiments with repeated baselines, measured
