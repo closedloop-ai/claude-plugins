@@ -41,6 +41,7 @@ class FakeClosedLoop:
         self.projects = {"PRO-5": ["ISS-50", "ISS-51"]}
         self.blocks = [("ISS-1", "ISS-2"), ("ISS-2", "ISS-3"), ("ISS-90", "ISS-3"), ("ISS-50", "ISS-51")]
         self.calls = 0
+        self.link_queries: list[str] = []
         self.bases: list[str] = []
         self.keys: list[str] = []
 
@@ -81,6 +82,8 @@ class FakeApi:
 
     def links(self, artifact, link_type, direction):
         self.world.calls += 1
+        if link_type == "BLOCKS":
+            self.world.link_queries.append(artifact)
         if link_type == "PRODUCES":
             return [{"source": {"slug": artifact}, "target": self.world.end(s)}
                     for s in self.world.children.get(artifact, [])]
