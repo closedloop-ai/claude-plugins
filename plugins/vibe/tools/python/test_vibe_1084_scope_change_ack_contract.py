@@ -1,4 +1,4 @@
-"""Contracts for the vibe 1.0.83 release: mid-run scope changes are acknowledged and watched (ISS-13096)."""
+"""Contracts for the vibe 1.0.84 release: mid-run scope changes are acknowledged and watched (ISS-13096)."""
 
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ def read(path: Path) -> str:
     return path.read_text()
 
 
-def test_release_and_both_manifests_are_1083() -> None:
+def test_release_and_both_manifests_are_1084() -> None:
     for manifest in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
-        assert json.loads(read(ROOT / manifest))["version"] == "1.0.83"
+        assert json.loads(read(ROOT / manifest))["version"] == "1.0.84"
 
 
 def test_orchestrator_sends_scope_changes_through_the_board_and_acts_on_its_flags() -> None:

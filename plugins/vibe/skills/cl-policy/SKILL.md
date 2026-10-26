@@ -34,13 +34,33 @@ that ClosedLoop or its MCP server is unavailable.
    contracts from current repository routes or official current documentation
    instead of guessing. A ticket slug can be read through
    `GET https://api.closedloop.ai/documents/<slug>` in the current platform.
-6. Treat an inactive localhost MCP URL, a missing initial registration, or a
+6. When a fallback request writes (`POST`, `PUT`, `PATCH`, `DELETE`), print
+   the `clop_` operation id from the response's `operationReceipt` in the same
+   shell call, so the session that made the write is tied to it (PRD-800).
+   Keep the response in a variable, print it or your usual `jq` filter of it
+   on stdout as before, then print the id on stderr; stdout stays exactly what
+   it was. The receipt is optional: when the response has none, the second
+   command prints nothing and still succeeds. Keep the redirections in this
+   order.
+
+   ```bash
+   response="$(curl -sS -X POST "https://api.closedloop.ai/<route>" \
+     -H "Authorization: Bearer $CLOSEDLOOP_API_KEY" \
+     -H "Content-Type: application/json" \
+     --data @<payload-file>)"
+   printf '%s\n' "$response"
+   printf '%s\n' "$response" \
+     | jq -r '(.data? // .) | objects | .operationReceipt | objects | .operationId | strings' \
+     >&2 2>/dev/null
+   ```
+
+7. Treat an inactive localhost MCP URL, a missing initial registration, or a
    stale read-only intelligence index as an access-path issue, not proof of a
    ClosedLoop outage. Continue through the next valid fallback and state which
    source established live state.
-7. Report a genuine access blocker only after applicable discovery, Codex CLI
+8. Report a genuine access blocker only after applicable discovery, Codex CLI
    MCP, and authenticated API paths have been exhausted or are unavailable.
-8. For ticket intelligence, discover the read-only `closedloop-graph` MCP by
+9. For ticket intelligence, discover the read-only `closedloop-graph` MCP by
    capability rather than by configured server name, using only discovery
    mechanisms supported by the current host.
    Treat it as the preferred indexed discovery surface for bounded PRD/plan/

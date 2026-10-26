@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.0.83
+### vibe v1.0.84
 
 A mid-run scope change or answer sent to a Claude writer is now acknowledged by id and watched, so a writer stuck in one long turn is caught within the hour instead of when the operator asks (ISS-13096).
 
@@ -17,6 +17,17 @@ A mid-run scope change or answer sent to a Claude writer is now acknowledged by 
 - The worker preamble says messages arrive only when the turn ends, forbids `sleep` polls as well as long foreground waits, and has the writer read its pending list before each commit and each verification phase. It replaces the "check the worker inbox" line, which named no action.
 - The fleet skill sends every mid-run scope change through the board and interrupts or relaunches a writer on `UNACKED-SCOPE` or `SCOPE-NOT-STARTED`, since a resend does not reach a writer mid-turn.
 - Instruction text is about 2 words shorter than in 1.0.81.
+
+### platform v1.1.6
+
+#### Changed
+- `upload_artifact.py` adds an `operationReceipt` field to its JSON output for every document it creates or versions, carrying the `clop_` operation id the server returned. The field sits ahead of `response`, and is omitted when the server returns no receipt, so the existing output keys are unchanged.
+- The `upload-artifact` skill reports the operation id when the script output has one.
+
+### vibe v1.0.83
+
+#### Changed
+- `cl-policy`'s direct-API fallback prints the `clop_` operation id from each write response's `operationReceipt` on stderr in the same shell call, reading it from `data` or the body root. Stdout keeps the response or the caller's usual filter, and a response without a receipt prints nothing extra.
 
 ### code v2.0.2
 
