@@ -13,11 +13,6 @@ def read(path: str) -> str:
     return (ROOT / path).read_text()
 
 
-def test_release_and_both_manifests_are_1081() -> None:
-    for manifest in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
-        assert json.loads(read(manifest))["version"] == "1.0.81"
-
-
 def test_targeted_tests_are_the_lanes_test_lanes_names() -> None:
     verify = read("agents/vibe-verify-worker.md")
     assert "each named lane by the command\n`pnpm test:lanes` prints" in verify

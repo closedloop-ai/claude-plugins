@@ -139,6 +139,7 @@ async def _version_document(
         "artifact_id": document_id,
         "document_id": document_id,
         "slug": data.get("slug", parsed.get("slug") if isinstance(parsed, dict) else None),
+        **_read_operation_receipt(parsed),
         "content_length": len(content),
         "status": "success",
         "response": parsed,
@@ -175,6 +176,7 @@ async def _create_document(
         "artifact_id": document_id,
         "document_id": document_id,
         "slug": data.get("slug", parsed.get("slug")),
+        **_read_operation_receipt(parsed),
         "content_length": len(content),
         "status": "success",
         "response": parsed,
@@ -238,6 +240,25 @@ async def _verify_document(
         "stored_match": actual_length == expected_length,
         "returned_match": returned_length == expected_length,
     }
+
+
+def _read_operation_receipt(parsed: object) -> dict:
+    """The write's operation receipt, or nothing when the response has none.
+
+    ISS-12714: printed in the result so the session that ran this script names
+    the write it made (PRD-800). The MCP server puts the receipt on the body
+    root and the REST API inside ``data``. It sits ahead of ``response`` so a
+    transcript that keeps only the head of a long result still holds it.
+    """
+    if not isinstance(parsed, dict):
+        return {}
+    receipt = parsed.get("operationReceipt")
+    if receipt is None:
+        data = parsed.get("data")
+        receipt = data.get("operationReceipt") if isinstance(data, dict) else None
+    if isinstance(receipt, dict) and isinstance(receipt.get("operationId"), str):
+        return {"operationReceipt": receipt}
+    return {}
 
 
 def _format_exception(exc: Exception | ExceptionGroup) -> dict:  # type: ignore[type-arg]

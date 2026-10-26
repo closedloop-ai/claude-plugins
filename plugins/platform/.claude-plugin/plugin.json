@@ -1,7 +1,7 @@
 {
   "name": "platform",
   "description": "ClosedLoop Platform plugin",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "dependencies": ["closedloop-core"],
   "author": {
     "name": "ClosedLoop",

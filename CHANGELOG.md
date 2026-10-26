@@ -4,7 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.0.81
+### platform v1.1.6
+
+#### Changed
+- `upload_artifact.py` adds an `operationReceipt` field to its JSON output for every document it creates or versions, carrying the `clop_` operation id the server returned. The field sits ahead of `response`, and is omitted when the server returns no receipt, so the existing output keys are unchanged.
+- The `upload-artifact` skill reports the operation id when the script output has one.
+
+### vibe v1.0.82
+
+#### Changed
+- `cl-policy`'s direct-API fallback prints the `clop_` operation id from each write response's `operationReceipt` on stderr in the same shell call, reading it from `data` or the body root. Stdout keeps the response or the caller's usual filter, and a response without a receipt prints nothing extra.
 
 The 2026-10-23 and 2026-10-24 fleet lessons now have hooks, launcher behavior and evidence gates instead of prose alone.
 
