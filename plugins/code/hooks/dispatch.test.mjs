@@ -4,7 +4,7 @@
 // command did, and the event script on an identical fixture, and compares them.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -30,7 +30,18 @@ function fixture(t, { selfLearning = false } = {}) {
   mkdirSync(path.join(workdir, ".closedloop-ai"), { recursive: true });
   writeFileSync(path.join(cwd, ".closedloop-ai", `session-${SESSION}.workdir`), workdir);
   writeFileSync(path.join(workdir, ".closedloop-ai", "config.env"), `CLOSEDLOOP_SELF_LEARNING=${selfLearning}\nCLOSEDLOOP_RUN_ID=run-1\n`);
-  const run = (name, payload) => spawnSync(script(name), { input: JSON.stringify(payload), encoding: "utf8", env: cleanEnv(root) });
+  let calls = 0;
+  // stdin is a file: on Linux, node's `input` is a socket, which pre-tool-use-hook.sh cannot open as /dev/stdin.
+  const run = (name, payload) => {
+    const file = path.join(root, `payload-${(calls += 1)}.json`);
+    writeFileSync(file, JSON.stringify(payload));
+    const stdin = openSync(file, "r");
+    try {
+      return spawnSync(script(name), { stdio: [stdin, "pipe", "pipe"], encoding: "utf8", env: cleanEnv(root) });
+    } finally {
+      closeSync(stdin);
+    }
+  };
   return { root, cwd, workdir, run };
 }
 

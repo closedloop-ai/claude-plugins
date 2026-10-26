@@ -11,6 +11,7 @@ PreToolUse and SubagentStop each run one registered script, which runs that even
 #### Changed
 - `hooks.json` registers `hooks/pre-tool-use.sh` for PreToolUse and `hooks/subagent-stop.sh` for SubagentStop, in place of two commands each. `pre-tool-use.sh` runs `pretooluse-hook.sh` for Read, Bash, Write and Edit (its old matcher) and `pre-tool-use-hook.sh` for every tool; `subagent-stop.sh` runs `loop-stop-hook.sh` and then `subagent-stop-hook.sh`.
 - The new `hooks/dispatch.sh` passes a single handler's output through unchanged. Several JSON outputs merge: the strongest permission decision (deny, defer, ask, allow) or a block wins with every reason joined, and every context and system message is kept. Plain text is printed when no handler produced JSON. A handler exiting 2 still blocks; one exiting with another code contributes nothing, and its exit code is kept when no other handler produced output.
+- Each handler reads the hook input from a pipe `dispatch.sh` writes, not from the stdin Claude Code opened for the event.
 - SubagentStop handlers now run in sequence, `loop-stop-hook.sh` first, so it always reads the `.agent-types` record before `subagent-stop-hook.sh` removes it. They previously ran in parallel.
 
 ### vibe v1.0.82
