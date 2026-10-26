@@ -222,7 +222,7 @@ test('status fails on state outside the fleet home: a flat watched dir, and a se
   assert.equal(run([home, 'status', ...now]).status, 0);
 });
 
-// ISS-13096 (2026-10-26): a Claude pane writer committed items 1 to 3 and sat in long verification runs for over an
+// 2026-10-26: a Claude pane writer committed items 1 to 3 and sat in long verification runs for over an
 // hour; the answer and two scope additions sent at 14:55 and 15:15 never reached it, and its worktree stayed clean
 // at that one commit. Every send reported success and nothing flagged it until the operator asked.
 const gitRepo = (t) => {
@@ -232,11 +232,11 @@ const gitRepo = (t) => {
   git('init', '-q');
   writeFileSync(path.join(repo, 'filters.ts'), 'export const quickFilters = true;\n');
   git('add', '.');
-  git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', 'items 1 to 3');
+  git('-c', 'user.name=t', '-c', 'user.email=t', 'commit', '-qm', 'items 1 to 3');
   return repo;
 };
 
-test('a scope change the writer never acknowledges is UNACKED-SCOPE, and a worktree still clean at the old head is SCOPE-NOT-STARTED (ISS-13096)', (t) => {
+test('a scope change the writer never acknowledges is UNACKED-SCOPE, and a worktree still clean at the old head is SCOPE-NOT-STARTED (2026-10-26)', (t) => {
   const dir = tempDir(t);
   const worktree = gitRepo(t);
   assert.equal(run([dir, 'writer', 'fix-13096', '--runtime', 'claude', '--worktree', worktree, '--now', '2026-10-26T14:49:00Z']).status, 0);

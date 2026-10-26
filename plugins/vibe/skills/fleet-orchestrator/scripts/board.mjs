@@ -62,7 +62,7 @@
 // after it was told, the worktree still sits clean at the recorded head.
 // `watch-lines` prints those and the late-question lines without minutes, for
 // codex-fleet-monitor's snapshot, so the watcher wakes on each. A Claude pane
-// writer ran one turn for over two hours (ISS-13096, 2026-10-26) and never
+// writer ran one turn for over two hours (2026-10-26) and never
 // received an answer and two scope additions; it committed and verified the old
 // scope while every send reported success.
 // <orchDir> is a fleet home or a program dir (work-dir.mjs). `status` also prints

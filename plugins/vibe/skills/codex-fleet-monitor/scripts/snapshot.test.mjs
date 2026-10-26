@@ -204,7 +204,7 @@ test('a PR another chat owns is never added or reported: prs-ignore.txt, or anot
   assert.match(mine, /^acme\/app 9058$/m);
 });
 
-test('board lines are snapshot lines: a scope change the writer has not acknowledged wakes the watcher (ISS-13096)', TIMEOUT, () => {
+test('board lines are snapshot lines: a scope change the writer has not acknowledged wakes the watcher (2026-10-26)', TIMEOUT, () => {
   const f = fixture();
   assert.doesNotMatch(f.run('ok'), /^board /m, 'no board, no board lines');
   const board = fileURLToPath(new URL('../../fleet-orchestrator/scripts/board.mjs', import.meta.url));
