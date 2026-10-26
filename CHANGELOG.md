@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v2.0.2
+
+PreToolUse and SubagentStop each run one registered script, which runs that event's handler scripts and merges their results.
+
+#### Changed
+- `hooks.json` registers `hooks/pre-tool-use.sh` for PreToolUse and `hooks/subagent-stop.sh` for SubagentStop, in place of two commands each. `pre-tool-use.sh` runs `pretooluse-hook.sh` for Read, Bash, Write and Edit (its old matcher) and `pre-tool-use-hook.sh` for every tool; `subagent-stop.sh` runs `loop-stop-hook.sh` and then `subagent-stop-hook.sh`.
+- The new `hooks/dispatch.sh` passes a single handler's output through unchanged. Several JSON outputs merge: the strongest permission decision (deny, defer, ask, allow) or a block wins with every reason joined, and every context and system message is kept. Plain text is printed when no handler produced JSON. A handler exiting 2 still blocks; one exiting with another code contributes nothing, and its exit code is kept when no other handler produced output.
+- SubagentStop handlers now run in sequence, `loop-stop-hook.sh` first, so it always reads the `.agent-types` record before `subagent-stop-hook.sh` removes it. They previously ran in parallel.
+
 ### vibe v1.0.82
 
 Each hook event now runs one vibe script, which routes to every guard in a single process.
@@ -15,7 +24,7 @@ Each hook event now runs one vibe script, which routes to every guard in a singl
 - `kill-guard.mjs` remains the `own <pid>` recorder; run without `own` it now prints its usage and exits 1.
 
 #### Added
-- A repository check in `tools/plugin-manifests` fails CI when any plugin's hook configuration (each `hooks.json` in the plugin tree or a `hooks` field in either manifest) registers more than one handler for an event. The `code` plugin's existing two PreToolUse and two SubagentStop handlers are held at that count and may only shrink.
+- A repository check in `tools/plugin-manifests` fails CI when any plugin's hook configuration (each `hooks.json` in the plugin tree or a `hooks` field in either manifest) registers more than one handler for an event. It has no exceptions.
 
 ### vibe v1.0.81
 

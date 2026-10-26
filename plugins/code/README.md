@@ -330,7 +330,11 @@ Staged pipeline for inventorying a Claude Design export into reviewable findings
 
 ## Hooks
 
-Hooks are shell scripts that fire at Claude Code lifecycle events. Registered in `hooks/hooks.json`.
+Hooks are shell scripts that fire at Claude Code lifecycle events. Registered in `hooks/hooks.json`, one command per event. PreToolUse and SubagentStop each register one event script that runs that event's handler scripts below through `dispatch.sh`, which merges their results into one output.
+
+### `pre-tool-use.sh` and `subagent-stop.sh` (PreToolUse, SubagentStop)
+
+The registered commands for those two events. `pre-tool-use.sh` runs `pretooluse-hook.sh` for Read, Bash, Write and Edit, then `pre-tool-use-hook.sh` for every tool. `subagent-stop.sh` runs `loop-stop-hook.sh`, then `subagent-stop-hook.sh`. `dispatch.sh` passes a single handler's output through unchanged; when several produce JSON it keeps the strongest permission decision (deny, defer, ask, allow) or a block, with every reason, context and system message joined.
 
 ### `session-start-hook.sh` (SessionStart)
 
@@ -352,7 +356,7 @@ Runs when any subagent starts. Performs three tasks:
 2. **Agent type tracking**: Writes the agent type, short name, and start timestamp to `.agent-types/{agent_id}` so the stop hook can track timing and type.
 3. **Learning injection**: Reads `~/.closedloop-ai/learnings/org-patterns.toon`, filters patterns matching the agent's name, sorts by category priority (mistake > convention > pattern > insight) and confidence, and injects up to 15 patterns into the agent's context via `additionalContext`. Also injects environment variables (`CLOSEDLOOP_WORKDIR`, `CLAUDE_PLUGIN_ROOT`, etc.) into every agent's context.
 
-### `subagent-stop-hook.sh` (SubagentStop)
+### `subagent-stop-hook.sh` (SubagentStop handler)
 
 Runs when any subagent exits. Performs:
 
@@ -361,7 +365,7 @@ Runs when any subagent exits. Performs:
 3. **Outcome logging**: Records which injected patterns were applied or merely injected to `outcomes.log` for success rate computation.
 4. **Performance instrumentation**: Computes agent wall-clock duration from start timestamp and appends a timing event to `perf.jsonl`.
 
-### `loop-stop-hook.sh` (SubagentStop, runs before subagent-stop-hook)
+### `loop-stop-hook.sh` (SubagentStop handler, runs before subagent-stop-hook)
 
 Implements the validation loop for agents registered in `loop-agents.json`. When an agent exits:
 
@@ -371,13 +375,13 @@ Implements the validation loop for agents registered in `loop-agents.json`. When
 4. If validation passes, allows the agent to exit (returns nothing)
 5. If validation fails or the promise is absent, increments the iteration counter and blocks the agent with feedback to continue
 
-### `pretooluse-hook.sh` (PreToolUse, matches Read/Bash/Write/Edit)
+### `pretooluse-hook.sh` (PreToolUse handler, for Read/Bash/Write/Edit)
 
 Injects tool-specific learnings just before tool execution. Filters `org-patterns.toon` by tool type (Bash patterns get build/test tags; Write/Edit patterns get language-specific tags based on file extension). Injects up to 10 matching patterns as `additionalContext`. Also auto-allows tool calls targeting `.closedloop-ai/` workspace paths without prompting.
 
-### `pre-tool-use-hook.sh` (PreToolUse)
+### `pre-tool-use-hook.sh` (PreToolUse handler, every tool)
 
-Writes per-tool-call sentinel files to `{WORKDIR}/.tool-calls/` so post-tool handling can compute duration and attribution. After resolving the session workdir, it hydrates persisted native run metadata from `.closedloop-ai/config.env` so `tool` and `spawn` rows share the same run id, command, and iteration as the native command. Emits `spawn` perf events for `Agent` tool calls. Registered separately from `pretooluse-hook.sh` and designed to fail open.
+Writes per-tool-call sentinel files to `{WORKDIR}/.tool-calls/` so post-tool handling can compute duration and attribution. After resolving the session workdir, it hydrates persisted native run metadata from `.closedloop-ai/config.env` so `tool` and `spawn` rows share the same run id, command, and iteration as the native command. Emits `spawn` perf events for `Agent` tool calls. Runs after `pretooluse-hook.sh` in `pre-tool-use.sh` and is designed to fail open.
 
 ### `post-tool-use-hook.sh` (PostToolUse)
 

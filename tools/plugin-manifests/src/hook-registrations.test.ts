@@ -39,8 +39,8 @@ describe("findHookRegistrationProblems", () => {
       },
     });
 
-    expect(findHookRegistrationProblems(pluginsDir, {})).toEqual([
-      { plugin: "vibe", event: "PreToolUse", count: 6, allowed: 1, sources: ["hooks/hooks.json"] },
+    expect(findHookRegistrationProblems(pluginsDir)).toEqual([
+      { plugin: "vibe", event: "PreToolUse", count: 6, sources: ["hooks/hooks.json"] },
     ]);
   });
 
@@ -52,7 +52,7 @@ describe("findHookRegistrationProblems", () => {
       },
     });
 
-    expect(findHookRegistrationProblems(pluginsDir, {})).toEqual([]);
+    expect(findHookRegistrationProblems(pluginsDir)).toEqual([]);
   });
 
   it("counts every plugin and every hook source, Codex and manifest hooks included", () => {
@@ -62,9 +62,9 @@ describe("findHookRegistrationProblems", () => {
     writeJson("beta", "extra/hooks-config.json", { hooks: { SessionStart: [{ hooks: [command("a.mjs")] }] } });
     writeJson("beta", CODEX_MANIFEST, { version: "1.0.0", hooks: { SessionStart: [{ hooks: [command("b.mjs")] }] } });
 
-    expect(findHookRegistrationProblems(pluginsDir, {})).toEqual([
-      { plugin: "alpha", event: "Stop", count: 2, allowed: 1, sources: [".codex/hooks.json", "hooks/hooks.json"] },
-      { plugin: "beta", event: "SessionStart", count: 2, allowed: 1, sources: [".codex-plugin/plugin.json (inline hooks)", "extra/hooks-config.json"] },
+    expect(findHookRegistrationProblems(pluginsDir)).toEqual([
+      { plugin: "alpha", event: "Stop", count: 2, sources: [".codex/hooks.json", "hooks/hooks.json"] },
+      { plugin: "beta", event: "SessionStart", count: 2, sources: [".codex-plugin/plugin.json (inline hooks)", "extra/hooks-config.json"] },
     ]);
   });
 
@@ -72,29 +72,22 @@ describe("findHookRegistrationProblems", () => {
     writeJson("alpha", CLAUDE_MANIFEST, { version: "1.0.0", hooks: ["./hooks/hooks.json"] });
     writeJson("alpha", "hooks/hooks.json", { hooks: { Stop: [{ hooks: [command("a.mjs")] }] } });
 
-    expect(findHookRegistrationProblems(pluginsDir, {})).toEqual([]);
+    expect(findHookRegistrationProblems(pluginsDir)).toEqual([]);
   });
 
-  it("holds a grandfathered count exactly: more fails, and fewer fails until the entry shrinks", () => {
-    const twoStops = (scripts: string[]) => writeJson("code", "hooks/hooks.json", { hooks: { Stop: scripts.map((script) => ({ hooks: [command(script)] })) } });
+  it("reports the code plugin's 2.0.1 layout: two PreToolUse and two SubagentStop commands", () => {
+    const script = (name: string) => ({ type: "command", command: `\${CLAUDE_PLUGIN_ROOT}/hooks/${name}` });
+    writeJson("code", "hooks/hooks.json", {
+      hooks: {
+        SessionStart: [{ hooks: [script("session-start-hook.sh")] }],
+        PreToolUse: [{ matcher: "Read|Bash|Write|Edit", hooks: [script("pretooluse-hook.sh")] }, { hooks: [script("pre-tool-use-hook.sh")] }],
+        SubagentStop: [{ hooks: [script("loop-stop-hook.sh")] }, { hooks: [script("subagent-stop-hook.sh")] }],
+      },
+    });
 
-    twoStops(["a.sh", "b.sh"]);
-    expect(findHookRegistrationProblems(pluginsDir, { code: { Stop: 2 } })).toEqual([]);
-
-    twoStops(["a.sh", "b.sh", "c.sh"]);
-    expect(findHookRegistrationProblems(pluginsDir, { code: { Stop: 2 } }).map(formatHookProblem)).toEqual([
-      "plugins/code: Stop registers 3 hook handlers (hooks/hooks.json), allowed 2; register one script for the event and route to each guard inside it",
-    ]);
-
-    twoStops(["a.sh"]);
-    expect(findHookRegistrationProblems(pluginsDir, { code: { Stop: 2 } }).map(formatHookProblem)).toEqual([
-      "plugins/code: Stop now registers 1 hook handlers but GRANDFATHERED_HOOK_COUNTS allows 2; lower or delete the entry (it only shrinks)",
-    ]);
-  });
-
-  it("reports a grandfathered entry for a plugin that no longer exists", () => {
-    expect(findHookRegistrationProblems(pluginsDir, { gone: { Stop: 2 } })).toEqual([
-      { plugin: "gone", event: "Stop", count: 0, allowed: 2, sources: [] },
+    expect(findHookRegistrationProblems(pluginsDir).map(formatHookProblem)).toEqual([
+      "plugins/code: PreToolUse registers 2 hook handlers (hooks/hooks.json), allowed 1; register one script for the event and route to each handler inside it",
+      "plugins/code: SubagentStop registers 2 hook handlers (hooks/hooks.json), allowed 1; register one script for the event and route to each handler inside it",
     ]);
   });
 });

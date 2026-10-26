@@ -7,6 +7,7 @@
  * matcher group and every hook source the plugin ships: each hooks.json in the
  * plugin tree (Claude's hooks/hooks.json and any Codex hooks.json) and a `hooks`
  * field in either plugin manifest, given as a path, a list of paths, or inline.
+ * There are no exceptions.
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -15,30 +16,16 @@ import { CLAUDE_MANIFEST, CODEX_MANIFEST } from "./manifest-versions.js";
 
 export const HOOKS_FILE = "hooks.json";
 
-/**
- * Plugins that registered several handlers for an event before this check
- * existed, with the exact count each still has. Shrink-only: a count may only
- * go down, and an entry that no longer matches the plugin fails until it is
- * lowered or deleted. Never add an entry.
- */
-export const GRANDFATHERED_HOOK_COUNTS: Readonly<Record<string, Readonly<Record<string, number>>>> = {
-  code: { PreToolUse: 2, SubagentStop: 2 },
-};
-
 export interface HookRegistrationProblem {
   plugin: string;
   event: string;
   count: number;
-  allowed: number;
   sources: string[];
 }
 
 type EventCounts = Map<string, { count: number; sources: Set<string> }>;
 
-export function findHookRegistrationProblems(
-  pluginsDir: string,
-  grandfathered: Readonly<Record<string, Readonly<Record<string, number>>>> = GRANDFATHERED_HOOK_COUNTS,
-): HookRegistrationProblem[] {
+export function findHookRegistrationProblems(pluginsDir: string): HookRegistrationProblem[] {
   const problems: HookRegistrationProblem[] = [];
   const plugins = readdirSync(pluginsDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
@@ -46,33 +33,16 @@ export function findHookRegistrationProblems(
     .sort();
   for (const plugin of plugins) {
     const counts = countHandlers(join(pluginsDir, plugin));
-    const allowances = grandfathered[plugin] ?? {};
-    const events = new Set([...counts.keys(), ...Object.keys(allowances)]);
-    for (const event of [...events].sort()) {
-      const found = counts.get(event);
-      const count = found?.count ?? 0;
-      const grandfatheredCount = allowances[event];
-      const allowed = grandfatheredCount ?? 1;
-      if (count > allowed || (grandfatheredCount !== undefined && count !== grandfatheredCount)) {
-        problems.push({ plugin, event, count, allowed, sources: [...(found?.sources ?? [])].sort() });
-      }
-    }
-  }
-  for (const plugin of Object.keys(grandfathered).sort()) {
-    if (plugins.includes(plugin)) continue;
-    for (const [event, allowed] of Object.entries(grandfathered[plugin] ?? {})) {
-      problems.push({ plugin, event, count: 0, allowed, sources: [] });
+    for (const event of [...counts.keys()].sort()) {
+      const { count, sources } = counts.get(event) ?? { count: 0, sources: new Set<string>() };
+      if (count > 1) problems.push({ plugin, event, count, sources: [...sources].sort() });
     }
   }
   return problems;
 }
 
-export function formatHookProblem({ plugin, event, count, allowed, sources }: HookRegistrationProblem): string {
-  const where = sources.length > 0 ? ` (${sources.join(", ")})` : "";
-  if (count > allowed) {
-    return `plugins/${plugin}: ${event} registers ${count} hook handlers${where}, allowed ${allowed}; register one script for the event and route to each guard inside it`;
-  }
-  return `plugins/${plugin}: ${event} now registers ${count} hook handlers but GRANDFATHERED_HOOK_COUNTS allows ${allowed}; lower or delete the entry (it only shrinks)`;
+export function formatHookProblem({ plugin, event, count, sources }: HookRegistrationProblem): string {
+  return `plugins/${plugin}: ${event} registers ${count} hook handlers (${sources.join(", ")}), allowed 1; register one script for the event and route to each handler inside it`;
 }
 
 function countHandlers(pluginDir: string): EventCounts {
