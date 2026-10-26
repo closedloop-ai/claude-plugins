@@ -2,41 +2,11 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|Agent|SendMessage",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/kill-guard.mjs\""
-          },
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/foreground-guard.mjs\""
-          },
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/merge-guard.mjs\""
-          },
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/shell-safety-guard.mjs\""
-          }
-        ]
-      },
-      {
-        "matcher": "Agent",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-guard.mjs\""
-          }
-        ]
-      },
-      {
-        "matcher": "SendMessage",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pause-guard.mjs\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use.mjs\""
           }
         ]
       }
@@ -46,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/away-protocol.mjs\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.mjs\""
           }
         ]
       }

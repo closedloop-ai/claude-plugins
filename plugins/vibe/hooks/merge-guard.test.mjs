@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { mergeCalls, mergeProblem } from "./merge-guard.mjs";
+import { mergeCalls, mergeGuard, mergeProblem } from "./merge-guard.mjs";
+import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const GUARD = path.join(HERE, "merge-guard.mjs");
+const GUARD = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-tool-use.mjs");
 
 /** A gh stand-in: the signed-in login, and each PR number's author and branch. */
 const fakeGh = (me, prs) => (args) => {
@@ -44,5 +44,5 @@ test("the hook denies through the PreToolUse contract and stays silent when gh c
   const broken = run("gh pr merge 9169 --auto", path.join(dir, "missing-gh"));
   assert.equal(broken.stdout, "");
   assert.match(broken.stderr, /^merge-guard: /);
-  assert.ok(readFileSync(path.join(HERE, "hooks.json"), "utf8").includes("hooks/merge-guard.mjs"), "the hook is registered");
+  assert.ok(PRE_TOOL_USE_ROUTES.Bash.some((guard) => guard.run === mergeGuard), "the Bash guard is routed");
 });

@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // PreToolUse reminder for SendMessage: a hold is TaskStop, not a message. A vibe
 // session was told HOLD twice (2026-10-23) and kept its writer running: a
 // message reaches a busy agent only at its next tool round, and never reaches
@@ -8,10 +7,7 @@
 // instructions ("push nothing more", "stop the investigation and report") are
 // not pauses and get nothing.
 //
-// Usage (hook): reads the PreToolUse JSON on stdin; prints additional context or nothing.
-
-import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+// Runs from pre-tool-use.mjs.
 
 /** Each pattern is a request that the recipient pause or hold itself. */
 export const HOLD_PATTERNS = Object.freeze([
@@ -30,14 +26,8 @@ export function holdReminder(input) {
   return HOLD_PATTERNS.some((pattern) => pattern.test(message)) ? TASKSTOP_REMINDER : null;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try {
-    const event = JSON.parse(readFileSync(0, "utf8") || "{}");
-    const reminder = event?.tool_name === "SendMessage" ? holdReminder(event.tool_input) : null;
-    if (reminder) {
-      process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: reminder } })}\n`);
-    }
-  } catch (error) {
-    process.stderr.write(`pause-guard: ${error instanceof Error ? error.message : String(error)}\n`);
-  }
+/** The PreToolUse result for a SendMessage call: the TaskStop reminder as context, or null. It never refuses. */
+export function pauseGuard(event) {
+  const reminder = holdReminder(event?.tool_input);
+  return reminder ? { context: reminder } : null;
 }

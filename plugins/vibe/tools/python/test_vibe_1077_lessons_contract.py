@@ -1,9 +1,8 @@
 """Contract coverage for the vibe 1.0.77 release: question ids and acknowledgements, and the foreground guard."""
 
-import json
 from pathlib import Path
 
-from vibe_contract_text import flat
+from vibe_contract_text import flat, hook_guard_routed
 
 
 PLUGIN = Path(__file__).resolve().parents[2]
@@ -22,9 +21,7 @@ def test_answers_echo_question_ids_and_unacknowledged_answers_are_flagged() -> N
 
 
 def test_vibe_worktrees_refuse_long_foreground_waits() -> None:
-    hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]["PreToolUse"]
-    commands = [hook["command"] for entry in hooks if entry.get("matcher") == "Bash" for hook in entry["hooks"]]
-    assert any("foreground-guard.mjs" in command for command in commands)
+    assert hook_guard_routed(PLUGIN, "PreToolUse", "foreground-guard", tool="Bash")
 
 
 def test_every_pr_open_step_requires_the_lanes_ci_would_run() -> None:
@@ -45,6 +42,5 @@ def test_the_watch_set_finds_every_open_pr_and_names_its_writer() -> None:
 
 
 def test_away_and_back_phrases_bring_the_away_protocol() -> None:
-    hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]
-    assert any("away-protocol.mjs" in hook["command"] for entry in hooks["UserPromptSubmit"] for hook in entry["hooks"])
+    assert hook_guard_routed(PLUGIN, "UserPromptSubmit", "away-protocol")
     assert "`away-protocol` hook" in _text(FLEET / "SKILL.md")

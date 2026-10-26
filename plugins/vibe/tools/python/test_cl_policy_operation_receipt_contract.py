@@ -84,7 +84,7 @@ def test_response_without_a_receipt_prints_only_the_response(body: dict) -> None
     assert result.stderr == ""
 
 
-def test_release_and_both_manifests_are_1082() -> None:
+def test_release_and_both_manifests_are_1083() -> None:
     plugin = SKILL.parents[2]
     for manifest in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
-        assert json.loads((plugin / manifest).read_text())["version"] == "1.0.82"
+        assert json.loads((plugin / manifest).read_text())["version"] == "1.0.83"

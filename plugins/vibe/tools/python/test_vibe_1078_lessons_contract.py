@@ -1,10 +1,9 @@
 """Contract coverage for the vibe 1.0.78 release."""
 
-import json
 import re
 from pathlib import Path
 
-from vibe_contract_text import flat
+from vibe_contract_text import flat, hook_guard_routed
 
 
 PLUGIN = Path(__file__).resolve().parents[2]
@@ -57,9 +56,7 @@ def test_the_2026_10_22_open_lessons_are_wired() -> None:
     assert "--single-review-ruling" in flat((PLUGIN / "skills" / "handoff" / "SKILL.md").read_text())
     assert "only while an operator's single-review ruling is in force" in flat((PLUGIN / "skills" / "vibe" / "SKILL.md").read_text())
     assert "`prs-ignore.txt` or another program's `prs.txt`" in flat((MONITOR / "SKILL.md").read_text())
-    hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())
-    commands = [hook["command"] for entry in hooks["hooks"]["PreToolUse"] for hook in entry["hooks"]]
-    assert any("hooks/merge-guard.mjs" in command for command in commands)
+    assert hook_guard_routed(PLUGIN, "PreToolUse", "merge-guard", tool="Bash")
 
 
 def test_green_watch_fixes_pass_vibe_gates_and_results_name_their_commit() -> None:

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from vibe_contract_text import flat
+from vibe_contract_text import flat, hook_guard_routed
 
 
 PLUGIN = Path(__file__).resolve().parents[2]
@@ -39,12 +39,11 @@ def test_handoff_compares_each_consumer_with_its_prototype_route() -> None:
 
 
 def test_worker_rules_forbid_credential_workarounds_and_force_push_everywhere() -> None:
-    hook_manifest = (PLUGIN / "hooks" / "hooks.json").read_text()
     worker_preamble = flat(
         (PLUGIN / "skills" / "fleet-orchestrator" / "references" / "templates.md").read_text()
     )
     vibe = flat((VIBE / "SKILL.md").read_text())
-    assert "shell-safety-guard.mjs" in hook_manifest
+    assert hook_guard_routed(PLUGIN, "PreToolUse", "shell-safety-guard", tool="Bash")
     for text in (worker_preamble, vibe):
         assert "first authentication failure" in text
         assert "CI logs or the API" in text

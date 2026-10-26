@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // PreToolUse guard for Bash: workers may not invent credential routes to fetch
 // evidence or force-push any remote. Both mistakes can escape a written rule,
 // especially through an ssh command aimed at another machine.
@@ -9,10 +8,11 @@
 // unquoted parameter; and e2e-slot.sh reruns tested an old commit when they
 // started before the push landed, because the slot captured whatever HEAD was.
 
-import { readFileSync } from "node:fs";
+// Runs from pre-tool-use.mjs.
+
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { commandSegments } from "./command-segments.mjs";
+import { deny } from "./hook-dispatch.mjs";
 
 const TOKEN = /(?:\b(?:gh_token|github_token|[a-z][a-z0-9_]*token)\b|\$\{?[a-z][a-z0-9_]*token\}?|--password(?:-stdin)?\b|(?:^|\s)-p(?:\s|$)|["']?auth["']?\s*:)/i;
 const CREDENTIAL_ROUTE = /(?:\bDOCKER_CONFIG\b|\bdocker\s+login\b|["']?auths["']?\s*:)/i;
@@ -68,20 +68,11 @@ function invokes(words, script) {
   return name === script || (SHELLS.has(name) && path.basename(words[1] ?? "") === script);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try {
-    const event = JSON.parse(readFileSync(0, "utf8") || "{}");
-    const command = event?.tool_input?.command;
-    if (event?.tool_name === "Bash" && typeof command === "string") {
-      const problem = credentialProblem(command) ?? forcePushProblem(command) ?? watcherLaunchProblem(event.tool_input)
-        ?? wordSplitProblem(command) ?? e2eSlotProblem(command);
-      if (problem) {
-        process.stdout.write(`${JSON.stringify({ hookSpecificOutput: {
-          hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: problem,
-        } })}\n`);
-      }
-    }
-  } catch (error) {
-    process.stderr.write(`shell-safety-guard: ${error instanceof Error ? error.message : String(error)}\n`);
-  }
+/** The PreToolUse result for a Bash call: a deny for the first unsafe shape it finds, or null. */
+export function shellSafetyGuard(event) {
+  const command = event?.tool_input?.command;
+  if (typeof command !== "string") return null;
+  const problem = credentialProblem(command) ?? forcePushProblem(command) ?? watcherLaunchProblem(event.tool_input)
+    ?? wordSplitProblem(command) ?? e2eSlotProblem(command);
+  return problem ? deny(problem) : null;
 }

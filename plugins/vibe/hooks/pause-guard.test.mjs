@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { holdReminder, TASKSTOP_REMINDER } from "./pause-guard.mjs";
+import { holdReminder, pauseGuard, TASKSTOP_REMINDER } from "./pause-guard.mjs";
+import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const HOOK = path.join(HERE, "pause-guard.mjs");
+const HOOK = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-tool-use.mjs");
 
 test("a message asking its recipient to pause or hold itself gets the TaskStop reminder (two ignored HOLDs, 2026-10-23)", () => {
   for (const message of ["HOLD: main is being reverted", "PAUSE until the revert lands", "Please pause your writer now.",
@@ -32,6 +31,5 @@ test("the SendMessage hook adds the reminder as context, never refuses, and is r
   assert.equal(output.additionalContext, TASKSTOP_REMINDER);
   assert.equal(output.permissionDecision, undefined);
   assert.equal(run("Push nothing more to the branch.").stdout, "");
-  const hooks = JSON.parse(readFileSync(path.join(HERE, "hooks.json"), "utf8")).hooks.PreToolUse;
-  assert.ok(hooks.some((entry) => entry.matcher === "SendMessage" && entry.hooks.some((hook) => hook.command.includes("hooks/pause-guard.mjs"))));
+  assert.ok(PRE_TOOL_USE_ROUTES.SendMessage.some((guard) => guard.run === pauseGuard), "the SendMessage guard is routed");
 });

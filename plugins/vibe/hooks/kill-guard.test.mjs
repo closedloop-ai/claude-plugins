@@ -12,7 +12,9 @@ import { killProblems, recordedOwn } from "./kill-guard.mjs";
 // by-name scans, which read test text, never meet a live signal shape here.
 const sh = (...words) => words.join(" ");
 const byName = (variant) => (variant === "all" ? "kill" + "all" : "p" + "kill");
-const GUARD = path.join(path.dirname(fileURLToPath(import.meta.url)), "kill-guard.mjs");
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const GUARD = path.join(HERE, "pre-tool-use.mjs");
+const RECORDER = path.join(HERE, "kill-guard.mjs");
 const OWN = 4242;
 const isOwn = (pid) => pid === OWN;
 
@@ -74,7 +76,10 @@ test("the hook denies a refused Bash command and stays silent otherwise", (t) =>
   assert.equal(run({ tool_name: "Bash", cwd: home, tool_input: { command: "kill 4242" } }).stdout.length > 0, true, "an unrecorded pid is denied");
   assert.equal(run({ tool_name: "Bash", cwd: home, tool_input: { command: "ls -la" } }).stdout, "");
   assert.equal(run({ tool_name: "Read", tool_input: { file_path: "x" } }).stdout, "");
-  const refusedRecord = spawnSync(process.execPath, [GUARD, "own", String(1)], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  const refusedRecord = spawnSync(process.execPath, [RECORDER, "own", String(1)], { encoding: "utf8", env: { ...process.env, HOME: home } });
   assert.equal(refusedRecord.status, 1);
   assert.match(refusedRecord.stderr, /only a pid above 1/);
+  const noMode = spawnSync(process.execPath, [RECORDER], { input: "{}", encoding: "utf8", env: { ...process.env, HOME: home } });
+  assert.deepEqual([noMode.status, noMode.stdout], [1, ""]);
+  assert.match(noMode.stderr, /usage: kill-guard\.mjs own <pid>/);
 });
