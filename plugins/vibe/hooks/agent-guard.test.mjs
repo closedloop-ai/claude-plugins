@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { agentLaunchProblem } from "./agent-guard.mjs";
+import { agentGuard, agentLaunchProblem } from "./agent-guard.mjs";
+import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const GUARD = path.join(HERE, "agent-guard.mjs");
+const GUARD = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-tool-use.mjs");
 
 test("an orchestrator cannot launch a vibe worker directly outside a vibe session", (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "vibe-agent-guard-"));
@@ -28,5 +28,5 @@ test("an orchestrator cannot launch a vibe worker directly outside a vibe sessio
   const gitDir = execFileSync("git", ["-C", dir, "rev-parse", "--absolute-git-dir"], { encoding: "utf8" }).trim();
   writeFileSync(path.join(gitDir, "vibe-session.json"), "{}\n");
   assert.equal(run("vibe:vibe-change-worker", dir).stdout, "", "the vibe skill may dispatch its own worker inside a session");
-  assert.ok(readFileSync(path.join(HERE, "hooks.json"), "utf8").includes('"matcher": "Agent"'), "the Agent hook is registered");
+  assert.ok(PRE_TOOL_USE_ROUTES.Agent.some((guard) => guard.run === agentGuard), "the Agent guard is routed");
 });

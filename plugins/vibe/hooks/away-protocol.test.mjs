@@ -5,7 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { AWAY_CHECKLIST, BACK_CHECKLIST, checklistFor } from "./away-protocol.mjs";
 
-const HOOK = path.join(path.dirname(fileURLToPath(import.meta.url)), "away-protocol.mjs");
+const HOOK = path.join(path.dirname(fileURLToPath(import.meta.url)), "user-prompt-submit.mjs");
 
 test("away and back phrases bring the checklist; ordinary prompts do not (brb with no away protocol)", () => {
   for (const prompt of ["stepping away. brb.", "brb", "afk for 20", "going to bed, see you tomorrow", "heading out for lunch", "back in 30", "back in a few", "ok I need to step out"]) {

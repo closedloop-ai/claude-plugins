@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
+
+from vibe_contract_text import hook_guard_routed
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -11,11 +12,6 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def read(path: str) -> str:
     return (ROOT / path).read_text()
-
-
-def test_release_and_both_manifests_are_1081() -> None:
-    for manifest in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
-        assert json.loads(read(manifest))["version"] == "1.0.81"
 
 
 def test_targeted_tests_are_the_lanes_test_lanes_names() -> None:
@@ -35,8 +31,7 @@ def test_bot_threads_and_holds_have_owned_rules() -> None:
     assert "`source: bot` thread is fixed only when it reproduces" in handoff
     assert "vibe.reviewBots" in read("agents/vibe-environment-worker.md")
     assert "Hold an agent with TaskStop, never a message" in fleet
-    hooks = json.loads(read("hooks/hooks.json"))["hooks"]["PreToolUse"]
-    assert any(entry["matcher"] == "SendMessage" for entry in hooks)
+    assert hook_guard_routed(ROOT, "PreToolUse", "pause-guard", tool="SendMessage")
 
 
 def test_env_less_sessions_push_and_qa_env_uses_vibe_up() -> None:

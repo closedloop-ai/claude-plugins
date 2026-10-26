@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // PreToolUse guard for Bash: `gh pr merge` (a merge, an enqueue or armed
 // auto-merge) runs only on a pull request the signed-in account authored. An
 // orchestrator once enqueued a teammate's pull request under the operator's
@@ -8,14 +7,12 @@
 // it: rerun as `MERGE_AUTHOR_OK=<author login> gh pr merge ...`. When gh
 // cannot answer, the guard stays silent and says why on stderr.
 //
-// Usage (hook): reads the PreToolUse JSON on stdin; prints a deny decision or nothing.
-// MERGE_GUARD_GH overrides the gh binary.
+// Runs from pre-tool-use.mjs. MERGE_GUARD_GH overrides the gh binary.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { commandSegments } from "./command-segments.mjs";
+import { deny, eventCwd } from "./hook-dispatch.mjs";
 
 const VALUE_FLAGS = new Set(["-R", "--repo", "-b", "--body", "-F", "--body-file", "-t", "--subject", "--match-head-commit", "-A", "--author-email"]);
 
@@ -59,19 +56,12 @@ export function mergeProblem(command, gh) {
   return null;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try {
-    const event = JSON.parse(readFileSync(0, "utf8") || "{}");
-    const command = event?.tool_input?.command;
-    if (event?.tool_name === "Bash" && typeof command === "string" && mergeCalls(command).length > 0) {
-      const cwd = typeof event.cwd === "string" ? event.cwd : process.cwd();
-      const gh = (args) => execFileSync(process.env.MERGE_GUARD_GH || "gh", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 20_000 });
-      const problem = mergeProblem(command, gh);
-      if (problem) {
-        process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: problem } })}\n`);
-      }
-    }
-  } catch (error) {
-    process.stderr.write(`merge-guard: ${error instanceof Error ? error.message : String(error)}\n`);
-  }
+/** The PreToolUse result for a Bash call: a deny for `gh pr merge` on another author's pull request, or null. Throws when gh cannot answer. */
+export function mergeGuard(event) {
+  const command = event?.tool_input?.command;
+  if (typeof command !== "string" || mergeCalls(command).length === 0) return null;
+  const cwd = eventCwd(event);
+  const gh = (args) => execFileSync(process.env.MERGE_GUARD_GH || "gh", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 20_000 });
+  const problem = mergeProblem(command, gh);
+  return problem ? deny(problem) : null;
 }

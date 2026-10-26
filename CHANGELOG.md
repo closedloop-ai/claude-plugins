@@ -4,6 +4,19 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.82
+
+Each hook event now runs one vibe script, which routes to every guard in a single process.
+
+#### Changed
+- `hooks.json` registers one PreToolUse command, `hooks/pre-tool-use.mjs` (matcher `Bash|Agent|SendMessage`), and one UserPromptSubmit command, `hooks/user-prompt-submit.mjs`, in place of seven per-guard commands. The guards are modules the two scripts route to by tool name.
+- Several guard results for one call merge into one output: the strongest decision wins (deny, then defer, ask, allow), carrying every reason given for it in guard order, and every guard's context is kept. A single guard's output is unchanged byte for byte.
+- A guard that throws is still reported on stderr under its own name and contributes nothing, so the other guards still decide; unreadable hook input fails open. The scripts always exit 0, as each guard did.
+- `kill-guard.mjs` remains the `own <pid>` recorder; run without `own` it now prints its usage and exits 1.
+
+#### Added
+- A repository check in `tools/plugin-manifests` fails CI when any plugin's hook configuration (each `hooks.json` in the plugin tree or a `hooks` field in either manifest) registers more than one handler for an event. The `code` plugin's existing two PreToolUse and two SubagentStop handlers are held at that count and may only shrink.
+
 ### vibe v1.0.81
 
 The 2026-10-23 and 2026-10-24 fleet lessons now have hooks, launcher behavior and evidence gates instead of prose alone.
