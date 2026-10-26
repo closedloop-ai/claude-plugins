@@ -523,7 +523,7 @@ harness switch instead of another worker doing its work.
 
 ## Runtime Files
 
-Version `1.0.81` contains 12 skills, 16 agents, and one hook manifest
+Version `1.0.82` contains 12 skills, 16 agents, and one hook manifest
 (`hooks/hooks.json`). It has no standalone commands, root-level shell scripts,
 or production Python tools under
 `tools/python/`; that directory contains the skill-contract test modules and

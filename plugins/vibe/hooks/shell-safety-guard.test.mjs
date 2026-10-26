@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { credentialProblem, e2eSlotProblem, forcePushProblem, watcherLaunchProblem, wordSplitProblem } from "./shell-safety-guard.mjs";
+import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
+import { credentialProblem, e2eSlotProblem, forcePushProblem, shellSafetyGuard, watcherLaunchProblem, wordSplitProblem } from "./shell-safety-guard.mjs";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const GUARD = path.join(HERE, "shell-safety-guard.mjs");
+const GUARD = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-tool-use.mjs");
 
 test("credential workarounds are refused at the first auth failure", () => {
   const refused = [
@@ -44,7 +43,7 @@ test("the PreToolUse hook denies unsafe Bash and is registered", () => {
     assert.equal(JSON.parse(result.stdout).hookSpecificOutput.permissionDecision, "deny");
   }
   assert.equal(run("gh run view 123 --log").stdout, "");
-  assert.ok(readFileSync(path.join(HERE, "hooks.json"), "utf8").includes("hooks/shell-safety-guard.mjs"));
+  assert.ok(PRE_TOOL_USE_ROUTES.Bash.some((guard) => guard.run === shellSafetyGuard), "the Bash guard is routed");
 });
 
 test("the fleet watcher starts only as its own background call (started with & twice, 2026-10-24)", () => {

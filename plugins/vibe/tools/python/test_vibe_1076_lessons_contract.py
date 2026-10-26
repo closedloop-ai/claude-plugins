@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from vibe_contract_text import flat
+from vibe_contract_text import flat, hook_guard_routed
 
 
 PLUGIN = Path(__file__).resolve().parents[2]
@@ -69,10 +69,7 @@ def test_the_shepherd_stops_on_review_threads() -> None:
 
 
 def test_claude_sessions_run_the_kill_guard_on_every_bash_command() -> None:
-    import json
-
-    hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]["PreToolUse"]
-    assert any(entry.get("matcher") == "Bash" and any("kill-guard.mjs" in hook["command"] for hook in entry["hooks"]) for entry in hooks)
+    assert hook_guard_routed(PLUGIN, "PreToolUse", "kill-guard", tool="Bash")
     assert "kill-guard.mjs own <pid>" in _text(VIBE / "references" / "guardrails.md")
 
 

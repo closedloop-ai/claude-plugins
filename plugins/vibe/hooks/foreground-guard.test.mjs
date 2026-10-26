@@ -7,7 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { foregroundProblem } from "./foreground-guard.mjs";
 
-const GUARD = path.join(path.dirname(fileURLToPath(import.meta.url)), "foreground-guard.mjs");
+const GUARD = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-tool-use.mjs");
 
 test("a foreground wait over 5 minutes is refused; background runs and short waits pass (answers sent three times)", () => {
   assert.match(foregroundProblem({ command: "pnpm test", timeout: 600000 }), /at most 5 minutes/);

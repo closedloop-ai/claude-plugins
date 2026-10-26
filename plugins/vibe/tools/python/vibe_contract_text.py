@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -41,3 +42,20 @@ def paragraph(text: str, marker: str) -> str:
 def agent(name: str) -> str:
     """The raw text of the vibe agent definition `name`."""
     return (AGENTS / f"{name}.md").read_text()
+
+
+def hook_guard_routed(plugin: Path, event: str, guard: str, tool: str | None = None) -> bool:
+    """Whether hooks.json's one `event` command runs `guard` (for `tool`, when given, through its matcher and route)."""
+    entries = json.loads((plugin / "hooks" / "hooks.json").read_text())["hooks"][event]
+    commands = [(entry.get("matcher", ""), hook["command"]) for entry in entries for hook in entry["hooks"]]
+    if len(commands) != 1:
+        return False
+    matcher, command = commands[0]
+    script = re.search(r"hooks/([\w.-]+\.mjs)", command)
+    if script is None or (tool is not None and tool not in matcher.split("|")):
+        return False
+    source = (plugin / "hooks" / script.group(1)).read_text()
+    if tool is None:
+        return f'name: "{guard}"' in source
+    route = re.search(rf"\b{re.escape(tool)}: Object\.freeze\(\[(.*?)\]\)", source, re.DOTALL)
+    return route is not None and f'name: "{guard}"' in route.group(1)

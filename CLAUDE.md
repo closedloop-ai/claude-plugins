@@ -56,7 +56,7 @@ The orchestrator prompt at `plugins/code/prompts/prompt.md` coordinates 8 workfl
 
 ### Hooks
 
-Registered in `plugins/code/hooks/hooks.json` across 5 lifecycle events: `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `PreToolUse`. `SubagentStart` injects environment variables and relevant learning patterns. `SubagentStop` logs outcomes and telemetry. `PreToolUse` fires on `Read|Bash|Write|Edit` for just-in-time pattern injection.
+Registered in `plugins/code/hooks/hooks.json`, one command per event (see AGENTS.md). `SubagentStart` injects environment variables and relevant learning patterns. `SubagentStop` (`subagent-stop.sh`) runs the loop and learning stop handlers and logs outcomes and telemetry. `PreToolUse` (`pre-tool-use.sh`) runs just-in-time pattern injection for `Read|Bash|Write|Edit` and the tool-call sentinel for every tool.
 
 ### TOON Format
 

@@ -10,15 +10,15 @@
 // passes only for a pid recorded here as this session's own, still running the
 // process that was recorded.
 //
-// Usage (hook): reads the PreToolUse JSON on stdin; prints a deny decision or nothing.
-//        record: kill-guard.mjs own <pid>...   (run from the session's working directory, for example with $!)
+// The hook runs from pre-tool-use.mjs.
+// Usage (record): kill-guard.mjs own <pid>...   (run from the session's working directory, for example with $!)
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { commandSegments } from "./command-segments.mjs";
+import { deny, eventCwd, isMain } from "./hook-dispatch.mjs";
 
 const SIGNAL_OPTION = /^-(?:[A-Za-z][A-Za-z0-9+-]*|\d+)$/;
 const SUBSTITUTED_KILL = /(?:^|[\s;&|(])kill\b[^;&|\n]*(?:\$\(|`)/;
@@ -121,33 +121,22 @@ function recordOwn(pids, cwd, file = ledgerFile()) {
   writeFileSync(file, `${JSON.stringify(ledger, null, 2)}\n`);
 }
 
-function hook(input) {
-  const event = JSON.parse(input || "{}");
+/** The PreToolUse result for a Bash call: a deny naming every signal it may not send, or null. */
+export function killGuard(event) {
   const command = event?.tool_input?.command;
-  if (event?.tool_name !== "Bash" || typeof command !== "string") return null;
+  if (typeof command !== "string") return null;
   const ledger = readLedger(ledgerFile());
-  const cwd = typeof event.cwd === "string" ? event.cwd : process.cwd();
+  const cwd = eventCwd(event);
   const problems = killProblems(command, (pid) => recordedOwn(ledger, pid, cwd));
-  if (problems.length === 0) return null;
-  return {
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: `Signal only processes this session started and recorded: ${problems.join("; ")}`,
-    },
-  };
+  return problems.length === 0 ? null : deny(`Signal only processes this session started and recorded: ${problems.join("; ")}`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMain(import.meta.url)) {
   try {
-    if (process.argv[2] === "own") {
-      recordOwn(process.argv.slice(3), process.cwd());
-    } else {
-      const decision = hook(readFileSync(0, "utf8"));
-      if (decision) process.stdout.write(`${JSON.stringify(decision)}\n`);
-    }
+    if (process.argv[2] !== "own") throw new Error("usage: kill-guard.mjs own <pid>...");
+    recordOwn(process.argv.slice(3), process.cwd());
   } catch (error) {
     process.stderr.write(`kill-guard: ${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(process.argv[2] === "own" ? 1 : 0);
+    process.exit(1);
   }
 }

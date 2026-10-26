@@ -18,6 +18,29 @@ A mid-run scope change or answer sent to a Claude writer is now acknowledged by 
 - The fleet skill sends every mid-run scope change through the board and interrupts or relaunches a writer on `UNACKED-SCOPE` or `SCOPE-NOT-STARTED`, since a resend does not reach a writer mid-turn.
 - Instruction text is about 2 words shorter than in 1.0.81.
 
+### code v2.0.2
+
+PreToolUse and SubagentStop each run one registered script, which runs that event's handler scripts and merges their results.
+
+#### Changed
+- `hooks.json` registers `hooks/pre-tool-use.sh` for PreToolUse and `hooks/subagent-stop.sh` for SubagentStop, in place of two commands each. `pre-tool-use.sh` runs `pretooluse-hook.sh` for Read, Bash, Write and Edit (its old matcher) and `pre-tool-use-hook.sh` for every tool; `subagent-stop.sh` runs `loop-stop-hook.sh` and then `subagent-stop-hook.sh`.
+- The new `hooks/dispatch.sh` passes a single handler's output through unchanged. Several JSON outputs merge: the strongest permission decision (deny, defer, ask, allow) or a block wins with every reason joined, and every context and system message is kept. Plain text is printed when no handler produced JSON. A handler exiting 2 still blocks; one exiting with another code contributes nothing, and its exit code is kept when no other handler produced output.
+- Each handler reads the hook input from a pipe `dispatch.sh` writes, not from the stdin Claude Code opened for the event.
+- SubagentStop handlers now run in sequence, `loop-stop-hook.sh` first, so it always reads the `.agent-types` record before `subagent-stop-hook.sh` removes it. They previously ran in parallel.
+
+### vibe v1.0.82
+
+Each hook event now runs one vibe script, which routes to every guard in a single process.
+
+#### Changed
+- `hooks.json` registers one PreToolUse command, `hooks/pre-tool-use.mjs` (matcher `Bash|Agent|SendMessage`), and one UserPromptSubmit command, `hooks/user-prompt-submit.mjs`, in place of seven per-guard commands. The guards are modules the two scripts route to by tool name.
+- Several guard results for one call merge into one output: the strongest decision wins (deny, then defer, ask, allow), carrying every reason given for it in guard order, and every guard's context is kept. A single guard's output is unchanged byte for byte.
+- A guard that throws is still reported on stderr under its own name and contributes nothing, so the other guards still decide; unreadable hook input fails open. The scripts always exit 0, as each guard did.
+- `kill-guard.mjs` remains the `own <pid>` recorder; run without `own` it now prints its usage and exits 1.
+
+#### Added
+- A repository check in `tools/plugin-manifests` fails CI when any plugin's hook configuration (each `hooks.json` in the plugin tree or a `hooks` field in either manifest) registers more than one handler for an event. It has no exceptions.
+
 ### vibe v1.0.81
 
 The 2026-10-23 and 2026-10-24 fleet lessons now have hooks, launcher behavior and evidence gates instead of prose alone.

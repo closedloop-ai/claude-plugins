@@ -89,7 +89,8 @@ jobs:
           cache-dependency-path: tools/plugin-manifests/package-lock.json
       - run: npm ci
       - run: npm run typecheck
-      # Fails when any plugin's .claude-plugin and .codex-plugin versions differ.
+      # Fails when any plugin's .claude-plugin and .codex-plugin versions differ,
+      # or when any plugin registers more than one hook command for an event.
       - run: npm test
 
   lint:

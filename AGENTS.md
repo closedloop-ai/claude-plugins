@@ -31,6 +31,7 @@ This repository is a plugin monorepo under `plugins/`.
 - Test files use `test_<name>.py`; functions use `snake_case`.
 - Plugin artifacts are explicit and frontmatter-driven (`agents`, `commands`, `skills` definitions in Markdown).
 - Use existing conventions in each plugin; avoid changing naming style in adjacent files (for example, slash command names and agent IDs remain kebab-case, e.g. `code-review`).
+- A plugin registers one hook script per event, routing to its guards inside that script; `tools/plugin-manifests/src/hook-registrations.ts` fails CI on a second command for any event in any plugin's hook config.
 
 ## Testing Guidelines
 - Framework: `pytest`.
