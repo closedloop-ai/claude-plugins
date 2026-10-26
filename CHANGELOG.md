@@ -9,6 +9,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Fixed
 - `prd-dependency-graph` draws every BLOCKS link between two tickets the graph shows, not only links that touch an in-scope ticket or lead into an outside blocker. A ticket the scope blocks that also blocks another such ticket now gets that arrow, so hovering or pinning a ticket shows all of its drawn blockers. With one layer of outside blockers, links between those blockers and from them to downstream tickets are drawn too. New pages, `--once`, the refresh button and the outside-blockers option all build links the same way. The links of each drawn ticket not already read during the walk are read once, and no ticket is added to the graph.
 
+### vibe v1.0.85
+
+#### Added
+- `vibe-setup-worker` now handles a missing Clerk sign-in key: when the real Clerk stack is needed and `local.env` has no Clerk keys, it does not fetch or type secrets and tells the person to run `! just clerk-keys` (after `aws sso login` if needed), then continues.
+
 ### vibe v1.0.84
 
 A mid-run scope change or answer sent to a Claude writer is now acknowledged by id and watched, so a writer stuck in one long turn is caught within the hour instead of when the operator asks (ISS-13096).

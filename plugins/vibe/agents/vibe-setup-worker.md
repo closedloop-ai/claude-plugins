@@ -90,6 +90,13 @@ The checkout is the one the preflight remembered
   as `NEEDS_PERSON` in one plain line. When it is not configured at all,
   return `BLOCKED` saying the closedloop-graph connector is missing, for
   engineering.
+- Real Clerk sign-in stack (for example `just dev`) needed and `local.env` has
+  no Clerk keys (`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` or `CLERK_SECRET_KEY`
+  blank or absent): never fetch or type the secrets yourself. Tell the person
+  to run `! just clerk-keys` in the repository (after
+  `aws sso login --profile <their stage profile>` if needed), returned as
+  `NEEDS_PERSON` in one plain line, then continue. Agent verification stacks
+  run Clerk-free and never need this.
 - Bootstrap: run `./.closedloop-ai/loops-setup.sh` in the worktree; on failure
   read its output and fix the cause if it is a missing prerequisite.
 - Local Storybook: start it detached in the worktree on a free port from 6100
