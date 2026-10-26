@@ -4,6 +4,20 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.83
+
+A mid-run scope change or answer sent to a Claude writer is now acknowledged by id and watched, so a writer stuck in one long turn is caught within the hour instead of when the operator asks (ISS-13096).
+
+#### Added
+- `board.mjs deliver --kind scope` records a mid-run change to what a writer builds, with its text and the head of the writer's worktree (`writer --worktree`). `status` prints `UNACKED-SCOPE` once a told change waits 15 minutes unacknowledged, and `SCOPE-NOT-STARTED` when, 30 minutes after it was told, the worktree is still clean at that head.
+- `board.mjs pending <writer>` lists the writer's unacknowledged scope changes and answered questions (`answered --text` stores the answer), exiting 1 while any remain; `ack` acknowledges a scope change by its id as it does an answer.
+- `board.mjs watch-lines`, read by the watcher's snapshot, makes those flags and late questions watcher events, so an armed watcher wakes the orchestrator on each.
+
+#### Changed
+- The worker preamble says messages arrive only when the turn ends, forbids `sleep` polls as well as long foreground waits, and has the writer read its pending list before each commit and each verification phase. It replaces the "check the worker inbox" line, which named no action.
+- The fleet skill sends every mid-run scope change through the board and interrupts or relaunches a writer on `UNACKED-SCOPE` or `SCOPE-NOT-STARTED`, since a resend does not reach a writer mid-turn.
+- Instruction text is about 2 words shorter than in 1.0.81.
+
 ### vibe v1.0.81
 
 The 2026-10-23 and 2026-10-24 fleet lessons now have hooks, launcher behavior and evidence gates instead of prose alone.

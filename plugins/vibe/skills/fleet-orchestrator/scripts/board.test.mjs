@@ -221,3 +221,76 @@ test('status fails on state outside the fleet home: a flat watched dir, and a se
   writeFileSync(path.join(dir, 'sessions', 'prd723-vibe.remote.json'), '{}\n');
   assert.equal(run([home, 'status', ...now]).status, 0);
 });
+
+// ISS-13096 (2026-10-26): a Claude pane writer committed items 1 to 3 and sat in long verification runs for over an
+// hour; the answer and two scope additions sent at 14:55 and 15:15 never reached it, and its worktree stayed clean
+// at that one commit. Every send reported success and nothing flagged it until the operator asked.
+const gitRepo = (t) => {
+  const repo = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-wt-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const git = (...args) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  git('init', '-q');
+  writeFileSync(path.join(repo, 'filters.ts'), 'export const quickFilters = true;\n');
+  git('add', '.');
+  git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', 'items 1 to 3');
+  return repo;
+};
+
+test('a scope change the writer never acknowledges is UNACKED-SCOPE, and a worktree still clean at the old head is SCOPE-NOT-STARTED (ISS-13096)', (t) => {
+  const dir = tempDir(t);
+  const worktree = gitRepo(t);
+  assert.equal(run([dir, 'writer', 'fix-13096', '--runtime', 'claude', '--worktree', worktree, '--now', '2026-10-26T14:49:00Z']).status, 0);
+  assert.equal(run([dir, 'deliver', 'item-5', '--kind', 'scope', '--to', 'fix-13096', '--text', 'restore legacy Project Detail row selection (AC-5)', '--now', '2026-10-26T15:15:00Z']).status, 0);
+  assert.equal(run([dir, 'told', 'item-5', 'fix-13096', '--now', '2026-10-26T15:15:30Z']).status, 0);
+  const at = (time) => run([dir, 'status', '--now', time]);
+  assert.equal(at('2026-10-26T15:29:00Z').status, 0, 'a told change has 15 minutes to be acknowledged');
+  const unacked = at('2026-10-26T15:31:00Z');
+  assert.equal(unacked.status, 1);
+  assert.match(unacked.stdout, /^UNACKED-SCOPE item-5 fix-13096 15m: the writer has not acknowledged this scope change/m);
+  assert.doesNotMatch(unacked.stdout, /SCOPE-NOT-STARTED/, 'thirty minutes pass before an unmoved head counts');
+  const incident = at('2026-10-26T16:52:00Z');
+  assert.match(incident.stdout, /^UNACKED-SCOPE item-5 fix-13096 96m/m);
+  assert.match(incident.stdout, /^SCOPE-NOT-STARTED item-5 fix-13096 96m: its worktree is clean at [0-9a-f]{10}, the head it had when the change was sent/m);
+  assert.match(incident.stdout, /1 scope unacked, 1 scope not started/);
+  assert.equal(
+    run([dir, 'watch-lines', '--now', '2026-10-26T16:52:00Z']).stdout,
+    'board UNACKED-SCOPE item-5 fix-13096\nboard SCOPE-NOT-STARTED item-5 fix-13096\n',
+    'watch lines carry no minutes, so the watcher wakes once when each appears',
+  );
+  assert.equal(run([dir, 'watch-lines', '--now', '2026-10-26T17:30:00Z']).stdout, run([dir, 'watch-lines', '--now', '2026-10-26T16:52:00Z']).stdout);
+
+  const pending = run([dir, 'pending', 'fix-13096']);
+  assert.equal(pending.status, 1, 'the writer reads its own pending list without waiting for the mailbox');
+  assert.match(pending.stdout, /^SCOPE item-5: restore legacy Project Detail row selection \(AC-5\)$/m);
+  assert.equal(run([dir, 'ack', 'fix-13096', '--id', 'item-5', '--now', '2026-10-26T16:53:00Z']).status, 0);
+  assert.equal(run([dir, 'pending', 'fix-13096']).status, 0);
+  const acked = at('2026-10-26T16:54:00Z');
+  assert.doesNotMatch(acked.stdout, /UNACKED-SCOPE/);
+  assert.match(acked.stdout, /^SCOPE-NOT-STARTED item-5 fix-13096/m, 'an acknowledgement alone does not start the work');
+  writeFileSync(path.join(worktree, 'selection.ts'), 'export const rowSelection = true;\n');
+  assert.equal(at('2026-10-26T16:55:00Z').status, 0, 'a change in the worktree is the work starting');
+});
+
+test('a scope change needs content and a writer whose worktree status can read; a pending answer carries its text', (t) => {
+  const dir = tempDir(t);
+  assert.equal(run([dir, 'writer', 'w1']).status, 0);
+  const noTree = run([dir, 'deliver', 'c1', '--kind', 'scope', '--to', 'w1', '--text', 'add item 4']);
+  assert.equal(noTree.status, 2);
+  assert.match(noTree.stderr, /board writer with a worktree/);
+  assert.equal(run([dir, 'writer', 'w1', '--worktree', gitRepo(t)]).status, 0);
+  const empty = run([dir, 'deliver', 'c1', '--kind', 'scope', '--to', 'w1']);
+  assert.equal(empty.status, 2);
+  assert.match(empty.stderr, /carries its content/);
+  assert.equal(run([dir, 'deliver', 'c1', '--kind', 'scope', '--to', 'w1', '--text', 'add item 4']).status, 0);
+  assert.match(readFileSync(path.join(dir, 'board.md'), 'utf8'), /^- c1 for w1: add item 4$/m);
+  assert.equal(run([dir, 'ack', 'w2', '--id', 'c1']).status, 2, 'only a recipient acknowledges a scope change');
+
+  assert.equal(run([dir, 'question', 'w1', '--id', 'hide-default', '--text', 'Hide completed ON by default? Default: OFF']).status, 0);
+  assert.equal(run([dir, 'answered', 'w1', '--id', 'hide-default', '--text', 'ON, with legacy persistence']).status, 0);
+  const pending = run([dir, 'pending', 'w1']);
+  assert.match(pending.stdout, /^SCOPE c1: add item 4$/m);
+  assert.match(pending.stdout, /^ANSWERED hide-default: ON, with legacy persistence$/m);
+  assert.equal(run([dir, 'ack', 'w1', '--id', 'hide-default']).status, 0);
+  assert.equal(run([dir, 'ack', 'w1', '--id', 'c1']).status, 0);
+  assert.equal(run([dir, 'pending', 'w1']).stdout, 'pending: none\n');
+});

@@ -138,7 +138,7 @@ def test_long_commands_do_not_hide_orchestrator_messages() -> None:
     templates = _text(FLEET / "references" / "templates.md")
     skill = _text(FLEET / "SKILL.md")
     assert "more than a few minutes run in the background" in templates
-    assert "Check the worker inbox between steps" in templates
+    assert "board.mjs <orchDir> pending <you>" in templates
     assert "interrupt after the second unanswered delivery" in skill
 
 

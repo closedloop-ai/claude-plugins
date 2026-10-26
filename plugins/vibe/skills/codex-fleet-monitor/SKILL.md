@@ -96,6 +96,7 @@ Start it as its own `run_in_background` call, never with `&` (a second copy exit
 | `codex-usage ... LIMIT-SPENDING-CREDITS` | limit reached and turns are now consuming paid credits | tell the user at once and stop sending turns unless they approve paid credits |
 | `codex-usage ... unknown` / `unreadable READFAIL` | the App Server answered without rate limits, or it or the remote host could not be read | check `codex` on that machine |
 | `requests <local\|remote> <count> <newest file>` / `requests ... UNREADABLE` | a session dropped (or you removed) a delegated-work request file | hand the new request to a Claude worker, then steer its result back to the session that asked |
+| `board UNACKED-SCOPE`, `SCOPE-NOT-STARTED`, `UNACKED`, `QUESTION-UNANSWERED` | a fleet-orchestrator `board.json` flag | act as fleet-orchestrator says |
 | `open-prs <repo> <numbers>` | open PR list changed | add the new PR to `prs.txt` and start its review |
 | `pr ... BLOCKED(unresolved threads)` | unresolved review threads (`threads=<n>`) block the merge even when approved with auto-merge armed | route each thread to the owning writer now; it is not a missing approval |
 | `pr ... STALE-PR(...)` | an open PR with unresolved threads, a conflict, a draft flag or a failed check has had no push for `STALE_PR_SECONDS` (45 minutes) | ask its writer for an ETA, unblock it, or reassign it, however busy the writer looks |
