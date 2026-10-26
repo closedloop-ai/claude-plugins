@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 
@@ -13,11 +12,6 @@ MONITOR = ROOT / "skills" / "codex-fleet-monitor"
 
 def read(path: Path) -> str:
     return path.read_text()
-
-
-def test_release_and_both_manifests_are_1084() -> None:
-    for manifest in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
-        assert json.loads(read(ROOT / manifest))["version"] == "1.0.84"
 
 
 def test_orchestrator_sends_scope_changes_through_the_board_and_acts_on_its_flags() -> None:
