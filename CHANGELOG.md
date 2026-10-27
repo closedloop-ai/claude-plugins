@@ -28,7 +28,7 @@ fleet-orchestrator now runs a program with one writer or with none, every vibe a
 
 #### Fixed
 - `exec-version-proceed-does-not-wait` used a grader setting the eval runner rejects (`match: lacks`), so it never loaded.
-- The `tools/vibe-workers` suite no longer times out under load. Vitest ran one file per core but one, 17 at once on an 18-core Mac, and tests that start git, the bundled CLIs and fake claude processes ran 3 to 5 times longer than alone, past their timeouts. `vitest.config.ts` caps it at three workers, which ran the suite in the same wall time, and `src/test-budget.test.ts` keeps the cap and fails when a per-test timeout is added or raised.
+- The `tools/vibe-workers` suite no longer times out under load. Vitest ran one file per core but one, 17 at once on an 18-core Mac, and tests that start git, the bundled CLIs and fake claude processes ran 3 to 5 times longer than alone, past their timeouts. `vitest.config.ts` caps it at three workers, which ran the suite in the same wall time. 44 per-test timeouts in the five measured files drop to three times each test's measured time (12 back to vitest's default), and `src/test-budget.test.ts` keeps the cap and fails when a per-test timeout is added or raised.
 
 ### closedloop-core v1.5.3
 
