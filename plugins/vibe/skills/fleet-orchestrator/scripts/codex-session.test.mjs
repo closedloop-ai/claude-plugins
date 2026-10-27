@@ -4,8 +4,12 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import {
-  lastMessages, loadState, nextState, parseCli, run, saveState,
+  lastMessages, loadState, nextState, ORCHESTRATOR_PROVENANCE, parseCli, run, saveState,
 } from './codex-session.mjs';
+
+// A writer recorded its parent orchestrator's capacity stop as a human ruling (2026-10-26); every turn and steer
+// this client sends says who it is from.
+const SENT = `$vibe resume the session for the ticket.\n\n${ORCHESTRATOR_PROVENANCE}`;
 
 /** Records each request and answers from `replies[method]` (a value or a function of params). */
 function stubClient(replies) {
@@ -91,7 +95,7 @@ test('turn on a new session starts a thread in the cwd, starts the turn and save
     {
       method: 'turn/start',
       params: {
-        threadId: 'T1', input: [{ type: 'text', text: '$vibe resume the session for the ticket.\n', text_elements: [] }],
+        threadId: 'T1', input: [{ type: 'text', text: SENT, text_elements: [] }],
         cwd: '/wt', model: 'm', effort: 'high', approvalPolicy: 'never',
       },
     },
@@ -140,7 +144,7 @@ test('steer targets the active turn and refuses when no turn is running', async 
   });
   assert.equal(await run(active, parseCli(['steer', dir, 'w1', '--prompt-file', promptFile])), 'w1 steer T1 U2');
   assert.deepEqual(active.calls[1].params, {
-    threadId: 'T1', expectedTurnId: 'U2', input: [{ type: 'text', text: '$vibe resume the session for the ticket.\n', text_elements: [] }],
+    threadId: 'T1', expectedTurnId: 'U2', input: [{ type: 'text', text: SENT, text_elements: [] }],
   });
   const idle = stubClient({ 'thread/read': { thread: { turns: [{ id: 'U1', status: 'completed' }] } } });
   await assert.rejects(run(idle, parseCli(['steer', dir, 'w1', '--prompt-file', promptFile])), /last turn is completed/);

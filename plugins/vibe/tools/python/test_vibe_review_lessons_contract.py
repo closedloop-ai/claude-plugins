@@ -263,7 +263,7 @@ def test_an_outdated_plugin_question_comes_before_the_endings_line() -> None:
     endings = flat(VIBE_SKILL.read_text())
     assert "The one thing that comes before it is an outdated plugin's version question" in endings
     order = [
-        endings.index("Every `$vibe` start, new or resume, first checks whether this plugin is the latest release"),
+        endings.index("Every `$vibe` start, new or resume, first checks whether the ClosedLoop plugins installed on this machine"),
         endings.index("1. Your first reply to the new session carries the endings line"),
     ]
     assert order == sorted(order)
@@ -308,7 +308,8 @@ def test_diff_rules_run_inside_the_inventory_and_block() -> None:
     inventory = INVENTORY.read_text()
     rules = DIFF_RULES.read_text()
     assert 'import { runDiffRules } from "./diff-rules.mjs";' in inventory
-    assert "diffRulesClear: diffRules.blocking.length === 0" in inventory
+    assert "diffRulesClear: diffRulesBlocking.length === 0" in inventory
+    assert 'const HANDOFF_ONLY_RULES = new Set(["frozen-render"]);' in inventory
     for rule in ("migration-precedent", "migration-backfill", "activity-capture", "tx-result-after-write",
                  "desktop-sync-lane", "artifact-link-delete", "ticketed-comment", "shared-path",
                  "story-outcome", "story-entry", "frozen-render"):

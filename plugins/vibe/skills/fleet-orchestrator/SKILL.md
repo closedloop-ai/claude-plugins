@@ -1,11 +1,11 @@
 ---
 name: fleet-orchestrator
-description: 'Use when you orchestrate several workers at once (Codex or vibe sessions and Claude subagents) delivering parallel pull requests, on one machine or across several, for a human operator who does QA and merges. Covers who may write where, orchestration state that survives a reboot, restart or compaction, starting, resuming and steering Codex threads bound to a worktree, Codex budget rules, a Claude takeover of a dead Codex writer, CPU and shared e2e stack slot locks across machines, agent-first QA and review before merge, pushback on flags and extra code paths, a lessons ledger, and how to report to the operator. Pairs with codex-fleet-monitor for watching the fleet.'
+description: 'Use when you run delivery work for a human operator who does QA and merges: several workers at once (Codex or vibe sessions and Claude subagents) delivering parallel pull requests on one machine or several, one writer delivering one pull request, or a session with no writer at all (design, research or analysis). Covers who may write where, orchestration state that survives a reboot, restart or compaction, starting, resuming and steering Codex threads bound to a worktree, Codex budget rules, a Claude takeover of a dead Codex writer, CPU and shared e2e stack slot locks across machines, agent-first QA and review before merge, pushback on flags and extra code paths, a lessons ledger, and how to report to the operator. Pairs with codex-fleet-monitor for watching the fleet.'
 ---
 
 # fleet-orchestrator
 
-You run a program of several PRs at once: you plan, route, review, push back and report; workers write; the operator does QA, merges and makes product calls. Each script named below carries the incident behind its rule in its header.
+You run a program (several PRs at once, one writer on one PR, or research and design with no writer): you plan, route, review, push back and report; workers write; the operator does QA, merges and makes product calls. Each script named below carries the incident behind its rule in its header.
 
 ## Principles
 
@@ -25,6 +25,7 @@ Repo specifics (launch paths, auth, bootstrap, test commands, e2e harness) come 
 
 Works on one machine with no remote config. More machines need ssh key auth between them, plus `codex`, `node`, `gh`, this plugin and the closedloop-graph MCP server on each. Prerequisites, `config.env` keys and the checklist: [references/setup.md](./references/setup.md).
 
+- Plugin version, first in every chat: run the check `fleet-home.mjs resume` prints (`node ../vibe/scripts/plugin-version.mjs check --state <orchDir>/plugin-version.json`; no `--state` before a program exists). On `outdated`, ask the operator: "A newer version of the plugins is available (<versions>). Update now, or proceed on this version? Proceeding on an outdated plugin could give worse results." Record the answer with `plugin-version.mjs choose --choice update|proceed --state <same file>` and in the resume log. On update, run `plugin-version.mjs update --state <same file>`; whatever its status, tell the operator which harness in its `restart` needs a new session or a reopened app, and stop when yours is one of them. On `unknown`, say the check could not run and carry on.
 - First run: when `<fleetHome>/config.env` is missing, or lacks a key this run needs, ask the operator once before launching anything, as one structured question set with the [first-run questions](./references/setup.md#first-run-interview) and their defaults. Write `config.env`, run the checklist's verification, and report what passed.
 - Later runs read `config.env` and do not ask again unless a verification fails.
 
@@ -48,6 +49,14 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 | Writers, reviews, handoff, ticket, environment | vibe's own workers (above) | vibe | none; vibe is required |
 | Watchers, pollers, narrow log diagnosis | Sonnet subagents; `codex-fleet-monitor` for the fleet; the `app-server-orchestrator` skill to steer Codex threads | vibe, Codex skills | `fleet.sh session last` polling |
 
+## Programs with one writer or none
+
+For one writer on one PR, or nobody writing code (design, research, analysis): `fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet` records the shape, `fleet-home.mjs shape` changes it before the program grows, and `board.mjs writer` refuses a writer the shape does not allow. Which sections apply:
+
+- Both shapes: Principles (evidence before every claim), Setup, Research with closedloop-graph, State and persistence (resume log, rulings), Pushback, Lessons loop, Artifacts people read, Reporting to the operator.
+- one-writer, also: Roles, Monitoring, Codex sessions, Claude workers, Machines and CPU, Program practices; Quality gates and QA except merge order and shared version-file conflicts; from Fleet board and direct messages only its row and deliveries; from Moving work between runtimes and accounts only a takeover of its writer, which keeps the writer's board row name.
+- no-writer, also: only read-only helpers from Roles and Claude workers, a heavy check you run from Machines and CPU, repo knowledge from Program practices; nothing else.
+
 ## Research with closedloop-graph
 
 The closedloop-graph MCP server is required; decide from it, not from guesses. Tool guide: [vibe's closedloop-graph reference](../vibe/references/closedloop-graph.md).
@@ -62,7 +71,8 @@ The closedloop-graph MCP server is required; decide from it, not from guesses. T
 ## State and persistence
 
 - All state lives in one fleet home, never `/tmp` or a scratchpad: reused files at its top, each program under `programs/<slug>/` ([layout and a new chat's steps](./references/state.md)). `<orchDir>` below is the home or the program dir; `board.mjs status` fails on state written outside it.
-- Write every prompt to `prompts/` before sending it, and keep the dated resume log; after a restart or compaction, follow a new chat's steps and tell the operator what you restarted.
+- Write every prompt to `prompts/` before sending it, and keep the dated resume log; after a restart or compaction, follow a new chat's steps and tell the operator what you restarted (vibe's SessionStart hook puts that reading list in context after a compaction).
+- When the operator changes the program (no build, design only, another PRD, start over), append the quoted ruling to `rulings.md` and a resume-log entry naming the new program before acting on it (vibe's `program-change` hook reminds you); a different program is `fleet-home.mjs start <slug>`.
 - A remote machine that lost session state cannot reattach its Codex threads: start fresh ones in the same worktrees with [resume prompts](./references/templates.md#resume-prompt).
 
 ## Monitoring
@@ -117,7 +127,7 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 - When a machine's `codex-usage` band reaches `MOVE_AT_PERCENT`, or will before the work is done, tell the operator at once with the band and `resets=<n>` (applying a reset is theirs); when they are away, or on `LIMIT` or `LIMIT-SPENDING-CREDITS`, move its busiest writers to Claude writers. The watcher's `claude-usage` line (`claude -p "/usage"`) works the same way in reverse: on `HIGH` tell the operator its reset time and, when away, move the busiest Claude writers to Codex, at once for one at its limit.
 - When the operator reports high Claude usage, stop idle and polling Claude workers first, ask active ones to push a checkpoint and end, move their remaining work to Codex writers, and widen the Claude polling interval.
 - Before any move the old writer stops, or is confirmed dead, after committing and pushing or reporting its uncommitted state.
-- To Codex (another machine, account, or from Claude): a fresh `fleet.sh` thread in the branch's worktree there with a [resume prompt](./references/templates.md#resume-prompt), which says to keep the current plugin version. Codex to Claude: a Claude writer in the same worktree with the [takeover preamble](./references/templates.md#worker-preamble), which first moves the vibe writer with vibe's harness switch.
+- To Codex (another machine, account, or from Claude): a fresh `fleet.sh` thread in the branch's worktree there with a [resume prompt](./references/templates.md#resume-prompt), which carries the operator's plugin version answer. Codex to Claude: a Claude writer in the same worktree with the [takeover preamble](./references/templates.md#worker-preamble), which first moves the vibe writer with vibe's harness switch.
 
 ## Machines and CPU
 
@@ -187,6 +197,7 @@ Hard rule: a ticket, PR body, comment, reply or other artifact for people never 
 ## Reporting to the operator
 
 - Surface every problem the moment you see it: limits, stalls, failures, new human review comments, blockers. Keep status updates short.
+- Before reporting a count or an "only" claim from a command you ran, check that it exited 0 and that no `head`, `tail` or tool truncation cut its output; otherwise rerun the narrow command or call the figure partial. Principle 2 holds for your own findings too.
 - When the operator steps away (vibe's `away-protocol` hook puts this checklist in context on "brb", "stepping away" and the like, and the return checklist on "I'm back"), keep `<orchDir>/attention.md` current (decision needed, recommendation, what is blocked), keep reading idle writers' last messages, and lead with that list on return.
 - Put every finding the operator reviews on one page using the stable `D`, `X`, `N`, `S` and `R` IDs in the [operator review template](./references/templates.md#operator-review-page); never restart numbering across audits.
 - The final report lists, per PRD, which flags must be on to see each change.

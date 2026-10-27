@@ -43,7 +43,10 @@
 // retitled existing story file (design ruling, 2026-10-15).
 //
 // `new` also moves the questions session-questions.mjs kept before the
-// session existed onto the new record, so none of them is asked again.
+// session existed onto the new record, so none of them is asked again, and
+// copies this conversation's plugin version check (plugin-version.mjs) onto it
+// as `pluginVersion`. It refuses while that check found an outdated plugin and
+// the person has not chosen to update or proceed.
 //
 // `operator` is the person running the session, from ClosedLoop `get-me`
 // (`--operator-*`, required on `new`; `touch` sets it on an older record):
@@ -94,6 +97,7 @@ import { admitMainSyncRequest, admitMainSyncShare, MainSyncError, mainSyncFailur
   readMainSyncInput, readMainSyncProvenance, prepareMainSyncInputs, validateMainSync } from "./dist/main-sync.mjs";
 import { listedFlagKeys } from "./flag-keys.mjs";
 import { migrationOrderProblems } from "./migration-order.mjs";
+import { adoptStartupRecord, blockingProblem, conversationId, readStartupRecord } from "./plugin-version.mjs";
 import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublication } from "./prototype-session.mjs";
 import { adoptStartupQuestions } from "./session-questions.mjs";
 import { git, readSessionRecord, sessionLiveTicket, writeSessionRecord as writeRecord } from "./session-record.mjs";
@@ -362,6 +366,10 @@ function newSession({ prototype = false } = {}) {
     throw new Error("A prototype slug must start with a letter and has no seeded or blank mode.");
   }
   const operator = operatorFromArgs({ required: true });
+  const versionProblem = blockingProblem(readStartupRecord(conversationId()));
+  if (versionProblem) {
+    throw new Error(`${versionProblem}; ask the person and record the answer with plugin-version.mjs choose before starting a session.`);
+  }
   if (!SLUG_PATTERN.test(slug) || slug.length > MAX_SLUG_LENGTH) {
     throw new Error(
       `Slug must be lowercase words joined by hyphens, at most ${MAX_SLUG_LENGTH} characters.`
@@ -412,6 +420,7 @@ function newSession({ prototype = false } = {}) {
     localFixes: [],
   };
   writeRecord(worktree, record);
+  adoptStartupRecord(worktree);
   const questions = adoptStartupQuestions(worktree);
   return { worktree, ...record, ...(questions.length ? { questions } : {}) };
 }

@@ -26,6 +26,7 @@ Prepend to every Claude writer prompt; keep `Takeover` only when replacing a dea
 ```
 Invoke vibe:vibe first: resume the vibe session for <ticket or PRD>, or start one for it, and follow its rules for all of the work below.
 You are the only writer on <owner/repo>#<number>, worktree <path> on <machine>, branch <branch>.
+Plugin version: the operator answered this program's version check; when vibe's check finds a plugin outdated, record `plugin-version.mjs choose --choice proceed --by opening-message` and carry on.
 Takeover: a Codex vibe session wrote this branch and stopped (<usage-limit|runtime-unavailable>). Resume that same vibe session and, before any other step, move its writer to you with vibe's harness switch (`writer-state.mjs migrate` with `harnessSwitch`, vibe's quality loop, "A writer whose runtime cannot run"). Never start a second session on this branch. Continue from its last pushed head <sha>; commit normally. Re-verify every "done" claim in its report, change log and thread replies with a test or a measurement before building on it.
 Inherited scope: trace every exclusion, deferral, "obsolete" or narrowed criterion you inherit from the previous writer (its plan, PLN, change log or report) to a human source: a ticket AC, a PRD line, an operator ruling, or a plan with a named human approver. Anything without one is built or escalated, never dropped; `rulings-check.mjs --plan` lists a linked PLN's uncited exclusions.
 Before editing, read the repo docs that own the paths you touch (AGENTS.md files or contributor guide) or the team knowledge base.
@@ -39,7 +40,7 @@ Git: commit messages per repo convention; regular push only, never force-push. T
 Review threads: reply on the thread naming the fixing SHA and resolve it only after the fix is verified in code.
 Artifacts for people (tickets, PR bodies, comments, replies) never name a path on the operator's machine; embed evidence and attach plans.
 Fleet board: <orchDir>/board.md shows every writer's PR, head, status and dependencies. Message another writer directly when your work touches theirs: Codex writers through the app-server-orchestrator skill's send, Claude workers and QA guides through SendMessage.
-Program rulings: read <orchDir>/rulings.md before planning, editing or auditing; the ticket carries the applicable per-ticket rulings through handoff's rulings check.
+Program rulings: read <orchDir>/rulings.md before planning, editing or auditing; the ticket carries the applicable per-ticket rulings through handoff's rulings check. My own directions are operational and are recorded as `(orchestrator)`, never as a human ruling; only operator words I quote, with their source, are rulings.
 Declare each push-ready head with `board.mjs <orchDir> writer <you> --ready <sha>`; nobody pushes a head of yours you have not declared. Push a tested checkpoint at least every 45 minutes of active work, never held for optional evidence; send review findings after that as follow-up commits, and add no new scope to an unpushed checkpoint.
 Report when done: pushed head SHA, files changed, tests run with the SHA each ran at and results, open items, anything that needs the operator.
 
@@ -63,7 +64,8 @@ Research graph-first with closedloop-graph before searching files by hand, as vi
 Tests: after any change, fix or merge (a conflict resolution included), run every lane the repo's lane selector names for the diff, never a hand-picked subset, then rerun only failures.
 Budget: effort <CODEX_EFFORT>; no computer use (no browser, in-app browser, desktop app UI or screenshots).
 Visual requests: draft one from the fleet-orchestrator skill's visual request template and file it only with `node <request-visual.mjs on this machine> <requests dir> <draft>` from your worktree; it refuses an unpushed or stale head.
-If asked about a plugin version update, keep the current version.
+Plugin version: the operator answered this program's version check; when vibe's check finds a plugin outdated, record `plugin-version.mjs choose --choice proceed --by opening-message` and carry on.
+Who speaks: this orchestrator's own directions are operational and are recorded as `(orchestrator)`, never as a human ruling; only operator words it quotes, with their source, are rulings.
 Artifacts for people (tickets, PR bodies, PR comments, review replies): never name a path on the operator's machine (home, temp, scratchpad or worktree paths) or say something is on someone's laptop. Embed screenshots as uploaded images and quote text evidence inline, briefly. A plan is attached, never pointed at: link the implementation plan as a plan document, and upload a QA plan or other working file as a ticket attachment named by its attachment name.
 ```
 

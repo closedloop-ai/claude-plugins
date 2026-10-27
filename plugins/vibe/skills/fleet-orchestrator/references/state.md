@@ -14,16 +14,19 @@ One fleet home per machine holds everything (`FLEET_HOME`, default `~/fleet-orch
     prompts/<name>-<nn>-<slug>.md   every prompt sent to any worker, written before sending
     requests/  findings/  evidence/
     resume-log.md  rulings.md  attention.md  review.md
+    program.json   the program's shape (no-writer, one-writer or fleet)
+    plugin-version.json   the plugin version check, the operator's answer and any update
 ```
 
-`fleet-home.mjs start <slug>` makes a program current; it reads nothing of an earlier one. A remote machine keeps its sessions under `REMOTE_FLEET_HOME` the same way, and `fleet.sh` copies each prompt there when it sends it. `fleet-home.mjs migrate` moves a flat work dir in.
+`fleet-home.mjs start <slug> --shape <shape>` makes a program current; it reads nothing of an earlier one. A remote machine keeps its sessions under `REMOTE_FLEET_HOME` the same way, and `fleet.sh` copies each prompt there when it sends it. `fleet-home.mjs migrate` moves a flat work dir in.
 
 ## A new chat
 
-1. `fleet-home.mjs resume`: read each `READ` file in order. On `NO-ACTIVE-PROGRAM`, `start` a fresh one.
-2. `WATCHER-LIVE <pid>`: the previous chat still holds the watch lock; stop its watcher there (or close that chat), then arm yours.
-3. Relaunch each `RELAUNCH <writer> <prompt>` Claude worker from that saved prompt; resume Codex writers through `fleet.sh`.
-4. Run `fleet-home.mjs check` and fix every line before acting.
+1. `fleet-home.mjs resume`: read each `READ` file in order and note its `SHAPE`. On `NO-ACTIVE-PROGRAM`, `start` a fresh one.
+2. Run the plugin version check its `PLUGIN-VERSION` line names (SKILL.md, Setup) before anything else.
+3. `WATCHER-LIVE <pid>`: the previous chat still holds the watch lock; stop its watcher there (or close that chat), then arm yours.
+4. Relaunch each `RELAUNCH <writer> <prompt>` Claude worker from that saved prompt; resume Codex writers through `fleet.sh`.
+5. Run `fleet-home.mjs check` and fix every line before acting.
 
 ## Resume log
 

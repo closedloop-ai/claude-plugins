@@ -6,9 +6,10 @@
    handles the same situation is the default answer.
 3. A product question follows one shared order ending in live Asana in the
    operator's signed-in browser; public help centers are never precedent.
-4. Every vibe start checks the plugin version, asks "keep going or update" when
+4. Every vibe start checks the plugin version, asks "update or keep going" when
    it is outdated, helps with the update and asks for a reopen, and carries on
-   when the check cannot run.
+   when the check cannot run (widened to every installed plugin in both
+   harnesses by the 2026-10-27 ruling).
 5. The orchestrator offers visual QA at each visible milestone, never on a small
    edit, and the build loop is otherwise unchanged.
 6. "Looks good, make it polished" runs visual QA before handoff unless the change
@@ -191,19 +192,21 @@ def test_a_precedent_is_recorded_with_its_source_and_is_not_a_human_ruling() -> 
 
 
 def test_the_version_check_runs_at_every_start_and_never_blocks() -> None:
+    # Operator ruling 2026-10-27: every installed ClosedLoop plugin, in both harnesses; the question names
+    # the risk of proceeding, and the answer is recorded.
     assert_all(plugin_version(), (
-        "Every `$vibe` start, new or resume, first checks whether this plugin is the latest release",
+        "Every `$vibe` start, new or resume, first checks whether the ClosedLoop plugins installed on this machine, in Claude Code and in Codex, are the latest release",
         "It runs once per conversation, so its question is never repeated and does not go through `session-questions.mjs`.",
-        "`node scripts/plugin-version.mjs --runtime codex` in Codex, or `--runtime claude` in Claude Code",
+        "`node scripts/plugin-version.mjs check --runtime codex` in Codex, or `--runtime claude` in Claude Code",
         "`current`: say nothing about it and continue.",
         "the check never blocks",
         "\"I couldn't check whether vibe is up to date, so I'm carrying on with the version you have.\"",
-        "\"A newer version of vibe is available (you have <installed>, the latest is <latest>). Do you want to keep going with this one, or update now?\"",
-        "On \"keep going\", continue with this version.",
-        "run each command in its `update` list in order yourself",
+        "\"A newer version of vibe is available (<versions>). Do you want me to update it now, or keep going with this one? Keeping going with an older version could give worse results.\"",
+        "On \"keep going\", run `node scripts/plugin-version.mjs choose --choice proceed` and continue with this version.",
+        "On \"update\", run `choose --choice update`, then `node scripts/plugin-version.mjs update`",
         "Quit the ChatGPT app completely (press Cmd and Q), open it again, start a new chat and type $vibe.",
         "Close this Claude Code session, start a new one and type /vibe:vibe.",
-        "Then stop: the update is used only from a new session.",
+        "the update is used only from a new session.",
         "never retry it another way",
     ))
     asked_once = section(VIBE_SKILL.read_text(), "### Questions are asked once")
@@ -213,12 +216,12 @@ def test_the_version_check_runs_at_every_start_and_never_blocks() -> None:
 def test_the_person_chosen_update_is_the_one_plugin_change_allowed() -> None:
     tooling = section(GUARDRAILS.read_text(), "## Plugins and tooling")
     assert_all(tooling, (
-        "The one exception is the vibe update the person chooses when the startup version check finds a newer release (`SKILL.md`, section 1, \"Plugin version\")",
-        "the orchestrator runs exactly the update commands `plugin-version.mjs` printed, and nothing else",
+        "The one exception is the update the person chooses when the startup version check finds a newer release (`SKILL.md`, section 1, \"Plugin version\")",
+        "the orchestrator runs `plugin-version.mjs update`, which refuses unless that choice is recorded, and nothing else",
     ))
     role = section(VIBE_SKILL.read_text(), "## Your role: orchestrate, never do the work")
     assert "apart from the update the person chooses at startup" in role
-    assert "run the update commands `plugin-version.mjs` prints, only when the person chose to update" in role
+    assert "run `plugin-version.mjs update` only when the person chose to update" in role
 
 
 def test_the_update_commands_match_the_install_guide() -> None:
@@ -227,11 +230,10 @@ def test_the_update_commands_match_the_install_guide() -> None:
     for command in ("plugin marketplace upgrade closedloop-ai", "plugin add vibe@closedloop-ai",
                     "plugin add closedloop-core@closedloop-ai"):
         assert command in install, command
-    assert "plugin marketplace upgrade ${MARKETPLACE}" in script
-    assert "plugin add vibe@${MARKETPLACE}" in script
-    assert "plugin add closedloop-core@${MARKETPLACE}" in script
-    assert "claude plugin marketplace update ${MARKETPLACE}" in script
-    assert "claude plugin update vibe@${MARKETPLACE}" in script
+    assert '[cli, "plugin", "marketplace", "upgrade", MARKETPLACE]' in script
+    assert '[cli, "plugin", "add", `${plugin.name}@${MARKETPLACE}`]' in script
+    assert '[cli, "plugin", "marketplace", "update", MARKETPLACE]' in script
+    assert '[cli, "plugin", "update", plugin.id' in script
     assert "`$vibe` checks this itself at the start of every session" in install
 
 

@@ -23,6 +23,8 @@ import yaml
 EVALS = Path(__file__).resolve().parents[1]
 PLUGIN = EVALS.parent
 MANIFESTS = (".codex-plugin/plugin.json", ".claude-plugin/plugin.json")
+PERSONAS = {"exec-": "executive-", "pm-": "product-manager-", "orch-": "orchestrator-"}
+SKILLS = ("fleet-orchestrator", "handoff", "vibe")
 
 
 def document(path: Path) -> tuple[dict[str, Any], str]:
@@ -59,11 +61,11 @@ def cases(root: Path = EVALS) -> list[dict[str, Any]]:
     result = []
     for path in sorted(root.glob("*/prompt.md")):
         meta, prompt = document(path)
-        name = (
-            path.parent.name.replace("exec-", "executive-", 1)
-            if path.parent.name.startswith("exec-")
-            else path.parent.name.replace("pm-", "product-manager-", 1)
-        )
+        name = path.parent.name
+        for prefix, persona in PERSONAS.items():
+            if name.startswith(prefix):
+                name = name.replace(prefix, persona, 1)
+                break
         result.append(
             dict(name=name, source=path.parent, meta=meta, prompt=role_text(prompt))
         )
@@ -495,14 +497,14 @@ def run_case(
                 30,
                 work / "scaffold.log",
             )
-        skill = "handoff" if "vibe:handoff" in case["prompt"] else "vibe"
+        skill = next(name for name in SKILLS if "vibe:" + name in case["prompt"] or name == "vibe")
         # The source's Claude-only Skill instruction maps to the installed Codex skill.
         prompt = case["prompt"].replace(
             "Load the instructions with the Skill tool",
             "Load the installed Codex skill instructions",
         )
         prompt = re.sub(
-            r"\(`vibe:(vibe|handoff)`\)", lambda m: "(`$" + m[1] + "`)", prompt
+            r"\(`vibe:(vibe|handoff|fleet-orchestrator)`\)", lambda m: "(`$" + m[1] + "`)", prompt
         )
         header = case["meta"].get("append_system_prompt", "")
         history = case["source"] / "history.jsonl"

@@ -120,8 +120,16 @@ export function nextState(saved, options) {
   };
 }
 
+/**
+ * Ends every turn and steer this client sends. A vibe session once wrote its parent orchestrator's capacity stop
+ * into its findings and its writer's brief as a "Human capacity-stop ruling" (2026-10-26): a driven session cannot
+ * tell whose words its user turn carries unless the turn says so.
+ */
+export const ORCHESTRATOR_PROVENANCE = 'From the fleet orchestrator, not the operator: its own directions are operational and are recorded as `(orchestrator)`, never as a human ruling; only operator words it quotes, with their source, are rulings.';
+
 function textInput(text) {
-  return [{ type: 'text', text, text_elements: [] }];
+  const sent = text.includes(ORCHESTRATOR_PROVENANCE) ? text : `${text}\n${ORCHESTRATOR_PROVENANCE}`;
+  return [{ type: 'text', text: sent, text_elements: [] }];
 }
 
 function defined(object) {

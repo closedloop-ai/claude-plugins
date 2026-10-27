@@ -7,7 +7,7 @@ uv run --with Pillow==12.3.0 python plugins/vibe/evals/codex/run.py
 ```
 
 The runner discovers one case for every Claude `evals/*/prompt.md`. Case IDs
-use `executive-` and `product-manager-`. Prompts, histories, scaffold scripts,
+use `executive-`, `product-manager-` and `orchestrator-` (from `exec-`, `pm-` and `orch-`). Prompts, histories, scaffold scripts,
 reference PNGs and regex graders come from the Claude cases rather than a
 second copy. Only harness instructions change: Codex loads the installed skill
 instead of Claude's Skill tool. Named recipients become role email identities,
@@ -45,7 +45,7 @@ Visual cases (tag `visual-cues`) use the same stand-in repository and Pillow
 renderer as Claude, which renders light and dark (`--theme dark`) from the
 stand-in tokens' `:root` and `.dark` blocks. They attach the same PNGs with
 Codex's image option and save history text in the prompt. No browser, Electron
-window, actual app or external ticket is started. The 64 other cases rehearse
+window, actual app or external ticket is started. The 79 other cases rehearse
 one reply or decision from supplied session state in read-only mode. This is
 behavior coverage, not a substitute for live app validation.
 

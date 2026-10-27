@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Agent|SendMessage",
+        "matcher": "Bash|Agent|SendMessage|Skill|AskUserQuestion|request_user_input|request_user_input_async",
         "hooks": [
           {
             "type": "command",
@@ -17,6 +17,17 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.mjs\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs\""
           }
         ]
       }

@@ -90,10 +90,13 @@ bash ~/.codex/plugins/cache/closedloop-ai/vibe/*/skills/vibe/scripts/vibe-prefli
 ## Updating
 
 `$vibe` checks this itself at the start of every session
-(`scripts/plugin-version.mjs`): when the vibe on claude-plugins `main` is
-newer than the installed one, it asks the vibe user whether to keep going or
-update now, and on update runs the commands below for the marketplace vibe
-came from, then asks them to quit and reopen the ChatGPT app. When the check
+(`scripts/plugin-version.mjs`): it compares every ClosedLoop plugin installed
+in Codex, and in Claude Code when that is installed too, with claude-plugins
+`main`. When one is older, it asks the vibe user whether to update now or keep
+going, saying that an older version could give worse results, and records the
+answer. On update it runs the commands below for the marketplace each plugin
+came from, in each app that has an outdated plugin, checks the new version is
+installed, then asks them to quit and reopen the ChatGPT app. When the check
 cannot reach GitHub, the session carries on and says so.
 
 To update by hand, check which version is installed and where the `closedloop-ai` marketplace

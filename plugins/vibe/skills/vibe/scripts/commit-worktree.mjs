@@ -5,12 +5,18 @@
 // instead of the hook output.
 //
 // Usage:
-//   commit-worktree.mjs --worktree <path> --subject <text> [--body <text>]
+//   commit-worktree.mjs --worktree <path> --subject <text> [--body <text>] [--exclude <path>]...
 //
 // Stages everything, then leaves out the session's `localFixes` (from the
-// vibe session record, when the worktree has one) and files that never belong
+// vibe session record, when the worktree has one), files that never belong
 // in a commit (`.env` files and `.control/`, `node_modules/`, `.next/`,
-// `.turbo/`, `storybook-static/`). A staged merge (MERGE_HEAD) is concluded.
+// `.turbo/`, `storybook-static/`) and each untracked file or folder named by
+// `--exclude`: a person's own files the session did not write, which the
+// inventory lists as foreign. A person's 17 untracked skill files once held a
+// commit for 1 h 37 min while a question about moving them waited
+// (2026-10-26). `--exclude` never drops a tracked change, and a path that
+// names no untracked file is refused, so a typo cannot hide work. A staged
+// merge (MERGE_HEAD) is concluded.
 // Hooks always run; a refused commit commits nothing and reports the end of
 // the hook output. Never amends, squashes, or skips hooks.
 //
@@ -40,6 +46,7 @@ const { values } = parseArgs({
     worktree: { type: "string" },
     subject: { type: "string" },
     body: { type: "string" },
+    exclude: { type: "string", multiple: true, default: [] },
     "prepare-main-sync": { type: "boolean", default: false },
   },
 });
@@ -70,8 +77,9 @@ function commitWorktree() {
     throw new Error(`Local technical plans are already committed; publication is blocked: ${committedPlans.join(", ")}`);
   }
 
+  const foreign = foreignFiles(worktree, values.exclude);
   git(worktree, ["add", "-A"]);
-  const excluded = stagedFiles(worktree).filter((file) => isLocalFix(file, localFixes) || neverCommitted(file));
+  const excluded = stagedFiles(worktree).filter((file) => isLocalFix(file, localFixes) || neverCommitted(file) || foreign.has(file));
   for (const file of excluded) {
     git(worktree, ["restore", "--staged", "--", file]);
   }
@@ -125,6 +133,21 @@ function requireSubject(subject) {
 function stagedFiles(worktree) {
   const names = git(worktree, ["diff", "--cached", "--name-only", "-z"]);
   return names ? names.split("\0").filter(Boolean) : [];
+}
+
+/** The untracked files under each `--exclude` path; refuses a path that names none. */
+function foreignFiles(worktree, excludes) {
+  if (excludes.length === 0) return new Set();
+  const listed = git(worktree, ["ls-files", "--others", "--exclude-standard", "-z"]);
+  const untracked = listed ? listed.split("\0").filter(Boolean) : [];
+  const foreign = new Set();
+  for (const exclude of excludes) {
+    const prefix = exclude.replace(/\/+$/, "");
+    const matched = untracked.filter((file) => file === prefix || file.startsWith(`${prefix}/`));
+    if (matched.length === 0) throw new Error(`--exclude ${exclude} names no untracked file; it leaves out only a person's own untracked files, never the session's tracked changes`);
+    for (const file of matched) foreign.add(file);
+  }
+  return foreign;
 }
 
 function hasMergeHead(worktree) {

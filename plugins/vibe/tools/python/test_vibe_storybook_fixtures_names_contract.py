@@ -28,9 +28,9 @@ DESIGN_PASS = PLUGIN_ROOT / "skills" / "vibe" / "references" / "design-pass.md"
 EVALS = PLUGIN_ROOT / "evals"
 
 
-def test_release_and_both_manifests_are_1086() -> None:
+def test_release_and_both_manifests_are_111() -> None:
     for manifest in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
-        assert json.loads((PLUGIN_ROOT / manifest).read_text())["version"] == "1.0.86"
+        assert json.loads((PLUGIN_ROOT / manifest).read_text())["version"] == "1.1.1"
 
 
 def placement_block() -> str:

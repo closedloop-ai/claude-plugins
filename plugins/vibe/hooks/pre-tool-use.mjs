@@ -12,6 +12,8 @@ import { isMain, mergeResults, runGuards, runHookScript } from "./hook-dispatch.
 import { killGuard } from "./kill-guard.mjs";
 import { mergeGuard } from "./merge-guard.mjs";
 import { pauseGuard } from "./pause-guard.mjs";
+import { pluginVersionGuard, pluginVersionSkillStart } from "./plugin-version-guard.mjs";
+import { QUESTION_TOOLS, questionGuard } from "./question-guard.mjs";
 import { shellSafetyGuard } from "./shell-safety-guard.mjs";
 
 /** The guards each tool runs, in order; hooks.json's PreToolUse matcher names exactly these tools. */
@@ -21,9 +23,15 @@ export const PRE_TOOL_USE_ROUTES = Object.freeze({
     { name: "foreground-guard", run: foregroundGuard },
     { name: "merge-guard", run: mergeGuard },
     { name: "shell-safety-guard", run: shellSafetyGuard },
+    { name: "plugin-version-guard", run: pluginVersionGuard },
   ]),
-  Agent: Object.freeze([{ name: "agent-guard", run: agentGuard }]),
+  Agent: Object.freeze([
+    { name: "agent-guard", run: agentGuard },
+    { name: "plugin-version-guard", run: pluginVersionGuard },
+  ]),
   SendMessage: Object.freeze([{ name: "pause-guard", run: pauseGuard }]),
+  Skill: Object.freeze([{ name: "plugin-version-start", run: pluginVersionSkillStart }]),
+  ...Object.fromEntries(QUESTION_TOOLS.map((tool) => [tool, Object.freeze([{ name: "question-guard", run: questionGuard }])])),
 });
 
 /** The PreToolUse output for `event`, or null; `report(line)` receives each failing guard's error. */

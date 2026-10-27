@@ -15,7 +15,9 @@
 //        board.mjs <orchDir> watch-lines
 //
 // `writer` adds or updates a writer's row (owner, PR, head, status,
-// dependencies). `deliver` records something each recipient must be told
+// dependencies). It refuses a new row in a program whose recorded shape
+// (fleet-home.mjs) is `no-writer`, and a second writer in a `one-writer` one,
+// until the shape is changed. `deliver` records something each recipient must be told
 // directly (a ruling saved once as a reference file, a QA checkpoint that is
 // ready); `told` marks one recipient told. Every write re-renders
 // <orchDir>/board.md, the page every writer reads, with a log line.
@@ -79,7 +81,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { watcherState } from "../../codex-fleet-monitor/scripts/watcher.mjs";
 import { readConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
-import { homeProblems } from "./fleet-home.mjs";
+import { homeProblems, programShape, Shape } from "./fleet-home.mjs";
 import { readThreads } from "../../vibe/scripts/pr-threads.mjs";
 
 const STATE = "board.json";
@@ -168,6 +170,14 @@ export function pendingFor(board, writer) {
     .filter((entry) => entry.writer === writer && entry.answeredAt)
     .map((entry) => ({ kind: "ANSWERED", id: entry.id, text: entry.answer ?? `see the message answering: ${entry.text}` }));
   return [...changes, ...answers];
+}
+
+/** Why a program of `shape` with `writers` cannot take another writer, or null. */
+export function writerShapeProblem(shape, writers) {
+  if (shape === Shape.NoWriter || (shape === Shape.OneWriter && writers.length > 0)) {
+    return `this program is recorded as ${shape}${writers.length > 0 ? ` (writer ${writers.join(", ")})` : ""}; record its new shape with fleet-home.mjs shape ${shape === Shape.NoWriter ? "one-writer|fleet" : "fleet"} before adding a writer, so the sections that shape needs apply`;
+  }
+  return null;
 }
 
 /** Required duties with no owner recorded. */
@@ -434,6 +444,8 @@ function main(argv) {
     if (values.runtime !== undefined && !RUNTIMES.has(values.runtime)) {
       throw new Error("--runtime must be codex or claude.");
     }
+    const shapeProblem = board.writers[name] ? null : writerShapeProblem(programShape(orchDir), Object.keys(board.writers));
+    if (shapeProblem) throw new Error(shapeProblem);
     const row = board.writers[name] ?? {};
     const worktree = values.worktree === undefined ? undefined : path.resolve(values.worktree);
     const update = Object.fromEntries(Object.entries({ pr: values.pr, repo: values.repo, head: values.head, ready: values.ready, status: values.status, runtime: values.runtime, worktree })

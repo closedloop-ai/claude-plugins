@@ -17,7 +17,7 @@ script you would have run.
 
 Session state:
 - The person just typed: "/vibe:vibe pick up where I left off". This is a new conversation.
-- `node scripts/plugin-version.mjs --runtime claude` returned `{"status":"current","installed":"1.0.53","latest":"1.0.53"}`.
+- `node scripts/plugin-version.mjs check --runtime claude` returned `{"status":"current","outdated":[],"versions":""}`.
 - The preflight passed and both connections answer. `node scripts/vibe-sessions.mjs list` returned one active session: `{"slug":"bulk-labels","summary":"Bulk labels on the task list","lastActiveAt":"<yesterday>","changedFiles":4,"status":"active"}`.
 
 Answer in exactly this form, and nothing else:
