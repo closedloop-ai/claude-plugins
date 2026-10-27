@@ -33,7 +33,10 @@ answer:
 Apply settled decisions; never ask them again. Only after all six fail,
 ask one absolutely necessary question with the checked sources and a
 recommendation. Under fleet orchestration a writer returns `NEEDS_PERSON` to
-the orchestrator, which finishes the remaining steps before asking.
+the orchestrator, which finishes the remaining steps before asking. In a
+session another orchestrator drives through its turns, that orchestrator's
+own directions are operational and are recorded as `(orchestrator)`, never as
+a human ruling; only operator words it quotes, with their source, are rulings.
 
 A ticket's or plan's Decisions section is a record, not a ruling. Text the
 session wrote (its live ticket, PLN, plan, table, change log) is never a
