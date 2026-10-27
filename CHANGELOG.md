@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.2
+
+A vibe user on Codex could not follow the setup step "connect the ClosedLoop connector in Codex Settings: open Settings and click Connect", which named no section or label (ISS-13258). Restoring a connection is now steps the setup worker runs, and the person only signs in in the browser and starts a new chat.
+
+#### Fixed
+- `preflight.md` has one "Restoring a connection" procedure for both `closedloop` (`get-me` failed) and `closedloop-graph` (`sync_status` failed). On Codex, `vibe-setup-worker` reads `codex mcp list` and runs `codex mcp add closedloop --url https://mcp.closedloop.ai/mcp` when there is no row, or `codex mcp login <name>` when its `Auth` is `Not logged in` (or `OAuth` for `closedloop`), in the background so the sign-in page stays open. The person gets one line to sign in with their own ClosedLoop account, then one line to click New chat in the sidebar and type `$vibe`: a connection added or signed in while a chat is open reaches only a new chat, and quitting the app is not needed (checked against the app's bundled app server). A missing or disabled `closedloop-graph`, a connection that still fails in the new chat, or one that is not connected in Claude Code goes to engineering as `BLOCKED`.
+- The vibe orchestrator dispatches the setup worker when either connection does not answer, instead of telling the person to open Settings. The setup worker no longer asks the person to quit and reopen the ChatGPT app for closedloop-graph.
+- The folder access step names the macOS labels: System Settings, Privacy & Security, Files & Folders, under ChatGPT. `INSTALL.md` says to click Plugins and New chat in the sidebar, and says what `codex mcp list` must show for closedloop-graph.
+- Coverage: a contract test file (`test_vibe_connection_restore_contract.py`, 5 of its 6 cases fail on 1.1.1) that also refuses any vibe or fleet-orchestrator instruction naming the app's Settings or "click Connect". A new eval, `exec-closedloop-connection-lost-no-settings`, passes 3 of 3 here on Claude (sonnet) and Codex, against 1 of 3 on Claude and 0 of 3 on Codex with 1.1.1, which told the person to open Codex Settings and click Connect.
+
 ### vibe v1.1.1
 
 Two Storybook mistakes the first Storybook handoff review found (ISS-13167) are now raised at placement, before the writer builds the stories, instead of only at handoff (ISS-13182).

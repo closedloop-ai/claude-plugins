@@ -420,7 +420,8 @@ The plugin bundles the ClosedLoop ticket automation skill pack: `cl-policy`, `cl
 words asking for a pull request, passing the work on, an unclear "I'm done",
 the endings line in a new session's first reply, and the closing pull request
 link. It also covers setup and questions (tags `setup`, `sample-data`,
-`questions`): an expired Claude sign-in becomes one plain step, the sample-data
+`questions`): an expired Claude sign-in becomes one plain step, a lost
+ClosedLoop connection goes to the setup worker and never to the app's Settings, the sample-data
 question is plain and asked only when it matters, and an answered or waiting
 question is never asked again. Each case is a one-turn rehearsal with the session state in the prompt,
 so it needs no symphony-alpha checkout, and it is named by persona (`exec-`
@@ -526,7 +527,7 @@ harness switch instead of another worker doing its work.
 
 ## Runtime Files
 
-Version `1.1.1` contains 12 skills, 16 agents, and one hook manifest
+Version `1.1.2` contains 12 skills, 16 agents, and one hook manifest
 (`hooks/hooks.json`). It has no standalone commands, root-level shell scripts,
 or production Python tools under
 `tools/python/`; that directory contains the skill-contract test modules and

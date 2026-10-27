@@ -330,8 +330,9 @@ the validated remembered checkout using the startup context above, or the exact
 owned session once it exists. Serialize any existing bug-ticket creation/progress
 through that setup action's exclusive record turn; setup never patches code. The
 only things the person ever does are type their Mac password into an
-installer prompt, finish a browser sign-in, allow Codex into a folder when
-macOS asks, and sign in to Claude again with the one Terminal step the
+installer prompt, finish a browser sign-in (then start a new chat when the
+setup worker says so), allow Codex into a folder when macOS asks, and sign in
+to Claude again with the one Terminal step the
 `claude-login` fix gives; the worker reports those actions as `NEEDS_PERSON`. Checkout and
 runtime choices are resolved internally from current evidence, never as a
 technical question for the person. You and the
@@ -354,10 +355,10 @@ As soon as Node, Git and the exact checkout validate, use the owned launcher for
 every normal call. No other launcher failure permits this native bootstrap.
 
 Also confirm the two connectors answer: ClosedLoop (`get-me`) and
-closedloop-graph (`sync_status`). closedloop-graph is required. If it does
-not answer, dispatch `vibe-setup-worker` to restore the connection; never ask
-the person to set anything up beyond what that worker reports as
-`NEEDS_PERSON`.
+closedloop-graph (`sync_status`). closedloop-graph is required. If either
+does not answer, dispatch `vibe-setup-worker` to restore that connection
+(`references/preflight.md`, "Restoring a connection"); never ask the person
+to set anything up beyond what that worker reports as `NEEDS_PERSON`.
 
 ## 2. Start or resume
 
