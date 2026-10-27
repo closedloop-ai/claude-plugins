@@ -130,6 +130,16 @@ Do this first, in both modes.
      lifecycle: the root, lifecycle tag and tree position always come from
      `apps/storybook/TAXONOMY.md`, and a precedent in a v1.0 root never puts
      new work in v1.0.
+   - The lifecycle tag of a new entry also follows its flags (operator ruling,
+     2026-10-27): list each PostHog flag that gates the surface where it is
+     mounted and each flag the planned stories turn on
+     (`parameters.appCore.enabledFlags`, a desktop page's `flags` prop), and
+     read each one's value in the session's production flag snapshot (the
+     file at `flagSnapshot.file` in `vibe-sessions.mjs show`). A surface
+     reachable only behind a flag that is off or missing there gets the
+     `preview` tag wherever it sits in the tree, never `stable`. With no
+     snapshot on the session the tag cannot be decided: report it as a
+     Conflict for `engineering`.
    - Either way, stories document the components consumers actually render,
      one story per state, never internal render pieces: a shared capability's
      generic mechanics stay in the shared component's existing stories, and
@@ -159,7 +169,7 @@ Placement:
 - Capability: <named without the entity>
 - Precedents: <each: entity, providing component path, how hosts consume it, each story title, story names, lifecycle tag and file>, or none found
 - Owner: <path to build or extend>, per <doc section> or mirroring <precedent path>
-- Stories: <each story to add or extend: title, lifecycle tag, file>, root and tag per <TAXONOMY.md section>, structure per <doc section> or mirroring <precedent>; an existing file's title and tag unchanged, a v1.0 file not edited beyond a compile-only repair (step 4)
+- Stories: <each story to add or extend: title, lifecycle tag, file, and each flag that gates its surface or that it turns on with that flag's value in the production flag snapshot (one off or missing makes the tag `preview`)>, root and tag per <TAXONOMY.md section>, structure per <doc section> or mirroring <precedent>; an existing file's title and tag unchanged, a v1.0 file not edited beyond a compile-only repair (step 4)
 - Fixtures: <each piece of setup the new stories need that a story file already declares: its story file and line, and the non-story fixture module to import it from, or the move into one the writer makes first>, or none
 - Names: <each planned story name, and for every thing the name claims (each kind, level or state it lists, a word such as every or all, a painted label or status), the play assertion that will check it, or the args that render it when the story has no play>; a claim with no assertion is a name to narrow or a play to complete before the story is written
 - Conflict: <each disagreement: audience `design` or `engineering`, both sides quoted with paths, and how it was decided>, or none
@@ -236,7 +246,9 @@ evidence:
   repeats setup another story file declares, instead of importing it from the
   non-story fixture module the Placement block's Fixtures line names.
 - Emitters and lifecycle: a story state no production path emits, and a
-  `stable` tag on a surface only reachable behind a default-off flag.
+  `stable` tag on a story whose surface is reachable only behind a flag that
+  is off or missing in the session's production flag snapshot; it is
+  `preview` wherever it sits in the tree.
 - Sidebar folds: every new `!dev` marker and the person's explicit request for
   sidebar reduction that authorizes it. Without that request it is a finding.
 - Version History: the session's new entries in `Start Here/Version History`

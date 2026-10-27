@@ -88,3 +88,30 @@ def test_an_eval_rehearses_the_names_line_at_placement() -> None:
     assert "Priority Label On Every Kind" in prompt
     graders = sorted(path.name for path in (case / "graders").glob("*.md"))
     assert graders == ["branch-kind-unchecked.md", "status-label-unchecked.md"]
+
+
+def test_placement_tags_a_surface_behind_an_off_flag_preview() -> None:
+    """Operator ruling, 2026-10-27: a story whose surface is reachable only behind a flag off in production is `preview`."""
+    search = flat(section(agent("vibe-storybook-decomposer"), "## Precedent search"))
+    for required in (
+        "The lifecycle tag of a new entry also follows its flags (operator ruling, 2026-10-27)",
+        "each PostHog flag that gates the surface where it is mounted and each flag the planned stories turn on",
+        "the session's production flag snapshot (the file at `flagSnapshot.file` in `vibe-sessions.mjs show`)",
+        "A surface reachable only behind a flag that is off or missing there gets the `preview` tag wherever it sits in the tree, never `stable`.",
+        "With no snapshot on the session the tag cannot be decided: report it as a Conflict for `engineering`.",
+    ):
+        assert required in search, required
+    assert "with that flag's value in the production flag snapshot (one off or missing makes the tag `preview`)" in placement_block()
+    verify = flat(section(agent("vibe-storybook-decomposer"), "## Verify"))
+    assert "is off or missing in the session's production flag snapshot; it is `preview` wherever it sits in the tree" in verify
+    assert "only reachable behind a default-off flag" not in verify
+
+
+def test_an_eval_rehearses_the_off_flag_tag_at_placement() -> None:
+    case = EVALS / "pm-storybook-flag-off-is-preview"
+    prompt = (case / "prompt.md").read_text()
+    assert "`placement`" in prompt
+    assert '"projects-portable-surface": false' in prompt
+    graders = sorted(path.name for path in (case / "graders").glob("*.md"))
+    assert graders == ["not-stable.md", "tag-is-preview.md"]
+
