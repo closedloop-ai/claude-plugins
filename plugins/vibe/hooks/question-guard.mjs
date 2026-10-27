@@ -19,7 +19,7 @@ import { deny } from "./hook-dispatch.mjs";
 import { loadsSkill, readTranscript } from "./skill-transcript.mjs";
 
 export const QUESTION_TOOLS = Object.freeze(["AskUserQuestion", "request_user_input", "request_user_input_async"]);
-const VERSION_QUESTION = /\bnewer version of (?:vibe|the ClosedLoop plugins) is available\b/i;
+const VERSION_QUESTION = /\bnewer version of (?:vibe|the plugins) is available\b/i;
 const CODE_CITATION = /checked in code:\s*\S+:\d+/i;
 const RECORD_MARKER = "sessionquestionsmjsask";
 const RECORD_WINDOW = 400;

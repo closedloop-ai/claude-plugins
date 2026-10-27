@@ -34,7 +34,7 @@ test("in a vibe session a question reaches the person only after session-questio
   assert.equal(ask(transcript(t, vibeSkill), BACKUP, "request_user_input")?.decision, "deny", "the Codex question tool is held to the same path");
   assert.equal(ask(transcript(t, vibeSkill), "A newer version of vibe is available (vibe: you have 1.0.85, the latest is 1.1.0). Do you want me to update it now, or keep going with this one? Keeping going with an older version could give worse results."), null,
     "the startup version question runs once per conversation outside session-questions.mjs");
-  assert.equal(ask(transcript(t, fleetSkill), "A newer version of the ClosedLoop plugins is available (vibe: you have 1.0.85, the latest is 1.1.0). Update now, or proceed on this version? Proceeding on an outdated plugin could give worse results."), null,
+  assert.equal(ask(transcript(t, fleetSkill), "A newer version of the plugins is available (vibe: you have 1.0.85, the latest is 1.1.0). Update now, or proceed on this version? Proceeding on an outdated plugin could give worse results."), null,
     "the fleet startup version question is about the install, so it names no code");
   assert.equal(ask(transcript(t, fleetSkill), BACKUP)?.decision, "deny", "every other orchestrator question still names the code");
 });
