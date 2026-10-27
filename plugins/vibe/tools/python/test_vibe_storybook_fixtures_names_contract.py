@@ -97,7 +97,8 @@ def test_placement_tags_a_surface_behind_an_off_flag_preview() -> None:
         "The lifecycle tag of a new entry also follows its flags (operator ruling, 2026-10-27)",
         "each PostHog flag that gates the surface where it is mounted and each flag the planned stories turn on",
         "the session's production flag snapshot (the file at `flagSnapshot.file` in `vibe-sessions.mjs show`)",
-        "A surface reachable only behind a flag that is off or missing there gets the `preview` tag wherever it sits in the tree, never `stable`.",
+        "A surface reachable only behind a flag that is off or missing there gets the `preview` tag wherever it sits in the tree, never `stable`, and its story file names that flag",
+        "(a `// Preview: <flag key> is off in production` comment)",
         "With no snapshot on the session the tag cannot be decided: report it as a Conflict for `engineering`.",
     ):
         assert required in search, required

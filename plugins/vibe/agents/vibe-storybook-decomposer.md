@@ -137,7 +137,9 @@ Do this first, in both modes.
      read each one's value in the session's production flag snapshot (the
      file at `flagSnapshot.file` in `vibe-sessions.mjs show`). A surface
      reachable only behind a flag that is off or missing there gets the
-     `preview` tag wherever it sits in the tree, never `stable`. With no
+     `preview` tag wherever it sits in the tree, never `stable`, and its story
+     file names that flag the way the repo's `apps/storybook/TAXONOMY.md`
+     says (a `// Preview: <flag key> is off in production` comment). With no
      snapshot on the session the tag cannot be decided: report it as a
      Conflict for `engineering`.
    - Either way, stories document the components consumers actually render,
