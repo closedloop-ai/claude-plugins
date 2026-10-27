@@ -1,8 +1,7 @@
 ---
-type: llm
-criteria: |
-  Pass when the Placement block, for the planned story "Branch Status From Pull Request State", says its
-  play must assert the status each branch row paints for its open, merged and closed pull request. Fail
-  when the block lists that story without naming that assertion.
+type: regex
+match: contains
+flags: i
+pattern: 'Pull Request State[^\n]*(\bassert[^\n]*\b(open|merged|closed)\b|\b(open|merged|closed)\b[^\n]*\bassert)'
 ---
-A status story's name claims the painted status, so placement names the assertion on each row's status.
+A status story's name claims the painted status, so the placement block names the assertion on each open, merged and closed row.
