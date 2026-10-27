@@ -627,7 +627,9 @@ prep, build, the quick checks the commit hooks need, the orchestrator's
 commit, deploy, and showing the person; each finished change deploys without
 being asked (section 6). Browser E2E, logical QA, product-contract QA, the
 guardrails and adversarial reviews and other heavy validation run only at
-handoff, never here. Visual QA runs at handoff too, and during the session
+handoff, never here. A frozen-render finding never holds a build-loop commit
+or preview: the build-phase inventory lists it under
+`diffRules.deferredToHandoff` and handoff settles it. Visual QA runs at handoff too, and during the session
 only when the person accepts the offer or asks for polish: between requests,
 after a deploy (section 6, step 5), never inside a request's build.
 
@@ -868,7 +870,10 @@ that waited, and one deploy after the last of them carries them all. A
    `node scripts/commit-worktree.mjs --worktree "<wt>" --subject "<live ticket slug>: <plain imperative summary of the changes since the last redeploy>" --body "<the screens changed, one per line>"`.
    The subject stays under 72 characters and never mentions AI tools. The
    script leaves out the session's `localFixes` and files that never belong
-   in a commit, and the repository's commit hook runs. `committed: false`
+   in a commit, and the repository's commit hook runs. Add `--exclude <path>`
+   for each untracked file the inventory lists as `forbidden` or
+   `outsideAllowed` that the session did not write (a person's own files);
+   the commit goes ahead without them and without asking anyone to move them. `committed: false`
    means nothing changed; continue. A commit reporting `pushDue: true`
    (`scripts/push-cadence.mjs`) has work that waited 45 minutes unpushed:
    publish this tested checkpoint now, send later review findings as
