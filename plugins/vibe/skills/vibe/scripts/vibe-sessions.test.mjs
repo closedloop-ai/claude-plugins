@@ -236,6 +236,27 @@ test("new records the person running the session and refuses to start without th
   assert.deepEqual(nameless.json.session.operator, { id: "user-second", email: "second+08252026@example.com", name: null });
 });
 
+test("new refuses while this conversation's plugin check is outdated and unanswered, and records the answer once given", (t) => {
+  const { home, checkout } = setup(t);
+  rememberRepo(home, checkout);
+  const env = { CLAUDE_CODE_SESSION_ID: "conversation-version", CODEX_THREAD_ID: "" };
+  const startup = path.join(home, ".codex", "vibe", "plugin-version", "conversation-version.json");
+  const outdated = { status: "outdated", versions: "vibe: you have 1.0.84, the latest is 1.0.85", outdated: [{ harness: "codex", plugin: "vibe", installed: "1.0.84", latest: "1.0.85" }] };
+  writeJson(startup, outdated);
+  const args = ["new", "--slug", "version-gate", "--summary", "x", "--mode", "blank", ...OPERATOR_ARGS];
+  const refused = runNode(SCRIPT, args, home, env);
+  assert.equal(refused.status, 1);
+  assert.match(refused.json.error, /plugins are outdated \(vibe: you have 1\.0\.84, the latest is 1\.0\.85\) and the person has not chosen to update or to proceed/);
+  assert.equal(git(checkout, ["branch", "--list", "vibe/version-gate"], home), "", "a refused start creates nothing");
+
+  writeJson(startup, { ...outdated, choice: { choice: "proceed", by: "person", acceptedWorseResults: true } });
+  const created = runNode(SCRIPT, args, home, env);
+  assert.equal(created.status, 0, created.stderr);
+  const record = JSON.parse(readFileSync(recordFile(created.json.session.worktree, home), "utf8"));
+  assert.equal(record.pluginVersion.choice.choice, "proceed");
+  assert.equal(record.pluginVersion.choice.acceptedWorseResults, true);
+});
+
 test("touch records final-merge mode for the publication main-sync and refuses other values", (t) => {
   const { home, worktree } = newSession(t, "final-merge");
   assert.equal(runNode(SCRIPT, ["show", "--worktree", worktree], home).json.session.mainMerge, undefined);

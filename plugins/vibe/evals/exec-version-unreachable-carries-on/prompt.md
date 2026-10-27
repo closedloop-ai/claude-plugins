@@ -17,7 +17,7 @@ script you would have run.
 
 Session state:
 - The person just typed: "$vibe I want to change how the projects board groups cards". This is a new conversation; no session exists yet.
-- `node scripts/plugin-version.mjs --runtime codex` returned `{"status":"unknown","installed":"1.0.53","reason":"the marketplace could not be reached: fetch failed"}`.
+- `node scripts/plugin-version.mjs check --runtime codex` returned `{"status":"unknown","reason":"the marketplace could not be reached: fetch failed"}`.
 - The preflight passed and both connections answer.
 
 Answer in exactly this form, and nothing else:

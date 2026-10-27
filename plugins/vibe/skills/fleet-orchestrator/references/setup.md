@@ -53,7 +53,7 @@ Then set the slot counts from this machine's core count, write the file, and run
 
 ## Checklist
 
-1. Run `scripts/fleet-home.mjs start <slug>` ([layout](./state.md)) and write `<fleetHome>/config.env`.
+1. Run `scripts/fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet` ([layout](./state.md)) and write `<fleetHome>/config.env`.
 2. Fill `sessions.txt` and `prs.txt` as codex-fleet-monitor describes; a session started through `fleet.sh` is listed as `local|remote <name>`.
 3. For each other machine: create its fleet home the same way, then check ssh and its login shell with `ssh <host> "<REMOTE_SHELL> 'command -v node codex gh'"`, which must print three paths. Install this plugin there in a persistent path.
 4. Get a branch to another machine's clone without going through the code host: `git push <host>:<path to its clone> <branch>:<branch>`, then on that machine `git worktree add <worktree path> <branch>` and run the bootstrap the target repo's docs name. Push to a branch that is not checked out there.

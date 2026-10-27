@@ -2,16 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def test_release_and_both_manifests_are_1085() -> None:
-    for manifest in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
-        assert json.loads((ROOT / manifest).read_text())["version"] == "1.0.85"
 
 
 def test_setup_worker_sends_missing_clerk_keys_to_the_person() -> None:

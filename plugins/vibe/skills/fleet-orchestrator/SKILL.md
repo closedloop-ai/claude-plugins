@@ -1,11 +1,11 @@
 ---
 name: fleet-orchestrator
-description: 'Use when you orchestrate several workers at once (Codex or vibe sessions and Claude subagents) delivering parallel pull requests, on one machine or across several, for a human operator who does QA and merges. Covers who may write where, orchestration state that survives a reboot, restart or compaction, starting, resuming and steering Codex threads bound to a worktree, Codex budget rules, a Claude takeover of a dead Codex writer, CPU and shared e2e stack slot locks across machines, agent-first QA and review before merge, pushback on flags and extra code paths, a lessons ledger, and how to report to the operator. Pairs with codex-fleet-monitor for watching the fleet.'
+description: 'Use when you run delivery work for a human operator who does QA and merges: several workers at once (Codex or vibe sessions and Claude subagents) delivering parallel pull requests on one machine or several, one writer delivering one pull request, or a session with no writer at all (design, research or analysis). Starts every chat by checking the installed plugin versions in Claude Code and Codex. Covers who may write where, orchestration state that survives a reboot, restart or compaction, starting, resuming and steering Codex threads bound to a worktree, Codex budget rules, a Claude takeover of a dead Codex writer, CPU and shared e2e stack slot locks across machines, agent-first QA and review before merge, pushback on flags and extra code paths, a lessons ledger, and how to report to the operator. Pairs with codex-fleet-monitor for watching the fleet.'
 ---
 
 # fleet-orchestrator
 
-You run a program of several PRs at once: you plan, route, review, push back and report; workers write; the operator does QA, merges and makes product calls. Each script named below carries the incident behind its rule in its header.
+You run a program (several PRs at once, one writer on one PR, or research and design with no writer): you plan, route, review, push back and report; workers write; the operator does QA, merges and makes product calls. Each script named below carries the incident behind its rule in its header.
 
 ## Principles
 
@@ -25,6 +25,7 @@ Repo specifics (launch paths, auth, bootstrap, test commands, e2e harness) come 
 
 Works on one machine with no remote config. More machines need ssh key auth between them, plus `codex`, `node`, `gh`, this plugin and the closedloop-graph MCP server on each. Prerequisites, `config.env` keys and the checklist: [references/setup.md](./references/setup.md).
 
+- Plugin version, first in every chat, new or resumed: run `node ../vibe/scripts/plugin-version.mjs check --state <orchDir>/plugin-version.json` (`fleet-home.mjs resume` prints it; leave out `--state` before a program exists). On `outdated`, ask the operator one question with its `versions`: update now, or proceed knowing an outdated plugin could give worse results. Record the answer with `plugin-version.mjs choose --choice update|proceed --state <same file>` and in the resume log. On update, run `plugin-version.mjs update --state <same file>`: it updates each outdated plugin in Claude Code and Codex, whichever has one, and verifies it; tell the operator each harness in `restart` needs a new session (Claude Code) or a reopened app (Codex), and stop. On `unknown`, say in one line that the check could not run and carry on. In Claude Code the vibe hooks refuse worker launches until the check and any answer are recorded.
 - First run: when `<fleetHome>/config.env` is missing, or lacks a key this run needs, ask the operator once before launching anything, as one structured question set with the [first-run questions](./references/setup.md#first-run-interview) and their defaults. Write `config.env`, run the checklist's verification, and report what passed.
 - Later runs read `config.env` and do not ask again unless a verification fails.
 
@@ -47,6 +48,30 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 | Turning a repeated mistake into a guard | `closedloop-core:prevent-recurrence` | closedloop-core | the lessons loop below |
 | Writers, reviews, handoff, ticket, environment | vibe's own workers (above) | vibe | none; vibe is required |
 | Watchers, pollers, narrow log diagnosis | Sonnet subagents; `codex-fleet-monitor` for the fleet; the `app-server-orchestrator` skill to steer Codex threads | vibe, Codex skills | `fleet.sh session last` polling |
+
+## Programs with one writer or none
+
+This skill also runs a program with one writer on one PR, or one with nobody writing code (design, research, analysis). Record the shape when you start it, `fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet`, and change it with `fleet-home.mjs shape <shape>` before the program grows; `board.mjs writer` refuses a writer the shape does not allow, and `resume` prints the shape for the next chat. What each section asks of the smaller shapes:
+
+| Section | no-writer | one-writer |
+|---|---|---|
+| Principles | applies, including evidence before every claim | applies |
+| Setup | applies; only the keys this program uses | applies |
+| Roles | read-only helpers only | applies |
+| Research with closedloop-graph | applies | applies |
+| State and persistence | applies: resume log, rulings, a program change recorded before acting | applies |
+| Monitoring | skip: no sessions or PRs to watch | applies to its one PR |
+| Codex sessions | skip | applies when the writer runs in Codex |
+| Claude workers | helpers only | applies |
+| Fleet board and direct messages | skip | its one row and deliveries; no writer-to-writer messages |
+| Moving work between runtimes and accounts | skip | only a takeover of the one writer |
+| Machines and CPU | only for a heavy check you run | applies |
+| Quality gates and QA | skip | applies, except merge order and shared version-file conflicts between PRs |
+| Pushback | applies | applies |
+| Program practices | repo knowledge only | applies |
+| Lessons loop | applies | applies |
+| Artifacts people read | applies | applies |
+| Reporting to the operator | applies | applies |
 
 ## Research with closedloop-graph
 
@@ -117,7 +142,7 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 - When a machine's `codex-usage` band reaches `MOVE_AT_PERCENT`, or will before the work is done, tell the operator at once with the band and `resets=<n>` (applying a reset is theirs); when they are away, or on `LIMIT` or `LIMIT-SPENDING-CREDITS`, move its busiest writers to Claude writers. The watcher's `claude-usage` line (`claude -p "/usage"`) works the same way in reverse: on `HIGH` tell the operator its reset time and, when away, move the busiest Claude writers to Codex, at once for one at its limit.
 - When the operator reports high Claude usage, stop idle and polling Claude workers first, ask active ones to push a checkpoint and end, move their remaining work to Codex writers, and widen the Claude polling interval.
 - Before any move the old writer stops, or is confirmed dead, after committing and pushing or reporting its uncommitted state.
-- To Codex (another machine, account, or from Claude): a fresh `fleet.sh` thread in the branch's worktree there with a [resume prompt](./references/templates.md#resume-prompt), which says to keep the current plugin version. Codex to Claude: a Claude writer in the same worktree with the [takeover preamble](./references/templates.md#worker-preamble), which first moves the vibe writer with vibe's harness switch.
+- To Codex (another machine, account, or from Claude): a fresh `fleet.sh` thread in the branch's worktree there with a [resume prompt](./references/templates.md#resume-prompt), which carries the operator's plugin version answer. Codex to Claude: a Claude writer in the same worktree with the [takeover preamble](./references/templates.md#worker-preamble), which first moves the vibe writer with vibe's harness switch.
 
 ## Machines and CPU
 

@@ -495,14 +495,14 @@ def run_case(
                 30,
                 work / "scaffold.log",
             )
-        skill = "handoff" if "vibe:handoff" in case["prompt"] else "vibe"
+        skill = next((name for name in ("handoff", "fleet-orchestrator") if f"vibe:{name}" in case["prompt"]), "vibe")
         # The source's Claude-only Skill instruction maps to the installed Codex skill.
         prompt = case["prompt"].replace(
             "Load the instructions with the Skill tool",
             "Load the installed Codex skill instructions",
         )
         prompt = re.sub(
-            r"\(`vibe:(vibe|handoff)`\)", lambda m: "(`$" + m[1] + "`)", prompt
+            r"\(`vibe:(vibe|handoff|fleet-orchestrator)`\)", lambda m: "(`$" + m[1] + "`)", prompt
         )
         header = case["meta"].get("append_system_prompt", "")
         history = case["source"] / "history.jsonl"

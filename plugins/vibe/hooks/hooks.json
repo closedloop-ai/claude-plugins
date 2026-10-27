@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Agent|SendMessage",
+        "matcher": "Bash|Agent|SendMessage|Skill",
         "hooks": [
           {
             "type": "command",

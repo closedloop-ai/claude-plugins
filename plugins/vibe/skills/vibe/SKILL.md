@@ -23,8 +23,8 @@ Keep your context for the conversation and session state; NEVER do the work:
   `scripts/commit-worktree.mjs`, `scripts/local-plans.mjs`,
   `scripts/session-questions.mjs`, `scripts/run-bounded.mjs`,
   `scripts/dist/writer-state.mjs`, `scripts/dist/claude-worker.mjs`,
-  `scripts/plugin-version.mjs`, `scripts/precedent-check.mjs`); run the update
-  commands `plugin-version.mjs` prints, only when the person chose to update;
+  `scripts/plugin-version.mjs`, `scripts/precedent-check.mjs`); run
+  `plugin-version.mjs update` only when the person chose to update;
   call ClosedLoop `get-me`
   and closedloop-graph `sync_status`; inspect the in-app browser for live-Asana
   precedent or accepted visual QA (`references/quality-loop.md`); and dispatch.
@@ -261,39 +261,49 @@ stay with the workers.
 
 ### Plugin version
 
-Every `$vibe` start, new or resume, first checks whether this plugin is the
-latest release: run
-`node scripts/plugin-version.mjs --runtime codex` in Codex, or
-`--runtime claude` in Claude Code. It runs once per conversation, so its
+Every `$vibe` start, new or resume, first checks whether the ClosedLoop
+plugins installed on this machine, in Claude Code and in Codex, are the latest
+release: run `node scripts/plugin-version.mjs check --runtime codex` in Codex,
+or `--runtime claude` in Claude Code. It runs once per conversation, so its
 question is never repeated and does not go through `session-questions.mjs`.
+It records its result for this conversation; `vibe-sessions.mjs new` copies
+it onto the session and refuses to start one while an outdated result has no
+recorded answer, and in Claude Code the vibe hooks refuse worker launches
+until then.
 
 - `current`: say nothing about it and continue.
 - `unknown`, or the command could not run at all (no Node yet on a first
   run): the check never blocks. Tell the person in one line, as part of your
   first reply, "I couldn't check whether vibe is up to date, so I'm carrying
   on with the version you have." and continue.
-- `outdated`: ask only on a fresh start whose opening message does not already
-  say to proceed. Ask exactly: "A newer version of vibe is available (you have
-  <installed>, the latest is <latest>). Do you want to keep going with this
-  one, or update now?" That question is the whole first reply: the endings line
-  of a new session (section 5, "Notices that never wait") waits for its answer.
-  On "keep going", continue with this version. On a resumed session, or when
-  the opening message already says to proceed, report "A newer version of vibe
-  is available (you have <installed>, the latest is <latest>). I'm carrying on
-  with this version as requested." and continue in the same turn. Do not ask
-  the version question or stop orchestration in either case.
-  That applies only after the fresh-start question. The next reply is then the
-  new session's first reply, endings line included. On "update", run each
-  command in its `update` list in order
-  yourself; this is the one plugin change you make, and only on the person's
-  choice (`references/guardrails.md`, "Plugins and tooling"). When they all
-  succeed, tell the person, in Codex: "vibe is updated. Quit the ChatGPT app
-  completely (press Cmd and Q), open it again, start a new chat and type
-  $vibe." In Claude Code: "vibe is updated. Close this Claude Code session,
-  start a new one and type /vibe:vibe." Then stop: the update is used only
-  from a new session. When a command fails, tell them in one plain line that
-  the update could not finish, so you are carrying on with the version they
-  have and they can message engineering about it; never retry it another way.
+- `outdated`, new or resumed, unless the opening message already says to
+  proceed: ask exactly "A newer version of vibe is available (<versions>). Do
+  you want me to update it now, or keep going with this one? Keeping going
+  with an older version could give worse results.", where `<versions>` is the
+  result's `versions`. That question is the whole first reply: the endings
+  line of a new session (section 5, "Notices that never wait") waits for its
+  answer. The next reply is then the new session's first reply, endings line
+  included.
+- On "keep going", run `node scripts/plugin-version.mjs choose --choice
+  proceed` and continue with this version.
+- When the opening message already says to proceed (a fleet orchestrator's
+  brief, for example), run `choose --choice proceed --by opening-message`,
+  report "A newer version of vibe is available (<versions>). I'm carrying on
+  with this version as requested, though an older version could give worse
+  results." and continue in the same turn, without asking.
+- On "update", run `choose --choice update`, then `node
+  scripts/plugin-version.mjs update`; this is the one plugin change you make,
+  and only on the person's choice (`references/guardrails.md`, "Plugins and
+  tooling"). It updates every outdated ClosedLoop plugin in Claude Code and
+  in Codex, whichever has one, and checks each reached the latest version. On
+  `"status":"updated"`, tell the person, for each harness in its `restart`,
+  in Codex: "vibe is updated. Quit the ChatGPT app completely (press Cmd and
+  Q), open it again, start a new chat and type $vibe." In Claude Code: "vibe
+  is updated. Close this Claude Code session, start a new one and type
+  /vibe:vibe." Then stop: the update is used only from a new session. On
+  `"status":"failed"`, tell them in one plain line that the update could not
+  finish, so you are carrying on with the version they have and they can
+  message engineering about it; never retry it another way.
 
 ### Prerequisites
 
@@ -404,16 +414,18 @@ with `mergeCheck: true` (its own record turn): when the session's pull
 request has merged it moves the PLN to `EXECUTED`. This is internal; never
 mention it to the person.
 
-Then follow "Resuming" below.
+Once the person picks a session, record this conversation's version check
+and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
+"<wt>"`. Then follow "Resuming" below.
 
 ### Starting new
 
 1. Your first reply to the new session carries the endings line (section 5,
    "Notices that never wait"), after the plugin version check (section 1,
    "Plugin version"): when the version is current or unknown it goes in the
-   very first reply; when it is outdated and the fresh start did not already
-   say to proceed, the version question comes first on its own and the endings
-   line goes in the first reply after the person answers it. A resume or an
+   very first reply; when it is outdated and the opening message did not
+   already say to proceed, the version question comes first on its own and the
+   endings line goes in the first reply after the person answers it. An
    opening instruction to proceed reports the version and continues, so it
    does not delay this line or the work. Use the work the person already described.
    Only when they have not supplied it, ask what they want to work on: a ClosedLoop ticket (ISS-, PRD-, or a pasted
@@ -795,8 +807,8 @@ what it already built, like any other request about it.
   either open a pull request for you, or pass it to design or engineering to
   finish." It is a notice, not a question: it rides along with whatever that
   first reply says or asks, and nothing waits on it. The one thing that
-  comes before it is an outdated plugin's version question when a fresh start
-  did not already say to proceed (section 1, "Plugin version"), which is asked
+  comes before it is an outdated plugin's version question when the opening
+  message did not already say to proceed (section 1, "Plugin version"), which is asked
   alone; the endings line then rides in the first reply after that answer. An
   opening instruction to proceed reports the outdated version and includes
   this line while continuing. Never add it when resuming a session, and

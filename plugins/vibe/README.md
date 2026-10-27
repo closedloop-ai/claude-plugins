@@ -174,14 +174,17 @@ slug) go into the session decision table. A question is raised, one at a
 time with full context, only when none of these settles it and the answer
 is absolutely necessary. Existing product and design approvals remain intact.
 
-Every `$vibe` start checks the installed vibe against the version on
-claude-plugins `main` (`scripts/plugin-version.mjs`). When it is older, the
-person chooses to keep going or update now; on update the orchestrator runs
-the harness's update commands (`claude plugin marketplace update` and
-`claude plugin update` in Claude Code, `codex plugin marketplace upgrade`
-and `codex plugin add` for vibe and closedloop-core in Codex) and asks them
-to reopen the app. When the check cannot reach GitHub the session carries
-on and says so.
+Every `$vibe` and fleet-orchestrator start checks every closedloop-ai plugin
+installed in Claude Code and in Codex against the version on claude-plugins
+`main` (`scripts/plugin-version.mjs`). When one is older, the person chooses
+to update now or keep going, knowing an older version could give worse
+results, and the choice is recorded in the session's state. On update the
+script updates each outdated plugin in each harness that has one
+(`claude plugin marketplace update` and `claude plugin update` in Claude
+Code, `codex plugin marketplace upgrade` and `codex plugin add` in Codex),
+checks the new version is installed, and the orchestrator asks them to start
+a new session or reopen the app. When the check cannot reach GitHub the
+session carries on and says so.
 
 Sessions keep Codex and Claude usage down. Each worker's model follows its
 role from one policy per harness: in Codex, `scripts/worker-model.mjs` (backed
