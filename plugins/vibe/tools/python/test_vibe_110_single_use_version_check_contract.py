@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 from vibe_contract_text import flat, section
@@ -24,7 +23,6 @@ FLEET_SKILL = FLEET / "SKILL.md"
 TEMPLATES = FLEET / "references" / "templates.md"
 STATE = FLEET / "references" / "state.md"
 SINGLE_USE = "## Programs with one writer or none"
-CELL = re.compile(r"^\| (?P<section>[^|]+?) \| (?P<none>[^|]+?) \| (?P<one>[^|]+?) \|$")
 
 
 def test_release_and_both_manifests_are_110() -> None:
@@ -39,35 +37,27 @@ def test_the_fleet_skill_is_the_entry_point_for_one_writer_and_for_none() -> Non
         assert phrase in description, phrase
 
 
-def single_use_rows() -> dict[str, tuple[str, str]]:
-    text = FLEET_SKILL.read_text()
-    block = text[text.index(SINGLE_USE):].split("\n## ", 1)[0]
-    rows = {}
-    for line in block.splitlines():
-        match = CELL.match(line)
-        if match and match["section"] not in ("Section", "---"):
-            rows[match["section"]] = (match["none"], match["one"])
-    return rows
+def shape_lines() -> dict[str, str]:
+    text = section(FLEET_SKILL.read_text(), SINGLE_USE)
+    return {label: text.split(f"- {label}", 1)[1].split(" - ", 1)[0] for label in ("Both shapes:", "one-writer, also:", "no-writer, also:")}
 
 
-def test_every_fleet_section_says_what_it_asks_of_a_one_writer_and_a_no_writer_program() -> None:
-    # A section added later without a row would leave the smaller shapes guessing again.
-    headings = [line[3:] for line in FLEET_SKILL.read_text().splitlines() if line.startswith("## ")]
-    rows = single_use_rows()
-    assert sorted(rows) == sorted(heading for heading in headings if heading != SINGLE_USE[3:])
-    for name, cells in rows.items():
-        assert all(cell.strip() and not cell.startswith("-") for cell in cells), name
-    for always in ("Principles", "State and persistence", "Research with closedloop-graph", "Reporting to the operator"):
-        assert rows[always][0].startswith("applies"), always
-    assert "evidence before every claim" in rows["Principles"][0]
-    assert "resume log, rulings" in rows["State and persistence"][0]
-    assert rows["Fleet board and direct messages"][0] == "skip"
-    assert "merge order and shared version-file conflicts" in rows["Quality gates and QA"][1]
+def test_every_fleet_section_says_whether_a_one_writer_and_a_no_writer_program_needs_it() -> None:
+    # A section added later without a mention would leave the smaller shapes guessing again.
+    headings = [line[3:] for line in FLEET_SKILL.read_text().splitlines() if line.startswith("## ") and line != SINGLE_USE]
+    lines = shape_lines()
+    one_writer = lines["Both shapes:"] + lines["one-writer, also:"]
+    assert [heading for heading in headings if heading not in one_writer] == []
+    assert [heading for heading in headings if heading in lines["Both shapes:"] and heading in lines["one-writer, also:"]] == []
+    assert "Principles (evidence before every claim)" in lines["Both shapes:"]
+    assert "State and persistence (resume log, rulings)" in lines["Both shapes:"]
+    assert "Quality gates and QA except merge order and shared version-file conflicts" in lines["one-writer, also:"]
+    assert lines["no-writer, also:"].rstrip().endswith("nothing else.")
 
 
 def test_the_shape_is_recorded_and_enforced_by_the_scripts() -> None:
     single = section(FLEET_SKILL.read_text(), SINGLE_USE)
-    assert "`fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet`" in single
+    assert "`fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet` records the shape" in single
     assert "`board.mjs writer` refuses a writer the shape does not allow" in single
     assert "`fleet-home.mjs start <slug> --shape <shape>`" in STATE.read_text()
 
@@ -75,12 +65,10 @@ def test_the_shape_is_recorded_and_enforced_by_the_scripts() -> None:
 def test_every_fleet_chat_starts_with_the_plugin_version_check() -> None:
     setup = section(FLEET_SKILL.read_text(), "## Setup")
     for phrase in (
-        "Plugin version, first in every chat, new or resumed: run `node ../vibe/scripts/plugin-version.mjs check --state <orchDir>/plugin-version.json`",
+        "Plugin version, first in every chat: run the check `fleet-home.mjs resume` prints (`node ../vibe/scripts/plugin-version.mjs check --state <orchDir>/plugin-version.json`",
         "\"A newer version of the ClosedLoop plugins is available (<versions>). Update now, or proceed on this version? Proceeding on an outdated plugin could give worse results.\"",
         "`plugin-version.mjs choose --choice update|proceed --state <same file>` and in the resume log",
-        "`plugin-version.mjs update --state <same file>`",
-        "it updates each outdated plugin in Claude Code and Codex, whichever has one, and verifies it",
-        "In Claude Code the vibe hooks refuse worker launches until the check and any answer are recorded.",
+        "run `plugin-version.mjs update --state <same file>`, tell the operator which harness in its `restart` needs a new session or a reopened app, and stop",
     ):
         assert phrase in setup, phrase
     new_chat = section(STATE.read_text(), "## A new chat")

@@ -1,6 +1,6 @@
 ---
 name: fleet-orchestrator
-description: 'Use when you run delivery work for a human operator who does QA and merges: several workers at once (Codex or vibe sessions and Claude subagents) delivering parallel pull requests on one machine or several, one writer delivering one pull request, or a session with no writer at all (design, research or analysis). Starts every chat by checking the installed plugin versions in Claude Code and Codex. Covers who may write where, orchestration state that survives a reboot, restart or compaction, starting, resuming and steering Codex threads bound to a worktree, Codex budget rules, a Claude takeover of a dead Codex writer, CPU and shared e2e stack slot locks across machines, agent-first QA and review before merge, pushback on flags and extra code paths, a lessons ledger, and how to report to the operator. Pairs with codex-fleet-monitor for watching the fleet.'
+description: 'Use when you run delivery work for a human operator who does QA and merges: several workers at once (Codex or vibe sessions and Claude subagents) delivering parallel pull requests on one machine or several, one writer delivering one pull request, or a session with no writer at all (design, research or analysis). Covers who may write where, orchestration state that survives a reboot, restart or compaction, starting, resuming and steering Codex threads bound to a worktree, Codex budget rules, a Claude takeover of a dead Codex writer, CPU and shared e2e stack slot locks across machines, agent-first QA and review before merge, pushback on flags and extra code paths, a lessons ledger, and how to report to the operator. Pairs with codex-fleet-monitor for watching the fleet.'
 ---
 
 # fleet-orchestrator
@@ -25,7 +25,7 @@ Repo specifics (launch paths, auth, bootstrap, test commands, e2e harness) come 
 
 Works on one machine with no remote config. More machines need ssh key auth between them, plus `codex`, `node`, `gh`, this plugin and the closedloop-graph MCP server on each. Prerequisites, `config.env` keys and the checklist: [references/setup.md](./references/setup.md).
 
-- Plugin version, first in every chat, new or resumed: run `node ../vibe/scripts/plugin-version.mjs check --state <orchDir>/plugin-version.json` (`fleet-home.mjs resume` prints it; leave out `--state` before a program exists). On `outdated`, ask the operator: "A newer version of the ClosedLoop plugins is available (<versions>). Update now, or proceed on this version? Proceeding on an outdated plugin could give worse results." Record the answer with `plugin-version.mjs choose --choice update|proceed --state <same file>` and in the resume log. On update, run `plugin-version.mjs update --state <same file>`: it updates each outdated plugin in Claude Code and Codex, whichever has one, and verifies it; tell the operator each harness in `restart` needs a new session (Claude Code) or a reopened app (Codex), and stop. On `unknown`, say in one line that the check could not run and carry on. In Claude Code the vibe hooks refuse worker launches until the check and any answer are recorded.
+- Plugin version, first in every chat: run the check `fleet-home.mjs resume` prints (`node ../vibe/scripts/plugin-version.mjs check --state <orchDir>/plugin-version.json`; no `--state` before a program exists). On `outdated`, ask the operator: "A newer version of the ClosedLoop plugins is available (<versions>). Update now, or proceed on this version? Proceeding on an outdated plugin could give worse results." Record the answer with `plugin-version.mjs choose --choice update|proceed --state <same file>` and in the resume log. On update, run `plugin-version.mjs update --state <same file>`, tell the operator which harness in its `restart` needs a new session or a reopened app, and stop. On `unknown`, say the check could not run and carry on.
 - First run: when `<fleetHome>/config.env` is missing, or lacks a key this run needs, ask the operator once before launching anything, as one structured question set with the [first-run questions](./references/setup.md#first-run-interview) and their defaults. Write `config.env`, run the checklist's verification, and report what passed.
 - Later runs read `config.env` and do not ask again unless a verification fails.
 
@@ -51,27 +51,11 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 
 ## Programs with one writer or none
 
-This skill also runs a program with one writer on one PR, or one with nobody writing code (design, research, analysis). Record the shape when you start it, `fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet`, and change it with `fleet-home.mjs shape <shape>` before the program grows; `board.mjs writer` refuses a writer the shape does not allow, and `resume` prints the shape for the next chat. What each section asks of the smaller shapes:
+For one writer on one PR, or nobody writing code (design, research, analysis): `fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet` records the shape, `fleet-home.mjs shape` changes it before the program grows, and `board.mjs writer` refuses a writer the shape does not allow. Which sections apply:
 
-| Section | no-writer | one-writer |
-|---|---|---|
-| Principles | applies, including evidence before every claim | applies |
-| Setup | applies; only the keys this program uses | applies |
-| Roles | read-only helpers only | applies |
-| Research with closedloop-graph | applies | applies |
-| State and persistence | applies: resume log, rulings, a program change recorded before acting | applies |
-| Monitoring | skip: no sessions or PRs to watch | applies to its one PR |
-| Codex sessions | skip | applies when the writer runs in Codex |
-| Claude workers | helpers only | applies |
-| Fleet board and direct messages | skip | its one row and deliveries; no writer-to-writer messages |
-| Moving work between runtimes and accounts | skip | only a takeover of the one writer |
-| Machines and CPU | only for a heavy check you run | applies |
-| Quality gates and QA | skip | applies, except merge order and shared version-file conflicts between PRs |
-| Pushback | applies | applies |
-| Program practices | repo knowledge only | applies |
-| Lessons loop | applies | applies |
-| Artifacts people read | applies | applies |
-| Reporting to the operator | applies | applies |
+- Both shapes: Principles (evidence before every claim), Setup, Research with closedloop-graph, State and persistence (resume log, rulings), Pushback, Lessons loop, Artifacts people read, Reporting to the operator.
+- one-writer, also: Roles, Monitoring, Codex sessions, Claude workers, Machines and CPU, Program practices; Quality gates and QA except merge order and shared version-file conflicts; from Fleet board and direct messages only its row and deliveries; from Moving work between runtimes and accounts only a takeover of its writer.
+- no-writer, also: only read-only helpers from Roles and Claude workers, a heavy check you run from Machines and CPU, repo knowledge from Program practices; nothing else.
 
 ## Research with closedloop-graph
 

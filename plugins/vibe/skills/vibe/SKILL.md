@@ -275,10 +275,6 @@ plugins installed on this machine, in Claude Code and in Codex, are the latest
 release: run `node scripts/plugin-version.mjs check --runtime codex` in Codex,
 or `--runtime claude` in Claude Code. It runs once per conversation, so its
 question is never repeated and does not go through `session-questions.mjs`.
-It records its result for this conversation; `vibe-sessions.mjs new` copies
-it onto the session and refuses to start one while an outdated result has no
-recorded answer, and in Claude Code the vibe hooks refuse worker launches
-until then.
 
 - `current`: say nothing about it and continue.
 - `unknown`, or the command could not run at all (no Node yet on a first
@@ -818,11 +814,8 @@ what it already built, like any other request about it.
   either open a pull request for you, or pass it to design or engineering to
   finish." It is a notice, not a question: it rides along with whatever that
   first reply says or asks, and nothing waits on it. The one thing that
-  comes before it is an outdated plugin's version question when the opening
-  message did not already say to proceed (section 1, "Plugin version"), which is asked
-  alone; the endings line then rides in the first reply after that answer. An
-  opening instruction to proceed reports the outdated version and includes
-  this line while continuing. Never add it when resuming a session, and
+  comes before it is an outdated plugin's version question, asked alone
+  (section 1, "Plugin version"). Never add it when resuming a session, and
   never repeat it later in the session.
 
 Pure mockups still use canonical `$prototype` guidance through this writer;
