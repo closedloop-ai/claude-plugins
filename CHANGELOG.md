@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### vibe v1.1.0
 
-fleet-orchestrator now runs a program with one writer or with none, every vibe and fleet-orchestrator start checks every installed ClosedLoop plugin in Claude Code and Codex against `main`, and eight bugs from two audited fleet sessions (vibe 1.0.72 and 1.0.85) are fixed (operator rulings, 2026-10-27).
+fleet-orchestrator now runs a program with one writer or with none, every vibe and fleet-orchestrator start checks every installed ClosedLoop plugin in Claude Code and Codex against `main`, and eight bugs from two audited fleet sessions (vibe 1.0.72 and 1.0.85) are fixed (operator rulings, 2026-10-27). Skill instruction text is about 802 words longer than 1.0.85, 367 of them from the audit fixes; the new eval prompts add about 2,850 more, which no session loads.
 
 #### Added
 - `fleet-orchestrator` covers one writer on one pull request and sessions with no writer (design, research, analysis), not only several writers. Its description says so, and a new "Programs with one writer or none" section has a table saying what each section asks of a `no-writer` and a `one-writer` program.
