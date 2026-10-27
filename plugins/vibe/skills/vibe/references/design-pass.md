@@ -103,7 +103,7 @@ Prep:
 - Earlier work: <what this session already built for it, or none>
 - Memory: <pitfalls found, none found, or not installed>
 - Precedent: <the sibling entity, providing component and how hosts consume it, or none found>
-- Placement: <the decomposer's Owner, Stories and Conflict lines, or no story or shared component>
+- Placement: <the decomposer's Owner, Stories, Fixtures, Names and Conflict lines, or no story or shared component>
 - Rule: <the owner rule number that decided it, or `precedent`>
 Graph:
 - <one line per required call and what it established>

@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.0.86
+
+Two Storybook mistakes the first Storybook handoff review found (ISS-13167) are now raised at placement, before the writer builds the stories, instead of only at handoff (ISS-13182).
+
+#### Added
+- `vibe-storybook-decomposer` placement reports the setup the new stories need that an existing story file for the same component, page or folder already declares (route fixtures, stored-view clearing, query-cache seeding, fixture components and data), in a new `Fixtures` line naming the non-story fixture module to import it from, or the move into one the writer makes first. A new story file never re-types it.
+- A new `Names` line lists, for each planned story name, the play assertion (or the args, for a story with no play) behind every claim in the name: each kind, level or state it lists, a word such as every or all, a painted label or status. A claim with nothing behind it is narrowed or its play completed before the story is written.
+- The writer's design-pass prep records both lines, and the handoff `Names` and `Fixtures` checks compare the result against them.
+- Coverage: a contract test file (`test_vibe_storybook_fixtures_names_contract.py`) and a `claude plugin eval` case (`pm-storybook-names-claim-what-plays-assert`) rehearsing the ISS-13167 names at placement.
+
 ### closedloop-core v1.5.3
 
 #### Fixed

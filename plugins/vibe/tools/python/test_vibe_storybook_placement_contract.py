@@ -203,7 +203,7 @@ def test_owner_prep_looks_for_the_precedent_first_and_points_at_the_repo_rule() 
     assert "review-owned, no gate" not in text
     prep = flat(text)
     assert "- Precedent: <" in prep
-    assert "- Placement: <the decomposer's Owner, Stories and Conflict lines" in prep
+    assert "- Placement: <the decomposer's Owner, Stories, Fixtures, Names and Conflict lines" in prep
     assert "or `precedent`>" in prep
     writer = flat(agent("vibe-change-worker"))
     assert "(`design-pass.md`, Prep step 5)" in writer
