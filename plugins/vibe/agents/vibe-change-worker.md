@@ -195,7 +195,9 @@ change log and keep building every allowed part. It is never `BLOCKED` or
 
 Before `DONE`, run the handoff inventory in build phase and require its
 `forbiddenPaths` and `diffRulesClear` gates to be true; a `diffRules` finding
-is fixed, or cleared by the change log line it names with a reason that holds. Any `forbidden` or `outsideAllowed` entry is
+is fixed, or cleared by the change log line it names with a reason that holds.
+A frozen render listed under `diffRules.deferredToHandoff` never holds
+`DONE`: rendering frozen stories is handoff's heavy validation. Any `forbidden` or `outsideAllowed` entry is
 removed and routed through the rule above, including repo-root scripts, skill
 tests and any `AGENTS.md`. The only exception is a file the inventory lists in
 `shrinkOnlyAllowlists` after proving the source-gate edit only deletes entries

@@ -308,7 +308,8 @@ def test_diff_rules_run_inside_the_inventory_and_block() -> None:
     inventory = INVENTORY.read_text()
     rules = DIFF_RULES.read_text()
     assert 'import { runDiffRules } from "./diff-rules.mjs";' in inventory
-    assert "diffRulesClear: diffRules.blocking.length === 0" in inventory
+    assert "diffRulesClear: diffRulesBlocking.length === 0" in inventory
+    assert 'const HANDOFF_ONLY_RULES = new Set(["frozen-render"]);' in inventory
     for rule in ("migration-precedent", "migration-backfill", "activity-capture", "tx-result-after-write",
                  "desktop-sync-lane", "artifact-link-delete", "ticketed-comment", "shared-path",
                  "story-outcome", "story-entry", "frozen-render"):

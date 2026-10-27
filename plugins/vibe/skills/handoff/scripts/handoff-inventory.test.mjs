@@ -656,3 +656,24 @@ test("diff rule findings block the inventory and its required tests are reported
   assert.equal(blocked.json.blocking.diffRulesClear, false);
   assert.deepEqual(blocked.json.diffRules.blocking.map((finding) => [finding.rule, finding.file]), [["artifact-link-delete", "apps/api/app/links/service.ts"]]);
 });
+
+// vibe SKILL.md section 5 runs heavy validation only at handoff; a build-phase
+// frozen-render gate held a writer's first commit for hours (2026-10-26).
+test("a frozen render is settled at handoff: the build phase reports it without blocking, handoff and pull-request phases block", (t) => {
+  const row = "apps/storybook/stories/row.stories.tsx";
+  const { home, worktree } = setup(t, "frozen-render-phase", {
+    [row]: "import { Row } from \"@repo/design-system/components/row\";\nexport default { title: \"Composites/Row\", tags: [\"v1.0\"] };\nexport const Default = {};\n",
+    "packages/design-system/components/row.tsx": "export const Row = 1;\n",
+  });
+  write(worktree, "packages/design-system/components/row.tsx", "export const Row = 2;\n");
+  const build = runNode(INVENTORY, ["--worktree", worktree, "--phase", "build"], home);
+  assert.equal(build.json.blocking.diffRulesClear, true, JSON.stringify(build.json.diffRules));
+  assert.deepEqual(build.json.diffRules.blocking, []);
+  assert.deepEqual(build.json.diffRules.deferredToHandoff.map((finding) => [finding.rule, finding.file]), [["frozen-render", row]]);
+  for (const phase of ["handoff", "pull-request"]) {
+    const later = runNode(INVENTORY, ["--worktree", worktree, "--phase", phase], home);
+    assert.equal(later.json.blocking.diffRulesClear, false, phase);
+    assert.deepEqual(later.json.diffRules.blocking.map((finding) => finding.rule), ["frozen-render"], phase);
+    assert.deepEqual(later.json.diffRules.deferredToHandoff, [], phase);
+  }
+});
