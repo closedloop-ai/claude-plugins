@@ -7,9 +7,13 @@
 
 import { awayProtocol } from "./away-protocol.mjs";
 import { isMain, mergeResults, runGuards, runHookScript } from "./hook-dispatch.mjs";
+import { programChange } from "./program-change.mjs";
 
 /** The guards every prompt runs, in order. */
-export const USER_PROMPT_SUBMIT_GUARDS = Object.freeze([{ name: "away-protocol", run: awayProtocol }]);
+export const USER_PROMPT_SUBMIT_GUARDS = Object.freeze([
+  { name: "away-protocol", run: awayProtocol },
+  { name: "program-change", run: programChange },
+]);
 
 /** The UserPromptSubmit output for `event`, or null; `report(line)` receives each failing guard's error. */
 export function userPromptSubmit(event, report) {
