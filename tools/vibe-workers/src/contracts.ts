@@ -49,20 +49,30 @@ export const capabilitiesSchema = z.array(capabilitySchema).max(48).refine(
   "Duplicate capability binding",
 );
 export const identifierSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:-]+$/);
+/** A Codex `spawn_agent` result names its helper only by agent path (`/root/setup`), so a native worker ID may be one. */
+export const codexAgentPathSchema = z.string().max(160).regex(/^(?:\/[A-Za-z0-9_.:-]+)+$/)
+  .refine((value) => value.split("/").slice(1).every((segment) => segment !== "." && segment !== ".."), "Invalid Codex agent path");
+export const workerIdSchema = z.union([identifierSchema, codexAgentPathSchema]);
+const pathIdOnlyForCodex = (value: { runtime: string; workerId?: string }, ctx: z.RefinementCtx) => {
+  if (value.runtime !== "codex" && value.workerId?.startsWith("/")) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["workerId"], message: "Only a Codex writer is named by its agent path" });
+  }
+};
 export const statusSchema = z.enum(["PLAN", "STORIES_READY", "NEEDS_REVIEW", "NEEDS_PERSON", "NEEDS_COMMIT", "NEEDS_CHANGE",
   "NEEDS_PRIMITIVE", "NEEDS_BACKEND", "NEEDS_STORYBOOK", "NEEDS_DESKTOP_STOP", "DONE", "BLOCKED", "FAILED"]);
 export type WorkerStatus = z.infer<typeof statusSchema>;
-export const registerSchema = z.object({
-  worktree: z.string().min(1), runtime: z.enum(["codex", "claude"]), workerId: identifierSchema.optional(),
+const registerFields = z.object({
+  worktree: z.string().min(1), runtime: z.enum(["codex", "claude"]), workerId: workerIdSchema.optional(),
   agentRoot: z.string().min(1), agentName: identifierSchema,
   capabilities: capabilitiesSchema.default([]),
 }).strict();
-export const stoppedTurnSchema = z.object({ runtime: z.literal("codex"), workerId: identifierSchema,
+export const registerSchema = registerFields.superRefine(pathIdOnlyForCodex);
+export const stoppedTurnSchema = z.object({ runtime: z.literal("codex"), workerId: workerIdSchema,
   requestId: identifierSchema, lease: z.string().uuid(), state: z.enum(["completed", "failed", "canceled"]) }).strict();
 /** Only the removed recorded definition is a migratable block; every other block stays a refusal. */
 export const blockReasonSchema = z.enum(["recorded-definition-removed", "other"]);
 export const actionSchema = z.object({
-  worktree: z.string().min(1), workerId: identifierSchema.optional(), requestId: identifierSchema.optional(),
+  worktree: z.string().min(1), workerId: workerIdSchema.optional(), requestId: identifierSchema.optional(),
   input: z.string().min(1).max(64 * 1024).optional(), continuation: z.string().min(1).max(64 * 1024).optional(),
   lease: z.string().uuid().optional(), status: statusSchema.optional(), resultSummary: z.string().max(4096).optional(),
   blockReason: blockReasonSchema.optional(), stoppedTurn: stoppedTurnSchema.optional(),
@@ -81,14 +91,14 @@ export const harnessSwitchSchema = z.object({
 }).strict();
 export type HarnessSwitch = z.infer<typeof harnessSwitchSchema>;
 /** Migration is a parent-owned operation, separate from ordinary registration. */
-export const migrateSchema = registerSchema.extend({
-  previousWorkerId: identifierSchema, previousDigest: z.string().regex(/^[a-f0-9]{64}$/),
+export const migrateSchema = registerFields.extend({
+  previousWorkerId: workerIdSchema, previousDigest: z.string().regex(/^[a-f0-9]{64}$/),
   retainedRecord: retainedRecordSchema.optional(), harnessSwitch: harnessSwitchSchema.optional(),
-}).strict();
+}).strict().superRefine(pathIdOnlyForCodex);
 const requestSchema = z.object({ id: identifierSchema, input: z.string().min(1).max(64 * 1024) }).strict();
 const ledgerStateSchema = z.object({
   version: z.literal(1), worktree: z.string(), branch: z.string(), runtime: z.enum(["codex", "claude"]),
-  workerId: identifierSchema, binding: bindingSchema, started: z.boolean(),
+  workerId: workerIdSchema, binding: bindingSchema, started: z.boolean(),
   pending: z.array(requestSchema).max(32),
   active: requestSchema.extend({ status: statusSchema, continuation: z.string().max(64 * 1024).optional(),
     lease: z.string().uuid().optional(), ownerPid: z.number().int().positive().optional(),
@@ -101,7 +111,7 @@ export const migrationSchema = z.object({
   id: z.string().uuid(), at: z.string().datetime(),
   reason: z.enum(["definition-missing", "definition-upgraded", "harness-switch"]),
   observedDigest: z.string().length(64).nullable(),
-  previous: ledgerStateSchema, workerId: identifierSchema, binding: bindingSchema,
+  previous: ledgerStateSchema, workerId: workerIdSchema, binding: bindingSchema,
   releasedRecord: z.object({ requestId: identifierSchema, recordAction: identifierSchema,
     state: stoppedTurnSchema.shape.state }).strict().optional(),
   harnessSwitch: harnessSwitchSchema.extend({ from: z.enum(["codex", "claude"]) }).strict().optional(),
