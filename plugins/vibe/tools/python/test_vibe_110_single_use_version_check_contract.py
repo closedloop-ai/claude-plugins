@@ -68,7 +68,7 @@ def test_every_fleet_chat_starts_with_the_plugin_version_check() -> None:
         "Plugin version, first in every chat: run the check `fleet-home.mjs resume` prints (`node ../vibe/scripts/plugin-version.mjs check --state <orchDir>/plugin-version.json`",
         "\"A newer version of the plugins is available (<versions>). Update now, or proceed on this version? Proceeding on an outdated plugin could give worse results.\"",
         "`plugin-version.mjs choose --choice update|proceed --state <same file>` and in the resume log",
-        "run `plugin-version.mjs update --state <same file>`, tell the operator which harness in its `restart` needs a new session or a reopened app, and stop",
+        "run `plugin-version.mjs update --state <same file>`; whatever its status, tell the operator which harness in its `restart` needs a new session or a reopened app, and stop when yours is one of them",
     ):
         assert phrase in setup, phrase
     new_chat = section(STATE.read_text(), "## A new chat")
@@ -81,3 +81,11 @@ def test_writers_carry_the_operators_version_answer_instead_of_asking_again() ->
     for name in ("## Worker preamble", "## Resume prompt"):
         assert line in flat(section(templates, name)), name
     assert "keep the current version" not in templates
+
+
+def test_a_partial_update_still_asks_for_the_restart_it_needs() -> None:
+    # PR #350 review: a failed update could leave one harness on replaced files with nobody told to restart it.
+    version = section((ROOT / "skills" / "vibe" / "SKILL.md").read_text(), "### Plugin version")
+    assert "Whatever its status, tell the person, for each harness in its `restart`" in version
+    assert "Then stop when the harness you run in is in `restart`: the update is used only from a new session." in version
+    assert "a takeover of its writer, which keeps the writer's board row name" in section(FLEET_SKILL.read_text(), SINGLE_USE)

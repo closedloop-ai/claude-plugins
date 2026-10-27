@@ -16,7 +16,7 @@
 // Runs from pre-tool-use.mjs.
 
 import { deny } from "./hook-dispatch.mjs";
-import { loadsSkill, readTranscript } from "./skill-transcript.mjs";
+import { latestSkill, readTranscript } from "./skill-transcript.mjs";
 
 export const QUESTION_TOOLS = Object.freeze(["AskUserQuestion", "request_user_input", "request_user_input_async"]);
 const VERSION_QUESTION = /\bnewer version of (?:vibe|the plugins) is available\b/i;
@@ -35,11 +35,14 @@ export function questionGuard(event) {
   const questions = questionTexts(event?.tool_input);
   const text = readTranscript(event?.transcript_path);
   if (questions.length === 0 || text === null) return null;
-  if (loadsSkill(text, "vibe")) {
+  // The skill loaded last decides, so an orchestrator that read vibe's files, or a vibe
+  // session started after a fleet chat, gets its own rule (PR #350 review).
+  const skill = latestSkill(text, ["vibe", "fleet-orchestrator"]);
+  if (skill === "vibe") {
     const missing = questions.filter((question) => !VERSION_QUESTION.test(question) && !recorded(text, question));
     return missing.length === 0 ? null : deny(`record each question with \`node <plugin root>/skills/vibe/scripts/session-questions.mjs ask --key <topic> --question "<exact words>" --default "<what you do without an answer>" --deadline-minutes <n>\` first and ask only when it returns "ask": true (vibe SKILL.md, "Questions are asked once"); not recorded: ${missing.join(" | ")}`);
   }
-  if (loadsSkill(text, "fleet-orchestrator")) {
+  if (skill === "fleet-orchestrator") {
     const missing = questions.filter((question) => !VERSION_QUESTION.test(question) && !CODE_CITATION.test(question));
     return missing.length === 0 ? null : deny(`a question to the operator names where you checked the code first, as \`checked in code: <file>:<line>\` (fleet-orchestrator SKILL.md, principle 1); drop it if the code already answers it. Missing in: ${missing.join(" | ")}`);
   }

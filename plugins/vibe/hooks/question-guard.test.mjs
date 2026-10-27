@@ -56,3 +56,22 @@ test("other sessions and tools are untouched, and the PreToolUse hook routes the
     input: JSON.stringify({ tool_name: "AskUserQuestion", transcript_path: transcript(t, vibeSkill), tool_input: { questions: [{ question: BACKUP }] } }) });
   assert.equal(JSON.parse(result.stdout).hookSpecificOutput.permissionDecision, "deny");
 });
+
+// PR #350 review: a Read or a listing of skills/vibe/SKILL.md made any session a vibe session.
+test("only a real skill load decides the rule, never a mention of the skill's files", (t) => {
+  const read = { type: "assistant", message: { content: [{ type: "tool_use", name: "Read", input: { file_path: "/repo/plugins/vibe/skills/vibe/SKILL.md" } }] } };
+  const listing = { type: "user", message: { content: "/repo/plugins/vibe/skills/vibe/SKILL.md\n/repo/plugins/vibe/skills/fleet-orchestrator/SKILL.md\n" } };
+  assert.equal(ask(transcript(t, read, listing), BACKUP), null);
+  const codexVibe = { type: "response_item", payload: { content: "<skill>\n<name>vibe:vibe</name>\n<path>/cache/vibe/1.1.0/skills/vibe/SKILL.md</path>" } };
+  assert.equal(ask(transcript(t, codexVibe), BACKUP)?.decision, "deny", "Codex's injected skill block is a load");
+  const toolCall = { type: "assistant", message: { content: [{ type: "tool_use", name: "Skill", input: { skill: "vibe:fleet-orchestrator" } }] } };
+  assert.match(ask(transcript(t, toolCall), BACKUP).reason, /checked in code/, "a Skill tool call is a load");
+});
+
+// PR #350 review: vibe was checked first, so an orchestrator that read vibe's files was held to vibe's rule.
+test("the skill loaded last decides, in either order", (t) => {
+  const cited = "The commit helper stages every file (checked in code: skills/vibe/scripts/commit-worktree.mjs:73). Move them?";
+  assert.equal(ask(transcript(t, vibeSkill, fleetSkill), cited), null, "fleet loaded last: a cited question passes");
+  assert.match(ask(transcript(t, vibeSkill, fleetSkill), BACKUP).reason, /checked in code/);
+  assert.match(ask(transcript(t, fleetSkill, vibeSkill), cited).reason, /session-questions\.mjs ask/, "vibe loaded last: vibe's rule");
+});

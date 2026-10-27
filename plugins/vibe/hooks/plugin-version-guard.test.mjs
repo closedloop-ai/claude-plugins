@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { launchesWorker, pluginVersionGuard, pluginVersionPromptStart, pluginVersionSkillStart } from "./plugin-version-guard.mjs";
+import { launchesWorker, launchesWriterAgent, pluginVersionGuard, pluginVersionPromptStart, pluginVersionSkillStart } from "./plugin-version-guard.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SESSION = "11111111-2222-4333-8444-555555555555";
@@ -23,7 +23,7 @@ function record(dir, value, session = SESSION) {
   writeFileSync(recordFile(dir, session), JSON.stringify(value));
 }
 
-const agent = { tool_name: "Agent", session_id: SESSION, tool_input: { subagent_type: "general-purpose", prompt: "write the fix" } };
+const agent = { tool_name: "Agent", session_id: SESSION, tool_input: { subagent_type: "general-purpose", prompt: "Invoke vibe:vibe first: resume the vibe session for ISS-1 and write the fix." } };
 const bash = (command) => ({ tool_name: "Bash", session_id: SESSION, tool_input: { command } });
 const OUTDATED = { status: "outdated", versions: "vibe: you have 1.0.84, the latest is 1.0.85" };
 
@@ -90,4 +90,16 @@ test("the hook scripts route the guard: a Skill start then an Agent call is refu
   const prompt = run("user-prompt-submit.mjs", { hook_event_name: "UserPromptSubmit", session_id: "prompted", prompt: "/vibe:fleet-orchestrator one writer, one PR" });
   assert.deepEqual([prompt.status, prompt.stdout], [0, ""]);
   assert.equal(JSON.parse(readFileSync(recordFile(dir, "prompted"), "utf8")).status, "pending");
+});
+
+// PR #350 review: every Agent call was refused, so research subagents could not run while the question waited.
+test("only writer launches wait for the answer; other subagents run", (t) => {
+  const dir = home(t);
+  record(dir, OUTDATED);
+  const research = { ...agent, tool_input: { subagent_type: "Explore", prompt: "find where the board renders writer rows" } };
+  assert.equal(pluginVersionGuard(research, dir), null);
+  const worker = { ...agent, tool_input: { subagent_type: "vibe:vibe-setup-worker", prompt: "install node" } };
+  assert.equal(pluginVersionGuard(worker, dir)?.decision, "deny");
+  assert.equal(pluginVersionGuard(agent, dir)?.decision, "deny", "a writer brief that invokes vibe:vibe");
+  assert.equal(launchesWriterAgent({ subagent_type: "general-purpose", prompt: "review the vibe-sessions code" }), false);
 });

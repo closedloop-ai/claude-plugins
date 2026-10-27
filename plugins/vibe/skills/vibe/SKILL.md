@@ -300,15 +300,16 @@ question is never repeated and does not go through `session-questions.mjs`.
   scripts/plugin-version.mjs update`; this is the one plugin change you make,
   and only on the person's choice (`references/guardrails.md`, "Plugins and
   tooling"). It updates every outdated ClosedLoop plugin in Claude Code and
-  in Codex, whichever has one, and checks each reached the latest version. On
-  `"status":"updated"`, tell the person, for each harness in its `restart`,
+  in Codex, whichever has one, and checks each reached the latest version.
+  Whatever its status, tell the person, for each harness in its `restart`,
   in Codex: "vibe is updated. Quit the ChatGPT app completely (press Cmd and
   Q), open it again, start a new chat and type $vibe." In Claude Code: "vibe
   is updated. Close this Claude Code session, start a new one and type
-  /vibe:vibe." Then stop: the update is used only from a new session. On
-  `"status":"failed"`, tell them in one plain line that the update could not
-  finish, so you are carrying on with the version they have and they can
-  message engineering about it; never retry it another way.
+  /vibe:vibe." When `"status":"failed"`, also tell them in one plain line
+  that the update could not finish and they can message engineering about it;
+  never retry it another way. Then stop when the harness you run in is in
+  `restart`: the update is used only from a new session. Otherwise carry on
+  with the version they have.
 
 ### Prerequisites
 

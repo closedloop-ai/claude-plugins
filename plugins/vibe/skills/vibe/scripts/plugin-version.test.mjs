@@ -67,8 +67,8 @@ const kind = ${JSON.stringify(kind)};
 const refresh = (name) => { const p = s.installed.find((x) => x.name === name); if (p && s.refreshed && !s.stuck) p.version = s.main[name]; };
 const localVersion = (name) => JSON.parse(fs.readFileSync(s.root + "/plugins/" + name + "/.codex-plugin/plugin.json", "utf8")).version;
 if (line === "plugin list --json") {
-  if (kind === "claude") process.stdout.write(JSON.stringify(s.installed.map((p) => ({ id: p.name + "@" + (p.market ?? "closedloop-ai"), version: p.version, scope: "user", enabled: true }))));
-  else process.stdout.write(JSON.stringify({ installed: s.installed.map((p) => ({ pluginId: p.name + "@" + (p.market ?? "closedloop-ai"), name: p.name, marketplaceName: p.market ?? "closedloop-ai", version: p.version, installed: true, marketplaceSource: s.root ? { sourceType: "local", source: s.root } : { sourceType: "git", source: "https://example.invalid/claude-plugins.git" } })), available: [] }));
+  if (kind === "claude") process.stdout.write(JSON.stringify(s.installed.map((p) => ({ id: p.name + "@" + (p.market ?? "closedloop-ai"), version: p.version, scope: "user", enabled: p.enabled !== false }))));
+  else process.stdout.write(JSON.stringify({ installed: s.installed.map((p) => ({ pluginId: p.name + "@" + (p.market ?? "closedloop-ai"), name: p.name, marketplaceName: p.market ?? "closedloop-ai", version: p.version, installed: true, enabled: p.enabled !== false, marketplaceSource: s.root ? { sourceType: "local", source: s.root } : { sourceType: "git", source: "https://example.invalid/claude-plugins.git" } })), available: [] }));
 } else if (line === "plugin marketplace update closedloop-ai" || line === "plugin marketplace upgrade closedloop-ai") {
   s.refreshed = true;
 } else if (kind === "claude" && a[0] === "plugin" && a[1] === "update") {
@@ -334,6 +334,54 @@ test("a Codex local folder marketplace is pulled instead of upgraded", async (t)
   assert.equal(result.commands[0], `git -C '${checkout}' pull --ff-only`);
   assert.equal(JSON.parse(readFileSync(manifest(checkout), "utf8")).version, "1.0.53");
   assert.deepEqual(codex.state().calls.slice(1), ["plugin add vibe@closedloop-ai", "plugin list --json"]);
+});
+
+// PR #350 review: a local marketplace is often someone's own checkout on a feature branch.
+test("a Codex local marketplace on another branch, or with uncommitted changes, is left alone and the update fails naming it", async (t) => {
+  const { root, home, bin } = sandbox(t);
+  const env = { ...process.env, HOME: home, GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "T", GIT_AUTHOR_EMAIL: "t@example.invalid", GIT_COMMITTER_NAME: "T", GIT_COMMITTER_EMAIL: "t@example.invalid" };
+  const git = (cwd, ...args) => execFileSync("git", args, { cwd, env, encoding: "utf8", stdio: "pipe" }).trim();
+  const upstream = path.join(root, "upstream");
+  const manifest = (dir) => path.join(dir, "plugins", "vibe", ".codex-plugin", "plugin.json");
+  mkdirSync(path.dirname(manifest(upstream)), { recursive: true });
+  writeFileSync(manifest(upstream), JSON.stringify({ version: "1.0.52" }));
+  git(root, "init", "--quiet", "--initial-branch=main", upstream);
+  git(upstream, "add", "-A");
+  git(upstream, "commit", "--quiet", "-m", "old");
+  const checkout = path.join(root, "claude-plugins");
+  git(root, "clone", "--quiet", upstream, checkout);
+  writeFileSync(manifest(upstream), JSON.stringify({ version: "1.0.53" }));
+  git(upstream, "commit", "--quiet", "-am", "new");
+  const main = await marketplace(t, { files: mainFiles({ vibe: "1.0.53" }) });
+  const update = async () => {
+    const codex = fakeCli(bin, "codex", { installed: [{ name: "vibe", version: "1.0.52" }], root: checkout });
+    await run(home, ["check", "--codex", codex.file, "--latest-base", main.url]);
+    await run(home, ["choose", "--choice", "update"]);
+    return { codex, ...(await run(home, ["update", "--codex", codex.file])) };
+  };
+  git(checkout, "checkout", "--quiet", "-b", "feat/my-work");
+  const onBranch = await update();
+  assert.equal(onBranch.code, 1);
+  assert.match(onBranch.result.plugins[0].reason, new RegExp(`${checkout.replaceAll("/", "\\/")} is on feat/my-work, not main; it was left alone`));
+  assert.equal(git(checkout, "rev-parse", "--abbrev-ref", "HEAD"), "feat/my-work");
+  assert.equal(JSON.parse(readFileSync(manifest(checkout), "utf8")).version, "1.0.52", "the feature branch was not moved");
+  assert.deepEqual(onBranch.codex.state().calls.slice(1), ["plugin list --json"], "nothing was installed");
+  git(checkout, "checkout", "--quiet", "main");
+  writeFileSync(path.join(checkout, "notes.txt"), "mine\n");
+  const dirty = await update();
+  assert.equal(dirty.code, 1);
+  assert.match(dirty.result.plugins[0].reason, /has uncommitted changes; it was left alone/);
+  assert.equal(JSON.parse(readFileSync(manifest(checkout), "utf8")).version, "1.0.52");
+});
+
+test("a disabled plugin is not checked or updated", async (t) => {
+  const { home, bin } = sandbox(t);
+  const main = await marketplace(t, { files: mainFiles({ vibe: "1.0.53", code: "2.0.3" }) });
+  const claude = fakeCli(bin, "claude", { installed: [{ name: "vibe", version: "1.0.53" }, { name: "code", version: "2.0.1", enabled: false }] });
+  const codex = fakeCli(bin, "codex", { installed: [{ name: "code", version: "2.0.1", enabled: false }] });
+  const { result } = await run(home, ["check", ...both(claude, codex, main.url)]);
+  assert.equal(result.status, "current");
+  assert.deepEqual(result.harnesses.map((entry) => [entry.harness, entry.installed, (entry.plugins ?? []).map((plugin) => plugin.name)]), [["claude", true, ["vibe"]], ["codex", false, []]]);
 });
 
 test("a fleet program's state file and a vibe session record hold the result, mirrored for the hooks", async (t) => {

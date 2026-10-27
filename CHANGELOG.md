@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### vibe v1.1.0
 
-fleet-orchestrator now runs a program with one writer or with none, every vibe and fleet-orchestrator start checks every installed ClosedLoop plugin in Claude Code and Codex against `main`, and eight bugs from two audited fleet sessions (vibe 1.0.72 and 1.0.85) are fixed (operator rulings, 2026-10-27). Skill instruction text is about 802 words longer than 1.0.85, 367 of them from the audit fixes; the new eval prompts add about 2,850 more, which no session loads.
+fleet-orchestrator now runs a program with one writer or with none, every vibe and fleet-orchestrator start checks every installed ClosedLoop plugin in Claude Code and Codex against `main`, and eight bugs from two audited fleet sessions (vibe 1.0.72 and 1.0.85) are fixed (operator rulings, 2026-10-27). Skill instruction text is about 827 words longer than 1.0.85, 367 of them from the audit fixes; the new eval prompts add about 2,850 more, which no session loads.
 
 #### Added
 - `fleet-orchestrator` covers one writer on one pull request and sessions with no writer (design, research, analysis), not only several writers. Its description says so, and a new "Programs with one writer or none" section has a table saying what each section asks of a `no-writer` and a `one-writer` program.
@@ -27,6 +27,7 @@ fleet-orchestrator now runs a program with one writer or with none, every vibe a
 - The Codex harness notes say Codex loads `hooks/hooks.json` once it is trusted in `/hooks`, and `pre-tool-use.test.mjs` pins that the Codex manifest declares no hooks override.
 
 #### Fixed
+- Review findings on PR #350: a session counts as a vibe or fleet-orchestrator session only on a real skill load (Claude Code's skill base line, a Skill tool call, Codex's injected skill block), never because its transcript mentions `skills/vibe/SKILL.md`, and the skill loaded last decides `question-guard.mjs`'s rule. `plugin-version.mjs update` leaves a local folder marketplace alone, and fails naming it, unless it is on its default branch with nothing uncommitted, and it ignores disabled plugins. The version guard refuses only writer launches, so research subagents still run. A partial update still asks for the restarts it needs. `findCodex` is gone; `codex-usage.mjs` uses `findCli`. `test-budget.test.ts` also counts the options-object timeout form and refuses `vi.setConfig({ testTimeout })`.
 - `exec-version-proceed-does-not-wait` used a grader setting the eval runner rejects (`match: lacks`), so it never loaded.
 - The `tools/vibe-workers` suite no longer times out under load. Vitest ran one file per core but one, 17 at once on an 18-core Mac, and tests that start git, the bundled CLIs and fake claude processes ran 3 to 5 times longer than alone, past their timeouts. `vitest.config.ts` caps it at three workers, which ran the suite in the same wall time. 44 per-test timeouts in the five measured files drop to three times each test's measured time (12 back to vitest's default), and `src/test-budget.test.ts` keeps the cap and fails when a per-test timeout is added or raised.
 

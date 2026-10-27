@@ -83,11 +83,6 @@ export function compareVersions(left, right) {
   return 0;
 }
 
-/** The codex CLI on PATH, else the one bundled with the ChatGPT app (which may not exist). */
-export function findCodex(env = process.env) {
-  return onPath("codex", env) ?? BUNDLED_CODEX;
-}
-
 /** The CLI for `harness` that exists on this machine, or null: PATH first, then its usual install places. */
 export function findCli(harness, env = process.env, home = os.homedir()) {
   const fallbacks = harness === Harness.Claude
@@ -96,16 +91,16 @@ export function findCli(harness, env = process.env, home = os.homedir()) {
   return onPath(harness, env) ?? fallbacks.find(isExecutable) ?? null;
 }
 
-/** The closedloop-ai plugins one harness's `plugin list --json` output names, as {name, id, version, scope?, marketplace?}. */
+/** The enabled closedloop-ai plugins one harness's `plugin list --json` output names, as {name, id, version, scope?, marketplace?}. */
 export function installedPlugins(harness, listing) {
   const parsed = typeof listing === "string" ? JSON.parse(listing) : listing;
   if (harness === Harness.Claude) {
     const rows = Array.isArray(parsed) ? parsed : [];
-    return rows.filter((row) => typeof row?.id === "string" && row.id.endsWith(`@${MARKETPLACE}`))
+    return rows.filter((row) => typeof row?.id === "string" && row.id.endsWith(`@${MARKETPLACE}`) && row.enabled !== false)
       .map((row) => ({ name: row.id.slice(0, -MARKETPLACE.length - 1), id: row.id, version: row.version ?? null, scope: row.scope ?? null }));
   }
   const rows = Array.isArray(parsed?.installed) ? parsed.installed : [];
-  return rows.filter((row) => row?.marketplaceName === MARKETPLACE && row.installed !== false && typeof row.name === "string")
+  return rows.filter((row) => row?.marketplaceName === MARKETPLACE && row.installed !== false && row.enabled !== false && typeof row.name === "string")
     .map((row) => ({ name: row.name, id: row.pluginId ?? `${row.name}@${MARKETPLACE}`, version: row.version ?? null, marketplace: marketplaceOf(row) }));
 }
 
@@ -205,7 +200,7 @@ export function updatePlugins(record, { clis = {}, env = process.env, home = os.
       continue;
     }
     const cli = clis[entry.harness] ?? entry.cli ?? findCli(entry.harness, env, home);
-    let failure = null;
+    let failure = entry.harness === Harness.Codex ? localMarketplaceProblem(outdated) : null;
     for (const argv of updateCommands(entry.harness, cli, outdated)) {
       commands.push(argv.map(shellWord).join(" "));
       if (failure) {
@@ -233,6 +228,37 @@ export function updatePlugins(record, { clis = {}, env = process.env, home = os.
   }
   const ok = plugins.length > 0 && plugins.every((plugin) => plugin.status === "updated");
   return { status: ok ? "updated" : "failed", plugins, restart, commands };
+}
+
+/**
+ * Why a local folder marketplace cannot be pulled, or null: it is often someone's own
+ * checkout, so it is pulled only on its default branch with nothing uncommitted, and a
+ * feature branch is never moved (PR #350 review).
+ */
+export function localMarketplaceProblem(outdated) {
+  const root = outdated.map((plugin) => plugin.marketplace).find((source) => source?.type === "local")?.root;
+  if (!root) {
+    return null;
+  }
+  const git = (...args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", timeout: CLI_TIMEOUT_MS, stdio: ["ignore", "pipe", "pipe"] }).trim();
+  try {
+    let base = "main";
+    try {
+      base = git("symbolic-ref", "--short", "refs/remotes/origin/HEAD").replace(/^origin\//, "");
+    } catch {
+      // No remote HEAD recorded; main is the marketplace's branch.
+    }
+    const branch = git("rev-parse", "--abbrev-ref", "HEAD");
+    if (branch !== base) {
+      return `the local marketplace ${root} is on ${branch}, not ${base}; it was left alone, so switch it to ${base} or update it yourself`;
+    }
+    if (git("status", "--porcelain") !== "") {
+      return `the local marketplace ${root} has uncommitted changes; it was left alone, so commit or stash them, or update it yourself`;
+    }
+  } catch (error) {
+    return `the local marketplace ${root} could not be read: ${firstLine(error.stderr) || error.message}`;
+  }
+  return null;
 }
 
 /** Where this conversation's startup record lives. */

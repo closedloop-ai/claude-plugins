@@ -8,8 +8,10 @@
 // Starting either skill (the Skill tool, or a `/vibe:vibe` or
 // `/vibe:fleet-orchestrator` prompt) marks the conversation pending unless it
 // already has a record. Until the check has run, and while it found an
-// outdated plugin with no recorded choice, every worker launch is refused: an
-// Agent call, `claude-worker.mjs`, and `fleet.sh ... session turn`.
+// outdated plugin with no recorded choice, every writer launch is refused: an
+// Agent call that starts a vibe worker or a vibe writer (a prompt invoking
+// vibe:vibe, as fleet-orchestrator's worker preamble does), `claude-worker.mjs`,
+// and `fleet.sh ... session turn`. Other subagents, such as research, still run.
 //
 // Runs from pre-tool-use.mjs (Skill, Agent, Bash) and user-prompt-submit.mjs.
 
@@ -25,6 +27,14 @@ export const CHECKED_SKILLS = Object.freeze(["vibe:vibe", "vibe:fleet-orchestrat
 const STARTS_SKILL = /^\s*\/(?:vibe:vibe|vibe:fleet-orchestrator)(?:\s|$)/;
 const CONVERSATION = /^[A-Za-z0-9_.:-]{1,128}$/;
 const INTERPRETERS = new Set(["node", "bash", "sh", "zsh"]);
+const VIBE_WORKER = /^vibe:vibe-[a-z0-9-]+-worker$/;
+const INVOKES_VIBE = /\bvibe:vibe\b/;
+
+/** Whether an Agent call starts a vibe worker or a writer that runs the vibe skill. */
+export function launchesWriterAgent(input) {
+  return (typeof input?.subagent_type === "string" && VIBE_WORKER.test(input.subagent_type))
+    || (typeof input?.prompt === "string" && INVOKES_VIBE.test(input.prompt));
+}
 
 /** Whether a Bash command starts a worker: a Claude worker launch or a Codex writer turn. */
 export function launchesWorker(command) {
@@ -60,9 +70,10 @@ export function pluginVersionPromptStart(event, home = os.homedir()) {
   return null;
 }
 
-/** PreToolUse on Agent and Bash: refuses a worker launch while the conversation's check blocks. */
+/** PreToolUse on Agent and Bash: refuses a writer launch while the conversation's check blocks. */
 export function pluginVersionGuard(event, home = os.homedir()) {
-  const launch = event?.tool_name === "Agent" || (event?.tool_name === "Bash" && launchesWorker(event?.tool_input?.command));
+  const launch = (event?.tool_name === "Agent" && launchesWriterAgent(event?.tool_input))
+    || (event?.tool_name === "Bash" && launchesWorker(event?.tool_input?.command));
   if (!launch) return null;
   const problem = versionProblem(event?.session_id, home);
   return problem ? deny(problem) : null;

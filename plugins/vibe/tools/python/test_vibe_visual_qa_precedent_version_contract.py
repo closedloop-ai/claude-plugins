@@ -206,7 +206,7 @@ def test_the_version_check_runs_at_every_start_and_never_blocks() -> None:
         "On \"update\", run `choose --choice update`, then `node scripts/plugin-version.mjs update`",
         "Quit the ChatGPT app completely (press Cmd and Q), open it again, start a new chat and type $vibe.",
         "Close this Claude Code session, start a new one and type /vibe:vibe.",
-        "Then stop: the update is used only from a new session.",
+        "the update is used only from a new session.",
         "never retry it another way",
     ))
     asked_once = section(VIBE_SKILL.read_text(), "### Questions are asked once")
