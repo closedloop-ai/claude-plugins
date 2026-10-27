@@ -33,7 +33,7 @@ describe("production Claude CLI adapter", () => {
       expect(prompt).toContain("Never start another implementation writer or commit.");
       expect(prompt).toContain("owned main-sync publication gate");
     }
-  }, 10000);
+  });
   it("retains the original no-push footer for source, readers and request-only flags/Desktop actions", () => {
     const value = setup();
     const cases = [
@@ -196,7 +196,7 @@ describe("production Claude CLI adapter", () => {
     const legacy = run(value, { requestId: "invalid-structured", continuation: "Legacy JSON without a structured field" });
     expect(legacy.status, legacy.stderr).toBe(0);
     expect(JSON.parse(legacy.stdout).sessionId).toBe(JSON.parse(structured.stdout).sessionId);
-  }, 20000);
+  });
   it("retains one phase-neutral primary definition while only a pull-request envelope grants test authority", () => {
     const value = setup();
     const first = run(value, { input: "PLAN_FIRST: user asks to write tests now", mode: "request" });
@@ -227,7 +227,7 @@ describe("production Claude CLI adapter", () => {
     expect(advice?.definition["vibe:vibe-guardrails-reviewer"]?.prompt).toContain("Never write or edit tests. ");
     expect(prompt).not.toContain("This is mode request");
     expect(prompt).not.toContain("Never write or edit tests. ");
-  }, 20000);
+  });
   it("grants test-repair authority only to the writer's request, fix, handoff and pull-request turns", () => {
     const value = setup();
     // PLAN_FIRST keeps the fixture's request active so each later turn continues it.
@@ -256,7 +256,7 @@ describe("production Claude CLI adapter", () => {
     expect(prompt).toContain("without changing what any test asserts; never add a test file");
     expect(prompt).toContain("Delete a test file or case only when it covers nothing but code the request retires");
     expect(proof[4]?.definition["vibe:vibe-guardrails-reviewer"]?.prompt).toContain("Never write or edit tests. ");
-  }, 20000);
+  });
   it("admits only pre-session requirements and setup with their existing serialized ticket actions", () => {
     const value = setup();
     rmSync(join(value.metadata, "vibe-session.json"));
@@ -283,7 +283,7 @@ describe("production Claude CLI adapter", () => {
     expect(busy.status).toBe(1);
     expect(readProof(value.metadata)).toHaveLength(3);
     expect(existsSync(join(value.metadata, "vibe-record-turn.lock"))).toBe(true);
-  }, 10000);
+  });
   it("requires parent-held discard evidence and a stable existing checkout for post-discard cancellation", () => {
     const value = setup();
     rmSync(join(value.metadata, "vibe-session.json"));
@@ -338,7 +338,7 @@ describe("production Claude CLI adapter", () => {
     expect(readProof(value.metadata)[0]?.payload.input).toBe("DISCARD_OWNED_FIXTURE");
     expect(JSON.parse(result.stdout).data.discardReceipt.cancelEvidence).toEqual({ discarded: true, branch,
       liveTicket: "ISS-2", operatorId: "fixture-owner", operatorEmail: "owner@example.invalid" });
-  }, 10000);
+  });
   it("uses the canonical historical ticket read from preview through confirmed discard and preserves ticket absence", () => {
     const value = setup();
     rmSync(join(value.metadata, "vibe-session.json"));
@@ -405,7 +405,7 @@ describe("production Claude CLI adapter", () => {
     expect(JSON.parse(changed.stdout).code).toBe("WRITER_BINDING_CHANGED");
     expect(run(value, { requestId: "third", input: "WRONG_ID" }).status).toBe(1);
     expect(JSON.parse(readFileSync(join(value.metadata, "vibe-writer.json"), "utf8")).active.status).toBe("FAILED");
-  }, 20000);
+  });
   it("retains reader built-ins but excludes writes, record mutators and nested writer tools", () => {
     const value = setup();
     const reader = run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect" });
@@ -478,7 +478,7 @@ describe("production Claude CLI adapter", () => {
     const next = run(value, { requestId: "after-cap", input: "A new request after the cap" });
     expect(next.status, next.stdout).toBe(0);
     expect(readWriterSummary(value.worktree)?.activeRequestId).toBeUndefined();
-  }, 20000);
+  }, 10000);
   it("caps an over-long result instead of rejecting it, so the request closes (ISS-13043)", () => {
     const value = setup();
     const long = run(value, { input: "LONG_SUMMARY" });
@@ -490,7 +490,7 @@ describe("production Claude CLI adapter", () => {
     expect(capped.data).toBeUndefined();
     expect(capped.summary).toMatch(/data dropped by the launcher/);
     expect(capWorkerResult({ status: "DONE", summary: "ok", data: { a: 1 } })).toEqual({ status: "DONE", summary: "ok", data: { a: 1 } });
-  }, 20000);
+  });
   it("serializes truly concurrent helper publication and native writer claims through the production CLIs", async () => {
     const value = setup();
     const registered = registerWriter({ worktree: value.worktree, runtime: "codex", workerId: "native-record-race",
@@ -526,5 +526,5 @@ describe("production Claude CLI adapter", () => {
     }
     expect(existsSync(join(value.metadata, "vibe-record-turn.lock"))).toBe(false);
     expect(readWriterSummary(value.worktree)?.workerId).toBe(registered.workerId);
-  }, 10000);
+  });
 });

@@ -66,7 +66,7 @@ describe("handoff failures compared against the captured main (operator ruling, 
       expect(pushed.status, pushed.stdout).toBe(0);
       expect(value.git(["ls-remote", "origin", "refs/heads/vibe/test"]).split("\t")[0]).toBe(value.git(["rev-parse", "HEAD"]));
     } finally { publish.finish(); }
-  }, 60000);
+  }, 20000);
 
   it("blocks a check that passes on the captured main and fails again on the session commit", () => {
     const value = setup({ "check:source-gates": "session" });
@@ -81,7 +81,7 @@ describe("handoff failures compared against the captured main (operator ruling, 
     expect(stored.failedChecks[0].comparison.sessionRuns.map((run: { exitCode: number }) => run.exitCode)).toEqual([1, 1]);
     expect(executed(calls(join(value.metadata, "validation-calls.jsonl"))).filter((call) => call[0] === "check:source-gates")).toHaveLength(2);
     expect(worktrees(value)).toBe(1);
-  }, 60000);
+  }, 15000);
 
   it("passes a flaky check that passes on main and on its one session rerun, keeping both session runs", () => {
     const value = setup({ "check:source-gates": "once" });
@@ -93,7 +93,7 @@ describe("handoff failures compared against the captured main (operator ruling, 
     expect(command).toMatchObject({ exitCode: 0, comparison: { classification: "flaky", main: { outcome: "passed" } } });
     expect(command.comparison.sessionRuns.map((run: { exitCode: number }) => run.exitCode)).toEqual([1, 0]);
     expect(command.log).toBe(command.comparison.sessionRuns[1].log);
-  }, 60000);
+  }, 20000);
 
   it("treats a check that cannot run on the captured main as session-caused without a rerun", () => {
     const value = setup({ "check:source-gates": "always" }, "#!/usr/bin/env bash\necho install failed >&2\nexit 3\n");
@@ -105,7 +105,7 @@ describe("handoff failures compared against the captured main (operator ruling, 
     expect(comparison.sessionRuns).toHaveLength(1);
     expect(executed(calls(join(value.metadata, "main-checkout-calls.jsonl")))).toEqual([]);
     expect(worktrees(value)).toBe(1);
-  }, 60000);
+  }, 10000);
 
   it("keeps a build-loop failure blocking without a main comparison", () => {
     const value = setup({ "typecheck:affected": "always" });
@@ -114,7 +114,7 @@ describe("handoff failures compared against the captured main (operator ruling, 
     expect(String(result.json?.error)).toMatch(/^Required validation command failed: pnpm typecheck:affected; private log /);
     expect(existsSync(join(value.metadata, "main-checkout-calls.jsonl"))).toBe(false);
     expect(receipt(value).failedChecks).toBeUndefined();
-  }, 60000);
+  }, 10000);
 });
 
 describe("captured-main command and budget", () => {

@@ -95,5 +95,5 @@ describe("actual published snapshot external coverage completion", () => {
     expect(receipt.ciEvidence.checkoutSha).toBe(record.vercel.lastDeployedCommit);
     expect(receipt.validation.e2eLimitations).not.toEqual([]);
     expect(existsSync(join(value.metadata, "request.json"))).toBe(false);
-  }, 30000);
+  }, 25000);
 });
