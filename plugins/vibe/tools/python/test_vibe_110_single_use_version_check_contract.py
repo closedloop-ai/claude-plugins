@@ -1,4 +1,4 @@
-"""Contracts for the vibe 1.0.86 release (operator ruling, 2026-10-27).
+"""Contracts for the vibe 1.1.0 release (operator ruling, 2026-10-27).
 
 1. fleet-orchestrator is the entry point for a program with one writer, or with
    none, as well as several: its description says so, and its table states
@@ -27,9 +27,9 @@ SINGLE_USE = "## Programs with one writer or none"
 CELL = re.compile(r"^\| (?P<section>[^|]+?) \| (?P<none>[^|]+?) \| (?P<one>[^|]+?) \|$")
 
 
-def test_release_and_both_manifests_are_1086() -> None:
+def test_release_and_both_manifests_are_110() -> None:
     for manifest in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
-        assert json.loads((ROOT / manifest).read_text())["version"] == "1.0.86"
+        assert json.loads((ROOT / manifest).read_text())["version"] == "1.1.0"
 
 
 def test_the_fleet_skill_is_the_entry_point_for_one_writer_and_for_none() -> None:
