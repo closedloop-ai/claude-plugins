@@ -12,7 +12,7 @@ Two Storybook mistakes the first Storybook handoff review found (ISS-13167) are 
 - `vibe-storybook-decomposer` placement reports the setup the new stories need that an existing story file for the same component, page or folder already declares (route fixtures, stored-view clearing, query-cache seeding, fixture components and data), in a new `Fixtures` line naming the non-story fixture module to import it from, or the move into one the writer makes first. A new story file never re-types it.
 - A new `Names` line lists, for each planned story name, the play assertion (or the args, for a story with no play) behind every claim in the name: each kind, level or state it lists, a word such as every or all, a painted label or status. A claim with nothing behind it is narrowed or its play completed before the story is written.
 - The writer's design-pass prep records both lines, and the handoff `Names` and `Fixtures` checks compare the result against them.
-- Coverage: a contract test file (`test_vibe_storybook_fixtures_names_contract.py`) and a `claude plugin eval` case (`pm-storybook-names-claim-what-plays-assert`) rehearsing the ISS-13167 names at placement.
+- Coverage: a contract test file (`test_vibe_storybook_fixtures_names_contract.py`, 4 of its 6 cases fail on 1.0.85) and a `claude plugin eval` case (`pm-storybook-names-claim-what-plays-assert`) rehearsing the ISS-13167 names at placement. The eval passes 3 of 3 here and also 3 of 3 on 1.0.85, whose decomposer already gives the naming advice, so it guards against a regression; the contract test is the evidence for this change.
 
 ### closedloop-core v1.5.3
 
