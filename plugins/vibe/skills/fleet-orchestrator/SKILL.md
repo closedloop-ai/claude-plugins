@@ -62,7 +62,8 @@ The closedloop-graph MCP server is required; decide from it, not from guesses. T
 ## State and persistence
 
 - All state lives in one fleet home, never `/tmp` or a scratchpad: reused files at its top, each program under `programs/<slug>/` ([layout and a new chat's steps](./references/state.md)). `<orchDir>` below is the home or the program dir; `board.mjs status` fails on state written outside it.
-- Write every prompt to `prompts/` before sending it, and keep the dated resume log; after a restart or compaction, follow a new chat's steps and tell the operator what you restarted.
+- Write every prompt to `prompts/` before sending it, and keep the dated resume log; after a restart or compaction, follow a new chat's steps and tell the operator what you restarted (vibe's SessionStart hook puts that reading list in context after a compaction).
+- When the operator changes the program (no build, design only, another PRD, start over), append the quoted ruling to `rulings.md` and a resume-log entry naming the new program before acting on it (vibe's `program-change` hook reminds you); a different program is `fleet-home.mjs start <slug>`.
 - A remote machine that lost session state cannot reattach its Codex threads: start fresh ones in the same worktrees with [resume prompts](./references/templates.md#resume-prompt).
 
 ## Monitoring
@@ -187,6 +188,7 @@ Hard rule: a ticket, PR body, comment, reply or other artifact for people never 
 ## Reporting to the operator
 
 - Surface every problem the moment you see it: limits, stalls, failures, new human review comments, blockers. Keep status updates short.
+- Before reporting a count or an "only" claim from a command you ran, check that it exited 0 and that no `head`, `tail` or tool truncation cut its output; otherwise rerun the narrow command or call the figure partial. Principle 2 holds for your own findings too.
 - When the operator steps away (vibe's `away-protocol` hook puts this checklist in context on "brb", "stepping away" and the like, and the return checklist on "I'm back"), keep `<orchDir>/attention.md` current (decision needed, recommendation, what is blocked), keep reading idle writers' last messages, and lead with that list on return.
 - Put every finding the operator reviews on one page using the stable `D`, `X`, `N`, `S` and `R` IDs in the [operator review template](./references/templates.md#operator-review-page); never restart numbering across audits.
 - The final report lists, per PRD, which flags must be on to see each change.

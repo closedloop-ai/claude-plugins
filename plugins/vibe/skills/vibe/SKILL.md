@@ -84,8 +84,9 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   the handoff summary) run on `gpt-5.6-terra`, every writer, reviewer and
   verifier on `gpt-6-sol`, all at `high`. Never pass `xhigh` unless the person
   asked for it. Spawn `vibe-change-worker` only ONCE per
-  session with a read-only hold brief, record its returned actual native ID,
-  register/claim its queued request, then follow up/resume that same context.
+  session with a read-only hold brief, record its returned actual native ID
+  (the agent path `spawn_agent` returns, such as `/root/vibe_writer`, is that
+  ID), register/claim its queued request, then follow up/resume that same context.
   Never make a new source writer per request/unit. Repo agents live in `<repo>/.claude/agents/`.
   A new native helper also starts with a read-only hold brief; obtain its real
   ID, acquire the grant, then resume that SAME helper for the operation.
@@ -101,6 +102,14 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   quality-loop.md's turn stranded by a plugin upgrade: `migrate` with
   `retainedRecord`, internally, never a question or a message to engineering.
   Startup and confirmed discard use the same bounded stable contexts below.
+- Codex loads this plugin's `hooks/hooks.json` (the shell, kill and merge
+  guards, the away checklist and the compaction resume) but runs it only once
+  it is reviewed and trusted in Codex's `/hooks`, and again after it changes.
+  So after any context compaction in Codex, before the next action, run
+  fleet-orchestrator's `scripts/fleet-home.mjs resume` when you orchestrate a
+  fleet and read each `READ` file it prints, then reread the session record
+  (`vibe-sessions.mjs show`) and `session-questions.mjs list`; never continue from
+  the summary alone.
 - Usage limits (both harnesses). In Codex, run
   `node scripts/codex-usage.mjs check` before spawning a worker or
   forwarding a request to the writer, and again when a worker turn stalls
