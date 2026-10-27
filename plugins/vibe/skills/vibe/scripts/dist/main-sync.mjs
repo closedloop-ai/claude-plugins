@@ -224070,6 +224070,13 @@ var capabilitiesSchema = external_exports.array(capabilitySchema).max(48).refine
   "Duplicate capability binding"
 );
 var identifierSchema = external_exports.string().min(1).max(160).regex(/^[A-Za-z0-9_.:-]+$/);
+var codexAgentPathSchema = external_exports.string().max(160).regex(/^(?:\/[A-Za-z0-9_.:-]+)+$/).refine((value) => value.split("/").slice(1).every((segment) => segment !== "." && segment !== ".."), "Invalid Codex agent path");
+var workerIdSchema = external_exports.union([identifierSchema, codexAgentPathSchema]);
+var pathIdOnlyForCodex = (value, ctx) => {
+  if (value.runtime !== "codex" && value.workerId?.startsWith("/")) {
+    ctx.addIssue({ code: external_exports.ZodIssueCode.custom, path: ["workerId"], message: "Only a Codex writer is named by its agent path" });
+  }
+};
 var statusSchema = external_exports.enum([
   "PLAN",
   "STORIES_READY",
@@ -224085,17 +224092,18 @@ var statusSchema = external_exports.enum([
   "BLOCKED",
   "FAILED"
 ]);
-var registerSchema = external_exports.object({
+var registerFields = external_exports.object({
   worktree: external_exports.string().min(1),
   runtime: external_exports.enum(["codex", "claude"]),
-  workerId: identifierSchema.optional(),
+  workerId: workerIdSchema.optional(),
   agentRoot: external_exports.string().min(1),
   agentName: identifierSchema,
   capabilities: capabilitiesSchema.default([])
 }).strict();
+var registerSchema = registerFields.superRefine(pathIdOnlyForCodex);
 var stoppedTurnSchema = external_exports.object({
   runtime: external_exports.literal("codex"),
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   requestId: identifierSchema,
   lease: external_exports.string().uuid(),
   state: external_exports.enum(["completed", "failed", "canceled"])
@@ -224103,7 +224111,7 @@ var stoppedTurnSchema = external_exports.object({
 var blockReasonSchema = external_exports.enum(["recorded-definition-removed", "other"]);
 var actionSchema = external_exports.object({
   worktree: external_exports.string().min(1),
-  workerId: identifierSchema.optional(),
+  workerId: workerIdSchema.optional(),
   requestId: identifierSchema.optional(),
   input: external_exports.string().min(1).max(64 * 1024).optional(),
   continuation: external_exports.string().min(1).max(64 * 1024).optional(),
@@ -224125,19 +224133,19 @@ var harnessSwitchSchema = external_exports.object({
   cause: external_exports.enum(["usage-limit", "runtime-unavailable"]),
   evidence: external_exports.string().min(1).max(1024)
 }).strict();
-var migrateSchema = registerSchema.extend({
-  previousWorkerId: identifierSchema,
+var migrateSchema = registerFields.extend({
+  previousWorkerId: workerIdSchema,
   previousDigest: external_exports.string().regex(/^[a-f0-9]{64}$/),
   retainedRecord: retainedRecordSchema.optional(),
   harnessSwitch: harnessSwitchSchema.optional()
-}).strict();
+}).strict().superRefine(pathIdOnlyForCodex);
 var requestSchema = external_exports.object({ id: identifierSchema, input: external_exports.string().min(1).max(64 * 1024) }).strict();
 var ledgerStateSchema = external_exports.object({
   version: external_exports.literal(1),
   worktree: external_exports.string(),
   branch: external_exports.string(),
   runtime: external_exports.enum(["codex", "claude"]),
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   binding: bindingSchema,
   started: external_exports.boolean(),
   pending: external_exports.array(requestSchema).max(32),
@@ -224158,7 +224166,7 @@ var migrationSchema = external_exports.object({
   reason: external_exports.enum(["definition-missing", "definition-upgraded", "harness-switch"]),
   observedDigest: external_exports.string().length(64).nullable(),
   previous: ledgerStateSchema,
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   binding: bindingSchema,
   releasedRecord: external_exports.object({
     requestId: identifierSchema,
@@ -224409,7 +224417,7 @@ var originProofSchema = external_exports.object({
   inputSha256: digestSchema,
   source: external_exports.object({
     runtime: external_exports.enum(["codex", "claude"]),
-    workerId: identifierSchema
+    workerId: workerIdSchema
   }).strict(),
   checkedAt: external_exports.string().datetime(),
   files: external_exports.array(originFileSchema).max(1e4),
@@ -224428,7 +224436,7 @@ var operationContextSchema = external_exports.object({
   agentName: identifierSchema,
   mode: external_exports.literal("record"),
   recordAction: recordActionSchema,
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   requestId: identifierSchema,
   lease: external_exports.string().uuid(),
   publicationPurpose: mainSyncPurposeSchema.optional(),
@@ -224480,7 +224488,7 @@ var e2eLimitationSchema = external_exports.object({
 var fileDeltaSchema = external_exports.object({ path: external_exports.string().min(1), status: external_exports.string().min(1) }).strict();
 var publicationTurnSchema = external_exports.object({
   runtime: external_exports.enum(["codex", "claude"]),
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   requestId: identifierSchema,
   lease: external_exports.string().uuid()
 }).strict();
@@ -224641,13 +224649,13 @@ import { join as join2, resolve } from "node:path";
 // src/native-record.ts
 var grantSchema = recordContextSchema.extend({
   agentRoot: external_exports.string().min(1),
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   requestId: identifierSchema,
-  primaryOwner: external_exports.object({ workerId: identifierSchema, lease: external_exports.string().uuid() }).strict().optional()
+  primaryOwner: external_exports.object({ workerId: workerIdSchema, lease: external_exports.string().uuid() }).strict().optional()
 }).strict();
 var releaseSchema = grantSchema.extend({ lease: external_exports.string().uuid(), stoppedTurn: external_exports.object({
   runtime: external_exports.literal("codex"),
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   requestId: identifierSchema,
   lease: external_exports.string().uuid(),
   state: external_exports.enum(["completed", "failed", "canceled"])

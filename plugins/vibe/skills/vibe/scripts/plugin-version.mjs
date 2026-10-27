@@ -27,6 +27,8 @@
 // nothing is assumed. "Latest" is each plugin's manifest on main, located
 // through main's own marketplace file, read over HTTPS with no clone.
 //
+// A check run again in the same conversation with the same outdated versions
+// keeps the answer already recorded; a new conversation asks again.
 // `choose` records the person's answer. `proceed` records that they accepted
 // that an outdated plugin could give worse results. `update` refuses unless
 // the recorded choice is `update`; it refreshes the marketplace and updates
@@ -513,7 +515,14 @@ async function main(argv, env, home) {
       env,
       home,
     });
-    const record = { ...result, checkedAt: now.toISOString(), ...(values.runtime ? { runtime: values.runtime } : {}) };
+    const conversation = values.conversation ?? conversationId(env);
+    const record = { ...result, conversation, checkedAt: now.toISOString(), ...(values.runtime ? { runtime: values.runtime } : {}) };
+    // Checking again in the same conversation (after a compaction, say) keeps the
+    // answer the person already gave for the same versions, so it is never asked twice.
+    const previous = store.read();
+    if (record.status === VersionStatus.Outdated && previous?.choice && previous.conversation === conversation && previous.versions === record.versions) {
+      record.choice = previous.choice;
+    }
     try {
       store.write(record);
       if (!values.worktree && !values.state) {

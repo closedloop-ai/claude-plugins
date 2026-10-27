@@ -40,7 +40,7 @@ Git: commit messages per repo convention; regular push only, never force-push. T
 Review threads: reply on the thread naming the fixing SHA and resolve it only after the fix is verified in code.
 Artifacts for people (tickets, PR bodies, comments, replies) never name a path on the operator's machine; embed evidence and attach plans.
 Fleet board: <orchDir>/board.md shows every writer's PR, head, status and dependencies. Message another writer directly when your work touches theirs: Codex writers through the app-server-orchestrator skill's send, Claude workers and QA guides through SendMessage.
-Program rulings: read <orchDir>/rulings.md before planning, editing or auditing; the ticket carries the applicable per-ticket rulings through handoff's rulings check.
+Program rulings: read <orchDir>/rulings.md before planning, editing or auditing; the ticket carries the applicable per-ticket rulings through handoff's rulings check. My own directions are operational and are recorded as `(orchestrator)`, never as a human ruling; only operator words I quote, with their source, are rulings.
 Declare each push-ready head with `board.mjs <orchDir> writer <you> --ready <sha>`; nobody pushes a head of yours you have not declared. Push a tested checkpoint at least every 45 minutes of active work, never held for optional evidence; send review findings after that as follow-up commits, and add no new scope to an unpushed checkpoint.
 Report when done: pushed head SHA, files changed, tests run with the SHA each ran at and results, open items, anything that needs the operator.
 
@@ -65,6 +65,7 @@ Tests: after any change, fix or merge (a conflict resolution included), run ever
 Budget: effort <CODEX_EFFORT>; no computer use (no browser, in-app browser, desktop app UI or screenshots).
 Visual requests: draft one from the fleet-orchestrator skill's visual request template and file it only with `node <request-visual.mjs on this machine> <requests dir> <draft>` from your worktree; it refuses an unpushed or stale head.
 Plugin version: the operator answered this program's version check; when vibe's check finds a plugin outdated, record `plugin-version.mjs choose --choice proceed --by opening-message` and carry on.
+Who speaks: this orchestrator's own directions are operational and are recorded as `(orchestrator)`, never as a human ruling; only operator words it quotes, with their source, are rulings.
 Artifacts for people (tickets, PR bodies, PR comments, review replies): never name a path on the operator's machine (home, temp, scratchpad or worktree paths) or say something is on someone's laptop. Embed screenshots as uploaded images and quote text evidence inline, briefly. A plan is attached, never pointed at: link the implementation plan as a plan document, and upload a QA plan or other working file as a ticket attachment named by its attachment name.
 ```
 

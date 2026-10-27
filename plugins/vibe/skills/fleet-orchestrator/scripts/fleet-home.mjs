@@ -222,7 +222,7 @@ function pluginVersionLine(programDir) {
   if (record.status === "outdated" && !record.choice) {
     return `PLUGIN-VERSION-UNANSWERED ${record.versions}: ask the operator to update now or proceed knowing an outdated plugin could give worse results, and record it with plugin-version.mjs choose --state ${file}`;
   }
-  return `PLUGIN-VERSION ${record.status}${record.choice ? ` ${record.choice.choice}` : ""} at ${record.checkedAt}: run \`${check}\` again for this chat`;
+  return `PLUGIN-VERSION ${record.status}${record.choice ? ` ${record.choice.choice}` : ""} at ${record.checkedAt}: run \`${check}\` in every chat; in the same chat it keeps the recorded answer`;
 }
 
 /** Creates programs/<slug>/ with its shape and makes it current; refuses while another program is current. */

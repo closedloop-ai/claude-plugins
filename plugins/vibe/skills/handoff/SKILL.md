@@ -519,8 +519,10 @@ Run `node ../vibe/scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"`
 again, then ROOT commits the staged merge and any subsequent reviewed fixes as one more
 commit (nothing is squashed or amended):
 `node ../vibe/scripts/commit-worktree.mjs --worktree "<wt>" --subject "<live ticket slug>: <plain imperative summary of the handoff fixes>" --body "<what was fixed, one per line>"`
-(under 72 characters, no mention of AI tools). `committed: false` means
-nothing changed. A commit the hook refused goes back to step 5's fixing, then
+(under 72 characters, no mention of AI tools), with `--exclude <path>` for
+each untracked file the inventory lists as `forbidden` or `outsideAllowed`
+that the session did not write (`../vibe/SKILL.md`, section 6, step 3).
+`committed: false` means nothing changed. A commit the hook refused goes back to step 5's fixing, then
 this step again. Every main sync is checked for capability removal, this one
 included, because a merge can quietly take away something main ships (for
 example, turn an editable control read-only). Once the merge is committed,

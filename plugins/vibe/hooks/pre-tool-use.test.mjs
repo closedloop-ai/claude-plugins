@@ -105,8 +105,31 @@ test("results merge as deny > defer > ask > allow and keep every context", () =>
 test("hooks.json registers one command per event, and the PreToolUse matcher names exactly the routed tools", () => {
   const { hooks } = JSON.parse(readFileSync(path.join(HERE, "hooks.json"), "utf8"));
   const commands = (event) => hooks[event].flatMap((entry) => entry.hooks.map((hook) => hook.command));
-  assert.deepEqual(Object.keys(hooks).sort(), ["PreToolUse", "UserPromptSubmit"]);
+  assert.deepEqual(Object.keys(hooks).sort(), ["PreToolUse", "SessionStart", "UserPromptSubmit"]);
   assert.deepEqual(commands("PreToolUse"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use.mjs"']);
   assert.deepEqual(commands("UserPromptSubmit"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.mjs"']);
+  assert.deepEqual(commands("SessionStart"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs"']);
+  assert.equal(hooks.SessionStart[0].matcher, "compact");
   assert.deepEqual(hooks.PreToolUse[0].matcher.split("|").sort(), Object.keys(PRE_TOOL_USE_ROUTES).sort());
+});
+
+// Codex (0.164) loads a plugin's hooks/hooks.json by default, sets CLAUDE_PLUGIN_ROOT, and reports its shell
+// and exec_command tools as Bash with tool_input.command (Codex hooks docs). An audit took the manifest's missing
+// `hooks` field to mean the guards never load in Codex (2026-10-27); this pins what they rely on there.
+test("the Codex hook path: default hooks.json location, CLAUDE_PLUGIN_ROOT commands, and Codex's Bash payload is refused", () => {
+  const pluginRoot = path.join(HERE, "..");
+  const codexManifest = JSON.parse(readFileSync(path.join(pluginRoot, ".codex-plugin", "plugin.json"), "utf8"));
+  assert.equal(codexManifest.hooks, undefined, "a hooks override would move Codex off hooks/hooks.json and re-key its trust");
+  const { hooks } = JSON.parse(readFileSync(path.join(HERE, "hooks.json"), "utf8"));
+  for (const entry of Object.values(hooks).flat()) {
+    for (const hook of entry.hooks) assert.match(hook.command, /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/[a-z-]+\.mjs"$/);
+  }
+  const codexEvent = {
+    session_id: "01a17e08-330d-7d80-8afa-6b01adb56fbf", turn_id: "turn-1", transcript_path: null, cwd: tmpdir(),
+    hook_event_name: "PreToolUse", model: "gpt-6-sol", permission_mode: "default",
+    tool_name: "Bash", tool_use_id: "call_1", tool_input: { command: FORCE_PUSH },
+  };
+  const result = spawnSync(process.execPath, [PRE_TOOL_USE], { input: JSON.stringify(codexEvent), encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).hookSpecificOutput.permissionDecision, "deny");
 });

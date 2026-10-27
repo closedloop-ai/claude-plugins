@@ -207,3 +207,33 @@ test("concludes an origin/main merge staged by the no-grant fallback", (t) => {
   assert.equal(result.json.merge, true);
   assert.equal(git(checkout, ["rev-list", "--parents", "-n", "1", "HEAD"], home).split(" ").length, 3);
 });
+
+// A person's own untracked files (17 `.agents` skill files) once held a
+// session's commit for 1 h 37 min, because the script staged everything and
+// had no way to leave them out (2026-10-26).
+test("--exclude leaves a person's own untracked files out of the commit and in the worktree", (t) => {
+  const { home, checkout } = setup(t);
+  write(checkout, "apps/app/page.tsx", "two\n");
+  write(checkout, ".agents/skills/mine/SKILL.md", "theirs\n");
+  write(checkout, ".agents/skills/other/SKILL.md", "theirs\n");
+  write(checkout, "notes.md", "theirs\n");
+  const result = runNode(SCRIPT, ["--worktree", checkout, "--subject", "ISS-7: Change the page", "--exclude", ".agents/skills", "--exclude", "notes.md"], home);
+  assert.equal(result.status, 0, JSON.stringify(result.json));
+  assert.deepEqual(result.json.files, ["apps/app/page.tsx"]);
+  assert.deepEqual([...result.json.excluded].sort(), [".agents/skills/mine/SKILL.md", ".agents/skills/other/SKILL.md", "notes.md"]);
+  const leftOver = git(checkout, ["status", "--porcelain", "--untracked-files=all"], home).split("\n").map((line) => line.slice(3)).sort();
+  assert.deepEqual(leftOver, [".agents/skills/mine/SKILL.md", ".agents/skills/other/SKILL.md", "notes.md"]);
+});
+
+test("--exclude never drops the session's tracked changes and refuses a path that names no untracked file", (t) => {
+  const { home, checkout } = setup(t);
+  write(checkout, "apps/app/page.tsx", "two\n");
+  for (const exclude of ["apps/app/page.tsx", "missing/dir"]) {
+    const before = commitCount(checkout, home);
+    const result = runNode(SCRIPT, ["--worktree", checkout, "--subject", "ISS-7: Change the page", "--exclude", exclude], home);
+    assert.equal(result.status, 1, exclude);
+    assert.match(result.json.error, /--exclude .* names no untracked file/, exclude);
+    assert.equal(commitCount(checkout, home), before, exclude);
+    assert.equal(git(checkout, ["diff", "--cached", "--name-only"], home), "", `${exclude}: nothing is left staged`);
+  }
+});

@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
-import { credentialProblem, e2eSlotProblem, forcePushProblem, shellSafetyGuard, watcherLaunchProblem, wordSplitProblem } from "./shell-safety-guard.mjs";
+import { credentialProblem, e2eSlotProblem, equalsWordProblem, forcePushProblem, shellSafetyGuard, watcherLaunchProblem, wordSplitProblem } from "./shell-safety-guard.mjs";
 
 const GUARD = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-tool-use.mjs");
 
@@ -71,4 +71,23 @@ test("e2e-slot.sh runs only with the pushed commit named (two reruns tested a st
     assert.match(e2eSlotProblem(command) ?? "", /--head <sha>/, command);
   }
   for (const command of ["~/vibe-remote/e2e-slot.sh --head 0123abc ISS-1 pnpm e2e", "cat ~/vibe-remote/e2e-slot.sh"]) assert.equal(e2eSlotProblem(command), null, command);
+});
+
+test("an unquoted word starting with = is refused, because zsh aborts the whole list on it (echo ==== hid two reads, 2026-10-22)", () => {
+  const refused = [
+    "git diff a b -- x | head -70; echo ====; git log --oneline -- .claude/skills; echo ====; sed -n 1,30p AGENTS.md",
+    "echo ==== && ls",
+    "[ \"$a\" == b ] && echo same",
+    "echo =foo",
+    "printf '%s\\n' x; print -r -- ====",
+    "x==1",
+  ];
+  for (const command of refused) assert.match(equalsWordProblem(command) ?? "", /quote/, command);
+  const allowed = [
+    "echo '===='", "echo \"====\"", "echo \\====", "echo =", "[ \"$a\" = b ]", "[[ $a == b ]] && echo same",
+    "echo a=b", "git log --format=%H -1", "echo --x==y", "cat <<'EOF'\n====\nEOF", "awk -F= '{print $1}' f",
+    "jq '.a == 1' f.json", "test \"$a\" != b",
+  ];
+  for (const command of allowed) assert.equal(equalsWordProblem(command), null, command);
+  assert.equal(shellSafetyGuard({ tool_input: { command: "echo ====; cat AGENTS.md" } })?.decision, "deny");
 });

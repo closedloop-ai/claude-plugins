@@ -220,6 +220,25 @@ test("update refuses until the person chose it, and proceed records that they ac
   assert.equal(bad.code, 1);
 });
 
+test("checking again in the same conversation keeps the answer for the same versions; a new conversation or version asks again", async (t) => {
+  const { home, bin } = sandbox(t);
+  const main = await marketplace(t, { files: mainFiles({ vibe: "1.0.53" }) });
+  const claude = fakeCli(bin, "claude", { installed: [{ name: "vibe", version: "1.0.52" }] });
+  await run(home, ["check", "--claude", claude.file, "--latest-base", main.url]);
+  await run(home, ["choose", "--choice", "proceed"]);
+  const again = await run(home, ["check", "--claude", claude.file, "--latest-base", main.url]);
+  assert.equal(again.result.choice.choice, "proceed");
+  assert.equal(startup(home).choice.choice, "proceed");
+  const program = path.join(home, "program.json");
+  await run(home, ["check", "--state", program, "--claude", claude.file, "--latest-base", main.url]);
+  await run(home, ["choose", "--choice", "proceed", "--state", program]);
+  const newChat = await run(home, ["check", "--state", program, "--claude", claude.file, "--latest-base", main.url], { CLAUDE_CODE_SESSION_ID: "conversation-2" });
+  assert.equal(newChat.result.choice, undefined, "a new chat on the same program is asked again");
+  const newer = await marketplace(t, { files: mainFiles({ vibe: "1.0.54" }) });
+  const moved = await run(home, ["check", "--claude", claude.file, "--latest-base", newer.url]);
+  assert.equal(moved.result.choice, undefined, "a newer release is asked about again");
+});
+
 test("a current check leaves nothing to choose or update", async (t) => {
   const { home, bin } = sandbox(t);
   const main = await marketplace(t, { files: mainFiles({ vibe: "1.0.53" }) });

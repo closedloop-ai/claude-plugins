@@ -84,8 +84,9 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   the handoff summary) run on `gpt-5.6-terra`, every writer, reviewer and
   verifier on `gpt-6-sol`, all at `high`. Never pass `xhigh` unless the person
   asked for it. Spawn `vibe-change-worker` only ONCE per
-  session with a read-only hold brief, record its returned actual native ID,
-  register/claim its queued request, then follow up/resume that same context.
+  session with a read-only hold brief, record its returned actual native ID
+  (the agent path `spawn_agent` returns, such as `/root/vibe_writer`, is that
+  ID), register/claim its queued request, then follow up/resume that same context.
   Never make a new source writer per request/unit. Repo agents live in `<repo>/.claude/agents/`.
   A new native helper also starts with a read-only hold brief; obtain its real
   ID, acquire the grant, then resume that SAME helper for the operation.
@@ -101,6 +102,14 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   quality-loop.md's turn stranded by a plugin upgrade: `migrate` with
   `retainedRecord`, internally, never a question or a message to engineering.
   Startup and confirmed discard use the same bounded stable contexts below.
+- Codex loads this plugin's `hooks/hooks.json` (the shell, kill and merge
+  guards, the away checklist and the compaction resume) but runs it only once
+  it is reviewed and trusted in Codex's `/hooks`, and again after it changes.
+  So after any context compaction in Codex, before the next action, run
+  fleet-orchestrator's `scripts/fleet-home.mjs resume` when you orchestrate a
+  fleet and read each `READ` file it prints, then reread the session record
+  (`vibe-sessions.mjs show`) and `session-questions.mjs list`; never continue from
+  the summary alone.
 - Usage limits (both harnesses). In Codex, run
   `node scripts/codex-usage.mjs check` before spawning a worker or
   forwarding a request to the writer, and again when a worker turn stalls
@@ -639,7 +648,9 @@ prep, build, the quick checks the commit hooks need, the orchestrator's
 commit, deploy, and showing the person; each finished change deploys without
 being asked (section 6). Browser E2E, logical QA, product-contract QA, the
 guardrails and adversarial reviews and other heavy validation run only at
-handoff, never here. Visual QA runs at handoff too, and during the session
+handoff, never here. A frozen-render finding never holds a build-loop commit
+or preview: the build-phase inventory lists it under
+`diffRules.deferredToHandoff` and handoff settles it. Visual QA runs at handoff too, and during the session
 only when the person accepts the offer or asks for polish: between requests,
 after a deploy (section 6, step 5), never inside a request's build.
 
@@ -880,7 +891,10 @@ that waited, and one deploy after the last of them carries them all. A
    `node scripts/commit-worktree.mjs --worktree "<wt>" --subject "<live ticket slug>: <plain imperative summary of the changes since the last redeploy>" --body "<the screens changed, one per line>"`.
    The subject stays under 72 characters and never mentions AI tools. The
    script leaves out the session's `localFixes` and files that never belong
-   in a commit, and the repository's commit hook runs. `committed: false`
+   in a commit, and the repository's commit hook runs. Add `--exclude <path>`
+   for each untracked file the inventory lists as `forbidden` or
+   `outsideAllowed` that the session did not write (a person's own files);
+   the commit goes ahead without them and without asking anyone to move them. `committed: false`
    means nothing changed; continue. A commit reporting `pushDue: true`
    (`scripts/push-cadence.mjs`) has work that waited 45 minutes unpushed:
    publish this tested checkpoint now, send later review findings as

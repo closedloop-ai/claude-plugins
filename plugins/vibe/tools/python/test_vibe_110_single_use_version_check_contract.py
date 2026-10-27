@@ -76,7 +76,7 @@ def test_every_fleet_chat_starts_with_the_plugin_version_check() -> None:
     setup = section(FLEET_SKILL.read_text(), "## Setup")
     for phrase in (
         "Plugin version, first in every chat, new or resumed: run `node ../vibe/scripts/plugin-version.mjs check --state <orchDir>/plugin-version.json`",
-        "update now, or proceed knowing an outdated plugin could give worse results",
+        "\"A newer version of the ClosedLoop plugins is available (<versions>). Update now, or proceed on this version? Proceeding on an outdated plugin could give worse results.\"",
         "`plugin-version.mjs choose --choice update|proceed --state <same file>` and in the resume log",
         "`plugin-version.mjs update --state <same file>`",
         "it updates each outdated plugin in Claude Code and Codex, whichever has one, and verifies it",

@@ -19,9 +19,9 @@ SPEC.loader.exec_module(runner)
 
 def test_one_case_per_claude_prompt_and_role_names() -> None:
     found = runner.cases()
-    assert len(found) == 80
+    assert len(found) == 85
     assert len({c["name"] for c in found}) == len(found)
-    assert all(c["name"].startswith(("executive-", "product-manager-")) for c in found)
+    assert all(c["name"].startswith(("executive-", "product-manager-", "orchestrator-")) for c in found)
     for case in found:
         _, original = runner.document(case["source"] / "prompt.md")
         assert case["prompt"] == runner.role_text(original)

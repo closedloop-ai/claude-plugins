@@ -7,6 +7,9 @@
 // never fired, because zsh (this tool's shell on macOS) does not word-split an
 // unquoted parameter; and e2e-slot.sh reruns tested an old commit when they
 // started before the push landed, because the slot captured whatever HEAD was.
+// And `echo ====` (2026-10-22): zsh expands an unquoted word starting with `=`
+// to a command path, fails on `===`, and aborts the whole list, so the reads
+// after it never ran and their absence was reported as a complete answer.
 
 // Runs from pre-tool-use.mjs.
 
@@ -21,6 +24,10 @@ const BACKGROUND_AMPERSAND = /&/;
 const REDIRECT_AMPERSAND = /\d*>&\d*|&>>?/g;
 const ZSH_SPLIT = /(?:^|[\s;&|(])set\s+--\s+\$\{?[A-Za-z_][A-Za-z0-9_]*\}?(?=[\s;&|)]|$)/m;
 const SHA = /^[0-9a-f]{7,40}$/i;
+const HEREDOC = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n[\s\S]*?\n\s*\2(?=\n|$)/g;
+const WORD_BREAK = new Set([" ", "\t", "\n", ";", "|", "&", "(", ")"]);
+const COMMAND_BREAK = new Set(["\n", ";", "|", "&", "("]);
+const ASSIGN_EQUALS = /^[A-Za-z_][A-Za-z0-9_]*==/;
 const FORCE_PUSH = /\bgit\b(?:(?![;&|\n]).)*?\bpush\b(?:(?![;&|\n]).)*(?:\s-f(?:\s|$)|--force(?:-with-lease)?\b|(?:^|\s)\+[^\s]+)/i;
 
 /** The credential-safety refusal for a shell command, or null. */
@@ -50,6 +57,58 @@ export function wordSplitProblem(command) {
   return "set -- $var does not word-split in zsh, so $1 holds the whole string: use read -r first second <<< \"$var\"";
 }
 
+/** The refusal for an unquoted word starting with `=` outside `[[ ]]`, which aborts a zsh command list, or null. */
+export function equalsWordProblem(command) {
+  for (const { word, commandPosition, testDepth } of unquotedWords(command.replace(HEREDOC, " "))) {
+    if (testDepth === 0 && ((word.length > 1 && word.startsWith("=")) || (commandPosition && ASSIGN_EQUALS.test(word)))) {
+      return `zsh reads the unquoted ${word} as an =command lookup, which fails and aborts the rest of the command list: quote it ('${word}') or use printf '%s\\n' '${word}'`;
+    }
+  }
+  return null;
+}
+
+/** Each word's unquoted text, with whether it starts a command and the `[[ ]]` depth it sits in. */
+function unquotedWords(command) {
+  const words = [];
+  let word = null;
+  let quote = null;
+  let commandPosition = true;
+  let testDepth = 0;
+  const finish = () => {
+    if (word === null) return;
+    if (word.quoted === false && word.text === "[[") testDepth += 1;
+    else if (word.quoted === false && word.text === "]]") testDepth = Math.max(0, testDepth - 1);
+    else if (word.quoted === false) words.push({ word: word.text, commandPosition: word.commandPosition, testDepth });
+    commandPosition = word.commandPosition && /^[A-Za-z_][A-Za-z0-9_]*=/.test(word.text);
+    word = null;
+  };
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index];
+    if (quote) {
+      if (char === quote) quote = null;
+      else if (char === "\\" && quote === '"') index += 1;
+      continue;
+    }
+    if (WORD_BREAK.has(char)) {
+      finish();
+      if (COMMAND_BREAK.has(char)) commandPosition = true;
+      continue;
+    }
+    word ??= { text: "", quoted: false, commandPosition };
+    if (char === "'" || char === '"') {
+      word.quoted = true;
+      quote = char;
+    } else if (char === "\\") {
+      word.quoted = true;
+      index += 1;
+    } else if (!word.quoted) {
+      word.text += char;
+    }
+  }
+  finish();
+  return words;
+}
+
 /** The refusal for an e2e-slot.sh run that does not name the commit it must test, or null. */
 export function e2eSlotProblem(command) {
   for (const { words } of commandSegments(command)) {
@@ -73,6 +132,6 @@ export function shellSafetyGuard(event) {
   const command = event?.tool_input?.command;
   if (typeof command !== "string") return null;
   const problem = credentialProblem(command) ?? forcePushProblem(command) ?? watcherLaunchProblem(event.tool_input)
-    ?? wordSplitProblem(command) ?? e2eSlotProblem(command);
+    ?? wordSplitProblem(command) ?? equalsWordProblem(command) ?? e2eSlotProblem(command);
   return problem ? deny(problem) : null;
 }

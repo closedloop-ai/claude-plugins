@@ -4,6 +4,31 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.0
+
+fleet-orchestrator now runs a program with one writer or with none, every vibe and fleet-orchestrator start checks every installed ClosedLoop plugin in Claude Code and Codex against `main`, and eight bugs from two audited fleet sessions (vibe 1.0.72 and 1.0.85) are fixed (operator rulings, 2026-10-27).
+
+#### Added
+- `fleet-orchestrator` covers one writer on one pull request and sessions with no writer (design, research, analysis), not only several writers. Its description says so, and a new "Programs with one writer or none" section has a table saying what each section asks of a `no-writer` and a `one-writer` program.
+- `fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet` records the program's shape in `program.json`, and `fleet-home.mjs shape` changes it. `resume` prints `SHAPE` and the program's plugin version line, and `board.mjs writer` refuses a writer the shape does not allow.
+- `plugin-version.mjs` checks every closedloop-ai plugin installed in Claude Code and in Codex. A harness counts only when its CLI is found and lists one of them. Each plugin is compared with its manifest on `main`, located through `main`'s own marketplace file, over HTTPS with no clone. New commands: `choose --choice update|proceed [--by person|opening-message]` records the answer, `update` updates each outdated plugin in each harness that has one, lists them again to verify and names the harnesses to restart, and `adopt` copies the result onto a vibe session. The result lives in the conversation's record, on the session record (`pluginVersion`) or in a fleet program's `plugin-version.json`. Offline, a refused or slow answer, or a CLI that cannot list its plugins makes the result `unknown`, and the session carries on.
+- `hooks/plugin-version-guard.mjs`, routed from `pre-tool-use.mjs` (Skill, Agent, Bash) and `user-prompt-submit.mjs`. Starting `vibe:vibe` or `vibe:fleet-orchestrator` marks the conversation pending. Until the check has run, and while it found an outdated plugin with no answer, an Agent call, `claude-worker.mjs` and `fleet.sh ... session turn` are refused.
+- A `SessionStart` hook (`compact`, `session-start.mjs`) puts `fleet-home.mjs resume`'s reading list and the newest resume-log entry into context after a compaction in a fleet session. A `program-change` UserPromptSubmit reminder asks for the ruling and the program change to be recorded before acting on them.
+- `hooks/question-guard.mjs` on AskUserQuestion and Codex's `request_user_input`: a vibe question needs a prior `session-questions.mjs ask`, and an orchestrator question needs `checked in code: <file>:<line>`. The startup plugin version question passes both.
+- `commit-worktree.mjs --exclude <path>` leaves an untracked file the session does not own out of the commit, and refuses a path that names no untracked file.
+- Eleven eval cases: three fleet single-use cases, three version-check cases (`pm-version-resume-asks` replaces `pm-version-resume-does-not-wait`, since a resumed session is now asked), and five orchestrator and vibe cases for the audit bugs. The Codex runner maps `orch-` cases and `$fleet-orchestrator`.
+
+#### Changed
+- The vibe version question is now "Do you want me to update it now, or keep going with this one? Keeping going with an older version could give worse results." It is asked on resumed sessions too. Only an opening message that says to proceed carries on, and that is recorded as `--by opening-message`. `vibe-sessions.mjs new` refuses to start a session while an outdated result has no answer. Fleet writers' preamble and resume prompt carry the operator's answer instead of "keep the current version".
+- `handoff-inventory.mjs` in the build phase lists `frozen-render` under `diffRules.deferredToHandoff` and does not block. Handoff and pull-request phases still block on it.
+- `codex-session.mjs` marks every turn and steer it sends as the orchestrator's own direction. The worker preamble, resume prompt and quality loop say such directions are recorded as `(orchestrator)`, never as a human ruling.
+- `shell-safety-guard.mjs` refuses an unquoted word starting with `=` (zsh expands it as a command path). Fleet "Reporting to the operator" requires a count or "only" claim to come from a command that exited 0 with no truncation.
+- `writer-state.mjs` accepts a Codex agent path (such as `/root/setup`) as a native worker ID, and refuses one for the Claude runtime.
+- The Codex harness notes say Codex loads `hooks/hooks.json` once it is trusted in `/hooks`, and `pre-tool-use.test.mjs` pins that the Codex manifest declares no hooks override.
+
+#### Fixed
+- `exec-version-proceed-does-not-wait` used a grader setting the eval runner rejects (`match: lacks`), so it never loaded.
+
 ### closedloop-core v1.5.3
 
 #### Fixed

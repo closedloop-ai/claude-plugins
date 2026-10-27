@@ -186,6 +186,6 @@ test('resume tells a new chat to run the plugin version check, and flags an outd
   writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'outdated', versions: 'vibe: you have 1.0.84, the latest is 1.0.85', checkedAt: 'then' }));
   assert.match(run(['resume', '--home', home]).stdout, /^PLUGIN-VERSION-UNANSWERED vibe: you have 1\.0\.84, the latest is 1\.0\.85: ask the operator to update now or proceed knowing an outdated plugin could give worse results/m);
   writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'outdated', versions: 'v', checkedAt: 'then', choice: { choice: 'proceed' } }));
-  assert.match(run(['resume', '--home', home]).stdout, /^PLUGIN-VERSION outdated proceed at then: run `.+` again for this chat$/m);
+  assert.match(run(['resume', '--home', home]).stdout, /^PLUGIN-VERSION outdated proceed at then: run `.+` in every chat; in the same chat it keeps the recorded answer$/m);
   assert.equal(run(['check', '--home', home]).status, 0, 'program.json and plugin-version.json are program state, not strays');
 });

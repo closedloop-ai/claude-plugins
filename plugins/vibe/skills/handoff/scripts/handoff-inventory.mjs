@@ -62,7 +62,11 @@
 //
 // `diffRules` is diff-rules.mjs's result on the session's own changes (local
 // fixes left out); any `diffRules.blocking` finding blocks
-// (`blocking.diffRulesClear`).
+// (`blocking.diffRulesClear`). The build phase lists a `frozen-render` finding
+// under `diffRules.deferredToHandoff` instead, because rendering every
+// affected frozen story is heavy validation, which vibe's build loop leaves to
+// handoff (vibe SKILL.md section 5); the handoff and pull-request phases block
+// on it. A writer's DONE once waited hours on 49 such renders (2026-10-26).
 //
 // `backendChanged` says whether the work touched backend code
 // (`backendFiles`). Handoff adds two workflow-code-review passes when it did;
@@ -132,6 +136,7 @@ const BACKEND_PREFIXES = [
 ];
 const BACKEND_SEGMENTS = ["/prisma/", "/migrations/"];
 
+const HANDOFF_ONLY_RULES = new Set(["frozen-render"]);
 const STORY_PATTERN = /\.stories\.tsx?$/;
 const COMPONENT_PATTERN = /\/components\/.+\.tsx$/;
 const STORY_PATHSPECS = ["*.stories.ts", "*.stories.tsx"];
@@ -213,13 +218,15 @@ const diffRules = runDiffRules({ worktree, base: baseCommit, exclude: new Set(lo
   storyReplacements: new Set((Array.isArray(record?.storyReplacements) ? record.storyReplacements : []).map((entry) => entry?.path)),
 });
 const prFacts = values.phase === "build" ? null : readPullRequestFacts();
+const deferredToHandoff = values.phase === "build" ? diffRules.blocking.filter((finding) => HANDOFF_ONLY_RULES.has(finding.rule)) : [];
+const diffRulesBlocking = diffRules.blocking.filter((finding) => !deferredToHandoff.includes(finding));
 
 const blocking = {
   forbiddenPaths: forbidden.length === 0 && outsideAllowed.length === 0,
   hasChanges: changedFiles.length > 0,
   storiesInV2Taxonomy: v1Stories.length === 0,
   existingStoryTitlesKept: retitledStories.every((story) => story.replacement !== null),
-  diffRulesClear: diffRules.blocking.length === 0,
+  diffRulesClear: diffRulesBlocking.length === 0,
   ...(storybookSchemeUnreadable ? { storybookSchemeRecognized: false } : {}),
   ...(trackedLocalPlans.length ? { localPlansUntracked: false } : {}),
   ...(prototype ? { prototypePublicationCurrent: publicationProblem === undefined } : {}),
@@ -257,7 +264,7 @@ const result = {
   v1Stories,
   compileOnlyV1Repairs,
   retitledStories,
-  diffRules: { blocking: diffRules.blocking, requiredTests: diffRules.requiredTests, requiredChecks: diffRules.requiredChecks },
+  diffRules: { blocking: diffRulesBlocking, deferredToHandoff, requiredTests: diffRules.requiredTests, requiredChecks: diffRules.requiredChecks },
   ...prFacts,
 };
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
