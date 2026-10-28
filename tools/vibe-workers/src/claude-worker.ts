@@ -17,6 +17,7 @@ import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
 import type { OperationContext } from "./main-sync-contracts.js";
 import { deriveValidationEnvelope } from "./main-sync-validation-envelope.js";
 import { readReferenceImages } from "./reference-images.js";
+import { asksForUsage, claudeWorkerUsage } from "./usage.js";
 import { type ClaudeRateLimit, mustStopForUsage, rateLimitFromEvent } from "./claude-usage.js";
 
 const launchSchema = recordContextSchema.extend({
@@ -350,6 +351,7 @@ function safeFailure(error: unknown): { code: string; summary: string; personAct
     && String(error.syscall).startsWith("spawn")) {
     return { code: "CLAUDE_CLI_MISSING", summary: "The claude command is not on this shell's PATH" };
   }
+  if (message.includes("never argv")) return { code: "INVALID_REQUEST", summary: "This command takes no arguments; send the launch request on stdin (claude-worker.mjs help prints its shape)." };
   if (error instanceof z.ZodError) return { code: "INVALID_REQUEST", summary: "The worker request or capability binding does not match the supported contract." };
   if (error instanceof OwnedCleanupError) return { code: "OWNED_PROCESS_NOT_STOPPED", summary: "Owned process cleanup is unproven; the unsafe turn remains locked." };
   if (message.includes("deadline")) return { code: "TURN_TIMEOUT", summary: "The owned worker turn exceeded its deadline." };
@@ -392,6 +394,10 @@ function signalOwnedChild(child: ChildProcessWithoutNullStreams, signal: NodeJS.
 }
 
 export async function main(argv: string[]): Promise<number> {
+  if (asksForUsage(argv)) {
+    process.stdout.write(`${claudeWorkerUsage()}\n`);
+    return 0;
+  }
   let input: unknown;
   try {
     if (argv.length) throw new Error("Send the worker brief and capability metadata on stdin, never argv");

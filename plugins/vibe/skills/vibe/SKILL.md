@@ -311,6 +311,10 @@ question is never repeated and does not go through `session-questions.mjs`.
   and only on the person's choice (`references/guardrails.md`, "Plugins and
   tooling"). It updates every outdated ClosedLoop plugin in Claude Code and
   in Codex, whichever has one, and checks each reached the latest version.
+  Its `sessions` names each vibe session whose writer was bound to the
+  release it replaced: `migrated` needs nothing more, and `on-resume` is
+  migrated when that session resumes (`references/quality-loop.md`,
+  "Recorded definition migration"). Neither is news for the person.
   Whatever its status, tell the person, for each harness in its `restart`,
   in Codex: "vibe is updated. Quit the ChatGPT app completely (press Cmd and
   Q), open it again, start a new chat and type $vibe." In Claude Code: "vibe

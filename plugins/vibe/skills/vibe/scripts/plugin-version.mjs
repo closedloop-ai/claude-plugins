@@ -45,6 +45,12 @@
 // own get-me and sync_status calls. It prints {"print":true,"block"} once per
 // conversation and {"print":false} on every later call in it, a compaction
 // included, so the block is never shown twice.
+// When vibe itself is outdated, `sessions` names each vibe session in the
+// remembered checkout whose writer is bound to an older vibe release, which
+// the update strands (ISS-13291), and migrates each Claude writer with the
+// updated release's own writer-state.mjs: `migrated`, `on-resume` (a running
+// turn, a Codex writer, or a recorded release still installed; the session
+// migrates when it resumes) or `failed` with its reason.
 // `vibe-sessions.mjs new` refuses to create a session while this
 // conversation's record is outdated with no choice, and the vibe hooks refuse
 // worker launches in Claude Code while it is (hooks/plugin-version-guard.mjs).
@@ -64,6 +70,8 @@ export const Harness = Object.freeze({ Claude: "claude", Codex: "codex" });
 export const VersionStatus = Object.freeze({ Current: "current", Outdated: "outdated", Unknown: "unknown", Pending: "pending" });
 export const Choice = Object.freeze({ Update: "update", Proceed: "proceed" });
 export const Connection = Object.freeze({ Connected: "connected", NotConnected: "not-connected" });
+export const StrandedMigration = Object.freeze({ Migrated: "migrated", OnResume: "on-resume", Failed: "failed" });
+const VIBE_BRANCH = "vibe/";
 const MANIFEST = Object.freeze({ claude: ".claude-plugin/plugin.json", codex: ".codex-plugin/plugin.json" });
 const CATALOG = Object.freeze({ claude: ".claude-plugin/marketplace.json", codex: ".agents/plugins/marketplace.json" });
 const CHOOSERS = Object.freeze(["person", "opening-message"]);
@@ -643,7 +651,15 @@ async function main(argv, env, home) {
     if (record?.choice?.choice !== Choice.Update) {
       throw new Error("the person has not chosen to update; record their answer with plugin-version.mjs choose --choice update first");
     }
+    const vibe = (record.harnesses ?? []).flatMap((entry) => entry.plugins ?? [])
+      .find((plugin) => plugin.name === "vibe" && plugin.status === VersionStatus.Outdated);
+    // Named before the update, which removes the release their writers are bound to.
+    const stranded = vibe ? writersBoundBefore(vibe.latest, home) : [];
     const result = updatePlugins(record, { clis, env, home });
+    const reached = result.plugins.find((plugin) => plugin.plugin === "vibe" && plugin.status === "updated");
+    if (stranded.length) {
+      result.sessions = migrateStrandedWriters(stranded, reached?.after ?? null);
+    }
     store.write({ ...record, update: { ...result, at: now.toISOString() } });
     return { code: result.status === "updated" ? 0 : 1, output: result };
   }
@@ -660,5 +676,100 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     // The check itself never fails a session; the other commands report a refusal.
     process.stdout.write(`${JSON.stringify(command === "check" ? { status: VersionStatus.Unknown, reason: error.message } : { ok: false, error: error.message })}\n`);
     process.exitCode = command === "check" ? 0 : 1;
+  }
+}
+
+/**
+ * Vibe sessions in the remembered symphony-alpha checkout whose persistent writer is bound to a vibe
+ * release older than `latest`. An update removes that release from the plugin cache, which strands the
+ * writer until it is migrated (ISS-13291). Never throws: an unreadable checkout or record lists nothing.
+ */
+export function writersBoundBefore(latest, home = os.homedir()) {
+  const repo = readJson(path.join(home, ".codex", "vibe", "config.json"))?.repo;
+  if (typeof repo !== "string" || !existsSync(repo)) {
+    return [];
+  }
+  const sessions = [];
+  for (const entry of vibeWorktrees(repo)) {
+    const ledger = readLedger(entry.worktree);
+    const agentRoot = ledger?.binding?.agentRoot;
+    if (typeof agentRoot !== "string" || path.basename(path.dirname(agentRoot)) !== "vibe") {
+      continue;
+    }
+    const recordedVersion = path.basename(agentRoot);
+    if (compareVersions(recordedVersion, latest) !== -1) {
+      continue;
+    }
+    sessions.push({
+      slug: entry.branch.slice(VIBE_BRANCH.length), worktree: entry.worktree, runtime: ledger.runtime,
+      workerId: ledger.workerId, digest: ledger.binding.digest, agentRoot, recordedVersion,
+      running: Boolean(ledger.active?.lease), blocked: ledger.active?.status === "BLOCKED",
+    });
+  }
+  return sessions.sort((a, b) => a.slug.localeCompare(b.slug));
+}
+
+/**
+ * Migrates each stranded writer it can with the updated release's own `writer-state.mjs migrate`, found
+ * beside the recorded release in the same plugin cache; the rest migrate when their session resumes
+ * (vibe quality loop, "Recorded definition migration"). Never throws.
+ */
+export function migrateStrandedWriters(sessions, afterVersion) {
+  return sessions.map((session) => {
+    const named = { slug: session.slug, worktree: session.worktree, runtime: session.runtime,
+      recordedVersion: session.recordedVersion, blocked: session.blocked };
+    const onResume = (reason) => ({ ...named, migration: StrandedMigration.OnResume, reason });
+    if (session.running) {
+      return onResume("a writer turn is still running");
+    }
+    if (session.runtime !== Harness.Claude) {
+      return onResume("a Codex writer needs the new held writer its session starts");
+    }
+    const agentRoot = path.join(path.dirname(session.agentRoot), afterVersion ?? "");
+    const command = path.join(agentRoot, "skills", "vibe", "scripts", "dist", "writer-state.mjs");
+    if (!afterVersion || !existsSync(command)) {
+      return onResume(`vibe ${afterVersion ?? "(unknown)"} is not beside ${session.recordedVersion} in the plugin cache`);
+    }
+    try {
+      const output = execFileSync(process.execPath, [command, "migrate"], {
+        input: JSON.stringify({ worktree: session.worktree, runtime: session.runtime, agentRoot, agentName: "vibe-change-worker",
+          previousWorkerId: session.workerId, previousDigest: session.digest }),
+        encoding: "utf8", timeout: CLI_TIMEOUT_MS, stdio: ["pipe", "pipe", "pipe"],
+      });
+      return { ...named, migration: StrandedMigration.Migrated, workerId: JSON.parse(output).workerId };
+    } catch (error) {
+      const reason = firstLine(error.stderr) || error.message;
+      // The recorded release is still installed, so its writer still runs until it is removed.
+      return reason.includes("present and matching") ? onResume(reason) : { ...named, migration: StrandedMigration.Failed, reason };
+    }
+  });
+}
+
+function vibeWorktrees(repo) {
+  let porcelain;
+  try {
+    porcelain = execFileSync("git", ["-C", repo, "worktree", "list", "--porcelain"], { encoding: "utf8", timeout: CLI_TIMEOUT_MS, stdio: ["ignore", "pipe", "ignore"] });
+  } catch {
+    return [];
+  }
+  const entries = [];
+  let current = null;
+  for (const line of porcelain.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      current = { worktree: line.slice("worktree ".length), branch: null };
+      entries.push(current);
+    } else if (current && line.startsWith("branch refs/heads/")) {
+      current.branch = line.slice("branch refs/heads/".length);
+    }
+  }
+  return entries.filter((entry) => entry.branch?.startsWith(VIBE_BRANCH) && existsSync(entry.worktree));
+}
+
+function readLedger(worktree) {
+  try {
+    const gitDir = execFileSync("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"], { encoding: "utf8", timeout: CLI_TIMEOUT_MS, stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return readJson(path.join(gitDir, "vibe-writer.json"));
+  } catch {
+    return null;
   }
 }

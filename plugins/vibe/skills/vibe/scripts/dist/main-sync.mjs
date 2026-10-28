@@ -224134,6 +224134,7 @@ var harnessSwitchSchema = external_exports.object({
   evidence: external_exports.string().min(1).max(1024)
 }).strict();
 var migrateSchema = registerFields.extend({
+  capabilities: capabilitiesSchema.optional(),
   previousWorkerId: workerIdSchema,
   previousDigest: external_exports.string().regex(/^[a-f0-9]{64}$/),
   retainedRecord: retainedRecordSchema.optional(),

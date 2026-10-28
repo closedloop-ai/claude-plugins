@@ -11562,6 +11562,7 @@ var harnessSwitchSchema = external_exports.object({
   evidence: external_exports.string().min(1).max(1024)
 }).strict();
 var migrateSchema = registerFields.extend({
+  capabilities: capabilitiesSchema.optional(),
   previousWorkerId: workerIdSchema,
   previousDigest: external_exports.string().regex(/^[a-f0-9]{64}$/),
   retainedRecord: retainedRecordSchema.optional(),
@@ -12594,6 +12595,36 @@ async function privateData(file) {
   }
 }
 
+// src/usage.ts
+function asksForUsage(argv) {
+  return argv.length === 1 && ["help", "--help", "-h"].includes(argv[0]);
+}
+function capabilityUsage() {
+  const list = (values) => [...values].sort().join(", ");
+  return [
+    "Capabilities: a JSON array of at most 48 { name, service, access, operation } entries, one per MCP tool, no duplicates.",
+    "  name       the tool as the harness lists it: mcp__<server>__<operation> (underscores or hyphens)",
+    `  graph      service "graph", access "read": ${list(graphOperations)}`,
+    `  live read  service "closedloop", access "read": ${list(liveReadOperations)}`,
+    `  record     service "closedloop", access "write": ${list(recordOperations)}`,
+    "  Any other tool is refused as an unsupported capability binding."
+  ].join("\n");
+}
+function claudeWorkerUsage() {
+  return [
+    "Usage: claude-worker.mjs < launch.json",
+    "Launches one canonical vibe agent as an owned Claude session. Takes no arguments;",
+    "the launch request is one JSON object on stdin.",
+    "",
+    "Fields: worktree, agentName, mode, requestId, capabilities, and input (a new request) or continuation",
+    "(the active request). Optional: agentRoot, timeoutMs, allowCredits, and the record fields",
+    "(recordAction, exclusiveRecordTurn, ...) for a record turn.",
+    "Prints one JSON result; exits 1 when the status is BLOCKED or FAILED.",
+    "",
+    capabilityUsage()
+  ].join("\n");
+}
+
 // src/claude-usage.ts
 var rateLimitEventSchema = external_exports.object({
   type: external_exports.literal("rate_limit_event"),
@@ -13045,6 +13076,7 @@ function safeFailure(error) {
   if (error instanceof Error && "code" in error && error.code === "ENOENT" && "syscall" in error && String(error.syscall).startsWith("spawn")) {
     return { code: "CLAUDE_CLI_MISSING", summary: "The claude command is not on this shell's PATH" };
   }
+  if (message.includes("never argv")) return { code: "INVALID_REQUEST", summary: "This command takes no arguments; send the launch request on stdin (claude-worker.mjs help prints its shape)." };
   if (error instanceof external_exports.ZodError) return { code: "INVALID_REQUEST", summary: "The worker request or capability binding does not match the supported contract." };
   if (error instanceof OwnedCleanupError) return { code: "OWNED_PROCESS_NOT_STOPPED", summary: "Owned process cleanup is unproven; the unsafe turn remains locked." };
   if (message.includes("deadline")) return { code: "TURN_TIMEOUT", summary: "The owned worker turn exceeded its deadline." };
@@ -13084,6 +13116,11 @@ function signalOwnedChild(child, signal) {
   }
 }
 async function main(argv) {
+  if (asksForUsage(argv)) {
+    process.stdout.write(`${claudeWorkerUsage()}
+`);
+    return 0;
+  }
   let input;
   try {
     if (argv.length) throw new Error("Send the worker brief and capability metadata on stdin, never argv");
