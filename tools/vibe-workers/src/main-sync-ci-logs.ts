@@ -39,7 +39,9 @@ export function checkedSourceFromJobLog(log: string, checkout: CiStep, test: CiS
     const found = selectors.filter((item) => item.key === key);
     return found.length === 1 && found[0]!.value === "";
   });
-  if (env.length !== 1 || env[0] !== shaCandidates[0] || !scopeComplete) {
+  // symphony-alpha #8713 and #9080 dropped DD_GIT_COMMIT_SHA from the producer; the checkout action's own line is the
+  // identity, and a header that still binds the variable must agree with it (ISS-13321).
+  if (env.length > 1 || (env.length === 1 && env[0] !== shaCandidates[0]) || !scopeComplete) {
     throw new MainSyncError("CI runner source/full-scope identity does not match the trusted checkout");
   }
   return shaCandidates[0]!;

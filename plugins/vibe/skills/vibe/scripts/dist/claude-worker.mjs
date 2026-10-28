@@ -12383,11 +12383,12 @@ var capturedMainRunSchema = external_exports.object({
   reason: external_exports.string().min(1).max(512).optional()
 }).strict();
 var mainComparisonSchema = external_exports.object({
-  classification: external_exports.enum(["main-preexisting", "session-caused", "flaky"]),
+  classification: external_exports.enum(["main-preexisting", "session-caused", "flaky", "machine-limited"]),
   mainSha: commitSchema,
   sessionRuns: external_exports.array(runEvidenceSchema).min(1).max(2),
   main: capturedMainRunSchema
 }).strict();
+var ACCEPTED_FAILURES = /* @__PURE__ */ new Set(["main-preexisting", "machine-limited"]);
 var commandReceiptSchema = external_exports.object({
   argv: external_exports.array(external_exports.string()).min(1).max(256),
   bindings: external_exports.record(external_exports.string()).optional(),
@@ -12397,7 +12398,7 @@ var commandReceiptSchema = external_exports.object({
   log: external_exports.string().min(1),
   sha256: external_exports.string().length(64),
   comparison: mainComparisonSchema.optional()
-}).strict().refine((item) => item.exitCode === 0 === (item.comparison?.classification !== "main-preexisting") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
+}).strict().refine((item) => item.exitCode === 0 === !ACCEPTED_FAILURES.has(item.comparison?.classification ?? "") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
 var failedCheckSchema = external_exports.object({
   argv: external_exports.array(external_exports.string()).min(1).max(256),
   bindings: external_exports.record(external_exports.string()).optional(),

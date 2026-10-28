@@ -803,7 +803,9 @@ describe("production main-sync publication CLIs", () => {
       expect(failed.status, failed.stdout).toBe(0);
       const validation = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8")).validation;
       expect(validation.e2eLimitations[0].reason).toMatch(/displayless/i);
-      expect(failed.json?.mainSync).toMatchObject({ status: "NEEDS_REVIEW", publicationReady: true, requiredE2eComplete: false });
+      // ISS-13321: the Desktop lane goes to the post-merge run instead of holding the handoff.
+      expect(failed.json?.mainSync).toMatchObject({ status: "DONE", publicationReady: true, requiredE2eComplete: true,
+        e2eLeftForCi: [{ argv: ["pnpm", "--dir", "apps/desktop", "test:e2e"] }] });
     } finally { source.finish(); }
   }, 15000);
   it("locally ROOT commits reviewed dirty source before preparation, then commits the merge and publishes checked inputs", () => {

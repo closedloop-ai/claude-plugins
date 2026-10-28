@@ -224460,11 +224460,12 @@ var capturedMainRunSchema = external_exports.object({
   reason: external_exports.string().min(1).max(512).optional()
 }).strict();
 var mainComparisonSchema = external_exports.object({
-  classification: external_exports.enum(["main-preexisting", "session-caused", "flaky"]),
+  classification: external_exports.enum(["main-preexisting", "session-caused", "flaky", "machine-limited"]),
   mainSha: commitSchema,
   sessionRuns: external_exports.array(runEvidenceSchema).min(1).max(2),
   main: capturedMainRunSchema
 }).strict();
+var ACCEPTED_FAILURES = /* @__PURE__ */ new Set(["main-preexisting", "machine-limited"]);
 var commandReceiptSchema = external_exports.object({
   argv: external_exports.array(external_exports.string()).min(1).max(256),
   bindings: external_exports.record(external_exports.string()).optional(),
@@ -224474,7 +224475,7 @@ var commandReceiptSchema = external_exports.object({
   log: external_exports.string().min(1),
   sha256: external_exports.string().length(64),
   comparison: mainComparisonSchema.optional()
-}).strict().refine((item) => item.exitCode === 0 === (item.comparison?.classification !== "main-preexisting") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
+}).strict().refine((item) => item.exitCode === 0 === !ACCEPTED_FAILURES.has(item.comparison?.classification ?? "") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
 var failedCheckSchema = external_exports.object({
   argv: external_exports.array(external_exports.string()).min(1).max(256),
   bindings: external_exports.record(external_exports.string()).optional(),
@@ -224627,7 +224628,7 @@ function checkedSourceFromJobLog(log, checkout, test, expectedCommand) {
     const found = selectors.filter((item) => item.key === key);
     return found.length === 1 && found[0].value === "";
   });
-  if (env.length !== 1 || env[0] !== shaCandidates[0] || !scopeComplete) {
+  if (env.length > 1 || env.length === 1 && env[0] !== shaCandidates[0] || !scopeComplete) {
     throw new MainSyncError("CI runner source/full-scope identity does not match the trusted checkout");
   }
   return shaCandidates[0];
@@ -224784,6 +224785,7 @@ function digest(text) {
 var REPOSITORY = "closedloop-ai/symphony-alpha";
 var WORKFLOW = ".github/workflows/e2e-test.yml";
 var REVIEWED_ELECTRON_RUN_SHA256 = "d42acd228f3da95e0d05b419b0c8f38f36c2233fbf49c3113de6aae1e4697912";
+var REVIEWED_CHECKOUT_REF = "${{ github.event.merge_group.head_sha || github.event.pull_request.head.sha || github.event.inputs.ref || (github.event_name == 'schedule' && github.sha) || github.ref }}";
 var SAFE_ID = external_exports.number().int().positive().safe();
 var identitySchema = external_exports.object({ full_name: external_exports.literal(REPOSITORY) }).passthrough();
 var workflowSchema = external_exports.object({ id: SAFE_ID, path: external_exports.literal(WORKFLOW) }).passthrough();
@@ -224816,7 +224818,8 @@ var producerStepSchema = external_exports.object({
   id: external_exports.string().optional(),
   uses: external_exports.string().optional(),
   run: external_exports.string().optional(),
-  env: external_exports.record(external_exports.unknown()).optional()
+  env: external_exports.record(external_exports.unknown()).optional(),
+  with: external_exports.record(external_exports.unknown()).optional()
 }).passthrough();
 var producerSchema = external_exports.object({ jobs: external_exports.object({ "desktop-e2e": external_exports.object({ steps: external_exports.array(producerStepSchema) }).passthrough() }).passthrough() }).passthrough();
 function verifyExternalCi(value, input) {
@@ -224829,20 +224832,12 @@ function verifyExternalCi(value, input) {
     throw new MainSyncError("CI run/workflow/attempt differs from the actual source grant");
   }
   const contents = contentsSchema.parse(apiJson(root, `repos/${REPOSITORY}/contents/${WORKFLOW}?ref=${run.head_sha}`));
-  const definition = producerSchema.parse((0, import_yaml2.parse)(Buffer.from(contents.content, "base64").toString("utf8")));
-  const steps = definition.jobs["desktop-e2e"].steps;
-  const checkout = only(steps.filter((step) => step.name === "Checkout repository"));
-  const resolve7 = only(steps.filter((step) => step.id === "target-ref"));
-  const test = only(steps.filter((step) => step.name === "Run Electron e2e"));
-  if (!checkout.uses?.startsWith("actions/checkout@") || !resolve7.run?.includes('echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"') || test.env?.DD_GIT_COMMIT_SHA !== "${{ steps.target-ref.outputs.sha }}" || !test.run || digest(test.run) !== REVIEWED_ELECTRON_RUN_SHA256) {
-    throw new MainSyncError("Pinned loaded-main CI producer has no recognized trusted source/verdict interface");
-  }
+  const test = reviewedProducer(Buffer.from(contents.content, "base64").toString("utf8"));
   const jobs = jobsSchema.parse(apiJson(root, `repos/${REPOSITORY}/actions/runs/${run.id}/attempts/${locator.attempt}/jobs?per_page=100`));
   if (jobs.jobs.length !== jobs.total_count) throw new MainSyncError("Required CI job set is incomplete");
   const desktop = only(jobs.jobs.filter((job) => job.name === "desktop-e2e"));
   requireJob(desktop, run.id, locator.attempt);
   const checkoutStep = requiredStep(desktop.steps, "Checkout repository");
-  requiredStep(desktop.steps, "Resolve target ref");
   const testStep = requiredStep(desktop.steps, "Run Electron e2e");
   const log = apiText(root, `repos/${REPOSITORY}/actions/jobs/${desktop.id}/logs`, true);
   const checkoutSha = checkedSourceFromJobLog(log, checkoutStep, testStep, test.run.trimStart().split("\n")[0].trim());
@@ -224867,6 +224862,15 @@ function verifyExternalCi(value, input) {
       logSha256: digest(log)
     }]
   });
+}
+function reviewedProducer(workflowText) {
+  const steps = producerSchema.parse((0, import_yaml2.parse)(workflowText)).jobs["desktop-e2e"].steps;
+  const checkout = only(steps.filter((step) => step.name === "Checkout repository"));
+  const test = only(steps.filter((step) => step.name === "Run Electron e2e"));
+  if (!checkout.uses?.startsWith("actions/checkout@") || checkout.with?.ref !== REVIEWED_CHECKOUT_REF || !test.run || digest(test.run) !== REVIEWED_ELECTRON_RUN_SHA256) {
+    throw new MainSyncError("Pinned loaded-main CI producer has no recognized trusted source/verdict interface");
+  }
+  return { ...test, run: test.run };
 }
 function requiredStep(steps, name) {
   const step = only(steps.filter((item) => item.name === name));
@@ -224896,73 +224900,8 @@ function apiText(root, path2, logs = false) {
   return result.stdout;
 }
 
-// src/main-sync-checks.ts
-import { spawnSync as spawnSync8 } from "node:child_process";
-import { createHash as createHash4 } from "node:crypto";
-import { existsSync as existsSync10, lstatSync as lstatSync7, readFileSync as readFileSync15, readlinkSync, writeFileSync as writeFileSync6 } from "node:fs";
-import { join as join16 } from "node:path";
-
-// src/main-sync-main-comparison.ts
+// src/main-sync-lanes.ts
 import { spawnSync as spawnSync3 } from "node:child_process";
-import { existsSync as existsSync7, mkdtempSync, realpathSync as realpathSync7, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
-import { tmpdir } from "node:os";
-import { join as join10 } from "node:path";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
-
-// src/main-sync-failure.ts
-import { basename as basename2 } from "node:path";
-var PRESERVE = "preserve the operation and inspect its owned evidence";
-var INVALID2 = "Main-sync context or private evidence is invalid";
-var ERROR_CODE = /^[A-Z][A-Z0-9_]{1,63}$/;
-var SYSCALL = /^[a-z][A-Za-z]{1,31}(?: [A-Za-z0-9._-]{1,64})?$/;
-var FILE_NAME = /^[A-Za-z0-9._@+-]{1,128}$/;
-var COMMAND_WORD = /^[a-z][a-z0-9-]{0,39}$/;
-var FAILED_COMMAND = /^Command failed: (\S+)(?: (\S+))?/;
-var STACK_FRAME = /\(?(?:file:\/\/)?(\/[^():]+\.[cm]?[jt]s):(\d+):\d+\)?$/;
-var MAX_MESSAGE = 240;
-var PATH_SEGMENT = /^[A-Za-z0-9_.@+-]{1,64}$/;
-var MAX_ISSUES = 3;
-function mainSyncFailure(error) {
-  if (error instanceof MainSyncError) return { status: error.status, error: error.message };
-  if (error instanceof external_exports.ZodError || error instanceof SyntaxError) return { status: "BLOCKED", error: `${INVALID2} (${failureCause(error)}); ${PRESERVE}` };
-  return { status: "BLOCKED", error: `Main-sync stopped on an operational error (${failureCause(error)}); ${PRESERVE}` };
-}
-function failureCause(error) {
-  if (error instanceof external_exports.ZodError) return `schema: ${schemaIssues(error)}`;
-  if (error instanceof SyntaxError) return `malformed JSON${sourceFrame(error.stack)}`;
-  return operationalCause(error);
-}
-function operationalCause(error) {
-  if (!(error instanceof Error)) return "non-Error exception";
-  const fields = error;
-  const where = sourceFrame(error.stack);
-  if (Array.isArray(fields.output) || error.message.startsWith("Command failed:")) {
-    const words = (FAILED_COMMAND.exec(error.message)?.slice(1) ?? []).filter((word) => Boolean(word)).map((word, index) => index === 0 ? basename2(word) : word).filter((word) => COMMAND_WORD.test(word));
-    const ended = typeof fields.status === "number" ? `exited ${fields.status}` : typeof fields.signal === "string" && ERROR_CODE.test(fields.signal) ? `stopped by ${fields.signal}` : "failed";
-    return `subprocess ${words.length ? `${words.join(" ")} ` : ""}${ended}${where}`;
-  }
-  if (typeof fields.code === "string" && ERROR_CODE.test(fields.code)) {
-    const syscall = typeof fields.syscall === "string" && SYSCALL.test(fields.syscall) ? ` during ${fields.syscall}` : "";
-    const file = typeof fields.path === "string" && FILE_NAME.test(basename2(fields.path)) ? ` on ${basename2(fields.path)}` : "";
-    return `${error.name} ${fields.code}${syscall}${file}${where}`;
-  }
-  const message = error.message.split("\n", 1)[0].slice(0, MAX_MESSAGE);
-  return `${error.name}: ${message}${where}`;
-}
-function schemaIssues(error) {
-  const issues = error.issues.slice(0, MAX_ISSUES).map((issue) => {
-    const path2 = issue.path.map((segment) => typeof segment === "number" || PATH_SEGMENT.test(segment) ? String(segment) : "*").join(".");
-    return `${path2 || "(root)"} ${issue.code}`;
-  });
-  return `${issues.join(", ")}${error.issues.length > MAX_ISSUES ? ` and ${error.issues.length - MAX_ISSUES} more` : ""}`;
-}
-function sourceFrame(stack) {
-  for (const line of (stack ?? "").split("\n").slice(1)) {
-    const frame = STACK_FRAME.exec(line.trim());
-    if (frame && !frame[1].includes("/node_modules/")) return ` at ${basename2(frame[1])}:${frame[2]}`;
-  }
-  return "";
-}
 
 // src/main-sync-report-execution.ts
 var REPLAY = /(?:^|[\s=])--(?:merge-reports|last-failed)(?:\b|=)|(?:^|[\s/])assert-e2e-results(?:\.mjs)?\b/;
@@ -226197,6 +226136,63 @@ import { execFileSync as execFileSync3, spawnSync as spawnSync2 } from "node:chi
 import { createHash as createHash2 } from "node:crypto";
 import { lstatSync as lstatSync2, readFileSync as readFileSync7, realpathSync as realpathSync4 } from "node:fs";
 import { join as join6 } from "node:path";
+
+// src/main-sync-failure.ts
+import { basename as basename2 } from "node:path";
+var PRESERVE = "preserve the operation and inspect its owned evidence";
+var INVALID2 = "Main-sync context or private evidence is invalid";
+var ERROR_CODE = /^[A-Z][A-Z0-9_]{1,63}$/;
+var SYSCALL = /^[a-z][A-Za-z]{1,31}(?: [A-Za-z0-9._-]{1,64})?$/;
+var FILE_NAME = /^[A-Za-z0-9._@+-]{1,128}$/;
+var COMMAND_WORD = /^[a-z][a-z0-9-]{0,39}$/;
+var FAILED_COMMAND = /^Command failed: (\S+)(?: (\S+))?/;
+var STACK_FRAME = /\(?(?:file:\/\/)?(\/[^():]+\.[cm]?[jt]s):(\d+):\d+\)?$/;
+var MAX_MESSAGE = 240;
+var PATH_SEGMENT = /^[A-Za-z0-9_.@+-]{1,64}$/;
+var MAX_ISSUES = 3;
+function mainSyncFailure(error) {
+  if (error instanceof MainSyncError) return { status: error.status, error: error.message };
+  if (error instanceof external_exports.ZodError || error instanceof SyntaxError) return { status: "BLOCKED", error: `${INVALID2} (${failureCause(error)}); ${PRESERVE}` };
+  return { status: "BLOCKED", error: `Main-sync stopped on an operational error (${failureCause(error)}); ${PRESERVE}` };
+}
+function failureCause(error) {
+  if (error instanceof external_exports.ZodError) return `schema: ${schemaIssues(error)}`;
+  if (error instanceof SyntaxError) return `malformed JSON${sourceFrame(error.stack)}`;
+  return operationalCause(error);
+}
+function operationalCause(error) {
+  if (!(error instanceof Error)) return "non-Error exception";
+  const fields = error;
+  const where = sourceFrame(error.stack);
+  if (Array.isArray(fields.output) || error.message.startsWith("Command failed:")) {
+    const words = (FAILED_COMMAND.exec(error.message)?.slice(1) ?? []).filter((word) => Boolean(word)).map((word, index) => index === 0 ? basename2(word) : word).filter((word) => COMMAND_WORD.test(word));
+    const ended = typeof fields.status === "number" ? `exited ${fields.status}` : typeof fields.signal === "string" && ERROR_CODE.test(fields.signal) ? `stopped by ${fields.signal}` : "failed";
+    return `subprocess ${words.length ? `${words.join(" ")} ` : ""}${ended}${where}`;
+  }
+  if (typeof fields.code === "string" && ERROR_CODE.test(fields.code)) {
+    const syscall = typeof fields.syscall === "string" && SYSCALL.test(fields.syscall) ? ` during ${fields.syscall}` : "";
+    const file = typeof fields.path === "string" && FILE_NAME.test(basename2(fields.path)) ? ` on ${basename2(fields.path)}` : "";
+    return `${error.name} ${fields.code}${syscall}${file}${where}`;
+  }
+  const message = error.message.split("\n", 1)[0].slice(0, MAX_MESSAGE);
+  return `${error.name}: ${message}${where}`;
+}
+function schemaIssues(error) {
+  const issues = error.issues.slice(0, MAX_ISSUES).map((issue) => {
+    const path2 = issue.path.map((segment) => typeof segment === "number" || PATH_SEGMENT.test(segment) ? String(segment) : "*").join(".");
+    return `${path2 || "(root)"} ${issue.code}`;
+  });
+  return `${issues.join(", ")}${error.issues.length > MAX_ISSUES ? ` and ${error.issues.length - MAX_ISSUES} more` : ""}`;
+}
+function sourceFrame(stack) {
+  for (const line of (stack ?? "").split("\n").slice(1)) {
+    const frame = STACK_FRAME.exec(line.trim());
+    if (frame && !frame[1].includes("/node_modules/")) return ` at ${basename2(frame[1])}:${frame[2]}`;
+  }
+  return "";
+}
+
+// src/main-sync-generated-input.ts
 var GENERATED_BIOME_PATH = ".biome-noscan.jsonc";
 var MAX_INPUT_BYTES = 128 * 1024 * 1024;
 var PRODUCER_FILES = [
@@ -226952,6 +226948,119 @@ function verifyReportProducerInputs(retainedRoot, root, owner, inputs) {
   }
 }
 
+// src/main-sync-lanes.ts
+var laneSchema = external_exports.object({
+  script: external_exports.string().min(1),
+  dir: external_exports.string().optional(),
+  suites: external_exports.string().optional(),
+  widenReason: external_exports.string().optional(),
+  env: external_exports.record(external_exports.string()).optional()
+}).strict();
+var discoverySchema = external_exports.object({
+  commands: external_exports.array(laneSchema).max(128),
+  desktopHarness: external_exports.object({ run: external_exports.string().min(1), dir: external_exports.literal("apps/desktop") }).strict().optional()
+}).strict();
+var DISCOVERY_MODULES = [
+  "scripts/lint/affected-test-lanes.ts",
+  "scripts/lint/report-test-lanes.ts",
+  "scripts/lint/desktop-e2e-lane.ts",
+  "scripts/lint/workflow-shell-harness.ts"
+];
+var DISCOVERY_SOURCE = String.raw`
+import {execFileSync} from 'node:child_process';
+import {loadOutOfGraphLanes, lanesCoveringPaths, referencedLanes} from './${DISCOVERY_MODULES[0]}';
+import {laneCiCommand, execPlan} from './${DISCOVERY_MODULES[1]}';
+import {desktopE2eLane} from './${DISCOVERY_MODULES[2]}';
+import {loadWorkflowOrThrow} from './${DISCOVERY_MODULES[3]}';
+const since = process.argv[1];
+if (!/^[a-f0-9]{40}$/.test(since ?? '')) throw new Error('Lane discovery requires the captured main commit');
+const paths = execFileSync('git', ['diff', '--name-only', since, 'HEAD'], {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+  stdio: ['ignore', 'pipe', 'pipe']}).trim().split('\n').filter(Boolean);
+const lanes = await loadOutOfGraphLanes();
+const direct = lanesCoveringPaths(paths, lanes);
+const claimed = new Set(direct.flatMap(match => match.paths));
+const referenced = referencedLanes(paths.filter(path => !claimed.has(path)), lanes);
+const commands = new Map([...direct, ...referenced].map(({lane}) => [lane.script, laneCiCommand(lane.script, paths)]));
+const desktop = desktopE2eLane(paths);
+let desktopHarness;
+if (desktop) {
+  commands.set('desktop-e2e', desktop.ci);
+  const workflow = loadWorkflowOrThrow('.github/workflows/e2e-test.yml');
+  const step = workflow.jobs?.['desktop-e2e']?.steps?.find(step => step.name === 'Run Electron e2e');
+  if (!step?.run || step['working-directory'] !== 'apps/desktop') throw new Error('Canonical displayless harness is unavailable');
+  desktopHarness = {run: step.run, dir: step['working-directory']};
+}
+console.log(JSON.stringify({commands: execPlan([], [...commands.values()]), ...(desktopHarness ? {desktopHarness} : {})}));
+`;
+var BROWSER_SCRIPT = /^(?:test:e2e(?::.*)?|test:web-smoke)$/;
+function discoverRequiredE2eLanes(root, receipt) {
+  if (process.env.PWDEBUG) throw new MainSyncError("Headless/displayless validation cannot run with ambient PWDEBUG; no test lane was spawned");
+  const discovery = { argv: ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", DISCOVERY_SOURCE, receipt.mainSha] };
+  verifyReportProducerInputs(root, root, ReportExecutionOwner.Discovery, DISCOVERY_MODULES);
+  verifyReportExecution(root, root, ReportExecutionOwner.Discovery, discovery.argv);
+  const run = spawnSync3(discovery.argv[0], discovery.argv.slice(1), {
+    cwd: root,
+    encoding: "utf8",
+    timeout: MAX_CHECK_MS,
+    maxBuffer: 16 * 1024 * 1024
+  });
+  if (run.error || run.status !== 0) throw new MainSyncError("Structured owning test-lane discovery failed; no test lane was spawned");
+  const selected = discoverySchema.parse(JSON.parse(run.stdout));
+  const limitations = [];
+  for (const lane of selected.commands) {
+    const bindings = { ...lane.env, ...lane.suites === void 0 ? {} : { AFFECTED_SCRIPT_SUITES: lane.suites } };
+    if (bindings.PWDEBUG) throw new MainSyncError("Selected lane enables PWDEBUG; no test lane was spawned");
+    if (lane.dir === "apps/desktop" && lane.script === "test:e2e") {
+      const harness = selected.desktopHarness;
+      if (process.platform !== "linux" || !harness || !harness.run.includes("dbus-run-session") || !harness.run.includes("xvfb-run") || !displaylessPrerequisites(root)) {
+        limitations.push({
+          argv: ["pnpm", "--dir", "apps/desktop", lane.script],
+          bindings,
+          reason: `Required Desktop Electron lane has no supported displayless prerequisites on ${process.platform}; no lane spawned or PASS. No automatic Vibe-branch E2E path is established; CI dispatch requires explicit operator permission`
+        });
+        continue;
+      }
+      limitations.push({
+        argv: ["pnpm", "--dir", "apps/desktop", lane.script],
+        bindings,
+        reason: "Selected Desktop verdict reads results.json then adjacent dd-quarantine.json from fixed retained locations; no verified current-run report isolation is available here. No lane spawned or PASS; use exact-SHA authorized external coverage"
+      });
+    } else if (BROWSER_SCRIPT.test(lane.script)) {
+      limitations.push({
+        argv: ["pnpm", ...lane.dir ? ["--dir", lane.dir] : [], lane.script],
+        bindings,
+        reason: `Required browser lane ${lane.script} has no verified supported headless launch here; no lane spawned or PASS`
+      });
+    }
+  }
+  return limitations;
+}
+function displaylessPrerequisites(root) {
+  const result = spawnSync3(
+    "sh",
+    ["-c", "command -v dbus-run-session && command -v xvfb-run && command -v gnome-keyring-daemon"],
+    { cwd: root, encoding: "utf8", timeout: 1e4, maxBuffer: 1024 * 1024 }
+  );
+  return !result.error && result.status === 0;
+}
+var DESKTOP_E2E_POST_MERGE_COVERAGE = "symphony-alpha desktop-e2e-validation.yml, commit status desktop-e2e/validated";
+function isDesktopE2eLimitation(item) {
+  return item.argv.length === 4 && item.argv[0] === "pnpm" && item.argv[1] === "--dir" && item.argv[2] === "apps/desktop" && item.argv[3] === "test:e2e";
+}
+
+// src/main-sync-checks.ts
+import { spawnSync as spawnSync8 } from "node:child_process";
+import { createHash as createHash4 } from "node:crypto";
+import { existsSync as existsSync10, lstatSync as lstatSync7, readFileSync as readFileSync15, readlinkSync, writeFileSync as writeFileSync6 } from "node:fs";
+import { join as join16 } from "node:path";
+
+// src/main-sync-main-comparison.ts
+import { spawnSync as spawnSync4 } from "node:child_process";
+import { existsSync as existsSync7, mkdtempSync, realpathSync as realpathSync7, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as join10 } from "node:path";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
+
 // src/main-sync-validation-recipe.ts
 var MAIN_BOOTSTRAP_MS = 15 * 60 * 1e3;
 function recipeIdentity(value) {
@@ -226986,6 +227095,7 @@ function comparisonBudgetMs(commands) {
 var BOOTSTRAP = ["bash", ".closedloop-ai/loops-setup.sh"];
 var PINNED_FILTER = /^--filter=\.\.\.\[[a-f0-9]{40}\]$/;
 var CLEANUP_MS = 15 * 60 * 1e3;
+var MAIN_TIMED_OUT = "it ran out of its time limit on captured main";
 var WRAPPER_GRACE_MS = 30 * 1e3;
 var CapturedMainComparison = class {
   constructor(root, dir, receipt) {
@@ -227000,13 +227110,9 @@ var CapturedMainComparison = class {
   registered = false;
   bootstrap;
   /** Classifies one failing session run; passing checks never reach this. */
-  classify(command, selection, failed, prefix, env, rerun) {
-    const mainSha = this.receipt.mainSha;
+  classify(command, selection, failed, prefix, env, rerun, sessionTimedOut = false) {
     const main = this.runOnMain(command, selection, prefix, env);
-    if (main.outcome === "failed") return { classification: "main-preexisting", mainSha, sessionRuns: [failed], main };
-    if (main.outcome === "unrunnable") return { classification: "session-caused", mainSha, sessionRuns: [failed], main };
-    const again = rerun(`${prefix}-rerun.log`);
-    return { classification: again.exitCode === 0 ? "flaky" : "session-caused", mainSha, sessionRuns: [failed, again], main };
+    return classifyAgainstMain(this.receipt.mainSha, failed, main, sessionTimedOut, () => rerun(`${prefix}-rerun.log`));
   }
   /** Removes the disposable checkout; an unproven removal keeps the operation's evidence and refuses. */
   dispose() {
@@ -227051,7 +227157,7 @@ var CapturedMainComparison = class {
         exitCode: run.exitCode,
         log: run.log,
         sha256: run.sha256,
-        reason: run.timedOut ? "it ran out of its time limit on captured main" : "it could not be started on captured main"
+        reason: run.timedOut ? MAIN_TIMED_OUT : "it could not be started on captured main"
       };
     }
     return { outcome: "failed", argv: scoped.argv, exitCode: run.exitCode, log: run.log, sha256: run.sha256 };
@@ -227091,7 +227197,7 @@ var CapturedMainComparison = class {
 };
 function runBounded(argv, cwd, env, timeoutMs, log) {
   const seconds = Math.max(1, Math.ceil(timeoutMs / 1e3));
-  const result = spawnSync3(process.execPath, [runBoundedScript(), String(seconds), ...argv], {
+  const result = spawnSync4(process.execPath, [runBoundedScript(), String(seconds), ...argv], {
     cwd,
     env,
     encoding: "utf8",
@@ -227152,102 +227258,14 @@ function runBoundedScript() {
   if (!existsSync7(script)) throw new MainSyncError("The plugin's run-bounded.mjs is missing; no comparison was run");
   return script;
 }
-
-// src/main-sync-lanes.ts
-import { spawnSync as spawnSync4 } from "node:child_process";
-var laneSchema = external_exports.object({
-  script: external_exports.string().min(1),
-  dir: external_exports.string().optional(),
-  suites: external_exports.string().optional(),
-  widenReason: external_exports.string().optional(),
-  env: external_exports.record(external_exports.string()).optional()
-}).strict();
-var discoverySchema = external_exports.object({
-  commands: external_exports.array(laneSchema).max(128),
-  desktopHarness: external_exports.object({ run: external_exports.string().min(1), dir: external_exports.literal("apps/desktop") }).strict().optional()
-}).strict();
-var DISCOVERY_MODULES = [
-  "scripts/lint/affected-test-lanes.ts",
-  "scripts/lint/report-test-lanes.ts",
-  "scripts/lint/desktop-e2e-lane.ts",
-  "scripts/lint/workflow-shell-harness.ts"
-];
-var DISCOVERY_SOURCE = String.raw`
-import {execFileSync} from 'node:child_process';
-import {loadOutOfGraphLanes, lanesCoveringPaths, referencedLanes} from './${DISCOVERY_MODULES[0]}';
-import {laneCiCommand, execPlan} from './${DISCOVERY_MODULES[1]}';
-import {desktopE2eLane} from './${DISCOVERY_MODULES[2]}';
-import {loadWorkflowOrThrow} from './${DISCOVERY_MODULES[3]}';
-const since = process.argv[1];
-if (!/^[a-f0-9]{40}$/.test(since ?? '')) throw new Error('Lane discovery requires the captured main commit');
-const paths = execFileSync('git', ['diff', '--name-only', since, 'HEAD'], {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
-  stdio: ['ignore', 'pipe', 'pipe']}).trim().split('\n').filter(Boolean);
-const lanes = await loadOutOfGraphLanes();
-const direct = lanesCoveringPaths(paths, lanes);
-const claimed = new Set(direct.flatMap(match => match.paths));
-const referenced = referencedLanes(paths.filter(path => !claimed.has(path)), lanes);
-const commands = new Map([...direct, ...referenced].map(({lane}) => [lane.script, laneCiCommand(lane.script, paths)]));
-const desktop = desktopE2eLane(paths);
-let desktopHarness;
-if (desktop) {
-  commands.set('desktop-e2e', desktop.ci);
-  const workflow = loadWorkflowOrThrow('.github/workflows/e2e-test.yml');
-  const step = workflow.jobs?.['desktop-e2e']?.steps?.find(step => step.name === 'Run Electron e2e');
-  if (!step?.run || step['working-directory'] !== 'apps/desktop') throw new Error('Canonical displayless harness is unavailable');
-  desktopHarness = {run: step.run, dir: step['working-directory']};
-}
-console.log(JSON.stringify({commands: execPlan([], [...commands.values()]), ...(desktopHarness ? {desktopHarness} : {})}));
-`;
-var BROWSER_SCRIPT = /^(?:test:e2e(?::.*)?|test:web-smoke)$/;
-function discoverRequiredE2eLanes(root, receipt) {
-  if (process.env.PWDEBUG) throw new MainSyncError("Headless/displayless validation cannot run with ambient PWDEBUG; no test lane was spawned");
-  const discovery = { argv: ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", DISCOVERY_SOURCE, receipt.mainSha] };
-  verifyReportProducerInputs(root, root, ReportExecutionOwner.Discovery, DISCOVERY_MODULES);
-  verifyReportExecution(root, root, ReportExecutionOwner.Discovery, discovery.argv);
-  const run = spawnSync4(discovery.argv[0], discovery.argv.slice(1), {
-    cwd: root,
-    encoding: "utf8",
-    timeout: MAX_CHECK_MS,
-    maxBuffer: 16 * 1024 * 1024
-  });
-  if (run.error || run.status !== 0) throw new MainSyncError("Structured owning test-lane discovery failed; no test lane was spawned");
-  const selected = discoverySchema.parse(JSON.parse(run.stdout));
-  const limitations = [];
-  for (const lane of selected.commands) {
-    const bindings = { ...lane.env, ...lane.suites === void 0 ? {} : { AFFECTED_SCRIPT_SUITES: lane.suites } };
-    if (bindings.PWDEBUG) throw new MainSyncError("Selected lane enables PWDEBUG; no test lane was spawned");
-    if (lane.dir === "apps/desktop" && lane.script === "test:e2e") {
-      const harness = selected.desktopHarness;
-      if (process.platform !== "linux" || !harness || !harness.run.includes("dbus-run-session") || !harness.run.includes("xvfb-run") || !displaylessPrerequisites(root)) {
-        limitations.push({
-          argv: ["pnpm", "--dir", "apps/desktop", lane.script],
-          bindings,
-          reason: `Required Desktop Electron lane has no supported displayless prerequisites on ${process.platform}; no lane spawned or PASS. No automatic Vibe-branch E2E path is established; CI dispatch requires explicit operator permission`
-        });
-        continue;
-      }
-      limitations.push({
-        argv: ["pnpm", "--dir", "apps/desktop", lane.script],
-        bindings,
-        reason: "Selected Desktop verdict reads results.json then adjacent dd-quarantine.json from fixed retained locations; no verified current-run report isolation is available here. No lane spawned or PASS; use exact-SHA authorized external coverage"
-      });
-    } else if (BROWSER_SCRIPT.test(lane.script)) {
-      limitations.push({
-        argv: ["pnpm", ...lane.dir ? ["--dir", lane.dir] : [], lane.script],
-        bindings,
-        reason: `Required browser lane ${lane.script} has no verified supported headless launch here; no lane spawned or PASS`
-      });
-    }
+function classifyAgainstMain(mainSha, failed, main, sessionTimedOut, rerun) {
+  if (main.outcome === "failed") return { classification: "main-preexisting", mainSha, sessionRuns: [failed], main };
+  if (sessionTimedOut && main.outcome === "unrunnable" && main.reason === MAIN_TIMED_OUT) {
+    return { classification: "machine-limited", mainSha, sessionRuns: [failed], main };
   }
-  return limitations;
-}
-function displaylessPrerequisites(root) {
-  const result = spawnSync4(
-    "sh",
-    ["-c", "command -v dbus-run-session && command -v xvfb-run && command -v gnome-keyring-daemon"],
-    { cwd: root, encoding: "utf8", timeout: 1e4, maxBuffer: 1024 * 1024 }
-  );
-  return !result.error && result.status === 0;
+  if (main.outcome === "unrunnable") return { classification: "session-caused", mainSha, sessionRuns: [failed], main };
+  const again = rerun();
+  return { classification: again.exitCode === 0 ? "flaky" : "session-caused", mainSha, sessionRuns: [failed, again], main };
 }
 
 // src/main-sync-private-inputs.ts
@@ -227904,6 +227922,7 @@ function executeChecks(value, receipt, preparedRecipe) {
         if (result.error || result.status !== 0) {
           if (!main) throw new MainSyncError(`Required validation command failed: ${command.argv.join(" ")}; private log ${log}`);
           const failed = { ...evidence, exitCode: result.status ?? 1 };
+          const sessionTimedOut = result.error?.code === "ETIMEDOUT";
           comparison = main.classify(command, selection, failed, prefix, env, (rerunLog) => {
             verifyReportExecution(
               value.place.root,
@@ -227921,7 +227940,7 @@ function executeChecks(value, receipt, preparedRecipe) {
               rerunLog
             );
             return { exitCode: again.exitCode, log: again.log, sha256: again.sha256 };
-          });
+          }, sessionTimedOut);
           if (comparison.classification === "session-caused") {
             recordFailedCheck(value, command, comparison);
             throw new MainSyncError(sessionCausedMessage(command, comparison));
@@ -228156,7 +228175,7 @@ function validateMainSync(raw) {
     if (remoteHead(value.place.root, value.place.branch) !== identity.headSha || receipt.pushedHead !== identity.headSha && !alreadyPublished(value.place.session, identity.headSha)) {
       throw new MainSyncError("Exact handoff snapshot must be safely published before external coverage completion");
     }
-    if (validation.e2eLimitations.some((item) => item.argv[1] !== "--dir" || item.argv[2] !== "apps/desktop")) {
+    if (!validation.e2eLimitations.every(isDesktopE2eLimitation)) {
       throw new MainSyncError("Selected required E2E has no verified external checked-source interface; handoff remains incomplete");
     }
     ciEvidence = verifyExternalCi(value, identity);
@@ -228171,8 +228190,9 @@ function validateMainSync(raw) {
   if (!ciEvidence) delete next.ciEvidence;
   if (receipt.pushedHead !== identity.headSha) delete next.pushedHead;
   saveSyncReceipt(value.place.dir, next);
-  const requiredE2eComplete = validation.e2eLimitations.length === 0 || Boolean(ciEvidence);
-  const { mainPreexistingFailures, flakyChecks } = comparedChecks(validation.commands);
+  const e2eLeftForCi = validation.e2eLimitations.filter(isDesktopE2eLimitation).map((item) => ({ argv: item.argv, coveredBy: DESKTOP_E2E_POST_MERGE_COVERAGE }));
+  const requiredE2eComplete = validation.e2eLimitations.length === e2eLeftForCi.length || Boolean(ciEvidence);
+  const { mainPreexistingFailures, flakyChecks, machineLimitedChecks } = comparedChecks(validation.commands);
   return {
     status: value.purpose === "handoff" && !requiredE2eComplete ? "NEEDS_REVIEW" : "DONE",
     publicationReady: true,
@@ -228185,8 +228205,10 @@ function validateMainSync(raw) {
     purpose: value.purpose,
     validationScope: "publication-preparation",
     e2eLimitations: validation.e2eLimitations,
+    ...e2eLeftForCi.length && !ciEvidence ? { e2eLeftForCi } : {},
     ...mainPreexistingFailures.length ? { mainPreexistingFailures } : {},
     ...flakyChecks.length ? { flakyChecks } : {},
+    ...machineLimitedChecks.length ? { machineLimitedChecks } : {},
     ...ciEvidence ? { ciEvidence } : {}
   };
 }
@@ -228382,6 +228404,7 @@ function featureTestHistory(root, originalBase, startingHead, previous) {
 function comparedChecks(commands) {
   const mainPreexistingFailures = [];
   const flakyChecks = [];
+  const machineLimitedChecks = [];
   for (const command of commands) {
     const comparison = command.comparison;
     if (comparison?.classification === "main-preexisting") {
@@ -228394,6 +228417,14 @@ function comparedChecks(commands) {
         log: command.log,
         mainLog: comparison.main.log
       });
+    } else if (comparison?.classification === "machine-limited") {
+      machineLimitedChecks.push({
+        check: command.argv.join(" "),
+        mainSha: comparison.mainSha,
+        timeoutMs: command.timeoutMs,
+        log: command.log,
+        mainLog: comparison.main.log
+      });
     } else if (comparison?.classification === "flaky") {
       flakyChecks.push({
         check: command.argv.join(" "),
@@ -228403,7 +228434,7 @@ function comparedChecks(commands) {
       });
     }
   }
-  return { mainPreexistingFailures, flakyChecks };
+  return { mainPreexistingFailures, flakyChecks, machineLimitedChecks };
 }
 export {
   MainSyncError,

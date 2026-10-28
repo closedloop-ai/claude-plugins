@@ -19,6 +19,7 @@ type Rerun = (log: string) => RunEvidence;
 const BOOTSTRAP = ["bash", ".closedloop-ai/loops-setup.sh"];
 const PINNED_FILTER = /^--filter=\.\.\.\[[a-f0-9]{40}\]$/;
 const CLEANUP_MS = 15 * 60 * 1000;
+export const MAIN_TIMED_OUT = "it ran out of its time limit on captured main";
 // run-bounded stops the whole process group at its limit; this outer bound only catches a stuck wrapper.
 const WRAPPER_GRACE_MS = 30 * 1000;
 
@@ -26,7 +27,9 @@ const WRAPPER_GRACE_MS = 30 * 1000;
  * Operator ruling, 2026-10-16: a handoff check that fails is run again on the main the session captured. It is
  * `main-preexisting` when it also fails there, which never blocks publication. When it passes on main the session
  * commit gets one rerun before the failure is `session-caused` (a pass is `flaky`). A check that cannot run on main
- * is `session-caused`, the conservative reading. One disposable checkout of the captured main is bootstrapped once,
+ * is `session-caused`, the conservative reading, except a check that ran out of its time limit on the session commit
+ * and on main alike: that is this machine's limit, `machine-limited`, which goes to engineering like a main failure and
+ * never blocks (ISS-13321). One disposable checkout of the captured main is bootstrapped once,
  * shared by every failing check of this validation, and removed by `dispose`.
  */
 export class CapturedMainComparison {
@@ -38,13 +41,9 @@ export class CapturedMainComparison {
 
   /** Classifies one failing session run; passing checks never reach this. */
   classify(command: CheckCommand, selection: Selection | undefined, failed: RunEvidence, prefix: string,
-    env: NodeJS.ProcessEnv, rerun: Rerun): MainComparison {
-    const mainSha = this.receipt.mainSha;
+    env: NodeJS.ProcessEnv, rerun: Rerun, sessionTimedOut = false): MainComparison {
     const main = this.runOnMain(command, selection, prefix, env);
-    if (main.outcome === "failed") return { classification: "main-preexisting", mainSha, sessionRuns: [failed], main };
-    if (main.outcome === "unrunnable") return { classification: "session-caused", mainSha, sessionRuns: [failed], main };
-    const again = rerun(`${prefix}-rerun.log`);
-    return { classification: again.exitCode === 0 ? "flaky" : "session-caused", mainSha, sessionRuns: [failed, again], main };
+    return classifyAgainstMain(this.receipt.mainSha, failed, main, sessionTimedOut, () => rerun(`${prefix}-rerun.log`));
   }
 
   /** Removes the disposable checkout; an unproven removal keeps the operation's evidence and refuses. */
@@ -73,7 +72,7 @@ export class CapturedMainComparison {
     if (run.exitCode === 0) return { outcome: "passed", argv: scoped.argv, exitCode: 0, log: run.log, sha256: run.sha256 };
     if (run.timedOut || run.spawnFailed) {
       return { outcome: "unrunnable", argv: scoped.argv, exitCode: run.exitCode, log: run.log, sha256: run.sha256,
-        reason: run.timedOut ? "it ran out of its time limit on captured main" : "it could not be started on captured main" };
+        reason: run.timedOut ? MAIN_TIMED_OUT : "it could not be started on captured main" };
     }
     return { outcome: "failed", argv: scoped.argv, exitCode: run.exitCode, log: run.log, sha256: run.sha256 };
   }
@@ -168,4 +167,16 @@ function runBoundedScript() {
   const script = fileURLToPath(new URL("../run-bounded.mjs", import.meta.url));
   if (!existsSync(script)) throw new MainSyncError("The plugin's run-bounded.mjs is missing; no comparison was run");
   return script;
+}
+
+/** The classification of one failing session run from its captured-main run; `rerun` runs the session commit once more. */
+export function classifyAgainstMain(mainSha: string, failed: RunEvidence, main: MainComparison["main"], sessionTimedOut: boolean,
+  rerun: () => RunEvidence): MainComparison {
+  if (main.outcome === "failed") return { classification: "main-preexisting", mainSha, sessionRuns: [failed], main };
+  if (sessionTimedOut && main.outcome === "unrunnable" && main.reason === MAIN_TIMED_OUT) {
+    return { classification: "machine-limited", mainSha, sessionRuns: [failed], main };
+  }
+  if (main.outcome === "unrunnable") return { classification: "session-caused", mainSha, sessionRuns: [failed], main };
+  const again = rerun();
+  return { classification: again.exitCode === 0 ? "flaky" : "session-caused", mainSha, sessionRuns: [failed, again], main };
 }

@@ -267,13 +267,14 @@ export function executeChecks(value: ReturnType<typeof syncContext>, receipt: Ma
     if (result.error || result.status !== 0) {
       if (!main) throw new MainSyncError(`Required validation command failed: ${command.argv.join(" ")}; private log ${log}`);
       const failed = { ...evidence, exitCode: result.status ?? 1 };
+      const sessionTimedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
       comparison = main.classify(command, selection, failed, prefix, env, (rerunLog) => {
         verifyReportExecution(value.place.root, value.place.root, ReportExecutionOwner.Check, command.argv,
           command.cwd ? join(value.place.root, command.cwd) : value.place.root, selection);
         const again = runBounded(command.argv, command.cwd ? join(value.place.root, command.cwd) : value.place.root, env,
           command.timeoutMs ?? MAX_CHECK_MS, rerunLog);
         return { exitCode: again.exitCode, log: again.log, sha256: again.sha256 };
-      });
+      }, sessionTimedOut);
       if (comparison.classification === "session-caused") {
         recordFailedCheck(value, command, comparison);
         throw new MainSyncError(sessionCausedMessage(command, comparison));

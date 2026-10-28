@@ -8,6 +8,7 @@ import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mj
 import { requirePrototypePublication } from "../../../plugins/vibe/skills/vibe/scripts/prototype-session.mjs";
 import { readInput } from "./contracts.js";
 import { verifyExternalCi } from "./main-sync-ci.js";
+import { DESKTOP_E2E_POST_MERGE_COVERAGE, isDesktopE2eLimitation } from "./main-sync-lanes.js";
 import { isPublisherContext } from "./record-context.js";
 import { committedInputs, executeChecks, checkRecipe, inspectInputInventory } from "./main-sync-checks.js";
 import { prepareInputOrigins, reusableInputOrigin } from "./main-sync-input-origin.js";
@@ -154,7 +155,7 @@ export function validateMainSync(raw: unknown) {
       || (receipt.pushedHead !== identity.headSha && !alreadyPublished(value.place.session, identity.headSha))) {
       throw new MainSyncError("Exact handoff snapshot must be safely published before external coverage completion");
     }
-    if (validation.e2eLimitations.some((item) => item.argv[1] !== "--dir" || item.argv[2] !== "apps/desktop")) {
+    if (!validation.e2eLimitations.every(isDesktopE2eLimitation)) {
       throw new MainSyncError("Selected required E2E has no verified external checked-source interface; handoff remains incomplete");
     }
     ciEvidence = verifyExternalCi(value, identity);
@@ -170,13 +171,19 @@ export function validateMainSync(raw: unknown) {
   if (!ciEvidence) delete next.ciEvidence;
   if (receipt.pushedHead !== identity.headSha) delete next.pushedHead;
   saveSyncReceipt(value.place.dir, next);
-  const requiredE2eComplete = validation.e2eLimitations.length === 0 || Boolean(ciEvidence);
-  const { mainPreexistingFailures, flakyChecks } = comparedChecks(validation.commands);
+  // The Desktop Electron lane never runs on a vibe machine; the post-merge run covers it, so it does not hold the
+  // handoff or a requested pull request (ISS-13321). Any other limitation still needs CI evidence.
+  const e2eLeftForCi = validation.e2eLimitations.filter(isDesktopE2eLimitation)
+    .map((item) => ({ argv: item.argv, coveredBy: DESKTOP_E2E_POST_MERGE_COVERAGE }));
+  const requiredE2eComplete = validation.e2eLimitations.length === e2eLeftForCi.length || Boolean(ciEvidence);
+  const { mainPreexistingFailures, flakyChecks, machineLimitedChecks } = comparedChecks(validation.commands);
   return { status: value.purpose === "handoff" && !requiredE2eComplete ? "NEEDS_REVIEW" : "DONE",
     publicationReady: true, requiredE2eComplete, transactionId: receipt.transactionId, mainSha: receipt.mainSha,
     headSha: validation.headSha, treeSha: validation.treeSha, commandCount: validation.commands.length,
     purpose: value.purpose, validationScope: "publication-preparation", e2eLimitations: validation.e2eLimitations,
+    ...(e2eLeftForCi.length && !ciEvidence ? { e2eLeftForCi } : {}),
     ...(mainPreexistingFailures.length ? { mainPreexistingFailures } : {}), ...(flakyChecks.length ? { flakyChecks } : {}),
+    ...(machineLimitedChecks.length ? { machineLimitedChecks } : {}),
     ...(ciEvidence ? { ciEvidence } : {}) };
 }
 
@@ -361,16 +368,20 @@ function featureTestHistory(root: string, originalBase: string, startingHead: st
 function comparedChecks(commands: NonNullable<MainSyncReceipt["validation"]>["commands"]) {
   const mainPreexistingFailures = [];
   const flakyChecks = [];
+  const machineLimitedChecks = [];
   for (const command of commands) {
     const comparison = command.comparison;
     if (comparison?.classification === "main-preexisting") {
       mainPreexistingFailures.push({ check: command.argv.join(" "), mainSha: comparison.mainSha,
         sessionExitCode: command.exitCode, mainExitCode: comparison.main.exitCode, mainArgv: comparison.main.argv,
         log: command.log, mainLog: comparison.main.log });
+    } else if (comparison?.classification === "machine-limited") {
+      machineLimitedChecks.push({ check: command.argv.join(" "), mainSha: comparison.mainSha, timeoutMs: command.timeoutMs,
+        log: command.log, mainLog: comparison.main.log });
     } else if (comparison?.classification === "flaky") {
       flakyChecks.push({ check: command.argv.join(" "), mainSha: comparison.mainSha,
         logs: comparison.sessionRuns.map((run) => run.log), mainLog: comparison.main.log });
     }
   }
-  return { mainPreexistingFailures, flakyChecks };
+  return { mainPreexistingFailures, flakyChecks, machineLimitedChecks };
 }

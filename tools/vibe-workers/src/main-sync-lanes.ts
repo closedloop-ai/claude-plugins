@@ -84,3 +84,11 @@ function displaylessPrerequisites(root: string) {
     { cwd: root, encoding: "utf8", timeout: 10000, maxBuffer: 1024 * 1024 });
   return !result.error && result.status === 0;
 }
+
+/** The post-merge workflow and commit status that run the whole Desktop Electron suite on every main SHA. */
+export const DESKTOP_E2E_POST_MERGE_COVERAGE = "symphony-alpha desktop-e2e-validation.yml, commit status desktop-e2e/validated";
+
+/** A recorded limitation for the Desktop Electron lane, the one e2e lane a vibe machine never runs. */
+export function isDesktopE2eLimitation(item: { argv: string[] }) {
+  return item.argv.length === 4 && item.argv[0] === "pnpm" && item.argv[1] === "--dir" && item.argv[2] === "apps/desktop" && item.argv[3] === "test:e2e";
+}
