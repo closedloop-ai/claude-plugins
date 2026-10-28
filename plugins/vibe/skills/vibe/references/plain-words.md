@@ -61,7 +61,9 @@ to open; one may appear only beside a working link to it. Never link the
 app's front page and give directions from there ("go to the dashboard, start
 the tour, step to step 2"): link the page itself, or, for one state of a
 component (a step partway through, an error, an empty list), its entry in the
-component gallery, which opens on that state. This section is the
+component gallery, which opens on that state. Not knowing a page's real path
+is no reason to link the front page: look the path up, or link the gallery
+story the writer named for the change. This section is the
 rule's one canonical statement, for every skill and worker whose words reach
 the person.
 

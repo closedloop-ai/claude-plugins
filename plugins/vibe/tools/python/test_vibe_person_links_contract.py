@@ -55,6 +55,8 @@ def test_the_rule_is_stated_once_in_plain_words() -> None:
         "Never link the app's front page and give directions from there",
         "for one state of a component (a step partway through, an error, an empty list), its entry in the "
         "component gallery, which opens on that state",
+        "Not knowing a page's real path is no reason to link the front page: look the path up, or link the gallery "
+        "story the writer named for the change",
         "This section is the rule's one canonical statement",
         '`node scripts/vibe-sessions.mjs link --worktree "<wt>" --story <story id>` or `--page <path>`',
         "a story on the deployed environment's Storybook once the environment is verified, otherwise on the local "
