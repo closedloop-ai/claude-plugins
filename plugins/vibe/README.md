@@ -26,6 +26,14 @@ Everything a session does is recorded on a live ClosedLoop ticket, so whoever
 picks the work up next sees what was asked for, what was built and what is
 still open.
 
+For an operator running several pull requests at once, `fleet-orchestrator`
+runs Claude Code and Codex writers side by side and moves work between them
+as either account's usage runs high. When a Codex writer dies, a Claude writer
+takes over its worktree and carries on. It works on this machine and one more
+machine over ssh: heavy checks take a capped number of slots on each machine
+and go to the other machine when one is too loaded, and the shared e2e stack
+runs one run at a time per machine under a lock.
+
 ## What a session looks like
 
 1. **Start.** The person types `$vibe` in Codex (`/vibe:vibe` in Claude Code)
@@ -324,7 +332,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.5` contains 12 skills, 16 agents, and one hook manifest
+Version `1.1.6` contains 12 skills, 16 agents, and one hook manifest
 (`hooks/hooks.json`). It has no standalone commands, root-level shell scripts,
 or production Python tools under `tools/python/`; that directory contains the
 skill-contract test modules and `vibe_contract_text.py`, the text helpers they

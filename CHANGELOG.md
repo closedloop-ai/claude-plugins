@@ -4,12 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.5
+### vibe v1.1.6
 
 A vibe user on Codex could not follow the setup step "connect the ClosedLoop connector in Codex Settings: open Settings and click Connect", which named no section or label (ISS-13258). Restoring a connection, signing in to GitHub and running a command the Codex sandbox refuses are now steps the agent runs; the person only signs in in the browser, clicks Allow once when Codex asks, and starts a new chat only when the connection still fails in the current one.
 
 #### Added
 - `plugin-version.mjs status --closedloop connected|not-connected --graph connected|not-connected` prints the setup check block once per conversation: the installed closedloop-core and vibe versions for each installed harness (from that conversation's `check`) and whether each connection answered that conversation's own `get-me` and `sync_status` call. A later call in the same conversation, after a compaction included, prints `{"print":false}`. vibe (`SKILL.md`, "Setup check") and fleet-orchestrator (Setup, and a new chat's steps) run it right after the version check; a `not connected` line starts the restore at once.
+
+#### Changed
+- The README opening also says what `fleet-orchestrator` does (ISS-13281): Claude Code and Codex writers side by side with work moved between them on usage, a Claude writer taking over a dead Codex writer's worktree, and this machine plus one more over ssh, with capped heavy-check slots per machine, a load limit that sends a run to the other machine, and one shared e2e run at a time per machine.
 
 #### Fixed
 - `preflight.md`, "Restoring a connection", covers `closedloop` (`get-me` failed) and `closedloop-graph` (`sync_status` failed). On Codex, `vibe-setup-worker` reads `codex mcp list` and runs `codex mcp add closedloop --url https://mcp.closedloop.ai/mcp` when there is no row (it opens the sign-in itself) or `codex mcp login <name>` when its `Auth` is `Not logged in` (or `OAuth` for `closedloop`), in the background so the sign-in page stays open, and the person gets one line to sign in with their own ClosedLoop account.
