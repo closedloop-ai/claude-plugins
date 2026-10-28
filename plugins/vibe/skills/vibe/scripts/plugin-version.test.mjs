@@ -465,8 +465,8 @@ test("the setup check block lists closedloop-core and vibe per installed harness
   assert.equal(first.result.print, true);
   assert.equal(first.result.block, [
     "Setup check",
-    "- Claude Code: closedloop-core 1.5.3, vibe 1.1.2",
-    "- Codex: closedloop-core not installed, vibe 1.1.1",
+    "- Claude Code: closedloop-core 1.5.3 (latest), vibe 1.1.2 (latest)",
+    "- Codex: closedloop-core not installed, vibe 1.1.1 (1.1.2 available)",
     "- ClosedLoop connection: connected",
     "- closedloop-graph connection: not connected",
   ].join("\n"));
@@ -489,10 +489,11 @@ test("the setup check block lists closedloop-core and vibe per installed harness
 test("the setup check block never claims versions it did not read, and refuses connections it was not told", async (t) => {
   const { home, bin } = sandbox(t);
   const fleet = path.join(home, "plugin-version.json");
-  // No check has run in this conversation.
+  // No check has run in this conversation, and nothing is installed here.
   const unchecked = await run(home, ["status", "--state", fleet, "--closedloop", "not-connected", "--graph", "connected"]);
   assert.equal(unchecked.result.print, true);
-  assert.match(unchecked.result.block, /- Plugins: the version check has not run in this conversation\n/);
+  assert.match(unchecked.result.block, /- Plugins: none installed in Claude Code or Codex\n/);
+  assert.doesNotMatch(unchecked.result.block, /has not run/);
   assert.match(unchecked.result.block, /- ClosedLoop connection: not connected\n/);
 
   // A check from an earlier conversation in the same fleet state file is not this conversation's.
@@ -590,4 +591,78 @@ test("an update with no vibe session writer on an older release names none", asy
   const { result } = await run(home, ["update", "--claude", claude.file, "--codex", codex.file]);
   assert.equal(result.status, "updated");
   assert.equal(result.sessions, undefined);
+});
+
+test("with no check of this conversation, the setup check still lists the versions installed here, read locally (ISS-13315)", async (t) => {
+  const { home, bin } = sandbox(t);
+  fakeCli(bin, "codex", { installed: [{ name: "closedloop-core", version: "1.5.3" }, { name: "vibe", version: "1.1.12" }] });
+  const { code, result } = await run(home, ["status", "--closedloop", "connected", "--graph", "connected"], { PATH: [bin, SYSTEM_PATH].join(path.delimiter) });
+  assert.equal(code, 0);
+  assert.equal(result.block, [
+    "Setup check",
+    "- Codex: closedloop-core 1.5.3 (couldn't check for a newer version), vibe 1.1.12 (couldn't check for a newer version)",
+    "- ClosedLoop connection: connected",
+    "- closedloop-graph connection: connected",
+  ].join("\n"));
+});
+
+test("a check the Codex sandbox stopped asks to run again escalated; the escalated run completes and shows the block (ISS-13315)", async (t) => {
+  const { home, bin } = sandbox(t);
+  const main = await marketplace(t, { files: mainFiles({ vibe: "1.1.13", "closedloop-core": "1.5.3" }) });
+  const codex = fakeCli(bin, "codex", { installed: [{ name: "closedloop-core", version: "1.5.3" }, { name: "vibe", version: "1.1.12" }] });
+  // Codex sets these for every command of an "Ask for approval" turn, escalated ones included.
+  const turn = { CODEX_SANDBOX: "seatbelt", CODEX_SANDBOX_NETWORK_DISABLED: "1" };
+  const args = ["check", "--codex", codex.file, "--closedloop", "connected", "--graph", "not-connected"];
+  const sandboxed = await run(home, [...args, "--latest-base", UNREACHABLE], turn);
+  assert.equal(sandboxed.code, 0);
+  assert.equal(sandboxed.result.status, "unknown");
+  assert.equal(sandboxed.result.escalate, true);
+  assert.equal(sandboxed.result.justification, "Check whether vibe is up to date");
+  assert.match(sandboxed.result.block, /- Codex: closedloop-core 1\.5\.3 \(couldn't check for a newer version\), vibe 1\.1\.12 \(couldn't check for a newer version\)/);
+  assert.equal(startup(home).statusShown, undefined, "the sandboxed run never marks the block shown");
+
+  // The escalated rerun keeps the turn's variables but reaches main and saves: no escalation, a completed block.
+  const escalated = await run(home, [...args, "--latest-base", main.url], turn);
+  assert.equal(escalated.result.status, "outdated");
+  assert.equal(escalated.result.escalate, undefined);
+  assert.equal(escalated.result.recordError, undefined);
+  assert.equal(escalated.result.print, true);
+  assert.match(escalated.result.block, /- Codex: closedloop-core 1\.5\.3 \(latest\), vibe 1\.1\.12 \(1\.1\.13 available\)/);
+  assert.equal(startup(home).statusShown.graph, "not-connected");
+  const later = await run(home, [...args, "--latest-base", main.url], turn);
+  assert.equal(later.result.print, false);
+
+  // Outside Codex an unreachable main is plain unknown, never an escalation.
+  const elsewhere = await run(home, [...args, "--latest-base", UNREACHABLE], { CLAUDE_CODE_SESSION_ID: "conversation-5" });
+  assert.equal(elsewhere.result.status, "unknown");
+  assert.equal(elsewhere.result.escalate, undefined);
+});
+
+test("a check whose record cannot be saved still answers, shows the block and says why, and status does the same (ISS-13315)", async (t) => {
+  const { home, bin } = sandbox(t);
+  const main = await marketplace(t, { files: mainFiles({ vibe: "1.1.12", "closedloop-core": "1.5.3" }) });
+  const codex = fakeCli(bin, "codex", { installed: [{ name: "closedloop-core", version: "1.5.3" }, { name: "vibe", version: "1.1.12" }] });
+  // What the sandbox does to ~/.codex/vibe: the folder cannot be created.
+  mkdirSync(path.join(home, ".codex"), { recursive: true });
+  writeFileSync(path.join(home, ".codex", "vibe"), "not a folder");
+  const checked = await run(home, ["check", "--codex", codex.file, "--latest-base", main.url, "--closedloop", "connected", "--graph", "connected"]);
+  assert.equal(checked.code, 0);
+  assert.equal(checked.result.status, "current");
+  assert.match(checked.result.recordError, /ENOTDIR|EEXIST/);
+  assert.match(checked.result.block, /- Codex: closedloop-core 1\.5\.3 \(latest\), vibe 1\.1\.12 \(latest\)/);
+  const status = await run(home, ["status", "--codex", codex.file, "--closedloop", "connected", "--graph", "connected"]);
+  assert.equal(status.code, 0);
+  assert.equal(status.result.print, true);
+  assert.match(status.result.recordError, /ENOTDIR|EEXIST/);
+  assert.match(status.result.block, /- Codex: closedloop-core 1\.5\.3 \(couldn't check for a newer version\)/);
+});
+
+test("check refuses connection states it was not told, like status", async (t) => {
+  const { home } = sandbox(t);
+  const refused = await run(home, ["choose", "--choice", "proceed", "--closedloop", "connected"]);
+  assert.equal(refused.code, 1);
+  assert.match(refused.result.error, /must each be connected or not-connected/);
+  const check = await run(home, ["check", "--latest-base", UNREACHABLE, "--graph", "yes", "--closedloop", "connected"]);
+  assert.equal(check.result.status, "unknown");
+  assert.match(check.result.reason, /must each be connected or not-connected/);
 });

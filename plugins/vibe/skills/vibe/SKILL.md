@@ -285,23 +285,38 @@ stay with the workers.
 
 Every `$vibe` start, new or resume, first checks whether the ClosedLoop
 plugins installed on this machine, in Claude Code and in Codex, are the latest
-release: run `node scripts/plugin-version.mjs check --runtime codex` in Codex,
-or `--runtime claude` in Claude Code. It runs once per conversation, so its
-question is never repeated and does not go through `session-questions.mjs`.
+release, and shows the setup check, in one command. Call ClosedLoop `get-me`
+and closedloop-graph `sync_status` yourself first, then run
+`node scripts/plugin-version.mjs check --runtime codex --closedloop <state> --graph <state>`
+in Codex, or `--runtime claude` in Claude Code, where each `<state>` is
+`connected` only when that call answered in this conversation, otherwise
+`not-connected`; never assume either. In Codex, run it with escalated
+permissions from the first try (`sandbox_permissions: "require_escalated"`,
+justification "Check whether vibe is up to date"): it reads the latest
+release from GitHub and saves this conversation's result outside the
+workspace, and Codex's sandbox blocks both (`references/preflight.md`,
+"Commands the sandbox blocks"). An output with `"escalate":true` from a run
+without escalation was stopped by the sandbox: run the same command again
+escalated before you reply, and use the first output only if the person
+declines. An escalated run's output is final. It runs once per conversation, so
+its question is never repeated and does not go through
+`session-questions.mjs`.
 
 - `current`: say nothing about it and continue.
-- `unknown`, or the command could not run at all (no Node yet on a first
-  run): the check never blocks. Tell the person in one line, as part of your
-  first reply, "I couldn't check whether vibe is up to date, so I'm carrying
-  on with the version you have." and continue.
+- `unknown` from the escalated run, or after the person declined it, or the
+  command could not run at all (no Node yet on a first run): the check never
+  blocks. Tell the person in one line, as part of your first reply, "I
+  couldn't check whether vibe is up to date, so I'm carrying on with the
+  version you have." and continue. An `unknown` with `"escalate":true` from a
+  run without escalation is not this case.
 - `outdated`, new or resumed, unless the opening message already says to
   proceed: ask exactly "A newer version of vibe is available (<versions>). Do
   you want me to update it now, or keep going with this one? Keeping going
   with an older version could give worse results.", where `<versions>` is the
   result's `versions`. That question is the whole first reply: the endings
   line of a new session (section 5, "Notices that never wait") waits for its
-  answer. The next reply is then the new session's first reply, endings line
-  included.
+  answer. The next reply is then the new session's
+  first reply, endings line included.
 - On "keep going", run `node scripts/plugin-version.mjs choose --choice
   proceed` and continue with this version.
 - When the opening message already says to proceed (a fleet orchestrator's
@@ -330,17 +345,17 @@ question is never repeated and does not go through `session-questions.mjs`.
 
 ### Setup check
 
-Once per conversation, right after the version check, call ClosedLoop
-`get-me` and closedloop-graph `sync_status` yourself, then run
-`node scripts/plugin-version.mjs status --closedloop <state> --graph <state>`,
-where each `<state>` is `connected` only when that call answered in this
-conversation, otherwise `not-connected`; never assume either. When it prints
-`"print":true`, its `block` (the installed closedloop-core and vibe versions
-for each installed harness, and both connections) opens your first reply
-word for word, before the version question or the endings line. `"print":false`
-means this conversation already showed it (a compaction or a later turn):
-show nothing. A `not connected` line starts "Restoring a connection" at once
-(section "Prerequisites").
+When the check prints `"print":true` (the escalated run's output, when there
+was one), its `block` (the installed closedloop-core and vibe versions for
+each installed harness, each marked latest, newer available or not checked,
+and both connections) opens your first reply word for word, before the
+version question or the endings line. Send that reply as soon as you have the
+block, before you read any other file, run the preflight or dispatch a
+worker. `"print":false` means this conversation already showed it (a
+compaction or a later turn): show nothing. If the check could not run at all,
+`node scripts/plugin-version.mjs status --closedloop <state> --graph <state>`
+prints the same block from the versions installed here. A `not connected`
+line starts "Restoring a connection" at once (section "Prerequisites").
 
 ### Prerequisites
 

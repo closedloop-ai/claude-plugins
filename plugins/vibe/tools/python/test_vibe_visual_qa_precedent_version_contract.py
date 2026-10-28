@@ -197,7 +197,8 @@ def test_the_version_check_runs_at_every_start_and_never_blocks() -> None:
     assert_all(plugin_version(), (
         "Every `$vibe` start, new or resume, first checks whether the ClosedLoop plugins installed on this machine, in Claude Code and in Codex, are the latest release",
         "It runs once per conversation, so its question is never repeated and does not go through `session-questions.mjs`.",
-        "`node scripts/plugin-version.mjs check --runtime codex` in Codex, or `--runtime claude` in Claude Code",
+        "`node scripts/plugin-version.mjs check --runtime codex --closedloop <state> --graph <state>` in Codex, or `--runtime claude` in Claude Code",
+        "In Codex, run it with escalated permissions from the first try (`sandbox_permissions: \"require_escalated\"`, justification \"Check whether vibe is up to date\")",
         "`current`: say nothing about it and continue.",
         "the check never blocks",
         "\"I couldn't check whether vibe is up to date, so I'm carrying on with the version you have.\"",

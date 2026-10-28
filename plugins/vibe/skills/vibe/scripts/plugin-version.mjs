@@ -8,6 +8,7 @@
 // Usage:
 //   plugin-version.mjs [check]  [--runtime codex|claude] [state] [--claude <CLI>] [--codex <CLI>]
 //                               [--latest-base <url>] [--timeout-ms <n>]
+//                               [--closedloop connected|not-connected --graph connected|not-connected]
 //   plugin-version.mjs choose   --choice update|proceed [--by person|opening-message] [state]
 //   plugin-version.mjs update   [state] [--claude <CLI>] [--codex <CLI>]
 //   plugin-version.mjs pending  --conversation <id>     (written by the vibe hooks when a session starts)
@@ -40,11 +41,20 @@
 // (Claude Code) or a reopened app (Codex) before the update takes effect.
 // `status` prints the startup setup check block (ISS-13258, operator ruling
 // 2026-10-27): the installed closedloop-core and vibe versions for each
-// installed harness, from this conversation's `check`, and whether the
-// closedloop and closedloop-graph connections answered this conversation's
-// own get-me and sync_status calls. It prints {"print":true,"block"} once per
-// conversation and {"print":false} on every later call in it, a compaction
-// included, so the block is never shown twice.
+// installed harness, each with the latest-version result from this
+// conversation's `check` ("latest", "<version> available" or "couldn't check
+// for a newer version"), and whether the closedloop and closedloop-graph
+// connections answered this conversation's own get-me and sync_status calls.
+// With no check of this conversation it reads the installed versions locally
+// (ISS-13315). It prints {"print":true,"block"} once per conversation and
+// {"print":false} on every later call in it, a compaction included, so the
+// block is never shown twice. `check` given --closedloop and --graph does the
+// same in the same run, so startup is one command.
+// In Codex's default sandbox (CODEX_SANDBOX_NETWORK_DISABLED=1) main cannot be
+// read and the startup record cannot be saved: `check` then adds
+// {"escalate":true,"justification"}, and the orchestrator runs the same
+// command again with escalated permissions (ISS-13315). A record that
+// could not be saved is reported as `recordError`; the command still exits 0.
 // When vibe itself is outdated, `sessions` names each vibe session in the
 // remembered checkout whose writer is bound to an older vibe release, which
 // the update strands (ISS-13291), and migrates each Claude writer with the
@@ -79,6 +89,7 @@ const COMMANDS = Object.freeze(["check", "choose", "update", "pending", "adopt",
 const HARNESS_LABEL = Object.freeze({ claude: "Claude Code", codex: "Codex" });
 const STATUS_PLUGINS = Object.freeze(["closedloop-core", "vibe"]);
 const DEFAULT_TIMEOUT_MS = 5_000;
+export const ESCALATION_JUSTIFICATION = "Check whether vibe is up to date";
 const CLI_TIMEOUT_MS = 30_000;
 const UPDATE_TIMEOUT_MS = 180_000;
 const STARTUP_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
@@ -347,10 +358,8 @@ export function adoptStartupRecord(worktree, { env = process.env, home = os.home
 export function statusBlock(record, connections) {
   const lines = ["Setup check"];
   const harnesses = (record?.harnesses ?? []).filter((entry) => entry.installed !== false);
-  if (!record) {
-    lines.push("- Plugins: the version check has not run in this conversation");
-  } else if (harnesses.length === 0) {
-    lines.push(record.reason ? `- Plugins: couldn't read the installed versions (${record.reason})` : "- Plugins: none installed in Claude Code or Codex");
+  if (harnesses.length === 0) {
+    lines.push(record?.reason ? `- Plugins: couldn't read the installed versions (${record.reason})` : "- Plugins: none installed in Claude Code or Codex");
   }
   for (const entry of harnesses) {
     const label = HARNESS_LABEL[entry.harness] ?? entry.harness;
@@ -360,13 +369,74 @@ export function statusBlock(record, connections) {
     }
     const parts = STATUS_PLUGINS.map((name) => {
       const plugin = entry.plugins.find((candidate) => candidate.name === name);
-      return plugin ? `${name} ${plugin.version ?? "(version unknown)"}` : `${name} not installed`;
+      return plugin ? `${name} ${plugin.version ?? "(version unknown)"} (${latestNote(plugin)})` : `${name} not installed`;
     });
     lines.push(`- ${label}: ${parts.join(", ")}`);
   }
   const word = (value) => (value === Connection.Connected ? "connected" : "not connected");
   lines.push(`- ClosedLoop connection: ${word(connections.closedloop)}`, `- closedloop-graph connection: ${word(connections.graph)}`);
   return lines.join("\n");
+}
+
+/**
+ * The installed closedloop-ai plugins of every harness found on this machine, read locally with
+ * no network, every one `unknown` against main: what the setup check shows when this
+ * conversation has no check of its own (ISS-13315).
+ */
+export function localInstalled({ clis = {}, env = process.env, home = os.homedir(), reason = "the latest version was not checked" } = {}) {
+  return [Harness.Claude, Harness.Codex].map((harness) => {
+    const cli = clis[harness] ?? findCli(harness, env, home);
+    if (!cli) {
+      return { harness, installed: false };
+    }
+    const listed = listInstalled(harness, cli);
+    if (listed.reason) {
+      return { harness, cli, installed: null, reason: listed.reason };
+    }
+    if (listed.plugins.length === 0) {
+      return { harness, cli, installed: false };
+    }
+    return { harness, cli, installed: true, plugins: listed.plugins.map((plugin) => ({ ...plugin, latest: null, status: VersionStatus.Unknown, reason })) };
+  });
+}
+
+/**
+ * True when this check ran inside Codex's sandbox and the sandbox stopped it: the turn's
+ * sandbox has no network (Codex's default "Ask for approval" mode), and main could not be
+ * reached or the record could not be written. Codex sets CODEX_SANDBOX_NETWORK_DISABLED for
+ * every command of such a turn, escalated ones included (seen on codex-cli 0.163.0-alpha.11.2,
+ * ISS-13315), so the variable alone never decides it: an escalated run reaches main and saves.
+ */
+export function blockedBySandbox(result, recordError, env = process.env) {
+  if (env.CODEX_SANDBOX_NETWORK_DISABLED !== "1") {
+    return false;
+  }
+  return /EPERM|EACCES/.test(recordError ?? "") || /could not be reached/.test(result.reason ?? "");
+}
+
+/**
+ * The setup check block for `own` (this conversation's check, or the local listing), once per
+ * conversation: what to print, and the record to save (`stored` marked shown), or null when
+ * `stored` says it was already shown here and nothing changes.
+ */
+function setupCheck(stored, own, connections, conversation, now) {
+  if (stored?.statusShown?.conversation === conversation) {
+    return { output: { print: false, reason: "the setup check was already shown in this conversation" }, next: null };
+  }
+  return {
+    output: { print: true, block: statusBlock(own, connections) },
+    next: { ...stored, statusShown: { conversation, at: now.toISOString(), ...connections } },
+  };
+}
+
+function latestNote(plugin) {
+  if (plugin.status === VersionStatus.Outdated) {
+    return `${plugin.latest} available`;
+  }
+  if (plugin.status === VersionStatus.Current) {
+    return "latest";
+  }
+  return "couldn't check for a newer version";
 }
 
 function onPath(name, env) {
@@ -583,6 +653,11 @@ async function main(argv, env, home) {
     return { code: 0, output: { ok: true, pluginVersion: adoptStartupRecord(values.worktree, { env, home }) } };
   }
   const store = stateStore(values, env, home);
+  const connections = { closedloop: values.closedloop, graph: values.graph };
+  const withConnections = connections.closedloop !== undefined || connections.graph !== undefined;
+  if ((command === "status" || withConnections) && !Object.values(connections).every((value) => Object.values(Connection).includes(value))) {
+    throw new Error("--closedloop and --graph must each be connected or not-connected, from this conversation's own get-me and sync_status calls");
+  }
   if (command === "check") {
     const timeoutMs = Number(values["timeout-ms"]);
     const result = await checkVersions({
@@ -603,29 +678,46 @@ async function main(argv, env, home) {
     if (previous?.statusShown?.conversation === conversation) {
       record.statusShown = previous.statusShown;
     }
+    const shown = withConnections ? setupCheck(record, record, connections, conversation, now) : null;
+    let recordError;
     try {
-      store.write(record);
+      store.write(shown?.next ?? record);
       if (!values.worktree && !values.state) {
         sweepStartup(home, now);
       }
     } catch (error) {
-      record.recordError = error.message;
+      recordError = error.message;
     }
-    return { code: 0, output: { ...record, state: store.where } };
+    // In Codex's default sandbox main cannot be read and the record cannot be saved; the
+    // orchestrator reruns this same command with escalated permissions (one "Allow once"),
+    // and that run's block is the one the person sees.
+    const escalating = blockedBySandbox(record, recordError, env);
+    if (escalating && shown?.next && !recordError) {
+      try {
+        store.write(record);
+      } catch {
+        // The escalated rerun saves it.
+      }
+    }
+    const escalate = escalating ? { escalate: true, justification: ESCALATION_JUSTIFICATION } : {};
+    return { code: 0, output: { ...record, ...(shown?.output ?? {}), ...(recordError ? { recordError } : {}), ...escalate, state: store.where } };
   }
   if (command === "status") {
-    const connections = { closedloop: values.closedloop, graph: values.graph };
-    if (!Object.values(connections).every((value) => Object.values(Connection).includes(value))) {
-      throw new Error("--closedloop and --graph must each be connected or not-connected, from this conversation's own get-me and sync_status calls");
-    }
     const conversation = values.conversation ?? conversationId(env);
     const record = store.read();
-    if (record?.statusShown?.conversation === conversation) {
-      return { code: 0, output: { print: false, reason: "the setup check was already shown in this conversation", state: store.where } };
+    // A conversation whose own check never ran or never saved still shows the versions
+    // installed here, read locally, never "has not run" with no versions (ISS-13315).
+    const own = record?.conversation === conversation ? record : { harnesses: localInstalled({ clis, env, home }) };
+    const shown = setupCheck(record, own, connections, conversation, now);
+    let recordError;
+    try {
+      if (shown.next) {
+        store.write(shown.next);
+      }
+    } catch (error) {
+      recordError = error.message;
     }
-    const block = statusBlock(record?.conversation === conversation ? record : null, connections);
-    store.write({ ...record, statusShown: { conversation, at: now.toISOString(), ...connections } });
-    return { code: 0, output: { print: true, block, state: store.where } };
+    return { code: 0, output: { ...shown.output, ...(recordError ? { recordError } : {}), state: store.where } };
   }
   if (command === "show") {
     return { code: 0, output: store.read() ?? { status: null, state: store.where } };
