@@ -4,6 +4,24 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.14
+
+The handoff `frozen-render` gate could never clear when main's own render of a frozen story varied between runs (ISS-13317): Kaiti Carpenter's session saw the guided tour story render eight different ways in eight base captures, and `frozen-render.mjs` accepted only byte-identical renders or identical failures. Its printed line also counted stories while the gate counted story files, so on any story file with more than one story the line never matched.
+
+#### Fixed
+- `handoff/scripts/frozen-render.mjs` renders every story twice on the base and once on the branch. A story whose two base renders differ is `unstable-on-base`: it does not block, is not compared with the branch by pixels, and gets a cropped diff of the two base renders; the branch's play outcome must still match a base one. A story that fails on the base and fails the same way on the branch (same verdict and error text) is `same-failure` and does not block. A changed stable render, a play that passes on the base and fails on the branch, a changed failure, or a play outcome the base never had is `blocking`, with a cropped diff when the pixels differ.
+- Every render pins its inputs: Chromium rasterizes in software on one thread with sRGB color, no LCD text and no font hinting (the ISS-13164 capture's settings); each render gets a fresh browser context with a fixed viewport, scale 1, en-US, UTC, the light color scheme and reduced motion; the page clock is fixed (`--now`, default `2026-01-01T12:00:00.000Z`); fonts finish loading before the screenshot, which disables animations and transitions and hides the caret.
+- Screenshots are compared by decoded pixels with no threshold (new `handoff/scripts/png-diff.mjs`, node built-ins only). Cropped diffs are at most 800 pixels wide; the full screenshots stay under `--out`.
+- The command prints one line per story, a summary line with the count per class, and, when nothing blocks, `Frozen render unchanged: all <N> story files (<M> stories): frozen-render.mjs ...: <identical>, <unstable on base>, <same failure>, 0 blocking; <results>`. The `frozen-render` rule in `diff-rules.mjs` now counts story files the same way, so it accepts that line; the 1.1.11 line is no longer accepted.
+
+#### Changed
+- The `frozen-render` remedy, handoff's step 1, `vibe-change-worker` and `vibe-storybook-decomposer` point at the command and never describe a manual capture; the line is recorded only as printed.
+- `ticket-template.md`: an `unstable-on-base` story goes on the live ticket as a Known main failure with its cropped diff, beside the `same-failure` ones.
+- The README's runtime line says 1.1.14.
+
+#### Coverage
+- `frozen-render.test.mjs` covers each class (identical, unstable on base, same failure, changed on the branch, newly failing on the branch, unstable base with a changed play), the pinned context, clock and screenshot options, and that its line passes `diff-rules.mjs` while the 1.1.11 line does not. `png-diff.test.mjs` covers RGB and RGBA decoding through every PNG row filter, exact diffs and the crop size. `test_vibe_iss_13317_contract.py` pins the instruction text; `test_vibe_1057_lessons_contract.py` and `test_vibe_iss_13291_contract.py` follow the new wording.
+
 ### vibe v1.1.12
 
 Sessions the vibe and fleet scripts start no longer fill a desktop app's chat list with "Imported session" and raw JSON titles (ISS-13279).
