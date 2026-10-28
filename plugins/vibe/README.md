@@ -37,17 +37,19 @@ still open.
    it is available.
 2. **Ask for changes.** They click Annotate in the browser toolbar (or press
    Cmd + .), point at what they want changed and type a comment, or they just
-   describe it in chat. They can attach a screenshot, including one of another
-   product, or name a product to work like.
+   describe it in chat. A designer can attach a reference screenshot,
+   including one of another product, or ask for changes to the look; anyone
+   can name a product to work like.
 3. **See it live.** Each finished change deploys to their copy of the app
    without being asked. vibe says when it is ready to look at, and names any
    acceptance criterion that is not done yet instead of claiming it.
 4. **Answer only what only they can answer.** Product questions are researched
    first. A question reaches the person only when nothing else settles it, one
    at a time, and never twice.
-5. **Finish.** They say they are done. vibe opens a pull request for them, or
-   passes the ticket to the person they name. The ticket stays In Progress
-   either way.
+5. **Finish.** They say they are done. Whoever will take it through review
+   and merge themselves, often an engineer, gets a pull request opened for
+   them, with full tests written first. Otherwise vibe passes the ticket to
+   the person they name. The ticket stays In Progress either way.
 
 A short example (the replies are paraphrased, apart from the endings line):
 
