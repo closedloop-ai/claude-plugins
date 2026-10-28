@@ -76,20 +76,21 @@ The checkout is the one the preflight remembered
   access, stop and return `NEEDS_PERSON` for that human-only action.
   Multiple checkouts are resolved internally from the active workspace or
   recorded session; if still ambiguous, return `BLOCKED`, not a technical question.
-- closedloop-graph unreachable (preflight's `sync_status` failed, or a
-  worker's Graph block said `unreachable`): this is a setup problem, not a
-  normal state. Check that the harness lists the server and that it answers:
-  in Codex, `mcp list` on the Codex CLI that `../skills/vibe/INSTALL.md` uses;
-  in Claude Code, `claude mcp get <server>` run from the home folder, whose
-  `Status:` line says whether it is connected. A launch the Claude worker
-  launcher refused with `MCP_TOOLS_MISSING` names the connection that did not
-  load. When it is listed
-  but not answering, reconnect it the way `preflight.md` reconnects the
-  ClosedLoop connector (the person opens Settings and completes any sign-in,
-  never Computer Use), or have the person quit and reopen the ChatGPT app, returned
-  as `NEEDS_PERSON` in one plain line. When it is not configured at all,
-  return `BLOCKED` saying the closedloop-graph connector is missing, for
-  engineering.
+- A command the Codex sandbox refuses (no network, or a write outside the
+  workspace such as `codex mcp add`): run it again with an escalation
+  request as `preflight.md`, "Commands the sandbox blocks", says; never hand
+  it to the person or send them to the Terminal app. GitHub sign-in follows
+  `preflight.md`, "Signing in to GitHub".
+- ClosedLoop or closedloop-graph unreachable: ClosedLoop's `get-me` failed,
+  or closedloop-graph's `sync_status` failed or a worker's Graph block said
+  `unreachable`. This is a setup problem, not a normal state. Follow
+  `preflight.md`, "Restoring a connection", exactly: you run every command,
+  and the person only signs in in the browser, returned as `NEEDS_PERSON`
+  with that section's exact words; whether a new chat is needed is the
+  orchestrator's step 5, never yours. A launch the
+  Claude worker launcher refused with `MCP_TOOLS_MISSING` names the
+  connection that did not load. Never send the person into the app's
+  Settings and never use Computer Use.
 - Real Clerk sign-in stack (for example `just dev`) needed and `local.env` has
   no Clerk keys (`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` or `CLERK_SECRET_KEY`
   blank or absent): never fetch or type the secrets yourself. Tell the person

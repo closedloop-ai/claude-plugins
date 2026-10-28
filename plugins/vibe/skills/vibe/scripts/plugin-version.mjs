@@ -12,6 +12,7 @@
 //   plugin-version.mjs update   [state] [--claude <CLI>] [--codex <CLI>]
 //   plugin-version.mjs pending  --conversation <id>     (written by the vibe hooks when a session starts)
 //   plugin-version.mjs adopt    --worktree <path>       (vibe-sessions.mjs new does this itself)
+//   plugin-version.mjs status   --closedloop connected|not-connected --graph connected|not-connected [state]
 //   plugin-version.mjs show     [state]
 // where [state] is --worktree <vibe session> (the session record's
 // `pluginVersion`), --state <file> (a fleet program's plugin-version.json),
@@ -37,6 +38,13 @@
 // "plugins", "restart", "commands"}, exiting 1 unless every plugin reached
 // the latest version. `restart` names the harnesses that need a new session
 // (Claude Code) or a reopened app (Codex) before the update takes effect.
+// `status` prints the startup setup check block (ISS-13258, operator ruling
+// 2026-10-27): the installed closedloop-core and vibe versions for each
+// installed harness, from this conversation's `check`, and whether the
+// closedloop and closedloop-graph connections answered this conversation's
+// own get-me and sync_status calls. It prints {"print":true,"block"} once per
+// conversation and {"print":false} on every later call in it, a compaction
+// included, so the block is never shown twice.
 // `vibe-sessions.mjs new` refuses to create a session while this
 // conversation's record is outdated with no choice, and the vibe hooks refuse
 // worker launches in Claude Code while it is (hooks/plugin-version-guard.mjs).
@@ -55,10 +63,13 @@ export const BUNDLED_CODEX = "/Applications/ChatGPT.app/Contents/Resources/codex
 export const Harness = Object.freeze({ Claude: "claude", Codex: "codex" });
 export const VersionStatus = Object.freeze({ Current: "current", Outdated: "outdated", Unknown: "unknown", Pending: "pending" });
 export const Choice = Object.freeze({ Update: "update", Proceed: "proceed" });
+export const Connection = Object.freeze({ Connected: "connected", NotConnected: "not-connected" });
 const MANIFEST = Object.freeze({ claude: ".claude-plugin/plugin.json", codex: ".codex-plugin/plugin.json" });
 const CATALOG = Object.freeze({ claude: ".claude-plugin/marketplace.json", codex: ".agents/plugins/marketplace.json" });
 const CHOOSERS = Object.freeze(["person", "opening-message"]);
-const COMMANDS = Object.freeze(["check", "choose", "update", "pending", "adopt", "show"]);
+const COMMANDS = Object.freeze(["check", "choose", "update", "pending", "adopt", "status", "show"]);
+const HARNESS_LABEL = Object.freeze({ claude: "Claude Code", codex: "Codex" });
+const STATUS_PLUGINS = Object.freeze(["closedloop-core", "vibe"]);
 const DEFAULT_TIMEOUT_MS = 5_000;
 const CLI_TIMEOUT_MS = 30_000;
 const UPDATE_TIMEOUT_MS = 180_000;
@@ -320,6 +331,36 @@ export function adoptStartupRecord(worktree, { env = process.env, home = os.home
   return record;
 }
 
+/**
+ * The startup setup check block: the installed closedloop-core and vibe versions for each
+ * installed harness, from `record` (this conversation's check, or null when it has not run
+ * here), then the two connections as this conversation's own calls found them.
+ */
+export function statusBlock(record, connections) {
+  const lines = ["Setup check"];
+  const harnesses = (record?.harnesses ?? []).filter((entry) => entry.installed !== false);
+  if (!record) {
+    lines.push("- Plugins: the version check has not run in this conversation");
+  } else if (harnesses.length === 0) {
+    lines.push(record.reason ? `- Plugins: couldn't read the installed versions (${record.reason})` : "- Plugins: none installed in Claude Code or Codex");
+  }
+  for (const entry of harnesses) {
+    const label = HARNESS_LABEL[entry.harness] ?? entry.harness;
+    if (!Array.isArray(entry.plugins)) {
+      lines.push(`- ${label}: couldn't read its plugins`);
+      continue;
+    }
+    const parts = STATUS_PLUGINS.map((name) => {
+      const plugin = entry.plugins.find((candidate) => candidate.name === name);
+      return plugin ? `${name} ${plugin.version ?? "(version unknown)"}` : `${name} not installed`;
+    });
+    lines.push(`- ${label}: ${parts.join(", ")}`);
+  }
+  const word = (value) => (value === Connection.Connected ? "connected" : "not connected");
+  lines.push(`- ClosedLoop connection: ${word(connections.closedloop)}`, `- closedloop-graph connection: ${word(connections.graph)}`);
+  return lines.join("\n");
+}
+
 function onPath(name, env) {
   for (const dir of (env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
     const candidate = path.join(dir, name);
@@ -515,6 +556,8 @@ async function main(argv, env, home) {
       conversation: { type: "string" },
       choice: { type: "string" },
       by: { type: "string" },
+      closedloop: { type: "string" },
+      graph: { type: "string" },
       "latest-base": { type: "string" },
       "timeout-ms": { type: "string" },
     },
@@ -549,6 +592,9 @@ async function main(argv, env, home) {
     if (record.status === VersionStatus.Outdated && previous?.choice && previous.conversation === conversation && previous.versions === record.versions) {
       record.choice = previous.choice;
     }
+    if (previous?.statusShown?.conversation === conversation) {
+      record.statusShown = previous.statusShown;
+    }
     try {
       store.write(record);
       if (!values.worktree && !values.state) {
@@ -558,6 +604,20 @@ async function main(argv, env, home) {
       record.recordError = error.message;
     }
     return { code: 0, output: { ...record, state: store.where } };
+  }
+  if (command === "status") {
+    const connections = { closedloop: values.closedloop, graph: values.graph };
+    if (!Object.values(connections).every((value) => Object.values(Connection).includes(value))) {
+      throw new Error("--closedloop and --graph must each be connected or not-connected, from this conversation's own get-me and sync_status calls");
+    }
+    const conversation = values.conversation ?? conversationId(env);
+    const record = store.read();
+    if (record?.statusShown?.conversation === conversation) {
+      return { code: 0, output: { print: false, reason: "the setup check was already shown in this conversation", state: store.where } };
+    }
+    const block = statusBlock(record?.conversation === conversation ? record : null, connections);
+    store.write({ ...record, statusShown: { conversation, at: now.toISOString(), ...connections } });
+    return { code: 0, output: { print: true, block, state: store.where } };
   }
   if (command === "show") {
     return { code: 0, output: store.read() ?? { status: null, state: store.where } };

@@ -26,7 +26,9 @@ Keep your context for the conversation and session state; NEVER do the work:
   `scripts/plugin-version.mjs`, `scripts/precedent-check.mjs`); run
   `plugin-version.mjs update` only when the person chose to update;
   call ClosedLoop `get-me`
-  and closedloop-graph `sync_status`; inspect the in-app browser for live-Asana
+  and closedloop-graph `sync_status` (and, in Claude Code, a connection's own
+  `authenticate` tool as `references/preflight.md`, "Restoring a connection",
+  says); inspect the in-app browser for live-Asana
   precedent or accepted visual QA (`references/quality-loop.md`); and dispatch.
 - You and every worker leave plugins, plugin marketplaces and plugin caches
   alone, apart from the update the person chooses at startup (section 1,
@@ -51,6 +53,7 @@ completed feature, unmet criteria and current work. Other messages are only:
 - section 5's non-waiting notices, including the endings line in a new
   session's first reply;
 - the startup version check (section 1, "Plugin version");
+- the setup check block, once per conversation (section 1, "Setup check");
 - the visual QA offer and its results (section 6, step 5).
 
 Research product questions in the single order in `references/quality-loop.md`.
@@ -311,6 +314,20 @@ question is never repeated and does not go through `session-questions.mjs`.
   `restart`: the update is used only from a new session. Otherwise carry on
   with the version they have.
 
+### Setup check
+
+Once per conversation, right after the version check, call ClosedLoop
+`get-me` and closedloop-graph `sync_status` yourself, then run
+`node scripts/plugin-version.mjs status --closedloop <state> --graph <state>`,
+where each `<state>` is `connected` only when that call answered in this
+conversation, otherwise `not-connected`; never assume either. When it prints
+`"print":true`, its `block` (the installed closedloop-core and vibe versions
+for each installed harness, and both connections) opens your first reply
+word for word, before the version question or the endings line. `"print":false`
+means this conversation already showed it (a compaction or a later turn):
+show nothing. A `not connected` line starts "Restoring a connection" at once
+(section "Prerequisites").
+
 ### Prerequisites
 
 Run `scripts/vibe-preflight.sh --prototype` for the common prerequisites
@@ -330,8 +347,11 @@ the validated remembered checkout using the startup context above, or the exact
 owned session once it exists. Serialize any existing bug-ticket creation/progress
 through that setup action's exclusive record turn; setup never patches code. The
 only things the person ever does are type their Mac password into an
-installer prompt, finish a browser sign-in, allow Codex into a folder when
-macOS asks, and sign in to Claude again with the one Terminal step the
+installer prompt, click Allow once when Codex asks to run a setup command
+(`references/preflight.md`, "Commands the sandbox blocks"), finish a browser
+sign-in (then start a new chat only when "Restoring a connection" step 5 says
+so), allow Codex into a folder when macOS asks, and sign in
+to Claude again with the one Terminal step the
 `claude-login` fix gives; the worker reports those actions as `NEEDS_PERSON`. Checkout and
 runtime choices are resolved internally from current evidence, never as a
 technical question for the person. You and the
@@ -354,10 +374,18 @@ As soon as Node, Git and the exact checkout validate, use the owned launcher for
 every normal call. No other launcher failure permits this native bootstrap.
 
 Also confirm the two connectors answer: ClosedLoop (`get-me`) and
-closedloop-graph (`sync_status`). closedloop-graph is required. If it does
-not answer, dispatch `vibe-setup-worker` to restore the connection; never ask
-the person to set anything up beyond what that worker reports as
-`NEEDS_PERSON`.
+closedloop-graph (`sync_status`). closedloop-graph is required. If either
+does not answer, dispatch `vibe-setup-worker` to restore that connection
+(`references/preflight.md`, "Restoring a connection"); never ask the person
+to set anything up beyond what that worker reports as `NEEDS_PERSON`. On
+Codex, send the one heads-up line from `references/preflight.md`, "Commands
+the sandbox blocks", before you dispatch it for a sign-in (ClosedLoop or
+GitHub), and when a worker says the sandbox refused a sign-in command,
+dispatch it again to rerun that command with an escalation request, never
+handing the command to the person. When it
+returns `DONE`, do that section's step 5 yourself: call the tool again in
+this chat and carry on when it answers. Ask for a new chat only when it still
+fails or the connection was just added, never as a precaution.
 
 ## 2. Start or resume
 

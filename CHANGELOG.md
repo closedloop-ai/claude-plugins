@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.5
+### vibe v1.1.7
 
 Sessions the vibe and fleet scripts start no longer fill a desktop app's chat list with "Imported session" and raw JSON titles (ISS-13279).
 
@@ -21,8 +21,29 @@ Sessions the vibe and fleet scripts start no longer fill a desktop app's chat li
 - `claude-usage.mjs` runs `claude -p --no-session-persistence /usage`, and `precedent-check.mjs` adds `--no-session-persistence` to its headless `claude -p --chrome` look.
 - fleet-orchestrator's QA-guide launch adds `--name "QA guide · PR <n>"`.
 - vibe `INSTALL.md` and fleet-orchestrator `references/setup.md` explain that the Codex app's Import from Claude and Keep imports in sync turn saved Claude sessions into sidebar chats, and how to keep them out; cl-sweep `execution-surfaces.md` says when to run `end`.
-- The README's runtime line says 1.1.5, and its `fleet-orchestrator` section says `fleet.sh` also ends threads and names and groups new ones.
+- The README's runtime line says 1.1.7, and its `fleet-orchestrator` section says `fleet.sh` also ends threads and names and groups new ones.
 - `fleet.sh` ships `thread-sidebar.mjs` for remote sessions, and a test walks `codex-session.mjs`'s imports so an unshipped module fails.
+- The 1.1.6 release pin in `test_vibe_connection_restore_contract.py` is retired (the manifests now say 1.1.7; the Plugin Manifest Versions job keeps the two equal).
+
+### vibe v1.1.6
+
+A vibe user on Codex could not follow the setup step "connect the ClosedLoop connector in Codex Settings: open Settings and click Connect", which named no section or label (ISS-13258). Restoring a connection, signing in to GitHub and running a command the Codex sandbox refuses are now steps the agent runs; the person only signs in in the browser, clicks Allow once when Codex asks, and starts a new chat only when the connection still fails in the current one.
+
+#### Added
+- `plugin-version.mjs status --closedloop connected|not-connected --graph connected|not-connected` prints the setup check block once per conversation: the installed closedloop-core and vibe versions for each installed harness (from that conversation's `check`) and whether each connection answered that conversation's own `get-me` and `sync_status` call. A later call in the same conversation, after a compaction included, prints `{"print":false}`. vibe (`SKILL.md`, "Setup check") and fleet-orchestrator (Setup, and a new chat's steps) run it right after the version check; a `not connected` line starts the restore at once.
+
+#### Changed
+- The README opening also says what `fleet-orchestrator` does (ISS-13281): Claude Code and Codex writers side by side with work moved between them on usage, a Claude writer taking over a dead Codex writer's worktree, and this machine plus one more over ssh, with capped heavy-check slots per machine, a load limit that sends a run to the other machine, and one shared e2e run at a time per machine.
+
+#### Fixed
+- `preflight.md`, "Restoring a connection", covers `closedloop` (`get-me` failed) and `closedloop-graph` (`sync_status` failed). On Codex, `vibe-setup-worker` reads `codex mcp list` and runs `codex mcp add closedloop --url https://mcp.closedloop.ai/mcp` when there is no row (it opens the sign-in itself) or `codex mcp login <name>` when its `Auth` is `Not logged in` (or `OAuth` for `closedloop`), in the background so the sign-in page stays open, and the person gets one line to sign in with their own ClosedLoop account.
+- After a sign-in the orchestrator calls `get-me` again in the same chat and carries on when it answers; it asks for a new chat ("click New chat in the sidebar and type $vibe") only when it still fails or the connection was just added. Checked against the ChatGPT app's own Codex app server with a local OAuth server: a connection that failed when the chat started reconnects at the person's next message, a sign-in that ran out while the chat was open stays broken in that chat, and a connection added with `codex mcp add` never reaches the open chat.
+- On Claude Code, a conversation that started without the sign-in lists the connection's own `authenticate` tool; the orchestrator calls it and sends the sign-in link, and the connection then works in the same conversation. `claude mcp login` needs a terminal, so no worker runs it; a connection added mid-conversation needs `/exit` and then `claude --continue`, which keeps the conversation.
+- `preflight.md`, "Commands the sandbox blocks": in Codex's default "Ask for approval" mode, `codex mcp add`, `codex mcp login`, `gh auth login` and installers fail in the sandbox. The worker runs the same command again with the shell tool's escalation request and a plain justification, and the person clicks Allow once on "Allow ChatGPT to run this command?". The orchestrator sends one heads-up line before dispatching a sign-in, and a worker's sandbox refusal is retried that way instead of being handed to the person or the Terminal app.
+- `preflight.md`, "Signing in to GitHub": the worker runs `gh auth login --hostname github.com --git-protocol https --web` in the background, which opens no browser without a terminal, opens `https://github.com/login/device` itself, gives the person the one-time code, then checks `gh auth status` and runs `gh auth setup-git`. The `gh-auth-login` preflight row points there.
+- The vibe orchestrator dispatches the setup worker when either connection does not answer, instead of telling the person to open Settings. The setup worker no longer asks the person to quit and reopen the ChatGPT app for closedloop-graph.
+- The folder access step names the macOS labels: System Settings, Privacy & Security, Files & Folders, under ChatGPT. `INSTALL.md` says to click Plugins and New chat in the sidebar, and says what `codex mcp list` must show for closedloop-graph.
+- Coverage: `test_vibe_connection_restore_contract.py` (13 cases, 10 fail on 1.1.4) pins the procedures, refuses any vibe or fleet-orchestrator instruction naming the app's Settings or "click Connect", and refuses a person line that sends the person to the Terminal app for anything but the Claude sign-in. Two new `plugin-version.test.mjs` cases cover the setup check block. New evals `exec-closedloop-sign-in-ran-out-mid-chat-new-chat`, `exec-closedloop-signed-in-again-keeps-chat`, `exec-sandbox-blocked-sign-in-asks-allow-once`, `exec-github-sign-in-run-for-the-person` and `exec-setup-check-block-first-reply` join `exec-closedloop-connection-lost-no-settings`; the Codex runner now has 93 cases.
 ### vibe v1.1.4
 
 The plugin README now says what vibe is, who it is for (executives, designers, product managers and engineers) and what a session looks like before the reference material (ISS-13281). No skill or agent behavior changes.
