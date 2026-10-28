@@ -677,3 +677,15 @@ test("a frozen render is settled at handoff: the build phase reports it without 
     assert.deepEqual(later.json.diffRules.deferredToHandoff, [], phase);
   }
 });
+
+test("a new comparator outside the pull-request phase clears with its tie test listed as missing (ISS-13321)", (t) => {
+  const { home, worktree } = setup(t, "comparator-tie", { "apps/app/rank.ts": "export const rank = (rows) => rows;\n" });
+  write(worktree, "apps/app/rank.ts", "export const rank = (rows) => rows.sort((a, b) => a.n - b.n || a.id.localeCompare(b.id));\n");
+  const gitDir = git(worktree, ["rev-parse", "--absolute-git-dir"], home).trim();
+  const ties = (phase) => runNode(INVENTORY, ["--worktree", worktree, "--phase", phase], home).json.diffRules.blocking.filter((finding) => finding.rule === "comparator-tie");
+  assert.match(ties("handoff")[0].fix, /list the tie test under Missing tests, and record `Comparator: <file>: missing test listed`/);
+  writeFileSync(path.join(gitDir, "vibe-changes.md"), "Comparator: apps/app/rank.ts: missing test listed\n");
+  assert.deepEqual(ties("build"), []);
+  assert.deepEqual(ties("handoff"), []);
+  assert.equal(ties("pull-request").length, 1, "the pull-request turn writes the tie test");
+});

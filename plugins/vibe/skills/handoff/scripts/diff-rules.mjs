@@ -136,7 +136,7 @@ export function parseUnifiedDiff(text) {
  * text or null, `headFiles`
  * (tracked paths at head) and `importerCounts(paths)` (non-test files importing each).
  */
-export function evaluateDiff(files, changeLog, repo) {
+export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
   const blocking = [];
   const requiredTests = [];
   const requiredChecks = [];
@@ -180,7 +180,7 @@ export function evaluateDiff(files, changeLog, repo) {
   checkCapabilityRemovals(live, files, repo, logged, add);
   checkSpecChanges(files, changeLog, add);
   checkRestoredRemovalsDeepening(live, files, repo, changeLog, add);
-  checkComparators(live, repo, logged, add, changeLog);
+  checkComparators(live, repo, logged, add, changeLog, phase);
   checkUnusedExports(live, repo, logged, add);
   checkStorybookRules(files, repo, logged, add);
   requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo), ...sidebarOrderTests(files, repo), ...pathGateTests(live, (file) => repo.head(file)), ...storybookRuleTests(files, (file) => repo.head(file)), ...sharedComponentTests(live, repo, logged, add));
@@ -850,14 +850,15 @@ function readBlobs(worktree, base, files) {
  * Runs every rule on the session diff. `exclude` holds paths that are not the
  * session's work (local fixes); `isFrozenStory` is the base's v1.0 predicate
  * (storybook-taxonomy.mjs, by the base's scheme); `storyReplacements` holds
- * story files recorded as a sibling replacement's entry.
+ * story files recorded as a sibling replacement's entry; `phase` is the
+ * inventory's (only the pull-request phase writes tests).
  */
-export function runDiffRules({ worktree, base, changeLog, exclude = new Set(), isFrozenStory = () => false, storyReplacements = new Set() }) {
+export function runDiffRules({ worktree, base, changeLog, exclude = new Set(), isFrozenStory = () => false, storyReplacements = new Set(), phase = "pull-request" }) {
   const files = [...parseUnifiedDiff(git(worktree, ["diff", "--no-color", "--unified=0", "-M", base])), ...untrackedAsAdded(worktree)]
     .filter((file) => !exclude.has(file.path));
   const logFile = changeLog ?? path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-changes.md");
   const log = existsSync(logFile) ? readFileSync(logFile, "utf8") : "";
-  return evaluateDiff(files, log, gitRepo(worktree, base, isFrozenStory, storyReplacements));
+  return evaluateDiff(files, log, gitRepo(worktree, base, isFrozenStory, storyReplacements), phase);
 }
 
 /** Every tracked file importing each of `files` by its directory and stem, or by `./stem` beside it. */
