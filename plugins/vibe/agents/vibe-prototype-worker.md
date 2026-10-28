@@ -100,3 +100,9 @@ slug and ticket. `NEEDS_REVIEW`/`NEEDS_COMMIT` waits for the SAME writer/root
 sequence; `BLOCKED` includes exact publication evidence. `NEEDS_PERSON` is only
 a researched absolutely necessary unresolved product question or human-only
 action. End with the required Graph block. No PR is opened.
+A story or page named for the person to look at carries a link that opens it,
+never a bare story ID, path or route pattern: give its story ID or the page's
+real path for the example data, and the link comes from
+`../skills/vibe/scripts/vibe-sessions.mjs link`
+(`../skills/vibe/references/plain-words.md`, "Links to what the person should
+look at").

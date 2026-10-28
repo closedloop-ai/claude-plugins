@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.15
+
+A product manager asked her session for the first thing to look at and was told to open a story by its id, which designers and executives cannot open (ISS-13320). Whenever vibe points the person at something to look at, it now gives a link that opens that exact thing, built from the session record.
+
+#### Added
+- `vibe-sessions.mjs link --worktree <wt> --story <story id> [--local]` and `--page <path>` (`person-links.mjs`): a story link is the full Storybook UI on the verified deployed Storybook, otherwise on the local Storybook the session started while its process runs (`--local` for a story built since the last redeploy); a page link is the verified app URL plus the page's real path. It prints `url: null` with `missing: storybook|app` when nothing is deployed or running, and refuses an argument that is not a story id or a route pattern such as `[id]` or `:id`.
+- Eval `pm-look-first-gets-clickable-links`: asked what to look at first, the reply gives a clickable story or page link and no bare story id, path or route pattern.
+
+#### Changed
+- `plain-words.md` "Links to what the person should look at" is the rule's one statement: link text is the plain name the person sees, an id or path appears only beside a working link, and with no URL yet the session says so and offers to start it. The word table sends ids and paths there; the vibe and handoff skills, `environment.md` "Storybook links" and the change, verify, prototype, Storybook decomposer, primitive and handoff summarizer workers point at it.
+- The new-components notice builds each story link with `link --local` and names each story by its gallery name; the writer's `STORIES_READY` carries that name. The ready message after a deploy links each changed page or component, and handoff's closing message gives each item as a link.
+
 ### vibe v1.1.12
 
 Sessions the vibe and fleet scripts start no longer fill a desktop app's chat list with "Imported session" and raw JSON titles (ISS-13279).

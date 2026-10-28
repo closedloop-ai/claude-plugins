@@ -50,7 +50,9 @@ Keep your context for the conversation and session state; NEVER do the work:
   scratch commits use a fresh `proof/<sha>-<n>` ref.
 
 Every word the person sees follows `references/plain-words.md`, including
-worker text you relay.
+worker text you relay, and anything you point the person at to look at is a
+link that opens it (`references/plain-words.md`, "Links to what the person
+should look at").
 Follow `references/quality-loop.md` for the persistent writer, queue, review
 and communication. Never show technical plans or questions, except when the
 person explicitly asks for the plan, files, diff or commands: that one reply
@@ -804,7 +806,8 @@ evidence, never by replacing the writer.
    request and deploy it under section 6 without being asked (requests that
    waited through a running deploy go out together after the last of them);
    when the deploy is done, tell the person only the completed feature, that it's ready to
-   look at, and the next work, in their own terms, plus, plainly, each
+   look at with a link to each changed page (`vibe-sessions.mjs link --page`;
+   `references/plain-words.md`, "Links to what the person should look at"), and the next work, in their own terms, plus, plainly, each
    criterion the writer reported `not met yet` as not done yet; never claim it. The next queued
    request goes to the SAME ID/context. Update the session summary through
    the existing session script in a serial record turn.
@@ -843,13 +846,17 @@ what it already built, like any other request about it.
   `references/guardrails.md`, "Copy".
 - New Storybook components. When the plan needs NEW Storybook
   components, the writer builds those components and their stories before the
-  feature and returns `STORIES_READY` with each new story's ID. Take the local
-  `storybookUrl` from the session's stack (`vibe-sessions.mjs show`); if none
-  is running, dispatch `vibe-setup-worker` to start it. Send one plain message
-  pointing the person to `<storybookUrl>/?path=/story/<id>` for each new
-  story (never the bare `iframe.html` canvas; `references/environment.md`,
-  "Storybook links"), in words like "I built the new pieces first; you can
-  look at each one in the component gallery: <link>", with no mention of a
+  feature and returns `STORIES_READY` with each new story's ID and the name
+  the gallery shows for it. Build each link with
+  `node scripts/vibe-sessions.mjs link --worktree "<wt>" --story <id> --local`
+  (new stories are only on the local Storybook until the next redeploy); it
+  prints `<storybookUrl>/?path=/story/<id>` from the session's stack. If it
+  prints `url: null`, no local Storybook is running: dispatch
+  `vibe-setup-worker` to start it, then run `link` again. Send one plain
+  message linking each new story by its gallery name (never the bare `iframe.html` canvas; `references/environment.md`, "Storybook links")
+  and never a bare id (`references/plain-words.md`, "Links to what the
+  person should look at"), in words like "I built the new pieces first; you can
+  look at each one in the component gallery: [<gallery name>](<link>)", with no mention of a
   server, a story or Storybook, then resume the SAME writer to build the feature with them. A change
   that only reuses existing components skips this step.
 - Endings. In the first reply to a NEW session, include this one line as it
@@ -952,8 +959,9 @@ that waited, and one deploy after the last of them carries them all. A
    deployed, and updates the ticket. The quick checks have run in the
    loop; no tests are authored.
 5. On `DONE`, reload the app tab (and the Desktop and Storybook tabs if
-   open), look at it yourself, and tell them it's ready to look at,
-   naming plainly any acceptance criterion still `not met yet` (section 5,
+   open), look at it yourself, and tell them it's ready to look at, with a
+   link to each changed page or component (`references/plain-words.md`,
+   "Links to what the person should look at"), naming plainly any acceptance criterion still `not met yet` (section 5,
    step 7). When the session has a reference image, look at each touched
    screen beside it first: a visible difference is not ready, so resume the
    SAME writer with it and redeploy before saying ready. Never say it
