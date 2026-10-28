@@ -23,6 +23,14 @@
 // variables. `--skip` drops lanes only with a recorded operator ruling
 // (deadline mode), printing `SKIPPED-LANE <command> (<ruling>)` for each.
 //
+// A machine without the staging e2e identities (the e2e sign-in password in
+// neither the environment nor apps/app/.env.local) cannot run the local web
+// e2e lane: its teardown reaps as those identities and returns 401. There
+// `check` does not run or require that lane; it records it `not-run` at HEAD,
+// prints `NOT-RUN-LANE <command> (...)` and relies on the containerized or CI
+// run instead of stopping (operator ruling, 2026-10-28, ISS-13291). The Desktop
+// e2e lane is not a web lane and stays required.
+//
 // `run` runs a lane in the worktree and records its result; `record` takes a
 // result run elsewhere. Both refuse unless the worktree's HEAD is `--head`
 // with no modified tracked file (tested-head.mjs), and `run` records a failure
@@ -38,12 +46,39 @@ import { testedHead } from "./tested-head.mjs";
 
 const LANE_LINE = /^ {4}((?:[A-Za-z_][A-Za-z0-9_]*=(?:'(?:[^']|'\\'')*'|\S+)\s+)*(?:pnpm|npm|npx|yarn|node)\s.*?)(?:\s+\(.*\))?\s*$/;
 const NOTHING = /nothing to cover|No paths changed/i;
+// The repo's web Playwright lanes (`pnpm test:e2e`, `pnpm test:web-smoke`); a lane naming desktop is the Electron one.
+const WEB_E2E = /\b(?:test:e2e|test:web-smoke)\b/;
+const DESKTOP = /\bdesktop\b/i;
+// symphony-alpha e2e/helpers/sign-in.ts signs the primary identity in with this password; playwright.config.ts loads apps/app/.env.local.
+export const STAGING_IDENTITY_KEY = "DEVOPS_CLOSEDLOOP_APP_PWD";
+const ENV_LINE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/;
+export const NOT_RUN_NO_IDENTITY = "no staging e2e identities on this machine; the containerized or CI run covers it";
 
 /** The lane commands a lane report names, or null when it names none and does not say nothing changed. */
 export function reportLanes(report) {
   const all = [...new Set(report.split("\n").map((line) => LANE_LINE.exec(line)?.[1]).filter(Boolean))];
   if (all.length === 0) return NOTHING.test(report) ? [] : null;
   return all;
+}
+
+/** Whether a lane is the repo's local web e2e lane. */
+export function isWebE2eLane(lane) {
+  return WEB_E2E.test(lane) && !DESKTOP.test(lane);
+}
+
+/** Whether this machine has the staging e2e identities the web e2e lane signs in and tears down as. */
+export function hasStagingE2eIdentity(worktree, env = process.env) {
+  if (env[STAGING_IDENTITY_KEY]?.trim()) {
+    return true;
+  }
+  const file = path.join(worktree, "apps", "app", ".env.local");
+  if (!existsSync(file)) {
+    return false;
+  }
+  return readFileSync(file, "utf8").split("\n").some((line) => {
+    const match = ENV_LINE.exec(line);
+    return match?.[1] === STAGING_IDENTITY_KEY && match[2].replace(/^(['"])(.*)\1$/, "$2").trim() !== "";
+  });
 }
 
 /** Lanes with no passing record at `head`. */
@@ -92,11 +127,20 @@ function main(argv) {
       return 2;
     }
     const skip = values.skip ? new RegExp(values.skip, "i") : null;
-    const lanes = named.filter((lane) => !skip?.test(lane));
+    const records = readRecords(values.worktree);
+    const notRun = hasStagingE2eIdentity(values.worktree) ? []
+      : named.filter((lane) => !skip?.test(lane) && isWebE2eLane(lane) && missingLanes([lane], records, head).length);
+    const lanes = named.filter((lane) => !skip?.test(lane) && !notRun.includes(lane));
     for (const lane of named.filter((lane) => skip?.test(lane))) process.stdout.write(`SKIPPED-LANE ${lane} (${values["skip-ruling"].trim()})\n`);
-    const missing = missingLanes(lanes, readRecords(values.worktree), head);
+    if (notRun.length) {
+      const kept = records.filter((record) => !(notRun.includes(record.command) && record.head === head));
+      const at = new Date().toISOString();
+      writeFileSync(recordsFile(values.worktree), `${JSON.stringify([...kept, ...notRun.map((lane) => ({ command: lane, head, result: "not-run", reason: NOT_RUN_NO_IDENTITY, at }))], null, 2)}\n`);
+      for (const lane of notRun) process.stdout.write(`NOT-RUN-LANE ${lane} (${NOT_RUN_NO_IDENTITY})\n`);
+    }
+    const missing = missingLanes(lanes, records, head);
     for (const lane of missing) process.stdout.write(`MISSING-LANE ${lane}: run it, with pre-pr-lanes.mjs run --head <HEAD> --command "${lane}"\n`);
-    process.stdout.write(`pre-pr lanes: ${lanes.length} lanes, ${missing.length} missing at ${head.slice(0, 10)}\n`);
+    process.stdout.write(`pre-pr lanes: ${lanes.length} lanes, ${missing.length} missing${notRun.length ? `, ${notRun.length} not run locally` : ""} at ${head.slice(0, 10)}\n`);
     return missing.length === 0 ? 0 : 1;
   }
   throw new Error("Usage: pre-pr-lanes.mjs record|check ...");

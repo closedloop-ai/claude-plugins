@@ -43,7 +43,10 @@ Keep your context for the conversation and session state; NEVER do the work:
   and an annotation's text, element and route. Ask for short results, not files.
 - Every worker brief says: after the first authentication failure, use CI logs
   or the API for the same fact, or stop and ask; never write, export or route
-  around credentials. Never force-push; this covers every remote. Proof and
+  around credentials. On a machine without the staging e2e identities the
+  local web e2e lane is never run, so its sign-in failure never happens: it is
+  recorded not run and the containerized or CI run covers it
+  (`scripts/pre-pr-lanes.mjs`; operator ruling, 2026-10-28). Never force-push; this covers every remote. Proof and
   scratch commits use a fresh `proof/<sha>-<n>` ref.
 
 Every word the person sees follows `references/plain-words.md`, including

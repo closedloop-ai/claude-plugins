@@ -399,7 +399,10 @@ changes and gates fields.
    tools; `node ../skills/vibe/scripts/pr-preflight.mjs --title "<title>" --body-file <file> --worktree "<wt>" --base <inventory.baseCommit>`
    must pass. First `node ../skills/vibe/scripts/pre-pr-lanes.mjs check --worktree "<wt>" --report <the repo's lane report output>`
    must pass (each test lane the report names has a passing run recorded at
-   HEAD; `BLOCKED` with its `MISSING-LANE` lines otherwise). Create it with
+   HEAD; `BLOCKED` with its `MISSING-LANE` lines otherwise). On a machine
+   without the staging e2e identities it records the local web e2e lane not
+   run (`NOT-RUN-LANE`) instead; the body's Test plan says that lane was not
+   run locally and relies on the containerized or CI run. Create it with
    `gh pr create --repo closedloop-ai/symphony-alpha --base main --head <branch> --title "<title>" --body-file <file>`,
    the body file in the session's private git directory and named for the
    live ticket (`pr-body-<live ticket slug>.md`), never a shared name such as
