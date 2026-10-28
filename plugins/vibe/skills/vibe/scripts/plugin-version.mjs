@@ -51,9 +51,9 @@
 // block is never shown twice. `check` given --closedloop and --graph does the
 // same in the same run, so startup is one command.
 // In Codex's default sandbox (CODEX_SANDBOX_NETWORK_DISABLED=1) main cannot be
-// read and the startup record cannot be saved: `check` then skips the network
-// and adds {"escalate":true,"justification"}, and the orchestrator runs the
-// same command again with escalated permissions (ISS-13315). A record that
+// read and the startup record cannot be saved: `check` then adds
+// {"escalate":true,"justification"}, and the orchestrator runs the same
+// command again with escalated permissions (ISS-13315). A record that
 // could not be saved is reported as `recordError`; the command still exits 0.
 // When vibe itself is outdated, `sessions` names each vibe session in the
 // remembered checkout whose writer is bound to an older vibe release, which
@@ -89,7 +89,6 @@ const COMMANDS = Object.freeze(["check", "choose", "update", "pending", "adopt",
 const HARNESS_LABEL = Object.freeze({ claude: "Claude Code", codex: "Codex" });
 const STATUS_PLUGINS = Object.freeze(["closedloop-core", "vibe"]);
 const DEFAULT_TIMEOUT_MS = 5_000;
-const SANDBOX_REASON = "Codex's sandbox has no network";
 export const ESCALATION_JUSTIFICATION = "Check whether vibe is up to date";
 const CLI_TIMEOUT_MS = 30_000;
 const UPDATE_TIMEOUT_MS = 180_000;
@@ -212,7 +211,7 @@ export function updateCommands(harness, cli, outdated) {
 
 /** Runs the whole check; never throws. */
 export async function checkVersions({ clis = {}, latestBase = LATEST_BASE, timeoutMs = DEFAULT_TIMEOUT_MS, fetchImpl = fetch, env = process.env, home = os.homedir() } = {}) {
-  const fetchText = sandboxWithoutNetwork(env) ? async () => ({ reason: SANDBOX_REASON }) : cachedFetch(fetchImpl, timeoutMs);
+  const fetchText = cachedFetch(fetchImpl, timeoutMs);
   const harnesses = [];
   for (const harness of [Harness.Claude, Harness.Codex]) {
     harnesses.push(await checkHarness(harness, clis[harness] ?? findCli(harness, env, home), latestBase, fetchText));
@@ -402,11 +401,17 @@ export function localInstalled({ clis = {}, env = process.env, home = os.homedir
 }
 
 /**
- * True inside Codex's sandbox with the network off (Codex's default "Ask for approval" mode),
- * where main cannot be read and nothing outside the workspace can be written.
+ * True when this check ran inside Codex's sandbox and the sandbox stopped it: the turn's
+ * sandbox has no network (Codex's default "Ask for approval" mode), and main could not be
+ * reached or the record could not be written. Codex sets CODEX_SANDBOX_NETWORK_DISABLED for
+ * every command of such a turn, escalated ones included (seen on codex-cli 0.163.0-alpha.11.2,
+ * ISS-13315), so the variable alone never decides it: an escalated run reaches main and saves.
  */
-export function sandboxWithoutNetwork(env = process.env) {
-  return env.CODEX_SANDBOX_NETWORK_DISABLED === "1";
+export function blockedBySandbox(result, recordError, env = process.env) {
+  if (env.CODEX_SANDBOX_NETWORK_DISABLED !== "1") {
+    return false;
+  }
+  return /EPERM|EACCES/.test(recordError ?? "") || /could not be reached/.test(result.reason ?? "");
 }
 
 /**
@@ -674,11 +679,9 @@ async function main(argv, env, home) {
       record.statusShown = previous.statusShown;
     }
     const shown = withConnections ? setupCheck(record, record, connections, conversation, now) : null;
-    // A run inside the sandbox is run again escalated, and that run is the one the person sees.
-    const escalating = sandboxWithoutNetwork(env);
     let recordError;
     try {
-      store.write(escalating ? record : (shown?.next ?? record));
+      store.write(shown?.next ?? record);
       if (!values.worktree && !values.state) {
         sweepStartup(home, now);
       }
@@ -686,7 +689,16 @@ async function main(argv, env, home) {
       recordError = error.message;
     }
     // In Codex's default sandbox main cannot be read and the record cannot be saved; the
-    // orchestrator reruns this same command with escalated permissions (one "Allow once").
+    // orchestrator reruns this same command with escalated permissions (one "Allow once"),
+    // and that run's block is the one the person sees.
+    const escalating = blockedBySandbox(record, recordError, env);
+    if (escalating && shown?.next && !recordError) {
+      try {
+        store.write(record);
+      } catch {
+        // The escalated rerun saves it.
+      }
+    }
     const escalate = escalating ? { escalate: true, justification: ESCALATION_JUSTIFICATION } : {};
     return { code: 0, output: { ...record, ...(shown?.output ?? {}), ...(recordError ? { recordError } : {}), ...escalate, state: store.where } };
   }

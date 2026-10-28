@@ -295,9 +295,10 @@ permissions from the first try (`sandbox_permissions: "require_escalated"`,
 justification "Check whether vibe is up to date"): it reads the latest
 release from GitHub and saves this conversation's result outside the
 workspace, and Codex's sandbox blocks both (`references/preflight.md`,
-"Commands the sandbox blocks"). An output with `"escalate":true` ran in the
-sandbox: run the same command again escalated before you reply, and use the
-first output only if the person declines. It runs once per conversation, so
+"Commands the sandbox blocks"). An output with `"escalate":true` from a run
+without escalation was stopped by the sandbox: run the same command again
+escalated before you reply, and use the first output only if the person
+declines. An escalated run's output is final. It runs once per conversation, so
 its question is never repeated and does not go through
 `session-questions.mjs`.
 
@@ -306,8 +307,8 @@ its question is never repeated and does not go through
   command could not run at all (no Node yet on a first run): the check never
   blocks. Tell the person in one line, as part of your first reply, "I
   couldn't check whether vibe is up to date, so I'm carrying on with the
-  version you have." and continue. A sandboxed `unknown` with
-  `"escalate":true` is not this case.
+  version you have." and continue. An `unknown` with `"escalate":true` from a
+  run without escalation is not this case.
 - `outdated`, new or resumed, unless the opening message already says to
   proceed: ask exactly "A newer version of vibe is available (<versions>). Do
   you want me to update it now, or keep going with this one? Keeping going

@@ -242,7 +242,7 @@ def test_vibe_and_the_fleet_show_the_setup_check_once_per_conversation() -> None
     fleet = section((PLUGIN_ROOT / "skills" / "fleet-orchestrator" / "SKILL.md").read_text(), "## Setup")
     for phrase in (
         "Setup check, once per chat, from that same check run",
-        "with `--closedloop <state> --graph <state>` added as vibe's [Plugin version](../vibe/SKILL.md#plugin-version) says",
+        "with the two connection flags added as vibe's [Plugin version](../vibe/SKILL.md#plugin-version) says",
         "never handed to the operator",
     ):
         assert phrase in fleet, phrase

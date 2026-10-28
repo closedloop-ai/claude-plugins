@@ -606,28 +606,36 @@ test("with no check of this conversation, the setup check still lists the versio
   ].join("\n"));
 });
 
-test("inside Codex's sandbox the check reads no network, keeps the local versions and asks to run again escalated (ISS-13315)", async (t) => {
+test("a check the Codex sandbox stopped asks to run again escalated; the escalated run completes and shows the block (ISS-13315)", async (t) => {
   const { home, bin } = sandbox(t);
   const main = await marketplace(t, { files: mainFiles({ vibe: "1.1.13", "closedloop-core": "1.5.3" }) });
   const codex = fakeCli(bin, "codex", { installed: [{ name: "closedloop-core", version: "1.5.3" }, { name: "vibe", version: "1.1.12" }] });
-  const sandboxed = { CODEX_SANDBOX: "seatbelt", CODEX_SANDBOX_NETWORK_DISABLED: "1" };
-  const { code, result } = await run(home, ["check", "--codex", codex.file, "--latest-base", main.url, "--closedloop", "connected", "--graph", "not-connected"], sandboxed);
-  assert.equal(code, 0);
-  assert.equal(result.status, "unknown");
-  assert.equal(result.escalate, true);
-  assert.equal(result.justification, "Check whether vibe is up to date");
-  assert.deepEqual(main.requests, [], "the sandbox has no network, so main is never asked");
-  assert.match(result.block, /- Codex: closedloop-core 1\.5\.3 \(couldn't check for a newer version\), vibe 1\.1\.12 \(couldn't check for a newer version\)/);
+  // Codex sets these for every command of an "Ask for approval" turn, escalated ones included.
+  const turn = { CODEX_SANDBOX: "seatbelt", CODEX_SANDBOX_NETWORK_DISABLED: "1" };
+  const args = ["check", "--codex", codex.file, "--closedloop", "connected", "--graph", "not-connected"];
+  const sandboxed = await run(home, [...args, "--latest-base", UNREACHABLE], turn);
+  assert.equal(sandboxed.code, 0);
+  assert.equal(sandboxed.result.status, "unknown");
+  assert.equal(sandboxed.result.escalate, true);
+  assert.equal(sandboxed.result.justification, "Check whether vibe is up to date");
+  assert.match(sandboxed.result.block, /- Codex: closedloop-core 1\.5\.3 \(couldn't check for a newer version\), vibe 1\.1\.12 \(couldn't check for a newer version\)/);
+  assert.equal(startup(home).statusShown, undefined, "the sandboxed run never marks the block shown");
 
-  // The same command run again escalated (outside the sandbox) completes the comparison and shows the block for this conversation.
-  const escalated = await run(home, ["check", "--codex", codex.file, "--latest-base", main.url, "--closedloop", "connected", "--graph", "not-connected"]);
+  // The escalated rerun keeps the turn's variables but reaches main and saves: no escalation, a completed block.
+  const escalated = await run(home, [...args, "--latest-base", main.url], turn);
   assert.equal(escalated.result.status, "outdated");
   assert.equal(escalated.result.escalate, undefined);
+  assert.equal(escalated.result.recordError, undefined);
   assert.equal(escalated.result.print, true);
   assert.match(escalated.result.block, /- Codex: closedloop-core 1\.5\.3 \(latest\), vibe 1\.1\.12 \(1\.1\.13 available\)/);
   assert.equal(startup(home).statusShown.graph, "not-connected");
-  const later = await run(home, ["check", "--codex", codex.file, "--latest-base", main.url, "--closedloop", "connected", "--graph", "connected"]);
+  const later = await run(home, [...args, "--latest-base", main.url], turn);
   assert.equal(later.result.print, false);
+
+  // Outside Codex an unreachable main is plain unknown, never an escalation.
+  const elsewhere = await run(home, [...args, "--latest-base", UNREACHABLE], { CLAUDE_CODE_SESSION_ID: "conversation-5" });
+  assert.equal(elsewhere.result.status, "unknown");
+  assert.equal(elsewhere.result.escalate, undefined);
 });
 
 test("a check whose record cannot be saved still answers, shows the block and says why, and status does the same (ISS-13315)", async (t) => {
