@@ -224343,6 +224343,7 @@ var recordActionSchema = external_exports.enum([
   "desktop",
   "share",
   "discard",
+  "handover",
   "pull-request"
 ]);
 var requestContinuationSchema = external_exports.object({

@@ -12185,6 +12185,7 @@ var recordModes = {
     redeploy: ["create_document_version"],
     flags: ["create_document_version"],
     desktop: ["create_document_version"],
+    handover: ["create_document_version"],
     "pull-request": []
   },
   "vibe-prototype-worker": { share: ["create_document_version"] }
@@ -12201,6 +12202,7 @@ var recordActionSchema = external_exports.enum([
   "desktop",
   "share",
   "discard",
+  "handover",
   "pull-request"
 ]);
 var requestContinuationSchema = external_exports.object({
@@ -12244,6 +12246,9 @@ var recordContextSchema = external_exports.object({
 }).strict();
 function isPublisherContext(input) {
   return input.mode === "record" && input.exclusiveRecordTurn === true && (input.agentName === "vibe-environment-worker" && ["create", "redeploy"].includes(input.recordAction ?? "") || input.agentName === "vibe-prototype-worker" && input.recordAction === "share");
+}
+function isHandoverContext(input) {
+  return input.mode === "record" && input.exclusiveRecordTurn === true && input.agentName === "vibe-environment-worker" && input.recordAction === "handover";
 }
 function resolveRecordContext(input) {
   if (input.mainSyncValidation && (input.agentName !== "vibe-change-worker" || input.mode !== "record" || input.recordAction !== "progress" || !input.exclusiveRecordTurn || input.mainSyncValidation.transactionId !== input.mainSyncTransactionId || !input.publicationPurpose || input.sessionless)) {
@@ -12735,7 +12740,7 @@ function boundDefinition(definition, input) {
   const phasePolicy = persistent ? "Current phase, test-authoring and test-repair authority come only from the orchestrator's top-level turn envelope, separate from raw input text. Only an explicit pull-request turn in that envelope, sent because the person asked for a pull request, may author tests. Never author tests in plan, request, fix, handoff, record or build turns, or infer authority from the person's words. A request, fix or handoff turn with test-repair authority may only repair existing tests and fixtures your own change broke (imports, renamed or retired symbols, setup, type errors) without changing what any test asserts; never add a test file. Delete a test file or case only when it covers nothing but code the request retires, recorded with retired-tests.mjs and the ticket or PRD that retires it; a test of live behavior is only repaired. " : `This is mode ${input.mode}. Never write or edit tests. `;
   const prompt = `${definition.prompt}
 
-Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join7(definition.root, "agents")}. ` + (isPublisherContext(input) ? "Never start another implementation writer or commit. Normal pushes are permitted only through the owned main-sync publication gate. " : "Never start another implementation writer, commit, or push. ") + phasePolicy + (reader ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : "") + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
+Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join7(definition.root, "agents")}. ` + pushPolicy(input) + phasePolicy + (reader ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : "") + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
   const agent = {
     description: definition.metadata.description,
     prompt,
@@ -12744,6 +12749,15 @@ Runtime binding: work only in ${input.worktree}. Resolve this canonical definiti
     ...definition.skills.length ? { skills: definition.skills } : {}
   };
   return { agent, reader, tools };
+}
+function pushPolicy(input) {
+  if (isPublisherContext(input)) {
+    return "Never start another implementation writer or commit. Normal pushes are permitted only through the owned main-sync publication gate. ";
+  }
+  if (isHandoverContext(input)) {
+    return "Never start another implementation writer or commit. Push only the current commit to the session's branch, once, through the repository's normal pre-push checks; never forced or with checks skipped. ";
+  }
+  return "Never start another implementation writer, commit, or push. ";
 }
 async function runWorker(rawInput) {
   const input = launchSchema.parse(rawInput);

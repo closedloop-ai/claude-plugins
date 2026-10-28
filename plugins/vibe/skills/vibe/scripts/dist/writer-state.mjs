@@ -12216,6 +12216,7 @@ var recordModes = {
     redeploy: ["create_document_version"],
     flags: ["create_document_version"],
     desktop: ["create_document_version"],
+    handover: ["create_document_version"],
     "pull-request": []
   },
   "vibe-prototype-worker": { share: ["create_document_version"] }
@@ -12232,6 +12233,7 @@ var recordActionSchema = external_exports.enum([
   "desktop",
   "share",
   "discard",
+  "handover",
   "pull-request"
 ]);
 var requestContinuationSchema = external_exports.object({

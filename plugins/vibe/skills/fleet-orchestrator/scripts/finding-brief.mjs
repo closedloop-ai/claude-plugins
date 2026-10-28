@@ -46,7 +46,8 @@ export function findingProblems(findings, exists = existsSync) {
 /**
  * Touched-surface findings that have neither a fixing commit nor a follow-up
  * ticket. A QA pass that found nothing has nothing to dispose of and passes
- * (ISS-13321); only a findings file that is not a list is refused.
+ * rather than needing an invented finding; only a findings file that is not
+ * a list is refused.
  */
 export function dispositionProblems(findings) {
   if (!Array.isArray(findings)) return ["findings must be a list, [] when QA found nothing"];

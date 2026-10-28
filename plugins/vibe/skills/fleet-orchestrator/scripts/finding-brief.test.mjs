@@ -80,7 +80,7 @@ test('a VQA finding on a touched surface blocks closeout without a fix or ticket
   assert.deepEqual(dispositionProblems(undefined), ['findings must be a list, [] when QA found nothing']);
 });
 
-test('a clean QA pass with no findings clears the disposition gate (ISS-13321)', (t) => {
+test('a clean QA pass with no findings clears the disposition gate, never needing an invented finding', (t) => {
   assert.deepEqual(dispositionProblems([]), []);
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'finding-brief-clean-')));
   t.after(() => rmSync(root, { recursive: true, force: true }));
