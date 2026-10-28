@@ -289,7 +289,7 @@ reasoning effort `high`.
 
 ### Evals
 
-`evals/` holds a `claude plugin eval` suite of 95 one-turn rehearsals. Each
+`evals/` holds a `claude plugin eval` suite of 96 one-turn rehearsals. Each
 case carries the session state in its prompt, so it needs no symphony-alpha
 checkout. Cases are named by persona: `exec-` for someone who describes the
 work and passes it on, `pm-` for someone who iterates from reference

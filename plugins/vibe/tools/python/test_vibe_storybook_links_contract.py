@@ -79,7 +79,8 @@ def test_every_worker_that_reports_story_links_points_at_the_rule() -> None:
 
 def test_no_plugin_file_uses_the_canvas_link_form_except_the_rule_itself() -> None:
     holders = [path.name for path in plugin_text_files() if CANVAS_LINK.search(path.read_text())]
-    assert holders == ["environment.md"]
+    # frozen-render.mjs loads the canvas in a headless browser to render one story; it gives no link to anyone (ISS-13291).
+    assert holders == ["frozen-render.mjs", "environment.md"]
 
 
 def test_every_story_path_uses_the_full_ui_form() -> None:

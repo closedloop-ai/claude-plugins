@@ -236,8 +236,8 @@ evidence:
   never a capture of your own. The base URL is the repo's Storybook served
   from a disposable detached worktree at the base commit, bootstrapped with
   `.closedloop-ai/loops-setup.sh` and removed afterwards; the head URL is the
-  session's own Storybook. It renders each story ID on both with one
-  viewport, waits for the play to finish and judges it with
+  session's own Storybook. It renders each story ID on both with fixed
+  args, globals and viewport, waits for the play to finish and judges it with
   `story-play-verdict.mjs`. Each `differs` entry is a finding. Each
   `knownMainFailures` entry fails the same way on the base: it is not a
   finding and goes on the live ticket as a Known main failure. When nothing
