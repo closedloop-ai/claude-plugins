@@ -17,8 +17,9 @@ script you would have run.
 
 Session state:
 - The person just typed: "$vibe I want to change how the projects board groups cards". This is a new conversation; no session exists yet.
-- `node scripts/plugin-version.mjs check --runtime codex` returned `{"status":"unknown","reason":"the marketplace could not be reached: fetch failed"}`.
-- The preflight passed and both connections answer.
+- You called ClosedLoop `get-me` and closedloop-graph `sync_status`; both answered.
+- `node scripts/plugin-version.mjs check --runtime codex --closedloop connected --graph connected`, run with escalated permissions (the person clicked Allow once), returned `{"status":"unknown","reason":"the marketplace could not be reached: fetch failed","print":true,"block":"Setup check\n- Codex: closedloop-core 1.5.3 (couldn't check for a newer version), vibe 1.1.13 (couldn't check for a newer version)\n- ClosedLoop connection: connected\n- closedloop-graph connection: connected"}`.
+- The preflight passed.
 
 Answer in exactly this form, and nothing else:
 REPLY: <the message you would send the person now, word for word, or NONE if you would send nothing>

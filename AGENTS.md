@@ -48,6 +48,7 @@ This repository is a plugin monorepo under `plugins/`.
 - Recommended branches: `feat/*`, `fix/*`, `docs/*`, `refactor/*`.
 - PR workflow: fork, create topic branch from `main`, rebase onto upstream, then open PR from your fork.
 - PR description should include purpose, affected plugins/files, and exact commands run.
+- A PR that changes `plugins/vibe` needs `node tools/vibe-release-smoke/smoke.mjs` run on its final commit (a Mac with the ChatGPT app signed in) and its pass in the PR description, before it merges. It is a release step, not a CI check (CI cannot sign in to ChatGPT), so nothing enforces it but the release process (CONTRIBUTING.md, "Plugin Version Management"). Unit tests and evals feed script output in the prompt and cannot see Codex's sandbox (ISS-13315).
 - Do not manually edit `CHANGELOG.md` or `README.md` for plugin changes; after code changes are final, run the repo's `/update-documentation` workflow so generated documentation satisfies the changelog requirement enforced by `.githooks/pre-push`.
 
 ## Security & Configuration Tips

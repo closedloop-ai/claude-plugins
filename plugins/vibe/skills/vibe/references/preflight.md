@@ -90,7 +90,11 @@ These are checked by the skill, not the script:
 In Codex's default "Ask for approval" mode a command runs in a sandbox that
 can write only inside the workspace and has no network. So `codex mcp add`
 fails ("failed to persist config ... Operation not permitted"), and
-`codex mcp login`, `gh auth login` and installers fail on the network. Never
+`codex mcp login`, `gh auth login` and installers fail on the network. The
+startup `plugin-version.mjs check` reads the latest release from GitHub and
+saves its result under `~/.codex/vibe`, so it fails the same way; it is run
+escalated from the first try (`SKILL.md`, section 1, "Plugin version"), with
+the justification "Check whether vibe is up to date". Never
 hand such a command to the person or send them to the Terminal app. Run the
 same command again with your shell tool's escalated permissions
 (`sandbox_permissions: "require_escalated"`) and a plain `justification`

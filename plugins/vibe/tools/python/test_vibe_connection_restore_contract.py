@@ -220,22 +220,29 @@ def test_the_terminal_guard_rejects_the_reported_github_step() -> None:
 
 
 def test_vibe_and_the_fleet_show_the_setup_check_once_per_conversation() -> None:
-    check = section((VIBE / "SKILL.md").read_text(), "### Setup check")
+    # ISS-13315: the connection states ride on the version check itself, one escalated command in Codex.
+    version = section((VIBE / "SKILL.md").read_text(), "### Plugin version")
     for phrase in (
-        "Once per conversation, right after the version check",
-        "`node scripts/plugin-version.mjs status --closedloop <state> --graph <state>`",
+        "Call ClosedLoop `get-me` and closedloop-graph `sync_status` yourself first",
+        "`node scripts/plugin-version.mjs check --runtime codex --closedloop <state> --graph <state>`",
         "`connected` only when that call answered in this conversation",
         "never assume either",
+    ):
+        assert phrase in version, phrase
+    check = section((VIBE / "SKILL.md").read_text(), "### Setup check")
+    for phrase in (
+        "When the check prints `\"print\":true`",
         "opens your first reply word for word, before the version question or the endings line",
         "`\"print\":false` means this conversation already showed it",
+        "`node scripts/plugin-version.mjs status --closedloop <state> --graph <state>` prints the same block from the versions installed here",
         "A `not connected` line starts \"Restoring a connection\" at once",
     ):
         assert phrase in check, phrase
     assert 'the setup check block, once per conversation (section 1, "Setup check")' in flat((VIBE / "SKILL.md").read_text())
     fleet = section((PLUGIN_ROOT / "skills" / "fleet-orchestrator" / "SKILL.md").read_text(), "## Setup")
     for phrase in (
-        "Setup check, once per chat, right after the version check",
-        "run it as vibe's [Setup check](../vibe/SKILL.md#setup-check) says (both connection calls first, then `plugin-version.mjs status`), adding `--state <orchDir>/plugin-version.json`",
+        "Setup check, once per chat, from that same check run",
+        "with the two connection flags added as vibe's [Plugin version](../vibe/SKILL.md#plugin-version) says",
         "never handed to the operator",
     ):
         assert phrase in fleet, phrase
