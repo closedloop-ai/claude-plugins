@@ -89,13 +89,16 @@ test('state files round trip, are absent until saved, and must name a thread and
 
 test('nextState binds a session to its first cwd and keeps model and effort between turns', () => {
   assert.throws(() => nextState(null, { effort: 'high' }), /a new session needs --cwd/);
-  assert.throws(() => nextState(null, { cwd: '/wt', effort: 'high', model: 'm1' }), /a new session needs --ticket/);
   assert.throws(() => nextState(null, { cwd: '/wt', ticket: 'ISS-1' }), /a new session needs --effort/);
   assert.throws(() => nextState(null, { cwd: '/wt', ticket: 'ISS-1', effort: 'high' }), /a new session needs --model/);
   assert.deepEqual(nextState(null, { cwd: '/wt', ticket: 'ISS-1', model: 'm1', effort: 'high' }), {
     threadId: undefined, cwd: '/wt', model: 'm1', effort: 'high', sandbox: undefined, turns: [], ticket: 'ISS-1',
   });
   assert.throws(() => nextState({ threadId: 'T1', cwd: '/wt', ticket: 'ISS-1', turns: [] }, { ticket: 'ISS-2' }), /session is for ISS-1/);
+  // A single-use run, or an older caller, has no ticket; the session still starts.
+  assert.deepEqual(nextState(null, { cwd: '/wt', model: 'm1', effort: 'high' }), {
+    threadId: undefined, cwd: '/wt', model: 'm1', effort: 'high', sandbox: undefined, turns: [],
+  });
   const saved = { threadId: 'T1', cwd: '/wt', model: 'm1', effort: 'medium', sandbox: 'workspace-write', turns: [{ turnId: 'u1' }] };
   assert.deepEqual(nextState(saved, { cwd: '/wt' }), saved);
   assert.equal(nextState(saved, { model: 'm2' }).model, 'm2');
@@ -304,4 +307,14 @@ test('an ended session refuses steer, and turn unarchives the thread before resu
   const state = loadState(dir, 'w1');
   assert.equal(state.ended, undefined);
   assert.equal(state.archivedAt, undefined);
+});
+
+test('a new session without --ticket starts and its thread is named by the session name alone', async () => {
+  const { dir, promptFile } = workDir();
+  const client = stubClient({ ...SIDEBAR, 'thread/start': { thread: { id: 'T1' } }, 'turn/start': { turn: { id: 'U1' } } });
+  const line = await run(client, parseCli(['turn', dir, 'w1', '--prompt-file', promptFile, '--cwd', '/wt', '--model', 'm', '--effort', 'high']));
+  assert.equal(line, 'w1 turn T1 U1');
+  assert.deepEqual(client.calls.find((call) => call.method === 'thread/name/set').params, { threadId: 'T1', name: 'w1' });
+  assert.ok(client.calls.some((call) => call.method === 'thread/section/move'));
+  assert.equal(loadState(dir, 'w1').ticket, undefined);
 });

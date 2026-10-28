@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.2
+### vibe v1.1.5
 
 Sessions the vibe and fleet scripts start no longer fill a desktop app's chat list with "Imported session" and raw JSON titles (ISS-13279).
 
@@ -15,14 +15,13 @@ Sessions the vibe and fleet scripts start no longer fill a desktop app's chat li
 - A guard test (`thread-sidebar.test.mjs`) fails when any plugin or `tools/*/src` script calls `thread/start` without `labelWorkerThread`, or runs headless `claude -p`/`--print` without `--name` or `--no-session-persistence`.
 
 #### Changed
-- `codex-session.mjs turn` needs `--ticket <slug>` for a new session; its thread is named `<name> · <ticket>` and moved into "Fleet workers" right after `thread/start`. A resumed session is never renamed or moved.
+- `codex-session.mjs turn` takes an optional `--ticket <slug>` for a new session; its thread is named `<name> · <ticket>`, or `<name>` without one, and moved into "Fleet workers" right after `thread/start`. A resumed session is never renamed or moved.
 - cl-sweep ticket worker threads are named `cl-sweep · <ticket>` and moved into "Fleet workers" right after `thread/start`.
 - `claude-worker.mjs` passes `--name "vibe <role> · <session slug> · <request id>"` to every Claude worker run; sessions are still saved.
 - `claude-usage.mjs` runs `claude -p --no-session-persistence /usage`, and `precedent-check.mjs` adds `--no-session-persistence` to its headless `claude -p --chrome` look.
 - fleet-orchestrator's QA-guide launch adds `--name "QA guide · PR <n>"`.
 - vibe `INSTALL.md` and fleet-orchestrator `references/setup.md` explain that the Codex app's Import from Claude and Keep imports in sync turn saved Claude sessions into sidebar chats, and how to keep them out; cl-sweep `execution-surfaces.md` says when to run `end`.
 - `fleet.sh` ships `thread-sidebar.mjs` for remote sessions, and a test walks `codex-session.mjs`'s imports so an unshipped module fails.
-- The vibe version pin moves from the 1.1.1 Storybook contract test to `test_vibe_112_version_contract.py`.
 ### vibe v1.1.4
 
 The plugin README now says what vibe is, who it is for (executives, designers, product managers and engineers) and what a session looks like before the reference material (ISS-13281). No skill or agent behavior changes.

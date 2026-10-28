@@ -4,8 +4,8 @@
 //   node codex-session.mjs last  <stateDir> <name> [--count <n>]
 //   node codex-session.mjs end   <stateDir> <name> --reason stopped|merged
 // `turn` starts a thread bound to --cwd when <stateDir>/<name>.json does not exist (a new session also needs
-// --ticket, --model, --effort and a prompt that starts with `$vibe`, since every writer is a vibe session), otherwise resumes the thread it names, then starts a turn with the prompt file's text. `steer` adds the prompt to the active turn.
-// A new thread is named `<name> · <ticket>` and moved into the Codex app's "Fleet workers" sidebar section.
+// --model, --effort and a prompt that starts with `$vibe`, since every writer is a vibe session), otherwise resumes the thread it names, then starts a turn with the prompt file's text. `steer` adds the prompt to the active turn.
+// A new thread is named `<name> · <ticket>` (`<name>` without --ticket) and moved into the Codex app's "Fleet workers" sidebar section.
 // `end` records the writer stopped or merged in its state file, then archives its thread; it refuses a thread
 // with a running turn. A later `turn` on an ended session unarchives the thread first.
 // A prompt that hands over another writer's work (a `Done:` line) also needs a `Re-verify:` line: takeover
@@ -122,7 +122,6 @@ export function nextState(saved, options) {
     throw new Error(`session is bound to ${saved.cwd}; start a new session name for ${options.cwd}`);
   }
   if (!saved && !options.cwd) throw new Error('a new session needs --cwd');
-  if (!saved && !options.ticket) throw new Error('a new session needs --ticket (its thread is named `<name> · <ticket>`)');
   if (saved && options.ticket && saved.ticket && options.ticket !== saved.ticket) {
     throw new Error(`session is for ${saved.ticket}; start a new session name for ${options.ticket}`);
   }

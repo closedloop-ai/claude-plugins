@@ -9,8 +9,9 @@ import { readThreadState } from './liveness.mjs';
 export const FLEET_SECTION_NAME = 'Fleet workers';
 export const END_REASONS = Object.freeze(['stopped', 'merged']);
 
+/** `<writer> · <ticket>`, or the writer alone when there is no ticket (a single-use run). */
 export function workerThreadName(writer, ticket) {
-  return `${writer} · ${ticket}`;
+  return ticket ? `${writer} · ${ticket}` : writer;
 }
 
 /** The id of the "Fleet workers" section, created when missing. Several with that name: the oldest (UUIDv7). */
