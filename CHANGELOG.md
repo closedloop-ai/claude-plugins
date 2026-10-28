@@ -22,6 +22,7 @@ Sessions the vibe and fleet scripts start no longer fill a desktop app's chat li
 - fleet-orchestrator's QA-guide launch adds `--name "QA guide · PR <n>"`.
 - vibe `INSTALL.md` and fleet-orchestrator `references/setup.md` explain that the Codex app's Import from Claude and Keep imports in sync turn saved Claude sessions into sidebar chats, and how to keep them out; cl-sweep `execution-surfaces.md` says when to run `end`.
 - `fleet.sh` ships `thread-sidebar.mjs` for remote sessions, and a test walks `codex-session.mjs`'s imports so an unshipped module fails.
+- The vibe version pin moves from the 1.1.1 Storybook contract test to `test_vibe_112_version_contract.py`.
 ### vibe v1.1.1
 
 Two Storybook mistakes the first Storybook handoff review found (ISS-13167) are now raised at placement, before the writer builds the stories, instead of only at handoff (ISS-13182).
