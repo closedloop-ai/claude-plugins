@@ -4,6 +4,25 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.13
+
+The startup version check and setup check work in the Codex app's default "Ask for approval" mode, and a release smoke now runs the real plugin build in a real Codex session before every vibe release (ISS-13315).
+
+#### Fixed
+- `plugin-version.mjs check` inside Codex's sandbox (`CODEX_SANDBOX_NETWORK_DISABLED=1`) no longer reports a network failure as an answer: it skips the network and returns `"escalate":true` with the justification "Check whether vibe is up to date", and SKILL.md runs the check escalated from the first try in Codex (one "Allow once"). Before, the sandboxed check returned `unknown`, the person was told "I couldn't check whether vibe is up to date", and the record write failed silently.
+- The setup check block always lists the installed closedloop-core and vibe versions for each installed harness, each marked `latest`, `<version> available` or `couldn't check for a newer version`. With no check of this conversation, `status` reads the installed versions locally instead of printing "the version check has not run in this conversation".
+- A startup record that cannot be saved (the sandbox refusing `~/.codex/vibe/plugin-version`) is reported as `recordError` by `check` and by `status`; `status` no longer exits 1 on it and still prints the block. A sandboxed check never marks the block shown, so the escalated rerun shows it.
+
+#### Changed
+- Startup is one command: `get-me` and `sync_status` first, then `plugin-version.mjs check --closedloop <state> --graph <state>` prints the setup check block in the same run; the block is sent before any other file is read or worker started. `status` stays for a check that could not run. fleet-orchestrator's Setup follows the same order.
+- `references/preflight.md` ("Commands the sandbox blocks") and `INSTALL.md` ("Updating") name the version check's one "Allow once".
+- Evals: `exec-setup-check-block-first-reply` and `exec-version-unreachable-carries-on` follow the one-command startup; new `exec-version-sandboxed-runs-escalated`.
+
+#### Added
+- `tools/vibe-release-smoke/smoke.mjs`: installs `plugins/vibe` and `plugins/closedloop-core` as committed at `--ref` into a throwaway Codex home, drives a real session through the ChatGPT app's bundled Codex app server with approval policy `on-request` and the `workspace-write` sandbox, sends `$vibe pick up where I left off`, and fails unless the first reply's setup check shows the installed versions with a completed latest-version comparison, no "has not run" or "couldn't check" line, a saved record, and arrives within 90 seconds. It fails on vibe 1.1.12 and passes on 1.1.13.
+- CI job "Vibe Release Smoke Receipt": a pull request that changes `plugins/vibe` fails until `tools/vibe-release-smoke/receipt.json` records a passing smoke of exactly its `plugins/vibe` and `plugins/closedloop-core` trees (`node tools/vibe-release-smoke/smoke.mjs --receipt`, run on a Mac with the ChatGPT app signed in). There is no Claude Code smoke yet: Claude Code reads its sign-in from the real config's keychain entry, so an isolated headless run is not signed in.
+- The README's runtime line says 1.1.13.
+
 ### vibe v1.1.12
 
 Sessions the vibe and fleet scripts start no longer fill a desktop app's chat list with "Imported session" and raw JSON titles (ISS-13279).

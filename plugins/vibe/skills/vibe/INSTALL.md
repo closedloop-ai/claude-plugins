@@ -97,8 +97,12 @@ in Codex, and in Claude Code when that is installed too, with claude-plugins
 going, saying that an older version could give worse results, and records the
 answer. On update it runs the commands below for the marketplace each plugin
 came from, in each app that has an outdated plugin, checks the new version is
-installed, then asks them to quit and reopen the ChatGPT app. When the check
-cannot reach GitHub, the session carries on and says so.
+installed, then asks them to quit and reopen the ChatGPT app. In the app's
+default "Ask for approval" mode the check needs one "Allow once" (it reads
+GitHub and saves its result outside the workspace, which the sandbox blocks).
+When the check still cannot reach GitHub, the session carries on and says so.
+The first reply's setup check lists the installed closedloop-core and vibe
+versions either way.
 
 To update by hand, check which version is installed and where the `closedloop-ai` marketplace
 comes from:
