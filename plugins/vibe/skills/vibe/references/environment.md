@@ -308,7 +308,14 @@ not silently included or discarded. A clean result needs no extra local commit.
    source continuation. The SAME registered writer extends its existing
    session table/local canonical plan before source fixes and checks frozen
    earlier behavior/interactions against the merged result. All conflicts,
-   generated source and fixes stay with that writer; no new tests are written
+   generated source and fixes stay with that writer. A merge that conflicts
+   only on the Storybook version file and Version History (main ships a
+   Storybook release several times a day) is settled with
+   `node <plugin-root>/skills/vibe/scripts/storybook-version-merge.mjs --worktree "<wt>"`:
+   main's version bumped by the session's own level, both entries kept, the
+   session's on top; the writer then updates its entry's counts to the
+   merged tree (ISS-13321). Any other conflict, or its refusal, the writer
+   resolves as before. No new tests are written
    unless the person asked for a pull request, and the writer only repairs
    existing tests the merge broke (`guardrails.md`, "Tests").
 3. Only the root commits the staged merge/fixes through the existing commit

@@ -227980,7 +227980,7 @@ function checkRecipe(value, receipt) {
     e2eLimitations.push(...discoverRequiredE2eLanes(root, receipt));
     commands.push({ argv: ["pnpm", "check:source-gates"] }, { argv: ["pnpm", "typecheck:affected"] });
   }
-  const filter = `...[${receipt.validationSince}]`;
+  const filter = `...[${receipt.mainSha}]`;
   commands.push({ argv: ["pnpm", "turbo", "typecheck", `--filter=${filter}`, "--concurrency=1"] });
   if (files.some((file) => file.includes(".stories.") || file.startsWith("apps/storybook/") || file.startsWith("packages/design-system/"))) {
     commands.push({ argv: ["pnpm", "--filter", "storybook", "validate:catalog"] });
@@ -228012,7 +228012,7 @@ function executeChecks(value, receipt, preparedRecipe) {
           const start2 = performance2.now();
           selection = commandSelection(value.place.root, command, remainingBudget(MAX_CHECK_MS, drySpent[index]));
           drySpent[index] += performance2.now() - start2;
-          if (command.argv[1] === "turbo" && !selection?.tasks.length && git(value.place.root, ["diff", "--name-only", receipt.validationSince, "HEAD"])) {
+          if (command.argv[1] === "turbo" && !selection?.tasks.length && git(value.place.root, ["diff", "--name-only", receipt.mainSha, "HEAD"])) {
             throw new MainSyncError("Pinned validation selected no tasks for changed inputs; no executed coverage was established");
           }
           assertIdentity(value.place.root, before);

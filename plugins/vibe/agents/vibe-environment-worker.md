@@ -223,10 +223,9 @@ every conflict/source problem. Do not run a raw merge/commit/push yourself.
      typecheck and Biome on the changed source, no test suites.
    - At handoff the matrix adds the source gates, the Storybook catalog check
      when stories changed, and the typecheck of every package the session
-     changed since `<since>` plus the packages that depend on them
-     (`pnpm turbo typecheck --filter="...[<since>]"`, where `<since>` is the
-     session's `vercel.lastDeployedCommit`, or its `baseCommit` before the
-     first deploy). There is still no broad or full test suite: the verify
+     changed against the main it captured, plus the packages that depend on
+     them (`pnpm turbo typecheck --filter="...[<mainSha>]"`), so a main merge
+     never widens it by main's own changes (ISS-13321). There is still no broad or full test suite: the verify
      worker runs the tests `code_tests_for` selects for each changed file,
      and CI runs the broad suites.
    - The shared executor owns fixed selected process budgets and the
