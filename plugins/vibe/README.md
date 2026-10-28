@@ -202,8 +202,10 @@ requests, one writer on one pull request, or a session with no writer
 (design, research, analysis). It covers who may write where, state that
 survives a reboot or compaction, Codex budget rules, a Claude takeover of a
 stopped Codex writer, CPU and shared e2e stack locks across machines,
-agent-first QA and a lessons ledger. `fleet.sh` starts, steers and reads Codex
-threads on this machine or over ssh.
+agent-first QA and a lessons ledger. `fleet.sh` starts, steers, reads and ends
+Codex threads on this machine or over ssh; each new thread is named for its
+writer and grouped in the Codex app's "Fleet workers" sidebar section, and an
+ended one is archived.
 
 ### `codex-fleet-monitor`
 
@@ -318,7 +320,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.4` contains 12 skills, 16 agents, and one hook manifest
+Version `1.1.5` contains 12 skills, 16 agents, and one hook manifest
 (`hooks/hooks.json`). It has no standalone commands, root-level shell scripts,
 or production Python tools under `tools/python/`; that directory contains the
 skill-contract test modules and `vibe_contract_text.py`, the text helpers they

@@ -21,6 +21,7 @@ Sessions the vibe and fleet scripts start no longer fill a desktop app's chat li
 - `claude-usage.mjs` runs `claude -p --no-session-persistence /usage`, and `precedent-check.mjs` adds `--no-session-persistence` to its headless `claude -p --chrome` look.
 - fleet-orchestrator's QA-guide launch adds `--name "QA guide · PR <n>"`.
 - vibe `INSTALL.md` and fleet-orchestrator `references/setup.md` explain that the Codex app's Import from Claude and Keep imports in sync turn saved Claude sessions into sidebar chats, and how to keep them out; cl-sweep `execution-surfaces.md` says when to run `end`.
+- The README's runtime line says 1.1.5, and its `fleet-orchestrator` section says `fleet.sh` also ends threads and names and groups new ones.
 - `fleet.sh` ships `thread-sidebar.mjs` for remote sessions, and a test walks `codex-session.mjs`'s imports so an unshipped module fails.
 ### vibe v1.1.4
 
