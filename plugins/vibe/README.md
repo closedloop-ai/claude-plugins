@@ -1,16 +1,26 @@
 # vibe
 
-vibe lets a person change the ClosedLoop product (symphony-alpha) by
-describing what they want in plain words. It is built for executives, product
-managers and other people who do not write code. They work from the in-app
-browser in Codex Desktop, or from Claude Code, and never touch git, a terminal
-command or the backend.
+vibe lets a person change the ClosedLoop product (symphony-alpha) by saying
+what they want in plain words. They work from the in-app browser in Codex
+Desktop, or from Claude Code, and nobody in a session has to touch git, a
+terminal command or the backend. Each change is built for them and deployed to
+their own copy of the app on Vercel, which they sign in to as themselves. They
+look at the real product with their change in it, ask for more, and when they
+are done vibe either opens a pull request they take through review and merge,
+or passes the work to the next owner, usually design and then engineering.
 
-Each change is built for them and deployed to the person's own copy of the app
-on Vercel, which they sign in to as themselves. They look at the real
-product with their change in it, ask for more, and when they are done vibe
-either opens a pull request they take through review and merge, or passes the
-work to the next owner, usually design and then engineering.
+It is built for executives, designers, product managers and engineers:
+
+- **Executives and product managers** describe a change in plain words, or
+  point at the screen and comment, and see it working in the real product a
+  few minutes later.
+- **Designers** work from a reference screenshot or iterate on the look of a
+  screen. vibe maps what the reference shows onto the design system's tokens
+  and components, compares each touched screen with it (in light and dark
+  where the screen has both), and can run a visual QA pass when the change is ready to polish.
+- **Engineers** build fast with the same guardrails, Storybook rules and
+  handoff review as everyone else, and take the pull request through review
+  and merge themselves.
 
 Everything a session does is recorded on a live ClosedLoop ticket, so whoever
 picks the work up next sees what was asked for, what was built and what is
@@ -306,7 +316,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.2` contains 12 skills, 16 agents, and one hook manifest
+Version `1.1.4` contains 12 skills, 16 agents, and one hook manifest
 (`hooks/hooks.json`). It has no standalone commands, root-level shell scripts,
 or production Python tools under `tools/python/`; that directory contains the
 skill-contract test modules and `vibe_contract_text.py`, the text helpers they

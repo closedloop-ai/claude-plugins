@@ -4,12 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.2
+### vibe v1.1.4
 
-The plugin README now says what vibe is, who it is for and what a session looks like before the reference material (ISS-13281). No skill or agent behavior changes.
+The plugin README now says what vibe is, who it is for (executives, designers, product managers and engineers) and what a session looks like before the reference material (ISS-13281). No skill or agent behavior changes.
 
 #### Changed
-- `plugins/vibe/README.md` opens with what vibe lets a non-engineer do, walks through a session end to end, then lists the guarantees behind the result, the other skills, and the reference sections (installation, invocation names, agents, evals, runtime files). The scattered ruling dates are gone, apart from the Storybook `Start Here/` ruling a contract test pins.
+- `plugins/vibe/README.md` opens with what vibe does and how each of its users works with it, walks through a session end to end, then lists the guarantees behind the result, the other skills, and the reference sections (installation, invocation names, agents, evals, runtime files). The scattered ruling dates are gone, apart from the Storybook `Start Here/` ruling a contract test pins.
 - The agents table no longer credits `vibe-requirements-worker` with "help-center precedent research": precedent is live Asana observed in the operator's signed-in browser, and reference mode is listed separately. The README's notice text no longer says reference mode reads a product's public documentation.
 - The main-sync validation proof rules that only the README stated (the `.biome-noscan.jsonc` byte match, package proof digests, report admission and the 4,096 context ceiling, and what never counts as coverage proof) moved to `skills/vibe/references/environment.md`, "What the validation proof accepts".
 - `test_vibe_storybook_fixtures_names_contract.py` drops its 1.1.1 release-number pin.
