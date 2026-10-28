@@ -18,6 +18,7 @@
 // otherwise. A record is `<records dir>/<project>.json`.
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { escalation, isSandboxRefusal } from "./sandbox-refusal.mjs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -83,11 +84,21 @@ function main(argv) {
     return 2;
   }
   const input = { project: values.project, worktree: values.worktree, head: values.head, command, records: values.records };
-  if (action === "record") { recordImages(input); return 0; }
+  if (action === "record") {
+    try { recordImages(input); }
+    catch (error) {
+      if (!isSandboxRefusal(error)) throw error;
+      process.stdout.write(`${JSON.stringify(escalation(error, ESCALATION_JUSTIFICATION))}\n`);
+      return 1;
+    }
+    return 0;
+  }
   const problem = imageProblem(input);
   if (problem) process.stderr.write(`${problem}\n`);
   return problem ? 1 : 0;
 }
+
+export const ESCALATION_JUSTIFICATION = "Record which version the automatic checks' setup was built from";
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   process.exitCode = main(process.argv.slice(2));

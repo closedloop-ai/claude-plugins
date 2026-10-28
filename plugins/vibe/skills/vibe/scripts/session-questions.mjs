@@ -38,6 +38,7 @@
 // Every command prints one JSON object; errors print {"ok":false,"error":...}.
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { escalation, isSandboxRefusal } from "./sandbox-refusal.mjs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -228,11 +229,14 @@ function run(argv, home = os.homedir()) {
   }
 }
 
+export const ESCALATION_JUSTIFICATION = "Save the questions for this vibe session";
+
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
     process.stdout.write(`${JSON.stringify({ ok: true, ...run(process.argv.slice(2)) })}\n`);
   } catch (error) {
-    process.stdout.write(`${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })}\n`);
+    process.stdout.write(`${JSON.stringify({ ok: false, ...(isSandboxRefusal(error) ? escalation(error, ESCALATION_JUSTIFICATION)
+      : { error: error instanceof Error ? error.message : String(error) }) })}\n`);
     process.exit(1);
   }
 }
