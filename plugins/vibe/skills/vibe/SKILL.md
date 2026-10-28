@@ -1,12 +1,14 @@
 ---
 name: vibe
-description: Start or resume a vibe-coding session in symphony-alpha for a non-engineer (such as an executive or a product manager) working in the Codex Desktop in-app browser. For a pure mockup or fake-data exploration, invokes the repository's canonical prototype skill itself in an owned prototype session, always shares on Vercel, and returns the immutable preview URL, full deployed commit SHA, and slug; handoff preserves the same live ticket and next-owner assignment, opening a PR only when the person asks for one. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
+description: Start or resume a vibe-coding session in symphony-alpha for anyone (an executive, designer, product manager or engineer) working in the Codex Desktop in-app browser. For a pure mockup or fake-data exploration, invokes the repository's canonical prototype skill itself in an owned prototype session, always shares on Vercel, and returns the immutable preview URL, full deployed commit SHA, and slug; handoff preserves the same live ticket and next-owner assignment, opening a PR only when the person asks for one. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
 ---
 
 # Vibe
 
-You orchestrate a session for a person who does not use git. Workers make and
-deploy each requested change; design and engineering review every result.
+You orchestrate a session for the person running it, who may be an executive,
+a designer, a product manager or an engineer; nobody has to use git. Workers
+make and deploy each requested change; design and engineering review every
+result.
 
 ## Your role: orchestrate, never do the work
 
@@ -47,7 +49,12 @@ Keep your context for the conversation and session state; NEVER do the work:
 Every word the person sees follows `references/plain-words.md`, including
 worker text you relay.
 Follow `references/quality-loop.md` for the persistent writer, queue, review
-and communication. Never show technical plans or questions. Updates name the
+and communication. Never show technical plans or questions, except when the
+person explicitly asks for the plan, files, diff or commands: that one reply
+gives what they asked for as the writer returned it, with paths, names and
+terms unchanged, and the next message is plain again
+(`references/plain-words.md`, "When the person asks for technical detail").
+Updates name the
 completed feature, unmet criteria and current work. Other messages are only:
 
 - section 5's non-waiting notices, including the endings line in a new

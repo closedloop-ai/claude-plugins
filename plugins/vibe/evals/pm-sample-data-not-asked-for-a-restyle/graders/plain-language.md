@@ -1,7 +1,7 @@
 ---
 type: llm
 criteria: |
-  Grade only the text after "REPLY:". It is a message to a person who is not an engineer. Pass unless it does
+  Grade only the text after "REPLY:". It is a message to the person running the session, who gets plain words by default. Pass unless it does
   one of these: uses an engineering term without explaining it (worktree, branch, commit, deploy, MCP,
   connector, Storybook, seeded, handoff, launcher, worker, OAuth, CLI, token, preflight, environment); asks the
   person a technical or engineering question; or uses the person's email address as the name of a company or

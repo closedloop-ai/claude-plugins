@@ -1,10 +1,13 @@
 # Plain words for the person
 
-The person running a vibe session is not an engineer. Some describe the work
-and pass it on; others bring screenshots and may open the pull request
-themselves. Neither should have to learn how the work is built. Every message the person sees, from the orchestrator or
-relayed from a worker, uses plain words: setup, progress, notices, questions,
-sample data and errors alike.
+The person running a vibe session may be an executive, a designer, a product
+manager or an engineer. Some describe the work and pass it on; others bring
+screenshots and may open the pull request themselves. Nobody should have to
+learn how the work is built. Plain words are the default for everyone: every
+message the person sees, from the orchestrator or relayed from a worker, uses
+them, setup, progress, notices, questions, sample data and errors alike. The
+one exception is a reply to an explicit request for technical detail ("When
+the person asks for technical detail", below).
 
 Before sending a message, replace every term on the left. A term that is not
 listed but would only make sense to an engineer gets the same treatment:
@@ -43,3 +46,23 @@ Two more rules:
 - Never repeat a question that is waiting for an answer, and never ask one
   that was already answered; `scripts/session-questions.mjs` keeps both
   (`SKILL.md`, "Questions are asked once").
+
+## When the person asks for technical detail
+
+When the person explicitly asks for technical detail, such as the plan, the
+files changed, the diff or the commands that ran, give it in that reply. Take
+it from the same writer: its last result, or resume it for its local plan,
+changed files or diff when the last result does not carry them. You still read
+no source yourself. The table above does not apply to that reply: relay it as
+the writer gave it, keeping repo-relative paths, file names, component, route
+and code names and engineering terms as they are rather than translating them,
+and give only what was asked for: asking for the files is not asking for the
+diff.
+
+Only that reply carries it. The next message goes back to plain words, and an
+update the person did not ask for never carries technical detail, even after
+an earlier request for it. Showing the plan is never asking the person to
+approve it, and it does not open technical questions to the person: those are
+still resolved internally. The plan's safety rules still apply
+(`quality-loop.md`, "Local plan"): no local absolute paths, usernames, secrets
+or credentials.

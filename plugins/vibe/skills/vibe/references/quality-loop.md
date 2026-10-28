@@ -10,7 +10,10 @@ migration below. After migration, SAME writer means the ledger's current writer.
 ## Communication and product questions
 
 Do not show or ask the person to approve a technical plan, ask a technical
-question, or give an upfront summary. Updates say only which requested feature
+question, or give an upfront summary. When the person explicitly asks for the
+plan, files, diff or commands, that one reply gives them, and approval is
+still never asked (`plain-words.md`, "When the person asks for technical
+detail"). Updates say only which requested feature
 is complete, which of its acceptance criteria are not done yet ("Acceptance
 criteria before ready"), and what is being worked on next, using the person's
 own words; after visual QA they also say what it found and changed ("Visual QA

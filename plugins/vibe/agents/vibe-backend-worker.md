@@ -124,5 +124,6 @@ the session's plan, as its PLN.
 `DONE` with existing or needed endpoint/type contracts, `Owner: <path>`,
 migration/seed considerations and evidence for the sole writer. Never claim
 advice was built. Or `NEEDS_PERSON`
-with the product question, phrased for a non-engineer. Or `BLOCKED` with why.
+with the product question, phrased in plain words for the person running the
+session. Or `BLOCKED` with why.
 End with the Graph block (`closedloop-graph.md`).

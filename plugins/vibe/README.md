@@ -291,7 +291,7 @@ reasoning effort `high`.
 
 ### Evals
 
-`evals/` holds a `claude plugin eval` suite of 93 one-turn rehearsals. Each
+`evals/` holds a `claude plugin eval` suite of 95 one-turn rehearsals. Each
 case carries the session state in its prompt, so it needs no symphony-alpha
 checkout. Cases are named by persona: `exec-` for someone who describes the
 work and passes it on, `pm-` for someone who iterates from reference
@@ -301,7 +301,7 @@ fleet orchestrator. Tags select a group, for example:
 - how a session ends: `pr-intent`, `pass-on`, `unclear-end`, `pr-path`,
   `post-pr`, `pr-facts`;
 - setup and questions: `setup`, `sample-data`, `questions`, `precedent`,
-  `version-check`;
+  `version-check`, `technical-detail`;
 - visual work: `visual-cues` (reference screenshots, light and dark, tokens),
   `visual-qa`, `storybook`;
 - handoff decisions: `main-failures`, `review-lessons`, `review-gates`,
@@ -334,7 +334,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.7` contains 12 skills, 16 agents, and one hook manifest
+Version `1.1.10` contains 12 skills, 16 agents, and one hook manifest
 (`hooks/hooks.json`). It has no standalone commands, root-level shell scripts,
 or production Python tools under `tools/python/`; that directory contains the
 skill-contract test modules and `vibe_contract_text.py`, the text helpers they
