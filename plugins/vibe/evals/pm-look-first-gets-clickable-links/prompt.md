@@ -21,8 +21,6 @@ Session state:
   `DONE. New story composites-guided-tour--mid-run (gallery name "Guided Tour / Mid Run") shows the tour paused on step 2. Changed page: the session page, real path /acme-co/sessions/ses-9f2c for the example data (route apps/app/app/(authenticated)/[orgSlug]/sessions/[sessionId]/page.tsx). Every touched criterion met.`
 - The change is saved and the deploy finished. `vibe-sessions.mjs show --worktree "<wt>"` returns, in part:
   `"vercel": {"appUrl": "https://app-stage-git-vibe-guided-tour.preview.closedloop-stage.ai", "storybookUrl": "https://prototypes-git-vibe-guided-tour.preview.closedloop-stage.ai/storybook", "verifiedAt": "2026-10-28T15:00:00Z"}, "stack": {"storybookUrl": "http://localhost:6123", "storybookPid": 51234}`
-- `vibe-sessions.mjs link --worktree "<wt>" --story composites-guided-tour--mid-run` returns `{"ok": true, "url": "https://prototypes-git-vibe-guided-tour.preview.closedloop-stage.ai/storybook/?path=/story/composites-guided-tour--mid-run", "source": "deployed"}`.
-- `vibe-sessions.mjs link --worktree "<wt>" --page /acme-co/sessions/ses-9f2c` returns `{"ok": true, "url": "https://app-stage-git-vibe-guided-tour.preview.closedloop-stage.ai/acme-co/sessions/ses-9f2c", "source": "deployed"}`.
 - Visual QA was offered with the ready message and declined. `session-questions.mjs list --worktree "<wt>"` returns that one answered question. Nothing is queued.
 
 The person now says: "what should I look at first? tell me in plain words"

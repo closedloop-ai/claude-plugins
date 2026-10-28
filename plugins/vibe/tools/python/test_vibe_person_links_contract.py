@@ -52,6 +52,9 @@ def test_the_rule_is_stated_once_in_plain_words() -> None:
         "The link text is the plain name the person sees in the product",
         "A story id, file path, component name or route pattern is never the thing the person is told to open; "
         "one may appear only beside a working link to it",
+        "Never link the app's front page and give directions from there",
+        "for one state of a component (a step partway through, an error, an empty list), its entry in the "
+        "component gallery, which opens on that state",
         "This section is the rule's one canonical statement",
         '`node scripts/vibe-sessions.mjs link --worktree "<wt>" --story <story id>` or `--page <path>`',
         "a story on the deployed environment's Storybook once the environment is verified, otherwise on the local "

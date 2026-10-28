@@ -57,7 +57,11 @@ exact thing in one click. The link text is the plain name the person sees in
 the product: the page's or screen's name, or the component and its state as
 the gallery names it, such as [Guided tour, mid run](<link>). A story id, file
 path, component name or route pattern is never the thing the person is told
-to open; one may appear only beside a working link to it. This section is the
+to open; one may appear only beside a working link to it. Never link the
+app's front page and give directions from there ("go to the dashboard, start
+the tour, step to step 2"): link the page itself, or, for one state of a
+component (a step partway through, an error, an empty list), its entry in the
+component gallery, which opens on that state. This section is the
 rule's one canonical statement, for every skill and worker whose words reach
 the person.
 
