@@ -79,6 +79,7 @@ export const DEFAULT_NOW = "2026-01-01T12:00:00.000Z";
 const DEFAULT_VIEWPORT = Object.freeze({ width: 1280, height: 800 });
 const DEFAULT_TIMEOUT_MS = 20_000;
 const VIEWPORT = /^(\d{2,5})x(\d{2,5})$/;
+const WHITESPACE_RUN = /\s+/g;
 const FINISH_EVENTS = Object.freeze(["storyFinished", "storyThrewException", "storyErrored", "playFunctionThrewException", "storyMissing", "unhandledErrorsWhilePlaying"]);
 const Side = Object.freeze({ Base: "base", BaseAgain: "base-again", Head: "head" });
 export const StoryFileChange = Object.freeze({ Unchanged: "unchanged", Repaired: "repaired", Changed: "changed" });
@@ -253,8 +254,9 @@ function baseText(repo, base, file) {
   return execFileSync("git", ["-C", repo, "show", `${base}:${file}`], { encoding: "utf8", maxBuffer: GIT_MAX_BUFFER, stdio: ["ignore", "pipe", "pipe"] });
 }
 
+/** The verdict reason and failure text on one line, so each story stays one line of output. */
 function describePlay(render) {
-  return `${render.reason}${render.failure?.message ? `: ${render.failure.message}` : ""}`;
+  return `${render.reason}${render.failure?.message ? `: ${render.failure.message.replace(WHITESPACE_RUN, " ").trim()}` : ""}`;
 }
 
 function playChange(base, again, head) {

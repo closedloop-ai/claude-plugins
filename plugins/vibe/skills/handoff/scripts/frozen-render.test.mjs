@@ -168,6 +168,13 @@ test("a base whose play outcome varies clears only when the branch matches one o
   assert.equal(classifyStory(fail("x"), fail("x"), pass).reason, "play FAIL on the base, PASS on the branch");
 });
 
+test("a multi-line failure message stays on its story's one line", () => {
+  const fail = (message) => ({ verdict: "FAIL", reason: "playFunctionThrewException fired", failure: { type: "playFunctionThrewException", message }, pixels: "f" });
+  const message = "Unable to find role \"button\"\n\n  Here are the accessible roles:\n    status:";
+  const story = { storyId: "s--x", ...classifyStory(fail(message), fail(message), fail(message)) };
+  assert.equal(story.reason, "fails the same way on the base: playFunctionThrewException fired: Unable to find role \"button\" Here are the accessible roles: status:");
+});
+
 test("a play that threw is never identical, even when Storybook reports it finished with success", () => {
   const base = { verdict: "PASS", reason: "ok", failure: null, pixels: "same" };
   const head = { verdict: "FAIL", reason: "playFunctionThrewException fired", failure: { type: "playFunctionThrewException", message: null }, pixels: "same" };
