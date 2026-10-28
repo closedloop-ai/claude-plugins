@@ -4,6 +4,20 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.8
+
+vibe's text no longer assumes the person running a session is not an engineer: it is for executives, designers, product managers and engineers (ISS-13292, operator ruling, 2026-10-28). Plain words stay the default for everyone, and one new rule lets the person get technical detail when they ask for it. This is not an engineer mode.
+
+#### Added
+- `skills/vibe/references/plain-words.md`, "When the person asks for technical detail": when the person explicitly asks for the plan, the files changed, the diff or the commands that ran, that one reply gives what they asked for as the writer returned it, with paths, names and terms unchanged and the plain-words table set aside. The next message goes back to plain words, an update the person did not ask for never carries technical detail, showing the plan never asks for approval, and the plan's safety rules still apply. `SKILL.md` and `references/quality-loop.md` carry the same exception where they say technical plans are never shown.
+- Two eval cases, tag `technical-detail`. `pm-asked-for-plan-and-files` (the person asks for the plan and the files): Claude (sonnet) 3 of 3 here and 0 of 3 on 1.1.4; Codex 3 of 3 here and 0 of 3 on 1.1.4. On 1.1.4 Claude refused the file paths in 2 of 3 runs and translated the plan into plain words in all 3, and Codex listed the files but translated the plan. `pm-unprompted-update-stays-plain` (an update after an earlier request for files): 3 of 3 in both harnesses, here and on 1.1.4.
+- `test_vibe_role_neutral_contract.py`: no skill, agent, eval grader or Codex manifest text says the person is a non-engineer or does not use git, both descriptions name all four roles, and the new rule and its pointers are present. All 4 cases fail on 1.1.4.
+
+#### Changed
+- Role-neutral wording in the `vibe` skill description and opening, the Codex `longDescription`, `plain-words.md`, `INSTALL.md`, `vibe-handoff-summarizer`, `vibe-guardrails-reviewer` and `vibe-backend-worker`.
+- The 13 `plain-language` eval graders describe the reader as the person running the session, who gets plain words by default, instead of a person who is not an engineer. Their pass criteria are unchanged.
+- The suite counts move from 87 to 89 cases in `plugins/vibe/README.md`, `evals/codex/README.md` and the pinned count in `evals/codex/test_run.py`.
+
 ### vibe v1.1.4
 
 The plugin README now says what vibe is, who it is for (executives, designers, product managers and engineers) and what a session looks like before the reference material (ISS-13281). No skill or agent behavior changes.
