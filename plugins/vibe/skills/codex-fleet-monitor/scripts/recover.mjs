@@ -174,6 +174,16 @@ function defined(object) {
 }
 
 /** The cwd, model, effort and sandbox a fleet-orchestrator state file records, so a resume keeps them. */
+/** A session fleet-orchestrator ended (`codex-session.mjs end`): its thread is archived and never resumed here. */
+export function endedSession(spec, stateDir) {
+  if (spec.includes('=')) return false;
+  try {
+    return Boolean(JSON.parse(readFileSync(`${stateDir}/${spec}.json`, 'utf8')).ended);
+  } catch {
+    return false;
+  }
+}
+
 export function savedOptions(spec, stateDir) {
   if (spec.includes('=')) return {};
   try {
@@ -236,6 +246,7 @@ export async function recoverPass({ stateDir, specs, config, connect, restart, n
     for (const spec of specs) {
       let session;
       try {
+        if (endedSession(spec, stateDir)) continue;
         session = parseSession(spec, stateDir);
         const { thread, turn } = await readThreadState(client, session.threadId);
         sessions.push({ ...session, options: savedOptions(spec, stateDir), thread, turn });

@@ -157,3 +157,12 @@ claude-plugins `main`.
 | `$vibe` | Start something new, or pick up where they left off |
 | "redeploy" (in a vibe session) | Put the latest changes on their Vercel copy of the app |
 | `$handoff` | Check and finish the work's ticket and hand it to whoever they name to pick it up next (usually design, then engineering) |
+
+## Worker chats in the Codex app sidebar
+
+Vibe's Claude workers save their sessions, and the Codex app's Import from
+Claude (Settings, Import from another AI app) turns each saved Claude session
+into a chat in the sidebar; with Keep imports in sync on, it imports new ones
+every 12 hours. Each worker chat is titled `vibe <role> · <session> · <request>`.
+To keep them out of the sidebar, leave recent chats out of a Claude import and
+turn Keep imports in sync off. Vibe never changes the app's settings.

@@ -2,13 +2,14 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPTS = fileURLToPath(new URL('.', import.meta.url));
 const FLEET = join(SCRIPTS, 'fleet.sh');
 const TIMEOUT = { timeout: 20_000 };
+const RELATIVE_IMPORT = /^import [^;]*? from '(\.{1,2}\/[^']+)';/gms;
 
 /**
  * An orchestration dir plus a bin dir that shadows `node` (prints its argv, one per line) and `ssh`
@@ -73,6 +74,28 @@ test('a remote session ships the scripts and prompt file and runs in the remote 
   }
   assert.equal(readFileSync(join(shipped, 'w1-01-start.md'), 'utf8'), 'Start.\n');
   assert.match(readFileSync(join(f.root, 'ssh-args'), 'utf8'), /^-o\nConnectTimeout=10\n-o\nServerAliveInterval=15\nbox\n/);
+});
+
+// A module codex-session.mjs imports that fleet.sh does not ship fails every remote session at load time.
+test('a remote session ships every module codex-session.mjs imports, transitively', TIMEOUT, () => {
+  const f = fixture();
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
+  const result = f.run(['remote', 'session', 'last', 'w1']);
+  assert.equal(result.status, 0, result.stderr);
+  const shipped = join(f.root, 'remote', 'sessions', '.fleet-orchestrator');
+  const skills = join(SCRIPTS, '..', '..');
+  const pending = ['fleet-orchestrator/scripts/codex-session.mjs'];
+  const seen = new Set();
+  while (pending.length) {
+    const file = pending.pop();
+    if (seen.has(file)) continue;
+    seen.add(file);
+    assert.ok(existsSync(join(shipped, file)), `${file} is imported but not shipped`);
+    for (const [, spec] of readFileSync(join(skills, file), 'utf8').matchAll(RELATIVE_IMPORT)) {
+      pending.push(relative(skills, join(skills, dirname(file), spec)));
+    }
+  }
+  assert.ok(seen.has('codex-fleet-monitor/scripts/thread-sidebar.mjs'));
 });
 
 test('remote without REMOTE_HOST fails and names the missing key', TIMEOUT, () => {

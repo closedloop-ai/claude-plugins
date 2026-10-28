@@ -12823,7 +12823,9 @@ async function runWorker(rawInput) {
       "--allowedTools",
       bound.tools.join(","),
       resume ? "--resume" : "--session-id",
-      workerId
+      workerId,
+      "--name",
+      workerSessionName(input.agentName, place.branch, input.requestId)
     ];
     const launch = launchProcess(args, bound.tools, place.root, JSON.stringify({
       requestId: input.requestId,
@@ -13155,9 +13157,14 @@ function capCheckpoint(root, gitDir, turnId) {
   }
 }
 runFromCanonicalEntry(import.meta.url, main);
+function workerSessionName(agentName, branch, requestId) {
+  const role = agentName.replace(/^vibe-/, "").replaceAll("-", " ");
+  return `vibe ${role} \xB7 ${branch.replace(/^vibe\//, "")} \xB7 ${requestId}`;
+}
 export {
   boundDefinition,
   capWorkerResult,
   main,
-  runWorker
+  runWorker,
+  workerSessionName
 };

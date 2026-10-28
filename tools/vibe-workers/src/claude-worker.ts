@@ -185,7 +185,8 @@ export async function runWorker(rawInput: unknown) {
           : "Agent,Task,EnterWorktree,ExitWorktree,NotebookEdit",
       "--permission-mode", "default",
       "--allowedTools", bound.tools.join(","),
-      resume ? "--resume" : "--session-id", workerId];
+      resume ? "--resume" : "--session-id", workerId,
+      "--name", workerSessionName(input.agentName, place.branch, input.requestId)];
     const launch = launchProcess(args, bound.tools, place.root, JSON.stringify({ requestId: input.requestId,
       mode: input.mode, authority: { testAuthoringAuthorized: persistent && input.mode === "pull-request",
         testRepairAuthorized: persistent && TEST_REPAIR_MODES.has(input.mode) },
@@ -469,3 +470,13 @@ function capCheckpoint(root: string, gitDir: string, turnId: string): CapCheckpo
   } catch { return undefined; }
 }
 runFromCanonicalEntry(import.meta.url, main);
+
+/**
+ * The saved session's title, e.g. "vibe guardrails reviewer · prd818 · prd818-guardrails-05". The Codex app's
+ * Import Claude turns each saved Claude session into a sidebar chat titled by this name, else by the first
+ * message, which here is the JSON request envelope (ISS-13279).
+ */
+export function workerSessionName(agentName: string, branch: string, requestId: string) {
+  const role = agentName.replace(/^vibe-/, "").replaceAll("-", " ");
+  return `vibe ${role} · ${branch.replace(/^vibe\//, "")} · ${requestId}`;
+}

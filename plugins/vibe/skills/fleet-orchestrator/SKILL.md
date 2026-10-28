@@ -92,13 +92,15 @@ Run [codex-fleet-monitor](../codex-fleet-monitor/SKILL.md) (`vibe:codex-fleet-mo
 `scripts/fleet.sh` drives a session on this machine (`local`) or on `REMOTE_HOST` (`remote`, which copies the scripts and the prompt file there first) through the managed Codex App Server.
 
 ```sh
-scripts/fleet.sh <orchDir> local|remote session turn  <name> --prompt-file <file> [--cwd <worktree>] [--model <m>] [--effort <e>] [--sandbox <mode>]
+scripts/fleet.sh <orchDir> local|remote session turn  <name> --prompt-file <file> [--cwd <worktree>] [--ticket <slug>] [--model <m>] [--effort <e>] [--sandbox <mode>]
 scripts/fleet.sh <orchDir> local|remote session steer <name> --prompt-file <file>
 scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
+scripts/fleet.sh <orchDir> local|remote session end   <name> --reason stopped|merged
 ```
 
-- `turn` binds a new thread to `--cwd` (refusing another later), resumes it afterwards and starts a turn. `--model` and `--effort` default to `CODEX_MODEL` and `CODEX_EFFORT`; a new session refuses to start without a model or an effort, or with a prompt not starting with `$vibe`. Start every Codex writer this way; restart a thread the watcher marks `MODEL(...)` on the configured model.
+- `turn` binds a new thread to `--cwd` (refusing another later), resumes it afterwards and starts a turn. `--model` and `--effort` default to `CODEX_MODEL` and `CODEX_EFFORT`; a new session refuses to start without a model or an effort, without a `--ticket`, or with a prompt not starting with `$vibe`. Its thread is named `<name> · <ticket>` and moved into the Codex app's "Fleet workers" sidebar section. Start every Codex writer this way; restart a thread the watcher marks `MODEL(...)` on the configured model.
 - `steer` adds to the active turn and fails when none is running; `last` prints the monitor's status line and the last agent messages.
+- `end` once a writer's PR is merged or you stop the writer: it records that in the session's state file, then archives the thread so it leaves the operator's chat list. It refuses a thread with a running turn; never end a live writer. A later `turn` unarchives the thread first, and the recovery supervisor skips an ended session.
 - Run Codex at high effort, never the maximum (it burns the limit for little gain), and never name a sub-agent model in a prompt; vibe's policy picks them.
 - No computer use in Codex (browser, in-app browser, desktop app UI, screenshots): it is the fastest drain. Code host work goes through its CLI.
 - Visual work is a request file a Codex session writes only through `scripts/request-visual.mjs` ([template](./references/templates.md#visual-request)); a Claude worker does it and you steer the findings back as text.
@@ -151,7 +153,7 @@ scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
 - Before handoff, `node scripts/finding-brief.mjs <orchDir> --findings <findings.json> --require-disposition` must pass.
 - A QA rerun that toggles flags or moves data never uses the stack handed to the operator: `helpers.mjs <orchDir> hand <stack> --to <guide>` when the guide gets it, `unhand` when QA ends, and start the rerun helper with `--stack <its own stack>`.
 - Writers push a tested checkpoint at least every 45 minutes of active work and never hold one for optional evidence (vibe's commit reports `pushDue`); later review findings go out as follow-up commits, and no new scope joins an unpushed checkpoint.
-- Human QA runs in a Claude QA-guide session per PR that the operator talks to directly. When the QA plan is ready, save the [QA guide prompt](./references/templates.md#qa-guide-prompt) to `prompts/`, launch it headless from the repo root (`claude -p --output-format json`, its tools allowed), give the operator `cd <repo> && claude --resume <session_id>`, and keep a re-armed background wait on its findings file, routing each failure to the writer.
+- Human QA runs in a Claude QA-guide session per PR that the operator talks to directly. When the QA plan is ready, save the [QA guide prompt](./references/templates.md#qa-guide-prompt) to `prompts/`, launch it headless from the repo root (`claude -p --output-format json --name "QA guide · PR <n>"`, its tools allowed, so the Codex app's Claude import titles it by that name), give the operator `cd <repo> && claude --resume <session_id>`, and keep a re-armed background wait on its findings file, routing each failure to the writer.
 
   Send QA findings to a writer only through `node scripts/finding-brief.mjs <orchDir> --findings <findings.json> --prompt <prompt> [--where remote]`.
   You alone file a ticket for a QA finding (the QA guide never does), and only after searching open tickets created in the last day for the same subject.

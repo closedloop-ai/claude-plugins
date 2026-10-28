@@ -8,6 +8,8 @@
 // the last line is reused from <workDir>/claude-usage.txt.
 //
 // Usage: claude-usage.mjs <workDir> [label]   (CLAUDE_BIN overrides the claude binary)
+// The probe runs with --no-session-persistence: nobody resumes or analyzes it, and a saved transcript is
+// imported into the Codex app's sidebar as an "Imported session" chat (ISS-13279).
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -18,6 +20,7 @@ import { highUsagePercent, usageBand } from './ratelimit.mjs';
 
 const LINE = /^\s*Current (session|week \(all models\)):\s*(\d+(?:\.\d+)?)%\s*used(?:\s*·\s*resets\s+(.+?))?\s*$/gim;
 export const DEFAULT_INTERVAL_SECONDS = 600;
+export const USAGE_ARGS = Object.freeze(['-p', '--no-session-persistence', '/usage']);
 
 /** The session and all-models weekly percentages and reset times in `/usage` output, or null when absent. */
 export function parseUsage(text) {
@@ -58,7 +61,7 @@ function main() {
   if (!line) {
     let output = '';
     try {
-      output = execFileSync(process.env.CLAUDE_BIN || 'claude', ['-p', '/usage'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 60_000 });
+      output = execFileSync(process.env.CLAUDE_BIN || 'claude', USAGE_ARGS, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 60_000 });
     } catch {}
     line = claudeUsageLine(label, parseUsage(output));
     writeFileSync(file, `${line}\n`);

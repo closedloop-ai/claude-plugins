@@ -99,9 +99,12 @@ ${behaviors.map((_, index) => `B${index + 1}: observed: <what happened>; screens
 `;
 }
 
-/** The headless Claude Code arguments for the look. */
+/**
+ * The headless Claude Code arguments for the look. It is never resumed and its report goes to a file, so it
+ * saves no session: a saved one is imported into the Codex app's sidebar as a stray chat (ISS-13279).
+ */
 export function claudeArgs() {
-  return ["-p", "--chrome", "--allowedTools", CLAUDE_TOOLS];
+  return ["-p", "--no-session-persistence", "--chrome", "--allowedTools", CLAUDE_TOOLS];
 }
 
 /**

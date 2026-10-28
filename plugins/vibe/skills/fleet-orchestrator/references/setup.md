@@ -59,3 +59,7 @@ Then set the slot counts from this machine's core count, write the file, and run
 4. Get a branch to another machine's clone without going through the code host: `git push <host>:<path to its clone> <branch>:<branch>`, then on that machine `git worktree add <worktree path> <branch>` and run the bootstrap the target repo's docs name. Push to a branch that is not checked out there.
 5. On each machine, check closedloop-graph answers (its `sync_status` tool) from Claude Code and from Codex.
 6. Check the transport with `fleet.sh <orchDir> local|remote session last <name>` on an existing session.
+
+## Desktop app sidebars
+
+In the Codex app every Codex thread the fleet starts is an ordinary chat, so `fleet.sh ... session turn` names each new thread `<writer> · <ticket>` and moves it into one "Fleet workers" sidebar section, and `session end` archives it once the writer is merged or stopped. Most of the rest of the clutter is Claude Code sessions, which the Codex app pulls in through Import from Claude (Settings, Import from another AI app) and, when Keep imports in sync is on, every 12 hours: each Claude worker, QA guide and teammate session becomes a chat. Workers carry readable names, and the usage probe and the precedent look save no session. To keep them out of the sidebar, leave recent chats out of a Claude import and turn Keep imports in sync off. The fleet never changes the app's settings. The Claude desktop app lists only the sessions started in it.

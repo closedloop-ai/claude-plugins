@@ -4,6 +4,24 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.2
+
+Sessions the vibe and fleet scripts start no longer fill a desktop app's chat list with "Imported session" and raw JSON titles (ISS-13279).
+
+#### Added
+- `codex-fleet-monitor/scripts/thread-sidebar.mjs`: names a just-started Codex thread, moves it into one "Fleet workers" sidebar section (creating it when missing, the oldest when several share the name), and archives a worker only after its end is recorded. A step an older App Server lacks is a warning, not a failed start.
+- `codex-session.mjs end <stateDir> <name> --reason stopped|merged` (also `fleet.sh ... session end`): refuses a thread with a running turn, records the end in the session's state file, then archives the thread. A later `turn` unarchives it first, `steer` refuses an ended session, and the recovery supervisor (`recover.mjs`) skips ended sessions.
+- cl-sweep: `native-app-server-orchestrator.mjs init --thread-name` and an `end --reason stopped|merged` command on both `native-app-server-orchestrator.mjs` and `app-server-worker-session.mjs`, with the same order (refuse a live turn, record, archive) and an unarchive before a later resume.
+- A guard test (`thread-sidebar.test.mjs`) fails when any plugin or `tools/*/src` script calls `thread/start` without `labelWorkerThread`, or runs headless `claude -p`/`--print` without `--name` or `--no-session-persistence`.
+
+#### Changed
+- `codex-session.mjs turn` needs `--ticket <slug>` for a new session; its thread is named `<name> · <ticket>` and moved into "Fleet workers" right after `thread/start`. A resumed session is never renamed or moved.
+- cl-sweep ticket worker threads are named `cl-sweep · <ticket>` and moved into "Fleet workers" right after `thread/start`.
+- `claude-worker.mjs` passes `--name "vibe <role> · <session slug> · <request id>"` to every Claude worker run; sessions are still saved.
+- `claude-usage.mjs` runs `claude -p --no-session-persistence /usage`, and `precedent-check.mjs` adds `--no-session-persistence` to its headless `claude -p --chrome` look.
+- fleet-orchestrator's QA-guide launch adds `--name "QA guide · PR <n>"`.
+- vibe `INSTALL.md` and fleet-orchestrator `references/setup.md` explain that the Codex app's Import from Claude and Keep imports in sync turn saved Claude sessions into sidebar chats, and how to keep them out; cl-sweep `execution-surfaces.md` says when to run `end`.
+- `fleet.sh` ships `thread-sidebar.mjs` for remote sessions, and a test walks `codex-session.mjs`'s imports so an unshipped module fails.
 ### vibe v1.1.1
 
 Two Storybook mistakes the first Storybook handoff review found (ISS-13167) are now raised at placement, before the writer builds the stories, instead of only at handoff (ISS-13182).

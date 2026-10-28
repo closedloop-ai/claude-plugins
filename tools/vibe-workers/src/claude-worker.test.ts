@@ -2,7 +2,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { boundDefinition, capWorkerResult } from "./claude-worker.js";
+import { boundDefinition, capWorkerResult, workerSessionName } from "./claude-worker.js";
 import { readDefinition } from "./definition.js";
 import { changeWriter, readWriterSummary, registerWriter } from "./ledger.js";
 import { bundleDirectory, fixture, graph, liveReads, readProof, recordWrite, writeAgent } from "./test-fixtures.js";
@@ -107,6 +107,9 @@ describe("production Claude CLI adapter", () => {
     expect(proof[0]?.definition["vibe:vibe-change-worker"]?.prompt).toContain("Canonical fixture prompt");
     expect(proof[0]?.args[proof[0].args.indexOf("--allowedTools") + 1]?.split(",")).toEqual(
       proof[0]?.definition["vibe:vibe-change-worker"]?.tools);
+    // ISS-13279: the Codex app imports a saved Claude session titled by its name, else by the JSON envelope.
+    expect(proof.map((item) => item.args[item.args.indexOf("--name") + 1]))
+      .toEqual(["vibe change worker · test · first", "vibe change worker · test · second"]);
     expect(proof[0]?.payload.input).toBe("SECRET_FIRST");
     expect(proof[1]?.payload.input).toBe("SECRET_SECOND");
     for (const item of proof) {
@@ -406,6 +409,11 @@ describe("production Claude CLI adapter", () => {
     expect(run(value, { requestId: "third", input: "WRONG_ID" }).status).toBe(1);
     expect(JSON.parse(readFileSync(join(value.metadata, "vibe-writer.json"), "utf8")).active.status).toBe("FAILED");
   });
+  it("names a session by role, session slug and request, keeping a branch outside vibe/ whole", () => {
+    expect(workerSessionName("vibe-adversarial-reviewer", "vibe/prd818", "prd818-guardrails-05"))
+      .toBe("vibe adversarial reviewer · prd818 · prd818-guardrails-05");
+    expect(workerSessionName("vibe-ticket-worker", "main", "r1")).toBe("vibe ticket worker · main · r1");
+  });
   it("retains reader built-ins but excludes writes, record mutators and nested writer tools", () => {
     const value = setup();
     const reader = run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect" });
@@ -413,6 +421,8 @@ describe("production Claude CLI adapter", () => {
     const proof = readProof(value.metadata)[0];
     expect(proof?.args[proof.args.indexOf("--permission-mode") + 1]).toBe("default");
     expect(proof?.args[proof.args.indexOf("--disallowedTools") + 1]).toMatch(/Write,Edit/);
+    expect(proof?.args[proof.args.indexOf("--name") + 1]).toBe("vibe guardrails reviewer · test · first");
+    expect(proof?.args).not.toContain("--no-session-persistence");
     expect(proof?.definition["vibe:vibe-guardrails-reviewer"]?.tools).toEqual(["Read", "Grep", "Glob", "Bash", "Skill", "ToolSearch", "StructuredOutput", graph[0]?.name,
       "mcp__custom_graph__sync-status"]);
     expect(run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect", capabilities: [...graph, recordWrite] }).status).toBe(1);

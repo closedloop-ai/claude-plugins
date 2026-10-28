@@ -102,7 +102,7 @@ test("run mode starts headless claude with Chrome and only the research tools, t
     prompt: path.join(out, "prompt.md"),
     report: path.join(out, "report.md"),
   });
-  assert.deepEqual(readFileSync(path.join(dir, "args.txt"), "utf8").trim().split("\n"), ["-p", "--chrome", "--allowedTools", CLAUDE_TOOLS]);
+  assert.deepEqual(readFileSync(path.join(dir, "args.txt"), "utf8").trim().split("\n"), ["-p", "--no-session-persistence", "--chrome", "--allowedTools", CLAUDE_TOOLS]);
   assert.equal(readFileSync(path.join(dir, "stdin.txt"), "utf8"), readFileSync(path.join(out, "prompt.md"), "utf8"));
   assert.match(readFileSync(path.join(dir, "stdin.txt"), "utf8"), new RegExp(QUESTION.replace(/[?]/g, "\\?")));
   assert.equal(readFileSync(path.join(dir, "cwd.txt"), "utf8").trim(), path.resolve(out));
