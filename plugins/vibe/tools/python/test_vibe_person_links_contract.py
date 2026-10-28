@@ -60,7 +60,7 @@ def test_the_rule_is_stated_once_in_plain_words() -> None:
         "It refuses a route pattern",
         "the ticket's `webUrl`",
         "When `link` prints `url: null`, nothing is running or deployed to open yet",
-        "Say so in plain words and offer to start it",
+        "Otherwise say so in plain words and offer to start it",
         "Never send the id or path in its place",
     ):
         assert required in rule, required
