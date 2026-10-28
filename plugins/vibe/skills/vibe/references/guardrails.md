@@ -22,9 +22,13 @@ Codex and Claude Code, and this section is its one canonical statement:
   question for the person.
   1. Record the blocker: the request stays `BLOCKED` in the session ledger
      with the reason, and a line in the live ticket's Progress names it.
+     Dispatch the ticket worker for that line before you reply to the
+     person, so engineering reading the ticket sees the newest blocker.
   2. Report it to engineering: tell the person in one plain line that this
      needs engineering and to message engineering, naming this work by its
-     summary (`plain-words.md`).
+     summary (`plain-words.md`), such as "This needs an engineer to fix
+     vibe. Message engineering with: <summary>." That line never quotes a
+     rule or a script's refusal and never names or links a plugin file.
 - A handoff check that also fails on the main the session captured is not a
   needed fix and never stops the handoff: it is a Known main failure recorded
   for engineering (`quality-loop.md`, "Failures already on main").

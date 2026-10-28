@@ -158,10 +158,17 @@ Never use `register` to replace a writer or copy old agent definitions.
 
 1. Read `status` and the bounded binding facts from the private ledger. Wait
    for source and record turns to finish with actual stopped-turn evidence;
-   a short-lived CLI PID exiting does not release an owned turn. Resolve any
-   writer refusal in the original request first. Never migrate around a refusal. Migration rejects `BLOCKED`
-   (except a removed definition, below), running leases, matching definitions,
-   unproven upgrades and stale identity.
+   a short-lived CLI PID exiting does not release an owned turn. While the
+   recorded definition is present, resolve any writer refusal in the original
+   request first. Never migrate around a refusal the recorded writer can still
+   settle. Once the recorded definition is missing, that writer can never run
+   again, so a `BLOCKED` request of any reason is carried over unchanged as the
+   active request and the new writer settles it before any other work (step 5).
+   That is the recovery `guardrails.md` promises for a turn stranded by a
+   plugin upgrade, not a bypass. Migration rejects `BLOCKED`
+   (except a removed definition, below) while the recorded definition is
+   present, running leases, matching definitions, unproven upgrades and stale
+   identity.
 2. Codex: spawn one current canonical `vibe-change-worker` with a read-only
    hold brief and obtain its actual native ID. No source/test/record writes
    until migration succeeds. Claude: the command allocates the new session ID;
@@ -172,6 +179,10 @@ Never use `register` to replace a writer or copy old agent definitions.
       "agentRoot": "<current-plugin-root>", "agentName": "vibe-change-worker",
       "capabilities": <exact parent-discovered capabilities> }`.
    For Codex add `"workerId": "<new held native ID>"`; omit it for Claude.
+   Leave `capabilities` out to keep the recorded binding's capabilities. When
+   given, it is at most 48 ClosedLoop graph reads, ClosedLoop live reads and
+   the five record writes (`writer-state.mjs help` lists the bindable
+   operations); anything else is refused.
    The command independently reads the current definition from its own plugin
    root and verifies the old definition with its recorded capabilities.
 4. The atomic ledger update appends `migrations`: old writer ID, full old
@@ -183,7 +194,10 @@ Never use `register` to replace a writer or copy old agent definitions.
 5. Use only the returned current ID with the current binding supplied above.
    Claim the existing active
    request with a checkpoint continuation, or the oldest queued request if
-   none is active. Recover its input with the owned `take-input` lease. Brief
+   none is active. When migrate returns `carriedBlock`, the continuation
+   names that block (its `resultSummary`) and asks the writer to settle it
+   first; `claim` refuses every queued request until the writer continues it.
+   Recover its input with the owned `take-input` lease. Brief
    the new writer with the same plan/table paths, checkpoint, change log and
    decisions before new code; migration grants no implementation or handoff
    authority by itself. Codex resumes its held context. Claude's normal owned
@@ -207,7 +221,7 @@ engineering about it.
    root disappeared, finish with `"status": "BLOCKED"` and
    `"blockReason": "recorded-definition-removed"`; the command refuses that
    reason while the recorded definition is present. Every other `BLOCKED` is
-   stored with reason `other` and stays unmigratable.
+   stored with reason `other` and is carried over unchanged (step 1).
 3. Run the same `migrate` command with step 3's JSON plus
    `"retainedRecord": { "lease": "<record lease>", "stoppedTurn": {
    "runtime": "codex", "workerId": "<recorded ID>", "requestId": "<request ID>",
@@ -223,9 +237,9 @@ engineering about it.
    evidence and stale identity are refused with nothing changed. A stopped
    helper's grant under a removed root needs no old cache: `release-record`
    with its identical grant frees it, and `migrate` refuses until it is gone.
-4. A writer blocked before block reasons existed has no `blockReason`. The
-   command accepts it only with that retained grant under an absent
-   definition, then records the proven reason; otherwise it stays refused.
+4. A writer blocked before block reasons existed has no `blockReason`. With
+   that retained grant under an absent definition the command records the
+   proven reason; without it the request is carried over unchanged (step 1).
 5. Continue with step 5 above. All authority is fresh: the current writer and
    helpers acquire new grants from the current plugin root (source `progress`,
    publisher, ticket `handoff` and `assign`), and the writer reruns
@@ -246,7 +260,8 @@ The command refuses running turns, retained grants, a `BLOCKED`
 writer and a same-runtime switch, and records the switch in `migrations`.
 
 Any other binding/read/identity error remains `BLOCKED` internally. Never
-migrate around a refusal or to create parallel authors. If migration fails,
+migrate around a refusal the recorded writer can still settle, or to create
+parallel authors. If migration fails,
 retain the ledger and stop the unused held Codex worker without source writes.
 New sessions bind the current release.
 

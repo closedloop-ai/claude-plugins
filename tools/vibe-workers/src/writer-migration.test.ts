@@ -54,6 +54,7 @@ describe("recorded writer migration", () => {
     const after = value.read();
     expect(migrated.workerId).not.toBe(owner.workerId);
     expect(migrated.migrationCount).toBe(1);
+    expect(migrated).not.toHaveProperty("carriedBlock");
     expect(after.started).toBe(false);
     for (const key of ["pending", "active", "completed", "worktree", "branch"]) expect(after[key]).toEqual(before[key]);
     const { migrations: ignored, ...previous } = before;
@@ -98,6 +99,14 @@ describe("recorded writer migration", () => {
     releaseNativeRecord({ ...helper, lease, stoppedTurn: { runtime: "codex", workerId: helper.workerId,
       requestId: helper.requestId, lease, state: "completed" } });
     expect(migrateWriter(value.input, value.currentRoot).lastMigration?.reason).toBe("definition-missing");
+  });
+  it("keeps the recorded capabilities when migrate is sent none (ISS-13291)", () => {
+    const value = setup();
+    rmSync(value.oldRoot, { recursive: true });
+    const { capabilities: ignored, ...input } = value.input;
+    migrateWriter(input, value.currentRoot);
+    expect(value.read().binding.capabilities).toEqual(value.read().migrations[0].previous.binding.capabilities);
+    expect(value.read().binding.capabilities.length).toBeGreaterThan(0);
   });
   it("migrates when the recorded agent file alone is missing", () => {
     const value = setup();
@@ -145,15 +154,13 @@ describe("recorded writer migration", () => {
       expect(readFileSync(value.ledgerFile, "utf8")).toBe(before);
     });
 
-  it.each(["running-source", "running-record", "refusal", "reused-id"])("retains ownership and refusal protections: %s", failure => {
+  it.each(["running-source", "running-record", "reused-id"])("retains ownership protections: %s", failure => {
     const value = setup();
     rmSync(value.oldRoot, { recursive: true });
     const owner = { worktree: value.worktree, workerId: value.registered.workerId, requestId: "held" };
-    if (failure === "running-source" || failure === "refusal") {
+    if (failure === "running-source") {
       changeWriter("enqueue", { ...owner, input: "Keep this request" });
-      const turn = changeWriter("claim", owner).turn!;
-      if (failure === "refusal") changeWriter("finish", { ...owner, lease: turn.lease, status: "BLOCKED", stoppedTurn: {
-        runtime: "codex", workerId: owner.workerId, requestId: owner.requestId, lease: turn.lease, state: "completed" } });
+      changeWriter("claim", owner);
     }
     if (failure === "running-record") acquireRecordTurn(value.worktree);
     if (failure === "reused-id") value.input.workerId = value.registered.workerId;
@@ -260,6 +267,7 @@ describe("stranded writer recovery", () => {
     expect(value.read().active.blockReason).toBe("recorded-definition-removed");
     const result = migrateWriter({ ...value.input, retainedRecord: stranded.retainedRecord }, value.currentRoot, verifyStrandedRecordGrant);
     expect(result.status).toBe("BLOCKED");
+    expect(result).not.toHaveProperty("carriedBlock");
     expect(existsSync(stranded.lock)).toBe(false);
   });
 
@@ -302,20 +310,28 @@ describe("stranded writer recovery", () => {
   const refusal = /bypass a writer refusal/;
   const stopped = /Wait for owned source and record turns/;
   const evidence = /own record grant and its exact stopped-turn evidence/;
-  it.each([["other-block", refusal], ["legacy-without-grant", refusal], ["running-lease", stopped], ["no-evidence", stopped],
+  it.each([["upgraded-other-block", refusal], ["running-lease", stopped], ["no-evidence", stopped],
     ["wrong-lease", evidence], ["wrong-request", evidence], ["wrong-worker", evidence], ["helper-grant", evidence], ["foreign-root", evidence],
     ["matching-definition", /present and matching/], ["grant-definition-present", /release it with release-record/],
     ["stale-id", /exact recorded writer/], ["stale-digest", /exact recorded writer/], ["no-verifier", stopped]] as const)(
     "refuses stranded recovery without changing the ledger or grant: %s", (failure, expected) => {
       const value = setup();
       const options: Parameters<typeof strand>[1] = { legacy: true };
-      if (failure === "other-block") options.legacy = false;
+      if (failure === "upgraded-other-block") options.legacy = false;
       if (failure === "running-lease") options.finish = false;
       if (failure === "helper-grant") options.helperGrant = true;
       if (failure === "foreign-root") options.foreignRoot = true;
       const preserved = join(value.base, "preserved-old-root");
-      if (failure === "matching-definition" || failure === "grant-definition-present") cpSync(value.oldRoot, preserved, { recursive: true });
+      if (failure === "matching-definition" || failure === "grant-definition-present" || failure === "upgraded-other-block") {
+        cpSync(value.oldRoot, preserved, { recursive: true });
+      }
       const stranded = strand(value, options);
+      if (failure === "upgraded-other-block") {
+        // The recorded root is back with a newer definition, so the recorded writer can still run and settle its refusal.
+        rmSync(stranded.lock, { recursive: true });
+        cpSync(preserved, value.oldRoot, { recursive: true });
+        writeAgent(value.oldRoot, "vibe-change-worker", "Read, Write, Edit");
+      }
       if (failure === "matching-definition") cpSync(preserved, value.oldRoot, { recursive: true });
       if (failure === "grant-definition-present") {
         cpSync(preserved, value.oldRoot, { recursive: true });
@@ -328,10 +344,7 @@ describe("stranded writer recovery", () => {
         stoppedTurn: { ...stoppedTurn, lease: "11111111-1111-4111-8111-111111111111" } };
       if (failure === "wrong-request") retainedRecord = { lease: stranded.lease, stoppedTurn: { ...stoppedTurn, requestId: "other-request" } };
       if (failure === "wrong-worker") retainedRecord = { lease: stranded.lease, stoppedTurn: { ...stoppedTurn, workerId: "other-writer" } };
-      if (failure === "legacy-without-grant") {
-        rmSync(stranded.lock, { recursive: true });
-        retainedRecord = undefined;
-      }
+      if (failure === "upgraded-other-block") retainedRecord = undefined;
       const input = { ...value.input, ...(retainedRecord ? { retainedRecord } : {}) };
       if (failure === "stale-id") input.previousWorkerId = "wrong-writer";
       if (failure === "stale-digest") input.previousDigest = "0".repeat(64);
@@ -339,4 +352,85 @@ describe("stranded writer recovery", () => {
       expect(() => migrateWriter(input, value.currentRoot, failure === "no-verifier" ? undefined : verifyStrandedRecordGrant)).toThrow(expected);
       expect(snapshot(value, stranded.lock)).toEqual(before);
     });
+});
+
+/** A writer whose last turn ended BLOCKED for its own reason, then lost its definition to a plugin update (ISS-13291). */
+function blockedThenUpdated(runtime: "codex" | "claude") {
+  const value = setup(runtime);
+  const owner = { worktree: value.worktree, workerId: value.registered.workerId };
+  changeWriter("enqueue", { ...owner, requestId: "record-01", input: "Record the build on the ticket" });
+  changeWriter("enqueue", { ...owner, requestId: "next-01", input: "Queued after the record" });
+  const lease = changeWriter("claim", { ...owner, requestId: "record-01" }).turn!.lease!;
+  changeWriter("finish", { ...owner, requestId: "record-01", lease, status: "BLOCKED", resultSummary: "Ticket write refused",
+    ...(runtime === "codex" ? { stoppedTurn: { runtime, workerId: owner.workerId, requestId: "record-01", lease,
+      state: "completed" } } : {}) });
+  expect(value.read().active).toMatchObject({ id: "record-01", status: "BLOCKED", blockReason: "other" });
+  rmSync(value.oldRoot, { recursive: true });
+  return { ...value, owner };
+}
+
+describe("a BLOCKED writer stranded by a plugin update (ISS-13291)", () => {
+  it.each(["codex", "claude"] as const)("carries a %s writer's BLOCKED request over unchanged; the new writer settles it first", runtime => {
+    const value = blockedThenUpdated(runtime);
+    const before = value.read();
+    const migrated = migrateWriter(value.input, value.currentRoot);
+    expect(migrated).toMatchObject({ activeRequestId: "record-01", status: "BLOCKED", running: false, migrationCount: 1,
+      carriedBlock: { requestId: "record-01", blockReason: "other", resultSummary: "Ticket write refused" } });
+    const after = value.read();
+    expect(after.active).toEqual(before.active);
+    for (const key of ["pending", "completed"]) expect(after[key]).toEqual(before[key]);
+    expect(after.migrations[0]).toMatchObject({ reason: "definition-missing", observedDigest: null });
+    const writer = { worktree: value.worktree, workerId: migrated.workerId };
+    expect(() => changeWriter("claim", { ...writer, requestId: "next-01" })).toThrow(/Continue the active request/);
+    const settled = changeWriter("claim", { ...writer, requestId: "record-01", continuation: "Settle the refusal first" });
+    expect(settled.turn).toMatchObject({ id: "record-01", input: "Record the build on the ticket", continuation: "Settle the refusal first" });
+  });
+
+  it("carries a pre-reason BLOCKED request with no retained grant", () => {
+    const value = blockedThenUpdated("codex");
+    const ledger = value.read();
+    delete ledger.active.blockReason;
+    writeFileSync(value.ledgerFile, JSON.stringify(ledger));
+    expect(migrateWriter(value.input, value.currentRoot)).toMatchObject({ activeRequestId: "record-01", status: "BLOCKED" });
+    expect(value.read().active.blockReason).toBeUndefined();
+  });
+
+  it("releases the writer's own stranded grant and carries its BLOCKED other request", () => {
+    const value = setup();
+    const stranded = strand(value);
+    expect(value.read().active).toMatchObject({ status: "BLOCKED", blockReason: "other" });
+    const result = migrateWriter({ ...value.input, retainedRecord: stranded.retainedRecord }, value.currentRoot, verifyStrandedRecordGrant);
+    expect(result).toMatchObject({ status: "BLOCKED", activeRequestId: requestId, workerId: "new-native" });
+    expect(value.read().active.blockReason).toBe("other");
+    expect(existsSync(stranded.lock)).toBe(false);
+  });
+
+  it("recovers through the shipped command for a held Codex writer", () => {
+    const value = blockedThenUpdated("codex");
+    const currentRoot = resolve(bundleDirectory, "../../../..");
+    const output = execFileSync(process.execPath, [join(bundleDirectory, "writer-state.mjs"), "migrate"], {
+      input: JSON.stringify({ ...value.input, agentRoot: currentRoot }), encoding: "utf8" });
+    expect(JSON.parse(output)).toMatchObject({ workerId: "new-native", activeRequestId: "record-01", status: "BLOCKED" });
+    const settled = changeWriter("claim", { worktree: value.worktree, workerId: "new-native", requestId: "record-01",
+      continuation: "Settle the refusal first" });
+    expect(settled.turn?.input).toBe("Record the build on the ticket");
+  });
+
+  it("recovers through the shipped command and resumes the request in a fresh Claude session", async () => {
+    const value = blockedThenUpdated("claude");
+    const currentRoot = resolve(bundleDirectory, "../../../..");
+    const migrated = JSON.parse(execFileSync(process.execPath, [join(bundleDirectory, "writer-state.mjs"), "migrate"], {
+      input: JSON.stringify({ ...value.input, agentRoot: currentRoot }), encoding: "utf8" }));
+    expect(migrated).toMatchObject({ activeRequestId: "record-01", status: "BLOCKED", migrationCount: 1 });
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${value.bin}:${originalPath}`;
+    try {
+      const result = await runWorker({ worktree: value.worktree, agentRoot: currentRoot, agentName: "vibe-change-worker",
+        capabilities: graph, mode: "plan", requestId: "record-01", continuation: "Settle the refusal first" });
+      expect(result.workerId).toBe(migrated.workerId);
+      const proof = readProof(value.metadata);
+      expect(proof[0]!.args).toContain("--session-id");
+      expect(proof[0]!.args).toContain(migrated.workerId);
+    } finally { process.env.PATH = originalPath; }
+  });
 });

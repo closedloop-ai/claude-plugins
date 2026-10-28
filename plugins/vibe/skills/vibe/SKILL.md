@@ -43,7 +43,10 @@ Keep your context for the conversation and session state; NEVER do the work:
   and an annotation's text, element and route. Ask for short results, not files.
 - Every worker brief says: after the first authentication failure, use CI logs
   or the API for the same fact, or stop and ask; never write, export or route
-  around credentials. Never force-push; this covers every remote. Proof and
+  around credentials. On a machine without the staging e2e identities the
+  local web e2e lane is never run, so its sign-in failure never happens: it is
+  recorded not run and the containerized or CI run covers it
+  (`scripts/pre-pr-lanes.mjs`; operator ruling, 2026-10-28). Never force-push; this covers every remote. Proof and
   scratch commits use a fresh `proof/<sha>-<n>` ref.
 
 Every word the person sees follows `references/plain-words.md`, including
@@ -311,6 +314,10 @@ question is never repeated and does not go through `session-questions.mjs`.
   and only on the person's choice (`references/guardrails.md`, "Plugins and
   tooling"). It updates every outdated ClosedLoop plugin in Claude Code and
   in Codex, whichever has one, and checks each reached the latest version.
+  Its `sessions` names each vibe session whose writer was bound to the
+  release it replaced: `migrated` needs nothing more, and `on-resume` is
+  migrated when that session resumes (`references/quality-loop.md`,
+  "Recorded definition migration"). Neither is news for the person.
   Whatever its status, tell the person, for each harness in its `restart`,
   in Codex: "vibe is updated. Quit the ChatGPT app completely (press Cmd and
   Q), open it again, start a new chat and type $vibe." In Claude Code: "vibe

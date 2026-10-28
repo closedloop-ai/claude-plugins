@@ -69,7 +69,7 @@ const registerFields = z.object({
 export const registerSchema = registerFields.superRefine(pathIdOnlyForCodex);
 export const stoppedTurnSchema = z.object({ runtime: z.literal("codex"), workerId: workerIdSchema,
   requestId: identifierSchema, lease: z.string().uuid(), state: z.enum(["completed", "failed", "canceled"]) }).strict();
-/** Only the removed recorded definition is a migratable block; every other block stays a refusal. */
+/** Why a writer turn ended BLOCKED; `migrateWriter` decides which blocks move to a new writer. */
 export const blockReasonSchema = z.enum(["recorded-definition-removed", "other"]);
 export const actionSchema = z.object({
   worktree: z.string().min(1), workerId: workerIdSchema.optional(), requestId: identifierSchema.optional(),
@@ -90,8 +90,9 @@ export const harnessSwitchSchema = z.object({
   evidence: z.string().min(1).max(1024),
 }).strict();
 export type HarnessSwitch = z.infer<typeof harnessSwitchSchema>;
-/** Migration is a parent-owned operation, separate from ordinary registration. */
+/** Migration is a parent-owned operation, separate from ordinary registration; omitted capabilities keep the recorded ones. */
 export const migrateSchema = registerFields.extend({
+  capabilities: capabilitiesSchema.optional(),
   previousWorkerId: workerIdSchema, previousDigest: z.string().regex(/^[a-f0-9]{64}$/),
   retainedRecord: retainedRecordSchema.optional(), harnessSwitch: harnessSwitchSchema.optional(),
 }).strict().superRefine(pathIdOnlyForCodex);

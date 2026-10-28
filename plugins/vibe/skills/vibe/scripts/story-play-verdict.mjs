@@ -30,7 +30,8 @@ export const PLAY_EVENT_RECORDER = `(() => {
     const channel = window.__STORYBOOK_ADDONS_CHANNEL__;
     if (!channel) return setTimeout(attach, 50);
     for (const type of events) {
-      channel.on(type, (payload) => window.__vibePlayEvents.push({ type, storyId: payload?.storyId ?? payload?.id ?? null, status: payload?.status ?? null }));
+      channel.on(type, (payload) => window.__vibePlayEvents.push({ type, storyId: payload?.storyId ?? payload?.id ?? null, status: payload?.status ?? null,
+        message: typeof payload?.message === "string" ? payload.message.slice(0, 500) : null }));
     }
   };
   attach();

@@ -11575,6 +11575,7 @@ var harnessSwitchSchema = external_exports.object({
   evidence: external_exports.string().min(1).max(1024)
 }).strict();
 var migrateSchema = registerFields.extend({
+  capabilities: capabilitiesSchema.optional(),
   previousWorkerId: workerIdSchema,
   previousDigest: external_exports.string().regex(/^[a-f0-9]{64}$/),
   retainedRecord: retainedRecordSchema.optional(),
@@ -11877,16 +11878,21 @@ function registerWriter(input) {
 }
 function migrateWriter(input, currentPluginRoot, verifyRetained) {
   const data = migrateSchema.parse(input);
-  const definition = readDefinition(currentPluginRoot, "vibe-change-worker", data.capabilities);
-  if (realpathSync4(data.agentRoot) !== definition.root || data.agentName !== "vibe-change-worker") {
-    throw new Error("Migration must use this command's current canonical plugin definition");
-  }
-  const currentVersion = definition.version;
-  if (!currentVersion) throw new Error("Current plugin release has no version");
+  const currentDefinition = (capabilities) => {
+    const found = readDefinition(currentPluginRoot, "vibe-change-worker", capabilities);
+    if (realpathSync4(data.agentRoot) !== found.root || data.agentName !== "vibe-change-worker") {
+      throw new Error("Migration must use this command's current canonical plugin definition");
+    }
+    const version = found.version;
+    if (!version) throw new Error("Current plugin release has no version");
+    return { definition: found, version };
+  };
+  if (data.capabilities) currentDefinition(data.capabilities);
   const place = location(data.worktree);
   return locked(place, () => {
     const ledger = readLedger(place);
     if (ledger.runtime !== data.runtime || ledger.workerId !== data.previousWorkerId || ledger.binding.digest !== data.previousDigest) throw new Error("Migration requires the exact recorded writer and digest");
+    const { definition, version: currentVersion } = currentDefinition(data.capabilities ?? ledger.binding.capabilities);
     const lock = join4(place.dir, "vibe-record-turn.lock");
     const retained = existsSync3(lock);
     if (ledger.active?.lease || retained && !(data.retainedRecord && verifyRetained)) {
@@ -11924,6 +11930,11 @@ function migrateWriter(input, currentPluginRoot, verifyRetained) {
     ledger.binding = definition.binding;
     ledger.started = false;
     if (block === "proven-legacy" && ledger.active) ledger.active.blockReason = "recorded-definition-removed";
+    const carriedBlock = block === "carried" && ledger.active ? {
+      requestId: ledger.active.id,
+      blockReason: ledger.active.blockReason,
+      resultSummary: ledger.active.resultSummary
+    } : void 0;
     if (!releasedRecord) save(place, ledger);
     else {
       const parked = `${lock}.${randomUUID()}.released`;
@@ -11936,7 +11947,7 @@ function migrateWriter(input, currentPluginRoot, verifyRetained) {
       }
       rmSync(parked, { recursive: true, force: true });
     }
-    return summary(ledger);
+    return { ...summary(ledger), ...carriedBlock ? { carriedBlock } : {} };
   });
 }
 function provenDefinitionChange(ledger, observedDigest, currentVersion) {
@@ -11952,7 +11963,8 @@ function migratableBlock(ledger, observedDigest, releasedRecord) {
   const active = ledger.active;
   if (active?.status !== "BLOCKED" || active.blockReason === "recorded-definition-removed") return "migratable";
   if (active.blockReason === void 0 && observedDigest === null && releasedRecord?.requestId === active.id) return "proven-legacy";
-  throw new Error("Migration cannot bypass a writer refusal; resolve the blocked request first");
+  if (observedDigest === null) return "carried";
+  throw new Error("Migration cannot bypass a writer refusal while the recorded writer can still run; resolve the blocked request first");
 }
 function isNewerRelease(current, previous) {
   if (!/^\d+\.\d+\.\d+$/.test(previous)) return false;
@@ -12396,8 +12408,55 @@ function verifyStrandedRecordGrant(lock, ledger, retained) {
   return { requestId: grant.requestId, recordAction: grant.recordAction, state: stoppedTurn.state };
 }
 
+// src/usage.ts
+function asksForUsage(argv) {
+  return argv.length === 1 && ["help", "--help", "-h"].includes(argv[0]);
+}
+function capabilityUsage() {
+  const list = (values) => [...values].sort().join(", ");
+  return [
+    "Capabilities: a JSON array of at most 48 { name, service, access, operation } entries, one per MCP tool, no duplicates.",
+    "  name       the tool as the harness lists it: mcp__<server>__<operation> (underscores or hyphens)",
+    `  graph      service "graph", access "read": ${list(graphOperations)}`,
+    `  live read  service "closedloop", access "read": ${list(liveReadOperations)}`,
+    `  record     service "closedloop", access "write": ${list(recordOperations)}`,
+    "  Any other tool is refused as an unsupported capability binding."
+  ].join("\n");
+}
+function writerStateUsage() {
+  return [
+    "Usage: writer-state.mjs <action> < request.json",
+    "The action is the only argument; the request is one JSON object on stdin, never in argv.",
+    "",
+    "Actions:",
+    "  status          { worktree }  the writer's compact summary, or null",
+    "  register        { worktree, runtime, agentName, capabilities, workerId? (codex), agentRoot? }",
+    "  migrate         { worktree, runtime, agentRoot, agentName, previousWorkerId, previousDigest,",
+    "                    workerId? (codex), capabilities?, retainedRecord?, harnessSwitch? }",
+    "                  capabilities left out keeps the recorded binding's; agentRoot is this command's plugin root.",
+    "                  A BLOCKED request whose recorded definition is missing is carried over as the active",
+    "                  request and returned as carriedBlock; the new writer settles it first.",
+    "  enqueue         { worktree, workerId, requestId, input }",
+    "  claim           { worktree, workerId, requestId, continuation? }",
+    "  take-input      { worktree, workerId, requestId, lease }",
+    "  finish          { worktree, workerId, requestId, lease, status, resultSummary?, blockReason?, stoppedTurn? (codex) }",
+    "  acquire-record  native helper record grant",
+    "  release-record  native helper record release with stopped-turn evidence",
+    "  help            this text",
+    "",
+    capabilityUsage(),
+    "",
+    `The full procedure is the vibe skill's quality loop, "Recorded definition migration".`
+  ].join("\n");
+}
+
 // src/writer-state.ts
 async function main(argv) {
+  if (asksForUsage(argv)) {
+    process.stdout.write(`${writerStateUsage()}
+`);
+    return 0;
+  }
   const { positionals } = parseArgs({ args: argv, allowPositionals: true, options: {} });
   const action = external_exports.enum(["register", "migrate", "status", "enqueue", "claim", "take-input", "finish", "acquire-record", "release-record"]).parse(positionals[0]);
   if (positionals.length !== 1) throw new Error("Only the action belongs in argv; send private input on stdin");

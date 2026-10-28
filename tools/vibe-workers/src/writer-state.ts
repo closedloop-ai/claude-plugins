@@ -7,9 +7,14 @@ import { readInput } from "./contracts.js";
 import { changeWriter, migrateWriter, readWriterSummary, recordedWriterRoot, registerWriter, takeWriterInput } from "./ledger.js";
 import { acquireNativeRecord, releaseNativeRecord, verifyStrandedRecordGrant } from "./native-record.js";
 import { installedPluginRoot, resolveAgentRoot } from "./plugin-root.js";
+import { asksForUsage, writerStateUsage } from "./usage.js";
 export { readWriterSummary } from "./ledger.js";
 
 export async function main(argv: string[]): Promise<number> {
+  if (asksForUsage(argv)) {
+    process.stdout.write(`${writerStateUsage()}\n`);
+    return 0;
+  }
   const { positionals } = parseArgs({ args: argv, allowPositionals: true, options: {} });
   const action = z.enum(["register", "migrate", "status", "enqueue", "claim", "take-input", "finish", "acquire-record", "release-record"]).parse(positionals[0]);
   if (positionals.length !== 1) throw new Error("Only the action belongs in argv; send private input on stdin");

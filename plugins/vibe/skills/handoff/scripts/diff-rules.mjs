@@ -497,8 +497,9 @@ function checkFrozenRenders(files, repo, logged, add) {
     }
     return [...seen].some((file) => file !== story && changed.has(file));
   });
-  if (affected.length && !logged(`Frozen render unchanged: all ${affected.length} stories:`)) {
-    add("frozen-render", affected[0], 1, `${affected.length} frozen v1.0 stories render files this diff changed: ${affected.join(", ")}`, `render their story IDs on the base and the branch with fixed args, globals and viewport and run their plays; when every one is identical record \`Frozen render unchanged: all ${affected.length} stories: <command and result>\`, otherwise keep the frozen renders unchanged`);
+  // Only the shipped driver's line counts; a hand-rolled capture skipped real play completion (ISS-13291).
+  if (affected.length && !logged(`Frozen render unchanged: all ${affected.length} stories: frozen-render.mjs`)) {
+    add("frozen-render", affected[0], 1, `${affected.length} frozen v1.0 stories render files this diff changed: ${affected.join(", ")}`, `run handoff's scripts/frozen-render.mjs over these story files against a Storybook serving the base and one serving the branch (fixed args, globals and viewport); when nothing differs record the \`changeLogLine\` it prints (stories that fail the same way on the base are known main failures and do not block), otherwise keep the frozen renders unchanged`);
   }
 }
 

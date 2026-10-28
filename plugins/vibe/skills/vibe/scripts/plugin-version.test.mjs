@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
 import test from "node:test";
@@ -511,4 +511,83 @@ test("the setup check block never claims versions it did not read, and refuses c
     assert.equal(refused.result.ok, false);
     assert.match(refused.result.error, /must each be connected or not-connected/);
   }
+});
+
+const PLUGIN_ROOT = path.resolve(path.dirname(SCRIPT), "../../..");
+
+/** A vibe release in a fake plugin cache, carrying the real writer agent and the shipped writer-state command. */
+function cachedRelease(cache, version) {
+  const root = path.join(cache, "vibe", version);
+  mkdirSync(path.join(root, ".claude-plugin"), { recursive: true });
+  mkdirSync(path.join(root, "agents"));
+  mkdirSync(path.join(root, "skills", "vibe", "scripts", "dist"), { recursive: true });
+  writeFileSync(path.join(root, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version }));
+  cpSync(path.join(PLUGIN_ROOT, "agents", "vibe-change-worker.md"), path.join(root, "agents", "vibe-change-worker.md"));
+  cpSync(path.join(PLUGIN_ROOT, "skills", "vibe", "scripts", "dist", "writer-state.mjs"),
+    path.join(root, "skills", "vibe", "scripts", "dist", "writer-state.mjs"));
+  return root;
+}
+
+/** A vibe session worktree of `repo` whose `runtime` writer is bound to `agentRoot`, its last turn ended BLOCKED. */
+function blockedSession(root, repo, slug, runtime, agentRoot) {
+  const worktree = path.join(root, slug);
+  execFileSync("git", ["-C", repo, "worktree", "add", "--quiet", "-b", `vibe/${slug}`, worktree], { stdio: "ignore" });
+  const gitDir = execFileSync("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"], { encoding: "utf8" }).trim();
+  writeFileSync(path.join(gitDir, "vibe-session.json"), JSON.stringify({ worktree, branch: `vibe/${slug}` }));
+  const state = (action, input) => JSON.parse(execFileSync(process.execPath,
+    [path.join(agentRoot, "skills", "vibe", "scripts", "dist", "writer-state.mjs"), action], { input: JSON.stringify(input), encoding: "utf8" }));
+  const writer = state("register", { worktree, runtime, agentRoot, agentName: "vibe-change-worker",
+    ...(runtime === "codex" ? { workerId: `${slug}-native` } : {}) });
+  const owner = { worktree, workerId: writer.workerId, requestId: "record-01" };
+  state("enqueue", { ...owner, input: "Record the build" });
+  const { turn } = state("claim", owner);
+  state("finish", { ...owner, lease: turn.lease, status: "BLOCKED", resultSummary: "Ticket write refused",
+    ...(runtime === "codex" ? { stoppedTurn: { runtime, workerId: writer.workerId, requestId: "record-01", lease: turn.lease, state: "completed" } } : {}) });
+  return { worktree, ledger: () => JSON.parse(readFileSync(path.join(gitDir, "vibe-writer.json"), "utf8")) };
+}
+
+test("an update names the vibe sessions whose writer it strands and migrates the ones it can (ISS-13291)", async (t) => {
+  const { root, home, bin } = sandbox(t);
+  const repo = path.join(root, "symphony-alpha");
+  mkdirSync(repo);
+  execFileSync("git", ["init", "--quiet", "-b", "main", repo]);
+  execFileSync("git", ["-C", repo, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "init"]);
+  mkdirSync(path.join(home, ".codex", "vibe"), { recursive: true });
+  writeFileSync(path.join(home, ".codex", "vibe", "config.json"), JSON.stringify({ repo }));
+  const cache = path.join(root, "cache");
+  const old = cachedRelease(cache, "1.0.52");
+  const current = cachedRelease(cache, "1.0.53");
+  const claudeWriter = blockedSession(root, repo, "table-fixes", "claude", old);
+  blockedSession(root, repo, "codex-writer", "codex", old);
+  blockedSession(root, repo, "already-current", "claude", current);
+  // The update removes the release the first two writers are bound to.
+  rmSync(old, { recursive: true });
+  const main = await marketplace(t, { files: mainFiles({ vibe: "1.0.53" }) });
+  const claude = fakeCli(bin, "claude", { installed: [{ name: "vibe", version: "1.0.52" }], main: { vibe: "1.0.53" } });
+  const codex = fakeCli(bin, "codex", { installed: [] });
+  await run(home, ["check", ...both(claude, codex, main.url)]);
+  await run(home, ["choose", "--choice", "update"]);
+  const { code, result } = await run(home, ["update", "--claude", claude.file, "--codex", codex.file]);
+  assert.equal(code, 0);
+  assert.deepEqual(result.sessions.map((session) => [session.slug, session.runtime, session.recordedVersion, session.blocked, session.migration]), [
+    ["codex-writer", "codex", "1.0.52", true, "on-resume"],
+    ["table-fixes", "claude", "1.0.52", true, "migrated"],
+  ]);
+  const ledger = claudeWriter.ledger();
+  assert.equal(ledger.binding.agentRoot, realpathSync(current));
+  assert.equal(ledger.workerId, result.sessions[1].workerId);
+  assert.deepEqual([ledger.active.id, ledger.active.status, ledger.active.blockReason], ["record-01", "BLOCKED", "other"]);
+  assert.equal(startup(home).update.sessions.length, 2);
+});
+
+test("an update with no vibe session writer on an older release names none", async (t) => {
+  const { home, bin } = sandbox(t);
+  const main = await marketplace(t, { files: mainFiles({ vibe: "1.0.53" }) });
+  const claude = fakeCli(bin, "claude", { installed: [{ name: "vibe", version: "1.0.52" }], main: { vibe: "1.0.53" } });
+  const codex = fakeCli(bin, "codex", { installed: [] });
+  await run(home, ["check", ...both(claude, codex, main.url)]);
+  await run(home, ["choose", "--choice", "update"]);
+  const { result } = await run(home, ["update", "--claude", claude.file, "--codex", codex.file]);
+  assert.equal(result.status, "updated");
+  assert.equal(result.sessions, undefined);
 });

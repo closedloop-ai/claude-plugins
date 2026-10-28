@@ -435,6 +435,10 @@ none of them is a step a worker takes by hand.
   bytes match the reviewed canonical pure producer applied to the complete
   committed config. Modified, stale or deceptive derivatives and unrelated
   executable overlays still block; the gate never invokes the writing hook.
+- Ignored files under a `.codex/`, `.claude/`, `.agents/`, `.vscode/` or
+  `.idea/` folder are the person's own agent and editor config, never a
+  validation input, and never block main sync. The same files untracked but
+  not ignored still block as uncommitted executables.
 - Source-owned input readiness preserves canonical unconsumed private
   diagnostics and retained reports without accepting their contents as
   coverage. Known generated dependencies need complete pure or pristine owner

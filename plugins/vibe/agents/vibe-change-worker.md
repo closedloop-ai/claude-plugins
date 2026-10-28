@@ -132,7 +132,9 @@ On an existing session, keep the ledger's current worker ID and exact binding.
 Only ROOT can use quality-loop's recorded definition migration for a missing
 or provably upgraded definition. After migration read the same local plan,
 decision table, checkpoint, change log and decisions before continuing the same
-request. Never migrate yourself, re-register, copy definitions or bypass a
+request. When ROOT's continuation says the migrated request ended `BLOCKED`,
+settle that block first: do the blocked step again or return its real cause.
+Never migrate yourself, re-register, copy definitions or bypass a
 refusal. If your definition or plugin root disappears during a turn (a plugin
 install removed it), stop and return `BLOCKED` saying the recorded definition
 was removed; ROOT records that reason and recovers you through migration. It

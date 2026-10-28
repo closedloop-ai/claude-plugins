@@ -28,6 +28,8 @@ const BIOME_PATHS_PER_COMMAND = 120;
 const SOURCE_PATH = /\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss)$/;
 const PRIVATE_ARTIFACT = /\.(?:md|json|log|txt|png|webp)$/;
 const CACHE_SEGMENTS = new Set(["node_modules", ".next", ".turbo", "dist", "storybook-static", ".cache"]);
+/** A person's own agent and editor config: ignored files here are never a validation input (ISS-13291). */
+const LOCAL_CONFIG_DIRS = new Set([".codex", ".claude", ".agents", ".vscode", ".idea"]);
 const turboTasksSchema = z.object({ tasks: z.array(z.object({ taskId: z.string(), package: z.string().optional() }).passthrough()) }).passthrough();
 
 /** Every tracked byte/mode and nonprivate executable overlay must match the committed publication tree. */
@@ -68,6 +70,7 @@ function inspectInventory(root: string, completion: "standalone" | "origin") {
     for (const file of git(root, args).split("\0").filter(Boolean)) {
       untracked.push(file);
       if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) continue;
+      if (ignored && file.split("/").slice(0, -1).some((segment) => LOCAL_CONFIG_DIRS.has(segment))) continue;
       if (isLocalPlanPath(file)) {
         if (!ignored) throw new MainSyncError(`Private planning evidence must remain ignored: ${file}`, "NEEDS_CHANGE");
         verifyPrivateInput(root, file, before.headSha);

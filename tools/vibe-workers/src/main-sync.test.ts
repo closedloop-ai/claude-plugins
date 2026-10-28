@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { finalMerge, generatedBiomeFixture, invokeSync, syncFixture, validateFixture, currentSyncDefinitions } from "./main-sync-test-fixtures.js";
 import { bundleDirectory, graph, recordWrite, writeAgent } from "./test-fixtures.js";
 import { GENERATED_BIOME_PATH, MAX_INPUT_BYTES } from "./main-sync-generated-input.js";
+import { inspectInputInventory } from "./main-sync-checks.js";
 
 const fixtures: ReturnType<typeof syncFixture>[] = [];
 afterEach(() => { for (const value of fixtures.splice(0)) value.cleanup(); });
@@ -119,6 +120,18 @@ describe("production main-sync publication CLIs", () => {
       if (contents) expect(readFileSync(inspected)).toEqual(contents);
     } finally { turn.finish(); }
   }, 30000);
+  it("passes ignored local agent and editor config but still refuses the same files when they are not ignored (ISS-13291)", () => {
+    const value = setup();
+    const config = [".codex/agents/reviewer.toml", ".claude/settings.local.json", ".agents/local.yml", ".vscode/settings.json",
+      ".idea/runConfigurations.json", "apps/app/.vscode/launch.json"];
+    mkdirSync(join(value.metadata, "info"), { recursive: true });
+    writeFileSync(join(value.metadata, "info", "exclude"), "/.codex/\n/.claude/\n/.agents/\n.vscode/\n/.idea/\n");
+    for (const path of config) value.write(path, "local = true\n");
+    expect(inspectInputInventory(value.worktree).headSha).toBe(value.git(["rev-parse", "HEAD"]));
+    for (const path of config) expect(readFileSync(join(value.worktree, path), "utf8")).toBe("local = true\n");
+    rmSync(join(value.metadata, "info", "exclude"));
+    expect(() => inspectInputInventory(value.worktree)).toThrow(/uncommitted executable \.(?:agents|claude|codex|idea|vscode)\//);
+  });
   it.each(["malformed", "conflicting-exit", "timeout", "changed-source"] as const)(
     "rejects %s pure-loader evidence before any transaction and does not expose dependency output", (failure) => {
     const value = setup(); const generated = generatedBiomeFixture(value);

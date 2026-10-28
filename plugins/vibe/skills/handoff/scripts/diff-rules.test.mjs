@@ -182,8 +182,12 @@ test("a change anywhere in a frozen story's import closure blocks until its iden
   const deep = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" } });
   assert.deepEqual(deep.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]]);
   assert.deepEqual(run(t, { base, head: { "packages/design-system/components/other.tsx": "export const other = 2;\n" } }).found, []);
-  const recorded = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: "Frozen render unchanged: all 1 stories: storybook test-runner on base and branch, identical\n" });
+  const recorded = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: "Frozen render unchanged: all 1 stories: frozen-render.mjs --base abc --story-file apps/storybook/stories/row.stories.tsx: 1 identical, 0 known main failures; out/results.json\n" });
   assert.deepEqual(recorded.found, []);
+  // A hand-rolled capture's line no longer passes the gate (ISS-13291).
+  const handRolled = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: "Frozen render unchanged: all 1 stories: storybook test-runner on base and branch, identical\n" });
+  assert.deepEqual(handRolled.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]]);
+  assert.match(handRolled.blocking[0].fix, /frozen-render\.mjs/);
 });
 
 test("routes, GridTableV2 and story titles require the tests the graph does not map", (t) => {

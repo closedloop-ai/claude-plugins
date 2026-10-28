@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { missingLanes, reportLanes } from "./pre-pr-lanes.mjs";
+import { NOT_RUN_NO_IDENTITY, STAGING_IDENTITY_KEY, isWebE2eLane, missingLanes, reportLanes } from "./pre-pr-lanes.mjs";
 import { git, makeHome } from "./test-fixtures.mjs";
 import { spawnSync } from "node:child_process";
 
@@ -86,4 +86,44 @@ test("a result names the commit it ran: a run refuses another HEAD or a modified
   const moved = run("run", "--worktree", worktree, "--head", intended, "--command", `git checkout --quiet ${old}`);
   assert.equal(moved.status, 1, "HEAD moving during the run fails it");
   assert.match(moved.stdout, /^HEAD-MOVED /m);
+});
+
+test("without the staging e2e identities the local web e2e lane is recorded not run and does not stop the PR (operator ruling, 2026-10-28, ISS-13291)", (t) => {
+  const { root, home, cleanup } = makeHome("vibe-pre-pr-lanes-identity-");
+  t.after(cleanup);
+  const worktree = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", worktree], home);
+  git(worktree, ["commit", "--quiet", "--allow-empty", "-m", "base"], home);
+  const head = git(worktree, ["rev-parse", "HEAD"], home).trim();
+  const web = "pnpm test:e2e";
+  const report = path.join(root, "lanes.txt");
+  writeFileSync(report, ["OUTSIDE THE TURBO GRAPH: 2 lane(s).", `    ${web}      (2 changed path(s) under e2e/)`, `    ${DESKTOP_E2E} (1 changed path(s))`, ""].join("\n"));
+  const env = { ...process.env, HOME: home };
+  delete env[STAGING_IDENTITY_KEY];
+  const run = (extra = {}) => spawnSync(process.execPath, [SCRIPT, "check", "--worktree", worktree, "--report", report], { encoding: "utf8", env: { ...env, ...extra } });
+  assert.equal(run().status, 1, "the Desktop e2e lane is not a web lane and is still required");
+  spawnSync(process.execPath, [SCRIPT, "record", "--worktree", worktree, "--head", head, "--command", DESKTOP_E2E, "--result", "pass"], { env });
+  const skipped = run();
+  assert.equal(skipped.status, 0, skipped.stdout);
+  assert.match(skipped.stdout, /^NOT-RUN-LANE pnpm test:e2e \(no staging e2e identities on this machine; the containerized or CI run covers it\)$/m);
+  assert.doesNotMatch(skipped.stdout, /MISSING-LANE/);
+  const records = JSON.parse(readFileSync(path.join(worktree, ".git", "vibe-lane-results.json"), "utf8"));
+  assert.deepEqual(records.filter((record) => record.command === web).map((record) => [record.head, record.result, record.reason]),
+    [[head, "not-run", NOT_RUN_NO_IDENTITY]]);
+  assert.equal(run({ [STAGING_IDENTITY_KEY]: "set" }).status, 1, "a machine with the identity in its environment runs the web lane");
+  mkdirSync(path.join(worktree, "apps", "app"), { recursive: true });
+  writeFileSync(path.join(worktree, "apps", "app", ".env.local"), `${STAGING_IDENTITY_KEY}=""\n`);
+  assert.equal(run().status, 0, "a blank value is not an identity");
+  writeFileSync(path.join(worktree, "apps", "app", ".env.local"), `OTHER=1\n${STAGING_IDENTITY_KEY}='secret'\n`);
+  const required = run();
+  assert.equal(required.status, 1);
+  assert.match(required.stdout, /^MISSING-LANE pnpm test:e2e:/m);
+});
+
+test("only the web Playwright lanes count as local web e2e", () => {
+  assert.equal(isWebE2eLane("pnpm test:e2e"), true);
+  assert.equal(isWebE2eLane("E2E_PROJECTS='chromium' pnpm test:web-smoke"), true);
+  assert.equal(isWebE2eLane(DESKTOP_E2E), false);
+  assert.equal(isWebE2eLane("pnpm --dir apps/desktop test:e2e"), false);
+  assert.equal(isWebE2eLane("pnpm --filter @repo/app test"), false);
 });

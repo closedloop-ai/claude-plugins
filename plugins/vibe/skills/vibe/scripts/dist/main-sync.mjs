@@ -224134,6 +224134,7 @@ var harnessSwitchSchema = external_exports.object({
   evidence: external_exports.string().min(1).max(1024)
 }).strict();
 var migrateSchema = registerFields.extend({
+  capabilities: capabilitiesSchema.optional(),
   previousWorkerId: workerIdSchema,
   previousDigest: external_exports.string().regex(/^[a-f0-9]{64}$/),
   retainedRecord: retainedRecordSchema.optional(),
@@ -227679,6 +227680,7 @@ var BIOME_PATHS_PER_COMMAND = 120;
 var SOURCE_PATH = /\.(?:[cm]?js|tsx?|jsx|py|sh|jsonc?|ya?ml|toml|css|scss)$/;
 var PRIVATE_ARTIFACT = /\.(?:md|json|log|txt|png|webp)$/;
 var CACHE_SEGMENTS = /* @__PURE__ */ new Set(["node_modules", ".next", ".turbo", "dist", "storybook-static", ".cache"]);
+var LOCAL_CONFIG_DIRS = /* @__PURE__ */ new Set([".codex", ".claude", ".agents", ".vscode", ".idea"]);
 var turboTasksSchema = external_exports.object({ tasks: external_exports.array(external_exports.object({ taskId: external_exports.string(), package: external_exports.string().optional() }).passthrough()) }).passthrough();
 function committedInputs(root) {
   const inspected = inspectInventory(root, "origin");
@@ -227714,6 +227716,7 @@ function inspectInventory(root, completion) {
     for (const file of git(root, args).split("\0").filter(Boolean)) {
       untracked.push(file);
       if (file.split("/").some((segment) => CACHE_SEGMENTS.has(segment))) continue;
+      if (ignored && file.split("/").slice(0, -1).some((segment) => LOCAL_CONFIG_DIRS.has(segment))) continue;
       if (isLocalPlanPath(file)) {
         if (!ignored) throw new MainSyncError(`Private planning evidence must remain ignored: ${file}`, "NEEDS_CHANGE");
         verifyPrivateInput(root, file, before.headSha);

@@ -230,10 +230,18 @@ advice was applied.
 In handoff mode also run these checks and report each result with its
 evidence:
 
-- Frozen renders: for each inventory `frozen-render` finding, render its
-  story IDs on the base and branch with fixed args, globals and viewport and
-  run their plays; a difference is a finding, a match is what its change log
-  line cites.
+- Frozen renders: for each inventory `frozen-render` finding, run
+  `../skills/handoff/scripts/frozen-render.mjs --repo <worktree> --base <base>
+  --base-url <url> --head-url <url> --story-file <file> ... --out <dir>`,
+  never a capture of your own. The base URL is the repo's Storybook served
+  from a disposable detached worktree at the base commit, bootstrapped with
+  `.closedloop-ai/loops-setup.sh` and removed afterwards; the head URL is the
+  session's own Storybook. It renders each story ID on both with fixed
+  args, globals and viewport, waits for the play to finish and judges it with
+  `story-play-verdict.mjs`. Each `differs` entry is a finding. Each
+  `knownMainFailures` entry fails the same way on the base: it is not a
+  finding and goes on the live ticket as a Known main failure. When nothing
+  differs, report its `changeLogLine` for the writer to record.
 - Flag-on states: every surface the session claims has its flag-on state on
   that surface's existing story entry.
 - States: for each state the ticket, PRD or acceptance criteria name, the

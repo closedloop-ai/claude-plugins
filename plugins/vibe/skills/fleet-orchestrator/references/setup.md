@@ -42,6 +42,15 @@ Session, request and remote state dirs are derived per program. `fleet.sh` uses 
 
 Ask once, in one question set, only for keys `config.env` lacks; offer the default first.
 
+Ask nothing when the operator runs vibe (the work is their vibe session or
+ticket, not a fleet they run) or the program is `one-writer` or `no-writer`:
+the defaults already fit one writer, so the answers would change nothing.
+Write every default below and report
+them in one plain line, such as "I set this up with the defaults: this
+machine, Claude writers, no outside product for UX precedent." Ask about
+machines only when the operator already named another machine, never about
+writers, models, effort, budget or the move threshold.
+
 | Question | Default | Writes |
 |---|---|---|
 | Machines: this one only, or more (the ssh host of each)? | this one only | `REMOTE_HOST`, `REMOTE_FLEET_HOME`, `REMOTE_SHELL` |
