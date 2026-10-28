@@ -4,6 +4,25 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.11
+
+A product manager could not get a pull request out of vibe (ISS-13291). After the plugin update, the session's saved writer could neither resume (its release was removed) nor migrate (its last turn had ended `BLOCKED`), main sync refused the person's own ignored agent config, the handoff frozen-render gate had no shipped way to pass, and local web e2e stopped on the staging sign-in a PM's machine does not have. Operator rulings (2026-10-28): fix all five bugs in one change, deadlock first; on a machine without the staging e2e identities, skip local web e2e and rely on the containerized or CI run.
+
+#### Fixed
+- `writer-state.mjs migrate` carries a `BLOCKED` request of any reason over to the new writer once the recorded definition is missing: it stays the active request, `claim` refuses every queued request until the new writer continues it, and the result carries `carriedBlock` (request, reason, summary) for the continuation. While the recorded definition is present the refusal stays. `quality-loop.md` "Recorded definition migration" now matches `guardrails.md`, and `vibe-change-worker` settles a carried block first.
+- `plugin-version.mjs update`, when vibe is outdated, names each vibe session in the remembered checkout whose writer is bound to an older vibe release (`sessions`), and migrates each Claude writer with the updated release's own `writer-state.mjs`; a Codex writer, a running turn or a still-installed release is `on-resume`.
+- `migrate` keeps the recorded binding's capabilities when `capabilities` is left out, so a guessed tool list is never needed.
+- Main sync treats ignored files under `.codex/`, `.claude/`, `.agents/`, `.vscode/` and `.idea/` as the person's own config and never refuses them; the same files untracked but not ignored still block.
+- New `handoff/scripts/frozen-render.mjs` renders each frozen story on a base and a branch Storybook with fixed args, globals and viewport, waits for the play to finish and judges it with `story-play-verdict.mjs`. A story that fails the same way on the base is a known main failure that does not block and goes on the live ticket's Known main failures. The `frozen-render` rule now accepts only the line this script prints. `story-play-verdict.mjs`'s recorder also keeps each failure event's message.
+- `pre-pr-lanes.mjs check`, on a machine without the staging e2e identities (the e2e sign-in password in neither the environment nor `apps/app/.env.local`), records the local web e2e lane `not-run` and prints `NOT-RUN-LANE` instead of requiring it; the Desktop e2e lane stays required.
+- fleet-orchestrator's first run asks nothing when the operator runs vibe or the program has one writer or none: it writes the defaults and reports them in one plain line.
+- `writer-state.mjs help` and `claude-worker.mjs help` print their usage and the bindable capability set; `claude-worker.mjs` given an argument answers `INVALID_REQUEST`, not `WORKER_TURN_FAILED`.
+- A tooling stop is recorded on the live ticket's Progress before the reply, and the reply is one plain line that quotes no rule and names no plugin file.
+
+#### Coverage
+- Failing on 1.1.6 (main 3a466ee6) and passing here: 15 vitest cases (`writer-migration.test.ts`, `usage.test.ts`, `main-sync.test.ts`), the new `plugin-version.test.mjs` stranded-sessions case, `frozen-render.test.mjs`, `pre-pr-lanes.test.mjs`, the `diff-rules.test.mjs` frozen-render case, `test_vibe_iss_13291_contract.py` (8 cases) and 3 updated cases in `test_vibe_stranded_writer_recovery_contract.py`. New eval `pm-fleet-defaults-not-asked`: 3 of 3 here, 0 of 3 on 1.1.6; the Codex runner now has 96 cases.
+- `test_vibe_storybook_links_contract.py` allows `frozen-render.mjs`, which loads the Storybook canvas in a headless browser and gives no link to anyone.
+
 ### vibe v1.1.9
 
 vibe's text no longer assumes the person running a session is not an engineer: it is for executives, designers, product managers and engineers (ISS-13292, operator ruling, 2026-10-28). Plain words stay the default for everyone, and one new rule lets the person get technical detail when they ask for it. This is not an engineer mode.
