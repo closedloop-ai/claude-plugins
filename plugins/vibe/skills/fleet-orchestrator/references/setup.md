@@ -44,7 +44,8 @@ Ask once, in one question set, only for keys `config.env` lacks; offer the defau
 
 Ask nothing when the operator runs vibe (the work is their vibe session or
 ticket, not a fleet they run) or the program is `one-writer` or `no-writer`:
-these are engineering setup questions. Write every default below and report
+the defaults already fit one writer, so the answers would change nothing.
+Write every default below and report
 them in one plain line, such as "I set this up with the defaults: this
 machine, Claude writers, no outside product for UX precedent." Ask about
 machines only when the operator already named another machine, never about
