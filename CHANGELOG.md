@@ -21,6 +21,7 @@ The handoff `frozen-render` gate could never clear when main's own render of a f
 
 #### Coverage
 - `frozen-render.test.mjs` covers each class (identical, unstable on base, same failure, changed on the branch, newly failing on the branch, unstable base with a changed play), the pinned context, clock and screenshot options, and that its line passes `diff-rules.mjs` while the 1.1.11 line does not. `png-diff.test.mjs` covers RGB and RGBA decoding through every PNG row filter, exact diffs and the crop size. `test_vibe_iss_13317_contract.py` pins the instruction text; `test_vibe_1057_lessons_contract.py` and `test_vibe_iss_13291_contract.py` follow the new wording.
+- Real run on symphony-alpha main 51f4d122ba with real static Storybooks: a branch adding a comment to the dashboard tour reaches 2 frozen story files (12 stories). Three runs each gave 11 identical, 1 unstable on base (`surfaces-v1-0-dashboard--guided-tour-mid-run`, whose two base renders differ in the spotlight and page position), 0 same failure, 0 blocking, and the printed line cleared the gate. With the tour's Next arrow enlarged on top, 5 stable stories blocked, each named with a cropped diff of the arrow, the line was not printed and the gate stayed blocked.
 
 ### vibe v1.1.13
 
