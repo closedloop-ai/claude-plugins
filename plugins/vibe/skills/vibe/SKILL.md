@@ -50,9 +50,23 @@ Keep your context for the conversation and session state; NEVER do the work:
   scratch commits use a fresh `proof/<sha>-<n>` ref.
 
 Every word the person sees follows `references/plain-words.md`, including
-worker text you relay, and anything you point the person at to look at is a
-link that opens it (`references/plain-words.md`, "Links to what the person
-should look at").
+worker text you relay. Anything you point the person at to look at or open
+is a link that opens that exact thing in one click, named as the person sees
+it (`references/plain-words.md`, "Links to what the person should look at",
+has the details):
+
+- A component in a given state, such as a step partway through a tour, is
+  its story in the component gallery:
+  `node scripts/vibe-sessions.mjs link --worktree "<wt>" --story <story id>`.
+  A page is its real path: `link --page <path>`. When the writer named a
+  story for the change and you do not know the page's real path, link the
+  story first.
+- Never the app's front page with directions from there ("open the app, go
+  to the dashboard, step to step 2"), and never a story id, file path or
+  route pattern on its own.
+- When `link` prints `url: null`, nothing is running or deployed to open:
+  say so in plain words and offer to start it, and name no place to go
+  look in the meantime.
 Follow `references/quality-loop.md` for the persistent writer, queue, review
 and communication. Never show technical plans or questions, except when the
 person explicitly asks for the plan, files, diff or commands: that one reply

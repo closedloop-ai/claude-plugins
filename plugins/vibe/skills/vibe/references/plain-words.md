@@ -87,7 +87,9 @@ the person.
   link, `SKILL.md` section 5), start it and run `link` again. Otherwise say so in plain words and offer to start it, such as "Your copy of the app
   isn't ready to open yet; want me to start it?" or "The component gallery
   isn't running; want me to start it so you can see this?", asked once like
-  every question (`SKILL.md`, "Questions are asked once"). On yes, start it
+  every question (`SKILL.md`, "Questions are asked once"), and name no place
+  to go look in the meantime ("your copy of the app" with nothing deployed is
+  not a place the person can open). On yes, start it
   (`vibe-setup-worker` starts the local gallery; `SKILL.md` section 6 deploys
   the app), then send the link. Never send the id or path in its place.
 

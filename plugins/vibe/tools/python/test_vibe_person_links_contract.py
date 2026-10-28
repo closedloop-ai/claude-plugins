@@ -83,10 +83,16 @@ def test_the_word_table_sends_ids_and_paths_to_the_rule() -> None:
 
 def test_the_skills_and_storybook_rule_point_at_it() -> None:
     skill = flat(VIBE_SKILL.read_text())
-    assert (
-        "anything you point the person at to look at is a link that opens it "
-        f"(`references/plain-words.md`, {RULE_NAME})" in skill
-    )
+    for required in (
+        "Anything you point the person at to look at or open is a link that opens that exact thing in one click, "
+        f"named as the person sees it (`references/plain-words.md`, {RULE_NAME}, has the details)",
+        "A component in a given state, such as a step partway through a tour, is its story in the component gallery",
+        "When the writer named a story for the change and you do not know the page's real path, link the story first",
+        "Never the app's front page with directions from there",
+        "When `link` prints `url: null`, nothing is running or deployed to open: say so in plain words and offer to "
+        "start it, and name no place to go look in the meantime",
+    ):
+        assert required in skill, required
     loop = section(VIBE_SKILL.read_text(), "## 5. Build loop")
     assert "look at with a link to each changed page (`vibe-sessions.mjs link --page`;" in loop
     deploy = section(VIBE_SKILL.read_text(), "## 6. Deploy each change")
