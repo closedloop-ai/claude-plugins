@@ -9,8 +9,9 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
 import { playVerdictProblems } from "../../vibe/scripts/story-play-verdict.mjs";
+import { isDesktopE2eLane } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { isE2ePath, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
-import { tierEvidenceProblems } from "./e2e-tier.mjs";
+import { selectE2eTier, tierEvidenceProblems } from "./e2e-tier.mjs";
 
 const REPO = "closedloop-ai/symphony-alpha";
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -32,6 +33,8 @@ const DESKTOP_HOST = ["apps/desktop/src/renderer/", "packages/app/"];
 const TEMPLATE_PATHS = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md", "pull_request_template.md"];
 const TEMPLATE_HEADING = /^#{1,6}\s+\S.*$/gm;
 const SELECTORS = ["code_tests_for", "related", "e2e-reference"];
+const SHA = /^[a-f0-9]{40}$/;
+export const KNOWN_MAIN_FAILURES = "Known main failures";
 const CI_CHECK_PATH = /^(?:\.github\/(?:workflows|actions)\/|scripts\/)|(?:^|\/)(?:package\.json|turbo\.json|biome\.jsonc?)$|(?:^|\/)(?:lint|checks?|gates?)\//;
 
 export const STACKED_BASE_STATEMENT = "Stacked pull request: its base is not main, so no required CI lane runs on it; local evidence is listed below.";
@@ -167,16 +170,43 @@ export function requiredLanes(changed, touchFlows = []) {
   return lanes;
 }
 
+/**
+ * A run that failed the same way on the main the session captured: the
+ * session did not cause it, so it never stops the pull request, and the body
+ * lists it under Known main failures (ISS-13321). `mainSha` is the captured
+ * main the same command also failed on.
+ */
+export function isMainPreexisting(run) {
+  return run?.status === "main-preexisting" && SHA.test(run.mainSha ?? "");
+}
+
+function passedOrMainPreexisting(run) {
+  return run?.status === "passed" || isMainPreexisting(run);
+}
+
+/**
+ * The web e2e lane is left for CI when no permitted tier can run it and every
+ * changed spec is listed unavailable with the CI jobs that cover it, the same
+ * record `tierEvidenceProblems` accepts (ISS-13321).
+ */
+function e2eLeftForCi(runsFile, changed) {
+  const capability = runsFile?.e2eCapability;
+  const unavailable = new Set(capability?.unavailableSpecs ?? []);
+  const specs = changed.filter((file) => isE2ePath(file) && TEST_SPEC_PATTERN.test(file));
+  return Boolean(capability) && selectE2eTier(capability).tier === null && unavailable.size > 0
+    && specs.every((spec) => unavailable.has(spec)) && Array.isArray(capability.ciCoverage) && capability.ciCoverage.length > 0;
+}
+
 /** Every required lane finished and passed on the published commit. */
 export function evidenceProblems(runsFile, changed, commit) {
   if (!Array.isArray(runsFile?.touchFlows) || (runsFile.touchFlows.length === 0 && !runsFile.touchFlowsReason)) {
     return ["list every touched card, narrow or touch flow in touchFlows, or [] with a touchFlowsReason"];
   }
-  return requiredLanes(changed, runsFile.touchFlows).flatMap((lane) => {
+  return requiredLanes(changed, runsFile.touchFlows).filter((lane) => !(lane === "e2e" && e2eLeftForCi(runsFile, changed))).flatMap((lane) => {
     const runs = (runsFile.runs ?? []).filter((run) => run.lane === lane);
     if (runs.length === 0) return [`${lane}: no run recorded`];
     return runs.flatMap((run) => [
-      ...(run.status === "passed" ? [] : [`${lane}: ${run.status ?? "no status"}; a pull request never opens on an unfinished or failed run`]),
+      ...(passedOrMainPreexisting(run) ? [] : [`${lane}: ${run.status ?? "no status"}; a pull request never opens on an unfinished or failed run`]),
       ...(run.command && run.outcome ? [] : [`${lane}: command or visible outcome missing`]),
       ...(commit && run.commit !== commit ? [`${lane}: ran on ${run.commit}, not the published commit ${commit}`] : []),
       ...(lane === "storybook-plays" ? playVerdictProblems(run) : []),
@@ -232,7 +262,10 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
   };
   return {
     ...facts,
-    ...(body === undefined ? {} : { prBodyProblems: bodyProblems(body, facts, files, prBase, template ?? readTemplate(worktree, base)) }),
+    ...(body === undefined ? {} : { prBodyProblems: [
+      ...bodyProblems(body, facts, files, prBase, template ?? readTemplate(worktree, base)),
+      ...(runs === undefined ? [] : knownMainFailureProblems(body, runs)),
+    ] }),
     ...(runs === undefined ? {} : { prEvidenceProblems: [
       ...evidenceProblems(runs, changed, commit),
       ...selectionProblems(runs, files, requiredTests, commit),
@@ -298,7 +331,7 @@ export function selectionProblems(runsFile, files, requiredTests, commit) {
   const acceptedCommit = (test) => target(test)?.resultCommit ?? commit;
   const carried = (test) => !commit || acceptedCommit(test) === commit
     || (target(test)?.carriedTo === commit && typeof target(test)?.carryReason === "string" && target(test).carryReason.length > 0);
-  const passed = (test, flag) => carried(test) && runs.some((entry) => entry?.path === test && entry.status === "passed" && (!acceptedCommit(test) || entry.commit === acceptedCommit(test))
+  const passed = (test, flag) => carried(test) && runs.some((entry) => entry?.path === test && passedOrMainPreexisting(entry) && (!acceptedCommit(test) || entry.commit === acceptedCommit(test))
     && (flag === undefined || entry.flag === flag));
   for (const test of [...selected].sort()) {
     if (!passed(test)) {
@@ -331,7 +364,8 @@ export function targetedEvidenceProblems(runsFile, commit, worktree) {
   for (const lane of inventory.laneReport?.matches ?? []) {
     if (!lane?.name || !lane?.command) problems.push("each matching post-merge lane needs its repository name and exact command");
     else if (!(lane.mentionOnly === true && text(lane.notRunReason))
-      && !runs.some((run) => run?.lane === lane.name && run.command === lane.command && run.status === "passed" && run.commit === commit)) {
+      && !runs.some((run) => run?.lane === lane.name && run.command === lane.command && run.commit === commit
+        && (passedOrMainPreexisting(run) || desktopLeftForCi(run)))) {
       problems.push(`lane ${lane.name}: no passing run of its test:lanes command on ${commit}; a hand-picked subset is not the lane (#9238)`);
     }
   }
@@ -358,7 +392,7 @@ export function targetedEvidenceProblems(runsFile, commit, worktree) {
         else if (current !== covered.sha256) problems.push(`${covered.path}: covered file hash changed before ${commit}`);
       }
     }
-    const passed = runs.some((run) => run?.path === entry.path && run.status === "passed" && run.commit === resultCommit
+    const passed = runs.some((run) => run?.path === entry.path && passedOrMainPreexisting(run) && run.commit === resultCommit
       && run.command === entry.command && Array.isArray(run.cases) && entry.cases.every((name) => run.cases.includes(name)));
     if (!passed) problems.push(`${entry.path}: no passing targeted run with its exact cases and command on ${resultCommit}`);
   }
@@ -395,6 +429,29 @@ export function ciCheckProblems(runsFile, changed, commit) {
     if (!text(repro?.job) || !text(repro?.tier) || !text(repro?.checkout) || !text(repro?.command)) return [`ciCheckRepros entry ${repro?.job ?? "unknown"} needs job, tier, checkout and command`];
     return repro.status === "passed" && repro.commit === commit ? [] : [`${repro.job}: no passing run in its CI checkout shape on ${commit}`];
   });
+}
+
+/**
+ * The Desktop Electron lane cannot run on a machine without the displayless
+ * Linux harness, and vibe never launches Electron natively; there
+ * `pre-pr-lanes.mjs check` records it `not-run` and the post-merge
+ * `desktop-e2e/validated` run covers it (ISS-13321).
+ */
+function desktopLeftForCi(run) {
+  return run?.status === "not-run" && isDesktopE2eLane(run.command ?? "") && text(run.reason);
+}
+
+/**
+ * Every main-preexisting run is named in the body under Known main failures,
+ * so the reviewer sees what the pull request did not cause (ISS-13321).
+ */
+export function knownMainFailureProblems(body, runsFile) {
+  const known = [...(runsFile?.runs ?? []), ...(runsFile?.testRuns ?? [])].filter(isMainPreexisting);
+  if (known.length === 0) return [];
+  const at = body.indexOf(KNOWN_MAIN_FAILURES);
+  const listed = at < 0 ? "" : body.slice(at);
+  return known.map((run) => run.path ?? run.command ?? run.lane).filter((name) => !listed.includes(name))
+    .map((name) => `${name} fails on main too; list it under "${KNOWN_MAIN_FAILURES}" with the main commit`);
 }
 
 function finalFileHash(inventory, worktree, file) {

@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { NOT_RUN_NO_IDENTITY, STAGING_IDENTITY_KEY, isWebE2eLane, missingLanes, reportLanes } from "./pre-pr-lanes.mjs";
+import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY, STAGING_IDENTITY_KEY, hasDisplaylessElectronHarness, isDesktopE2eLane, isWebE2eLane, missingLanes, notRunLanes, reportLanes } from "./pre-pr-lanes.mjs";
 import { git, makeHome } from "./test-fixtures.mjs";
 import { spawnSync } from "node:child_process";
 
@@ -19,6 +19,8 @@ const REPORT = [
   "",
 ].join("\n");
 const DESKTOP_E2E = "DESKTOP_E2E_SPECS='e2e/branches-grid.spec.ts e2e/it'\\''s.spec.ts' DESKTOP_E2E_PROJECTS='desktop' pnpm --filter desktop test:e2e";
+// The Desktop lane is required only where the displayless Linux harness exists (ISS-13321).
+const HARNESS = hasDisplaylessElectronHarness();
 
 test("every lane the report names is required, e2e lanes and lanes with the step's variables included (#9116 merged with Desktop E2E reds)", () => {
   assert.deepEqual(reportLanes(REPORT), ["pnpm --filter @repo/app test", "pnpm test:desktop-renderer", DESKTOP_E2E]);
@@ -46,7 +48,7 @@ test("the PR-open check refuses a diff naming desktop-renderer with no recorded 
   const refused = run("check", "--worktree", worktree, "--report", report);
   assert.equal(refused.status, 1);
   assert.match(refused.stdout, /^MISSING-LANE pnpm test:desktop-renderer:/m);
-  assert.match(refused.stdout, /^MISSING-LANE DESKTOP_E2E_SPECS=.* pnpm --filter desktop test:e2e:/m);
+  assert.match(refused.stdout, HARNESS ? /^MISSING-LANE DESKTOP_E2E_SPECS=.* pnpm --filter desktop test:e2e:/m : /^NOT-RUN-LANE DESKTOP_E2E_SPECS=.* pnpm --filter desktop test:e2e \(no displayless Linux Electron harness/m);
   assert.equal(run("check", "--worktree", worktree, "--report", report, "--skip", "e2e").status, 2, "a skip needs the operator ruling that waives it");
   const waived = run("check", "--worktree", worktree, "--report", report, "--skip", "test:e2e", "--skip-ruling", "deadline mode, operator, 2026-10-22, rulings.md");
   assert.match(waived.stdout, /^SKIPPED-LANE DESKTOP_E2E_SPECS=.* \(deadline mode, operator, 2026-10-22, rulings.md\)$/m);
@@ -101,7 +103,7 @@ test("without the staging e2e identities the local web e2e lane is recorded not 
   const env = { ...process.env, HOME: home };
   delete env[STAGING_IDENTITY_KEY];
   const run = (extra = {}) => spawnSync(process.execPath, [SCRIPT, "check", "--worktree", worktree, "--report", report], { encoding: "utf8", env: { ...env, ...extra } });
-  assert.equal(run().status, 1, "the Desktop e2e lane is not a web lane and is still required");
+  assert.equal(run().status, HARNESS ? 1 : 0, "the Desktop e2e lane is required only where the displayless harness exists");
   spawnSync(process.execPath, [SCRIPT, "record", "--worktree", worktree, "--head", head, "--command", DESKTOP_E2E, "--result", "pass"], { env });
   const skipped = run();
   assert.equal(skipped.status, 0, skipped.stdout);
@@ -126,4 +128,54 @@ test("only the web Playwright lanes count as local web e2e", () => {
   assert.equal(isWebE2eLane(DESKTOP_E2E), false);
   assert.equal(isWebE2eLane("pnpm --dir apps/desktop test:e2e"), false);
   assert.equal(isWebE2eLane("pnpm --filter @repo/app test"), false);
+});
+
+test("the Desktop e2e lane is left for CI on a machine without the displayless Linux harness (ISS-13321)", () => {
+  const lanes = ["pnpm test:e2e", DESKTOP_E2E, "pnpm test:desktop-renderer"];
+  assert.equal(isDesktopE2eLane(DESKTOP_E2E), true);
+  assert.equal(isDesktopE2eLane("DESKTOP_E2E_SMOKE_TAG='@smoke' DESKTOP_E2E_CHANGED_SPECS='' pnpm --dir apps/desktop test:e2e"), true);
+  assert.equal(isDesktopE2eLane("pnpm test:e2e"), false);
+  assert.equal(isDesktopE2eLane("pnpm test:desktop-renderer"), false);
+  assert.deepEqual(notRunLanes(lanes, [], "h1", { identity: true, harness: false }), [{ lane: DESKTOP_E2E, reason: NOT_RUN_NO_DESKTOP_HARNESS }]);
+  assert.deepEqual(notRunLanes(lanes, [], "h1", { identity: true, harness: true }), [], "a Linux machine with the harness runs it");
+  assert.deepEqual(notRunLanes(lanes, [{ command: DESKTOP_E2E, head: "h1", result: "pass" }], "h1", { identity: true, harness: false }), [],
+    "a run recorded from a remote runner counts");
+  assert.equal(hasDisplaylessElectronHarness("darwin", () => true), false, "a Mac never launches Electron for vibe");
+  assert.equal(hasDisplaylessElectronHarness("linux", (tool) => tool !== "xvfb-run"), false);
+  assert.equal(hasDisplaylessElectronHarness("linux", () => true), true);
+});
+
+test("a lane that also fails on captured main is recorded main-preexisting and does not stop the PR (ISS-13321)", (t) => {
+  const { root, home, cleanup } = makeHome("vibe-pre-pr-lanes-main-");
+  t.after(cleanup);
+  const worktree = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", worktree], home);
+  writeFileSync(path.join(worktree, "red.txt"), "main is red\n");
+  git(worktree, ["add", "red.txt"], home);
+  git(worktree, ["commit", "--quiet", "-m", "main"], home);
+  const mainSha = git(worktree, ["rev-parse", "HEAD"], home).trim();
+  const mainCheckout = path.join(root, "main");
+  git(worktree, ["worktree", "add", "--quiet", "--detach", mainCheckout, mainSha], home);
+  git(worktree, ["rm", "--quiet", "red.txt"], home);
+  git(worktree, ["commit", "--quiet", "-m", "session"], home);
+  const head = git(worktree, ["rev-parse", "HEAD"], home).trim();
+  const lane = "pnpm test:deploy-guards";
+  const failing = "false";
+  const report = path.join(root, "lanes.txt");
+  writeFileSync(report, `OUTSIDE THE TURBO GRAPH: 1 lane(s).\n    ${lane}      (1 changed path(s))\n`);
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  assert.deepEqual(missingLanes([lane], [{ command: lane, head, result: "main-preexisting", mainSha }], head), []);
+  assert.deepEqual(missingLanes([lane], [{ command: lane, head, result: "main-preexisting" }], head), [lane], "it names the main it failed on");
+  const records = path.join(worktree, ".git", "vibe-lane-results.json");
+  const recorded = run("run", "--worktree", worktree, "--head", head, "--command", failing, "--main-worktree", mainCheckout, "--main-sha", mainSha);
+  assert.equal(recorded.status, 0, recorded.stdout + recorded.stderr);
+  const [entry] = JSON.parse(readFileSync(records, "utf8"));
+  assert.deepEqual([entry.result, entry.mainSha], ["main-preexisting", mainSha]);
+  writeFileSync(records, `${JSON.stringify([{ ...entry, command: lane }])}\n`);
+  const checked = run("check", "--worktree", worktree, "--report", report);
+  assert.equal(checked.status, 0, checked.stdout);
+  assert.match(checked.stdout, new RegExp(`^MAIN-PREEXISTING-LANE ${lane} \\(fails on captured main ${mainSha} too; list it under Known main failures\\)$`, "m"));
+  const sessionCaused = run("run", "--worktree", worktree, "--head", head, "--command", "test -f red.txt", "--main-worktree", mainCheckout, "--main-sha", mainSha);
+  assert.equal(sessionCaused.status, 1, "a lane that passes on main is the session's failure");
+  assert.match(sessionCaused.stdout, /^recorded fail for test -f red.txt at /m);
 });

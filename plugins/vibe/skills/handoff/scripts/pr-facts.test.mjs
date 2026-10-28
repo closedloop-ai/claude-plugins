@@ -3,7 +3,8 @@ import { unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { ciCheckProblems, evidenceProblems, pullRequestFacts, requiredLanes, selectionProblems, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
+import { ciCheckProblems, evidenceProblems, knownMainFailureProblems, pullRequestFacts, requiredLanes, selectionProblems, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
+import { NOT_RUN_NO_DESKTOP_HARNESS } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -262,4 +263,62 @@ test("a changed check or CI script needs a run in its CI job's checkout shape (#
   assert.match(ciCheckProblems({ ciCheckRepros: [{ ...repro, status: "failed" }] }, ["scripts/a.ts"], commit).join(), /storybook-build: no passing run/);
   assert.match(ciCheckProblems({ ciCheckRepros: [{ ...repro, checkout: "" }] }, ["scripts/a.ts"], commit).join(), /needs job, tier, checkout/);
   assert.deepEqual(ciCheckProblems({ ciCheckRepros: [repro] }, ["scripts/a.ts"], commit), []);
+});
+
+test("the Desktop e2e lane left for CI by pre-pr-lanes is not a missing lane run (ISS-13321)", () => {
+  const commit = "f".repeat(40);
+  const lane = { name: "desktop-e2e", command: "DESKTOP_E2E_SMOKE_TAG='@smoke' DESKTOP_E2E_CHANGED_SPECS='' pnpm --dir apps/desktop test:e2e" };
+  const evidence = (testRuns) => ({
+    targetedInventory: { actor: "read-only", source: "final-committed-diff", commit, laneReport: { command: "pnpm test:lanes", matches: [lane] }, entries: [], noTestsReason: "lane only" },
+    testRuns, rerunCycles: [],
+  });
+  const notRun = { lane: lane.name, command: lane.command, status: "not-run", reason: NOT_RUN_NO_DESKTOP_HARNESS, commit };
+  assert.deepEqual(targetedEvidenceProblems(evidence([notRun]), commit), []);
+  assert.match(targetedEvidenceProblems(evidence([{ ...notRun, reason: "" }]), commit).join(), /lane desktop-e2e: no passing run/, "a not-run record names why");
+  assert.match(targetedEvidenceProblems(evidence([{ ...notRun, commit: "e".repeat(40) }]), commit).join(), /lane desktop-e2e/, "at the published commit");
+  const web = { name: "e2e", command: "pnpm test:e2e" };
+  const webEvidence = { ...evidence([{ ...notRun, lane: web.name, command: web.command }]) };
+  webEvidence.targetedInventory = { ...webEvidence.targetedInventory, laneReport: { command: "pnpm test:lanes", matches: [web] } };
+  assert.match(targetedEvidenceProblems(webEvidence, commit).join(), /lane e2e: no passing run/, "only the Desktop lane is left for CI here");
+});
+
+test("a run that also fails on captured main does not block, and the body lists it under Known main failures (ISS-13321)", (t) => {
+  const commit = "a".repeat(40);
+  const mainSha = "9".repeat(40);
+  const red = (extra) => ({ status: "main-preexisting", mainSha, commit, ...extra });
+  const required = [{ path: "scripts/deploy/deploy-guards.test.ts", reason: "path gate" }];
+  assert.deepEqual(selectionProblems({ testSelection: [], testRuns: [red({ path: required[0].path })] }, [], required, commit), []);
+  assert.match(selectionProblems({ testSelection: [], testRuns: [red({ path: required[0].path, mainSha: undefined })] }, [], required, commit).join(), /selected but no passing/,
+    "main-preexisting names the main it failed on");
+  const lane = { name: "deploy-guards", command: "pnpm test:deploy-guards" };
+  const lanes = { targetedInventory: { actor: "read-only", source: "final-committed-diff", commit, laneReport: { command: "pnpm test:lanes", matches: [lane] }, entries: [], noTestsReason: "lane only" },
+    testRuns: [red({ lane: lane.name, command: lane.command })], rerunCycles: [] };
+  assert.deepEqual(targetedEvidenceProblems(lanes, commit), []);
+  const changed = ["packages/app/list.tsx"];
+  const runs = requiredLanes(changed).map((name) => (name === "web-host" ? red({ lane: name, command: "control", outcome: "fails on main too" })
+    : { lane: name, status: "passed", command: "control", outcome: "ok", commit }));
+  assert.deepEqual(evidenceProblems({ touchFlows: [], touchFlowsReason: "none", runs }, changed, commit), []);
+  const runsFile = { testRuns: lanes.testRuns };
+  assert.deepEqual(knownMainFailureProblems("## Summary\nNothing.", runsFile), [`${lane.command} fails on main too; list it under "Known main failures" with the main commit`]);
+  assert.deepEqual(knownMainFailureProblems(`## Known main failures\n- ${lane.command} fails on ${mainSha}`, runsFile), []);
+  const s = session(t);
+  const wired = facts(s, { body: COMPLETE_BODY, runs: { ...SELECTED, ...runsFile, testRuns: [...SELECTED.testRuns, ...runsFile.testRuns] }, commit });
+  assert.ok(wired.prBodyProblems.some((problem) => problem.includes("Known main failures")), "the body gate reads the runs");
+});
+
+test("the web e2e lane is not required locally when every changed spec is left for CI (ISS-13321)", () => {
+  const commit = "b".repeat(40);
+  const spec = "e2e/issues-row.spec.ts";
+  const capability = {
+    selectedTier: null,
+    container: { dockerPresent: false, dockerReachable: false, memoryGiB: 0, diskGiB: 0, minimumMemoryGiB: 20, minimumDiskGiB: 64, command: "repo probe" },
+    native: { available: false }, remote: { available: false },
+    unavailableSpecs: [spec], ciCoverage: ["e2e-test.yml:e2e"],
+  };
+  const file = { touchFlows: [], touchFlowsReason: "none", runs: [], e2eCapability: capability };
+  assert.deepEqual(evidenceProblems(file, [spec], commit), []);
+  assert.deepEqual(evidenceProblems({ ...file, e2eCapability: { ...capability, ciCoverage: [] } }, [spec], commit), ["e2e: no run recorded"]);
+  assert.deepEqual(evidenceProblems({ ...file, e2eCapability: { ...capability, unavailableSpecs: [] } }, [spec], commit), ["e2e: no run recorded"]);
+  const docker = { ...capability, container: { ...capability.container, dockerPresent: true, dockerReachable: true, memoryGiB: 24, diskGiB: 80 } };
+  assert.deepEqual(evidenceProblems({ ...file, e2eCapability: docker }, [spec], commit), ["e2e: no run recorded"], "a machine that can run it runs it");
 });
