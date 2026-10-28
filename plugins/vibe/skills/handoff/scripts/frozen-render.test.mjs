@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { runDiffRules } from "./diff-rules.mjs";
-import { DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, classifyStory, frozenRenders, frozenStoryFiles, frozenStoryIds } from "./frozen-render.mjs";
+import { DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenRenders, frozenStoryFiles, frozenStoryIds, prepareBase, storyFileChanges } from "./frozen-render.mjs";
 import { CROP_MAX_WIDTH, decodePng, encodePng } from "./png-diff.mjs";
 import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
 
@@ -266,6 +266,94 @@ test("the line the command prints is the line the gate accepts when story files 
   assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((entry) => entry.rule), ["frozen-render"]);
 });
 
+/**
+ * A checkout whose base has a frozen Sessions story with a play that queries the canvas before the Views menu has
+ * closed, and whose session changed a component the story renders and repaired that play (ISS-13120's shape).
+ */
+function repairedCheckout(root, home, { story } = {}) {
+  const checkout = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", checkout], home);
+  const STORY = "packages/app/sessions/sessions-contracts.stories.tsx";
+  const header = "import { Surface } from \"./surface\";\nexport default { title: \"Composites v1.0/Sessions/Contracts\", tags: [\"deprecated\"] };\n";
+  const broken = `${header}export const ViewAndCreation = { play: async () => { openViews(); queryCanvas(); } };\nexport const BulkSelection = {};\n`;
+  const files = { [STORY]: broken, "packages/app/sessions/surface.tsx": "export const Surface = 1;\n" };
+  for (const [file, text] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(checkout, file)), { recursive: true });
+    writeFileSync(path.join(checkout, file), text);
+  }
+  git(checkout, ["add", "-A"], home);
+  git(checkout, ["commit", "--quiet", "-m", "base"], home);
+  const base = git(checkout, ["rev-parse", "HEAD"], home);
+  writeFileSync(path.join(checkout, "packages/app/sessions/surface.tsx"), "// a comment in the closure\nexport const Surface = 1;\n");
+  const repaired = story ?? `${header}export const ViewAndCreation = { play: async () => { openViews(); await menuClosed(); queryCanvas(); } };\nexport const BulkSelection = {};\n`;
+  writeFileSync(path.join(checkout, STORY), repaired);
+  git(checkout, ["commit", "--quiet", "-am", "repair the play"], home);
+  return { checkout, base, STORY, broken, repaired };
+}
+
+const VIEW = "composites-v1-0-sessions-contracts--view-and-creation";
+const BULK = "composites-v1-0-sessions-contracts--bulk-selection";
+
+test("a compile-only repaired story runs the head's story file against both app codes and clears (ISS-13317)", async (t) => {
+  const { root, home, out } = sandbox(t);
+  const { checkout, base, STORY, repaired } = repairedCheckout(root, home);
+  assert.deepEqual(storyFileChanges(checkout, base, [STORY]).map((change) => change.change), [StoryFileChange.Repaired]);
+  // The base Storybook is built from a worktree at the base commit holding the head's story file and the base app code.
+  const dir = path.join(root, "base-wt");
+  const prepared = prepareBase({ repo: checkout, base, storyFiles: [STORY], dir });
+  assert.deepEqual(prepared.headStoryFiles, [STORY]);
+  assert.equal(readFileSync(path.join(dir, STORY), "utf8"), repaired);
+  assert.equal(readFileSync(path.join(dir, "packages/app/sessions/surface.tsx"), "utf8"), "export const Surface = 1;\n");
+  // Each commit's own story file: the broken base play fails, the repaired head passes, so it could never clear.
+  const ownFiles = await frozenRenders({ ids: [VIEW], fileCount: 1, baseUrl: BASE, headUrl: HEAD, out: path.join(out, "own"), command: "frozen-render.mjs",
+    browser: fakeBrowser({ [BASE]: { [VIEW]: throws("Unable to find role button Add session") }, [HEAD]: { [VIEW]: passes(shot(GREY)) } }) });
+  assert.equal(ownFiles.blocking[0].reason, "play FAIL on the base, PASS on the branch");
+  // The head's story file on both sides: same app render, so it clears and says why.
+  const side = { [VIEW]: passes(shot(GREY)), [BULK]: passes(shot(BLUE)) };
+  const summary = await frozenStoryFiles({ repo: checkout, base, storyFiles: [STORY], baseUrl: BASE, headUrl: HEAD, out, browser: fakeBrowser({ [BASE]: side, [HEAD]: side }) });
+  assert.equal(summary.ok, true);
+  assert.equal(summary.lines[0], `identical ${BULK}; head story file on both sides (compile-only repair of ${STORY})`);
+  assert.match(summary.changeLogLine, new RegExp(`^Frozen render unchanged: all 1 story files \\(2 stories\\): .*: 2 identical, 0 unstable on base, 0 same failure, 0 blocking; head story file on both sides for 1 compile-only repaired story files \\(${STORY.replaceAll(".", "\\.")}\\); `));
+  const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], home);
+  const isFrozenStory = (text) => / v1\.0\//.test(text);
+  writeFileSync(path.join(gitDir, "vibe-changes.md"), "");
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((entry) => entry.rule), ["frozen-render"]);
+  writeFileSync(path.join(gitDir, "vibe-changes.md"), `${summary.changeLogLine}\n`);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, []);
+});
+
+test("a repaired story whose render the app code changed still blocks", async (t) => {
+  const { root, home, out } = sandbox(t);
+  const { checkout, base, STORY } = repairedCheckout(root, home);
+  const summary = await frozenStoryFiles({ repo: checkout, base, storyFiles: [STORY], baseUrl: BASE, headUrl: HEAD, out,
+    browser: fakeBrowser({ [BASE]: { [VIEW]: passes(shot(GREY)), [BULK]: passes(shot(GREY)) }, [HEAD]: { [VIEW]: passes(shot(GREY, BLUE)), [BULK]: passes(shot(GREY)) } }) });
+  assert.equal(summary.ok, false);
+  assert.deepEqual(summary.blocking.map((story) => [story.storyId, story.reason]), [[VIEW, "the render changed"]]);
+  assert.match(summary.lines.find((line) => line.startsWith("blocking")), /; head story file on both sides \(compile-only repair of .*\); diff /);
+});
+
+test("a frozen story file changed beyond a compile-only repair is not compared and blocks", async (t) => {
+  const { root, home, out } = sandbox(t);
+  const renamed = "import { Surface } from \"./surface\";\nexport default { title: \"Composites v1.0/Sessions/Contracts\", tags: [\"deprecated\"] };\nexport const ViewAndCreationFixed = {};\nexport const BulkSelection = {};\n";
+  const { checkout, base, STORY, broken } = repairedCheckout(root, home, { story: renamed });
+  assert.deepEqual(storyFileChanges(checkout, base, [STORY]).map((change) => change.change), [StoryFileChange.Changed]);
+  const dir = path.join(root, "base-wt");
+  const prepared = prepareBase({ repo: checkout, base, storyFiles: [STORY], dir });
+  assert.deepEqual([prepared.headStoryFiles, prepared.notCompared], [[], [STORY]]);
+  assert.equal(readFileSync(path.join(dir, STORY), "utf8"), broken);
+  const browser = fakeBrowser({});
+  const summary = await frozenStoryFiles({ repo: checkout, base, storyFiles: [STORY], baseUrl: BASE, headUrl: HEAD, out, browser });
+  assert.equal(summary.ok, false);
+  assert.equal(summary.changeLogLine, undefined);
+  assert.deepEqual(summary.blocking.map((story) => story.storyId).sort(), [BULK, VIEW]);
+  assert.match(summary.blocking[0].reason, /changed beyond a compile-only repair \(its title, tags or story names differ\), so it is not compared$/);
+  assert.equal(browser.visits.length, 0);
+  // A frozen story file the session deleted is not compared either.
+  rmSync(path.join(checkout, STORY));
+  assert.match((await frozenStoryFiles({ repo: checkout, base, storyFiles: [STORY], baseUrl: BASE, headUrl: HEAD, out, browser })).blocking[0].reason, /\(it is gone\)/);
+  assert.throws(() => prepareBase({ repo: checkout, base, storyFiles: [STORY], dir }), /already exists/);
+});
+
 test("the CLI names a missing argument, a bad --now or a repo without Playwright and exits 2", (t) => {
   const { root } = sandbox(t);
   const usage = spawnSync(process.execPath, [SCRIPT], { encoding: "utf8" });
@@ -281,6 +369,9 @@ test("the CLI names a missing argument, a bad --now or a repo without Playwright
   const badNow = spawnSync(process.execPath, [...args, "--now", "yesterday"], { encoding: "utf8" });
   assert.equal(badNow.status, 2);
   assert.match(badNow.stdout, /^error: --now must be an ISO time/);
+  const prepareUsage = spawnSync(process.execPath, [SCRIPT, "prepare-base", "--repo", repo], { encoding: "utf8" });
+  assert.equal(prepareUsage.status, 2);
+  assert.match(prepareUsage.stdout, /^error: Usage: frozen-render\.mjs prepare-base/);
   const missing = spawnSync(process.execPath, args, { encoding: "utf8" });
   assert.equal(missing.status, 2);
   assert.match(missing.stdout, /^error: Playwright is not installed/);

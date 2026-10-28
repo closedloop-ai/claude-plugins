@@ -15,6 +15,18 @@
 //                     --story-file <repo-relative story path> [--story-file ...]
 //                     --out <dir> [--viewport 1280x800] [--timeout-ms 20000]
 //                     [--now <ISO time>]
+//   frozen-render.mjs prepare-base --repo <session worktree> --base <base commit>
+//                     --story-file <path> [--story-file ...] --dir <new worktree>
+//
+// A frozen story file the session repaired without changing its title, tags or
+// story names (a compile-only repair, the inventory's `compileOnlyV1Repairs`
+// test) keeps its story IDs, but its base text may hold the broken play the
+// session fixed. Comparing each commit's own story file would then always
+// differ. So `prepare-base` makes the base worktree for the base Storybook: a
+// detached worktree at the base commit with only those repaired story files
+// taken from the session, so both Storybooks run the head's story file and
+// only the app code differs. The run names those stories. A frozen story file
+// changed in any other way is not compared: its stories block.
 //
 // Every input that could make two renders of the same code differ is pinned:
 // Chromium rasterizes in software on one thread with sRGB color and no LCD
@@ -46,7 +58,7 @@
 // when something does, 2 on a usage or setup error.
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -54,7 +66,7 @@ import { parseArgs } from "node:util";
 import { PLAY_EVENT_RECORDER, playVerdicts } from "../../vibe/scripts/story-play-verdict.mjs";
 import { storyId } from "./diff-rules.mjs";
 import { cropDiffPng, decodePng, pixelHash } from "./png-diff.mjs";
-import { storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
+import { keepsStoryIdentity, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 
 export const FrozenOutcome = Object.freeze({ Identical: "identical", UnstableOnBase: "unstable-on-base", SameFailure: "same-failure", Blocking: "blocking" });
 /** Software rasterizing on one thread with fixed color and font handling, as the ISS-13164 capture launches Chromium. */
@@ -69,11 +81,13 @@ const DEFAULT_TIMEOUT_MS = 20_000;
 const VIEWPORT = /^(\d{2,5})x(\d{2,5})$/;
 const FINISH_EVENTS = Object.freeze(["storyFinished", "storyThrewException", "storyErrored", "playFunctionThrewException", "storyMissing", "unhandledErrorsWhilePlaying"]);
 const Side = Object.freeze({ Base: "base", BaseAgain: "base-again", Head: "head" });
+export const StoryFileChange = Object.freeze({ Unchanged: "unchanged", Repaired: "repaired", Changed: "changed" });
+const GIT_MAX_BUFFER = 16 * 1024 * 1024;
 
 /** Every story ID in `storyFiles`, read from their text at `base` in `repo`. */
 export function frozenStoryIds(repo, base, storyFiles) {
   return storyFiles.flatMap((file) => {
-    const text = execFileSync("git", ["-C", repo, "show", `${base}:${file}`], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+    const text = baseText(repo, base, file);
     const title = storyMetaTitle(text);
     if (!title) {
       throw new Error(`${file} has no story title at ${base}`);
@@ -137,7 +151,7 @@ export function classifyStory(base, again, head) {
 }
 
 /** Renders every story twice on the base and once on the branch and returns the summary; writes evidence under `out`. */
-export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser, out, viewport, timeoutMs, now, command }) {
+export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser, out, viewport, timeoutMs, now, command, repairedIds = new Map(), refused = [] }) {
   const stories = [];
   const options = { viewport, timeoutMs, now };
   for (const id of ids) {
@@ -152,9 +166,10 @@ export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser,
     }
     const { diff, ...result } = classifyStory(renders[Side.Base], renders[Side.BaseAgain], renders[Side.Head]);
     const crop = diff ? writeCrop(out, id, renders[diff[0]].screenshot, renders[diff[1]].screenshot) : null;
-    stories.push({ storyId: id, ...result, ...(crop ? { crop } : {}),
+    stories.push({ storyId: id, ...result, ...(crop ? { crop } : {}), ...(repairedIds.has(id) ? { headStoryFile: repairedIds.get(id) } : {}),
       renders: Object.fromEntries(Object.entries(renders).map(([side, { screenshot, ...rest }]) => [side, rest])) });
   }
+  stories.push(...refused.map((story) => ({ ...story, outcome: FrozenOutcome.Blocking })));
   return summarize(stories, { fileCount, out, command });
 }
 
@@ -164,14 +179,56 @@ export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser,
  */
 export async function frozenStoryFiles({ repo, base, storyFiles, ...render }) {
   const files = [...new Set(storyFiles)];
-  const ids = frozenStoryIds(repo, base, files);
+  const changes = storyFileChanges(repo, base, files);
+  const idsOf = (change) => frozenStoryIds(repo, base, [change.file]);
+  const compared = changes.filter((change) => change.change !== StoryFileChange.Changed);
+  const repairedIds = new Map(compared.filter((change) => change.change === StoryFileChange.Repaired)
+    .flatMap((change) => idsOf(change).map((id) => [id, change.file])));
+  const refused = changes.filter((change) => change.change === StoryFileChange.Changed).flatMap((change) => idsOf(change).map((id) => ({
+    storyId: id, reason: `${change.file} changed beyond a compile-only repair (${change.headText === null ? "it is gone" : "its title, tags or story names differ"}), so it is not compared`,
+  })));
   const command = `frozen-render.mjs --base ${base} --story-file ${files.join(" --story-file ")}`;
-  return frozenRenders({ ...render, ids, fileCount: files.length, command });
+  return frozenRenders({ ...render, ids: compared.flatMap(idsOf), fileCount: files.length, command, repairedIds, refused });
+}
+
+/**
+ * How each story file in the session worktree differs from its text at `base`: unchanged, repaired (a
+ * compile-only repair that keeps every story ID) or changed in any other way, including gone.
+ */
+export function storyFileChanges(repo, base, storyFiles) {
+  return storyFiles.map((file) => {
+    const before = baseText(repo, base, file);
+    const headPath = path.join(repo, file);
+    const headText = existsSync(headPath) ? readFileSync(headPath, "utf8") : null;
+    if (headText === before) {
+      return { file, change: StoryFileChange.Unchanged, headText };
+    }
+    return { file, change: headText !== null && keepsStoryIdentity(before, headText) ? StoryFileChange.Repaired : StoryFileChange.Changed, headText };
+  });
+}
+
+/**
+ * Makes `dir` a detached worktree of `repo` at `base` for the base Storybook, with each compile-only repaired story
+ * file in `storyFiles` replaced by the session's text, so both Storybooks run the head's story file.
+ */
+export function prepareBase({ repo, base, storyFiles, dir }) {
+  if (existsSync(dir)) {
+    throw new Error(`${dir} already exists; prepare-base makes a new worktree`);
+  }
+  const changes = storyFileChanges(repo, base, [...new Set(storyFiles)]);
+  execFileSync("git", ["-C", repo, "worktree", "add", "--detach", dir, base], { stdio: ["ignore", "pipe", "pipe"] });
+  const repaired = changes.filter((change) => change.change === StoryFileChange.Repaired);
+  for (const change of repaired) {
+    writeFileSync(path.join(dir, change.file), change.headText);
+  }
+  return { dir, base, headStoryFiles: repaired.map((change) => change.file),
+    notCompared: changes.filter((change) => change.change === StoryFileChange.Changed).map((change) => change.file) };
 }
 
 /** One line per story, as the CLI prints it. */
 export function storyLine(story) {
-  return `${story.outcome} ${story.storyId}${story.reason ? `: ${story.reason}` : ""}${story.crop ? `; diff ${story.crop}` : ""}`;
+  const repaired = story.headStoryFile ? `; head story file on both sides (compile-only repair of ${story.headStoryFile})` : "";
+  return `${story.outcome} ${story.storyId}${story.reason ? `: ${story.reason}` : ""}${repaired}${story.crop ? `; diff ${story.crop}` : ""}`;
 }
 
 /** Playwright's chromium from the session repo, so the plugin ships no browser dependency. */
@@ -190,6 +247,10 @@ export function loadChromium(repo) {
 /** The verdict, reason and failure text that must match for two plays to count as the same outcome. */
 function playOutcome(render) {
   return JSON.stringify([render.verdict, render.reason, render.failure?.type ?? null, render.failure?.message ?? null]);
+}
+
+function baseText(repo, base, file) {
+  return execFileSync("git", ["-C", repo, "show", `${base}:${file}`], { encoding: "utf8", maxBuffer: GIT_MAX_BUFFER, stdio: ["ignore", "pipe", "pipe"] });
 }
 
 function describePlay(render) {
@@ -229,10 +290,12 @@ function summarize(stories, { fileCount, out, command }) {
   const named = (list) => (list.length ? ` (${list.map((story) => story.storyId).join(", ")})` : "");
   const counts = `${identical} identical, ${unstableOnBase.length} unstable on base${named(unstableOnBase)}, ${sameFailure.length} same failure${named(sameFailure)}, ${blocking.length} blocking`;
   const ok = blocking.length === 0 && stories.length > 0;
+  const headFiles = [...new Set(stories.map((story) => story.headStoryFile).filter(Boolean))];
+  const repaired = headFiles.length ? `; head story file on both sides for ${headFiles.length} compile-only repaired story files (${headFiles.join(", ")})` : "";
   const summary = {
     ok, storyFiles: fileCount, stories: stories.length, identical, unstableOnBase, sameFailure, blocking,
-    lines: [...stories.map(storyLine), `summary: ${stories.length} stories in ${fileCount} story files: ${counts}; results ${results}`],
-    ...(ok ? { changeLogLine: `Frozen render unchanged: all ${fileCount} story files (${stories.length} stories): ${command}: ${counts}; ${results}` } : {}),
+    lines: [...stories.map(storyLine), `summary: ${stories.length} stories in ${fileCount} story files: ${counts}${repaired}; results ${results}`],
+    ...(ok ? { changeLogLine: `Frozen render unchanged: all ${fileCount} story files (${stories.length} stories): ${command}: ${counts}${repaired}; ${results}` } : {}),
   };
   mkdirSync(out, { recursive: true });
   writeFileSync(results, `${JSON.stringify({ ...summary, details: stories }, null, 2)}\n`);
@@ -251,11 +314,21 @@ function parseViewport(text) {
 }
 
 async function main(argv) {
-  const { values } = parseArgs({ args: argv, options: {
+  const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: {
     repo: { type: "string" }, base: { type: "string" }, "base-url": { type: "string" }, "head-url": { type: "string" },
     "story-file": { type: "string", multiple: true }, out: { type: "string" }, viewport: { type: "string" }, "timeout-ms": { type: "string" },
-    now: { type: "string" },
+    now: { type: "string" }, dir: { type: "string" },
   } });
+  if (positionals[0] === "prepare-base") {
+    if (!values.repo || !values.base || !values["story-file"]?.length || !values.dir || positionals.length > 1) {
+      throw new Error("Usage: frozen-render.mjs prepare-base --repo <worktree> --base <commit> --story-file <path> [--story-file ...] --dir <new worktree>");
+    }
+    const prepared = prepareBase({ repo: values.repo, base: values.base, storyFiles: values["story-file"], dir: path.resolve(values.dir) });
+    return { ok: true, lines: [`prepared ${prepared.dir} at ${prepared.base}; head story file for ${prepared.headStoryFiles.length} compile-only repaired story files${prepared.headStoryFiles.length ? ` (${prepared.headStoryFiles.join(", ")})` : ""}${prepared.notCompared.length ? `; not compared, changed beyond a compile-only repair: ${prepared.notCompared.join(", ")}` : ""}`] };
+  }
+  if (positionals.length) {
+    throw new Error(`unknown command ${positionals[0]}; the only command is prepare-base`);
+  }
   if (!values.repo || !values.base || !values["base-url"] || !values["head-url"] || !values["story-file"]?.length || !values.out) {
     throw new Error("Usage: frozen-render.mjs --repo <worktree> --base <commit> --base-url <url> --head-url <url> --story-file <path> [--story-file ...] --out <dir> [--viewport WxH] [--timeout-ms N] [--now <ISO time>]");
   }

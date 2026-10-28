@@ -119,6 +119,18 @@ export function storyExportNames(source) {
   return [...names].sort();
 }
 
+/**
+ * Whether `source` keeps `base`'s title, tags and exported story names, so every story ID stays the same: the
+ * test for a compile-only repair of a frozen v1.0 story file.
+ */
+export function keepsStoryIdentity(base, source) {
+  return (
+    storyMetaTitle(base) === storyMetaTitle(source) &&
+    JSON.stringify(storyMetaTags(base)) === JSON.stringify(storyMetaTags(source)) &&
+    JSON.stringify(storyExportNames(base)) === JSON.stringify(storyExportNames(source))
+  );
+}
+
 function storyTitleRoot(source) {
   return storyMetaTitle(source)?.split("/")[0].trim();
 }
