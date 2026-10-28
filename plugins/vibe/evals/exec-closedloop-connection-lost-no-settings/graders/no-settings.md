@@ -1,6 +1,5 @@
 ---
 type: regex
 match: not_contains
-flags: i
-pattern: 'REPLY:(?:(?!ROUTE:)[\s\S])*\b(settings|click Connect|connections)\b'
+pattern: 'REPLY:(?:(?!ROUTE:)[\s\S])*(\b[Ss]ettings\b|\b[Cc]lick [Cc]onnect\b|\bConnections\b)'
 ---

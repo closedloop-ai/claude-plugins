@@ -453,3 +453,62 @@ test("versions are listed once per plugin and update commands keep paths with sp
   ]);
   assert.deepEqual(updateCommands("claude", "claude", []), []);
 });
+
+test("the setup check block lists closedloop-core and vibe per installed harness and both connections, once per conversation", async (t) => {
+  const { home, bin } = sandbox(t);
+  const main = await marketplace(t, { files: mainFiles({ vibe: "1.1.2", "closedloop-core": "1.5.3", code: "2.0.2" }) });
+  const claude = fakeCli(bin, "claude", { installed: [{ name: "closedloop-core", version: "1.5.3" }, { name: "vibe", version: "1.1.2" }] });
+  const codex = fakeCli(bin, "codex", { installed: [{ name: "vibe", version: "1.1.1" }, { name: "code", version: "2.0.2" }] });
+  await run(home, ["check", ...both(claude, codex, main.url)]);
+  const first = await run(home, ["status", "--closedloop", "connected", "--graph", "not-connected"]);
+  assert.equal(first.code, 0);
+  assert.equal(first.result.print, true);
+  assert.equal(first.result.block, [
+    "Setup check",
+    "- Claude Code: closedloop-core 1.5.3, vibe 1.1.2",
+    "- Codex: closedloop-core not installed, vibe 1.1.1",
+    "- ClosedLoop connection: connected",
+    "- closedloop-graph connection: not connected",
+  ].join("\n"));
+  assert.equal(startup(home).statusShown.graph, "not-connected");
+
+  // A compaction reruns the check and the status in the same conversation: nothing is shown again.
+  await run(home, ["check", ...both(claude, codex, main.url)]);
+  const again = await run(home, ["status", "--closedloop", "connected", "--graph", "connected"]);
+  assert.equal(again.result.print, false);
+  assert.equal(again.result.block, undefined);
+
+  // A new conversation shows it again.
+  const other = { CLAUDE_CODE_SESSION_ID: "conversation-2" };
+  await run(home, ["check", ...both(claude, codex, main.url)], other);
+  const fresh = await run(home, ["status", "--closedloop", "connected", "--graph", "connected"], other);
+  assert.equal(fresh.result.print, true);
+  assert.match(fresh.result.block, /- closedloop-graph connection: connected$/);
+});
+
+test("the setup check block never claims versions it did not read, and refuses connections it was not told", async (t) => {
+  const { home, bin } = sandbox(t);
+  const fleet = path.join(home, "plugin-version.json");
+  // No check has run in this conversation.
+  const unchecked = await run(home, ["status", "--state", fleet, "--closedloop", "not-connected", "--graph", "connected"]);
+  assert.equal(unchecked.result.print, true);
+  assert.match(unchecked.result.block, /- Plugins: the version check has not run in this conversation\n/);
+  assert.match(unchecked.result.block, /- ClosedLoop connection: not connected\n/);
+
+  // A check from an earlier conversation in the same fleet state file is not this conversation's.
+  const main = await marketplace(t, { files: mainFiles({ vibe: "1.1.2" }) });
+  const claude = fakeCli(bin, "claude", { installed: [], fail: "plugin list" });
+  const later = { CLAUDE_CODE_SESSION_ID: "conversation-3" };
+  const failing = await run(home, ["check", "--state", fleet, "--claude", claude.file, "--latest-base", main.url], later);
+  assert.equal(failing.result.status, "unknown");
+  const listingFailed = await run(home, ["status", "--state", fleet, "--closedloop", "connected", "--graph", "connected"], later);
+  assert.match(listingFailed.result.block, /- Claude Code: couldn't read its plugins\n/);
+  assert.doesNotMatch(listingFailed.result.block, /Codex/);
+
+  for (const args of [[], ["--closedloop", "connected"], ["--closedloop", "yes", "--graph", "connected"]]) {
+    const refused = await run(home, ["status", "--state", fleet, ...args], { CLAUDE_CODE_SESSION_ID: "conversation-4" });
+    assert.equal(refused.code, 1);
+    assert.equal(refused.result.ok, false);
+    assert.match(refused.result.error, /must each be connected or not-connected/);
+  }
+});

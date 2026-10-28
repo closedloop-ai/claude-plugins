@@ -186,6 +186,21 @@ checks the new version is installed, and the orchestrator asks them to start
 a new session or reopen the app. When the check cannot reach GitHub the
 session carries on and says so.
 
+Right after that check, once per conversation, vibe and fleet-orchestrator
+show a short setup check block (`plugin-version.mjs status`): the installed
+closedloop-core and vibe versions for each installed harness, and whether the
+ClosedLoop and closedloop-graph connections answered that conversation's own
+`get-me` and `sync_status` calls. A compaction or a later turn never shows it
+again. A connection that is not connected is restored at once.
+
+Restoring a connection or signing in to GitHub is steps the setup worker runs
+(`skills/vibe/references/preflight.md`); the person only signs in in the
+browser. A command the Codex sandbox refuses is run again with an escalation
+request, so the person clicks Allow once instead of opening the Terminal app.
+After a ClosedLoop sign-in the connection is checked again in the same chat,
+and a new chat is asked for only when it still fails there or the connection
+was just added.
+
 Sessions keep Codex and Claude usage down. Each worker's model follows its
 role from one policy per harness: in Codex, `scripts/worker-model.mjs` (backed
 by `cl-sweep/scripts/model-policy.mjs`, which cl-sweep and cl-execute use too)
@@ -421,7 +436,9 @@ words asking for a pull request, passing the work on, an unclear "I'm done",
 the endings line in a new session's first reply, and the closing pull request
 link. It also covers setup and questions (tags `setup`, `sample-data`,
 `questions`): an expired Claude sign-in becomes one plain step, a lost
-ClosedLoop connection goes to the setup worker and never to the app's Settings, the sample-data
+ClosedLoop connection goes to the setup worker and never to the app's Settings, a sign-in
+the Codex sandbox refused is retried with an Allow once approval, a new chat is asked for
+only when the connection still fails in this chat, the setup check runs first, the sample-data
 question is plain and asked only when it matters, and an answered or waiting
 question is never asked again. Each case is a one-turn rehearsal with the session state in the prompt,
 so it needs no symphony-alpha checkout, and it is named by persona (`exec-`

@@ -76,12 +76,18 @@ The checkout is the one the preflight remembered
   access, stop and return `NEEDS_PERSON` for that human-only action.
   Multiple checkouts are resolved internally from the active workspace or
   recorded session; if still ambiguous, return `BLOCKED`, not a technical question.
+- A command the Codex sandbox refuses (no network, or a write outside the
+  workspace such as `codex mcp add`): run it again with an escalation
+  request as `preflight.md`, "Commands the sandbox blocks", says; never hand
+  it to the person or send them to the Terminal app. GitHub sign-in follows
+  `preflight.md`, "Signing in to GitHub".
 - ClosedLoop or closedloop-graph unreachable: ClosedLoop's `get-me` failed,
   or closedloop-graph's `sync_status` failed or a worker's Graph block said
   `unreachable`. This is a setup problem, not a normal state. Follow
   `preflight.md`, "Restoring a connection", exactly: you run every command,
-  and the person only signs in in the browser and starts a new chat, each
-  returned as `NEEDS_PERSON` with that section's exact words. A launch the
+  and the person only signs in in the browser, returned as `NEEDS_PERSON`
+  with that section's exact words; whether a new chat is needed is the
+  orchestrator's step 5, never yours. A launch the
   Claude worker launcher refused with `MCP_TOOLS_MISSING` names the
   connection that did not load. Never send the person into the app's
   Settings and never use Computer Use.

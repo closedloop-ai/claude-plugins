@@ -16,7 +16,7 @@ below is everything that has already happened, including the output of every
 script you would have run.
 
 Session state:
-- The plugin version check found every plugin current.
+- The plugin version check found every plugin current, and the setup check block was already shown in this conversation.
 - The common preflight (`scripts/vibe-preflight.sh --prototype`) passed every check.
 - ClosedLoop `get-me` failed: "MCP server closedloop is not available in this session". closedloop-graph `sync_status` answered.
 - No worker has been dispatched yet. No session exists yet.
