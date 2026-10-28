@@ -152,8 +152,8 @@ def test_claude_code_restore_uses_the_conversations_own_sign_in_tool() -> None:
     assert "`mcp__<name>__authenticate`" in claude
     assert "the connection works in this same conversation" in claude
     assert "`claude mcp login` needs a terminal, so no worker can run it" in claude
-    assert "`/clear` (a new conversation in the same window)" in claude
-    assert "`claude --continue`" in claude
+    assert "The smallest one is `/exit` and then `claude --continue` in the same folder, which keeps the conversation" in claude
+    assert "never `/clear`, which drops it" in claude
     assert "a connection's own `authenticate` tool" in flat((VIBE / "SKILL.md").read_text())
 
 

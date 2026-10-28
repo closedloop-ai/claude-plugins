@@ -170,9 +170,9 @@ On Claude Code (checked on 2026-10-28 with Claude Code 2.1.308 the same way),
 - Not configured at all, or anything else: return `BLOCKED` with the
   `Status:` line for engineering. `claude mcp login` needs a terminal, so
   no worker can run it, and a connection added while a conversation is open
-  reaches it only after `/clear` (a new conversation in the same window) or
-  after quitting and running `claude --continue` in the same folder, which
-  keeps the conversation. Never send the person into a settings screen.
+  reaches it only after a restart. The smallest one is `/exit` and then
+  `claude --continue` in the same folder, which keeps the conversation; never
+  `/clear`, which drops it. Never send the person into a settings screen.
 
 ## Signing in to GitHub
 
