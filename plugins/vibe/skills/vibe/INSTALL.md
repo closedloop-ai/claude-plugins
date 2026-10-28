@@ -39,9 +39,10 @@ with their own account. Codex stores an OAuth sign-in, not an API key.
 
 closedloop-graph (ticket and code intelligence) is required: every vibe and
 handoff worker that locates, changes, or reviews code calls it for each
-change. Make sure it is connected in Codex (`"$CODEX" mcp list` shows it). If
-it ever stops answering, the vibe skill has its setup worker restore the
-connection.
+change. `"$CODEX" mcp list` must show a `closedloop-graph` row with Status
+`enabled`; if there is none, get its connection from engineering before the
+first run. If a connection ever stops answering, the vibe skill has its setup
+worker restore it (`references/preflight.md`, "Restoring a connection").
 
 Check:
 
@@ -53,7 +54,7 @@ Check:
 
 ## 2. Turn on the Codex plugins vibe uses
 
-In Codex Desktop, open Plugins and make sure these are added and enabled:
+In Codex Desktop, click Plugins in the sidebar and make sure these are added and enabled:
 
 - **Browser**: the in-app browser the work happens in. Vibe never uses
   Computer Use; a dialog that needs a click is yours.
@@ -63,7 +64,7 @@ connector.
 
 ## 3. First run
 
-Start a new Codex thread and type `$vibe`. On the first run it:
+Click New chat in the sidebar and type `$vibe`. On the first run it:
 
 - finds an existing symphony-alpha checkout anywhere in the home folder (by
   its GitHub remote, so the folder can have any name, including spaces) and

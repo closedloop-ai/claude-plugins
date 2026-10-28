@@ -24,6 +24,7 @@ One fleet home per machine holds everything (`FLEET_HOME`, default `~/fleet-orch
 
 1. `fleet-home.mjs resume`: read each `READ` file in order and note its `SHAPE`. On `NO-ACTIVE-PROGRAM`, `start` a fresh one.
 2. Run the plugin version check its `PLUGIN-VERSION` line names (SKILL.md, Setup) before anything else.
+   Then show the setup check block (SKILL.md, Setup) once.
 3. `WATCHER-LIVE <pid>`: the previous chat still holds the watch lock; stop its watcher there (or close that chat), then arm yours.
 4. Relaunch each `RELAUNCH <writer> <prompt>` Claude worker from that saved prompt; resume Codex writers through `fleet.sh`.
 5. Run `fleet-home.mjs check` and fix every line before acting.

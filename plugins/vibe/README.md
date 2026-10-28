@@ -26,12 +26,26 @@ Everything a session does is recorded on a live ClosedLoop ticket, so whoever
 picks the work up next sees what was asked for, what was built and what is
 still open.
 
+For an operator running several pull requests at once, `fleet-orchestrator`
+runs Claude Code and Codex writers side by side and moves work between them
+as either account's usage runs high. When a Codex writer dies, a Claude writer
+takes over its worktree and carries on. It works on this machine and one more
+machine over ssh: heavy checks take a capped number of slots on each machine
+and go to the other machine when one is too loaded, and the shared e2e stack
+runs one run at a time per machine under a lock.
+
 ## What a session looks like
 
 1. **Start.** The person types `$vibe` in Codex (`/vibe:vibe` in Claude Code)
    and names a ClosedLoop ticket or describes the change. vibe checks its own
-   version, installs anything missing on the machine, creates the live ticket
-   assigned to them, and opens their copy of the app. It starts with an example
+   version, shows a short setup check (the installed closedloop-core and vibe
+   versions for each harness, and whether the ClosedLoop and closedloop-graph
+   connections answer), installs anything missing on the machine, creates the
+   live ticket assigned to them, and opens their copy of the app. A lost
+   connection or a GitHub sign-in is restored by the setup worker: the person
+   only signs in in the browser, clicks Allow once when Codex asks to run a
+   setup command, and starts a new chat only when the connection still fails
+   in the current one. It starts with an example
    company that already has people and work in it, or empty when the request
    is about what a new account looks like. Desktop opens as a second tab when
    it is available.
@@ -275,7 +289,7 @@ reasoning effort `high`.
 
 ### Evals
 
-`evals/` holds a `claude plugin eval` suite of 89 one-turn rehearsals. Each
+`evals/` holds a `claude plugin eval` suite of 95 one-turn rehearsals. Each
 case carries the session state in its prompt, so it needs no symphony-alpha
 checkout. Cases are named by persona: `exec-` for someone who describes the
 work and passes it on, `pm-` for someone who iterates from reference
@@ -318,7 +332,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.8` contains 12 skills, 16 agents, and one hook manifest
+Version `1.1.9` contains 12 skills, 16 agents, and one hook manifest
 (`hooks/hooks.json`). It has no standalone commands, root-level shell scripts,
 or production Python tools under `tools/python/`; that directory contains the
 skill-contract test modules and `vibe_contract_text.py`, the text helpers they
