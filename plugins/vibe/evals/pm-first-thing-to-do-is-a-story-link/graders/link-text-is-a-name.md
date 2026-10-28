@@ -2,5 +2,5 @@
 type: regex
 match: not_contains
 flags: i
-pattern: 'REPLY:(?:(?!ROUTE:)[\s\S])*\[[^\]]*(?:--|https?://|\.tsx|/story/)[^\]]*\]\('
+pattern: 'REPLY:(?:(?!ROUTE:)[\s\S])*\[[^\]]*(?:--|https?://|\.tsx|\?path=)[^\]]*\]\('
 ---
