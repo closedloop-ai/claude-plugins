@@ -23,6 +23,21 @@ function nativeFinish(input: { worktree: string; workerId: string; requestId: st
 }
 
 describe("persistent writer ledger", () => {
+  it("reopens the request that just returned DONE for its follow-up step instead of refusing it (ISS-13321)", () => {
+    const value = registered();
+    const owner = { worktree: value.worktree, workerId: value.workerId };
+    changeWriter("enqueue", { ...owner, requestId: "inputs", input: "Run main-sync-inputs" });
+    const first = changeWriter("claim", { ...owner, requestId: "inputs" }).turn!;
+    nativeFinish({ ...owner, requestId: "inputs", lease: first.lease!, status: "DONE" });
+    const next = changeWriter("claim", { ...owner, requestId: "inputs", continuation: "Run main-sync-validate" }).turn!;
+    expect(next.id).toBe("inputs");
+    expect(next.continuation).toBe("Run main-sync-validate");
+    nativeFinish({ ...owner, requestId: "inputs", lease: next.lease!, status: "DONE" });
+    changeWriter("enqueue", { ...owner, requestId: "later", input: "Another request" });
+    const later = changeWriter("claim", { ...owner, requestId: "later" }).turn!;
+    nativeFinish({ ...owner, requestId: "later", lease: later.lease!, status: "DONE" });
+    expect(() => changeWriter("claim", { ...owner, requestId: "inputs", continuation: "Too late" })).toThrow(/oldest pending/);
+  });
   it("registers one native writer with canonical binding and no copied resources", () => {
     const value = registered();
     expect(registerWriter(value.registration).workerId).toBe(value.workerId);

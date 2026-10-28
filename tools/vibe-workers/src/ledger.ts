@@ -34,7 +34,21 @@ export function location(worktree: string) {
 export function readWriterSummary(worktree: string) {
   const place = location(worktree);
   if (!existsSync(place.file)) return undefined;
-  return summary(readLedger(place));
+  const ledger = readLedger(place);
+  return { ...summary(ledger), recordedDefinition: recordedDefinitionState(ledger) };
+}
+
+/**
+ * Whether the writer's recorded definition can still run: `removed` (a plugin update deleted its root) and
+ * `changed` need the recorded migration before the writer is launched or resumed, not after a failed launch
+ * (ISS-13321: a launch failed after three minutes and a setup worker migrated four minutes later).
+ */
+function recordedDefinitionState(ledger: Ledger): "present" | "removed" | "changed" | "unreadable" {
+  try {
+    const observed = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
+    if (observed === null) return "removed";
+    return observed === ledger.binding.digest ? "present" : "changed";
+  } catch { return "unreadable"; }
 }
 
 /** The persistent writer's recorded definition root, so a resumed writer keeps its binding; undefined without one. */
@@ -242,7 +256,12 @@ export function changeWriter(action: "enqueue" | "claim" | "finish", input: unkn
         ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
         delete ledger.active;
       }
-      if (ledger.active) {
+      if (!ledger.active && data.continuation && ledger.completed.at(-1) === requestId) {
+        // The writer's last request returned DONE and its follow-up step (the main-sync validation after the
+        // input step) continues it: reopen that request rather than fail the continuation (ISS-13321).
+        ledger.completed = ledger.completed.slice(0, -1);
+        ledger.active = { id: requestId, input: data.continuation, status: "PLAN", continuation: data.continuation };
+      } else if (ledger.active) {
         if (ledger.active.id !== requestId || !data.continuation) throw new Error("Continue the active request before the next queued request");
         ledger.active.continuation = data.continuation;
       } else {

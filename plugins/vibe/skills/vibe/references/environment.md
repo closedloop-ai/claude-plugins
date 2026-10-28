@@ -362,7 +362,10 @@ not silently included or discarded. A clean result needs no extra local commit.
    text, borrow another role's lease, print a lease or clear a lock because a
    short CLI PID ended. Input is `{ "context": <operationContext> }` on
    stdin, optionally with the matching `transactionId`; no caller command
-   list or `passed: true` is accepted.
+   list or `passed: true` is accepted. Copy the envelope's `operationContext`
+   verbatim, never a context rebuilt field by field: any field that differs
+   from the launcher's record is refused, and the refusal names each one
+   (ISS-13321).
    A publication attempt/no-op consumes proof for this exact publisher
    runtime/worker/request/lease. Same-turn retries retain it; a later
    publishing turn must prepare fresh, not recycle an old transaction.

@@ -32330,10 +32330,10 @@ ${lanes.join("\n")}
         if (!extraFileExtensions || extraFileExtensions.length === 0) {
           return needJsExtensions ? allSupportedExtensions : supportedTSExtensions;
         }
-        const builtins = needJsExtensions ? allSupportedExtensions : supportedTSExtensions;
-        const flatBuiltins = flatten(builtins);
+        const builtins2 = needJsExtensions ? allSupportedExtensions : supportedTSExtensions;
+        const flatBuiltins = flatten(builtins2);
         const extensions = [
-          ...builtins,
+          ...builtins2,
           ...mapDefined(extraFileExtensions, (x) => x.scriptKind === 7 || needJsExtensions && isJSLike(x.scriptKind) && !flatBuiltins.includes(x.extension) ? [x.extension] : void 0)
         ];
         return extensions;
@@ -132860,7 +132860,7 @@ ${lanes.join("\n")}
           }
         }
         function createImportCallExpressionAMD(arg, containsLexicalThis) {
-          const resolve7 = factory2.createUniqueName("resolve");
+          const resolve8 = factory2.createUniqueName("resolve");
           const reject = factory2.createUniqueName("reject");
           const parameters = [
             factory2.createParameterDeclaration(
@@ -132869,7 +132869,7 @@ ${lanes.join("\n")}
               /*dotDotDotToken*/
               void 0,
               /*name*/
-              resolve7
+              resolve8
             ),
             factory2.createParameterDeclaration(
               /*modifiers*/
@@ -132886,7 +132886,7 @@ ${lanes.join("\n")}
                 factory2.createIdentifier("require"),
                 /*typeArguments*/
                 void 0,
-                [factory2.createArrayLiteralExpression([arg || factory2.createOmittedExpression()]), resolve7, reject]
+                [factory2.createArrayLiteralExpression([arg || factory2.createOmittedExpression()]), resolve8, reject]
               )
             )
           ]);
@@ -145696,9 +145696,9 @@ ${lanes.join("\n")}
             /*ignoreCase*/
             false
           )) {
-            const basename3 = getBaseFileName(a.fileName);
-            if (basename3 === "lib.d.ts" || basename3 === "lib.es6.d.ts") return 0;
-            const name = removeSuffix(removePrefix(basename3, "lib."), ".d.ts");
+            const basename4 = getBaseFileName(a.fileName);
+            if (basename4 === "lib.d.ts" || basename4 === "lib.es6.d.ts") return 0;
+            const name = removeSuffix(removePrefix(basename4, "lib."), ".d.ts");
             const index = libs.indexOf(name);
             if (index !== -1) return index + 1;
           }
@@ -183753,7 +183753,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
           Array: (t) => checker.createArrayType(t),
           Promise: (t) => checker.createPromiseType(t)
         };
-        const builtins = [
+        const builtins2 = [
           checker.getStringType(),
           checker.getNumberType(),
           checker.createArrayType(checker.getAnyType()),
@@ -184263,7 +184263,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         }
         function inferNamedTypesFromProperties(usage) {
           if (!usage.properties || !usage.properties.size) return [];
-          const types = builtins.filter((t) => allPropertiesAreAssignableToUsage(t, usage));
+          const types = builtins2.filter((t) => allPropertiesAreAssignableToUsage(t, usage));
           if (0 < types.length && types.length < 3) {
             return types.map((t) => inferInstantiationFromUsage(t, usage));
           }
@@ -209444,8 +209444,8 @@ ${options.prefix}` : "\n" : options.prefix
             }
           };
           for (const file of files) {
-            const basename3 = getBaseFileName(file);
-            if (basename3 === "package.json" || basename3 === "bower.json") {
+            const basename4 = getBaseFileName(file);
+            if (basename4 === "package.json" || basename4 === "bower.json") {
               createProjectWatcher(
                 file,
                 "FileWatcher"
@@ -213117,8 +213117,8 @@ All files are: ${JSON.stringify(names)}`,
               var _a;
               const fileOrDirectoryPath = removeIgnoredPath(this.toPath(fileOrDirectory));
               if (!fileOrDirectoryPath) return;
-              const basename3 = getBaseFileName(fileOrDirectoryPath);
-              if (((_a = result.affectedModuleSpecifierCacheProjects) == null ? void 0 : _a.size) && (basename3 === "package.json" || basename3 === "node_modules")) {
+              const basename4 = getBaseFileName(fileOrDirectoryPath);
+              if (((_a = result.affectedModuleSpecifierCacheProjects) == null ? void 0 : _a.size) && (basename4 === "package.json" || basename4 === "node_modules")) {
                 result.affectedModuleSpecifierCacheProjects.forEach((project) => {
                   var _a2;
                   (_a2 = project.getModuleSpecifierCache()) == null ? void 0 : _a2.clear();
@@ -219604,8 +219604,8 @@ Additional information: BADCLIENT: Bad error code, ${badCode} not found in range
         installPackage(options) {
           this.packageInstallId++;
           const request = { kind: "installPackage", ...options, id: this.packageInstallId };
-          const promise = new Promise((resolve7, reject) => {
-            (this.packageInstalledPromise ?? (this.packageInstalledPromise = /* @__PURE__ */ new Map())).set(this.packageInstallId, { resolve: resolve7, reject });
+          const promise = new Promise((resolve8, reject) => {
+            (this.packageInstalledPromise ?? (this.packageInstalledPromise = /* @__PURE__ */ new Map())).set(this.packageInstallId, { resolve: resolve8, reject });
           });
           this.installer.send(request);
           return promise;
@@ -219890,8 +219890,8 @@ Additional information: BADCLIENT: Bad error code, ${badCode} not found in range
 // src/main-sync.ts
 import { spawnSync as spawnSync9 } from "node:child_process";
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { existsSync as existsSync11, lstatSync as lstatSync8, readFileSync as readFileSync16, realpathSync as realpathSync10 } from "node:fs";
-import { join as join17 } from "node:path";
+import { existsSync as existsSync12, lstatSync as lstatSync8, readFileSync as readFileSync18, realpathSync as realpathSync12 } from "node:fs";
+import { join as join19 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 
 // node_modules/zod/v3/external.js
@@ -224195,11 +224195,32 @@ import { spawnSync } from "node:child_process";
 
 // src/ledger.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, realpathSync, renameSync, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync4, realpathSync as realpathSync3, renameSync, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { basename as basename2, dirname as dirname2, isAbsolute, join as join3 } from "node:path";
 
 // src/definition.ts
 var import_yaml = __toESM(require_dist(), 1);
+import { createHash } from "node:crypto";
+import { readFileSync as readFileSync3, realpathSync as realpathSync2 } from "node:fs";
+import { join as join2 } from "node:path";
+
+// src/plugin-root.ts
+import { existsSync as existsSync2, readFileSync as readFileSync2, realpathSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+var manifestPaths = [".claude-plugin/plugin.json", ".codex-plugin/plugin.json"];
+function readPluginManifest(root) {
+  for (const relative9 of manifestPaths) {
+    try {
+      return JSON.parse(readFileSync2(join(root, relative9), "utf8"));
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+  }
+  throw Object.assign(new Error("No vibe plugin manifest exists"), { code: "ENOENT" });
+}
+
+// src/definition.ts
+var frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/;
 var metadataSchema = external_exports.object({
   name: external_exports.string(),
   description: external_exports.string().min(1),
@@ -224207,6 +224228,60 @@ var metadataSchema = external_exports.object({
   tools: external_exports.union([external_exports.string(), external_exports.array(external_exports.string())]),
   skills: external_exports.union([external_exports.string(), external_exports.array(external_exports.string())]).optional()
 }).passthrough();
+var builtins = /* @__PURE__ */ new Set([
+  "Read",
+  "Write",
+  "Edit",
+  "Grep",
+  "Glob",
+  "Bash",
+  "Skill",
+  "ToolSearch",
+  "WebSearch",
+  "WebFetch",
+  "SendMessage",
+  "Agent"
+]);
+function readDefinition(agentRoot, agentName, capabilityInput) {
+  if (!/^vibe-[a-z0-9-]+$/.test(agentName)) throw new Error("Only own-plugin vibe agents are supported");
+  const root = realpathSync2(agentRoot);
+  const file = realpathSync2(join2(root, "agents", `${agentName}.md`));
+  if (file !== join2(root, "agents", `${agentName}.md`)) throw new Error("Agent escapes its owning plugin");
+  const manifest = external_exports.object({ name: external_exports.literal("vibe"), version: external_exports.string().regex(/^\d+\.\d+\.\d+$/).optional() }).passthrough().parse(
+    readPluginManifest(root)
+  );
+  const source = readFileSync3(file, "utf8");
+  const match = source.match(frontmatter);
+  if (!match) throw new Error("Agent has no canonical frontmatter");
+  const metadata = metadataSchema.parse((0, import_yaml.parse)(match[1] ?? ""));
+  if (metadata.name !== agentName) throw new Error("Agent name does not match canonical file");
+  const tools = asList(metadata.tools);
+  if (tools.some((tool) => !builtins.has(tool))) throw new Error("Unrecognized canonical built-in tool");
+  const capabilities = capabilitiesSchema.parse(capabilityInput).sort((a, b) => a.name.localeCompare(b.name));
+  const digest2 = createHash("sha256").update(source).update(JSON.stringify(capabilities)).digest("hex");
+  return {
+    root,
+    version: manifest.version,
+    name: `${manifest.name}:${agentName}`,
+    metadata,
+    prompt: match[2] ?? "",
+    tools,
+    skills: asList(metadata.skills),
+    binding: { agentRoot: root, agentName, digest: digest2, capabilities }
+  };
+}
+function asList(value) {
+  if (value === void 0) return [];
+  return typeof value === "string" ? value.split(",").map((item) => item.trim()).filter(Boolean) : value;
+}
+function observeDefinitionDigest(agentRoot, agentName, capabilities) {
+  try {
+    return readDefinition(agentRoot, agentName, capabilities).binding.digest;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  }
+}
 
 // src/reference-images.ts
 var referenceSchema = external_exports.object({
@@ -224218,26 +224293,36 @@ var recordSchema = external_exports.object({ referenceImages: external_exports.a
 
 // src/ledger.ts
 function checkoutLocation(worktree) {
-  const root = realpathSync(git2(worktree, ["rev-parse", "--show-toplevel"]));
-  if (realpathSync(worktree) !== root) throw new Error("Use the session's exact worktree root");
+  const root = realpathSync3(git2(worktree, ["rev-parse", "--show-toplevel"]));
+  if (realpathSync3(worktree) !== root) throw new Error("Use the session's exact worktree root");
   const metadata = git2(root, ["rev-parse", "--absolute-git-dir", "--abbrev-ref", "HEAD"]);
   const separator = metadata.lastIndexOf("\n");
   if (separator < 0) throw new Error("Missing native checkout metadata boundary");
   const [dir, branch] = external_exports.tuple([external_exports.string().min(1).refine(isAbsolute), external_exports.string().min(1)]).parse([metadata.slice(0, separator).trim(), metadata.slice(separator + 1).trim()]);
-  return { root, dir, branch, file: join(dir, "vibe-writer.json"), lock: join(dir, "vibe-writer.lock") };
+  return { root, dir, branch, file: join3(dir, "vibe-writer.json"), lock: join3(dir, "vibe-writer.lock") };
 }
 function location(worktree) {
   const place = checkoutLocation(worktree);
   const record = external_exports.object({ worktree: external_exports.string().optional(), branch: external_exports.string() }).passthrough().parse(
-    JSON.parse(readFileSync2(join(place.dir, "vibe-session.json"), "utf8"))
+    JSON.parse(readFileSync4(join3(place.dir, "vibe-session.json"), "utf8"))
   );
-  if (record.worktree && realpathSync(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Session worktree or branch changed");
+  if (record.worktree && realpathSync3(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Session worktree or branch changed");
   return place;
 }
 function readWriterSummary(worktree) {
   const place = location(worktree);
-  if (!existsSync2(place.file)) return void 0;
-  return summary(readLedger(place));
+  if (!existsSync3(place.file)) return void 0;
+  const ledger = readLedger(place);
+  return { ...summary(ledger), recordedDefinition: recordedDefinitionState(ledger) };
+}
+function recordedDefinitionState(ledger) {
+  try {
+    const observed = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
+    if (observed === null) return "removed";
+    return observed === ledger.binding.digest ? "present" : "changed";
+  } catch {
+    return "unreadable";
+  }
 }
 function verifySourceTurn(worktree, workerId, requestId, lease) {
   const place = location(worktree);
@@ -224258,7 +224343,7 @@ function git2(cwd, args) {
   }).trim();
 }
 function readLedger(place) {
-  const ledger = ledgerSchema.parse(JSON.parse(readFileSync2(place.file, "utf8")));
+  const ledger = ledgerSchema.parse(JSON.parse(readFileSync4(place.file, "utf8")));
   if (ledger.worktree !== place.root || ledger.branch !== place.branch) throw new Error("Writer ledger does not belong to this session");
   return ledger;
 }
@@ -224645,9 +224730,9 @@ function stepEvents(events, step) {
 }
 
 // src/main-sync-state.ts
-import { createHash, randomUUID } from "node:crypto";
-import { existsSync as existsSync3, lstatSync, readFileSync as readFileSync3, realpathSync as realpathSync2, renameSync as renameSync2, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join2, resolve } from "node:path";
+import { createHash as createHash2, randomUUID } from "node:crypto";
+import { existsSync as existsSync4, lstatSync, readFileSync as readFileSync5, realpathSync as realpathSync4, renameSync as renameSync2, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { join as join4, resolve as resolve2 } from "node:path";
 
 // src/native-record.ts
 var grantSchema = recordContextSchema.extend({
@@ -224676,9 +224761,9 @@ var claudeOwnerSchema = external_exports.object({
 }).strict();
 function syncLocation(worktree) {
   const place = checkoutLocation(worktree);
-  readPrivateJson(join2(place.dir, "vibe-session.json"));
+  readPrivateJson(join4(place.dir, "vibe-session.json"));
   const session = sessionSchema.parse(readSessionRecord(place.root));
-  if (session.branch !== place.branch || session.worktree && realpathSync2(session.worktree) !== place.root || (session.branch.startsWith("prototype/") ? session.mode !== null || !isOwnedPrototypeSession(session, place.branch) : session.mode === null)) {
+  if (session.branch !== place.branch || session.worktree && realpathSync4(session.worktree) !== place.root || (session.branch.startsWith("prototype/") ? session.mode !== null || !isOwnedPrototypeSession(session, place.branch) : session.mode === null)) {
     throw new MainSyncError("Main-sync requires the exact active owned session branch and mode");
   }
   return { ...place, session };
@@ -224686,12 +224771,12 @@ function syncLocation(worktree) {
 function syncContext(raw, operation) {
   const input = mainSyncInputSchema.parse(raw);
   const place = syncLocation(input.context.worktree);
-  const context = { ...input.context, worktree: realpathSync2(input.context.worktree) };
-  const lock = join2(place.dir, "vibe-record-turn.lock");
+  const context = { ...input.context, worktree: realpathSync4(input.context.worktree) };
+  const lock = join4(place.dir, "vibe-record-turn.lock");
   let actual;
   let primaryOwner;
   if (context.runtime === "codex") {
-    const owner = nativeRecordOwnerSchema.parse(readPrivateJson(join2(lock, "native-owner.json")));
+    const owner = nativeRecordOwnerSchema.parse(readPrivateJson(join4(lock, "native-owner.json")));
     if (owner.branch !== place.branch || owner.targetDir || owner.grant.sessionless) throw new MainSyncError("Publishing requires its normal owned session turn");
     const grant = owner.grant;
     if (grant.mode !== "record" || !grant.exclusiveRecordTurn || !grant.recordAction) throw new MainSyncError("Main-sync requires an exclusive declared record grant");
@@ -224712,13 +224797,14 @@ function syncContext(raw, operation) {
     if (grant.mainSyncValidation) actual.mainSyncValidation = grant.mainSyncValidation;
     primaryOwner = grant.primaryOwner;
   } else {
-    const owner = claudeOwnerSchema.parse(readPrivateJson(join2(lock, CLAUDE_OPERATION_OWNER)));
+    const owner = claudeOwnerSchema.parse(readPrivateJson(join4(lock, CLAUDE_OPERATION_OWNER)));
     if (owner.branch !== place.branch) throw new MainSyncError("Claude operation belongs to another branch");
     actual = owner.context;
     primaryOwner = owner.primaryOwner;
   }
-  if (actual.worktree !== place.root || actual.agentName !== context.agentName || actual.workerId !== context.workerId || actual.requestId !== context.requestId || actual.lease !== context.lease || actual.recordAction !== context.recordAction || (actual.publicationPurpose ?? "build") !== (context.publicationPurpose ?? "build") || actual.mainSyncTransactionId !== context.mainSyncTransactionId || JSON.stringify(actual.mainSyncRequestContinuations) !== JSON.stringify(context.mainSyncRequestContinuations)) {
-    throw new MainSyncError("Main-sync requires the exact current owner, role, action and purpose");
+  const differing = ownerMismatches(actual, context, place.root);
+  if (differing.length) {
+    throw new MainSyncError(`Main-sync requires the exact current owner, role, action and purpose; differs: ${differing.join(", ")}. Pass the launch envelope's operationContext verbatim, never a rebuilt one`);
   }
   if (JSON.stringify(actual.mainSyncCiRun) !== JSON.stringify(context.mainSyncCiRun)) {
     throw new MainSyncError("CI locator must match the actual parent-issued source grant");
@@ -224745,11 +224831,11 @@ function syncContext(raw, operation) {
 function readPrivateJson(file) {
   const stat = lstatSync(file);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_PRIVATE_BYTES) throw new MainSyncError("Private main-sync evidence must be a bounded regular file");
-  return JSON.parse(readFileSync3(file, "utf8"));
+  return JSON.parse(readFileSync5(file, "utf8"));
 }
 function saveSyncReceipt(dir, receipt) {
-  const file = join2(dir, MAIN_SYNC_FILE);
-  if (existsSync3(file) && lstatSync(file).isSymbolicLink()) throw new MainSyncError("Main-sync receipt cannot be a symlink");
+  const file = join4(dir, MAIN_SYNC_FILE);
+  if (existsSync4(file) && lstatSync(file).isSymbolicLink()) throw new MainSyncError("Main-sync receipt cannot be a symlink");
   const serialized = JSON.stringify(mainSyncStateSchema.parse(receipt));
   if (Buffer.byteLength(serialized, "utf8") > MAX_PRIVATE_BYTES) {
     throw new MainSyncError("Complete main-sync receipt exceeds the unchanged private byte bound; prior evidence is preserved", "NEEDS_CHANGE");
@@ -224763,8 +224849,8 @@ function saveSyncReceipt(dir, receipt) {
   }
 }
 function requireSyncReceipt(value) {
-  const file = join2(value.place.dir, MAIN_SYNC_FILE);
-  if (!existsSync3(file)) throw new MainSyncError("Canonical redeploy required: no fresh main-sync transaction", "NEEDS_CHANGE");
+  const file = join4(value.place.dir, MAIN_SYNC_FILE);
+  if (!existsSync4(file)) throw new MainSyncError("Canonical redeploy required: no fresh main-sync transaction", "NEEDS_CHANGE");
   const state = mainSyncStateSchema.parse(readPrivateJson(file));
   const receipt = state.phase === "input-readiness" ? state.previous : state;
   if (!receipt) throw new MainSyncError("Canonical redeploy required: inputs are ready but main has not been captured", "NEEDS_CHANGE");
@@ -224774,12 +224860,26 @@ function requireSyncReceipt(value) {
   return receipt;
 }
 function committedIdentity(root) {
-  if (existsSync3(resolve(root, git(root, ["rev-parse", "--git-path", "MERGE_HEAD"])))) throw new MainSyncError("ROOT must finish the ordinary merge before validation", "NEEDS_COMMIT");
+  if (existsSync4(resolve2(root, git(root, ["rev-parse", "--git-path", "MERGE_HEAD"])))) throw new MainSyncError("ROOT must finish the ordinary merge before validation", "NEEDS_COMMIT");
   const [headSha, treeSha] = external_exports.tuple([commitSchema, commitSchema]).parse(git(root, ["rev-parse", "HEAD", "HEAD^{tree}"]).split("\n"));
   return { headSha, treeSha };
 }
 function digest(text) {
-  return createHash("sha256").update(text).digest("hex");
+  return createHash2("sha256").update(text).digest("hex");
+}
+function ownerMismatches(actual, context, root) {
+  const checks = [
+    ["worktree", actual.worktree !== root],
+    ["agentName", actual.agentName !== context.agentName],
+    ["workerId", actual.workerId !== context.workerId],
+    ["requestId", actual.requestId !== context.requestId],
+    ["lease", actual.lease !== context.lease],
+    ["recordAction", actual.recordAction !== context.recordAction],
+    ["publicationPurpose", (actual.publicationPurpose ?? "build") !== (context.publicationPurpose ?? "build")],
+    ["mainSyncTransactionId", actual.mainSyncTransactionId !== context.mainSyncTransactionId],
+    ["mainSyncRequestContinuations", JSON.stringify(actual.mainSyncRequestContinuations) !== JSON.stringify(context.mainSyncRequestContinuations)]
+  ];
+  return checks.filter(([, differs]) => differs).map(([name]) => name);
 }
 
 // src/main-sync-ci.ts
@@ -224931,20 +225031,20 @@ function rejectReportReplay(command) {
 }
 
 // src/main-sync-report-command.ts
-import { existsSync as existsSync5, readFileSync as readFileSync6 } from "node:fs";
-import { dirname as dirname4, isAbsolute as isAbsolute3, join as join5, relative as relative2, resolve as resolve3 } from "node:path";
+import { existsSync as existsSync6, readFileSync as readFileSync8 } from "node:fs";
+import { dirname as dirname5, isAbsolute as isAbsolute3, join as join7, relative as relative2, resolve as resolve4 } from "node:path";
 var import_yaml3 = __toESM(require_dist(), 1);
 var import_picomatch2 = __toESM(require_picomatch2(), 1);
 
 // src/main-sync-input-references.ts
 var import_typescript = __toESM(require_typescript(), 1);
 var import_picomatch = __toESM(require_picomatch2(), 1);
-import { existsSync as existsSync4, readFileSync as readFileSync5 } from "node:fs";
-import { dirname as dirname3, isAbsolute as isAbsolute2, join as join4, normalize, relative, resolve as resolve2 } from "node:path";
+import { existsSync as existsSync5, readFileSync as readFileSync7 } from "node:fs";
+import { dirname as dirname4, isAbsolute as isAbsolute2, join as join6, normalize, relative, resolve as resolve3 } from "node:path";
 import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
 
 // ../../plugins/vibe/skills/vibe/scripts/local-plans.mjs
-import { realpathSync as realpathSync3 } from "node:fs";
+import { realpathSync as realpathSync5 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 var LOCAL_PLAN_PREFIX = ".closedloop-ai/vibe-plans/";
@@ -224954,7 +225054,7 @@ function isLocalPlanPath(filePath) {
 function committedLocalPlans(runGit) {
   return runGit(["ls-tree", "-r", "-z", "--name-only", "HEAD", "--", LOCAL_PLAN_PREFIX.slice(0, -1)]).split("\0").filter((file) => file && isLocalPlanPath(file));
 }
-if (process.argv[1] && realpathSync3(fileURLToPath(import.meta.url)) === realpathSync3(process.argv[1])) {
+if (process.argv[1] && realpathSync5(fileURLToPath(import.meta.url)) === realpathSync5(process.argv[1])) {
   try {
     const { values } = parseArgs({ options: { worktree: { type: "string" } } });
     if (!values.worktree) throw new Error("--worktree is required.");
@@ -224970,8 +225070,8 @@ if (process.argv[1] && realpathSync3(fileURLToPath(import.meta.url)) === realpat
 }
 
 // src/main-sync-committed-tree.ts
-import { readFileSync as readFileSync4 } from "node:fs";
-import { dirname as dirname2, join as join3 } from "node:path";
+import { readFileSync as readFileSync6 } from "node:fs";
+import { dirname as dirname3, join as join5 } from "node:path";
 var WORKSPACE_MANIFEST = /^(?:apps|packages|containers)\/[^/]+\/package\.json$/;
 var manifestSchema = external_exports.object({ name: external_exports.string().optional() }).passthrough();
 var active;
@@ -225012,9 +225112,9 @@ function workspaceNames(root, files) {
   const names = /* @__PURE__ */ new Map();
   for (const file of files) {
     if (!WORKSPACE_MANIFEST.test(file)) continue;
-    const name = manifestSchema.parse(JSON.parse(readFileSync4(join3(root, file), "utf8"))).name;
+    const name = manifestSchema.parse(JSON.parse(readFileSync6(join5(root, file), "utf8"))).name;
     if (name === void 0) continue;
-    names.set(name, [...names.get(name) ?? [], dirname2(file)]);
+    names.set(name, [...names.get(name) ?? [], dirname3(file)]);
   }
   return names;
 }
@@ -225105,7 +225205,7 @@ function referenceMatches(root, file, reference, candidates) {
     const positiveMatchers = positives.map((pattern) => collectorPattern(pattern, reference.dot));
     const ignoreMatchers = negatives.map((pattern) => collectorPattern(pattern, reference.dot));
     return candidates.some((candidate) => {
-      const absoluteCandidate = join4(root, candidate);
+      const absoluteCandidate = join6(root, candidate);
       const relativeCandidate = relative(reference.base, absoluteCandidate);
       const matches = (pattern) => pattern.match(pattern.absolute ? absoluteCandidate : relativeCandidate);
       return positiveMatchers.some(matches) && !ignoreMatchers.some(matches);
@@ -225113,15 +225213,15 @@ function referenceMatches(root, file, reference, candidates) {
   }
   const absolute = (pattern) => {
     if (pattern.startsWith("**")) return pattern;
-    if (pattern.startsWith("/")) return join4(packageBase(root, file), pattern.slice(1));
-    return join4(reference.base, pattern);
+    if (pattern.startsWith("/")) return join6(packageBase(root, file), pattern.slice(1));
+    return join6(reference.base, pattern);
   };
   const match = (0, import_picomatch.default)(positives.map(absolute), {
     dot: reference.dot,
     ignore: negatives.map(absolute),
     ...reference.kind === "vite" ? { noext: true } : {}
   });
-  return candidates.some((candidate) => match(join4(root, candidate)));
+  return candidates.some((candidate) => match(join6(root, candidate)));
 }
 function explicitPlanningReference(root, file, reference) {
   if (reference.kind !== "path") return false;
@@ -225129,7 +225229,7 @@ function explicitPlanningReference(root, file, reference) {
     const suffix = reference.value.slice(reference.value.lastIndexOf(UNKNOWN) + UNKNOWN.length).replace(/^\/+/, "");
     return suffix === ".closedloop-ai/vibe-plans" || suffix.startsWith(".closedloop-ai/vibe-plans/") || reference.uncertainTerms.some((term) => term.includes(".closedloop-ai/vibe-plans")) || reference.uncertainTerms.includes(".closedloop-ai") && reference.uncertainTerms.includes("vibe-plans");
   }
-  const target = reference.base === "runtime" && !isAbsolute2(reference.value) ? normalize(reference.value).replace(LEADING_PARENTS, "") : relative(root, resolve2(dirname3(join4(root, file)), reference.value));
+  const target = reference.base === "runtime" && !isAbsolute2(reference.value) ? normalize(reference.value).replace(LEADING_PARENTS, "") : relative(root, resolve3(dirname4(join6(root, file)), reference.value));
   return isLocalPlanPath(target) || target === ".closedloop-ai/vibe-plans";
 }
 function callName(expression) {
@@ -225148,7 +225248,7 @@ function isReader(expression) {
 }
 function viteReference(root, file, node) {
   const values = node.arguments[0] ? literalGroup(node.arguments[0]) : [];
-  let base = dirname3(join4(root, file));
+  let base = dirname4(join6(root, file));
   let dot = false;
   let unresolved2 = !node.arguments[0] || !literalGroupComplete(node.arguments[0]) || values.some((value) => !["/", "./", "../", "**"].some((prefix) => value.replace(/^!/, "").startsWith(prefix)));
   const options = node.arguments[1];
@@ -225165,7 +225265,7 @@ function viteReference(root, file, node) {
         else if (property.initializer.kind !== import_typescript.default.SyntaxKind.FalseKeyword) unresolved2 = true;
       } else if (name === "base") {
         if (!import_typescript.default.isStringLiteralLike(property.initializer)) unresolved2 = true;
-        else base = property.initializer.text.startsWith("/") ? join4(packageBase(root, file), property.initializer.text) : resolve2(base, property.initializer.text);
+        else base = property.initializer.text.startsWith("/") ? join6(packageBase(root, file), property.initializer.text) : resolve3(base, property.initializer.text);
       } else if (!["eager", "import", "query", "as"].includes(name)) unresolved2 = true;
     }
   }
@@ -225187,8 +225287,8 @@ function collectorExcludes(node) {
   return node.properties.flatMap((property) => import_typescript.default.isPropertyAssignment(property) && propertyName(property.name) === "exclude" ? literalGroup(property.initializer) : []);
 }
 function packageBase(root, file) {
-  let base = dirname3(join4(root, file));
-  while (base !== root && !existsSync4(join4(base, "package.json"))) base = dirname3(base);
+  let base = dirname4(join6(root, file));
+  while (base !== root && !existsSync5(join6(base, "package.json"))) base = dirname4(base);
   return base;
 }
 function importedName(identifier) {
@@ -225259,7 +225359,7 @@ function pathValue(expression, root, file, seen, collect) {
   if (import_typescript.default.isParenthesizedExpression(expression)) return pathValue(expression.expression, root, file, seen, collect);
   if (import_typescript.default.isIdentifier(expression)) {
     const declaration = localDeclaration(expression);
-    if (expression.text === "__dirname" && !declaration) return dirname3(join4(root, file));
+    if (expression.text === "__dirname" && !declaration) return dirname4(join6(root, file));
     if (declaration && import_typescript.default.isVariableDeclaration(declaration) && declaration.initializer && import_typescript.default.isVariableDeclarationList(declaration.parent) && declaration.parent.flags & import_typescript.default.NodeFlags.Const) {
       return pathValue(declaration.initializer, root, file, seen, collect);
     }
@@ -225274,8 +225374,8 @@ function pathValue(expression, root, file, seen, collect) {
     if (values.includes(NO_FILE_TARGET)) return NO_FILE_TARGET;
     return expression.head.text + expression.templateSpans.map((part, index) => stringValue(values[index]) + part.literal.text).join("");
   }
-  if (import_typescript.default.isPropertyAccessExpression(expression) && expression.name.text === "url" && import_typescript.default.isMetaProperty(expression.expression) && expression.expression.keywordToken === import_typescript.default.SyntaxKind.ImportKeyword) return pathToFileURL(join4(root, file)).href;
-  if (import_typescript.default.isPropertyAccessExpression(expression) && expression.name.text === "dirname" && import_typescript.default.isMetaProperty(expression.expression) && expression.expression.keywordToken === import_typescript.default.SyntaxKind.ImportKeyword) return dirname3(join4(root, file));
+  if (import_typescript.default.isPropertyAccessExpression(expression) && expression.name.text === "url" && import_typescript.default.isMetaProperty(expression.expression) && expression.expression.keywordToken === import_typescript.default.SyntaxKind.ImportKeyword) return pathToFileURL(join6(root, file)).href;
+  if (import_typescript.default.isPropertyAccessExpression(expression) && expression.name.text === "dirname" && import_typescript.default.isMetaProperty(expression.expression) && expression.expression.keywordToken === import_typescript.default.SyntaxKind.ImportKeyword) return dirname4(join6(root, file));
   if (import_typescript.default.isBinaryExpression(expression) && expression.operatorToken.kind === import_typescript.default.SyntaxKind.PlusToken) {
     const left = pathValue(expression.left, root, file, seen, collect);
     const right = pathValue(expression.right, root, file, seen, collect);
@@ -225294,8 +225394,8 @@ function pathValue(expression, root, file, seen, collect) {
   const name = callName(expression.expression);
   if (name === "dirname" && builtin(expression.expression, ["node:path", "path"])) {
     const value = expression.arguments[0] && pathValue(expression.arguments[0], root, file, seen, collect);
-    if (isIsolatedPath(value)) return { isolatedPath: dirname3(value.isolatedPath), identity: value.identity };
-    return typeof value === "string" && !value.includes(UNKNOWN) ? dirname3(value) : UNKNOWN;
+    if (isIsolatedPath(value)) return { isolatedPath: dirname4(value.isolatedPath), identity: value.identity };
+    return typeof value === "string" && !value.includes(UNKNOWN) ? dirname4(value) : UNKNOWN;
   }
   if (name === "cwd" && isProcessMember(expression.expression, "cwd")) {
     return environment?.cwd ?? { possiblePath: "/", unknownPrefix: true };
@@ -225316,7 +225416,7 @@ function pathValue(expression, root, file, seen, collect) {
     if (isolated) {
       if (name === "resolve" && inputs.length === 1) return isolated;
       if (name === "join" && isIsolatedPath(inputs[0]) && inputs.slice(1).every((value) => typeof value === "string" && !value.includes(UNKNOWN))) {
-        const path2 = normalize(join4(isolated.isolatedPath, ...inputs.slice(1)));
+        const path2 = normalize(join6(isolated.isolatedPath, ...inputs.slice(1)));
         if (!isAbsolute2(path2) && path2 !== ".." && !path2.startsWith("../")) return { isolatedPath: path2, identity: isolated.identity };
       }
       return UNKNOWN;
@@ -225381,9 +225481,9 @@ function pathPossibility(root, file, value, base, candidates, unknownPrefix = fa
   if (unknownPrefix) pattern = `${UNKNOWN}${pattern}`;
   else if (base === "runtime" && !isAbsolute2(pattern)) {
     if (!pattern.startsWith(UNKNOWN)) pattern = `${UNKNOWN}/${normalize(pattern).replace(LEADING_PARENTS, "")}`;
-  } else if (!isAbsolute2(pattern)) pattern = resolve2(dirname3(join4(root, file)), pattern);
+  } else if (!isAbsolute2(pattern)) pattern = resolve3(dirname4(join6(root, file)), pattern);
   const match = new RegExp(`^${pattern.replace(REGEX_META, "\\$&").split(UNKNOWN).join(".*")}$`);
-  return candidates.some((candidate) => match.test(join4(root, candidate)));
+  return candidates.some((candidate) => match.test(join6(root, candidate)));
 }
 function isUrlConstructor(expression) {
   if (callName(expression) !== "URL") return false;
@@ -225481,7 +225581,7 @@ function isProcessMember(expression, member) {
   return Boolean(node && import_typescript.default.isImportDeclaration(node) && import_typescript.default.isStringLiteral(node.moduleSpecifier) && ["node:process", "process"].includes(node.moduleSpecifier.text));
 }
 function parseInputModule(root, file, environment) {
-  const source = import_typescript.default.createSourceFile(file, readFileSync5(join4(root, file), "utf8"), import_typescript.default.ScriptTarget.Latest, true);
+  const source = import_typescript.default.createSourceFile(file, readFileSync7(join6(root, file), "utf8"), import_typescript.default.ScriptTarget.Latest, true);
   if (environment) nativeEnvironments.set(source, environment);
   return source;
 }
@@ -225530,13 +225630,13 @@ function isIsolatedPath(value) {
 function importedConstant(root, source, declaration, environment) {
   const imported = declaration.parent.parent.parent;
   if (!import_typescript.default.isImportDeclaration(imported) || !import_typescript.default.isStringLiteral(imported.moduleSpecifier) || !imported.moduleSpecifier.text.startsWith(".")) return void 0;
-  const base = resolve2(dirname3(join4(root, source.fileName)), imported.moduleSpecifier.text);
+  const base = resolve3(dirname4(join6(root, source.fileName)), imported.moduleSpecifier.text);
   if (!base.startsWith(`${root}/`)) return void 0;
   const stem = relative(root, base);
   const files = [stem, stem.replace(/\.js$/, ".ts"), `${stem}.ts`, `${stem}.mjs`, `${stem}/index.ts`];
   const name = (declaration.propertyName ?? declaration.name).text;
   for (const file of files) {
-    if (!existsSync4(join4(root, file)) || !MODULE_PATH.test(file) || isLocalPlanPath(file)) continue;
+    if (!existsSync5(join6(root, file)) || !MODULE_PATH.test(file) || isLocalPlanPath(file)) continue;
     const module = readInputModule(root, file, environment);
     for (const statement of module.statements) {
       if (!import_typescript.default.isVariableStatement(statement) || !statement.modifiers?.some((modifier) => modifier.kind === import_typescript.default.SyntaxKind.ExportKeyword) || !(statement.declarationList.flags & import_typescript.default.NodeFlags.Const)) continue;
@@ -225556,7 +225656,7 @@ function collectorPattern(pattern, dot) {
 }
 function nativePathOperation(operation, inputs, cwd) {
   const known = (value) => typeof value === "string" && !value.includes(UNKNOWN);
-  if (operation === "join" && inputs.every(known)) return join4(...inputs);
+  if (operation === "join" && inputs.every(known)) return join6(...inputs);
   let result = "";
   if (operation === "resolve") result = cwd ?? { possiblePath: "/", unknownPrefix: true };
   for (const input of inputs) {
@@ -225565,12 +225665,12 @@ function nativePathOperation(operation, inputs, cwd) {
       if (input && typeof input === "object" && "possiblePath" in input) value = input.possiblePath;
       else if (typeof input === "string") value = input;
       const suffix = value.includes(UNKNOWN) ? value.slice(value.lastIndexOf(UNKNOWN) + UNKNOWN.length) : value;
-      result = { possiblePath: join4("/", suffix), unknownPrefix: true };
+      result = { possiblePath: join6("/", suffix), unknownPrefix: true };
     } else if (operation === "resolve" && isAbsolute2(input)) result = normalize(input);
-    else if (typeof result === "string") result = join4(result, input);
-    else result = { possiblePath: join4("/", result.possiblePath, input), unknownPrefix: true };
+    else if (typeof result === "string") result = join6(result, input);
+    else result = { possiblePath: join6("/", result.possiblePath, input), unknownPrefix: true };
   }
-  if (operation === "resolve" && typeof result === "string" && isAbsolute2(result)) return resolve2(result);
+  if (operation === "resolve" && typeof result === "string" && isAbsolute2(result)) return resolve3(result);
   return result;
 }
 function completeExpressionTerms(expression, root, file, seen, value, collect) {
@@ -225623,7 +225723,7 @@ function nativePathConstraint(operation, inputs, cwd) {
   let known = [];
   const flush = () => {
     if (known.length) {
-      parts.push(join4(...known));
+      parts.push(join6(...known));
       known = [];
     }
   };
@@ -225699,7 +225799,7 @@ function reportCommandEntries(execution) {
   for (const task of execution.tasks ?? []) {
     const directory = task.package && workspaceDirectory(execution.root, task.package);
     const name = task.taskId.slice(task.taskId.lastIndexOf("#") + 1);
-    if (directory) entries.push(...ordinaryEntries(execution.root, ["pnpm", "run", name], { kind: "known", path: join5(execution.root, directory) }));
+    if (directory) entries.push(...ordinaryEntries(execution.root, ["pnpm", "run", name], { kind: "known", path: join7(execution.root, directory) }));
   }
   return entries;
 }
@@ -225750,7 +225850,7 @@ function nodeEntry(root, argv, context) {
   return paths.map((path2) => ({
     file: path2,
     context,
-    argv: [process.execPath, join5(root, path2), ...argv.slice(index + 1)]
+    argv: [process.execPath, join7(root, path2), ...argv.slice(index + 1)]
   }));
 }
 function pnpmEntries(root, args, initialContext, seen) {
@@ -225768,7 +225868,7 @@ function pnpmEntries(root, args, initialContext, seen) {
       const selected = args[index + 1];
       const directory = selected && workspaceDirectory(root, selected);
       if (!directory) throw unresolved("nonliteral package selector");
-      selectedDirectory = join5(root, directory);
+      selectedDirectory = join7(root, directory);
       index += 2;
     } else {
       const consumed = pnpmOption(args, index, options);
@@ -225900,8 +226000,8 @@ function reportLiteralWords(value) {
   }
 }
 function ownedFile(root, cwd, file) {
-  const absolute = isAbsolute3(file) ? file : resolve3(cwd, file);
-  if (!within(root, absolute) || !existsSync5(absolute)) throw unresolved("entry outside/missing from owned execution root");
+  const absolute = isAbsolute3(file) ? file : resolve4(cwd, file);
+  if (!within(root, absolute) || !existsSync6(absolute)) throw unresolved("entry outside/missing from owned execution root");
   return relative2(root, absolute);
 }
 function within(root, path2) {
@@ -225911,7 +226011,7 @@ function unresolved(reason) {
   return new UnsupportedReportSyntax(reason);
 }
 function reportShellEntries(execution, file, context) {
-  const source = readFileSync6(join5(execution.root, file), "utf8");
+  const source = readFileSync8(join7(execution.root, file), "utf8");
   if (source.length > 65536) throw unresolved("shell owner size");
   const lines = source.split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
   const result = [];
@@ -225931,9 +226031,9 @@ var UnsupportedReportSyntax = class extends Error {
 };
 function possibleFiles(root, file, context, accepts = (path2) => MODULE.test(path2)) {
   if (isAbsolute3(file)) return [ownedFile(root, root, file)];
-  const reference = context.constraints ? { ...context.constraints, value: join5(context.constraints.value, context.suffix, file), base: "runtime", possibleOnly: true } : {
+  const reference = context.constraints ? { ...context.constraints, value: join7(context.constraints.value, context.suffix, file), base: "runtime", possibleOnly: true } : {
     kind: "path",
-    value: join5(context.suffix, file),
+    value: join7(context.suffix, file),
     base: "runtime",
     possibleOnly: true,
     unknownPrefix: false,
@@ -225998,7 +226098,7 @@ function selectedConfigs(root, argv, context) {
     else for (const flag of flags) if (value.startsWith(`${flag}=`)) selected = value.slice(flag.length + 1);
   }
   const defaults = program === "tsc" ? ["tsconfig.json"] : [`${program}.config.ts`, `${program}.config.mts`, `${program}.config.js`, `${program}.config.mjs`];
-  const paths = selected ? [selected] : context.kind === "possible" ? defaults : defaults.filter((file) => existsSync5(resolve3(context.path, file)));
+  const paths = selected ? [selected] : context.kind === "possible" ? defaults : defaults.filter((file) => existsSync6(resolve4(context.path, file)));
   const files = paths.flatMap((path2) => targetFiles(root, path2, context, (candidate) => MODULE.test(candidate) || candidate.endsWith(".json")));
   return files.map((file) => ({ file, context, argv: [...argv] }));
 }
@@ -226021,8 +226121,8 @@ function pnpmOption(args, index, options) {
 }
 function installEntries(root, cwd, options, seen) {
   if (options.ignoreScripts === true) return [];
-  const workspace = join5(root, "pnpm-workspace.yaml");
-  const standalone = options.ignoreWorkspace === true || !existsSync5(workspace);
+  const workspace = join7(root, "pnpm-workspace.yaml");
+  const standalone = options.ignoreWorkspace === true || !existsSync6(workspace);
   const directories = standalone ? [cwd] : workspaceDirectories(root, workspace);
   const roots = new Set(standalone ? [cwd] : options.ignoreWorkspace === false ? [root] : [root, cwd]);
   const entries = [];
@@ -226039,17 +226139,17 @@ function installEntries(root, cwd, options, seen) {
   return entries;
 }
 function scriptsAt(directory) {
-  const file = join5(directory, "package.json");
-  return existsSync5(file) ? packageSchema.parse(JSON.parse(readFileSync6(file, "utf8"))).scripts ?? {} : {};
+  const file = join7(directory, "package.json");
+  return existsSync6(file) ? packageSchema.parse(JSON.parse(readFileSync8(file, "utf8"))).scripts ?? {} : {};
 }
 function workspaceDirectories(root, workspace) {
   const files = committedFiles(root).filter((file) => file.endsWith("/package.json") || file === "package.json");
   if (files.length > 4096) throw unresolved("workspace manifest bound");
-  const config = external_exports.object({ packages: external_exports.array(external_exports.string()).optional() }).passthrough().parse((0, import_yaml3.parse)(readFileSync6(workspace, "utf8")));
+  const config = external_exports.object({ packages: external_exports.array(external_exports.string()).optional() }).passthrough().parse((0, import_yaml3.parse)(readFileSync8(workspace, "utf8")));
   const patterns = config.packages ?? [];
   const finite = config.packages !== void 0 && patterns.every((pattern) => WORKSPACE_PATTERN.test(pattern));
   const matches = finite ? (0, import_picomatch2.default)(patterns, { dot: true }) : void 0;
-  return files.filter((file) => file === "package.json" || !matches || matches(dirname4(file))).map((file) => join5(root, dirname4(file)));
+  return files.filter((file) => file === "package.json" || !matches || matches(dirname5(file))).map((file) => join7(root, dirname5(file)));
 }
 function supportedScript(root, value, args, cwd, seen) {
   try {
@@ -226060,7 +226160,7 @@ function supportedScript(root, value, args, cwd, seen) {
   }
 }
 function possibleManifestDirectories(root, context) {
-  return possibleFiles(root, "package.json", context, (path2) => path2 === "package.json" || path2.endsWith("/package.json")).map((file) => join5(root, dirname4(file)));
+  return possibleFiles(root, "package.json", context, (path2) => path2 === "package.json" || path2.endsWith("/package.json")).map((file) => join7(root, dirname5(file)));
 }
 function possibleInstallEntries(root, context, options, seen) {
   const directories = context.kind === "possible" ? possibleManifestDirectories(root, context) : [context.path];
@@ -226094,16 +226194,16 @@ function targetFiles(root, target, context, accepts = (path2) => MODULE.test(pat
 }
 function reportRelativeCwd(root, context, target) {
   if (isAbsolute3(target)) {
-    const path2 = resolve3(target);
+    const path2 = resolve4(target);
     if (!within(root, path2)) throw unresolved("execution cwd outside owned root");
     return { kind: "known", path: path2 };
   }
   if (context.kind === "known") {
-    const path2 = resolve3(context.path, target);
+    const path2 = resolve4(context.path, target);
     if (!within(root, path2)) throw unresolved("execution cwd outside owned root");
     return { kind: "known", path: path2 };
   }
-  return { ...context, suffix: join5(context.suffix, target) };
+  return { ...context, suffix: join7(context.suffix, target) };
 }
 function reportLoaderEntries(execution, importer, target, context) {
   let files;
@@ -226117,29 +226217,29 @@ function reportLoaderEntries(execution, importer, target, context) {
 
 // src/main-sync-report-closure.ts
 var import_typescript3 = __toESM(require_typescript(), 1);
-import { readFileSync as readFileSync10 } from "node:fs";
+import { readFileSync as readFileSync12 } from "node:fs";
 import { builtinModules } from "node:module";
-import { dirname as dirname7, join as join9, relative as relative4, resolve as resolve4 } from "node:path";
+import { dirname as dirname8, join as join11, relative as relative4, resolve as resolve5 } from "node:path";
 
 // src/main-sync-input-catalog.ts
-import { existsSync as existsSync6, lstatSync as lstatSync4, readFileSync as readFileSync9, readdirSync as readdirSync2 } from "node:fs";
+import { existsSync as existsSync7, lstatSync as lstatSync4, readFileSync as readFileSync11, readdirSync as readdirSync2 } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname as dirname6, join as join8, relative as relative3, sep as sep2 } from "node:path";
-import { realpathSync as realpathSync6 } from "node:fs";
+import { dirname as dirname7, join as join10, relative as relative3, sep as sep2 } from "node:path";
+import { realpathSync as realpathSync8 } from "node:fs";
 var import_yaml4 = __toESM(require_dist(), 1);
 
 // src/main-sync-input-files.ts
-import { lstatSync as lstatSync3, readFileSync as readFileSync8, readdirSync, realpathSync as realpathSync5 } from "node:fs";
-import { dirname as dirname5, join as join7, sep } from "node:path";
+import { lstatSync as lstatSync3, readFileSync as readFileSync10, readdirSync, realpathSync as realpathSync7 } from "node:fs";
+import { dirname as dirname6, join as join9, sep } from "node:path";
 
 // src/main-sync-generated-input.ts
 import { execFileSync as execFileSync3, spawnSync as spawnSync2 } from "node:child_process";
-import { createHash as createHash2 } from "node:crypto";
-import { lstatSync as lstatSync2, readFileSync as readFileSync7, realpathSync as realpathSync4 } from "node:fs";
-import { join as join6 } from "node:path";
+import { createHash as createHash3 } from "node:crypto";
+import { lstatSync as lstatSync2, readFileSync as readFileSync9, realpathSync as realpathSync6 } from "node:fs";
+import { join as join8 } from "node:path";
 
 // src/main-sync-failure.ts
-import { basename as basename2 } from "node:path";
+import { basename as basename3 } from "node:path";
 var PRESERVE = "preserve the operation and inspect its owned evidence";
 var INVALID2 = "Main-sync context or private evidence is invalid";
 var ERROR_CODE = /^[A-Z][A-Z0-9_]{1,63}$/;
@@ -226166,13 +226266,13 @@ function operationalCause(error) {
   const fields = error;
   const where = sourceFrame(error.stack);
   if (Array.isArray(fields.output) || error.message.startsWith("Command failed:")) {
-    const words = (FAILED_COMMAND.exec(error.message)?.slice(1) ?? []).filter((word) => Boolean(word)).map((word, index) => index === 0 ? basename2(word) : word).filter((word) => COMMAND_WORD.test(word));
+    const words = (FAILED_COMMAND.exec(error.message)?.slice(1) ?? []).filter((word) => Boolean(word)).map((word, index) => index === 0 ? basename3(word) : word).filter((word) => COMMAND_WORD.test(word));
     const ended = typeof fields.status === "number" ? `exited ${fields.status}` : typeof fields.signal === "string" && ERROR_CODE.test(fields.signal) ? `stopped by ${fields.signal}` : "failed";
     return `subprocess ${words.length ? `${words.join(" ")} ` : ""}${ended}${where}`;
   }
   if (typeof fields.code === "string" && ERROR_CODE.test(fields.code)) {
     const syscall = typeof fields.syscall === "string" && SYSCALL.test(fields.syscall) ? ` during ${fields.syscall}` : "";
-    const file = typeof fields.path === "string" && FILE_NAME.test(basename2(fields.path)) ? ` on ${basename2(fields.path)}` : "";
+    const file = typeof fields.path === "string" && FILE_NAME.test(basename3(fields.path)) ? ` on ${basename3(fields.path)}` : "";
     return `${error.name} ${fields.code}${syscall}${file}${where}`;
   }
   const message = error.message.split("\n", 1)[0].slice(0, MAX_MESSAGE);
@@ -226188,7 +226288,7 @@ function schemaIssues(error) {
 function sourceFrame(stack) {
   for (const line of (stack ?? "").split("\n").slice(1)) {
     const frame = STACK_FRAME.exec(line.trim());
-    if (frame && !frame[1].includes("/node_modules/")) return ` at ${basename2(frame[1])}:${frame[2]}`;
+    if (frame && !frame[1].includes("/node_modules/")) return ` at ${basename3(frame[1])}:${frame[2]}`;
   }
   return "";
 }
@@ -226252,7 +226352,7 @@ function verifyGeneratedBiomeInput(root, headSha) {
     });
     if (result.error || result.status !== 0) throw new MainSyncError("Read-only canonical generated-input probe failed; no source check or publication permitted", "NEEDS_CHANGE");
     const proof = probeSchema.parse(JSON.parse(result.stdout));
-    if (proof.path !== join6(root, GENERATED_BIOME_PATH) || proof.bytes !== artifact.length || proof.sha256 !== sha256(artifact)) {
+    if (proof.path !== join8(root, GENERATED_BIOME_PATH) || proof.bytes !== artifact.length || proof.sha256 !== sha256(artifact)) {
       throw new MainSyncError("Generated Biome input differs from the exact committed-config derivative; preserve the artifact", "NEEDS_CHANGE");
     }
     for (const file of inputs) {
@@ -226265,37 +226365,37 @@ function verifyGeneratedBiomeInput(root, headSha) {
   }
 }
 function readRegular(root, file) {
-  const path2 = join6(root, file);
+  const path2 = join8(root, file);
   const stat = lstatSync2(path2);
-  if (!stat.isFile() || stat.size > MAX_INPUT_BYTES || stat.mode & 73 || realpathSync4(path2) !== path2) {
+  if (!stat.isFile() || stat.size > MAX_INPUT_BYTES || stat.mode & 73 || realpathSync6(path2) !== path2) {
     throw new MainSyncError(`Generated-input verification requires a bounded canonical regular file: ${file}`, "NEEDS_CHANGE");
   }
-  return readFileSync7(path2);
+  return readFileSync9(path2);
 }
 function rawBlob(root, headSha, file) {
   return execFileSync3("git", ["show", `${headSha}:${file}`], { cwd: root, timeout: 1e4, maxBuffer: MAX_INPUT_BYTES });
 }
 function sha256(bytes) {
-  return createHash2("sha256").update(bytes).digest("hex");
+  return createHash3("sha256").update(bytes).digest("hex");
 }
 
 // src/main-sync-input-files.ts
 function originFile(root, file) {
-  const target = join7(root, file);
+  const target = join9(root, file);
   const stat = lstatSync3(target);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.mode & 73 || stat.size > MAX_INPUT_BYTES || realpathSync5(target) !== target) throw new MainSyncError(`Generated input must be a bounded canonical non-executable regular file: ${file}`, "NEEDS_CHANGE");
-  for (let parent = dirname5(target); parent !== root; parent = dirname5(parent)) {
-    if (!parent.startsWith(`${root}${sep}`) || lstatSync3(parent).isSymbolicLink() || realpathSync5(parent) !== parent) {
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.mode & 73 || stat.size > MAX_INPUT_BYTES || realpathSync7(target) !== target) throw new MainSyncError(`Generated input must be a bounded canonical non-executable regular file: ${file}`, "NEEDS_CHANGE");
+  for (let parent = dirname6(target); parent !== root; parent = dirname6(parent)) {
+    if (!parent.startsWith(`${root}${sep}`) || lstatSync3(parent).isSymbolicLink() || realpathSync7(parent) !== parent) {
       throw new MainSyncError(`Generated input parent is not canonical: ${file}`, "NEEDS_CHANGE");
     }
   }
-  return originFileSchema.parse({ path: file, bytes: stat.size, sha256: digest(readFileSync8(target)), mode: "100644" });
+  return originFileSchema.parse({ path: file, bytes: stat.size, sha256: digest(readFileSync10(target)), mode: "100644" });
 }
 function originTree(root, path2, allowed) {
-  const target = join7(root, path2);
+  const target = join9(root, path2);
   const stat = lstatSync3(target, { throwIfNoEntry: false });
   if (!stat) return [];
-  if (stat.isSymbolicLink() || realpathSync5(target) !== target) throw new MainSyncError(`Generated output root cannot be a symlink or alias: ${path2}`, "NEEDS_CHANGE");
+  if (stat.isSymbolicLink() || realpathSync7(target) !== target) throw new MainSyncError(`Generated output root cannot be a symlink or alias: ${path2}`, "NEEDS_CHANGE");
   if (stat.isFile()) {
     if (allowed && !allowed.has(path2)) throw new MainSyncError(`Unknown generated output must be preserved: ${path2}`, "NEEDS_CHANGE");
     return [originFile(root, path2)];
@@ -226517,7 +226617,7 @@ function producerFor(path2) {
   return inputProducers.find((producer) => producer.roots.some((root) => path2 === root || path2.startsWith(`${root}/`)));
 }
 function presentProducers(root) {
-  return inputProducers.filter((producer) => producer.roots.some((path2) => lstatSync4(join8(root, path2), { throwIfNoEntry: false })));
+  return inputProducers.filter((producer) => producer.roots.some((path2) => lstatSync4(join10(root, path2), { throwIfNoEntry: false })));
 }
 function producerFiles(root, producer, allowed) {
   return producer.roots.flatMap((path2) => originTree(root, path2, allowed));
@@ -226525,26 +226625,26 @@ function producerFiles(root, producer, allowed) {
 function producerPackage(root, producer) {
   if (!producer.package) return void 0;
   const owner = producer.package;
-  const lookup = createRequire(join8(root, owner.dir, "package.json")).resolve.paths(owner.name) ?? [];
-  const file = lookup.map((directory) => join8(directory, owner.name, "package.json")).find((candidate) => existsSync6(candidate));
+  const lookup = createRequire(join10(root, owner.dir, "package.json")).resolve.paths(owner.name) ?? [];
+  const file = lookup.map((directory) => join10(directory, owner.name, "package.json")).find((candidate) => existsSync7(candidate));
   if (!file) throw new MainSyncError(`Canonical installed producer is not installed: ${producer.id}`, "NEEDS_CHANGE");
-  const canonical = realpathSync6(file);
+  const canonical = realpathSync8(file);
   if (!canonical.startsWith(`${root}${sep2}`) || !lstatSync4(canonical).isFile()) {
     throw new MainSyncError(`Canonical installed producer resolves outside the owned validation checkout: ${producer.id}`, "NEEDS_CHANGE");
   }
-  const data = packageSchema2.parse(JSON.parse(readFileSync9(canonical, "utf8")));
+  const data = packageSchema2.parse(JSON.parse(readFileSync11(canonical, "utf8")));
   if (data.name !== owner.name || data.version !== targetPackageVersion(root, owner, data.version)) {
     throw new MainSyncError(`Installed producer contract changed: ${producer.id}`, "NEEDS_CHANGE");
   }
-  return { path: relative3(root, canonical), directory: dirname6(canonical), version: data.version };
+  return { path: relative3(root, canonical), directory: dirname7(canonical), version: data.version };
 }
 function targetPackageVersion(root, owner, installed) {
-  const manifest = manifestSchema2.parse(JSON.parse(readFileSync9(join8(root, owner.dir, "package.json"), "utf8")));
+  const manifest = manifestSchema2.parse(JSON.parse(readFileSync11(join10(root, owner.dir, "package.json"), "utf8")));
   const specifier = manifest.dependencies?.[owner.name] ?? manifest.devDependencies?.[owner.name] ?? manifest.optionalDependencies?.[owner.name];
   if (!specifier?.startsWith("catalog:")) return installed;
-  const file = join8(root, WORKSPACE);
-  if (!existsSync6(file)) throw new MainSyncError(`Catalog-backed producer has no pnpm workspace: ${owner.name}`, "NEEDS_CHANGE");
-  const workspace = workspaceSchema.parse((0, import_yaml4.parse)(readFileSync9(file, "utf8")));
+  const file = join10(root, WORKSPACE);
+  if (!existsSync7(file)) throw new MainSyncError(`Catalog-backed producer has no pnpm workspace: ${owner.name}`, "NEEDS_CHANGE");
+  const workspace = workspaceSchema.parse((0, import_yaml4.parse)(readFileSync11(file, "utf8")));
   const catalogName = specifier.slice("catalog:".length);
   const version = (catalogName ? workspace.catalogs?.[catalogName] : workspace.catalog)?.[owner.name];
   if (!version) throw new MainSyncError(`Catalog has no producer version: ${owner.name}`, "NEEDS_CHANGE");
@@ -226553,15 +226653,15 @@ function targetPackageVersion(root, owner, installed) {
 function producerOwnerInputs(root, producer, allowed) {
   const owner = producerPackage(root, producer);
   if (!owner) return [];
-  const shims = join8(owner.directory, "node_modules", ".bin");
+  const shims = join10(owner.directory, "node_modules", ".bin");
   const result = [];
   const walk = (directory) => {
     for (const name of readdirSync2(directory).sort()) {
-      const path2 = join8(directory, name);
+      const path2 = join10(directory, name);
       if (path2 === shims) continue;
       const file = relative3(root, path2);
       const stat = lstatSync4(path2);
-      if (stat.isSymbolicLink() || realpathSync6(path2) !== path2) throw new MainSyncError(`Selected producer package contains a noncanonical node: ${producer.id}`, "NEEDS_CHANGE");
+      if (stat.isSymbolicLink() || realpathSync8(path2) !== path2) throw new MainSyncError(`Selected producer package contains a noncanonical node: ${producer.id}`, "NEEDS_CHANGE");
       if (stat.isDirectory()) {
         if (allowed && !shims.startsWith(`${path2}${sep2}`) && ![...allowed].some((item) => item.startsWith(`${file}/`))) throw new MainSyncError("Selected producer contains an unknown directory; preserve it without reading contents", "NEEDS_CHANGE");
         walk(path2);
@@ -226571,7 +226671,7 @@ function producerOwnerInputs(root, producer, allowed) {
         result.push(producerInputSchema.parse({
           path: file,
           bytes: stat.size,
-          sha256: digest(readFileSync9(path2)),
+          sha256: digest(readFileSync11(path2)),
           mode: stat.mode & 73 ? "100755" : "100644"
         }));
       }
@@ -226600,8 +226700,8 @@ function verifyProducerInputPaths(root, producers, untracked) {
       }
     }
     for (const input of producer.inputs) {
-      if (!lstatSync4(join8(root, input), { throwIfNoEntry: false })) continue;
-      if (realpathSync6(join8(root, input)) !== join8(root, input)) throw new MainSyncError(`Producer input is not canonical: ${input}`, "NEEDS_CHANGE");
+      if (!lstatSync4(join10(root, input), { throwIfNoEntry: false })) continue;
+      if (realpathSync8(join10(root, input)) !== join10(root, input)) throw new MainSyncError(`Producer input is not canonical: ${input}`, "NEEDS_CHANGE");
     }
   }
 }
@@ -226747,7 +226847,7 @@ function walkReportClosure(execution, entries) {
             const isolated = args.elements.length === 2 && import_typescript3.default.isExpression(args.elements[1]) ? isolatedReportArgument(execution.root, entry.file, node, args.elements[1]) : void 0;
             const script = inputKnownString(values[0]);
             if (program.text === "node" && isolated && script && context.cwd.kind === "known") {
-              const target = resolve4(context.cwd.path, script);
+              const target = resolve5(context.cwd.path, script);
               if (!target.startsWith(`${execution.root}/`)) throw unproved("isolated reader escapes owned root");
               const file = relative4(execution.root, target);
               if (!tracked.has(file) || isLocalPlanPath(file)) throw unproved("isolated reader is not committed source");
@@ -226765,7 +226865,7 @@ function walkReportClosure(execution, entries) {
                 if (reference?.kind === "path") return { constraint: reference };
                 return "";
               });
-              pending.push(...selected.map((item) => ({ ...item, argv: [process.execPath, join9(execution.root, item.file), ...arguments_] })));
+              pending.push(...selected.map((item) => ({ ...item, argv: [process.execPath, join11(execution.root, item.file), ...arguments_] })));
             } else if (literals.every((value) => value !== void 0)) {
               pending.push(...reportChildEntries(execution, [program.text, ...literals], context.cwd));
             }
@@ -226780,7 +226880,7 @@ function walkReportClosure(execution, entries) {
 function resolveImport(root, importer, specifier, tracked, mode) {
   if (BUILTINS.has(specifier)) return [];
   if (specifier.startsWith(".")) {
-    const path2 = resolve4(dirname7(join9(root, importer)), specifier);
+    const path2 = resolve5(dirname8(join11(root, importer)), specifier);
     if (!path2.startsWith(`${root}/`)) throw unproved("selected import escapes owned root");
     const stem = relative4(root, path2);
     return trackedModule(stem, tracked);
@@ -226796,7 +226896,7 @@ function workspaceImport(root, specifier, tracked, mode) {
   const subpath = pieces.slice(2).join("/");
   const base = workspaceDirectory(root, name);
   if (!base) return [];
-  const manifest = packageSchema3.parse(JSON.parse(readFileSync10(join9(root, base, "package.json"), "utf8")));
+  const manifest = packageSchema3.parse(JSON.parse(readFileSync12(join11(root, base, "package.json"), "utf8")));
   const targets = workspaceTargets(manifest.exports, manifest.main, subpath, mode);
   const selected = [];
   for (const target of targets) {
@@ -226804,8 +226904,8 @@ function workspaceImport(root, specifier, tracked, mode) {
       selected.push(...[...tracked].filter((file) => file.startsWith(`${base}/`) && PUBLIC_MODULE.test(file)));
       continue;
     }
-    const absolute = resolve4(root, base, target);
-    if (!absolute.startsWith(`${join9(root, base)}/`)) throw unproved("workspace export escapes committed owner");
+    const absolute = resolve5(root, base, target);
+    if (!absolute.startsWith(`${join11(root, base)}/`)) throw unproved("workspace export escapes committed owner");
     selected.push(...trackedModule(relative4(root, absolute), tracked));
   }
   return [...new Set(selected)];
@@ -227051,15 +227151,15 @@ function isDesktopE2eLimitation(item) {
 
 // src/main-sync-checks.ts
 import { spawnSync as spawnSync8 } from "node:child_process";
-import { createHash as createHash4 } from "node:crypto";
-import { existsSync as existsSync10, lstatSync as lstatSync7, readFileSync as readFileSync15, readlinkSync, writeFileSync as writeFileSync6 } from "node:fs";
-import { join as join16 } from "node:path";
+import { createHash as createHash5 } from "node:crypto";
+import { existsSync as existsSync11, lstatSync as lstatSync7, readFileSync as readFileSync17, readlinkSync, writeFileSync as writeFileSync7 } from "node:fs";
+import { join as join18 } from "node:path";
 
 // src/main-sync-main-comparison.ts
 import { spawnSync as spawnSync4 } from "node:child_process";
-import { existsSync as existsSync7, mkdtempSync, realpathSync as realpathSync7, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync8, mkdtempSync, realpathSync as realpathSync9, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join10 } from "node:path";
+import { join as join12 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // src/main-sync-validation-recipe.ts
@@ -227143,7 +227243,7 @@ var CapturedMainComparison = class {
       };
     }
     const checkout = this.checkout;
-    const cwd = command.cwd ? join10(checkout, command.cwd) : checkout;
+    const cwd = command.cwd ? join12(checkout, command.cwd) : checkout;
     try {
       verifyReportExecution(this.root, checkout, ReportExecutionOwner.Check, scoped.argv, cwd, selection);
     } catch (error) {
@@ -227167,7 +227267,7 @@ var CapturedMainComparison = class {
     if (this.bootstrap) return this.bootstrap;
     const mainSha = this.receipt.mainSha;
     try {
-      this.checkout = realpathSync7(mkdtempSync(join10(tmpdir(), "vibe-captured-main-")));
+      this.checkout = realpathSync9(mkdtempSync(join12(tmpdir(), "vibe-captured-main-")));
       git(this.root, ["worktree", "add", "--detach", this.checkout, mainSha], { timeout: CLEANUP_MS });
       this.registered = true;
     } catch (error) {
@@ -227175,7 +227275,7 @@ var CapturedMainComparison = class {
       this.bootstrap = { ok: false, reason: `a checkout of captured main could not be created: ${failureCause(error)}`.slice(0, 512) };
       return this.bootstrap;
     }
-    if (!existsSync7(join10(this.checkout, BOOTSTRAP[1]))) {
+    if (!existsSync8(join12(this.checkout, BOOTSTRAP[1]))) {
       this.bootstrap = { ok: false, reason: "captured main has no canonical bootstrap (.closedloop-ai/loops-setup.sh)" };
       return this.bootstrap;
     }
@@ -227185,7 +227285,7 @@ var CapturedMainComparison = class {
       this.bootstrap = { ok: false, reason: `bootstrap admission refused: ${failureCause(error)}`.slice(0, 512) };
       return this.bootstrap;
     }
-    const log = join10(this.dir, `vibe-main-sync-${this.receipt.transactionId}-main-bootstrap.log`);
+    const log = join12(this.dir, `vibe-main-sync-${this.receipt.transactionId}-main-bootstrap.log`);
     const run = runBounded(BOOTSTRAP, this.checkout, process.env, MAIN_BOOTSTRAP_MS, log);
     this.bootstrap = run.exitCode === 0 ? { ok: true } : {
       ok: false,
@@ -227256,7 +227356,7 @@ var WRAPPER_FAILED_EXIT = 2;
 var SPAWN_FAILURE = /^spawn \S+ E[A-Z]+\s*$/m;
 function runBoundedScript() {
   const script = fileURLToPath3(new URL("../run-bounded.mjs", import.meta.url));
-  if (!existsSync7(script)) throw new MainSyncError("The plugin's run-bounded.mjs is missing; no comparison was run");
+  if (!existsSync8(script)) throw new MainSyncError("The plugin's run-bounded.mjs is missing; no comparison was run");
   return script;
 }
 function classifyAgainstMain(mainSha, failed, main, sessionTimedOut, rerun) {
@@ -227270,8 +227370,8 @@ function classifyAgainstMain(mainSha, failed, main, sessionTimedOut, rerun) {
 }
 
 // src/main-sync-private-inputs.ts
-import { existsSync as existsSync8, lstatSync as lstatSync5, realpathSync as realpathSync8 } from "node:fs";
-import { dirname as dirname8, join as join11, relative as relative5, resolve as resolve5, sep as sep3 } from "node:path";
+import { existsSync as existsSync9, lstatSync as lstatSync5, realpathSync as realpathSync10 } from "node:fs";
+import { dirname as dirname9, join as join13, relative as relative5, resolve as resolve6, sep as sep3 } from "node:path";
 var analyzed;
 function verifyPrivateInput(root, file, head) {
   verifyEvidencePath(root, file);
@@ -227286,20 +227386,20 @@ function verifyPrivateInput(root, file, head) {
 }
 function verifyPrivateRoot(root) {
   for (const path2 of [".closedloop-ai", ".closedloop-ai/vibe-plans"]) {
-    const stat = lstatSync5(join11(root, path2), { throwIfNoEntry: false });
-    if (stat && (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync8(join11(root, path2)) !== join11(root, path2))) {
+    const stat = lstatSync5(join13(root, path2), { throwIfNoEntry: false });
+    if (stat && (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync10(join13(root, path2)) !== join13(root, path2))) {
       throw new MainSyncError("Private planning evidence requires its canonical owned directory; no symlink or alias is accepted", "NEEDS_CHANGE");
     }
   }
 }
 function verifyEvidencePath(root, file, label = "Private planning evidence") {
-  const target = join11(root, file);
+  const target = join13(root, file);
   const stat = lstatSync5(target);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_INPUT_BYTES || realpathSync8(target) !== target) {
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_INPUT_BYTES || realpathSync10(target) !== target) {
     throw new MainSyncError(`${label} requires a bounded canonical regular file`, "NEEDS_CHANGE");
   }
-  for (let parent = dirname8(target); parent !== root; parent = dirname8(parent)) {
-    if (!parent.startsWith(`${root}${sep3}`) || lstatSync5(parent).isSymbolicLink() || realpathSync8(parent) !== parent) {
+  for (let parent = dirname9(target); parent !== root; parent = dirname9(parent)) {
+    if (!parent.startsWith(`${root}${sep3}`) || lstatSync5(parent).isSymbolicLink() || realpathSync10(parent) !== parent) {
       throw new MainSyncError(`${label} cannot use a symlinked or escaping parent`, "NEEDS_CHANGE");
     }
   }
@@ -227308,16 +227408,16 @@ function referencesPrivateInputs(root, privatePaths) {
   return committedInputReferences(root, (file, reference) => {
     if (explicitPlanningReference(root, file, reference) || referenceMatches(root, file, reference, privatePaths)) return true;
     if (reference.kind !== "path") return false;
-    const path2 = resolve5(reference.base === "module" ? dirname8(join11(root, file)) : root, reference.value);
-    return existsSync8(path2) && isLocalPlanPath(relative5(root, realpathSync8(path2)));
+    const path2 = resolve6(reference.base === "module" ? dirname9(join13(root, file)) : root, reference.value);
+    return existsSync9(path2) && isLocalPlanPath(relative5(root, realpathSync10(path2)));
   });
 }
 
 // src/main-sync-budget.ts
 import { spawnSync as spawnSync5 } from "node:child_process";
-import { readFileSync as readFileSync11 } from "node:fs";
-import { join as join12 } from "node:path";
-import { createHash as createHash3 } from "node:crypto";
+import { readFileSync as readFileSync13 } from "node:fs";
+import { join as join14 } from "node:path";
+import { createHash as createHash4 } from "node:crypto";
 var GENERAL_CHECK_MS = 15 * 60 * 1e3;
 var tasksSchema = external_exports.object({ tasks: external_exports.array(external_exports.object({ taskId: external_exports.string().min(1), package: external_exports.string().min(1) }).passthrough()).max(5e4) }).passthrough();
 var affectedFilterSchema = external_exports.string().regex(/^\.\.\.\[[a-f0-9]{40}\]$/);
@@ -227327,8 +227427,8 @@ function commandSelection(root, command, timeoutMs = GENERAL_CHECK_MS) {
   let argv;
   if (command.argv[0] === "pnpm" && command.argv[1] === "turbo") argv = [...command.argv.slice(1), "--dry=json"];
   else if (command.argv.join(" ") === "pnpm typecheck:affected") {
-    const pkg = wrapperSchema.parse(JSON.parse(readFileSync11(join12(root, "package.json"), "utf8")));
-    if (pkg.scripts["typecheck:affected"] !== "sh scripts/typecheck-affected.sh" || createHash3("sha256").update(readFileSync11(join12(root, "scripts/typecheck-affected.sh"))).digest("hex") !== AFFECTED_TYPECHECK_SHA) {
+    const pkg = wrapperSchema.parse(JSON.parse(readFileSync13(join14(root, "package.json"), "utf8")));
+    if (pkg.scripts["typecheck:affected"] !== "sh scripts/typecheck-affected.sh" || createHash4("sha256").update(readFileSync13(join14(root, "scripts/typecheck-affected.sh"))).digest("hex") !== AFFECTED_TYPECHECK_SHA) {
       throw new MainSyncError("Affected typecheck wrapper owner changed; no selected producer authority", "NEEDS_CHANGE");
     }
     argv = ["turbo", "typecheck", `--filter=${affectedFilter(root)}`, "--concurrency=1", "--dry=json"];
@@ -227349,21 +227449,21 @@ function bindCheckBudgets(commands) {
 }
 
 // src/main-sync-check-production.ts
-import { readFileSync as readFileSync14 } from "node:fs";
-import { join as join15 } from "node:path";
+import { readFileSync as readFileSync16 } from "node:fs";
+import { join as join17 } from "node:path";
 
 // src/main-sync-input-origin.ts
 import { spawnSync as spawnSync7 } from "node:child_process";
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { lstatSync as lstatSync6, mkdtempSync as mkdtempSync2, readFileSync as readFileSync13, realpathSync as realpathSync9, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { lstatSync as lstatSync6, mkdtempSync as mkdtempSync2, readFileSync as readFileSync15, realpathSync as realpathSync11, rmSync as rmSync4, writeFileSync as writeFileSync6 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join14 } from "node:path";
+import { join as join16 } from "node:path";
 
 // src/main-sync-input-pure.ts
 var import_typescript4 = __toESM(require_typescript(), 1);
 import { spawnSync as spawnSync6 } from "node:child_process";
-import { readFileSync as readFileSync12 } from "node:fs";
-import { join as join13, relative as relative6 } from "node:path";
+import { readFileSync as readFileSync14, writeFileSync as writeFileSync5 } from "node:fs";
+import { join as join15, relative as relative6 } from "node:path";
 var PURE_OWNER_PROBE = String.raw`
 import {readFileSync,lstatSync,realpathSync} from 'node:fs';
 import {join} from 'node:path';
@@ -227395,11 +227495,25 @@ if(input.id==='desktop-build') {
  }));
 } else throw new Error('Unsupported pure owner');
 if(typeof body!=='string'||Buffer.byteLength(body)>128*1024*1024) throw new Error('Invalid complete pure body');
-process.stdout.write(JSON.stringify({path:input.output,bytes:Buffer.byteLength(body),sha256:createHash('sha256').update(body).digest('hex'),mode:'100644'}));
+process.stdout.write(JSON.stringify({path:input.output,bytes:Buffer.byteLength(body),sha256:createHash('sha256').update(body).digest('hex'),mode:'100644',...(input.emit?{body}:{})}));
 `;
 var pureResultSchema = external_exports.array(originFileSchema).length(1);
+var pureBodySchema = external_exports.object({ body: external_exports.string() }).passthrough();
 function pureOriginFiles(root, producer, head) {
   if (producer.id === "husky") return huskyBody(root, producer);
+  return pureResultSchema.parse([runPureOwner(root, producer, head, false)]);
+}
+function refreshPureOutput(root, producer, head) {
+  if (!isRefreshable(producer)) throw new MainSyncError(`Only a pure renderer's output is rewritten: ${producer.id}`, "NEEDS_CHANGE");
+  const output = producer.roots[0];
+  if (git(root, ["ls-files", "--", output])) throw new MainSyncError(`A tracked file is never rewritten as generated input: ${output}`, "NEEDS_CHANGE");
+  const { body } = pureBodySchema.parse(runPureOwner(root, producer, head, true));
+  writeFileSync5(join15(root, output), body);
+}
+function isRefreshable(producer) {
+  return producer.strategy === "pure" && producer.id !== "husky";
+}
+function runPureOwner(root, producer, head, emit) {
   verifyReportProducerInputs(root, root, ReportExecutionOwner.Pure, producer.inputs);
   verifyReportExecution(
     root,
@@ -227410,18 +227524,18 @@ function pureOriginFiles(root, producer, head) {
   const result = spawnSync6("pnpm", ["exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", PURE_OWNER_PROBE], {
     cwd: root,
     encoding: "utf8",
-    input: JSON.stringify({ id: producer.id, head, output: producer.roots[0] }),
+    input: JSON.stringify({ id: producer.id, head, output: producer.roots[0], ...emit ? { emit } : {} }),
     timeout: 1e4,
-    maxBuffer: 1024 * 1024
+    maxBuffer: emit ? 256 * 1024 * 1024 : 1024 * 1024
   });
   if (result.error || result.status !== 0) throw new MainSyncError(`Existing pure input owner failed: ${producer.id}`, "NEEDS_CHANGE");
-  return pureResultSchema.parse([JSON.parse(result.stdout)]);
+  return JSON.parse(result.stdout);
 }
 function huskyBody(root, producer) {
   const owner = producerPackage(root, producer);
   if (!owner) throw new MainSyncError("Locked Husky owner is unavailable", "NEEDS_CHANGE");
-  const file = join13(owner.directory, "index.js");
-  const source = import_typescript4.default.createSourceFile(relative6(root, file), readFileSync12(file, "utf8"), import_typescript4.default.ScriptTarget.Latest, true);
+  const file = join15(owner.directory, "index.js");
+  const source = import_typescript4.default.createSourceFile(relative6(root, file), readFileSync14(file, "utf8"), import_typescript4.default.ScriptTarget.Latest, true);
   const candidates = [];
   const inspect = (node) => {
     if (import_typescript4.default.isVariableDeclaration(node) && import_typescript4.default.isIdentifier(node.name) && node.name.text === "msg" && node.initializer && import_typescript4.default.isStringLiteralLike(node.initializer)) candidates.push(node.initializer.text);
@@ -227434,7 +227548,7 @@ function huskyBody(root, producer) {
 }
 
 // src/main-sync-package-owner.ts
-import { relative as relative7, resolve as resolve6, sep as sep4 } from "node:path";
+import { relative as relative7, resolve as resolve7, sep as sep4 } from "node:path";
 import { gzipSync, gunzipSync } from "node:zlib";
 var namesSchema = external_exports.array(canonicalRelativeSchema).min(1).max(1e4);
 var MAX_DECODED_NAMES = 2 * 1024 * 1024;
@@ -227445,7 +227559,7 @@ function packageTupleIdentity(inputs) {
 }
 function packPackageOwner(root, owner, name, inputs) {
   const path2 = canonicalRelativeSchema.parse(relative7(root, owner.directory));
-  const names = namesSchema.parse(inputs.map((file) => relative7(owner.directory, resolve6(root, file.path))).sort(comparePath));
+  const names = namesSchema.parse(inputs.map((file) => relative7(owner.directory, resolve7(root, file.path))).sort(comparePath));
   if (new Set(names).size !== names.length) throw new MainSyncError("Duplicate selected-package filename", "NEEDS_CHANGE");
   const raw = Buffer.from(JSON.stringify(names));
   if (raw.length > MAX_DECODED_NAMES) throw new MainSyncError("Selected-package names exceed the finite decoded bound", "NEEDS_CHANGE");
@@ -227471,9 +227585,9 @@ function packageOwnerPaths(root, owner) {
   if (names.length !== owner.files || names.some((name, index) => index > 0 && comparePath(names[index - 1], name) >= 0)) {
     throw new MainSyncError("Selected-package names are duplicated, unsorted or incomplete", "NEEDS_CHANGE");
   }
-  const directory = resolve6(root, owner.path);
+  const directory = resolve7(root, owner.path);
   return new Set(names.map((name) => {
-    const path2 = resolve6(directory, name);
+    const path2 = resolve7(directory, name);
     if (!path2.startsWith(`${directory}${sep4}`)) throw new MainSyncError("Selected-package name escapes its canonical owner", "NEEDS_CHANGE");
     return relative7(root, path2);
   }));
@@ -227492,10 +227606,10 @@ function prepareInputOrigins(value, before, producers) {
   const packages = [];
   if (!producers.length) return proof();
   const needsCold = producers.some((producer) => producer.argv || producer.package);
-  const cold = needsCold ? realpathSync9(mkdtempSync2(join14(tmpdir2(), "vibe-input-origin-"))) : void 0;
+  const cold = needsCold ? realpathSync11(mkdtempSync2(join16(tmpdir2(), "vibe-input-origin-"))) : void 0;
   let registered = false;
   const commands = [];
-  const log = join14(value.place.dir, `vibe-input-origin-${attempt}.json`);
+  const log = join16(value.place.dir, `vibe-input-origin-${attempt}.json`);
   try {
     verifyProducerInputs(root, before.headSha, producers);
     verifyReportProducerInputs(root, root, ReportExecutionOwner.Producer, producers.flatMap((producer) => producer.inputs));
@@ -227504,11 +227618,11 @@ function prepareInputOrigins(value, before, producers) {
       registered = true;
       assertTracked(cold, before);
       for (const producer of producers) {
-        for (const path2 of producer.roots) if (lstatSync6(join14(cold, path2), { throwIfNoEntry: false })) {
+        for (const path2 of producer.roots) if (lstatSync6(join16(cold, path2), { throwIfNoEntry: false })) {
           throw new MainSyncError(`Pristine output origin was not empty: ${path2}`, "NEEDS_CHANGE");
         }
       }
-      if (lstatSync6(join14(cold, "node_modules"), { throwIfNoEntry: false }) || lstatSync6(join14(cold, "apps/desktop/src/main/database/migrations-manifest.ts"), { throwIfNoEntry: false })) {
+      if (lstatSync6(join16(cold, "node_modules"), { throwIfNoEntry: false }) || lstatSync6(join16(cold, "apps/desktop/src/main/database/migrations-manifest.ts"), { throwIfNoEntry: false })) {
         throw new MainSyncError("Pristine bootstrap prerequisites are not empty or contain a legacy migration artifact", "NEEDS_CHANGE");
       }
       run(cold, ["bash", ".closedloop-ai/loops-setup.sh"]);
@@ -227537,15 +227651,24 @@ function prepareInputOrigins(value, before, producers) {
       if (!expected.length) throw new MainSyncError(`Canonical producer emitted no complete output set: ${producer.id}`, "NEEDS_CHANGE");
       const names = new Set(expected.map((file) => file.path));
       const actual = producerFiles(root, producer, names);
-      if (producer.strategy !== "full-write" && !sameOriginFiles(actual, expected)) {
+      const stale = !sameOriginFiles(actual, expected) && isRefreshable(producer);
+      if (producer.strategy !== "full-write" && !stale && !sameOriginFiles(actual, expected)) {
         throw new MainSyncError(`Generated input differs from canonical committed production: ${producer.id}; SAME source must use the existing canonical producer then recheck`, "NEEDS_CHANGE");
       }
-      prepared.push({ producer, expected, actual, ownerInputs, ...ownerPath ? { ownerPath } : {} });
+      prepared.push({ producer, expected, actual, ownerInputs, stale, ...ownerPath ? { ownerPath } : {} });
     }
     for (const item of prepared) {
       const { producer, expected, ownerInputs, ownerPath } = item;
       const names = new Set(expected.map((file) => file.path));
       let actual = item.actual;
+      if (item.stale) {
+        refreshPureOutput(root, producer, before.headSha);
+        assertTracked(root, before);
+        actual = producerFiles(root, producer, names);
+        if (!sameOriginFiles(actual, expected)) {
+          throw new MainSyncError(`Generated input differs from canonical committed production after its own renderer rewrote it: ${producer.id}`, "NEEDS_CHANGE");
+        }
+      }
       if (producer.strategy === "full-write") {
         verifyProducerInputs(root, before.headSha, producers);
         run(root, producer.argv);
@@ -227564,7 +227687,7 @@ function prepareInputOrigins(value, before, producers) {
     assertTracked(root, before);
     verifyProducerInputs(root, before.headSha, producers);
     writeLog();
-    const logSha256 = digest(readFileSync13(log));
+    const logSha256 = digest(readFileSync15(log));
     for (const producer of evidence) producer.logSha256 = logSha256;
     return proof();
   } finally {
@@ -227591,7 +227714,7 @@ function prepareInputOrigins(value, before, producers) {
     };
   }
   function writeLog() {
-    writeFileSync5(log, JSON.stringify({ headSha: before.headSha, treeSha: before.treeSha, ...cold ? { scratch: cold } : {}, commands }), { mode: 384 });
+    writeFileSync6(log, JSON.stringify({ headSha: before.headSha, treeSha: before.treeSha, ...cold ? { scratch: cold } : {}, commands }), { mode: 384 });
   }
   function run(cwd, argv) {
     const owner = argv[0] === "bash" ? ReportExecutionOwner.Bootstrap : ReportExecutionOwner.Producer;
@@ -227673,7 +227796,7 @@ function selectedProducer(root, id, command, selection) {
   if (!direct && command.argv.join(" ") !== "pnpm typecheck:affected" || !selection) return false;
   const owner = id === "fumadocs" ? "web" : id === "next-api" ? "api" : id === "next-app" ? "app" : id.startsWith("desktop-") ? "desktop" : void 0;
   if (!owner || !selection.tasks.some((task) => task.package === owner && task.taskId.endsWith("#typecheck"))) return false;
-  const script = packageSchema4.parse(JSON.parse(readFileSync14(join15(root, "apps", owner, "package.json"), "utf8"))).scripts?.typecheck;
+  const script = packageSchema4.parse(JSON.parse(readFileSync16(join17(root, "apps", owner, "package.json"), "utf8"))).scripts?.typecheck;
   const first = script?.split("&&")[0]?.trim();
   if (owner === "web") return first === "fumadocs-mdx";
   if (owner === "app" || owner === "api") return first === "next typegen";
@@ -227706,8 +227829,8 @@ function committedInputs(root) {
   const before = inspected.inventory;
   if (!before.producers.length) return { headSha: before.headSha, treeSha: before.treeSha, inputSha256: before.inputSha256 };
   const metadata = inspected.metadata;
-  const file = join16(metadata, MAIN_SYNC_FILE);
-  if (!existsSync10(file)) throw new MainSyncError("Canonical source input readiness is required before generated dependencies can be consumed", "NEEDS_CHANGE");
+  const file = join18(metadata, MAIN_SYNC_FILE);
+  if (!existsSync11(file)) throw new MainSyncError("Canonical source input readiness is required before generated dependencies can be consumed", "NEEDS_CHANGE");
   const state = mainSyncStateSchema.parse(readPrivateJson(file));
   if (state.worktree !== root) throw new MainSyncError("Generated input origin belongs to another worktree", "NEEDS_CHANGE");
   const proof = state.inputs;
@@ -227722,9 +227845,9 @@ function inspectInventory(root, completion) {
   const before = trackedInputs(root);
   verifyPrivateRoot(root);
   for (const path2 of reportOutputs) {
-    if (lstatSync7(join16(root, path2), { throwIfNoEntry: false })) verifyEvidencePath(root, path2, "Retained report");
+    if (lstatSync7(join18(root, path2), { throwIfNoEntry: false })) verifyEvidencePath(root, path2, "Retained report");
   }
-  const generated = lstatSync7(join16(root, GENERATED_BIOME_PATH), { throwIfNoEntry: false });
+  const generated = lstatSync7(join18(root, GENERATED_BIOME_PATH), { throwIfNoEntry: false });
   if (generated && !generated.isFile()) {
     throw new MainSyncError(`Generated-input verification requires a bounded canonical regular file: ${GENERATED_BIOME_PATH}`, "NEEDS_CHANGE");
   }
@@ -227747,7 +227870,7 @@ function inspectInventory(root, completion) {
         continue;
       }
       if (ignored && reportOutputs.has(file)) {
-        const stat = lstatSync7(join16(root, file));
+        const stat = lstatSync7(join18(root, file));
         if (!stat.isFile() || stat.isSymbolicLink()) throw new MainSyncError(`Retained report must be a regular owned output: ${file}`, "NEEDS_CHANGE");
         continue;
       }
@@ -227802,7 +227925,7 @@ function verifyOriginProof(root, metadata, before, proof, changed = /* @__PURE__
     }
     const stat = lstatSync7(producer.log);
     const name = producer.log.slice(metadata.length + 1);
-    if (!producer.log.startsWith(`${metadata}/`) || !/^vibe-input-origin-[a-f0-9-]{36}\.json$/.test(name) || !stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024 || digest(readFileSync15(producer.log)) !== producer.logSha256) {
+    if (!producer.log.startsWith(`${metadata}/`) || !/^vibe-input-origin-[a-f0-9-]{36}\.json$/.test(name) || !stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024 || digest(readFileSync17(producer.log)) !== producer.logSha256) {
       throw new MainSyncError("Actual generated-origin execution evidence changed", "NEEDS_CHANGE");
     }
   }
@@ -227810,18 +227933,18 @@ function verifyOriginProof(root, metadata, before, proof, changed = /* @__PURE__
 function trackedInputs(root) {
   const identity = committedIdentity(root);
   if (git(root, ["write-tree"]) !== identity.treeSha) throw new MainSyncError("Committed validation inputs differ from HEAD: staged source", "NEEDS_CHANGE");
-  const hash = createHash4("sha256");
+  const hash = createHash5("sha256");
   const entries = git(root, ["ls-tree", "-r", "-z", "HEAD"]);
   for (const entry of entries.split("\0").filter(Boolean)) {
     const tab = entry.indexOf("	");
     const [mode, kind, object] = entry.slice(0, tab).split(" ");
     const file = entry.slice(tab + 1);
-    const target = join16(root, file);
-    if (kind !== "blob" || !existsSync10(target)) throw new MainSyncError(`Committed validation inputs differ from HEAD: ${file}`, "NEEDS_CHANGE");
+    const target = join18(root, file);
+    if (kind !== "blob" || !existsSync11(target)) throw new MainSyncError(`Committed validation inputs differ from HEAD: ${file}`, "NEEDS_CHANGE");
     const stat = lstatSync7(target);
     if (stat.size > MAX_INPUT_BYTES) throw new MainSyncError(`Validation input exceeds the bounded file limit: ${file}`);
-    const content = mode === "120000" && stat.isSymbolicLink() ? Buffer.from(readlinkSync(target)) : stat.isFile() ? readFileSync15(target) : void 0;
-    const actual = content && createHash4("sha1").update(`blob ${content.length}\0`).update(content).digest("hex");
+    const content = mode === "120000" && stat.isSymbolicLink() ? Buffer.from(readlinkSync(target)) : stat.isFile() ? readFileSync17(target) : void 0;
+    const actual = content && createHash5("sha1").update(`blob ${content.length}\0`).update(content).digest("hex");
     const executable = Boolean(stat.mode & 73);
     if (!content || actual !== object || mode !== "120000" && executable !== (mode === "100755")) {
       throw new MainSyncError(`Committed validation inputs differ from HEAD: ${file}; preserve localFix source and use the same-writer workaround flow`, "NEEDS_CHANGE");
@@ -227834,7 +227957,7 @@ function checkRecipe(value, receipt) {
   const root = value.place.root;
   const files = git(root, ["diff", "--name-only", "--no-renames", receipt.mainSha, "HEAD"]).split("\n").filter(Boolean);
   const prototype = value.place.branch.startsWith("prototype/");
-  const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync10(join16(root, file)));
+  const paths = files.filter((file) => SOURCE_PATH.test(file) && existsSync11(join18(root, file)));
   const commands = [];
   const e2eLimitations = [];
   if (value.purpose === "build") {
@@ -227903,11 +228026,11 @@ function executeChecks(value, receipt, preparedRecipe) {
           value.place.root,
           ReportExecutionOwner.Check,
           command.argv,
-          command.cwd ? join16(value.place.root, command.cwd) : value.place.root,
+          command.cwd ? join18(value.place.root, command.cwd) : value.place.root,
           selection
         );
         const result = spawnSync8(command.argv[0], command.argv.slice(1), {
-          cwd: command.cwd ? join16(value.place.root, command.cwd) : value.place.root,
+          cwd: command.cwd ? join18(value.place.root, command.cwd) : value.place.root,
           encoding: "utf8",
           timeout: remainingBudget(command.timeoutMs ?? MAX_CHECK_MS, spent[index]),
           maxBuffer: 16 * 1024 * 1024,
@@ -227915,9 +228038,9 @@ function executeChecks(value, receipt, preparedRecipe) {
         });
         spent[index] += performance2.now() - start;
         const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-        const prefix = join16(value.place.dir, `vibe-main-sync-${receipt.transactionId}-${attempt}-${index}`);
+        const prefix = join18(value.place.dir, `vibe-main-sync-${receipt.transactionId}-${attempt}-${index}`);
         const log = `${prefix}.log`;
-        writeFileSync6(log, output, { mode: 384 });
+        writeFileSync7(log, output, { mode: 384 });
         let evidence = { exitCode: 0, log, sha256: digest(output) };
         let comparison;
         if (result.error || result.status !== 0) {
@@ -227930,12 +228053,12 @@ function executeChecks(value, receipt, preparedRecipe) {
               value.place.root,
               ReportExecutionOwner.Check,
               command.argv,
-              command.cwd ? join16(value.place.root, command.cwd) : value.place.root,
+              command.cwd ? join18(value.place.root, command.cwd) : value.place.root,
               selection
             );
             const again = runBounded(
               command.argv,
-              command.cwd ? join16(value.place.root, command.cwd) : value.place.root,
+              command.cwd ? join18(value.place.root, command.cwd) : value.place.root,
               env,
               command.timeoutMs ?? MAX_CHECK_MS,
               rerunLog
@@ -227949,7 +228072,7 @@ function executeChecks(value, receipt, preparedRecipe) {
           evidence = comparison.classification === "flaky" ? comparison.sessionRuns[1] : failed;
         }
         if (selection) {
-          writeFileSync6(`${log}.selection.json`, JSON.stringify(selection), { mode: 384 });
+          writeFileSync7(`${log}.selection.json`, JSON.stringify(selection), { mode: 384 });
         }
         try {
           assertIdentity(value.place.root, before);
@@ -227990,7 +228113,7 @@ function assertIdentity(root, expected) {
   }
 }
 function recordFailedCheck(value, command, comparison) {
-  const state = mainSyncStateSchema.parse(readPrivateJson(join16(value.place.dir, MAIN_SYNC_FILE)));
+  const state = mainSyncStateSchema.parse(readPrivateJson(join18(value.place.dir, MAIN_SYNC_FILE)));
   const failedChecks = [{
     argv: command.argv,
     ...command.bindings ? { bindings: command.bindings } : {},
@@ -228023,14 +228146,14 @@ var desktopSchema = external_exports.object({ ok: external_exports.boolean(), ru
 var TEST_HISTORY_PATH = /(?:\.(?:test|spec)\.[cm]?[jt]sx?$|\.snap$|(?:^|\/)(?:__tests__|__fixtures__|__snapshots__|e2e)\/|^apps\/desktop\/test\/)/;
 async function readMainSyncInput(worktree) {
   const input = mainSyncInputSchema.parse(await readInput());
-  if (realpathSync10(input.context.worktree) !== realpathSync10(worktree)) throw new MainSyncError("CLI worktree and owned operation context differ");
+  if (realpathSync12(input.context.worktree) !== realpathSync12(worktree)) throw new MainSyncError("CLI worktree and owned operation context differ");
   return input;
 }
 function prepareMainSyncInputs(raw) {
   const value = syncContext(raw, "inputs");
   const identity = inspectInputInventory(value.place.root);
-  const file = join17(value.place.dir, MAIN_SYNC_FILE);
-  const prior = existsSync11(file) ? mainSyncStateSchema.parse(readPrivateJson(file)) : void 0;
+  const file = join19(value.place.dir, MAIN_SYNC_FILE);
+  const prior = existsSync12(file) ? mainSyncStateSchema.parse(readPrivateJson(file)) : void 0;
   if (prior && (prior.worktree !== value.place.root || prior.branch !== value.place.branch || prior.operator.id !== value.place.session.operator.id || prior.operator.email !== value.place.session.operator.email || prior.originalBase !== value.place.session.baseCommit)) throw new MainSyncError("Input readiness belongs to another owned session");
   const previous = prior?.phase === "input-readiness" ? prior.previous : prior;
   if (previous && (!value.context.mainSyncTransactionId || previous.transactionId !== value.context.mainSyncTransactionId)) {
@@ -228075,8 +228198,8 @@ function prepareMainSync(raw) {
   const value = syncContext(raw, "prepare");
   const root = value.place.root;
   const inventory = inspectInputInventory(root);
-  const previousFile = join17(value.place.dir, MAIN_SYNC_FILE);
-  const state = existsSync11(previousFile) ? mainSyncStateSchema.parse(readPrivateJson(previousFile)) : void 0;
+  const previousFile = join19(value.place.dir, MAIN_SYNC_FILE);
+  const state = existsSync12(previousFile) ? mainSyncStateSchema.parse(readPrivateJson(previousFile)) : void 0;
   if (state?.inputs?.headSha === inventory.headSha && state.inputs.treeSha === inventory.treeSha) committedInputs(root);
   const previous = state?.phase === "input-readiness" ? state.previous : state;
   if (previous && (previous.worktree !== root || previous.branch !== value.place.branch || previous.originalBase !== value.place.session.baseCommit || previous.operator.id !== value.place.session.operator.id || previous.operator.email !== value.place.session.operator.email)) {
@@ -228137,7 +228260,7 @@ function prepareMainSync(raw) {
       throw new MainSyncError(`Ordinary main merge needs the SAME writer's conflict/source correction${conflicts ? `: ${conflicts}` : ""}; ROOT alone commits`, "NEEDS_CHANGE");
     }
   }
-  const requiresCommit = existsSync11(join17(value.place.dir, "MERGE_HEAD"));
+  const requiresCommit = existsSync12(join19(value.place.dir, "MERGE_HEAD"));
   return {
     status: requiresCommit ? "NEEDS_COMMIT" : "DONE",
     transactionId: receipt.transactionId,
@@ -228274,14 +228397,14 @@ function admitMainSyncShare(raw) {
 }
 function readMainSyncProvenance(worktree) {
   const place = syncLocation(worktree);
-  const file = join17(place.dir, MAIN_SYNC_FILE);
-  if (!existsSync11(file)) return void 0;
+  const file = join19(place.dir, MAIN_SYNC_FILE);
+  if (!existsSync12(file)) return void 0;
   const state = mainSyncStateSchema.parse(readPrivateJson(file));
   const value = state.phase === "input-readiness" ? state.previous : state;
   if (!value) return void 0;
   if (value.worktree !== place.root || value.branch !== place.branch || value.originalBase !== place.session.baseCommit || value.operator.id !== place.session.operator.id || value.operator.email !== place.session.operator.email) return void 0;
-  const merge = join17(place.dir, "MERGE_HEAD");
-  const pendingMerge = existsSync11(merge) && git(place.root, ["rev-parse", "MERGE_HEAD"]) === value.mainSha;
+  const merge = join19(place.dir, "MERGE_HEAD");
+  const pendingMerge = existsSync12(merge) && git(place.root, ["rev-parse", "MERGE_HEAD"]) === value.mainSha;
   if (!pendingMerge && !isAncestor(place.root, value.mainSha)) return void 0;
   return {
     mainSha: value.mainSha,
@@ -228320,12 +228443,12 @@ function validationMatches(value, receipt, identity) {
   }
   for (const [index, command] of proof.commands.entries()) {
     const prefix = `vibe-main-sync-${receipt.transactionId}-`;
-    const permitted = [`${prefix}${index}.log`, ...[0, 1].flatMap((attempt) => ["", "-rerun", "-main"].map((suffix) => `${prefix}${attempt}-${index}${suffix}.log`)), `${prefix}main-bootstrap.log`].map((name) => join17(value.place.dir, name));
+    const permitted = [`${prefix}${index}.log`, ...[0, 1].flatMap((attempt) => ["", "-rerun", "-main"].map((suffix) => `${prefix}${attempt}-${index}${suffix}.log`)), `${prefix}main-bootstrap.log`].map((name) => join19(value.place.dir, name));
     const evidence = [{ log: command.log, sha256: command.sha256 }, ...command.comparison ? comparisonLogs(command.comparison) : []];
     for (const { log: file, sha256: sha2562 } of evidence) {
       if (!permitted.includes(file)) throw new MainSyncError("Actual command evidence path changed", "NEEDS_CHANGE");
       const stat = lstatSync8(file, { throwIfNoEntry: false });
-      if (!stat || !stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024 || digest(readFileSync16(file)) !== sha2562) throw new MainSyncError("Actual command evidence changed; validation is required", "NEEDS_CHANGE");
+      if (!stat || !stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024 || digest(readFileSync18(file)) !== sha2562) throw new MainSyncError("Actual command evidence changed; validation is required", "NEEDS_CHANGE");
     }
     if (command.comparison && command.comparison.mainSha !== receipt.mainSha) throw new MainSyncError("Main comparison names another main", "NEEDS_CHANGE");
   }

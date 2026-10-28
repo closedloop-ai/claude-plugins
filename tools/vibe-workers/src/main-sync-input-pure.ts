@@ -1,9 +1,10 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import ts from "typescript";
 import { z } from "zod";
 import { MainSyncError, originFileSchema } from "./main-sync-contracts.js";
+import { git } from "../../../plugins/vibe/skills/vibe/scripts/session-record.mjs";
 import { digest } from "./main-sync-state.js";
 import { producerPackage, type InputProducer } from "./main-sync-input-catalog.js";
 import { type OriginFile } from "./main-sync-input-files.js";
@@ -41,22 +42,45 @@ if(input.id==='desktop-build') {
  }));
 } else throw new Error('Unsupported pure owner');
 if(typeof body!=='string'||Buffer.byteLength(body)>128*1024*1024) throw new Error('Invalid complete pure body');
-process.stdout.write(JSON.stringify({path:input.output,bytes:Buffer.byteLength(body),sha256:createHash('sha256').update(body).digest('hex'),mode:'100644'}));
+process.stdout.write(JSON.stringify({path:input.output,bytes:Buffer.byteLength(body),sha256:createHash('sha256').update(body).digest('hex'),mode:'100644',...(input.emit?{body}:{})}));
 `;
 const pureResultSchema = z.array(originFileSchema).length(1);
+const pureBodySchema = z.object({ body: z.string() }).passthrough();
 
 /** Invokes existing import-safe renderers without writing wrappers, legacy healing or output normalization. */
 export function pureOriginFiles(root: string, producer: InputProducer, head: string): OriginFile[] {
   if (producer.id === "husky") return huskyBody(root, producer);
+  return pureResultSchema.parse([runPureOwner(root, producer, head, false)]);
+}
+
+/**
+ * Rewrites a stale gitignored output of a pure renderer with the repository's own renderer, so a generated file left
+ * from an earlier merge (build-info's old commit hash) never refuses publication (ISS-13321). Husky's support
+ * literal is installed, not rendered, and is never rewritten.
+ */
+export function refreshPureOutput(root: string, producer: InputProducer, head: string) {
+  if (!isRefreshable(producer)) throw new MainSyncError(`Only a pure renderer's output is rewritten: ${producer.id}`, "NEEDS_CHANGE");
+  const output = producer.roots[0]!;
+  if (git(root, ["ls-files", "--", output])) throw new MainSyncError(`A tracked file is never rewritten as generated input: ${output}`, "NEEDS_CHANGE");
+  const { body } = pureBodySchema.parse(runPureOwner(root, producer, head, true));
+  writeFileSync(join(root, output), body);
+}
+
+/** A pure renderer's output, which its own renderer can rewrite; Husky's installed literal is not one. */
+export function isRefreshable(producer: InputProducer) {
+  return producer.strategy === "pure" && producer.id !== "husky";
+}
+
+function runPureOwner(root: string, producer: InputProducer, head: string, emit: boolean): unknown {
   verifyReportProducerInputs(root, root, ReportExecutionOwner.Pure, producer.inputs);
   verifyReportExecution(root, root, ReportExecutionOwner.Pure,
     ["pnpm", "exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", PURE_OWNER_PROBE]);
   const result = spawnSync("pnpm", ["exec", "node", "--import", "tsx/esm", "--input-type=module", "--eval", PURE_OWNER_PROBE], {
-    cwd: root, encoding: "utf8", input: JSON.stringify({ id: producer.id, head, output: producer.roots[0] }),
-    timeout: 10000, maxBuffer: 1024 * 1024,
+    cwd: root, encoding: "utf8", input: JSON.stringify({ id: producer.id, head, output: producer.roots[0], ...(emit ? { emit } : {}) }),
+    timeout: 10000, maxBuffer: emit ? 256 * 1024 * 1024 : 1024 * 1024,
   });
   if (result.error || result.status !== 0) throw new MainSyncError(`Existing pure input owner failed: ${producer.id}`, "NEEDS_CHANGE");
-  return pureResultSchema.parse([JSON.parse(result.stdout)]);
+  return JSON.parse(result.stdout);
 }
 
 function huskyBody(root: string, producer: InputProducer): OriginFile[] {

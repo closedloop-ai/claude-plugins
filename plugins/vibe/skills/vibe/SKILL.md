@@ -723,6 +723,13 @@ recorded underlying session ID is resumed, never a fresh context with the same
 name. Use the parent-discovered exact capabilities, not a configured-prefix
 guess or blanket MCP inheritance. All private input is JSON on stdin.
 
+Before launching or resuming the recorded writer, read
+`writer-state.mjs status`: when its `recordedDefinition` is `removed` (a
+plugin update deleted the recorded release), or `changed` with the installed
+release newer than the recorded one, run
+`references/quality-loop.md`'s "Recorded definition migration" first, never a
+launch that fails on the missing definition (ISS-13321).
+
 Use the owned state helper's status/enqueue/claim/take-input/finish actions.
 Queue incoming requests while one is active. For native Codex, claim its exact
 writer/request/lease, take the durable input, and forward it to the recorded

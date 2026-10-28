@@ -9,7 +9,7 @@ import { digest, type syncContext } from "./main-sync-state.js";
 import { trackedInputs, verifyOriginProof, type inspectInputInventory } from "./main-sync-checks.js";
 import { producerFiles, producerPackage, producerOwnerInputs, verifyProducerInputs, type InputProducer } from "./main-sync-input-catalog.js";
 import { originIdentity, sameOriginFiles, type OriginFile } from "./main-sync-input-files.js";
-import { pureOriginFiles } from "./main-sync-input-pure.js";
+import { isRefreshable, pureOriginFiles, refreshPureOutput } from "./main-sync-input-pure.js";
 import { packPackageOwner } from "./main-sync-package-owner.js";
 import { verifyReportExecution, verifyReportProducerInputs } from "./main-sync-report-inputs.js";
 import { ReportExecutionOwner } from "./main-sync-report-execution.js";
@@ -51,7 +51,7 @@ export function prepareInputOrigins(value: ReturnType<typeof syncContext>, befor
     assertTracked(cold, before);
    }
     const prepared: { producer: InputProducer; expected: OriginFile[]; actual: OriginFile[];
-      ownerInputs: ReturnType<typeof producerOwnerInputs>; ownerPath?: string }[] = [];
+      ownerInputs: ReturnType<typeof producerOwnerInputs>; stale: boolean; ownerPath?: string }[] = [];
     for (const producer of producers) {
       producerPackage(cold ?? root, producer);
       const sourceOwner = producerPackage(root, producer);
@@ -74,16 +74,26 @@ export function prepareInputOrigins(value: ReturnType<typeof syncContext>, befor
       if (!expected.length) throw new MainSyncError(`Canonical producer emitted no complete output set: ${producer.id}`, "NEEDS_CHANGE");
       const names = new Set(expected.map((file) => file.path));
       const actual = producerFiles(root, producer, names);
-      if (producer.strategy !== "full-write" && !sameOriginFiles(actual, expected)) {
+      // A stale gitignored output of a pure renderer is rewritten below with the repository's own renderer (ISS-13321).
+      const stale = !sameOriginFiles(actual, expected) && isRefreshable(producer);
+      if (producer.strategy !== "full-write" && !stale && !sameOriginFiles(actual, expected)) {
         throw new MainSyncError(`Generated input differs from canonical committed production: ${producer.id}; SAME source must use the existing canonical producer then recheck`, "NEEDS_CHANGE");
       }
-      prepared.push({ producer, expected, actual, ownerInputs, ...(ownerPath ? { ownerPath } : {}) });
+      prepared.push({ producer, expected, actual, ownerInputs, stale, ...(ownerPath ? { ownerPath } : {}) });
     }
     // Every original set must be known before any canonical writer touches the feature checkout.
     for (const item of prepared) {
       const { producer, expected, ownerInputs, ownerPath } = item;
       const names = new Set(expected.map((file) => file.path));
       let actual = item.actual;
+      if (item.stale) {
+        refreshPureOutput(root, producer, before.headSha);
+        assertTracked(root, before);
+        actual = producerFiles(root, producer, names);
+        if (!sameOriginFiles(actual, expected)) {
+          throw new MainSyncError(`Generated input differs from canonical committed production after its own renderer rewrote it: ${producer.id}`, "NEEDS_CHANGE");
+        }
+      }
       if (producer.strategy === "full-write") {
         verifyProducerInputs(root, before.headSha, producers);
         run(root, producer.argv!);
