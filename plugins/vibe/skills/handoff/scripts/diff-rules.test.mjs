@@ -242,6 +242,23 @@ test("a component or file a human removed is not brought back without a restore 
   assert.equal(run(t, { history, head, changeLog: noSlug }).found.some(([rule, file]) => rule === "restored-removal" && file === toolbar), true);
 });
 
+test("mounting a component a cleanup removed from another file, or a design-system primitive, is not a restore (ISS-13321)", (t) => {
+  const retired = "packages/app/plans/plans-nav.tsx";
+  const list = "packages/app/issues/issues-list.tsx";
+  const card = "packages/app/issues/issue-card.tsx";
+  const badgeImport = 'import { Badge } from "@repo/design-system/components/ui/badge";\n';
+  const history = [
+    { message: "Add plans nav", files: { [retired]: `${badgeImport}export const PlansNav = () => (\n  <Nav>\n    <Badge />\n    <PlanCount />\n  </Nav>\n);\n` } },
+    { message: "ISS-12983: Retire Desktop Plans nav", files: { [retired]: "export const PlansNav = () => null;\n" } },
+  ];
+  const base = { [list]: `${badgeImport}export const IssuesList = () => (\n  <List>\n  </List>\n);\n` };
+  const head = {
+    [list]: `${badgeImport}export const IssuesList = () => (\n  <List>\n    <Badge />\n    <PlanCount />\n  </List>\n);\n`,
+    [card]: `${badgeImport}export const IssueCard = () => (\n  <Card>\n    <Badge />\n    <PlanCount />\n  </Card>\n);\n`,
+  };
+  assert.deepEqual(run(t, { history, base, head }).found.filter(([rule]) => rule === "restored-removal"), []);
+});
+
 test("in a shallow clone the restored-removal check deepens the history to find the removal, and blocks only when that fails", (t) => {
   const toolbar = "packages/app/sessions/sessions-toolbar.tsx";
   const withPill = "export const Toolbar = () => (\n  <Bar>\n    <ReadSourceBadge source={source} />\n  </Bar>\n);\n";
@@ -339,6 +356,20 @@ test("a #8962-shaped prop that enables a control needs a source naming it on tha
   assert.deepEqual(run(t, { base, head, changeLog: cited }).found.filter(([rule]) => rule === "control-provenance"), []);
 });
 
+test("extracting an existing control into a shared parent is not a newly enabled control (ISS-13321)", (t) => {
+  const page = "packages/app/issues/issues-page.tsx";
+  const parent = "packages/app/shared/components/list-actions.tsx";
+  const base = { [page]: "export const IssuesPage = () => (\n  <Page>\n    <Button onClick={open}>Open</Button>\n  </Page>\n);\n" };
+  const head = {
+    [page]: 'import { ListActions } from "../shared/components/list-actions";\nexport const IssuesPage = () => (\n  <Page>\n    <ListActions onOpen={open} />\n  </Page>\n);\n',
+    [parent]: "export const ListActions = ({ onOpen }) => (\n  <Bar>\n    <Button onClick={onOpen}>Open</Button>\n  </Bar>\n);\n",
+  };
+  assert.deepEqual(run(t, { base, head }).found.filter(([rule]) => rule === "control-provenance"), []);
+  const added = { ...head, [parent]: head[parent].replace("  </Bar>", "    <FavoriteToggle />\n  </Bar>") };
+  assert.deepEqual(run(t, { base, head: added }).blocking.filter((finding) => finding.rule === "control-provenance").map((finding) => [finding.file, finding.problem]),
+    [[parent, "newly enables <FavoriteToggle> with no surface-specific ticket acceptance criterion or ruling"]], "a control the parent adds is still checked");
+});
+
 test("a #8922-shaped capability composed by sibling list adapters needs one shared owner", (t) => {
   const component = "packages/design-system/components/ui/filter-popover.tsx";
   const sessions = "packages/app/agents/components/sessions/sessions-list-toolbar-v2.tsx";
@@ -385,6 +416,23 @@ test("a #8922-shaped capability composed by sibling list adapters needs one shar
   );
 });
 
+test("one more item in a menu a page already composes, a type, or a leaf part needs no shared owner (ISS-13321)", (t) => {
+  const menu = "packages/design-system/components/ui/dropdown-menu.tsx";
+  const issues = "packages/app/issues/components/issues-list.tsx";
+  const sessions = "packages/app/agents/components/sessions/sessions-list.tsx";
+  const imports = (names) => `import { ${names} } from "@repo/design-system/components/ui/dropdown-menu";\n`;
+  const base = {
+    [menu]: "export const DropdownMenu = 1;\nexport const DropdownMenuItem = 1;\nexport type SortDirection = string;\n",
+    [issues]: `${imports("DropdownMenu, DropdownMenuItem")}export const IssuesList = () => (\n  <DropdownMenu>\n    <DropdownMenuItem>Open</DropdownMenuItem>\n  </DropdownMenu>\n);\n`,
+    [sessions]: `${imports("DropdownMenu, DropdownMenuItem, type SortDirection")}export const SessionsList = () => <DropdownMenu />;\n`,
+  };
+  const head = {
+    [issues]: `${imports("DropdownMenu, DropdownMenuItem, type SortDirection")}export const IssuesList = () => (\n  <DropdownMenu>\n    <DropdownMenuItem>Open</DropdownMenuItem>\n    <DropdownMenuItem>Duplicate</DropdownMenuItem>\n  </DropdownMenu>\n);\n`,
+  };
+  const changeLog = 'Copy: "Duplicate": ISS-1 AC1\n';
+  assert.deepEqual(run(t, { base, head, changeLog }).found.filter(([rule]) => rule === "shared-capability-owner"), []);
+});
+
 test("a changed screenshot baseline needs its counted element ledger before handoff", (t) => {
   const file = "e2e/__screenshots__/visual-regression.spec.ts/branches-desktop.png";
   assert.deepEqual(run(t, { base: { [file]: "old\n" }, head: { [file]: "new\n" } }).found, [["visual-baseline-ledger", file]]);
@@ -404,6 +452,21 @@ test("a lost story ID blocks unless recorded as a replacement, and every referen
     head: { "s/rows.stories.tsx": "export default { title: \"Composites/Rows\" };\nexport const Default = {};\n" },
   });
   assert.deepEqual(result.found, [["lost-story-id", "s/rows.stories.tsx"], ["lost-story-id", "apps/desktop/test/e2e/helpers/story-urls.ts"], ["lost-story-id", "e2e/rows.spec.ts"]]);
+});
+
+test("a lost story ID named in docs the session may not edit clears with an Engineering needed line (ISS-13321)", (t) => {
+  const ledger = "docs/branches-list-adapter-disposition-ledger.md";
+  const base = {
+    "s/rows.stories.tsx": "export default { title: \"Branches/Branches List\" };\nexport const Default = {};\nexport const HoverAndKeyboard = {};\n",
+    [ledger]: "See branches-branches-list--hover-and-keyboard.\n",
+  };
+  const head = { "s/rows.stories.tsx": "export default { title: \"Branches/Branches List\" };\nexport const Default = {};\nexport const KeyboardOnly = {};\n" };
+  const onLedger = (result) => result.blocking.filter((finding) => finding.rule === "lost-story-id" && finding.file === ledger);
+  const bare = onLedger(run(t, { base, head }));
+  assert.equal(bare.length, 1);
+  assert.match(bare[0].fix, /Engineering needed \(forbidden path\): docs\/branches-list-adapter-disposition-ledger\.md/);
+  const changeLog = `Engineering needed (forbidden path): ${ledger}; why: point it at the story's current ID\n`;
+  assert.deepEqual(onLedger(run(t, { base, head, changeLog })), []);
 });
 
 test("a changed route requires the web and Desktop specs that reach its endpoint only through a helper, never the helper (#8967)", (t) => {
