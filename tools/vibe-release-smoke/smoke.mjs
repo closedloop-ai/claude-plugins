@@ -261,7 +261,6 @@ function delay(ms) {
 function finish(code, result) {
   if (code === 0 && values.receipt) {
     const receipt = {
-      ticket: "ISS-13315",
       result: "pass",
       commit: result.commit,
       plugins: result.built,
