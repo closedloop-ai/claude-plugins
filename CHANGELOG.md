@@ -4,6 +4,26 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.16
+
+Gates a vibe session could never clear now either clear with what the session can do or hand the work to engineering (ISS-13321). Findings are numbered as in the ISS-13321 audit.
+
+#### Fixed
+- Desktop e2e at handoff (1): `main-sync-validate` returns the Desktop Electron lane under `e2eLeftForCi`, covered by symphony-alpha's post-merge `desktop-e2e/validated` run, and it no longer holds `requiredE2eComplete` or returns `NEEDS_REVIEW`. The CI reader is re-pinned to the current `desktop-e2e` producer (the checkout step's reviewed `ref` expression; the removed `target-ref` step and `DD_GIT_COMMIT_SHA` are no longer required, and a header that still binds the variable must match the checkout). A snapshot of that job is a fixture, and `main-sync-ci-producer.test.ts` also reads symphony-alpha main live wherever `gh` can.
+- Requested pull request (2, 11): `pre-pr-lanes.mjs check` records the Desktop e2e lane `not-run` (`NOT-RUN-LANE`) on a machine without the displayless Linux harness, and `pr-facts.mjs` accepts that record; a passing run recorded from a remote runner still counts. The `e2e` evidence lane is not required when no tier can run it and every changed spec is listed unavailable with its CI coverage.
+- Failures already on main in a pull request (7): `pre-pr-lanes.mjs run --main-worktree <checkout> --main-sha <sha>` reruns a failing lane on captured main and records `main-preexisting` when it fails there too; `check` accepts it and prints `MAIN-PREEXISTING-LANE`. `pr-facts.mjs` accepts `main-preexisting` runs with their `mainSha` in every evidence gate, and `blocking.prBody` requires each listed under Known main failures.
+- Diff rules (3, 4, 12, 13, 15): a restored removal needs a removal from the same file and never counts a design-system primitive; a shared capability owner fires only for a page that newly composes the name, never for a type or an `*Item`, `*Content` or `*Trigger` part; mounts the diff moved and components it defines are not newly enabled controls; outside the pull-request phase a comparator clears with `Comparator: <file>: missing test listed`; a lost story ID named in docs or agent files clears with `Engineering needed (forbidden path): <file>`.
+- Clean QA (6): `finding-brief.mjs --require-disposition` passes `{"findings":[]}`.
+- Tooling stop (8): the stop pushes the committed work through the repo's normal pre-push checks (new `vibe-environment-worker` handover mode and `handover` record action, no main sync), puts the blocker on the Engineering checklist and offers "pass it to someone now"; a requested pull request that cannot open offers the same.
+- Remedies (9): `plain-words.md` "What the person is asked to do": the person is only asked for a click, a sign-in, a choice between endings or a product answer; diff-rule fixes are for the writer. The shallow-clone fetch remedy no longer says "yourself".
+- Timeouts (14): a check that runs out of time on the session commit and on captured main alike is `machine-limited`, returned under `machineLimitedChecks` for the Engineering checklist, not `session-caused`.
+- Criteria on other work (16): on the pass-it-on ending a criterion may be `not met yet: waits on <ticket>`, carried on the Engineering checklist.
+- Storybook train (5, in part): at pull request creation a version another open pull request reserves, or main moving on after the pin, no longer blocks; the next free version is taken and named in the packet.
+
+#### Changed
+- `ticket-template.md`: Engineering checklist entries for checks that ran out of time, e2e left for CI, criteria waiting on other work and vibe tooling blockers.
+- The README's runtime line says 1.1.16.
+
 ### vibe v1.1.13
 
 The startup version check and setup check work in the Codex app's default "Ask for approval" mode, and a release smoke now runs the real plugin build in a real Codex session before every vibe release (ISS-13315).
