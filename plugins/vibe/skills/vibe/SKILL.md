@@ -709,7 +709,10 @@ being asked (section 6). Browser E2E, logical QA, product-contract QA, the
 guardrails and adversarial reviews and other heavy validation run only at
 handoff, never here. A frozen-render finding never holds a build-loop commit
 or preview: the build-phase inventory lists it under
-`diffRules.deferredToHandoff` and handoff settles it. Visual QA runs at handoff too, and during the session
+`diffRules.deferredToHandoff` and handoff settles it. A deferred finding and
+its remedy (render the frozen stories, pause an animation) are never relayed
+to the person, not even when they ask what to do next
+(`references/plain-words.md`, "What the person is asked to do"; ISS-13321). Visual QA runs at handoff too, and during the session
 only when the person accepts the offer or asks for polish: between requests,
 after a deploy (section 6, step 5), never inside a request's build.
 

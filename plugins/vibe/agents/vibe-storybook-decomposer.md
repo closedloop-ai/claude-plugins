@@ -241,7 +241,12 @@ evidence:
   `story-play-verdict.mjs`. Each `differs` entry is a finding. Each
   `knownMainFailures` entry fails the same way on the base: it is not a
   finding and goes on the live ticket as a Known main failure. When nothing
-  differs, report its `changeLogLine` for the writer to record.
+  differs, report its `changeLogLine` for the writer to record. Each finding
+  and its remedy (make a story deterministic, pause an animation) is for the
+  writer, or for engineering on the ticket when the session may not make it;
+  never phrase it as something the person running the session does
+  (`../skills/vibe/references/plain-words.md`, "What the person is asked to
+  do"; ISS-13321).
 - Flag-on states: every surface the session claims has its flag-on state on
   that surface's existing story entry.
 - States: for each state the ticket, PRD or acceptance criteria name, the

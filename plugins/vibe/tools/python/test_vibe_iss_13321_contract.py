@@ -57,6 +57,9 @@ def test_the_person_is_only_asked_to_do_what_only_a_human_can() -> None:
     assert "never reach the person as something to do unless only a human can do it" in skill
     handoff = flat(HANDOFF.read_text())
     assert "A finding's `fix` is written for the writer, never relayed to the person as a step" in handoff
+    assert "A deferred finding and its remedy (render the frozen stories, pause an animation) are never relayed to the person" in skill
+    decomposer = flat((AGENTS / "vibe-storybook-decomposer.md").read_text())
+    assert "never phrase it as something the person running the session does" in decomposer
 
 
 def test_a_check_that_times_out_on_main_too_is_this_machines_limit() -> None:
