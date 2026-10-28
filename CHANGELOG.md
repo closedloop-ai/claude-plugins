@@ -23,6 +23,16 @@ Sessions the vibe and fleet scripts start no longer fill a desktop app's chat li
 - vibe `INSTALL.md` and fleet-orchestrator `references/setup.md` explain that the Codex app's Import from Claude and Keep imports in sync turn saved Claude sessions into sidebar chats, and how to keep them out; cl-sweep `execution-surfaces.md` says when to run `end`.
 - `fleet.sh` ships `thread-sidebar.mjs` for remote sessions, and a test walks `codex-session.mjs`'s imports so an unshipped module fails.
 - The vibe version pin moves from the 1.1.1 Storybook contract test to `test_vibe_112_version_contract.py`.
+### vibe v1.1.4
+
+The plugin README now says what vibe is, who it is for (executives, designers, product managers and engineers) and what a session looks like before the reference material (ISS-13281). No skill or agent behavior changes.
+
+#### Changed
+- `plugins/vibe/README.md` opens with what vibe does and how each of its users works with it, walks through a session end to end (a designer's reference or look changes, and the pull request an engineer or anyone else takes through review), then lists the guarantees behind the result, the other skills, and the reference sections (installation, invocation names, agents, evals, runtime files). The scattered ruling dates are gone, apart from the Storybook `Start Here/` ruling a contract test pins.
+- The agents table no longer credits `vibe-requirements-worker` with "help-center precedent research": precedent is live Asana observed in the operator's signed-in browser, and reference mode is listed separately. The README's notice text no longer says reference mode reads a product's public documentation.
+- The main-sync validation proof rules that only the README stated (the `.biome-noscan.jsonc` byte match, package proof digests, report admission and the 4,096 context ceiling, and what never counts as coverage proof) moved to `skills/vibe/references/environment.md`, "What the validation proof accepts".
+- `test_vibe_storybook_fixtures_names_contract.py` drops its 1.1.1 release-number pin.
+
 ### vibe v1.1.1
 
 Two Storybook mistakes the first Storybook handoff review found (ISS-13167) are now raised at placement, before the writer builds the stories, instead of only at handoff (ISS-13182).
