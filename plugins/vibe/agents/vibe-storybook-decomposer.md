@@ -234,9 +234,15 @@ evidence:
   <worktree> --base <base> --base-url <url> --head-url <url> --story-file
   <file> ... --out <dir>` once with every story file the inventory's
   `frozen-render` finding lists, never a capture of your own. The base URL
-  is the repo's Storybook served from a disposable detached worktree at the
-  base commit, bootstrapped with `.closedloop-ai/loops-setup.sh` and removed
-  afterwards; the head URL is the session's own Storybook. It is heavy
+  is the repo's Storybook served from a disposable worktree made by
+  `../skills/handoff/scripts/frozen-render.mjs prepare-base --repo <worktree>
+  --base <base> --story-file <file> ... --dir <dir>` with the same story
+  files, bootstrapped with `.closedloop-ai/loops-setup.sh` and removed
+  afterwards (`git worktree remove`); never copy or edit a file in it
+  yourself. It is the base commit with each compile-only repaired story file
+  (same title, tags and story names) taken from the session, so a repaired
+  play runs on both sides and only the app code differs. The head URL is the
+  session's own Storybook. It is heavy
   validation and runs under the same load and slot rules as every other
   handoff heavy run. It renders each story twice on the base and once on the
   branch with its clock, animations, viewport, fonts, theme, args and globals
@@ -246,7 +252,10 @@ evidence:
   screenshots. Each `blocking` story is a finding. A `same-failure` story
   fails the same way on the base and an `unstable-on-base` story renders
   differently on two base renders: neither is a finding, and each goes on the
-  live ticket as a Known main failure. When nothing blocks, report the
+  live ticket as a Known main failure. A story the run marks `head story
+  file on both sides` was compared with the session's repaired story file;
+  a story file changed beyond a compile-only repair is not compared and
+  its stories block. When nothing blocks, report the
   `Frozen render unchanged` line it prints for the writer to record
   unchanged; never write or edit that line yourself.
 - Flag-on states: every surface the session claims has its flag-on state on

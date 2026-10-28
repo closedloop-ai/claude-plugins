@@ -44,3 +44,13 @@ def test_unstable_base_stories_go_on_the_ticket_as_known_main_failures() -> None
     template = flat((REFERENCES / "ticket-template.md").read_text())
     assert "Each `unstable-on-base` story goes there as" in template
     assert "renders differently on two base renders at <base>; diff: <its cropped diff>" in template
+
+
+def test_the_base_storybook_runs_a_repaired_story_file_from_the_session() -> None:
+    decomposer = flat((AGENTS / "vibe-storybook-decomposer.md").read_text())
+    assert "frozen-render.mjs prepare-base --repo <worktree> --base <base> --story-file <file> ... --dir <dir>" in decomposer
+    assert "never copy or edit a file in it yourself" in decomposer
+    assert "a repaired play runs on both sides and only the app code differs" in decomposer
+    assert "a story file changed beyond a compile-only repair is not compared and its stories block" in decomposer
+    inventory = (HANDOFF / "scripts" / "handoff-inventory.mjs").read_text()
+    assert "keepsStoryIdentity," in inventory and "function keepsStoryIdentity" not in inventory
