@@ -7,9 +7,12 @@
 // check. Unit tests and evals feed script output in the prompt; this runs the real thing.
 //
 // Usage: node tools/vibe-release-smoke/smoke.mjs [--ref HEAD] [--codex <cli>] [--request <text>]
-//          [--timeout-ms 420000] [--max-seconds 90] [--receipt] [--keep]
-// --receipt writes tools/vibe-release-smoke/receipt.json on a pass, for the CI receipt check.
+//          [--timeout-ms 420000] [--max-seconds 90] [--keep]
 // Exit 0 on a pass, 1 on a failure, 2 when the smoke could not run at all.
+//
+// A required release step, not a CI check: it needs the ChatGPT app signed in, which CI
+// runners are not (operator ruling, ISS-13315). Run it on the final commit of every change
+// to plugins/vibe before it merges (AGENTS.md, CONTRIBUTING.md).
 //
 // The person's part is played by this script: it allows commands that run the installed vibe
 // plugin's startup check (the "Allow once" the person clicks), lets the two read-only
@@ -46,7 +49,6 @@ const { values } = parseArgs({
     request: { type: "string", default: "pick up where I left off" },
     "timeout-ms": { type: "string", default: "420000" },
     "max-seconds": { type: "string", default: "90" },
-    receipt: { type: "boolean", default: false },
     keep: { type: "boolean", default: false },
   },
 });
@@ -259,17 +261,6 @@ function delay(ms) {
 }
 
 function finish(code, result) {
-  if (code === 0 && values.receipt) {
-    const receipt = {
-      result: "pass",
-      commit: result.commit,
-      plugins: result.built,
-      codex: result.codex,
-      setupCheck: result.setupCheck,
-      ranAt: new Date().toISOString(),
-    };
-    writeFileSync(path.join(HERE, "receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`);
-  }
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   process.exit(code);
 }

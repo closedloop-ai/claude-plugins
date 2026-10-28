@@ -155,26 +155,6 @@ jobs:
           printf '  %s\n' "${files[@]}"
           node --test --test-reporter=spec "${files[@]}"
 
-  vibe-release-smoke:
-    name: Vibe Release Smoke Receipt
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Unit tests for the smoke's judge and receipt check
-        run: node --test tools/vibe-release-smoke/first-reply.test.mjs tools/vibe-release-smoke/receipt-check.test.mjs
-      # The smoke itself drives a real ChatGPT-signed-in Codex session, which these runners
-      # cannot do (ISS-13315). A plugins/vibe change fails here until
-      # tools/vibe-release-smoke/receipt.json records a passing run of this exact build.
-      - name: Require a smoke receipt for this vibe build
-        if: github.event_name == 'pull_request'
-        run: node tools/vibe-release-smoke/receipt-check.mjs --base "origin/${{ github.event.pull_request.base.ref }}"
-
   tools-ts:
     name: TypeScript (${{ matrix.tool }})
     runs-on: ubuntu-latest

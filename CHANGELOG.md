@@ -20,7 +20,7 @@ The startup version check and setup check work in the Codex app's default "Ask f
 
 #### Added
 - `tools/vibe-release-smoke/smoke.mjs`: installs `plugins/vibe` and `plugins/closedloop-core` as committed at `--ref` into a throwaway Codex home, drives a real session through the ChatGPT app's bundled Codex app server with approval policy `on-request` and the `workspace-write` sandbox, sends `$vibe pick up where I left off`, and fails unless the first reply's setup check shows the installed versions with a completed latest-version comparison, no "has not run" or "couldn't check" line, a saved record, and arrives within 90 seconds. It fails on vibe 1.1.12 and passes on 1.1.13.
-- CI job "Vibe Release Smoke Receipt": a pull request that changes `plugins/vibe` fails until `tools/vibe-release-smoke/receipt.json` records a passing smoke of exactly its `plugins/vibe` and `plugins/closedloop-core` trees (`node tools/vibe-release-smoke/smoke.mjs --receipt`, run on a Mac with the ChatGPT app signed in). There is no Claude Code smoke yet: Claude Code reads its sign-in from the real config's keychain entry, so an isolated headless run is not signed in.
+- Release step, not CI: CONTRIBUTING.md ("Plugin Version Management") and AGENTS.md require `node tools/vibe-release-smoke/smoke.mjs` on the final commit of every `plugins/vibe` change, with its pass in the PR description. CI does not run or enforce it because its runners cannot sign in to ChatGPT. This covers vibe, fleet-orchestrator and every other vibe skill. There is no Claude Code smoke yet: Claude Code reads its sign-in from the real config's keychain entry, so an isolated headless run is not signed in.
 - The README's runtime line says 1.1.13.
 
 ### vibe v1.1.12
