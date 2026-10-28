@@ -32,7 +32,15 @@
 //                                     --request-id <id>
 //   vibe-sessions.mjs local-fix       --worktree <path> --ticket ISS-123 --path <file> [--path <file> ...]
 //   vibe-sessions.mjs story-replacement --worktree <path> --path <story file> --replacement <component>
+//   vibe-sessions.mjs telemetry       --worktree <path> [--transcript <file> ...] [--wall-time-ms <n> | --wall-since-created]
+//                                     [--environment-minutes <n>]
 //   vibe-sessions.mjs discard         --worktree <path> [--confirm]
+//
+// `telemetry` records measured cost in the record's `telemetry` object (session-telemetry.mjs;
+// a measure nobody recorded is null). `--transcript` (repeatable) replaces the token totals with
+// the Claude transcripts' usage (transcript-tokens.mjs); worker launches come from the PostToolUse
+// hook and heavy-slot wait from e2e-lock.mjs. `--wall-since-created` stores the time since the
+// record was created, idle time included.
 //
 // `--repo` defaults to the checkout vibe-preflight.sh remembered in
 // ~/.codex/vibe/config.json; `repo` prints it. `local-fix` records files the
@@ -100,6 +108,8 @@ import { migrationOrderProblems } from "./migration-order.mjs";
 import { adoptStartupRecord, blockingProblem, conversationId, readStartupRecord } from "./plugin-version.mjs";
 import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublication } from "./prototype-session.mjs";
 import { adoptStartupQuestions } from "./session-questions.mjs";
+import { telemetryWithDefaults, updateSessionTelemetry, withMeasures, withTokens } from "./session-telemetry.mjs";
+import { tokenTotalsFromFiles } from "./transcript-tokens.mjs";
 import { git, readSessionRecord, sessionLiveTicket, writeSessionRecord as writeRecord } from "./session-record.mjs";
 import {
   buildDispatchInputs,
@@ -198,6 +208,10 @@ const { positionals, values } = parseArgs({
     pid: { type: "string" },
     log: { type: "string" },
     path: { type: "string", multiple: true },
+    transcript: { type: "string", multiple: true },
+    "wall-time-ms": { type: "string" },
+    "wall-since-created": { type: "boolean" },
+    "environment-minutes": { type: "string" },
     replacement: { type: "string" },
     confirm: { type: "boolean", default: false },
   },
@@ -259,11 +273,13 @@ async function run(command) {
       return { session: recordLocalFix() };
     case "story-replacement":
       return { session: recordStoryReplacement() };
+    case "telemetry":
+      return { telemetry: recordTelemetry() };
     case "discard":
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, ticket-sections, environment-result, local-fix, story-replacement, discard."
+        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, ticket-sections, environment-result, local-fix, story-replacement, telemetry, discard."
       );
   }
 }
@@ -606,6 +622,26 @@ function resolveRepo() {
   return repo;
 }
 
+/** Records the measured cost the options carry in the session record's telemetry; options not given leave their measures as they were. */
+function recordTelemetry() {
+  const worktree = requireOption("worktree");
+  const record = requireRecord(worktree);
+  const number = (name) => (values[name] === undefined ? undefined : values[name].trim() === "" ? Number.NaN : Number(values[name]));
+  const wallTimeMs = values["wall-since-created"] ? Date.now() - Date.parse(record.createdAt) : number("wall-time-ms");
+  if (values["wall-since-created"] && !Number.isFinite(wallTimeMs)) {
+    throw new Error("The record has no valid createdAt, so --wall-since-created has nothing to measure from.");
+  }
+  const files = values.transcript ?? [];
+  const totals = files.length > 0 ? tokenTotalsFromFiles(files) : null;
+  if (totals && totals.tokens === null) {
+    throw new Error("No assistant message with token usage was found in the given transcripts; tokens stay unrecorded.");
+  }
+  return updateSessionTelemetry(worktree, (stored) => {
+    const withMeasure = withMeasures(stored, { wallTimeMs, environmentMinutes: number("environment-minutes") });
+    return totals ? withTokens(withMeasure, totals.tokens, "claude-transcript") : withMeasure;
+  });
+}
+
 /** Records the sole writer's managed local workaround paths under the owning bug ticket. */
 function recordLocalFix() {
   const worktree = requireOption("worktree");
@@ -677,6 +713,7 @@ function withDefaults(record) {
     desktopAuthSavedAt: rest.desktopAuthSavedAt ?? null,
     codexSessions: rest.codexSessions ?? { orchestrators: [], subagents: [] },
     localFixes: rest.localFixes ?? [],
+    telemetry: telemetryWithDefaults(rest.telemetry),
   };
 }
 

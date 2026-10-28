@@ -47,6 +47,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { imageProblem, recordImages } from "./image-head.mjs";
+import { updateSessionTelemetry, withSlotWait } from "./session-telemetry.mjs";
 import { testedHead } from "./tested-head.mjs";
 
 export const BUSY_EXIT = 75;
@@ -240,6 +241,15 @@ function runCommand(command, args, env) {
   });
 }
 
+/** Adds the time this run waited for the stack to the worktree's session telemetry (WS0 M4); a worktree without a session record, or a failed write, changes nothing. */
+function recordSlotWait(owner) {
+  try {
+    updateSessionTelemetry(owner.worktree, (stored) => withSlotWait(stored, Math.max(0, Date.now() - Date.parse(owner.startedAt))));
+  } catch {
+    // telemetry never blocks an e2e run
+  }
+}
+
 async function main(argv) {
   const { action, values, command, args } = parseCommandLine(argv);
   const lockDir = path.resolve(values["lock-dir"] ?? defaultLockDir());
@@ -301,6 +311,7 @@ async function main(argv) {
     process.stdout.write(`${JSON.stringify({ status: "busy", holder: attempt.holder })}\n`);
     return BUSY_EXIT;
   }
+  recordSlotWait(owner);
   const composeProject = composeProjectFor(process.env, owner.token);
   process.stderr.write(`e2e-lock: compose project ${composeProject}\ne2e-lock: testing ${tested}\n`);
   const images = { project: composeProject, worktree: owner.worktree, head: tested, command: [command, ...args].join(" "),

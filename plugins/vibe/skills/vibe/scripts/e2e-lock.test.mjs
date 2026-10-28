@@ -243,3 +243,22 @@ test("a --no-build run needs images built from the head it tests in the same wor
   assert.equal(run(wt, fix).status, 0);
   assert.equal(run(wt, fix, "--no-build").status, 0);
 });
+
+test("a run records how long it waited for the stack in the worktree's session telemetry, and only there", async () => {
+  const lockDir = path.join(root, "telemetry");
+  const gitDir = spawnSync("git", ["-C", root, "rev-parse", "--absolute-git-dir"], { encoding: "utf8" }).stdout.trim();
+  const recordFile = path.join(gitDir, "vibe-session.json");
+  const run = () => spawnSync(process.execPath, [SCRIPT, "run", "--head", SHA, "--lock-dir", lockDir, process.execPath, "-e", "0"], { cwd: root, encoding: "utf8" });
+  try {
+    assert.equal(run().status, 0, "a worktree without a session record runs and writes nothing");
+    assert.equal(existsSync(recordFile), false);
+    writeFileSync(recordFile, `${JSON.stringify({ slug: "x" })}\n`);
+    assert.equal(run().status, 0);
+    const telemetry = JSON.parse(readFileSync(recordFile, "utf8")).telemetry;
+    assert.equal(telemetry.slotAcquisitions, 1);
+    assert.ok(telemetry.slotWaitMs >= 0 && telemetry.slotWaitMs < 5000, String(telemetry.slotWaitMs));
+    assert.equal(telemetry.workerLaunches, null);
+  } finally {
+    rmSync(recordFile, { force: true });
+  }
+});

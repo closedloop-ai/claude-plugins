@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.14
+
+Measurement tooling for the vibe optimization (PRD-823, WS0, ISS-13326 to ISS-13331): a replay of merged tickets scored against the human change, and measured cost in the session record.
+
+#### Added
+- `evals/replay/`: `corpus-select.mjs` picks merged tickets with a linked pull request, stratified by class, and excludes weak acceptance criteria, later migrations, flag-only changes and backend changes without tests (`git-enrich.mjs` reads the merge-base parent, files and test files from git; `criteria.mjs` reads the Acceptance criteria section). `runner.mjs`, `workspace.mjs` and `claude-arm.mjs` run each arm at least 3 times per ticket from a clone in which the merge commit is unreachable, with only the ticket text as the request. `scorer.mjs` runs the human change's test files on the agent's tree (one exit code per file), computes diff size, file overlap and extra files, and scores acceptance-criteria graders in the existing `evals/<case>/graders` format. `uncertainty.mjs` scores flagged assumptions against labeled review findings and carries rework signals; flag-dependent numbers are null until a run records its flagged assumptions. `baseline-report.mjs` builds the baseline table. `cli.mjs` drives `select`, `plan`, `run`, `score`, `uncertainty` and `report`.
+- Session telemetry in the session record (`session-telemetry.mjs`): worker launches by worker from a new PostToolUse hook on `Agent`, heavy-slot wait from `e2e-lock.mjs`, token totals from Claude transcripts (`transcript-tokens.mjs`), wall time and environment minutes through `vibe-sessions.mjs telemetry`. A measure nobody recorded is null. Codex token and launch measures are not read.
+
 ### vibe v1.1.13
 
 The startup version check and setup check work in the Codex app's default "Ask for approval" mode, and a release smoke now runs the real plugin build in a real Codex session before every vibe release (ISS-13315).

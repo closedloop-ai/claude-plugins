@@ -954,3 +954,35 @@ test("sessions carry no scope, and a record written with the retired draft scope
   assert.equal("scope" in listed.json.sessions[0], false);
   assert.equal("scope" in runNode(SCRIPT, ["show", "--worktree", worktree], home).json.session, false);
 });
+
+test("telemetry reads null until measured, then records transcript tokens, wall time and environment minutes", (t) => {
+  const { root, home, checkout } = setup(t);
+  rememberRepo(home, checkout);
+  const created = runNode(SCRIPT, ["new", "--slug", "board-chips", "--summary", "Board chips", "--mode", "seeded", ...OPERATOR_ARGS], home);
+  assert.equal(created.status, 0, created.stderr);
+  const worktree = created.json.session.worktree;
+  assert.equal(runNode(SCRIPT, ["show", "--worktree", worktree], home).json.session.telemetry.workerLaunches, null);
+
+  const transcript = path.join(root, "stream.jsonl");
+  writeFileSync(transcript, [
+    { type: "assistant", message: { id: "m1", usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 7 } } },
+    { type: "assistant", message: { id: "m1", usage: { input_tokens: 10, output_tokens: 5 } } },
+  ].map((event) => JSON.stringify(event)).join("\n"));
+  const args = ["telemetry", "--worktree", worktree, "--transcript", transcript, "--wall-time-ms", "9000", "--environment-minutes", "12.5"];
+  assert.equal(runNode(SCRIPT, args, home).status, 0);
+  const again = runNode(SCRIPT, args, home);
+  assert.deepEqual(again.json.telemetry.tokens, { input: 10, output: 5, cacheRead: 100, cacheWrite: 7 });
+  assert.equal(again.json.telemetry.wallTimeMs, 9000);
+  assert.equal(again.json.telemetry.environmentMinutes, 25, "environment minutes add per environment");
+  assert.equal(again.json.telemetry.slotWaitMs, null);
+
+  const touched = runNode(SCRIPT, ["touch", "--worktree", worktree, "--summary", "Board chips v2"], home);
+  assert.equal(touched.json.session.telemetry.wallTimeMs, 9000, "touch keeps the telemetry");
+
+  const empty = path.join(root, "empty.jsonl");
+  writeFileSync(empty, "{}\n");
+  const refused = runNode(SCRIPT, ["telemetry", "--worktree", worktree, "--transcript", empty], home);
+  assert.equal(refused.status, 1);
+  assert.match(refused.json.error, /No assistant message with token usage/);
+  assert.equal(runNode(SCRIPT, ["telemetry", "--worktree", worktree, "--wall-time-ms", "abc"], home).status, 1);
+});
