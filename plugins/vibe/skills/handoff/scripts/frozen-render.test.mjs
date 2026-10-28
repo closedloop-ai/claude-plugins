@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { runDiffRules } from "./diff-rules.mjs";
-import { DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, classifyStory, frozenRenders, frozenStoryIds } from "./frozen-render.mjs";
+import { DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, classifyStory, frozenRenders, frozenStoryFiles, frozenStoryIds } from "./frozen-render.mjs";
 import { CROP_MAX_WIDTH, decodePng, encodePng } from "./png-diff.mjs";
 import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
 
@@ -225,6 +225,45 @@ test("the line it prints passes handoff's frozen-render rule, which counts story
   // The 1.1.11 line counted stories where the rule counts story files, so it is not accepted.
   writeFileSync(path.join(gitDir, "vibe-changes.md"), `Frozen render unchanged: all 2 stories: frozen-render.mjs --base ${base}: 1 identical, 1 known main failures; ${out}\n`);
   assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((finding) => finding.rule), ["frozen-render"]);
+});
+
+test("the line the command prints is the line the gate accepts when story files hold several story IDs (ISS-13317)", async (t) => {
+  const { root, home, out } = sandbox(t);
+  const checkout = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", checkout], home);
+  const header = (title) => `import { Row } from "@repo/design-system/components/row";\nexport default { title: "${title}" };\n`;
+  const files = {
+    "apps/storybook/stories/rows.stories.tsx": `${header("Composites v1.0/Rows")}export const Populated = {};\nexport const Empty = {};\nexport const Loading = {};\n`,
+    "apps/storybook/stories/table.stories.tsx": `${header("Surfaces v1.0/Table")}export const Default = {};\n`,
+    "packages/design-system/components/row.tsx": "export const Row = 1;\n",
+  };
+  for (const [file, text] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(checkout, file)), { recursive: true });
+    writeFileSync(path.join(checkout, file), text);
+  }
+  git(checkout, ["add", "-A"], home);
+  git(checkout, ["commit", "--quiet", "-m", "base"], home);
+  const base = git(checkout, ["rev-parse", "HEAD"], home);
+  writeFileSync(path.join(checkout, "packages/design-system/components/row.tsx"), "export const Row = 2;\n");
+  const isFrozenStory = (text) => / v1\.0\//.test(text);
+  const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], home);
+  writeFileSync(path.join(gitDir, "vibe-changes.md"), "");
+  const [finding] = runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking;
+  assert.equal(finding.rule, "frozen-render");
+  assert.match(finding.problem, /^2 frozen v1\.0 story files /);
+  const storyFiles = ["apps/storybook/stories/rows.stories.tsx", "apps/storybook/stories/table.stories.tsx"];
+  const ids = frozenStoryIds(checkout, base, storyFiles);
+  assert.equal(ids.length, 4);
+  const side = Object.fromEntries(ids.map((id) => [id, passes(shot(GREY))]));
+  // A story file named twice is still one file.
+  const summary = await frozenStoryFiles({ repo: checkout, base, storyFiles: [...storyFiles, storyFiles[0]], baseUrl: BASE, headUrl: HEAD, out,
+    browser: fakeBrowser({ [BASE]: side, [HEAD]: side }) });
+  assert.equal(summary.changeLogLine, `Frozen render unchanged: all 2 story files (4 stories): frozen-render.mjs --base ${base} --story-file ${storyFiles[0]} --story-file ${storyFiles[1]}: 4 identical, 0 unstable on base, 0 same failure, 0 blocking; ${path.join(out, "results.json")}`);
+  writeFileSync(path.join(gitDir, "vibe-changes.md"), `${summary.changeLogLine}\n`);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, []);
+  // A line counting the 4 stories as story files, as 1.1.11 did, is refused.
+  writeFileSync(path.join(gitDir, "vibe-changes.md"), `${summary.changeLogLine.replace("all 2 story files (4 stories)", "all 4 story files (4 stories)")}\n`);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((entry) => entry.rule), ["frozen-render"]);
 });
 
 test("the CLI names a missing argument, a bad --now or a repo without Playwright and exits 2", (t) => {

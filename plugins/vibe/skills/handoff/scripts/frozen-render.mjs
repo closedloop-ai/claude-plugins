@@ -158,6 +158,17 @@ export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser,
   return summarize(stories, { fileCount, out, command });
 }
 
+/**
+ * What the CLI runs: every story in `storyFiles` (read at `base`), with the line counting story files, as the
+ * `frozen-render` rule does, and their stories in parentheses.
+ */
+export async function frozenStoryFiles({ repo, base, storyFiles, ...render }) {
+  const files = [...new Set(storyFiles)];
+  const ids = frozenStoryIds(repo, base, files);
+  const command = `frozen-render.mjs --base ${base} --story-file ${files.join(" --story-file ")}`;
+  return frozenRenders({ ...render, ids, fileCount: files.length, command });
+}
+
 /** One line per story, as the CLI prints it. */
 export function storyLine(story) {
   return `${story.outcome} ${story.storyId}${story.reason ? `: ${story.reason}` : ""}${story.crop ? `; diff ${story.crop}` : ""}`;
@@ -257,13 +268,10 @@ async function main(argv) {
     throw new Error("--now must be an ISO time, such as 2026-01-01T12:00:00.000Z");
   }
   const viewport = parseViewport(values.viewport);
-  const storyFiles = [...new Set(values["story-file"])];
-  const ids = frozenStoryIds(values.repo, values.base, storyFiles);
   const browser = await loadChromium(values.repo).launch({ args: [...DETERMINISTIC_CHROMIUM_ARGS] });
   try {
-    const command = `frozen-render.mjs --base ${values.base} --story-file ${storyFiles.join(" --story-file ")}`;
-    return await frozenRenders({ ids, fileCount: storyFiles.length, baseUrl: values["base-url"], headUrl: values["head-url"], browser,
-      out: path.resolve(values.out), viewport, timeoutMs, now, command });
+    return await frozenStoryFiles({ repo: values.repo, base: values.base, storyFiles: values["story-file"], baseUrl: values["base-url"],
+      headUrl: values["head-url"], browser, out: path.resolve(values.out), viewport, timeoutMs, now });
   } finally {
     await browser.close();
   }
