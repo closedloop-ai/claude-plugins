@@ -467,19 +467,12 @@ describe("production committed-input privacy and origin boundaries", () => {
       expect(result.status, result.stdout).toBe(0);
       expect(result.json?.mainSync).toMatchObject({ generatedFiles: 1 });
       expect(readFileSync(join(value.worktree, generated.output), "utf8")).toBe(generated.body);
-    } finally { source.finish(); }
-  }, 30000);
-
-  it("rewrites a stale gitignored build-info with the repository's own renderer instead of refusing (ISS-13321)", () => {
-    const value = setup();
-    const generated = buildInfoInputFixture(value);
-    const stale = generated.body.replace(value.git(["rev-parse", "HEAD"]), "0".repeat(40));
-    expect(stale).not.toBe(generated.body);
-    value.write(generated.output, stale);
-    const source = value.sourceTurn();
-    try {
-      const result = invokeSync(value, "inputs", source.context);
-      expect(result.status, result.stdout).toBe(0);
+      // ISS-13321: a build-info left from an earlier merge is rewritten with the repository's own renderer, not refused.
+      const stale = generated.body.replace(value.git(["rev-parse", "HEAD"]), "0".repeat(40));
+      expect(stale).not.toBe(generated.body);
+      value.write(generated.output, stale);
+      const rewritten = invokeSync(value, "inputs", source.context);
+      expect(rewritten.status, rewritten.stdout).toBe(0);
       expect(readFileSync(join(value.worktree, generated.output), "utf8")).toBe(generated.derive());
     } finally { source.finish(); }
   }, 30000);

@@ -19,5 +19,5 @@ describe("a main-sync context that differs from the launcher's record", () => {
       expect(error).not.toContain("rebuilt-request");
       expect(invokeSync(value, "prepare", publisher.context).status).toBe(0);
     } finally { publisher.finish(); }
-  }, 20000);
+  });
 });
