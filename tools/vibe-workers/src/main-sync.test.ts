@@ -119,6 +119,23 @@ describe("production main-sync publication CLIs", () => {
       if (contents) expect(readFileSync(inspected)).toEqual(contents);
     } finally { turn.finish(); }
   }, 30000);
+  it("passes ignored local agent and editor config but still refuses the same files when they are not ignored (ISS-13291)", () => {
+    const value = setup();
+    const config = [".codex/agents/reviewer.toml", ".claude/settings.local.json", ".agents/local.yml", ".vscode/settings.json",
+      ".idea/runConfigurations.json", "apps/app/.vscode/launch.json"];
+    mkdirSync(join(value.metadata, "info"), { recursive: true });
+    writeFileSync(join(value.metadata, "info", "exclude"), "/.codex/\n/.claude/\n/.agents/\n.vscode/\n/.idea/\n");
+    for (const path of config) value.write(path, "local = true\n");
+    expect(validateFixture(value).status).toBe(0);
+    for (const path of config) expect(readFileSync(join(value.worktree, path), "utf8")).toBe("local = true\n");
+    rmSync(join(value.metadata, "info", "exclude"));
+    const turn = value.start("redeploy");
+    try {
+      const denied = invokeSync(value, "prepare", turn.context);
+      expect(denied.status, denied.stdout).toBe(1);
+      expect(String(denied.json?.error)).toMatch(/uncommitted executable \.(?:agents|claude|codex|idea|vscode)\//);
+    } finally { turn.finish(); }
+  }, 30000);
   it.each(["malformed", "conflicting-exit", "timeout", "changed-source"] as const)(
     "rejects %s pure-loader evidence before any transaction and does not expose dependency output", (failure) => {
     const value = setup(); const generated = generatedBiomeFixture(value);
