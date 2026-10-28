@@ -230,18 +230,25 @@ advice was applied.
 In handoff mode also run these checks and report each result with its
 evidence:
 
-- Frozen renders: for each inventory `frozen-render` finding, run
-  `../skills/handoff/scripts/frozen-render.mjs --repo <worktree> --base <base>
-  --base-url <url> --head-url <url> --story-file <file> ... --out <dir>`,
-  never a capture of your own. The base URL is the repo's Storybook served
-  from a disposable detached worktree at the base commit, bootstrapped with
-  `.closedloop-ai/loops-setup.sh` and removed afterwards; the head URL is the
-  session's own Storybook. It renders each story ID on both with fixed
-  args, globals and viewport, waits for the play to finish and judges it with
-  `story-play-verdict.mjs`. Each `differs` entry is a finding. Each
-  `knownMainFailures` entry fails the same way on the base: it is not a
-  finding and goes on the live ticket as a Known main failure. When nothing
-  differs, report its `changeLogLine` for the writer to record.
+- Frozen renders: run `../skills/handoff/scripts/frozen-render.mjs --repo
+  <worktree> --base <base> --base-url <url> --head-url <url> --story-file
+  <file> ... --out <dir>` once with every story file the inventory's
+  `frozen-render` finding lists, never a capture of your own. The base URL
+  is the repo's Storybook served from a disposable detached worktree at the
+  base commit, bootstrapped with `.closedloop-ai/loops-setup.sh` and removed
+  afterwards; the head URL is the session's own Storybook. It is heavy
+  validation and runs under the same load and slot rules as every other
+  handoff heavy run. It renders each story twice on the base and once on the
+  branch with its clock, animations, viewport, fonts, theme, args and globals
+  pinned, waits for each play to finish and judges it with
+  `story-play-verdict.mjs`. It prints one line per story and a summary; read
+  those and, for a `blocking` story, only its cropped diff, never the full
+  screenshots. Each `blocking` story is a finding. A `same-failure` story
+  fails the same way on the base and an `unstable-on-base` story renders
+  differently on two base renders: neither is a finding, and each goes on the
+  live ticket as a Known main failure. When nothing blocks, report the
+  `Frozen render unchanged` line it prints for the writer to record
+  unchanged; never write or edit that line yourself.
 - Flag-on states: every surface the session claims has its flag-on state on
   that surface's existing story entry.
 - States: for each state the ticket, PRD or acceptance criteria name, the

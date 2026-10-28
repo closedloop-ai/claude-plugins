@@ -91,9 +91,11 @@ publication, and the same ticket worker verifies completeness and assignment.
   `- [ ] Known main failure: <check>; fails on captured main <mainSha>; evidence: <first error line of the main run's log>; exit <main exit code> on captured main, <session exit code> on the session commit`.
   Not on the Handoff section's Pre-existing failures line, never in both, and
   never routed to the person running the session. It does not block
-  assignment or the pull request. Each `knownMainFailures` story from
+  assignment or the pull request. Each `same-failure` story from
   handoff's `frozen-render.mjs` goes there the same way:
   `- [ ] Known main failure: frozen story <story ID>; fails the same way on base <base>; evidence: <its reason>`.
+  Each `unstable-on-base` story goes there as
+  `- [ ] Known main failure: frozen story <story ID>; renders differently on two base renders at <base>; diff: <its cropped diff>`.
 - Compile-only v1.0 repairs: each file in the handoff inventory's
   `compileOnlyV1Repairs` goes once at the end of the Engineering checklist as
   `- [ ] Check compile-only repair to v1.0: <file>; confirm only prop, import or type changes and no visual change`.

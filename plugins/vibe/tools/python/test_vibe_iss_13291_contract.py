@@ -63,7 +63,7 @@ def test_frozen_renders_use_the_shipped_driver_and_base_failures_do_not_block() 
     assert "../skills/handoff/scripts/frozen-render.mjs" in decomposer
     assert "never a capture of your own" in decomposer
     assert "`story-play-verdict.mjs`" in decomposer
-    assert "Each `knownMainFailures` entry fails the same way on the base: it is not a finding" in decomposer
+    assert "A `same-failure` story fails the same way on the base" in decomposer
     template = flat((REFERENCES / "ticket-template.md").read_text())
     assert "`- [ ] Known main failure: frozen story <story ID>; fails the same way on base <base>; evidence: <its reason>`" in template
 
