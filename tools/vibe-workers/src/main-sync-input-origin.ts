@@ -74,7 +74,8 @@ export function prepareInputOrigins(value: ReturnType<typeof syncContext>, befor
       if (!expected.length) throw new MainSyncError(`Canonical producer emitted no complete output set: ${producer.id}`, "NEEDS_CHANGE");
       const names = new Set(expected.map((file) => file.path));
       const actual = producerFiles(root, producer, names);
-      // A stale gitignored output of a pure renderer is rewritten below with the repository's own renderer (ISS-13321).
+      // A stale gitignored output (build-info, the docs bundle manifest) is rewritten below by the repository's own
+      // producer, once every original set is known (ISS-13321).
       const stale = !sameOriginFiles(actual, expected) && isRefreshable(producer);
       if (producer.strategy !== "full-write" && !stale && !sameOriginFiles(actual, expected)) {
         throw new MainSyncError(`Generated input differs from canonical committed production: ${producer.id}; SAME source must use the existing canonical producer then recheck`, "NEEDS_CHANGE");
@@ -87,7 +88,8 @@ export function prepareInputOrigins(value: ReturnType<typeof syncContext>, befor
       const names = new Set(expected.map((file) => file.path));
       let actual = item.actual;
       if (item.stale) {
-        refreshPureOutput(root, producer, before.headSha);
+        if (producer.strategy === "pure") refreshPureOutput(root, producer, before.headSha);
+        else run(root, producer.argv!);
         assertTracked(root, before);
         actual = producerFiles(root, producer, names);
         if (!sameOriginFiles(actual, expected)) {

@@ -227504,15 +227504,16 @@ function pureOriginFiles(root, producer, head) {
   return pureResultSchema.parse([runPureOwner(root, producer, head, false)]);
 }
 function refreshPureOutput(root, producer, head) {
-  if (!isRefreshable(producer)) throw new MainSyncError(`Only a pure renderer's output is rewritten: ${producer.id}`, "NEEDS_CHANGE");
+  if (producer.strategy !== "pure" || !isRefreshable(producer)) throw new MainSyncError(`Only a pure renderer's output is rewritten here: ${producer.id}`, "NEEDS_CHANGE");
   const output = producer.roots[0];
   if (git(root, ["ls-files", "--", output])) throw new MainSyncError(`A tracked file is never rewritten as generated input: ${output}`, "NEEDS_CHANGE");
   const { body } = pureBodySchema.parse(runPureOwner(root, producer, head, true));
   writeFileSync5(join15(root, output), body);
 }
 function isRefreshable(producer) {
-  return producer.strategy === "pure" && producer.id !== "husky";
+  return PREBUILD_OUTPUTS.has(producer.id);
 }
+var PREBUILD_OUTPUTS = /* @__PURE__ */ new Set(["desktop-build", "desktop-migrations", "desktop-docs", "desktop-auth"]);
 function runPureOwner(root, producer, head, emit) {
   verifyReportProducerInputs(root, root, ReportExecutionOwner.Pure, producer.inputs);
   verifyReportExecution(
@@ -227662,7 +227663,8 @@ function prepareInputOrigins(value, before, producers) {
       const names = new Set(expected.map((file) => file.path));
       let actual = item.actual;
       if (item.stale) {
-        refreshPureOutput(root, producer, before.headSha);
+        if (producer.strategy === "pure") refreshPureOutput(root, producer, before.headSha);
+        else run(root, producer.argv);
         assertTracked(root, before);
         actual = producerFiles(root, producer, names);
         if (!sameOriginFiles(actual, expected)) {
@@ -227980,7 +227982,7 @@ function checkRecipe(value, receipt) {
     e2eLimitations.push(...discoverRequiredE2eLanes(root, receipt));
     commands.push({ argv: ["pnpm", "check:source-gates"] }, { argv: ["pnpm", "typecheck:affected"] });
   }
-  const filter = `...[${receipt.mainSha}]`;
+  const filter = `...[${receipt.validationSince}]`;
   commands.push({ argv: ["pnpm", "turbo", "typecheck", `--filter=${filter}`, "--concurrency=1"] });
   if (files.some((file) => file.includes(".stories.") || file.startsWith("apps/storybook/") || file.startsWith("packages/design-system/"))) {
     commands.push({ argv: ["pnpm", "--filter", "storybook", "validate:catalog"] });
@@ -228012,7 +228014,7 @@ function executeChecks(value, receipt, preparedRecipe) {
           const start2 = performance2.now();
           selection = commandSelection(value.place.root, command, remainingBudget(MAX_CHECK_MS, drySpent[index]));
           drySpent[index] += performance2.now() - start2;
-          if (command.argv[1] === "turbo" && !selection?.tasks.length && git(value.place.root, ["diff", "--name-only", receipt.mainSha, "HEAD"])) {
+          if (command.argv[1] === "turbo" && !selection?.tasks.length && git(value.place.root, ["diff", "--name-only", receipt.validationSince, "HEAD"])) {
             throw new MainSyncError("Pinned validation selected no tasks for changed inputs; no executed coverage was established");
           }
           assertIdentity(value.place.root, before);

@@ -59,17 +59,24 @@ export function pureOriginFiles(root: string, producer: InputProducer, head: str
  * literal is installed, not rendered, and is never rewritten.
  */
 export function refreshPureOutput(root: string, producer: InputProducer, head: string) {
-  if (!isRefreshable(producer)) throw new MainSyncError(`Only a pure renderer's output is rewritten: ${producer.id}`, "NEEDS_CHANGE");
+  if (producer.strategy !== "pure" || !isRefreshable(producer)) throw new MainSyncError(`Only a pure renderer's output is rewritten here: ${producer.id}`, "NEEDS_CHANGE");
   const output = producer.roots[0]!;
   if (git(root, ["ls-files", "--", output])) throw new MainSyncError(`A tracked file is never rewritten as generated input: ${output}`, "NEEDS_CHANGE");
   const { body } = pureBodySchema.parse(runPureOwner(root, producer, head, true));
   writeFileSync(join(root, output), body);
 }
 
-/** A pure renderer's output, which its own renderer can rewrite; Husky's installed literal is not one. */
+/**
+ * The Desktop prebuild outputs (build info, migrations manifest, docs bundle manifest, auth handoff assets): the
+ * repository rewrites them on every Desktop build, so one left from an earlier merge is stale, not an edit, and its
+ * own producer rewrites it. Every other generated input (the Prisma clients, Next's route types, Husky) still
+ * refuses a difference, since there it can be a hand edit.
+ */
 export function isRefreshable(producer: InputProducer) {
-  return producer.strategy === "pure" && producer.id !== "husky";
+  return PREBUILD_OUTPUTS.has(producer.id);
 }
+
+const PREBUILD_OUTPUTS: ReadonlySet<string> = new Set(["desktop-build", "desktop-migrations", "desktop-docs", "desktop-auth"]);
 
 function runPureOwner(root: string, producer: InputProducer, head: string, emit: boolean): unknown {
   verifyReportProducerInputs(root, root, ReportExecutionOwner.Pure, producer.inputs);
