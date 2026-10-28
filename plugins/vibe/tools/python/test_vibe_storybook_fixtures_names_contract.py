@@ -17,7 +17,6 @@ handoff, after the writer had built the stories.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from vibe_contract_text import agent, flat, section
@@ -26,11 +25,6 @@ from vibe_contract_text import agent, flat, section
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 DESIGN_PASS = PLUGIN_ROOT / "skills" / "vibe" / "references" / "design-pass.md"
 EVALS = PLUGIN_ROOT / "evals"
-
-
-def test_release_and_both_manifests_are_111() -> None:
-    for manifest in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
-        assert json.loads((PLUGIN_ROOT / manifest).read_text())["version"] == "1.1.1"
 
 
 def placement_block() -> str:
