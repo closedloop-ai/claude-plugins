@@ -35,7 +35,9 @@ answer:
 
 Apply settled decisions; never ask them again. Only after all six fail,
 ask one absolutely necessary question with the checked sources and a
-recommendation. Under fleet orchestration a writer returns `NEEDS_PERSON` to
+recommendation. The Spec Card (`spec-card.md`, "Fork checkpoint") names which
+unresolved items may stop code, with 2 to 3 options and a recommendation; it
+adds no question this section would not allow. Under fleet orchestration a writer returns `NEEDS_PERSON` to
 the orchestrator, which finishes the remaining steps before asking. In a
 session another orchestrator drives through its turns, that orchestrator's
 own directions are operational and are recorded as `(orchestrator)`, never as
@@ -361,7 +363,9 @@ or `/closedloop-core:decision-table` in Claude Code and use that skill's actual
 artifact format, edge-case expansion, review-prevention and adversarial rules.
 Never copy its skill, checklist or template into this plugin.
 
-Keep one living table for the whole session at
+The Spec Card (`spec-card.md`) seeds this table's `## Acceptance Criteria`
+section and Open Questions; it never replaces the table, its rows or its
+passes. Keep one living table for the whole session at
 `.closedloop-ai/decision-tables/<session-slug>.md`, in the SAME worktree and
 branch, authored only by the SAME persistent writer. New requests extend that
 file before code; they never start or replace a per-request table. Use real

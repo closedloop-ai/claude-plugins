@@ -183,6 +183,13 @@ subagent that worked on this.>
   verification unavailable or stale when it is; never guess a value or present
   source defaults/local QA as production truth. Record this delta/gate evidence
   without overwriting the machine-generated snapshot or implicitly refreshing it.>
+- Assumptions: <generated from the session's Spec Card by
+  `node scripts/spec-card.mjs assumptions <card> --worktree <wt> --base <sha>`
+  (`spec-card.md`, "Assumptions at handoff"), not written freehand: grounded
+  and unverified assumptions with what would falsify each, the questions
+  answered before code, what was deliberately not changed, and the files
+  changed outside the plan with their cited criterion or with none cited. Write
+  "None: no Spec Card" when the session has none>
 - Open Questions: <only genuinely unresolved Product/Design/Scope questions
   after graph and live ClosedLoop research under quality-loop.md: sources checked,
   context and the decision needed. Exclude answered or settled questions; an

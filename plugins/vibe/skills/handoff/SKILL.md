@@ -902,9 +902,12 @@ tell the person it is ready to enqueue right away, once
 passes; the merge queue retests it against main. On that head, a
 fresh-context reviewer given only the ticket's criteria and the diff writes
 the MET/PARTIAL/MISSED audit, and
-`node scripts/criteria-audit.mjs --worktree "<wt>" --ticket <body> --audit <audit> --matrix <matrix>`
-must pass (every criterion MET, and every criterion x surface x input x flag
-cell evidenced, flag-off cells by a diff against the base or a ruling).
+`node scripts/criteria-audit.mjs --worktree "<wt>" --ticket <body> --audit <audit> --matrix <matrix> --evidence <evidence>`
+must pass (every criterion MET, every criterion x surface x input x flag
+cell evidenced, flag-off cells by a diff against the base or a ruling, and
+every criterion mapped to a test, script, screenshot or API read in the
+requirement-to-evidence matrix, `../vibe/references/spec-card.md`, "Evidence
+matrix"; `../vibe/scripts/spec-card.mjs evidence-skeleton` prints its rows).
 `node scripts/rulings-check.mjs --ticket <body> --record <QA record> --plan <each linked PLN's get-document JSON> --plan-body <its latest text>`
 must pass too, and so must
 `node scripts/rollout-gate.mjs --worktree "<wt>" --ticket <body> --slug <ticket> --prd <PRD body> --prd-slug <PRD>`

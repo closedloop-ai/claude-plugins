@@ -276,6 +276,11 @@ entry/read/mutation/host gates. No new flags does not mean no existing gates.
 Keep source defaults, timestamped verified production values and local QA
 toggles distinct; explicitly retain unavailable/stale evidence, never guess
 or overwrite/implicitly refresh the machine-generated flag snapshot.
+Fill the Handoff Assumptions line from the session's Spec Card, never freehand:
+`node ../skills/vibe/scripts/spec-card.mjs assumptions "$(node ../skills/vibe/scripts/spec-card.mjs path --worktree "<wt>")" --worktree "<wt>" --base <inventory baseCommit>`
+(`../skills/vibe/references/spec-card.md`, "Assumptions at handoff"); keep its
+grounded and unverified labels as printed. A session with no card gets
+`Assumptions: None: no Spec Card`.
 For Open Questions apply `quality-loop.md` graph and live answered-decision
 research first. Include sources checked, context and the necessary unresolved
 Product/Design/Scope decision; exclude answered/settled questions and keep

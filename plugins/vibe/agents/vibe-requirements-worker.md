@@ -24,6 +24,7 @@ do not fabricate a table or claim it existed before code that already landed.
 ## Read first
 
 `../skills/vibe/references/closedloop-graph.md`.
+Read `../skills/vibe/references/spec-card.md`.
 Read `../skills/vibe/references/quality-loop.md`. Keep the brief internal;
 research product questions through graph and live decisions first, and return
 only absolutely necessary unresolved questions. Never ask a technical question,
@@ -89,6 +90,18 @@ questions"), or produce an upfront summary for the person.
    same files or a module they import; resolve each named dependency ("Roadmap
    N", "Dependencies:") to its PRD and open pull requests. A ticket-only
    collision result is incomplete.
+
+5. Spec Card: return the criteria, assumptions and open questions you found as
+   a `draft` Spec Card (`spec-card.md`), valid under
+   `node ../skills/vibe/scripts/spec-card.mjs check <card>`. Tag each
+   assumption `grounded` (with its basis) or `unverified`, each with what would
+   falsify it. Put an item in `openQuestions` only when it is an unverified
+   product-impacting assumption or a material product fork, with 2 to 3
+   end-to-end options and a recommendation, and only after the research order
+   in `quality-loop.md`; every other uncertainty stays an assumption. Before
+   you state anything about what current `main` does, run
+   `node ../skills/vibe/scripts/freshness.mjs --worktree <repo path>` and quote
+   the path and SHAs it prints beside the claim.
 
 ## Reference mode
 

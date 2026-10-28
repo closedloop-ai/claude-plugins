@@ -120,6 +120,21 @@ The plan gets no review: build in the same turn right after it
 (`quality-loop.md`, "Lean build loop"). No technical plan goes to the person
 running the session for approval.
 
+Lock the Spec Card before code (`../skills/vibe/references/spec-card.md`): add
+its `plan` (owner files, files deliberately not touched) and save it with
+`node ../skills/vibe/scripts/spec-card.mjs save --worktree "<wt>" --stage locked <card>`.
+Run `spec-card.mjs check <card> --stage locked`: the fork checkpoint is off
+unless the brief or `VIBE_FORK_CHECKPOINT=1` switches it on; when on, return
+`NEEDS_PERSON` for each entry in its `blocking` list, and when off build as
+usual and let each `wouldBlock` entry stand as an unverified assumption in the
+handoff. Seed the table's `## Acceptance Criteria` section from the card's
+criteria. Before any claim about current `main`, run
+`node ../skills/vibe/scripts/freshness.mjs --worktree "<wt>" --expect-path "<wt>"`.
+Before `DONE`, run `spec-card.mjs budget`: it never blocks and never removes
+required scope; give every uncited file a `plan.justifications` entry that
+cites a criterion or a sourced requirement, or take it out of the diff when
+none drives it.
+
 Always load named core decision-table (`$decision-table` in Codex or
 `/closedloop-core:decision-table` in Claude Code) and create or extend the
 same session decision table before any code, for EVERY request including

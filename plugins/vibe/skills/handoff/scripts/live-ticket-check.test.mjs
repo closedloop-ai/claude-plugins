@@ -40,7 +40,7 @@ function completeTicket(overrides = {}) {
     "Backend still missing": "None.",
     "Production flag snapshot": "Taken 2026-10-06T15:00:00Z as PostHog user `user_1`. 1 flags.\n\n| Flag | Value |\n|---|---|\n| `a` | true |\n\n### Keys to see this work\n\n| Surface | Hosts | Key | Origin | Approval | In this snapshot |\n|---|---|---|---|---|---|\n| Tags | web | `a` | existing key | on main | true |",
     Sessions: "- Codex session (orchestrator): `01a11209-54a0-72c0-8255-68692884c10f`",
-    Handoff: "- Checks: all pass",
+    Handoff: "- Checks: all pass\n- Assumptions: None: no Spec Card",
     "Design Review": DESIGN_REVIEW,
     Grading: "Set `Design grade` or `Eng grade`.\n\n```\nGrade: High / Medium / Low\n```",
     "Engineering checklist": "- [ ] Open the pull request",
@@ -211,7 +211,7 @@ test("a flag snapshot without the keys to see the work fails the check", () => {
 });
 
 test("a ticket naming a path on the operator's machine or a local plan fails the check", () => {
-  const body = completeTicket({ Handoff: "- Screenshot: /Users/x/file.png\n- Log: ~/foo\n- Capture: `.control/runs/a.png`\n- QA plan: .closedloop-ai/vibe-plans/qa.md\n- Attached: `qa-plan.md`" });
+  const body = completeTicket({ Handoff: "- Screenshot: /Users/x/file.png\n- Log: ~/foo\n- Capture: `.control/runs/a.png`\n- QA plan: .closedloop-ai/vibe-plans/qa.md\n- Attached: `qa-plan.md`\n- Assumptions: None: no Spec Card" });
   const problems = checkLiveTicket(body).problems;
   const lines = body.split("\n");
   assert.deepEqual(problems.map(({ section, problem }) => [section, lines[Number(/^line (\d+)/.exec(problem)[1]) - 1]]), [
@@ -300,4 +300,9 @@ test("a session's flag keys must be recorded, and every proposed key approved an
   // A cited source is not approval, and an answer given for another proposal does not carry over.
   const stale = { ...flagKeys, approvals: { "branches-list-v2": { decision: "approved", fingerprint: "000000000000" } } };
   assert.match(problems({ branch: "vibe/tags", flagKeys: stale })[0].problem, /no approval from the person \(pending\)/);
+});
+
+test("a Handoff section with no Assumptions line fails the check", () => {
+  const body = completeTicket({ Handoff: "- Checks: all pass" });
+  assert.ok(checkLiveTicket(body).problems.some((entry) => entry.section === "Handoff" && entry.problem.includes("no Assumptions line")));
 });

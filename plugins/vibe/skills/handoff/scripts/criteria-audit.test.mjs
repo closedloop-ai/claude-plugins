@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { auditProblems, matrixProblems, ticketCriteria } from "./criteria-audit.mjs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { auditProblems, evidenceProblems, matrixProblems, ticketCriteria } from "./criteria-audit.mjs";
 
 const TICKET = `## Scope and acceptance criteria
 
@@ -49,4 +52,30 @@ test("every criterion x surface x input x flag cell needs evidence, and flag-off
   assert.match(matrixProblems({ surfaces: [], inputs: ["pointer"], rows }, criteria)[0], /no surfaces or no input modes/);
   const anyInputWithoutReason = [{ criterion: "AC-1", surface: "web", input: "*", evidence: "covered" }];
   assert.equal(matrixProblems({ surfaces: ["web"], inputs: ["pointer"], rows: anyInputWithoutReason }, criteria).length, 1, "* needs a not input-driven reason");
+});
+
+test("every criterion needs a MET evidence row of a known type with a ref; anything else blocks done", () => {
+  const criteria = ticketCriteria(TICKET);
+  const met = (criterion, type, ref) => ({ criterion, type, ref, verdict: "MET" });
+  assert.deepEqual(evidenceProblems({ rows: [met("AC-1", "script", "pnpm test:lanes"), met("AC-2", "screenshot", "capture-2.png")] }, criteria), []);
+  assert.deepEqual(evidenceProblems({ rows: [met("AC-1", "api-read", "GET /x")] }, criteria), ["AC-2: no evidence row; map it to a test, script, screenshot or API read"]);
+  assert.deepEqual(evidenceProblems({ rows: [met("AC-1", "script", "run"), { criterion: "AC-2", type: "screenshot", ref: null, verdict: null }] }, criteria), ["AC-2: screenshot evidence not filled in"]);
+  assert.deepEqual(evidenceProblems({ rows: [met("AC-1", "script", "run"), { criterion: "AC-2", type: "screenshot", ref: "shot.png", verdict: "PARTIAL" }] }, criteria), ["AC-2: PARTIAL (shot.png)"]);
+  assert.deepEqual(evidenceProblems({ rows: [met("AC-1", "script", ""), met("AC-2", "script", "run")] }, criteria), ["AC-1: MET needs a ref naming the script"]);
+  assert.match(evidenceProblems({ rows: [met("AC-1", "vibes", "x"), met("AC-2", "script", "run")] }, criteria)[0], /evidence type must be one of test, script, screenshot, api-read/);
+  assert.deepEqual(evidenceProblems({ rows: [met("AC-1", "script", "run"), met("AC-2", "script", "run"), met("AC-9", "script", "run")] }, criteria), ["AC-9: evidence for a criterion the ticket does not list"]);
+  assert.deepEqual(evidenceProblems(undefined, criteria).length, 2);
+});
+
+test("a test ref must name a file that exists at HEAD", () => {
+  const criteria = ticketCriteria(TICKET).slice(0, 1);
+  const dir = mkdtempSync(path.join(tmpdir(), "criteria-evidence-"));
+  try {
+    writeFileSync(path.join(dir, "drag.spec.ts"), "");
+    const rows = (ref) => ({ rows: [{ criterion: "AC-1", type: "test", ref, verdict: "MET" }] });
+    assert.deepEqual(evidenceProblems(rows("drag.spec.ts::drags a row"), criteria, dir), []);
+    assert.deepEqual(evidenceProblems(rows("missing.spec.ts"), criteria, dir), ["AC-1: the test missing.spec.ts does not exist at HEAD; a planned test is not evidence"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -71,6 +71,7 @@ const REQUIRED_CONTENT = {
     // The keys a person must turn on to see the work (operator ruling, 2026-10-20).
     [/^### Keys to see this work$/m, "lists no keys to see the work"],
   ],
+  Handoff: [[/^- Assumptions: \S/m, "has no Assumptions line (generated from the Spec Card by spec-card.mjs assumptions, or \"None: no Spec Card\")"]],
   Sessions: [[/\(orchestrator\): `[^`]+`/, "lists no orchestrator session id"]],
   "Scope and acceptance criteria": [
     [/^- Newest ruling: (?:none found \(searched: [^)\n]+\)|.*\b\d{4}-\d{2}-\d{2}\b)/m, "has no Newest ruling line (a dated ruling, or none found with the searches run)"],

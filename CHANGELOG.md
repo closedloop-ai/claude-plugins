@@ -4,6 +4,21 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.16
+
+The Spec Card: one structured statement of the criteria, assumptions, open questions and smallest-change plan, with script-enforced checks for the files a change touches, the freshness of any claim about main, the handoff assumptions and the requirement-to-evidence matrix (PRD-823, ISS-13336, ISS-13337, ISS-13338, ISS-13339, ISS-13340, ISS-13342). The session decision table stays mandatory.
+
+#### Added
+- `references/spec-card.md` and `scripts/spec-card.mjs` (`check`, `save`, `path`, `budget`, `assumptions`, `evidence-skeleton`): the requirements worker returns a `draft` card (criteria with intended evidence type, assumptions tagged `grounded` or `unverified` with what would falsify each, open questions with 2 to 3 options and a recommendation); the writer locks it with the smallest-change plan (owner files, files deliberately not touched) before code and seeds the decision table's acceptance criteria from it. A locked card changes only through a `superseded` entry that names a source.
+- Fork checkpoint, off by default: `spec-card.mjs check` lists unanswered product-impacting questions as `wouldBlock` and changes nothing; `--checkpoint` or `VIBE_FORK_CHECKPOINT=1` turns them into `blocking`. Whether the pre-code question blocks by default is the owner's open decision.
+- File justification check: `spec-card.mjs budget` reports every changed file outside the plan as cited (a card criterion or a sourced requirement) or uncited. There is no size cap and it never blocks or removes a file; uncited files go to the writer and into the handoff.
+- `scripts/freshness.mjs`: prints the checkout path, HEAD and the freshly fetched `origin/main` SHA with ahead/behind counts before any claim about current code; a failed fetch leaves the SHA null and exits 1.
+- Handoff Assumptions line, generated from the card by `spec-card.mjs assumptions` and required by `live-ticket-check.mjs`.
+
+#### Changed
+- `criteria-audit.mjs` requires `--evidence`: each acceptance criterion needs a `MET` row of type `test`, `script`, `screenshot` or `api-read` with a ref; a missing, unfilled, `PARTIAL` or `MISSED` row blocks done, and a test ref must name a file that exists at HEAD.
+- No strict result vocabulary was added (ISS-13341 not built).
+
 ### vibe v1.1.13
 
 The startup version check and setup check work in the Codex app's default "Ask for approval" mode, and a release smoke now runs the real plugin build in a real Codex session before every vibe release (ISS-13315).

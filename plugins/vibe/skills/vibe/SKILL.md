@@ -502,7 +502,7 @@ and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
    and no record grants. Keep its brief internal; no upfront summary or plan approval.
    Keep its quoted acceptance criteria from the ticket and its PRD for the
    writer's first request (`references/quality-loop.md`, "Acceptance criteria
-   before ready"). When the source is a PRD, its existing children are the
+   before ready"), as the draft Spec Card (`references/spec-card.md`). When the source is a PRD, its existing children are the
    scope units: the requirements brief classifies every child before the
    session ticket exists, and the ticket worker claims or reports them
    (`vibe-ticket-worker.md`, create step 7).
@@ -739,7 +739,8 @@ evidence, never by replacing the writer.
    every saved reference image path. Never send your own description of an
    image in place of its path. It performs
    graph/owner prep and writes the canonical core-template plan locally.
-   It always creates or extends the one session decision table at
+   It locks the Spec Card before any code (`references/spec-card.md`). It
+   always creates or extends the one session decision table at
    `.closedloop-ai/decision-tables/<session-slug>.md` before any code, using
    the named core skill in quality-loop.md. Include its path and affected/
    interacting row IDs in every applicable worker brief. Later requests append
