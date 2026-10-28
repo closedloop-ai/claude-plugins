@@ -53,6 +53,18 @@ describe("production Claude CLI adapter", () => {
       expect(bound.agent.prompt).toContain("Never start another implementation writer, commit, or push.");
     }
   });
+  it("admits the environment handover action with one normal push through the repo's checks (ISS-13321)", () => {
+    const value = setup();
+    const item = { agentName: "vibe-environment-worker", mode: "record" as const,
+      recordAction: "handover" as const, exclusiveRecordTurn: true as const };
+    const capabilities = [...graph, recordWrite];
+    const prompt = boundDefinition(readDefinition(value.agentRoot, item.agentName, capabilities),
+      { worktree: value.worktree, agentRoot: value.agentRoot, requestId: "tooling-stop", input: "hand the work over",
+        timeoutMs: 1000, capabilities, ...item }).agent.prompt;
+    expect(prompt).toContain("Push only the current commit to the session's branch, once, through the repository's normal pre-push checks");
+    expect(prompt).not.toContain("owned main-sync publication gate");
+    expect(prompt).not.toContain("Never start another implementation writer, commit, or push.");
+  });
   it("admits the environment pull-request action with no record writes and the no-push footer", () => {
     const value = setup();
     const item = { agentName: "vibe-environment-worker", mode: "record" as const,

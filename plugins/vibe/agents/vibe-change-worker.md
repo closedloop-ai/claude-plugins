@@ -350,7 +350,10 @@ Throughout:
   main, reset binding or author tests in a record turn. Changed source
   invalidates proof.
 - `requiredE2eComplete: false` blocks final coverage/alignment/assignment,
-  not safe preview publication with its explicit preparation evidence.
+  not safe preview publication with its explicit preparation evidence. The
+  Desktop Electron lane never runs on a vibe machine: the executor returns it
+  under `e2eLeftForCi`, covered by the post-merge `desktop-e2e/validated`
+  run, and it does not hold `requiredE2eComplete` (ISS-13321).
 
 Compare actual source and behavior against the same session decision table's
 affected and interacting prior row IDs after implementation and every fix.

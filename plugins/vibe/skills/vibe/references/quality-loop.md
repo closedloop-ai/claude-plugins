@@ -956,9 +956,16 @@ writer judges it:
   session's own code as before. The receipt keeps all three runs.
 - `flaky`: it passes on the captured main and on that one rerun. It counts as
   passed, returned under `flakyChecks` with both session runs kept.
-- A check that cannot run on the captured main (no bootstrap, a failed or
-  timed out bootstrap, a time limit, a checked file main does not have) is
-  `session-caused`, the conservative reading, and blocks.
+- `machine-limited`: it ran out of its time limit on the session commit and
+  on the captured main alike. That is this machine's limit, not the session's
+  failure (ISS-13321): it is returned under `machineLimitedChecks`, blocks
+  neither publication nor assignment, and goes on the live ticket's
+  Engineering checklist (`ticket-template.md`, "Checks that ran out of
+  time") for a faster machine or CI to run.
+- Any other check that cannot run on the captured main (no bootstrap, a
+  failed or timed out bootstrap, a time limit on main only, a checked file
+  main does not have) is `session-caused`, the conservative reading, and
+  blocks.
 - Each `main-preexisting` failure goes once on the live ticket's Engineering
   checklist as a Known main failure (`ticket-template.md`, "Known main
   failures"). It is not a needed tooling fix (`guardrails.md`, "Plugins and

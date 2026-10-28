@@ -422,6 +422,14 @@ accepts caller PASS, trusts run.head_sha as tested source, stores raw secret
 logs or treats later spoofed stdout as proof. Missing evidence leaves
 `requiredE2eComplete: false`; final handoff remains incomplete. Do not re-fetch
 main repeatedly while CI waits. Changed source/new preparation invalidates proof.
+The Desktop Electron lane is the exception (ISS-13321): no vibe machine runs
+it, and since symphony-alpha's desktop-e2e job skips pull requests no run
+exists for a branch before merge. The executor returns it under
+`e2eLeftForCi`, covered by the post-merge desktop-e2e-validation run that
+publishes `desktop-e2e/validated`, and it does not hold
+`requiredE2eComplete`. The ticket's Engineering checklist carries it
+(`ticket-template.md`, "E2E left for CI"). An operator-dispatched run bound
+through `mainSyncCiRun` still verifies as above and replaces that entry.
 
 ### What the validation proof accepts
 

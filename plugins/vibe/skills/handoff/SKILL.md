@@ -274,7 +274,9 @@ The checklist stops immediately when `blocking.forbiddenPaths` is false
 (every `forbidden` or `outsideAllowed` path; only inventory-proven
 `shrinkOnlyAllowlists` entries are exempt) or `blocking.diffRulesClear` is
 false: each `diffRules` finding goes to the SAME writer, which fixes it or
-records the change log line it names.
+records the change log line it names. A finding's `fix` is written for the
+writer, never relayed to the person as a step
+(`../vibe/references/plain-words.md`, "What the person is asked to do").
 
 Keep the remaining checklist internal; never show the person a technical
 task list, upfront summary or plan to approve. Preserve
@@ -428,7 +430,14 @@ host adapter. Coverage on one host, a shared unit test or a mocked router
 leaves a named missing test for the uncovered host.
 No criterion or PLN task that depends on external work is complete until the
 deployed collector, selector, monitor or other dependency evidence is present.
-An explicitly missing dependency keeps final alignment open.
+An explicitly missing dependency keeps final alignment open, with one
+exception (ISS-13321): when the person chose passing it on, a criterion whose
+only gap is work another ticket owns (an API or data ticket that has not
+shipped) is marked `not met yet: waits on <ticket>`, and the table may then
+say `Final Alignment Status: Aligned except criteria waiting on <tickets>`.
+Each such criterion goes on the Engineering checklist (`../vibe/references/ticket-template.md`,
+"Criteria waiting on other work"), so the people who close the dependency
+receive the work. A requested pull request still needs every criterion met.
 
 Lighter: repo `review-soul` and `vibe-adversarial-reviewer`
 may review independently in parallel, read-only. Backend: named core
@@ -513,7 +522,11 @@ with handoff purpose and the whole session table: the same actor runs
 `main-sync-inputs` once, after the Root-owned committed merge/fix result, and
 its witness becomes that actor's `mainSyncValidation`. Its retained reports are
 never PASS; readiness is not test authority or completed coverage, and
-`requiredE2eComplete` must still be true before final coverage/assignment.
+`requiredE2eComplete` must still be true before final coverage/assignment. The
+Desktop Electron lane, which no vibe machine runs, comes back under
+`e2eLeftForCi` instead and does not hold it (ISS-13321): carry each entry to
+step 8's ticket worker for the Engineering checklist, covered by the post-merge
+`desktop-e2e/validated` run.
 
 Run `node ../vibe/scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"`
 again, then ROOT commits the staged merge and any subsequent reviewed fixes as one more
@@ -539,7 +552,9 @@ main"). A result that lists
 `mainPreexistingFailures` still has `publicationReady: true`: continue with the
 redeploy below, carry every entry to step 8's ticket worker as a Known main
 failure, never send it to the writer as a fix, never stop and never ask the
-person about it. A refusal whose error says `session-caused` (it passes on the
+person about it. `machineLimitedChecks` (a check that ran out of time on the
+session commit and on the captured main alike) are handled the same way, as
+checks that ran out of time on this machine (ISS-13321). A refusal whose error says `session-caused` (it passes on the
 captured main and failed again on a rerun, or it could not run on the captured
 main) blocks as before and goes back to the SAME writer to fix the session's
 own code. `flakyChecks` passed on their one rerun; they block nothing.
@@ -579,7 +594,8 @@ PASS or workflow main head_sha. Changed source invalidates proof and returns
 to this same writer's fresh preparation/correction flow. Keep whole-table
 tests/reviews and source-phase authority separate from the CI reader.
 Do not proceed to final assignment/alignment with `requiredE2eComplete: false`
-or any other required coverage gap, even when publicationReady is true.
+or any other required coverage gap, even when publicationReady is true. A
+Desktop lane under `e2eLeftForCi` is not such a gap.
 
 ## 8. Choose who picks it up, then check the ticket
 
@@ -683,14 +699,19 @@ For every handoff, read the Storybook package version on the final branch,
 list every other open pull request, and inspect the files and claimed
 Storybook version in each one. Record the version and matching pull request
 numbers, or `None`, in the live ticket and, when opening one, the pull request
-packet. A matching claim is coordination evidence to note, not permission to
-silently choose a different version.
+packet. A matching claim is coordination evidence to note, never a stop.
 Immediately before a requested pull request is created, repeat this check
-against the pinned pull request base. Compare its release history entry,
-package version and component and story counts with the branch, then inspect
-every in-flight train pull request for a reserved next version and counts.
-Any stale base, duplicate reservation or inconsistent count returns to the
-same writer and blocks creation.
+against the pinned pull request base: the branch's bump and its one release
+history entry must be correct relative to that base, and the component and
+story counts must match the branch. A wrong bump or count returns to the same
+writer, and every in-flight train pull request is inspected for its
+reserved version. Main moving on after the pin is not a stale base, and the one main
+merge after QA that `../fleet-orchestrator/scripts/qa-merge-order.mjs`
+permits is enough: never sync main again only to chase a newer Storybook
+release. A version another open pull request already reserves does not block
+creation either; the merge queue settles it. Take the next free version, say
+so in the pull request packet with the reserving pull request's number, and
+go on (ISS-13321).
 
 On a requested pull request (step 0), skip the question and the lookup: the
 next owner is the session's operator, the person who ran it, and the ticket
@@ -794,10 +815,15 @@ and gates fields. It opens the pull request on the already pushed branch,
 blocked until the inventory's `blocking.prBody` and `blocking.prEvidence` and
 `../vibe/scripts/pre-pr-lanes.mjs check` pass
 (`NEEDS_CHANGE`: runs to the verify worker, the rest to the SAME writer), and
-returns its URL; it never enqueues or merges it. On `BLOCKED`, tell the
+returns its URL; it never enqueues or merges it. On `BLOCKED`, record the
+reason on the Engineering checklist as a vibe tooling stop does
+(`../vibe/references/guardrails.md`, "Plugins and tooling"), tell the
 person in one plain line that the pull request could not be opened and
 suggest they message engineering, naming this work by its summary; never give them the
-branch to merge instead. Then mark the session handed off as below.
+branch to merge instead. The branch is already pushed, so offer the same one
+plain choice to pass it to someone now; when they name someone, run step 8's
+lookup and assign mode as for passing it on (ISS-13321). Then mark the
+session handed off as below.
 After it returns the URL, have the ticket worker attach it to every PRD child
 in review. In Codex, arm the core `$gh-monitor-pr` on it when already set up,
 never asking for a restart.

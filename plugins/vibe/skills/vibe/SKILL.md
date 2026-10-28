@@ -277,7 +277,12 @@ no PR itself, and never offers to send the person the branch to merge. Never ask
 person about tests or any other engineering choice: those rules decide it, or
 it goes to engineering. Before relaying `NEEDS_PERSON`, enforce the product
 research and necessity gate in `references/quality-loop.md`; technical choices
-stay with the workers.
+stay with the workers. A `NEEDS_PERSON` or `BLOCKED` result, a check's
+suggested fix and a stop's reason never reach the person as something to do
+unless only a human can do it (a click, a sign-in, a choice between endings,
+a product answer); any other remedy is the writer's, or engineering's on the
+live ticket's Engineering checklist (`references/plain-words.md`, "What the
+person is asked to do").
 
 ## 1. Preflight
 

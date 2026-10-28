@@ -87,6 +87,15 @@ script or workflow reruns in its job's shape from
 failure, refresh the inventory and rerun only that failed case and any target
 the fix newly reaches, never the whole set. Record every result and SHA. Carry
 an earlier pass only when its covered-file hashes match final HEAD.
+A selected test or lane that fails at final HEAD is run once more, the same
+command, in a checkout of the main the session captured (the main-sync
+`mainSha`; for a lane, `../skills/vibe/scripts/pre-pr-lanes.mjs run
+--main-worktree <that checkout> --main-sha <mainSha>`). When it fails there
+too, record it `status: "main-preexisting"` with that `mainSha`: it does not
+block the pull request, and the body lists it under Known main failures
+(ISS-13321). One that passes on main stays a failure for the writer. A
+Desktop e2e lane `pre-pr-lanes.mjs check` recorded `not-run` is copied into
+`testRuns` the same way, with its `reason`.
 
 For targeted E2E, record the repository's capability probe and choose:
 
@@ -234,8 +243,11 @@ Missing stories/catalog fixes go to the sole writer, never this helper.
 Immediately before pull request creation, rerun footprint mode against the
 pinned pull request base. Compare release history, package version and
 component and story counts, then inspect every in-flight Storybook train pull
-request for its reserved version and counts. A duplicate reservation, stale
-base or count mismatch is blocking evidence, not an advisory.
+request for its reserved version and counts. A wrong bump relative to the
+pinned base or a count mismatch is blocking evidence, not an advisory. A
+version another open pull request reserves, and main moving on after the
+pin, are reported for the packet and never block: the next free version is
+taken and named there (ISS-13321).
 
 Design Review needs actual command/report evidence, pinned baseline/current
 commits and unresolved footprint/catalog advisories. Match added/changed/removed

@@ -618,7 +618,7 @@ function checkRestoredRemovalsDeepening(files, allFiles, repo, changeLog, add) {
     }
   }
   if (failure !== null) {
-    collect("restored-removal", files[0].path, 1, `the clone is shallow and deepening it failed (${failure}), so a removal older than its shallow boundary is invisible to this check`, "fix the fetch (network, remote or credentials) and rerun, or run `git fetch --unshallow` yourself");
+    collect("restored-removal", files[0].path, 1, `the clone is shallow and deepening it failed (${failure}), so a removal older than its shallow boundary is invisible to this check`, "for the writer: fix the fetch (network, remote or credentials) and rerun, or run `git fetch --unshallow` in the worktree; never a step for the person");
   }
   findings.forEach((finding) => add(...finding));
 }

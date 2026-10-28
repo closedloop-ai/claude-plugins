@@ -12,7 +12,7 @@ import { readDefinition } from "./definition.js";
 import { acquireRecordTurnAt, attachClaudeProcess, changeWriter, markClaudeStarted, readWriterSummary, recordedWriterRoot,
   registerWriter } from "./ledger.js";
 import { AgentRootError, installedPluginRoot, resolveAgentRoot } from "./plugin-root.js";
-import { isPublisherContext, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
+import { isHandoverContext, isPublisherContext, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
 import type { OperationContext } from "./main-sync-contracts.js";
 import { deriveValidationEnvelope } from "./main-sync-validation-envelope.js";
@@ -94,9 +94,7 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
     : `This is mode ${input.mode}. Never write or edit tests. `;
   const prompt = `${definition.prompt}\n\nRuntime binding: work only in ${input.worktree}. `
     + `Resolve this canonical definition's relative resource references against ${join(definition.root, "agents")}. `
-    + (isPublisherContext(input)
-      ? "Never start another implementation writer or commit. Normal pushes are permitted only through the owned main-sync publication gate. "
-      : "Never start another implementation writer, commit, or push. ") + phasePolicy
+    + pushPolicy(input) + phasePolicy
     + (reader ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : "")
     + (input.agentName === "vibe-prototype-worker"
       ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "")
@@ -108,6 +106,17 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
   const agent = { description: definition.metadata.description, prompt, model: definition.metadata.model, tools,
     ...(definition.skills.length ? { skills: definition.skills } : {}) };
   return { agent, reader, tools };
+}
+
+function pushPolicy(input: LaunchInput) {
+  if (isPublisherContext(input)) {
+    return "Never start another implementation writer or commit. Normal pushes are permitted only through the owned main-sync publication gate. ";
+  }
+  if (isHandoverContext(input)) {
+    return "Never start another implementation writer or commit. Push only the current commit to the session's branch, once, "
+      + "through the repository's normal pre-push checks; never forced or with checks skipped. ";
+  }
+  return "Never start another implementation writer, commit, or push. ";
 }
 
 /** Launches the canonical scoped agent directly; the registered writer resumes its original context. */

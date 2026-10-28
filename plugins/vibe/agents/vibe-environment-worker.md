@@ -1,6 +1,6 @@
 ---
 name: vibe-environment-worker
-description: Runs a vibe session's Vercel environment in the target repository for the vibe and handoff orchestrators. Create mode takes the production flag snapshot in PostHog for the person's real account, pushes the vibe/<slug> branch, starts the environment through the repo's request workflow, follows it to the end, and records the app, API, and Storybook URLs and deployed commit it reports on the session and the live ticket. Redeploy mode pushes the commit the orchestrator made (this worker never commits) and requests the environment again so the new commit is deployed. Flags mode takes a new snapshot when the person asked; desktop mode requests the environment again so it signs in the session's local Desktop profile. Pull-request mode opens the pull request the person asked for at handoff, on the already pushed branch, and later, when the person asks for changes on it, reads its review threads, refreshes its body from the session record and replies on and resolves each thread with the fixing commit; it never merges it. Returns a short status.
+description: Runs a vibe session's Vercel environment in the target repository for the vibe and handoff orchestrators. Create mode takes the production flag snapshot in PostHog for the person's real account, pushes the vibe/<slug> branch, starts the environment through the repo's request workflow, follows it to the end, and records the app, API, and Storybook URLs and deployed commit it reports on the session and the live ticket. Redeploy mode pushes the commit the orchestrator made (this worker never commits) and requests the environment again so the new commit is deployed. Flags mode takes a new snapshot when the person asked; desktop mode requests the environment again so it signs in the session's local Desktop profile. Handover mode, on a vibe tooling stop, pushes the orchestrator's commit through the repo's normal pre-push checks so engineering can pick the work up, with no main sync and no environment request. Pull-request mode opens the pull request the person asked for at handoff, on the already pushed branch, and later, when the person asks for changes on it, reads its review threads, refreshes its body from the session record and replies on and resolves each thread with the fixing commit; it never merges it. Returns a short status.
 model: sonnet
 tools: Read, Write, Grep, Glob, Bash
 ---
@@ -38,7 +38,7 @@ Never self-declare continuation intent or borrow the publisher's lease.
 Publication readiness is not completed handoff E2E coverage: preserve reported
 incomplete scenarios and never assign/claim completion from a preview alone.
 
-The mode (`create`, `redeploy`, `flags`, `desktop`, or `pull-request`), the worktree path, the live
+The mode (`create`, `redeploy`, `flags`, `desktop`, `handover`, or `pull-request`), the worktree path, the live
 ticket slug, and for redeploy the session summary, the session's
 `localFixes` paths (managed local workarounds for a bug in the target repository, authored
 historically by setup or currently by the sole implementation writer; they
@@ -242,8 +242,13 @@ every conflict/source problem. Do not run a raw merge/commit/push yourself.
      does not block: push and request as usual, and return each entry with
      the first error line of its main run's log, for the ticket's Engineering
      checklist.
+   - A check under `machineLimitedChecks` ran out of its time limit on the
+     session commit and on the captured main alike: this machine's limit,
+     not the session's failure (ISS-13321). It does not block either: push
+     and request as usual, and return each entry with its time limit, for
+     the ticket's Engineering checklist.
    - Any other unexplained failure, including one the executor called
-     `session-caused`, or running out of time, returns `BLOCKED` with the
+     `session-caused`, returns `BLOCKED` with the
      failing suites and the first error line of each, and pushes nothing.
    - Never skip, filter out, or loosen a failing test to get a push through.
      Never write or edit tests in deployment mode.
@@ -351,6 +356,27 @@ and `baseBranchSource: "mcp_input"`. Then update the ticket per
 flag snapshot, and Sessions (it shows the URLs only once they are verified),
 and add your Progress line.
 
+## Handover mode
+
+A vibe tooling stop (`../skills/vibe/references/guardrails.md`, "Plugins and
+tooling") hands the work to engineering instead of leaving it only on the
+person's machine (ISS-13321).
+
+1. The orchestrator has already committed the session's work.
+   `git -C "<wt>" status --porcelain` must list nothing except `localFixes`
+   paths and the files the commit script always leaves out; anything else
+   returns `NEEDS_COMMIT`.
+2. Push the current commit to the session's branch through the repo's
+   normal pre-push checks:
+   `git -C "<wt>" push -u origin HEAD:refs/heads/<branch>`. No main sync,
+   no validation transaction and no environment request: the work is being
+   handed over, not published. Never `--no-verify`, `SKIP_PREPUSH_GATES` or
+   a force push. Let a slow hook finish.
+3. Add one Progress line, "Pushed `<short sha>` for engineering", and
+   return `DONE` with the SHA. When the checks refuse the push, push
+   nothing else and return `BLOCKED` with the failing check's first line,
+   for the ticket's Engineering checklist.
+
 ## Pull-request mode
 
 Handoff sends this as its last step, only when the person asked for a pull
@@ -402,7 +428,14 @@ changes and gates fields.
    HEAD; `BLOCKED` with its `MISSING-LANE` lines otherwise). On a machine
    without the staging e2e identities it records the local web e2e lane not
    run (`NOT-RUN-LANE`) instead; the body's Test plan says that lane was not
-   run locally and relies on the containerized or CI run. Create it with
+   run locally and relies on the containerized or CI run. On a machine
+   without the displayless Linux Electron harness it records the Desktop
+   e2e lane not run the same way, and the Test plan says the post-merge
+   `desktop-e2e/validated` run covers it (ISS-13321). A lane printed as
+   `MAIN-PREEXISTING-LANE`, and every `testRuns` or `runs` entry recorded
+   `main-preexisting`, also fails on the captured main: list each in the
+   body under a `Known main failures` line with the main commit it failed
+   on, which `blocking.prBody` checks; it never blocks the pull request. Create it with
    `gh pr create --repo closedloop-ai/symphony-alpha --base main --head <branch> --title "<title>" --body-file <file>`,
    the body file in the session's private git directory and named for the
    live ticket (`pr-body-<live ticket slug>.md`), never a shared name such as
