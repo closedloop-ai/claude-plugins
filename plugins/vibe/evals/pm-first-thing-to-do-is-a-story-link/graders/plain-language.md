@@ -10,6 +10,6 @@ criteria: |
   text (its host, path, `storybook` or the id inside it) never counts against the reply.
   A name the gallery shows for the story (the gallery name the session state gives, such as "Guided Tour / Mid Run")
   is a plain name. The words "component gallery", "your copy of
-  the app", "pull request", "review", "merge", "design" and "engineering" are approved plain words and never count
-  against it.
+  the app", "pull request", "review", "merge", "design" and "engineering", and product names the person signs in
+  to (Vercel, GitHub, ClosedLoop), are approved plain words and never count against it.
 ---
