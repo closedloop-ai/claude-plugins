@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { endSession, initializeSession, startThread, startTurn } from './native-app-server-orchestrator.mjs';
-import { FLEET_SECTION_NAME } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
+import { FLEET_SECTION_NAME, WORKER_THREAD_SOURCE } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
 
 class FakeClient {
   constructor(handler) {
@@ -95,6 +95,7 @@ test('thread-start names a new thread and moves it into Fleet workers right afte
   assert.deepEqual(client.calls.map((call) => call.method), [
     'thread/list', 'thread/start', 'thread/name/set', 'threadSection/list', 'threadSection/create', 'thread/section/move',
   ]);
+  assert.equal(client.calls[1].params.threadSource, WORKER_THREAD_SOURCE);
   assert.deepEqual(client.calls[2].params, { threadId: 'thread-1', name: 'cl-sweep · ISS-7' });
   assert.deepEqual(client.calls[5].params, { threadId: 'thread-1', sectionId: 'section-1' });
 });
@@ -158,6 +159,7 @@ test('a turn on an ended worker unarchives its thread before resuming it', async
   });
   const started = await startTurn({ stateFile, prompt: 'follow-up' }, { client, ...initialized, ...liveRead(root, 'idle') });
   assert.equal(started.turnId, 'turn-2');
+  assert.ok(client.calls.every((call) => call.params?.threadSource === undefined), 'resume and turn never resend the marker');
   const methods = client.calls.map((call) => call.method);
   assert.ok(methods.indexOf('thread/unarchive') >= 0 && methods.indexOf('thread/unarchive') < methods.indexOf('thread/resume'), methods.join());
   const saved = JSON.parse(readFileSync(stateFile, 'utf8'));

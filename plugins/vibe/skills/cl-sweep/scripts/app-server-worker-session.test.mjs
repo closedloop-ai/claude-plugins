@@ -343,6 +343,10 @@ test('new ticket sessions default to gpt-6-sol at high effort and capture a sync
   assert.deepEqual(methods.slice(methods.indexOf('thread/start'), methods.indexOf('thread/start') + 5),
     ['thread/start', 'thread/name/set', 'threadSection/list', 'threadSection/create', 'thread/section/move']);
   assert.deepEqual(client.requests.find(({ method }) => method === 'thread/name/set').params, { threadId: 'worker-thread', name: 'cl-sweep · ISS-1' });
+  // The worker thread carries the hidden marker; nothing sent to the parent (orchestrator) thread does.
+  assert.equal(threadStart.params.threadSource, 'chatgpt_hidden');
+  assert.ok(client.requests.filter(({ method }) => method === 'thread/start').length === 1);
+  assert.ok(client.requests.every(({ method, params }) => method === 'thread/start' || params?.threadSource === undefined));
   const start = client.requests.find(({ method, params }) => method === 'turn/start' && params.threadId === 'worker-thread');
   assert.equal(start.params.model, REQUIRED_WORKER_MODEL);
   assert.equal(start.params.effort, 'high');

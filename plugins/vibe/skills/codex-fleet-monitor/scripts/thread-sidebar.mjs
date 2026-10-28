@@ -7,6 +7,12 @@
 import { readThreadState } from './liveness.mjs';
 
 export const FLEET_SECTION_NAME = 'Fleet workers';
+// Sent on thread/start for every worker thread, never for the orchestrator's own thread (operator ruling,
+// 2026-10-28). The Codex app leaves a thread with this source out of its sidebar, but thread/list does not
+// return the field (0.163 to 0.165): tested, a marked worker is hidden on the app's first launch and listed
+// again after the app restarts. Workers should drop out for good once a server returns it. The CLI and the
+// App Server never read it, so workers stay listed and resumable there.
+export const WORKER_THREAD_SOURCE = 'chatgpt_hidden';
 export const END_REASONS = Object.freeze(['stopped', 'merged']);
 
 /** `<writer> · <ticket>`, or the writer alone when there is no ticket (a single-use run). */

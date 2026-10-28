@@ -27,7 +27,7 @@ import {
 } from './core-client-process.mjs';
 import { LEGACY_UNVERSIONED_MODEL, MECHANICAL_SUPPORT_MODEL, TICKET_OWNER_MODEL } from './model-policy.mjs';
 import {
-  archiveEndedWorker, assertWorkerNotLive, END_REASONS, endRecord, labelWorkerThread,
+  archiveEndedWorker, assertWorkerNotLive, END_REASONS, endRecord, labelWorkerThread, WORKER_THREAD_SOURCE,
 } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
 
 export const SESSION_SCHEMA = 'APP_SERVER_ORCHESTRATOR_SESSION v1';
@@ -545,6 +545,7 @@ export async function ensureDurableThread(client, session, persist, dependencies
     const result = await client.request('thread/start', {
       cwd: session.cwd,
       ...threadOptions(session),
+      threadSource: WORKER_THREAD_SOURCE,
     });
     const threadId = result?.thread?.id;
     if (!threadId) fail('App Server did not return a worker thread id');

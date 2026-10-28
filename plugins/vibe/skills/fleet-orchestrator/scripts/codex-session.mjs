@@ -19,7 +19,8 @@ import {
   connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint, summarize,
 } from '../../codex-fleet-monitor/scripts/liveness.mjs';
 import {
-  archiveEndedWorker, assertWorkerNotLive, END_REASONS, endRecord, labelWorkerThread, workerThreadName,
+  archiveEndedWorker, assertWorkerNotLive, END_REASONS, endRecord, labelWorkerThread, WORKER_THREAD_SOURCE,
+  workerThreadName,
 } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
 
 const COMMANDS = new Set(['turn', 'steer', 'last', 'end']);
@@ -170,7 +171,7 @@ export async function startTurn(client, state, prompt, promptFile, { name, warn 
     if (archivedAt) await client.request('thread/unarchive', { threadId });
     await client.request('thread/resume', { threadId, ...threadOptions });
   } else {
-    const started = await client.request('thread/start', threadOptions);
+    const started = await client.request('thread/start', { ...threadOptions, threadSource: WORKER_THREAD_SOURCE });
     threadId = started?.thread?.id;
     if (!threadId) throw new Error('App Server returned no thread id');
     for (const warning of await labelWorkerThread(client, threadId, workerThreadName(name, state.ticket))) warn(warning);

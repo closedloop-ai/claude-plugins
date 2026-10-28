@@ -5,13 +5,15 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 // ISS-13279: every session a plugin script starts becomes a chat in the person's desktop app sidebar. A Codex
-// thread/start gets a name and the Fleet workers section; a headless Claude run gets a name, or saves no session.
+// thread/start gets a name, the Fleet workers section and the hidden marker; a headless Claude run gets a name,
+// or saves no session.
 const ROOT = fileURLToPath(new URL('../../../../../', import.meta.url));
 const SOURCE = /\.(?:mjs|cjs|js|ts)$/;
 const SKIPPED = /(?:\.test\.|\.black-box\.|test-fixtures|test-support|\/dist\/|\/node_modules\/|\/evals\/)/;
 const THREAD_START = /['"]thread\/start['"]/;
 const CLAUDE_PRINT = /['"](?:-p|--print)['"]/;
 const CLAUDE_BINARY = /['"]claude['"]|CLAUDE_BIN|\bclaude\s*=/;
+const WORKER_SOURCE_SENT = /threadSource:\s*WORKER_THREAD_SOURCE\b/;
 const SESSION_TITLE = /['"]--(?:name|no-session-persistence)['"]/;
 
 function sources(dir) {
@@ -37,6 +39,9 @@ function unlabeledSpawns(files) {
     const text = readFileSync(file, 'utf8');
     if (THREAD_START.test(text) && !text.includes('labelWorkerThread')) {
       found.push(`${relative(ROOT, file)}: thread/start without labelWorkerThread (thread-sidebar.mjs)`);
+    }
+    if (THREAD_START.test(text) && !WORKER_SOURCE_SENT.test(text)) {
+      found.push(`${relative(ROOT, file)}: thread/start without threadSource WORKER_THREAD_SOURCE (thread-sidebar.mjs)`);
     }
     if (CLAUDE_PRINT.test(text) && CLAUDE_BINARY.test(text) && !SESSION_TITLE.test(text)) {
       found.push(`${relative(ROOT, file)}: headless claude run without --name or --no-session-persistence`);

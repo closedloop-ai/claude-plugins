@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import {
   lastMessages, loadState, nextState, ORCHESTRATOR_PROVENANCE, parseCli, run, saveState,
 } from './codex-session.mjs';
-import { FLEET_SECTION_NAME } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
+import { FLEET_SECTION_NAME, WORKER_THREAD_SOURCE } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
 
 // A writer recorded its parent orchestrator's capacity stop as a human ruling (2026-10-26); every turn and steer
 // this client sends says who it is from.
@@ -111,7 +111,7 @@ test('turn on a new session starts a thread, names it, moves it into Fleet worke
   const line = await run(client, parseCli(['turn', dir, 'w1', '--prompt-file', promptFile, '--cwd', '/wt', '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high']));
   assert.equal(line, 'w1 turn T1 U1');
   assert.deepEqual(client.calls, [
-    { method: 'thread/start', params: { cwd: '/wt', model: 'm', approvalPolicy: 'never' } },
+    { method: 'thread/start', params: { cwd: '/wt', model: 'm', approvalPolicy: 'never', threadSource: WORKER_THREAD_SOURCE } },
     { method: 'thread/name/set', params: { threadId: 'T1', name: 'w1 · ISS-1' } },
     { method: 'threadSection/list', params: {} },
     { method: 'threadSection/create', params: { name: FLEET_SECTION_NAME } },
@@ -248,6 +248,19 @@ test('a resumed session is never renamed or moved', async () => {
   const client = stubClient({ ...SIDEBAR, 'thread/resume': {}, 'turn/start': { turn: { id: 'U2' } } });
   await run(client, parseCli(['turn', dir, 'w1', '--prompt-file', promptFile]));
   assert.deepEqual(client.calls.map((call) => call.method), ['thread/resume', 'turn/start']);
+});
+
+// The marker goes on the worker's thread/start only. The orchestrator's own thread is never started here, and a
+// flagged worker resumes and takes turns like any other thread (verified against App Server 0.163 to 0.165).
+test('only a new worker thread carries the hidden marker; resume and turns on a flagged worker are unchanged', async () => {
+  const { dir, promptFile } = workDir();
+  const client = stubClient({ ...SIDEBAR, 'thread/start': { thread: { id: 'T1' } }, 'thread/resume': {}, 'turn/start': { turn: { id: 'U1' } } });
+  await run(client, parseCli(['turn', dir, 'w1', '--prompt-file', promptFile, '--cwd', '/wt', '--model', 'm', '--effort', 'high']));
+  await run(client, parseCli(['turn', dir, 'w1', '--prompt-file', promptFile]));
+  const flagged = client.calls.filter((call) => call.params?.threadSource !== undefined);
+  assert.deepEqual(flagged.map((call) => [call.method, call.params.threadSource]), [['thread/start', WORKER_THREAD_SOURCE]]);
+  assert.deepEqual(client.calls.slice(-2).map((call) => call.method), ['thread/resume', 'turn/start']);
+  assert.equal(loadState(dir, 'w1').turns.length, 2);
 });
 
 /** A thread whose newest turn has `status`, read the way liveness.mjs reads it. */
