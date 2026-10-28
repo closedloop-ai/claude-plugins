@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.2
+### vibe v1.1.5
 
 A vibe user on Codex could not follow the setup step "connect the ClosedLoop connector in Codex Settings: open Settings and click Connect", which named no section or label (ISS-13258). Restoring a connection, signing in to GitHub and running a command the Codex sandbox refuses are now steps the agent runs; the person only signs in in the browser, clicks Allow once when Codex asks, and starts a new chat only when the connection still fails in the current one.
 
@@ -19,7 +19,17 @@ A vibe user on Codex could not follow the setup step "connect the ClosedLoop con
 - `preflight.md`, "Signing in to GitHub": the worker runs `gh auth login --hostname github.com --git-protocol https --web` in the background, which opens no browser without a terminal, opens `https://github.com/login/device` itself, gives the person the one-time code, then checks `gh auth status` and runs `gh auth setup-git`. The `gh-auth-login` preflight row points there.
 - The vibe orchestrator dispatches the setup worker when either connection does not answer, instead of telling the person to open Settings. The setup worker no longer asks the person to quit and reopen the ChatGPT app for closedloop-graph.
 - The folder access step names the macOS labels: System Settings, Privacy & Security, Files & Folders, under ChatGPT. `INSTALL.md` says to click Plugins and New chat in the sidebar, and says what `codex mcp list` must show for closedloop-graph.
-- Coverage: `test_vibe_connection_restore_contract.py` (13 cases, 10 fail on 1.1.1) pins the procedures, refuses any vibe or fleet-orchestrator instruction naming the app's Settings or "click Connect", and refuses a person line that sends the person to the Terminal app for anything but the Claude sign-in. Two new `plugin-version.test.mjs` cases cover the setup check block. New evals `exec-closedloop-sign-in-ran-out-mid-chat-new-chat`, `exec-closedloop-signed-in-again-keeps-chat`, `exec-sandbox-blocked-sign-in-asks-allow-once`, `exec-github-sign-in-run-for-the-person` and `exec-setup-check-block-first-reply` join `exec-closedloop-connection-lost-no-settings`; the Codex runner now has 93 cases.
+- Coverage: `test_vibe_connection_restore_contract.py` (13 cases, 10 fail on 1.1.4) pins the procedures, refuses any vibe or fleet-orchestrator instruction naming the app's Settings or "click Connect", and refuses a person line that sends the person to the Terminal app for anything but the Claude sign-in. Two new `plugin-version.test.mjs` cases cover the setup check block. New evals `exec-closedloop-sign-in-ran-out-mid-chat-new-chat`, `exec-closedloop-signed-in-again-keeps-chat`, `exec-sandbox-blocked-sign-in-asks-allow-once`, `exec-github-sign-in-run-for-the-person` and `exec-setup-check-block-first-reply` join `exec-closedloop-connection-lost-no-settings`; the Codex runner now has 93 cases.
+
+### vibe v1.1.4
+
+The plugin README now says what vibe is, who it is for (executives, designers, product managers and engineers) and what a session looks like before the reference material (ISS-13281). No skill or agent behavior changes.
+
+#### Changed
+- `plugins/vibe/README.md` opens with what vibe does and how each of its users works with it, walks through a session end to end (a designer's reference or look changes, and the pull request an engineer or anyone else takes through review), then lists the guarantees behind the result, the other skills, and the reference sections (installation, invocation names, agents, evals, runtime files). The scattered ruling dates are gone, apart from the Storybook `Start Here/` ruling a contract test pins.
+- The agents table no longer credits `vibe-requirements-worker` with "help-center precedent research": precedent is live Asana observed in the operator's signed-in browser, and reference mode is listed separately. The README's notice text no longer says reference mode reads a product's public documentation.
+- The main-sync validation proof rules that only the README stated (the `.biome-noscan.jsonc` byte match, package proof digests, report admission and the 4,096 context ceiling, and what never counts as coverage proof) moved to `skills/vibe/references/environment.md`, "What the validation proof accepts".
+- `test_vibe_storybook_fixtures_names_contract.py` drops its 1.1.1 release-number pin.
 
 ### vibe v1.1.1
 

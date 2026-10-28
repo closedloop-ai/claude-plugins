@@ -423,6 +423,38 @@ logs or treats later spoofed stdout as proof. Missing evidence leaves
 `requiredE2eComplete: false`; final handoff remains incomplete. Do not re-fetch
 main repeatedly while CI waits. Changed source/new preparation invalidates proof.
 
+### What the validation proof accepts
+
+The shared main-sync executor (`scripts/dist/main-sync.mjs`) enforces these;
+none of them is a step a worker takes by hand.
+
+- Imported main changes stay distinct from feature scope, while original
+  feature test history remains available for phase verification even after
+  main absorbs identical bytes.
+- The existing ignored root `.biome-noscan.jsonc` is recognized only when its
+  bytes match the reviewed canonical pure producer applied to the complete
+  committed config. Modified, stale or deceptive derivatives and unrelated
+  executable overlays still block; the gate never invokes the writing hook.
+- Source-owned input readiness preserves canonical unconsumed private
+  diagnostics and retained reports without accepting their contents as
+  coverage. Known generated dependencies need complete pure or pristine owner
+  verification before execution; unknown extras, edited bodies, producer drift
+  and aliases remain blocked.
+- Selected package proofs use bounded deduplicated names and full
+  byte/mode/set digests in the existing private receipt.
+- Report admission follows actual selected entries, tasks, configs and
+  producer inputs. Selected module coverage follows the finite committed tree;
+  the existing 4,096 ceiling bounds distinct cwd/argv contexts rather than
+  source file count. Data imports use the same path predicate as the shared
+  code/config parser; retained-report references and global private planning
+  protection remain enforced.
+- An unrelated capable reader is not selected consumption. Ordinary bootstrap
+  health cannot mint validation proof. Meaningful retained report data,
+  default verdicts and replay still block, while proven same-call test
+  fixtures remain nonretained inputs and never stand in for required coverage.
+- Workflow main SHA, generic log matches and caller PASS are not coverage
+  proof.
+
 ## When it fails
 
 - A request or environment run fails: the worker reads the failed step's log
