@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### vibe v1.1.14
 
-The handoff `frozen-render` gate could never clear when main's own render of a frozen story varied between runs (ISS-13317): Kaiti Carpenter's session saw the guided tour story render eight different ways in eight base captures, and `frozen-render.mjs` accepted only byte-identical renders or identical failures. Its printed line also counted stories while the gate counted story files, so on any story file with more than one story the line never matched.
+The handoff `frozen-render` gate could never clear when main's own render of a frozen story varied between runs (ISS-13317): a product manager's session saw the guided tour story render eight different ways in eight base captures, and `frozen-render.mjs` accepted only byte-identical renders or identical failures. Its printed line also counted stories while the gate counted story files, so on any story file with more than one story the line never matched.
 
 #### Fixed
 - `handoff/scripts/frozen-render.mjs` renders every story twice on the base and once on the branch. A story whose two base renders differ is `unstable-on-base`: it does not block, is not compared with the branch by pixels, and gets a cropped diff of the two base renders; the branch's play outcome must still match a base one. A story that fails on the base and fails the same way on the branch (same verdict and error text) is `same-failure` and does not block. A changed stable render, a play that passes on the base and fails on the branch, a changed failure, or a play outcome the base never had is `blocking`, with a cropped diff when the pixels differ.

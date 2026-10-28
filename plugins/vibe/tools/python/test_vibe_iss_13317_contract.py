@@ -1,6 +1,6 @@
 """Contract checks for ISS-13317: the frozen-render gate is settled only by the shipped command.
 
-Kaiti Carpenter's session could never clear `frozen-render`: main's own render of a story varied between
+A product manager's session could never clear `frozen-render`: main's own render of a story varied between
 runs and vibe shipped no deterministic capture, so the session wrote its own loop. The command now renders
 the base twice, pins its inputs and prints the only line the gate accepts; every instruction points at it.
 """
