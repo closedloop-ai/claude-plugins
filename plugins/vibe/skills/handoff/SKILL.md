@@ -278,7 +278,9 @@ records the change log line it names. A `frozen-render` finding is settled
 only by `scripts/frozen-render.mjs`, run in step 4 by
 `vibe-storybook-decomposer`: the writer records the `Frozen render
 unchanged` line that command prints, and nobody captures frozen stories any
-other way. A finding's `fix` is written for the writer, never relayed to the
+other way. The line names the session files it rendered and counts only while
+they are unchanged: after any later change, a fix or a main merge included,
+the command runs again (ISS-13321). A finding's `fix` is written for the writer, never relayed to the
 person as a step (`../vibe/references/plain-words.md`, "What the person is
 asked to do").
 

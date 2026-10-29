@@ -17,6 +17,7 @@ import { sharedComponentTests } from "./shared-consumers.mjs";
 import { checkSpecChanges } from "./spec-rules.mjs";
 import { routeSpecs } from "./route-specs.mjs";
 import { escapeRegExp, IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
+import { frozenInputs } from "./frozen-render.mjs";
 import { checkStorybookRules, storybookRuleTests } from "./storybook-rules.mjs";
 import { isUnversionedStory, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 import { isVisualBaseline, visualBaselineLedgerProblems } from "./visual-baseline-ledger.mjs";
@@ -56,6 +57,8 @@ const STORY_TITLE = /\btitle:\s*["'`]([^"'`]+)["'`]/;
 const FROZEN_CANDIDATE = String.raw`v1\.0|deprecated`;
 const CLOSURE_LIMIT = 20000;
 const STORY_ID_PATHSPECS = [...E2E_ROOT_PATHSPECS, "docs/", "apps/web/content/docs/", ".claude/", "*.test.*", "*.spec.*", "*.stories.*"];
+const FROZEN_LINE_BASE = /: frozen-render\.mjs --base (\S+)/;
+const FROZEN_LINE_INPUTS = /; inputs ([0-9a-f]{16});/;
 const UNEDITABLE_REFERENCE = /^(?:docs\/|apps\/web\/content\/docs\/|\.claude\/)/;
 const FORBIDDEN_REFERENCE = /^(?:AGENTS|CLAUDE|AGENTS\.override)\.md$/;
 const STORY_ID_WORD = /[A-Z]{2,}(?=[A-Z][a-z]|\b|\d)|[A-Z]?[a-z]+|[A-Z]|\d+/g;
@@ -168,7 +171,7 @@ export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
   checkDesktopLane(live, repo, logged, add);
   checkTicketedComments(files, repo, logged, add);
   checkStories(live, files, repo, logged, add);
-  checkFrozenRenders(files, repo, logged, add);
+  checkFrozenRenders(files, repo, changeLog, add);
   checkLostStoryIds(files, repo, logged, add);
   checkCopyProvenance(live, files, repo, logged, add);
   checkNewControls(live, files, changeLog, add);
@@ -488,7 +491,7 @@ function checkStories(files, allFiles, repo, logged, add) {
  * evidence; a byte-identical story file is not enough. Edits to the story file
  * itself are the inventory's `v1Stories` and `compileOnlyV1Repairs`.
  */
-function checkFrozenRenders(files, repo, logged, add) {
+function checkFrozenRenders(files, repo, changeLog, add) {
   const changed = new Set(files.flatMap((file) => [file.path, file.oldPath].filter(Boolean)));
   const stories = repo.frozenStories();
   if (stories.length === 0) {
@@ -521,9 +524,18 @@ function checkFrozenRenders(files, repo, logged, add) {
     return [...seen].some((file) => file !== story && changed.has(file));
   });
   // Only the shipped driver's line counts; a hand-rolled capture skipped real play completion (ISS-13291).
-  // It counts story files, as `affected` does; their stories follow in parentheses (ISS-13317).
-  if (affected.length && !logged(`Frozen render unchanged: all ${affected.length} story files (`, ": frozen-render.mjs ")) {
-    add("frozen-render", affected[0], 1, `${affected.length} frozen v1.0 story files render files this diff changed: ${affected.join(", ")}`, `run handoff's scripts/frozen-render.mjs with every one of these story files against a Storybook serving the base and one serving the branch, never a capture of your own; when it reports nothing blocking, record the \`Frozen render unchanged\` line it prints, otherwise keep the frozen renders unchanged`);
+  // It counts story files, as `affected` does; their stories follow in parentheses (ISS-13317). It names the
+  // session files it rendered (`inputs`), and holds only while they are unchanged: a line from an earlier head
+  // once cleared later changes to a frozen render (ISS-13321).
+  const prefix = `Frozen render unchanged: all ${affected.length} story files (`;
+  const current = (line) => {
+    const base = FROZEN_LINE_BASE.exec(line)?.[1];
+    const inputs = FROZEN_LINE_INPUTS.exec(line)?.[1];
+    return Boolean(base && inputs) && repo.frozenInputs(base) === inputs;
+  };
+  const recorded = changeLog.split("\n").some((line) => line.includes(prefix) && line.includes(": frozen-render.mjs ") && current(line));
+  if (affected.length && !recorded) {
+    add("frozen-render", affected[0], 1, `${affected.length} frozen v1.0 story files render files this diff changed: ${affected.join(", ")}`, `run handoff's scripts/frozen-render.mjs with every one of these story files against a Storybook serving the base and one serving the branch, never a capture of your own; when it reports nothing blocking, record the \`Frozen render unchanged\` line it prints, otherwise keep the frozen renders unchanged; a line recorded before a later change no longer counts, so run it again after any change`);
   }
 }
 
@@ -779,6 +791,7 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
         return false;
       }
     },
+    frozenInputs: memoize((ref) => { try { return frozenInputs(worktree, ref); } catch { return null; } }),
     filesNaming: (text) => lines(() => git(worktree, ["grep", "-l", "-F", text, "--", ...STORY_ID_PATHSPECS])),
     isFrozenStory,
     frozenStories: () => {
