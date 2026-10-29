@@ -45,6 +45,8 @@ def test_single_reply_rule_requires_exhaustion_and_supported_handover() -> None:
     assert "genuinely need a human-only decision, access or credentials only a person has" in guardrail
     assert "A recoverable tooling defect follows the path above, with no handover" in guardrail
     assert 'Use an engineering referral only for that last category' in guardrail
+    assert "A stop or wait alone is never the final reply" in skill
+    assert "Never end with only a stop or wait" in guardrail
     assert "`vibe-environment-worker` in handover mode" in guardrail
     assert "Never edit vibe's checker to force a pass, waive a check" in guardrail
 

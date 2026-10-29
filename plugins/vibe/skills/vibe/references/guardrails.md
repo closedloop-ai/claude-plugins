@@ -48,7 +48,9 @@ Codex and Claude Code, and this section is its one canonical statement:
      pre-push checks, with no main sync and no new copy of the app. Record a
      refused push on the same checklist item; never claim it was pushed.
   3. In the reply, name the exact block and what each layer tried, and offer to
-     pass the saved work to someone now (`plain-words.md`). When the person
+     pass the saved work to someone now (`plain-words.md`), even when a human
+     must first decide or grant access. Never end with only a stop or wait.
+     When the person
      names someone, use handoff step 8's lookup and the ticket worker's
      assign mode. The ticket and plan go to that person, In Progress, and
      the session is marked handed off. Otherwise the ticket stays assigned

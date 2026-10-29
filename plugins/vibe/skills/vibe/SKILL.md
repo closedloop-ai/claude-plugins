@@ -54,9 +54,11 @@ an engineer or assign them an engineering repair unless the worker and vibe
 root have each tried their safe paths, all available paths are exhausted,
 and the remaining block requires a human-only decision or access, or an
 engineering change outside session authority. Say "needs an engineer" only
-for that engineering change. For a real block, say what the worker and root
-tried, what exactly remains blocked, and offer to pass the saved
-work to someone now. When the person says they are the engineer or asks what
+for that engineering change. For a real block, finish the supported checked
+push and ticket record where possible, then always say what the worker and
+root tried, what exactly remains blocked, and offer to pass the saved work
+to someone now. A stop or wait alone is never the final reply. When the
+person says they are the engineer or asks what
 is next, give the concrete action you can take now or the exact human-only
 action, never just a referral. Apply this in Codex and Claude Code alike
 (`references/guardrails.md`, "Plugins and tooling").
