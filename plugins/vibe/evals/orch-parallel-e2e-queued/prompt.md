@@ -23,7 +23,8 @@ Read the fleet skill's "Reporting to the operator" section and the
 Session state:
 - The operator asks: "What remains before this PR is ready, and when?"
 - Machine A is allowed for e2e. An unrelated e2e run has 8 minutes left on its
-  stack, and this PR's selected e2e run is queued behind it for 12 minutes.
+  stack. This PR's selected e2e run is queued behind it; when that run ends,
+  the selected e2e starts and lasts 12 minutes.
 - Machine B is allowed for heavy checks, has this PR's worktree ready, has two
   free heavy slots, and its load is within its configured limit.
 - This PR's repository lane selector still requires integration and typecheck.

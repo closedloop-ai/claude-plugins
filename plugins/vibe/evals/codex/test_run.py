@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import re
 import time
 
 import pytest
@@ -52,6 +53,23 @@ def test_fleet_cases_load_the_installed_skill_without_leaking_answer_lines() -> 
     assert runner.loaded_plugin_read(snapshot_read, "fleet-orchestrator")
     source_read = [{"name": "exec_command", "arguments": "cat plugins/vibe/skills/fleet-orchestrator/SKILL.md"}]
     assert not runner.loaded_plugin_read(source_read, "fleet-orchestrator")
+
+
+def test_parallel_e2e_scenario_states_queue_wait_and_run_duration() -> None:
+    """The e2e critical path has both durations needed for the expected ETA."""
+    prompt = next(case["prompt"] for case in runner.cases() if case["name"] == "orchestrator-parallel-e2e-queued")
+    wait = re.search(r"unrelated e2e run has (\d+) minutes left", prompt)
+    assert "This PR's selected e2e run is queued behind it; when that run ends" in prompt
+    duration = re.search(r"selected e2e starts and lasts (\d+) minutes", prompt)
+    integration = re.search(r"Integration takes (\d+) minutes", prompt)
+    typecheck = re.search(r"typecheck takes (\d+) minutes", prompt)
+    assert wait is not None
+    assert duration is not None
+    assert integration is not None
+    assert typecheck is not None
+    assert "no prerequisite edge to each other or to e2e" in prompt
+    assert max(int(wait.group(1)) + int(duration.group(1)),
+               int(integration.group(1)), int(typecheck.group(1))) == 20
 
 
 @pytest.mark.parametrize("layout", [".codex-plugin", ".claude-plugin"])
