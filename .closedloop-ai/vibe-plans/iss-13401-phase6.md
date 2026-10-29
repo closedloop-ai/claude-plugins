@@ -86,6 +86,7 @@ Remove the repo-local skill, developer CLI modules and Phase 6 tests; revert Pha
 ## Gaps
 
 - [x] **GAP-601**: A new full paid six-run developer benchmark is not repeated in this implementation phase; Phase 2's accepted ten-run baseline already proves the same task, stack and proof-PR lifecycle, and Phase 6 adds deterministic scheduling and publication coverage.
+- [x] **GAP-602**: Known main failure at `6746cd6c0a498610e42d00df544134dc47e10f96`: `plugins/vibe/skills/fleet-orchestrator/scripts/fleet-home.test.mjs` matches `iss-1` inside a checkout name containing `iss-13401`, so its isolation assertion fails on unchanged main. Three other full-suite process timing failures passed their targeted reruns.
 
 ## Visual References
 
