@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.18
+### vibe v1.1.19
 
 #### Changed
 - The Codex eval runner accepts an explicit executable and source commit, records its CLI version and deterministic mode, and can skip only the paid wording grader while retaining every deterministic check and recording each skip.
