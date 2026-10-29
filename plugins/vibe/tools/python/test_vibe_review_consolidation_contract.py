@@ -143,3 +143,24 @@ def test_adversarial_prompt_does_not_grow_past_its_pre_trim_size() -> None:
     # Measured 9832 bytes against 9884 before (-0.5%): the plan's ~30% is not reachable without
     # dropping wording that ten existing contract tests pin, so this only stops regrowth.
     assert len(read(ADVERSARIAL).encode()) <= ADVERSARIAL_BASELINE_BYTES
+
+
+def test_lane_cache_key_covers_tree_base_config_and_scope_and_is_a_sha256() -> None:
+    cache = read(VIBE_SCRIPTS / "lane-cache.mjs")
+    assert 'createHash("sha256")' in cache
+    for field in ("command", "tree", "base", "config", "scope"):
+        assert re.search(rf"\b{field}\b", cache.split("export function laneCacheKey", 1)[1].split("}", 1)[0]), field
+    assert '"HEAD^{tree}"' in cache
+    assert "S6" not in cache and "REMOTE_PENDING" not in cache and "NOT_APPLICABLE" not in cache
+
+
+def test_cached_lanes_are_off_by_default_and_never_recorded_or_counted_as_a_pass() -> None:
+    lanes = read(VIBE_SCRIPTS / "pre-pr-lanes.mjs")
+    assert '"reuse-cache": { type: "boolean" }' in lanes
+    assert 'values["reuse-cache"] ? reuseCachedLanes(' in lanes
+    cache = read(VIBE_SCRIPTS / "lane-cache.mjs")
+    assert 'CACHED_RESULT = "cached"' in cache
+    assert 'record.result === "pass" && record.provenance !== Provenance.Cached' in cache
+    # missingLanes still counts only pass and main-preexisting, so a cached record never satisfies a check that did not opt in
+    assert 'record.result === "pass" ||' in lanes
+    assert "CACHED-LANE" in lanes and "not a fresh run" in lanes
