@@ -9,6 +9,8 @@ PLUGIN = ROOT / "plugins" / "vibe"
 HANDOFF = PLUGIN / "skills" / "handoff" / "SKILL.md"
 VERIFY = PLUGIN / "agents" / "vibe-verify-worker.md"
 DECOMPOSER = PLUGIN / "agents" / "vibe-storybook-decomposer.md"
+FLEET = PLUGIN / "skills" / "fleet-orchestrator" / "SKILL.md"
+FLEET_TEMPLATES = PLUGIN / "skills" / "fleet-orchestrator" / "references" / "templates.md"
 STATIC_LAUNCH = re.compile(
     r"\b(?:python(?:3)?\s+-m\s+http\.server|npx\s+serve|http-server|busybox\s+httpd|serve\s+-s)\b",
     re.IGNORECASE,
@@ -37,3 +39,14 @@ def test_no_plugin_instruction_launches_an_ad_hoc_static_server() -> None:
             if line.lstrip().lower().startswith(("never ", "do not ", "- never ", "- do not ")):
                 continue
             assert not STATIC_LAUNCH.search(line), f"ad hoc static server instruction: {path.relative_to(ROOT)}"
+
+
+def test_terminal_cleanup_response_names_foreign_resources_left_alone() -> None:
+    """The cleanup reply has an explicit unrecorded resource disposition."""
+    skill = FLEET.read_text()
+    template = FLEET_TEMPLATES.read_text()
+    assert "Every terminal PR cleanup reply uses [Lifecycle cleanup report]" in skill
+    assert "State in `FOREIGN:` that any other worker's unrecorded resource is left untouched" in skill
+    for field in ("ACTION:", "DOCKER:", "FOREIGN:", "STATUS:"):
+        assert field in template
+    assert "other worker or unrecorded resource left untouched" in template
