@@ -4,6 +4,19 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.18
+
+Review consolidation, a lane-evidence cache and a trimmed adversarial reviewer (PRD-823, ISS-13352, ISS-13353, ISS-13354, ISS-13355). Every new path is off by default; today's reviewers and fleet review chain run unchanged.
+
+#### Added
+- `vibe-consolidated-reviewer` and `handoff/scripts/review-scope.mjs` (ISS-13352): with `VIBE_CONSOLIDATED_REVIEW=1` and a findings file in the `vibe.guardrails-findings/1` shape, the script chooses one consolidated read of the final diff or the full fleet by diff size, backend change or shared-component change. A missing, invalid, stale or partly skipped findings file is "not checked" and keeps the existing reviewers. The escalation numbers are unruled defaults in `REVIEW_SCOPE_DEFAULTS`. Depends on the guardrails gate (D4, WS3) to produce the file.
+- `vibe/scripts/lane-cache.mjs` (ISS-13354): a SHA-256 key over a lane's command, tree, base, config and changed-file scope. `pre-pr-lanes.mjs` stores it with each fresh result and, only under `check --reuse-cache`, records an earlier fresh pass as `cached` (printed `CACHED-LANE`), never as a pass. A changed tree, base, config or scope, a failed run or an unresolvable base invalidates it.
+- `fleet-orchestrator/scripts/review-chain.mjs` (ISS-13355): with `FLEET_REVIEW_HANDOFF_ONLY=1` the orchestrator verifies fixes instead of running its own independent review, only when the writer's handoff review covered the pull request's exact head. Off by default; whether the chain is intentionally separate from handoff review is an open owner decision, so nothing was removed.
+
+#### Changed
+- `vibe-adversarial-reviewer` (ISS-13353) points its test-edit rules at check 9 of the guardrails reviewer and starts its shared-component and gate attacks from the inventory's `diffRules.requiredTests` (consumer pack and gate table). The other eleven attacks are unchanged. Measured size 9884 to 9835 bytes (-0.5%); the plan's estimate of about 30% was not reached. Two existing contract assertions that pinned the removed wording now pin the pointer.
+- No strict result vocabulary was added (ISS-13341 not built).
+
 ### vibe v1.1.16
 
 Gates a vibe session could never clear now either clear with what the session can do or hand the work to engineering (ISS-13321). Findings are numbered as in the ISS-13321 audit.
