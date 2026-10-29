@@ -97,7 +97,10 @@ def test_the_inventory_reports_repairs_without_blocking_on_them() -> None:
     assert "storiesInV2Taxonomy: v1Stories.length === 0," in blocking
     result = inventory[inventory.index("const result = {") :]
     assert "  compileOnlyV1Repairs,\n" in result
-    assert "function keepsStoryIdentity(base, source)" in inventory
+    # ISS-13317 moved the identity test to storybook-taxonomy.mjs so frozen-render.mjs uses the same one.
+    assert "keepsStoryIdentity(base, source)" in inventory
+    taxonomy = (INVENTORY.parent / "storybook-taxonomy.mjs").read_text()
+    assert "export function keepsStoryIdentity(base, source)" in taxonomy
 
 
 def test_the_ticket_worker_places_each_repair_once_on_the_engineering_checklist() -> None:
