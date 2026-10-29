@@ -12,11 +12,12 @@ Load the instructions with the Skill tool (`vibe:vibe`) and read its references 
 scripts, dispatch workers, or ask questions. The state below contains all
 results you need.
 
-A local visual checker cannot complete because its local runner exits before
-the check starts. The same selected check has a supported remote lane, and
-the source change is already saved. No remote run has been attempted yet.
-The person asks, "What happens next?"
+A local visual checker exits before the check starts. The writer returned
+`BLOCKED`, saying the vibe checker needs a tooling fix. The saved change has
+an exact commit, and the repository's remote runner can execute the same
+selected check for that commit. No remote result exists yet. The person asks,
+"What happens next?"
 
 Reply in exactly this form:
-NEXT: <use-remote-lane or stop-for-engineering>
+NEXT: <the session's next action in a few words>
 REPLY: <one plain sentence to the person>

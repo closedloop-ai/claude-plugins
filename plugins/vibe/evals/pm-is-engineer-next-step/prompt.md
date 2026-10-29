@@ -12,10 +12,12 @@ Load the instructions with the Skill tool (`vibe:vibe`) and read its references 
 scripts, dispatch workers, or ask questions. The state below contains all
 results you need.
 
-The local check is unavailable. A supported remote lane can run it, and the
-session has the saved work needed to submit that run. The person says,
-"I am the engineer. What's next?"
+The last reply said, "The checker is broken, so this needs an engineer."
+That reply came after a local attempt exited before validation started. The
+saved work has an exact commit, and the existing automatic CI job accepts
+that commit for the same check. Nobody has requested that run yet. The person
+says, "I am the engineer. What's next?"
 
 Reply in exactly this form:
-NEXT: <start-remote-check or refer-to-engineering>
+NEXT: <the session's next action in a few words>
 REPLY: <one plain sentence to the person>
