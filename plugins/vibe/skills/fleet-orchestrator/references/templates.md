@@ -87,6 +87,7 @@ Test authority: <existing authorization for proof tests, or not applicable>
 Return: <commit or proof to the ticket writer; helper does not integrate>
 Defect: <send any defect in ticket-writer code to that writer; helper does not repair it>
 Review: <independent read-only reviewer, never this helper>
+BRANCH_ISOLATION: one writer per branch; helpers never edit or touch the ticket branch
 
 ## Remaining work report
 

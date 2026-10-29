@@ -92,6 +92,11 @@ def test_disjoint_helpers_keep_exclusive_branches_and_return_defects() -> None:
                    "proof tests for separate criteria, or a whole new disjoint module or file set",
                    "helper does not integrate", "helper does not repair it", "independent read-only reviewer"):
         assert phrase in brief, phrase
+    assert "BRANCH_ISOLATION: one writer per branch; helpers never edit or touch the ticket branch" in brief
+    principles = flat(section(FLEET.read_text(), "## Principles"))
+    assert "Before sending a helper split plan" in principles
+    assert "mandatory `BRANCH_ISOLATION:` line" in principles
+    assert "incomplete and must not be sent until that line is present and nonempty" in principles
     quality = flat(section(QUALITY.read_text(), "## One persistent writer and a serial queue"))
     assert "outside this session only on a separate branch and worktree" in quality
     assert "This session keeps its one persistent writer and serial queue" in quality
