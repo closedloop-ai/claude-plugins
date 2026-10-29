@@ -71,6 +71,8 @@ import { parseArgs } from "node:util";
 import { PLAY_EVENT_RECORDER, playVerdicts } from "../../vibe/scripts/story-play-verdict.mjs";
 import { storyId } from "./diff-rules.mjs";
 import { cropDiffPng, decodePng, pixelHash } from "./png-diff.mjs";
+import { semanticSourceText } from "./qa-impact.mjs";
+import { IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
 import { keepsStoryIdentity, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 
 export const FrozenOutcome = Object.freeze({ Identical: "identical", UnstableOnBase: "unstable-on-base", SameFailure: "same-failure", Blocking: "blocking" });
@@ -91,6 +93,12 @@ const Side = Object.freeze({ Base: "base", BaseAgain: "base-again", Head: "head"
 export const CONFIRM_RENDERS = 2;
 export const StoryFileChange = Object.freeze({ Unchanged: "unchanged", Repaired: "repaired", Changed: "changed" });
 const GIT_MAX_BUFFER = 16 * 1024 * 1024;
+const FROZEN_GLOBAL_INPUT = /\.(?:css|scss|sass|less)$|(?:^|\/)(?:tokens?|themes?)(?:\/|\.|-)|(?:^|\/)tailwind\.config\.[cm]?[jt]s$|(?:^|\/)\.storybook\/preview\.[cm]?[jt]sx?$/i;
+
+/** Global inputs that can affect every frozen story without a direct import. */
+export function isFrozenGlobalInput(file) {
+  return FROZEN_GLOBAL_INPUT.test(file);
+}
 
 /** Every story ID in `storyFiles`, read from their text at `base` in `repo`. */
 export function frozenStoryIds(repo, base, storyFiles) {
@@ -162,7 +170,7 @@ export function classifyStory(bases, head) {
   return { outcome: FrozenOutcome.Identical };
 }
 
-/** Renders every story twice on the base and once on the branch; `head` identifies the checked-out commit in its proof line. */
+/** Renders every story twice on the base and once on the branch. */
 export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser, out, viewport, timeoutMs, now, command, head, inputs, repairedIds = new Map(), refused = [] }) {
   const stories = [];
   const options = { viewport, timeoutMs, now };
@@ -213,11 +221,11 @@ export async function frozenStoryFiles({ repo, base, storyFiles, ...render }) {
   })));
   const command = `frozen-render.mjs --base ${base} --story-file ${files.join(" --story-file ")}`;
   const head = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-  const inputs = frozenInputs(repo, base);
+  const inputs = frozenInputs(repo, base, files);
   const summary = await frozenRenders({ ...render, ids: compared.flatMap(idsOf), fileCount: files.length, command, head, inputs, repairedIds, refused });
-  // A commit or edit during rendering changes the proof's source identity, even when file bytes end up identical.
+  // A source edit during rendering can make the comparison internally inconsistent.
   if (summary.changeLogLine && (execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim() !== head
-    || frozenInputs(repo, base) !== inputs)) {
+    || frozenInputs(repo, base, files) !== inputs)) {
     const { changeLogLine, ...rest } = summary;
     return { ...rest, ok: false, lines: [...rest.lines, "the session's files changed during the run; run it again"] };
   }
@@ -225,18 +233,46 @@ export async function frozenStoryFiles({ repo, base, storyFiles, ...render }) {
 }
 
 /**
- * What the head side rendered: a digest of every file the session checkout differs from `base` in, tracked or
- * untracked, with its content. The recorded line carries it beside the exact head SHA, and the diff rules require
- * both to match. A later commit with the same file bytes still needs a new render (ISS-13321).
+ * What the named stories rendered: a digest of their base and branch import
+ * closure. Comments and formatting are excluded because they cannot alter a
+ * render. Unrelated commits therefore preserve this screen and state evidence.
  */
-export function frozenInputs(repo, base) {
+export function frozenInputs(repo, base, storyFiles = []) {
   const run = (args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", maxBuffer: GIT_MAX_BUFFER, stdio: ["ignore", "pipe", "pipe"] });
-  const files = [...new Set([...run(["diff", "--name-only", "--no-renames", base]).split("\n"), ...run(["ls-files", "--others", "--exclude-standard"]).split("\n")])]
-    .filter((file) => file && !file.startsWith(".closedloop-ai/vibe-plans/")).sort();
+  const baseFiles = new Set(run(["ls-tree", "-r", "--name-only", base]).split("\n").filter((file) => SOURCE_FILE.test(file)));
+  const headFiles = new Set(run(["ls-files", "--cached", "--others", "--exclude-standard"]).split("\n").filter((file) => SOURCE_FILE.test(file)));
+  const allFiles = new Set([...baseFiles, ...headFiles]);
+  const changed = run(["diff", "--name-only", "--no-renames", base]).split("\n").filter((file) => SOURCE_FILE.test(file));
+  const roots = [...new Set([...(storyFiles.length ? storyFiles : changed), ...changed.filter(isFrozenGlobalInput)])];
+  const closure = new Set();
+  const queue = [...new Set(roots)];
+  const textAt = (file, ref) => {
+    if (ref === "head") {
+      const absolute = path.join(repo, file);
+      return existsSync(absolute) ? readFileSync(absolute, "utf8") : null;
+    }
+    try {
+      return run(["show", `${base}:${file}`]);
+    } catch {
+      return null;
+    }
+  };
+  while (queue.length) {
+    const file = queue.shift();
+    if (!SOURCE_FILE.test(file) || closure.has(file)) continue;
+    closure.add(file);
+    for (const text of [textAt(file, "base"), textAt(file, "head")]) {
+      for (const match of text?.matchAll(IMPORT_SPECIFIER) ?? []) {
+        const target = resolveImport(file, match[1], allFiles);
+        if (target && !closure.has(target)) queue.push(target);
+      }
+    }
+  }
   const hash = createHash("sha256");
-  for (const file of files) {
-    const absolute = path.join(repo, file);
-    hash.update(`${file}\0${existsSync(absolute) ? createHash("sha256").update(readFileSync(absolute)).digest("hex") : "deleted"}\n`);
+  for (const file of [...closure].sort()) {
+    const text = textAt(file, "head");
+    const semantic = semanticSourceText(file, text) ?? text;
+    hash.update(`${file}\0${semantic === null ? "deleted" : createHash("sha256").update(semantic).digest("hex")}\n`);
   }
   return hash.digest("hex").slice(0, 16);
 }
@@ -336,7 +372,7 @@ function writeCrop(out, id, before, after) {
   return file;
 }
 
-function summarize(stories, { fileCount, out, command, head, inputs }) {
+function summarize(stories, { fileCount, out, command, inputs }) {
   const pick = (outcome) => stories.filter((story) => story.outcome === outcome);
   const entry = ({ storyId: id, reason, crop }) => ({ storyId: id, reason, ...(crop ? { crop } : {}) });
   const identical = pick(FrozenOutcome.Identical).length;
@@ -349,10 +385,11 @@ function summarize(stories, { fileCount, out, command, head, inputs }) {
   const ok = blocking.length === 0 && stories.length > 0;
   const headFiles = [...new Set(stories.map((story) => story.headStoryFile).filter(Boolean))];
   const repaired = headFiles.length ? `; head story file on both sides for ${headFiles.length} compile-only repaired story files (${headFiles.join(", ")})` : "";
+  const states = stories.map((story) => story.storyId).join(",");
   const summary = {
     ok, storyFiles: fileCount, stories: stories.length, identical, unstableOnBase, sameFailure, blocking,
     lines: [...stories.map(storyLine), `summary: ${stories.length} stories in ${fileCount} story files: ${counts}${repaired}; results ${results}`],
-    ...(ok ? { changeLogLine: `Frozen render unchanged: all ${fileCount} story files (${stories.length} stories): ${command}: ${counts}${repaired}${head ? `; head ${head}` : ""}${inputs ? `; inputs ${inputs}` : ""}; ${results}` } : {}),
+    ...(ok ? { changeLogLine: `Frozen render unchanged: all ${fileCount} story files (${stories.length} stories): ${command}: ${counts}${repaired}; states ${states}${inputs ? `; inputs ${inputs}` : ""}; ${results}` } : {}),
   };
   mkdirSync(out, { recursive: true });
   writeFileSync(results, `${JSON.stringify({ ...summary, details: stories }, null, 2)}\n`);

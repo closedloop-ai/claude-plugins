@@ -149,7 +149,7 @@ test("only unstable-on-base and same-failure stories clear: the line names both 
   const summary = await frozenRenders({ ids: ["tour--opening", "shell--populated", "row--x"], fileCount: 2, baseUrl: BASE, headUrl: HEAD, browser, out,
     command: "frozen-render.mjs --base abc --story-file s/a.stories.tsx --story-file s/b.stories.tsx" });
   assert.equal(summary.ok, true);
-  assert.equal(summary.changeLogLine, `Frozen render unchanged: all 2 story files (3 stories): frozen-render.mjs --base abc --story-file s/a.stories.tsx --story-file s/b.stories.tsx: 1 identical, 1 unstable on base (tour--opening), 1 same failure (shell--populated), 0 blocking; ${path.join(out, "results.json")}`);
+  assert.equal(summary.changeLogLine, `Frozen render unchanged: all 2 story files (3 stories): frozen-render.mjs --base abc --story-file s/a.stories.tsx --story-file s/b.stories.tsx: 1 identical, 1 unstable on base (tour--opening), 1 same failure (shell--populated), 0 blocking; states tour--opening,shell--populated,row--x; ${path.join(out, "results.json")}`);
 });
 
 test("a blocking story is rendered twice more on the base and becomes unstable on base when the base varies (ISS-13317)", async (t) => {
@@ -255,7 +255,7 @@ test("the line it prints passes handoff's frozen-render rule, which counts story
   const ids = frozenStoryIds(checkout, base, storyFiles);
   const summary = await frozenRenders({ ids, fileCount: storyFiles.length, baseUrl: BASE, headUrl: HEAD, out, command: `frozen-render.mjs --base ${base} --story-file ${storyFiles[0]}`,
     head: git(checkout, ["rev-parse", "HEAD"], home),
-    inputs: frozenInputs(checkout, base),
+    inputs: frozenInputs(checkout, base, storyFiles),
     browser: fakeBrowser({ [BASE]: { [ids[0]]: throws("no fixture"), [ids[1]]: [passes(shot(GREY)), passes(shot(BLUE))] }, [HEAD]: { [ids[0]]: throws("no fixture"), [ids[1]]: passes(shot(GREY)) } }) });
   assert.match(summary.changeLogLine, /^Frozen render unchanged: all 1 story files \(2 stories\): frozen-render\.mjs /);
   const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], home);
@@ -300,7 +300,7 @@ test("the line the command prints is the line the gate accepts when story files 
   // A story file named twice is still one file.
   const summary = await frozenStoryFiles({ repo: checkout, base, storyFiles: [...storyFiles, storyFiles[0]], baseUrl: BASE, headUrl: HEAD, out,
     browser: fakeBrowser({ [BASE]: side, [HEAD]: side }) });
-  assert.equal(summary.changeLogLine, `Frozen render unchanged: all 2 story files (4 stories): frozen-render.mjs --base ${base} --story-file ${storyFiles[0]} --story-file ${storyFiles[1]}: 4 identical, 0 unstable on base, 0 same failure, 0 blocking; head ${base}; inputs ${frozenInputs(checkout, base)}; ${path.join(out, "results.json")}`);
+  assert.equal(summary.changeLogLine, `Frozen render unchanged: all 2 story files (4 stories): frozen-render.mjs --base ${base} --story-file ${storyFiles[0]} --story-file ${storyFiles[1]}: 4 identical, 0 unstable on base, 0 same failure, 0 blocking; states ${ids.join(",")}; inputs ${frozenInputs(checkout, base, storyFiles)}; ${path.join(out, "results.json")}`);
   writeFileSync(path.join(gitDir, "vibe-changes.md"), `${summary.changeLogLine}\n`);
   assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, []);
   // A line counting the 4 stories as story files, as 1.1.11 did, is refused.
@@ -419,7 +419,7 @@ test("the CLI names a missing argument, a bad --now or a repo without Playwright
   assert.match(missing.stdout, /^error: Playwright is not installed/);
 });
 
-test("a recorded line clears only the exact head and files it rendered (ISS-13321)", async (t) => {
+test("a recorded line survives unrelated commits and clears only proven unchanged story inputs (ISS-13411)", async (t) => {
   const { root, home, out } = sandbox(t);
   const checkout = path.join(root, "wt");
   git(root, ["init", "--quiet", "--initial-branch=main", checkout], home);
@@ -436,22 +436,23 @@ test("a recorded line clears only the exact head and files it rendered (ISS-1332
   const [id] = frozenStoryIds(checkout, base, [story]);
   const summary = await frozenStoryFiles({ repo: checkout, base, storyFiles: [story], baseUrl: BASE, headUrl: HEAD, out,
     browser: fakeBrowser({ [BASE]: { [id]: passes(shot(GREY)) }, [HEAD]: { [id]: passes(shot(GREY)) } }) });
-  assert.match(summary.changeLogLine, new RegExp(`; head ${base}; inputs [0-9a-f]{16}; `));
+  assert.doesNotMatch(summary.changeLogLine, /; head [0-9a-f]{40};/);
+  assert.match(summary.changeLogLine, new RegExp(`; states ${id}; inputs [0-9a-f]{16}; `));
   assert.match(summary.changeLogLine, /; inputs [0-9a-f]{16}; /);
   const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], home);
   writeFileSync(path.join(gitDir, "vibe-changes.md"), `${summary.changeLogLine}\n`);
   const isFrozenStory = (text) => / v1\.0\//.test(text);
   assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, []);
   git(checkout, ["commit", "--quiet", "-am", "the rendered change"], home);
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((finding) => finding.rule), ["frozen-render"],
-    "the same bytes on a different head require a new render proof");
-  const committedHead = git(checkout, ["rev-parse", "HEAD"], home);
-  const current = await frozenStoryFiles({ repo: checkout, base, storyFiles: [story], baseUrl: BASE, headUrl: HEAD, out,
-    browser: fakeBrowser({ [BASE]: { [id]: passes(shot(GREY)) }, [HEAD]: { [id]: passes(shot(GREY)) } }) });
-  assert.match(current.changeLogLine, new RegExp(`; head ${committedHead}; inputs [0-9a-f]{16}; `));
-  writeFileSync(path.join(gitDir, "vibe-changes.md"), `${current.changeLogLine}\n`);
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, []);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, [], "a commit boundary alone changes no evidence");
+  writeFileSync(path.join(checkout, "notes.md"), "unrelated docs\n");
+  git(checkout, ["add", "notes.md"], home);
+  git(checkout, ["commit", "--quiet", "-m", "docs"], home);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, [], "unrelated docs preserve the render evidence");
+  writeFileSync(path.join(checkout, row), "// explanation\nexport const Row = 2;\n");
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, [],
+    "the bundled parser proves a comment in the rendered closure cannot change the render");
   writeFileSync(path.join(checkout, row), "export const Row = 3;\n");
   assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((finding) => finding.rule), ["frozen-render"],
-    "the line from the earlier head no longer clears the new change");
+    "a rendered dependency change invalidates the recorded states");
 });

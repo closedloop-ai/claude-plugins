@@ -433,7 +433,7 @@ runner env SHA against unchanged owned HEAD/tree/input. It never dispatches,
 accepts caller PASS, trusts run.head_sha as tested source, stores raw secret
 logs or treats later spoofed stdout as proof. Missing evidence leaves
 `requiredE2eComplete: false`; final handoff remains incomplete. Do not re-fetch
-main repeatedly while CI waits. Changed source/new preparation invalidates proof.
+main repeatedly while CI waits. CI is per push; `qa-impact.mjs` decides local QA.
 The Desktop Electron lane is the exception (ISS-13321): no vibe machine runs
 it, and since symphony-alpha's desktop-e2e job skips pull requests no run
 exists for a branch before merge. The executor returns it under

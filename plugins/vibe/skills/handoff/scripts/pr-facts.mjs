@@ -14,6 +14,7 @@ import { isE2ePath, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/tes
 import { REQUIRED_CONTAINER_IDENTITY, specExecutionLimitation, tierEvidenceProblems } from "./e2e-tier.mjs";
 import { probeE2eCapability } from "./e2e-capability-probe.mjs";
 import { prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS } from "./pr-evidence-schema.mjs";
+import { qaImpactRequest } from "./qa-impact.mjs";
 
 const REPO = "closedloop-ai/symphony-alpha";
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -202,18 +203,34 @@ function e2eLeftForCi(runsFile, changed, commit) {
     && specs.every((spec) => e2eCarriedForCi(runsFile, selection.entries, spec, commit));
 }
 
-/** Every required lane finished and passed on the published commit. */
-export function evidenceProblems(runsFile, changed, commit) {
+function recomputedImpact(runsFile, worktree) {
+  if (!worktree || !runsFile?.qaImpactRequest) return { problem: "older lane evidence needs a qaImpactRequest recomputed in the worktree" };
+  try {
+    const impact = qaImpactRequest(worktree, runsFile.qaImpactRequest);
+    if (!/^[a-f0-9]{16}$/.test(impact.laneKey ?? "")) return { problem: "recomputed QA impact has no laneKey" };
+    return { impact };
+  } catch (error) {
+    return { problem: `QA impact could not be recomputed: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
+/** Every required lane finished and passed for its recomputed changed-file scope. */
+export function evidenceProblems(runsFile, changed, commit, worktree) {
   if (!Array.isArray(runsFile?.touchFlows) || (runsFile.touchFlows.length === 0 && !runsFile.touchFlowsReason)) {
     return ["list every touched card, narrow or touch flow in touchFlows, or [] with a touchFlowsReason"];
   }
+  const allRuns = Array.isArray(runsFile?.runs) ? runsFile.runs : [];
+  const older = Boolean(commit) && allRuns.some((run) => run?.commit && run.commit !== commit);
+  const recomputed = older ? recomputedImpact(runsFile, worktree) : null;
+  if (recomputed?.problem) return [recomputed.problem];
+  const impactKey = recomputed?.impact?.laneKey;
   return requiredLanes(changed, runsFile.touchFlows).filter((lane) => !(lane === "e2e" && e2eLeftForCi(runsFile, changed, commit))).flatMap((lane) => {
-    const runs = (runsFile.runs ?? []).filter((run) => run.lane === lane);
+    const runs = allRuns.filter((run) => run.lane === lane);
     if (runs.length === 0) return [`${lane}: no run recorded`];
     return runs.flatMap((run) => [
       ...(passedOrMainPreexisting(run) ? [] : [`${lane}: ${run.status ?? "no status"}; a pull request never opens on an unfinished or failed run`]),
       ...(run.command && run.outcome ? [] : [`${lane}: command or visible outcome missing`]),
-      ...(commit && run.commit !== commit ? [`${lane}: ran on ${run.commit}, not the published commit ${commit}`] : []),
+      ...(impactKey && run.commit !== commit && run.laneKey !== impactKey ? [`${lane}: changed-file scope ${run.laneKey ?? "missing"} does not match recomputed ${impactKey}`] : []),
       ...(lane === "storybook-plays" ? playVerdictProblems(run) : []),
     ]);
   });
@@ -290,7 +307,7 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
       ...(runs === undefined ? [] : knownMainFailureProblems(body, runs)),
     ] }),
     ...(runs === undefined ? {} : { prEvidenceProblems: [
-      ...evidenceProblems(runs, changed, commit),
+      ...evidenceProblems(runs, changed, commit, worktree),
       ...selectionProblems(runs, files, requiredTests, commit),
       ...targetedEvidenceProblems(runs, commit, worktree),
       ...capabilityProbeProblems(runs, worktree, commit, probeCapability),
@@ -459,19 +476,27 @@ export function targetedEvidenceProblems(runsFile, commit, worktree) {
   if (!inventory || typeof inventory !== "object") return ["targeted inventory of the final committed diff is missing"];
   const { entries: selection } = readTestSelection(runsFile);
   const problems = [...prEvidenceShapeProblems(runsFile)];
+  const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
+  const laneRuns = runs.filter((run) => run?.lane);
+  const older = Boolean(commit) && (inventory.commit !== commit || laneRuns.some((run) => run?.commit && run.commit !== commit));
+  const recomputed = older ? recomputedImpact(runsFile, worktree) : null;
+  if (recomputed?.problem) problems.push(recomputed.problem);
+  const impactKey = recomputed?.impact?.laneKey;
   if (inventory.actor !== "read-only") problems.push("targeted inventory must come from a read-only subagent");
   if (inventory.source !== "final-committed-diff") problems.push("targeted inventory must read the final committed diff, not the plan");
-  if (!commit || inventory.commit !== commit) problems.push(`targeted inventory does not name the final committed SHA ${commit ?? "required by the gate"}`);
+  if (impactKey && inventory.impactKey !== impactKey) {
+    problems.push("targeted inventory does not name recomputed qa-impact.mjs changed-file scope");
+  }
   if (inventory.laneReport?.command !== "pnpm test:lanes") problems.push("targeted inventory must use pnpm test:lanes as the repository lane source");
   if (!Array.isArray(inventory.laneReport?.matches)) problems.push("targeted inventory must list the post-merge lane matches from pnpm test:lanes");
-  const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
   const laneMatches = Array.isArray(inventory.laneReport?.matches) ? inventory.laneReport.matches : [];
   for (const lane of laneMatches) {
     if (!lane?.name || !lane?.command) problems.push("each matching post-merge lane needs its repository name and exact command");
     else if (!(lane.mentionOnly === true && text(lane.notRunReason))
-      && !runs.some((run) => run?.lane === lane.name && run.command === lane.command && run.commit === commit
+      && !runs.some((run) => run?.lane === lane.name && run.command === lane.command
+        && (!impactKey || run.commit === commit || run.laneKey === impactKey)
         && (passedOrMainPreexisting(run) || desktopLeftForCi(run)))) {
-      problems.push(`lane ${lane.name}: no passing run of its test:lanes command on ${commit}; a hand-picked subset is not the lane (#9238)`);
+      problems.push(`lane ${lane.name}: no passing run of its test:lanes command for changed-file scope ${impactKey ?? "missing"}; a hand-picked subset is not the lane (#9238)`);
     }
   }
   if (!Array.isArray(inventory.entries) || (inventory.entries.length === 0 && !inventory.noTestsReason)) {

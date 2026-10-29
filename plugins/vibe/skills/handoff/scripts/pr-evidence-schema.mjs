@@ -53,6 +53,10 @@ export function prEvidenceShapeProblems(evidence) {
     if (inventory.actor !== "read-only" || inventory.source !== "final-committed-diff" || !/^[a-f0-9]{40}$/.test(inventory.commit ?? "")) {
       problems.push("targetedInventory must identify a read-only actor, the final committed diff and its full commit SHA");
     }
+    if (evidence?.qaImpact !== undefined
+      && (!/^[a-f0-9]{16}$/.test(evidence.qaImpact?.laneKey ?? "") || inventory.impactKey !== evidence.qaImpact.laneKey)) {
+      problems.push("targetedInventory must name qaImpact.laneKey as its changed-file scope");
+    }
     if (inventory.laneReport?.command !== "pnpm test:lanes" || !Array.isArray(inventory.laneReport?.matches)) {
       problems.push("targetedInventory.laneReport needs pnpm test:lanes and exact matching lane commands");
     }

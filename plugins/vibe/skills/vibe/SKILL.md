@@ -525,7 +525,8 @@ mention it to the person.
 
 Once the person picks a session, record this conversation's version check
 and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
-"<wt>"`. Then follow "Resuming" below.
+"<wt>"`. Before its first request or fleet takeover, apply
+`references/quality-loop.md`, "Local plan". Then follow "Resuming" below.
 
 ### Starting new
 
@@ -624,7 +625,8 @@ remain in the handoff flow.
 
 Resuming: use the session's `worktree`, and run the matching `codex-sessions`
 or `claude-sessions` command again so a
-new conversation is recorded too. A resumed session gets no endings line. Starting new or resuming stops any other
+new conversation is recorded too. Existing tickets use quality-loop's plan
+rule. A resumed session gets no endings line. Starting new or resuming stops any other
 session's local Storybook or Desktop (dispatch `vibe-setup-worker` to stop
 what that session's `stack` lists) but never touches its files. You commit
 only through `scripts/commit-worktree.mjs` and never push, stash, or rebase;

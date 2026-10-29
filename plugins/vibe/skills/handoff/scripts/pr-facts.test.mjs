@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { capabilityProbeProblems, ciCheckProblems, evidenceProblems, knownMainFailureProblems, pullRequestFacts, requiredLanes, selectionProblems, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
 import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
+import { qaImpactRequest } from "./qa-impact.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INVENTORY = path.join(HERE, "handoff-inventory.mjs");
@@ -159,16 +160,52 @@ test("evidence: lanes follow the diff, and unfinished, missing or stale runs blo
   assert.deepEqual(["e2e/a.spec.ts", "e2e-web-smoke/b.spec.ts", "apps/desktop/test/e2e/c.spec.ts"].map((file) => requiredLanes([file])), [["e2e"], ["e2e"], ["e2e"]]);
   assert.deepEqual(requiredLanes(changed, ["card select"]), ["web-host", "desktop-host", "webkit-iphone", "chromium-pixel", "storybook-plays"]);
   const commit = "a".repeat(40);
-  const runs = requiredLanes(changed, ["card select"]).map((lane) => ({ lane, status: "passed", command: "run", commit, outcome: "selected",
+  const laneKey = "1".repeat(16);
+  const runs = requiredLanes(changed, ["card select"]).map((lane) => ({ lane, status: "passed", command: "run", commit, laneKey, outcome: "selected",
     ...(lane === "storybook-plays" ? { playVerdicts: [{ storyId: "cards--select", verdict: "PASS" }] } : {}) }));
-  const file = { touchFlows: ["card select"], runs };
+  const file = { touchFlows: ["card select"], runs, qaImpact: { laneKey } };
   assert.deepEqual(evidenceProblems(file, changed, commit), []);
   assert.match(evidenceProblems({ ...file, runs: runs.map((run, i) => (i === 2 ? { ...run, status: "running" } : run)) }, changed, commit).join(), /webkit-iphone: running/);
   assert.match(evidenceProblems({ ...file, runs: runs.slice(1) }, changed, commit).join(), /web-host: no run recorded/);
-  assert.match(evidenceProblems(file, changed, "b".repeat(40)).join(), /not the published commit/);
+  assert.match(evidenceProblems(file, changed, "b".repeat(40)).join(), /recomputed/);
+  assert.deepEqual(evidenceProblems({ ...file, qaImpact: { laneKey: "2".repeat(16) } }, changed, commit), [], "a trusted-only stored key is ignored at the current head");
   assert.match(evidenceProblems({ runs }, changed, commit).join(), /touchFlows/);
   const unjudged = runs.map((run) => (run.lane === "storybook-plays" ? { ...run, playVerdicts: undefined } : run));
   assert.match(evidenceProblems({ ...file, runs: unjudged }, changed, commit).join(), /storybook-plays: no playVerdicts/);
+});
+
+test("older lane and inventory evidence requires a recomputed impact key", (t) => {
+  const fixture = makeHome("pr-facts-impact-");
+  t.after(fixture.cleanup);
+  const worktree = path.join(fixture.root, "wt");
+  git(fixture.root, ["init", "--quiet", "--initial-branch=main", worktree], fixture.home);
+  mkdirSync(path.join(worktree, "e2e"), { recursive: true });
+  const spec = "e2e/changed.spec.ts";
+  writeFileSync(path.join(worktree, spec), "export const value = 1;\n");
+  git(worktree, ["add", "-A"], fixture.home);
+  git(worktree, ["commit", "--quiet", "-m", "base"], fixture.home);
+  const boundary = git(worktree, ["rev-parse", "HEAD"], fixture.home);
+  writeFileSync(path.join(worktree, spec), "export const value = 2;\n");
+  git(worktree, ["commit", "--quiet", "-am", "change spec"], fixture.home);
+  const final = git(worktree, ["rev-parse", "HEAD"], fixture.home);
+  const command = "pnpm test:e2e";
+  const request = { lastQa: { boundary }, evidence: { screens: [] }, graphImporters: { importers: {} },
+    featureMap: { entries: [] }, laneSelections: { files: { [spec]: [command] } }, config: { docs: [] } };
+  const laneKey = qaImpactRequest(worktree, request).laneKey;
+  const old = "0".repeat(40);
+  const run = { lane: "e2e", command, outcome: "passed", status: "passed", commit: old };
+  const lanes = { touchFlows: [], touchFlowsReason: "spec only", runs: [run] };
+  assert.match(evidenceProblems(lanes, [spec], final, worktree).join(), /recomputed/);
+  assert.match(evidenceProblems({ ...lanes, qaImpactRequest: request }, [spec], final, worktree).join(), /scope missing/);
+  assert.deepEqual(evidenceProblems({ ...lanes, qaImpactRequest: request, runs: [{ ...run, laneKey }] }, [spec], final, worktree), []);
+
+  const targeted = { testSelection: [], qaImpactRequest: request,
+    targetedInventory: { actor: "read-only", source: "final-committed-diff", commit: old, impactKey: laneKey,
+      laneReport: { command: "pnpm test:lanes", matches: [{ name: "e2e", command }] }, entries: [], noTestsReason: "lane only" },
+    testRuns: [{ ...run, laneKey }], rerunCycles: [] };
+  assert.deepEqual(targetedEvidenceProblems(targeted, final, worktree), []);
+  const trustedOnly = { ...targeted, qaImpactRequest: undefined };
+  assert.match(targetedEvidenceProblems(trustedOnly, final, worktree).join(), /recomputed/);
 });
 
 test("the inventory reports the facts and gates only the pull-request phase", (t) => {
@@ -235,14 +272,16 @@ test("a required test with flag states needs a passing run with the flag on and 
   assert.deepEqual(problems([run("on"), run("off")]), []);
 });
 
-test("a pull request needs a read-only final-diff inventory and exact targeted results at its commit", () => {
+test("a pull request inventory and lane runs follow qa-impact scope instead of the final commit", () => {
   const commit = "d".repeat(40);
+  const laneKey = "4".repeat(16);
   const entry = { kind: "vitest", path: TEST, cases: ["limits"], command: `pnpm --filter api exec vitest run ${TEST} -t limits` };
   const complete = {
     targetedInventory: {
       actor: "read-only",
       source: "final-committed-diff",
       commit,
+      impactKey: laneKey,
       laneReport: { command: "pnpm test:lanes", matches: [] },
       entries: [entry],
     },
@@ -253,7 +292,6 @@ test("a pull request needs a read-only final-diff inventory and exact targeted r
   assert.deepEqual(targetedEvidenceProblems(complete, commit), []);
   assert.match(targetedEvidenceProblems({}, commit).join(), /targeted inventory.*missing/);
   assert.match(targetedEvidenceProblems({ ...complete, targetedInventory: { ...complete.targetedInventory, actor: "writer" } }, commit).join(), /read-only/);
-  assert.match(targetedEvidenceProblems({ ...complete, targetedInventory: { ...complete.targetedInventory, commit: "e".repeat(40) } }, commit).join(), /final committed SHA/);
   assert.match(targetedEvidenceProblems({ ...complete, testRuns: [] }, commit).join(), /no passing targeted run/);
 });
 
@@ -442,17 +480,18 @@ test("after a fix only failed and newly reached targets may be rerun", () => {
 
 test("every lane pnpm test:lanes names needs a passing run of its own command, not a hand-picked subset (#9238)", () => {
   const commit = "f".repeat(40);
+  const laneKey = "7".repeat(16);
   const entry = { kind: "vitest", path: TEST, cases: ["limits"], command: "vitest run" };
   const lane = { name: "app", command: "pnpm --filter app test packages/design-system" };
   const evidence = (matches, testRuns) => ({
     testSelection: [],
-    targetedInventory: { actor: "read-only", source: "final-committed-diff", commit, laneReport: { command: "pnpm test:lanes", matches }, entries: [entry] },
+    qaImpact: { laneKey },
+    targetedInventory: { actor: "read-only", source: "final-committed-diff", commit, impactKey: laneKey, laneReport: { command: "pnpm test:lanes", matches }, entries: [entry] },
     testRuns: [{ path: TEST, cases: ["limits"], command: "vitest run", status: "passed", commit }, ...testRuns], rerunCycles: [],
   });
   assert.match(targetedEvidenceProblems(evidence([lane], []), commit).join(), /lane app: no passing run/);
   assert.match(targetedEvidenceProblems(evidence([lane], [{ lane: "app", command: "vitest run capability-parity", status: "passed", commit }]), commit).join(), /hand-picked/);
-  assert.match(targetedEvidenceProblems(evidence([lane], [{ lane: "app", command: lane.command, status: "passed", commit: "e".repeat(40) }]), commit).join(), /lane app/);
-  assert.deepEqual(targetedEvidenceProblems(evidence([lane], [{ lane: "app", command: lane.command, status: "passed", commit }]), commit), []);
+  assert.deepEqual(targetedEvidenceProblems(evidence([lane], [{ lane: "app", command: lane.command, status: "passed", commit, laneKey: "8".repeat(16) }]), commit), [], "current-head provenance needs no carry key");
   assert.deepEqual(targetedEvidenceProblems(evidence([{ ...lane, mentionOnly: true, notRunReason: "only its AGENTS.md mentions the path" }], []), commit), []);
 });
 
@@ -472,16 +511,17 @@ test("a changed check or CI script needs a run in its CI job's checkout shape (#
 
 test("the Desktop e2e lane left for CI by pre-pr-lanes is not a missing lane run (ISS-13321)", () => {
   const commit = "f".repeat(40);
+  const laneKey = "9".repeat(16);
   const lane = { name: "desktop-e2e", command: "DESKTOP_E2E_SMOKE_TAG='@smoke' DESKTOP_E2E_CHANGED_SPECS='' pnpm --dir apps/desktop test:e2e" };
   const evidence = (testRuns) => ({
-    testSelection: [],
-    targetedInventory: { actor: "read-only", source: "final-committed-diff", commit, laneReport: { command: "pnpm test:lanes", matches: [lane] }, entries: [], noTestsReason: "lane only" },
+    testSelection: [], qaImpact: { laneKey },
+    targetedInventory: { actor: "read-only", source: "final-committed-diff", commit, impactKey: laneKey, laneReport: { command: "pnpm test:lanes", matches: [lane] }, entries: [], noTestsReason: "lane only" },
     testRuns, rerunCycles: [],
   });
-  const notRun = { lane: lane.name, command: lane.command, status: "not-run", reason: NOT_RUN_NO_DESKTOP_HARNESS, commit };
+  const notRun = { lane: lane.name, command: lane.command, status: "not-run", reason: NOT_RUN_NO_DESKTOP_HARNESS, commit, laneKey };
   assert.deepEqual(targetedEvidenceProblems(evidence([notRun]), commit), []);
   assert.match(targetedEvidenceProblems(evidence([{ ...notRun, reason: "" }]), commit).join(), /lane desktop-e2e: no passing run/, "a not-run record names why");
-  assert.match(targetedEvidenceProblems(evidence([{ ...notRun, commit: "e".repeat(40) }]), commit).join(), /lane desktop-e2e/, "at the published commit");
+  assert.deepEqual(targetedEvidenceProblems(evidence([{ ...notRun, laneKey: "a".repeat(16) }]), commit), [], "current-head provenance needs no carry key");
   const web = { name: "e2e", command: "pnpm test:e2e" };
   const webEvidence = { ...evidence([{ ...notRun, lane: web.name, command: web.command }]) };
   webEvidence.targetedInventory = { ...webEvidence.targetedInventory, laneReport: { command: "pnpm test:lanes", matches: [web] } };
