@@ -2,7 +2,7 @@
 type: regex
 match: contains
 flags: i
-pattern: '(?s)(?=.*proof)(?=.*(?:module|new-index))(?=.*branch.*branch)(?=.*tests/criterion-a\.test\.ts)(?=.*src/new-index/index\.ts)(?=.*src/new-index/mapper\.ts)(?=.*(?:exclusive file allowlist|non.overlap|disjoint))(?:.|\n)+'
+pattern: '(?=[\s\S]*proof)(?=[\s\S]*(?:module|new-index))(?=[\s\S]*branch[\s\S]*branch)(?=[\s\S]*tests/criterion-a\.test\.ts)(?=[\s\S]*src/new-index/index\.ts)(?=[\s\S]*src/new-index/mapper\.ts)(?=[\s\S]*(?:exclusive file allowlist|non.overlap|disjoint))[\s\S]+'
 ---
 
 Both tasks get explicit non-overlapping file allowlists on separate branches.

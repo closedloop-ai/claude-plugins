@@ -2,7 +2,7 @@
 type: regex
 match: contains
 flags: i
-pattern: '(?s)(?=.*defect.*(?:return|send|route).*ticket writer)(?=.*helper.*(?:never|do not|does not|cannot).*repair)(?:.|\n)+'
+pattern: '(?=[\s\S]*defect[\s\S]*(?:return|send|route)[\s\S]*ticket writer)(?=[\s\S]*helper[\s\S]*(?:never|do not|does not|cannot)[\s\S]*repair)[\s\S]+'
 ---
 
 A defect in ticket writer code returns to that writer, not a helper repair.
