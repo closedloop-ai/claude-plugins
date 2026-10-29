@@ -134,16 +134,11 @@ that writer alone reviews and integrates a helper's returned commit or proof.
 Reviewers stay independent and read-only.
 
 During a requested pull-request writer turn, run
-`node ../handoff/scripts/parallel-prep.mjs --writer-state running --pull-request`
-and dispatch its lanes. Draft the targeted inventory from the live
-diff and later inspect only its committed delta. Configured E2E runner: fresh
-ref, install, bootstrap, prebuild app images; never force.
-Rebuild only when final build-input hashes differ. Run stable lanes for finished
-files; bind results to SHA and covered-file hashes. At turn end, start hidden
-local QA so visual QA overlaps tests. Draft the PR body and evidence comment as
-results land. Lanes are read-only or operational: no product-source/test edits
-or second writer. Carry a result only when its recorded hashes
-match final HEAD.
+`node ../handoff/scripts/parallel-prep.mjs --writer-state running --pull-request`.
+Draft the targeted inventory from the live
+diff, prebuild app images, and bind results to covered-file hashes. Its
+read-only lanes never edit product source or tests; visual QA overlaps tests.
+After QA, `qa-impact.mjs` alone selects any repeated lane or screen.
 
 Codex: hold, register and resume one canonical writer. Claude Code: launch and
 resume the canonical `vibe:vibe-change-worker` with parent-discovered
@@ -498,9 +493,11 @@ and publishes nothing on failure. Do not hide a leak by rewriting history or
 broadly ignore other ClosedLoop artifacts. Handoff reviewers exclude only
 this exact folder from deliverable files.
 
-The plan gets no review: the writer writes it and builds in the same turn. A
-material approach change found later is corrected in the plan at outline level
-by the same writer. The person running the session never reviews or approves the technical plan.
+The plan gets no review: the writer writes it and builds in the same turn. On startup, resume, fleet takeover or handoff with an
+existing `liveTicket`, list outgoing `PRODUCES` links and reuse one PLN. With
+none, the SAME writer first writes the core plan covering every criterion and
+continues building; plan mode publishes `built: false` without a person wait,
+second PLN or build/deploy pause. Later changes return to that writer.
 
 ## Implementation and corrections
 

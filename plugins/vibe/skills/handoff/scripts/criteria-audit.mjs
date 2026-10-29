@@ -5,14 +5,14 @@
 // flag-off path with the base, and the audit against the criteria ran only
 // after merge.
 //
-// Usage: criteria-audit.mjs --worktree <path> --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json>
+// Usage: criteria-audit.mjs --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json>
 //
 // The criteria are the ticket's `- Acceptance criteria:` checklist, numbered
 // AC-1, AC-2, ... in order.
 // The audit is a fresh-context reviewer's table given only those criteria and
-// the diff, run on the final head after the last main merge: a `Head: <sha>`
-// line, then one `| AC-n | MET|PARTIAL|MISSED | <evidence> |` row per
-// criterion. Every criterion must be MET, on the worktree's HEAD.
+// the diff: one `| AC-n | MET|PARTIAL|MISSED | <evidence> |` row per
+// criterion. Every criterion must be MET. Later work is classified by
+// qa-impact.mjs, which reruns this audit only when its affected scope changed.
 // The matrix: {"surfaces": [...], "inputs": [...], "flags": ["on", "off"] or [],
 // "rows": [{"criterion", "surface", "input", "flag", "evidence"}]}. Every
 // criterion x surface x input x flag cell needs a row with evidence; `"input":
@@ -21,7 +21,6 @@
 // accessibility or snapshot diff against the base) or `ruling:` (the human
 // source). Prints {"ok","problems"}; exits 1 on any problem.
 
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -32,7 +31,6 @@ const HEADING = /^(#{1,6})\s/;
 const CHECKBOX = /^\s+-\s*\[([ xX])\]\s*(\S.*)$/;
 const TOP_CHECKBOX = /^\s*[-*]\s*\[([ xX])\]\s*(\S.*)$/;
 const AUDIT_ROW = /^\|\s*(AC-\d+)\s*\|\s*(MET|PARTIAL|MISSED)\s*\|\s*(.*?)\s*\|\s*$/gm;
-const AUDIT_HEAD = /^Head:\s*([0-9a-f]{7,40})\s*$/m;
 const FLAG_OFF_EVIDENCE = /^(?:no behavior change:|ruling:)\s*\S/;
 const ANY_INPUT_EVIDENCE = /^not input-driven:\s*\S/;
 
@@ -72,13 +70,9 @@ export function criteriaStates(ticket) {
   return criteria;
 }
 
-/** Problems with the audit table against the criteria and the head. */
-export function auditProblems(audit, criteria, head) {
+/** Problems with the audit table against the criteria. */
+export function auditProblems(audit, criteria) {
   const problems = [];
-  const auditedHead = AUDIT_HEAD.exec(audit)?.[1];
-  if (!auditedHead || !head.startsWith(auditedHead)) {
-    problems.push(`the audit ran on ${auditedHead ?? "no recorded head"}, not ${head}; rerun it on the final head after the last main merge`);
-  }
   const rows = new Map([...audit.matchAll(AUDIT_ROW)].map((match) => [match[1], { verdict: match[2], evidence: match[3] }]));
   for (const { id } of criteria) {
     const row = rows.get(id);
@@ -121,15 +115,14 @@ export function matrixProblems(matrix, criteria) {
 }
 
 function main(argv) {
-  const { values } = parseArgs({ args: argv, options: { worktree: { type: "string" }, ticket: { type: "string" }, audit: { type: "string" }, matrix: { type: "string" } } });
-  if (!values.worktree || !values.ticket || !values.audit || !values.matrix) {
-    throw new Error("Usage: criteria-audit.mjs --worktree <path> --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json>");
+  const { values } = parseArgs({ args: argv, options: { ticket: { type: "string" }, audit: { type: "string" }, matrix: { type: "string" } } });
+  if (!values.ticket || !values.audit || !values.matrix) {
+    throw new Error("Usage: criteria-audit.mjs --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json>");
   }
   const criteria = ticketCriteria(readFileSync(values.ticket, "utf8"));
-  const head = execFileSync("git", ["-C", values.worktree, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   const problems = [
     ...(criteria.length === 0 ? ["the ticket has no acceptance criteria checklist"] : []),
-    ...auditProblems(readFileSync(values.audit, "utf8"), criteria, head),
+    ...auditProblems(readFileSync(values.audit, "utf8"), criteria),
     ...matrixProblems(JSON.parse(readFileSync(values.matrix, "utf8")), criteria),
   ];
   process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, criteria: criteria.map(({ id }) => id), problems }, null, 2)}\n`);

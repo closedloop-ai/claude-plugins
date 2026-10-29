@@ -99,11 +99,13 @@ test path>"] }` entries, not a `codeTestsFor` object or a list of basenames.
 When the graph cannot establish tests, a `code_tests_for` row may use
 `tests: null` only with the repository's `related` selection for that file.
 `targetedInventory` has `actor: "read-only"`,
-`source: "final-committed-diff"`, the full final `commit`, a `laneReport`
+`source: "final-committed-diff"`, the full final `commit`, and the complete
+`qaImpactRequest` inputs. Recompute that request and copy its `laneKey` to
+`impactKey`; never trust a stored classifier result. It also has a `laneReport`
 with `command: "pnpm test:lanes"` and `matches` named by that report, and
 `entries` containing each exact test `kind`, `path`, nonempty `cases` and
 `command`. A lane result in `testRuns` uses `status: "passed"` with its
-exact command and commit, not `"pass"`; a selected test result also names
+exact command, provenance commit and matching `laneKey`, not `"pass"`; a selected test result also names
 its exact path, cases and command. Always write `rerunCycles: []` when no
 failure was rerun. After writing the private JSON, run
 `node ../skills/handoff/scripts/pr-evidence-schema.mjs --file
@@ -120,12 +122,11 @@ post-merge-only lane. Run that set once, each named lane by the command
 script or workflow reruns in its job's shape from
 `../skills/handoff/scripts/ci-job-shape.mjs` (`ciCheckRepros`). After a writer fixes an isolated
 failure, refresh the inventory and rerun only that failed case and any target
-the fix newly reaches, never the whole set. Record every result and SHA. Carry
-an earlier pass only when its covered-file hashes match final HEAD.
-A selected test or lane that fails at final HEAD is run once more, the same
-command, in a checkout of the main the session captured (the main-sync
+the fix newly reaches, never the whole set. `qa-impact.mjs` decides reuse and
+names any lanes or screens. A selected failure runs once more on captured main (the main-sync
 `mainSha`; for a lane, `../skills/vibe/scripts/pre-pr-lanes.mjs run
---main-worktree <that checkout> --main-sha <mainSha>`). When it fails there
+--main-worktree <that checkout> --main-sha <mainSha>` with the same `--report`
+or `--impact` selection file). When it fails there
 too, record it `status: "main-preexisting"` with that `mainSha`: it does not
 block the pull request, and the body lists it under Known main failures
 (ISS-13321). One that passes on main stays a failure for the writer. A
@@ -151,9 +152,9 @@ and cases actually ran at the recorded commit.
 The runtime tier is selected from the actual machine probe even when an
 authenticated spec cannot execute there. Never set `dockerPresent: false`
 or `selectedTier: null` to explain missing credentials on a working Docker
-machine. On final HEAD run
+machine. For a selected E2E spec, run
 `node ../skills/handoff/scripts/e2e-capability-probe.mjs --worktree "<wt>"
---head "<full SHA>"` and copy its `probe.container`, `probe.desktopHarness`
+--head "<tested source SHA>"` and copy its `probe.container`, `probe.desktopHarness`
 and `probe.probedCommit` into the private evidence without changing its
 boolean results. It checks Docker and Dagger directly, reads disk capacity,
 and reports only whether existing required credentials are present, never
