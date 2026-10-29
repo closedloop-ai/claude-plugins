@@ -95,7 +95,7 @@ const recorded = (pid, group, identity = `id-${pid}`) => ({ pid, group, identity
 const FAKE = 2_147_480_000;
 
 test('a terminal PR reconciles only its recorded helper and reports a refused cleanup with owner and ticket', async () => {
-  const record = { owner: 'writer-a', ticket: 'ISS-13420', repo: 'acme/repo', pr: '42', ending: 'pr-terminal',
+  const record = { owner: 'writer-a', ticket: 'ticket-one', repo: 'acme/repo', pr: '42', ending: 'pr-terminal',
     startedAt: '2026-10-29T00:00:00Z', pids: [FAKE + 101], identities: { [FAKE + 101]: 'started-a' },
     dockerResources: { project: 'qa-owned', containers: [], volumes: [], networks: [] } };
   const other = { owner: 'writer-b', ticket: 'ISS-OTHER', repo: 'acme/repo', pr: '43', ending: 'pr-terminal',
@@ -120,30 +120,30 @@ test('a terminal PR reconciles only its recorded helper and reports a refused cl
     prState: async () => 'terminal', end: async () => [], alive: () => false,
     cleanup: () => { throw new Error('Docker witness changed'); },
   });
-  assert.match(refused.findings[0], /LEFTOVER qa-a owner writer-a ticket ISS-13420: Docker witness changed/);
+  assert.match(refused.findings[0], /LEFTOVER qa-a owner writer-a ticket ticket-one: Docker witness changed/);
   assert.equal(record.stoppedAt, undefined);
 });
 
 test('an unverified or still live process is never marked stopped after PR closure', async () => {
-  const ledger = { qa: { owner: 'writer-a', ticket: 'ISS-13420', repo: 'acme/repo', pr: '42', ending: 'pr-terminal',
+  const ledger = { qa: { owner: 'writer-a', ticket: 'ticket-one', repo: 'acme/repo', pr: '42', ending: 'pr-terminal',
     pids: [FAKE + 103], identities: {} } };
   let signals = 0;
   const result = await reconcileTerminalHelpers(ledger, { prState: async () => 'terminal',
     end: async () => { signals += 1; return []; }, alive: () => true });
   assert.equal(signals, 1);
-  assert.match(result.findings[0], /LEFTOVER qa owner writer-a ticket ISS-13420/);
+  assert.match(result.findings[0], /LEFTOVER qa owner writer-a ticket ticket-one/);
   assert.equal(ledger.qa.stoppedAt, undefined);
 });
 
 test('fleet lifecycle status names the owner and ticket when cleanup proof is incomplete', (t) => {
   const dir = tempDir(t);
   writeFileSync(path.join(dir, 'helpers.json'), JSON.stringify({ qa: {
-    startedAt: '2026-10-29T00:00:00Z', owner: 'writer-a', ticket: 'ISS-13420',
+    startedAt: '2026-10-29T00:00:00Z', owner: 'writer-a', ticket: 'ticket-one',
     ending: 'pr-terminal', pr: '42',
   } }));
   const result = run([dir, 'status']);
   assert.equal(result.status, 1);
-  assert.match(result.stdout, /LEFTOVER qa owner writer-a ticket ISS-13420: missing ending or ownership record/);
+  assert.match(result.stdout, /LEFTOVER qa owner writer-a ticket ticket-one: missing ending or ownership record/);
 });
 const waitUntil = async (predicate) => {
   for (let i = 0; i < 100 && !predicate(); i += 1) await new Promise((resolve) => setTimeout(resolve, 50));
