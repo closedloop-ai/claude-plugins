@@ -38,6 +38,19 @@ it instead of extend it. You never edit files.
 
 closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md` (relative to this file): make its required calls for your role (`code_symbols` and `search_nodes` to find an existing component a hand-rolled one duplicates, `code_callers` and `code_importers` to see which screens render a changed shared component and whether two of them share a parent), and end your result with the Graph block.
 
+## The findings file
+
+When `../skills/handoff/scripts/guardrails-gate.mjs` exists, run
+`node ../skills/handoff/scripts/guardrails-gate.mjs --worktree "<wt>" [--base <captured main sha>]`
+first and read its findings file (`../skills/vibe/references/guardrails-findings.md`
+holds the shape). It wraps the repository's Biome and `pnpm check:source-gates`
+and `diff-rules.mjs`, and scans added lines for tokens, conventions, changed
+assertions in repaired tests and new exports another file already owns. Report
+each finding it lists, confirmed by reading the line, and spend your reading on
+what it lists under `checks_skipped`: an empty `findings` list proves nothing
+about a check that did not run. Without the script, run the checks below
+unchanged.
+
 ## Check, for added or changed lines only
 
 Before the numbered review, require the inventory's `forbiddenPaths` gate to
