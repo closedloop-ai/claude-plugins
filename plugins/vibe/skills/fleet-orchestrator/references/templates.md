@@ -11,7 +11,7 @@ A Codex session drafts this and files it only with `node scripts/request-visual.
 Session: <session name>
 PR: <owner/repo>#<number>
 Pushed head: <full sha; must equal the PR head>
-Where: <URLs or component story ids>
+Where: <screen map entry ids when available, plus URLs or component story ids>
 Flags: <key=on|off for every flag on the path>
 Steps:
 1. <step>
@@ -30,7 +30,8 @@ Plugin version: the operator answered this program's version check; when vibe's 
 Takeover: a Codex vibe session wrote this branch and stopped (<usage-limit|runtime-unavailable>). Resume that same vibe session and, before any other step, move its writer to you with vibe's harness switch (`writer-state.mjs migrate` with `harnessSwitch`, vibe's quality loop, "A writer whose runtime cannot run"). Never start a second session on this branch. Continue from its last pushed head <sha>; commit normally. Re-verify every "done" claim in its report, change log and thread replies with a test or a measurement before building on it.
 Inherited scope: trace every exclusion, deferral, "obsolete" or narrowed criterion you inherit from the previous writer (its plan, PLN, change log or report) to a human source: a ticket AC, a PRD line, an operator ruling, or a plan with a named human approver. Anything without one is built or escalated, never dropped; `rulings-check.mjs --plan` lists a linked PLN's uncited exclusions.
 Before editing, read the repo docs that own the paths you touch (AGENTS.md files or contributor guide) or the team knowledge base.
-Tests: after any change, fix or merge (a conflict resolution included), run every lane the repo's lane selector names for the diff, never a hand-picked subset, then rerun only failures.
+Tests: run the repository-selected lanes for the feature-complete change. After QA, run handoff's `qa-impact.mjs` and execute only the lanes or screens it names; a `None` result relies on ordinary per-push CI.
+Start independent repository selected validation lanes concurrently through assigned heavy slots, including non-e2e lanes while e2e runs elsewhere. Ask the orchestrator to move a lane waiting only on load or a full slot to another allowed machine; report the move and obey exclusions and limits.
 Heavy checks go through <fleet.sh slot command for the chosen machine>; never run windowed e2e on the operator's daily machine.
 Messages reach you only when your turn ends: commands expected to take more than a few minutes run in the background, never a foreground wait or a `sleep` poll, and you end the turn while they run.
 Before each commit and each verification phase, run `board.mjs <orchDir> pending <you>`; apply and acknowledge (`ack <you> --id <id>`) each change and answer it lists, naming what you applied in your next status.
@@ -61,13 +62,21 @@ Left: <what remains, in order>
 Inherited scope: trace every exclusion, deferral, "obsolete" or narrowed criterion the previous writer left (its plan, PLN, change log or report) to a human source: a ticket AC, a PRD line, an operator ruling, or a plan with a named human approver. Anything without one is built or escalated, never dropped; `rulings-check.mjs --plan` lists a linked PLN's uncited exclusions.
 Rulings in force: read <orchDir>/rulings.md; the ticket carries the applicable per-ticket rulings through handoff's rulings check.
 Research graph-first with closedloop-graph before searching files by hand, as vibe requires: ticket_detail for the ticket and its PRD, query_collisions and blast_radius_tickets for overlapping work, code_callers and code_importers before a shared change.
-Tests: after any change, fix or merge (a conflict resolution included), run every lane the repo's lane selector names for the diff, never a hand-picked subset, then rerun only failures.
+Tests: run the repository-selected lanes for the feature-complete change. After QA, run handoff's `qa-impact.mjs` and execute only the lanes or screens it names; a `None` result relies on ordinary per-push CI.
+Start independent repository selected validation lanes concurrently through assigned heavy slots, including non-e2e lanes while e2e runs elsewhere. Ask the orchestrator to move a lane waiting only on load or a full slot to another allowed machine; report the move and obey exclusions and limits.
 Budget: effort <CODEX_EFFORT>; no computer use (no browser, in-app browser, desktop app UI or screenshots).
 Visual requests: draft one from the fleet-orchestrator skill's visual request template and file it only with `node <request-visual.mjs on this machine> <requests dir> <draft>` from your worktree; it refuses an unpushed or stale head.
 Plugin version: the operator answered this program's version check; when vibe's check finds a plugin outdated, record `plugin-version.mjs choose --choice proceed --by opening-message` and carry on.
 Who speaks: this orchestrator's own directions are operational and are recorded as `(orchestrator)`, never as a human ruling; only operator words it quotes, with their source, are rulings.
 Artifacts for people (tickets, PR bodies, PR comments, review replies): never name a path on the operator's machine (home, temp, scratchpad or worktree paths) or say something is on someone's laptop. Embed screenshots as uploaded images and quote text evidence inline, briefly. A plan is attached, never pointed at: link the implementation plan as a plan document, and upload a QA plan or other working file as a ticket attachment named by its attachment name.
 ```
+
+## Remaining work report
+
+Parallel now: <each independent step and its machine, or none>
+Waiting on a real dependency: <step and prerequisite, or none>
+Moved for capacity: <step, source machine, destination machine, or none>
+Time to ready: <estimate from the longest dependent path and its stated assumptions>
 
 ## QA guide prompt
 

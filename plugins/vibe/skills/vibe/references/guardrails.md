@@ -435,6 +435,10 @@ reviewer, the ticket worker and the handoff skill point at it.
   writer and recorded on the Feature docs line instead, never kept as a
   draft.
 
+## Feature map lines
+
+Use the target repo's screen map and its writer policy. A feature branch never edits or regenerates a map reserved for a bot or refresh skill. When a screen's behavior or reach changes, write one `Feature map: <entry id or screen>: <what changed>` line per screen in the existing change log as the change is made. Use the discovered entry id; for a new screen without an entry, use its screen name. Write no line when nothing user visible changed. Handoff copies the lines verbatim to the ticket and a requested pull request.
+
 ## No new tech debt
 
 A change grows no tech debt without a cited reason. A new flag key, a

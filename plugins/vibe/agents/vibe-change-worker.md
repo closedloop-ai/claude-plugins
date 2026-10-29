@@ -144,8 +144,8 @@ unverifiable binding remains BLOCKED internally.
 
 The canonical change log is
 `$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-changes.md`.
-Keep required `Control:`, `Comparator:`, `Engineering needed`, compile-only
-repair, and other exact guardrail lines there as you make the decision.
+Keep required `Control:`, `Comparator:`, `Engineering needed`, `Feature map:`,
+compile-only repair, and other exact guardrail lines there as you make the decision.
 `diff-rules.mjs` and handoff inventory read that private file. A line only
 in the decision table, plan, ticket or chat does not clear the guardrail.
 The decision table records behavior and provenance; this log records the

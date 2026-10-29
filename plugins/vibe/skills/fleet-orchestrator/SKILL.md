@@ -46,6 +46,7 @@ Works on one machine with no remote config. More machines need ssh key auth betw
 | QA plan per PR (plan-only) and the QA-guide session (one checkpoint at a time) | `closedloop-core:guided-manual-qa` in a Claude worker | closedloop-core | a written checklist from the criteria trace |
 | Pre-merge local CI | the repo's local-CI skill (for example a `local-ci` skill wrapping dagger) | target repo | the repo's documented verify command |
 | Design and visual review of a PR's UI, headless against the deployed preview | the repo's design-review and visual-qa skills and critic agents (for example `design-critic`, `visual-qa-critic`) | target repo | a Claude reviewer reading headless captures |
+| Running app reproduction and verification | the repo's run-and-drive skill (for example `control`) in a Claude worker on an allowed machine, with displayless Desktop and headless browser modes only | target repo | headless captures; unsupported Desktop scenario left to automatically started CI |
 | Turning a repeated mistake into a guard | `closedloop-core:prevent-recurrence` | closedloop-core | the lessons loop below |
 | Writers, reviews, handoff, ticket, environment | vibe's own workers (above) | vibe | none; vibe is required |
 | Watchers, pollers, narrow log diagnosis | Sonnet subagents; `codex-fleet-monitor` for the fleet; the `app-server-orchestrator` skill to steer Codex threads | vibe, Codex skills | `fleet.sh session last` polling |
@@ -62,7 +63,7 @@ For one writer on one PR, or nobody writing code (design, research, analysis): `
 
 The closedloop-graph MCP server is required; decide from it, not from guesses. Tool guide: [vibe's closedloop-graph reference](../vibe/references/closedloop-graph.md).
 
-- Before assigning work or ruling between PRs, check overlap with `query_collisions` and `blast_radius_tickets`; read a ticket's PRD lineage and children with `ticket_detail`.
+- Before assigning work or ruling between PRs, check `query_collisions` and `blast_radius_tickets`, read PRD lineage with `ticket_detail`, and resolve tickets to screen map entries when the repo publishes them. Shared entries count as overlap across files; assign one owner or an explicit merge order.
 - Before dispatching a ticket, and in every QA-prep brief, run vibe's newest-ruling search ([requirements worker](../../agents/vibe-requirements-worker.md), Newest ruling); on a hit, stop and ask the operator.
 - In the same step, check every plan linked to the ticket (`list-artifact-links`, PRODUCES) with `node ../handoff/scripts/rulings-check.mjs --plan <json> --plan-body <text>`. Each exclusion it reports is scope the brief tells the writer to build, or you escalate; never one to skip.
 - Before a shared change, read its callers and importers (`code_callers`, `code_importers`).
@@ -135,6 +136,7 @@ scripts/fleet.sh <orchDir> local|remote session end   <name> --reason stopped|me
 ## Machines and CPU
 
 - Run heavy checks (full suites, typecheck, repo-wide lint and other gates, component story runs) through `scripts/fleet.sh <orchDir> local|remote slot heavy <owner> <worktree> <command...>`, in the worker's own worktree on that machine ([checklist step 4](./references/setup.md#checklist) gets the branch there). It caps runs at `HEAVY_SLOTS` or `REMOTE_HEAVY_SLOTS` and refuses a machine over `MAX_LOAD_PER_CORE` (exit 4): send the run to the other machine. Keep the operator's daily machine for edits and git; e2e and desktop app runs never go there.
+- Before reporting or waiting on remaining work, identify true dependencies. Start independent repository selected integration, unit, typecheck and lint lanes at once through available heavy slots on allowed machines, even while e2e is queued or running elsewhere. A lane waiting only for a full slot or load moves to another allowed machine with capacity; report the move. Respect operator exclusions, machine load and slot limits, no dagger restrictions and the daily machine's no visible e2e rule. Keep the repository lane selector and `qa-impact.mjs` decision on which checks are needed.
 - A shared e2e stack with fixed ports runs only under vibe's machine-wide e2e lock: `node ../vibe/scripts/e2e-lock.mjs run --head <sha> <command...>` on the machine that runs it, never a second lock; results name the commit they ran. Each run gets its own compose project, so a teardown removes only its own stack; name a stack another tool started with `--foreign-compose <project>`. Unit tests, typecheck, story runs and stand-in server tests run outside it.
 - `scripts/slot-lock.sh --status <lockName>` on a machine lists slot holders.
 - Kill only processes you started, by recorded pid; vibe's `hooks/kill-guard.mjs` refuses the rest. Tests that send signals run on another machine, never the operator's daily one.
@@ -149,7 +151,7 @@ scripts/fleet.sh <orchDir> local|remote session end   <name> --reason stopped|me
 - Before an audit, reconcile operator chat and AskUserQuestion answers plus guide-session and QA records into `<orchDir>/rulings.md`, then run `node ../handoff/scripts/rulings-check.mjs --program <orchDir>/rulings.md --record <transcript-or-record> ...`; audit the acceptance criteria together with those rulings.
 - Before showing `<orchDir>/review.md`, run `node scripts/review-page-check.mjs <orchDir>/review.md`.
 - The QA plan is a two-way trace between that list and the diff: each checkpoint cites one criterion ID, a diff change mapping to no criterion is a finding, and a criterion with no change and no coverage is a gap. Regression checks on neighboring surfaces are labeled separately; a regression failure is a bug, never a new requirement.
-- Agent-first QA, zero human checkpoints by default: an agent verifies and records everything it can (e2e on the head, DOM and accessibility reads, API second views, screenshots against the reference, measured contrast, geometry and focus). The operator gets only real-device feel, assistive tech, flows an agent cannot drive, or a product call no reference settles. `node ../vibe/scripts/pre-pr-lanes.mjs check --worktree <wt> --report <lane report>` (each lane at the head) and `node scripts/qa-plan-check.mjs --plan <QA record> --criteria <ticket body> --prd <PRD body>` must pass before the plan reaches the operator. A defect an agent already observed goes to the writer with its measurement.
+- Agent-first QA has zero human checkpoints by default: an agent uses the repository's run-and-drive skill from Roles when available for each screen it can drive, leaving only real-device feel, assistive tech, undrivable flows or unresolved product calls to the operator. Initial lanes use `pre-pr-lanes.mjs check --report`, later lanes `--impact`, and `qa-plan-check.mjs --plan <QA record> --criteria <ticket body>` must pass.
 - A confirmed visual-QA finding on a surface the change touches is a required fix even when it predates the branch, is already on main or was called an owner's decision. User-facing copy still needs a human source.
 - Before handoff, `node scripts/finding-brief.mjs <orchDir> --findings <findings.json> --require-disposition` must pass.
 - A QA rerun that toggles flags or moves data never uses the stack handed to the operator: `helpers.mjs <orchDir> hand <stack> --to <guide>` when the guide gets it, `unhand` when QA ends, and start the rerun helper with `--stack <its own stack>`.
@@ -172,6 +174,7 @@ scripts/fleet.sh <orchDir> local|remote session end   <name> --reason stopped|me
 Pushback applies principle 2; more patterns: [references/judgment.md](./references/judgment.md).
 
 - Debt to push back on includes parallel code paths, shims and a second owner for the same behavior; forwarding it for approval as is makes the operator do your review.
+- Honor the repo's reserved writer policy for generated files. Keep a feature PR off a bot owned screen map, never hand resolve its conflicts, and put the repo's prescribed screen change lines in the PR body. A generator change follows the repo's explicit exception.
 - No agent adds a key to the team's feature-flag service without the operator approving that key ([approval template](./references/templates.md#flag-approval)). Prefer one key per program or surface; corrections and removals are never gated.
 - An instruction to match a prototype or design never removes what main ships: diff main's shipped controls against the target before briefing a writer, and keep any it leaves out unless a human source retires it.
 - Never invent product behavior or user-facing copy; cite the human source. Never write a row the repo reserves for human attestation; read the owning check's header and ask the operator.
@@ -199,6 +202,7 @@ Hard rule: a ticket, PR body, comment, reply or other artifact for people never 
 
 ## Reporting to the operator
 
+- A remaining-steps report names each step running in parallel and its machine, actual dependencies, every capacity move, and an estimated time to ready from the longest dependent path rather than the serial sum.
 - Surface every problem the moment you see it: limits, stalls, failures, new human review comments, blockers. Keep status updates short.
 - Before reporting a count or an "only" claim from a command you ran, check that it exited 0 and that no `head`, `tail` or tool truncation cut its output; otherwise rerun the narrow command or call the figure partial. Principle 2 holds for your own findings too.
 - When the operator steps away (vibe's `away-protocol` hook puts this checklist in context on "brb", "stepping away" and the like, and the return checklist on "I'm back"), keep `<orchDir>/attention.md` current (decision needed, recommendation, what is blocked), keep reading idle writers' last messages, and lead with that list on return.

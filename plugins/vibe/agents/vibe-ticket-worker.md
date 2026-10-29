@@ -357,6 +357,7 @@ historical inspections accurately. Preserve the existing grading block.
      to update and never claims the branch edited one. A docs page in the diff
      (`git -C "<wt>" diff --stat <inventory baseCommit> apps/web/content/docs docs`)
      returns `NEEDS_CHANGE`, because nothing agent-written goes into public docs.
+   - Feature map line: copies each `Feature map:` line from the writer's change log verbatim into Handoff, or records "None: no screen behavior or reach changed".
    - Missing tests lists every entry of the writer's missing tests list, each
      with its behavior, row ID and files to cover.
    - Retired tests deleted lists every `retiredTests` entry the inventory
