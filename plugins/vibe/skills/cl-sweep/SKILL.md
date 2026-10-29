@@ -264,9 +264,8 @@ identity and callback ownership, not ticket-domain policy or surface selection.
   an already-open PR. For already-open UI PRs with no evidence or exception,
   resume the owning worker to provide the existing pre-PR evidence, obtain
   the operator's exception, or return the exact blocker; do not present the PR as
-  waiting only on CI or manual merge. After that initial evidence, apply the
-  Design Visual-QA Gate's `qa-impact.mjs` rule to later changes: preserve a
-  `None` result and repeat visual QA only for named affected screens and states.
+  waiting only on CI or manual merge. Later changes do not add another
+  visual-QA pass unless the operator explicitly asks.
 - The one ordinary review-remediation push is the default review-driven code cutoff
   for parent escalation too. Later comments alone never justify a push:
   unresolved review findings may be source-fixed after that cutoff only when

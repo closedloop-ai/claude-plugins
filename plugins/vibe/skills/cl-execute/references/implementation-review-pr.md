@@ -195,11 +195,10 @@ on leaving implementation using the [display reporter](../../cl-sweep/references
    code cannot prove it, treat that like any failed validation: fix the gap or
    return `MANUAL_INTERVENTION_REQUIRED` with the exact blocker before opening
    the PR.
-   Record `Repo verification evidence` and `Safety fact` with their source
-   provenance. After automated QA, use handoff's `qa-impact.mjs` with code
-   importers and FEATURE_MAP. `None` carries them, `Lanes only` repeats only
-   its named functional lanes, and `Visual QA` recaptures only its named
-   screens and recorded states. Manual QA keeps its own human-evidence rule.
+   Record `Repo verification evidence` and `Safety fact` with source
+   provenance. Later commits do not recapture them merely because the head
+   changed; focused validation and per-push CI prove later source fixes.
+   Manual QA keeps its own human-evidence rule.
 4. Enforce automated E2E display boundaries and record `Automated E2E display
    mode`.
 5. For performance tickets, enforce the Performance Measurement Contract in
@@ -243,10 +242,9 @@ in cl-execute points here.
 5. Already-open PR without pre-PR evidence: do not invent a current-head
    refresh gate. Produce the existing pre-PR evidence, obtain the operator's explicit
    exception for that already-open PR, or return the exact blocker.
-6. Later changes: after the one pre-PR pass or the operator's explicit
-   exception exists, run handoff's `qa-impact.mjs`. Comments, docs, release
-   history and unrelated merges return `None`. Run another visual pass only
-   for the screens, states and flag arms a `Visual QA` result names.
+6. Later changes: after the one pre-PR pass or explicit exception, do not add
+   another visual-QA pass unless the operator asks. This workflow never gains
+   classifier-driven QA that it did not run before.
 7. Substitutes: green CI, Storybook, a11y, screenshots attached to tests, and
    displayless E2E are supporting evidence, not substitutes for the pre-PR pass.
    One exception: when no stack may run (the user has stopped test

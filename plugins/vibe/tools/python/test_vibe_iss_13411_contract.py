@@ -15,6 +15,13 @@ HEAD_BOUND_QA = tuple(re.compile(pattern, re.IGNORECASE) for pattern in (
     rf"\b{QA}\b.{{0,180}}\b{ACTION}\b.{{0,180}}\b{HEAD}\b",
     rf"\b{ACTION}\b.{{0,180}}\b{QA}\b.{{0,180}}\b{HEAD}\b",
     rf"\b{ACTION}\b.{{0,180}}\b{HEAD}\b.{{0,180}}\b{QA}\b",
+    r"\ba head change\b.{0,60}\bsends? it back\b",
+    r"\bchanged source\b.{0,60}\binvalidates? proof\b",
+    r"\bafter any (?:change|fix|merge)(?:,|\s|or)*.{0,100}\b(?:run|rerun|repeat)\b.{0,80}\b(?:every )?(?:qa|lane|check|critic)",
+    r"\brerun\b.{0,60}\bat the final head\b",
+    r"\bfrozen[- ]render\b.{0,160}\bafter any (?:later )?change\b.{0,80}\b(?:runs? again|rerun)",
+    r"\bevery main sync\b.{0,120}\b(?:rerun|repeat)\b.{0,80}\b(?:check|critic|guardrail)",
+    r"\bafter any fix\b.{0,100}\b(?:rerun|repeat)\b.{0,80}\b(?:all|every)\b.{0,40}\b(?:check|critic)",
 ))
 MANUAL_QA_ALLOWLIST = {
     "skills/cl-execute/references/feature-manual-qa.md": re.compile(r"manual[- ]qa|responsible-human", re.I),
@@ -55,8 +62,11 @@ def test_the_one_classifier_owns_post_qa_scope() -> None:
     assert 'None: "None"' in source
     assert 'LanesOnly: "Lanes only"' in source
     assert 'Visual: "Visual QA"' in source
-    assert "code importers missing" in source
+    assert "SAFE_ROOT_FILES" in source
+    assert "tokenizerSafeOnly" in source
     assert "FEATURE_MAP_DEFAULT" in source
+    assert "CONFIG_DEFAULT" in source
+    assert "UI_LOCATION" not in source
     assert "QA evidence is screen and state based" in source
     assert (HANDOFF / "scripts" / "qa-impact.test.mjs").is_file()
     assert not (HANDOFF / "scripts" / "qa-merge-order.mjs").exists()
@@ -76,18 +86,22 @@ def test_no_markdown_instruction_reintroduces_head_based_automated_qa() -> None:
     assert automated_head_qa_violations(PLUGIN) == []
 
 
-def test_semantic_guard_catches_reworded_head_based_qa_outside_the_old_phrase_list(tmp_path: Path) -> None:
+def test_semantic_guard_catches_every_iss_13411_rerun_phrase_outside_the_old_list(tmp_path: Path) -> None:
     variants = {
-        "skills/new-rule.md": "When the commit changes, refresh the visual QA evidence.",
-        "agents/new-worker.md": "Rerun the selected lanes whenever HEAD advances.",
-        "references/new-proof.md": "Screenshot proof becomes stale after a new SHA.",
+        "skills/head-back.md": "A head change sends it back to verification.",
+        "agents/source-proof.md": "Changed source invalidates proof.",
+        "references/every-lane.md": "After any change, fix, or merge, run every lane.",
+        "skills/final-head.md": "Rerun visual QA at the final head.",
+        "references/frozen.md": "Frozen-render evidence counts only while files are unchanged; after any later change the command runs again.",
+        "skills/main-sync.md": "Every main sync must rerun required checks and the guardrails critic.",
+        "agents/fix-critics.md": "After any fix, rerun all checks and critics.",
     }
     for relative, text in variants.items():
         file = tmp_path / relative
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text(text)
     violations = automated_head_qa_violations(tmp_path)
-    assert len(violations) == 3
+    assert len(violations) == len(variants)
     assert {item.split(":", 1)[0] for item in violations} == set(variants)
 
 

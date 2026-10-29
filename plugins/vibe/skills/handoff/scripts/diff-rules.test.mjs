@@ -204,6 +204,26 @@ test("frozen story dependency closure includes imported styles and token JSON (I
   }
 });
 
+test("frozen stories include global styles, tokens, Tailwind config and Storybook preview (ISS-13411 review)", (t) => {
+  const base = {
+    "apps/storybook/stories/row.stories.tsx": "import { Row } from \"@repo/design-system/components/row\";\nexport default { title: \"Composites v1.0/Row\" };\n",
+    "packages/design-system/components/row.tsx": "export const Row = 1;\n",
+    "apps/app/globals.css": "body { color: red; }\n",
+    "packages/design-system/tokens/colors.json": "{\"text\":\"red\"}\n",
+    "tailwind.config.ts": "export default { theme: {} };\n",
+    "apps/storybook/.storybook/preview.tsx": "export const decorators = [];\n",
+  };
+  for (const [file, text] of Object.entries({
+    "apps/app/globals.css": "body { color: blue; }\n",
+    "packages/design-system/tokens/colors.json": "{\"text\":\"blue\"}\n",
+    "tailwind.config.ts": "export default { theme: { extend: {} } };\n",
+    "apps/storybook/.storybook/preview.tsx": "export const decorators = [() => null];\n",
+  })) {
+    const result = run(t, { base, head: { [file]: text } });
+    assert.deepEqual(result.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]], file);
+  }
+});
+
 test("routes, GridTableV2 and story titles require the tests the graph does not map", (t) => {
   const tests = ["apps/app/__tests__/grid-table-v2-surface-capability-parity.test.ts", "apps/app/__tests__/sessions-list-v2-host-capability-parity.test.ts", "apps/storybook/__tests__/preview-story-sort-order.test.ts", "apps/storybook/__tests__/story-group-order.test.ts"];
   const result = run(t, {

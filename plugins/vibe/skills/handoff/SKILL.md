@@ -554,12 +554,10 @@ commit (nothing is squashed or amended):
 each untracked file the inventory lists as `forbidden` or `outsideAllowed`
 that the session did not write (`../vibe/SKILL.md`, section 6, step 3).
 `committed: false` means nothing changed. A commit the hook refused goes back to step 5's fixing, then
-this step again. Every main sync is checked for capability removal, this one
-included, because a merge can quietly take away something main ships (for
-example, turn an editable control read-only). Once the merge is committed,
-dispatch `vibe-guardrails-reviewer` for its check 13 on that
-merge and rerun the inventory's `requiredChecks` on the merged tree; a
-blocking finding goes back to the SAME writer, then this step again.
+this step again. Once the merge is committed, run `qa-impact.mjs` from the
+last handoff evidence. `None` carries it; otherwise run only the named lanes
+or screens. Dispatch `vibe-guardrails-reviewer` only for hand-resolved source
+changes, never for a clean main merge.
 Resume the SAME writer's source-owned `progress` continuation
 with parent-controlled handoff purpose/transaction to execute
 `main-sync-validate` against committed input.
@@ -910,12 +908,10 @@ resumes and every fix goes through this path, never around it:
    product question a thread raises goes through "Answers from the person";
    a fix that needs a path the writer may never edit is logged as
    `Engineering needed (forbidden path)` and answered with that reason.
-4. Rerun the checks on the new diff, the way a behavior answer does: step 1's
-   inventory with `--phase pull-request`, step 3's guardrails review (the
-   `vibe-guardrails-reviewer` reruns on the whole new diff), step 4 when a
-   component or story changed, step 5's checks, and step 6's review with
-   `review-soul` required on the tests. Confirmed findings return to the SAME
-   writer until all of them are clean. The guardrails reviewer marks each
+4. Rebuild step 1's pull-request inventory, then run `qa-impact.mjs` from the
+   prior evidence. Run only its lanes or named screens, and review only the
+   files the fix changed; never restart every check or critic. Confirmed
+   findings return to the SAME writer. The guardrails reviewer marks each
    `fixed` thread `verified` or `not-verified` with `file:line` evidence;
    the writer's own report is never that verification.
    The VQA findings file must also pass `node ../fleet-orchestrator/scripts/finding-brief.mjs <orchDir> --findings <findings.json> --require-disposition`; a finding on a touched surface cannot be handed off without its fixing SHA or follow-up ticket.

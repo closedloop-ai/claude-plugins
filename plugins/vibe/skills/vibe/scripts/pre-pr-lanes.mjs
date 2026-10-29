@@ -57,6 +57,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
 import { git } from "./session-record.mjs";
 import { testedHead } from "./tested-head.mjs";
 
@@ -145,7 +146,7 @@ function readRecords(worktree) {
 function selectedScope(values, command) {
   if (Boolean(values.report) === Boolean(values.impact)) throw new Error("exactly one of --report or --impact is required");
   if (values.impact) {
-    const impact = JSON.parse(readFileSync(values.impact, "utf8"));
+    const impact = qaImpactRequest(values.worktree, JSON.parse(readFileSync(values.impact, "utf8")));
     if (!Array.isArray(impact.lanes) || (command && !impact.lanes.includes(command)) || (impact.lanes.length && !/^[a-f0-9]{16}$/.test(impact.laneKey ?? ""))) {
       throw new Error("--impact must select this lane and carry qa-impact.mjs laneKey");
     }

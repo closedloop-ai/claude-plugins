@@ -55,13 +55,21 @@ test("the PR-open check refuses a diff naming desktop-renderer with no recorded 
   const head = git(worktree, ["rev-parse", "HEAD"], home).trim();
   for (const lane of reportLanes(REPORT)) assert.equal(run("record", "--worktree", worktree, "--head", head, "--command", lane, "--result", "pass", "--report", report).status, 0);
   assert.equal(run("check", "--worktree", worktree, "--report", report).status, 0);
-  git(worktree, ["commit", "--quiet", "--allow-empty", "-m", "more"], home);
+  writeFileSync(path.join(worktree, "README.md"), "docs\n");
+  git(worktree, ["add", "README.md"], home);
+  git(worktree, ["commit", "--quiet", "-m", "docs"], home);
   const none = path.join(root, "impact-none.json");
-  writeFileSync(none, JSON.stringify({ outcome: "None", lanes: [], screens: [] }));
+  writeFileSync(none, JSON.stringify({ since: head, evidence: { screens: [] }, graphImporters: { importers: {} },
+    featureMap: { entries: [] }, laneSelections: { files: {} }, config: { docs: [] } }));
   assert.equal(run("check", "--worktree", worktree, "--impact", none).status, 0, "an unrelated commit selects no local lane");
+  const testFile = "changed.test.ts";
+  writeFileSync(path.join(worktree, testFile), "export const changed = true;\n");
+  git(worktree, ["add", testFile], home);
+  git(worktree, ["commit", "--quiet", "-m", "test"], home);
   const selected = path.join(root, "impact-lanes.json");
-  writeFileSync(selected, JSON.stringify({ outcome: "Lanes only", lanes: ["pnpm test:desktop-renderer"], screens: [], laneKey: "0123456789abcdef" }));
-  assert.equal(run("check", "--worktree", worktree, "--impact", selected).status, 1, "a selected lane still needs current evidence");
+  writeFileSync(selected, JSON.stringify({ outcome: "None", lanes: [], since: head, evidence: { screens: [] }, graphImporters: { importers: {} },
+    featureMap: { entries: [] }, laneSelections: { files: { [testFile]: ["pnpm test:desktop-renderer"] } }, config: { docs: [] } }));
+  assert.equal(run("check", "--worktree", worktree, "--impact", selected).status, 1, "caller outcome is ignored and the selected lane still needs evidence");
   const later = git(worktree, ["rev-parse", "HEAD"], home).trim();
   assert.equal(run("record", "--worktree", worktree, "--head", later, "--command", "pnpm test:desktop-renderer", "--result", "pass", "--impact", selected).status, 0);
   git(worktree, ["commit", "--quiet", "--allow-empty", "-m", "docs only"], home);

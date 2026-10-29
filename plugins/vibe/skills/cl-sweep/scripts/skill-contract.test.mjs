@@ -204,7 +204,7 @@ test('ticket workers own support delegation and visual QA carries the preflight'
   assert.doesNotMatch(protocol, /Ticket sessions never delegate/i);
 });
 
-test('UI work keeps one pre-PR pass and scopes later automated visual QA by impact (ISS-13411 operator ruling, 2026-10-29)', () => {
+test('UI work keeps one pre-PR visual pass and adds no later pass (ISS-13411 operator ruling, 2026-10-29)', () => {
   const execute = readExecuteContract();
   const implementation = read('cl-execute/references/implementation-review-pr.md');
   const skill = read('cl-execute/SKILL.md');
@@ -220,14 +220,13 @@ test('UI work keeps one pre-PR pass and scopes later automated visual QA by impa
   assert.match(gate, /exactly one dedicated visual-QA pass[\s\S]{0,420}before first push\/open PR/i);
   assert.match(gate, /Never silently open a PR and defer\s+visual QA to post-PR/);
   assert.match(gate, /do not invent a current-head\s+refresh gate/);
-  // ISS-13411 operator ruling, 2026-10-29: "we only do automated qa if there's a potential for a commit to have caused a UI change".
-  assert.match(gate, /Later changes:[\s\S]{0,220}qa-impact\.mjs/);
-  assert.match(gate, /Comments, docs, release\s+history and unrelated merges return `None`/);
-  assert.match(gate, /Run another visual pass only\s+for the screens, states and flag arms a `Visual QA` result names/);
+  // ISS-13411 operator ruling, 2026-10-29: the ruling reduces automated QA; it never adds a pass to this workflow.
+  assert.match(gate, /Later changes:[\s\S]{0,220}do not add\s+another visual-QA pass unless the operator asks/);
+  assert.doesNotMatch(gate, /qa-impact\.mjs/);
   assert.match(gate, /Storybook, a11y, screenshots attached to tests, and\s+displayless E2E are supporting evidence/);
   assert.match(gate, /when no stack may run[\s\S]{0,260}may review\s+captured before\/after screenshots/);
   assert.match(gate, /UI visual QA: passed \(screenshots only, no\s+live stack\)/);
-  assert.doesNotMatch(execute, /do not require another\s+visual-QA pass unless the operator\s+explicitly asks/i);
+  assert.match(execute, /do not add\s+another visual-QA pass unless the operator asks/i);
   for (const source of [skill, monitoring, formats]) {
     assert.match(source, /Design Visual-QA Gate\]\((?:references\/)?implementation-review-pr\.md#design-visual-qa-gate\)/);
   }
@@ -235,8 +234,8 @@ test('UI work keeps one pre-PR pass and scopes later automated visual QA by impa
   // The sweep keeps only its parent acceptance checks and points workers at the gate.
   for (const source of [sweep, lifecycle]) {
     assert.match(source, /one dedicated\s+pre-PR design visual-QA pass/i);
-    assert.match(source, /qa-impact\.mjs/);
-    assert.match(source, /named affected (?:screens and states|visual scope)/i);
+    assert.match(source, /do not add another\s+visual-QA pass unless the operator explicitly asks/i);
+    assert.doesNotMatch(source, /qa-impact\.mjs/);
   }
   assert.match(lifecycle, /satisfy the Design Visual-QA Gate in \.\.\/\.\.\/cl-execute\/references\/implementation-review-pr\.md/);
 
@@ -886,8 +885,8 @@ test('manual QA still compares stable patch-id before scenario carry-forward (IS
   assert.match(implementation, /Manual QA keeps its own human-evidence rule/);
   assert.match(manualQa, /same binding governs\s+only this responsible-human scenario evidence/);
   assert.match(formats, /^Manual QA head coverage: <current PR head, tested head, merge base and stable patch-id at each/m);
-  assert.match(formats, /^Safety fact: <[^\n]*source provenance, later qa-impact disposition/m);
-  assert.match(formats, /^Repo verification evidence: <[^\n]*source provenance and any later qa-impact disposition/m);
+  assert.match(formats, /^Safety fact: <[^\n]*source provenance/m);
+  assert.match(formats, /^Repo verification evidence: <[^\n]*source provenance/m);
 });
 
 test('manual-QA verdict changes are logged in the decision log', () => {

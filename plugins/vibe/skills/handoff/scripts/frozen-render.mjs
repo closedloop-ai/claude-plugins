@@ -71,7 +71,7 @@ import { parseArgs } from "node:util";
 import { PLAY_EVENT_RECORDER, playVerdicts } from "../../vibe/scripts/story-play-verdict.mjs";
 import { storyId } from "./diff-rules.mjs";
 import { cropDiffPng, decodePng, pixelHash } from "./png-diff.mjs";
-import { semanticSourceText } from "./qa-impact.mjs";
+import { loadTypeScript, semanticSourceText } from "./qa-impact.mjs";
 import { IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
 import { keepsStoryIdentity, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 
@@ -93,6 +93,12 @@ const Side = Object.freeze({ Base: "base", BaseAgain: "base-again", Head: "head"
 export const CONFIRM_RENDERS = 2;
 export const StoryFileChange = Object.freeze({ Unchanged: "unchanged", Repaired: "repaired", Changed: "changed" });
 const GIT_MAX_BUFFER = 16 * 1024 * 1024;
+const FROZEN_GLOBAL_INPUT = /\.(?:css|scss|sass|less)$|(?:^|\/)(?:tokens?|themes?)(?:\/|\.|-)|(?:^|\/)tailwind\.config\.[cm]?[jt]s$|(?:^|\/)\.storybook\/preview\.[cm]?[jt]sx?$/i;
+
+/** Global inputs that can affect every frozen story without a direct import. */
+export function isFrozenGlobalInput(file) {
+  return FROZEN_GLOBAL_INPUT.test(file);
+}
 
 /** Every story ID in `storyFiles`, read from their text at `base` in `repo`. */
 export function frozenStoryIds(repo, base, storyFiles) {
@@ -237,7 +243,8 @@ export function frozenInputs(repo, base, storyFiles = []) {
   const headFiles = new Set(run(["ls-files", "--cached", "--others", "--exclude-standard"]).split("\n").filter((file) => SOURCE_FILE.test(file)));
   const allFiles = new Set([...baseFiles, ...headFiles]);
   const changed = run(["diff", "--name-only", "--no-renames", base]).split("\n").filter((file) => SOURCE_FILE.test(file));
-  const roots = storyFiles.length ? storyFiles : changed;
+  const roots = [...new Set([...(storyFiles.length ? storyFiles : changed), ...changed.filter(isFrozenGlobalInput)])];
+  const typescript = loadTypeScript(repo);
   const closure = new Set();
   const queue = [...new Set(roots)];
   const textAt = (file, ref) => {
@@ -265,7 +272,7 @@ export function frozenInputs(repo, base, storyFiles = []) {
   const hash = createHash("sha256");
   for (const file of [...closure].sort()) {
     const text = textAt(file, "head");
-    const semantic = semanticSourceText(file, text);
+    const semantic = semanticSourceText(file, text, typescript) ?? text;
     hash.update(`${file}\0${semantic === null ? "deleted" : createHash("sha256").update(semantic).digest("hex")}\n`);
   }
   return hash.digest("hex").slice(0, 16);

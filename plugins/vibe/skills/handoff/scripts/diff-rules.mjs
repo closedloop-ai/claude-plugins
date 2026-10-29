@@ -17,7 +17,7 @@ import { sharedComponentTests } from "./shared-consumers.mjs";
 import { checkSpecChanges } from "./spec-rules.mjs";
 import { routeSpecs } from "./route-specs.mjs";
 import { escapeRegExp, IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
-import { frozenInputs } from "./frozen-render.mjs";
+import { frozenInputs, isFrozenGlobalInput } from "./frozen-render.mjs";
 import { checkStorybookRules, storybookRuleTests } from "./storybook-rules.mjs";
 import { isUnversionedStory, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 import { isVisualBaseline, visualBaselineLedgerProblems } from "./visual-baseline-ledger.mjs";
@@ -510,7 +510,9 @@ function checkFrozenRenders(files, repo, changeLog, add) {
     }
     frontier = [...next];
   }
+  const globalChanged = [...changed].some(isFrozenGlobalInput);
   const affected = stories.filter((story) => {
+    if (globalChanged) return true;
     const seen = new Set([story]);
     const queue = [story];
     while (queue.length) {

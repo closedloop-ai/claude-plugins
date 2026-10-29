@@ -82,6 +82,13 @@ def test_wrong_route_and_missing_must_say_fail(tmp_path: Path) -> None:
     assert all(c["passed"] for c in checks)
 
 
+def test_resume_plan_eval_rejects_the_main_behavior(tmp_path: Path) -> None:
+    case = next(c for c in runner.cases() if c["name"] == "product-manager-resume-existing-ticket-plan")
+    main_behavior = "MISSING: keep the local plan unpublished\nEXISTING: reuse PLN-1450 and create no new plan\nBUILD: neither pauses"
+    checks, _ = runner.deterministic(case, main_behavior, tmp_path, [])
+    assert not next(c for c in checks if c["grader"] == "missing-publishes-plan")["passed"]
+
+
 def test_missing_negative_check_target_cannot_pass(tmp_path: Path) -> None:
     case = next(c for c in runner.cases() if "described-change" in c["name"])
     table = tmp_path / "session/.closedloop-ai/decision-tables/session.md"
