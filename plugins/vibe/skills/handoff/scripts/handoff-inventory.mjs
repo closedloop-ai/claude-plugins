@@ -96,11 +96,10 @@ import { isPortableSurfaceAllowlistEdit, PORTABLE_SURFACE_CHECKER } from "./prot
 import { loadOpenPrs, pullRequestFacts } from "./pr-facts.mjs";
 import {
   isUnversionedStory,
+  keepsStoryIdentity,
   STORY_GROUP_ORDER_PATH,
   StorybookScheme,
   storybookSchemeOf,
-  storyExportNames,
-  storyMetaTags,
   storyMetaTitle,
 } from "./storybook-taxonomy.mjs";
 
@@ -475,15 +474,6 @@ function findV1Stories(files) {
     }
   }
   return { v1Stories: v1, compileOnlyV1Repairs: compileOnly };
-}
-
-/** Same meta title, same meta tags and same exported story names, so the same story IDs. */
-function keepsStoryIdentity(base, source) {
-  return (
-    storyMetaTitle(base) === storyMetaTitle(source) &&
-    JSON.stringify(storyMetaTags(base)) === JSON.stringify(storyMetaTags(source)) &&
-    JSON.stringify(storyExportNames(base)) === JSON.stringify(storyExportNames(source))
-  );
 }
 
 function isV1Story(source) {

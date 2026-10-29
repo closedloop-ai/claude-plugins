@@ -230,21 +230,37 @@ advice was applied.
 In handoff mode also run these checks and report each result with its
 evidence:
 
-- Frozen renders: for each inventory `frozen-render` finding, run
-  `../skills/handoff/scripts/frozen-render.mjs --repo <worktree> --base <base>
-  --base-url <url> --head-url <url> --story-file <file> ... --out <dir>`,
-  never a capture of your own. The base URL is the repo's Storybook served
-  from a disposable detached worktree at the base commit, bootstrapped with
-  `.closedloop-ai/loops-setup.sh` and removed afterwards; the head URL is the
-  session's own Storybook. It renders each story ID on both with fixed
-  args, globals and viewport, waits for the play to finish and judges it with
-  `story-play-verdict.mjs`. Each `differs` entry is a finding. Each
-  `knownMainFailures` entry fails the same way on the base: it is not a
-  finding and goes on the live ticket as a Known main failure. When nothing
-  differs, report its `changeLogLine` for the writer to record. Each finding
-  and its remedy (make a story deterministic, pause an animation) is for the
-  writer, or for engineering on the ticket when the session may not make it;
-  never phrase it as something the person running the session does
+- Frozen renders: run `../skills/handoff/scripts/frozen-render.mjs --repo
+  <worktree> --base <base> --base-url <url> --head-url <url> --story-file
+  <file> ... --out <dir>` once with every story file the inventory's
+  `frozen-render` finding lists, never a capture of your own. The base URL
+  is the repo's Storybook served from a disposable worktree made by
+  `../skills/handoff/scripts/frozen-render.mjs prepare-base --repo <worktree>
+  --base <base> --story-file <file> ... --dir <dir>` with the same story
+  files, bootstrapped with `.closedloop-ai/loops-setup.sh` and removed
+  afterwards (`git worktree remove`); never copy or edit a file in it
+  yourself. It is the base commit with each compile-only repaired story file
+  (same title, tags and story names) taken from the session, so a repaired
+  play runs on both sides and only the app code differs. The head URL is the
+  session's own Storybook. It is heavy
+  validation and runs under the same load and slot rules as every other
+  handoff heavy run. It renders each story twice on the base and once on the
+  branch with its clock, animations, viewport, fonts, theme, args and globals
+  pinned, waits for each play to finish and judges it with
+  `story-play-verdict.mjs`. It prints one line per story and a summary; read
+  those and, for a `blocking` story, only its cropped diff, never the full
+  screenshots. Each `blocking` story is a finding. A `same-failure` story
+  fails the same way on the base and an `unstable-on-base` story renders
+  differently on two base renders: neither is a finding, and each goes on the
+  live ticket as a Known main failure. A story the run marks `head story
+  file on both sides` was compared with the session's repaired story file;
+  a story file changed beyond a compile-only repair is not compared and
+  its stories block. When nothing blocks, report the
+  `Frozen render unchanged` line it prints for the writer to record
+  unchanged; never write or edit that line yourself. Each finding and its
+  remedy (make a story deterministic, pause an animation) is for the writer,
+  or for engineering on the ticket when the session may not make it; never
+  phrase it as something the person running the session does
   (`../skills/vibe/references/plain-words.md`, "What the person is asked to
   do"; ISS-13321).
 - Flag-on states: every surface the session claims has its flag-on state on
