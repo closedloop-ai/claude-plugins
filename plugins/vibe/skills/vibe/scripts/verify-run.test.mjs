@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createVerifyRun, evidenceOk, parseLaneCheck, Status, summarize, TIME_LIMITS } from "./verify-run.mjs";
+import { createVerifyRun, evidenceOk, parseLaneCheck, Status, summarize, TIME_LIMITS, turboReplay, uncoveredPaths } from "./verify-run.mjs";
 
 const HEAD = "a".repeat(40);
 const ok = (stdout = "") => ({ status: 0, stdout, stderr: "" });
@@ -212,4 +212,44 @@ test("the lane check output is read back into missing, not-run, main-preexisting
     missing: ["pnpm a"], notRun: [{ lane: "pnpm b", reason: "reason b" }], mainPreexisting: ["pnpm c"], skipped: [{ lane: "pnpm d", reason: "ruling" }],
   });
   assert.equal(TIME_LIMITS.lane, 1800);
+});
+
+test("a turbo run that replayed every task from its cache is cached with its provenance, never passed", () => {
+  const files = { "/wt/package.json": PACKAGE, "/wt/apps/app/a.tsx": "x" };
+  const replay = harness({ files, extra: [["run-bounded.mjs 900 pnpm typecheck:affected", ok("Tasks: 46 successful, 46 total\nCached:    46 cached, 46 total\n>>> FULL TURBO\n")]] });
+  const evidence = replay.controller.verify({ worktree: "/wt", head: HEAD, useCache: false });
+  const typecheck = find(evidence, "typecheck");
+  assert.equal(typecheck.status, Status.Cached);
+  assert.equal(typecheck.cachedFrom.kind, "turbo-cache");
+  assert.equal(typecheck.cachedFrom.detail, "46 cached, 46 total");
+  assert.match(typecheck.reason, /did not run/);
+  assert.equal(evidence.summary.cached >= 1, true);
+  assert.equal(evidence.ok, true);
+  const partial = harness({ files, extra: [["run-bounded.mjs 900 pnpm typecheck:affected", ok("Cached:    40 cached, 46 total\n")]] });
+  assert.equal(find(partial.controller.verify({ worktree: "/wt", head: HEAD, useCache: false }), "typecheck").status, Status.Passed);
+  assert.equal(turboReplay("nothing"), null);
+  assert.equal(turboReplay("Cached: 0 cached, 0 total"), null);
+});
+
+test("a replayed run is not stored as a pass for the next run to trust", () => {
+  const files = { "/wt/package.json": PACKAGE, "/wt/apps/app/a.tsx": "x" };
+  const replay = harness({ files, extra: [["run-bounded.mjs 900 pnpm typecheck:affected", ok("Cached:    3 cached, 3 total\n")]] });
+  replay.controller.verify({ worktree: "/wt", head: HEAD });
+  const cache = JSON.parse(replay.written["/gd/vibe-verify-cache.json"]);
+  assert.ok(!Object.keys(cache).some((key) => key.includes("typecheck:affected")));
+});
+
+const NO_LANE_REPORT = `${REPORT}\nCOVERED BY NO LANE \u2014 1 path(s):\n    e2e/org-issues-list.spec.ts\n  Docs and config often belong here legitimately.\n`;
+
+test("the lane report's covered-by-no-lane paths are surfaced in the evidence and do not change ok", () => {
+  assert.deepEqual(uncoveredPaths(NO_LANE_REPORT), ["e2e/org-issues-list.spec.ts"]);
+  assert.deepEqual(uncoveredPaths(REPORT), []);
+  const files = { "/wt/package.json": PACKAGE, "/wt/apps/app/a.tsx": "x" };
+  const withPaths = harness({ files, extra: [["run-bounded.mjs 300 pnpm test:lanes", ok(NO_LANE_REPORT)]] }).controller.verify({ worktree: "/wt", head: HEAD, useCache: false });
+  assert.deepEqual(withPaths.coveredByNoLane, ["e2e/org-issues-list.spec.ts"]);
+  assert.equal(withPaths.ok, true);
+  const without = harness({ files }).controller.verify({ worktree: "/wt", head: HEAD, useCache: false });
+  assert.deepEqual(without.coveredByNoLane, []);
+  const notRead = harness({ files }).controller.verify({ worktree: "/wt", head: HEAD, useCache: false, runLanes: false });
+  assert.equal(notRead.coveredByNoLane, null);
 });

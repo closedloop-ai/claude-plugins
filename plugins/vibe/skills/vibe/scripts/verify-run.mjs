@@ -26,6 +26,12 @@
 // evidence lists what is left to the verify worker under `leftToWorker`:
 // E2E specs, story plays, touch flows and the control sweep run in a browser.
 //
+// `coveredByNoLane` lists the paths the lane report says no lane covers (null when the
+// report was not read). It is reported only and does not change `ok`.
+//
+// A typecheck or other turbo run that replayed every task from its cache is
+// `cached` with `cachedFrom.kind` `turbo-cache`, never `passed`: the code did not run.
+//
 // Exits 0 only when `ok`. Prints the evidence; with --out writes it too (by
 // default `<gitdir>/vibe-verify-evidence.json`).
 
@@ -68,6 +74,26 @@ export function parseLaneCheck(output) {
     mainPreexisting: grab("MAIN-PREEXISTING-LANE ", /^MAIN-PREEXISTING-LANE (.*?) \(/).map((match) => match[1]),
     skipped: grab("SKIPPED-LANE ", /^SKIPPED-LANE (.*) \((.*)\)$/).map((match) => ({ lane: match[1], reason: match[2] })),
   };
+}
+
+/** The paths the lane report says no lane covers (its `COVERED BY NO LANE` block), or [] when it names none. */
+export function uncoveredPaths(report) {
+  const lines = report.split("\n");
+  const at = lines.findIndex((line) => /^COVERED BY NO LANE\b/.test(line));
+  if (at < 0) return [];
+  const paths = [];
+  for (const line of lines.slice(at + 1)) {
+    if (!/^ {4}\S/.test(line)) break;
+    paths.push(line.trim());
+  }
+  return paths;
+}
+
+/** A turbo run that replayed every task from its cache (`N cached, N total` or FULL TURBO): the code did not run. */
+export function turboReplay(output) {
+  const match = /(\d+) cached, (\d+) total/.exec(output);
+  if (match && Number(match[1]) === Number(match[2]) && Number(match[2]) > 0) return `${match[1]} cached, ${match[2]} total`;
+  return /FULL TURBO/.test(output) ? "FULL TURBO" : null;
 }
 
 /** Whether every required check is satisfied: a pass at this head or a cached pass. Nothing skipped, no-op, not run or failed counts. */
@@ -121,6 +147,10 @@ export function createVerifyRun({
     if (hit) return required(name, full, Status.Cached, { cachedFrom: { head: hit.head, ranAt: hit.at } });
     const result = bounded(seconds, command, args, worktree);
     const done = outcome(result, seconds);
+    const replay = done.status === Status.Passed ? turboReplay(`${result.stdout}\n${result.stderr}`) : null;
+    if (replay) {
+      return required(name, full, Status.Cached, { exitCode: result.status, durationMs: result.durationMs, cachedFrom: { kind: "turbo-cache", detail: replay, head }, reason: "turbo replayed every task from its cache, so the code did not run in this invocation" });
+    }
     if (done.status === Status.Passed) cache[`${head}\u0000${full}`] = { head, at: new Date(now()).toISOString() };
     return required(name, full, done.status, { exitCode: result.status, durationMs: result.durationMs, ...(done.reason ? { reason: done.reason } : {}), ...(done.evidenceTail ? { evidenceTail: done.evidenceTail } : {}) });
   }
@@ -137,12 +167,13 @@ export function createVerifyRun({
     return { ...last, command: `pnpm exec biome check <${targets.length} changed files>`, files: targets.length };
   }
 
-  function laneChecks({ worktree, head, cache, useCache }) {
+  function laneChecks({ worktree, head, cache, useCache, state }) {
     const gitDir = run("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]).stdout.trim();
     const reportRun = bounded(TIME_LIMITS.report, "pnpm", ["test:lanes"], worktree);
     if (reportRun.status !== 0) {
       return [required("lanes", "pnpm test:lanes", Status.Blocked, { reason: "the repository's lane report did not run", exitCode: reportRun.status, evidenceTail: tailLines(`${reportRun.stdout}\n${reportRun.stderr}`) })];
     }
+    state.coveredByNoLane = uncoveredPaths(reportRun.stdout);
     const lanes = reportLanes(reportRun.stdout);
     if (lanes === null) return [required("lanes", "pnpm test:lanes", Status.Blocked, { reason: "the lane report names no lane and does not say nothing changed" })];
     if (lanes.length === 0) return [required("lanes", "pnpm test:lanes", Status.NoOp, { reason: "the lane report says there is nothing to cover on this diff" })];
@@ -193,7 +224,7 @@ export function createVerifyRun({
     const gitDir = run("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]).stdout.trim();
     const actual = run("git", ["-C", worktree, "rev-parse", "HEAD"]).stdout.trim();
     const dirty = run("git", ["-C", worktree, "status", "--porcelain", "--untracked-files=no"]).stdout.trim();
-    const evidence = { schema: SCHEMA, head: actual, base: base ?? null, ranAt: new Date(now()).toISOString(), checks: [], leftToWorker: LEFT_TO_WORKER };
+    const evidence = { schema: SCHEMA, head: actual, base: base ?? null, ranAt: new Date(now()).toISOString(), checks: [], coveredByNoLane: null, leftToWorker: LEFT_TO_WORKER };
     const intended = (head ?? "").toLowerCase();
     if (!/^[0-9a-f]{7,40}$/.test(intended) || !actual.startsWith(intended) || dirty) {
       const reason = !actual.startsWith(intended) ? `HEAD-MISMATCH the worktree is at ${actual.slice(0, 12)}, not ${head}` : `DIRTY-WORKTREE modified tracked files: ${dirty.split("\n").map((line) => line.replace(/^\s*\S+\s+/, "")).join(", ")}`;
@@ -205,14 +236,16 @@ export function createVerifyRun({
     const baseRef = base ?? run("git", ["-C", worktree, "merge-base", "HEAD", "origin/main"]).stdout.trim();
     evidence.base = baseRef || null;
     const changed = run("git", ["-C", worktree, "diff", "--name-only", "--diff-filter=AMR", `${baseRef}...HEAD`]).stdout.split("\n").filter(Boolean);
+    const state = { coveredByNoLane: null };
     const common = { worktree, head: actual, cache, useCache };
     evidence.checks.push(
       biomeCheck({ files: changed, ...common }),
       repoCheck({ name: "source-gates", scriptName: "check:source-gates", command: "pnpm", args: ["check:source-gates"], seconds: TIME_LIMITS.sourceGates, ...common }),
       repoCheck({ name: "typecheck", scriptName: "typecheck:affected", command: "pnpm", args: ["typecheck:affected"], seconds: TIME_LIMITS.typecheck, ...common }),
     );
-    evidence.checks.push(...(runLanes ? laneChecks(common) : [required("lanes", "pnpm test:lanes", Status.NotRun, { reason: "--no-lanes was given", owner: "verify-worker" })]));
+    evidence.checks.push(...(runLanes ? laneChecks({ ...common, state }) : [required("lanes", "pnpm test:lanes", Status.NotRun, { reason: "--no-lanes was given", owner: "verify-worker" })]));
     evidence.checks.push(...selectedTests({ entries: testsFile ? parseJson(read(testsFile), null) : null, worktree }));
+    evidence.coveredByNoLane = state.coveredByNoLane;
     if (useCache) write(cacheFile, `${JSON.stringify(cache, null, 2)}\n`);
     return finish(evidence, gitDir);
   }
