@@ -209,7 +209,9 @@ export function checkRecipe(value: ReturnType<typeof syncContext>, receipt: Main
     e2eLimitations.push(...discoverRequiredE2eLanes(root, receipt));
     commands.push({ argv: ["pnpm", "check:source-gates"] }, { argv: ["pnpm", "typecheck:affected"] });
   }
-  const filter = `...[${receipt.validationSince}]`;
+  // Operator ruling, 2026-10-28 (ISS-13321): the session's own diff against the main it captured, as Biome uses.
+  // Pinned to the last deploy, every main merge widened the typecheck by all of main's changes since then.
+  const filter = `...[${receipt.mainSha}]`;
   commands.push({ argv: ["pnpm", "turbo", "typecheck", `--filter=${filter}`, "--concurrency=1"] });
   if (files.some((file) => file.includes(".stories.") || file.startsWith("apps/storybook/") || file.startsWith("packages/design-system/"))) {
     commands.push({ argv: ["pnpm", "--filter", "storybook", "validate:catalog"] });
@@ -243,7 +245,7 @@ export function executeChecks(value: ReturnType<typeof syncContext>, receipt: Ma
       drySpent[index]! += performance.now() - start;
       // The affected wrapper's no-op is not coverage; the later deployment-pinned matrix still runs.
       if (command.argv[1] === "turbo" && !selection?.tasks.length
-        && git(value.place.root, ["diff", "--name-only", receipt.validationSince, "HEAD"])) {
+        && git(value.place.root, ["diff", "--name-only", receipt.mainSha, "HEAD"])) {
         throw new MainSyncError("Pinned validation selected no tasks for changed inputs; no executed coverage was established");
       }
       assertIdentity(value.place.root, before);
