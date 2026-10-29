@@ -17,6 +17,8 @@ Do not answer until you have read the instructions for your runtime. You may
 read plugin skill and reference files, but do not run scripts, start workers
 or contact a machine. The session state below is the output of the checks you
 would have made.
+Read the fleet skill's "Reporting to the operator" section and the
+"Remaining work report" template before answering.
 
 Session state:
 - The operator asks: "What remains before this PR is ready, and when?"

@@ -11,6 +11,7 @@ FLEET = PLUGIN / "skills" / "fleet-orchestrator" / "SKILL.md"
 TEMPLATES = PLUGIN / "skills" / "fleet-orchestrator" / "references" / "templates.md"
 QUALITY = PLUGIN / "skills" / "vibe" / "references" / "quality-loop.md"
 GUARDRAILS = PLUGIN / "skills" / "vibe" / "references" / "guardrails.md"
+PARALLEL_PROMPT = PLUGIN / "evals" / "orch-parallel-e2e-queued" / "prompt.md"
 
 
 def test_non_e2e_lanes_start_while_e2e_is_queued() -> None:
@@ -69,6 +70,21 @@ def test_writers_and_reports_preserve_parallel_work() -> None:
     assert "longest dependent path rather than the serial sum" in fleet_report
     assert fleet_text.count("Before replying with remaining work, fill every field of [Remaining work report]") == 1
     assert next(i for i, line in enumerate(fleet_text.splitlines(), 1) if "Before replying with remaining work, fill every field" in line) < 100
+
+
+def test_operator_reporting_requires_visible_critical_path_eta() -> None:
+    """The owning reporting section and eval prompt both reach the ETA contract."""
+    reporting = flat(section(FLEET.read_text(), "## Reporting to the operator"))
+    template = TEMPLATES.read_text().split("## Remaining work report\n", 1)[1].split("\n## ", 1)[0]
+    prompt = PARALLEL_PROMPT.read_text()
+    assert "Time to ready" in reporting
+    assert "longest dependent path" in reporting
+    assert "dependency graph" in reporting
+    assert "incomplete" in reporting
+    assert re.search(r"^ETA: <duration>; Time to ready: <same duration>; longest dependent path: <named steps", template, re.MULTILINE)
+    assert "not a sum of independent lanes" in template
+    assert '"Reporting to the operator" section' in prompt
+    assert '"Remaining work report" template' in prompt
 
 
 def test_disjoint_helpers_keep_exclusive_branches_and_return_defects() -> None:

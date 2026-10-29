@@ -16,6 +16,8 @@ through the Skill tool. If you are in Codex, read the installed repository snaps
 Do not answer until you have read the instructions for your runtime. You may
 read plugin skill and reference files, but do not run scripts, start workers
 or contact a service.
+Read the fleet skill's "Monitoring" section and the "Lifecycle cleanup report"
+template before answering.
 
 Session state:
 - The monitor reports PR 42 in acme/app has closed. Its ticket is ISS-13420.

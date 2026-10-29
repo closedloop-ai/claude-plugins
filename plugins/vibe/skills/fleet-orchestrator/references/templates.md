@@ -97,11 +97,12 @@ START_INTEGRATION: <machine and immediate start, or a specific dependency>
 START_TYPECHECK: <machine and immediate start, or a specific dependency>
 DEPENDENCIES: <actual prerequisites, or none>
 REPORT: <one line naming every parallel and queued step and its machine; no following bullet block>
-ETA: <estimated time to ready from the longest dependent path, not a serial sum>
+ETA: <duration>; Time to ready: <same duration>; longest dependent path: <named steps and assumptions>
 Parallel now: <each independent step and its machine, or none>
 Waiting on a real dependency: <step and prerequisite, or none>
 Moved for capacity: <step, source machine, destination machine, or none>
-Time to ready: <estimate from the longest dependent path and its stated assumptions>
+
+Compute the ETA from the dependency graph's longest dependent path, not a sum of independent lanes. Keep both time labels and the named path on that one human-visible line; do not send the report until they agree.
 
 ## Lifecycle cleanup report
 

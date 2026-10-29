@@ -3,6 +3,8 @@
 import re
 from pathlib import Path
 
+from vibe_contract_text import flat
+
 
 ROOT = Path(__file__).resolve().parents[4]
 PLUGIN = ROOT / "plugins" / "vibe"
@@ -11,6 +13,7 @@ VERIFY = PLUGIN / "agents" / "vibe-verify-worker.md"
 DECOMPOSER = PLUGIN / "agents" / "vibe-storybook-decomposer.md"
 FLEET = PLUGIN / "skills" / "fleet-orchestrator" / "SKILL.md"
 FLEET_TEMPLATES = PLUGIN / "skills" / "fleet-orchestrator" / "references" / "templates.md"
+CLEANUP_PROMPT = PLUGIN / "evals" / "orch-owned-qa-cleanup" / "prompt.md"
 STATIC_LAUNCH = re.compile(
     r"\b(?:python(?:3)?\s+-m\s+http\.server|npx\s+serve|http-server|busybox\s+httpd|serve\s+-s)\b",
     re.IGNORECASE,
@@ -58,3 +61,24 @@ def test_terminal_cleanup_response_names_foreign_resources_left_alone() -> None:
     assert "fill it and audit again before sending" in early
     assert skill.count("Every terminal PR cleanup reply uses [Lifecycle cleanup report]") == 1
     assert next(i for i, line in enumerate(skill.splitlines(), 1) if "Every terminal PR cleanup reply uses" in line) < 100
+
+
+def test_monitor_events_reconcile_terminal_pr_before_status_reply() -> None:
+    """A terminal PR event must trigger owned cleanup rather than only describe a capability."""
+    monitoring = FLEET.read_text().split("## Monitoring\n", 1)[1].split("\n## ", 1)[0]
+    for phrase in (
+        "every PR merged or closed monitor event",
+        "reconcile recorded leftovers for that PR",
+        "exact recorded identities",
+        "foreign or unrecorded resources untouched",
+        "ACTION:",
+        "DOCKER:",
+        "FOREIGN:",
+        "STATUS:",
+        "state its reconciliation happens now",
+    ):
+        assert phrase in monitoring, phrase
+    prompt = flat(CLEANUP_PROMPT.read_text())
+    assert '"Monitoring" section' in prompt
+    assert '"Lifecycle cleanup report" template' in prompt
+    assert "including terminal PR changes, `STOP` and `ORPHAN`" in FLEET.read_text()
