@@ -148,6 +148,35 @@ an `e2e-reference` selection row. Desktop additionally needs the
 `pnpm test:lanes` report. This is a carry to authoritative CI, never a
 passing local result. Do not label a spec `passed` unless its exact command
 and cases actually ran at the recorded commit.
+The runtime tier is selected from the actual machine probe even when an
+authenticated spec cannot execute there. Never set `dockerPresent: false`
+or `selectedTier: null` to explain missing credentials on a working Docker
+machine. On final HEAD run
+`node ../skills/handoff/scripts/e2e-capability-probe.mjs --worktree "<wt>"
+--head "<full SHA>"` and copy its `probe.container`, `probe.desktopHarness`
+and `probe.probedCommit` into the private evidence without changing its
+boolean results. It checks Docker and Dagger directly, reads disk capacity,
+and reports only whether existing required credentials are present, never
+their values. A failed probe is a limitation, not permission to record Docker
+as absent. For Tier A, bind the probe to the final `probedCommit`. When an
+E2E spec is carried to CI, the PR gate probes the same machine again and
+compares Docker presence, reachability, resource thresholds, required-key
+presence and displayless harness. A change in those facts needs a fresh
+private evidence record; never edit the probe booleans to preserve a pass.
+When an authenticated web spec lacks required keys, record `container.command`,
+`container.runnable: false`, and `secretsSet` booleans
+for `CLERK_SECRET_KEY`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, and
+`DEVOPS_CLOSEDLOOP_APP_PWD` without printing values. Name every missing
+required key in `container.notRunnableReason` and in each web spec's exact
+`missingPrerequisites` array; each spec-level not-run item also names
+`selectedTier: "A"`. `LIVEBLOCKS_SECRET` is optional in the repository's
+container instructions and never counts as a missing required key. For a
+Desktop spec with no supported displayless Linux Electron harness, record
+`desktopHarness: { available: false, reason: "no supported displayless Linux
+Electron harness", probe: "<actual platform and harness check>" }` and
+the same `displaylessLimitation` plus `selectedTier: "A"` on its not-run
+item. If the selected tier can actually execute a spec, run it and record
+the result; do not carry it to CI.
 
 For targeted E2E, record the repository's capability probe and choose:
 

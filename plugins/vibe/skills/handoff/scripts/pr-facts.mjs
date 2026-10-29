@@ -11,7 +11,8 @@ import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
 import { playVerdictProblems } from "../../vibe/scripts/story-play-verdict.mjs";
 import { isDesktopE2eLane, NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { isE2ePath, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
-import { selectE2eTier, tierEvidenceProblems } from "./e2e-tier.mjs";
+import { REQUIRED_CONTAINER_IDENTITY, specExecutionLimitation, tierEvidenceProblems } from "./e2e-tier.mjs";
+import { probeE2eCapability } from "./e2e-capability-probe.mjs";
 import { prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS } from "./pr-evidence-schema.mjs";
 
 const REPO = "closedloop-ai/symphony-alpha";
@@ -191,16 +192,14 @@ function passedOrMainPreexisting(run) {
 }
 
 /**
- * The web e2e lane is left for CI when no permitted tier can run it and every
- * changed spec is listed unavailable with the CI jobs that cover it, the same
- * record `tierEvidenceProblems` accepts (ISS-13321).
+ * The web E2E lane is left for CI only when every changed spec has complete
+ * per-spec evidence that its selected runtime tier cannot execute it.
  */
-function e2eLeftForCi(runsFile, changed) {
-  const capability = runsFile?.e2eCapability;
-  const unavailable = new Set(capability?.unavailableSpecs ?? []);
+function e2eLeftForCi(runsFile, changed, commit) {
   const specs = changed.filter((file) => isE2ePath(file) && TEST_SPEC_PATTERN.test(file));
-  return Boolean(capability) && selectE2eTier(capability).tier === null && unavailable.size > 0
-    && specs.every((spec) => unavailable.has(spec)) && Array.isArray(capability.ciCoverage) && capability.ciCoverage.length > 0;
+  const selection = readTestSelection(runsFile);
+  return specs.length > 0 && selection.problems.length === 0
+    && specs.every((spec) => e2eCarriedForCi(runsFile, selection.entries, spec, commit));
 }
 
 /** Every required lane finished and passed on the published commit. */
@@ -208,7 +207,7 @@ export function evidenceProblems(runsFile, changed, commit) {
   if (!Array.isArray(runsFile?.touchFlows) || (runsFile.touchFlows.length === 0 && !runsFile.touchFlowsReason)) {
     return ["list every touched card, narrow or touch flow in touchFlows, or [] with a touchFlowsReason"];
   }
-  return requiredLanes(changed, runsFile.touchFlows).filter((lane) => !(lane === "e2e" && e2eLeftForCi(runsFile, changed))).flatMap((lane) => {
+  return requiredLanes(changed, runsFile.touchFlows).filter((lane) => !(lane === "e2e" && e2eLeftForCi(runsFile, changed, commit))).flatMap((lane) => {
     const runs = (runsFile.runs ?? []).filter((run) => run.lane === lane);
     if (runs.length === 0) return [`${lane}: no run recorded`];
     return runs.flatMap((run) => [
@@ -265,7 +264,11 @@ export function loadOpenPrs() {
 }
 
 /** The facts for the inventory's JSON, with the gates when a body or a runs file is given. */
-export function pullRequestFacts({ worktree, base, include, prs, ownBranch, ticketText, body, runs, commit, prBase = "main", requiredTests = [], template }) {
+export function pullRequestFacts({ worktree, base, include, prs, ownBranch, ticketText, body, runs, commit, prBase = "main", requiredTests = [], template,
+  probeCapability = ({ worktree: root, commit: sha }) => {
+    if (git(root, ["rev-parse", "HEAD"]) !== sha) throw new Error("HEAD moved before the capability probe");
+    return probeE2eCapability({ worktree: root, commit: sha });
+  } }) {
   const files = readDiff(worktree, base).filter((file) => include.has(file.path));
   const changed = files.map((file) => file.path);
   const { contracts, refusals } = contractChanges(files);
@@ -290,10 +293,54 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
       ...evidenceProblems(runs, changed, commit),
       ...selectionProblems(runs, files, requiredTests, commit),
       ...targetedEvidenceProblems(runs, commit, worktree),
+      ...capabilityProbeProblems(runs, worktree, commit, probeCapability),
       ...ciCheckProblems(runs, changed, commit),
       ...tierEvidenceProblems(runs.e2eCapability, (Array.isArray(runs.targetedInventory?.entries) ? runs.targetedInventory.entries : []).filter((entry) => entry?.kind === "e2e").map((entry) => entry.path)),
     ] }),
   };
+}
+
+/**
+ * Confirm the verifier's CI carry still matches this machine's read-only
+ * runtime probe. A fabricated "no Docker" report cannot waive E2E merely by
+ * selecting no tier; a changed prerequisite requires fresh evidence.
+ */
+export function capabilityProbeProblems(evidence, worktree, commit, probeCapability) {
+  const carried = (Array.isArray(evidence?.testRuns) ? evidence.testRuns : [])
+    .filter((run) => run?.status === "not-run" && typeof run.path === "string" && isE2ePath(run.path));
+  if (carried.length === 0) return [];
+  const recorded = evidence?.e2eCapability;
+  if (!commit || recorded?.probedCommit !== commit) return ["E2E capability probe is not bound to the final committed HEAD"];
+  let current;
+  try { current = probeCapability({ worktree, commit }); }
+  catch { return ["current E2E capability probe could not be verified; do not carry specs to CI"]; }
+  if (!current?.container || !current.desktopHarness || current.probedCommit !== commit) {
+    return ["current E2E capability probe is incomplete; do not carry specs to CI"];
+  }
+  const named = recorded.container;
+  if (!named || named.dockerPresent !== current.container.dockerPresent
+    || named.dockerReachable !== current.container.dockerReachable
+    || named.minimumMemoryGiB !== current.container.minimumMemoryGiB
+    || named.minimumDiskGiB !== current.container.minimumDiskGiB
+    || named.command !== current.container.command
+    || (named.memoryGiB >= named.minimumMemoryGiB) !== (current.container.memoryGiB >= current.container.minimumMemoryGiB)
+    || (named.diskGiB >= named.minimumDiskGiB) !== (current.container.diskGiB >= current.container.minimumDiskGiB)
+    || named.runnable !== current.container.runnable
+    || named.notRunnableReason !== current.container.notRunnableReason) {
+    return ["Docker runtime probe differs from the current machine; rerun the read-only capability probe and rewrite CI carry evidence"];
+  }
+  for (const key of REQUIRED_CONTAINER_IDENTITY) {
+    if (named.secretsSet?.[key] !== current.container.secretsSet[key]) {
+      return ["E2E identity-key presence differs from the current machine; rerun the read-only capability probe"];
+    }
+  }
+  if (carried.some((run) => run.path.startsWith("apps/desktop/"))
+    && (recorded.desktopHarness?.available !== current.desktopHarness.available
+      || recorded.desktopHarness?.reason !== current.desktopHarness.reason
+      || recorded.desktopHarness?.probe !== current.desktopHarness.probe)) {
+    return ["Desktop displayless probe differs from the current machine; rerun the read-only capability probe"];
+  }
+  return [];
 }
 
 function git(worktree, args) {
@@ -371,14 +418,15 @@ export function selectionProblems(runsFile, files, requiredTests, commit) {
 
 /**
  * A changed E2E spec may remain not run locally only with a per-spec record,
- * exact selected HEAD, an unavailable-tier probe, and the named CI producer.
+ * exact selected HEAD, a proved per-spec execution limitation and named CI.
  * Desktop additionally needs the matching not-run lane from test:lanes.
  */
 function e2eCarriedForCi(evidence, selection, spec, commit) {
   if (!commit || !isE2ePath(spec) || !TEST_SPEC_PATTERN.test(spec)) return false;
   const capability = evidence?.e2eCapability;
-  if (!capability || selectE2eTier(capability).tier !== null || capability.selectedTier !== null
-    || !Array.isArray(capability.unavailableSpecs) || !capability.unavailableSpecs.includes(spec)) return false;
+  if (!capability || !Array.isArray(capability.unavailableSpecs) || !capability.unavailableSpecs.includes(spec)) return false;
+  const limitation = specExecutionLimitation(capability, spec, commit);
+  if (!limitation) return false;
   if (!selection.some((entry) => entry.selector === "e2e-reference" && Array.isArray(entry.tests) && entry.tests.includes(spec))) return false;
   const desktop = spec.startsWith("apps/desktop/");
   const reason = desktop ? NOT_RUN_NO_DESKTOP_HARNESS : NOT_RUN_NO_IDENTITY;
@@ -388,7 +436,12 @@ function e2eCarriedForCi(evidence, selection, spec, commit) {
   const runs = Array.isArray(evidence.testRuns) ? evidence.testRuns : [];
   const own = runs.some((run) => run?.path === spec && run.status === "not-run" && run.commit === commit
     && run.reason === reason && run.ciOwner === ciOwner && run.selectionSource === "e2e-reference"
-    && run.laneReportSource === "pnpm test:lanes");
+    && run.laneReportSource === "pnpm test:lanes" && (limitation.tier === null
+      ? run.selectedTier === undefined || run.selectedTier === null
+      : run.selectedTier === limitation.tier && (limitation.kind === "displayless"
+        ? run.displaylessLimitation === limitation.displaylessLimitation && run.missingPrerequisites === undefined
+        : Array.isArray(run.missingPrerequisites) && run.missingPrerequisites.length === limitation.missingPrerequisites.length
+          && limitation.missingPrerequisites.every((key) => run.missingPrerequisites.includes(key)))));
   if (!own || !desktop) return own;
   const matches = evidence.targetedInventory.laneReport.matches;
   const lane = Array.isArray(matches) ? matches.find((entry) => entry?.name === "desktop-e2e" && isDesktopE2eLane(entry.command ?? "")) : null;

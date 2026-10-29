@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "n
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { ciCheckProblems, evidenceProblems, knownMainFailureProblems, pullRequestFacts, requiredLanes, selectionProblems, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
+import { capabilityProbeProblems, ciCheckProblems, evidenceProblems, knownMainFailureProblems, pullRequestFacts, requiredLanes, selectionProblems, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
 import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
 
@@ -315,6 +315,89 @@ test("edited web and Desktop e2e specs can be carried only by exact not-run CI e
   ]) assert.match(check(changedEvidence).join(), /selected but no passing or carried run/);
 });
 
+test("Tier A Docker can be ready while five selected specs lack required identity or displayless execution", () => {
+  const commit = "f".repeat(40);
+  const web = ["e2e/gated-route-shells.spec.ts", "e2e/org-issues-list.spec.ts", "e2e/shell-sidebar-v2-route-matrix.spec.ts"];
+  const desktop = ["apps/desktop/test/e2e/issues-list.spec.ts", "apps/desktop/test/e2e/labs-signed-in-only-nav.spec.ts"];
+  const specs = [...web, ...desktop];
+  const lane = { name: "desktop-e2e", command: "DESKTOP_E2E_SMOKE_TAG='' DESKTOP_E2E_CHANGED_SPECS='' pnpm --dir apps/desktop test:e2e" };
+  const missingPrerequisites = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"];
+  const displaylessLimitation = "no supported displayless Linux Electron harness";
+  const capability = {
+    selectedTier: "A",
+    probedCommit: commit,
+    container: { dockerPresent: true, dockerReachable: true, memoryGiB: 23.4, diskGiB: 936,
+      minimumMemoryGiB: 20, minimumDiskGiB: 64, command: "docker version; docker info; dagger version; df",
+      runnable: false, notRunnableReason: missingPrerequisites.join(", "),
+      secretsSet: { CLERK_SECRET_KEY: false, NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: false, DEVOPS_CLOSEDLOOP_APP_PWD: true } },
+    native: { available: false }, remote: { available: false },
+    desktopHarness: { available: false, reason: displaylessLimitation, probe: "macOS has no Linux Xvfb/dbus/keyring harness" },
+    unavailableSpecs: specs, ciCoverage: ["e2e-test.yml:e2e", "desktop-e2e-validation.yml:desktop-e2e/validated"],
+  };
+  const runs = [
+    ...web.map((path) => ({ path, kind: "e2e", status: "not-run", commit, selectedTier: "A", missingPrerequisites,
+      reason: NOT_RUN_NO_IDENTITY, ciOwner: "e2e-test.yml:e2e", selectionSource: "e2e-reference", laneReportSource: "pnpm test:lanes" })),
+    ...desktop.map((path) => ({ path, kind: "e2e", status: "not-run", commit, selectedTier: "A", displaylessLimitation,
+      reason: NOT_RUN_NO_DESKTOP_HARNESS, ciOwner: "desktop-e2e-validation.yml:desktop-e2e/validated",
+      selectionSource: "e2e-reference", laneReportSource: "pnpm test:lanes" })),
+    { lane: lane.name, command: lane.command, status: "not-run", commit, reason: NOT_RUN_NO_DESKTOP_HARNESS },
+  ];
+  const evidence = {
+    touchFlows: [], touchFlowsReason: "no changed touch flow", runs: [], testRuns: runs, rerunCycles: [],
+    testSelection: [{ file: ROUTE, selector: "e2e-reference", tests: specs }],
+    targetedInventory: { actor: "read-only", source: "final-committed-diff", commit,
+      laneReport: { command: "pnpm test:lanes", matches: [lane] },
+      entries: specs.map((path) => ({ kind: "e2e", path, cases: ["changed name"], command: "not run locally" })) },
+    e2eCapability: capability,
+  };
+  const changed = specs.map((path) => ({ path, status: "M" }));
+  assert.deepEqual(selectionProblems(evidence, changed, [], commit), []);
+  assert.deepEqual(targetedEvidenceProblems(evidence, commit), []);
+  assert.deepEqual(evidenceProblems(evidence, specs, commit), []);
+  const rejects = (candidate) => assert.match(selectionProblems(candidate, changed, [], commit).join(), /selected but no passing or carried run/);
+  rejects({ ...evidence, testRuns: runs.filter((run) => run.path !== web[0]) });
+  rejects({ ...evidence, testRuns: runs.map((run) => run.path === web[0] ? { ...run, commit: "a".repeat(40) } : run) });
+  rejects({ ...evidence, testRuns: runs.map((run) => run.path === web[0] ? { ...run, selectedTier: null } : run) });
+  rejects({ ...evidence, testRuns: runs.map((run) => run.path === web[0] ? { ...run, ciOwner: "unknown" } : run) });
+  rejects({ ...evidence, testRuns: runs.map((run) => run.path === web[0] ? { ...run, reason: "generic missing secrets" } : run) });
+  rejects({ ...evidence, testRuns: runs.map((run) => run.path === web[0] ? { ...run, selectionSource: "guess" } : run) });
+  rejects({ ...evidence, testRuns: runs.map((run) => run.path === web[0] ? { ...run, missingPrerequisites: ["LIVEBLOCKS_SECRET"] } : run) });
+  rejects({ ...evidence, testRuns: runs.map((run) => run.path === desktop[0] ? { ...run, displaylessLimitation: "" } : run) });
+  rejects({ ...evidence, testRuns: runs.filter((run) => run.lane !== "desktop-e2e") });
+  rejects({ ...evidence, e2eCapability: { ...capability, container: { ...capability.container, command: "" } } });
+  rejects({ ...evidence, e2eCapability: { ...capability, probedCommit: "a".repeat(40) } });
+  rejects({ ...evidence, e2eCapability: { ...capability, container: { ...capability.container,
+    secretsSet: { NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: false, DEVOPS_CLOSEDLOOP_APP_PWD: true } } } });
+  rejects({ ...evidence, e2eCapability: { ...capability, container: { ...capability.container,
+    runnable: true, secretsSet: { CLERK_SECRET_KEY: true, NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: true, DEVOPS_CLOSEDLOOP_APP_PWD: true } } } });
+  rejects({ ...evidence, e2eCapability: { ...capability, desktopHarness: { ...capability.desktopHarness, available: true } } });
+});
+
+test("the PR gate rejects a claimed no-Docker carry when its live read-only probe sees Tier A", (t) => {
+  const s = session(t);
+  const commit = "a".repeat(40);
+  const current = {
+    probedCommit: commit,
+    container: { dockerPresent: true, dockerReachable: true, memoryGiB: 23.4, diskGiB: 936,
+      minimumMemoryGiB: 20, minimumDiskGiB: 64, command: "docker info",
+      secretsSet: { CLERK_SECRET_KEY: false, NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: false, DEVOPS_CLOSEDLOOP_APP_PWD: true } },
+    desktopHarness: { available: false, reason: "no supported displayless Linux Electron harness", probe: "darwin" },
+  };
+  const claimed = { ...current, selectedTier: null,
+    container: { ...current.container, dockerPresent: false, dockerReachable: false, memoryGiB: 0 } };
+  const runs = { ...SELECTED, touchFlows: [], touchFlowsReason: "server only", runs: [], e2eCapability: claimed,
+    testRuns: [...SELECTED.testRuns, { path: "e2e/org-issues-list.spec.ts", status: "not-run", commit }] };
+  const result = facts(s, { runs, commit, probeCapability: () => current });
+  assert.match(result.prEvidenceProblems.join("\n"), /Docker runtime probe differs from the current machine/);
+  const truthful = { ...runs, e2eCapability: { ...current, selectedTier: "A" } };
+  assert.deepEqual(capabilityProbeProblems(truthful, s.wt, commit, () => current), []);
+  assert.match(capabilityProbeProblems({ ...truthful, e2eCapability: { ...truthful.e2eCapability, probedCommit: undefined } },
+    s.wt, commit, () => current).join(), /not bound to the final committed HEAD/);
+  assert.match(capabilityProbeProblems({ ...truthful, e2eCapability: { ...truthful.e2eCapability,
+    container: { ...current.container, secretsSet: { ...current.container.secretsSet, CLERK_SECRET_KEY: true } } } },
+    s.wt, commit, () => current).join(), /identity-key presence differs/);
+});
+
 test("the verifier's private shape check rejects path-only evidence and accepts exact entries", (t) => {
   const s = session(t);
   const invalid = s.file("invalid-pr-evidence.json", {
@@ -438,7 +521,11 @@ test("the web e2e lane is not required locally when every changed spec is left f
     native: { available: false }, remote: { available: false },
     unavailableSpecs: [spec], ciCoverage: ["e2e-test.yml:e2e"],
   };
-  const file = { touchFlows: [], touchFlowsReason: "none", runs: [], e2eCapability: capability };
+  const file = { touchFlows: [], touchFlowsReason: "none", runs: [], e2eCapability: capability,
+    testSelection: [{ file: ROUTE, selector: "e2e-reference", tests: [spec] }],
+    targetedInventory: { laneReport: { command: "pnpm test:lanes", matches: [] } },
+    testRuns: [{ path: spec, status: "not-run", commit, reason: NOT_RUN_NO_IDENTITY,
+      ciOwner: "e2e-test.yml:e2e", selectionSource: "e2e-reference", laneReportSource: "pnpm test:lanes" }] };
   assert.deepEqual(evidenceProblems(file, [spec], commit), []);
   assert.deepEqual(evidenceProblems({ ...file, e2eCapability: { ...capability, ciCoverage: [] } }, [spec], commit), ["e2e: no run recorded"]);
   assert.deepEqual(evidenceProblems({ ...file, e2eCapability: { ...capability, unavailableSpecs: [] } }, [spec], commit), ["e2e: no run recorded"]);

@@ -2,6 +2,13 @@
 // vibe-pr-evidence.json. Repository-owned lane tooling supplies the probe;
 // this module only applies its documented thresholds and operator override.
 
+// symphony-alpha e2e/CONTAINERIZED.md and run-containerized.sh require these
+// three authenticated E2E inputs. LIVEBLOCKS_SECRET is optional there.
+export const REQUIRED_CONTAINER_IDENTITY = Object.freeze([
+  "CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "DEVOPS_CLOSEDLOOP_APP_PWD",
+]);
+export const NO_DISPLAYLESS_ELECTRON = "no supported displayless Linux Electron harness";
+
 /** Return the strongest available E2E tier, or null when CI must cover it. */
 export function selectE2eTier(capability = {}) {
   const container = capability.container ?? {};
@@ -15,6 +22,31 @@ export function selectE2eTier(capability = {}) {
   }
   if (capability.remote?.available === true) return { tier: "C", reason: "a configured remote runner is available" };
   return { tier: null, reason: "no permitted local or remote E2E tier is available" };
+}
+
+/**
+ * Why one spec cannot execute on the selected runtime tier. Runtime presence
+ * (Docker, memory and disk) is distinct from the secrets or display harness
+ * that an authenticated scenario consumes. Returns null when execution is
+ * possible or the claimed limitation has no complete probe evidence.
+ */
+export function specExecutionLimitation(capability, spec, commit) {
+  if (!capability || capability.selectedTier !== selectE2eTier(capability).tier) return null;
+  if (capability.selectedTier === null) return { tier: null, kind: "no-tier" };
+  if (capability.selectedTier !== "A" || capability.probedCommit !== commit
+    || typeof capability.container?.command !== "string" || !capability.container.command.trim()) return null;
+  if (spec.startsWith("apps/desktop/") && capability.desktopHarness?.available === false
+    && capability.desktopHarness.reason === NO_DISPLAYLESS_ELECTRON
+    && typeof capability.desktopHarness.probe === "string" && capability.desktopHarness.probe.trim()) {
+    return { tier: "A", kind: "displayless", displaylessLimitation: NO_DISPLAYLESS_ELECTRON };
+  }
+  const container = capability.container;
+  const secrets = container?.secretsSet;
+  if (container?.runnable !== false || !secrets || !REQUIRED_CONTAINER_IDENTITY.every((key) => typeof secrets[key] === "boolean")) return null;
+  const missingPrerequisites = REQUIRED_CONTAINER_IDENTITY.filter((key) => secrets[key] === false);
+  if (missingPrerequisites.length === 0 || typeof container.notRunnableReason !== "string"
+    || !missingPrerequisites.every((key) => container.notRunnableReason.includes(key))) return null;
+  return { tier: "A", kind: "missing-prerequisites", missingPrerequisites };
 }
 
 /** Problems in the recorded capability probe and chosen tier. */
@@ -49,6 +81,13 @@ export function tierEvidenceProblems(capability, e2eSpecs = []) {
     const unavailable = new Set(capability.unavailableSpecs ?? []);
     for (const spec of e2eSpecs.filter((spec) => !unavailable.has(spec))) problems.push(`${spec}: unavailable E2E spec is not left explicitly for CI`);
     if (!Array.isArray(capability.ciCoverage) || capability.ciCoverage.length === 0) problems.push("unavailable E2E needs the CI jobs that cover it");
+  }
+  if (expected === "A" && Array.isArray(capability.unavailableSpecs)) {
+    for (const spec of e2eSpecs.filter((file) => capability.unavailableSpecs.includes(file))) {
+      if (!specExecutionLimitation(capability, spec, capability.probedCommit)) {
+        problems.push(`${spec}: Tier A is selected but no exact prerequisite or displayless limitation proves it cannot run`);
+      }
+    }
   }
   return problems;
 }

@@ -127,6 +127,8 @@ describe("vibe worker cross-runtime tool contract", () => {
     expect(verify).toMatch(/`testSelection` is an\s+array/);
     expect(verify).toContain("pr-evidence-schema.mjs --file");
     expect(verify).toContain("status: \"passed\"");
+    expect(verify).toContain("e2e-capability-probe.mjs --worktree");
+    expect(verify).toContain("Never set `dockerPresent: false`");
   });
   it("tells the sole writer where diff rules read the private change log", () => {
     const writer = readFileSync(join(pluginRoot, "agents", "vibe-change-worker.md"), "utf8");
