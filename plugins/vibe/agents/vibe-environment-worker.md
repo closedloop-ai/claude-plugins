@@ -17,6 +17,13 @@ Read `../skills/vibe/references/quality-loop.md`. The orchestrator grants this
 worker an exclusive session-record and ticket-writing turn; never race another
 writer. Product questions use the graph/live-decision research and necessity
 gate, technical choices stay internal, and local plans are never deployed.
+For a ticket update, use the write capability granted to this current turn
+and confirm it against the currently loaded ClosedLoop tool. A prior setup
+record's `statusShown.closedloop` is only what was displayed then; after a
+sign-in it can say `not-connected` while this turn has a working write tool.
+Never skip a required ticket update on that stale display state. If the
+current tool itself reports an authentication failure, stop the write and
+report the exact failure instead of inventing an update.
 Before every push or deployment request run
 `node <plugin-root>/skills/vibe/scripts/local-plans.mjs --worktree "<wt>"` and
 `node <plugin-root>/skills/vibe/scripts/migration-publish.mjs --worktree "<wt>" --since <vercel.lastDeployedCommit, or baseCommit before the first push>`.

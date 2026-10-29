@@ -92,10 +92,18 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
       + "Delete a test file or case only when it covers nothing but code the request retires, recorded with retired-tests.mjs "
       + "and the ticket or PRD that retires it; a test of live behavior is only repaired. "
     : `This is mode ${input.mode}. Never write or edit tests. `;
+  const verifyEvidencePolicy = input.agentName === "vibe-verify-worker"
+    ? "This is a source read-only verification role. Never edit product source, tests, fixtures, snapshots, catalog or allowlists. "
+      + "Bash may write only owned private verification artifacts: <gitdir>/vibe-pr-evidence.json, "
+      + "<gitdir>/vibe-lane-report.txt from pnpm test:lanes, <gitdir>/vibe-lane-results.json "
+      + "through pre-pr-lanes.mjs, and .control/ runtime files from "
+      + "the repository control command in control mode. Move only this turn's control captures to "
+      + "the private git directory before publication. Never write a ClosedLoop or session record. "
+    : "";
   const prompt = `${definition.prompt}\n\nRuntime binding: work only in ${input.worktree}. `
     + `Resolve this canonical definition's relative resource references against ${join(definition.root, "agents")}. `
     + pushPolicy(input) + phasePolicy
-    + (reader ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : "")
+    + (reader && input.agentName !== "vibe-verify-worker" ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : verifyEvidencePolicy)
     + (input.agentName === "vibe-prototype-worker"
       ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "")
     + "Return one JSON object with status, summary (at most 4096 characters), and optional data. "

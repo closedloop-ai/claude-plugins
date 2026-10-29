@@ -551,10 +551,13 @@ and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
    `origin/main`. The live ticket is assigned to that person. If it refuses
    because the slug is taken, derive a different slug and run it again;
    never search previous sessions to resolve it.
-5. Record this conversation as the session's orchestrator:
+5. Record this conversation as the session's orchestrator. In Codex run
    `node scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"` (it reads
-   `CODEX_THREAD_ID`; outside Codex, pass `--thread <id>` if you have one, or
-   skip it).
+   `CODEX_THREAD_ID`). In Claude Code run `node scripts/vibe-sessions.mjs
+   claude-sessions --worktree "<wt>" --transcript "<this Claude session's
+   actual transcript path>"`. The command verifies the transcript's own
+   session ID. Never invent an ID or record the implementation writer as the
+   orchestrator.
 6. Dispatch `vibe-setup-worker` to bootstrap the new worktree, then
    `vibe-ticket-worker` in create mode with the worktree, the
    requirements worker's brief, the originating ticket if any, and the mode.
@@ -594,7 +597,8 @@ Never create a new worktree/branch for these requests or an arbitrary
 unrecorded prototype. Next-owner assignment and canonical metadata transitions
 remain in the handoff flow.
 
-Resuming: use the session's `worktree`, and run `codex-sessions` again so a
+Resuming: use the session's `worktree`, and run the matching `codex-sessions`
+or `claude-sessions` command again so a
 new conversation is recorded too. A resumed session gets no endings line. Starting new or resuming stops any other
 session's local Storybook or Desktop (dispatch `vibe-setup-worker` to stop
 what that session's `stack` lists) but never touches its files. You commit
@@ -965,7 +969,7 @@ in the writer's queue until it finishes; then the writer builds every request
 that waited, and one deploy after the last of them carries them all. A
 "redeploy" said during a running deploy joins that next deploy.
 
-1. Run `node scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"` so
+1. Run the matching `codex-sessions` or `claude-sessions` command from step 5 so
    the ticket lists every subagent so far.
 2. Keep deployment progress internal; report completion, not technical steps.
    After the writer's quick checks, ROOT commits the checked deliverable

@@ -117,4 +117,12 @@ describe("vibe worker cross-runtime tool contract", () => {
     expect(templateText).toContain("A Codex writer's prompt starts with `$vibe");
     expect(templateText).toContain("Invoke vibe:vibe first:");
   });
+  it("uses current ClosedLoop grants after sign-in and relocates owned control captures", () => {
+    const environment = readFileSync(join(pluginRoot, "agents", "vibe-environment-worker.md"), "utf8");
+    const verify = readFileSync(join(pluginRoot, "agents", "vibe-verify-worker.md"), "utf8");
+    expect(environment).toContain("statusShown.closedloop");
+    expect(environment).toContain("currently loaded ClosedLoop tool");
+    expect(verify).toContain("vibe-control-runs/");
+    expect(verify).toMatch(/Leave any other session's\s+captures alone/);
+  });
 });

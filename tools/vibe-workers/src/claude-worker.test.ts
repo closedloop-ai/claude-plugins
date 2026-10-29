@@ -53,6 +53,26 @@ describe("production Claude CLI adapter", () => {
       expect(bound.agent.prompt).toContain("Never start another implementation writer, commit, or push.");
     }
   });
+  it("lets the verify reader write only owned private evidence in pre-pr and control modes", () => {
+    const value = setup();
+    writeAgent(value.agentRoot, "vibe-verify-worker", "Read, Grep, Glob, Bash, Skill");
+    for (const mode of ["pre-pr", "control"]) {
+      const bound = boundDefinition(readDefinition(value.agentRoot, "vibe-verify-worker", graph),
+        { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-verify-worker",
+          requestId: `verify-${mode}`, input: mode, timeoutMs: 1000, capabilities: graph, mode: "request" });
+      expect(bound.reader).toBe(true);
+      expect(bound.agent.prompt).toContain("vibe-pr-evidence.json");
+      expect(bound.agent.prompt).toContain("vibe-lane-results.json");
+      expect(bound.agent.prompt).toContain("vibe-lane-report.txt");
+      expect(bound.agent.prompt).toContain(".control/");
+      expect(bound.agent.prompt).toContain("Never edit product source, tests, fixtures, snapshots, catalog or allowlists");
+      expect(bound.agent.prompt).not.toContain("never mutate files or records");
+    }
+    const advisor = boundDefinition(readDefinition(value.agentRoot, "vibe-guardrails-reviewer", graph),
+      { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-guardrails-reviewer",
+        requestId: "review", input: "review", timeoutMs: 1000, capabilities: graph, mode: "request" });
+    expect(advisor.agent.prompt).toContain("never mutate files or records");
+  });
   it("admits the environment handover action with one normal push through the repo's checks (ISS-13321)", () => {
     const value = setup();
     const item = { agentName: "vibe-environment-worker", mode: "record" as const,

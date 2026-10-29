@@ -526,6 +526,27 @@ test("codex-sessions records this thread and every subagent it spawned, nested o
   assert.match(missing.json.error, /CODEX_THREAD_ID/);
 });
 
+test("a Claude orchestrator records its actual transcript identity without inventing a Codex thread", (t) => {
+  const { home, worktree } = newSession(t, "claude-orchestrator");
+  const id = "36ee02c3-2de3-45a8-8c33-ae3e5302f554";
+  const transcriptDir = path.join(home, ".claude", "projects", "-tmp-vibe-orchestrator");
+  mkdirSync(transcriptDir, { recursive: true });
+  const transcript = path.join(transcriptDir, `${id}.jsonl`);
+  writeFileSync(transcript, `${JSON.stringify({ type: "user", sessionId: id, message: "start" })}\n`);
+  const saved = runNode(SCRIPT, ["claude-sessions", "--worktree", worktree, "--transcript", transcript], home);
+  assert.equal(saved.status, 0, saved.stderr);
+  assert.deepEqual(saved.json.session.claudeSessions.orchestrators.map((entry) => entry.id), [id]);
+  assert.deepEqual(saved.json.session.codexSessions.orchestrators, []);
+  const rendered = runNode(SCRIPT, ["ticket-sections", "--worktree", worktree], home);
+  assert.ok(rendered.json.markdown.includes(`Claude Code session (orchestrator): ` + "`" + id + "`"));
+
+  const wrong = path.join(transcriptDir, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jsonl");
+  writeFileSync(wrong, `${JSON.stringify({ type: "user", sessionId: id })}\n`);
+  const rejected = runNode(SCRIPT, ["claude-sessions", "--worktree", worktree, "--transcript", wrong], home);
+  assert.equal(rejected.status, 1);
+  assert.deepEqual(runNode(SCRIPT, ["show", "--worktree", worktree], home).json.session.claudeSessions.orchestrators.map((entry) => entry.id), [id]);
+});
+
 test("ticket-sections renders the record's sections and marks what is still pending", (t) => {
   const { root, home, worktree } = newSession(t, "sections");
   const pending = runNode(SCRIPT, ["ticket-sections", "--worktree", worktree], home);

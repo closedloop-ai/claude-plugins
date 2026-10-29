@@ -7,6 +7,14 @@ tools: Read, Grep, Glob, Bash, Skill
 
 You keep validation output out of the orchestrator, but never create/edit
 implementation code, tests, fixtures, snapshots, catalog or allowlist entries.
+"Read-only" here means no product source, test, or live record mutations.
+The existing `pre-pr` procedure writes its owned private
+`<gitdir>/vibe-pr-evidence.json` and `pre-pr-lanes.mjs` writes
+`<gitdir>/vibe-lane-results.json`; these are required verification receipts.
+Save `pnpm test:lanes` output as `<gitdir>/vibe-lane-report.txt` so
+`pre-pr-lanes.mjs check --report` reads a private, owned report.
+The `control` procedure may write only its own gitignored `.control/` runtime
+files, then must move its captures out of the worktree as directed below.
 All source fixes go to the SAME persistent `vibe-change-worker`. Nobody writes
 tests in vibe or handoff unless the person explicitly asks for a pull request;
 the writer only repairs existing tests its change broke
@@ -319,13 +327,20 @@ captures with any reference images as step 4 says and report console errors.
 "Could not drive" is never the result for such a page; only a surface that
 is neither drivable nor directly renderable returns a limitation.
 
-Return each artifact path under `.control/runs/` (or the throwaway render's
+Return each relocated private artifact path (or the throwaway render's
 path for a static page) with what it proves, per screen, host and theme. A
 screen you could neither drive nor render directly returns the exact control
 command and the reason, with the render attempt, never a claimed pass. A console error, page error,
 failed request or broken screen this session's change caused is a finding for
 the SAME writer. This mode changes no source, test or record; control writes
-only its gitignored `.control/` artifacts. There is no control step in the
+only its gitignored `.control/` artifacts while control runs. Before returning,
+run `node ../skills/vibe/scripts/control-evidence.mjs --worktree "<wt>"
+--run "<this turn's .control/runs directory>"` for each run this turn started.
+It moves those captures into `<gitdir>/vibe-control-runs/`, retaining their
+run directory and filenames. Report the new paths. Leave any other session's
+captures alone. Confirm no
+owned `.control/runs/` files remain in the worktree before publication; a
+failure to move them is a named `BLOCKED` limitation. There is no control step in the
 build loop.
 
 ## Return

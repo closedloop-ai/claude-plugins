@@ -186,8 +186,8 @@ with its value, and "Keys to see this work" (`guardrails.md`, "Feature flags").>
 
 ## Sessions
 
-<From ticket-sections: the Codex session ids of the orchestrator and every
-subagent that worked on this.>
+<From ticket-sections: the actual Codex or Claude Code orchestrator session ids,
+plus Codex subagent ids when applicable. A worker id is not an orchestrator id.>
 
 ## Handoff
 

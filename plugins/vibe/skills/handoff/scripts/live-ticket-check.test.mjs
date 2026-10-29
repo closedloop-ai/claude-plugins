@@ -59,6 +59,26 @@ test("a complete ticket passes", () => {
   assert.deepEqual(checkLiveTicket(completeTicket()), { ok: true, problems: [] });
 });
 
+test("a real Claude orchestrator session satisfies the Sessions contract without a Codex thread", () => {
+  const id = "36ee02c3-2de3-45a8-8c33-ae3e5302f554";
+  const claude = completeTicket({ Sessions: "- Implementation writer: claude `7b7bdd07-4820-4def-bb4a-0d0fc6de5b1c`\n- Claude Code session (orchestrator): `" + id + "`" });
+  assert.deepEqual(checkLiveTicket(claude), { ok: true, problems: [] });
+  const missing = completeTicket({ Sessions: "- Implementation writer: claude `7b7bdd07-4820-4def-bb4a-0d0fc6de5b1c`" });
+  assert.deepEqual(checkLiveTicket(missing).problems, [{ section: "Sessions", problem: "lists no orchestrator session id" }]);
+  for (const sessions of [
+    "- Imaginary session (orchestrator): `made-up`",
+    "- Claude Code session (orchestrator): `made-up`",
+  ]) {
+    assert.deepEqual(checkLiveTicket(completeTicket({ Sessions: sessions })).problems,
+      [{ section: "Sessions", problem: "lists no orchestrator session id" }]);
+  }
+  const record = { codexSessions: { orchestrators: [], subagents: [] },
+    claudeSessions: { orchestrators: [{ id }] }, flagKeys: { surfaces: [] } };
+  assert.deepEqual(checkLiveTicket(claude, { record }).problems, []);
+  assert.deepEqual(checkLiveTicket(completeTicket({ Sessions: "- Claude Code session (orchestrator): `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`" }), { record }).problems,
+    [{ section: "Sessions", problem: "does not match the session record's orchestrator ids" }]);
+});
+
 test("the template itself is never complete", () => {
   const body = TEMPLATE_BODY.exec(readFileSync(TEMPLATE, "utf8"))[1];
   const result = checkLiveTicket(body);

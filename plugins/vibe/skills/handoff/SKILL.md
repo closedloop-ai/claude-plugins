@@ -197,8 +197,10 @@ unasked. Otherwise tell the person it is
 already finished and stop, unless they are asking for changes on the pull
 request it opened: then follow section 10.
 
-Then run `node ../vibe/scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"`
-so this conversation is recorded on the session too.
+Then record this conversation using `codex-sessions` in Codex or
+`claude-sessions --transcript "<this Claude session's actual transcript path>"`
+in Claude Code, both with `--worktree "<wt>"`, so the actual orchestrator
+session is recorded. Never substitute a worker ID.
 
 ### Settle how it ends
 
@@ -536,8 +538,7 @@ Desktop Electron lane, which no vibe machine runs, comes back under
 step 8's ticket worker for the Engineering checklist, covered by the post-merge
 `desktop-e2e/validated` run.
 
-Run `node ../vibe/scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"`
-again, then ROOT commits the staged merge and any subsequent reviewed fixes as one more
+Run the same harness-specific session command again, then ROOT commits the staged merge and any subsequent reviewed fixes as one more
 commit (nothing is squashed or amended):
 `node ../vibe/scripts/commit-worktree.mjs --worktree "<wt>" --subject "<live ticket slug>: <plain imperative summary of the handoff fixes>" --body "<what was fixed, one per line>"`
 (under 72 characters, no mention of AI tools), with `--exclude <path>` for
@@ -619,6 +620,10 @@ follows that skill's own rules: hidden browser and app only (never
 runs displayless), read-only sessions (never `--allow-write`), and
 `pnpm control down` for every session it started. Control's own throwaway Desktop
 profile is separate from the session's Desktop, which stays stopped. It
+relocates only that turn's `.control/runs/` captures through
+`../vibe/scripts/control-evidence.mjs` to private git storage before a later
+publication check reads the worktree; retain those returned private paths.
+It
 captures each screen's evidence (capture, console errors and page errors,
 network, API reads and Desktop IPC reads where relevant), before and after
 when a baseline exists, and returns each artifact path with what it proves.
@@ -879,7 +884,7 @@ resumes and every fix goes through this path, never around it:
    plain words, only when more than one could be). It is resumed even though
    it is handed off; run `node ../vibe/scripts/vibe-sessions.mjs touch
    --worktree "<wt>" --status active` and record this conversation with
-   `codex-sessions`. Its writer, worktree, branch, live ticket and decision
+   the matching `codex-sessions` or `claude-sessions` command. Its writer, worktree, branch, live ticket and decision
    table are the same ones; nothing new is created.
 2. Dispatch `vibe-environment-worker` in `pull-request` mode with
    `reviewThreads: read`: it reads the pull request's unresolved review

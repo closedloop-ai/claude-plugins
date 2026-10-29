@@ -29,6 +29,7 @@
 //                                     (`true` is sent only when the session's previous request
 //                                     published a verified result; otherwise `false`)
 //   vibe-sessions.mjs codex-sessions  --worktree <path> [--thread <id>]
+//   vibe-sessions.mjs claude-sessions --worktree <path> --transcript <Claude Code session .jsonl>
 //   vibe-sessions.mjs ticket-sections --worktree <path>
 //   vibe-sessions.mjs environment-result --worktree <path> --file <vibe-environment-result.json>
 //                                     --request-id <id>
@@ -62,6 +63,8 @@
 // (ISS-12048) next to the record; `list` also shows the keys flag-keys.mjs
 // recorded and the person's approval of each; `codex-sessions` records this Codex thread
 // (`--thread`, else CODEX_THREAD_ID) and every subagent thread it spawned;
+// `claude-sessions` records a Claude Code orchestrator only from its witnessed
+// session transcript;
 // `ticket-sections` prints the live ticket's Environment, Production flag
 // snapshot, and Sessions sections from the record, with the branch's current
 // merge-base as its base commit. `dispatch-inputs` writes
@@ -93,7 +96,7 @@
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -148,6 +151,7 @@ const PlanStatus = {
   Executed: "EXECUTED",
 };
 const THREAD_PATTERN = /^[A-Za-z0-9-]{8,100}$/;
+const CLAUDE_SESSION_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CLERK_ORG_PATTERN = /^org_[A-Za-z0-9]+$/;
 const PID_PATTERN = /^[1-9]\d{0,9}$/;
 const STORY_FILE_PATTERN = /\.stories\.tsx?$/;
@@ -192,6 +196,7 @@ const { positionals, values } = parseArgs({
     "main-merge": { type: "string" },
     file: { type: "string" },
     thread: { type: "string" },
+    transcript: { type: "string" },
     out: { type: "string" },
     "person-email": { type: "string" },
     "clerk-org-id": { type: "string" },
@@ -263,6 +268,8 @@ async function run(command) {
       return { mainSync: admitMainSyncShare(await readMainSyncInput(requireOption("worktree"))) };
     case "codex-sessions":
       return { session: recordCodexSessions() };
+    case "claude-sessions":
+      return { session: recordClaudeSessions() };
     case "ticket-sections":
       return { markdown: ticketSections() };
     case "environment-result":
@@ -277,7 +284,7 @@ async function run(command) {
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, stop, link, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, ticket-sections, environment-result, local-fix, story-replacement, discard."
+        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, stop, link, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, claude-sessions, ticket-sections, environment-result, local-fix, story-replacement, discard."
       );
   }
 }
@@ -430,6 +437,7 @@ function newSession({ prototype = false } = {}) {
     clerkOrgId: null,
     desktopAuthSavedAt: null,
     codexSessions: { orchestrators: [], subagents: [] },
+    claudeSessions: { orchestrators: [] },
     stack: null,
     localFixes: [],
   };
@@ -719,6 +727,7 @@ function withDefaults(record) {
     clerkOrgId: rest.clerkOrgId ?? null,
     desktopAuthSavedAt: rest.desktopAuthSavedAt ?? null,
     codexSessions: rest.codexSessions ?? { orchestrators: [], subagents: [] },
+    claudeSessions: rest.claudeSessions ?? { orchestrators: [] },
     localFixes: rest.localFixes ?? [],
   };
 }
@@ -808,6 +817,36 @@ function recordCodexSessions() {
     codexSessions: { orchestrators, subagents },
     lastActiveAt: now,
   };
+  writeRecord(worktree, updated);
+  return { worktree, ...updated };
+}
+
+/** Records only a Claude Code orchestrator ID witnessed by its own session transcript. */
+function recordClaudeSessions() {
+  const worktree = requireOption("worktree");
+  const transcript = requireOption("transcript");
+  const record = requireRecord(worktree);
+  const projectRoot = realpathSync(path.join(os.homedir(), ".claude", "projects"));
+  const file = realpathSync(transcript);
+  if (!file.startsWith(`${projectRoot}${path.sep}`) || !file.endsWith(".jsonl")) {
+    throw new Error("Claude transcript must be a session file under this user's Claude projects directory.");
+  }
+  const id = path.basename(file, ".jsonl");
+  if (!CLAUDE_SESSION_PATTERN.test(id)) throw new Error("Claude transcript filename has no valid session id.");
+  const fd = openSync(file, "r");
+  const buffer = Buffer.alloc(64 * 1024);
+  let count;
+  try { count = readSync(fd, buffer, 0, buffer.length, 0); }
+  finally { closeSync(fd); }
+  const lines = buffer.toString("utf8", 0, count).split("\n").slice(0, -1);
+  if (!lines.some((line) => {
+    try { return JSON.parse(line).sessionId === id; }
+    catch { return false; }
+  })) throw new Error("Claude transcript does not witness the session id in its filename.");
+  const now = new Date().toISOString();
+  const orchestrators = [...(record.claudeSessions?.orchestrators ?? [])];
+  if (!orchestrators.some((entry) => entry.id === id)) orchestrators.push({ id, recordedAt: now });
+  const updated = { ...record, claudeSessions: { orchestrators }, lastActiveAt: now };
   writeRecord(worktree, updated);
   return { worktree, ...updated };
 }

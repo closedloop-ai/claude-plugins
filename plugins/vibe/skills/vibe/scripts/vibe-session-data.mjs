@@ -1,5 +1,5 @@
 // Pure helpers behind vibe-sessions.mjs: the session's Vercel URLs, the
-// production flag snapshot contract (ISS-12048), the Codex session ids that
+// production flag snapshot contract (ISS-12048), the orchestrator session ids that
 // worked on it, the person running it, the environment run's verified result,
 // and the live ticket sections rendered from the session record (the keys to
 // see the work come from flag-keys.mjs).
@@ -385,17 +385,21 @@ function renderFlagSnapshot(record, snapshot) {
 
 function renderSessions(record) {
   const sessions = record.codexSessions ?? { orchestrators: [], subagents: [] };
+  const claude = record.claudeSessions ?? { orchestrators: [] };
   const lines = ["## Sessions", ""];
   if (record.implementationWriter) {
     const writer = record.implementationWriter;
     lines.push(`- Implementation writer: ${writer.runtime} \`${writer.workerId}\` on \`${writer.branch}\` (same persistent context)`);
   }
-  if (sessions.orchestrators.length === 0 && !record.implementationWriter) {
+  if (sessions.orchestrators.length === 0 && claude.orchestrators.length === 0 && !record.implementationWriter) {
     lines.push(PENDING);
     return lines.join("\n");
   }
   for (const orchestrator of sessions.orchestrators) {
     lines.push(`- Codex session (orchestrator): \`${orchestrator.id}\``);
+  }
+  for (const orchestrator of claude.orchestrators) {
+    lines.push(`- Claude Code session (orchestrator): \`${orchestrator.id}\``);
   }
   for (const subagent of sessions.subagents) {
     const label = [subagent.role, subagent.nickname].filter(Boolean).join(", ");
