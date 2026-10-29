@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
-import { backendGroups, blastBundle, buildInventoryBundle, flagKeys, guardPredicates, storybookLinks } from "./inventory-bundle.mjs";
+import { backendGroups, blastBundle, buildInventoryBundle, flagKeys, flagModuleLookup, guardPredicates, resolveConstant, storybookLinks } from "./inventory-bundle.mjs";
 import { parseUnifiedDiff } from "./diff-rules.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -49,6 +49,69 @@ test("flag keys: a key read in the diff comes with its file and line, and the re
   assert.deepEqual(result.readInDiff.map((item) => [item.key, item.line]), [["branchesBulk", 1], ["sessionsNav", 2]]);
   assert.deepEqual(result.recorded, { surfaces: ["s"] });
   assert.equal(flagKeys([], null).recorded, null);
+});
+
+const ALIAS_MODULE = [
+  "export const NEW_THING_FEATURE_FLAG_KEY =",
+  "  NEW_THING_FLAG_KEY;",
+].join("\n");
+const KEY_MODULE = "export const NEW_THING_FLAG_KEY =\n  \"new-thing\" as const;\n";
+const lookupIn = (modules) => (name) => modules.filter((text) => text.includes(`const ${name}`));
+
+test("flag keys regression: a key read through a constant, with the call split across lines, resolves through an alias to its literal", () => {
+  const head = [
+    "import { NEW_THING_FEATURE_FLAG_KEY } from \"@repo/app/shared/lib/feature-flags\";",
+    "export function View() {",
+    "  const on = useFeatureFlag(",
+    "    NEW_THING_FEATURE_FLAG_KEY",
+    "  );",
+    "  return on;",
+    "}",
+    "",
+  ].join("\n");
+  const changed = files(diff("packages/app/view.tsx", head.split("\n")));
+  const result = flagKeys(changed, null, () => head, lookupIn([ALIAS_MODULE, KEY_MODULE]));
+  assert.deepEqual(result.readInDiff, [{ key: "new-thing", file: "packages/app/view.tsx", line: 3, constant: "NEW_THING_FEATURE_FLAG_KEY", resolvedBy: "alias of NEW_THING_FLAG_KEY" }]);
+});
+
+test("flag keys: a constant defined in the diff resolves from the changed file; one that cannot resolve is reported unresolved, never dropped", () => {
+  const head = "export const LOCAL_KEY = \"local-key\";\nconst a = useFeatureFlag(LOCAL_KEY);\nconst b = useFeatureFlag(MISSING_KEY);\n";
+  const changed = files(diff("packages/app/x.tsx", head.split("\n")));
+  const result = flagKeys(changed, null, () => head, () => []);
+  assert.deepEqual(result.readInDiff.map((item) => [item.key, item.constant, item.unresolved ?? false]), [["local-key", "LOCAL_KEY", false], [null, "MISSING_KEY", true]]);
+});
+
+test("flag keys: a read the diff did not add is not reported, and the string-literal read still works", () => {
+  const head = "const old = useFeatureFlag(OLD_KEY);\nconst added = useFeatureFlag(\"literal-key\");\n";
+  const changed = parseUnifiedDiff(`diff --git a/a.tsx b/a.tsx\n--- a/a.tsx\n+++ b/a.tsx\n@@ -1,0 +2,1 @@\n+const added = useFeatureFlag("literal-key");\n`);
+  const result = flagKeys(changed, null, () => head, () => []);
+  assert.deepEqual(result.readInDiff.map((item) => item.key), ["literal-key"]);
+});
+
+test("constants resolve through the repository's flag modules by the lookup the inventory uses", () => {
+  assert.equal(resolveConstant("A", [], lookupIn(["export const A = \"a-key\";"])).key, "a-key");
+  assert.equal(resolveConstant("A", [], lookupIn(["export const A = B;", "export const B = A;"])), null);
+  const calls = [];
+  const lookup = flagModuleLookup("/wt", (command, args) => { calls.push(args.join(" ")); return { status: 0, stdout: "export const A =\n  \"a-key\";\n--\nother", stderr: "" }; });
+  assert.equal(resolveConstant("A", [], lookup).key, "a-key");
+  assert.match(calls[0], /grep -h -A3 -E export const A\\b -- \*-flag\.ts/);
+});
+
+test("guard predicates regression: import lines, multi-line import specifiers and comments are not predicates", () => {
+  const head = [
+    "import {",
+    "  FeatureFlagged,",
+    "  useFeatureFlag,",
+    "} from \"@repo/app/shared/feature-flags\";",
+    "import { ARTIFACT_FEATURE_FLAG_KEY } from \"@repo/app/shared/lib/feature-flags\";",
+    "// the feature flag gates this",
+    "const on = useFeatureFlag(KEY);",
+    "",
+  ].join("\n");
+  const changed = files(diff("packages/app/view.tsx", head.split("\n")));
+  const result = guardPredicates(changed, () => head);
+  assert.deepEqual(result.predicates.map((item) => item.line), [7]);
+  assert.equal(result.total, 1);
 });
 
 const STORY = "const meta = { title: 'Components/Bulk Bar', component: Bar };\nexport default meta;\nexport const Default = {};\nexport const Selected = {};\n";
