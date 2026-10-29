@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - Automated QA evidence is no longer invalidated by a new commit identity. Comment, documentation, release, CI-only, and non-rendering backend changes preserve local evidence; selected test changes rerun only their lanes; rendered changes invalidate only affected screens and states. Frozen-render evidence now names story states and hashes their semantic dependency closure rather than the branch head and unrelated files. CI remains per push (ISS-13411).
-- Vibe's Markdown instructions are about 187 words shorter than in 1.1.17.
+- Vibe's Markdown instructions are about 126 words shorter than in 1.1.17.
 
 ### vibe v1.1.17
 
