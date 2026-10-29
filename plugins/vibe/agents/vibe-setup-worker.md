@@ -49,7 +49,8 @@ first: `fts_search` for an unfamiliar error to find known setup problems and
 open tickets, and `blast_radius_tickets` on a file you suspect.
 Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
 off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
-a needed vibe tooling fix returns `BLOCKED`.
+report a tooling defect and keep using the supported paths there; return
+`BLOCKED` only for a verified engineering-only blocker after those paths.
 
 macOS has no `timeout` or `gtimeout`; bound a slow command with your tool's
 own timeout setting or `node ../skills/vibe/scripts/run-bounded.mjs <seconds> <command>` (exit 124 on time out). Never start an interactive `claude`
@@ -200,5 +201,5 @@ Repo defects return diagnosis and ticket evidence without an applied-fix claim. 
 `NEEDS_PERSON` with one plain instruction for the person in the words of
 `../skills/vibe/references/plain-words.md` (for example "Your Mac is asking
 for your password to finish installing Node; type it in the prompt"). Or
-`BLOCKED` with the error in one or two lines and "message engineering, naming
-this work by its summary".
+`BLOCKED` with the exact error, paths tried and supported handover after the
+alternatives in the guardrail are exhausted. Give the person no repair task.

@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.17
+
+#### Fixed
+- Vibe and handoff now try supported validation and recovery paths before treating a tooling problem as an engineering-only blocker. Both the worker and vibe root must exhaust safe paths before a pushed handover for a genuine human-only decision, access need, or engineering change outside session authority. Vibe and direct handoff replies always offer to pass the saved work rather than only stopping or waiting (ISS-13400).
+- Existing contract checks require both sets of attempts and preserve the real-blocker handover. The real-blocker eval checks worker, root, and human-only blocker content separately from their line order; reply checks verify the pushed work and pass-on offer. The Codex eval parity check includes all 104 cases.
+- The tooling alternative-path eval starts from a recorded `BLOCKED` referral. The person-is-engineer eval covers rerun, narrower check, and automatic check paths, including a reply about running only the relevant part and following an automatic result without assigning a repair to the person. Its record grader accepts a pending check only when both stop and referral are marked premature. The tooling contract pins one rerun at most, and a narrowed or CI-deferred check is named in the existing progress or handoff summary.
+- A lockfile or other install-managed file changed by the session's own check is backed up privately and restored from the committed version only when the drift is accidental. A requested dependency manifest edit keeps its matching lockfile; preexisting or person-owned edits remain protected in the fourth eval, whose reply grader accepts plain continued progress.
+- The referral contract now scans every vibe Markdown file, including evals, with context-validated exceptions for historical quotes, negative graders, test repair, and verified human-only blockers.
+
 ### vibe v1.1.16
 
 Gates a vibe session could never clear now either clear with what the session can do or hand the work to engineering (ISS-13321). Findings are numbered as in the ISS-13321 audit.

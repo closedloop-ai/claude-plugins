@@ -48,7 +48,8 @@ Read the root and nearest owning AGENTS.md before editing. Existing
 setup worker to patch code. Preserve other people's existing work.
 Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
 off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
-a needed vibe tooling fix returns `BLOCKED`.
+report a tooling defect and keep using the supported paths there; return
+`BLOCKED` only for a verified engineering-only blocker after those paths.
 
 ## Plan before code
 
@@ -463,6 +464,8 @@ to the existing private change log. Keep the live ticket's scope, progress and
 backend facts truthful under `ticket-template.md`, without technical-plan
 uploads. Obtain the serial record turn before any shared session/ticket update;
 operational helpers do not write the same records concurrently.
+Name any check narrowed or left for CI in the existing progress or handoff
+summary in plain words (`../skills/vibe/references/guardrails.md`, "Checks").
 
 ## Tests: repair, don't author
 

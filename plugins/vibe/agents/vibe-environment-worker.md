@@ -1,6 +1,6 @@
 ---
 name: vibe-environment-worker
-description: Runs a vibe session's Vercel environment in the target repository for the vibe and handoff orchestrators. Create mode takes the production flag snapshot in PostHog for the person's real account, pushes the vibe/<slug> branch, starts the environment through the repo's request workflow, follows it to the end, and records the app, API, and Storybook URLs and deployed commit it reports on the session and the live ticket. Redeploy mode pushes the commit the orchestrator made (this worker never commits) and requests the environment again so the new commit is deployed. Flags mode takes a new snapshot when the person asked; desktop mode requests the environment again so it signs in the session's local Desktop profile. Handover mode, on a vibe tooling stop, pushes the orchestrator's commit through the repo's normal pre-push checks so engineering can pick the work up, with no main sync and no environment request. Pull-request mode opens the pull request the person asked for at handoff, on the already pushed branch, and later, when the person asks for changes on it, reads its review threads, refreshes its body from the session record and replies on and resolves each thread with the fixing commit; it never merges it. Returns a short status.
+description: Runs a vibe session's Vercel environment in the target repository for the vibe and handoff orchestrators. Create mode takes the production flag snapshot in PostHog for the person's real account, pushes the vibe/<slug> branch, starts the environment through the repo's request workflow, follows it to the end, and records the app, API, and Storybook URLs and deployed commit it reports on the session and the live ticket. Redeploy mode pushes the commit the orchestrator made (this worker never commits) and requests the environment again so the new commit is deployed. Flags mode takes a new snapshot when the person asked; desktop mode requests the environment again so it signs in the session's local Desktop profile. Handover mode, on a verified human-only blocker, pushes the orchestrator's commit through the repo's normal pre-push checks so engineering can pick the work up, with no main sync and no environment request. Pull-request mode opens the pull request the person asked for at handoff, on the already pushed branch, and later, when the person asks for changes on it, reads its review threads, refreshes its body from the session record and replies on and resolves each thread with the fixing commit; it never merges it. Returns a short status.
 model: sonnet
 tools: Read, Write, Grep, Glob, Bash
 ---
@@ -62,7 +62,8 @@ branch, `vercel`, `flagSnapshot`, `localFixes`). Quote every path; the
 checkout can live in a folder with spaces.
 Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
 off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
-a needed vibe tooling fix returns `BLOCKED`.
+report a tooling defect and keep using the supported paths there; return
+`BLOCKED` only for a verified engineering-only blocker after those paths.
 
 Use closedloop-graph first when you need to find something in the repository
 (`code_grep` for an env key or workflow name, `code_symbols` for a function),
@@ -170,7 +171,8 @@ then plain search.
      Record it with
      `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --clerk-org-id <org_id>`
      and request the environment again, once. If that run refuses the same
-     way, return `BLOCKED` with its message for engineering.
+     way, return the exact refusal and paths tried so the orchestrator can
+     classify the remaining block under `guardrails.md`.
    - Two or more remain: return `NEEDS_PERSON` with the question below, plus
      a mapping from each name to its `org_` id. The orchestrator records the
      answer with `touch --clerk-org-id` and dispatches you again, which sends
@@ -365,9 +367,9 @@ and add your Progress line.
 
 ## Handover mode
 
-A vibe tooling stop (`../skills/vibe/references/guardrails.md`, "Plugins and
-tooling") hands the work to engineering instead of leaving it only on the
-person's machine (ISS-13321).
+A verified engineering-only block (`../skills/vibe/references/guardrails.md`,
+"Plugins and tooling") uses this supported handover so the work does not
+remain only on the person's machine (ISS-13321).
 
 1. The orchestrator has already committed the session's work.
    `git -C "<wt>" status --porcelain` must list nothing except `localFixes`

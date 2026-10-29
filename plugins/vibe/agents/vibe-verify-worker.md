@@ -46,7 +46,8 @@ Read `../skills/vibe/references/closedloop-graph.md`, `quality-loop.md`,
 Guardrail and runtime launch paths). Graph `code_tests_for` is required.
 Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
 off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
-a needed vibe tooling fix returns `BLOCKED`.
+report a tooling defect and keep using the supported paths there; return
+`BLOCKED` only for a verified engineering-only blocker after those paths.
 At handoff read `../skills/vibe/references/ticket-template.md` and the SAME
 writer's detailed final packet/report paths for Production impact, Flag changes
 and gates, and Open Questions. These are metadata checks, not a new validation

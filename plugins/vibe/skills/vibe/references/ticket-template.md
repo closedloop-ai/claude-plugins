@@ -114,7 +114,8 @@ publication, and the same ticket worker verifies completeness and assignment.
   marked `not met yet: waits on <ticket>` (handoff SKILL.md step 6) goes once
   at the end of the Engineering checklist as
   `- [ ] Criterion waits on <ticket>: <criterion>; not met until it ships`.
-- Vibe tooling blockers: each tooling stop (`guardrails.md`, "Plugins and
+- Vibe tooling blockers: each verified engineering-only stop after supported
+  paths are exhausted (`guardrails.md`, "Plugins and
   tooling") goes once at the end of the Engineering checklist as
   `- [ ] Vibe tooling blocker: <what stopped, technically>; evidence: <the refusal's first line or the finding>`,
   while its Progress line stays a plain status. The person never gets its

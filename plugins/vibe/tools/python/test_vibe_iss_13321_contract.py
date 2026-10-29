@@ -38,15 +38,19 @@ def test_a_requested_pull_request_says_which_e2e_lanes_ci_covers() -> None:
 
 def test_a_tooling_stop_pushes_the_work_and_offers_to_pass_it_on() -> None:
     tooling = section((REFERENCES / "guardrails.md").read_text(), "## Plugins and tooling")
-    assert "The work never stays only on their machine" in tooling
-    assert "dispatch `vibe-environment-worker` in handover mode" in tooling
-    assert '"I can pass it to someone now. Who should get it? A name or email is fine."' in tooling
+    assert "The work never stays only on the person's machine" in tooling
+    assert "Only after both the worker and vibe root tried their safe paths" in tooling
+    assert "Record the exact blocker and what both the worker and root tried in the session ledger" in tooling
+    assert "then dispatch `vibe-environment-worker` in handover mode" in tooling
+    assert "name the exact block and what each layer tried, and offer to pass the saved work to someone now" in tooling
+    assert "Give no engineering repair task to the person" in tooling
     assert "`- [ ] Vibe tooling blocker: <what stopped, technically>; evidence: <the refusal's first line or the finding>`" in tooling
     handover = section((AGENTS / "vibe-environment-worker.md").read_text(), "## Handover mode")
     assert "No main sync, no validation transaction and no environment request" in handover
     assert "Never `--no-verify`, `SKIP_PREPUSH_GATES` or a force push." in handover
     pull_request_stop = flat(HANDOFF.read_text())
-    assert "offer the same one plain choice to pass it to someone now" in pull_request_stop
+    assert "Check for a safe retry or accepted alternative first" in pull_request_stop
+    assert "When it remains a verified engineering-only block, offer to pass the pushed work to someone now" in pull_request_stop
 
 
 def test_the_person_is_only_asked_to_do_what_only_a_human_can() -> None:

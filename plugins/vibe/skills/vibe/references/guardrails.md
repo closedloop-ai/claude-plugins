@@ -18,38 +18,44 @@ Codex and Claude Code, and this section is its one canonical statement:
   and nothing else.
 - Never clone or vendor the plugin's own repository (claude-plugins) to run a
   different version of its tooling.
-- When continuing needs a fix to the vibe tooling, stop. It is never a
-  question for the person. The work never stays only on their machine
-  (ISS-13321).
-  1. Record the blocker: the request stays `BLOCKED` in the session ledger
-     with the reason, and a line in the live ticket's Progress names it as a
-     plain status ("Stopped: this needs an engineer to fix vibe"). The
-     technical reason goes once at the end of its Engineering checklist as
+- A vibe tooling defect alone does not stop the person's work. Rerun a failed
+  check at most once. If it still fails, narrow that check or use an accepted
+  remote lane or CI path. Classify a failure already on captured main, fix
+  what is in the session's scope,
+  and keep building every independent part. Have the setup worker reuse or
+  file an issue for vibe's owners with the failing command, error, and
+  diagnosis, using its existing bug-ticket flow; this does not delay
+  independent work. Use the existing frozen-render and known-main paths where
+  they apply. For Desktop E2E, use the shipped `e2eLeftForCi` path and the
+  re-pinned CI reader when local tested-commit evidence is unavailable. Never
+  edit vibe's checker to force a pass, waive a check, or
+  claim evidence that was not obtained.
+- Only after both the worker and vibe root tried their safe paths and cannot
+  resolve the issue may the affected work stop. The remaining blocker must
+  genuinely need a human-only decision, access or credentials only a person
+  has, or an engineering change outside session authority. Use an engineering
+  referral only for that last category. A recoverable tooling defect follows
+  the path above, with no handover. The work never stays only on the person's
+  machine (ISS-13321).
+  1. Record the exact blocker and what both the worker and root tried in the session ledger and the
+     live ticket's Progress. Keep the request `BLOCKED` only for the part
+     that cannot proceed. Put the technical cause once on the Engineering
+     checklist as
      `- [ ] Vibe tooling blocker: <what stopped, technically>; evidence: <the refusal's first line or the finding>`
      (`ticket-template.md`, "Vibe tooling blockers"). Dispatch the ticket
-     worker for that line before you reply to the person, with the
-     checklist item in the same dispatch, so engineering reading the ticket
-     sees the newest blocker.
-  2. Save the work for engineering: commit what the session built through
-     `commit-worktree.mjs` as usual, then dispatch `vibe-environment-worker`
-     in handover mode, which pushes that commit through the repo's normal
-     pre-push checks with no main sync and no new copy of the app. A push
-     those checks refuse is one more line on the same Engineering checklist
-     item; the stop goes on.
-  3. Report it to engineering: tell the person in one plain line that this
-     needs engineering and to message engineering, naming this work by its
-     summary (`plain-words.md`), such as "This needs an engineer to fix
-     vibe. Message engineering with: <summary>." That line never quotes a
-     rule or a script's refusal and never names or links a plugin file.
-     Add one plain choice: "I can pass it to someone now. Who should get
-     it? A name or email is fine." When they name someone, run handoff's
-     lookup as handoff step 8 describes, then the ticket worker's assign
-     mode: the ticket and its plan go to that person, In Progress, with the
-     blocker on the Engineering checklist, and the session is marked handed
-     off. When they do not, the ticket stays with them and nothing else is
-     asked.
-  4. The person is never given the stop's remedy as something to do
-     ("What the person is asked to do" in `plain-words.md`).
+     worker before replying so the next owner has the latest facts.
+  2. Save the checked work through `commit-worktree.mjs`, then dispatch
+     `vibe-environment-worker` in handover mode. It pushes through the normal
+     pre-push checks, with no main sync and no new copy of the app. Record a
+     refused push on the same checklist item; never claim it was pushed.
+  3. In the reply, name the exact block and what each layer tried, and offer to
+     pass the saved work to someone now (`plain-words.md`), even when a human
+     must first decide or grant access. Never end with only a stop or wait.
+     When the person
+     names someone, use handoff step 8's lookup and the ticket worker's
+     assign mode. The ticket and plan go to that person, In Progress, and
+     the session is marked handed off. Otherwise the ticket stays assigned
+     to the person. Give no engineering repair task to the person.
 - A handoff check that also fails on the main the session captured is not a
   needed fix and never stops the handoff: it is a Known main failure recorded
   for engineering (`quality-loop.md`, "Failures already on main").
@@ -190,8 +196,8 @@ outside the allowed table: the writer does not edit it in the loop either.
 A visible part of the request that needs such a path keeps its acceptance
 criterion `not met yet` with the reason that engineering must make it, and
 the ready message tells the person so in plain words, so they never accept a
-change the branch cannot keep. A fix to vibe's own tooling is
-different and still stops the session ("Plugins and tooling", above).
+change the branch cannot keep. A vibe tooling defect follows "Plugins and
+tooling" above; it does not stop the allowed work by itself.
 
 Vibe work is headed for `main`, so the target repo's flag rule decides which
 keys it may add ("Feature flags"). If the person chose Labs, the Labs pattern
@@ -596,6 +602,36 @@ values, snapshots, tolerances, skips, timeouts, thresholds, `biome-ignore`,
 code. Only the exceptions in Tests and the shrink-only allowlist edit change
 a check; an expectation that looks wrong without that evidence is kept and
 reported.
+
+### Install-managed files changed by checks
+
+Before a session-owned install or a check that runs an install, capture the
+tracked and staged state of each install-managed file and its owning
+dependency manifest. Compare the state after the command with that snapshot
+and the owned command receipt. If the requested change intentionally edits
+`package.json` or another owning manifest and requires the resulting lockfile
+change, preserve that manifest and lockfile together, even when the session's
+install wrote the lockfile. Do not classify that pair as accidental drift.
+
+Restore a committed install-managed file only when an install ran as part of
+a check, the file was clean before that command, no intended dependency
+manifest change requires the result, and the receipt or a bounded
+reproduction establishes that the session's own check-run install changed
+it. A later person edit, an earlier change, or uncertain attribution is
+never session owned merely because the file is dirty now. A standalone
+install outside a check never authorizes automatic restoration.
+
+For a proven session-owned change, save the exact changed file in the
+session's private Git metadata before restoring the committed version. Verify
+the backup exists, the restored file matches the committed version, and no
+other tracked edit was changed. Continue the check or handoff without asking
+the person to approve undoing the session's own artifact. If the change
+predates the command or belongs to the person, preserve it and ask one plain
+question with a recommendation before any overwrite. If ownership remains
+unknown, preserve it and keep investigating without claiming a safe restore.
+
+When a check is narrowed or left for CI, name that check in the existing
+progress or handoff summary in plain words. Do not add a new summary template.
 
 ## Repo rules that bite most often
 
