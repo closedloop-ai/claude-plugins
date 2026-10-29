@@ -11,6 +11,7 @@ import { mergeResults } from "./hook-dispatch.mjs";
 import { killProblems } from "./kill-guard.mjs";
 import { TASKSTOP_REMINDER } from "./pause-guard.mjs";
 import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
+import { POST_TOOL_USE_ROUTES } from "./post-tool-use.mjs";
 import { forcePushProblem } from "./shell-safety-guard.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -105,8 +106,10 @@ test("results merge as deny > defer > ask > allow and keep every context", () =>
 test("hooks.json registers one command per event, and the PreToolUse matcher names exactly the routed tools", () => {
   const { hooks } = JSON.parse(readFileSync(path.join(HERE, "hooks.json"), "utf8"));
   const commands = (event) => hooks[event].flatMap((entry) => entry.hooks.map((hook) => hook.command));
-  assert.deepEqual(Object.keys(hooks).sort(), ["PreToolUse", "SessionStart", "UserPromptSubmit"]);
+  assert.deepEqual(Object.keys(hooks).sort(), ["PostToolUse", "PreToolUse", "SessionStart", "UserPromptSubmit"]);
   assert.deepEqual(commands("PreToolUse"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use.mjs"']);
+  assert.deepEqual(commands("PostToolUse"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use.mjs"']);
+  assert.deepEqual(hooks.PostToolUse[0].matcher.split("|").sort(), Object.keys(POST_TOOL_USE_ROUTES).sort());
   assert.deepEqual(commands("UserPromptSubmit"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.mjs"']);
   assert.deepEqual(commands("SessionStart"), ['node "${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs"']);
   assert.equal(hooks.SessionStart[0].matcher, "compact");
