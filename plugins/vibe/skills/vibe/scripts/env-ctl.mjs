@@ -257,7 +257,8 @@ export function createEnvCtl({
     if (left.length > 0) return { status: Status.NeedsCommit, files: left };
     const pushed = parseJson(sessions(["main-sync-push", "--worktree", worktree], { input: stdin }).stdout, {});
     if (pushed.ok !== true) return { status: pushed.status ?? Status.Blocked, error: pushed.error ?? "main-sync-push refused" };
-    return { status: Status.Done, pushed: pushed.pushed ?? null, alreadyPublished: pushed.alreadyPublished ?? false, ...(pushed.sha ? { sha: pushed.sha } : {}) };
+    const sync = pushed.mainSync ?? {};
+    return { status: Status.Done, pushed: sync.pushed ?? null, alreadyPublished: sync.alreadyPublished ?? false, ...(sync.sha ? { sha: sync.sha } : {}) };
   }
 
   async function redeploy({ worktree, since, personEmail, stdin, ...timing }) {

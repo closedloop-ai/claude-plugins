@@ -224,7 +224,7 @@ function publishRoutes(overrides = {}) {
     ["local-plans.mjs", overrides.plans ?? ok({ ok: true, committedLocalPlans: [] })],
     ["migration-publish.mjs", overrides.migrations ?? ok({ ok: true, problems: [] })],
     ["status --porcelain", overrides.status ?? ok(" M fix.ts\n")],
-    ["main-sync-push", overrides.push ?? ok({ ok: true, pushed: true })],
+    ["main-sync-push", overrides.push ?? ok({ ok: true, mainSync: { pushed: true } })],
   ];
 }
 
@@ -245,9 +245,19 @@ test("publish passes the parent context on stdin and forwards a refusal's own st
   const calls = [];
   const clean = createEnvCtl({ run: router(publishRoutes(), calls) }).publish({ worktree: "/wt", stdin: "{\"ctx\":1}" });
   assert.equal(clean.status, Status.Done);
+  assert.equal(clean.pushed, true);
   assert.equal(calls.find((call) => call.line.includes("main-sync-push")).options.input, "{\"ctx\":1}");
   const refused = createEnvCtl({ run: router(publishRoutes({ push: ok({ ok: false, status: "NEEDS_DESKTOP_STOP", error: "desktop running" }) })) }).publish({ worktree: "/wt" });
   assert.equal(refused.status, "NEEDS_DESKTOP_STOP");
+});
+
+test("an already published head is reported as such and redeploy then requests nothing", async () => {
+  const routes = publishRoutes({ push: ok({ ok: true, mainSync: { alreadyPublished: true, pushed: false } }) });
+  const published = createEnvCtl({ run: router(routes) }).publish({ worktree: "/wt" });
+  assert.deepEqual([published.alreadyPublished, published.pushed], [true, false]);
+  const result = await createEnvCtl({ run: router(routes), ...clock() }).redeploy({ worktree: "/wt" });
+  assert.equal(result.requested, false);
+  assert.equal(result.alreadyPublished, true);
 });
 
 test("redeploy with no environment stops after the push", async () => {
