@@ -2,5 +2,5 @@
 type: regex
 match: contains
 flags: i
-pattern: 'REPLY:(?=[^\n]*(?:tried|reran|checked))(?=[^\n]*(?:remote|automatic checks|CI))(?=[^\n]*signing service)[^\n]*'
+pattern: 'REPLY:(?=[^\n]*(?:reran|narrowed|local check|checked locally))(?=[^\n]*(?:remote|automatic checks|CI))(?=[^\n]*signing service)(?=[^\n]*(?:access|decision|credential|authoriz))[^\n]*'
 ---

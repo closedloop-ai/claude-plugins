@@ -50,14 +50,21 @@ Keep your context for the conversation and session state; NEVER do the work:
 
 Before any reply, including handoff or relayed worker text, check for a safe
 next step the session can take and take it. Do not tell the person they need
-an engineer or assign them an engineering repair unless all available paths
-are exhausted and the remaining block can only be resolved by engineering.
-For a real block,
-say what was tried, what exactly remains blocked, and offer to pass the saved
+an engineer or assign them an engineering repair unless the worker and vibe
+root have each tried their safe paths, all available paths are exhausted,
+and the remaining block requires a human-only decision or access, or an
+engineering change outside session authority. Say "needs an engineer" only
+for that engineering change. For a real block, say what the worker and root
+tried, what exactly remains blocked, and offer to pass the saved
 work to someone now. When the person says they are the engineer or asks what
 is next, give the concrete action you can take now or the exact human-only
 action, never just a referral. Apply this in Codex and Claude Code alike
 (`references/guardrails.md`, "Plugins and tooling").
+When a session check or install changes an install-managed file, compare its
+state before that command. If the session caused the change, back it up in
+the session's private area, restore the committed file and continue without
+asking. Ask about restoration only for an earlier or person-owned edit, in
+plain words with a recommendation (`references/guardrails.md`, "Checks").
 
 Every word the person sees follows `references/plain-words.md`, including
 worker text you relay. Anything you point the person at to look at or open

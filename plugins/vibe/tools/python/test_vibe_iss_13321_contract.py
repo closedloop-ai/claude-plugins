@@ -38,11 +38,11 @@ def test_a_requested_pull_request_says_which_e2e_lanes_ci_covers() -> None:
 
 def test_a_tooling_stop_pushes_the_work_and_offers_to_pass_it_on() -> None:
     tooling = section((REFERENCES / "guardrails.md").read_text(), "## Plugins and tooling")
-    assert "The work never stays only on their machine" in tooling
-    assert "Only a verified engineering-only blocker after every available path has been tried" in tooling
-    assert "Record the exact blocker and paths tried in the session ledger" in tooling
+    assert "The work never stays only on the person's machine" in tooling
+    assert "Only after both the worker and vibe root tried their safe paths" in tooling
+    assert "Record the exact blocker and what both the worker and root tried in the session ledger" in tooling
     assert "then dispatch `vibe-environment-worker` in handover mode" in tooling
-    assert "name the exact block and the paths tried, and offer to pass the saved work to someone now" in tooling
+    assert "name the exact block and what each layer tried, and offer to pass the saved work to someone now" in tooling
     assert "Give no engineering repair task to the person" in tooling
     assert "`- [ ] Vibe tooling blocker: <what stopped, technically>; evidence: <the refusal's first line or the finding>`" in tooling
     handover = section((AGENTS / "vibe-environment-worker.md").read_text(), "## Handover mode")

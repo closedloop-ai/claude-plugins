@@ -25,12 +25,18 @@ Codex and Claude Code, and this section is its one canonical statement:
   file an issue for vibe's owners with the failing command, error, and
   diagnosis, using its existing bug-ticket flow; this does not delay
   independent work. Use the existing frozen-render and known-main paths where
-  they apply. Never edit vibe's checker to force a pass, waive a check, or
+  they apply. For Desktop E2E, use the shipped `e2eLeftForCi` path and the
+  re-pinned CI reader when local tested-commit evidence is unavailable. Never
+  edit vibe's checker to force a pass, waive a check, or
   claim evidence that was not obtained.
-- Only a verified engineering-only blocker after every available path has
-  been tried can stop the affected work. It is never a technical question
-  for the person. The work never stays only on their machine (ISS-13321).
-  1. Record the exact blocker and paths tried in the session ledger and the
+- Only after both the worker and vibe root tried their safe paths and cannot
+  resolve the issue may the affected work stop. The remaining blocker must
+  genuinely need a human-only decision, access or credentials only a person
+  has, or an engineering change outside session authority. Use an engineering
+  referral only for that last category. A recoverable tooling defect follows
+  the path above, with no handover. The work never stays only on the person's
+  machine (ISS-13321).
+  1. Record the exact blocker and what both the worker and root tried in the session ledger and the
      live ticket's Progress. Keep the request `BLOCKED` only for the part
      that cannot proceed. Put the technical cause once on the Engineering
      checklist as
@@ -41,7 +47,7 @@ Codex and Claude Code, and this section is its one canonical statement:
      `vibe-environment-worker` in handover mode. It pushes through the normal
      pre-push checks, with no main sync and no new copy of the app. Record a
      refused push on the same checklist item; never claim it was pushed.
-  3. In the reply, name the exact block and the paths tried, and offer to
+  3. In the reply, name the exact block and what each layer tried, and offer to
      pass the saved work to someone now (`plain-words.md`). When the person
      names someone, use handoff step 8's lookup and the ticket worker's
      assign mode. The ticket and plan go to that person, In Progress, and
@@ -593,6 +599,25 @@ values, snapshots, tolerances, skips, timeouts, thresholds, `biome-ignore`,
 code. Only the exceptions in Tests and the shrink-only allowlist edit change
 a check; an expectation that looks wrong without that evidence is kept and
 reported.
+
+### Install-managed files changed by checks
+
+Before a session-owned install or a check that runs an install, capture the
+tracked and staged state of each install-managed file. Compare the state after
+the command with that snapshot and the owned command receipt. Restore only
+when the file was clean before the command and the receipt or a bounded
+reproduction establishes that the session's own command changed it. A later
+person edit, an earlier change, or uncertain attribution is never session
+owned merely because the file is dirty now.
+
+For a proven session-owned change, save the exact changed file in the
+session's private Git metadata before restoring the committed version. Verify
+the backup exists, the restored file matches the committed version, and no
+other tracked edit was changed. Continue the check or handoff without asking
+the person to approve undoing the session's own artifact. If the change
+predates the command or belongs to the person, preserve it and ask one plain
+question with a recommendation before any overwrite. If ownership remains
+unknown, preserve it and keep investigating without claiming a safe restore.
 
 ## Repo rules that bite most often
 

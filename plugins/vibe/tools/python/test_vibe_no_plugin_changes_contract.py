@@ -68,8 +68,8 @@ def test_tooling_defect_uses_supported_paths_before_a_real_blocker() -> None:
         "accepted remote lane or CI path",
         "failure already on captured main",
         "fix what is in the session's scope",
-        "Only a verified engineering-only blocker after every available path has",
-        "Record the exact blocker and paths tried in the session ledger",
+        "Only after both the worker and vibe root tried their safe paths",
+        "Record the exact blocker and what both the worker and root tried in the session ledger",
         "Give no engineering repair task to the person.",
     ):
         assert required in text, required

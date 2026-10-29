@@ -31,7 +31,7 @@ def test_the_tooling_stop_is_on_the_ticket_before_the_person_hears_of_it() -> No
 
 def test_the_tooling_stop_line_is_plain_and_quotes_no_rule_or_plugin_file() -> None:
     text = flat(guardrail_tooling())
-    assert "name the exact block and the paths tried" in text
+    assert "name the exact block and what each layer tried" in text
     assert "Give no engineering repair task to the person." in text
 
 

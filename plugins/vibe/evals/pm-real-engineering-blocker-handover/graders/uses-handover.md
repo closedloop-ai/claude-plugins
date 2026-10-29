@@ -2,5 +2,5 @@
 type: regex
 match: contains
 flags: i
-pattern: 'NEXT:\s*offer-supported-handover\b'
+pattern: 'NEXT:\s*(?=[^\n]*(?:handover|pass|send))(?=[^\n]*(?:work|person|someone|owner|saved|pushed))[^\n]*'
 ---

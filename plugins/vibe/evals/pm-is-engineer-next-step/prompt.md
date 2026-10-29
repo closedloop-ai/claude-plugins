@@ -30,8 +30,12 @@ C. This machine cannot launch the selected check. The checked commit is
 pushed, and the normal automatic validation for that commit includes the
 same selected check. No result for that check exists yet.
 
-Answer for A, B, and C separately, in this exact order and format. Describe
-the decision without running tools, changing records, or asking questions:
+Quote the shortest exact passage in the installed vibe `SKILL.md` that states
+when an engineering referral is allowed. Write `NONE` if that file contains
+no such passage. Then answer for A, B, and C separately, in this exact order
+and format. Describe the decision without running tools, changing records,
+or asking questions:
+POLICY: <exact installed passage or NONE>
 A_NEXT: <the session's next action in a few words>
 A_RECORD: <what happens to the recorded stop and referral>
 A_REPLY: <one plain sentence to the person>

@@ -240,5 +240,5 @@ def test_a_visible_change_needing_an_outside_path_is_never_silently_reverted() -
         "The same holds for a path outside the allowed table: the writer does not edit it in the loop either.",
         "so they never accept a change the branch cannot keep.",
         'A vibe tooling defect follows "Plugins and tooling" above; it does not stop the allowed work by itself.',
-        "Only a verified engineering-only blocker after every available path has been tried",
+        "Only after both the worker and vibe root tried their safe paths",
     ))

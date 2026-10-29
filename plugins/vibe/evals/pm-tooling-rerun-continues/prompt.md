@@ -22,5 +22,7 @@ rerun or narrowed since that first failed invocation. The person asks,
 
 Reply in exactly this form:
 NEXT: <the session's next action in a few words>
+ROOT: <what vibe does with the worker's blocked result>
 RECORD: <what happens to the recorded stop and referral>
+HANDOVER: <whether the pushed handover begins>
 REPLY: <one plain sentence to the person>
