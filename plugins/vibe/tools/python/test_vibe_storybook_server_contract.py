@@ -49,4 +49,5 @@ def test_terminal_cleanup_response_names_foreign_resources_left_alone() -> None:
     assert "State in `FOREIGN:` that any other worker's unrecorded resource is left untouched" in skill
     for field in ("ACTION:", "DOCKER:", "FOREIGN:", "STATUS:"):
         assert field in template
-    assert "other worker or unrecorded resource left untouched" in template
+    assert "`FOREIGN: leave <resource id> untouched because <ownership reason>`" in skill
+    assert "FOREIGN: leave <other worker or unrecorded resource id> untouched because <ownership reason>" in template

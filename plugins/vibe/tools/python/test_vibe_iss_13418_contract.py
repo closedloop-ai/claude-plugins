@@ -50,6 +50,8 @@ def test_writers_and_reports_preserve_parallel_work() -> None:
     fleet_report = section(FLEET.read_text(), "## Reporting to the operator")
     assert "Before replying with remaining work, fill every field of [Remaining work report]" in fleet_report
     assert "incomplete without literal `REPORT:` and `ETA:` lines" in fleet_report
+    assert "single `REPORT:` line; no bullets or continuation lines" in fleet_report
+    assert "one line naming every parallel and queued step and its machine" in report
     assert "never send only its start action" in fleet_report
     assert "each step running in parallel and its machine" in fleet_report
     assert "Report those fields even when a lane has already started" in fleet_report

@@ -75,7 +75,7 @@ Artifacts for people (tickets, PR bodies, PR comments, review replies): never na
 
 ## Remaining work report
 
-REPORT: <parallel steps and their machines, including queued work>
+REPORT: <one line naming every parallel and queued step and its machine; no following bullet block>
 ETA: <estimated time to ready from the longest dependent path, not a serial sum>
 Parallel now: <each independent step and its machine, or none>
 Waiting on a real dependency: <step and prerequisite, or none>
@@ -86,7 +86,7 @@ Time to ready: <estimate from the longest dependent path and its stated assumpti
 
 ACTION: <owned QA helper reconciled now, or exact refusal>
 DOCKER: <recorded container, volumes and network removed or exact refusal>
-FOREIGN: <other worker or unrecorded resource left untouched, or none>
+FOREIGN: leave <other worker or unrecorded resource id> untouched because <ownership reason>; or none
 STATUS: <owner, ticket and cleanup result or leftover>
 
 ## QA guide prompt
