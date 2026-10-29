@@ -90,3 +90,56 @@ def test_consolidated_reviewer_reads_the_two_reviewers_checklists_instead_of_cop
     for named in ("vibe-guardrails-reviewer.md", "vibe-adversarial-reviewer.md", "NOT-CHECKED", "checks_skipped"):
         assert named in agent
     assert "Edit" not in re.search(r"^tools:.*$", agent, re.MULTILINE).group(0)
+
+
+ADVERSARIAL = ROOT / "agents" / "vibe-adversarial-reviewer.md"
+ADVERSARIAL_BASELINE_BYTES = 9884  # vibe 1.1.16 on main, before ISS-13353
+# One distinctive phrase per genuinely adversarial attack that must survive the trim.
+RETAINED_ATTACKS = {
+    "shared components": "every consumer",
+    "states": "zero values versus unknown values",
+    "data correctness": "a count that can exceed its population",
+    "query and cache": "query keys that collide",
+    "accessibility": "WCAG 1.4.1",
+    "narrow controls": "narrow-controls.mjs",
+    "copies": "copies already behave differently",
+    "acceptance criteria per surface": "mechanism word",
+    "selections": "account for every selected row",
+    "gates": "gated on the host's capability",
+    "version skew": "whole-response parse",
+    "write paths": "unbounded cursor loop",
+}
+
+
+def test_adversarial_trim_keeps_every_genuinely_adversarial_attack() -> None:
+    text = read(ADVERSARIAL)
+    flat = " ".join(text.split())
+    for name, phrase in RETAINED_ATTACKS.items():
+        assert phrase in flat, f"attack lost: {name}"
+    attacks = re.findall(r"^\d+\. ", text.split("## Attack surface", 1)[1], re.MULTILINE)
+    assert len(attacks) == 12
+
+
+def test_adversarial_trim_hands_the_test_edit_rules_to_guardrails_check_9() -> None:
+    text = read(ADVERSARIAL)
+    assert "a repair that changes what a test asserts" not in text
+    assert "a deleted test that still covered live behavior" not in text
+    assert "check 9 of the guardrails reviewer, not repeated" in " ".join(text.split())
+    guardrails = read(ROOT / "agents" / "vibe-guardrails-reviewer.md")
+    assert "9. Tests and checks:" in guardrails
+    assert "check the missing tests list covers every behavior that lacks an existing test" in " ".join(text.split())
+
+
+def test_adversarial_reviewer_is_fed_the_consumer_pack_and_gate_table_from_the_inventory() -> None:
+    text = read(ADVERSARIAL)
+    assert "`diffRules.requiredTests`" in text
+    assert "shared-consumers.mjs" in text and ".vibe/path-gates.json" in text
+    inventory = read(SCRIPTS / "handoff-inventory.mjs")
+    assert "requiredTests: diffRules.requiredTests" in inventory
+    assert "sharedComponentTests" in read(SCRIPTS / "diff-rules.mjs") and "pathGateTests" in read(SCRIPTS / "diff-rules.mjs")
+
+
+def test_adversarial_prompt_does_not_grow_past_its_pre_trim_size() -> None:
+    # Measured 9832 bytes against 9884 before (-0.5%): the plan's ~30% is not reachable without
+    # dropping wording that ten existing contract tests pin, so this only stops regrowth.
+    assert len(read(ADVERSARIAL).encode()) <= ADVERSARIAL_BASELINE_BYTES
