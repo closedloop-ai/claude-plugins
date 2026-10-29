@@ -1,5 +1,6 @@
 """Contracts for ISS-13418 independent lane scheduling and reporting."""
 
+import re
 from pathlib import Path
 
 from vibe_contract_text import flat, section
@@ -47,12 +48,18 @@ def test_writers_and_reports_preserve_parallel_work() -> None:
     for field in ("REPORT:", "ETA:", "Parallel now:", "Waiting on a real dependency:", "Moved for capacity:", "Time to ready:"):
         assert field in report
     assert "longest dependent path" in report
+    assert "Pre-send audit: in the final draft" in report
+    raw_report = templates.split("## Remaining work report\n", 1)[1].split("\n## ", 1)[0]
+    for label in ("START_INTEGRATION:", "START_TYPECHECK:", "DEPENDENCIES:", "REPORT:", "ETA:"):
+        assert len(re.findall(rf"^{re.escape(label)}", raw_report, re.MULTILINE)) == 1, label
     fleet_report = section(FLEET.read_text(), "## Reporting to the operator")
     assert "Before replying with remaining work, fill every field of [Remaining work report]" in fleet_report
     assert "incomplete without literal `REPORT:` and `ETA:` lines" in fleet_report
     assert "single `REPORT:` line; no bullets or continuation lines" in fleet_report
     assert "one line naming every parallel and queued step and its machine" in report
     assert "never send only its start action" in fleet_report
+    assert "must each occur exactly once with nonempty content after the colon" in fleet_report
+    assert "fill it and audit again before sending" in fleet_report
     assert "each step running in parallel and its machine" in fleet_report
     assert "Report those fields even when a lane has already started" in fleet_report
     assert "every capacity move" in fleet_report

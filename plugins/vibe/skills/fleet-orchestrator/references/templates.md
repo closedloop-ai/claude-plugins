@@ -75,6 +75,11 @@ Artifacts for people (tickets, PR bodies, PR comments, review replies): never na
 
 ## Remaining work report
 
+Pre-send audit: in the final draft, `START_INTEGRATION:`, `START_TYPECHECK:`, `DEPENDENCIES:`, `REPORT:` and `ETA:` each occur exactly once with nonempty content after the colon. If a line is missing, duplicate or blank, complete it and audit again. Do not send an incomplete draft or include this audit note in the reply.
+
+START_INTEGRATION: <machine and immediate start, or a specific dependency>
+START_TYPECHECK: <machine and immediate start, or a specific dependency>
+DEPENDENCIES: <actual prerequisites, or none>
 REPORT: <one line naming every parallel and queued step and its machine; no following bullet block>
 ETA: <estimated time to ready from the longest dependent path, not a serial sum>
 Parallel now: <each independent step and its machine, or none>
@@ -83,6 +88,8 @@ Moved for capacity: <step, source machine, destination machine, or none>
 Time to ready: <estimate from the longest dependent path and its stated assumptions>
 
 ## Lifecycle cleanup report
+
+Pre-send audit: in the final draft, `ACTION:`, `DOCKER:`, `FOREIGN:` and `STATUS:` each occur exactly once with nonempty content after the colon. If a line is missing, duplicate or blank, complete it and audit again. Do not send an incomplete draft or include this audit note in the reply.
 
 ACTION: <owned QA helper reconciled now, or exact refusal>
 DOCKER: <recorded container, volumes and network removed or exact refusal>

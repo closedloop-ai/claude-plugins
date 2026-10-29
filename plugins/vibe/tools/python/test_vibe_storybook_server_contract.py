@@ -49,5 +49,9 @@ def test_terminal_cleanup_response_names_foreign_resources_left_alone() -> None:
     assert "State in `FOREIGN:` that any other worker's unrecorded resource is left untouched" in skill
     for field in ("ACTION:", "DOCKER:", "FOREIGN:", "STATUS:"):
         assert field in template
+        assert len(re.findall(rf"^{re.escape(field)}", template, re.MULTILINE)) == 1, field
     assert "`FOREIGN: leave <resource id> untouched because <ownership reason>`" in skill
     assert "FOREIGN: leave <other worker or unrecorded resource id> untouched because <ownership reason>" in template
+    assert "Pre-send audit: in the final draft" in template
+    assert "must each occur exactly once with nonempty content after the colon" in skill
+    assert "fill it and audit again before sending" in skill
