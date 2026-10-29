@@ -8,9 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Fixed
 - Vibe and handoff now try supported validation and recovery paths before treating a tooling problem as an engineering-only blocker. Both the worker and vibe root must exhaust safe paths before a pushed handover for a genuine human-only decision, access need, or engineering change outside session authority.
-- Existing contract checks require both sets of attempts and preserve the real-blocker handover. The real-blocker eval checks labeled worker, root, and human-only blocker evidence separately from the plain reply. The Codex eval parity check includes all 104 cases.
-- The tooling alternative-path eval starts from a recorded `BLOCKED` referral. The person-is-engineer eval covers three independent stops with untried rerun, narrower check, and automatic check paths; regex graders check the root's safe paths or checks, record correction, and a continuing reply.
-- A lockfile or other install-managed file changed by the session's own check is backed up privately and restored from the committed version after ownership is proven. Preexisting or person-owned edits are preserved; a fourth eval covers both cases.
+- Existing contract checks require both sets of attempts and preserve the real-blocker handover. The real-blocker eval checks labeled worker, root, and human-only blocker evidence and a named owner for handover separately from the plain reply. The Codex eval parity check includes all 104 cases.
+- The tooling alternative-path eval starts from a recorded `BLOCKED` referral. The person-is-engineer eval covers three independent stops with untried rerun, narrower check, and automatic check paths; regex graders check the root's safe paths, record correction, and reading an automatic result.
+- A lockfile or other install-managed file changed by the session's own check is backed up privately and restored from the committed version after ownership is proven. Preexisting or person-owned edits are preserved; a fourth eval covers both cases and accepts plain continuing wording.
 
 ### vibe v1.1.16
 
