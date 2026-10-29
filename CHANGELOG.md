@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.20
+
+#### Added
+- Vibe handoff carries the writer's `Feature map:` lines into the requested pull request and uses repository-owned screen maps to identify overlapping work (ISS-13415).
+- The fleet starts independent integration, unit, typecheck, and lint work on allowed machines while e2e is queued or running elsewhere. Disjoint proof tests or new modules may be assigned to helpers with exclusive branches and file allowlists; the ticket writer alone integrates their work (ISS-13418).
+
+#### Fixed
+- Frozen-render comparisons own and close their base and head Storybook servers on success and failure. Recorded QA stacks and Docker resources are reconciled when a pull request merges or closes; cleanup verifies ownership and leaves unrecorded resources untouched (ISS-13420).
+
+#### Changed
+- Vibe's Markdown instructions are about 2,740 words longer than in 1.1.18.
+
 ### vibe v1.1.18
 
 #### Added
