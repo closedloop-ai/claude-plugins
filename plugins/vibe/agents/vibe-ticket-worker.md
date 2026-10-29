@@ -87,6 +87,20 @@ it was recorded), call `get-me` and record it first:
 user id and exact email only, never by display name: two accounts can share a
 name, or have none.
 
+## The script for the body templating
+
+When `../skills/vibe/scripts/ticket-ctl.mjs` exists, use it for the text steps
+only: `checklist` renders the Engineering checklist lines from the handoff's
+structured entries in the template's exact formats (and merges them without
+repeating one), `grading` prints the Grading section unchanged from the
+template, `replace-sections --owner create|record|writer|handoff` changes only
+the sections that step owns, and `apply-record --worktree "<wt>"` pastes
+`ticket-sections` over its three sections. It reads and writes no ticket and
+holds no credential: the reads and writes stay with your ClosedLoop tools
+(the REST client is blocked on the owner's ruling about static credentials),
+so run it on the body you read and write the result back as before. Without
+the script, edit the body by hand as the rules above say.
+
 ## Source link and session plan
 
 The live ticket links back to the document the

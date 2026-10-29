@@ -334,7 +334,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.16` contains 12 skills, 16 agents, and one hook manifest
+Version `1.1.17` contains 12 skills, 16 agents, and one hook manifest
 (`hooks/hooks.json`). It has no standalone commands, root-level shell scripts,
 or production Python tools under `tools/python/`; that directory contains the
 skill-contract test modules and `vibe_contract_text.py`, the text helpers they
@@ -342,5 +342,5 @@ share. Runtime helpers and tests live alongside their owning skills, including
 vibe session and prototype records, local-plan publication guards, bundled
 persistent writer state, Claude launch/resume and shared main-sync publication
 helpers, handoff checks, sweep ownership and worker recovery, and the
-work-report renderer. Shared PR-monitor notification delivery and manual-QA
+work-report renderer, and the WS3 control scripts (`setup-ctl`, `env-ctl`, `graph-pack`, `guardrails-gate`, `verify-run`, `req-gather`, `prototype-share`, `ticket-ctl` and the handoff inventory's `bundle`) that run a worker's mechanical steps with no model, each optional for the worker that uses it. Shared PR-monitor notification delivery and manual-QA
 browser helpers live in `closedloop-core`.

@@ -4,6 +4,26 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.17
+
+Deterministic scripts for the mechanical steps of the vibe workers (PRD-823, WS3, ISS-13343 to ISS-13351). Each script wraps the scripts and the target repository's gates that already exist, is optional for the worker that uses it (every worker prompt keeps its manual steps and says so), and reports a skipped, absent, cached or not-run step as exactly that, never as a pass. No measured time or token saving is claimed: the plan's percentages are byte-share estimates of prompt text.
+
+#### Added
+- `setup-ctl.mjs` (ISS-13343): preflight fixes that need no person (`install-pnpm`, `brew-install-jq`, `brew-install-gh`, only with `--apply`), bootstrap, local Storybook, Desktop profile and launch, stop and confirmed discard, over `vibe-preflight.sh`, `loops-setup.sh`, `run-bounded.mjs` and the `vibe-sessions.mjs` subcommands. A needs-person exit carries only the sentence `preflight.md` writes, or `message: null` with the section to read; it never runs a fix that needs the Mac password or a sign-in, and never runs `plugin add`.
+- `env-ctl.mjs` (ISS-13344): flag snapshot, the publish checks and exact-SHA push, the environment request, run polling by request id with failed-job log extraction, result recording and the pull request open or update, over `vibe-sessions.mjs`, `posthog-key.mjs`, `local-plans.mjs`, `migration-publish.mjs` and `pr-preflight.mjs`. It has no credential source of its own; an org or identity refusal returns as `NEEDS_AGENT` evidence for the worker.
+- `graph-pack.mjs` (ISS-13345): one worktree context pack per request (owner, importing hosts, tests, stories, CODEOWNERS and FEATURE_MAP ids, term precedents). It is the unreachable-graph fallback search in one pass and says so; the closedloop-graph calls stay owed under `graphCallsStillOwed`.
+- `guardrails-gate.mjs` (ISS-13346): the mechanical guardrails checks as one findings JSON (`vibe.guardrails-findings/1`, documented in `references/guardrails-findings.md`), wrapping Biome, `pnpm check:source-gates` and `diff-rules.mjs`, plus added-line scans for tokens, conventions, changed assertions in repaired tests and duplicate owners. A check that did not run is in `checks_skipped` with its reason.
+- `verify-run.mjs` (ISS-13347): runs the repository's own Biome, source gates, affected typecheck, the lanes `pnpm test:lanes` names and the worker-supplied test commands at an exact head through `run-bounded.mjs` and `pre-pr-lanes.mjs`, and writes one evidence JSON that keeps `passed`, `failed`, `blocked`, `cached`, `main-preexisting`, `no-op`, `skipped` and `not-run` apart. E2E specs, story plays, touch flows and the control sweep are listed as left to the verify worker.
+- `req-gather.mjs` (ISS-13348): bundles the requirements worker's saved query results with what it reads from the worktree and lists every required ClosedLoop or closedloop-graph query with no result as missing. It cannot make those queries.
+- `inventory-bundle.mjs` (ISS-13349): `handoff-inventory.mjs` adds an additive `bundle` in the handoff and pull-request phases (backend paths by kind, guard predicates and flag reads, flag keys, Storybook links, a worktree blast bundle per changed source file); it reads `{ unavailable }` instead of failing the inventory.
+- `prototype-share.mjs` (ISS-13350): the prototype share sequence with no model (plan check, share admission, exact-SHA push, read-only wait for that SHA's `prototypes` deployment, `prototype-result` recording); only the deployment's own `environment_url` with `/p/<slug>` is accepted.
+- `ticket-ctl.mjs` (ISS-13351, partial): the offline templating only (Engineering checklist lines in the template's formats, the Grading section copied unchanged, owned-section replacement, `ticket-sections` pasting). The ClosedLoop REST client is not built: it is blocked on the owner's ruling about long-lived static credentials, so the script reads and writes no ticket and holds no credential source.
+
+#### Changed
+- The setup, environment, verify, guardrails, requirements, prototype, ticket and handoff-summarizer agents each point at their script with the manual steps kept; `closedloop-graph.md` names the context pack.
+- `test_vibe_ws3_scripts_contract.py` pins the contracts above. The README's runtime line says 1.1.17.
+- `CHANGELOG.md` and `README.md` were edited by hand in the file's format because the repository's `/update-documentation` workflow was not available in the session that built this change.
+
 ### vibe v1.1.16
 
 Gates a vibe session could never clear now either clear with what the session can do or hand the work to engineering (ISS-13321). Findings are numbered as in the ISS-13321 audit.
