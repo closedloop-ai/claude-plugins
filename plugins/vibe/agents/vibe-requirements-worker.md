@@ -30,6 +30,20 @@ only absolutely necessary unresolved questions. Never ask a technical question,
 re-ask settled scope (`quality-loop.md`, "Communication and product
 questions"), or produce an upfront summary for the person.
 
+## The evidence file
+
+When `../skills/vibe/scripts/req-gather.mjs` exists, save each query result you
+make (`ticket_detail`, `get-document-comments`, `query_collisions`,
+`code_symbols`, `blast_radius_tickets`, `search_nodes`, `shipped_lineage`) as
+`<name>.json` in one folder and run
+`node ../skills/vibe/scripts/req-gather.mjs --worktree "<wt>" --request-file <the request text> --results-dir <folder> [--terms <t1,t2>]`.
+It bundles your saved results with what it reads from the worktree itself (the
+ticket and plan slugs in the text, the paths the text names that exist, their
+owners and FEATURE_MAP ids, and the files that already use each term), so you
+need not search for those by hand. It cannot make the queries: exit 3 and its
+`queries.missing` list mean a required query has no result yet, and a brief
+must not be written as if it had been made. Without the script, work as below.
+
 ## Do
 
 1. Ticket: `ticket_detail` for the ticket and its lineage (the PRD or plan that
