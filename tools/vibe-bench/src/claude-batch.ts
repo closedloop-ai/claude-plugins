@@ -19,23 +19,35 @@ function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trimEnd();
 }
 
-/** Verify a clean, current symphony-alpha main checkout before measurement. */
-export function sourceMain(checkout: string): string {
+/** Verify a clean symphony-alpha fixture checkout before measurement. */
+export function sourceMain(checkout: string, expectedSourceSha?: string): string {
   if (git(checkout, "status", "--porcelain")) throw new Error("benchmark-source-not-clean");
   const head = git(checkout, "rev-parse", "HEAD^{commit}");
   const origin = git(checkout, "rev-parse", "origin/main^{commit}");
   if (!/[:/]closedloop-ai\/symphony-alpha(?:\.git)?$/.test(git(checkout, "remote", "get-url", "origin"))) {
     throw new Error("benchmark-source-not-symphony-alpha");
   }
-  if (head !== origin) throw new Error("benchmark-source-not-current-origin-main");
   const live = git(checkout, "ls-remote", "origin", "refs/heads/main").split(/\s+/)[0];
-  if (live !== head) throw new Error("benchmark-source-live-main-moved");
+  if (origin !== live) throw new Error("benchmark-source-local-origin-main-stale");
+  if (expectedSourceSha) {
+    if (!/^[a-f0-9]{40}$/.test(expectedSourceSha) || head !== expectedSourceSha) {
+      throw new Error("benchmark-source-not-expected-fixture");
+    }
+    try {
+      execFileSync("git", ["-C", checkout, "merge-base", "--is-ancestor", head, live], { stdio: "ignore" });
+    } catch {
+      throw new Error("benchmark-source-fixture-not-on-live-main");
+    }
+  } else if (head !== origin) {
+    throw new Error("benchmark-source-not-current-origin-main");
+  }
   return head;
 }
 
 /** Inputs shared by the baseline and selected-PR Claude batches. */
 export interface ClaudeBatchInputs {
   symphonyCheckout: string;
+  expectedSourceSha?: string;
   claudePluginsRepo: string;
   expectedPluginSha: string;
   snapshotMode: "main" | "head";
@@ -72,7 +84,7 @@ export async function runClaudeBatch(input: ClaudeBatchInputs): Promise<ClaudeBa
     const pluginRepo = realpathSync(input.claudePluginsRepo);
     const runRoot = realpathSync(input.runRoot);
     if (readdirSync(runRoot).length) throw new Error("benchmark-run-root-not-empty");
-    const sourceSha = sourceMain(source);
+    const sourceSha = sourceMain(source, input.expectedSourceSha);
     const snapshot = input.snapshotMode === "main"
       ? snapshotMainPlugins(pluginRepo, input.expectedPluginSha, runRoot)
       : snapshotPluginsAtHead(pluginRepo, input.expectedPluginSha, runRoot);

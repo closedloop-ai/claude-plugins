@@ -149,6 +149,7 @@ export async function runDeveloperBenchmark(input: {
 }): Promise<{ result: DeveloperBenchmarkArtifact; jsonFile: string }> {
   const baseline = JSON.parse(readFileSync(input.baselineFile, "utf8")) as BaselineArtifact;
   const batch = await runClaudeBatch({ symphonyCheckout: input.symphonyCheckout,
+    expectedSourceSha: baseline.sourceSha,
     claudePluginsRepo: input.claudePluginsRepo, expectedPluginSha: input.selectedPr.headSha,
     snapshotMode: "head", waves: DEVELOPER_WAVES, runRoot: input.runRoot,
     claudeExecutable: input.claudeExecutable, ghExecutable: input.ghExecutable });

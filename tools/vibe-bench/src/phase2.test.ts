@@ -232,13 +232,18 @@ test("source preflight rejects a live main advance absent from the checkout", ()
     execFileSync("git", ["-C", source, "remote", "add", "origin", bare]);
     execFileSync("git", ["-C", source, "push", "origin", "main"], { stdio: "ignore" });
     execFileSync("git", ["clone", "--branch", "main", bare, checkout], { stdio: "ignore" });
-    assert.match(sourceMain(checkout), /^[a-f0-9]{40}$/);
+    const sha = sourceMain(checkout);
+    assert.match(sha, /^[a-f0-9]{40}$/);
     writeFileSync(join(source, "file"), "two\n");
     execFileSync("git", ["-C", source, "add", "file"]);
     execFileSync("git", ["-C", source, "-c", "user.name=fixture", "-c", "user.email=fixture@invalid.local",
       "commit", "-m", "two"], { stdio: "ignore" });
     execFileSync("git", ["-C", source, "push", "origin", "main"], { stdio: "ignore" });
-    assert.throws(() => sourceMain(checkout), /benchmark-source-live-main-moved/);
+    assert.throws(() => sourceMain(checkout), /benchmark-source-local-origin-main-stale/);
+    execFileSync("git", ["-C", checkout, "fetch", "origin", "main"], { stdio: "ignore" });
+    assert.throws(() => sourceMain(checkout), /benchmark-source-not-current-origin-main/);
+    assert.equal(sourceMain(checkout, sha), sha);
+    assert.throws(() => sourceMain(checkout, "f".repeat(40)), /benchmark-source-not-expected-fixture/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
