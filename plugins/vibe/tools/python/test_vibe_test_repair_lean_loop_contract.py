@@ -118,7 +118,8 @@ def test_reviewers_check_that_repairs_changed_no_assertion() -> None:
                      "any changed assertion, expected value, matcher, case, skip, tolerance or timeout is blocking",
                      "a repair the change log does not record as one"):
         assert required in guardrails, required
-    assert "a repair that changes what a test asserts" in flat(agent("vibe-adversarial-reviewer"))
+    # ISS-13353: the adversarial reviewer no longer repeats check 9's repair rule; it points at it.
+    assert "check 9 of the guardrails reviewer, not repeated" in flat(agent("vibe-adversarial-reviewer"))
     assert "recorded repair that changes no assertion" in flat(agent("vibe-verify-worker"))
     check = section(HANDOFF_SKILL.read_text(), "## 3. Guardrail check")
     assert "except the inventory's `testRepairs` whose diffs it confirms changed no assertion" in check
