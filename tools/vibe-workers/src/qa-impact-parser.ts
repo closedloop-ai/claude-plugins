@@ -15,7 +15,7 @@ const SCRIPT_KINDS: Readonly<Record<string, ts.ScriptKind>> = {
 
 function scriptKind(file: string): ts.ScriptKind | null {
   const extension = Object.keys(SCRIPT_KINDS).find((candidate) => file.toLowerCase().endsWith(candidate));
-  return extension ? SCRIPT_KINDS[extension] : null;
+  return extension ? SCRIPT_KINDS[extension] ?? null : null;
 }
 
 /**
