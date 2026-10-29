@@ -2,5 +2,5 @@
 type: regex
 match: contains
 flags: i
-pattern: 'REPLY:(?=[^\n]*(?:run|request|start|submit|trigger))(?=[^\n]*(?:automatic check|CI))[^\n]*'
+pattern: 'REPLY:[^\n]*(?:continue|carry on|keep going|try again|rerun|re-run|retry|narrow|run[^\n]*again)[^\n]*'
 ---
