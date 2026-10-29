@@ -74,8 +74,10 @@ def test_no_surface_asks_the_person_about_tests() -> None:
     assert "Never return `NEEDS_PERSON` about a test or any other engineering choice" in writer
     assert "return `BLOCKED` for engineering" in writer
     escalation = section(VIBE_SKILL.read_text(), "## 6. Deploy each change")
-    assert "this part needs engineering" in escalation
-    assert "never ask them to decide it" in escalation
+    assert "resume the SAME persistent writer in fix mode with the error" in escalation
+    assert "first check the alternative paths in `references/guardrails.md`" in escalation
+    assert "record the exact cause and tried paths, then offer the supported pushed handover" in escalation
+    assert "Never ask the person to repair the test" in escalation
 
 
 def test_the_writer_repairs_in_loop_and_handoff_turns_and_records_each_repair() -> None:
