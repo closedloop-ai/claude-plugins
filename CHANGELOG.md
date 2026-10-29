@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Fixed
 - Vibe and handoff now try supported validation and recovery paths before treating a tooling problem as an engineering-only blocker. Replies give a concrete next step or the checked, pushed handover; three evals and a template contract cover these paths.
 - Existing contract checks now require tried-path evidence and the supported handover only for a real engineering-only blocker. The Codex eval parity check includes all 103 cases.
-- The tooling alternative-path and person-is-engineer evals now start from a recorded `BLOCKED` referral before a local rerun or narrower check, so their regex graders test whether the session corrects the stop and continues.
+- The tooling alternative-path and person-is-engineer evals now start from a recorded `BLOCKED` referral before a local rerun or narrower check. Their regex graders test correction of the stop and accept plain continuation wording in the reply.
 
 ### vibe v1.1.16
 
