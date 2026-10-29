@@ -58,6 +58,7 @@ const FROZEN_CANDIDATE = String.raw`v1\.0|deprecated`;
 const CLOSURE_LIMIT = 20000;
 const STORY_ID_PATHSPECS = [...E2E_ROOT_PATHSPECS, "docs/", "apps/web/content/docs/", ".claude/", "*.test.*", "*.spec.*", "*.stories.*"];
 const FROZEN_LINE_BASE = /: frozen-render\.mjs --base (\S+)/;
+const FROZEN_LINE_HEAD = /; head ([0-9a-f]{40});/;
 const FROZEN_LINE_INPUTS = /; inputs ([0-9a-f]{16});/;
 const UNEDITABLE_REFERENCE = /^(?:docs\/|apps\/web\/content\/docs\/|\.claude\/)/;
 const FORBIDDEN_REFERENCE = /^(?:AGENTS|CLAUDE|AGENTS\.override)\.md$/;
@@ -525,13 +526,13 @@ function checkFrozenRenders(files, repo, changeLog, add) {
   });
   // Only the shipped driver's line counts; a hand-rolled capture skipped real play completion (ISS-13291).
   // It counts story files, as `affected` does; their stories follow in parentheses (ISS-13317). It names the
-  // session files it rendered (`inputs`), and holds only while they are unchanged: a line from an earlier head
-  // once cleared later changes to a frozen render (ISS-13321).
+  // exact commit it rendered (`head`) and session files (`inputs`); both must still match (ISS-13321).
   const prefix = `Frozen render unchanged: all ${affected.length} story files (`;
   const current = (line) => {
     const base = FROZEN_LINE_BASE.exec(line)?.[1];
+    const head = FROZEN_LINE_HEAD.exec(line)?.[1];
     const inputs = FROZEN_LINE_INPUTS.exec(line)?.[1];
-    return Boolean(base && inputs) && repo.frozenInputs(base) === inputs;
+    return Boolean(base && head && inputs) && repo.headSha === head && repo.frozenInputs(base) === inputs;
   };
   const recorded = changeLog.split("\n").some((line) => line.includes(prefix) && line.includes(": frozen-render.mjs ") && current(line));
   if (affected.length && !recorded) {
@@ -726,6 +727,7 @@ export function sidebarOrderTests(files, repo) {
 
 function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
   let deepened = 0;
+  const headSha = git(worktree, ["rev-parse", "HEAD"]);
   const headFiles = git(worktree, ["ls-files"]).split("\n").filter(Boolean);
   const baseFiles = new Set(lines(() => git(worktree, ["ls-tree", "-r", "--name-only", base])));
   const blobs = new Map();
@@ -760,6 +762,7 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
         return { ok: false, reason: `git fetch ${step}: ${String(error?.stderr ?? error?.message ?? error).trim().split("\n")[0]}` };
       }
     },
+    headSha,
     headFiles,
     baseFiles,
     baseBlobs,

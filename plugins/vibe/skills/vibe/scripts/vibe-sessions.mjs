@@ -23,6 +23,7 @@
 //   vibe-sessions.mjs desktop-launched --worktree <path> --pid <launch pid> --log <launch log>
 //   vibe-sessions.mjs desktop-tab     --worktree <path>
 //   vibe-sessions.mjs stop            --worktree <path>
+//   vibe-sessions.mjs link            --worktree <path> (--story <story id> [--local] | --page <path>)
 //   vibe-sessions.mjs dispatch-inputs --worktree <path> --out <inputs.json>
 //                                     [--person-email <email>] [--keep-flag-snapshot true|false]
 //                                     (`true` is sent only when the session's previous request
@@ -80,7 +81,8 @@
 // and `discard --confirm` stops them first; `desktop-tab` reports
 // whether that launch is still running and its URL only while it is, so a tab
 // is never reopened on a closed Desktop's port. The URL carries the launch's bridge token, so the record is written
-// owner-only and the URL never goes on the ticket. `environment-result` checks the result `vibe-environment.yml`
+// owner-only and the URL never goes on the ticket. `link` prints the link to
+// give the person for one story or one real app page (`person-links.mjs`). `environment-result` checks the result `vibe-environment.yml`
 // published for a request (its `vibe-environment-result` artifact) against
 // that request and the worktree's HEAD and only then records the verified
 // URLs, deployment ids, and deployed commit; nothing else records them, and
@@ -101,8 +103,9 @@ import { admitMainSyncRequest, admitMainSyncShare, MainSyncError, mainSyncFailur
 import { listedFlagKeys } from "./flag-keys.mjs";
 import { migrationOrderProblems } from "./migration-order.mjs";
 import { adoptStartupRecord, blockingProblem, conversationId, readStartupRecord } from "./plugin-version.mjs";
+import { pageLink, storyLink } from "./person-links.mjs";
 import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublication } from "./prototype-session.mjs";
-import { stopSessionProcesses } from "./session-processes.mjs";
+import { captureSessionProcessIdentities, stopSessionProcesses } from "./session-processes.mjs";
 import { adoptStartupQuestions } from "./session-questions.mjs";
 import { git, readSessionRecord, sessionLiveTicket, writeSessionRecord as writeRecord } from "./session-record.mjs";
 import {
@@ -203,6 +206,9 @@ const { positionals, values } = parseArgs({
     log: { type: "string" },
     path: { type: "string", multiple: true },
     replacement: { type: "string" },
+    story: { type: "string" },
+    page: { type: "string" },
+    local: { type: "boolean", default: false },
     confirm: { type: "boolean", default: false },
   },
 });
@@ -242,6 +248,8 @@ async function run(command) {
       return { session: recordDesktopLaunch() };
     case "desktop-tab":
       return desktopTab();
+    case "link":
+      return personLink();
     case "dispatch-inputs":
       return await dispatchInputs();
     case "main-sync-validate":
@@ -269,7 +277,7 @@ async function run(command) {
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, stop, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, ticket-sections, environment-result, local-fix, story-replacement, discard."
+        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, stop, link, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, ticket-sections, environment-result, local-fix, story-replacement, discard."
       );
   }
 }
@@ -471,7 +479,7 @@ function touchSession() {
     livePlan: livePlan ?? record.livePlan,
     livePlanStatus: livePlanStatus ?? record.livePlanStatus,
     clerkOrgId: values["clerk-org-id"] ? requireClerkOrgId(values["clerk-org-id"]) : record.clerkOrgId,
-    stack: values.stack ? JSON.parse(values.stack) : record.stack,
+    stack: values.stack ? captureSessionProcessIdentities(worktree, JSON.parse(values.stack), { previous: record.stack }) : record.stack,
     ...(mainMerge ?? record.mainMerge ? { mainMerge: mainMerge ?? record.mainMerge } : {}),
     lastActiveAt: now,
   };
@@ -502,6 +510,7 @@ function showSession() {
 async function stopSession() {
   const worktree = requireOption("worktree");
   const record = requireRecord(worktree);
+  requireOwnedSession(worktree, record, "Stop");
   return { worktree, processes: await stopRecorded(worktree, record) };
 }
 
@@ -516,21 +525,7 @@ async function stopRecorded(worktree, record) {
 async function discardSession() {
   const worktree = requireOption("worktree");
   const record = requireRecord(worktree);
-  const branch = git(worktree, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  const targetRoot = realpathSync(git(worktree, ["rev-parse", "--show-toplevel"]));
-  const targetDir = git(worktree, ["rev-parse", "--absolute-git-dir"]);
-  if (realpathSync(worktree) !== targetRoot || record.branch !== branch || !existsSync(path.join(targetDir, "commondir"))) {
-    throw new Error("Discard requires the exact owned session worktree and matching private branch record.");
-  }
-  const operator = validateOperator({ id: record.operator?.id, email: record.operator?.email,
-    ...(record.operator?.name ? { name: record.operator.name } : {}) });
-  if (record.liveTicket !== null && !TICKET_PATTERN.test(record.liveTicket)) {
-    throw new Error("Discard requires a valid recorded live ticket or no ticket.");
-  }
-  const prototype = isOwnedPrototypeSession(record, branch);
-  if (!branch.startsWith(BRANCH_PREFIX) && !prototype) {
-    throw new Error(`${worktree} is not a vibe session (branch ${branch}).`);
-  }
+  const { branch, targetRoot, operator, prototype } = requireOwnedSession(worktree, record, "Discard");
   if (record?.status === SessionStatus.HandedOff) {
     throw new Error(`${branch} was handed off; it belongs to design and engineering now and is never discarded.`);
   }
@@ -547,12 +542,12 @@ async function discardSession() {
   if (!values.confirm) {
     return { discarded: false, wouldLose };
   }
-  // A discarded worktree's Storybook and Desktop would otherwise keep running with nothing left to stop them (ISS-13321).
-  const stopped = await stopRecorded(worktree, record);
   const executionRoot = realpathSync(process.cwd());
   if (executionRoot === targetRoot || executionRoot.startsWith(`${targetRoot}${path.sep}`)) {
     throw new Error("Confirmed discard must run from a retained checkout outside its target.");
   }
+  // A discarded worktree's Storybook and Desktop would otherwise keep running with nothing left to stop them (ISS-13321).
+  const stopped = await stopRecorded(worktree, record);
   const commonDir = git(worktree, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   const repo = path.dirname(commonDir);
   if (wouldLose.pushed && !prototype) {
@@ -576,6 +571,27 @@ async function discardSession() {
     ...(wouldLose.liveTicket ? { cancelEvidence: { discarded: true, branch, liveTicket: wouldLose.liveTicket,
       operatorId: operator.id, operatorEmail: operator.email } } : {}),
   };
+}
+
+/** Validates the recorded session's exact Git worktree, branch, operator and ticket before a stop or discard. */
+function requireOwnedSession(worktree, record, action) {
+  const branch = git(worktree, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  const targetRoot = realpathSync(git(worktree, ["rev-parse", "--show-toplevel"]));
+  const targetDir = git(worktree, ["rev-parse", "--absolute-git-dir"]);
+  if (realpathSync(worktree) !== targetRoot || (record.worktree && realpathSync(record.worktree) !== targetRoot)
+    || record.branch !== branch || !existsSync(path.join(targetDir, "commondir"))) {
+    throw new Error(`${action} requires the exact owned session worktree and matching private branch record.`);
+  }
+  const operator = validateOperator({ id: record.operator?.id, email: record.operator?.email,
+    ...(record.operator?.name ? { name: record.operator.name } : {}) });
+  if (record.liveTicket !== null && !TICKET_PATTERN.test(record.liveTicket)) {
+    throw new Error(`${action} requires a valid recorded live ticket or no ticket.`);
+  }
+  const prototype = isOwnedPrototypeSession(record, branch);
+  if (!branch.startsWith(BRANCH_PREFIX) && !prototype) {
+    throw new Error(`${worktree} is not a vibe session (branch ${branch}).`);
+  }
+  return { branch, targetRoot, operator, prototype };
 }
 
 /**
@@ -977,7 +993,8 @@ function recordDesktopLaunch() {
   const now = new Date().toISOString();
   const updated = {
     ...record,
-    stack: { ...record.stack, desktopPid: Number(pidText), desktopLog: log, desktopBrowserUrl },
+    stack: captureSessionProcessIdentities(worktree, { ...record.stack, desktopPid: Number(pidText), desktopLog: log, desktopBrowserUrl },
+      { previous: record.stack }),
     lastActiveAt: now,
   };
   writeRecord(worktree, updated);
@@ -995,6 +1012,28 @@ function desktopTab() {
   const { stack } = requireRecord(worktree);
   const running = isRunning(stack?.desktopPid);
   return { worktree, running, url: running ? (stack.desktopBrowserUrl ?? null) : null };
+}
+
+/**
+ * The link to give the person for one story (`--story <id>`, `--local` for a
+ * story built since the last redeploy) or one real app page (`--page <path>`),
+ * built from the session record; `url: null` with `missing` when nothing is
+ * deployed or running yet (`plain-words.md`, "Links to what the person
+ * should look at").
+ */
+function personLink() {
+  const worktree = requireOption("worktree");
+  const record = requireRecord(worktree);
+  if (Boolean(values.story) === Boolean(values.page)) {
+    throw new Error("Pass exactly one of --story <story id> or --page <path>.");
+  }
+  if (values.page && values.local) {
+    throw new Error("--local applies to --story only.");
+  }
+  const link = values.story
+    ? storyLink(record, values.story, { local: values.local, isRunning })
+    : pageLink(record, values.page);
+  return { worktree, ...link };
 }
 
 function isRunning(pid) {

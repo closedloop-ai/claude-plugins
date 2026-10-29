@@ -88,3 +88,16 @@ def test_passing_it_on_carries_criteria_that_wait_on_another_ticket() -> None:
     assert "`Aligned except criteria waiting on <tickets>`" in ticket
     template = flat((REFERENCES / "ticket-template.md").read_text())
     assert "`- [ ] Criterion waits on <ticket>: <criterion>; not met until it ships`" in template
+
+
+def test_release_smoke_is_an_optional_diagnostic_not_a_release_or_pr_gate() -> None:
+    repo = PLUGIN_ROOT.parents[1]
+    agents = flat((repo / "AGENTS.md").read_text())
+    contributing = flat((repo / "CONTRIBUTING.md").read_text())
+    changelog = flat((repo / "CHANGELOG.md").read_text())
+    assert "vibe release smoke is optional" in agents
+    assert "vibe release smoke (optional)" in contributing
+    assert "vibe release smoke is optional" in changelog
+    assert "required for every `plugins/vibe` change" not in contributing
+    assert "require `node tools/vibe-release-smoke/smoke.mjs`" not in changelog
+    assert (repo / "tools/vibe-release-smoke/smoke.mjs").is_file()

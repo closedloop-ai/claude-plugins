@@ -84,7 +84,9 @@ session's stack. Never give the bare canvas,
 `<storybook-base>/iframe.html?id=<story-id>&viewMode=story`, which shows the
 story without the sidebar or controls. This section is the rule's one
 canonical statement; the skills, the ticket template and the workers point at
-it.
+it. `scripts/vibe-sessions.mjs link --story <story-id>` builds the link from
+the session record, and a link given to the person also follows
+`plain-words.md`, "Links to what the person should look at".
 
 ## The production flag snapshot
 

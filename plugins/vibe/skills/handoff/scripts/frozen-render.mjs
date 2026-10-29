@@ -162,8 +162,8 @@ export function classifyStory(bases, head) {
   return { outcome: FrozenOutcome.Identical };
 }
 
-/** Renders every story twice on the base and once on the branch and returns the summary; writes evidence under `out`. */
-export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser, out, viewport, timeoutMs, now, command, inputs, repairedIds = new Map(), refused = [] }) {
+/** Renders every story twice on the base and once on the branch; `head` identifies the checked-out commit in its proof line. */
+export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser, out, viewport, timeoutMs, now, command, head, inputs, repairedIds = new Map(), refused = [] }) {
   const stories = [];
   const options = { viewport, timeoutMs, now };
   for (const id of ids) {
@@ -194,12 +194,12 @@ export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser,
       renders: Object.fromEntries(Object.entries(renders).map(([side, { screenshot, ...rest }]) => [side, rest])) });
   }
   stories.push(...refused.map((story) => ({ ...story, outcome: FrozenOutcome.Blocking })));
-  return summarize(stories, { fileCount, out, command, inputs });
+  return summarize(stories, { fileCount, out, command, head, inputs });
 }
 
 /**
- * What the CLI runs: every story in `storyFiles` (read at `base`), with the line counting story files, as the
- * `frozen-render` rule does, and their stories in parentheses.
+ * What the CLI runs: every story in `storyFiles` (read at `base`), with the line counting story files and
+ * their stories in parentheses. It pins HEAD before rendering and withholds the line if HEAD changes.
  */
 export async function frozenStoryFiles({ repo, base, storyFiles, ...render }) {
   const files = [...new Set(storyFiles)];
@@ -212,10 +212,12 @@ export async function frozenStoryFiles({ repo, base, storyFiles, ...render }) {
     storyId: id, reason: `${change.file} changed beyond a compile-only repair (${change.headText === null ? "it is gone" : "its title, tags or story names differ"}), so it is not compared`,
   })));
   const command = `frozen-render.mjs --base ${base} --story-file ${files.join(" --story-file ")}`;
+  const head = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   const inputs = frozenInputs(repo, base);
-  const summary = await frozenRenders({ ...render, ids: compared.flatMap(idsOf), fileCount: files.length, command, inputs, repairedIds, refused });
-  // Edits made while the stories rendered are not what was rendered; the line is withheld and the run repeats.
-  if (summary.changeLogLine && frozenInputs(repo, base) !== inputs) {
+  const summary = await frozenRenders({ ...render, ids: compared.flatMap(idsOf), fileCount: files.length, command, head, inputs, repairedIds, refused });
+  // A commit or edit during rendering changes the proof's source identity, even when file bytes end up identical.
+  if (summary.changeLogLine && (execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim() !== head
+    || frozenInputs(repo, base) !== inputs)) {
     const { changeLogLine, ...rest } = summary;
     return { ...rest, ok: false, lines: [...rest.lines, "the session's files changed during the run; run it again"] };
   }
@@ -224,8 +226,8 @@ export async function frozenStoryFiles({ repo, base, storyFiles, ...render }) {
 
 /**
  * What the head side rendered: a digest of every file the session checkout differs from `base` in, tracked or
- * untracked, with its content. The recorded line carries it, and the diff rules accept the line only while it
- * still matches, so a line from an earlier head never clears later changes (ISS-13321).
+ * untracked, with its content. The recorded line carries it beside the exact head SHA, and the diff rules require
+ * both to match. A later commit with the same file bytes still needs a new render (ISS-13321).
  */
 export function frozenInputs(repo, base) {
   const run = (args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", maxBuffer: GIT_MAX_BUFFER, stdio: ["ignore", "pipe", "pipe"] });
@@ -334,7 +336,7 @@ function writeCrop(out, id, before, after) {
   return file;
 }
 
-function summarize(stories, { fileCount, out, command, inputs }) {
+function summarize(stories, { fileCount, out, command, head, inputs }) {
   const pick = (outcome) => stories.filter((story) => story.outcome === outcome);
   const entry = ({ storyId: id, reason, crop }) => ({ storyId: id, reason, ...(crop ? { crop } : {}) });
   const identical = pick(FrozenOutcome.Identical).length;
@@ -350,7 +352,7 @@ function summarize(stories, { fileCount, out, command, inputs }) {
   const summary = {
     ok, storyFiles: fileCount, stories: stories.length, identical, unstableOnBase, sameFailure, blocking,
     lines: [...stories.map(storyLine), `summary: ${stories.length} stories in ${fileCount} story files: ${counts}${repaired}; results ${results}`],
-    ...(ok ? { changeLogLine: `Frozen render unchanged: all ${fileCount} story files (${stories.length} stories): ${command}: ${counts}${repaired}${inputs ? `; inputs ${inputs}` : ""}; ${results}` } : {}),
+    ...(ok ? { changeLogLine: `Frozen render unchanged: all ${fileCount} story files (${stories.length} stories): ${command}: ${counts}${repaired}${head ? `; head ${head}` : ""}${inputs ? `; inputs ${inputs}` : ""}; ${results}` } : {}),
   };
   mkdirSync(out, { recursive: true });
   writeFileSync(results, `${JSON.stringify({ ...summary, details: stories }, null, 2)}\n`);

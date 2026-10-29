@@ -30,6 +30,7 @@ say what it means for the person, or leave it out.
 | lint, typecheck, test suite, CI | the automatic checks |
 | Clerk, org id, admin role | your organization; you can manage it |
 | feature flag, flag snapshot | the settings that switch features on and off |
+| a story id, file path, component name or route pattern to look at | a link to that exact thing ("Links to what the person should look at") |
 
 A product or app name the person signs in to (Vercel, GitHub, ClosedLoop)
 stays. "Pull request", "review", "merge", "design" and "engineering" are the
@@ -63,6 +64,51 @@ nothing yet: "This needs an engineer. Message engineering with: <summary>",
 plus the offer to pass it to someone now (`guardrails.md`, "Plugins and
 tooling"). While the session can still continue, the answer is that you are
 working on it, and the next thing they will see.
+
+## Links to what the person should look at
+
+Whenever a message points the person at something to look at or open (a
+component in the component gallery, a page or screen of their copy of the
+app, a preview, a pull request, a ticket), it gives a link that opens that
+exact thing in one click. The link text is the plain name the person sees in
+the product: the page's or screen's name, or the component and its state as
+the gallery names it, such as [Guided tour, mid run](<link>). A story id, file
+path, component name or route pattern is never the thing the person is told
+to open; one may appear only beside a working link to it. Never link the
+app's front page and give directions from there ("go to the dashboard, start
+the tour, step to step 2"): link the page itself, or, for one state of a
+component (a step partway through, an error, an empty list), its entry in the
+component gallery, which opens on that state. Not knowing a page's real path
+is no reason to link the front page: look the path up, or link the gallery
+story the writer named for the change. This section is the
+rule's one canonical statement, for every skill and worker whose words reach
+the person.
+
+- A component in the gallery or a page of the app: run
+  `node scripts/vibe-sessions.mjs link --worktree "<wt>" --story <story id>`
+  or `--page <path>` and give the `url` it prints. It builds the link from
+  the session record: a story on the deployed environment's Storybook once
+  the environment is verified, otherwise on the local Storybook the session
+  started (`--local` for a story built since the last redeploy, which only
+  the local Storybook has yet), in the full Storybook UI form
+  (`environment.md`, "Storybook links"); a page as the verified app URL plus
+  the page's real path for the example data, with the organization's real
+  slug and the record's real id (read from the open app tab's address bar or
+  the API). It refuses a route pattern (`[id]`, `:id`, `<id>`), so look up
+  the real path first.
+- A preview, pull request or ticket: the URL its tool returned (the
+  prototype's recorded preview URL, the pull request's URL, the ticket's
+  `webUrl`).
+- When `link` prints `url: null`, nothing is running or deployed to open yet.
+  Where the step you are on already starts it (a new component's gallery
+  link, `SKILL.md` section 5), start it and run `link` again. Otherwise say so in plain words and offer to start it, such as "Your copy of the app
+  isn't ready to open yet; want me to start it?" or "The component gallery
+  isn't running; want me to start it so you can see this?", asked once like
+  every question (`SKILL.md`, "Questions are asked once"), and name no place
+  to go look in the meantime ("your copy of the app" with nothing deployed is
+  not a place the person can open). On yes, start it
+  (`vibe-setup-worker` starts the local gallery; `SKILL.md` section 6 deploys
+  the app), then send the link. Never send the id or path in its place.
 
 ## When the person asks for technical detail
 

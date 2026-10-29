@@ -94,6 +94,13 @@ describe("handoff failures compared against the captured main (operator ruling, 
     expect(command).toMatchObject({ exitCode: 0, comparison: { classification: "flaky", main: { outcome: "passed" } } });
     expect(command.comparison.sessionRuns.map((run: { exitCode: number }) => run.exitCode)).toEqual([1, 0]);
     expect(command.log).toBe(command.comparison.sessionRuns[1].log);
+    const before = executed(calls(join(value.metadata, "validation-calls.jsonl")))
+      .filter((call) => call[0] === "check:source-gates").length;
+    const source = value.sourceTurn("handoff");
+    try { expect(invokeSync(value, "validate", source.context).status).toBe(0); }
+    finally { source.finish(); }
+    expect(executed(calls(join(value.metadata, "validation-calls.jsonl")))
+      .filter((call) => call[0] === "check:source-gates").length).toBeGreaterThan(before);
   }, 20000);
 
   it("treats a check that cannot run on the captured main as session-caused without a rerun", () => {

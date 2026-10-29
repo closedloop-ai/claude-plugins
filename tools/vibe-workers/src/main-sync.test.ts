@@ -357,6 +357,13 @@ describe("production main-sync publication CLIs", () => {
   }, 10000);
   it("executes actual checks for committed code with private artifacts, pushes its explicit SHA and admits only matching request consumers", () => {
     const value = setup();
+    const pnpm = readFileSync(join(value.bin, "pnpm"), "utf8");
+    value.write("../bin/pnpm", pnpm.replace("if (args.includes('--dry=json')) {", `
+if(args.includes('--dry=json')) {
+ const hash=require('node:crypto').createHash('sha256').update(fs.readFileSync('apps/app/probe.ts')).digest('hex');
+ process.stdout.write(JSON.stringify({tasks:[{taskId:'app#typecheck',package:'app',hash,command:'tsc --noEmit'}]}));process.exit(0);
+}
+if (args.includes('--dry=json')) {`));
     value.write(".closedloop-ai/vibe-plans/plan.md", "private plan\n");
     value.write(".closedloop-ai/vibe-plans/check-evidence.json", "{}\n");
     const result = validateFixture(value);
@@ -387,6 +394,19 @@ describe("production main-sync publication CLIs", () => {
       } finally { consumer.finish(); }
     }
     expect(readFileSync(join(value.worktree, ".closedloop-ai/vibe-plans/plan.md"), "utf8")).toBe("private plan\n");
+    // The installed executable can change without changing HEAD, PATH or the reported Turbo task hashes.
+    const current = readFileSync(join(value.bin, "pnpm"), "utf8");
+    value.write("../bin/pnpm", current.replace("const command = args[0];", `
+if(args[0]==='typecheck:affected') {process.stderr.write('changed installed checker\\n');process.exit(9);}
+const command = args[0];`));
+    const next = value.start("redeploy");
+    try { expect(invokeSync(value, "prepare", next.context).status).toBe(0); } finally { next.finish(); }
+    const source = value.sourceTurn();
+    try {
+      const failed = invokeSync(value, "validate", source.context);
+      expect(failed.status).toBe(1);
+      expect(String(failed.json?.error)).toMatch(/Required validation command failed: pnpm typecheck:affected/);
+    } finally { source.finish(); }
   }, 25000);
   it("preserves normal pre-push refusal and blocks changed committed inputs before remote publication", () => {
     const value = setup();
@@ -481,15 +501,21 @@ describe("production main-sync publication CLIs", () => {
   it("uses one captured main through validation and publishes that exact SHA after the remote main advances", () => {
     const value = setup();
     finalMerge(value);
-    const preparation = value.start("create");
+    const preparation = value.start("create", "handoff");
     try { expect(invokeSync(value, "prepare", preparation.context).status).toBe(0); } finally { preparation.finish(); }
     const captured = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8"));
+    const firstSource = value.sourceTurn("handoff");
+    try { expect(invokeSync(value, "validate", firstSource.context).status).toBe(0); } finally { firstSource.finish(); }
+    const gateRuns = () => value.calls().split("\n").filter((line) => line.includes('"check:source-gates"')).length;
+    const before = gateRuns();
+    expect(before).toBeGreaterThan(0);
     value.git(["checkout", "main"]); value.write("README.md", "main advanced during transaction\n");
     value.git(["add", "."]); value.git(["commit", "-m", "Later main"]); value.git(["push", "origin", "main"]);
     const newerMain = value.git(["rev-parse", "HEAD"]); value.git(["checkout", "vibe/test"]);
-    const source = value.sourceTurn();
+    const source = value.sourceTurn("handoff");
     try { expect(invokeSync(value, "validate", source.context).status).toBe(0); } finally { source.finish(); }
-    const publisher = value.start("redeploy");
+    expect(gateRuns()).toBeGreaterThan(before);
+    const publisher = value.start("redeploy", "handoff");
     try { expect(invokeSync(value, "push", publisher.context).status).toBe(0); } finally { publisher.finish(); }
     const after = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8"));
     expect(after.mainSha).toBe(captured.mainSha);
@@ -702,6 +728,12 @@ describe("production main-sync publication CLIs", () => {
     expect(handoff.some((call) => call[0] === "turbo" && call[1] === "typecheck")).toBe(true);
     for (const command of [["test:affected", "--continue"], ["test:lanes"], ["test:skills"]]) expect(handoff).not.toContainEqual(command);
     expect(handoff.some((call) => call[0] === "turbo" && call[1] === "test")).toBe(false);
+    const count = (name: string) => executed(calls()).filter((call) => call.join(" ") === name).length;
+    const storybookBefore = count("vibe storybook-diff");
+    const baseIndex = join(value.metadata, "vibe-storybook-base-index.json");
+    writeFileSync(baseIndex, JSON.stringify({ commit: value.baseCommit, index: { entries: { changed: {} } } }));
+    validateFixture(value, "handoff");
+    expect(count("vibe storybook-diff")).toBeGreaterThan(storybookBefore);
   }, 20000);
   it("does not run a lane the owning reporter widened to its whole suite", () => {
     // symphony-alpha LaneCiCommand carries widenReason when a changed package.json makes the selector run a lane whole.
