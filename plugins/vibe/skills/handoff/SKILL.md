@@ -136,6 +136,7 @@ change worker has not handled is refused with `NEEDS_CHANGE`.
 | Existing code checks, coverage advice, suite and footprint | read-only `vibe-verify-worker` |
 | Running app checks with `pnpm control` | read-only `vibe-verify-worker` (control mode) |
 | Lighter: tough review | repo `review-soul` and `vibe-adversarial-reviewer`, in parallel |
+| Consolidated review, only when `review-scope.mjs` says so (step 6) | `vibe-consolidated-reviewer` |
 | Requested pull request: review of the tests the writer wrote | repo `review-soul`, required (step 6) |
 | Visual QA, logical QA and product-contract QA | the repository's own read-only skills (step 6) |
 | Backend: two review passes | the `workflow-code-review` skill (itself orchestrator-only) |
@@ -448,6 +449,16 @@ say `Final Alignment Status: Aligned except criteria waiting on <tickets>`.
 Each such criterion goes on the Engineering checklist (`../vibe/references/ticket-template.md`,
 "Criteria waiting on other work"), so the people who close the dependency
 receive the work. A requested pull request still needs every criterion met.
+
+Consolidated review (ISS-13352), off unless `VIBE_CONSOLIDATED_REVIEW=1`: when a
+precomputed findings file exists (`vibe.guardrails-findings/1`), run
+`node scripts/review-scope.mjs --worktree "<wt>" --findings <file> --inventory <inventory json>`.
+Only when it prints `"mode": "consolidated"` does one `vibe-consolidated-reviewer`
+take the place of step 3's guardrails reviewer and the adversarial reviewer
+below, on the final diff; `review-soul` on a requested pull request's tests and
+the backend passes still run. Any other output, a missing script or file, a
+skipped check or an error means the existing reviewers run unchanged. The
+escalation numbers are `REVIEW_SCOPE_DEFAULTS` in that script, unruled.
 
 Lighter: repo `review-soul` and `vibe-adversarial-reviewer`
 may review independently in parallel, read-only. Backend: named core
