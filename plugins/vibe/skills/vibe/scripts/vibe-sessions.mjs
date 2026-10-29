@@ -22,6 +22,7 @@
 //   vibe-sessions.mjs desktop-auth    --worktree <path> --file <auth-claim.json>
 //   vibe-sessions.mjs desktop-launched --worktree <path> --pid <launch pid> --log <launch log>
 //   vibe-sessions.mjs desktop-tab     --worktree <path>
+//   vibe-sessions.mjs link            --worktree <path> (--story <story id> [--local] | --page <path>)
 //   vibe-sessions.mjs dispatch-inputs --worktree <path> --out <inputs.json>
 //                                     [--person-email <email>] [--keep-flag-snapshot true|false]
 //                                     (`true` is sent only when the session's previous request
@@ -77,7 +78,8 @@
 // predates the tab (the Desktop window still runs); `desktop-tab` reports
 // whether that launch is still running and its URL only while it is, so a tab
 // is never reopened on a closed Desktop's port. The URL carries the launch's bridge token, so the record is written
-// owner-only and the URL never goes on the ticket. `environment-result` checks the result `vibe-environment.yml`
+// owner-only and the URL never goes on the ticket. `link` prints the link to
+// give the person for one story or one real app page (`person-links.mjs`). `environment-result` checks the result `vibe-environment.yml`
 // published for a request (its `vibe-environment-result` artifact) against
 // that request and the worktree's HEAD and only then records the verified
 // URLs, deployment ids, and deployed commit; nothing else records them, and
@@ -98,6 +100,7 @@ import { admitMainSyncRequest, admitMainSyncShare, MainSyncError, mainSyncFailur
 import { listedFlagKeys } from "./flag-keys.mjs";
 import { migrationOrderProblems } from "./migration-order.mjs";
 import { adoptStartupRecord, blockingProblem, conversationId, readStartupRecord } from "./plugin-version.mjs";
+import { pageLink, storyLink } from "./person-links.mjs";
 import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublication } from "./prototype-session.mjs";
 import { adoptStartupQuestions } from "./session-questions.mjs";
 import { git, readSessionRecord, sessionLiveTicket, writeSessionRecord as writeRecord } from "./session-record.mjs";
@@ -199,6 +202,9 @@ const { positionals, values } = parseArgs({
     log: { type: "string" },
     path: { type: "string", multiple: true },
     replacement: { type: "string" },
+    story: { type: "string" },
+    page: { type: "string" },
+    local: { type: "boolean", default: false },
     confirm: { type: "boolean", default: false },
   },
 });
@@ -238,6 +244,8 @@ async function run(command) {
       return { session: recordDesktopLaunch() };
     case "desktop-tab":
       return desktopTab();
+    case "link":
+      return personLink();
     case "dispatch-inputs":
       return await dispatchInputs();
     case "main-sync-validate":
@@ -263,7 +271,7 @@ async function run(command) {
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, ticket-sections, environment-result, local-fix, story-replacement, discard."
+        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, link, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, ticket-sections, environment-result, local-fix, story-replacement, discard."
       );
   }
 }
@@ -968,6 +976,28 @@ function desktopTab() {
   const { stack } = requireRecord(worktree);
   const running = isRunning(stack?.desktopPid);
   return { worktree, running, url: running ? (stack.desktopBrowserUrl ?? null) : null };
+}
+
+/**
+ * The link to give the person for one story (`--story <id>`, `--local` for a
+ * story built since the last redeploy) or one real app page (`--page <path>`),
+ * built from the session record; `url: null` with `missing` when nothing is
+ * deployed or running yet (`plain-words.md`, "Links to what the person
+ * should look at").
+ */
+function personLink() {
+  const worktree = requireOption("worktree");
+  const record = requireRecord(worktree);
+  if (Boolean(values.story) === Boolean(values.page)) {
+    throw new Error("Pass exactly one of --story <story id> or --page <path>.");
+  }
+  if (values.page && values.local) {
+    throw new Error("--local applies to --story only.");
+  }
+  const link = values.story
+    ? storyLink(record, values.story, { local: values.local, isRunning })
+    : pageLink(record, values.page);
+  return { worktree, ...link };
 }
 
 function isRunning(pid) {

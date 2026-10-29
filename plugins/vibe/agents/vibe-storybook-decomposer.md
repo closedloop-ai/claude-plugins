@@ -293,3 +293,9 @@ evidence paths for the same writer/ticket helper; never author or fix source.
 Every Storybook link opens the full Storybook UI,
 `<storybook-base>/?path=/story/<story-id>`, never the bare `iframe.html`
 canvas (`../skills/vibe/references/environment.md`, "Storybook links").
+A story or page named for the person to look at carries a link that opens it,
+never a bare story ID, path or route pattern: give its story ID or the page's
+real path for the example data, and the link comes from
+`../skills/vibe/scripts/vibe-sessions.mjs link`
+(`../skills/vibe/references/plain-words.md`, "Links to what the person should
+look at").

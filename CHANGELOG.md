@@ -4,6 +4,19 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.15
+
+A product manager asked her session for the first thing to look at and was told to open a story by its id, which designers and executives cannot open (ISS-13320). Whenever vibe points the person at something to look at, it now gives a link that opens that exact thing, built from the session record.
+
+#### Added
+- `vibe-sessions.mjs link --worktree <wt> --story <story id> [--local]` and `--page <path>` (`person-links.mjs`): a story link is the full Storybook UI on the verified deployed Storybook, otherwise on the local Storybook the session started while its process runs (`--local` for a story built since the last redeploy); a page link is the verified app URL plus the page's real path. It prints `url: null` with `missing: storybook|app` when nothing is deployed or running, and refuses an argument that is not a story id or a route pattern such as `[id]` or `:id`.
+- Evals `pm-look-first-gets-clickable-links` and `pm-first-thing-to-do-is-a-story-link` (the reported exchange): asked what to look at or do first, the reply gives a clickable story or page link named as the person sees it (link text checked by regex), and no bare story id, path or route pattern. `pm-nothing-running-offers-to-start` (the real run's miss): with nothing running or deployed, the reply says so and offers to start it, with no link and no steps to follow in an app that is not there.
+
+#### Changed
+- `plain-words.md` "Links to what the person should look at" is the rule's one statement: link text is the plain name the person sees, an id or path appears only beside a working link, the app's front page with directions from there is not a link to the exact thing (an unknown page path is looked up, or the change's gallery story is linked), and with no URL yet the session says so and offers to start it. The word table sends ids and paths there; the vibe and handoff skills, `environment.md` "Storybook links" and the change, verify, prototype, Storybook decomposer, primitive and handoff summarizer workers point at it.
+- `SKILL.md` carries the rule's operative lines where the orchestrator writes its replies (a component state is its gallery story, a page is its real path, the story first when the page path is unknown, never the front page with directions, and with `url: null` an offer to start and no place to look), because an orchestrator that never opens `plain-words.md` gave the front page with directions in 2 of 5 runs.
+- The new-components notice builds each story link with `link --local` and names each story by its gallery name; the writer's `STORIES_READY` carries that name. The ready message after a deploy links each changed page or component, and handoff's closing message gives each item as a link.
+
 ### vibe v1.1.14
 
 The handoff `frozen-render` gate could never clear when main's own render of a frozen story varied between runs (ISS-13317): a product manager's session saw the guided tour story render eight different ways in eight base captures, and `frozen-render.mjs` accepted only byte-identical renders or identical failures. Its printed line also counted stories while the gate counted story files, so on any story file with more than one story the line never matched.

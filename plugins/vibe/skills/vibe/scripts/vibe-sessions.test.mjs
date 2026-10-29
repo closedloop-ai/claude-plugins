@@ -954,3 +954,43 @@ test("sessions carry no scope, and a record written with the retired draft scope
   assert.equal("scope" in listed.json.sessions[0], false);
   assert.equal("scope" in runNode(SCRIPT, ["show", "--worktree", worktree], home).json.session, false);
 });
+
+test("link builds the person's story and page links from the session record, and says when none exists yet", (t) => {
+  const { root, home, worktree } = newSession(t, "deploys");
+  const link = (...args) => runNode(SCRIPT, ["link", "--worktree", worktree, ...args], home);
+  const story = "composites-guided-tour--mid-run";
+
+  const nothing = link("--story", story);
+  assert.equal(nothing.status, 0, nothing.stderr);
+  assert.deepEqual([nothing.json.url, nothing.json.missing], [null, "storybook"]);
+  assert.deepEqual([link("--page", "/acme-co/sessions").json.url, link("--page", "/acme-co/sessions").json.missing], [null, "app"]);
+
+  runNode(SCRIPT, ["touch", "--worktree", worktree, "--stack", JSON.stringify({ storybookUrl: "http://localhost:6123", storybookPid: process.pid })], home);
+  assert.deepEqual(
+    [link("--story", story).json.url, link("--story", story).json.source],
+    [`http://localhost:6123/?path=/story/${story}`, "local"]
+  );
+
+  const file = path.join(root, "vibe-environment-result.json");
+  writeJson(file, environmentResult(worktree, home));
+  assert.equal(runNode(SCRIPT, ["environment-result", "--worktree", worktree, "--file", file, "--request-id", "req-12345678"], home).status, 0);
+  const deployed = link("--story", story);
+  assert.deepEqual([deployed.json.url, deployed.json.source], [
+    `https://prototypes-git-vibe-deploys.preview.closedloop-stage.ai/storybook/?path=/story/${story}`,
+    "deployed",
+  ]);
+  assert.equal(link("--story", story, "--local").json.url, `http://localhost:6123/?path=/story/${story}`);
+  assert.equal(link("--page", "/acme-co/sessions").json.url, "https://app-stage-git-vibe-deploys.preview.closedloop-stage.ai/acme-co/sessions");
+
+  for (const [args, message] of [
+    [[], /exactly one of --story/],
+    [["--story", story, "--page", "/x"], /exactly one of --story/],
+    [["--page", "/x", "--local"], /--local applies to --story only/],
+    [["--story", "guided-tour-mid-run"], /Not a Storybook story id/],
+    [["--page", "/[orgSlug]/sessions"], /route pattern/],
+  ]) {
+    const refused = link(...args);
+    assert.equal(refused.status, 1, JSON.stringify(args));
+    assert.match(refused.json.error, message);
+  }
+});

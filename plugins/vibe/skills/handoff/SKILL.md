@@ -36,7 +36,9 @@ product decisions first, then the precedent check ("Precedent before
 asking"), and ask only an absolutely necessary unresolved one, never a
 technical question. Route the answer as "Answers from the person"
 below says. Every word the person sees follows
-`../vibe/references/plain-words.md`, and every question goes through
+`../vibe/references/plain-words.md`, including its "Links to what the
+person should look at" (a story or page link comes from
+`../vibe/scripts/vibe-sessions.mjs link`), and every question goes through
 `../vibe/scripts/session-questions.mjs` as the vibe skill's "Questions are
 asked once" says, so nothing settled in the session is asked again. Updates mention only completed features and next work; planning,
 reviews and the checklist stay internal. Every
@@ -818,7 +820,9 @@ Then mark the session handed off:
 and dispatch `vibe-setup-worker` to stop local Storybook or Desktop if either
 runs.
 
-Tell them, in a few lines: the ticket link, the app link as
+Tell them, in a few lines, each as a link that opens it
+(`../vibe/references/plain-words.md`, "Links to what the person should look
+at"): the ticket link, the app link as
 `<appUrl>/sign-in` (the app's root sends a signed-out visitor to account
 creation), the Storybook link (the full Storybook UI per
 `../vibe/references/environment.md`, "Storybook links"), the ticket's

@@ -322,3 +322,9 @@ build loop.
 requiring the writer; never claim you fixed them. `BLOCKED` names a precise validation
 limitation. All modes involving code or coverage end with the required Graph
 block. Technical diagnostics remain internal, not questions for the person running the session.
+A story or page named for the person to look at carries a link that opens it,
+never a bare story ID, path or route pattern: give its story ID or the page's
+real path for the example data, and the link comes from
+`../skills/vibe/scripts/vibe-sessions.mjs link`
+(`../skills/vibe/references/plain-words.md`, "Links to what the person should
+look at").

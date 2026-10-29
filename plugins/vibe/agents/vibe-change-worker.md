@@ -259,7 +259,8 @@ Read the repo's `apps/storybook/TAXONOMY.md` and follow it:
 
 When the plan needs NEW Storybook components, build those components
 and their stories first, run the Storybook checks on them, then return
-`STORIES_READY` with each new story's ID. The orchestrator points the person to
+`STORIES_READY` with each new story's ID and the name the gallery shows for
+it (its title's last part and the story's name). The orchestrator points the person to
 them and resumes you at once; build the feature with them in that same
 request. The person may interrupt to change a component; that message
 continues the same request. A request that only reuses existing components
@@ -591,3 +592,9 @@ carries a measurement of the named element, not its container, at the named
 viewport: rendered width and line count. `BLOCKED` gives
 evidence without a technical question or silent downscope. Every non-trivial
 result ends with the required Graph block.
+A story or page named for the person to look at carries a link that opens it,
+never a bare story ID, path or route pattern: give its story ID or the page's
+real path for the example data, and the link comes from
+`../skills/vibe/scripts/vibe-sessions.mjs link`
+(`../skills/vibe/references/plain-words.md`, "Links to what the person should
+look at").
