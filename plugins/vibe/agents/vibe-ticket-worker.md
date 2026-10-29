@@ -475,6 +475,13 @@ The person threw the session away and its branch is deleted.
 
 ## Return (under 100 words)
 
+After the final read-back, call the native `StructuredOutput` tool with only
+an object such as `{ "status": "DONE", "summary": "ISS-123 handoff verified." }`.
+Do not put tool tags, XML parameter markup or the ticket body in either field.
+If the output tool fails after a write, do not repeat that write: the
+orchestrator performs a read-only reconciliation of the live ticket and
+session record before dispatching any further record action.
+
 `DONE` with the ticket slug and URL (create, assign, cancel; create also confirms the
 slug is recorded on the session and names the source link or that there is no
 source; assign also names the new assignee of the ticket and its PLN), with

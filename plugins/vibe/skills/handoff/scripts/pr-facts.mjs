@@ -9,9 +9,10 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pointerProblems } from "../../vibe/scripts/publishable-text.mjs";
 import { playVerdictProblems } from "../../vibe/scripts/story-play-verdict.mjs";
-import { isDesktopE2eLane } from "../../vibe/scripts/pre-pr-lanes.mjs";
+import { isDesktopE2eLane, NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { isE2ePath, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
 import { selectE2eTier, tierEvidenceProblems } from "./e2e-tier.mjs";
+import { prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS } from "./pr-evidence-schema.mjs";
 
 const REPO = "closedloop-ai/symphony-alpha";
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -32,10 +33,15 @@ const UI = ["apps/app/", "apps/web/", "apps/storybook/", "apps/prototypes/", "ap
 const DESKTOP_HOST = ["apps/desktop/src/renderer/", "packages/app/"];
 const TEMPLATE_PATHS = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md", "pull_request_template.md"];
 const TEMPLATE_HEADING = /^#{1,6}\s+\S.*$/gm;
-const SELECTORS = ["code_tests_for", "related", "e2e-reference"];
 const SHA = /^[a-f0-9]{40}$/;
 export const KNOWN_MAIN_FAILURES = "Known main failures";
 const CI_CHECK_PATH = /^(?:\.github\/(?:workflows|actions)\/|scripts\/)|(?:^|\/)(?:package\.json|turbo\.json|biome\.jsonc?)$|(?:^|\/)(?:lint|checks?|gates?)\//;
+// The producer jobs checked on symphony-alpha main. A spec left for CI must
+// name the actual owner, not an invented local PASS or a generic "CI".
+const E2E_CI_OWNER = Object.freeze({
+  web: "e2e-test.yml:e2e",
+  desktop: "desktop-e2e-validation.yml:desktop-e2e/validated",
+});
 
 export const STACKED_BASE_STATEMENT = "Stacked pull request: its base is not main, so no required CI lane runs on it; local evidence is listed below.";
 
@@ -83,7 +89,7 @@ export function computeOverlap({ worktree, changed, prs, ownBranch }) {
   const changedSet = new Set(changed);
   const imported = new Set(changed.flatMap((file) => importsOf(worktree, file)).filter((file) => !changedSet.has(file)));
   return prs
-    .filter((pr) => pr.headRefName !== ownBranch)
+    .filter((pr) => pr.headRefName !== ownBranch && !pr.unavailableReason)
     .map((pr) => ({ number: pr.number, title: pr.title,
       sharedFiles: pr.files.filter((file) => changedSet.has(file)), importedFiles: pr.files.filter((file) => imported.has(file)) }))
     .filter((pr) => pr.sharedFiles.length + pr.importedFiles.length > 0)
@@ -226,6 +232,8 @@ export function bodyProblems(body, facts, files, prBase, template = "") {
       ? [] : [`${cited} is not a changed line of the diff`])),
     ...(facts.overlap === null ? ["open pull requests could not be read, so overlap is unchecked"] : facts.overlap
       .filter((pr) => !mentioned.has(pr.number)).map((pr) => `overlap with open #${pr.number} is not stated`)),
+    ...(facts.overlapUnavailable ?? []).filter(({ number, reason }) => !body.includes(`Overlap unavailable: #${number} (${reason})`))
+      .map(({ number, reason }) => `Overlap unavailable: #${number} (${reason}) must be stated; no overlap conclusion is possible`),
     ...facts.assertionChanges.map((change) => (change.line ? `${change.path}:${change.line}` : change.path))
       .filter((cite) => !body.includes(cite)).map((cite) => `assertion change ${cite} is not listed`),
     ...facts.contractChanges.filter((change) => !body.includes(change.name)).map((change) => `${change.kind} export ${change.name} is not listed`),
@@ -238,12 +246,22 @@ export function bodyProblems(body, facts, files, prBase, template = "") {
   ];
 }
 
-/** Every open pull request on symphony-alpha with its files, in one list call. */
+/** Every open PR's complete file list; GitHub's diff endpoint caps large patches at 300 files. */
 export function loadOpenPrs() {
   const prs = JSON.parse(gh(["pr", "list", "--repo", REPO, "--state", "open", "--limit", "200", "--json", "number,title,headRefName,files"]));
-  return prs.map(({ files, ...pr }) => ({ ...pr, files: files.length >= GH_LIST_FILE_CAP
-    ? gh(["pr", "diff", String(pr.number), "--repo", REPO, "--name-only"]).split("\n").filter(Boolean)
-    : files.map((file) => file.path) }));
+  return prs.map(({ files, ...pr }) => {
+    if (files.length < GH_LIST_FILE_CAP) return { ...pr, files: files.map((file) => file.path) };
+    const endpoint = `repos/${REPO}/pulls/${pr.number}`;
+    const count = Number(gh(["api", endpoint, "--jq", ".changed_files"]));
+    const names = gh(["api", "--paginate", `${endpoint}/files?per_page=100`, "--jq", ".[].filename"]).split("\n").filter(Boolean);
+    if (!Number.isSafeInteger(count) || count < GH_LIST_FILE_CAP || names.length > count) {
+      throw new Error(`PR #${pr.number} returned an invalid changed-file count`);
+    }
+    if (names.length === count) return { ...pr, files: names };
+    if (names.length === 3000 && count > 3000) return { ...pr, files: [],
+      unavailableReason: `GitHub file API exposes 3000 of ${count} changed files` };
+    throw new Error(`PR #${pr.number} file API returned ${names.length} of ${count} changed files; overlap is unverified`);
+  });
 }
 
 /** The facts for the inventory's JSON, with the gates when a body or a runs file is given. */
@@ -259,6 +277,8 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
     refusals,
     asks: ticketText ? [...new Set([...ticketText.matchAll(ASK)].map(([ask]) => ask.replace(/\s+/g, " ").trim()))] : [],
     overlap: prs ? computeOverlap({ worktree, changed, prs, ownBranch }) : null,
+    overlapUnavailable: prs ? prs.filter((pr) => pr.headRefName !== ownBranch && pr.unavailableReason)
+      .map(({ number, title, unavailableReason: reason }) => ({ number, title, reason })) : [],
   };
   return {
     ...facts,
@@ -271,7 +291,7 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
       ...selectionProblems(runs, files, requiredTests, commit),
       ...targetedEvidenceProblems(runs, commit, worktree),
       ...ciCheckProblems(runs, changed, commit),
-      ...tierEvidenceProblems(runs.e2eCapability, (runs.targetedInventory?.entries ?? []).filter((entry) => entry?.kind === "e2e").map((entry) => entry.path)),
+      ...tierEvidenceProblems(runs.e2eCapability, (Array.isArray(runs.targetedInventory?.entries) ? runs.targetedInventory.entries : []).filter((entry) => entry?.kind === "e2e").map((entry) => entry.path)),
     ] }),
   };
 }
@@ -307,10 +327,9 @@ export function templateHeadingProblems(body, template) {
  * run for each state, recorded with `flag`.
  */
 export function selectionProblems(runsFile, files, requiredTests, commit) {
-  const selection = Array.isArray(runsFile?.testSelection) ? runsFile.testSelection : [];
+  const { entries: selection, problems: shapeProblems } = readTestSelection(runsFile);
   const listed = (entry) => Array.isArray(entry?.tests) && entry.tests.every((test) => typeof test === "string");
-  const problems = selection.filter((entry) => !SELECTORS.includes(entry?.selector))
-    .map((entry) => `testSelection entry for ${entry?.file ?? "no file"} has selector ${JSON.stringify(entry?.selector)}; use one of ${SELECTORS.join(", ")}`);
+  const problems = [...shapeProblems];
   const of = (file, selector) => selection.filter((entry) => entry?.file === file && entry.selector === selector && listed(entry));
   const live = files.filter((file) => file.status !== "D");
   for (const file of live.filter((entry) => SOURCE.test(entry.path) && !isTestFile(entry.path)).map((entry) => entry.path)) {
@@ -322,20 +341,24 @@ export function selectionProblems(runsFile, files, requiredTests, commit) {
     }
   }
   const selected = new Set([
-    ...selection.filter((entry) => SELECTORS.includes(entry?.selector) && listed(entry)).flatMap((entry) => entry.tests),
+    ...selection.filter((entry) => TEST_SELECTORS.includes(entry?.selector) && listed(entry)).flatMap((entry) => entry.tests),
     ...requiredTests.map((entry) => entry.path),
     ...live.filter((entry) => TEST_SPEC_PATTERN.test(entry.path)).map((entry) => entry.path),
   ]);
   const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
-  const target = (test) => runsFile?.targetedInventory?.entries?.find((entry) => entry?.path === test);
+  const inventoryEntries = Array.isArray(runsFile?.targetedInventory?.entries) ? runsFile.targetedInventory.entries : [];
+  const target = (test) => inventoryEntries.find((entry) => entry?.path === test);
+  const unavailable = new Set(Array.isArray(runsFile?.e2eCapability?.unavailableSpecs) ? runsFile.e2eCapability.unavailableSpecs : []);
   const acceptedCommit = (test) => target(test)?.resultCommit ?? commit;
   const carried = (test) => !commit || acceptedCommit(test) === commit
     || (target(test)?.carriedTo === commit && typeof target(test)?.carryReason === "string" && target(test).carryReason.length > 0);
   const passed = (test, flag) => carried(test) && runs.some((entry) => entry?.path === test && passedOrMainPreexisting(entry) && (!acceptedCommit(test) || entry.commit === acceptedCommit(test))
-    && (flag === undefined || entry.flag === flag));
+    && (flag === undefined || entry.flag === flag) && (!isE2ePath(test) || (!unavailable.has(test)
+      && entry.command === target(test)?.command && Array.isArray(entry.cases)
+      && target(test)?.cases?.every((name) => entry.cases.includes(name)))));
   for (const test of [...selected].sort()) {
-    if (!passed(test)) {
-      problems.push(`${test}: selected but no passing or explicitly carried run for ${commit ?? "the published commit"} in testRuns`);
+    if (!passed(test) && !e2eCarriedForCi(runsFile, selection, test, commit)) {
+      problems.push(`${test}: selected but no passing or carried run for ${commit ?? "the published commit"} in testRuns`);
     }
   }
   for (const entry of requiredTests.filter((item) => Array.isArray(item.flagStates))) {
@@ -347,6 +370,33 @@ export function selectionProblems(runsFile, files, requiredTests, commit) {
 }
 
 /**
+ * A changed E2E spec may remain not run locally only with a per-spec record,
+ * exact selected HEAD, an unavailable-tier probe, and the named CI producer.
+ * Desktop additionally needs the matching not-run lane from test:lanes.
+ */
+function e2eCarriedForCi(evidence, selection, spec, commit) {
+  if (!commit || !isE2ePath(spec) || !TEST_SPEC_PATTERN.test(spec)) return false;
+  const capability = evidence?.e2eCapability;
+  if (!capability || selectE2eTier(capability).tier !== null || capability.selectedTier !== null
+    || !Array.isArray(capability.unavailableSpecs) || !capability.unavailableSpecs.includes(spec)) return false;
+  if (!selection.some((entry) => entry.selector === "e2e-reference" && Array.isArray(entry.tests) && entry.tests.includes(spec))) return false;
+  const desktop = spec.startsWith("apps/desktop/");
+  const reason = desktop ? NOT_RUN_NO_DESKTOP_HARNESS : NOT_RUN_NO_IDENTITY;
+  const ciOwner = desktop ? E2E_CI_OWNER.desktop : E2E_CI_OWNER.web;
+  if (!Array.isArray(capability.ciCoverage) || !capability.ciCoverage.includes(ciOwner)
+    || evidence?.targetedInventory?.laneReport?.command !== "pnpm test:lanes") return false;
+  const runs = Array.isArray(evidence.testRuns) ? evidence.testRuns : [];
+  const own = runs.some((run) => run?.path === spec && run.status === "not-run" && run.commit === commit
+    && run.reason === reason && run.ciOwner === ciOwner && run.selectionSource === "e2e-reference"
+    && run.laneReportSource === "pnpm test:lanes");
+  if (!own || !desktop) return own;
+  const matches = evidence.targetedInventory.laneReport.matches;
+  const lane = Array.isArray(matches) ? matches.find((entry) => entry?.name === "desktop-e2e" && isDesktopE2eLane(entry.command ?? "")) : null;
+  return Boolean(lane) && runs.some((run) => run?.lane === lane.name && run.command === lane.command
+    && run.status === "not-run" && run.commit === commit && run.reason === reason);
+}
+
+/**
  * A PR is gated on a read-only inventory of its final committed diff. Every
  * inventory row names exact cases and a command, and has a passing result at
  * that SHA unless the E2E capability record explicitly leaves it to CI.
@@ -354,14 +404,16 @@ export function selectionProblems(runsFile, files, requiredTests, commit) {
 export function targetedEvidenceProblems(runsFile, commit, worktree) {
   const inventory = runsFile?.targetedInventory;
   if (!inventory || typeof inventory !== "object") return ["targeted inventory of the final committed diff is missing"];
-  const problems = [];
+  const { entries: selection } = readTestSelection(runsFile);
+  const problems = [...prEvidenceShapeProblems(runsFile)];
   if (inventory.actor !== "read-only") problems.push("targeted inventory must come from a read-only subagent");
   if (inventory.source !== "final-committed-diff") problems.push("targeted inventory must read the final committed diff, not the plan");
   if (!commit || inventory.commit !== commit) problems.push(`targeted inventory does not name the final committed SHA ${commit ?? "required by the gate"}`);
   if (inventory.laneReport?.command !== "pnpm test:lanes") problems.push("targeted inventory must use pnpm test:lanes as the repository lane source");
   if (!Array.isArray(inventory.laneReport?.matches)) problems.push("targeted inventory must list the post-merge lane matches from pnpm test:lanes");
   const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
-  for (const lane of inventory.laneReport?.matches ?? []) {
+  const laneMatches = Array.isArray(inventory.laneReport?.matches) ? inventory.laneReport.matches : [];
+  for (const lane of laneMatches) {
     if (!lane?.name || !lane?.command) problems.push("each matching post-merge lane needs its repository name and exact command");
     else if (!(lane.mentionOnly === true && text(lane.notRunReason))
       && !runs.some((run) => run?.lane === lane.name && run.command === lane.command && run.commit === commit
@@ -373,20 +425,28 @@ export function targetedEvidenceProblems(runsFile, commit, worktree) {
     problems.push("targeted inventory needs exact entries or a no-tests reason");
   }
   const entries = Array.isArray(inventory.entries) ? inventory.entries : [];
-  const unavailable = new Set(runsFile?.e2eCapability?.unavailableSpecs ?? []);
+  if (runsFile?.e2eCapability?.unavailableSpecs !== undefined && !Array.isArray(runsFile.e2eCapability.unavailableSpecs)) {
+    problems.push("e2eCapability.unavailableSpecs must be an array");
+  }
+  const unavailable = new Set(Array.isArray(runsFile?.e2eCapability?.unavailableSpecs) ? runsFile.e2eCapability.unavailableSpecs : []);
   for (const entry of entries) {
     if (!entry?.kind || !entry?.path || !entry?.command || !Array.isArray(entry?.cases) || entry.cases.length === 0) {
       problems.push(`targeted inventory entry for ${entry?.path ?? "unknown path"} needs kind, path, cases and exact command`);
       continue;
     }
-    if (entry.kind === "e2e" && unavailable.has(entry.path)) continue;
+    if (entry.kind === "e2e" && unavailable.has(entry.path)) {
+      if (!e2eCarriedForCi(runsFile, selection, entry.path, commit)) {
+        problems.push(`${entry.path}: unavailable E2E needs an exact not-run spec record and authoritative CI owner`);
+      }
+      continue;
+    }
     const resultCommit = entry.resultCommit ?? commit;
     if (resultCommit !== commit) {
       if (entry.carriedTo !== commit || !entry.carryReason) problems.push(`${entry.path}: an earlier result needs the final SHA and a carry reason`);
       if (!Array.isArray(entry.coveredFiles) || entry.coveredFiles.length === 0) {
         problems.push(`${entry.path}: a carried result needs covered file hashes`);
       }
-      for (const covered of entry.coveredFiles ?? []) {
+      for (const covered of Array.isArray(entry.coveredFiles) ? entry.coveredFiles : []) {
         const current = finalFileHash(inventory, worktree, covered?.path);
         if (!covered?.path || !/^[a-f0-9]{64}$/i.test(covered?.sha256 ?? "")) problems.push(`${entry.path}: carried file hash is invalid`);
         else if (current !== covered.sha256) problems.push(`${covered.path}: covered file hash changed before ${commit}`);
@@ -396,16 +456,20 @@ export function targetedEvidenceProblems(runsFile, commit, worktree) {
       && run.command === entry.command && Array.isArray(run.cases) && entry.cases.every((name) => run.cases.includes(name)));
     if (!passed) problems.push(`${entry.path}: no passing targeted run with its exact cases and command on ${resultCommit}`);
   }
-  const selected = new Set((runsFile?.testSelection ?? []).flatMap((entry) => Array.isArray(entry?.tests) ? entry.tests : []));
+  const selected = new Set(selection.flatMap((entry) => Array.isArray(entry.tests) ? entry.tests : []));
   const inventoried = new Set(entries.map((entry) => entry?.path));
   for (const test of [...selected].filter(Boolean).filter((test) => !inventoried.has(test))) {
     problems.push(`${test}: selected test is absent from the targeted inventory`);
   }
   if (!Array.isArray(runsFile?.rerunCycles)) problems.push("rerunCycles must record isolated reruns, or [] when none failed");
-  for (const cycle of runsFile?.rerunCycles ?? []) {
-    const failed = new Set(cycle?.failed ?? []);
-    const allowed = new Set([...(cycle?.failed ?? []), ...(cycle?.newlyReached ?? [])]);
-    const rerun = new Set(cycle?.rerun ?? []);
+  for (const cycle of Array.isArray(runsFile?.rerunCycles) ? runsFile.rerunCycles : []) {
+    if (![cycle?.failed, cycle?.newlyReached, cycle?.rerun].every(Array.isArray)) {
+      problems.push("each rerun cycle needs failed, newlyReached and rerun arrays");
+      continue;
+    }
+    const failed = new Set(cycle.failed);
+    const allowed = new Set([...cycle.failed, ...cycle.newlyReached]);
+    const rerun = new Set(cycle.rerun);
     if (!cycle?.fromCommit || !cycle?.toCommit || failed.size === 0) problems.push("each rerun cycle needs its source SHA, fixed SHA and failed cases");
     if (rerun.size !== allowed.size || [...rerun].some((item) => !allowed.has(item))) problems.push("a rerun cycle may contain only its failed cases and targets newly reached by the fix");
   }

@@ -15,6 +15,14 @@ Save `pnpm test:lanes` output as `<gitdir>/vibe-lane-report.txt` so
 `pre-pr-lanes.mjs check --report` reads a private, owned report.
 The `control` procedure may write only its own gitignored `.control/` runtime
 files, then must move its captures out of the worktree as directed below.
+When a check needs a Storybook dev server, start each new server through
+`node ../skills/vibe/scripts/verify-storybook-process.mjs start --worktree
+"<the server's own worktree>" --port <port>`. It writes a private process
+birth record and log in that worktree's git directory. Stop each server this
+turn started with the matching `stop` command before returning, even after a
+failed render. Never launch Storybook with raw `nohup`, a backgrounded shell,
+or a pattern-based killer. Do not adopt an unrecorded server that was already
+running; report its exact port and PID for engineering.
 All source fixes go to the SAME persistent `vibe-change-worker`. Nobody writes
 tests in vibe or handoff unless the person explicitly asks for a pull request;
 the writer only repairs existing tests its change broke
@@ -83,6 +91,25 @@ the whole branch diff. Record import and E2E-reference selections in
 `<gitdir>/vibe-pr-evidence.json`. `blocking.prEvidence` names gaps; skipped CI
 is not a run or permission to write one.
 
+The private PR evidence uses the canonical structure checked by
+`../skills/handoff/scripts/pr-evidence-schema.mjs`. `testSelection` is an
+array of `{ file: "<full repo-relative source path>", selector:
+"code_tests_for" | "related" | "e2e-reference", tests: ["<full repo-relative
+test path>"] }` entries, not a `codeTestsFor` object or a list of basenames.
+When the graph cannot establish tests, a `code_tests_for` row may use
+`tests: null` only with the repository's `related` selection for that file.
+`targetedInventory` has `actor: "read-only"`,
+`source: "final-committed-diff"`, the full final `commit`, a `laneReport`
+with `command: "pnpm test:lanes"` and `matches` named by that report, and
+`entries` containing each exact test `kind`, `path`, nonempty `cases` and
+`command`. A lane result in `testRuns` uses `status: "passed"` with its
+exact command and commit, not `"pass"`; a selected test result also names
+its exact path, cases and command. Always write `rerunCycles: []` when no
+failure was rerun. After writing the private JSON, run
+`node ../skills/handoff/scripts/pr-evidence-schema.mjs --file
+"<gitdir>/vibe-pr-evidence.json"` and fix every reported shape problem before
+returning. The handoff inventory still checks the actual selections and runs.
+
 In `pre-pr` mode, read the final committed diff, never the plan, and write
 `targetedInventory` in that file as a read-only actor. Run `pnpm test:lanes`
 for the repository-owned lane names and commands. Inventory exact commands,
@@ -104,6 +131,23 @@ block the pull request, and the body lists it under Known main failures
 (ISS-13321). One that passes on main stays a failure for the writer. A
 Desktop e2e lane `pre-pr-lanes.mjs check` recorded `not-run` is copied into
 `testRuns` the same way, with its `reason`.
+For each selected or edited E2E spec that this machine cannot run under an
+available tier, also record one spec-level `testRuns` item with its full
+repo-relative `path`, `status: "not-run"`, the exact final `commit`,
+`selectionSource: "e2e-reference"`, `laneReportSource: "pnpm test:lanes"`,
+and `reason` equal to the relevant exported `NOT_RUN_NO_IDENTITY` or
+`NOT_RUN_NO_DESKTOP_HARNESS` value in `pre-pr-lanes.mjs`. The `ciOwner` is
+`e2e-test.yml:e2e` for web specs and
+`desktop-e2e-validation.yml:desktop-e2e/validated` for Desktop specs, each
+also named exactly in `e2eCapability.ciCoverage`. List the spec in
+`e2eCapability.unavailableSpecs`, set `selectedTier: null` only when the
+capability probe found no permitted local or remote tier, and include it in
+an `e2e-reference` selection row. Desktop additionally needs the
+`desktop-e2e` lane's exact not-run command, reason and commit copied from
+`pre-pr-lanes.mjs check` and the matching lane from the saved
+`pnpm test:lanes` report. This is a carry to authoritative CI, never a
+passing local result. Do not label a spec `passed` unless its exact command
+and cases actually ran at the recorded commit.
 
 For targeted E2E, record the repository's capability probe and choose:
 

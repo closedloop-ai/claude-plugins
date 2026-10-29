@@ -141,6 +141,16 @@ was removed; ROOT records that reason and recovers you through migration. It
 is never an engineering escalation or a question for the person. Any other
 unverifiable binding remains BLOCKED internally.
 
+The canonical change log is
+`$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-changes.md`.
+Keep required `Control:`, `Comparator:`, `Engineering needed`, compile-only
+repair, and other exact guardrail lines there as you make the decision.
+`diff-rules.mjs` and handoff inventory read that private file. A line only
+in the decision table, plan, ticket or chat does not clear the guardrail.
+The decision table records behavior and provenance; this log records the
+specific machine-checked disposition. For frozen renders, copy only the
+unchanged line the shipped renderer actually printed for the current head.
+
 Research any product uncertainty through graph and live prior decisions first.
 Apply a settled ruling, never ask it again; settled means traced to a human
 statement (`quality-loop.md`, "Communication and product questions"). Only an

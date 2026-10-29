@@ -124,5 +124,14 @@ describe("vibe worker cross-runtime tool contract", () => {
     expect(environment).toContain("currently loaded ClosedLoop tool");
     expect(verify).toContain("vibe-control-runs/");
     expect(verify).toMatch(/Leave any other session's\s+captures alone/);
+    expect(verify).toMatch(/`testSelection` is an\s+array/);
+    expect(verify).toContain("pr-evidence-schema.mjs --file");
+    expect(verify).toContain("status: \"passed\"");
+  });
+  it("tells the sole writer where diff rules read the private change log", () => {
+    const writer = readFileSync(join(pluginRoot, "agents", "vibe-change-worker.md"), "utf8");
+    expect(writer).toContain("rev-parse --absolute-git-dir");
+    expect(writer).toContain("vibe-changes.md");
+    expect(writer).toContain("diff-rules.mjs");
   });
 });

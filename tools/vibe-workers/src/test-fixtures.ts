@@ -93,6 +93,12 @@ process.stdin.on('end', () => {
     if (overage || rejected) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
   }
   if (payload.input.includes('INVALID_OUTPUT')) { process.stdout.write('invalid\n'); process.exit(0); }
+  if (payload.input.includes('STRUCTURED_RETRY_AFTER_WRITE')) {
+    fs.writeFileSync(path.join(process.cwd(), '.git', 'fake-external-write'), 'written');
+    process.stdout.write(JSON.stringify({ type: 'result', session_id: id, is_error: true,
+      terminal_reason: 'structured_output_retry_exhausted' }) + '\n');
+    return;
+  }
   let status = 'DONE';
   if (payload.input.includes('PLAN_FIRST')) status = 'PLAN';
   if (payload.input.includes('STORIES_FIRST')) status = 'STORIES_READY';

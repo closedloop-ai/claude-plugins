@@ -412,6 +412,12 @@ changes and gates fields.
      "Keys to see this work", then every `overlap`, `assertionChanges`,
      `contractChanges` and answered `asks` entry, plus the change log's
      `Control:`, `Baseline inventory:` and `Baseline element:` ledger lines.
+     Copy each `assertionChanges` path and line exactly, not just a test-file
+     name or a count. For each `overlapUnavailable`, add its exact
+     `Overlap unavailable: #<number> (<reason>)` line and do not claim no
+     overlap. The checker accepts this disclosure only when GitHub's file
+     API returned its 3000-file cap against a larger reported total; other
+     overlap lookup failures still block.
    - Breaking changes: from Production impact and every `refusals` entry;
      "none" only when Production impact supports it and `refusals` is empty.
    - UI Feature Flag: the heading alone, unless the change adds a net-new
@@ -427,6 +433,9 @@ changes and gates fields.
    no path on the operator's machine and no plan
    pointed at by path; cite the ticket's embedded evidence or quote text
    inline, briefly. `blocking.prBody` refuses a line naming one.
+   If `blocking.prBody` lists an omitted assertion or unavailable overlap,
+   repair the private body and rerun the same inventory before returning;
+   these are body edits, not source fixes or new permission requests.
 4. Title: `<live ticket slug>: <plain imperative summary>`, at most 72
    characters including the ` (#NNNN)` GitHub appends, with no mention of AI
    tools; `node ../skills/vibe/scripts/pr-preflight.mjs --title "<title>" --body-file <file> --worktree "<wt>" --base <inventory.baseCommit>`

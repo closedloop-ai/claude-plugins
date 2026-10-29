@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
-import { unlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { ciCheckProblems, evidenceProblems, knownMainFailureProblems, pullRequestFacts, requiredLanes, selectionProblems, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
-import { NOT_RUN_NO_DESKTOP_HARNESS } from "../../vibe/scripts/pre-pr-lanes.mjs";
+import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INVENTORY = path.join(HERE, "handoff-inventory.mjs");
+const SCHEMA = path.join(HERE, "pr-evidence-schema.mjs");
 const SESSIONS = path.join(HERE, "..", "..", "vibe", "scripts", "vibe-sessions.mjs");
 const ROUTE = "apps/api/app/links/route.ts";
 const TEST = "packages/api/src/links.test.ts";
@@ -88,6 +90,51 @@ test("facts name overlap by shared and imported file, assertion and export chang
   assert.deepEqual(result.contractChanges.map((change) => [change.kind, change.name]), [["changed", "LinkKind"], ["removed", "LINK_LIMIT"]]);
   assert.deepEqual(result.refusals, [{ path: ROUTE, line: 2, status: 409 }]);
   assert.deepEqual(result.asks, ["Say why POST vs DELETE in the PR."]);
+});
+
+test("overlap retrieves a complete file list when gh pr diff rejects a large PR", (t) => {
+  const fixture = makeHome("pr-overlap-large-");
+  t.after(fixture.cleanup);
+  const bin = path.join(fixture.root, "bin");
+  mkdirSync(bin);
+  const script = path.join(bin, "gh");
+  writeFileSync(script, `#!/bin/sh
+case "$1 $2" in
+  "pr list") printf '%s\\n' '[{"number":9191,"title":"Large PR","headRefName":"feature/large","files":${JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ path: `src/file-${i}.ts` })))} }]' ;;
+  "pr diff") echo 'HTTP 422: diff exceeds 300 files' >&2; exit 1 ;;
+  "api repos/closedloop-ai/symphony-alpha/pulls/9191") printf '%s\\n' '320' ;;
+  "api --paginate") i=0; while [ "$i" -lt 320 ]; do printf 'src/file-%s.ts\\n' "$i"; i=$((i+1)); done ;;
+  *) exit 3 ;;
+esac
+`);
+  chmodSync(script, 0o700);
+  const code = `import { loadOpenPrs } from ${JSON.stringify(new URL("./pr-facts.mjs", import.meta.url).href)}; console.log(JSON.stringify({ prs: loadOpenPrs() }));`;
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+    cwd: fixture.root, encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+  });
+  assert.equal(child.status, 0, child.stderr);
+  const prs = JSON.parse(child.stdout).prs;
+  assert.equal(prs[0].files.length, 320);
+  assert.equal(prs[0].unavailableReason, undefined);
+  writeFileSync(script, readFileSync(script, "utf8").replace("'320'", "'3205'").replace("-lt 320", "-lt 3000"));
+  const capped = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+    cwd: fixture.root, encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+  });
+  assert.equal(capped.status, 0, capped.stderr);
+  assert.deepEqual(JSON.parse(capped.stdout).prs[0].files, []);
+  assert.equal(JSON.parse(capped.stdout).prs[0].unavailableReason, "GitHub file API exposes 3000 of 3205 changed files");
+});
+
+test("an API-capped overlap is disclosed without claiming no overlap", (t) => {
+  const s = session(t);
+  const reason = "GitHub file API exposes 3000 of 3205 changed files";
+  const prs = [{ number: 9191, title: "Very large PR", headRefName: "feature/large", files: [], unavailableReason: reason }];
+  const missing = facts(s, { body: COMPLETE_BODY, prs }).prBodyProblems.join("\n");
+  assert.match(missing, /Overlap unavailable: #9191/);
+  const disclosed = facts(s, { body: `${COMPLETE_BODY}\nOverlap unavailable: #9191 (${reason})`, prs });
+  assert.deepEqual(disclosed.prBodyProblems, []);
+  assert.deepEqual(disclosed.overlap, []);
+  assert.deepEqual(disclosed.overlapUnavailable, [{ number: 9191, title: "Very large PR", reason }]);
 });
 
 test("the body gate refuses missing facts, uncited lines and a stacked base without its statement", (t) => {
@@ -210,12 +257,86 @@ test("a pull request needs a read-only final-diff inventory and exact targeted r
   assert.match(targetedEvidenceProblems({ ...complete, testRuns: [] }, commit).join(), /no passing targeted run/);
 });
 
+test("the verifier's object-shaped selection and path-only inventory fail closed instead of crashing", (t) => {
+  const s = session(t);
+  const commit = "d".repeat(40);
+  const actualVerifierShape = {
+    testSelection: { codeTestsFor: { [ROUTE]: ["links.test.ts"] } },
+    targetedInventory: { vitest: [TEST], storybook: [], webE2eSpecs: [], desktopE2eSpecs: [] },
+    testRuns: [{ lane: "api", command: "pnpm --filter api test", commit, status: "pass" }],
+  };
+  const result = facts(s, { body: COMPLETE_BODY, runs: actualVerifierShape, commit });
+  assert.match(result.prEvidenceProblems.join("\n"), /testSelection must be an array/);
+  assert.match(result.prEvidenceProblems.join("\n"), /targetedInventory.*final committed diff/);
+  assert.match(result.prEvidenceProblems.join("\n"), /targetedInventory.*exact entries/);
+});
+
+test("selection evidence never silently drops a nonarray or malformed test list", () => {
+  const commit = "d".repeat(40);
+  assert.match(selectionProblems({ testSelection: { codeTestsFor: { [ROUTE]: [TEST] } } }, [], [], commit).join(), /testSelection must be an array/);
+  assert.match(selectionProblems({ testSelection: [{ file: ROUTE, selector: "code_tests_for", tests: { path: TEST } }] }, [], [], commit).join(), /tests must be an array/);
+});
+
+test("edited web and Desktop e2e specs can be carried only by exact not-run CI evidence", () => {
+  const commit = "f".repeat(40);
+  const web = "e2e/org-issues-list.spec.ts";
+  const desktop = "apps/desktop/test/e2e/issues-list.spec.ts";
+  const lane = { name: "desktop-e2e", command: "DESKTOP_E2E_SMOKE_TAG='' pnpm --dir apps/desktop test:e2e" };
+  const ciOwner = { [web]: "e2e-test.yml:e2e", [desktop]: "desktop-e2e-validation.yml:desktop-e2e/validated" };
+  const records = [
+    { path: web, status: "not-run", commit, reason: NOT_RUN_NO_IDENTITY,
+      ciOwner: ciOwner[web], selectionSource: "e2e-reference", laneReportSource: "pnpm test:lanes" },
+    { path: desktop, status: "not-run", commit, reason: NOT_RUN_NO_DESKTOP_HARNESS,
+      ciOwner: ciOwner[desktop], selectionSource: "e2e-reference", laneReportSource: "pnpm test:lanes" },
+  ];
+  const evidence = {
+    testSelection: [{ file: ROUTE, selector: "e2e-reference", tests: [web, desktop] }],
+    testRuns: [...records, { lane: lane.name, command: lane.command, status: "not-run", commit, reason: NOT_RUN_NO_DESKTOP_HARNESS }],
+    targetedInventory: { actor: "read-only", source: "final-committed-diff", commit,
+      laneReport: { command: "pnpm test:lanes", matches: [lane] },
+      entries: [web, desktop].map((spec) => ({ kind: "e2e", path: spec, cases: ["changed name"], command: "not run locally" })) },
+    e2eCapability: { selectedTier: null, container: { dockerPresent: false, dockerReachable: false,
+      memoryGiB: 0, diskGiB: 0, minimumMemoryGiB: 20, minimumDiskGiB: 64, command: "repo probe" },
+      native: { available: false }, remote: { available: false }, unavailableSpecs: [web, desktop], ciCoverage: Object.values(ciOwner) },
+  };
+  const changed = [web, desktop].map((path) => ({ path, status: "M" }));
+  const check = (candidate) => selectionProblems(candidate, changed, [], commit);
+  assert.deepEqual(check(evidence), []);
+  assert.deepEqual(targetedEvidenceProblems({ ...evidence, rerunCycles: [] }, commit), []);
+  assert.match(targetedEvidenceProblems({ ...evidence, rerunCycles: [], testRuns: evidence.testRuns.filter((run) => run.path !== web) }, commit).join(),
+    /unavailable E2E needs an exact not-run spec record/);
+  for (const changedEvidence of [
+    { ...evidence, testRuns: evidence.testRuns.filter((run) => run.path !== web) },
+    { ...evidence, testRuns: evidence.testRuns.map((run) => run.path === web ? { ...run, commit: "a".repeat(40) } : run) },
+    { ...evidence, testRuns: evidence.testRuns.map((run) => run.path === web ? { ...run, ciOwner: "unknown" } : run) },
+    { ...evidence, testRuns: evidence.testRuns.map((run) => run.path === desktop ? { ...run, reason: "machine busy" } : run) },
+    { ...evidence, testRuns: evidence.testRuns.filter((run) => run.lane !== lane.name) },
+    { ...evidence, e2eCapability: { ...evidence.e2eCapability, unavailableSpecs: [desktop] } },
+  ]) assert.match(check(changedEvidence).join(), /selected but no passing or carried run/);
+});
+
+test("the verifier's private shape check rejects path-only evidence and accepts exact entries", (t) => {
+  const s = session(t);
+  const invalid = s.file("invalid-pr-evidence.json", {
+    testSelection: { codeTestsFor: { [ROUTE]: ["links.test.ts"] } },
+    targetedInventory: { vitest: [TEST] }, testRuns: [],
+  });
+  const rejected = runNode(SCHEMA, ["--file", invalid], s.home);
+  assert.equal(rejected.status, 1);
+  assert.match(rejected.json.problems.join("\n"), /testSelection must be an array/);
+  assert.match(rejected.json.problems.join("\n"), /targetedInventory needs exact entries/);
+  const accepted = runNode(SCHEMA, ["--file", s.file("valid-pr-evidence.json", SELECTED)], s.home);
+  assert.equal(accepted.status, 0, JSON.stringify(accepted.json));
+  assert.deepEqual(accepted.json.problems, []);
+});
+
 test("after a fix only failed and newly reached targets may be rerun", () => {
   const before = "1".repeat(40);
   const after = "2".repeat(40);
   const sameHash = "a".repeat(64);
   const entry = (path, extra = {}) => ({ kind: "vitest", path, cases: [path], command: `vitest ${path}`, ...extra });
   const evidence = {
+    testSelection: [],
     targetedInventory: { actor: "read-only", source: "final-committed-diff", commit: after,
       fileHashes: { "src/passed.ts": sameHash },
       laneReport: { command: "pnpm test:lanes", matches: [] }, entries: [
@@ -241,6 +362,7 @@ test("every lane pnpm test:lanes names needs a passing run of its own command, n
   const entry = { kind: "vitest", path: TEST, cases: ["limits"], command: "vitest run" };
   const lane = { name: "app", command: "pnpm --filter app test packages/design-system" };
   const evidence = (matches, testRuns) => ({
+    testSelection: [],
     targetedInventory: { actor: "read-only", source: "final-committed-diff", commit, laneReport: { command: "pnpm test:lanes", matches }, entries: [entry] },
     testRuns: [{ path: TEST, cases: ["limits"], command: "vitest run", status: "passed", commit }, ...testRuns], rerunCycles: [],
   });
@@ -269,6 +391,7 @@ test("the Desktop e2e lane left for CI by pre-pr-lanes is not a missing lane run
   const commit = "f".repeat(40);
   const lane = { name: "desktop-e2e", command: "DESKTOP_E2E_SMOKE_TAG='@smoke' DESKTOP_E2E_CHANGED_SPECS='' pnpm --dir apps/desktop test:e2e" };
   const evidence = (testRuns) => ({
+    testSelection: [],
     targetedInventory: { actor: "read-only", source: "final-committed-diff", commit, laneReport: { command: "pnpm test:lanes", matches: [lane] }, entries: [], noTestsReason: "lane only" },
     testRuns, rerunCycles: [],
   });
@@ -291,7 +414,7 @@ test("a run that also fails on captured main does not block, and the body lists 
   assert.match(selectionProblems({ testSelection: [], testRuns: [red({ path: required[0].path, mainSha: undefined })] }, [], required, commit).join(), /selected but no passing/,
     "main-preexisting names the main it failed on");
   const lane = { name: "deploy-guards", command: "pnpm test:deploy-guards" };
-  const lanes = { targetedInventory: { actor: "read-only", source: "final-committed-diff", commit, laneReport: { command: "pnpm test:lanes", matches: [lane] }, entries: [], noTestsReason: "lane only" },
+  const lanes = { testSelection: [], targetedInventory: { actor: "read-only", source: "final-committed-diff", commit, laneReport: { command: "pnpm test:lanes", matches: [lane] }, entries: [], noTestsReason: "lane only" },
     testRuns: [red({ lane: lane.name, command: lane.command })], rerunCycles: [] };
   assert.deepEqual(targetedEvidenceProblems(lanes, commit), []);
   const changed = ["packages/app/list.tsx"];
