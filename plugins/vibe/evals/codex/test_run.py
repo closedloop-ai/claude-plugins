@@ -33,6 +33,27 @@ def test_one_case_per_claude_prompt_and_role_names() -> None:
     )
 
 
+def test_fleet_cases_load_the_installed_skill_without_leaking_answer_lines() -> None:
+    """Both runtimes consult the same plugin instructions before grading behavior."""
+    cases = {case["name"]: case["prompt"] for case in runner.cases()}
+    for name in ("orchestrator-parallel-e2e-queued", "orchestrator-owned-qa-cleanup"):
+        prompt = cases[name]
+        assert "if you are in Claude Code, load `vibe:fleet-orchestrator`" in prompt
+        assert "If you are in Codex, read the installed repository snapshot" in prompt
+        assert "../market/plugins/vibe/skills/fleet-orchestrator/SKILL.md" in prompt
+        assert "../market/plugins/vibe/skills/fleet-orchestrator/references/templates.md" in prompt
+        assert "Do not answer until you have read the instructions" in prompt
+        assert "Let the skill and its template determine the response shape" in prompt
+        assert "Reply in exactly this form" not in prompt
+        for label in ("START_INTEGRATION:", "START_TYPECHECK:", "DEPENDENCIES:",
+                      "REPORT:", "ETA:", "ACTION:", "DOCKER:", "FOREIGN:", "STATUS:"):
+            assert label not in prompt, (name, label)
+    snapshot_read = [{"name": "exec_command", "arguments": "cat ../market/plugins/vibe/skills/fleet-orchestrator/SKILL.md"}]
+    assert runner.loaded_plugin_read(snapshot_read, "fleet-orchestrator")
+    source_read = [{"name": "exec_command", "arguments": "cat plugins/vibe/skills/fleet-orchestrator/SKILL.md"}]
+    assert not runner.loaded_plugin_read(source_read, "fleet-orchestrator")
+
+
 @pytest.mark.parametrize("layout", [".codex-plugin", ".claude-plugin"])
 def test_plugin_version_accepts_either_runtime_manifest(tmp_path: Path, layout: str) -> None:
     manifest = tmp_path / layout / "plugin.json"

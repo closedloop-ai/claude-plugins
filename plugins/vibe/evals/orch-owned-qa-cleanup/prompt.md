@@ -5,13 +5,17 @@ max_turns: 12
 timeout_seconds: 300
 allowed_tools: [Skill, Read, Grep, Glob]
 tags: [orchestrator, fleet, iss-13420]
-description: "A terminal PR releases only its recorded QA stack and reports ownership."
+description: "Fleet status after a PR closes with two QA stacks under different ownership."
 ---
 
-This is a rehearsal of one fleet-orchestrator turn in Claude Code, with no real
-environment. Load `vibe:fleet-orchestrator` and decide the next action from
-the supplied state. You may read plugin skill and reference files. Do not run
-scripts, start workers or contact a service.
+This is a rehearsal of one fleet-orchestrator turn, with no real environment.
+Before deciding, if you are in Claude Code, load `vibe:fleet-orchestrator`
+through the Skill tool. If you are in Codex, read the installed repository snapshot at
+`../market/plugins/vibe/skills/fleet-orchestrator/SKILL.md` and its relevant
+`../market/plugins/vibe/skills/fleet-orchestrator/references/templates.md`.
+Do not answer until you have read the instructions for your runtime. You may
+read plugin skill and reference files, but do not run scripts, start workers
+or contact a service.
 
 Session state:
 - The monitor reports PR 42 in acme/app has closed. Its ticket is ISS-13420.
@@ -22,8 +26,5 @@ Session state:
   program and belongs to another ticket.
 - The operator asks for fleet status. Nobody has requested a cleanup action.
 
-Reply in exactly this form, and nothing else:
-ACTION: <what happens now to the recorded QA helper>
-DOCKER: <what happens to its recorded container, volumes and network>
-FOREIGN: <what happens to the other worker's stack>
-STATUS: <what the fleet status reports, including owner and ticket>
+Decide and report the next action using the fleet skill's required response
+contract. Let the skill and its template determine the response shape.

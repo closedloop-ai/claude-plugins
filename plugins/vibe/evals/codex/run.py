@@ -265,6 +265,12 @@ def tool_text(call: dict[str, Any]) -> str:
     )
 
 
+def loaded_plugin_read(trace: list[dict[str, Any]], skill: str) -> bool:
+    """Accept a read of the installed versioned skill or this runner's private snapshot."""
+    pattern = r"(?:/market/plugins/vibe/skills|/vibe/[^ ]*/skills)/" + re.escape(skill) + r"/SKILL\.md"
+    return any(re.search(pattern, tool_text(call)) for call in trace)
+
+
 def check(name: str, passed: bool, reason: str) -> dict[str, Any]:
     return dict(grader=name, passed=bool(passed), reason="ok" if passed else reason)
 
@@ -550,12 +556,7 @@ def run_case(
         result["checks"].append(
             check(
                 "loaded-plugin",
-                any(
-                    re.search(
-                        r"/vibe/[^ ]*/skills/" + skill + r"/SKILL.md", tool_text(t)
-                    )
-                    for t in trace
-                ),
+                loaded_plugin_read(trace, skill),
                 "installed vibe skill was not read",
             )
         )
