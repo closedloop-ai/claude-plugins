@@ -101,6 +101,15 @@ def test_resume_plan_eval_rejects_inverted_answers(tmp_path: Path) -> None:
     assert not graded["missing-publishes-plan"]
     assert not graded["existing-reuses-plan"]
     assert not graded["build-continues"]
+    named = (
+        "MISSING: the vibe-ticket-worker in plan mode refuses to publish a PLN for ISS-14001 or add links\n"
+        "EXISTING: vibe-ticket-worker in plan mode reconciles PLN-1450 and creates no new plan\n"
+        "BUILD: the build does not continue; it pauses until the PLN exists"
+    )
+    checks, _ = runner.deterministic(case, named, tmp_path, [])
+    graded = {check["grader"]: check["passed"] for check in checks}
+    assert not graded["missing-publishes-plan"]
+    assert not graded["build-continues"]
 
 
 def test_resume_plan_eval_accepts_equivalent_positive_wording(tmp_path: Path) -> None:

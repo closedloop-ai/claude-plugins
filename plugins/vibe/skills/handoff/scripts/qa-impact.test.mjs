@@ -108,6 +108,33 @@ test("the bundled TypeScript parser distinguishes comments from JSX text, string
   assert.equal(semanticSourceText("styles.css", "/* comment */\n.a {}"), null, "non-TypeScript files are never comment-proven safe");
 });
 
+test("behavior-changing comment directives are never comment-only", () => {
+  const directives = [
+    "@jsxImportSource preact", "webpackChunkName: 'settings'", "@vite-ignore", "@ts-ignore",
+    "eslint-disable-next-line no-console", "prettier-ignore", "biome-ignore lint/style/useConst",
+  ];
+  for (const directive of directives) {
+    const file = "packages/api/service.ts";
+    const result = classifyQaImpact({ files: [file],
+      before: new Map([[file, "// ordinary note\nexport const value = 1;\n"]]),
+      after: new Map([[file, `// ${directive}\nexport const value = 1;\n`]]),
+      importers: new Map([[file, []]]), featureMap: { entries: [] }, evidence: EVIDENCE,
+      laneSelections: lanesFor(file), ownFiles: new Set([file]), config: CONFIG });
+    assert.equal(result.outcome, QaImpact.LanesOnly, directive);
+  }
+});
+
+test("Tailwind class tokens in comments are Visual only for scanned files", () => {
+  const file = "packages/api/presentation.ts";
+  const classifyComment = (config) => classifyQaImpact({ files: [file],
+    before: new Map([[file, "// bg-red-500\nexport const value = 1;\n"]]),
+    after: new Map([[file, "// bg-blue-500\nexport const value = 1;\n"]]),
+    importers: new Map([[file, []]]), featureMap: { entries: [] }, evidence: EVIDENCE,
+    laneSelections: lanesFor(file), ownFiles: new Set([file]), config });
+  assert.equal(classifyComment({ ...CONFIG, tailwind: ["packages/api/"] }).outcome, QaImpact.Visual);
+  assert.equal(classifyComment(CONFIG).outcome, QaImpact.None, "ordinary comments remain safe outside Tailwind content roots");
+});
+
 test("None is an exact allow-list, while unknown and UI-capable files classify upward", () => {
   assert.equal(classifyOne("HISTORY.md").outcome, QaImpact.None);
   assert.equal(classifyOne("docs/guide.md").outcome, QaImpact.None);
@@ -154,7 +181,7 @@ test("test-only work runs only the lanes selected for those files", (t) => {
   f.write("plugins/vibe/.claude-plugin/plugin.json", '{"name":"vibe","version":"1.1.18"}\n');
   f.commit("docs and version");
   assert.equal(classify(f, f.base, {}, lanesFor(testFile)).laneKey, result.laneKey, "lane scope ignores unrelated docs and version changes");
-  assert.match(classify(f, f.base).warnings.join(" "), /no narrowed lane selection/);
+  assert.throws(() => classify(f, f.base), /at least one lane/);
 });
 
 test("lane selection is limited to commits since the last QA boundary", (t) => {
@@ -245,6 +272,8 @@ test("root CI files are None but product workflow source is Visual QA", (t) => {
 });
 
 test("token modules, mapped API shaping and ordinary fixture components are UI-capable", () => {
+  assert.equal(classifyOne("theme.ts").outcome, QaImpact.Visual);
+  assert.equal(classifyOne("tokens.ts").outcome, QaImpact.Visual);
   assert.equal(classifyOne("packages/design-system/tokens/colors.ts").outcome, QaImpact.Visual);
   const map = { entries: [{ id: "shell-route:documents", code: ["api: apps/api/app/documents/"] }] };
   assert.equal(classifyOne("apps/api/app/documents/shape.ts", { featureMap: map }).outcome, QaImpact.Visual);
@@ -353,7 +382,7 @@ test("unreadable or structurally changed files classify upward instead of None",
   const binary = fixture(t);
   binary.write("README.md", Buffer.from([0, 1, 2, 3]));
   binary.commit("binary root file");
-  cases.push(["binary", classify(binary, binary.base).outcome]);
+  cases.push(["binary", classify(binary, binary.base, {}, lanesFor("README.md")).outcome]);
 
   const deleted = fixture(t);
   deleted.write("CHANGELOG.md", "release\n");
@@ -361,7 +390,7 @@ test("unreadable or structurally changed files classify upward instead of None",
   const deleteBoundary = git(deleted.worktree, ["rev-parse", "HEAD"], deleted.home);
   git(deleted.worktree, ["rm", "CHANGELOG.md"], deleted.home);
   deleted.commit("delete release file");
-  cases.push(["deleted", classify(deleted, deleteBoundary).outcome]);
+  cases.push(["deleted", classify(deleted, deleteBoundary, {}, lanesFor("CHANGELOG.md")).outcome]);
 
   const renamed = fixture(t);
   renamed.write("README.md", "before\n");
@@ -369,7 +398,7 @@ test("unreadable or structurally changed files classify upward instead of None",
   const renameBoundary = git(renamed.worktree, ["rev-parse", "HEAD"], renamed.home);
   renameSync(path.join(renamed.worktree, "README.md"), path.join(renamed.worktree, "NOTES.md"));
   renamed.commit("rename readme");
-  cases.push(["renamed", classify(renamed, renameBoundary).outcome]);
+  cases.push(["renamed", classify(renamed, renameBoundary, {}, lanesFor("README.md", "NOTES.md")).outcome]);
 
   const mode = fixture(t);
   mode.write("README.md", "docs\n");
@@ -377,7 +406,7 @@ test("unreadable or structurally changed files classify upward instead of None",
   const modeBoundary = git(mode.worktree, ["rev-parse", "HEAD"], mode.home);
   chmodSync(path.join(mode.worktree, "README.md"), 0o755);
   mode.commit("change mode");
-  cases.push(["mode", classify(mode, modeBoundary).outcome]);
+  cases.push(["mode", classify(mode, modeBoundary, {}, lanesFor("README.md")).outcome]);
 
   const gitlink = fixture(t);
   gitlink.write("README.md", "docs\n");
@@ -386,7 +415,7 @@ test("unreadable or structurally changed files classify upward instead of None",
   git(gitlink.worktree, ["rm", "--cached", "README.md"], gitlink.home);
   git(gitlink.worktree, ["update-index", "--add", "--cacheinfo", `160000,${gitlinkBoundary},README.md`], gitlink.home);
   git(gitlink.worktree, ["commit", "--quiet", "-m", "replace blob with gitlink"], gitlink.home);
-  cases.push(["gitlink", classify(gitlink, gitlinkBoundary).outcome]);
+  cases.push(["gitlink", classify(gitlink, gitlinkBoundary, {}, lanesFor("README.md")).outcome]);
 
   for (const [name, outcome] of cases) assert.notEqual(outcome, QaImpact.None, name);
 });
@@ -418,6 +447,16 @@ test("impact requests require a recorded boundary before HEAD and non-empty lane
   assert.throws(() => qaImpactRequest(f.worktree, { ...request, lastQa: { boundary: head } }), /must precede HEAD/);
   assert.throws(() => qaImpactRequest(f.worktree, { ...request, lastQa: undefined, since: f.base }), /recorded last-QA point/);
   assert.throws(() => qaImpactRequest(f.worktree, { ...request, laneSelections: { files: {} } }), /non-empty laneSelections/);
+});
+
+test("every changed non-safe lane file needs a selected lane", (t) => {
+  const f = fixture(t);
+  f.write("packages/api/service.ts", "export const value = 2;\n");
+  f.commit("backend");
+  const base = { worktree: f.worktree, since: f.base, evidence: EVIDENCE,
+    graphImporters: { importers: { "packages/api/service.ts": [] } }, featureMap: FEATURE_MAP, config: CONFIG };
+  assert.throws(() => qaImpact({ ...base, laneSelections: lanesFor("unchanged.test.ts") }), /packages\/api\/service\.ts/);
+  assert.throws(() => qaImpact({ ...base, laneSelections: { files: { "packages/api/service.ts": [] } } }), /at least one lane/);
 });
 
 test("missing graph or FEATURE_MAP classifies UI upward but leaves docs and tests mechanical", (t) => {

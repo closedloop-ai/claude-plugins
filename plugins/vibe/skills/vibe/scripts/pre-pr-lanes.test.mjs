@@ -41,7 +41,9 @@ test("the PR-open check refuses a diff naming desktop-renderer with no recorded 
   t.after(cleanup);
   const worktree = path.join(root, "wt");
   git(root, ["init", "--quiet", "--initial-branch=main", worktree], home);
-  git(worktree, ["commit", "--quiet", "--allow-empty", "-m", "base"], home);
+  writeFileSync(path.join(worktree, "README.md"), "base docs\n");
+  git(worktree, ["add", "README.md"], home);
+  git(worktree, ["commit", "--quiet", "-m", "base"], home);
   const report = path.join(root, "lanes.txt");
   writeFileSync(report, REPORT);
   const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, HOME: home } });
@@ -80,6 +82,12 @@ test("the PR-open check refuses a diff naming desktop-renderer with no recorded 
   writeFileSync(selected, JSON.stringify({ lastQa: { boundary: head }, evidence: { screens: [] }, graphImporters: { importers: {} },
     featureMap: { entries: [] }, laneSelections: { files: {} }, config: { docs: [] } }));
   assert.equal(run("check", "--worktree", worktree, "--impact", selected).status, 2, "empty lane selections are refused");
+  writeFileSync(selected, JSON.stringify({ lastQa: { boundary: head }, evidence: { screens: [] }, graphImporters: { importers: {} },
+    featureMap: { entries: [] }, laneSelections: { files: { "unchanged.test.ts": ["pnpm test"] } }, config: { docs: [] } }));
+  assert.equal(run("check", "--worktree", worktree, "--impact", selected).status, 2, "a lane for only an unchanged file is refused");
+  writeFileSync(selected, JSON.stringify({ lastQa: { boundary: head }, evidence: { screens: [] }, graphImporters: { importers: {} },
+    featureMap: { entries: [] }, laneSelections: { files: { [testFile]: [] } }, config: { docs: [] } }));
+  assert.equal(run("check", "--worktree", worktree, "--impact", selected).status, 2, "an empty lane list for the changed file is refused");
 });
 
 test("a result names the commit it ran: a run refuses another HEAD or a modified tracked file (23/23 reported for an untested PR)", (t) => {

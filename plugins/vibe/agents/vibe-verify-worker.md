@@ -100,8 +100,9 @@ test path>"] }` entries, not a `codeTestsFor` object or a list of basenames.
 When the graph cannot establish tests, a `code_tests_for` row may use
 `tests: null` only with the repository's `related` selection for that file.
 `targetedInventory` has `actor: "read-only"`,
-`source: "final-committed-diff"`, the full final `commit`, `impactKey` copied
-from `qaImpact.laneKey`, and a `laneReport`
+`source: "final-committed-diff"`, the full final `commit`, and the complete
+`qaImpactRequest` inputs. Recompute that request and copy its `laneKey` to
+`impactKey`; never trust a stored classifier result. It also has a `laneReport`
 with `command: "pnpm test:lanes"` and `matches` named by that report, and
 `entries` containing each exact test `kind`, `path`, nonempty `cases` and
 `command`. A lane result in `testRuns` uses `status: "passed"` with its

@@ -14,7 +14,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs, TextDecoder } from "node:util";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
-import { commentlessAst } from "../../vibe/scripts/dist/qa-impact-parser.mjs";
+import { commentlessAst, sourceComments } from "../../vibe/scripts/dist/qa-impact-parser.mjs";
 
 export const QaImpact = Object.freeze({ None: "None", LanesOnly: "Lanes only", Visual: "Visual QA" });
 
@@ -22,7 +22,7 @@ const SAFE_ROOT_FILES = new Set(["CHANGELOG.md", "CHANGES.md", "HISTORY.md", "RE
 const CI_CONFIG = /^(?:\.github\/(?:workflows\/[^/]+\.ya?ml|dependabot\.ya?ml|CODEOWNERS)|\.circleci\/config\.ya?ml|\.buildkite\/[^/]+\.ya?ml|Jenkinsfile)$/i;
 const TOKENIZED_SOURCE = /\.(?:[cm]?[jt]sx?)$/i;
 const UI_CAPABLE = /\.(?:tsx|jsx|vue|svelte|css|scss|sass|less|svg|png|jpe?g|gif|webp|avif|ico|html?|mdx|woff2?|ttf|otf|eot)$/i;
-const UI_TOKEN_SOURCE = /(?:^|\/)(?:tokens?|themes?)(?:\/|\.|-).+\.(?:[cm]?[jt]s)$/i;
+const UI_TOKEN_SOURCE = /(?:^|\/)(?:(?:tokens?|themes?)\.[cm]?[jt]s|(?:tokens?|themes?)(?:\/|-).+\.[cm]?[jt]s)$/i;
 const DOC_FILE = /\.(?:md|rst|txt)$/i;
 const LOCKFILE = /(?:^|\/)(?:pnpm-lock\.yaml|package-lock\.json|yarn\.lock|bun\.lockb?)$/;
 const UI_PACKAGES = new Set(["react", "react-dom", "next", "tailwindcss", "storybook", "lucide-react", "framer-motion", "motion", "cmdk", "recharts", "sonner", "vaul", "date-fns", "react-markdown"]);
@@ -32,6 +32,8 @@ const VERSIONED_JSON = /(?:^|\/)(?:package|plugin)\.json$/;
 const FEATURE_MAP_DEFAULT = ".claude/skills/control/feature-map.json";
 const CONFIG_DEFAULT = ".vibe/qa-impact.json";
 const BARE_FIXTURE = /(?:^|\/)fixtures\//;
+const BEHAVIOR_DIRECTIVE = /(?:@jsx(?:ImportSource|Runtime)?\b|webpack(?:ChunkName|Mode|Prefetch|Preload|Ignore|Exports|FetchPriority)\b|@vite-ignore\b|@ts-(?:ignore|expect-error|nocheck|check)\b|(?:eslint|stylelint|oxlint)-(?:disable|enable)\b|(?:prettier|biome|format)-ignore\b|deno-lint-ignore\b)/i;
+const TAILWIND_CLASS = /(?:^|\s)(?:[a-z][\w-]*:)*(?:-?[a-z][\w]*-[\w\[\]/.%:-]+)(?=\s|$)/i;
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 const GIT_TEXT_MAX_BUFFER = 64 * 1024 * 1024;
 
@@ -75,11 +77,29 @@ export function semanticSourceText(file, source) {
   }
 }
 
-function commentOnlySafe(file, before, after) {
-  if (before === after) return true;
+function changedComments(before, after) {
+  const remaining = [...before];
+  const changed = [];
+  for (const comment of after) {
+    const index = remaining.indexOf(comment);
+    if (index >= 0) remaining.splice(index, 1);
+    else changed.push(comment);
+  }
+  return [...remaining, ...changed];
+}
+
+function commentOnlyImpact(file, before, after, tailwindScanned) {
+  if (before === after) return "safe";
   const oldTree = semanticSourceText(file, before);
   const newTree = semanticSourceText(file, after);
-  return oldTree !== null && newTree !== null && oldTree === newTree;
+  if (oldTree === null || newTree === null || oldTree !== newTree) return null;
+  const oldComments = sourceComments(file, before);
+  const newComments = sourceComments(file, after);
+  if (oldComments === null || newComments === null) return null;
+  const changed = changedComments(oldComments, newComments);
+  if (changed.some((comment) => BEHAVIOR_DIRECTIVE.test(comment))) return "directive";
+  if (tailwindScanned && changed.some((comment) => TAILWIND_CLASS.test(comment))) return "tailwind";
+  return "safe";
 }
 
 function versionOnly(file, before, after) {
@@ -275,13 +295,17 @@ export function classifyQaImpact({ files, before, after, changes = new Map(), im
   const entries = Array.isArray(featureMap?.entries) ? featureMap.entries : null;
   const docs = configuredPaths(config, "docs");
   const configuredUi = configuredPaths(config, "ui");
+  const tailwind = [...configuredPaths(config, "tailwind"), ...configuredPaths(config, "tailwindContent")];
   const tests = [];
   const unsafe = [];
+  const tailwindComments = new Set();
   for (const file of files) {
     const oldText = before.get(file) ?? null;
     const newText = after.get(file) ?? null;
     const change = changes.get(file);
     const readablePair = oldText !== null && newText !== null && !change?.modeChanged && !["A", "D"].includes(change?.status);
+    const commentImpact = readablePair ? commentOnlyImpact(file, oldText, newText, inConfiguredPath(file, tailwind)) : null;
+    if (commentImpact === "tailwind") tailwindComments.add(file);
     if (isTestFile(file) && !BARE_FIXTURE.test(file)) {
       tests.push(file);
       unsafe.push(file);
@@ -289,7 +313,7 @@ export function classifyQaImpact({ files, before, after, changes = new Map(), im
       || CI_CONFIG.test(file)
       || versionOnly(file, oldText, newText)
       || (DOC_FILE.test(file) && inConfiguredPath(file, docs))
-      || commentOnlySafe(file, oldText, newText))) {
+      || commentImpact === "safe")) {
       // Explicitly proven unable to change rendered behavior.
     } else {
       unsafe.push(file);
@@ -306,7 +330,8 @@ export function classifyQaImpact({ files, before, after, changes = new Map(), im
     const mergeOnly = mergeFiles.has(file) && !ownFiles.has(file);
     const test = tests.includes(file);
     const configuredAsUi = inConfiguredPath(file, configuredUi);
-    const uiCapable = !test && (UI_CAPABLE.test(file) || UI_TOKEN_SOURCE.test(file) || UI_CONFIG.test(file) || configuredAsUi || matched.length > 0
+    const uiCapable = !test && (UI_CAPABLE.test(file) || UI_TOKEN_SOURCE.test(file) || UI_CONFIG.test(file) || configuredAsUi
+      || tailwindComments.has(file) || matched.length > 0
       || (LOCKFILE.test(file) && lockfileMovesUi(before.get(file) ?? null, after.get(file) ?? null))
       || manifestMovesUi(file, before.get(file) ?? null, after.get(file) ?? null));
     return { file, importing, graphAvailable, matched, mergeOnly, test, uiCapable };
@@ -338,8 +363,9 @@ export function classifyQaImpact({ files, before, after, changes = new Map(), im
   }
 
   const laneMap = normalizeLaneSelections(laneSelections);
+  const unmappedLaneFiles = laneFiles.filter((file) => !(laneMap?.get(file)?.length > 0));
+  if (unmappedLaneFiles.length) throw new Error(`laneSelections must name at least one lane for changed non-safe files: ${unmappedLaneFiles.join(", ")}`);
   const lanes = [...new Set(laneFiles.flatMap((file) => laneMap?.get(file) ?? []))];
-  if (laneFiles.length && lanes.length === 0) warnings.push("no narrowed lane selection was provided for the changed files");
   if (visual) {
     let screens = [...affected.values()].map((entry) => screenEvidence(entry, recorded.get(entry.id)));
     if (screens.length === 0) screens = recordedScreens(evidence);

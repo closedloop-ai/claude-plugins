@@ -1,4 +1,9 @@
-"""Contract checks for ISS-13411: automated QA follows affected scope, not a commit identity."""
+"""Contract checks for ISS-13411.
+
+The prose scan is a heuristic backstop, not a proof that every possible
+paraphrase is caught. The executable classifier and evidence gates own the
+behavior; these patterns catch known regressions cheaply.
+"""
 
 import re
 from pathlib import Path
@@ -11,8 +16,8 @@ SCRIPT_MESSAGE_PATHS = (
     Path("skills/handoff/scripts/pr-facts.mjs"),
     Path("skills/handoff/scripts/live-ticket-check.mjs"),
 )
-HEAD = r"(?:head|sha|commit(?:\s+(?:hash|identity))?)"
-ACTION = r"(?:re[- ]?run|repeat|refresh|invalidate(?:s|d)?|stale|no\s+longer\s+(?:counts?|valid)|must\s+run\s+again)"
+HEAD = r"(?:head|sha|commit(?:\s+(?:hash|identity))?|(?:branch\s+)?tip)"
+ACTION = r"(?:re[- ]?run|redo|repeat|refresh|invalidate(?:s|d)?|stale|no\s+longer\s+(?:counts?|valid)|must\s+run\s+again|run\b.{0,30}\bagain)"
 QA = r"(?:automated\s+qa|visual[- ]?qa|qa\s+(?:pass|evidence|proof)|lanes?|screenshots?|critics?|frozen[- ]render(?:\s+(?:proof|evidence|line))?)"
 HEAD_BOUND_QA = tuple(re.compile(pattern, re.IGNORECASE) for pattern in (
     rf"\b{HEAD}\b.{{0,180}}\b{ACTION}\b.{{0,180}}\b{QA}\b",
@@ -32,26 +37,33 @@ HEAD_BOUND_QA = tuple(re.compile(pattern, re.IGNORECASE) for pattern in (
     r"\bafter (?:every |each )?(?:push|commit|merge)\b.{0,80}\b(?:refresh|redo|rerun)\b.{0,60}\b(?:critic|lane|qa|screenshot)",
     r"\b(?:automated qa|qa evidence)\b.{0,80}\b(?:match|bind|belong)\w*\b.{0,60}\bfinal commit\b",
     r"\blater commit\b.{0,80}\b(?:stales?|invalidates?)\b.{0,60}\bfrozen[- ]render\b",
+    rf"\b{HEAD}\b.{{0,60}}\b(?:moves?|changes?)\b.{{0,100}}\b(?:run|rerun|redo|repeat|refresh)\b.{{0,60}}\b{QA}\b",
+    rf"\b(?:run|rerun|redo|repeat|refresh)\b.{{0,60}}\b{QA}\b.{{0,100}}\b(?:when|if|after)\b.{{0,40}}\b{HEAD}\b.{{0,40}}\b(?:moves?|changes?)\b",
+    rf"\b{HEAD}\b.{{0,80}}\b{QA}\b.{{0,80}}\b{ACTION}\b",
 ))
 MANUAL_QA_ALLOWLIST = {
     "skills/cl-execute/references/feature-manual-qa.md": re.compile(r"manual[- ]qa|responsible-human", re.I),
-    "skills/cl-execute/references/implementation-review-pr.md": re.compile(r"manual[- ]qa|responsible-human", re.I),
+    "skills/cl-execute/references/implementation-review-pr.md": re.compile(r"manual[- ]qa|responsible-human|current-head visual-QA refresh", re.I),
     "skills/cl-sweep/references/open-pr-lifecycle.md": re.compile(r"manual[- ]qa|responsible human", re.I),
     "skills/cl-sweep/references/worker-prompt-packets.md": re.compile(r"manual[- ]qa|responsible human", re.I),
     "skills/cl-sweep/references/parent-goal.md": re.compile(r"manual[- ]qa|responsible human", re.I),
     "skills/fleet-orchestrator/references/judgment.md": re.compile(r"qa-impact\.mjs", re.I),
     "agents/vibe-verify-worker.md": re.compile(r"source validator|ciEvidence", re.I),
-    "skills/cl-execute/SKILL.md": re.compile(r"automatic rerun evidence proves the current head", re.I),
+    "skills/cl-execute/SKILL.md": re.compile(r"automatic rerun evidence proves the current head|never start.{0,80}visual-QA", re.I),
 }
 
 
 def directly_negates_action(text: str, start: int, end: int) -> bool:
     window_start = max(0, start - 40)
     window = text[window_start:end]
-    action = re.search(r"\b(?:re[- ]?run|redo|repeat|refresh|invalidate(?:s|d)?|stale)\b", window, re.I)
-    if not action:
+    match_offset = start - window_start
+    actions = list(re.finditer(r"\b(?:run|re[- ]?run|redo|repeat|refresh|invalidate(?:s|d)?|stale)\b", window[match_offset:], re.I))
+    if not actions:
         return False
-    return bool(re.search(r"\b(?:never|do not|does not)\s+$", window[: action.start()], re.I))
+    return all(
+        re.search(r"\b(?:never|do not|does not)\s+$", window[: match_offset + action.start()], re.I)
+        for action in actions
+    )
 
 
 def automated_head_qa_violations(root: Path) -> list[str]:
@@ -81,7 +93,7 @@ def test_the_one_classifier_owns_post_qa_scope() -> None:
     assert 'LanesOnly: "Lanes only"' in source
     assert 'Visual: "Visual QA"' in source
     assert "SAFE_ROOT_FILES" in source
-    assert "commentOnlySafe" in source
+    assert "commentOnlyImpact" in source
     assert "cat-file" in source
     assert '"--raw", "-z"' in source
     assert "FEATURE_MAP_DEFAULT" in source
@@ -133,6 +145,23 @@ def test_semantic_guard_catches_review_rewordings_and_leading_negation_bypass(tm
         "agents/final-bind.md": "Automated QA must match the final commit.",
         "references/frozen-stale.md": "A later commit stales the frozen-render evidence.",
         "skills/leading-negation.md": "Never skip this rule: when a new commit lands, redo the visual QA.",
+    }
+    for relative, content in variants.items():
+        file = tmp_path / relative
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(content)
+    violations = automated_head_qa_violations(tmp_path)
+    assert {item.split(":", 1)[0] for item in violations} == set(variants)
+
+
+def test_heuristic_guard_catches_round_three_paraphrases(tmp_path: Path) -> None:
+    variants = {
+        "skills/negated-prefix.md": "Do not rerun anything else; rerun the lanes when the head moves.",
+        "agents/tip-moves.md": "If the branch tip moves, run the lanes again.",
+        "references/commit-qa.md": "When the commit changes, redo automated QA.",
+        "skills/sha-shots.md": "After the SHA changes, refresh the screenshots.",
+        "agents/head-lanes.md": "Repeat the lanes whenever the head changes.",
+        "references/tip-visual.md": "A changed tip means visual QA must run again.",
     }
     for relative, content in variants.items():
         file = tmp_path / relative
