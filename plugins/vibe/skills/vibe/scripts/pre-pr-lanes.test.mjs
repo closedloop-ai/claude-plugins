@@ -28,7 +28,7 @@ test("every lane the report names is required, e2e lanes and lanes with the step
   assert.equal(reportLanes("something went wrong\n"), null, "an unreadable report is never read as no lanes");
 });
 
-test("a lane needs a passing record at the current head", () => {
+test("a selected lane needs a passing record at the source it exercises", () => {
   const lanes = ["pnpm test:desktop-renderer"];
   assert.deepEqual(missingLanes(lanes, [], "h1"), lanes);
   assert.deepEqual(missingLanes(lanes, [{ command: lanes[0], head: "h0", result: "pass" }], "h1"), lanes, "a run at an older head");
@@ -56,7 +56,12 @@ test("the PR-open check refuses a diff naming desktop-renderer with no recorded 
   for (const lane of reportLanes(REPORT)) assert.equal(run("record", "--worktree", worktree, "--head", head, "--command", lane, "--result", "pass").status, 0);
   assert.equal(run("check", "--worktree", worktree, "--report", report).status, 0);
   git(worktree, ["commit", "--quiet", "--allow-empty", "-m", "more"], home);
-  assert.equal(run("check", "--worktree", worktree, "--report", report).status, 1, "a new head needs the lanes run again");
+  const none = path.join(root, "impact-none.json");
+  writeFileSync(none, JSON.stringify({ outcome: "None", lanes: [], screens: [] }));
+  assert.equal(run("check", "--worktree", worktree, "--impact", none).status, 0, "an unrelated commit selects no local lane");
+  const selected = path.join(root, "impact-lanes.json");
+  writeFileSync(selected, JSON.stringify({ outcome: "Lanes only", lanes: ["pnpm test:desktop-renderer"], screens: [] }));
+  assert.equal(run("check", "--worktree", worktree, "--impact", selected).status, 1, "a selected lane still needs current evidence");
 });
 
 test("a result names the commit it ran: a run refuses another HEAD or a modified tracked file (23/23 reported for an untested PR)", (t) => {

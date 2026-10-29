@@ -158,6 +158,26 @@ def test_the_vibe_skill_publishes_the_plan_after_each_request_and_links_the_sour
     assert "Keep technical plans private." not in skill
 
 
+def test_resume_and_takeover_publish_or_reuse_one_existing_ticket_plan_without_pausing_build() -> None:
+    quality = section(QUALITY.read_text(), "## Local plan")
+    assert_all(quality, (
+        "startup, resume, fleet takeover and handoff",
+        "first lists outgoing `PRODUCES` links",
+        "records and updates one linked PLN",
+        "core-template plan covering every ticket criterion",
+        "continues building",
+        "without a person question, approval wait, second PLN, or source/deploy pause",
+    ))
+    skill = flat(VIBE_SKILL.read_text())
+    assert "Before its first request, apply `references/quality-loop.md`, \"Local plan\", including for a fleet takeover" in skill
+    handoff = flat(HANDOFF_SKILL.read_text())
+    assert "With any existing `liveTicket`, apply `../vibe/references/quality-loop.md`, \"Local plan\"" in handoff
+    rules = plan_rules()
+    assert "run step C even without `livePlan`" in rules
+    assert rules.index("list-artifact-links` with `artifactId: <live ticket>`, `direction: \"target\"") < rules.index(
+        "`create-document` with `type: IMPLEMENTATION_PLAN`")
+
+
 def test_the_session_record_has_the_pln_next_to_the_live_ticket(tmp_path: Path) -> None:
     worktree = tmp_path / "session"
     worktree.mkdir()

@@ -195,7 +195,10 @@ words and ask which one they want to finish. Read its `liveTicket` and `localFix
 
 If the session has no `liveTicket` (it started before live tickets existed),
 dispatch `vibe-ticket-worker` in create mode first; it records the slug on
-the session. If it is `handed-off`, first dispatch `vibe-ticket-worker` in
+the session. With any existing `liveTicket`, apply
+`../vibe/references/quality-loop.md`, "Local plan", before final ticket checks.
+It reuses one linked PLN or has the SAME writer create the missing plan while
+handoff continues, without a person wait. If it is `handed-off`, first dispatch `vibe-ticket-worker` in
 plan mode with `mergeCheck: true` when its `livePlanStatus` is `APPROVED`, so
 a merged pull request moves the PLN to `EXECUTED`. When its pull request is still open, read its threads first
 (`vibe-environment-worker`, `reviewThreads: read`) on every look: any
@@ -597,7 +600,7 @@ that artifact or claims missing final evidence is a successful handoff.
 
 Publication readiness may precede external E2E completion for this FINAL
 handoff snapshot: retain exact named limitations, safely publish the committed
-SHA for existing CI/live QA, and keep final coverage/assignment incomplete.
+source for ordinary CI and live QA, and keep final coverage/assignment incomplete.
 No automatic manual-CI trigger is added, and no feature PR opens here; a
 requested one opens in step 9. ROOT routes CI permission
 internally; never ask the vibe coder for technical-plan approval.
@@ -605,9 +608,10 @@ For actual authorized/completed evidence, ROOT binds `mainSyncCiRun: {runId, att
 in the SAME writer's actual source progress/handoff grant, then resumes
 `main-sync-validate` on the same captured-main transaction without another fetch
 loop. The consumer verifies real canonical run/job/step identity and actual
-checkout-action/pre-test env SHA against unchanged HEAD/tree/input, not caller
-PASS or workflow main head_sha. Changed source invalidates proof and returns
-to this same writer's fresh preparation/correction flow. Keep whole-table
+checkout-action/pre-test env SHA against the source that CI exercised, not caller
+PASS or workflow main head_sha. A later source snapshot gets its ordinary
+per-push CI result; `qa-impact.mjs` alone decides whether local lanes or
+rendered screens need new evidence. Keep whole-table
 tests/reviews and source-phase authority separate from the CI reader.
 Do not proceed to final assignment/alignment with `requiredE2eComplete: false`
 or any other required coverage gap, even when publicationReady is true. A
@@ -699,8 +703,8 @@ grade the finished code and its appearance/Storybook implementation:
   state access; removed/unavailable historical links are identified honestly.
 - Actual footprint/canonical catalog commands, baseline/current commits and
   reports, including unresolved advisories and their dispositions.
-- Actual design/visual-QA reports and screenshots with inspected commits,
-  viewports/dimensions, hosts and states, and accessible links/attachments,
+- Actual design/visual-QA reports and screenshots with screens,
+  viewports/dimensions, hosts, states and flag arms, and accessible links/attachments,
   including the running app verification's control captures, embedded rather
   than named by local path, and what each proves. Source-only, unverified, failed and
   unsupported coverage remains explicit, with the exact control command and
@@ -726,8 +730,8 @@ history entry must be correct relative to that base, and the component and
 story counts must match the branch. A wrong bump or count returns to the same
 writer, and every in-flight train pull request is inspected for its
 reserved version. Main moving on after the pin is not a stale base, and the one main
-merge after QA that `../fleet-orchestrator/scripts/qa-merge-order.mjs`
-permits is enough: never sync main again only to chase a newer Storybook
+merge after QA is enough: classify its diff with `scripts/qa-impact.mjs` and
+never sync main again only to chase a newer Storybook
 release. A version another open pull request already reserves does not block
 creation either; the merge queue settles it. Take the next free version, say
 so in the pull request packet with the reserving pull request's number, and
@@ -941,20 +945,16 @@ resumes and every fix goes through this path, never around it:
 Each fix is the SAME writer's; no other worker or helper edits source or
 tests here, and no step above is skipped because the change looks small.
 
-A pull request is QA'd on its feature-complete head, even when it conflicts
-with main; fix pushes before then leave main unmerged unless the person asks
-for a main merge now (set final-merge mode for that push). Once the person's QA has passed, run
-`node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --main-merge final`;
-the next pass through step 7's main-sync publication gate is the one main
-merge. Rerun only the tests selected for the files the merge touched, and
-tell the person it is ready to enqueue right away, once
-`node scripts/qa-merge-order.mjs --worktree "<wt>" --qa-head <QA'd sha>`
-passes; the merge queue retests it against main. On that head, a
-fresh-context reviewer given only the ticket's criteria and the diff writes
-the MET/PARTIAL/MISSED audit, and
-`node scripts/criteria-audit.mjs --worktree "<wt>" --ticket <body> --audit <audit> --matrix <matrix>`
-must pass (every criterion MET, and every criterion x surface x input x flag
-cell evidenced, flag-off cells by a diff against the base or a ruling).
+A pull request gets one feature-complete QA pass. Its record names screens,
+hosts, states and flag arms, never commit identity. After any later commit or
+the single final main merge, collect transitive `code_importers` and the
+same-diff lane report, then run `scripts/qa-impact.mjs` with that evidence and
+FEATURE_MAP. `None` runs no local lane, screenshot, audit or critic; otherwise
+run only the listed lanes or screens and recorded states. CI remains per push
+and the merge queue retests. `pre-pr-lanes.mjs check --impact` enforces the
+lane list. A fresh-context reviewer given only the ticket's criteria and the diff runs
+`scripts/criteria-audit.mjs --ticket <body> --audit <audit> --matrix <matrix>`
+for initial QA and again only for criteria on a named screen.
 `node scripts/rulings-check.mjs --ticket <body> --record <QA record> --plan <each linked PLN's get-document JSON> --plan-body <its latest text>`
 must pass too, and so must
 `node scripts/rollout-gate.mjs --worktree "<wt>" --ticket <body> --slug <ticket> --prd <PRD body> --prd-slug <PRD>`

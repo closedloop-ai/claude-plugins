@@ -58,7 +58,6 @@ const FROZEN_CANDIDATE = String.raw`v1\.0|deprecated`;
 const CLOSURE_LIMIT = 20000;
 const STORY_ID_PATHSPECS = [...E2E_ROOT_PATHSPECS, "docs/", "apps/web/content/docs/", ".claude/", "*.test.*", "*.spec.*", "*.stories.*"];
 const FROZEN_LINE_BASE = /: frozen-render\.mjs --base (\S+)/;
-const FROZEN_LINE_HEAD = /; head ([0-9a-f]{40});/;
 const FROZEN_LINE_INPUTS = /; inputs ([0-9a-f]{16});/;
 const UNEDITABLE_REFERENCE = /^(?:docs\/|apps\/web\/content\/docs\/|\.claude\/)/;
 const FORBIDDEN_REFERENCE = /^(?:AGENTS|CLAUDE|AGENTS\.override)\.md$/;
@@ -526,17 +525,18 @@ function checkFrozenRenders(files, repo, changeLog, add) {
   });
   // Only the shipped driver's line counts; a hand-rolled capture skipped real play completion (ISS-13291).
   // It counts story files, as `affected` does; their stories follow in parentheses (ISS-13317). It names the
-  // exact commit it rendered (`head`) and session files (`inputs`); both must still match (ISS-13321).
+  // rendered states and their dependency inputs. Unrelated branch changes do not invalidate that evidence.
   const prefix = `Frozen render unchanged: all ${affected.length} story files (`;
   const current = (line) => {
     const base = FROZEN_LINE_BASE.exec(line)?.[1];
-    const head = FROZEN_LINE_HEAD.exec(line)?.[1];
     const inputs = FROZEN_LINE_INPUTS.exec(line)?.[1];
-    return Boolean(base && head && inputs) && repo.headSha === head && repo.frozenInputs(base) === inputs;
+    const exactFiles = affected.every((file) => line.includes(`--story-file ${file}`));
+    const exactStates = affected.flatMap((story) => storyIds(repo.base(story))).every((state) => line.includes(state));
+    return Boolean(base && inputs && exactFiles && exactStates) && repo.frozenInputs(base, affected) === inputs;
   };
   const recorded = changeLog.split("\n").some((line) => line.includes(prefix) && line.includes(": frozen-render.mjs ") && current(line));
   if (affected.length && !recorded) {
-    add("frozen-render", affected[0], 1, `${affected.length} frozen v1.0 story files render files this diff changed: ${affected.join(", ")}`, `run handoff's scripts/frozen-render.mjs with every one of these story files against a Storybook serving the base and one serving the branch, never a capture of your own; when it reports nothing blocking, record the \`Frozen render unchanged\` line it prints, otherwise keep the frozen renders unchanged; a line recorded before a later change no longer counts, so run it again after any change`);
+    add("frozen-render", affected[0], 1, `${affected.length} frozen v1.0 story files render files this diff changed: ${affected.join(", ")}`, `run handoff's scripts/frozen-render.mjs with every one of these story files against a Storybook serving the base and one serving the branch, never a capture of your own; when it reports nothing blocking, record the \`Frozen render unchanged\` line it prints, otherwise keep the frozen renders unchanged; rerun it only when qa-impact.mjs names one of these story states or its dependency inputs changed`);
   }
 }
 
@@ -727,7 +727,6 @@ export function sidebarOrderTests(files, repo) {
 
 function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
   let deepened = 0;
-  const headSha = git(worktree, ["rev-parse", "HEAD"]);
   const headFiles = git(worktree, ["ls-files"]).split("\n").filter(Boolean);
   const baseFiles = new Set(lines(() => git(worktree, ["ls-tree", "-r", "--name-only", base])));
   const blobs = new Map();
@@ -762,7 +761,6 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
         return { ok: false, reason: `git fetch ${step}: ${String(error?.stderr ?? error?.message ?? error).trim().split("\n")[0]}` };
       }
     },
-    headSha,
     headFiles,
     baseFiles,
     baseBlobs,
@@ -794,7 +792,7 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
         return false;
       }
     },
-    frozenInputs: memoize((ref) => { try { return frozenInputs(worktree, ref); } catch { return null; } }),
+    frozenInputs: (ref, stories) => { try { return frozenInputs(worktree, ref, stories); } catch { return null; } },
     filesNaming: (text) => lines(() => git(worktree, ["grep", "-l", "-F", text, "--", ...STORY_ID_PATHSPECS])),
     isFrozenStory,
     frozenStories: () => {

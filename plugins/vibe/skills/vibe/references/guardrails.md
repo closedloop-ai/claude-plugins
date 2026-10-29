@@ -540,10 +540,11 @@ next to Missing tests so engineering sees them.
 
 ### Running and missing tests
 
-Handoff runs the existing affected tests: after any change, fix or main
-merge (a conflict resolution included), exactly the tests closedloop-graph
-`code_tests_for` returns for the files it touched, plus the inventory's
-`diffRules.requiredTests`, nothing broader by default. Files that map to no tests
+Handoff runs the existing affected tests once for the feature-complete change:
+exactly the tests closedloop-graph `code_tests_for` returns for the files it
+touched, plus the inventory's `diffRules.requiredTests`, nothing broader by
+default. After automated QA, `qa-impact.mjs` selects any later lanes or named
+screens; a `None` result runs no local validation. Files that map to no tests
 (changelog, README, version text, Storybook Version History) run none; CI
 confirms them. When one fails, the SAME persistent
 `vibe-change-worker` fixes the session's own code, never what the test asserts

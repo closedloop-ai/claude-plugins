@@ -7,14 +7,16 @@
 // Usage:
 //   pre-pr-lanes.mjs run    --worktree <path> --head <sha> --command "<the lane's command, as the report prints it>" [--main-worktree <checkout of captured main> --main-sha <sha>]
 //   pre-pr-lanes.mjs record --worktree <path> --head <sha the run tested> --command "<lane command>" --result pass|fail
-//   pre-pr-lanes.mjs check  --worktree <path> --report <the lane report's output, e.g. `pnpm test:lanes`> [--skip <regex> --skip-ruling "<who, when, where>"]
+//   pre-pr-lanes.mjs check  --worktree <path> (--report <initial lane report> | --impact <qa-impact JSON>) [--skip <regex> --skip-ruling "<who, when, where>"]
 //
 // The report's lane commands are its 4-space-indented lines that start with a
 // package runner (pnpm, npm, npx, yarn, node), after any `KEY='value'`
 // assignments the lane's CI step binds; a trailing ` (<detail>)` is not part of
 // the command. A report that says nothing changed needs no lane. `check`
 // prints `MISSING-LANE <command>` for each lane with no passing record at HEAD
-// and exits 1; a report it cannot read exits 2. Records live in the session's
+// and exits 1; a report it cannot read exits 2. After automated QA, `--impact`
+// narrows the check to only lanes qa-impact.mjs selected. A None result needs
+// no local lane merely because another commit exists. Records live in the session's
 // git dir (`vibe-lane-results.json`). Changes nothing else.
 //
 // Every lane the report names is required, e2e lanes included: a pull request
@@ -138,7 +140,7 @@ function readRecords(worktree) {
 function main(argv) {
   const [command, ...rest] = argv;
   const { values } = parseArgs({ args: rest, options: {
-    worktree: { type: "string" }, head: { type: "string" }, command: { type: "string" }, result: { type: "string" }, report: { type: "string" }, skip: { type: "string" }, "skip-ruling": { type: "string" },
+    worktree: { type: "string" }, head: { type: "string" }, command: { type: "string" }, result: { type: "string" }, report: { type: "string" }, impact: { type: "string" }, skip: { type: "string" }, "skip-ruling": { type: "string" },
     "main-worktree": { type: "string" }, "main-sha": { type: "string" },
   } });
   if (!values.worktree) throw new Error("--worktree is required");
@@ -173,9 +175,12 @@ function main(argv) {
   }
   const head = git(values.worktree, ["rev-parse", "HEAD"]);
   if (command === "check") {
-    if (!values.report) throw new Error("check needs --report <lane report output>");
+    if (Boolean(values.report) === Boolean(values.impact)) throw new Error("check needs exactly one of --report <initial lane report> or --impact <qa-impact JSON>");
     if (values.skip && !values["skip-ruling"]?.trim()) throw new Error("--skip needs --skip-ruling naming the operator ruling that waives those lanes");
-    const named = reportLanes(readFileSync(values.report, "utf8"));
+    const impact = values.impact ? JSON.parse(readFileSync(values.impact, "utf8")) : null;
+    if (impact && !["None", "Lanes only", "Visual QA"].includes(impact.outcome)) throw new Error("the impact file has no valid qa-impact outcome");
+    const named = impact ? impact.lanes : reportLanes(readFileSync(values.report, "utf8"));
+    if (impact && !Array.isArray(named)) throw new Error("the impact file has no lanes array");
     if (named === null) {
       process.stderr.write("the lane report names no lane and does not say nothing changed; rerun the repository's lane report and save its output\n");
       return 2;

@@ -121,8 +121,9 @@ post-merge-only lane. Run that set once, each named lane by the command
 script or workflow reruns in its job's shape from
 `../skills/handoff/scripts/ci-job-shape.mjs` (`ciCheckRepros`). After a writer fixes an isolated
 failure, refresh the inventory and rerun only that failed case and any target
-the fix newly reaches, never the whole set. Record every result and SHA. Carry
-an earlier pass only when its covered-file hashes match final HEAD.
+the fix newly reaches, never the whole set. Record run provenance, but decide
+reuse with `qa-impact.mjs`: `None` carries the result, `Lanes only` names the
+functional work, and `Visual QA` names the screens and recorded states.
 A selected test or lane that fails at final HEAD is run once more, the same
 command, in a checkout of the main the session captured (the main-sync
 `mainSha`; for a lane, `../skills/vibe/scripts/pre-pr-lanes.mjs run

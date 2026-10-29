@@ -195,13 +195,11 @@ on leaving implementation using the [display reporter](../../cl-sweep/references
    code cannot prove it, treat that like any failed validation: fix the gap or
    return `MANUAL_INTERVENTION_REQUIRED` with the exact blocker before opening
    the PR.
-   Bind `Repo verification evidence` and `Safety fact` to a head the same way
-   manual QA is bound: record the head, merge base, and stable patch-id they
-   were captured at, and apply the patch-id rule in
-   [feature-manual-qa.md](feature-manual-qa.md) "Keep evidence bound to the
-   final change" after every head change. Evidence stays valid while the
-   patch-id is unchanged and main's changed files do not reach the captured
-   surface; otherwise recapture the affected surface.
+   Record `Repo verification evidence` and `Safety fact` with their source
+   provenance. After automated QA, use handoff's `qa-impact.mjs` with code
+   importers and FEATURE_MAP. `None` carries them, `Lanes only` repeats only
+   its named functional lanes, and `Visual QA` recaptures only its named
+   screens and recorded states. Manual QA keeps its own human-evidence rule.
 4. Enforce automated E2E display boundaries and record `Automated E2E display
    mode`.
 5. For performance tickets, enforce the Performance Measurement Contract in
@@ -245,10 +243,10 @@ in cl-execute points here.
 5. Already-open PR without pre-PR evidence: do not invent a current-head
    refresh gate. Produce the existing pre-PR evidence, obtain the operator's explicit
    exception for that already-open PR, or return the exact blocker.
-6. Head changes: after the one pre-PR pass or the operator's explicit exception
-   exists, later PR comments, test fixes, rebases, conflict repairs, source head
-   changes, and CI remediation do not require another visual-QA pass unless the operator
-   explicitly asks.
+6. Later changes: after the one pre-PR pass or the operator's explicit
+   exception exists, run handoff's `qa-impact.mjs`. Comments, docs, release
+   history and unrelated merges return `None`. Run another visual pass only
+   for the screens, states and flag arms a `Visual QA` result names.
 7. Substitutes: green CI, Storybook, a11y, screenshots attached to tests, and
    displayless E2E are supporting evidence, not substitutes for the pre-PR pass.
    One exception: when no stack may run (the user has stopped test

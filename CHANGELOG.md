@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.18
+
+#### Added
+- `handoff/scripts/qa-impact.mjs` classifies changes since automated QA as `None`, `Lanes only`, or visual QA for named FEATURE_MAP screens. It combines changed files, transitive code importers, repository-selected lanes, and screen/state/flag-arm evidence. Resume, startup adoption, fleet takeover, and handoff also reconcile an existing ticket's outgoing plan link, publishing a missing criterion-complete session plan or updating its one linked PLN without pausing source work (ISS-13411).
+
+#### Changed
+- Automated QA evidence is no longer invalidated by a new commit identity. Comment, documentation, release, CI-only, and non-rendering backend changes preserve local evidence; selected test changes rerun only their lanes; rendered changes invalidate only affected screens and states. Frozen-render evidence now names story states and hashes their semantic dependency closure rather than the branch head and unrelated files. CI remains per push (ISS-13411).
+- Vibe's Markdown instructions are about 19 words shorter than in 1.1.17.
+
 ### vibe v1.1.17
 
 #### Fixed

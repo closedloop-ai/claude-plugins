@@ -98,6 +98,10 @@ before it writes, so a resumed session or a repeated run never creates a
 second PLN or a duplicate link. `<gitdir>` is
 `$(git -C "<wt>" rev-parse --absolute-git-dir)`.
 
+At startup, resume or takeover on an existing ticket, run step C even without
+`livePlan`: reuse its one linked PLN, or publish the writer's criterion-complete
+local plan. Plan mode never waits for person approval or pauses source work.
+
 A. Source link. The source is the record's `ticket`, the ClosedLoop document
    the session was started from (a PRD, an ISS or another document); skip
    this step when it is null or is the live ticket itself.
@@ -291,7 +295,7 @@ commit and protection/access verification; requested scope/screens/host states;
 added/changed/removed component/story inventory with IDs/direct links,
 controls/Docs/plays and intentional ID/category moves/sidebar folds; actual
 compiled footprint/canonical catalog evidence and unresolved advisories;
-design/visual-QA reports/screenshots with inspected commits/viewports/hosts/states
+design/visual-QA reports/screenshots with screens/viewports/hosts/states/flag arms
 versus source-only/unverified; known gaps and remaining design decisions.
 For owned prototypes preserve canonical publication and source-backed N/A
 surfaces. Never fabricate links, counts, protection or inspection, assert looks
