@@ -19,4 +19,8 @@ test("the PR comment lists the final SHA, exact cases, command, tier and result 
   const comment = renderEvidenceComment(evidence);
   for (const value of [commit, "src/list.test.ts", "search", command, "E2E tier: A", `passed at \`${commit}\``, "Browser E2E", "pnpm test:browser-e2e"]) assert.ok(comment.includes(value), value);
   assert.throws(() => renderEvidenceComment({}), /targeted inventory/);
+  assert.throws(() => renderEvidenceComment({
+    ...evidence,
+    testSelection: { codeTestsFor: { "src/list.ts": ["list.test.ts"] } },
+  }), /testSelection must be an array/);
 });

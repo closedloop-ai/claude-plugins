@@ -280,3 +280,18 @@ test("Claude preflight reports a signed-out claude command before any worker lau
   assert.equal(runPreflight(env, ["--runtime", "claude", "--prototype"]).checks["claude-login"].ok, true);
   assert.equal(runPreflight(env, ["--prototype"]).checks["claude-login"], undefined);
 });
+
+test("a refused write of the remembered checkout asks for an escalated rerun and never fails setup (ISS-13321)", (t) => {
+  const env = setup(t);
+  const checkout = path.join(env.home, ...SPACED);
+  makeCheckout({ ...env, checkout, files: { "package.json": '{"engines":{"node":"^24 || >=26"}}\n' } });
+  const codex = path.join(env.home, ".codex");
+  mkdirSync(codex, { recursive: true });
+  chmodSync(codex, 0o500);
+  const { checks, stdout } = runPreflight(env, [], { CODEX_SANDBOX_NETWORK_DISABLED: "1" });
+  chmodSync(codex, 0o700);
+  assert.equal(checks.repo.ok, true);
+  const escalation = stdout.split("\n").filter(Boolean).map((line) => JSON.parse(line)).find((line) => line.escalate);
+  assert.equal(escalation?.justification, "Remember where your copy of the code is");
+  assert.equal(remembered(env.home), null);
+});

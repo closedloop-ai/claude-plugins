@@ -12,7 +12,7 @@ import { readDefinition } from "./definition.js";
 import { acquireRecordTurnAt, attachClaudeProcess, changeWriter, markClaudeStarted, readWriterSummary, recordedWriterRoot,
   registerWriter } from "./ledger.js";
 import { AgentRootError, installedPluginRoot, resolveAgentRoot } from "./plugin-root.js";
-import { isPublisherContext, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
+import { isHandoverContext, isPublisherContext, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
 import type { OperationContext } from "./main-sync-contracts.js";
 import { deriveValidationEnvelope } from "./main-sync-validation-envelope.js";
@@ -92,12 +92,25 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
       + "Delete a test file or case only when it covers nothing but code the request retires, recorded with retired-tests.mjs "
       + "and the ticket or PRD that retires it; a test of live behavior is only repaired. "
     : `This is mode ${input.mode}. Never write or edit tests. `;
+  const verifyEvidencePolicy = input.agentName === "vibe-verify-worker"
+    ? "This is a source read-only verification role. Never edit product source, tests, fixtures, snapshots, catalog or allowlists. "
+      + "Bash may write only owned private verification artifacts: <gitdir>/vibe-pr-evidence.json, "
+      + "<gitdir>/vibe-lane-report.txt from pnpm test:lanes, <gitdir>/vibe-lane-results.json "
+      + "through pre-pr-lanes.mjs, verifier-owned Storybook birth records and logs in its private git directory, "
+      + "and .control/ runtime files from "
+      + "the repository control command in control mode. Move only this turn's control captures to "
+      + "the private git directory before publication. Never write a ClosedLoop or session record. "
+    : "";
+  const storybookEvidencePolicy = input.agentName === "vibe-storybook-decomposer"
+    ? "This advisor may write only verifier-owned Storybook birth records and logs in the private git directory "
+      + "through verify-storybook-process.mjs. Stop each new process before returning. Never edit product source, "
+      + "tests or live records, and never adopt an unrecorded process. " : "";
   const prompt = `${definition.prompt}\n\nRuntime binding: work only in ${input.worktree}. `
     + `Resolve this canonical definition's relative resource references against ${join(definition.root, "agents")}. `
-    + (isPublisherContext(input)
-      ? "Never start another implementation writer or commit. Normal pushes are permitted only through the owned main-sync publication gate. "
-      : "Never start another implementation writer, commit, or push. ") + phasePolicy
-    + (reader ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : "")
+    + pushPolicy(input) + phasePolicy
+    + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName)
+      ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. "
+      : `${verifyEvidencePolicy}${storybookEvidencePolicy}`)
     + (input.agentName === "vibe-prototype-worker"
       ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "")
     + "Return one JSON object with status, summary (at most 4096 characters), and optional data. "
@@ -108,6 +121,17 @@ export function boundDefinition(definition: Definition, input: LaunchInput) {
   const agent = { description: definition.metadata.description, prompt, model: definition.metadata.model, tools,
     ...(definition.skills.length ? { skills: definition.skills } : {}) };
   return { agent, reader, tools };
+}
+
+function pushPolicy(input: LaunchInput) {
+  if (isPublisherContext(input)) {
+    return "Never start another implementation writer or commit. Normal pushes are permitted only through the owned main-sync publication gate. ";
+  }
+  if (isHandoverContext(input)) {
+    return "Never start another implementation writer or commit. Push only the current commit to the session's branch, once, "
+      + "through the repository's normal pre-push checks; never forced or with checks skipped. ";
+  }
+  return "Never start another implementation writer, commit, or push. ";
 }
 
 /** Launches the canonical scoped agent directly; the registered writer resumes its original context. */
@@ -216,7 +240,9 @@ export async function runWorker(rawInput: unknown) {
         leaseRetained = false;
       } catch { leaseRetained = true; }
     }
-    const failure = safeFailure(error);
+    const failure = error instanceof StructuredOutputRetryError && input.mode === "record"
+      ? { code: "RECORD_RESULT_UNVERIFIED", summary: "The record turn's final status failed structured output validation. Its write may have succeeded. Do not repeat the write; perform read-only reconciliation of the ticket and session record, then continue from the verified state." }
+      : safeFailure(error);
     const capHit = persistent && failure.code === "TURN_TIMEOUT" ? capCheckpoint(place.root, place.dir, turnId) : undefined;
     if (capHit) {
       failure.summary = `CAP-HIT: the turn hit its time cap with ${capHit.dirtyFiles} changed files${capHit.midMerge ? ", mid-merge" : ""}`
@@ -321,6 +347,10 @@ async function launchProcess(args: string[], granted: readonly string[], cwd: st
           return;
         }
         if (failed) { reject(failed); return; }
+        if (final?.is_error && final.terminal_reason === "structured_output_retry_exhausted") {
+          reject(new StructuredOutputRetryError("Claude exhausted structured output retries"));
+          return;
+        }
         if (code !== 0 || !final || final.is_error || (final.structured_output === undefined && !final.result)) { reject(new Error("Claude failed or returned no successful structured result")); return; }
         try {
           const result = workerResultSchema.parse(capWorkerResult(final.structured_output !== undefined
@@ -334,6 +364,7 @@ async function launchProcess(args: string[], granted: readonly string[], cwd: st
 }
 
 class OwnedCleanupError extends Error {}
+class StructuredOutputRetryError extends Error {}
 class WorkerLaunchError extends Error {
   constructor(readonly result: { status: "BLOCKED"; code: string; summary: string; personAction?: string; workerId: string;
     sessionId: string; requestId: string; tracePath: string; leaseRetained: boolean; recordLeaseRetained: boolean;

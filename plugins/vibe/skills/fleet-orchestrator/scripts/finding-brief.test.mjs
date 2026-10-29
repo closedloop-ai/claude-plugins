@@ -77,4 +77,17 @@ test('a VQA finding on a touched surface blocks closeout without a fix or ticket
   assert.deepEqual(dispositionProblems([{ ...base, disposition: 'ticket: XY-1' }]), []);
   assert.deepEqual(dispositionProblems([{ ...base, touchedSurface: false }]), []);
   assert.deepEqual(dispositionProblems([{ id: 'X002' }]), ['X002: touchedSurface must say true or false']);
+  assert.deepEqual(dispositionProblems(undefined), ['findings must be a list, [] when QA found nothing']);
+});
+
+test('a clean QA pass with no findings clears the disposition gate, never needing an invented finding', (t) => {
+  assert.deepEqual(dispositionProblems([]), []);
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'finding-brief-clean-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const findings = join(root, 'findings.json');
+  writeFileSync(findings, JSON.stringify({ head: 'abc1234', findings: [] }));
+  const run = spawnSync(process.execPath, [SCRIPT, root, '--findings', findings, '--require-disposition'], { encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.deepEqual(JSON.parse(run.stdout), { ok: true, problems: [] });
+  assert.deepEqual(findingProblems([]), ['no findings'], 'the brief path still refuses an empty brief');
 });

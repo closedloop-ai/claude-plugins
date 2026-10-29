@@ -55,12 +55,11 @@ export function syncContext(raw: unknown, operation: "prepare" | "inputs" | "val
     actual = owner.context;
     primaryOwner = owner.primaryOwner;
   }
-  if (actual.worktree !== place.root || actual.agentName !== context.agentName || actual.workerId !== context.workerId
-    || actual.requestId !== context.requestId || actual.lease !== context.lease || actual.recordAction !== context.recordAction
-    || (actual.publicationPurpose ?? "build") !== (context.publicationPurpose ?? "build")
-    || actual.mainSyncTransactionId !== context.mainSyncTransactionId
-    || JSON.stringify(actual.mainSyncRequestContinuations) !== JSON.stringify(context.mainSyncRequestContinuations)) {
-    throw new MainSyncError("Main-sync requires the exact current owner, role, action and purpose");
+  const differing = ownerMismatches(actual, context, place.root);
+  if (differing.length) {
+    // A rebuilt context refused twice with no hint of what differed (ISS-13321); the names, never the values.
+    throw new MainSyncError(`Main-sync requires the exact current owner, role, action and purpose; differs: ${differing.join(", ")}. `
+      + "Pass the launch envelope's operationContext verbatim, never a rebuilt one");
   }
   if (JSON.stringify(actual.mainSyncCiRun) !== JSON.stringify(context.mainSyncCiRun)) {
     throw new MainSyncError("CI locator must match the actual parent-issued source grant");
@@ -133,3 +132,19 @@ export function committedIdentity(root: string) {
 }
 
 export function digest(text: string | Buffer) { return createHash("sha256").update(text).digest("hex"); }
+
+/** The owner-context fields where the caller's context differs from the launcher's record, by name only. */
+export function ownerMismatches(actual: OperationContext, context: OperationContext, root: string) {
+  const checks: [string, boolean][] = [
+    ["worktree", actual.worktree !== root],
+    ["agentName", actual.agentName !== context.agentName],
+    ["workerId", actual.workerId !== context.workerId],
+    ["requestId", actual.requestId !== context.requestId],
+    ["lease", actual.lease !== context.lease],
+    ["recordAction", actual.recordAction !== context.recordAction],
+    ["publicationPurpose", (actual.publicationPurpose ?? "build") !== (context.publicationPurpose ?? "build")],
+    ["mainSyncTransactionId", actual.mainSyncTransactionId !== context.mainSyncTransactionId],
+    ["mainSyncRequestContinuations", JSON.stringify(actual.mainSyncRequestContinuations) !== JSON.stringify(context.mainSyncRequestContinuations)],
+  ];
+  return checks.filter(([, differs]) => differs).map(([name]) => name);
+}

@@ -121,7 +121,7 @@ function titleOf(key) {
   return key.slice(0, key.lastIndexOf(" › "));
 }
 
-function bumpLevel(from, to) {
+export function bumpLevel(from, to) {
   const before = SEMVER.exec(from ?? "");
   const after = SEMVER.exec(to ?? "");
   if (!before || !after || from === to) {

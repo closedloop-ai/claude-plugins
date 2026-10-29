@@ -43,6 +43,7 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { escalation, isSandboxRefusal } from "./sandbox-refusal.mjs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -314,7 +315,7 @@ async function main(argv) {
     const code = await runCommand(command, args, { ...process.env, COMPOSE_PROJECT_NAME: composeProject });
     const after = execFileSync("git", ["-C", worktreeOf(process.cwd()), "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
     if (after === tested) {
-      if (code === 0) recordImages(images);
+      if (code === 0) recordImagesOrSay(images);
       return code;
     }
     process.stderr.write(`HEAD-MOVED from ${tested.slice(0, 12)} to ${after.slice(0, 12)} during the run; its result is not for ${tested.slice(0, 12)}\n`);
@@ -324,10 +325,21 @@ async function main(argv) {
   }
 }
 
+/** The image record is optional: a refused write is said, never fails a run that passed. */
+function recordImagesOrSay(images) {
+  try { recordImages(images); }
+  catch (error) {
+    process.stderr.write(`IMAGES-NOT-RECORDED ${error instanceof Error ? error.message : String(error)}; the next run builds fresh\n`);
+  }
+}
+
+export const ESCALATION_JUSTIFICATION = "Reserve the shared setup for the automatic checks";
+
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error) => {
+      if (isSandboxRefusal(error)) process.stdout.write(`${JSON.stringify(escalation(error, ESCALATION_JUSTIFICATION))}\n`);
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
       process.exit(2);
     }

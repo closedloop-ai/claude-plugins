@@ -293,7 +293,12 @@ no PR itself, and never offers to send the person the branch to merge. Never ask
 person about tests or any other engineering choice: those rules decide it, or
 it goes to engineering. Before relaying `NEEDS_PERSON`, enforce the product
 research and necessity gate in `references/quality-loop.md`; technical choices
-stay with the workers.
+stay with the workers. A `NEEDS_PERSON` or `BLOCKED` result, a check's
+suggested fix and a stop's reason never reach the person as something to do
+unless only a human can do it (a click, a sign-in, a choice between endings,
+a product answer); any other remedy is the writer's, or engineering's on the
+live ticket's Engineering checklist (`references/plain-words.md`, "What the
+person is asked to do").
 
 ## 1. Preflight
 
@@ -546,10 +551,13 @@ and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
    `origin/main`. The live ticket is assigned to that person. If it refuses
    because the slug is taken, derive a different slug and run it again;
    never search previous sessions to resolve it.
-5. Record this conversation as the session's orchestrator:
+5. Record this conversation as the session's orchestrator. In Codex run
    `node scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"` (it reads
-   `CODEX_THREAD_ID`; outside Codex, pass `--thread <id>` if you have one, or
-   skip it).
+   `CODEX_THREAD_ID`). In Claude Code run `node scripts/vibe-sessions.mjs
+   claude-sessions --worktree "<wt>" --transcript "<this Claude session's
+   actual transcript path>"`. The command verifies the transcript's own
+   session ID. Never invent an ID or record the implementation writer as the
+   orchestrator.
 6. Dispatch `vibe-setup-worker` to bootstrap the new worktree, then
    `vibe-ticket-worker` in create mode with the worktree, the
    requirements worker's brief, the originating ticket if any, and the mode.
@@ -589,7 +597,8 @@ Never create a new worktree/branch for these requests or an arbitrary
 unrecorded prototype. Next-owner assignment and canonical metadata transitions
 remain in the handoff flow.
 
-Resuming: use the session's `worktree`, and run `codex-sessions` again so a
+Resuming: use the session's `worktree`, and run the matching `codex-sessions`
+or `claude-sessions` command again so a
 new conversation is recorded too. A resumed session gets no endings line. Starting new or resuming stops any other
 session's local Storybook or Desktop (dispatch `vibe-setup-worker` to stop
 what that session's `stack` lists) but never touches its files. You commit
@@ -720,7 +729,10 @@ being asked (section 6). Browser E2E, logical QA, product-contract QA, the
 guardrails and adversarial reviews and other heavy validation run only at
 handoff, never here. A frozen-render finding never holds a build-loop commit
 or preview: the build-phase inventory lists it under
-`diffRules.deferredToHandoff` and handoff settles it. Visual QA runs at handoff too, and during the session
+`diffRules.deferredToHandoff` and handoff settles it. A deferred finding and
+its remedy (render the frozen stories, pause an animation) are never relayed
+to the person, not even when they ask what to do next
+(`references/plain-words.md`, "What the person is asked to do"; ISS-13321). Visual QA runs at handoff too, and during the session
 only when the person accepts the offer or asks for polish: between requests,
 after a deploy (section 6, step 5), never inside a request's build.
 
@@ -733,6 +745,13 @@ uses `scripts/dist/claude-worker.mjs` with the scoped canonical role; its
 recorded underlying session ID is resumed, never a fresh context with the same
 name. Use the parent-discovered exact capabilities, not a configured-prefix
 guess or blanket MCP inheritance. All private input is JSON on stdin.
+
+Before launching or resuming the recorded writer, read
+`writer-state.mjs status`: when its `recordedDefinition` is `removed` (a
+plugin update deleted the recorded release), or `changed` with the installed
+release newer than the recorded one, run
+`references/quality-loop.md`'s "Recorded definition migration" first, never a
+launch that fails on the missing definition (ISS-13321).
 
 Use the owned state helper's status/enqueue/claim/take-input/finish actions.
 Queue incoming requests while one is active. For native Codex, claim its exact
@@ -950,7 +969,7 @@ in the writer's queue until it finishes; then the writer builds every request
 that waited, and one deploy after the last of them carries them all. A
 "redeploy" said during a running deploy joins that next deploy.
 
-1. Run `node scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"` so
+1. Run the matching `codex-sessions` or `claude-sessions` command from step 5 so
    the ticket lists every subagent so far.
 2. Keep deployment progress internal; report completion, not technical steps.
    After the writer's quick checks, ROOT commits the checked deliverable
@@ -1059,8 +1078,9 @@ were going to code it"), explain the two endings plainly in a line or two and
 ask the same question; never jump straight to asking for a name. Never offer
 to send them the branch to merge.
 
-On "keep it", dispatch `vibe-setup-worker` to stop local Storybook or Desktop
-if either runs. Their work stays in the worktree and on the branch until they
+On "keep it", stop local Storybook and Desktop with
+`node scripts/vibe-sessions.mjs stop --worktree "<wt>"`, which signals only a
+recorded process it proves is still the session's own (ISS-13321). Their work stays in the worktree and on the branch until they
 come back and say they are done; remind them that is how it gets a pull
 request or reaches design and engineering. On "throw it away", follow section 9.
 

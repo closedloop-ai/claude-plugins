@@ -239,7 +239,10 @@ passes (return the ones it refuses). Change nothing else.
 ## Handoff mode
 
 Read the required session decision table and row IDs with actual whole-table
-source/test/review evidence. Require `Final Alignment Status: Aligned`; required
+source/test/review evidence. Require `Final Alignment Status: Aligned`, or,
+only when the person chose passing it on, `Aligned except criteria waiting on
+<tickets>` with each such criterion marked `not met yet: waits on <ticket>`
+(handoff SKILL.md step 6; ISS-13321); required
 coverage gaps return NEEDS_CHANGE to the same writer rather than a completed
 ticket claim, except a missing test that is on the writer's missing tests list,
 which goes under Missing tests as engineering's scope of work. The table covers
@@ -388,6 +391,13 @@ historical inspections accurately. Preserve the existing grading block.
      never blocks assignment or the check below. The item's shape:
 
      `- [ ] Known main failure: <check>; fails on captured main <mainSha>; evidence: <first error line of the main run's log>; exit <main exit code> on captured main, <session exit code> on the session commit`
+   - Place each `machineLimitedChecks`, `e2eLeftForCi` and waiting-criterion
+     entry, and each vibe tooling blocker, once, as an unchecked item at the
+     end of the Engineering checklist in the template's shape
+     (`../skills/vibe/references/ticket-template.md`, "Checks that ran out of
+     time", "E2E left for CI", "Criteria waiting on other work" and "Vibe
+     tooling blockers"). None of them blocks assignment or the check below,
+     and none goes to the person (ISS-13321).
    - Fill Grading with the template's Grading section copied unchanged,
      adding the section after Handoff when the ticket has none.
    - Include the handoff's same-Storybook-version check: the version, every
@@ -395,8 +405,10 @@ historical inspections accurately. Preserve the existing grading block.
      pull request does. For a requested pull request, require a fresh check
      against its pinned base immediately before creation: release history,
      package version, component and story counts, plus every in-flight train
-     reservation. A stale comparison, duplicate version or conflicting count
-     returns `NEEDS_CHANGE`.
+     reservation. A wrong bump relative to that base or a conflicting count
+     returns `NEEDS_CHANGE`; main moving on after the pin and a version
+     another open pull request reserves do not (handoff SKILL.md, "the next
+     free version"; ISS-13321).
 7. Run "Source link and session plan" A to F. The handoff's code is
    written and checked, so step F leaves the PLN `APPROVED` (an `EXECUTED`
    one stays). The ticket is not complete until the source link (when the
@@ -462,6 +474,13 @@ The person threw the session away and its branch is deleted.
    IN_PROGRESS`. Confirm with `get-document`.
 
 ## Return (under 100 words)
+
+After the final read-back, call the native `StructuredOutput` tool with only
+an object such as `{ "status": "DONE", "summary": "ISS-123 handoff verified." }`.
+Do not put tool tags, XML parameter markup or the ticket body in either field.
+If the output tool fails after a write, do not repeat that write: the
+orchestrator performs a read-only reconciliation of the live ticket and
+session record before dispatching any further record action.
 
 `DONE` with the ticket slug and URL (create, assign, cancel; create also confirms the
 slug is recorded on the session and names the source link or that there is no

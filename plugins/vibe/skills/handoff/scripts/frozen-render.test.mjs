@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { runDiffRules } from "./diff-rules.mjs";
-import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenRenders, frozenStoryFiles, frozenStoryIds, prepareBase, storyFileChanges } from "./frozen-render.mjs";
+import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenInputs, frozenRenders, frozenStoryFiles, frozenStoryIds, prepareBase, storyFileChanges } from "./frozen-render.mjs";
 import { CROP_MAX_WIDTH, decodePng, encodePng } from "./png-diff.mjs";
 import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
 
@@ -254,6 +254,8 @@ test("the line it prints passes handoff's frozen-render rule, which counts story
   const storyFiles = ["apps/storybook/stories/row.stories.tsx"];
   const ids = frozenStoryIds(checkout, base, storyFiles);
   const summary = await frozenRenders({ ids, fileCount: storyFiles.length, baseUrl: BASE, headUrl: HEAD, out, command: `frozen-render.mjs --base ${base} --story-file ${storyFiles[0]}`,
+    head: git(checkout, ["rev-parse", "HEAD"], home),
+    inputs: frozenInputs(checkout, base),
     browser: fakeBrowser({ [BASE]: { [ids[0]]: throws("no fixture"), [ids[1]]: [passes(shot(GREY)), passes(shot(BLUE))] }, [HEAD]: { [ids[0]]: throws("no fixture"), [ids[1]]: passes(shot(GREY)) } }) });
   assert.match(summary.changeLogLine, /^Frozen render unchanged: all 1 story files \(2 stories\): frozen-render\.mjs /);
   const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], home);
@@ -298,7 +300,7 @@ test("the line the command prints is the line the gate accepts when story files 
   // A story file named twice is still one file.
   const summary = await frozenStoryFiles({ repo: checkout, base, storyFiles: [...storyFiles, storyFiles[0]], baseUrl: BASE, headUrl: HEAD, out,
     browser: fakeBrowser({ [BASE]: side, [HEAD]: side }) });
-  assert.equal(summary.changeLogLine, `Frozen render unchanged: all 2 story files (4 stories): frozen-render.mjs --base ${base} --story-file ${storyFiles[0]} --story-file ${storyFiles[1]}: 4 identical, 0 unstable on base, 0 same failure, 0 blocking; ${path.join(out, "results.json")}`);
+  assert.equal(summary.changeLogLine, `Frozen render unchanged: all 2 story files (4 stories): frozen-render.mjs --base ${base} --story-file ${storyFiles[0]} --story-file ${storyFiles[1]}: 4 identical, 0 unstable on base, 0 same failure, 0 blocking; head ${base}; inputs ${frozenInputs(checkout, base)}; ${path.join(out, "results.json")}`);
   writeFileSync(path.join(gitDir, "vibe-changes.md"), `${summary.changeLogLine}\n`);
   assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, []);
   // A line counting the 4 stories as story files, as 1.1.11 did, is refused.
@@ -415,4 +417,41 @@ test("the CLI names a missing argument, a bad --now or a repo without Playwright
   const missing = spawnSync(process.execPath, args, { encoding: "utf8" });
   assert.equal(missing.status, 2);
   assert.match(missing.stdout, /^error: Playwright is not installed/);
+});
+
+test("a recorded line clears only the exact head and files it rendered (ISS-13321)", async (t) => {
+  const { root, home, out } = sandbox(t);
+  const checkout = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", checkout], home);
+  const story = "apps/storybook/stories/row.stories.tsx";
+  const row = "packages/design-system/components/row.tsx";
+  for (const [file, text] of Object.entries({ [story]: "import { Row } from \"@repo/design-system/components/row\";\nexport default { title: \"Composites v1.0/Row\" };\nexport const Populated = {};\n", [row]: "export const Row = 1;\n" })) {
+    mkdirSync(path.dirname(path.join(checkout, file)), { recursive: true });
+    writeFileSync(path.join(checkout, file), text);
+  }
+  git(checkout, ["add", "-A"], home);
+  git(checkout, ["commit", "--quiet", "-m", "base"], home);
+  const base = git(checkout, ["rev-parse", "HEAD"], home);
+  writeFileSync(path.join(checkout, row), "export const Row = 2;\n");
+  const [id] = frozenStoryIds(checkout, base, [story]);
+  const summary = await frozenStoryFiles({ repo: checkout, base, storyFiles: [story], baseUrl: BASE, headUrl: HEAD, out,
+    browser: fakeBrowser({ [BASE]: { [id]: passes(shot(GREY)) }, [HEAD]: { [id]: passes(shot(GREY)) } }) });
+  assert.match(summary.changeLogLine, new RegExp(`; head ${base}; inputs [0-9a-f]{16}; `));
+  assert.match(summary.changeLogLine, /; inputs [0-9a-f]{16}; /);
+  const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], home);
+  writeFileSync(path.join(gitDir, "vibe-changes.md"), `${summary.changeLogLine}\n`);
+  const isFrozenStory = (text) => / v1\.0\//.test(text);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, []);
+  git(checkout, ["commit", "--quiet", "-am", "the rendered change"], home);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((finding) => finding.rule), ["frozen-render"],
+    "the same bytes on a different head require a new render proof");
+  const committedHead = git(checkout, ["rev-parse", "HEAD"], home);
+  const current = await frozenStoryFiles({ repo: checkout, base, storyFiles: [story], baseUrl: BASE, headUrl: HEAD, out,
+    browser: fakeBrowser({ [BASE]: { [id]: passes(shot(GREY)) }, [HEAD]: { [id]: passes(shot(GREY)) } }) });
+  assert.match(current.changeLogLine, new RegExp(`; head ${committedHead}; inputs [0-9a-f]{16}; `));
+  writeFileSync(path.join(gitDir, "vibe-changes.md"), `${current.changeLogLine}\n`);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, []);
+  writeFileSync(path.join(checkout, row), "export const Row = 3;\n");
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((finding) => finding.rule), ["frozen-render"],
+    "the line from the earlier head no longer clears the new change");
 });

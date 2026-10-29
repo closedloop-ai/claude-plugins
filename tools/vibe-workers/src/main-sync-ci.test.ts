@@ -11,7 +11,9 @@ function pendingHandoff() {
   value.write("apps/desktop/test/reveal-window.spec.ts", "synthetic required Electron scenario\n");
   value.git(["add", "."]); value.git(["commit", "-m", "Final handoff scenario"]);
   const result = validateFixture(value, "handoff");
-  expect(result.json?.mainSync).toMatchObject({ status: "NEEDS_REVIEW", publicationReady: true, requiredE2eComplete: false });
+  // ISS-13321: the Desktop lane is left for the post-merge run and no longer holds the handoff.
+  expect(result.json?.mainSync).toMatchObject({ status: "DONE", publicationReady: true, requiredE2eComplete: true,
+    e2eLeftForCi: [{ argv: ["pnpm", "--dir", "apps/desktop", "test:e2e"], coveredBy: expect.stringContaining("desktop-e2e/validated") }] });
   const publication = value.start("redeploy", "handoff");
   try { expect(invokeSync(value, "push", publication.context).status).toBe(0); } finally { publication.finish(); }
   return value;
@@ -29,6 +31,7 @@ describe("actual published snapshot external coverage completion", () => {
     const checked = complete(value);
     expect(checked.status, checked.stdout).toBe(0);
     expect(checked.json?.mainSync).toMatchObject({ status: "DONE", requiredE2eComplete: true });
+    expect(checked.json?.mainSync).not.toHaveProperty("e2eLeftForCi");
     const after = JSON.parse(readFileSync(join(value.metadata, "vibe-main-sync.json"), "utf8"));
     expect(after.transactionId).toBe(before.transactionId);
     expect(after.mainSha).toBe(before.mainSha);
@@ -42,7 +45,7 @@ describe("actual published snapshot external coverage completion", () => {
     const stored = readFileSync(join(value.metadata, "vibe-writer.json"), "utf8");
     expect(JSON.parse(stored).workerId).toBe("fixture-source");
   }, 30000);
-  it.each(["repository", "head-repository", "loaded-main", "workflow", "attempt", "checkout", "canceled", "skipped", "missing-step", "narrowed-scope", "producer", "producer-markers-only", "duplicate-selector"])(
+  it.each(["repository", "head-repository", "loaded-main", "workflow", "attempt", "checkout", "canceled", "skipped", "missing-step", "narrowed-scope", "producer", "producer-markers-only", "producer-ref", "bound-other-sha", "duplicate-selector"])(
     "rejects actual %s mismatch rather than accepting generic green", (failure) => {
       const value = pendingHandoff(); const ci = installCiFixture(value);
       if (failure === "repository") ci.fixture.run.repository.full_name = "other/repo";
@@ -52,13 +55,18 @@ describe("actual published snapshot external coverage completion", () => {
       if (failure === "attempt") ci.fixture.run.run_attempt = 2;
       if (failure === "checkout") ci.fixture.log = ci.fixture.log.replaceAll(value.git(["rev-parse", "HEAD"]), "b".repeat(40));
       if (failure === "canceled") ci.fixture.jobs.jobs[0]!.conclusion = "cancelled";
-      if (failure === "skipped") ci.fixture.jobs.jobs[0]!.steps[2]!.conclusion = "skipped";
+      if (failure === "skipped") ci.fixture.jobs.jobs[0]!.steps[1]!.conclusion = "skipped";
       if (failure === "missing-step") ci.fixture.jobs.jobs[0]!.steps.pop();
       if (failure === "narrowed-scope") ci.fixture.log = ci.fixture.log.replace("DESKTOP_E2E_SMOKE_TAG: ", "DESKTOP_E2E_SMOKE_TAG: @smoke");
       if (failure === "producer") ci.fixture.contents.content = Buffer.from("jobs: {}\n").toString("base64");
       if (failure === "producer-markers-only") {
         ci.fixture.contents = producerContents("# dbus-run-session xvfb-run node scripts/assert-e2e-results.mjs\necho 'dbus-run-session xvfb-run node scripts/assert-e2e-results.mjs'\n");
       }
+      if (failure === "producer-ref") {
+        const definition = Buffer.from(ci.fixture.contents.content, "base64").toString("utf8").replace("github.event.inputs.ref || ", "");
+        ci.fixture.contents.content = Buffer.from(definition).toString("base64");
+      }
+      if (failure === "bound-other-sha") ci.fixture.log = ci.fixture.log.replace("   DESKTOP_E2E_SMOKE_TAG: ", `   DD_GIT_COMMIT_SHA: ${"b".repeat(40)}\n2026-10-09T00:00:10.0205000Z   DESKTOP_E2E_SMOKE_TAG: `);
       if (failure === "duplicate-selector") ci.fixture.log = ci.fixture.log.replace("DESKTOP_E2E_CHANGED_SPECS:", "DESKTOP_E2E_SMOKE_TAG:");
       ci.save();
       const denied = complete(value);
@@ -74,8 +82,8 @@ describe("actual published snapshot external coverage completion", () => {
     finally { source.finish(); }
     const sha = value.git(["rev-parse", "HEAD"]);
     const original = ci.fixture.log;
-    ci.fixture.log = original.replace(`   DD_GIT_COMMIT_SHA: ${sha}`, "   MISSING: ")
-      + `\n2026-10-09T00:00:12Z ##[group]Run set -o pipefail\n2026-10-09T00:00:12.1Z   DD_GIT_COMMIT_SHA: ${sha}\n2026-10-09T00:00:12.2Z ##[endgroup]`;
+    ci.fixture.log = original.replace(`Z ${sha}`, `Z ${"c".repeat(40)}`)
+      + `\n2026-10-09T00:00:12Z [command]/usr/bin/git log -1 --format=%H\n2026-10-09T00:00:12.1Z ${sha}`;
     ci.save(); expect(complete(value).status).toBe(1);
     ci.fixture.log = original; ci.fixture.mutateSourceOnLog = true; ci.save();
     expect(complete(value).status).toBe(1);

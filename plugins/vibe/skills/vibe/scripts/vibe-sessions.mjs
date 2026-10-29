@@ -22,12 +22,14 @@
 //   vibe-sessions.mjs desktop-auth    --worktree <path> --file <auth-claim.json>
 //   vibe-sessions.mjs desktop-launched --worktree <path> --pid <launch pid> --log <launch log>
 //   vibe-sessions.mjs desktop-tab     --worktree <path>
+//   vibe-sessions.mjs stop            --worktree <path>
 //   vibe-sessions.mjs link            --worktree <path> (--story <story id> [--local] | --page <path>)
 //   vibe-sessions.mjs dispatch-inputs --worktree <path> --out <inputs.json>
 //                                     [--person-email <email>] [--keep-flag-snapshot true|false]
 //                                     (`true` is sent only when the session's previous request
 //                                     published a verified result; otherwise `false`)
 //   vibe-sessions.mjs codex-sessions  --worktree <path> [--thread <id>]
+//   vibe-sessions.mjs claude-sessions --worktree <path> --transcript <Claude Code session .jsonl>
 //   vibe-sessions.mjs ticket-sections --worktree <path>
 //   vibe-sessions.mjs environment-result --worktree <path> --file <vibe-environment-result.json>
 //                                     --request-id <id>
@@ -61,6 +63,8 @@
 // (ISS-12048) next to the record; `list` also shows the keys flag-keys.mjs
 // recorded and the person's approval of each; `codex-sessions` records this Codex thread
 // (`--thread`, else CODEX_THREAD_ID) and every subagent thread it spawned;
+// `claude-sessions` records a Claude Code orchestrator only from its witnessed
+// session transcript;
 // `ticket-sections` prints the live ticket's Environment, Production flag
 // snapshot, and Sessions sections from the record, with the branch's current
 // merge-base as its base commit. `dispatch-inputs` writes
@@ -75,7 +79,9 @@
 // profile in. `desktop-launched` records a running `vibe:profile launch`
 // (its pid and log) and the Desktop browser tab's URL it printed on the
 // session's stack (ISS-12182), or no URL for a worktree whose launcher
-// predates the tab (the Desktop window still runs); `desktop-tab` reports
+// predates the tab (the Desktop window still runs); `stop` stops the recorded
+// Storybook and Desktop, each only when it is still the session's own process,
+// and `discard --confirm` stops them first; `desktop-tab` reports
 // whether that launch is still running and its URL only while it is, so a tab
 // is never reopened on a closed Desktop's port. The URL carries the launch's bridge token, so the record is written
 // owner-only and the URL never goes on the ticket. `link` prints the link to
@@ -90,7 +96,7 @@
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -102,6 +108,7 @@ import { migrationOrderProblems } from "./migration-order.mjs";
 import { adoptStartupRecord, blockingProblem, conversationId, readStartupRecord } from "./plugin-version.mjs";
 import { pageLink, storyLink } from "./person-links.mjs";
 import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublication } from "./prototype-session.mjs";
+import { captureSessionProcessIdentities, stopSessionProcesses } from "./session-processes.mjs";
 import { adoptStartupQuestions } from "./session-questions.mjs";
 import { git, readSessionRecord, sessionLiveTicket, writeSessionRecord as writeRecord } from "./session-record.mjs";
 import {
@@ -144,6 +151,7 @@ const PlanStatus = {
   Executed: "EXECUTED",
 };
 const THREAD_PATTERN = /^[A-Za-z0-9-]{8,100}$/;
+const CLAUDE_SESSION_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CLERK_ORG_PATTERN = /^org_[A-Za-z0-9]+$/;
 const PID_PATTERN = /^[1-9]\d{0,9}$/;
 const STORY_FILE_PATTERN = /\.stories\.tsx?$/;
@@ -188,6 +196,7 @@ const { positionals, values } = parseArgs({
     "main-merge": { type: "string" },
     file: { type: "string" },
     thread: { type: "string" },
+    transcript: { type: "string" },
     out: { type: "string" },
     "person-email": { type: "string" },
     "clerk-org-id": { type: "string" },
@@ -259,6 +268,8 @@ async function run(command) {
       return { mainSync: admitMainSyncShare(await readMainSyncInput(requireOption("worktree"))) };
     case "codex-sessions":
       return { session: recordCodexSessions() };
+    case "claude-sessions":
+      return { session: recordClaudeSessions() };
     case "ticket-sections":
       return { markdown: ticketSections() };
     case "environment-result":
@@ -267,11 +278,13 @@ async function run(command) {
       return { session: recordLocalFix() };
     case "story-replacement":
       return { session: recordStoryReplacement() };
+    case "stop":
+      return stopSession();
     case "discard":
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, link, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, ticket-sections, environment-result, local-fix, story-replacement, discard."
+        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, stop, link, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, claude-sessions, ticket-sections, environment-result, local-fix, story-replacement, discard."
       );
   }
 }
@@ -424,6 +437,7 @@ function newSession({ prototype = false } = {}) {
     clerkOrgId: null,
     desktopAuthSavedAt: null,
     codexSessions: { orchestrators: [], subagents: [] },
+    claudeSessions: { orchestrators: [] },
     stack: null,
     localFixes: [],
   };
@@ -473,7 +487,7 @@ function touchSession() {
     livePlan: livePlan ?? record.livePlan,
     livePlanStatus: livePlanStatus ?? record.livePlanStatus,
     clerkOrgId: values["clerk-org-id"] ? requireClerkOrgId(values["clerk-org-id"]) : record.clerkOrgId,
-    stack: values.stack ? JSON.parse(values.stack) : record.stack,
+    stack: values.stack ? captureSessionProcessIdentities(worktree, JSON.parse(values.stack), { previous: record.stack }) : record.stack,
     ...(mainMerge ?? record.mainMerge ? { mainMerge: mainMerge ?? record.mainMerge } : {}),
     lastActiveAt: now,
   };
@@ -497,24 +511,29 @@ function showSession() {
  * discarded. The result carries the live ticket and operator read from the
  * record before it is deleted, for the worker that cancels the ticket.
  */
-function discardSession() {
+/**
+ * Stops the session's recorded Storybook and Desktop, each only after proving it is still the process the
+ * session started (alive, that kind of command, running in this worktree); a stale or reused pid is left alone.
+ */
+async function stopSession() {
   const worktree = requireOption("worktree");
   const record = requireRecord(worktree);
-  const branch = git(worktree, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  const targetRoot = realpathSync(git(worktree, ["rev-parse", "--show-toplevel"]));
-  const targetDir = git(worktree, ["rev-parse", "--absolute-git-dir"]);
-  if (realpathSync(worktree) !== targetRoot || record.branch !== branch || !existsSync(path.join(targetDir, "commondir"))) {
-    throw new Error("Discard requires the exact owned session worktree and matching private branch record.");
+  requireOwnedSession(worktree, record, "Stop");
+  return { worktree, processes: await stopRecorded(worktree, record) };
+}
+
+async function stopRecorded(worktree, record) {
+  const { results, stack } = await stopSessionProcesses(worktree, record.stack);
+  if (record.stack && JSON.stringify(stack) !== JSON.stringify(record.stack)) {
+    writeRecord(worktree, { ...record, stack: Object.keys(stack).length ? stack : null });
   }
-  const operator = validateOperator({ id: record.operator?.id, email: record.operator?.email,
-    ...(record.operator?.name ? { name: record.operator.name } : {}) });
-  if (record.liveTicket !== null && !TICKET_PATTERN.test(record.liveTicket)) {
-    throw new Error("Discard requires a valid recorded live ticket or no ticket.");
-  }
-  const prototype = isOwnedPrototypeSession(record, branch);
-  if (!branch.startsWith(BRANCH_PREFIX) && !prototype) {
-    throw new Error(`${worktree} is not a vibe session (branch ${branch}).`);
-  }
+  return results;
+}
+
+async function discardSession() {
+  const worktree = requireOption("worktree");
+  const record = requireRecord(worktree);
+  const { branch, targetRoot, operator, prototype } = requireOwnedSession(worktree, record, "Discard");
   if (record?.status === SessionStatus.HandedOff) {
     throw new Error(`${branch} was handed off; it belongs to design and engineering now and is never discarded.`);
   }
@@ -535,6 +554,8 @@ function discardSession() {
   if (executionRoot === targetRoot || executionRoot.startsWith(`${targetRoot}${path.sep}`)) {
     throw new Error("Confirmed discard must run from a retained checkout outside its target.");
   }
+  // A discarded worktree's Storybook and Desktop would otherwise keep running with nothing left to stop them (ISS-13321).
+  const stopped = await stopRecorded(worktree, record);
   const commonDir = git(worktree, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   const repo = path.dirname(commonDir);
   if (wouldLose.pushed && !prototype) {
@@ -551,12 +572,34 @@ function discardSession() {
   git(repo, ["branch", "-D", branch]);
   return {
     discarded: true,
+    processes: stopped,
     remoteBranchDeleted: wouldLose.pushed,
     schemaCleanupRequested: wouldLose.pushed && !prototype,
     wouldLose,
     ...(wouldLose.liveTicket ? { cancelEvidence: { discarded: true, branch, liveTicket: wouldLose.liveTicket,
       operatorId: operator.id, operatorEmail: operator.email } } : {}),
   };
+}
+
+/** Validates the recorded session's exact Git worktree, branch, operator and ticket before a stop or discard. */
+function requireOwnedSession(worktree, record, action) {
+  const branch = git(worktree, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  const targetRoot = realpathSync(git(worktree, ["rev-parse", "--show-toplevel"]));
+  const targetDir = git(worktree, ["rev-parse", "--absolute-git-dir"]);
+  if (realpathSync(worktree) !== targetRoot || (record.worktree && realpathSync(record.worktree) !== targetRoot)
+    || record.branch !== branch || !existsSync(path.join(targetDir, "commondir"))) {
+    throw new Error(`${action} requires the exact owned session worktree and matching private branch record.`);
+  }
+  const operator = validateOperator({ id: record.operator?.id, email: record.operator?.email,
+    ...(record.operator?.name ? { name: record.operator.name } : {}) });
+  if (record.liveTicket !== null && !TICKET_PATTERN.test(record.liveTicket)) {
+    throw new Error(`${action} requires a valid recorded live ticket or no ticket.`);
+  }
+  const prototype = isOwnedPrototypeSession(record, branch);
+  if (!branch.startsWith(BRANCH_PREFIX) && !prototype) {
+    throw new Error(`${worktree} is not a vibe session (branch ${branch}).`);
+  }
+  return { branch, targetRoot, operator, prototype };
 }
 
 /**
@@ -684,6 +727,7 @@ function withDefaults(record) {
     clerkOrgId: rest.clerkOrgId ?? null,
     desktopAuthSavedAt: rest.desktopAuthSavedAt ?? null,
     codexSessions: rest.codexSessions ?? { orchestrators: [], subagents: [] },
+    claudeSessions: rest.claudeSessions ?? { orchestrators: [] },
     localFixes: rest.localFixes ?? [],
   };
 }
@@ -773,6 +817,36 @@ function recordCodexSessions() {
     codexSessions: { orchestrators, subagents },
     lastActiveAt: now,
   };
+  writeRecord(worktree, updated);
+  return { worktree, ...updated };
+}
+
+/** Records only a Claude Code orchestrator ID witnessed by its own session transcript. */
+function recordClaudeSessions() {
+  const worktree = requireOption("worktree");
+  const transcript = requireOption("transcript");
+  const record = requireRecord(worktree);
+  const projectRoot = realpathSync(path.join(os.homedir(), ".claude", "projects"));
+  const file = realpathSync(transcript);
+  if (!file.startsWith(`${projectRoot}${path.sep}`) || !file.endsWith(".jsonl")) {
+    throw new Error("Claude transcript must be a session file under this user's Claude projects directory.");
+  }
+  const id = path.basename(file, ".jsonl");
+  if (!CLAUDE_SESSION_PATTERN.test(id)) throw new Error("Claude transcript filename has no valid session id.");
+  const fd = openSync(file, "r");
+  const buffer = Buffer.alloc(64 * 1024);
+  let count;
+  try { count = readSync(fd, buffer, 0, buffer.length, 0); }
+  finally { closeSync(fd); }
+  const lines = buffer.toString("utf8", 0, count).split("\n").slice(0, -1);
+  if (!lines.some((line) => {
+    try { return JSON.parse(line).sessionId === id; }
+    catch { return false; }
+  })) throw new Error("Claude transcript does not witness the session id in its filename.");
+  const now = new Date().toISOString();
+  const orchestrators = [...(record.claudeSessions?.orchestrators ?? [])];
+  if (!orchestrators.some((entry) => entry.id === id)) orchestrators.push({ id, recordedAt: now });
+  const updated = { ...record, claudeSessions: { orchestrators }, lastActiveAt: now };
   writeRecord(worktree, updated);
   return { worktree, ...updated };
 }
@@ -958,7 +1032,8 @@ function recordDesktopLaunch() {
   const now = new Date().toISOString();
   const updated = {
     ...record,
-    stack: { ...record.stack, desktopPid: Number(pidText), desktopLog: log, desktopBrowserUrl },
+    stack: captureSessionProcessIdentities(worktree, { ...record.stack, desktopPid: Number(pidText), desktopLog: log, desktopBrowserUrl },
+      { previous: record.stack }),
     lastActiveAt: now,
   };
   writeRecord(worktree, updated);

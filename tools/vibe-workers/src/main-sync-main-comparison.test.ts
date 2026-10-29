@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { invokeSync, syncFixture } from "./main-sync-test-fixtures.js";
-import { capturedMainArgv } from "./main-sync-main-comparison.js";
+import { commandReceiptSchema } from "./main-sync-contracts.js";
+import { capturedMainArgv, classifyAgainstMain, MAIN_TIMED_OUT } from "./main-sync-main-comparison.js";
 import { comparisonBudgetMs, MAIN_BOOTSTRAP_MS, storedRecipe, validationEnvelopeMs } from "./main-sync-validation-recipe.js";
 
 const fixtures: ReturnType<typeof syncFixture>[] = [];
@@ -93,6 +94,13 @@ describe("handoff failures compared against the captured main (operator ruling, 
     expect(command).toMatchObject({ exitCode: 0, comparison: { classification: "flaky", main: { outcome: "passed" } } });
     expect(command.comparison.sessionRuns.map((run: { exitCode: number }) => run.exitCode)).toEqual([1, 0]);
     expect(command.log).toBe(command.comparison.sessionRuns[1].log);
+    const before = executed(calls(join(value.metadata, "validation-calls.jsonl")))
+      .filter((call) => call[0] === "check:source-gates").length;
+    const source = value.sourceTurn("handoff");
+    try { expect(invokeSync(value, "validate", source.context).status).toBe(0); }
+    finally { source.finish(); }
+    expect(executed(calls(join(value.metadata, "validation-calls.jsonl")))
+      .filter((call) => call[0] === "check:source-gates").length).toBeGreaterThan(before);
   }, 20000);
 
   it("treats a check that cannot run on the captured main as session-caused without a rerun", () => {
@@ -147,5 +155,25 @@ describe("captured-main command and budget", () => {
     expect(compared.recipeSha256).not.toBe(plain.recipeSha256);
     expect(validationEnvelopeMs(compared) - validationEnvelopeMs(plain)).toBe(MAIN_BOOTSTRAP_MS + 10000);
     expect(() => validationEnvelopeMs({ ...compared, comparison: { timeoutMs: 1 } })).toThrow(/comparison reserve/);
+  });
+});
+
+describe("a check that runs out of time on the session commit and on captured main alike (ISS-13321)", () => {
+  const mainSha = "a".repeat(40);
+  const failed = { exitCode: 1, log: "/private/session.log", sha256: "b".repeat(64) };
+  const timedOut = { outcome: "unrunnable" as const, argv: ["pnpm", "turbo", "typecheck"], exitCode: 124, log: "/private/main.log", sha256: "c".repeat(64), reason: MAIN_TIMED_OUT };
+  const noRerun = () => { throw new Error("a timeout on both sides needs no rerun"); };
+
+  it("is this machine's limit, recorded for engineering, not a failure the session caused", () => {
+    const comparison = classifyAgainstMain(mainSha, failed, timedOut, true, noRerun);
+    expect(comparison.classification).toBe("machine-limited");
+    expect(commandReceiptSchema.safeParse({ argv: ["pnpm", "turbo", "typecheck"], exitCode: 1, log: failed.log, sha256: failed.sha256, comparison }).success).toBe(true);
+  });
+
+  it("stays session-caused when only main timed out, or main could not run for another reason", () => {
+    expect(classifyAgainstMain(mainSha, failed, timedOut, false, noRerun).classification).toBe("session-caused");
+    expect(classifyAgainstMain(mainSha, failed, { ...timedOut, reason: "it could not be started on captured main" }, true, noRerun).classification).toBe("session-caused");
+    const passedOnMain = { outcome: "passed" as const, argv: ["pnpm", "turbo", "typecheck"], exitCode: 0, log: "/private/main.log", sha256: "c".repeat(64) };
+    expect(classifyAgainstMain(mainSha, failed, passedOnMain, true, () => failed).classification).toBe("session-caused");
   });
 });

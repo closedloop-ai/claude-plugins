@@ -13,8 +13,13 @@
 // pull request. The migration id is its folder name
 // (`migrations/<id>/migration.sql`) or its file name without `.sql`.
 //
-// Usage: migration-publish.mjs --worktree <path> --since <the last pushed commit, or the session's base commit> [--change-log <file>]
+// Usage: migration-publish.mjs --worktree <path> --since <the last pushed commit, or the session's base commit> [--main <the main the session merged>] [--change-log <file>]
 // Prints {"ok","migrations","problems"}; exits 1 on any problem. Changes nothing.
+//
+// A migration the branch got by merging main is main's, not the session's: one
+// that main already has (`--main`, by default the branch's merge-base with
+// origin/main, which is the main it merged) is left out (ISS-13321: two
+// migrations a main merge brought in blocked a publication twice).
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -66,12 +71,14 @@ export function migrationProblems(added, changeLog, exists) {
 }
 
 function main(argv) {
-  const { values } = parseArgs({ args: argv, options: { worktree: { type: "string" }, since: { type: "string" }, "change-log": { type: "string" } } });
+  const { values } = parseArgs({ args: argv, options: { worktree: { type: "string" }, since: { type: "string" }, main: { type: "string" }, "change-log": { type: "string" } } });
   if (!values.worktree || !values.since) {
     throw new Error("Usage: migration-publish.mjs --worktree <path> --since <commit> [--change-log <file>]");
   }
   const worktree = path.resolve(values.worktree);
-  const files = git(worktree, ["diff", "--name-only", "--diff-filter=A", `${values.since}..HEAD`]).split("\n").filter((file) => migrationId(file));
+  const onMain = mainFiles(worktree, values.main);
+  const files = git(worktree, ["diff", "--name-only", "--diff-filter=A", `${values.since}..HEAD`]).split("\n")
+    .filter((file) => migrationId(file) && !onMain.has(file));
   const added = files.map((file) => ({ path: file, sql: git(worktree, ["show", `HEAD:${file}`]) }));
   const logFile = values["change-log"] ?? path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-changes.md");
   const changeLog = existsSync(logFile) ? readFileSync(logFile, "utf8") : "";
@@ -79,6 +86,15 @@ function main(argv) {
   const problems = migrationProblems(added, changeLog, (file) => tracked.has(file));
   process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, migrations: files, problems }, null, 2)}\n`);
   return problems.length === 0 ? 0 : 1;
+}
+
+/** The files of the main the session merged; none when there is no such main to read. */
+function mainFiles(worktree, main) {
+  let ref = main;
+  if (!ref) {
+    try { ref = git(worktree, ["merge-base", "HEAD", "origin/main"]); } catch { return new Set(); }
+  }
+  return new Set(git(worktree, ["ls-tree", "-r", "--name-only", ref]).split("\n").filter(Boolean));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

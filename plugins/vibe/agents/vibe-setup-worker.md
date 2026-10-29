@@ -125,6 +125,11 @@ The checkout is the one the preflight remembered
     launcher predates the tab is recorded with no URL and keeps running as a
     window). Return `DONE` once it is recorded; the orchestrator reads the URL
     with `desktop-tab`, so never put the URL or its token in your result.
+  - Stopping everything the session runs (it was kept, discarded or handed
+    off) is `vibe-sessions.mjs stop --worktree "<wt>"`, never a signal by
+    hand: it stops the recorded Storybook and Desktop only after proving each
+    is still the session's own process, and leaves a stale or reused pid
+    alone (ISS-13321). A confirmed `discard` runs it first.
   - Stop Desktop only (before a step that merges main or swaps the
     worktree's commit, per "Never swap the worktree under a running Desktop"
     in `environment.md`): stop the recorded Desktop launch as `environment.md`

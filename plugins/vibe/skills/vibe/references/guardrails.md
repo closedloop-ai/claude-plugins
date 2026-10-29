@@ -19,16 +19,37 @@ Codex and Claude Code, and this section is its one canonical statement:
 - Never clone or vendor the plugin's own repository (claude-plugins) to run a
   different version of its tooling.
 - When continuing needs a fix to the vibe tooling, stop. It is never a
-  question for the person.
+  question for the person. The work never stays only on their machine
+  (ISS-13321).
   1. Record the blocker: the request stays `BLOCKED` in the session ledger
-     with the reason, and a line in the live ticket's Progress names it.
-     Dispatch the ticket worker for that line before you reply to the
-     person, so engineering reading the ticket sees the newest blocker.
-  2. Report it to engineering: tell the person in one plain line that this
+     with the reason, and a line in the live ticket's Progress names it as a
+     plain status ("Stopped: this needs an engineer to fix vibe"). The
+     technical reason goes once at the end of its Engineering checklist as
+     `- [ ] Vibe tooling blocker: <what stopped, technically>; evidence: <the refusal's first line or the finding>`
+     (`ticket-template.md`, "Vibe tooling blockers"). Dispatch the ticket
+     worker for that line before you reply to the person, with the
+     checklist item in the same dispatch, so engineering reading the ticket
+     sees the newest blocker.
+  2. Save the work for engineering: commit what the session built through
+     `commit-worktree.mjs` as usual, then dispatch `vibe-environment-worker`
+     in handover mode, which pushes that commit through the repo's normal
+     pre-push checks with no main sync and no new copy of the app. A push
+     those checks refuse is one more line on the same Engineering checklist
+     item; the stop goes on.
+  3. Report it to engineering: tell the person in one plain line that this
      needs engineering and to message engineering, naming this work by its
      summary (`plain-words.md`), such as "This needs an engineer to fix
      vibe. Message engineering with: <summary>." That line never quotes a
      rule or a script's refusal and never names or links a plugin file.
+     Add one plain choice: "I can pass it to someone now. Who should get
+     it? A name or email is fine." When they name someone, run handoff's
+     lookup as handoff step 8 describes, then the ticket worker's assign
+     mode: the ticket and its plan go to that person, In Progress, with the
+     blocker on the Engineering checklist, and the session is marked handed
+     off. When they do not, the ticket stays with them and nothing else is
+     asked.
+  4. The person is never given the stop's remedy as something to do
+     ("What the person is asked to do" in `plain-words.md`).
 - A handoff check that also fails on the main the session captured is not a
   needed fix and never stops the handoff: it is a Known main failure recorded
   for engineering (`quality-loop.md`, "Failures already on main").

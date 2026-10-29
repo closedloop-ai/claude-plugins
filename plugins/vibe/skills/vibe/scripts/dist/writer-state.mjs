@@ -11820,7 +11820,17 @@ function location(worktree) {
 function readWriterSummary(worktree) {
   const place = location(worktree);
   if (!existsSync3(place.file)) return void 0;
-  return summary(readLedger(place));
+  const ledger = readLedger(place);
+  return { ...summary(ledger), recordedDefinition: recordedDefinitionState(ledger) };
+}
+function recordedDefinitionState(ledger) {
+  try {
+    const observed = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
+    if (observed === null) return "removed";
+    return observed === ledger.binding.digest ? "present" : "changed";
+  } catch {
+    return "unreadable";
+  }
 }
 function recordedWriterRoot(worktree) {
   try {
@@ -12005,7 +12015,10 @@ function changeWriter(action, input) {
         ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
         delete ledger.active;
       }
-      if (ledger.active) {
+      if (!ledger.active && data.continuation && ledger.completed.at(-1) === requestId) {
+        ledger.completed = ledger.completed.slice(0, -1);
+        ledger.active = { id: requestId, input: data.continuation, status: "PLAN", continuation: data.continuation };
+      } else if (ledger.active) {
         if (ledger.active.id !== requestId || !data.continuation) throw new Error("Continue the active request before the next queued request");
         ledger.active.continuation = data.continuation;
       } else {
@@ -12216,6 +12229,7 @@ var recordModes = {
     redeploy: ["create_document_version"],
     flags: ["create_document_version"],
     desktop: ["create_document_version"],
+    handover: ["create_document_version"],
     "pull-request": []
   },
   "vibe-prototype-worker": { share: ["create_document_version"] }
@@ -12232,6 +12246,7 @@ var recordActionSchema = external_exports.enum([
   "desktop",
   "share",
   "discard",
+  "handover",
   "pull-request"
 ]);
 var requestContinuationSchema = external_exports.object({

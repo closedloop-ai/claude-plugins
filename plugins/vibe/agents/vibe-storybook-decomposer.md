@@ -218,7 +218,13 @@ Placement:
 
 ## Verify
 
-As an advisor, run no writing commands. Inspect the current result and report
+As an advisor, run no product source, test or session-record writes. For a
+handoff frozen render that needs a dev server, use only
+`../skills/vibe/scripts/verify-storybook-process.mjs start` and `stop` with
+each server's own worktree and port. The helper records a new process's birth
+in private git storage and stops only that same process at turn end, including
+after an error. Do not adopt a server that was already running, start one with
+raw `nohup`, or kill by port or pattern. Inspect the current result and report
 what the sole writer should check: `pnpm exec biome check` and
 `pnpm --filter storybook exec vitest run <changed story files>` for the
 changed stories only, never the whole Storybook suite. Report: files
@@ -242,7 +248,8 @@ evidence:
   yourself. It is the base commit with each compile-only repaired story file
   (same title, tags and story names) taken from the session, so a repaired
   play runs on both sides and only the app code differs. The head URL is the
-  session's own Storybook. It is heavy
+  session's own Storybook. Start any head or base Storybook with the owned
+  process helper above and stop it before removing the base worktree. It is heavy
   validation and runs under the same load and slot rules as every other
   handoff heavy run. It renders each story twice on the base and once on the
   branch with its clock, animations, viewport, fonts, theme, args and globals
@@ -257,7 +264,12 @@ evidence:
   a story file changed beyond a compile-only repair is not compared and
   its stories block. When nothing blocks, report the
   `Frozen render unchanged` line it prints for the writer to record
-  unchanged; never write or edit that line yourself.
+  unchanged; never write or edit that line yourself. Each finding and its
+  remedy (make a story deterministic, pause an animation) is for the writer,
+  or for engineering on the ticket when the session may not make it; never
+  phrase it as something the person running the session does
+  (`../skills/vibe/references/plain-words.md`, "What the person is asked to
+  do"; ISS-13321).
 - Flag-on states: every surface the session claims has its flag-on state on
   that surface's existing story entry.
 - States: for each state the ticket, PRD or acceptance criteria name, the

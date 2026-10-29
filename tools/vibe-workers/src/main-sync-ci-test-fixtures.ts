@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { syncFixture } from "./main-sync-test-fixtures.js";
 import { stringify } from "yaml";
+import { REVIEWED_CHECKOUT_REF } from "./main-sync-ci.js";
 
 // Producer text is fixture data for hashing, never a local executable harness.
 const REVIEWED_ELECTRON_RUN = [
@@ -23,9 +24,8 @@ const REVIEWED_ELECTRON_RUN = [
 
 export function producerContents(run = REVIEWED_ELECTRON_RUN) {
   const definition = { jobs: { "desktop-e2e": { steps: [
-    { name: "Checkout repository", uses: "actions/checkout@v7" },
-    { id: "target-ref", run: 'echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"' },
-    { name: "Run Electron e2e", run, env: { DD_GIT_COMMIT_SHA: "${{ steps.target-ref.outputs.sha }}" } },
+    { name: "Checkout repository", uses: "actions/checkout@v7", with: { ref: REVIEWED_CHECKOUT_REF } },
+    { name: "Run Electron e2e", "working-directory": "apps/desktop", run, env: { LIVEBLOCKS_SECRET: "${{ secrets.STAGING_LIVEBLOCKS_SECRET }}" } },
   ] } } };
   return { encoding: "base64", content: Buffer.from(stringify(definition)).toString("base64") };
 }
@@ -42,13 +42,12 @@ export function installCiFixture(value: ReturnType<typeof syncFixture>) {
       run_attempt: 1, repository: { full_name: "closedloop-ai/symphony-alpha" }, head_repository: { full_name: "closedloop-ai/symphony-alpha" } },
     jobs: { total_count: 1, jobs: [{ id: 113709299734, run_id: 37896583565, run_attempt: 1,
       name: "desktop-e2e", status: "completed", conclusion: "success", steps: [
-        step(2, "Checkout repository", "00", "01"), step(4, "Resolve target ref", "01", "02"), step(20, "Run Electron e2e", "10", "30"),
+        step(2, "Checkout repository", "00", "01"), step(20, "Run Electron e2e", "10", "30"),
       ] }] },
     contents: producerContents(),
     log: [`2026-10-09T00:00:00.2500000Z [command]/usr/bin/git log -1 --format=%H`,
       `2026-10-09T00:00:00.2600000Z ${checkoutSha}`,
       "2026-10-09T00:00:10.0100000Z ##[group]Run set -o pipefail",
-      `2026-10-09T00:00:10.0200000Z   DD_GIT_COMMIT_SHA: ${checkoutSha}`,
       "2026-10-09T00:00:10.0210000Z   DESKTOP_E2E_SMOKE_TAG: ",
       "2026-10-09T00:00:10.0220000Z   DESKTOP_E2E_CHANGED_SPECS: ",
       "2026-10-09T00:00:10.0300000Z ##[endgroup]",

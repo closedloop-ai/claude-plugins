@@ -14,15 +14,22 @@ function sources(files) {
   return files.filter((file) => file.status !== "D" && SOURCE_FILE.test(file.path) && !isTestFile(file.path) && !/\.stories\.[jt]sx?$/.test(file.path));
 }
 
-/** A new comparator needs `Comparator: <file>: tie test <test path>` naming a test that exists. */
-export function checkComparators(files, repo, logged, add, changeLog) {
+/**
+ * A new comparator needs `Comparator: <file>: tie test <test path>` naming a test that exists. Outside the
+ * pull-request phase the session writes no tests, so there `Comparator: <file>: missing test listed`, with the
+ * tie test on the Missing tests list, stands in for it (ISS-13321).
+ */
+export function checkComparators(files, repo, logged, add, changeLog, phase = "pull-request") {
   for (const file of sources(files)) {
     const entry = file.added.find((item) => COMPARATOR.test(item.text));
     if (!entry) continue;
-    const cited = changeLog.split("\n").filter((line) => line.includes("Comparator:") && line.includes(file.path))
-      .map((line) => /tie test\s+(\S+)/.exec(line)?.[1]).filter(Boolean);
+    const lines = changeLog.split("\n").filter((line) => line.includes("Comparator:") && line.includes(file.path));
+    const cited = lines.map((line) => /tie test\s+(\S+)/.exec(line)?.[1]).filter(Boolean);
+    if (phase !== "pull-request" && lines.some((line) => /:\s*missing test listed\s*$/.test(line))) continue;
     if (!cited.some((test) => repo.head(test) !== null && repo.head(test) !== undefined)) {
-      add("comparator-tie", file.path, entry.line, "adds a sort comparator with no test that sorts two rows tied on the ranked key; a comparator that returns 0 for distinct rows is not a total order", "break ties on a unique key, add a fixture with a tie, and record `Comparator: <file>: tie test <test path>`");
+      const record = phase === "pull-request" ? "add a fixture with a tie, and record `Comparator: <file>: tie test <test path>`"
+        : "list the tie test under Missing tests, and record `Comparator: <file>: missing test listed`";
+      add("comparator-tie", file.path, entry.line, "adds a sort comparator with no test that sorts two rows tied on the ranked key; a comparator that returns 0 for distinct rows is not a total order", `break ties on a unique key, ${record}`);
     }
   }
 }

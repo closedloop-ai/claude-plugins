@@ -40,6 +40,7 @@
 
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, createWriteStream } from "node:fs";
+import { escalation, isSandboxRefusal } from "./sandbox-refusal.mjs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -273,11 +274,13 @@ async function main() {
   throw new Error("command must be prompt, run or check");
 }
 
+export const ESCALATION_JUSTIFICATION = "Save the comparison with the other app";
+
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
     process.stdout.write(`${JSON.stringify(await main())}\n`);
   } catch (error) {
-    process.stdout.write(`${JSON.stringify({ ok: false, error: error.message })}\n`);
+    process.stdout.write(`${JSON.stringify({ ok: false, ...(isSandboxRefusal(error) ? escalation(error, ESCALATION_JUSTIFICATION) : { error: error.message }) })}\n`);
     process.exitCode = 1;
   }
 }

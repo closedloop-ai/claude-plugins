@@ -102,6 +102,16 @@ that says what it is for, such as "Sign in to ClosedLoop" or "Sign in to
 GitHub". Codex then shows the person "Allow ChatGPT to run this command?"
 with your justification, and runs the command outside the sandbox once they
 click Allow once. Request escalation only for the commands this file names.
+
+The other vibe scripts that write under `~/.codex/vibe` are named here too
+(ISS-13321): `vibe-preflight.sh` (the remembered checkout),
+`session-questions.mjs` without `--worktree`, `precedent-check.mjs` without
+`--out`, `e2e-lock.mjs` and `image-head.mjs record`. Each prints
+`"escalate":true` with its own `justification` when the sandbox refused its
+write. Run the same command again escalated with that justification before
+going on; never treat the first output as the answer, and never read the
+refusal as the script's verdict. Setup does not stop on the remembered
+checkout: it is found again on the next run.
 In "Full access" mode there is no prompt and the command just runs. This
 holds for a spawned worker too: its request reaches the person the same way.
 

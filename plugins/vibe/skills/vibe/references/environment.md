@@ -310,7 +310,14 @@ not silently included or discarded. A clean result needs no extra local commit.
    source continuation. The SAME registered writer extends its existing
    session table/local canonical plan before source fixes and checks frozen
    earlier behavior/interactions against the merged result. All conflicts,
-   generated source and fixes stay with that writer; no new tests are written
+   generated source and fixes stay with that writer. A merge that conflicts
+   only on the Storybook version file and Version History (main ships a
+   Storybook release several times a day) is settled with
+   `node <plugin-root>/skills/vibe/scripts/storybook-version-merge.mjs --worktree "<wt>"`:
+   main's version bumped by the session's own level, both entries kept, the
+   session's on top; the writer then updates its entry's counts to the
+   merged tree (ISS-13321). Any other conflict, or its refusal, the writer
+   resolves as before. No new tests are written
    unless the person asked for a pull request, and the writer only repairs
    existing tests the merge broke (`guardrails.md`, "Tests").
 3. Only the root commits the staged merge/fixes through the existing commit
@@ -364,7 +371,10 @@ not silently included or discarded. A clean result needs no extra local commit.
    text, borrow another role's lease, print a lease or clear a lock because a
    short CLI PID ended. Input is `{ "context": <operationContext> }` on
    stdin, optionally with the matching `transactionId`; no caller command
-   list or `passed: true` is accepted.
+   list or `passed: true` is accepted. Copy the envelope's `operationContext`
+   verbatim, never a context rebuilt field by field: any field that differs
+   from the launcher's record is refused, and the refusal names each one
+   (ISS-13321).
    A publication attempt/no-op consumes proof for this exact publisher
    runtime/worker/request/lease. Same-turn retries retain it; a later
    publishing turn must prepare fresh, not recycle an old transaction.
@@ -424,6 +434,14 @@ accepts caller PASS, trusts run.head_sha as tested source, stores raw secret
 logs or treats later spoofed stdout as proof. Missing evidence leaves
 `requiredE2eComplete: false`; final handoff remains incomplete. Do not re-fetch
 main repeatedly while CI waits. Changed source/new preparation invalidates proof.
+The Desktop Electron lane is the exception (ISS-13321): no vibe machine runs
+it, and since symphony-alpha's desktop-e2e job skips pull requests no run
+exists for a branch before merge. The executor returns it under
+`e2eLeftForCi`, covered by the post-merge desktop-e2e-validation run that
+publishes `desktop-e2e/validated`, and it does not hold
+`requiredE2eComplete`. The ticket's Engineering checklist carries it
+(`ticket-template.md`, "E2E left for CI"). An operator-dispatched run bound
+through `mainSyncCiRun` still verifies as above and replaces that entry.
 
 ### What the validation proof accepts
 

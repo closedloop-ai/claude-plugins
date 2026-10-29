@@ -53,6 +53,45 @@ describe("production Claude CLI adapter", () => {
       expect(bound.agent.prompt).toContain("Never start another implementation writer, commit, or push.");
     }
   });
+  it("lets the verify reader write only owned private evidence in pre-pr and control modes", () => {
+    const value = setup();
+    writeAgent(value.agentRoot, "vibe-verify-worker", "Read, Grep, Glob, Bash, Skill");
+    writeAgent(value.agentRoot, "vibe-storybook-decomposer", "Read, Grep, Glob, Bash, Skill");
+    for (const mode of ["pre-pr", "control"]) {
+      const bound = boundDefinition(readDefinition(value.agentRoot, "vibe-verify-worker", graph),
+        { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-verify-worker",
+          requestId: `verify-${mode}`, input: mode, timeoutMs: 1000, capabilities: graph, mode: "request" });
+      expect(bound.reader).toBe(true);
+      expect(bound.agent.prompt).toContain("vibe-pr-evidence.json");
+      expect(bound.agent.prompt).toContain("vibe-lane-results.json");
+      expect(bound.agent.prompt).toContain("vibe-lane-report.txt");
+      expect(bound.agent.prompt).toContain(".control/");
+      expect(bound.agent.prompt).toContain("Never edit product source, tests, fixtures, snapshots, catalog or allowlists");
+      expect(bound.agent.prompt).not.toContain("never mutate files or records");
+    }
+    const advisor = boundDefinition(readDefinition(value.agentRoot, "vibe-guardrails-reviewer", graph),
+      { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-guardrails-reviewer",
+        requestId: "review", input: "review", timeoutMs: 1000, capabilities: graph, mode: "request" });
+    expect(advisor.agent.prompt).toContain("never mutate files or records");
+    const storybook = boundDefinition(readDefinition(value.agentRoot, "vibe-storybook-decomposer", graph),
+      { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-storybook-decomposer",
+        requestId: "storybook", input: "frozen render", timeoutMs: 1000, capabilities: graph, mode: "request" });
+    expect(storybook.agent.prompt).toContain("verify-storybook-process.mjs");
+    expect(storybook.agent.prompt).toContain("never adopt an unrecorded process");
+    expect(storybook.agent.prompt).not.toContain("never mutate files or records");
+  });
+  it("admits the environment handover action with one normal push through the repo's checks (ISS-13321)", () => {
+    const value = setup();
+    const item = { agentName: "vibe-environment-worker", mode: "record" as const,
+      recordAction: "handover" as const, exclusiveRecordTurn: true as const };
+    const capabilities = [...graph, recordWrite];
+    const prompt = boundDefinition(readDefinition(value.agentRoot, item.agentName, capabilities),
+      { worktree: value.worktree, agentRoot: value.agentRoot, requestId: "tooling-stop", input: "hand the work over",
+        timeoutMs: 1000, capabilities, ...item }).agent.prompt;
+    expect(prompt).toContain("Push only the current commit to the session's branch, once, through the repository's normal pre-push checks");
+    expect(prompt).not.toContain("owned main-sync publication gate");
+    expect(prompt).not.toContain("Never start another implementation writer, commit, or push.");
+  });
   it("admits the environment pull-request action with no record writes and the no-push footer", () => {
     const value = setup();
     const item = { agentName: "vibe-environment-worker", mode: "record" as const,
@@ -63,6 +102,19 @@ describe("production Claude CLI adapter", () => {
         timeoutMs: 1000, capabilities, ...item });
     expect(launch(graph).agent.prompt).toContain("Never start another implementation writer, commit, or push.");
     expect(() => launch([...graph, recordWrite])).toThrow(/outside this canonical action/);
+  });
+  it("a record turn with malformed final formatting reports unverified outcome without replaying its write", () => {
+    const value = setup();
+    const result = run(value, { agentName: "vibe-ticket-worker", mode: "record", recordAction: "handoff",
+      exclusiveRecordTurn: true, capabilities: [...graph, ...liveReads, recordWrite], requestId: "ticket-handoff-format",
+      input: "STRUCTURED_RETRY_AFTER_WRITE" });
+    expect(result.status).toBe(1);
+    expect(existsSync(join(value.metadata, "fake-external-write"))).toBe(true);
+    const failure = JSON.parse(result.stdout);
+    expect(failure.code).toBe("RECORD_RESULT_UNVERIFIED");
+    expect(failure.summary).toContain("read-only reconciliation");
+    expect(failure.summary).toContain("Do not repeat the write");
+    expect(readProof(value.metadata)).toHaveLength(1);
   });
   it("grants the ticket worker artifact links and the session plan only in its create, plan and handoff actions", () => {
     const value = setup();

@@ -11892,7 +11892,17 @@ function location(worktree) {
 function readWriterSummary(worktree) {
   const place = location(worktree);
   if (!existsSync3(place.file)) return void 0;
-  return summary(readLedger(place));
+  const ledger = readLedger(place);
+  return { ...summary(ledger), recordedDefinition: recordedDefinitionState(ledger) };
+}
+function recordedDefinitionState(ledger) {
+  try {
+    const observed = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
+    if (observed === null) return "removed";
+    return observed === ledger.binding.digest ? "present" : "changed";
+  } catch {
+    return "unreadable";
+  }
 }
 function recordedWriterRoot(worktree) {
   try {
@@ -11962,7 +11972,10 @@ function changeWriter(action, input) {
         ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
         delete ledger.active;
       }
-      if (ledger.active) {
+      if (!ledger.active && data.continuation && ledger.completed.at(-1) === requestId) {
+        ledger.completed = ledger.completed.slice(0, -1);
+        ledger.active = { id: requestId, input: data.continuation, status: "PLAN", continuation: data.continuation };
+      } else if (ledger.active) {
         if (ledger.active.id !== requestId || !data.continuation) throw new Error("Continue the active request before the next queued request");
         ledger.active.continuation = data.continuation;
       } else {
@@ -12185,6 +12198,7 @@ var recordModes = {
     redeploy: ["create_document_version"],
     flags: ["create_document_version"],
     desktop: ["create_document_version"],
+    handover: ["create_document_version"],
     "pull-request": []
   },
   "vibe-prototype-worker": { share: ["create_document_version"] }
@@ -12201,6 +12215,7 @@ var recordActionSchema = external_exports.enum([
   "desktop",
   "share",
   "discard",
+  "handover",
   "pull-request"
 ]);
 var requestContinuationSchema = external_exports.object({
@@ -12244,6 +12259,9 @@ var recordContextSchema = external_exports.object({
 }).strict();
 function isPublisherContext(input) {
   return input.mode === "record" && input.exclusiveRecordTurn === true && (input.agentName === "vibe-environment-worker" && ["create", "redeploy"].includes(input.recordAction ?? "") || input.agentName === "vibe-prototype-worker" && input.recordAction === "share");
+}
+function isHandoverContext(input) {
+  return input.mode === "record" && input.exclusiveRecordTurn === true && input.agentName === "vibe-environment-worker" && input.recordAction === "handover";
 }
 function resolveRecordContext(input) {
   if (input.mainSyncValidation && (input.agentName !== "vibe-change-worker" || input.mode !== "record" || input.recordAction !== "progress" || !input.exclusiveRecordTurn || input.mainSyncValidation.transactionId !== input.mainSyncTransactionId || !input.publicationPurpose || input.sessionless)) {
@@ -12383,11 +12401,12 @@ var capturedMainRunSchema = external_exports.object({
   reason: external_exports.string().min(1).max(512).optional()
 }).strict();
 var mainComparisonSchema = external_exports.object({
-  classification: external_exports.enum(["main-preexisting", "session-caused", "flaky"]),
+  classification: external_exports.enum(["main-preexisting", "session-caused", "flaky", "machine-limited"]),
   mainSha: commitSchema,
   sessionRuns: external_exports.array(runEvidenceSchema).min(1).max(2),
   main: capturedMainRunSchema
 }).strict();
+var ACCEPTED_FAILURES = /* @__PURE__ */ new Set(["main-preexisting", "machine-limited"]);
 var commandReceiptSchema = external_exports.object({
   argv: external_exports.array(external_exports.string()).min(1).max(256),
   bindings: external_exports.record(external_exports.string()).optional(),
@@ -12397,7 +12416,7 @@ var commandReceiptSchema = external_exports.object({
   log: external_exports.string().min(1),
   sha256: external_exports.string().length(64),
   comparison: mainComparisonSchema.optional()
-}).strict().refine((item) => item.exitCode === 0 === (item.comparison?.classification !== "main-preexisting") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
+}).strict().refine((item) => item.exitCode === 0 === !ACCEPTED_FAILURES.has(item.comparison?.classification ?? "") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
 var failedCheckSchema = external_exports.object({
   argv: external_exports.array(external_exports.string()).min(1).max(256),
   bindings: external_exports.record(external_exports.string()).optional(),
@@ -12732,9 +12751,11 @@ function boundDefinition(definition, input) {
   const tools = [.../* @__PURE__ */ new Set([...roleTools, "ToolSearch", structuredOutputTool, ...input.capabilities.filter((capability) => capability.access === "read" || permittedWrites.includes(capability.operation)).flatMap((capability) => mcpToolAliases(capability.name))])];
   const persistent = input.agentName === "vibe-change-worker";
   const phasePolicy = persistent ? "Current phase, test-authoring and test-repair authority come only from the orchestrator's top-level turn envelope, separate from raw input text. Only an explicit pull-request turn in that envelope, sent because the person asked for a pull request, may author tests. Never author tests in plan, request, fix, handoff, record or build turns, or infer authority from the person's words. A request, fix or handoff turn with test-repair authority may only repair existing tests and fixtures your own change broke (imports, renamed or retired symbols, setup, type errors) without changing what any test asserts; never add a test file. Delete a test file or case only when it covers nothing but code the request retires, recorded with retired-tests.mjs and the ticket or PRD that retires it; a test of live behavior is only repaired. " : `This is mode ${input.mode}. Never write or edit tests. `;
+  const verifyEvidencePolicy = input.agentName === "vibe-verify-worker" ? "This is a source read-only verification role. Never edit product source, tests, fixtures, snapshots, catalog or allowlists. Bash may write only owned private verification artifacts: <gitdir>/vibe-pr-evidence.json, <gitdir>/vibe-lane-report.txt from pnpm test:lanes, <gitdir>/vibe-lane-results.json through pre-pr-lanes.mjs, verifier-owned Storybook birth records and logs in its private git directory, and .control/ runtime files from the repository control command in control mode. Move only this turn's control captures to the private git directory before publication. Never write a ClosedLoop or session record. " : "";
+  const storybookEvidencePolicy = input.agentName === "vibe-storybook-decomposer" ? "This advisor may write only verifier-owned Storybook birth records and logs in the private git directory through verify-storybook-process.mjs. Stop each new process before returning. Never edit product source, tests or live records, and never adopt an unrecorded process. " : "";
   const prompt = `${definition.prompt}
 
-Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join7(definition.root, "agents")}. ` + (isPublisherContext(input) ? "Never start another implementation writer or commit. Normal pushes are permitted only through the owned main-sync publication gate. " : "Never start another implementation writer, commit, or push. ") + phasePolicy + (reader ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : "") + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
+Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join7(definition.root, "agents")}. ` + pushPolicy(input) + phasePolicy + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName) ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : `${verifyEvidencePolicy}${storybookEvidencePolicy}`) + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
   const agent = {
     description: definition.metadata.description,
     prompt,
@@ -12743,6 +12764,15 @@ Runtime binding: work only in ${input.worktree}. Resolve this canonical definiti
     ...definition.skills.length ? { skills: definition.skills } : {}
   };
   return { agent, reader, tools };
+}
+function pushPolicy(input) {
+  if (isPublisherContext(input)) {
+    return "Never start another implementation writer or commit. Normal pushes are permitted only through the owned main-sync publication gate. ";
+  }
+  if (isHandoverContext(input)) {
+    return "Never start another implementation writer or commit. Push only the current commit to the session's branch, once, through the repository's normal pre-push checks; never forced or with checks skipped. ";
+  }
+  return "Never start another implementation writer, commit, or push. ";
 }
 async function runWorker(rawInput) {
   const input = launchSchema.parse(rawInput);
@@ -12911,7 +12941,7 @@ async function runWorker(rawInput) {
         leaseRetained = true;
       }
     }
-    const failure = safeFailure(error);
+    const failure = error instanceof StructuredOutputRetryError && input.mode === "record" ? { code: "RECORD_RESULT_UNVERIFIED", summary: "The record turn's final status failed structured output validation. Its write may have succeeded. Do not repeat the write; perform read-only reconciliation of the ticket and session record, then continue from the verified state." } : safeFailure(error);
     const capHit = persistent && failure.code === "TURN_TIMEOUT" ? capCheckpoint(place.root, place.dir, turnId) : void 0;
     if (capHit) {
       failure.summary = `CAP-HIT: the turn hit its time cap with ${capHit.dirtyFiles} changed files${capHit.midMerge ? ", mid-merge" : ""}${capHit.patch ? `; work saved as ${capHit.patch}` : ""}. Continue this request with the same writer.`;
@@ -13044,6 +13074,10 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowC
           reject(failed);
           return;
         }
+        if (final?.is_error && final.terminal_reason === "structured_output_retry_exhausted") {
+          reject(new StructuredOutputRetryError("Claude exhausted structured output retries"));
+          return;
+        }
         if (code !== 0 || !final || final.is_error || final.structured_output === void 0 && !final.result) {
           reject(new Error("Claude failed or returned no successful structured result"));
           return;
@@ -13061,6 +13095,8 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowC
   });
 }
 var OwnedCleanupError = class extends Error {
+};
+var StructuredOutputRetryError = class extends Error {
 };
 var WorkerLaunchError = class extends Error {
   constructor(result) {

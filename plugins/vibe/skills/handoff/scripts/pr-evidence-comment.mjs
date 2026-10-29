@@ -8,7 +8,7 @@ import { targetedEvidenceProblems } from "./pr-facts.mjs";
 /** Render a reviewable comment only from complete pre-PR evidence. */
 export function renderEvidenceComment(evidence) {
   const commit = evidence?.targetedInventory?.commit;
-  const e2eSpecs = (evidence?.targetedInventory?.entries ?? []).filter((entry) => entry?.kind === "e2e").map((entry) => entry.path);
+  const e2eSpecs = (Array.isArray(evidence?.targetedInventory?.entries) ? evidence.targetedInventory.entries : []).filter((entry) => entry?.kind === "e2e").map((entry) => entry.path);
   const problems = [...targetedEvidenceProblems(evidence, commit), ...tierEvidenceProblems(evidence?.e2eCapability, e2eSpecs)];
   if (problems.length) throw new Error(`pre-PR evidence is incomplete:\n${problems.map((problem) => `- ${problem}`).join("\n")}`);
   const capability = evidence.e2eCapability;

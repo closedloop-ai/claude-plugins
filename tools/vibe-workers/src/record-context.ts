@@ -14,12 +14,12 @@ export const recordModes: Record<string, Record<string, readonly string[]>> = {
     handoff: ["create_document", "create_document_version", "create_artifact_link", "update_document", "upload_attachment"],
     assign: ["update_document"], cancel: ["create_document_version", "update_document"] },
   "vibe-environment-worker": { create: ["create_document_version"], redeploy: ["create_document_version"],
-    flags: ["create_document_version"], desktop: ["create_document_version"], "pull-request": [] },
+    flags: ["create_document_version"], desktop: ["create_document_version"], handover: ["create_document_version"], "pull-request": [] },
   "vibe-prototype-worker": { share: ["create_document_version"] },
 };
 
 export const recordActionSchema = z.enum(["progress", "create", "plan", "handoff", "assign", "cancel", "redeploy", "flags", "desktop", "share",
-  "discard", "pull-request"]);
+  "discard", "handover", "pull-request"]);
 export const requestContinuationSchema = z.object({ runtime: z.enum(["codex", "claude"]),
   requestId: identifierSchema, recordAction: z.enum(["flags", "desktop"]) }).strict();
 export type RequestContinuation = z.infer<typeof requestContinuationSchema>;
@@ -54,6 +54,15 @@ export function isPublisherContext(input: Pick<RecordContext, "agentName" | "mod
   return input.mode === "record" && input.exclusiveRecordTurn === true
     && ((input.agentName === "vibe-environment-worker" && ["create", "redeploy"].includes(input.recordAction ?? ""))
       || (input.agentName === "vibe-prototype-worker" && input.recordAction === "share"));
+}
+
+/**
+ * A vibe tooling stop hands the work to engineering: the environment worker pushes the orchestrator's commit through
+ * the repo's normal pre-push checks, with no main sync and no environment request (ISS-13321).
+ */
+export function isHandoverContext(input: Pick<RecordContext, "agentName" | "mode" | "recordAction" | "exclusiveRecordTurn">) {
+  return input.mode === "record" && input.exclusiveRecordTurn === true && input.agentName === "vibe-environment-worker"
+    && input.recordAction === "handover";
 }
 
 /** Flags/Desktop consume a verified transaction under their own request-only grant. */

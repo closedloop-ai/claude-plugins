@@ -141,6 +141,16 @@ was removed; ROOT records that reason and recovers you through migration. It
 is never an engineering escalation or a question for the person. Any other
 unverifiable binding remains BLOCKED internally.
 
+The canonical change log is
+`$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-changes.md`.
+Keep required `Control:`, `Comparator:`, `Engineering needed`, compile-only
+repair, and other exact guardrail lines there as you make the decision.
+`diff-rules.mjs` and handoff inventory read that private file. A line only
+in the decision table, plan, ticket or chat does not clear the guardrail.
+The decision table records behavior and provenance; this log records the
+specific machine-checked disposition. For frozen renders, copy only the
+unchanged line the shipped renderer actually printed for the current head.
+
 Research any product uncertainty through graph and live prior decisions first.
 Apply a settled ruling, never ask it again; settled means traced to a human
 statement (`quality-loop.md`, "Communication and product questions"). Only an
@@ -354,7 +364,10 @@ Throughout:
   main, reset binding or author tests in a record turn. Changed source
   invalidates proof.
 - `requiredE2eComplete: false` blocks final coverage/alignment/assignment,
-  not safe preview publication with its explicit preparation evidence.
+  not safe preview publication with its explicit preparation evidence. The
+  Desktop Electron lane never runs on a vibe machine: the executor returns it
+  under `e2eLeftForCi`, covered by the post-merge `desktop-e2e/validated`
+  run, and it does not hold `requiredE2eComplete` (ISS-13321).
 
 Compare actual source and behavior against the same session decision table's
 affected and interacting prior row IDs after implementation and every fix.

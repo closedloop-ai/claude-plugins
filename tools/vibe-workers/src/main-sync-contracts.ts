@@ -44,16 +44,17 @@ const runEvidenceSchema = z.object({ exitCode: z.number().int(), log: z.string()
 export const capturedMainRunSchema = z.object({ outcome: z.enum(["failed", "passed", "unrunnable"]),
   argv: z.array(z.string()).min(1).max(256).optional(), exitCode: z.number().int().optional(),
   log: z.string().min(1).optional(), sha256: z.string().length(64).optional(), reason: z.string().min(1).max(512).optional() }).strict();
-export const mainComparisonSchema = z.object({ classification: z.enum(["main-preexisting", "session-caused", "flaky"]),
+export const mainComparisonSchema = z.object({ classification: z.enum(["main-preexisting", "session-caused", "flaky", "machine-limited"]),
   mainSha: commitSchema, sessionRuns: z.array(runEvidenceSchema).min(1).max(2), main: capturedMainRunSchema }).strict();
 export type MainComparison = z.infer<typeof mainComparisonSchema>;
+const ACCEPTED_FAILURES = new Set(["main-preexisting", "machine-limited"]);
 export const commandReceiptSchema = z.object({ argv: z.array(z.string()).min(1).max(256),
   bindings: z.record(z.string()).optional(), cwd: z.string().optional(),
   timeoutMs: z.number().int().min(1000).max(2 ** 31 - 1).optional(),
   exitCode: z.number().int(), log: z.string().min(1), sha256: z.string().length(64),
   comparison: mainComparisonSchema.optional() }).strict()
-  // Only a check that also fails on the captured main may stand in a receipt with a failing exit.
-  .refine((item) => (item.exitCode === 0) === (item.comparison?.classification !== "main-preexisting")
+  // Only a check that also fails on the captured main, or runs out of time there too, may stand in a receipt with a failing exit.
+  .refine((item) => (item.exitCode === 0) === !ACCEPTED_FAILURES.has(item.comparison?.classification ?? "")
     && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
 const failedCheckSchema = z.object({ argv: z.array(z.string()).min(1).max(256), bindings: z.record(z.string()).optional(),
   cwd: z.string().optional(), comparison: mainComparisonSchema }).strict();

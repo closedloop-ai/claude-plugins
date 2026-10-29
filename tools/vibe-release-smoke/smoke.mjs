@@ -5,6 +5,9 @@
 // on-request, workspace-write sandbox, no network), sends "$vibe <request>", and checks that
 // the first reply's setup check shows the installed versions and a completed latest-version
 // check. Unit tests and evals feed script output in the prompt; this runs the real thing.
+// It then runs the five other vibe scripts that write under ~/.codex/vibe through the same app
+// server's `command/exec`, in the turn's workspace-write sandbox and then with full access, and
+// checks each asks for an escalated rerun in the sandbox and does its job escalated (ISS-13321).
 //
 // Usage: node tools/vibe-release-smoke/smoke.mjs [--ref HEAD] [--codex <cli>] [--request <text>]
 //          [--timeout-ms 420000] [--max-seconds 90] [--keep]
@@ -31,6 +34,7 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { assessFirstReply, findSetupBlock } from "./first-reply.mjs";
+import { assessSandboxWriters, sandboxWriters } from "./sandbox-writers.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..", "..");
@@ -111,12 +115,13 @@ async function runSmoke() {
   }
   const startupScript = path.join(path.dirname(skill), "scripts", "plugin-version.mjs");
   const turn = await driveTurn({ env, skill, startupScript });
+  const writers = await runSandboxWriters({ env, scripts: path.join(path.dirname(skill), "scripts") });
   const expected = {
     harness: "Codex",
     versions: Object.fromEntries(PLUGINS.map((name) => [name, built[name].version])),
     maxSeconds: Number(values["max-seconds"]),
   };
-  const failures = assessFirstReply({ messages: turn.messages, commands: turn.commands, expected });
+  const failures = [...assessFirstReply({ messages: turn.messages, commands: turn.commands, expected }), ...assessSandboxWriters(writers)];
   const block = findSetupBlock(turn.messages);
   return {
     status: failures.length === 0 ? "pass" : "fail",
@@ -131,7 +136,60 @@ async function runSmoke() {
     commands: turn.commands.map(({ command, exitCode, approval, output, t }) => ({ t, command, exitCode, approval, output: String(output ?? "").slice(0, 600) })),
     approvals: turn.approvals,
     turnStatus: turn.status,
+    sandboxWriters: writers.map(({ writer, sandboxed, escalated }) => ({ script: writer.name,
+      sandboxed: { exitCode: sandboxed?.exitCode, stdout: String(sandboxed?.stdout ?? "").slice(-400) },
+      ...(escalated ? { escalated: { exitCode: escalated.exitCode, stdout: String(escalated.stdout ?? "").slice(-400) } } : {}) })),
   };
+}
+
+/**
+ * A throwaway symphony-alpha-shaped checkout for the writers, then each writer through `command/exec`: in the
+ * workspace-write sandbox a turn gets, and again with full access, the escalated rerun.
+ */
+async function runSandboxWriters({ env, scripts }) {
+  const repo = path.join(home, "Source", "symphony-alpha");
+  mkdirSync(repo, { recursive: true });
+  const git = (...args) => execFileSync("git", ["-C", repo, ...args], { env: { ...env, GIT_AUTHOR_NAME: "smoke", GIT_AUTHOR_EMAIL: "smoke@example.com",
+    GIT_COMMITTER_NAME: "smoke", GIT_COMMITTER_EMAIL: "smoke@example.com" }, encoding: "utf8" }).trim();
+  git("init", "--quiet", "--initial-branch=main");
+  writeFileSync(path.join(repo, "README.md"), "smoke\n");
+  git("add", "README.md");
+  git("commit", "--quiet", "-m", "smoke");
+  git("remote", "add", "origin", "git@github.com:closedloop-ai/symphony-alpha.git");
+  const head = git("rev-parse", "HEAD");
+  const child = spawn(values.codex, ["app-server"], { env, stdio: ["pipe", "pipe", "pipe"] });
+  child.stderr.resume();
+  const pending = new Map();
+  let nextId = 1;
+  readline.createInterface({ input: child.stdout }).on("line", (line) => {
+    let message;
+    try { message = JSON.parse(line); } catch { return; }
+    if (message.id === undefined || message.method) return;
+    const waiter = pending.get(message.id);
+    pending.delete(message.id);
+    if (message.error) waiter?.reject(new Error(JSON.stringify(message.error)));
+    else waiter?.resolve(message.result);
+  });
+  const request = (method, params) => new Promise((resolve, reject) => {
+    const id = nextId++;
+    pending.set(id, { resolve, reject });
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+  });
+  const exec = (writer, sandboxPolicy) => request("command/exec", { command: writer.argv, cwd: writer.cwd, sandboxPolicy, timeoutMs: 120_000 })
+    .catch((error) => ({ exitCode: null, stdout: "", stderr: error.message }));
+  try {
+    await request("initialize", { clientInfo: { name: "vibe_release_smoke", title: null, version: "1" }, capabilities: null });
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "initialized" })}\n`);
+    const results = [];
+    for (const writer of sandboxWriters({ scripts, repo, head, node: process.execPath })) {
+      const sandboxed = await exec(writer, { type: "workspaceWrite", writableRoots: [workspace], networkAccess: false });
+      const escalated = writer.escalated ? await exec(writer, { type: "dangerFullAccess" }) : undefined;
+      results.push({ writer, sandboxed, escalated });
+    }
+    return results;
+  } finally {
+    child.kill();
+  }
 }
 
 /** The [mcp_servers.closedloop] and [mcp_servers.closedloop-graph] blocks, and the env var names their bearer settings read. */

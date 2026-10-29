@@ -17,6 +17,7 @@ import { sharedComponentTests } from "./shared-consumers.mjs";
 import { checkSpecChanges } from "./spec-rules.mjs";
 import { routeSpecs } from "./route-specs.mjs";
 import { escapeRegExp, IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
+import { frozenInputs } from "./frozen-render.mjs";
 import { checkStorybookRules, storybookRuleTests } from "./storybook-rules.mjs";
 import { isUnversionedStory, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 import { isVisualBaseline, visualBaselineLedgerProblems } from "./visual-baseline-ledger.mjs";
@@ -56,6 +57,11 @@ const STORY_TITLE = /\btitle:\s*["'`]([^"'`]+)["'`]/;
 const FROZEN_CANDIDATE = String.raw`v1\.0|deprecated`;
 const CLOSURE_LIMIT = 20000;
 const STORY_ID_PATHSPECS = [...E2E_ROOT_PATHSPECS, "docs/", "apps/web/content/docs/", ".claude/", "*.test.*", "*.spec.*", "*.stories.*"];
+const FROZEN_LINE_BASE = /: frozen-render\.mjs --base (\S+)/;
+const FROZEN_LINE_HEAD = /; head ([0-9a-f]{40});/;
+const FROZEN_LINE_INPUTS = /; inputs ([0-9a-f]{16});/;
+const UNEDITABLE_REFERENCE = /^(?:docs\/|apps\/web\/content\/docs\/|\.claude\/)/;
+const FORBIDDEN_REFERENCE = /^(?:AGENTS|CLAUDE|AGENTS\.override)\.md$/;
 const STORY_ID_WORD = /[A-Z]{2,}(?=[A-Z][a-z]|\b|\d)|[A-Z]?[a-z]+|[A-Z]|\d+/g;
 const HARNESS_NAME = /harness|adapter/i;
 const EXPECT_CALL = /\bexpect\(/;
@@ -84,9 +90,11 @@ const DEEPEN_TIMEOUT_MS = 10 * 60 * 1000;
 const CONTROL_PROP = /\b((?:show|enable|allow|with|render|on)[A-Z][A-Za-z0-9]*)\s*(?::|=)/;
 const CONTROL_TERM = /selectall|checkbox|button|menu|action|toolbar|filter|search|picker|popover|dialog|drawer|toggle|favorite|star|bulk|control|disclosure|pagination/i;
 const CONTROL_MOUNT = /<([A-Z][A-Za-z0-9]*)\b/g;
+const DEFINED_COMPONENT = /^\s*export\s+(?:default\s+)?(?:const|function)\s+([A-Z][A-Za-z0-9]*)\b/;
 const IMPORT_DECLARATION = /\bimport\s+(?!["'])([\s\S]*?)\s+from\s+["']([^"']+)["'];?/g;
 const DESIGN_SYSTEM_CONTROL = /^@repo\/design-system\/components\/ui\//;
 const CAPABILITY_COMPONENT = /search|filter|sort|range|toolbar|pagination|control|picker|menu|popover/i;
+const PRIMITIVE_LEAF = /(?:Item|Content|Trigger)$/;
 const PAGE_COMPOSER = /(?:^|\/)[^/]*(?:page|route|toolbar|list|shell|surface|adapter)[^/]*\.[jt]sx$/i;
 
 /** Parses `git diff --unified=0` output into per-file added and removed lines. */
@@ -132,7 +140,7 @@ export function parseUnifiedDiff(text) {
  * text or null, `headFiles`
  * (tracked paths at head) and `importerCounts(paths)` (non-test files importing each).
  */
-export function evaluateDiff(files, changeLog, repo) {
+export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
   const blocking = [];
   const requiredTests = [];
   const requiredChecks = [];
@@ -164,10 +172,10 @@ export function evaluateDiff(files, changeLog, repo) {
   checkDesktopLane(live, repo, logged, add);
   checkTicketedComments(files, repo, logged, add);
   checkStories(live, files, repo, logged, add);
-  checkFrozenRenders(files, repo, logged, add);
-  checkLostStoryIds(files, repo, add);
+  checkFrozenRenders(files, repo, changeLog, add);
+  checkLostStoryIds(files, repo, logged, add);
   checkCopyProvenance(live, files, repo, logged, add);
-  checkNewControls(live, changeLog, add);
+  checkNewControls(live, files, changeLog, add);
   checkSharedCapabilityOwners(live, changeLog, repo, add);
   for (const problem of visualBaselineLedgerProblems(changeLog, live.filter((file) => isVisualBaseline(file.path)).map((file) => file.path))) {
     const file = problem.slice(0, problem.indexOf(":"));
@@ -176,16 +184,27 @@ export function evaluateDiff(files, changeLog, repo) {
   checkCapabilityRemovals(live, files, repo, logged, add);
   checkSpecChanges(files, changeLog, add);
   checkRestoredRemovalsDeepening(live, files, repo, changeLog, add);
-  checkComparators(live, repo, logged, add, changeLog);
+  checkComparators(live, repo, logged, add, changeLog, phase);
   checkUnusedExports(live, repo, logged, add);
   checkStorybookRules(files, repo, logged, add);
   requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo), ...sidebarOrderTests(files, repo), ...pathGateTests(live, (file) => repo.head(file)), ...storybookRuleTests(files, (file) => repo.head(file)), ...sharedComponentTests(live, repo, logged, add));
   return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks };
 }
 
-function controlSignals(file) {
+/**
+ * Mounts the whole diff removed, and components it defines, are moved or wrapped, not newly enabled:
+ * extracting a control into a shared parent counted twice, once in the parent and once in the
+ * consumer that mounts it (ISS-13321). The parent's own new controls are still checked in its file.
+ */
+function movedMounts(allFiles) {
+  return new Set([
+    ...allFiles.flatMap((file) => file.removed.flatMap((entry) => [...entry.text.matchAll(CONTROL_MOUNT)].map((match) => match[1]))),
+    ...allFiles.flatMap((file) => file.added.map((entry) => DEFINED_COMPONENT.exec(entry.text)?.[1]).filter(Boolean)),
+  ]);
+}
+
+function controlSignals(file, removedMounts) {
   const signals = new Map();
-  const removedMounts = new Set(file.removed.flatMap((entry) => [...entry.text.matchAll(CONTROL_MOUNT)].map((match) => match[1])));
   for (const entry of file.added) {
     const prop = CONTROL_PROP.exec(entry.text)?.[1];
     if (prop && CONTROL_TERM.test(prop)) {
@@ -201,9 +220,10 @@ function controlSignals(file) {
 }
 
 /** A newly wired control needs a cited criterion or ruling that names it on this surface. */
-function checkNewControls(files, changeLog, add) {
+function checkNewControls(files, allFiles, changeLog, add) {
+  const moved = movedMounts(allFiles);
   for (const file of files.filter((entry) => COPY_FILE.test(entry.path) && !isTestFile(entry.path) && !STORY_FILE.test(entry.path))) {
-    for (const [signal, line] of controlSignals(file)) {
+    for (const [signal, line] of controlSignals(file, moved)) {
       const prefix = `Control: ${file.path}: ${signal}:`;
       const record = changeLog.split("\n").find((entry) => entry.trimStart().startsWith(prefix));
       if (!record || !/^\s*[^:\n]+:\s*(?:(?:ISS|PRD|FEA)-\d+\s+(?:AC(?:-?\d+)?|acceptance criterion|ruling)\b|operator ruling\b)/i.test(record.slice(record.indexOf(prefix) + prefix.length))) {
@@ -223,7 +243,8 @@ function componentImports(source) {
     const named = /\{([\s\S]*?)\}/.exec(clause)?.[1];
     if (named) {
       for (const item of named.split(",")) {
-        const original = item.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0];
+        if (/^type\s/.test(item.trim())) continue;
+        const original = item.trim().split(/\s+as\s+/)[0];
         if (original) names.push(original);
       }
     }
@@ -239,16 +260,22 @@ function componentImports(source) {
 /**
  * A low-level capability newly composed by a second page adapter is visible
  * in the import graph. It belongs behind one parent unless a human explicitly
- * rules that the pages need separate compositions.
+ * rules that the pages need separate compositions. Only a page that did not
+ * compose it on the base counts, and never a type or a primitive's leaf part:
+ * one more menu item on a page that already had the menu once demanded a
+ * repo-wide refactor (ISS-13321).
  */
 function checkSharedCapabilityOwners(files, changeLog, repo, add) {
   const checked = new Set();
   for (const file of files.filter((entry) => PAGE_COMPOSER.test(entry.path) && !isTestFile(entry.path) && !STORY_FILE.test(entry.path))) {
     const addedLines = new Set(file.added.map((entry) => entry.line));
+    const baseImports = componentImports(repo.base(file.oldPath ?? file.path) ?? "");
+    const composedOnBase = (source, name) => baseImports.some((entry) => entry.source === source && entry.names.includes(name));
     for (const imported of componentImports(repo.head(file.path) ?? "").filter((entry) => DESIGN_SYSTEM_CONTROL.test(entry.source))) {
       const changedImport = [...addedLines].some((line) => line >= imported.start && line <= imported.end);
       const changedNames = imported.names.filter((name) =>
-        CAPABILITY_COMPONENT.test(name) && (changedImport || file.added.some((entry) => new RegExp(`<${escapeRegExp(name)}\\b`).test(entry.text)))
+        CAPABILITY_COMPONENT.test(name) && !PRIMITIVE_LEAF.test(name) && !composedOnBase(imported.source, name)
+        && (changedImport || file.added.some((entry) => new RegExp(`<${escapeRegExp(name)}\\b`).test(entry.text)))
       );
       for (const name of changedNames) {
         const key = `${imported.source}:${name}`;
@@ -465,7 +492,7 @@ function checkStories(files, allFiles, repo, logged, add) {
  * evidence; a byte-identical story file is not enough. Edits to the story file
  * itself are the inventory's `v1Stories` and `compileOnlyV1Repairs`.
  */
-function checkFrozenRenders(files, repo, logged, add) {
+function checkFrozenRenders(files, repo, changeLog, add) {
   const changed = new Set(files.flatMap((file) => [file.path, file.oldPath].filter(Boolean)));
   const stories = repo.frozenStories();
   if (stories.length === 0) {
@@ -498,9 +525,18 @@ function checkFrozenRenders(files, repo, logged, add) {
     return [...seen].some((file) => file !== story && changed.has(file));
   });
   // Only the shipped driver's line counts; a hand-rolled capture skipped real play completion (ISS-13291).
-  // It counts story files, as `affected` does; their stories follow in parentheses (ISS-13317).
-  if (affected.length && !logged(`Frozen render unchanged: all ${affected.length} story files (`, ": frozen-render.mjs ")) {
-    add("frozen-render", affected[0], 1, `${affected.length} frozen v1.0 story files render files this diff changed: ${affected.join(", ")}`, `run handoff's scripts/frozen-render.mjs with every one of these story files against a Storybook serving the base and one serving the branch, never a capture of your own; when it reports nothing blocking, record the \`Frozen render unchanged\` line it prints, otherwise keep the frozen renders unchanged`);
+  // It counts story files, as `affected` does; their stories follow in parentheses (ISS-13317). It names the
+  // exact commit it rendered (`head`) and session files (`inputs`); both must still match (ISS-13321).
+  const prefix = `Frozen render unchanged: all ${affected.length} story files (`;
+  const current = (line) => {
+    const base = FROZEN_LINE_BASE.exec(line)?.[1];
+    const head = FROZEN_LINE_HEAD.exec(line)?.[1];
+    const inputs = FROZEN_LINE_INPUTS.exec(line)?.[1];
+    return Boolean(base && head && inputs) && repo.headSha === head && repo.frozenInputs(base) === inputs;
+  };
+  const recorded = changeLog.split("\n").some((line) => line.includes(prefix) && line.includes(": frozen-render.mjs ") && current(line));
+  if (affected.length && !recorded) {
+    add("frozen-render", affected[0], 1, `${affected.length} frozen v1.0 story files render files this diff changed: ${affected.join(", ")}`, `run handoff's scripts/frozen-render.mjs with every one of these story files against a Storybook serving the base and one serving the branch, never a capture of your own; when it reports nothing blocking, record the \`Frozen render unchanged\` line it prints, otherwise keep the frozen renders unchanged; a line recorded before a later change no longer counts, so run it again after any change`);
   }
 }
 
@@ -519,9 +555,11 @@ function storyIds(source) {
  * Story IDs the base has and the session lost block unless the file is a
  * recorded sibling replacement's entry (a retitle is the inventory's
  * `retitledStories`), and every reference to a lost ID left in specs, tests,
- * docs, agent files or stories blocks.
+ * docs, agent files or stories blocks; in docs and agent files, which the
+ * session may not edit, a recorded `Engineering needed (forbidden path)` line
+ * for the file clears it.
  */
-function checkLostStoryIds(files, repo, add) {
+function checkLostStoryIds(files, repo, logged, add) {
   const still = new Set(files.filter((file) => file.status !== "D" && STORY_FILE.test(file.path)).flatMap((file) => storyIds(repo.head(file.path))));
   for (const file of files.filter((entry) => entry.status !== "A" && STORY_FILE.test(entry.oldPath ?? entry.path))) {
     const baseText = repo.base(file.oldPath ?? file.path);
@@ -533,6 +571,13 @@ function checkLostStoryIds(files, repo, add) {
     }
     for (const id of lost) {
       for (const hit of repo.filesNaming(id)) {
+        // A session may not edit docs or agent files, so there the engineering line stands in for the edit (ISS-13321).
+        if (UNEDITABLE_REFERENCE.test(hit) || FORBIDDEN_REFERENCE.test(path.basename(hit))) {
+          if (!logged("Engineering needed (forbidden path):", hit)) {
+            add("lost-story-id", hit, 1, `still names the removed or renamed story ID ${id}`, `the session may not edit this file: record \`Engineering needed (forbidden path): ${hit}; why: point it at the story's current ID instead of ${id}\``);
+          }
+          continue;
+        }
         add("lost-story-id", hit, 1, `still names the removed or renamed story ID ${id}`, "point it at the story's current ID");
       }
     }
@@ -587,14 +632,16 @@ function checkRestoredRemovalsDeepening(files, allFiles, repo, changeLog, add) {
     }
   }
   if (failure !== null) {
-    collect("restored-removal", files[0].path, 1, `the clone is shallow and deepening it failed (${failure}), so a removal older than its shallow boundary is invisible to this check`, "fix the fetch (network, remote or credentials) and rerun, or run `git fetch --unshallow` yourself");
+    collect("restored-removal", files[0].path, 1, `the clone is shallow and deepening it failed (${failure}), so a removal older than its shallow boundary is invisible to this check`, "for the writer: fix the fetch (network, remote or credentials) and rerun, or run `git fetch --unshallow` in the worktree; never a step for the person");
   }
   findings.forEach((finding) => add(...finding));
 }
 
 /**
  * A component mounted again, or a file added back, that a base commit removed needs a human's restore
- * authorization naming the removal it overrides. Returns how many history lookups found no removal.
+ * authorization naming the removal it overrides. Only a removal from the same file counts (a deleted
+ * module comes back as an added file): a removal anywhere in the repo blamed every new mount of a
+ * common component on an unrelated cleanup (ISS-13321). Returns how many history lookups found no removal.
  */
 function checkRestoredRemovals(files, allFiles, repo, changeLog, add) {
   const authorized = (name) => new RegExp(String.raw`^\s*(?:[-*]\s+)?Restore authorization:\s*${escapeRegExp(name)}:\s*(?:operator ruling|[A-Z][\w'.-]+(?:\s+[A-Z][\w'.-]+)+),\s*\d{4}-\d{2}-\d{2},\s*[^;\n]+;\s*overrides\s+(?:ISS|PRD|PLN|FEA)-\d+`, "m").test(changeLog);
@@ -609,13 +656,17 @@ function checkRestoredRemovals(files, allFiles, repo, changeLog, add) {
         add("restored-removal", file.path, 1, `adds back a file deleted by ${removal}`, `remove it, or record \`Restore authorization: ${file.path}: <human name or operator ruling>, <YYYY-MM-DD>, <where>; overrides <removal ticket>\``);
       }
     }
+    // An added file has no history of its own; a file deleted and added back is the finding above.
+    if (file.status === "A") continue;
     const before = repo.base(file.path) ?? "";
+    // A shared primitive is mounted everywhere and unmounted by every cleanup, so mounting one is never a restore (ISS-13321).
+    const primitives = new Set(componentImports(repo.head(file.path) ?? "").filter((entry) => DESIGN_SYSTEM_CONTROL.test(entry.source)).flatMap((entry) => entry.names));
     const mounted = new Set(file.added.flatMap((entry) => [...entry.text.matchAll(JSX_MOUNT)].map((match) => match[1])));
-    for (const name of [...mounted].filter((item) => !before.includes(`<${item}`) && !removed.has(item) && !authorized(item))) {
+    for (const name of [...mounted].filter((item) => !before.includes(`<${item}`) && !removed.has(item) && !primitives.has(item) && !authorized(item))) {
       if (checked++ >= RESTORE_LIMIT) {
         return unresolved;
       }
-      const removal = repo.unmountOf(name);
+      const removal = repo.unmountOf(name, file.path);
       unresolved += removal ? 0 : 1;
       if (removal) {
         const line = file.added.find((entry) => entry.text.includes(`<${name}`))?.line ?? 1;
@@ -676,6 +727,7 @@ export function sidebarOrderTests(files, repo) {
 
 function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
   let deepened = 0;
+  const headSha = git(worktree, ["rev-parse", "HEAD"]);
   const headFiles = git(worktree, ["ls-files"]).split("\n").filter(Boolean);
   const baseFiles = new Set(lines(() => git(worktree, ["ls-tree", "-r", "--name-only", base])));
   const blobs = new Map();
@@ -710,6 +762,7 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
         return { ok: false, reason: `git fetch ${step}: ${String(error?.stderr ?? error?.message ?? error).trim().split("\n")[0]}` };
       }
     },
+    headSha,
     headFiles,
     baseFiles,
     baseBlobs,
@@ -719,11 +772,11 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
       const hit = lines(() => git(worktree, ["log", "--diff-filter=D", "-n", "1", "--format=%h %s", base, "--", file]))[0];
       return hit ? `commit ${hit}` : null;
     },
-    unmountOf: (name) => {
+    unmountOf: (name, file) => {
       const mount = new RegExp(`<${name}\\b`);
-      for (const hit of lines(() => git(worktree, ["log", "-G", `<${name}([^A-Za-z0-9]|$)`, "-n", "20", "--format=%H %h %s", base]))) {
+      for (const hit of lines(() => git(worktree, ["log", "-G", `<${name}([^A-Za-z0-9]|$)`, "-n", "20", "--format=%H %h %s", base, "--", file]))) {
         const [sha, ...summary] = hit.split(" ");
-        const diff = lines(() => git(worktree, ["show", "--format=", "--unified=0", sha]));
+        const diff = lines(() => git(worktree, ["show", "--format=", "--unified=0", sha, "--", file]));
         const count = (sign) => diff.filter((text) => text.startsWith(sign) && !text.startsWith(`${sign}${sign}${sign}`) && mount.test(text)).length;
         if (count("-") > count("+")) {
           return `commit ${summary.join(" ")}`;
@@ -741,6 +794,7 @@ function gitRepo(worktree, base, isFrozenStory, storyReplacements) {
         return false;
       }
     },
+    frozenInputs: memoize((ref) => { try { return frozenInputs(worktree, ref); } catch { return null; } }),
     filesNaming: (text) => lines(() => git(worktree, ["grep", "-l", "-F", text, "--", ...STORY_ID_PATHSPECS])),
     isFrozenStory,
     frozenStories: () => {
@@ -813,14 +867,15 @@ function readBlobs(worktree, base, files) {
  * Runs every rule on the session diff. `exclude` holds paths that are not the
  * session's work (local fixes); `isFrozenStory` is the base's v1.0 predicate
  * (storybook-taxonomy.mjs, by the base's scheme); `storyReplacements` holds
- * story files recorded as a sibling replacement's entry.
+ * story files recorded as a sibling replacement's entry; `phase` is the
+ * inventory's (only the pull-request phase writes tests).
  */
-export function runDiffRules({ worktree, base, changeLog, exclude = new Set(), isFrozenStory = () => false, storyReplacements = new Set() }) {
+export function runDiffRules({ worktree, base, changeLog, exclude = new Set(), isFrozenStory = () => false, storyReplacements = new Set(), phase = "pull-request" }) {
   const files = [...parseUnifiedDiff(git(worktree, ["diff", "--no-color", "--unified=0", "-M", base])), ...untrackedAsAdded(worktree)]
     .filter((file) => !exclude.has(file.path));
   const logFile = changeLog ?? path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-changes.md");
   const log = existsSync(logFile) ? readFileSync(logFile, "utf8") : "";
-  return evaluateDiff(files, log, gitRepo(worktree, base, isFrozenStory, storyReplacements));
+  return evaluateDiff(files, log, gitRepo(worktree, base, isFrozenStory, storyReplacements), phase);
 }
 
 /** Every tracked file importing each of `files` by its directory and stem, or by `./stem` beside it. */

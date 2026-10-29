@@ -467,6 +467,13 @@ describe("production committed-input privacy and origin boundaries", () => {
       expect(result.status, result.stdout).toBe(0);
       expect(result.json?.mainSync).toMatchObject({ generatedFiles: 1 });
       expect(readFileSync(join(value.worktree, generated.output), "utf8")).toBe(generated.body);
+      // ISS-13321: a build-info left from an earlier merge is rewritten with the repository's own renderer, not refused.
+      const stale = generated.body.replace(value.git(["rev-parse", "HEAD"]), "0".repeat(40));
+      expect(stale).not.toBe(generated.body);
+      value.write(generated.output, stale);
+      const rewritten = invokeSync(value, "inputs", source.context);
+      expect(rewritten.status, rewritten.stdout).toBe(0);
+      expect(readFileSync(join(value.worktree, generated.output), "utf8")).toBe(generated.derive());
     } finally { source.finish(); }
   }, 30000);
 
@@ -491,6 +498,11 @@ describe("production committed-input privacy and origin boundaries", () => {
       expect(result.status, result.stdout).toBe(0);
       expect(readFileSync(join(value.worktree, generated.output), "utf8")).toBe(generated.body);
       expect(existsSync(join(value.worktree, "apps/web/.source"))).toBe(false);
+      // ISS-13321: a docs bundle manifest left from an earlier merge is rewritten by the repository's own producer.
+      value.write(generated.output, "export const stale = true;\n");
+      const rewritten = invokeSync(value, "inputs", source.context);
+      expect(rewritten.status, rewritten.stdout).toBe(0);
+      expect(readFileSync(join(value.worktree, generated.output), "utf8")).toBe(generated.body);
     } finally { source.finish(); }
   }, 30000);
 

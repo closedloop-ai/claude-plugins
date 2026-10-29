@@ -31,6 +31,14 @@ function setup(runtime: "codex" | "claude" = "codex") {
 }
 
 describe("recorded writer migration", () => {
+  it("status says the recorded definition was removed, so the migration runs before any launch (ISS-13321)", () => {
+    const value = setup("codex");
+    expect(readWriterSummary(value.worktree)?.recordedDefinition).toBe("present");
+    rmSync(value.oldRoot, { recursive: true });
+    expect(readWriterSummary(value.worktree)?.recordedDefinition).toBe("removed");
+    migrateWriter(value.input, value.currentRoot);
+    expect(readWriterSummary(value.worktree)?.recordedDefinition).toBe("present");
+  });
   it.each(["codex", "claude"] as const)("migrates a missing %s definition and preserves state and history", runtime => {
     const value = setup(runtime);
     const owner = { worktree: value.worktree, workerId: value.registered.workerId };

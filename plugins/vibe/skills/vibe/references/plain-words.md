@@ -48,6 +48,23 @@ Two more rules:
   that was already answered; `scripts/session-questions.mjs` keeps both
   (`SKILL.md`, "Questions are asked once").
 
+## What the person is asked to do
+
+The person is only ever asked to do what only a human can do: a click, a
+sign-in, a choice between endings, or an answer to a product question. Every
+other remedy is the session's own work, or engineering's on the live ticket's
+Engineering checklist. A check's or a script's suggested fix, a worker's
+remedy and a stop's reason are written for the writer or for engineering,
+never relayed to the person as a step, even in plain words (ISS-13321: a
+person who asked "what should I do first" was told to pause an animation in
+a component, which only engineering could do).
+
+When the person asks what to do while the session is stopped, the answer is
+nothing yet: "This needs an engineer. Message engineering with: <summary>",
+plus the offer to pass it to someone now (`guardrails.md`, "Plugins and
+tooling"). While the session can still continue, the answer is that you are
+working on it, and the next thing they will see.
+
 ## Links to what the person should look at
 
 Whenever a message points the person at something to look at or open (a

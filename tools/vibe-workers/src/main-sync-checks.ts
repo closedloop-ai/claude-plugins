@@ -209,7 +209,9 @@ export function checkRecipe(value: ReturnType<typeof syncContext>, receipt: Main
     e2eLimitations.push(...discoverRequiredE2eLanes(root, receipt));
     commands.push({ argv: ["pnpm", "check:source-gates"] }, { argv: ["pnpm", "typecheck:affected"] });
   }
-  const filter = `...[${receipt.validationSince}]`;
+  // Operator ruling, 2026-10-28 (ISS-13321): the session's own diff against the main it captured, as Biome uses.
+  // Pinned to the last deploy, every main merge widened the typecheck by all of main's changes since then.
+  const filter = `...[${receipt.mainSha}]`;
   commands.push({ argv: ["pnpm", "turbo", "typecheck", `--filter=${filter}`, "--concurrency=1"] });
   if (files.some((file) => file.includes(".stories.") || file.startsWith("apps/storybook/") || file.startsWith("packages/design-system/"))) {
     commands.push({ argv: ["pnpm", "--filter", "storybook", "validate:catalog"] });
@@ -243,7 +245,7 @@ export function executeChecks(value: ReturnType<typeof syncContext>, receipt: Ma
       drySpent[index]! += performance.now() - start;
       // The affected wrapper's no-op is not coverage; the later deployment-pinned matrix still runs.
       if (command.argv[1] === "turbo" && !selection?.tasks.length
-        && git(value.place.root, ["diff", "--name-only", receipt.validationSince, "HEAD"])) {
+        && git(value.place.root, ["diff", "--name-only", receipt.mainSha, "HEAD"])) {
         throw new MainSyncError("Pinned validation selected no tasks for changed inputs; no executed coverage was established");
       }
       assertIdentity(value.place.root, before);
@@ -267,13 +269,14 @@ export function executeChecks(value: ReturnType<typeof syncContext>, receipt: Ma
     if (result.error || result.status !== 0) {
       if (!main) throw new MainSyncError(`Required validation command failed: ${command.argv.join(" ")}; private log ${log}`);
       const failed = { ...evidence, exitCode: result.status ?? 1 };
+      const sessionTimedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
       comparison = main.classify(command, selection, failed, prefix, env, (rerunLog) => {
         verifyReportExecution(value.place.root, value.place.root, ReportExecutionOwner.Check, command.argv,
           command.cwd ? join(value.place.root, command.cwd) : value.place.root, selection);
         const again = runBounded(command.argv, command.cwd ? join(value.place.root, command.cwd) : value.place.root, env,
           command.timeoutMs ?? MAX_CHECK_MS, rerunLog);
         return { exitCode: again.exitCode, log: again.log, sha256: again.sha256 };
-      });
+      }, sessionTimedOut);
       if (comparison.classification === "session-caused") {
         recordFailedCheck(value, command, comparison);
         throw new MainSyncError(sessionCausedMessage(command, comparison));
