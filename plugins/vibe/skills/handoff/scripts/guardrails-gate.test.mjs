@@ -77,23 +77,109 @@ test("conventions: enum, as cast, console, raw anchor and inline import; import 
   assert.equal(found.find((item) => item.message.startsWith("TypeScript enum")).severity, Severity.High);
 });
 
+const repairFile = (path = "apps/app/a.test.tsx") => files(diff(path, ["x"]));
+const repairs = (before, after) => scanTestRepairs(repairFile(), () => before, () => after);
+
 test("test repair: a changed assertion shows the words that differ, ignoring whitespace and a trailing semicolon", () => {
-  const same = scanTestRepairs(files(diff("apps/app/a.test.tsx", ["  expect(a).toBe(1);"], ["expect(a).toBe(1)"])));
-  assert.deepEqual(same, []);
-  const changed = scanTestRepairs(files(diff("apps/app/a.test.tsx", ["expect(a).toBe(2);"], ["expect(a).toBe(1);"])));
-  assert.equal(changed.length, 1);
-  assert.equal(changed[0].severity, Severity.High);
-  assert.match(changed[0].evidence, /-expect\(a\)\.toBe\(1\) \+expect\(a\)\.toBe\(2\)/);
-  assert.match(changed[0].evidence, /changed words: expect\(a\)\.toBe\(2\)/);
+  assert.deepEqual(repairs("expect(a).toBe(1)\n", "  expect(a).toBe(1);\n").findings, []);
+  const { findings } = repairs("expect(a).toBe(1);\n", "expect(a).toBe(2);\n");
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].severity, Severity.High);
+  assert.match(findings[0].evidence, /-expect\(a\)\.toBe\(1\) \+expect\(a\)\.toBe\(2\)/);
+  assert.match(findings[0].evidence, /changed words: expect\(a\)\.toBe\(2\)/);
+});
+
+test("test repair regression (a): a reversed expectation inside an assertion split across lines is reported with word-level evidence", () => {
+  const before = [
+    "  // pins current behavior; looks odd because Close skips the reset",
+    "  expect(screen.getByRole(\"textbox\", { name: \"Issue title\" })).toHaveValue(",
+    "    \"Keep\"",
+    "  );",
+    "",
+  ].join("\n");
+  const after = [
+    "  // the shared composer has one dismissal path",
+    "  expect(screen.getByRole(\"textbox\", { name: \"Issue title\" })).toHaveValue(",
+    "    \"\"",
+    "  );",
+    "",
+  ].join("\n");
+  const { findings, unevaluated } = repairs(before, after);
+  assert.deepEqual(unevaluated, []);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].check, Check.TestRepair);
+  assert.equal(findings[0].line, 2);
+  assert.match(findings[0].evidence, /toHaveValue\( "Keep" \)/);
+  assert.match(findings[0].evidence, /changed words: .*""/);
+});
+
+test("test repair: a reformat of the same assertion across lines, with a trailing comma, is not a change", () => {
+  const before = "expect(screen.getByText(\"a\")).toHaveValue(\"Keep\");\n";
+  const after = "expect(screen.getByText(\"a\")).toHaveValue(\n  \"Keep\",\n);\n";
+  assert.deepEqual(repairs(before, after).findings, []);
 });
 
 test("test repair: a removed or added assertion is a finding, a non-assertion repair is not, a new test file is not scanned", () => {
-  const removed = scanTestRepairs(files(diff("apps/app/a.test.tsx", [], ["expect(a).toBe(1);"])));
-  assert.match(removed[0].message, /removed/);
-  const added = scanTestRepairs(files(diff("apps/app/a.test.tsx", ["expect(b).toBe(1);"], [])));
-  assert.match(added[0].message, /added/);
-  assert.deepEqual(scanTestRepairs(files(diff("apps/app/a.test.tsx", ["import { b } from \"./b\";"], ["import { a } from \"./a\";"]))), []);
-  assert.deepEqual(scanTestRepairs(files(diff("apps/app/new.test.tsx", ["expect(1).toBe(1);"], [], { status: "A" }))), []);
+  assert.match(repairs("expect(a).toBe(1);\n", "\n").findings[0].message, /removed/);
+  assert.match(repairs("\n", "expect(b).toBe(1);\n").findings[0].message, /added/);
+  assert.deepEqual(repairs("import { a } from \"./a\";\n", "import { b } from \"./b\";\n").findings, []);
+  assert.deepEqual(scanTestRepairs(files(diff("apps/app/new.test.tsx", ["expect(1).toBe(1);"], [], { status: "A" })), () => undefined, () => "expect(1).toBe(1);").findings, []);
+});
+
+test("test repair: a file whose base or head cannot be read is unevaluated, and the gate then lists the check as skipped, never run", () => {
+  const result = scanTestRepairs(repairFile(), () => undefined, () => "expect(a).toBe(1);");
+  assert.deepEqual(result, { findings: [], unevaluated: ["apps/app/a.test.tsx"] });
+  const gate = gateFor({
+    diffText: diff("apps/app/a.test.tsx", ["expect(a).toBe(2);"], ["expect(a).toBe(1);"]),
+    routes: [["show", { status: 128, stdout: "", stderr: "fatal" }]],
+    sources: { "/wt/apps/app/a.test.tsx": "expect(a).toBe(2);" },
+  }).gate.gate({ worktree: "/wt" });
+  assert.ok(!gate.checks_run.includes(Check.TestRepair));
+  const skip = gate.checks_skipped.find((entry) => entry.name === Check.TestRepair);
+  assert.match(skip.reason, /^partial: .*apps\/app\/a\.test\.tsx/);
+  assert.deepEqual(findingsProblems(gate), []);
+});
+
+test("test repair through the whole gate: the reversed split-line assertion is reported and the check is listed as run", () => {
+  const before = "expect(el).toHaveValue(\n  \"Keep\"\n);\n";
+  const after = "expect(el).toHaveValue(\n  \"\"\n);\n";
+  const report = gateFor({
+    diffText: diff("apps/app/a.test.tsx", ["  \"\""], ["  \"Keep\""]),
+    routes: [["show", ok(before)]],
+    sources: { "/wt/apps/app/a.test.tsx": after },
+  }).gate.gate({ worktree: "/wt" });
+  assert.ok(report.checks_run.includes(Check.TestRepair));
+  assert.equal(report.findings.filter((item) => item.check === Check.TestRepair).length, 1);
+});
+
+test("conventions regression (b): an `as` inside a test title string or a multi-line import rename is not a cast", () => {
+  const head = [
+    "import {",
+    "  CreationFieldPlacement,",
+    "  type CreationFieldValue,",
+    "  type ArtifactCreationField as CreationSchemaField,",
+    "  creationOptionsFromLabels,",
+    "} from \"./schema\";",
+    "it(\"shows the creator as Owner when none is set\", () => {});",
+    "",
+  ].join("\n");
+  const changed = files(diff("apps/app/c.test.tsx", head.split("\n")));
+  assert.deepEqual(scanConventions(changed, () => head).filter((item) => item.message.startsWith("`as` cast")), []);
+  assert.deepEqual(scanConventions(changed).filter((item) => item.message.startsWith("`as` cast")), []);
+});
+
+test("conventions regression (c): an exported cast is reported, an export list rename is not", () => {
+  const head = [
+    "import { a as b } from \"./a\";",
+    "export const CREATOR = PEOPLE[0] as User;",
+    "export { x as y };",
+    "export type { T as U } from \"./t\";",
+    "",
+  ].join("\n");
+  const changed = files(diff("apps/app/fixtures.ts", head.split("\n")));
+  const casts = scanConventions(changed, () => head).filter((item) => item.message.startsWith("`as` cast"));
+  assert.deepEqual(casts.map((item) => item.line), [2]);
+  assert.match(casts[0].evidence, /PEOPLE\[0\] as User/);
 });
 
 test("a finding id is stable for the same check, place and message and differs when any changes", () => {
@@ -189,7 +275,7 @@ test("the shape check rejects extra keys, a bad severity, a finding whose check 
   assert.deepEqual(findingsProblems(good), []);
   assert.match(findingsProblems({ ...good, extra: 1 }).join(), /top-level keys/);
   const item = { id: "i", check: "tokens", file: "a", line: 1, severity: "high", message: "m", evidence: "e" };
-  assert.match(findingsProblems({ ...good, findings: [item] }).join(), /not in checks_run/);
+  assert.match(findingsProblems({ ...good, findings: [item] }).join(), /neither checks_run nor checks_skipped/);
   assert.deepEqual(findingsProblems({ ...good, findings: [item], checks_run: ["tokens"] }), []);
   assert.match(findingsProblems({ ...good, findings: [{ ...item, severity: "blocking" }], checks_run: ["tokens"] }).join(), /severity/);
   assert.match(findingsProblems({ ...good, findings: [{ ...item, line: 1.5 }], checks_run: ["tokens"] }).join(), /integer or null/);

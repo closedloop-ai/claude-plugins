@@ -64,7 +64,9 @@ const ARBITRARY_PIXEL = /\[-?\d+(?:\.\d+)?px\]/;
 const INLINE_STYLE = /\bstyle=\{\{/;
 const ENUM = /^\s*(?:export\s+)?(?:declare\s+)?(?:const\s+)?enum\s+\w+/;
 const AS_CAST = /\bas\s+(?!const\b)(?:[A-Z][\w.]*(?:<[^>]*>)?|\{|\[|unknown\b|any\b|string\b|number\b|boolean\b)/;
-const IMPORT_RENAME = /^\s*(?:import|export)\b.*\bas\s+\w+/;
+const SPECIFIER_LINE = /^\s*(?:type\s+)?[\w$]+\s+as\s+[\w$]+,?\s*$/;
+// import / export-from / export-list statements, whose `as` renames a binding and never casts.
+const RENAME_STATEMENT = /^[ \t]*(?:import\b[^;]*?(?:\bfrom\s*)?["'][^"']+["']|export\s*(?:type\s*)?\{[^}]*\}(?:\s*from\s*["'][^"']+["'])?|export\s*\*\s*as\s+[\w$]+\s+from\s*["'][^"']+["'])/gm;
 const CONSOLE_CALL = /\bconsole\.(?:log|warn|error|debug|info)\(/;
 const RAW_ANCHOR = /<a\s[^>]*href=["']\/(?!\/)/;
 const INLINE_IMPORT = /(?<![\w.])import\(/;
@@ -104,8 +106,8 @@ export function findingsProblems(report) {
     if (typeof item.file !== "string" || typeof item.message !== "string" || typeof item.evidence !== "string" || typeof item.check !== "string") problems.push(`${label} has a non-string field`);
     if (ids.has(item.id)) problems.push(`${label}.id repeats`);
     ids.add(item.id);
-    const ran = new Set(report.checks_run ?? []);
-    if (!ran.has(item.check)) problems.push(`${label}.check ${item.check} is not in checks_run`);
+    const known = new Set([...(report.checks_run ?? []), ...(Array.isArray(skipped) ? skipped.map((entry) => entry.name) : [])]);
+    if (!known.has(item.check)) problems.push(`${label}.check ${item.check} is in neither checks_run nor checks_skipped`);
   }
   return problems;
 }
@@ -124,23 +126,69 @@ export function scanTokens(files) {
   return found;
 }
 
+/** Text with string, template and comment contents blanked, so a word inside prose or a title is never read as code. */
+export function codeOnly(line) {
+  return line.replace(/\/\/.*$/, "").replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`/g, (match) => match[0] + match[0]);
+}
+
+/** The 1-based lines of `text` inside an import statement, an export list or an export-from, where `as` renames. */
+export function renameLines(text) {
+  const lines = new Set();
+  for (const match of text.matchAll(RENAME_STATEMENT)) {
+    const first = text.slice(0, match.index).split("\n").length;
+    const count = match[0].split("\n").length;
+    for (let at = 0; at < count; at += 1) lines.add(first + at);
+  }
+  return lines;
+}
+
 /** Findings from added lines in source files: enum, `as` casts, client `console`, raw internal anchors, inline imports. */
-export function scanConventions(files) {
+export function scanConventions(files, readHead = () => undefined) {
   const found = [];
   for (const file of files.filter((entry) => entry.status !== "D" && SOURCE.test(entry.path) && !/\.(?:mjs|cjs)$/.test(entry.path))) {
+    const renames = TS_FILE.test(file.path) ? renameLines(readHead(file.path) ?? "") : new Set();
     for (const { line, text } of file.added) {
       if (COMMENT.test(text)) continue;
+      const code = codeOnly(text);
       if (TS_FILE.test(file.path) && ENUM.test(text)) found.push(finding(Check.Conventions, file.path, line, Severity.High, "TypeScript enum; use a PascalCase const object", text.trim()));
-      if (TS_FILE.test(file.path) && AS_CAST.test(text) && !IMPORT_RENAME.test(text)) found.push(finding(Check.Conventions, file.path, line, Severity.Medium, "`as` cast; narrow or type it instead", text.trim()));
+      if (TS_FILE.test(file.path) && AS_CAST.test(code) && !renames.has(line) && !SPECIFIER_LINE.test(text) && !/^\s*import\b/.test(text)) found.push(finding(Check.Conventions, file.path, line, Severity.Medium, "`as` cast; narrow or type it instead", text.trim()));
       if (CONSOLE_CALL.test(text) && !isTestFile(file.path)) found.push(finding(Check.Conventions, file.path, line, Severity.Medium, "console call in source", text.trim()));
       if (RAW_ANCHOR.test(text)) found.push(finding(Check.Conventions, file.path, line, Severity.Medium, "raw internal `<a href>`; use the navigation Link", text.trim()));
-      if (INLINE_IMPORT.test(text)) found.push(finding(Check.Conventions, file.path, line, Severity.Medium, "inline import(); imports belong at the top of the file", text.trim()));
+      if (INLINE_IMPORT.test(code)) found.push(finding(Check.Conventions, file.path, line, Severity.Medium, "inline import(); imports belong at the top of the file", text.trim()));
     }
   }
   return found;
 }
 
-const normalize = (text) => text.replace(/\s+/g, " ").replace(/[;,]\s*$/, "").trim();
+const squash = (text) => text.replace(/\s+/g, " ").replace(/,\s*([)\]}])/g, "$1").replace(/\s*([()[\]{},;])\s*/g, "$1").replace(/;$/, "").trim();
+const ASSERTION_START = /\b(?:expect|assert[\w.]*)\s*[.(]/g;
+
+/** The assertion statements of `source` (`expect(...)...;` across lines), each with its starting line and whitespace-free form. */
+export function assertionStatements(source) {
+  const found = [];
+  let resume = 0;
+  for (const match of source.matchAll(ASSERTION_START)) {
+    if (match.index < resume) continue;
+    let depth = 0;
+    let quote = null;
+    let end = source.length;
+    for (let at = match.index; at < source.length; at += 1) {
+      const char = source[at];
+      if (quote) {
+        if (char === "\\") at += 1;
+        else if (char === quote) quote = null;
+      } else if (char === '"' || char === "'" || char === "`") quote = char;
+      else if ("([{".includes(char)) depth += 1;
+      else if (")]}".includes(char)) depth -= 1;
+      else if (depth === 0 && (char === ";" || (char === "\n" && /[)\]}]\s*$/.test(source.slice(match.index, at))))) { end = at; break; }
+      if (depth < 0) { end = at; break; }
+    }
+    const raw = source.slice(match.index, end);
+    found.push({ line: source.slice(0, match.index).split("\n").length, raw: raw.replace(/\s+/g, " ").trim(), norm: squash(raw) });
+    resume = end;
+  }
+  return found;
+}
 
 /** The words of `after` that are not in `before`, for the evidence of a changed assertion. */
 function changedWords(before, after) {
@@ -149,33 +197,46 @@ function changedWords(before, after) {
 }
 
 /**
- * An edited test file may only be repaired so it compiles: an assertion line removed or changed, or one added,
- * is reported with the words that differ, whitespace and trailing punctuation ignored.
+ * An edited test file may only be repaired so it compiles. Assertion statements (not lines, so a call split
+ * across lines is one statement) of the base and the head are compared, whitespace and trailing commas ignored:
+ * a changed, removed or added assertion is reported with the words that differ. A file whose base or head text
+ * cannot be read is returned under `unevaluated`, never counted as clean.
  */
-export function scanTestRepairs(files) {
+export function scanTestRepairs(files, readBase, readHead) {
   const found = [];
-  for (const file of files.filter((entry) => entry.status === "M" && isTestFile(entry.path) && SOURCE.test(entry.path))) {
-    const added = file.added.map((entry) => ({ ...entry, norm: normalize(entry.text) }));
-    const removed = file.removed.map((entry) => ({ ...entry, norm: normalize(entry.text) }));
-    const addedSet = new Set(added.map((entry) => entry.norm));
-    const removedSet = new Set(removed.map((entry) => entry.norm));
-    const lostAssertions = removed.filter((entry) => ASSERTION.test(entry.text) && !addedSet.has(entry.norm));
-    const newAssertions = added.filter((entry) => ASSERTION.test(entry.text) && !removedSet.has(entry.norm));
-    const pairedNew = new Set();
-    for (const gone of lostAssertions) {
-      const partner = newAssertions.find((entry) => !pairedNew.has(entry) && Math.abs(entry.line - gone.line) <= 3) ?? newAssertions.find((entry) => !pairedNew.has(entry));
+  const unevaluated = [];
+  for (const file of files.filter((entry) => (entry.status === "M" || entry.status === "R") && isTestFile(entry.path) && SOURCE.test(entry.path))) {
+    const before = readBase(file.oldPath ?? file.path);
+    const after = readHead(file.path);
+    if (typeof before !== "string" || typeof after !== "string") { unevaluated.push(file.path); continue; }
+    const base = assertionStatements(before);
+    const head = assertionStatements(after);
+    const claim = (list, other) => {
+      const counts = new Map();
+      for (const item of other) counts.set(item.norm, (counts.get(item.norm) ?? 0) + 1);
+      return list.filter((item) => {
+        const left = counts.get(item.norm) ?? 0;
+        if (left > 0) { counts.set(item.norm, left - 1); return false; }
+        return true;
+      });
+    };
+    const lost = claim(base, head);
+    const fresh = claim(head, base);
+    const paired = new Set();
+    for (const gone of lost) {
+      const partner = fresh.filter((item) => !paired.has(item)).sort((a, b) => Math.abs(a.line - gone.line) - Math.abs(b.line - gone.line))[0];
       if (partner) {
-        pairedNew.add(partner);
-        found.push(finding(Check.TestRepair, file.path, partner.line, Severity.High, "an assertion changed in a test that may only be repaired", `-${gone.norm} +${partner.norm} (changed words: ${changedWords(gone.norm, partner.norm).join(" ") || "none, removed only"})`));
+        paired.add(partner);
+        found.push(finding(Check.TestRepair, file.path, partner.line, Severity.High, "an assertion changed in a test that may only be repaired", `-${gone.raw} +${partner.raw} (changed words: ${changedWords(gone.raw, partner.raw).join(" ") || "none, removed only"})`));
       } else {
-        found.push(finding(Check.TestRepair, file.path, gone.line, Severity.High, "an assertion was removed from a test that may only be repaired", `-${gone.norm}`));
+        found.push(finding(Check.TestRepair, file.path, gone.line, Severity.High, "an assertion was removed from a test that may only be repaired", `-${gone.raw}`));
       }
     }
-    for (const extra of newAssertions.filter((entry) => !pairedNew.has(entry))) {
-      found.push(finding(Check.TestRepair, file.path, extra.line, Severity.High, "an assertion was added to a test that may only be repaired", `+${extra.norm}`));
+    for (const extra of fresh.filter((item) => !paired.has(item))) {
+      found.push(finding(Check.TestRepair, file.path, extra.line, Severity.High, "an assertion was added to a test that may only be repaired", `+${extra.raw}`));
     }
   }
-  return found;
+  return { findings: found, unevaluated };
 }
 
 /** A diff-rules finding as a guardrails finding; the rule keeps its own name in the message. */
@@ -284,9 +345,16 @@ export function createGuardrailsGate({
     handle.ran(Check.Tokens);
     handle.add(scanTokens(files));
     handle.ran(Check.Conventions);
-    handle.add([...scanConventions(files), ...overCeiling({ files, worktree })]);
-    handle.ran(Check.TestRepair);
-    handle.add(scanTestRepairs(files));
+    const readHead = (file) => (exists(path.join(worktree, file)) ? read(path.join(worktree, file)) : undefined);
+    const readBase = (file) => {
+      const shown = git(worktree, ["show", `${baseSha}:${file}`]);
+      return shown.status === 0 ? shown.stdout : undefined;
+    };
+    handle.add([...scanConventions(files, readHead), ...overCeiling({ files, worktree })]);
+    const repairs = scanTestRepairs(files, readBase, readHead);
+    handle.add(repairs.findings);
+    if (repairs.unevaluated.length > 0) handle.skip(Check.TestRepair, `partial: findings cover only the files it could read; could not read the base or head text of ${repairs.unevaluated.join(", ")}`);
+    else handle.ran(Check.TestRepair);
     handle.ran(Check.OwnerDuplicates);
     handle.add(ownerDuplicates({ files, worktree, changedPaths }));
     for (const entry of REVIEWER_CHECKS) handle.skip(entry.name, entry.reason);

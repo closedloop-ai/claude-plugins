@@ -38,7 +38,7 @@ Rules every reader may rely on:
 - `head` is the commit that was checked and `base` the commit the diff is
   against (the main the session captured, or its merge-base with
   `origin/main`).
-- Every finding's `check` is in `checks_run`.
+- Every finding's `check` is in `checks_run`, or in `checks_skipped` when the check could evaluate only some files (its reason then starts with `partial:` and names the files it could not read); such a check is never in `checks_run`.
 - A check that did not run, for any reason, is in `checks_skipped` with its
   reason and never in `checks_run`. An empty `findings` list proves only the
   checks in `checks_run` found nothing: it never says a skipped or absent check
