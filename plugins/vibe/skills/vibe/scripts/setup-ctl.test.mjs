@@ -234,7 +234,7 @@ test("stop is the sessions script's own stop, never a signal by hand", () => {
   const calls = [];
   const ctl = createSetupCtl({ run: router([["vibe-sessions.mjs stop", ok({ ok: true, stopped: ["storybook"] })]], calls) });
   assert.deepEqual(ctl.stop({ worktree: "/wt" }), { status: Status.Ok, stopped: ["storybook"] });
-  assert.ok(!calls.some((call) => /kill|pkill/.test(call.line)));
+  assert.ok(calls.every((call) => call.line.includes("vibe-sessions.mjs stop")));
 });
 
 test("discard without --confirmed deletes nothing; with it, it stops first and runs from the retained checkout, never from the target", () => {
