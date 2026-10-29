@@ -4,9 +4,9 @@
    uninstall or repoint a plugin, change a plugin marketplace, or modify a
    plugin cache, in Codex or Claude Code, and never clone or vendor the
    plugin's own repository to run a different version of its tooling.
-2. A needed vibe tooling fix stops the session: the blocker is recorded in the
-   session ledger and the live ticket's Progress and reported to engineering,
-   never asked of the person.
+2. A vibe tooling defect uses supported paths first. Only an exhausted,
+   engineering-only blocker stops the affected work, with the exact cause and
+   attempts recorded on the ticket.
 3. Writer migration stays allowed only after a human or the engineering
    orchestrator installed the new release.
 4. The rule lives once, in `guardrails.md`; the skills, the migration section,
@@ -33,7 +33,7 @@ COMMAND_WORKERS = tuple(
 SECTION_NAME = '"Plugins and tooling"'
 WORKER_POINTER = (
     "Plugins, plugin marketplaces, plugin caches and the plugin's own repository are off limits "
-    f"(`../skills/vibe/references/guardrails.md`, {SECTION_NAME}); a needed vibe tooling fix returns `BLOCKED`."
+    f"(`../skills/vibe/references/guardrails.md`, {SECTION_NAME}); report a tooling defect and keep using the supported paths there; return `BLOCKED` only for a verified engineering-only blocker after those paths."
 )
 
 
@@ -60,15 +60,17 @@ def test_plugins_marketplaces_caches_and_the_plugin_repository_are_off_limits() 
     )
 
 
-def test_a_needed_tooling_fix_stops_and_is_recorded_and_reported_never_asked() -> None:
-    text = rule()
+def test_tooling_defect_uses_supported_paths_before_a_real_blocker() -> None:
+    text = flat(rule())
     for required in (
-        "When continuing needs a fix to the vibe tooling, stop.",
-        "the request stays `BLOCKED` in the session ledger with the reason",
-        "a line in the live ticket's Progress names it",
-        "Report it to engineering",
-        "message engineering, naming this work by its summary",
-        "It is never a question for the person.",
+        "A vibe tooling defect alone does not stop the person's work.",
+        "rerun or narrow the failed check",
+        "accepted remote lane or CI path",
+        "failure already on captured main",
+        "fix what is in the session's scope",
+        "Only a verified engineering-only blocker after every available path has",
+        "Record the exact blocker and paths tried in the session ledger",
+        "Give no engineering repair task to the person.",
     ):
         assert required in text, required
 

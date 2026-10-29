@@ -497,6 +497,7 @@ none of them is a step a worker takes by hand.
   Existing exclusion and restore rules still apply: no redeploy or handoff
   commits these files. Setup retries only after the writer supplies the fix;
   the permanent correction remains with the bug's ticket owner.
-- Anything else: tell the person the environment did not start, show the error
-  in one or two lines, and suggest they message engineering with the session
-  slug.
+- Anything else: return the exact failure and paths tried to the orchestrator.
+  Use the recovery or supported handover in `guardrails.md`, "Plugins and
+  tooling"; do not turn an unclassified failure into an engineering task for
+  the person.

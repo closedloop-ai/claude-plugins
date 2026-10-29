@@ -25,14 +25,14 @@ def guardrail_tooling() -> str:
 
 
 def test_the_tooling_stop_is_on_the_ticket_before_the_person_hears_of_it() -> None:
-    text = guardrail_tooling()
-    assert "Dispatch the ticket worker for that line before you reply to the person" in text
+    text = flat(guardrail_tooling())
+    assert "Dispatch the ticket worker before replying" in text
 
 
 def test_the_tooling_stop_line_is_plain_and_quotes_no_rule_or_plugin_file() -> None:
-    text = guardrail_tooling()
-    assert '"This needs an engineer to fix vibe. Message engineering with: <summary>."' in text
-    assert "never quotes a rule or a script's refusal and never names or links a plugin file" in text
+    text = flat(guardrail_tooling())
+    assert "name the exact block and the paths tried" in text
+    assert "Give no engineering repair task to the person." in text
 
 
 def test_update_names_and_migrates_the_sessions_it_strands() -> None:

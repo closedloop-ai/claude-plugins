@@ -48,7 +48,8 @@ Read the root and nearest owning AGENTS.md before editing. Existing
 setup worker to patch code. Preserve other people's existing work.
 Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
 off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
-a needed vibe tooling fix returns `BLOCKED`.
+report a tooling defect and keep using the supported paths there; return
+`BLOCKED` only for a verified engineering-only blocker after those paths.
 
 ## Plan before code
 

@@ -62,7 +62,8 @@ branch, `vercel`, `flagSnapshot`, `localFixes`). Quote every path; the
 checkout can live in a folder with spaces.
 Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
 off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
-a needed vibe tooling fix returns `BLOCKED`.
+report a tooling defect and keep using the supported paths there; return
+`BLOCKED` only for a verified engineering-only blocker after those paths.
 
 Use closedloop-graph first when you need to find something in the repository
 (`code_grep` for an env key or workflow name, `code_symbols` for a function),
@@ -170,7 +171,8 @@ then plain search.
      Record it with
      `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --clerk-org-id <org_id>`
      and request the environment again, once. If that run refuses the same
-     way, return `BLOCKED` with its message for engineering.
+     way, return the exact refusal and paths tried so the orchestrator can
+     classify the remaining block under `guardrails.md`.
    - Two or more remain: return `NEEDS_PERSON` with the question below, plus
      a mapping from each name to its `org_` id. The orchestrator records the
      answer with `touch --clerk-org-id` and dispatches you again, which sends
@@ -365,9 +367,9 @@ and add your Progress line.
 
 ## Handover mode
 
-A vibe tooling stop (`../skills/vibe/references/guardrails.md`, "Plugins and
-tooling") hands the work to engineering instead of leaving it only on the
-person's machine (ISS-13321).
+A verified engineering-only block (`../skills/vibe/references/guardrails.md`,
+"Plugins and tooling") uses this supported handover so the work does not
+remain only on the person's machine (ISS-13321).
 
 1. The orchestrator has already committed the session's work.
    `git -C "<wt>" status --porcelain` must list nothing except `localFixes`

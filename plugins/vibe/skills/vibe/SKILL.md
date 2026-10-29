@@ -35,8 +35,7 @@ Keep your context for the conversation and session state; NEVER do the work:
 - You and every worker leave plugins, plugin marketplaces and plugin caches
   alone, apart from the update the person chooses at startup (section 1,
   "Plugin version"), and never clone the plugin's repository to run other
-  tooling (`references/guardrails.md`, "Plugins and tooling"); a needed
-  tooling fix stops the session as that section says.
+  tooling (`references/guardrails.md`, "Plugins and tooling").
 - Everything else goes to a worker, including one-line changes. Never open a
   source file yourself.
 - Give workers only the worktree, session summary and mode, ticket, request,
@@ -48,6 +47,17 @@ Keep your context for the conversation and session state; NEVER do the work:
   recorded not run and the containerized or CI run covers it
   (`scripts/pre-pr-lanes.mjs`; operator ruling, 2026-10-28). Never force-push; this covers every remote. Proof and
   scratch commits use a fresh `proof/<sha>-<n>` ref.
+
+Before any reply, including handoff or relayed worker text, check for a safe
+next step the session can take and take it. Do not tell the person they need
+an engineer or assign them an engineering repair unless all available paths
+are exhausted and the remaining block can only be resolved by engineering.
+For a real block,
+say what was tried, what exactly remains blocked, and offer to pass the saved
+work to someone now. When the person says they are the engineer or asks what
+is next, give the concrete action you can take now or the exact human-only
+action, never just a referral. Apply this in Codex and Claude Code alike
+(`references/guardrails.md`, "Plugins and tooling").
 
 Every word the person sees follows `references/plain-words.md`, including
 worker text you relay. Anything you point the person at to look at or open
@@ -359,8 +369,9 @@ its question is never repeated and does not go through
   Q), open it again, start a new chat and type $vibe." In Claude Code: "vibe
   is updated. Close this Claude Code session, start a new one and type
   /vibe:vibe." When `"status":"failed"`, also tell them in one plain line
-  that the update could not finish and they can message engineering about it;
-  never retry it another way. Then stop when the harness you run in is in
+  that the update could not finish and state the exact restart action, if
+  available; never retry it another way. Then stop when the harness you run
+  in is in
   `restart`: the update is used only from a new session. Otherwise carry on
   with the version they have.
 
@@ -642,8 +653,9 @@ id the worker mapped to their answer with
 and dispatch it again. If it returns `NEEDS_PERSON` saying they are not an
 admin of any of their organizations, pass that on as written and wait for
 their answer. If it returns `BLOCKED`, tell the person in one or two
-plain lines what failed and suggest they message engineering, naming this
-work by its summary. Never open or give the person a URL after `BLOCKED`: any
+plain lines what failed and which supported recovery or handover you are
+taking (`references/guardrails.md`, "Plugins and tooling"). Never open or
+give the person a URL after `BLOCKED`: any
 preview address without its own deployment shows the stage production app.
 
 When it returns `DONE`:
@@ -994,10 +1006,11 @@ that waited, and one deploy after the last of them carries them all. A
    resume the SAME persistent writer in fix mode with the error, then commit
    again. An existing test or fixture the change broke is repaired there
    (`references/guardrails.md`, "Repair, don't author"). When the writer
-   returns `BLOCKED` because only engineering can settle it (a test of live
-   behavior whose assertions would have to change), tell the person in one plain line that this
-   part needs engineering and suggest they message engineering, naming this
-   work by its summary, as section 3 does; never ask them to decide it.
+   returns `BLOCKED` because a test of live behavior would need changed
+   assertions, first check the alternative paths in `references/guardrails.md`,
+   "Plugins and tooling". If the block remains, record the exact cause and
+   tried paths, then offer the supported pushed handover. Never ask the person
+   to repair the test.
 4. Dispatch `vibe-environment-worker` in redeploy mode with the worktree, the
    live ticket slug, the session summary, and the session's `localFixes`
    paths. First resume that SAME writer's source-owned `progress` continuation
