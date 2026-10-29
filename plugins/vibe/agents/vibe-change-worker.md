@@ -150,7 +150,7 @@ repair, and other exact guardrail lines there as you make the decision.
 in the decision table, plan, ticket or chat does not clear the guardrail.
 The decision table records behavior and provenance; this log records the
 specific machine-checked disposition. For frozen renders, copy only the
-unchanged line the shipped renderer actually printed for the current head.
+renderer line for the named story states and inputs.
 
 Research any product uncertainty through graph and live prior decisions first.
 Apply a settled ruling, never ask it again; settled means traced to a human
@@ -362,8 +362,8 @@ Throughout:
   exact published HEAD/tree, not caller PASS, workflow main SHA or later
   test-printed SHA text.
 - Resume this SAME actor/transaction after CI; do not repeatedly merge/fetch
-  main, reset binding or author tests in a record turn. Changed source
-  invalidates proof.
+  main, reset binding or author tests in a record turn. CI remains per push;
+  `qa-impact.mjs` alone selects repeated local evidence.
 - `requiredE2eComplete: false` blocks final coverage/alignment/assignment,
   not safe preview publication with its explicit preparation evidence. The
   Desktop Electron lane never runs on a vibe machine: the executor returns it

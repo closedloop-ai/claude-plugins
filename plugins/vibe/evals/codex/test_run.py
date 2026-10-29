@@ -19,7 +19,7 @@ SPEC.loader.exec_module(runner)
 
 def test_one_case_per_claude_prompt_and_role_names() -> None:
     found = runner.cases()
-    assert len(found) == 104
+    assert len(found) == 105
     assert len({c["name"] for c in found}) == len(found)
     assert all(c["name"].startswith(("executive-", "product-manager-", "orchestrator-")) for c in found)
     for case in found:
@@ -80,6 +80,52 @@ def test_wrong_route_and_missing_must_say_fail(tmp_path: Path) -> None:
         [],
     )
     assert all(c["passed"] for c in checks)
+
+
+def test_resume_plan_eval_rejects_the_main_behavior(tmp_path: Path) -> None:
+    case = next(c for c in runner.cases() if c["name"] == "product-manager-resume-existing-ticket-plan")
+    main_behavior = "MISSING: keep the local plan unpublished\nEXISTING: reuse PLN-1450 and create no new plan\nBUILD: neither pauses"
+    checks, _ = runner.deterministic(case, main_behavior, tmp_path, [])
+    assert not next(c for c in checks if c["grader"] == "missing-publishes-plan")["passed"]
+
+
+def test_resume_plan_eval_rejects_inverted_answers(tmp_path: Path) -> None:
+    case = next(c for c in runner.cases() if c["name"] == "product-manager-resume-existing-ticket-plan")
+    inverted = (
+        "MISSING: do not publish one implementation plan; ISS-14001 PRODUCES and links that PLN\n"
+        "EXISTING: do not update PLN-1450 and create no new plan\n"
+        "BUILD: no, the build must pause"
+    )
+    checks, _ = runner.deterministic(case, inverted, tmp_path, [])
+    graded = {check["grader"]: check["passed"] for check in checks}
+    assert not graded["missing-publishes-plan"]
+    assert not graded["existing-reuses-plan"]
+    assert not graded["build-continues"]
+    named = (
+        "MISSING: the vibe-ticket-worker in plan mode refuses to publish a PLN for ISS-14001 or add links\n"
+        "EXISTING: vibe-ticket-worker in plan mode reconciles PLN-1450 and creates no new plan\n"
+        "BUILD: the build does not continue; it pauses until the PLN exists"
+    )
+    checks, _ = runner.deterministic(case, named, tmp_path, [])
+    graded = {check["grader"]: check["passed"] for check in checks}
+    assert not graded["missing-publishes-plan"]
+    assert not graded["build-continues"]
+
+
+def test_resume_plan_eval_accepts_equivalent_positive_wording(tmp_path: Path) -> None:
+    case = next(c for c in runner.cases() if c["name"] == "product-manager-resume-existing-ticket-plan")
+    replies = [
+        "MISSING: vibe-ticket-worker in plan mode creates and uploads the criterion-complete canonical local plan as a PLN and links it to ISS-14001 with PRODUCES.\n"
+        "EXISTING: vibe-ticket-worker in plan mode reconciles the local plan with PLN-1450; create no new PLN.\n"
+        "BUILD: Plan reconciliation pauses neither source build.",
+        "MISSING: The same source writer writes a plan covering every criterion and continues the build. The vibe ticket worker publishes it in plan mode as one new PLN, then links ISS-14001 PRODUCES PLN.\n"
+        "EXISTING: The vibe ticket worker reconciles PLN-1450 in plan mode and updates it if needed. No new PLN is created.\n"
+        "BUILD: Plan reconciliation pauses neither source build.",
+    ]
+    for reply in replies:
+        checks, _ = runner.deterministic(case, reply, tmp_path, [])
+        behavioral = {check["grader"]: check["passed"] for check in checks if check["grader"] != "loaded-plugin"}
+        assert all(behavioral.values()), behavioral
 
 
 def test_missing_negative_check_target_cannot_pass(tmp_path: Path) -> None:
