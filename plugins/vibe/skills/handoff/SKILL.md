@@ -274,7 +274,11 @@ The checklist stops immediately when `blocking.forbiddenPaths` is false
 (every `forbidden` or `outsideAllowed` path; only inventory-proven
 `shrinkOnlyAllowlists` entries are exempt) or `blocking.diffRulesClear` is
 false: each `diffRules` finding goes to the SAME writer, which fixes it or
-records the change log line it names.
+records the change log line it names. A `frozen-render` finding is settled
+only by `scripts/frozen-render.mjs`, run in step 4 by
+`vibe-storybook-decomposer`: the writer records the `Frozen render
+unchanged` line that command prints, and nobody captures frozen stories any
+other way.
 
 Keep the remaining checklist internal; never show the person a technical
 task list, upfront summary or plan to approve. Preserve

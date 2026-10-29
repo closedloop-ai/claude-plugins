@@ -26,8 +26,9 @@ def test_frozen_stories_compare_dependency_closure_and_stable_output() -> None:
     decomposer = flat(agent("vibe-storybook-decomposer"))
     reviewer = flat(agent("vibe-guardrails-reviewer"))
     assert "rendered dependency closure" in rules
-    assert "fixed args, globals and viewport" in rules
-    assert "fixed args, globals and viewport" in decomposer
+    # ISS-13317: the remedy names the shipped command instead of describing a manual capture.
+    assert "frozen-render.mjs" in rules and "never a capture of your own" in rules
+    assert "clock, animations, viewport, fonts, theme, args and globals pinned" in decomposer
     assert "`frozen-render`" in decomposer and "`frozen-render`" in reviewer
     assert "even when its file is byte-identical" in reviewer
 
