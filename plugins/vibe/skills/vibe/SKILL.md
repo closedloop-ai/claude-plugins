@@ -545,8 +545,8 @@ and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
    `scripts/vibe-triage.mjs classify` and keep its manifest
    (`references/triage.md`); for the class it names, other than `unknown`
    or `mockup`, also load that class's pipeline skill. Section 3 runs now unless
-   the manifest's `environment` step has `effective: defer`, which happens only
-   while the triage switch is on (off by default).
+   the manifest's `environment` step has `effective: defer`, which the
+   manifest sets itself when the evidence shows the environment is not needed yet.
 
 ### Mockup sessions
 
@@ -638,7 +638,7 @@ When it returns `DONE`:
   page or an empty shell, before saying it is ready.
 - Start Desktop for every session, per the Desktop section of
   `references/environment.md`, unless the manifest's `desktop` step has
-  `effective: skip` (`references/triage.md`, "The switch"; off by default), and
+  `effective: skip` (`references/triage.md`, "Applying the manifest"), and
   open it as a second tab:
   1. Run `node scripts/vibe-sessions.mjs desktop-tab --worktree "<wt>"`. If it
      reports `running`, skip to step 3.
@@ -1084,7 +1084,7 @@ Whenever the person asks to throw a session away (at any point, for any
 ## References
 
 - `references/closedloop-graph.md`: how every worker uses closedloop-graph.
-- `references/triage.md`: the triage manifest, its classes and the switch;
+- `references/triage.md`: the triage manifest, its classes and how its steps apply;
   `references/pipeline-core.md`: the rules every class pipeline shares.
 - `references/quality-loop.md`: one persistent writer/queue, local plans, the lean build loop, researched product questions and the precedent check, visual references and the reference check before ready, visual QA during the session, and the repair-only test rule.
 - `references/preflight.md`: fixes for every preflight check (setup worker).

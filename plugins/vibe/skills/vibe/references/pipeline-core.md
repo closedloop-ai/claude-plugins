@@ -11,8 +11,9 @@ Every step the manifest records as `required (policy)` runs as the vibe skill
 describes it: the live ticket, your copy of the app and its flag snapshot,
 Desktop, the session decision table, the plan publish, redeploys and every
 handoff step. A step runs differently only when its `effective` value in the
-manifest says so, and `effective` leaves `run` only while the triage switch is
-on (`references/triage.md`, "The switch").
+manifest says so, and `effective` leaves `run` only for `environment` (`defer`)
+and `desktop` (`skip`), automatically, when the evidence shows the step is not
+needed (`references/triage.md`, "Applying the manifest").
 
 ## PC-2 Quality gates
 

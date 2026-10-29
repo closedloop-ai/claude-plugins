@@ -6,15 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### vibe v1.1.15
 
-A vibe session can now be classified by a deterministic triage script, and the manifest it writes can recommend creating the environment on first need and leaving Desktop out. Today's flow does not change: the recommendations take effect only when `VIBE_TRIAGE_APPLY_RECOMMENDATIONS=1` is set, and it is off by default (PRD-823 WS1: ISS-13332, ISS-13335; ISS-13333 and ISS-13334 await the owner's ruling).
+A vibe session can now be classified by a deterministic triage script, and the manifest it writes defers creating the environment to first need and leaves Desktop out, automatically, when the evidence shows neither is needed (PRD-823 WS1: ISS-13332, ISS-13333, ISS-13334, ISS-13335). There is no opt-in switch.
 
 #### Added
-- `skills/vibe/scripts/vibe-triage.mjs` (`classify`, `check`): classifies a request into `trivial-ui`, `ui-feature`, `backend`, `docs-config`, `data-metric`, `mockup` or `unknown` from touched paths or request text, and writes a manifest with the class, reason, evidence, the policy steps and the review scope. Evidence that does not decide stays `unknown`. Only `environment` (defer) and `desktop` (skip) carry a recommendation, every one is logged in `skipped[]` with its reason and evidence, and a class that rests on request text alone recommends nothing to leave out.
+- `skills/vibe/scripts/vibe-triage.mjs` (`classify`, `check`): classifies a request into `trivial-ui`, `ui-feature`, `backend`, `docs-config`, `data-metric`, `mockup` or `unknown` from touched paths or request text, and writes a manifest with the class, reason, evidence, the policy steps and the review scope. Evidence that does not decide stays `unknown`. Only `environment` (defer) and `desktop` (skip) carry a decision, every one is logged in `skipped[]` with its reason and evidence, and a class that rests on request text alone leaves nothing out.
 - Four class pipeline skills: `vibe-pipeline-trivial-ui`, `vibe-pipeline-ui-feature`, `vibe-pipeline-backend`, `vibe-pipeline-docs-config`. Each cites the shared rules PC-1 to PC-5 in `skills/vibe/references/pipeline-core.md` and restates none; `tools/python/test_vibe_triage_contract.py` pins that each rule lives in exactly one file and every class cites it.
-- `skills/vibe/references/triage.md`: the classes, the manifest and the switch.
+- `skills/vibe/references/triage.md`: the classes, the manifest and how its steps apply.
 
 #### Changed
-- The vibe skill's "Starting new" step 7 classifies the work and loads the class's pipeline skill; section 3 (environment) and its Desktop bullet run as before unless the manifest's `effective` is `defer` or `skip`, which only happens while the switch is on. With the switch off every `effective` is `run`.
+- The vibe skill's "Starting new" step 7 classifies the work and loads the class's pipeline skill; section 3 (environment) and its Desktop bullet run as before unless the manifest's `effective` is `defer` or `skip`, which the manifest sets itself from the evidence.
 - Lanes and end-to-end specs still come from `pnpm test:lanes` and the repository's e2e path filter, never from the class. Mid-run class upgrades are not part of this release.
 
 ### vibe v1.1.13

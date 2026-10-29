@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { ACTIONS, CLASSES, E2E_SOURCE, POLICY, POLICY_STEPS, SWITCH_ENV, classify, parsePathList, pathKind, switchOn, validateManifest } from "./vibe-triage.mjs";
+import { ACTIONS, CLASSES, E2E_SOURCE, POLICY, POLICY_STEPS, classify, parsePathList, pathKind, validateManifest } from "./vibe-triage.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "vibe-triage.mjs");
-const run = (args, env = {}) => spawnSync("node", [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, [SWITCH_ENV]: "", ...env } });
+const run = (args) => spawnSync("node", [SCRIPT, ...args], { encoding: "utf8" });
 
 const BACKEND_PATHS = ["apps/api/app/documents/route.ts", "apps/api/app/documents/route.test.ts", "packages/api/src/types/audit.ts"];
 const WEB_UI_PATHS = ["apps/app/components/header.tsx", "apps/app/components/footer.tsx"];
@@ -26,7 +26,7 @@ test("paths decide the class: backend only, docs only, one UI file, several UI f
 test("a path in no known area leaves the class unknown, never guessed", () => {
   const manifest = classify({ paths: ["Dockerfile.unknown-area"] });
   assert.equal(manifest.class, CLASSES.Unknown);
-  assert.equal(manifest.steps.environment.recommendation.action, ACTIONS.Unknown);
+  assert.equal(manifest.steps.environment.decision.action, ACTIONS.Unknown);
   assert.deepEqual(manifest.skipped, []);
 });
 
@@ -39,59 +39,51 @@ test("text decides before paths exist, and text that names no one area stays unk
   assert.equal(classify({ request: "The prototype decides the board lanes; the board header lists them" }).class, CLASSES.UiFeature, "a prototype the ticket cites is not a request for a mockup");
 });
 
-test("text alone never recommends leaving a step out (replay: title-only text mis-skipped 2 of 9 commits)", () => {
+test("text alone never leaves a step out (replay: title-only text mis-skipped 2 of 9 commits)", () => {
   const manifest = classify({ request: "Add an audit entry to the write path of the documents API route" });
   assert.equal(manifest.class, CLASSES.Backend);
   assert.deepEqual(manifest.evidence.sources, ["text"]);
-  for (const id of ["environment", "desktop"]) assert.equal(manifest.steps[id].recommendation.action, ACTIONS.Unknown, id);
+  for (const id of ["environment", "desktop"]) assert.equal(manifest.steps[id].decision.action, ACTIONS.Unknown, id);
   assert.deepEqual(manifest.skipped, []);
 });
 
-test("with touched paths, a backend session recommends deferring the environment and skipping Desktop, each logged with reason and evidence", () => {
+test("with touched paths, a backend session defers the environment and skipping Desktop, each logged with reason and evidence", () => {
   const manifest = classify({ paths: BACKEND_PATHS });
-  assert.equal(manifest.steps.environment.recommendation.action, ACTIONS.Defer);
-  assert.equal(manifest.steps.desktop.recommendation.action, ACTIONS.Skip);
+  assert.equal(manifest.steps.environment.decision.action, ACTIONS.Defer);
+  assert.equal(manifest.steps.desktop.decision.action, ACTIONS.Skip);
   assert.deepEqual(manifest.skipped.map((entry) => entry.step), ["environment", "desktop"]);
   for (const entry of manifest.skipped) {
     assert.ok(entry.reason);
     assert.ok(entry.evidence.length > 0);
-    assert.equal(entry.applied, false);
   }
 });
 
 test("Desktop-relevant evidence keeps Desktop: apps/desktop, packages/app, or the request naming Desktop", () => {
   for (const paths of [["packages/app/sessions/list.tsx", "packages/app/sessions/row.tsx"], ["apps/desktop/src/renderer/a.tsx", "apps/desktop/src/renderer/b.tsx"]]) {
-    assert.equal(classify({ paths }).steps.desktop.recommendation.action, ACTIONS.Run, paths[0]);
+    assert.equal(classify({ paths }).steps.desktop.decision.action, ACTIONS.Run, paths[0]);
   }
-  assert.equal(classify({ paths: WEB_UI_PATHS }).steps.desktop.recommendation.action, ACTIONS.Skip, "web-only UI files name no Desktop surface");
-  assert.equal(classify({ paths: WEB_UI_PATHS, request: "Show it on web and Desktop" }).steps.desktop.recommendation.action, ACTIONS.Run);
-  assert.equal(classify({ paths: ["apps/app/a.tsx", "apps/app/b.tsx", "apps/api/x.ts"] }).steps.environment.recommendation.action, ACTIONS.Run);
+  assert.equal(classify({ paths: WEB_UI_PATHS }).steps.desktop.decision.action, ACTIONS.Skip, "web-only UI files name no Desktop surface");
+  assert.equal(classify({ paths: WEB_UI_PATHS, request: "Show it on web and Desktop" }).steps.desktop.decision.action, ACTIONS.Run);
+  assert.equal(classify({ paths: ["apps/app/a.tsx", "apps/app/b.tsx", "apps/api/x.ts"] }).steps.environment.decision.action, ACTIONS.Run);
 });
 
-test("the switch is off by default and every step's effective stays run, whatever the recommendations say", () => {
-  assert.equal(switchOn({}), false);
-  assert.equal(switchOn({ [SWITCH_ENV]: "0" }), false);
-  assert.equal(switchOn({ [SWITCH_ENV]: "true" }), false);
-  for (const input of [{ paths: BACKEND_PATHS }, { paths: ["docs/a.md"] }, { paths: WEB_UI_PATHS }, { request: "Make it better" }]) {
+test("a deferred or skipped step is effective automatically; every other step, and every undecided one, runs", () => {
+  const backend = classify({ paths: BACKEND_PATHS });
+  assert.equal(backend.steps.environment.effective, ACTIONS.Defer);
+  assert.equal(backend.steps.desktop.effective, ACTIONS.Skip);
+  for (const id of POLICY_STEPS.filter((step) => step !== "environment" && step !== "desktop")) assert.equal(backend.steps[id].effective, ACTIONS.Run, id);
+  for (const input of [{ request: "Make it better" }, { request: "Add an audit entry to the write path of the documents API route" }]) {
     const manifest = classify(input);
-    assert.equal(manifest.applyRecommendations, false);
     for (const id of POLICY_STEPS) assert.equal(manifest.steps[id].effective, ACTIONS.Run, `${id} ${JSON.stringify(input)}`);
   }
+  assert.equal(classify({ paths: ["apps/app/a.tsx", "apps/app/b.tsx", "apps/api/x.ts"] }).steps.environment.effective, ACTIONS.Run, "a UI feature keeps its environment");
 });
 
-test("the CLI reads the switch: off without it, on with it, and the manifest records which", () => {
-  const off = JSON.parse(run(["classify", "--paths", BACKEND_PATHS.join(",")]).stdout);
-  assert.equal(off.applyRecommendations, false);
-  assert.equal(off.steps.environment.effective, ACTIONS.Run);
-  assert.equal(off.steps.desktop.effective, ACTIONS.Run);
-  const on = JSON.parse(run(["classify", "--paths", BACKEND_PATHS.join(",")], { [SWITCH_ENV]: "1" }).stdout);
-  assert.equal(on.applyRecommendations, true);
-  assert.equal(on.steps.environment.effective, ACTIONS.Defer);
-  assert.equal(on.steps.desktop.effective, ACTIONS.Skip);
-  assert.ok(on.skipped.every((entry) => entry.applied === true));
-  assert.equal(on.steps.ticket.effective, ACTIONS.Run, "the switch never touches the other policy steps");
-  assert.equal(on.steps.decisionTable.effective, ACTIONS.Run);
-  assert.equal(on.steps.handoffSteps.effective, ACTIONS.Run);
+test("the CLI prints the same automatic defer and skip, with no switch to set", () => {
+  const manifest = JSON.parse(run(["classify", "--paths", BACKEND_PATHS.join(",")]).stdout);
+  assert.equal(manifest.steps.environment.effective, ACTIONS.Defer);
+  assert.equal(manifest.steps.desktop.effective, ACTIONS.Skip);
+  assert.equal("applyRecommendations" in manifest, false);
 });
 
 test("every class records the policy steps and takes lanes and e2e from test:lanes", () => {
@@ -106,7 +98,7 @@ test("every class records the policy steps and takes lanes and e2e from test:lan
   assert.deepEqual(classify({ paths: ["packages/app/cost/cost-card.tsx"] }).steps.extraGates.gates, ["logical-qa"]);
 });
 
-test("validation rejects a manifest that drops a log entry, a reason, or lets effective move with the switch off", () => {
+test("validation rejects a manifest that drops a log entry, a reason, or lets effective disagree with the decision", () => {
   const good = () => structuredClone(classify({ paths: BACKEND_PATHS }));
   validateManifest(good());
   const unlogged = good();
@@ -116,16 +108,16 @@ test("validation rejects a manifest that drops a log entry, a reason, or lets ef
   noReason.skipped[0].reason = "";
   assert.throws(() => validateManifest(noReason), /needs a reason and evidence/);
   const noEvidence = good();
-  noEvidence.steps.desktop.recommendation.evidence = [];
+  noEvidence.steps.desktop.decision.evidence = [];
   assert.throws(() => validateManifest(noEvidence), /without evidence/);
   const moved = good();
-  moved.steps.desktop.effective = ACTIONS.Skip;
-  assert.throws(() => validateManifest(moved), /effective must be "run"/);
+  moved.steps.desktop.effective = ACTIONS.Run;
+  assert.throws(() => validateManifest(moved), /effective must be "skip"/);
   const waived = good();
   waived.steps.decisionTable.effective = ACTIONS.Skip;
   assert.throws(() => validateManifest(waived), /always runs/);
   const skippedEnv = good();
-  skippedEnv.steps.environment.recommendation.action = ACTIONS.Skip;
+  skippedEnv.steps.environment.decision.action = ACTIONS.Skip;
   assert.throws(() => validateManifest(skippedEnv), /deferred, never skipped/);
   assert.throws(() => validateManifest({ ...good(), schemaVersion: 2 }), /schemaVersion/);
 });

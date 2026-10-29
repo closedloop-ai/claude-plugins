@@ -11,17 +11,14 @@
 //   vibe-triage.mjs check --manifest <file>
 //       Prints {"ok":true,...} or exits 1 when the manifest breaks the schema.
 //
-// The manifest RECOMMENDS two things for some classes: create the environment
-// on first need (`environment`: defer) and leave Desktop out (`desktop`: skip).
-// Each recommendation is logged in `skipped` with its reason and evidence.
-// Today's flow does not change: every step's `effective` is "run" unless the
-// switch VIBE_TRIAGE_APPLY_RECOMMENDATIONS is set to 1 when `classify` runs.
-// The switch is off by default and `classify` is its only reader. Whether
-// relaxing "Start Desktop for every session" and starting without an eager
-// environment is allowed awaits the owner (ISS-13333, ISS-13334).
+// The manifest DECIDES two things for some classes, and the orchestrator does
+// them automatically: create the environment on first need (`environment`:
+// defer) and leave Desktop out (`desktop`: skip). Each defer or skip is logged
+// in `skipped` with its reason and evidence, and `effective` carries it. A step
+// is deferred or skipped only when the evidence shows it is not needed.
 //
 // A request the evidence does not decide is class "unknown": no pipeline skill,
-// no recommendation, today's flow. The class is never guessed.
+// nothing deferred or skipped, today's flow. The class is never guessed.
 //
 // Lane and e2e selection are never decided here: they come from `pnpm test:lanes`
 // and the target repository's e2e path filter.
@@ -31,8 +28,6 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 export const SCHEMA_VERSION = 1;
-
-export const SWITCH_ENV = "VIBE_TRIAGE_APPLY_RECOMMENDATIONS";
 
 export const CLASSES = Object.freeze({
   TrivialUi: "trivial-ui",
@@ -49,9 +44,9 @@ export const ACTIONS = Object.freeze({ Run: "run", Defer: "defer", Skip: "skip",
 export const POLICY = "required (policy)";
 
 // Steps of today's flow. A class never removes one; only `environment` and
-// `desktop` carry a recommendation, and it takes effect only with the switch.
+// `desktop` carry a decision, and it takes effect automatically.
 export const POLICY_STEPS = Object.freeze(["environment", "desktop", "ticket", "planPublish", "decisionTable", "redeploy", "handoffSteps"]);
-export const RECOMMENDABLE_STEPS = Object.freeze(["environment", "desktop"]);
+export const DECIDABLE_STEPS = Object.freeze(["environment", "desktop"]);
 
 export const E2E_SOURCE = "pnpm test:lanes and the e2e path filter";
 
@@ -165,13 +160,13 @@ function desktopRelevance(cls, paths, text) {
   return { relevant: null, evidence };
 }
 
-function recommend(cls, step, desktop, pathsKnown) {
+function decide(cls, step, desktop, pathsKnown) {
   const run = (reason, evidence = []) => ({ action: ACTIONS.Run, reason, evidence });
   const unknown = (reason) => ({ action: ACTIONS.Unknown, reason, evidence: [] });
   if (cls === CLASSES.Unknown) return { action: ACTIONS.Unknown, reason: "the class is unknown, so today's flow applies", evidence: [] };
   if (cls === CLASSES.Mockup) return { action: ACTIONS.Unknown, reason: "a mockup follows its own flow in the vibe skill", evidence: [] };
   const wantsLess = (step === "environment" && cls !== CLASSES.UiFeature && cls !== CLASSES.DataMetric) || (step === "desktop" && cls !== CLASSES.DataMetric && desktop.relevant !== true);
-  if (wantsLess && !pathsKnown) return unknown("the class rests on the request text alone, so no step is recommended to be left out");
+  if (wantsLess && !pathsKnown) return unknown("the class rests on the request text alone, so no step is left out");
   if (step === "environment") {
     if (cls === CLASSES.UiFeature || cls === CLASSES.DataMetric) return run("the change shows in the app");
     const reasons = {
@@ -190,17 +185,11 @@ function recommend(cls, step, desktop, pathsKnown) {
   return unknown("whether a Desktop-relevant surface is touched is not known");
 }
 
-function effectiveFor(recommendation, applied) {
-  if (!applied) return ACTIONS.Run;
-  return recommendation.action === ACTIONS.Defer || recommendation.action === ACTIONS.Skip ? recommendation.action : ACTIONS.Run;
-}
-
 /**
  * Classifies one request. Touched paths, when known, decide the class; the
- * request and ticket text decide it before any path exists. `apply` is the
- * switch's state (see SWITCH_ENV).
+ * request and ticket text decide it before any path exists.
  */
-export function classify({ request = "", ticketText = "", paths = [], apply = false }) {
+export function classify({ request = "", ticketText = "", paths = [] }) {
   const text = `${request}\n${ticketText}`;
   const byPaths = paths.length ? classifyByPaths(paths) : null;
   const byText = classifyByText(text);
@@ -217,11 +206,11 @@ export function classify({ request = "", ticketText = "", paths = [], apply = fa
   const steps = {};
   const skipped = [];
   for (const id of POLICY_STEPS) steps[id] = { state: POLICY, effective: ACTIONS.Run };
-  for (const id of RECOMMENDABLE_STEPS) {
-    const recommendation = recommend(chosen.cls, id, desktop, paths.length > 0);
-    steps[id] = { state: POLICY, recommendation, effective: effectiveFor(recommendation, apply) };
-    if (recommendation.action === ACTIONS.Defer || recommendation.action === ACTIONS.Skip) {
-      skipped.push({ step: id, action: recommendation.action, reason: recommendation.reason, evidence: recommendation.evidence, applied: apply });
+  for (const id of DECIDABLE_STEPS) {
+    const decision = decide(chosen.cls, id, desktop, paths.length > 0);
+    steps[id] = { state: POLICY, decision, effective: effectiveOf(decision) };
+    if (decision.action === ACTIONS.Defer || decision.action === ACTIONS.Skip) {
+      skipped.push({ step: id, action: decision.action, reason: decision.reason, evidence: decision.evidence });
     }
   }
   const review = CLASS_REVIEW[chosen.cls];
@@ -233,7 +222,6 @@ export function classify({ request = "", ticketText = "", paths = [], apply = fa
     class: chosen.cls,
     reason: chosen.reason,
     evidence: { paths: [...paths], keywords: byText.keywords, sources, desktopRelevant: desktop.relevant },
-    applyRecommendations: apply,
     steps,
     skipped,
   };
@@ -252,27 +240,26 @@ export function validateManifest(manifest) {
   if (!evidence || !Array.isArray(evidence.paths) || !Array.isArray(evidence.keywords) || !Array.isArray(evidence.sources)) {
     fail("evidence needs paths, keywords and sources arrays");
   }
-  if (typeof manifest.applyRecommendations !== "boolean") fail("applyRecommendations must be a boolean");
   const steps = manifest.steps;
   if (!steps || typeof steps !== "object") fail("steps missing");
   const logged = [];
   for (const id of POLICY_STEPS) {
     const step = steps[id];
     if (step?.state !== POLICY) fail(`step ${id} must be "${POLICY}"`);
-    if (!RECOMMENDABLE_STEPS.includes(id)) {
-      if (step.recommendation !== undefined || step.effective !== ACTIONS.Run) fail(`step ${id} always runs`);
+    if (!DECIDABLE_STEPS.includes(id)) {
+      if (step.decision !== undefined || step.effective !== ACTIONS.Run) fail(`step ${id} always runs`);
       continue;
     }
-    const recommendation = step.recommendation;
-    if (!Object.values(ACTIONS).includes(recommendation?.action)) fail(`step ${id} needs a recommendation action`);
-    if (typeof recommendation.reason !== "string" || !recommendation.reason) fail(`step ${id} recommendation needs a reason`);
-    if (!Array.isArray(recommendation.evidence)) fail(`step ${id} recommendation needs an evidence array`);
-    if (id === "environment" && recommendation.action === ACTIONS.Skip) fail("the environment is deferred, never skipped");
-    if (id === "desktop" && recommendation.action === ACTIONS.Defer) fail("Desktop is skipped, never deferred");
-    const wanted = manifest.applyRecommendations ? effectiveOf(recommendation) : ACTIONS.Run;
-    if (step.effective !== wanted) fail(`step ${id} effective must be "${wanted}" with applyRecommendations ${manifest.applyRecommendations}`);
-    if (recommendation.action === ACTIONS.Defer || recommendation.action === ACTIONS.Skip) {
-      if (recommendation.evidence.length === 0) fail(`step ${id} recommends ${recommendation.action} without evidence`);
+    const decision = step.decision;
+    if (!Object.values(ACTIONS).includes(decision?.action)) fail(`step ${id} needs a decision action`);
+    if (typeof decision.reason !== "string" || !decision.reason) fail(`step ${id} decision needs a reason`);
+    if (!Array.isArray(decision.evidence)) fail(`step ${id} decision needs an evidence array`);
+    if (id === "environment" && decision.action === ACTIONS.Skip) fail("the environment is deferred, never skipped");
+    if (id === "desktop" && decision.action === ACTIONS.Defer) fail("Desktop is skipped, never deferred");
+    const wanted = effectiveOf(decision);
+    if (step.effective !== wanted) fail(`step ${id} effective must be "${wanted}"`);
+    if (decision.action === ACTIONS.Defer || decision.action === ACTIONS.Skip) {
+      if (decision.evidence.length === 0) fail(`step ${id} decides ${decision.action} without evidence`);
       logged.push(id);
     }
   }
@@ -281,23 +268,17 @@ export function validateManifest(manifest) {
   if (steps.e2e?.source !== E2E_SOURCE) fail("step e2e must take its source from test:lanes");
   if (!Array.isArray(manifest.skipped)) fail("skipped must be an array");
   const skippedIds = manifest.skipped.map((entry) => entry?.step).sort();
-  if (JSON.stringify(skippedIds) !== JSON.stringify([...logged].sort())) fail("skipped must log exactly the steps whose recommendation is defer or skip");
+  if (JSON.stringify(skippedIds) !== JSON.stringify([...logged].sort())) fail("skipped must log exactly the steps whose decision is defer or skip");
   for (const entry of manifest.skipped) {
     if (typeof entry.reason !== "string" || !entry.reason || !Array.isArray(entry.evidence) || entry.evidence.length === 0) {
       fail(`skipped entry ${entry.step} needs a reason and evidence`);
     }
-    if (entry.applied !== manifest.applyRecommendations) fail(`skipped entry ${entry.step} applied must match applyRecommendations`);
   }
   return manifest;
 }
 
-function effectiveOf(recommendation) {
-  return recommendation.action === ACTIONS.Defer || recommendation.action === ACTIONS.Skip ? recommendation.action : ACTIONS.Run;
-}
-
-/** True when the switch is turned on in `env`. */
-export function switchOn(env = process.env) {
-  return env[SWITCH_ENV] === "1";
+function effectiveOf(decision) {
+  return decision.action === ACTIONS.Defer || decision.action === ACTIONS.Skip ? decision.action : ACTIONS.Run;
 }
 
 function readPaths(values) {
@@ -313,7 +294,7 @@ function main(argv) {
   });
   if (command === "classify") {
     const ticketText = values["ticket-file"] ? readFileSync(values["ticket-file"], "utf8") : "";
-    const manifest = classify({ request: values.request ?? "", ticketText, paths: readPaths(values), apply: switchOn() });
+    const manifest = classify({ request: values.request ?? "", ticketText, paths: readPaths(values) });
     const text = `${JSON.stringify(manifest, null, 2)}\n`;
     if (values.out) writeFileSync(values.out, text);
     process.stdout.write(text);
@@ -322,7 +303,7 @@ function main(argv) {
   if (command === "check") {
     if (!values.manifest) throw new Error("--manifest is required");
     const manifest = validateManifest(JSON.parse(readFileSync(values.manifest, "utf8")));
-    process.stdout.write(`${JSON.stringify({ ok: true, class: manifest.class, applyRecommendations: manifest.applyRecommendations })}\n`);
+    process.stdout.write(`${JSON.stringify({ ok: true, class: manifest.class })}\n`);
     return 0;
   }
   throw new Error("usage: vibe-triage.mjs classify|check (see the header of this file)");

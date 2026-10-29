@@ -12,5 +12,5 @@ this skill cites them and restates none.
 ## Specific to this class
 
 - Review scope: `consolidated-light`.
-- Environment: recommended `defer`; Desktop: recommended `skip`. Both take effect only while the triage switch is on (PC-1).
+- Environment: `defer`; Desktop: `skip`. Both apply automatically (PC-1).
 - The review scope and extra gates are recorded in the manifest for the consolidated reviewer; the handoff skill runs every review it runs today (PC-2).

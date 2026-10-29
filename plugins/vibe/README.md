@@ -339,7 +339,7 @@ Version `1.1.15` contains 16 skills, 16 agents, and one hook manifest
 or production Python tools under `tools/python/`; that directory contains the
 skill-contract test modules and `vibe_contract_text.py`, the text helpers they
 share. Runtime helpers and tests live alongside their owning skills, including
-vibe session and prototype records, the triage classifier and its manifest (recommendations off by default), local-plan publication guards, bundled
+vibe session and prototype records, the triage classifier and its manifest (environment deferral and Desktop skip applied automatically when the evidence supports them), local-plan publication guards, bundled
 persistent writer state, Claude launch/resume and shared main-sync publication
 helpers, handoff checks, sweep ownership and worker recovery, and the
 work-report renderer. Shared PR-monitor notification delivery and manual-QA

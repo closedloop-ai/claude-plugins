@@ -2,8 +2,8 @@
 
 1. Each shared rule lives in exactly one file, `references/pipeline-core.md`, and every
    class pipeline skill cites every rule id without restating it.
-2. The triage switch is documented, off by default, and the vibe skill reads only the
-   manifest's `effective` values, never the switch itself.
+2. Defer and skip are applied automatically, and the vibe skill reads the
+   manifest's `effective` values.
 3. Today's "Start Desktop for every session" rule and the eager environment step stay in
    the vibe skill, qualified only by the manifest.
 """
@@ -114,25 +114,21 @@ def test_script_records_every_policy_step_and_the_reference_names_them() -> None
     assert "`pnpm test:lanes and the e2e path filter`" in reference
 
 
-def test_switch_is_documented_off_by_default_and_awaits_the_owner() -> None:
-    text = section(TRIAGE.read_text(), "## The switch")
-    assert "`VIBE_TRIAGE_APPLY_RECOMMENDATIONS` is off by default" in text
-    assert "every step's `effective` is `run`" in text
+def test_defer_and_skip_apply_automatically_with_no_switch() -> None:
+    text = section(TRIAGE.read_text(), "## Applying the manifest")
+    assert "applied automatically; there is no switch" in text
     assert "ISS-13333, ISS-13334" in text
-    assert "await the owner's ruling" in text
     script = SCRIPT.read_text()
-    assert 'export const SWITCH_ENV = "VIBE_TRIAGE_APPLY_RECOMMENDATIONS"' in script
-    assert script.count("process.env") == 1, "only switchOn's default parameter reads the environment, and only the classify command calls it"
-    assert script.count("switchOn()") == 1
+    assert "process.env" not in script
+    assert "VIBE_TRIAGE_APPLY_RECOMMENDATIONS" not in script + flat(TRIAGE.read_text())
 
 
-def test_vibe_skill_reads_effective_never_the_switch_and_keeps_todays_rules() -> None:
+def test_vibe_skill_reads_effective_and_keeps_todays_rules() -> None:
     text = flat((VIBE / "SKILL.md").read_text())
     assert "VIBE_TRIAGE_APPLY_RECOMMENDATIONS" not in text
     assert "scripts/vibe-triage.mjs classify" in text
     assert "`effective: defer`" in text
     assert "`effective: skip`" in text
-    assert "(off by default)" in text
     assert "Start Desktop for every session, per the Desktop section of `references/environment.md`, unless the manifest's `desktop` step has" in text
     assert "Stand up the environment (section 3)" not in text, "step 7 now says it runs unless the manifest defers it"
     assert "Section 3 runs now unless the manifest's `environment` step has `effective: defer`" in text
