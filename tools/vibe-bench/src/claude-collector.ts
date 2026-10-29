@@ -117,6 +117,15 @@ function sameInput(a: CallTokens, b: CallTokens): boolean {
     a.cacheWriteTokens === b.cacheWriteTokens;
 }
 
+function invokedSkill(name: string, input: unknown): string | null {
+  if (name !== "Skill" || !input || typeof input !== "object" || Array.isArray(input)) return null;
+  const value = input as Record<string, unknown>;
+  const candidate = value.skill ?? value.skill_name ?? value.command;
+  if (typeof candidate !== "string") return null;
+  const normalized = candidate.trim().replace(/^\//, "");
+  return /^[a-z0-9-]+:[a-z0-9-]+$/.test(normalized) ? normalized : null;
+}
+
 /** Collect authoritative final totals and reconcile optional per-request OTEL. */
 export function collectClaude(input: ClaudeCollectorInput): ClaudeBenchmarkResult {
   const { identity, agentModels } = input;
@@ -183,12 +192,16 @@ export function collectClaude(input: ClaudeCollectorInput): ClaudeBenchmarkResul
   const requests = new Map<string, ModelCall>();
   const messageIds = new Map<string, string>();
   const parentAgents = new Map<string, string>();
-  let currentPhase: BenchmarkPhase | null = "startup";
+  const parentSkills = new Map<string, string>();
+  const phases = new Map<string, BenchmarkPhase | null>([["root", "startup"]]);
+  const skills = new Map<string, string | null>([["root", null]]);
   const rootModels = new Set<string>();
   const assistantSources = [
-    ...events.map((event) => ({ event, agentName: null as string | null, parentToolUseId: null as string | null, transcript: false })),
-    ...(input.transcripts ?? []).flatMap((bundle) => parseTranscript(bundle.jsonl).map((event) => ({
-      event, agentName: bundle.agentName ?? null, parentToolUseId: bundle.parentToolUseId ?? null, transcript: true,
+    ...events.map((event) => ({ event, agentName: null as string | null,
+      parentToolUseId: null as string | null, transcript: false, scope: "root" })),
+    ...(input.transcripts ?? []).flatMap((bundle, index) => parseTranscript(bundle.jsonl).map((event) => ({
+      event, agentName: bundle.agentName ?? null, parentToolUseId: bundle.parentToolUseId ?? null,
+      transcript: true, scope: `transcript-${index}`,
     }))),
   ];
   for (const source of assistantSources) {
@@ -204,11 +217,16 @@ export function collectClaude(input: ClaudeCollectorInput): ClaudeBenchmarkResul
     const usage = messageUsage(message.usage);
     const previous = requests.get(requestId);
     const agentName = source.agentName ?? (parentToolUseId ? parentAgents.get(parentToolUseId) ?? null : null);
+    if (!skills.has(source.scope)) {
+      skills.set(source.scope, parentToolUseId ? parentSkills.get(parentToolUseId) ?? null : null);
+      phases.set(source.scope, null);
+    }
     const reportedEffort = event.effort ?? event.perTurnEffort ?? null;
     const attribution = attributeCall({
       parentToolUseId,
       agentName,
-      phase: source.transcript && parentToolUseId ? null : currentPhase,
+      skillName: skills.get(source.scope) ?? null,
+      phase: phases.get(source.scope) ?? null,
     }, identity.shape, agentModels);
     if (previous) {
       if (previous.messageId !== message.id || previous.model !== message.model ||
@@ -236,9 +254,15 @@ export function collectClaude(input: ClaudeCollectorInput): ClaudeBenchmarkResul
         if (typeof raw === "string") {
           const firstWord = typeof value.description === "string" ? value.description.match(/^vibe-[a-z-]+/)?.[0] : null;
           parentAgents.set(block.id, raw === "general-purpose" && firstWord && agentModels[firstWord] ? firstWord : raw);
+          const skill = skills.get(source.scope);
+          if (skill) parentSkills.set(block.id, skill);
         }
       }
-      if (!source.transcript) currentPhase = phaseFromTool(block.name, block.input) ?? currentPhase;
+      const skill = invokedSkill(block.name, block.input);
+      if (skill) skills.set(source.scope, skill);
+      if (!source.transcript) {
+        phases.set(source.scope, phaseFromTool(block.name, block.input) ?? phases.get(source.scope) ?? null);
+      }
     }
   }
   if (!requests.size) throw new Error("benchmark-collector-no-model-calls");

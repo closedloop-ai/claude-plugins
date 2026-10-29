@@ -219,6 +219,11 @@ function validateEvidence(input: BenchmarkGateInput, content: string,
       return fail(`benchmark-${facet}-breakdown-empty`, `The disclosed ${facet} breakdown must contain data rows.`);
     }
   }
+  const shapeDefaults = new Set(["vibe:vibe", "vibe:fleet-orchestrator"]);
+  if (artifact.breakdowns.skill.every((row) => shapeDefaults.has(row.name))) {
+    return fail("benchmark-skill-breakdown-default-only",
+      "Attached skill evidence must be derived from observed stream invocations, not benchmark shape defaults.");
+  }
   if (!artifact.breakdowns.component.some((row) => row.name === "vibe") ||
       !artifact.breakdowns.component.some((row) => row.name === "fleet-orchestrator") ||
       !artifact.breakdowns.skill.some((row) => row.name !== "unobserved") ||
@@ -270,6 +275,10 @@ function validateResult(input: BenchmarkGateInput, content: string): BenchmarkGa
   if (status === "red") {
     const problem = validateApproval(input, BENCHMARK_RED_ACCEPTANCE_LABEL);
     if (problem) return problem;
+    if (lineValue(content, "Regression acceptance head") !== input.headSha) {
+      return fail("benchmark-red-acceptance-head-mismatch",
+        "A red comparison must record `Regression acceptance head:` for the current pull request head.");
+    }
   } else if (input.labels.includes(BENCHMARK_RED_ACCEPTANCE_LABEL)) {
     return fail("benchmark-red-acceptance-stale", "Remove the red-regression acceptance label from a non-red result.");
   }
@@ -298,6 +307,10 @@ export function validateBenchmarkDisclosure(input: BenchmarkGateInput): Benchmar
     }
     const reason = lineValue(section.content, "Bypassed");
     if (!reason) return fail("benchmark-bypass-reason-missing", "An approved bypass requires `Bypassed: <reason>`. ");
+    if (lineValue(section.content, "Bypass head") !== input.headSha) {
+      return fail("benchmark-bypass-head-mismatch",
+        "An approved bypass must record `Bypass head:` for the current pull request head.");
+    }
     const problem = validateApproval(input, BENCHMARK_BYPASS_LABEL);
     return problem ?? pass("benchmark-bypassed", `Benchmark bypass approved for head ${input.headSha}.`);
   }

@@ -70,7 +70,8 @@ function evidence(overrides: Partial<BenchmarkEvidenceArtifact> = {}): Benchmark
     totals: { inputTokens: 100, uncachedInputTokens: 50, outputTokens: 20 },
     breakdowns: {
       component: [{ name: "vibe", calls: 3 }, { name: "fleet-orchestrator", calls: 1 }],
-      skill: [{ name: "vibe:vibe", calls: 3 }, { name: "vibe:fleet-orchestrator", calls: 1 }],
+      skill: [{ name: "vibe:vibe", calls: 2 }, { name: "vibe:fleet-orchestrator", calls: 1 },
+        { name: "unobserved", calls: 1 }],
       worker: [{ name: "vibe-change-worker", calls: 3 }, { name: "unobserved", calls: 1 }],
       phase: [{ name: "build", calls: 3 }, { name: "startup", calls: 1 }],
     },
@@ -146,6 +147,12 @@ test("fabricated disclosure, empty evidence and failing evals fail closed", () =
   empty.breakdowns.worker = [];
   assert.equal(validateBenchmarkDisclosure(input({ evidenceArtifacts: [empty] })).code,
     "benchmark-worker-breakdown-invalid");
+  const shapeDefault = evidence();
+  shapeDefault.breakdowns.skill = [
+    { name: "vibe:vibe", calls: 3 }, { name: "vibe:fleet-orchestrator", calls: 1 },
+  ];
+  assert.equal(validateBenchmarkDisclosure(input({ evidenceArtifacts: [shapeDefault] })).code,
+    "benchmark-skill-breakdown-default-only");
   const failed = evidence();
   failed.eval.runtimes[0] = { runtime: "claude", passed: 11, failed: 1 };
   assert.equal(validateBenchmarkDisclosure(input({ evidenceArtifacts: [failed] })).code,
@@ -163,7 +170,7 @@ test("fabricated disclosure, empty evidence and failing evals fail closed", () =
 });
 
 test("bypass requires the approver's latest label event and reason, without paid evidence", () => {
-  const body = "## Benchmark\n\nBypassed: Documentation-only wording fix.\n";
+  const body = `## Benchmark\n\nBypassed: Documentation-only wording fix.\nBypass head: ${HEAD}\n`;
   assert.equal(validateBenchmarkDisclosure(input({ body })).code, "benchmark-bypass-label-missing");
   assert.equal(validateBenchmarkDisclosure(input({ body, labels: [BENCHMARK_BYPASS_LABEL],
     timelineEvents: [event("labeled", BENCHMARK_BYPASS_LABEL, "other-maintainer")] })).code,
@@ -179,6 +186,10 @@ test("bypass requires the approver's latest label event and reason, without paid
       event("labeled", BENCHMARK_BYPASS_LABEL)] })).code, "benchmark-bypassed");
   assert.equal(validateBenchmarkDisclosure(input({ body, labels: [BENCHMARK_BYPASS_LABEL],
     timelineEvents: [event("labeled", BENCHMARK_BYPASS_LABEL)] })).code, "benchmark-bypassed");
+  assert.equal(validateBenchmarkDisclosure(input({ body: body.replace(HEAD, "c".repeat(40)),
+    labels: [BENCHMARK_BYPASS_LABEL],
+    timelineEvents: [event("labeled", BENCHMARK_BYPASS_LABEL)] })).code,
+  "benchmark-bypass-head-mismatch");
 });
 
 test("red comparison requires current-head approver acceptance and conflicts fail", () => {
@@ -186,6 +197,11 @@ test("red comparison requires current-head approver acceptance and conflicts fai
     evidenceArtifacts: [evidence({ comparison: "red" })] })).code,
     "benchmark-approval-label-missing");
   const accepted = `${resultSection("red")}\nRegression acceptance head: ${HEAD}\n`;
+  assert.equal(validateBenchmarkDisclosure(input({ body: `${resultSection("red")}\nRegression acceptance head: ${"c".repeat(40)}\n`,
+    labels: [BENCHMARK_RED_ACCEPTANCE_LABEL],
+    timelineEvents: [event("labeled", BENCHMARK_RED_ACCEPTANCE_LABEL)],
+    evidenceArtifacts: [evidence({ comparison: "red" })] })).code,
+  "benchmark-red-acceptance-head-mismatch");
   assert.equal(validateBenchmarkDisclosure(input({ body: accepted,
     labels: [BENCHMARK_RED_ACCEPTANCE_LABEL],
     timelineEvents: [event("labeled", BENCHMARK_RED_ACCEPTANCE_LABEL)],
@@ -204,7 +220,7 @@ test("GitHub adapter paginates files and timeline and preserves renamed protecte
   const seen: string[] = [];
   const fetcher = async (url: string): Promise<Response> => {
     seen.push(url);
-    if (url === `${root}/pulls/123`) return Response.json({ body: "", head: { sha: HEAD },
+    if (url === `${root}/pulls/123`) return Response.json({ body: "", head: { sha: HEAD }, user: { login: "author" },
       labels: [{ name: BENCHMARK_BYPASS_LABEL }] });
     if (url === `${root}/pulls/123/files?per_page=100`) return Response.json(
       [{ filename: "docs/new.md", previous_filename: "plugins/vibe/old.md" }], { headers: {
@@ -219,7 +235,7 @@ test("GitHub adapter paginates files and timeline and preserves renamed protecte
       forcePushPayload,
     ]);
     if (url === `${root}/issues/123/comments?per_page=100`) return Response.json([
-      { body: `${BENCHMARK_EVIDENCE_MARKER}\n\n\`\`\`json\n${JSON.stringify(evidence())}\n\`\`\`` },
+      { user: { login: "author" }, body: `${BENCHMARK_EVIDENCE_MARKER}\n\n\`\`\`json\n${JSON.stringify(evidence())}\n\`\`\`` },
     ]);
     return Response.json({ message: "not found" }, { status: 404 });
   };
@@ -230,8 +246,35 @@ test("GitHub adapter paginates files and timeline and preserves renamed protecte
   assert.equal(value.evidenceArtifacts[0].resultHash, "b".repeat(64));
   assert.equal(seen.length, 5);
   await assert.rejects(() => fetchBenchmarkGateInput("closedloop-ai/claude-plugins", 123, "token",
-    async (url) => url.endsWith("/pulls/123") ? Response.json({ body: null, head: { sha: HEAD }, labels: [] })
+    async (url) => url.endsWith("/pulls/123") ? Response.json({ body: null, head: { sha: HEAD },
+      user: { login: "author" }, labels: [] })
       : Response.json({}, { status: 200 })), /page-invalid/);
+});
+
+test("GitHub adapter accepts evidence only from the author or a collaborator with write access", async () => {
+  const root = "https://api.github.com/repos/closedloop-ai/claude-plugins";
+  const marker = (body: string) => `${BENCHMARK_EVIDENCE_MARKER}\n\n${body}`;
+  const valid = marker(`\`\`\`json\n${JSON.stringify(evidence())}\n\`\`\``);
+  const fetcher = async (url: string): Promise<Response> => {
+    if (url === `${root}/pulls/123`) return Response.json({ body: "", head: { sha: HEAD },
+      user: { login: "author" }, labels: [] });
+    if (url.endsWith("/files?per_page=100") || url.endsWith("/timeline?per_page=100")) return Response.json([]);
+    if (url.endsWith("/comments?per_page=100")) return Response.json([
+      { user: { login: "outsider" }, body: marker("malformed outside evidence") },
+      { user: { login: "reader" }, body: valid },
+      { user: { login: "writer" }, body: valid },
+      { user: { login: "author" }, body: valid },
+    ]);
+    if (url.endsWith("/collaborators/outsider/permission")) return Response.json({ message: "not found" }, { status: 404 });
+    if (url.endsWith("/collaborators/reader/permission")) return Response.json({ permission: "read" });
+    if (url.endsWith("/collaborators/writer/permission")) return Response.json({ permission: "write" });
+    return Response.json({ message: "not found" }, { status: 404 });
+  };
+  const value = await fetchBenchmarkGateInput("closedloop-ai/claude-plugins", 123, "token", fetcher);
+  assert.equal(value.evidenceArtifacts.length, 2);
+  await assert.rejects(() => fetchBenchmarkGateInput("closedloop-ai/claude-plugins", 123, "token",
+    async (url) => url.endsWith("/collaborators/writer/permission")
+      ? Response.json({ message: "forbidden" }, { status: 403 }) : fetcher(url)), /github-http:403/);
 });
 
 test("workflow executes only trusted base code with read permissions and no model command", () => {

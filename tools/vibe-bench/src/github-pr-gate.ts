@@ -32,6 +32,26 @@ async function requestJson(url: string, token: string, fetcher: GateFetch): Prom
   catch { throw new Error("benchmark-github-json-invalid"); }
 }
 
+async function collaboratorCanWrite(url: string, token: string, fetcher: GateFetch): Promise<boolean> {
+  const response = await fetcher(url, { headers: {
+    Accept: "application/vnd.github+json",
+    Authorization: `Bearer ${token}`,
+    "X-GitHub-Api-Version": "2022-11-28",
+  } });
+  if (response.status === 404) return false;
+  if (!response.ok) throw new Error(`benchmark-github-http:${response.status}`);
+  let value: unknown;
+  try { value = await response.json() as unknown; }
+  catch { throw new Error("benchmark-github-json-invalid"); }
+  const permission = object(value, "benchmark-github-permission-invalid");
+  const level = text(permission.permission, "benchmark-github-permission-level-invalid");
+  const user = permission.user === undefined ? null : object(permission.user,
+    "benchmark-github-permission-user-invalid");
+  const push = user?.permissions === undefined ? false :
+    object(user.permissions, "benchmark-github-permissions-invalid").push === true;
+  return push || level === "admin" || level === "maintain" || level === "write";
+}
+
 async function paginatedArray(firstUrl: string, token: string, repositoryPath: string,
   fetcher: GateFetch): Promise<unknown[]> {
   const rows: unknown[] = [];
@@ -94,6 +114,8 @@ export async function fetchBenchmarkGateInput(repository: string, number: number
     "benchmark-github-pull-invalid");
   const head = object(pull.head, "benchmark-github-head-invalid");
   const headSha = text(head.sha, "benchmark-github-head-sha-invalid");
+  const pullAuthor = text(object(pull.user, "benchmark-github-pull-author-invalid").login,
+    "benchmark-github-pull-author-login-invalid");
   const body = pull.body === null ? "" : text(pull.body, "benchmark-github-body-invalid");
   if (!Array.isArray(pull.labels)) throw new Error("benchmark-github-labels-invalid");
   const labels = pull.labels.map((item) => text(object(item,
@@ -133,12 +155,25 @@ export async function fetchBenchmarkGateInput(repository: string, number: number
   }
   const commentRows = await paginatedArray(`${root}/issues/${number}/comments?per_page=100`, token,
     repositoryPath, fetcher);
-  const evidenceArtifacts = commentRows.flatMap((value) => {
+  const permissionCache = new Map<string, boolean>();
+  const evidenceArtifacts: BenchmarkEvidenceArtifact[] = [];
+  for (const value of commentRows) {
     const row = object(value, "benchmark-github-comment-invalid");
     const commentBody = text(row.body, "benchmark-github-comment-body-invalid");
+    if (!commentBody.includes(BENCHMARK_EVIDENCE_MARKER)) continue;
+    const login = text(object(row.user, "benchmark-github-comment-author-invalid").login,
+      "benchmark-github-comment-author-login-invalid");
+    let trusted = login === pullAuthor;
+    if (!trusted) {
+      const cached = permissionCache.get(login);
+      trusted = cached ?? await collaboratorCanWrite(
+        `${root}/collaborators/${encodeURIComponent(login)}/permission`, token, fetcher);
+      permissionCache.set(login, trusted);
+    }
+    if (!trusted) continue;
     const artifact = attachedEvidence(commentBody);
-    return artifact ? [artifact] : [];
-  });
+    if (artifact) evidenceArtifacts.push(artifact);
+  }
   return { number, headSha, body, changedFiles: [...changedFiles].sort(), labels, timelineEvents,
     evidenceArtifacts };
 }

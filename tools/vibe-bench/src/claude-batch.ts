@@ -9,6 +9,7 @@ import type { BaselineRun } from "./baseline.ts";
 import { BENCHMARK_EFFORT, BENCHMARK_MODEL, BENCHMARK_TASK, requirePinnedClaude,
   TARGET_WALL_MS } from "./contract.ts";
 import { ControlWebStackAdapter } from "./control-web-stack.ts";
+import { cleanupRecordedProof, ProcessPrCommands, proofRefs } from "./github-pr.ts";
 import { SeededStackLifecycle } from "./lifecycle.ts";
 import { snapshotMainPlugins, snapshotPluginsAtHead } from "./plugin-snapshot.ts";
 import type { SingleRunInput } from "./single-run.ts";
@@ -109,12 +110,15 @@ export async function runClaudeBatch(input: ClaudeBatchInputs): Promise<ClaudeBa
     async run(index, shape) {
       const runDir = join(runRoot, `run-${String(index + 1).padStart(2, "0")}-${shape}`);
       mkdirSync(runDir);
+      const runKey = `${batchId}-${index + 1}`;
+      const refs = proofRefs(sourceSha, runKey);
       const childInput: SingleRunInput = { index, shape, source, sourceSha, snapshot,
         apiKeyFile: stack.details().apiKeyFile, claudeExecutable: input.claudeExecutable,
         ghExecutable: input.ghExecutable, cliVersion, batchId, runDir };
       const inputFile = join(runDir, "run-input.json");
       writeFileSync(inputFile, `${JSON.stringify(childInput)}\n`, { flag: "wx", mode: 0o600 });
       const childScript = realpathSync(fileURLToPath(new URL("./single-run.ts", import.meta.url)));
+      let childFailure: unknown = null;
       try {
         const child = await runOwnedProcess(process.execPath,
           ["--experimental-strip-types", childScript, inputFile], {
@@ -126,7 +130,18 @@ export async function runClaudeBatch(input: ClaudeBatchInputs): Promise<ClaudeBa
         writeFileSync(join(runDir, "run-process.log"), `${child.stdout}\n${child.stderr}`,
           { flag: "wx", mode: 0o600 });
       } catch (error) {
-        throw new Error(`benchmark-child-${index + 1}-failed:${String(error)}`);
+        childFailure = error;
+      }
+      let cleanupFailures: string[] = [];
+      try {
+        cleanupFailures = cleanupRecordedProof(runDir, refs.baseRef, refs.ref,
+          new ProcessPrCommands(), input.ghExecutable);
+      } catch (error) {
+        cleanupFailures = [`journal:${String(error)}`];
+      }
+      if (childFailure || cleanupFailures.length) {
+        throw new Error(`benchmark-child-${index + 1}-failed:${String(childFailure ?? "cleanup")}; ` +
+          `parent-cleanup=${cleanupFailures.join(",") || "complete"}`);
       }
       return JSON.parse(readFileSync(join(runDir, "run-result.json"), "utf8")) as BaselineRun;
     },

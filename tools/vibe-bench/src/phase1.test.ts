@@ -199,7 +199,10 @@ test("subagent model and phase are preserved; unknown worker gets a reason", () 
     { type: "assistant", request_id: "root", parent_tool_use_id: null, effort: "high", message: {
       id: "root-msg", model: BENCHMARK_MODEL,
       usage: { input_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 1 },
-      content: [{ type: "tool_use", name: "Agent", id: "agent-tool", input: { subagent_type: "vibe-adversarial-reviewer" } }],
+      content: [
+        { type: "tool_use", name: "Skill", id: "skill-tool", input: { skill: "vibe:vibe" } },
+        { type: "tool_use", name: "Agent", id: "agent-tool", input: { subagent_type: "vibe-adversarial-reviewer" } },
+      ],
     } },
     { type: "assistant", request_id: "child", parent_tool_use_id: "agent-tool", effort: "high", message: {
       id: "child-msg", model: "claude-opus-4-6",
@@ -219,11 +222,18 @@ test("subagent model and phase are preserved; unknown worker gets a reason", () 
   assert.equal(result.calls[1].worker, "vibe-adversarial-reviewer");
   assert.equal(result.calls[1].declaredAgentModel, "opus");
   assert.equal(result.calls[1].phase, "review");
+  assert.equal(result.calls[0].skill, null);
+  assert.equal(result.calls[1].skill, "vibe:vibe");
   const generalPurpose = collect(stream.replace('"subagent_type":"vibe-adversarial-reviewer"',
     '"subagent_type":"general-purpose","description":"vibe-adversarial-reviewer checks the diff"'));
   assert.equal(generalPurpose.calls[1].worker, "vibe-adversarial-reviewer");
   const fleet = collect(stream, null, { shape: "fleet-one-writer" });
   assert.deepEqual(fleet.calls.map((call) => call.component), ["fleet-orchestrator", "vibe"]);
+  assert.deepEqual(fleet.calls.map((call) => call.skill), [null, "vibe:vibe"]);
+  const fleetSkill = collect(stream.replace('"skill":"vibe:vibe"',
+    '"skill":"vibe:fleet-orchestrator"'), null, { shape: "fleet-one-writer" });
+  assert.deepEqual(fleetSkill.calls.map((call) => call.component), ["fleet-orchestrator", "vibe"]);
+  assert.deepEqual(fleetSkill.calls.map((call) => call.skill), [null, "vibe:fleet-orchestrator"]);
   const unknown = collect(stream.replace("vibe-adversarial-reviewer", "custom-worker"));
   assert.equal(unknown.calls[1].component, "unattributed");
   assert.match(unknown.calls[1].unattributedReason ?? "", /unknown-agent/);

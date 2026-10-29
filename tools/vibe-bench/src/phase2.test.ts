@@ -10,7 +10,7 @@ import { buildBaselineReport, finalizeBaseline, orchestrateTen, verifyBaselineHa
 import type { BaselineRun } from "./baseline.ts";
 import { collectClaude } from "./claude-collector.ts";
 import { BENCHMARK_TASK } from "./contract.ts";
-import { GithubProofPr, PROOF_REMOTE } from "./github-pr.ts";
+import { cleanupRecordedProof, GithubProofPr, PROOF_LIFECYCLE_FILE, PROOF_REMOTE } from "./github-pr.ts";
 import type { PrCommands } from "./github-pr.ts";
 import { snapshotMainPlugins } from "./plugin-snapshot.ts";
 import { runOwnedProcess } from "./owned-process.ts";
@@ -279,6 +279,7 @@ class FakePrCommands implements PrCommands {
         ref: args[args.indexOf("--head") + 1], baseRef: args[args.indexOf("--base") + 1] };
       return "https://github.com/closedloop-ai/symphony-alpha/pull/123";
     }
+    if (args[1] === "list") return JSON.stringify(this.pr ? [{ number: this.pr.number }] : []);
     if (args[1] === "view") {
       assert.ok(this.pr);
       return JSON.stringify({ number: this.pr.number, isDraft: this.pr.draft, state: this.pr.state,
@@ -339,6 +340,41 @@ test("failed PR creation cleans both of its own pushed proof refs", () => {
     assert.throws(() => adapter.publish({ sourceSha: sha, baseSha: "c".repeat(40), agentCheckout: root } as PreparedFixture,
       root, "run-123456"), /publish-failed/);
     assert.equal(commands.refs.size, 0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("parent closes the PR and removes refs after a child is killed during publish", async () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-bench-pr-parent-cleanup-"));
+  try {
+    const agent = join(root, "agent");
+    mkdirSync(agent);
+    const baseRef = `proof/${"a".repeat(12)}-iss13401-deadbeef-1-base`;
+    const ref = `proof/${"a".repeat(12)}-iss13401-deadbeef-1-head`;
+    const journal = join(root, PROOF_LIFECYCLE_FILE);
+    const record = { schemaVersion: 1, cwd: realpathSync(agent), baseRef, ref, number: 0,
+      baseRefPushed: true, refPushed: true, closed: false,
+      headRefRemoved: false, baseRefRemoved: false };
+    const script = [
+      'const { writeFileSync } = require("node:fs");',
+      `writeFileSync(${JSON.stringify(journal)}, ${JSON.stringify(`${JSON.stringify(record)}\n`)});`,
+      "setInterval(() => {}, 1000);",
+    ].join("\n");
+    await assert.rejects(runOwnedProcess(process.execPath, ["-e", script], {
+      cwd: root, deadline: Date.now() + 150,
+    }), /benchmark-batch-budget-exhausted/);
+    const commands = new FakePrCommands("a".repeat(40));
+    commands.refs.add(baseRef);
+    commands.refs.add(ref);
+    commands.pr = { number: 123, draft: true, state: "OPEN", title: "proof", body: "proof",
+      ref, baseRef };
+    assert.deepEqual(cleanupRecordedProof(root, baseRef, ref, commands, "gh"), []);
+    assert.equal(commands.pr.state, "CLOSED");
+    assert.equal(commands.refs.size, 0);
+    const cleaned = JSON.parse(readFileSync(journal, "utf8")) as {
+      number: number; closed: boolean; headRefRemoved: boolean; baseRefRemoved: boolean;
+    };
+    assert.deepEqual(cleaned, { ...cleaned, number: 123, closed: true,
+      headRefRemoved: true, baseRefRemoved: true });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

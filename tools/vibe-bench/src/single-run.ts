@@ -14,7 +14,7 @@ import type { PublishedProof } from "./github-pr.ts";
 import type { PluginSnapshot } from "./plugin-snapshot.ts";
 import type { BenchmarkShape, ClaudeRunIdentity } from "./result-schema.ts";
 
-/** One child owns one fake checkout, Claude conversation, draft PR and cleanup. */
+/** One child owns one fake checkout, Claude conversation and the normal proof PR lifecycle. */
 export interface SingleRunInput {
   index: number;
   shape: BenchmarkShape;
@@ -47,7 +47,7 @@ function identity(input: SingleRunInput, id: string, startedAt: string,
   };
 }
 
-/** Measure and persist one complete run; failure cleanup is confined to its PR. */
+/** Measure and persist one complete run; the parent independently guarantees final cleanup. */
 export async function runBaselineOne(input: SingleRunInput): Promise<BaselineRun> {
   const started = Date.now();
   const startedAt = new Date(started).toISOString();

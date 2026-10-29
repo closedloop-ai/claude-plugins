@@ -52,7 +52,7 @@ export function attributeCall(
 ): Attribution {
   const worker = evidence.agentName?.replace(/^vibe:/, "") ?? null;
   const directSkill = evidence.skillName ?? null;
-  const skill = directSkill ?? (shape === "vibe" ? "vibe:vibe" : "vibe:fleet-orchestrator");
+  const skill = directSkill;
   let component: TopComponent;
   let unattributedReason: string | null = null;
   if (worker) {
@@ -62,7 +62,7 @@ export function attributeCall(
   } else if (evidence.parentToolUseId) {
     component = "unattributed";
     unattributedReason = `unknown-parent-tool:${evidence.parentToolUseId}`;
-  } else if (directSkill?.startsWith("fleet-orchestrator")) {
+  } else if (directSkill === "vibe:fleet-orchestrator" || directSkill?.startsWith("fleet-orchestrator")) {
     component = "fleet-orchestrator";
   } else if (directSkill?.startsWith("vibe:")) {
     component = "vibe";
