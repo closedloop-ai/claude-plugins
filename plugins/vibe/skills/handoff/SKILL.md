@@ -556,8 +556,12 @@ that the session did not write (`../vibe/SKILL.md`, section 6, step 3).
 `committed: false` means nothing changed. A commit the hook refused goes back to step 5's fixing, then
 this step again. Once the merge is committed, run `qa-impact.mjs` from the
 last handoff evidence. `None` carries it; otherwise run only the named lanes
-or screens. Dispatch `vibe-guardrails-reviewer` only for hand-resolved source
-changes, never for a clean main merge.
+or screens. Every main sync is checked for capability removal, this one
+included: dispatch `vibe-guardrails-reviewer` for its check 13 on that merge.
+Dispatch the rest of that reviewer only for hand-resolved source changes,
+never for a clean main merge. For the files `qa-impact.mjs` selects, rerun the
+inventory's `requiredChecks` on the merged tree; do not widen that set to
+unaffected files.
 Resume the SAME writer's source-owned `progress` continuation
 with parent-controlled handoff purpose/transaction to execute
 `main-sync-validate` against committed input.
@@ -909,9 +913,11 @@ resumes and every fix goes through this path, never around it:
    a fix that needs a path the writer may never edit is logged as
    `Engineering needed (forbidden path)` and answered with that reason.
 4. Rebuild step 1's pull-request inventory, then run `qa-impact.mjs` from the
-   prior evidence. Run only its lanes or named screens, and review only the
-   files the fix changed; never restart every check or critic. Confirmed
-   findings return to the SAME writer. The guardrails reviewer marks each
+   prior evidence. Run step 5's checks only for its named lanes or screens.
+   Run step 3's guardrails review on the files the fix changed, with
+   `review-soul` required on changed tests; never restart every check or
+   critic on unaffected files. Confirmed findings return to the SAME writer.
+   The guardrails reviewer marks each
    `fixed` thread `verified` or `not-verified` with `file:line` evidence;
    the writer's own report is never that verification.
    The VQA findings file must also pass `node ../fleet-orchestrator/scripts/finding-brief.mjs <orchDir> --findings <findings.json> --require-disposition`; a finding on a touched surface cannot be handed off without its fixing SHA or follow-up ticket.

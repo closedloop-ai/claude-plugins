@@ -87,7 +87,7 @@ function classifyOne(file, { config = CONFIG, featureMap = { entries: [] }, impo
     ownFiles: new Set([file]), config, typescript: TEST_TYPESCRIPT });
 }
 
-test("comment-only work proven by a tokenizer needs no QA (ISS-13411 Daniel ruling, 2026-10-29)", (t) => {
+test("comment-only work proven by a tokenizer needs no QA (ISS-13411 operator ruling, 2026-10-29)", (t) => {
   const f = fixture(t);
   f.write("packages/design-system/button.tsx", "// Why this stays shared.\nexport const Button = () => null;\n");
   f.commit("comment");
