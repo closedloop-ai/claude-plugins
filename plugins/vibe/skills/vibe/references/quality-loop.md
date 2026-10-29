@@ -124,6 +124,15 @@ Keep one active request. Plans, findings, answers and commit waits continue it;
 this does not authorize starting the next queued request or a fresh writer. Use the owned state API and block on
 unverifiable identity, branch or resume.
 
+Fleet may assign a helper outside this session only on a separate branch and
+worktree with an exclusive file allowlist disjoint from this writer's concurrent
+files and every other helper. The helper may own authorized proof tests or a
+whole new disjoint module or file set, but cannot edit this ticket branch,
+repair a defect in this writer's code, integrate, or take this session's ticket
+and plan records. This session keeps its one persistent writer and serial queue;
+that writer alone reviews and integrates a helper's returned commit or proof.
+Reviewers stay independent and read-only.
+
 During a requested pull-request writer turn, run
 `node ../handoff/scripts/parallel-prep.mjs --writer-state running --pull-request`
 and dispatch its lanes. Draft the targeted inventory from the live

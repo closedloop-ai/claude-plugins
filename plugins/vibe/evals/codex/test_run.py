@@ -19,7 +19,7 @@ SPEC.loader.exec_module(runner)
 
 def test_one_case_per_claude_prompt_and_role_names() -> None:
     found = runner.cases()
-    assert len(found) == 106
+    assert len(found) == 107
     assert len({c["name"] for c in found}) == len(found)
     assert all(c["name"].startswith(("executive-", "product-manager-", "orchestrator-")) for c in found)
     for case in found:
@@ -36,7 +36,7 @@ def test_one_case_per_claude_prompt_and_role_names() -> None:
 def test_fleet_cases_load_the_installed_skill_without_leaking_answer_lines() -> None:
     """Both runtimes consult the same plugin instructions before grading behavior."""
     cases = {case["name"]: case["prompt"] for case in runner.cases()}
-    for name in ("orchestrator-parallel-e2e-queued", "orchestrator-owned-qa-cleanup"):
+    for name in ("orchestrator-parallel-e2e-queued", "orchestrator-owned-qa-cleanup", "orchestrator-parallel-build-helpers"):
         prompt = cases[name]
         assert "if you are in Claude Code, load `vibe:fleet-orchestrator`" in prompt
         assert "If you are in Codex, read the installed repository snapshot" in prompt

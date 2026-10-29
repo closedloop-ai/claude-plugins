@@ -9,6 +9,8 @@ from vibe_contract_text import flat, section
 PLUGIN = Path(__file__).resolve().parents[2]
 FLEET = PLUGIN / "skills" / "fleet-orchestrator" / "SKILL.md"
 TEMPLATES = PLUGIN / "skills" / "fleet-orchestrator" / "references" / "templates.md"
+QUALITY = PLUGIN / "skills" / "vibe" / "references" / "quality-loop.md"
+GUARDRAILS = PLUGIN / "skills" / "vibe" / "references" / "guardrails.md"
 
 
 def test_non_e2e_lanes_start_while_e2e_is_queued() -> None:
@@ -67,3 +69,34 @@ def test_writers_and_reports_preserve_parallel_work() -> None:
     assert "longest dependent path rather than the serial sum" in fleet_report
     assert fleet_text.count("Before replying with remaining work, fill every field of [Remaining work report]") == 1
     assert next(i for i, line in enumerate(fleet_text.splitlines(), 1) if "Before replying with remaining work, fill every field" in line) < 100
+
+
+def test_disjoint_helpers_keep_exclusive_branches_and_return_defects() -> None:
+    """Fleet helpers may build separate proof files or a whole new module without replacing the ticket writer."""
+    roles = flat(section(FLEET.read_text(), "## Roles"))
+    for phrase in (
+        "Every ticket writer is a vibe session",
+        "One writer per branch at a time",
+        "exact files do not overlap each other or the ticket writer's concurrent files",
+        "use the existing `fleet-home.mjs shape fleet` transition",
+        "own branch, worktree and exclusive file allowlist",
+        "proof tests of separate criteria or a whole new disjoint module or file set",
+        "never the ticket branch",
+        "never repairs defects in ticket-writer code and never integrates",
+        "that writer alone reviews and integrates returned commits or proof",
+        "Independent reviewers remain read-only",
+    ):
+        assert phrase in roles, phrase
+    brief = flat(section(TEMPLATES.read_text(), "## Disjoint helper branch brief"))
+    for phrase in ("Ticket writer:", "Helper branch and worktree:", "Exclusive file allowlist:",
+                   "proof tests for separate criteria, or a whole new disjoint module or file set",
+                   "helper does not integrate", "helper does not repair it", "independent read-only reviewer"):
+        assert phrase in brief, phrase
+    quality = flat(section(QUALITY.read_text(), "## One persistent writer and a serial queue"))
+    assert "outside this session only on a separate branch and worktree" in quality
+    assert "This session keeps its one persistent writer and serial queue" in quality
+    assert "that writer alone reviews and integrates a helper's returned commit or proof" in quality
+    guardrails = flat(section(GUARDRAILS.read_text(), "## What may change"))
+    assert "A fleet helper branch is outside this one-writer vibe session" in guardrails
+    assert "whole new module or file set" in guardrails
+    assert "under existing test-authoring authority or an explicit user test request" in guardrails

@@ -73,6 +73,21 @@ Who speaks: this orchestrator's own directions are operational and are recorded 
 Artifacts for people (tickets, PR bodies, PR comments, review replies): never name a path on the operator's machine (home, temp, scratchpad or worktree paths) or say something is on someone's laptop. Embed screenshots as uploaded images and quote text evidence inline, briefly. A plan is attached, never pointed at: link the implementation plan as a plan document, and upload a QA plan or other working file as a ticket attachment named by its attachment name.
 ```
 
+## Disjoint helper branch brief
+
+Use only after fleet verifies exact file ownership and machine capacity. One
+helper is the only writer on its own branch; it does not join the ticket's
+vibe session. Fill every field before dispatch.
+
+Ticket writer: <owner and ticket branch; no helper edits there>
+Helper branch and worktree: <one new branch and its own worktree>
+Exclusive file allowlist: <every file this helper may edit, disjoint from all concurrent owners>
+Assignment: <proof tests for separate criteria, or a whole new disjoint module or file set>
+Test authority: <existing authorization for proof tests, or not applicable>
+Return: <commit or proof to the ticket writer; helper does not integrate>
+Defect: <send any defect in ticket-writer code to that writer; helper does not repair it>
+Review: <independent read-only reviewer, never this helper>
+
 ## Remaining work report
 
 Pre-send audit: in the final draft, `START_INTEGRATION:`, `START_TYPECHECK:`, `DEPENDENCIES:`, `REPORT:` and `ETA:` each occur exactly once with nonempty content after the colon. If a line is missing, duplicate or blank, complete it and audit again. Do not send an incomplete draft or include this audit note in the reply.

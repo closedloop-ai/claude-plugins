@@ -107,6 +107,15 @@ the pull request and reviews it before it merges. When the person asks for
 one ("Tests"), handoff opens the pull request for them to take through review
 and merge.
 
+A fleet helper branch is outside this one-writer vibe session. Its explicit
+file allowlist contains only disjoint proof tests or a whole new module or file
+set; it never edits the ticket branch or a file another helper or the ticket
+writer concurrently owns. It never repairs defects in ticket-writer code or
+integrates. The ticket writer reviews and integrates returned commits or proof,
+and independent reviewers remain read-only. A helper authors proof tests only
+under existing test-authoring authority or an explicit user test request; the
+normal build and handoff test prohibition below remains in force.
+
 | Frontend (the sole persistent `vibe-change-worker`) | Never |
 |---|---|
 | `apps/app/**` (web pages and route shells) | `apps/mcp/**`, `apps/relay/**`, `apps/realtime/**` |
