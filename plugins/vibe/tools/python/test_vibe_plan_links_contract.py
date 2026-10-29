@@ -161,21 +161,25 @@ def test_the_vibe_skill_publishes_the_plan_after_each_request_and_links_the_sour
 def test_resume_and_takeover_publish_or_reuse_one_existing_ticket_plan_without_pausing_build() -> None:
     quality = section(QUALITY.read_text(), "## Local plan")
     assert_all(quality, (
-        "startup, resume, fleet takeover and handoff",
-        "first lists outgoing `PRODUCES` links",
-        "records and updates one linked PLN",
-        "core-template plan covering every ticket criterion",
+        "startup, resume, fleet takeover or handoff",
+        "list outgoing `PRODUCES` links and reuse one PLN",
+        "core plan covering every criterion",
         "continues building",
-        "without a person question, approval wait, second PLN, or source/deploy pause",
+        "without a person wait, second PLN or build/deploy pause",
     ))
     skill = flat(VIBE_SKILL.read_text())
-    assert "Before its first request, apply `references/quality-loop.md`, \"Local plan\", including for a fleet takeover" in skill
+    assert "Before its first request or fleet takeover, apply `references/quality-loop.md`, \"Local plan\"" in skill
     handoff = flat(HANDOFF_SKILL.read_text())
-    assert "With any existing `liveTicket`, apply `../vibe/references/quality-loop.md`, \"Local plan\"" in handoff
+    assert "Existing tickets apply `../vibe/references/quality-loop.md`, \"Local plan\"" in handoff
     rules = plan_rules()
-    assert "run step C even without `livePlan`" in rules
+    assert "step C reuses one linked PLN or publishes" in rules
     assert rules.index("list-artifact-links` with `artifactId: <live ticket>`, `direction: \"target\"") < rules.index(
         "`create-document` with `type: IMPLEMENTATION_PLAN`")
+    resume_eval = PLUGIN_ROOT / "evals" / "pm-resume-existing-ticket-plan"
+    assert (resume_eval / "prompt.md").is_file()
+    assert {path.stem for path in (resume_eval / "graders").glob("*.md")} == {
+        "missing-publishes-plan", "existing-reuses-plan", "build-continues"
+    }
 
 
 def test_the_session_record_has_the_pln_next_to_the_live_ticket(tmp_path: Path) -> None:

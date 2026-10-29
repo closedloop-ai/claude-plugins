@@ -8,6 +8,7 @@
 // Evidence JSON shape: {"screens":[{"id":"screen","states":[],"flagArms":[]}]}.
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -18,12 +19,15 @@ import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 export const QaImpact = Object.freeze({ None: "None", LanesOnly: "Lanes only", Visual: "Visual QA" });
 
 const DOC_OR_RELEASE = /(?:^|\/)(?:CHANGELOG|CHANGES|HISTORY|RELEASES?|README)(?:\.|$)|\.(?:md|mdx|rst|txt)$/i;
-const CI_CONFIG = /^(?:\.github\/|\.circleci\/|\.buildkite\/)|(?:^|\/)(?:Dockerfile|Jenkinsfile)$|(?:^|\/)(?:ci|workflows?)\//i;
+const CI_CONFIG = /^(?:\.github\/|\.circleci\/|\.buildkite\/|Dockerfile$|Jenkinsfile$)/i;
 const SOURCE = /\.(?:[cm]?[jt]sx?|css|scss|sass|less|py|rb|go|rs|java|kt|swift|vue|svelte)$/i;
-const COMMENTABLE = /\.(?:[cm]?[jt]sx?|css|scss|sass|less|py|rb|sh|bash|zsh|yml|yaml|vue|svelte)$/i;
+const UI_ASSET = /\.(?:svg|png|jpe?g|gif|webp|avif|ico|html?)$/i;
+const DATA_ASSET = /\.json$/i;
+const UI_LOCATION = /^(?:apps\/(?:app|storybook)\/|apps\/desktop\/src\/renderer\/|packages\/(?:app|design-system)\/|public\/)/;
 const LOCKFILE = /(?:^|\/)(?:pnpm-lock\.yaml|package-lock\.json|yarn\.lock|bun\.lockb?)$/;
-const UI_LIBRARY = /(?:react|radix|tailwind|storybook|lucide|floating-ui|framer-motion|cmdk|design-system)/i;
-const GLOBAL_UI = /(?:^|\/)(?:tokens?|themes?|styles?|flags?)\b|(?:^|\/)tailwind\.|\.css$/i;
+const UI_PACKAGES = new Set(["react", "react-dom", "next", "tailwindcss", "storybook", "lucide-react", "framer-motion", "motion", "cmdk", "recharts", "sonner", "vaul"]);
+const UI_PACKAGE_SCOPES = ["@radix-ui/", "@tailwindcss/", "@storybook/", "@floating-ui/"];
+const GLOBAL_UI = /(?:^|\/)(?:tokens?|themes?|global-styles?|feature-flags?|ui-flags?)(?:\/|\.|$)|(?:^|\/)(?:globals?|tailwind)\.(?:css|scss|sass|less)$/i;
 const VERSIONED_JSON = /(?:^|\/)(?:package|plugin)\.json$/;
 const FEATURE_MAP_DEFAULT = ".claude/skills/control/feature-map.json";
 
@@ -44,78 +48,22 @@ function readAt(worktree, ref, file) {
 }
 
 function readHead(worktree, file) {
-  const absolute = path.join(worktree, file);
-  return existsSync(absolute) ? readFileSync(absolute, "utf8") : null;
+  return readAt(worktree, "HEAD", file);
 }
 
-/** Removes comments and formatting that cannot change executable or rendered behavior. */
+/** Removes only whole-line comments whose syntax is unambiguous for the file. */
 export function semanticSourceText(file, source) {
-  if (source === null || !COMMENTABLE.test(file)) return source;
-  let text = source;
-  if (/\.(?:py|rb|sh|bash|zsh|ya?ml)$/i.test(file)) {
-    text = text.split("\n").map((line) => {
-      let quote = null;
-      let escaped = false;
-      for (let index = 0; index < line.length; index++) {
-        const char = line[index];
-        if (escaped) {
-          escaped = false;
-        } else if (char === "\\" && quote) {
-          escaped = true;
-        } else if (quote) {
-          if (char === quote) quote = null;
-        } else if (char === "'" || char === '"') {
-          quote = char;
-        } else if (char === "#") {
-          return line.slice(0, index);
-        }
-      }
-      return line;
-    }).join("\n");
-  } else {
-    let result = "";
-    let quote = null;
-    let escaped = false;
-    let lineComment = false;
-    let blockComment = false;
-    for (let index = 0; index < text.length; index++) {
-      const char = text[index];
-      const next = text[index + 1];
-      if (lineComment) {
-        if (char === "\n") {
-          lineComment = false;
-          result += char;
-        }
-      } else if (blockComment) {
-        if (char === "*" && next === "/") {
-          blockComment = false;
-          index++;
-        } else if (char === "\n") {
-          result += char;
-        }
-      } else if (escaped) {
-        result += char;
-        escaped = false;
-      } else if (quote) {
-        result += char;
-        if (char === "\\") escaped = true;
-        else if (char === quote) quote = null;
-      } else if (char === "'" || char === '"' || char === "`") {
-        quote = char;
-        result += char;
-      } else if (char === "/" && next === "/") {
-        lineComment = true;
-        index++;
-      } else if (char === "/" && next === "*") {
-        blockComment = true;
-        index++;
-      } else {
-        result += char;
-      }
-    }
-    text = result.replace(/<!--[^]*?-->/g, "");
-  }
-  return text.split("\n").map((line) => line.trim()).filter(Boolean).join("\n");
+  if (source === null) return source;
+  const hashComments = /\.(?:py|rb|sh|bash|zsh|ya?ml)$/i.test(file);
+  const slashComments = /\.(?:[cm]?[jt]sx?|css|scss|sass|less|vue|svelte)$/i.test(file);
+  const htmlComments = /\.html?$/i.test(file);
+  if (!hashComments && !slashComments && !htmlComments) return source;
+  const comment = hashComments
+    ? /^\s*#.*$/
+    : htmlComments
+      ? /^\s*<!--(?:[^]|\n)*?-->\s*$/
+      : /^\s*(?:(?:\/\/|\/\*|\*|\*\/).*)$/;
+  return source.split("\n").filter((line) => !comment.test(line)).map((line) => line.trim()).filter(Boolean).join("\n");
 }
 
 function commentOnly(file, before, after) {
@@ -138,16 +86,27 @@ function versionOnly(file, before, after) {
 
 function lockfileMovesUi(before, after) {
   const oldLines = new Set((before ?? "").split("\n"));
-  return (after ?? "").split("\n").some((line) => !oldLines.has(line) && UI_LIBRARY.test(line));
+  return (after ?? "").split("\n").some((line) => !oldLines.has(line) && lockfileUiPackage(line));
+}
+
+/** Exact UI package named by one lockfile line, or null. */
+export function lockfileUiPackage(line) {
+  const text = line.trim().replace(/^['"]/, "").replace(/^\/?node_modules\//, "");
+  const found = /^(?<name>@[^/\s:'"]+\/[^@\s:'"]+|[^@/\s:'"]+)(?:@[^\s:'"]+)?['"]?:/.exec(text)?.groups?.name;
+  if (!found) return null;
+  return UI_PACKAGES.has(found) || UI_PACKAGE_SCOPES.some((scope) => found.startsWith(scope)) ? found : null;
 }
 
 function normalizeCodePath(value) {
   const text = String(value).trim();
-  return text.includes(": ") ? text.slice(text.indexOf(": ") + 2).replace(/\/$/, "") : text.replace(/\/$/, "");
+  return text.includes(": ") ? text.slice(text.indexOf(": ") + 2) : text;
 }
 
 function pathMatches(file, owner) {
-  return file === owner || file.startsWith(`${owner}/`) || owner.startsWith(`${file}/`) || file.startsWith(owner);
+  if (file === owner) return true;
+  if (owner.endsWith("/")) return file.startsWith(owner);
+  if (!file.startsWith(owner)) return false;
+  return ["/", ".", "-", "_"].includes(file[owner.length]);
 }
 
 function featurePaths(entry) {
@@ -155,6 +114,7 @@ function featurePaths(entry) {
 }
 
 function normalizeImporters(raw) {
+  if (raw === undefined || raw === null) return null;
   const source = raw?.importers ?? raw?.files ?? raw ?? {};
   if (Array.isArray(source)) {
     return new Map(source.map((entry) => [entry.file, entry.importers ?? entry.paths ?? []]));
@@ -185,21 +145,45 @@ export function evidenceProblems(evidence) {
   return problems;
 }
 
-function mergeOnly(worktree, since) {
-  const commits = lines(git(worktree, ["rev-list", "--first-parent", "--parents", `${since}..HEAD`]));
-  return commits.length > 0 && commits.every((line) => line.split(/\s+/).length > 2);
+function changedBetween(worktree, from, to) {
+  return new Set(lines(git(worktree, ["diff", "--name-only", "--no-renames", from, to])));
+}
+
+function differsBetween(worktree, from, to, file) {
+  try {
+    execFileSync("git", ["-C", worktree, "diff", "--quiet", from, to, "--", file], { stdio: "ignore" });
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/** Files changed by branch commits versus files arriving only through main merges. */
+export function changeOrigins(worktree, since) {
+  const ownFiles = new Set();
+  const mergeFiles = new Set();
+  for (const row of lines(git(worktree, ["rev-list", "--first-parent", "--reverse", "--parents", `${since}..HEAD`]))) {
+    const [commit, firstParent, secondParent] = row.split(/\s+/);
+    if (!firstParent) continue;
+    if (!secondParent) {
+      for (const file of changedBetween(worktree, firstParent, commit)) ownFiles.add(file);
+      continue;
+    }
+    const incoming = changedBetween(worktree, firstParent, commit);
+    for (const file of incoming) mergeFiles.add(file);
+    const mergeBase = git(worktree, ["merge-base", firstParent, secondParent]);
+    const branchSide = changedBetween(worktree, mergeBase, firstParent);
+    const mainSide = changedBetween(worktree, mergeBase, secondParent);
+    for (const file of incoming) {
+      if (branchSide.has(file) && mainSide.has(file) && differsBetween(worktree, secondParent, commit, file)) ownFiles.add(file);
+    }
+  }
+  for (const file of ownFiles) mergeFiles.delete(file);
+  return { ownFiles, mergeFiles };
 }
 
 function changedFiles(worktree, since) {
   return lines(git(worktree, ["diff", "--name-only", "--no-renames", `${since}..HEAD`]));
-}
-
-function changedDiff(worktree, since, file) {
-  try {
-    return git(worktree, ["diff", "--unified=0", "--no-renames", `${since}..HEAD`, "--", file]);
-  } catch {
-    return "";
-  }
 }
 
 function screenEvidence(entry, recorded) {
@@ -212,12 +196,26 @@ function screenEvidence(entry, recorded) {
   };
 }
 
+function recordedScreens(evidence) {
+  return (evidence?.screens ?? []).map((screen) => ({
+    id: screen.id ?? screen.screen,
+    ...(screen.title ? { title: screen.title } : {}),
+    states: screen.states,
+    flagArms: screen.flagArms,
+    ...(screen.hosts ? { hosts: screen.hosts } : {}),
+  }));
+}
+
+function withWarnings(result, warnings) {
+  return warnings.length ? { ...result, warnings: [...new Set(warnings)] } : result;
+}
+
 /** Classifies a prepared changed-file inventory. */
-export function classifyQaImpact({ files, before, after, diffs, importers, featureMap, evidence, lanes, onlyMerges }) {
+export function classifyQaImpact({ files, before, after, importers, featureMap, evidence, lanes, ownFiles = new Set() }) {
   const recorded = evidenceById(evidence);
   const tests = [];
-  const source = [];
-  let globalUi = false;
+  const candidates = [];
+  const globalUiFiles = new Set();
   for (const file of files) {
     const oldText = before.get(file) ?? null;
     const newText = after.get(file) ?? null;
@@ -227,35 +225,59 @@ export function classifyQaImpact({ files, before, after, diffs, importers, featu
       continue;
     }
     if (LOCKFILE.test(file)) {
-      globalUi ||= lockfileMovesUi(oldText, newText);
+      if (lockfileMovesUi(oldText, newText)) globalUiFiles.add(file);
       continue;
     }
-    if (!SOURCE.test(file)) continue;
-    source.push(file);
-    globalUi ||= GLOBAL_UI.test(file) || /(?:copy|label|title|route|flag)/i.test(diffs.get(file) ?? "");
+    if (!SOURCE.test(file) && !UI_ASSET.test(file) && !DATA_ASSET.test(file)) continue;
+    candidates.push(file);
+    if (GLOBAL_UI.test(file)) globalUiFiles.add(file);
   }
 
-  if (source.length === 0 && !globalUi) {
+  if (candidates.length === 0 && globalUiFiles.size === 0) {
     return tests.length
       ? { outcome: QaImpact.LanesOnly, lanes, screens: [], changedFiles: files, testFiles: tests, reason: "only tests can be affected" }
       : { outcome: QaImpact.None, lanes: [], screens: [], changedFiles: files, reason: "the changes cannot affect automated QA" };
   }
 
-  const missingGraph = source.filter((file) => !importers.has(file));
-  if (missingGraph.length) throw new Error(`graph importer results are missing for: ${missingGraph.join(", ")}`);
-  const reached = new Set(source);
-  for (const file of source) for (const importer of importers.get(file) ?? []) reached.add(importer);
-  let entries = (featureMap.entries ?? []).filter((entry) => featurePaths(entry).some((owner) => [...reached].some((file) => pathMatches(file, owner))));
-  if (globalUi && entries.length === 0) entries = (featureMap.entries ?? []).filter((entry) => recorded.has(entry.id));
-  if (onlyMerges) entries = entries.filter((entry) => recorded.has(entry.id));
-  const screens = entries.map((entry) => screenEvidence(entry, recorded.get(entry.id)));
-  if (screens.length === 0) {
-    return tests.length
-      ? { outcome: QaImpact.LanesOnly, lanes, screens: [], changedFiles: files, testFiles: tests, reason: "no changed source reaches a rendered screen; only changed tests select lanes" }
-      : { outcome: QaImpact.None, lanes: [], screens: [], changedFiles: files, reason: "no changed source reaches a rendered value checked by QA" };
+  const entries = Array.isArray(featureMap?.entries) ? featureMap.entries : null;
+  const affected = new Map();
+  const warnings = [];
+  if (entries === null) warnings.push("FEATURE_MAP is unavailable; UI-reaching changes use the recorded PR screens");
+  let classifyUp = globalUiFiles.size > 0;
+  for (const file of candidates) {
+    const importing = importers?.get(file);
+    if (importers === null || importing === undefined) {
+      classifyUp = true;
+      warnings.push(`code importers missing for ${file}; classified as Visual QA for the PR screens`);
+      continue;
+    }
+    const paths = [file, ...importing];
+    if (entries === null) {
+      if (UI_LOCATION.test(file) || UI_ASSET.test(file) || importing.some((item) => UI_LOCATION.test(item))) classifyUp = true;
+      continue;
+    }
+    const matched = entries.filter((entry) => featurePaths(entry).some((owner) => paths.some((item) => pathMatches(item, owner))));
+    for (const entry of matched) {
+      if (ownFiles.has(file) || recorded.has(entry.id)) affected.set(entry.id, entry);
+    }
+    const reachesUi = UI_LOCATION.test(file) || importing.some((item) => UI_LOCATION.test(item));
+    if (matched.length === 0 && (globalUiFiles.has(file) || reachesUi || (UI_ASSET.test(file) && reachesUi) || (DATA_ASSET.test(file) && reachesUi))) {
+      classifyUp = true;
+      warnings.push(`no FEATURE_MAP screen resolved for ${file}; classified as Visual QA for the PR screens`);
+    }
   }
-  return { outcome: QaImpact.Visual, lanes, screens, changedFiles: files, testFiles: tests,
-    reason: onlyMerges ? "the main merge changed dependencies of previously checked screens" : "changed source can alter rendered output" };
+  let screens = [...affected.values()].map((entry) => screenEvidence(entry, recorded.get(entry.id)));
+  if (classifyUp) {
+    const known = new Set(screens.map((screen) => screen.id));
+    screens = [...screens, ...recordedScreens(evidence).filter((screen) => !known.has(screen.id))];
+  }
+  if (screens.length === 0) {
+    return withWarnings(tests.length
+      ? { outcome: QaImpact.LanesOnly, lanes, screens: [], changedFiles: files, testFiles: tests, reason: "no changed source reaches a rendered screen; only changed tests select lanes" }
+      : { outcome: QaImpact.None, lanes: [], screens: [], changedFiles: files, reason: "no changed source reaches a rendered value checked by QA" }, warnings);
+  }
+  return withWarnings({ outcome: QaImpact.Visual, lanes, screens, changedFiles: files, testFiles: tests,
+    reason: "changed source can alter rendered output" }, warnings);
 }
 
 export function qaImpact({ worktree, since, evidence, graphImporters, featureMap, laneReport }) {
@@ -264,14 +286,18 @@ export function qaImpact({ worktree, since, evidence, graphImporters, featureMap
   const files = changedFiles(worktree, since);
   const before = new Map(files.map((file) => [file, readAt(worktree, since, file)]));
   const after = new Map(files.map((file) => [file, readHead(worktree, file)]));
-  const diffs = new Map(files.map((file) => [file, changedDiff(worktree, since, file)]));
   const lanes = laneReport === undefined ? [] : reportLanes(laneReport);
   if (lanes === null) throw new Error("the lane report names no lane and does not say nothing changed");
-  const result = classifyQaImpact({ files, before, after, diffs, importers: normalizeImporters(graphImporters), featureMap, evidence, lanes, onlyMerges: mergeOnly(worktree, since) });
+  const origins = changeOrigins(worktree, since);
+  const result = classifyQaImpact({ files, before, after, importers: normalizeImporters(graphImporters), featureMap, evidence, lanes, ownFiles: origins.ownFiles });
   if (result.outcome === QaImpact.LanesOnly && laneReport === undefined) {
     throw new Error("a Lanes only result needs the repository lane report for the same diff");
   }
-  return result;
+  if (lanes.length === 0) return result;
+  const relevant = [...new Set([...(result.testFiles ?? []), ...files.filter((file) => SOURCE.test(file) || UI_ASSET.test(file) || DATA_ASSET.test(file) || LOCKFILE.test(file))])].sort();
+  const hash = createHash("sha256").update(JSON.stringify(lanes));
+  for (const file of relevant) hash.update(`\n${file}\0${semanticSourceText(file, after.get(file) ?? null) ?? "deleted"}`);
+  return { ...result, laneKey: hash.digest("hex").slice(0, 16) };
 }
 
 function load(file, label) {
@@ -279,21 +305,25 @@ function load(file, label) {
   return JSON.parse(readFileSync(file, "utf8"));
 }
 
+function loadOptional(file) {
+  return file && existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
+}
+
 function main(argv) {
   const { values } = parseArgs({ args: argv, options: {
     worktree: { type: "string" }, since: { type: "string" }, evidence: { type: "string" }, "graph-importers": { type: "string" },
     "feature-map": { type: "string" }, "lane-report": { type: "string" },
   } });
-  if (!values.worktree || !values.since || !values.evidence || !values["graph-importers"]) {
-    throw new Error("Usage: qa-impact.mjs --worktree <path> --since <last QA boundary> --evidence <screen evidence JSON> --graph-importers <code_importers JSON> [--feature-map <feature map JSON>] [--lane-report <lane report>]");
+  if (!values.worktree || !values.since || !values.evidence) {
+    throw new Error("Usage: qa-impact.mjs --worktree <path> --since <last QA boundary> --evidence <screen evidence JSON> [--graph-importers <code_importers JSON>] [--feature-map <feature map JSON>] [--lane-report <lane report>]");
   }
   const featureMapFile = values["feature-map"] ?? path.join(values.worktree, FEATURE_MAP_DEFAULT);
   const result = qaImpact({
     worktree: values.worktree,
     since: values.since,
     evidence: load(values.evidence, "screen evidence"),
-    graphImporters: load(values["graph-importers"], "graph importer results"),
-    featureMap: load(featureMapFile, "feature map"),
+    graphImporters: loadOptional(values["graph-importers"]),
+    featureMap: loadOptional(featureMapFile),
     laneReport: values["lane-report"] ? readFileSync(values["lane-report"], "utf8") : undefined,
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

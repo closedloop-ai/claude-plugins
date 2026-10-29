@@ -150,8 +150,9 @@ the prior-head result remains applicable; never claim the unchanged scenario
 was exercised on the new SHA. Update the owned comment in place with the new
 head, both patch-ids, invalidated scenarios, carry-forward justifications, and
 remaining work, then verify the comment again. The same binding governs
-`Repo verification evidence` and `Safety fact` (Validation step 3 in
-[implementation-review-pr.md](implementation-review-pr.md)).
+only this responsible-human scenario evidence. Automated `Repo verification
+evidence` and `Safety fact` follow the `qa-impact.mjs` rule in Validation step
+3 of [implementation-review-pr.md](implementation-review-pr.md).
 
 Manual QA passes only when the relevant final PR head has responsible-human `PASS`
 evidence for every required scenario across the integrated feature and no

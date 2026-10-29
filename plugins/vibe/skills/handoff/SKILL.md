@@ -195,10 +195,8 @@ words and ask which one they want to finish. Read its `liveTicket` and `localFix
 
 If the session has no `liveTicket` (it started before live tickets existed),
 dispatch `vibe-ticket-worker` in create mode first; it records the slug on
-the session. With any existing `liveTicket`, apply
-`../vibe/references/quality-loop.md`, "Local plan", before final ticket checks.
-It reuses one linked PLN or has the SAME writer create the missing plan while
-handoff continues, without a person wait. If it is `handed-off`, first dispatch `vibe-ticket-worker` in
+the session. Existing tickets apply `../vibe/references/quality-loop.md`,
+"Local plan", before final checks without pausing handoff. If it is `handed-off`, first dispatch `vibe-ticket-worker` in
 plan mode with `mergeCheck: true` when its `livePlanStatus` is `APPROVED`, so
 a merged pull request moves the PLN to `EXECUTED`. When its pull request is still open, read its threads first
 (`vibe-environment-worker`, `reviewThreads: read`) on every look: any
@@ -293,8 +291,9 @@ only by `scripts/frozen-render.mjs`, run in step 4 by
 `vibe-storybook-decomposer`: the writer records the `Frozen render
 unchanged` line that command prints, and nobody captures frozen stories any
 other way. The line names the session files it rendered and counts only while
-they are unchanged: after any later change, a fix or a main merge included,
-the command runs again (ISS-13321). A finding's `fix` is written for the writer, never relayed to the
+their story states and dependency inputs are unchanged. A later commit or main
+merge reruns it only when `qa-impact.mjs` names one of those states or the
+frozen-render dependency digest changes (ISS-13411). A finding's `fix` is written for the writer, never relayed to the
 person as a step (`../vibe/references/plain-words.md`, "What the person is
 asked to do").
 
@@ -607,11 +606,8 @@ internally; never ask the vibe coder for technical-plan approval.
 For actual authorized/completed evidence, ROOT binds `mainSyncCiRun: {runId, attempt}`
 in the SAME writer's actual source progress/handoff grant, then resumes
 `main-sync-validate` on the same captured-main transaction without another fetch
-loop. The consumer verifies real canonical run/job/step identity and actual
-checkout-action/pre-test env SHA against the source that CI exercised, not caller
-PASS or workflow main head_sha. A later source snapshot gets its ordinary
-per-push CI result; `qa-impact.mjs` alone decides whether local lanes or
-rendered screens need new evidence. Keep whole-table
+loop. The consumer verifies real run/job/step and tested-source identity, not
+caller PASS or workflow head_sha. CI is per push; `qa-impact.mjs` decides local evidence. Keep whole-table
 tests/reviews and source-phase authority separate from the CI reader.
 Do not proceed to final assignment/alignment with `requiredE2eComplete: false`
 or any other required coverage gap, even when publicationReady is true. A
@@ -703,8 +699,8 @@ grade the finished code and its appearance/Storybook implementation:
   state access; removed/unavailable historical links are identified honestly.
 - Actual footprint/canonical catalog commands, baseline/current commits and
   reports, including unresolved advisories and their dispositions.
-- Actual design/visual-QA reports and screenshots with screens,
-  viewports/dimensions, hosts, states and flag arms, and accessible links/attachments,
+- Actual design/visual-QA reports with screens, viewports, hosts, states and
+  flag arms, plus accessible evidence,
   including the running app verification's control captures, embedded rather
   than named by local path, and what each proves. Source-only, unverified, failed and
   unsupported coverage remains explicit, with the exact control command and
@@ -945,14 +941,11 @@ resumes and every fix goes through this path, never around it:
 Each fix is the SAME writer's; no other worker or helper edits source or
 tests here, and no step above is skipped because the change looks small.
 
-A pull request gets one feature-complete QA pass. Its record names screens,
-hosts, states and flag arms, never commit identity. After any later commit or
-the single final main merge, collect transitive `code_importers` and the
-same-diff lane report, then run `scripts/qa-impact.mjs` with that evidence and
-FEATURE_MAP. `None` runs no local lane, screenshot, audit or critic; otherwise
-run only the listed lanes or screens and recorded states. CI remains per push
-and the merge queue retests. `pre-pr-lanes.mjs check --impact` enforces the
-lane list. A fresh-context reviewer given only the ticket's criteria and the diff runs
+A pull request gets one feature-complete QA pass, recorded by screen, host,
+state and flag arm. Later changes run `scripts/qa-impact.mjs` with importers,
+FEATURE_MAP, lane report and that evidence. `None` runs no local lane,
+screenshot, audit or critic; otherwise run only its scope. CI is per push and
+`pre-pr-lanes.mjs check --impact` enforces lanes. A fresh-context reviewer given only the ticket's criteria and the diff runs
 `scripts/criteria-audit.mjs --ticket <body> --audit <audit> --matrix <matrix>`
 for initial QA and again only for criteria on a named screen.
 `node scripts/rulings-check.mjs --ticket <body> --record <QA record> --plan <each linked PLN's get-document JSON> --plan-body <its latest text>`

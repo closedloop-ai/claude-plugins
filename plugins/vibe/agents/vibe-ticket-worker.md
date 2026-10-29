@@ -98,9 +98,8 @@ before it writes, so a resumed session or a repeated run never creates a
 second PLN or a duplicate link. `<gitdir>` is
 `$(git -C "<wt>" rev-parse --absolute-git-dir)`.
 
-At startup, resume or takeover on an existing ticket, run step C even without
-`livePlan`: reuse its one linked PLN, or publish the writer's criterion-complete
-local plan. Plan mode never waits for person approval or pauses source work.
+On startup, resume or takeover, step C reuses one linked PLN or publishes the
+criterion-complete local plan without pausing source work.
 
 A. Source link. The source is the record's `ticket`, the ClosedLoop document
    the session was started from (a PRD, an ISS or another document); skip

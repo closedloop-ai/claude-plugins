@@ -484,14 +484,11 @@ and publishes nothing on failure. Do not hide a leak by rewriting history or
 broadly ignore other ClosedLoop artifacts. Handoff reviewers exclude only
 this exact folder from deliverable files.
 
-The plan gets no review: the writer writes it and builds in the same turn. At
-startup, resume, fleet takeover and handoff with an existing `liveTicket`, the
-ticket worker first lists outgoing `PRODUCES` links. It records and updates one
-linked PLN, blocking on multiples. With none, the SAME writer's next source
-turn first writes the core-template plan covering every ticket criterion and
-continues building; plan mode publishes it with `built: false` without a
-person question, approval wait, second PLN, or source/deploy pause. Later
-approach changes return to that writer.
+The plan gets no review: the writer writes it and builds in the same turn. On startup, resume, fleet takeover or handoff with an
+existing `liveTicket`, list outgoing `PRODUCES` links and reuse one PLN. With
+none, the SAME writer first writes the core plan covering every criterion and
+continues building; plan mode publishes `built: false` without a person wait,
+second PLN or build/deploy pause. Later changes return to that writer.
 
 ## Implementation and corrections
 

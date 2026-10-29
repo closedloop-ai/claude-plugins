@@ -3,9 +3,9 @@
 
 import path from "node:path";
 
-export const SOURCE_FILE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
+export const SOURCE_FILE = /\.(?:ts|tsx|js|jsx|mjs|cjs|css|scss|sass|less|json|svg)$/;
 export const IMPORT_SPECIFIER = /\b(?:from|import)\s*\(?\s*["']([^"']+)["']/g;
-const SOURCE_EXTENSIONS = ["", ".ts", ".tsx", ".js", ".mjs", "/index.ts", "/index.tsx"];
+const SOURCE_EXTENSIONS = ["", ".ts", ".tsx", ".js", ".mjs", ".css", ".scss", ".sass", ".less", ".json", ".svg", "/index.ts", "/index.tsx"];
 
 /** An import specifier resolved to a file in `files` (relative or `@repo/`), or undefined. */
 export function resolveImport(from, specifier, files) {
