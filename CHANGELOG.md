@@ -19,6 +19,11 @@ Deterministic scripts for the mechanical steps of the vibe workers (PRD-823, WS3
 - `prototype-share.mjs` (ISS-13350): the prototype share sequence with no model (plan check, share admission, exact-SHA push, read-only wait for that SHA's `prototypes` deployment, `prototype-result` recording); only the deployment's own `environment_url` with `/p/<slug>` is accepted.
 - `ticket-ctl.mjs` (ISS-13351, partial): the offline templating only (Engineering checklist lines in the template's formats, the Grading section copied unchanged, owned-section replacement, `ticket-sections` pasting). The ClosedLoop REST client is not built: it is blocked on the owner's ruling about long-lived static credentials, so the script reads and writes no ticket and holds no credential source.
 
+#### Fixed (found by a read-only shadow diff against symphony-alpha PR 9366)
+- `guardrails-gate.mjs` (ISS-13346): `test-repair` compares whole assertion statements of the base and head text, so a reversed expectation inside a call split across lines is reported with word-level evidence; a file it cannot read puts the check under `checks_skipped` as `partial:` and out of `checks_run`. An `as` in a string or a multi-line import list is no longer a cast, and `export const X = y as T` is reported.
+- `inventory-bundle.mjs` (ISS-13349): flag reads through a constant (including calls split across lines) resolve through the changed files and the repository's flag key modules; import lines and comments are no longer guard predicates.
+- `verify-run.mjs` (ISS-13347): a 100% turbo cache replay is `cached` with provenance, not `passed`; the lane report's covered-by-no-lane paths are surfaced as `coveredByNoLane` (report only).
+
 #### Changed
 - The setup, environment, verify, guardrails, requirements, prototype, ticket and handoff-summarizer agents each point at their script with the manual steps kept; `closedloop-graph.md` names the context pack.
 - `test_vibe_ws3_scripts_contract.py` pins the contracts above. The README's runtime line says 1.1.17.
