@@ -64,7 +64,8 @@ def test_tooling_defect_uses_supported_paths_before_a_real_blocker() -> None:
     text = flat(rule())
     for required in (
         "A vibe tooling defect alone does not stop the person's work.",
-        "rerun or narrow the failed check",
+        "Rerun a failed check at most once.",
+        "If it still fails, narrow that check or use an accepted remote lane or CI path.",
         "accepted remote lane or CI path",
         "failure already on captured main",
         "fix what is in the session's scope",
