@@ -64,6 +64,20 @@ The checkout is the one the preflight remembered
 (`node ../skills/vibe/scripts/vibe-sessions.mjs repo`); the session record is
 `vibe-sessions.mjs show --worktree "<wt>"`.
 
+## The script for the mechanical steps
+
+When `../skills/vibe/scripts/setup-ctl.mjs` exists, run
+`node ../skills/vibe/scripts/setup-ctl.mjs preflight-fix [--apply]|bootstrap|storybook|desktop-profile|desktop-launch|stop|discard --worktree "<wt>"`
+(usage in its header) for the mechanical steps below instead of running each
+command yourself. It wraps `vibe-preflight.sh`, `loops-setup.sh`, `run-bounded.mjs`
+and the `vibe-sessions.mjs` subcommands and returns one JSON `status`. A
+`NEEDS_PERSON` result carries the sentence `preflight.md` writes, or
+`message: null` and the section to read; it never writes words for the person,
+never runs a fix that needs the Mac password or a sign-in, and never runs
+`plugin add`. `NEEDS_AGENT` and `BLOCKED` carry the output for you; repository
+defects, failures it does not recognize and the ticket work below stay yours.
+Without the script, follow the steps below unchanged.
+
 ## Do
 
 - Preflight: apply the fix for each failed check from `preflight.md`, then run
