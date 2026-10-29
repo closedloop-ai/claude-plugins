@@ -45,13 +45,16 @@ def test_terminal_cleanup_response_names_foreign_resources_left_alone() -> None:
     """The cleanup reply has an explicit unrecorded resource disposition."""
     skill = FLEET.read_text()
     template = FLEET_TEMPLATES.read_text()
-    assert "Every terminal PR cleanup reply uses [Lifecycle cleanup report]" in skill
-    assert "State in `FOREIGN:` that any other worker's unrecorded resource is left untouched" in skill
+    early = skill.split("## Principles\n", 1)[1].split("\n## Setup", 1)[0]
+    assert "Every terminal PR cleanup reply uses [Lifecycle cleanup report]" in early
+    assert "State in `FOREIGN:` that any other worker's unrecorded resource is left untouched" in early
     for field in ("ACTION:", "DOCKER:", "FOREIGN:", "STATUS:"):
         assert field in template
         assert len(re.findall(rf"^{re.escape(field)}", template, re.MULTILINE)) == 1, field
-    assert "`FOREIGN: leave <resource id> untouched because <ownership reason>`" in skill
+    assert "`FOREIGN: leave <resource id> untouched because <ownership reason>`" in early
     assert "FOREIGN: leave <other worker or unrecorded resource id> untouched because <ownership reason>" in template
     assert "Pre-send audit: in the final draft" in template
-    assert "must each occur exactly once with nonempty content after the colon" in skill
-    assert "fill it and audit again before sending" in skill
+    assert "must each occur exactly once with nonempty content after the colon" in early
+    assert "fill it and audit again before sending" in early
+    assert skill.count("Every terminal PR cleanup reply uses [Lifecycle cleanup report]") == 1
+    assert next(i for i, line in enumerate(skill.splitlines(), 1) if "Every terminal PR cleanup reply uses" in line) < 100

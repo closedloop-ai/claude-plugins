@@ -52,7 +52,8 @@ def test_writers_and_reports_preserve_parallel_work() -> None:
     raw_report = templates.split("## Remaining work report\n", 1)[1].split("\n## ", 1)[0]
     for label in ("START_INTEGRATION:", "START_TYPECHECK:", "DEPENDENCIES:", "REPORT:", "ETA:"):
         assert len(re.findall(rf"^{re.escape(label)}", raw_report, re.MULTILINE)) == 1, label
-    fleet_report = section(FLEET.read_text(), "## Reporting to the operator")
+    fleet_text = FLEET.read_text()
+    fleet_report = section(fleet_text, "## Principles")
     assert "Before replying with remaining work, fill every field of [Remaining work report]" in fleet_report
     assert "incomplete without literal `REPORT:` and `ETA:` lines" in fleet_report
     assert "single `REPORT:` line; no bullets or continuation lines" in fleet_report
@@ -64,3 +65,5 @@ def test_writers_and_reports_preserve_parallel_work() -> None:
     assert "Report those fields even when a lane has already started" in fleet_report
     assert "every capacity move" in fleet_report
     assert "longest dependent path rather than the serial sum" in fleet_report
+    assert fleet_text.count("Before replying with remaining work, fill every field of [Remaining work report]") == 1
+    assert next(i for i, line in enumerate(fleet_text.splitlines(), 1) if "Before replying with remaining work, fill every field" in line) < 100
