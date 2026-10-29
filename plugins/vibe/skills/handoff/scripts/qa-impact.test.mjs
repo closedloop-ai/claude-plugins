@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { QaImpact, classifyQaImpact, lockfileUiPackage, qaImpact } from "./qa-impact.mjs";
+import { QaImpact, classifyQaImpact, lockfileUiPackage, qaImpact, qaImpactRequest, semanticSourceText } from "./qa-impact.mjs";
 import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
 
 const FEATURE_MAP = {
@@ -23,25 +23,6 @@ const EVIDENCE = {
 };
 const LANE = "pnpm --filter @repo/app test";
 const CONFIG = { docs: ["docs/"] };
-const TEST_TYPESCRIPT = {
-  ScriptTarget: { Latest: 99 },
-  LanguageVariant: { Standard: 0, JSX: 1 },
-  SyntaxKind: { WhitespaceTrivia: 1, NewLineTrivia: 2, SingleLineCommentTrivia: 3, MultiLineCommentTrivia: 4, ShebangTrivia: 5, EndOfFileToken: 0 },
-  createScanner(_target, _skip, _variant, source) {
-    const parts = source.match(/\/\/[^\n]*|\s+|[^\s]+/g) ?? [];
-    let index = -1;
-    let current = "";
-    return {
-      scan() {
-        current = parts[++index] ?? "";
-        if (!current) return 0;
-        if (current.startsWith("//")) return 3;
-        return current.includes("\n") ? 2 : /^\s+$/.test(current) ? 1 : 10;
-      },
-      getTokenText() { return current; },
-    };
-  },
-};
 const SCRIPT = fileURLToPath(new URL("./qa-impact.mjs", import.meta.url));
 
 function fixture(t) {
@@ -68,6 +49,8 @@ function fixture(t) {
   write("apps/app/documents/page.tsx", "import { Button } from '../../../packages/design-system/button';\nexport default Button;\n");
   write("apps/app/tasks/page.tsx", "import { Button } from '../../../packages/design-system/button';\nexport default Button;\n");
   write("apps/app/settings/page.tsx", "export default function Settings() { return null; }\n");
+  write("README.md", "base docs\n");
+  write("CHANGELOG.md", "# Changelog\n");
   const base = commit("base");
   return { worktree, home, write, commit, base };
 }
@@ -78,16 +61,16 @@ function lanesFor(...files) {
 
 function classify(f, since, importers = {}, laneSelections = null, evidence = EVIDENCE, options = {}) {
   return qaImpact({ worktree: f.worktree, since, evidence, graphImporters: { importers }, featureMap: FEATURE_MAP,
-    laneSelections, config: CONFIG, typescript: TEST_TYPESCRIPT, ...options });
+    laneSelections, config: CONFIG, ...options });
 }
 
 function classifyOne(file, { config = CONFIG, featureMap = { entries: [] }, importers = [] } = {}) {
   return classifyQaImpact({ files: [file], before: new Map([[file, "old"]]), after: new Map([[file, "new"]]),
     importers: new Map([[file, importers]]), featureMap, evidence: EVIDENCE, laneSelections: lanesFor(file),
-    ownFiles: new Set([file]), config, typescript: TEST_TYPESCRIPT });
+    ownFiles: new Set([file]), config });
 }
 
-test("comment-only work proven by a tokenizer needs no QA (ISS-13411 operator ruling, 2026-10-29)", (t) => {
+test("comment-only work proven by the bundled compiler AST needs no QA (ISS-13411 operator ruling, 2026-10-29)", (t) => {
   const f = fixture(t);
   f.write("packages/design-system/button.tsx", "// Why this stays shared.\nexport const Button = () => null;\n");
   f.commit("comment");
@@ -100,15 +83,29 @@ test("comment-only work proven by a tokenizer needs no QA (ISS-13411 operator ru
   });
 });
 
-test("comment and whitespace safety requires a tokenizer", (t) => {
+test("the bundled TypeScript parser distinguishes comments from JSX text, strings and templates", (t) => {
   const f = fixture(t);
   f.write("packages/api/service.ts", "// explanation\nexport   const value = 1;\n");
   f.commit("trivia");
   assert.equal(classify(f, f.base, { "packages/api/service.ts": [] }, lanesFor("packages/api/service.ts")).outcome, QaImpact.None);
-  const withoutTokenizer = qaImpact({ worktree: f.worktree, since: f.base, evidence: EVIDENCE,
-    graphImporters: { importers: { "packages/api/service.ts": [] } }, featureMap: FEATURE_MAP,
-    laneSelections: lanesFor("packages/api/service.ts"), config: CONFIG, typescript: null });
-  assert.equal(withoutTokenizer.outcome, QaImpact.LanesOnly);
+  const repros = [
+    ["component.tsx", "export const C = () => <div>// old</div>;\n", "export const C = () => <div>// new</div>;\n"],
+    ["string.tsx", "export const C = () => <div>{\"/* old */\"}</div>;\n", "export const C = () => <div>{\"/* new */\"}</div>;\n"],
+    ["template.ts", "export const value = `// old /* text */`;\n", "export const value = `// new /* text */`;\n"],
+  ];
+  for (const [file, before, after] of repros) {
+    assert.notEqual(semanticSourceText(file, before), semanticSourceText(file, after), file);
+    const result = classifyQaImpact({ files: [file], before: new Map([[file, before]]), after: new Map([[file, after]]),
+      importers: new Map([[file, []]]), featureMap: { entries: [] }, evidence: EVIDENCE,
+      laneSelections: lanesFor(file), ownFiles: new Set([file]), config: CONFIG });
+    assert.notEqual(result.outcome, QaImpact.None, file);
+  }
+  assert.equal(
+    semanticSourceText("comment.tsx", "export const C = () => <div>{value}</div>;\n"),
+    semanticSourceText("comment.tsx", "export const C = () => <div>{/* note */}{value}</div>;\n"),
+    "a JSX comment disappears from the printed AST",
+  );
+  assert.equal(semanticSourceText("styles.css", "/* comment */\n.a {}"), null, "non-TypeScript files are never comment-proven safe");
 });
 
 test("None is an exact allow-list, while unknown and UI-capable files classify upward", () => {
@@ -121,7 +118,7 @@ test("None is an exact allow-list, while unknown and UI-capable files classify u
   assert.equal(classifyOne("changes.ts").outcome, QaImpact.LanesOnly);
   assert.equal(classifyOne("custom/client/state.ts", { config: { docs: ["docs/"], ui: ["custom/client/"] } }).outcome, QaImpact.Visual);
   assert.equal(classifyQaImpact({ files: ["component.tsx"], before: new Map([["component.tsx", "old"]]), after: new Map([["component.tsx", "new"]]),
-    importers: null, featureMap: null, evidence: { screens: [] }, laneSelections: lanesFor("component.tsx"), ownFiles: new Set(["component.tsx"]), config: null, typescript: null }).outcome, QaImpact.Visual);
+    importers: null, featureMap: null, evidence: { screens: [] }, laneSelections: lanesFor("component.tsx"), ownFiles: new Set(["component.tsx"]), config: null }).outcome, QaImpact.Visual);
 });
 
 test("a URL change in JSX is never mistaken for a comment", (t) => {
@@ -154,8 +151,9 @@ test("test-only work runs only the lanes selected for those files", (t) => {
   assert.deepEqual(result.lanes, [LANE]);
   assert.deepEqual(result.screens, []);
   f.write("README.md", "later docs\n");
-  f.commit("docs");
-  assert.equal(classify(f, f.base, {}, lanesFor(testFile)).laneKey, result.laneKey, "lane scope ignores a later docs-only commit");
+  f.write("plugins/vibe/.claude-plugin/plugin.json", '{"name":"vibe","version":"1.1.18"}\n');
+  f.commit("docs and version");
+  assert.equal(classify(f, f.base, {}, lanesFor(testFile)).laneKey, result.laneKey, "lane scope ignores unrelated docs and version changes");
   assert.match(classify(f, f.base).warnings.join(" "), /no narrowed lane selection/);
 });
 
@@ -169,7 +167,7 @@ test("lane selection is limited to commits since the last QA boundary", (t) => {
   f.commit("new test");
   const result = qaImpact({ worktree: f.worktree, since: boundary, evidence: EVIDENCE,
     graphImporters: { importers: {} }, featureMap: FEATURE_MAP,
-    laneSelections: { files: { [oldTest]: ["pnpm old"], [newTest]: ["pnpm new"] } }, config: CONFIG, typescript: TEST_TYPESCRIPT });
+    laneSelections: { files: { [oldTest]: ["pnpm old"], [newTest]: ["pnpm new"] } }, config: CONFIG });
   assert.deepEqual(result.lanes, ["pnpm new"]);
 });
 
@@ -229,7 +227,7 @@ test("lockfile UI packages match exact names, including the repo's UI libraries"
     before: new Map([["package.json", '{"dependencies":{"date-fns":"3"}}']]),
     after: new Map([["package.json", '{"dependencies":{"date-fns":"4"}}']]),
     importers: new Map([["package.json", []]]), featureMap: { entries: [] }, evidence: EVIDENCE,
-    laneSelections: lanesFor("package.json"), ownFiles: new Set(["package.json"]), config: CONFIG, typescript: TEST_TYPESCRIPT });
+    laneSelections: lanesFor("package.json"), ownFiles: new Set(["package.json"]), config: CONFIG });
   assert.equal(manifest.outcome, QaImpact.Visual);
 });
 
@@ -238,11 +236,19 @@ test("root CI files are None but product workflow source is Visual QA", (t) => {
   f.write(".github/workflows/ci.yml", "name: Changed CI\n");
   f.commit("ci");
   assert.equal(classify(f, f.base).outcome, QaImpact.None);
+  assert.equal(classifyOne("Dockerfile").outcome, QaImpact.LanesOnly, "the root Dockerfile builds the app and is not CI-safe");
 
   f.write("packages/app/workflows/card.tsx", "export const Card = () => <div>Changed</div>;\n");
   f.commit("product workflow");
   const result = classify(f, f.base, { "packages/app/workflows/card.tsx": ["apps/app/documents/page.tsx"] });
   assert.equal(result.outcome, QaImpact.Visual);
+});
+
+test("token modules, mapped API shaping and ordinary fixture components are UI-capable", () => {
+  assert.equal(classifyOne("packages/design-system/tokens/colors.ts").outcome, QaImpact.Visual);
+  const map = { entries: [{ id: "shell-route:documents", code: ["api: apps/api/app/documents/"] }] };
+  assert.equal(classifyOne("apps/api/app/documents/shape.ts", { featureMap: map }).outcome, QaImpact.Visual);
+  assert.equal(classifyOne("packages/app/fixtures/DocumentCard.tsx").outcome, QaImpact.Visual);
 });
 
 test("UI assets, imported locale JSON, and HTML classify as visual", (t) => {
@@ -283,7 +289,7 @@ test("a clean main merge ignores unrelated screens and invalidates a rendered de
   unrelated.write("README.md", "ordinary branch docs\n");
   unrelated.commit("docs after merge");
   const unrelatedResult = classify(unrelated, qaBoundary, { "apps/app/settings/page.tsx": ["apps/app/settings/page.tsx"] }, lanesFor("apps/app/settings/page.tsx"));
-  assert.equal(unrelatedResult.outcome, QaImpact.LanesOnly);
+  assert.equal(unrelatedResult.outcome, QaImpact.None);
   assert.deepEqual(unrelatedResult.screens, []);
 
   const related = fixture(t);
@@ -322,6 +328,96 @@ test("a hand-resolved UI conflict is branch-owned and names its screen", (t) => 
   const result = classify(f, boundary, { "apps/app/settings/page.tsx": ["apps/app/settings/page.tsx"] });
   assert.equal(result.outcome, QaImpact.Visual);
   assert.deepEqual(result.screens.map((screen) => screen.id), ["shell-route:settings"]);
+});
+
+test("a UI hand edit introduced only in a merge commit is branch-owned", (t) => {
+  const f = fixture(t);
+  git(f.worktree, ["checkout", "--quiet", "-b", "feature"], f.home);
+  f.write("feature.txt", "feature\n");
+  const boundary = f.commit("feature boundary");
+  git(f.worktree, ["checkout", "--quiet", "main"], f.home);
+  f.write("apps/app/settings/page.tsx", "export default function Settings() { return 'main'; }\n");
+  f.commit("main settings");
+  git(f.worktree, ["checkout", "--quiet", "feature"], f.home);
+  git(f.worktree, ["merge", "--quiet", "--no-commit", "main"], f.home);
+  f.write("apps/app/settings/page.tsx", "export default function Settings() { return 'hand edit'; }\n");
+  f.commit("merge with hand edit");
+  const result = classify(f, boundary, { "apps/app/settings/page.tsx": ["apps/app/settings/page.tsx"] });
+  assert.equal(result.outcome, QaImpact.Visual);
+  assert.deepEqual(result.screens.map((screen) => screen.id), ["shell-route:settings"]);
+});
+
+test("unreadable or structurally changed files classify upward instead of None", (t) => {
+  const cases = [];
+
+  const binary = fixture(t);
+  binary.write("README.md", Buffer.from([0, 1, 2, 3]));
+  binary.commit("binary root file");
+  cases.push(["binary", classify(binary, binary.base).outcome]);
+
+  const deleted = fixture(t);
+  deleted.write("CHANGELOG.md", "release\n");
+  deleted.commit("add release file");
+  const deleteBoundary = git(deleted.worktree, ["rev-parse", "HEAD"], deleted.home);
+  git(deleted.worktree, ["rm", "CHANGELOG.md"], deleted.home);
+  deleted.commit("delete release file");
+  cases.push(["deleted", classify(deleted, deleteBoundary).outcome]);
+
+  const renamed = fixture(t);
+  renamed.write("README.md", "before\n");
+  renamed.commit("add readme");
+  const renameBoundary = git(renamed.worktree, ["rev-parse", "HEAD"], renamed.home);
+  renameSync(path.join(renamed.worktree, "README.md"), path.join(renamed.worktree, "NOTES.md"));
+  renamed.commit("rename readme");
+  cases.push(["renamed", classify(renamed, renameBoundary).outcome]);
+
+  const mode = fixture(t);
+  mode.write("README.md", "docs\n");
+  mode.commit("add mode file");
+  const modeBoundary = git(mode.worktree, ["rev-parse", "HEAD"], mode.home);
+  chmodSync(path.join(mode.worktree, "README.md"), 0o755);
+  mode.commit("change mode");
+  cases.push(["mode", classify(mode, modeBoundary).outcome]);
+
+  const gitlink = fixture(t);
+  gitlink.write("README.md", "docs\n");
+  gitlink.commit("add blob");
+  const gitlinkBoundary = git(gitlink.worktree, ["rev-parse", "HEAD"], gitlink.home);
+  git(gitlink.worktree, ["rm", "--cached", "README.md"], gitlink.home);
+  git(gitlink.worktree, ["update-index", "--add", "--cacheinfo", `160000,${gitlinkBoundary},README.md`], gitlink.home);
+  git(gitlink.worktree, ["commit", "--quiet", "-m", "replace blob with gitlink"], gitlink.home);
+  cases.push(["gitlink", classify(gitlink, gitlinkBoundary).outcome]);
+
+  for (const [name, outcome] of cases) assert.notEqual(outcome, QaImpact.None, name);
+});
+
+test("large blobs and zero-delimited non-ASCII paths are read without false safety", (t) => {
+  const large = fixture(t);
+  large.write("styles/huge.css", `${".a{color:red}\n".repeat(90000)}/* changed */\n`);
+  large.write("pnpm-lock.yaml", `${"package-x: 1.0.0\n".repeat(140000)}react: 19.0.0\n`);
+  large.commit("large UI inputs");
+  assert.equal(classify(large, large.base).outcome, QaImpact.Visual);
+
+  const unicode = fixture(t);
+  unicode.write("docs/café guide.md", "before\n");
+  unicode.commit("unicode base");
+  const boundary = git(unicode.worktree, ["rev-parse", "HEAD"], unicode.home);
+  unicode.write("docs/café guide.md", "after\n");
+  unicode.commit("unicode docs");
+  assert.equal(classify(unicode, boundary).outcome, QaImpact.None);
+});
+
+test("impact requests require a recorded boundary before HEAD and non-empty lane selections", (t) => {
+  const f = fixture(t);
+  f.write("README.md", "docs\n");
+  f.commit("docs");
+  const request = { lastQa: { boundary: f.base }, evidence: EVIDENCE, graphImporters: { importers: {} },
+    featureMap: FEATURE_MAP, laneSelections: lanesFor("packages/api/service.ts"), config: CONFIG };
+  assert.equal(qaImpactRequest(f.worktree, request).outcome, QaImpact.None);
+  const head = git(f.worktree, ["rev-parse", "HEAD"], f.home);
+  assert.throws(() => qaImpactRequest(f.worktree, { ...request, lastQa: { boundary: head } }), /must precede HEAD/);
+  assert.throws(() => qaImpactRequest(f.worktree, { ...request, lastQa: undefined, since: f.base }), /recorded last-QA point/);
+  assert.throws(() => qaImpactRequest(f.worktree, { ...request, laneSelections: { files: {} } }), /non-empty laneSelections/);
 });
 
 test("missing graph or FEATURE_MAP classifies UI upward but leaves docs and tests mechanical", (t) => {

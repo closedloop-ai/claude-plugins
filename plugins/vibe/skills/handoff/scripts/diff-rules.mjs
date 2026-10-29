@@ -59,6 +59,7 @@ const CLOSURE_LIMIT = 20000;
 const STORY_ID_PATHSPECS = [...E2E_ROOT_PATHSPECS, "docs/", "apps/web/content/docs/", ".claude/", "*.test.*", "*.spec.*", "*.stories.*"];
 const FROZEN_LINE_BASE = /: frozen-render\.mjs --base (\S+)/;
 const FROZEN_LINE_INPUTS = /; inputs ([0-9a-f]{16});/;
+const FROZEN_LINE_STATES = /; states ([^;]*);/;
 const UNEDITABLE_REFERENCE = /^(?:docs\/|apps\/web\/content\/docs\/|\.claude\/)/;
 const FORBIDDEN_REFERENCE = /^(?:AGENTS|CLAUDE|AGENTS\.override)\.md$/;
 const STORY_ID_WORD = /[A-Z]{2,}(?=[A-Z][a-z]|\b|\d)|[A-Z]?[a-z]+|[A-Z]|\d+/g;
@@ -533,7 +534,10 @@ function checkFrozenRenders(files, repo, changeLog, add) {
     const base = FROZEN_LINE_BASE.exec(line)?.[1];
     const inputs = FROZEN_LINE_INPUTS.exec(line)?.[1];
     const exactFiles = affected.every((file) => line.includes(`--story-file ${file}`));
-    const exactStates = affected.flatMap((story) => storyIds(repo.base(story))).every((state) => line.includes(state));
+    const expectedStates = affected.flatMap((story) => storyIds(repo.base(story))).sort();
+    const recordedStates = (FROZEN_LINE_STATES.exec(line)?.[1] ?? "").split(",").filter(Boolean).sort();
+    const exactStates = expectedStates.length === recordedStates.length
+      && expectedStates.every((state, index) => state === recordedStates[index]);
     return Boolean(base && inputs && exactFiles && exactStates) && repo.frozenInputs(base, affected) === inputs;
   };
   const recorded = changeLog.split("\n").some((line) => line.includes(prefix) && line.includes(": frozen-render.mjs ") && current(line));

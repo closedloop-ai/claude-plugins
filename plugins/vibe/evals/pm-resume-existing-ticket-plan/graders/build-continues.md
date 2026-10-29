@@ -2,5 +2,5 @@
 type: regex
 match: contains
 flags: i
-pattern: 'BUILD:\s*(?:neither|no|does not|without)[^\n]*(?:pause|wait|block)|BUILD:[^\n]*(?:continue|keeps going)[^\n]*'
+pattern: 'BUILD:(?![^\n]*(?:must|will|does|should)\s+(?:pause|wait|block)\b)(?=[^\n]*(?:neither[^\n]*(?:pause|wait|block)|(?:pause|wait|block)\w*[^\n]*neither|(?:does not|without)[^\n]*(?:pause|wait|block)|continue|keeps going))[^\n]*'
 ---

@@ -71,7 +71,7 @@ import { parseArgs } from "node:util";
 import { PLAY_EVENT_RECORDER, playVerdicts } from "../../vibe/scripts/story-play-verdict.mjs";
 import { storyId } from "./diff-rules.mjs";
 import { cropDiffPng, decodePng, pixelHash } from "./png-diff.mjs";
-import { loadTypeScript, semanticSourceText } from "./qa-impact.mjs";
+import { semanticSourceText } from "./qa-impact.mjs";
 import { IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
 import { keepsStoryIdentity, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 
@@ -244,7 +244,6 @@ export function frozenInputs(repo, base, storyFiles = []) {
   const allFiles = new Set([...baseFiles, ...headFiles]);
   const changed = run(["diff", "--name-only", "--no-renames", base]).split("\n").filter((file) => SOURCE_FILE.test(file));
   const roots = [...new Set([...(storyFiles.length ? storyFiles : changed), ...changed.filter(isFrozenGlobalInput)])];
-  const typescript = loadTypeScript(repo);
   const closure = new Set();
   const queue = [...new Set(roots)];
   const textAt = (file, ref) => {
@@ -272,7 +271,7 @@ export function frozenInputs(repo, base, storyFiles = []) {
   const hash = createHash("sha256");
   for (const file of [...closure].sort()) {
     const text = textAt(file, "head");
-    const semantic = semanticSourceText(file, text, typescript) ?? text;
+    const semantic = semanticSourceText(file, text) ?? text;
     hash.update(`${file}\0${semantic === null ? "deleted" : createHash("sha256").update(semantic).digest("hex")}\n`);
   }
   return hash.digest("hex").slice(0, 16);

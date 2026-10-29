@@ -209,11 +209,12 @@ export function evidenceProblems(runsFile, changed, commit) {
   }
   return requiredLanes(changed, runsFile.touchFlows).filter((lane) => !(lane === "e2e" && e2eLeftForCi(runsFile, changed, commit))).flatMap((lane) => {
     const runs = (runsFile.runs ?? []).filter((run) => run.lane === lane);
+    const impactKey = runsFile?.qaImpact?.laneKey;
     if (runs.length === 0) return [`${lane}: no run recorded`];
     return runs.flatMap((run) => [
       ...(passedOrMainPreexisting(run) ? [] : [`${lane}: ${run.status ?? "no status"}; a pull request never opens on an unfinished or failed run`]),
       ...(run.command && run.outcome ? [] : [`${lane}: command or visible outcome missing`]),
-      ...(commit && run.commit !== commit ? [`${lane}: ran on ${run.commit}, not the published commit ${commit}`] : []),
+      ...(impactKey && run.laneKey !== impactKey ? [`${lane}: changed-file scope ${run.laneKey ?? "missing"} does not match ${impactKey}`] : []),
       ...(lane === "storybook-plays" ? playVerdictProblems(run) : []),
     ]);
   });
@@ -459,9 +460,12 @@ export function targetedEvidenceProblems(runsFile, commit, worktree) {
   if (!inventory || typeof inventory !== "object") return ["targeted inventory of the final committed diff is missing"];
   const { entries: selection } = readTestSelection(runsFile);
   const problems = [...prEvidenceShapeProblems(runsFile)];
+  const impactKey = runsFile?.qaImpact?.laneKey ?? inventory.impactKey;
   if (inventory.actor !== "read-only") problems.push("targeted inventory must come from a read-only subagent");
   if (inventory.source !== "final-committed-diff") problems.push("targeted inventory must read the final committed diff, not the plan");
-  if (!commit || inventory.commit !== commit) problems.push(`targeted inventory does not name the final committed SHA ${commit ?? "required by the gate"}`);
+  if (runsFile?.qaImpact && (!/^[a-f0-9]{16}$/.test(impactKey ?? "") || inventory.impactKey !== impactKey)) {
+    problems.push("targeted inventory does not name qa-impact.mjs changed-file scope");
+  }
   if (inventory.laneReport?.command !== "pnpm test:lanes") problems.push("targeted inventory must use pnpm test:lanes as the repository lane source");
   if (!Array.isArray(inventory.laneReport?.matches)) problems.push("targeted inventory must list the post-merge lane matches from pnpm test:lanes");
   const runs = Array.isArray(runsFile?.testRuns) ? runsFile.testRuns : [];
@@ -469,9 +473,9 @@ export function targetedEvidenceProblems(runsFile, commit, worktree) {
   for (const lane of laneMatches) {
     if (!lane?.name || !lane?.command) problems.push("each matching post-merge lane needs its repository name and exact command");
     else if (!(lane.mentionOnly === true && text(lane.notRunReason))
-      && !runs.some((run) => run?.lane === lane.name && run.command === lane.command && run.commit === commit
+      && !runs.some((run) => run?.lane === lane.name && run.command === lane.command && (!impactKey || run.laneKey === impactKey)
         && (passedOrMainPreexisting(run) || desktopLeftForCi(run)))) {
-      problems.push(`lane ${lane.name}: no passing run of its test:lanes command on ${commit}; a hand-picked subset is not the lane (#9238)`);
+      problems.push(`lane ${lane.name}: no passing run of its test:lanes command for changed-file scope ${impactKey ?? "missing"}; a hand-picked subset is not the lane (#9238)`);
     }
   }
   if (!Array.isArray(inventory.entries) || (inventory.entries.length === 0 && !inventory.noTestsReason)) {

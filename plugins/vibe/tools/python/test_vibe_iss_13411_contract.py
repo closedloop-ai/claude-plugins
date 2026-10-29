@@ -7,6 +7,10 @@ from pathlib import Path
 PLUGIN = Path(__file__).parents[2]
 HANDOFF = PLUGIN / "skills" / "handoff"
 CLASSIFIER = HANDOFF / "scripts" / "qa-impact.mjs"
+SCRIPT_MESSAGE_PATHS = (
+    Path("skills/handoff/scripts/pr-facts.mjs"),
+    Path("skills/handoff/scripts/live-ticket-check.mjs"),
+)
 HEAD = r"(?:head|sha|commit(?:\s+(?:hash|identity))?)"
 ACTION = r"(?:re[- ]?run|repeat|refresh|invalidate(?:s|d)?|stale|no\s+longer\s+(?:counts?|valid)|must\s+run\s+again)"
 QA = r"(?:automated\s+qa|visual[- ]?qa|qa\s+(?:pass|evidence|proof)|lanes?|screenshots?|critics?|frozen[- ]render(?:\s+(?:proof|evidence|line))?)"
@@ -22,6 +26,12 @@ HEAD_BOUND_QA = tuple(re.compile(pattern, re.IGNORECASE) for pattern in (
     r"\bfrozen[- ]render\b.{0,160}\bafter any (?:later )?change\b.{0,80}\b(?:runs? again|rerun)",
     r"\bevery main sync\b.{0,120}\b(?:rerun|repeat)\b.{0,80}\b(?:check|critic|guardrail)",
     r"\bafter any fix\b.{0,100}\b(?:rerun|repeat)\b.{0,80}\b(?:all|every)\b.{0,40}\b(?:check|critic)",
+    r"\bnew (?:commit|sha)\b.{0,80}\b(?:redo|rerun|refresh)\b.{0,80}\b(?:visual[- ]?qa|qa|screenshots?)\b",
+    r"\beach push\b.{0,80}\b(?:needs?|requires?)\b.{0,40}\bfresh\b.{0,40}\b(?:screenshots?|qa|lanes?)\b",
+    r"\b(?:new|changed) sha\b.{0,80}\binvalidates?\b.{0,60}\b(?:lane|qa|screenshot)",
+    r"\bafter (?:every |each )?(?:push|commit|merge)\b.{0,80}\b(?:refresh|redo|rerun)\b.{0,60}\b(?:critic|lane|qa|screenshot)",
+    r"\b(?:automated qa|qa evidence)\b.{0,80}\b(?:match|bind|belong)\w*\b.{0,60}\bfinal commit\b",
+    r"\blater commit\b.{0,80}\b(?:stales?|invalidates?)\b.{0,60}\bfrozen[- ]render\b",
 ))
 MANUAL_QA_ALLOWLIST = {
     "skills/cl-execute/references/feature-manual-qa.md": re.compile(r"manual[- ]qa|responsible-human", re.I),
@@ -35,20 +45,28 @@ MANUAL_QA_ALLOWLIST = {
 }
 
 
+def directly_negates_action(text: str, start: int, end: int) -> bool:
+    window_start = max(0, start - 40)
+    window = text[window_start:end]
+    action = re.search(r"\b(?:re[- ]?run|redo|repeat|refresh|invalidate(?:s|d)?|stale)\b", window, re.I)
+    if not action:
+        return False
+    return bool(re.search(r"\b(?:never|do not|does not)\s+$", window[: action.start()], re.I))
+
+
 def automated_head_qa_violations(root: Path) -> list[str]:
     violations: list[str] = []
-    for file in root.rglob("*.md"):
+    files = list(root.rglob("*.md"))
+    files.extend(file for relative in SCRIPT_MESSAGE_PATHS if (file := root / relative).is_file())
+    for file in files:
         relative = file.relative_to(root).as_posix()
         flattened = " ".join(file.read_text(errors="ignore").split())
         for pattern in HEAD_BOUND_QA:
             for match in pattern.finditer(flattened):
-                prefix = flattened[max(0, match.start() - 50):match.start()]
-                if re.search(r"\b(?:never|do not|does not)\s+$", prefix, re.I):
-                    continue
                 start = max(0, match.start() - 300)
                 end = min(len(flattened), match.end() + 300)
                 excerpt = flattened[start:end]
-                if re.search(r"\b(?:never|do not|does not)\b.{0,40}\b(?:re[- ]?run|repeat|refresh|invalidate)", match.group(0), re.I):
+                if directly_negates_action(flattened, match.start(), match.end()):
                     continue
                 allowed = MANUAL_QA_ALLOWLIST.get(relative)
                 if allowed and allowed.search(excerpt):
@@ -63,7 +81,9 @@ def test_the_one_classifier_owns_post_qa_scope() -> None:
     assert 'LanesOnly: "Lanes only"' in source
     assert 'Visual: "Visual QA"' in source
     assert "SAFE_ROOT_FILES" in source
-    assert "tokenizerSafeOnly" in source
+    assert "commentOnlySafe" in source
+    assert "cat-file" in source
+    assert '"--raw", "-z"' in source
     assert "FEATURE_MAP_DEFAULT" in source
     assert "CONFIG_DEFAULT" in source
     assert "UI_LOCATION" not in source
@@ -82,7 +102,7 @@ def test_instructions_call_the_classifier_instead_of_repeating_its_policy() -> N
     assert all(term in handoff for term in ("screens", "hosts", "states", "flag arms"))
 
 
-def test_no_markdown_instruction_reintroduces_head_based_automated_qa() -> None:
+def test_no_instruction_or_gate_message_reintroduces_head_based_automated_qa() -> None:
     assert automated_head_qa_violations(PLUGIN) == []
 
 
@@ -100,6 +120,24 @@ def test_semantic_guard_catches_every_iss_13411_rerun_phrase_outside_the_old_lis
         file = tmp_path / relative
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text(text)
+    violations = automated_head_qa_violations(tmp_path)
+    assert {item.split(":", 1)[0] for item in violations} == set(variants)
+
+
+def test_semantic_guard_catches_review_rewordings_and_leading_negation_bypass(tmp_path: Path) -> None:
+    variants = {
+        "skills/handoff/scripts/pr-facts.mjs": 'throw new Error("When a new commit lands, redo the visual QA.");',
+        "skills/handoff/scripts/live-ticket-check.mjs": 'return "Each push needs fresh screenshots";',
+        "references/sha-lanes.md": "A changed SHA invalidates the lane results.",
+        "skills/push-critics.md": "After every push, refresh the critic evidence.",
+        "agents/final-bind.md": "Automated QA must match the final commit.",
+        "references/frozen-stale.md": "A later commit stales the frozen-render evidence.",
+        "skills/leading-negation.md": "Never skip this rule: when a new commit lands, redo the visual QA.",
+    }
+    for relative, content in variants.items():
+        file = tmp_path / relative
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(content)
     violations = automated_head_qa_violations(tmp_path)
     assert {item.split(":", 1)[0] for item in violations} == set(variants)
 

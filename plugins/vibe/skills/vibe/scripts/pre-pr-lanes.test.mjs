@@ -59,21 +59,27 @@ test("the PR-open check refuses a diff naming desktop-renderer with no recorded 
   git(worktree, ["add", "README.md"], home);
   git(worktree, ["commit", "--quiet", "-m", "docs"], home);
   const none = path.join(root, "impact-none.json");
-  writeFileSync(none, JSON.stringify({ since: head, evidence: { screens: [] }, graphImporters: { importers: {} },
-    featureMap: { entries: [] }, laneSelections: { files: {} }, config: { docs: [] } }));
+  writeFileSync(none, JSON.stringify({ lastQa: { boundary: head }, evidence: { screens: [] }, graphImporters: { importers: {} },
+    featureMap: { entries: [] }, laneSelections: { files: { "unchanged.test.ts": ["pnpm test:desktop-renderer"] } }, config: { docs: [] } }));
   assert.equal(run("check", "--worktree", worktree, "--impact", none).status, 0, "an unrelated commit selects no local lane");
+  writeFileSync(none, JSON.stringify({ lastQa: { boundary: git(worktree, ["rev-parse", "HEAD"], home) }, evidence: { screens: [] },
+    graphImporters: { importers: {} }, featureMap: { entries: [] }, laneSelections: { files: { "unchanged.test.ts": ["pnpm test"] } }, config: { docs: [] } }));
+  assert.equal(run("check", "--worktree", worktree, "--impact", none).status, 2, "HEAD is not a recorded prior-QA boundary");
   const testFile = "changed.test.ts";
   writeFileSync(path.join(worktree, testFile), "export const changed = true;\n");
   git(worktree, ["add", testFile], home);
   git(worktree, ["commit", "--quiet", "-m", "test"], home);
   const selected = path.join(root, "impact-lanes.json");
-  writeFileSync(selected, JSON.stringify({ outcome: "None", lanes: [], since: head, evidence: { screens: [] }, graphImporters: { importers: {} },
+  writeFileSync(selected, JSON.stringify({ outcome: "None", lanes: [], lastQa: { boundary: head }, evidence: { screens: [] }, graphImporters: { importers: {} },
     featureMap: { entries: [] }, laneSelections: { files: { [testFile]: ["pnpm test:desktop-renderer"] } }, config: { docs: [] } }));
   assert.equal(run("check", "--worktree", worktree, "--impact", selected).status, 1, "caller outcome is ignored and the selected lane still needs evidence");
   const later = git(worktree, ["rev-parse", "HEAD"], home).trim();
   assert.equal(run("record", "--worktree", worktree, "--head", later, "--command", "pnpm test:desktop-renderer", "--result", "pass", "--impact", selected).status, 0);
   git(worktree, ["commit", "--quiet", "--allow-empty", "-m", "docs only"], home);
   assert.equal(run("check", "--worktree", worktree, "--impact", selected).status, 0, "lane evidence follows changed-file scope, not a later head");
+  writeFileSync(selected, JSON.stringify({ lastQa: { boundary: head }, evidence: { screens: [] }, graphImporters: { importers: {} },
+    featureMap: { entries: [] }, laneSelections: { files: {} }, config: { docs: [] } }));
+  assert.equal(run("check", "--worktree", worktree, "--impact", selected).status, 2, "empty lane selections are refused");
 });
 
 test("a result names the commit it ran: a run refuses another HEAD or a modified tracked file (23/23 reported for an untested PR)", (t) => {

@@ -10,18 +10,19 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { parseArgs } from "node:util";
+import { parseArgs, TextDecoder } from "node:util";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
+import { commentlessAst } from "../../vibe/scripts/dist/qa-impact-parser.mjs";
 
 export const QaImpact = Object.freeze({ None: "None", LanesOnly: "Lanes only", Visual: "Visual QA" });
 
 const SAFE_ROOT_FILES = new Set(["CHANGELOG.md", "CHANGES.md", "HISTORY.md", "RELEASE.md", "RELEASES.md", "README.md"]);
-const CI_CONFIG = /^(?:\.github\/(?:workflows\/[^/]+\.ya?ml|dependabot\.ya?ml|CODEOWNERS)|\.circleci\/config\.ya?ml|\.buildkite\/[^/]+\.ya?ml|Dockerfile|Jenkinsfile)$/i;
+const CI_CONFIG = /^(?:\.github\/(?:workflows\/[^/]+\.ya?ml|dependabot\.ya?ml|CODEOWNERS)|\.circleci\/config\.ya?ml|\.buildkite\/[^/]+\.ya?ml|Jenkinsfile)$/i;
 const TOKENIZED_SOURCE = /\.(?:[cm]?[jt]sx?)$/i;
 const UI_CAPABLE = /\.(?:tsx|jsx|vue|svelte|css|scss|sass|less|svg|png|jpe?g|gif|webp|avif|ico|html?|mdx|woff2?|ttf|otf|eot)$/i;
+const UI_TOKEN_SOURCE = /(?:^|\/)(?:tokens?|themes?)(?:\/|\.|-).+\.(?:[cm]?[jt]s)$/i;
 const DOC_FILE = /\.(?:md|rst|txt)$/i;
 const LOCKFILE = /(?:^|\/)(?:pnpm-lock\.yaml|package-lock\.json|yarn\.lock|bun\.lockb?)$/;
 const UI_PACKAGES = new Set(["react", "react-dom", "next", "tailwindcss", "storybook", "lucide-react", "framer-motion", "motion", "cmdk", "recharts", "sonner", "vaul", "date-fns", "react-markdown"]);
@@ -30,9 +31,14 @@ const UI_CONFIG = /(?:^|\/)(?:tailwind|postcss)\.config\.(?:[cm]?[jt]s)$|(?:^|\/
 const VERSIONED_JSON = /(?:^|\/)(?:package|plugin)\.json$/;
 const FEATURE_MAP_DEFAULT = ".claude/skills/control/feature-map.json";
 const CONFIG_DEFAULT = ".vibe/qa-impact.json";
+const BARE_FIXTURE = /(?:^|\/)fixtures\//;
+const UTF8 = new TextDecoder("utf-8", { fatal: true });
+const GIT_TEXT_MAX_BUFFER = 64 * 1024 * 1024;
 
 function git(worktree, args) {
-  return execFileSync("git", ["-C", worktree, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return execFileSync("git", ["-C", worktree, ...args], {
+    encoding: "utf8", maxBuffer: GIT_TEXT_MAX_BUFFER, stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
 }
 
 function lines(text) {
@@ -41,7 +47,15 @@ function lines(text) {
 
 function readAt(worktree, ref, file) {
   try {
-    return git(worktree, ["show", `${ref}:${file}`]);
+    const object = `${ref}:${file}`;
+    if (git(worktree, ["cat-file", "-t", object]) !== "blob") return null;
+    const size = Number(git(worktree, ["cat-file", "-s", object]));
+    if (!Number.isSafeInteger(size) || size < 0) return null;
+    const value = execFileSync("git", ["-C", worktree, "cat-file", "blob", object], {
+      encoding: "buffer", maxBuffer: size + 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (value.includes(0)) return null;
+    return UTF8.decode(value);
   } catch {
     return null;
   }
@@ -51,39 +65,21 @@ function readHead(worktree, file) {
   return readAt(worktree, "HEAD", file);
 }
 
-export function loadTypeScript(worktree) {
+/** Canonical AST text from the compiler bundled with this plugin, with comments removed. */
+export function semanticSourceText(file, source) {
+  if (source === null || !TOKENIZED_SOURCE.test(file)) return null;
   try {
-    return createRequire(path.join(worktree, "package.json"))("typescript");
+    return commentlessAst(file, source);
   } catch {
     return null;
   }
 }
 
-/** Token identity with TypeScript's real scanner, excluding only comments and whitespace trivia. */
-export function semanticSourceText(file, source, typescript) {
-  if (source === null || !TOKENIZED_SOURCE.test(file) || !typescript?.createScanner) return null;
-  const { SyntaxKind } = typescript;
-  const ignored = new Set([
-    SyntaxKind.WhitespaceTrivia,
-    SyntaxKind.NewLineTrivia,
-    SyntaxKind.SingleLineCommentTrivia,
-    SyntaxKind.MultiLineCommentTrivia,
-    SyntaxKind.ShebangTrivia,
-  ]);
-  const variant = /\.[jt]sx$/i.test(file) ? typescript.LanguageVariant.JSX : typescript.LanguageVariant.Standard;
-  const scanner = typescript.createScanner(typescript.ScriptTarget.Latest, false, variant, source);
-  const tokens = [];
-  for (let kind = scanner.scan(); kind !== SyntaxKind.EndOfFileToken; kind = scanner.scan()) {
-    if (!ignored.has(kind)) tokens.push(`${kind}:${scanner.getTokenText()}`);
-  }
-  return tokens.join("\0");
-}
-
-function tokenizerSafeOnly(file, before, after, typescript) {
+function commentOnlySafe(file, before, after) {
   if (before === after) return true;
-  const oldTokens = semanticSourceText(file, before, typescript);
-  const newTokens = semanticSourceText(file, after, typescript);
-  return oldTokens !== null && newTokens !== null && oldTokens === newTokens;
+  const oldTree = semanticSourceText(file, before);
+  const newTree = semanticSourceText(file, after);
+  return oldTree !== null && newTree !== null && oldTree === newTree;
 }
 
 function versionOnly(file, before, after) {
@@ -170,6 +166,12 @@ function normalizeLaneSelections(raw) {
   return new Map(Object.entries(source).map(([file, lanes]) => [file, Array.isArray(lanes) ? lanes : []]));
 }
 
+function splitZero(buffer) {
+  const values = buffer.toString("utf8").split("\0");
+  if (values.at(-1) === "") values.pop();
+  return values;
+}
+
 function evidenceById(evidence) {
   return new Map((evidence?.screens ?? []).map((screen) => [screen.id ?? screen.screen, screen]));
 }
@@ -194,7 +196,10 @@ export function evidenceProblems(evidence) {
 }
 
 function changedBetween(worktree, from, to) {
-  return new Set(lines(git(worktree, ["diff", "--name-only", "--no-renames", from, to])));
+  const output = execFileSync("git", ["-C", worktree, "diff", "--name-only", "-z", "--no-renames", from, to], {
+    encoding: "buffer", maxBuffer: GIT_TEXT_MAX_BUFFER, stdio: ["ignore", "pipe", "pipe"],
+  });
+  return new Set(splitZero(output));
 }
 
 function differsBetween(worktree, from, to, file) {
@@ -219,19 +224,25 @@ export function changeOrigins(worktree, since) {
     }
     const incoming = changedBetween(worktree, firstParent, commit);
     for (const file of incoming) mergeFiles.add(file);
-    const mergeBase = git(worktree, ["merge-base", firstParent, secondParent]);
-    const branchSide = changedBetween(worktree, mergeBase, firstParent);
-    const mainSide = changedBetween(worktree, mergeBase, secondParent);
-    for (const file of incoming) {
-      if (branchSide.has(file) && mainSide.has(file) && differsBetween(worktree, secondParent, commit, file)) ownFiles.add(file);
-    }
+    for (const file of incoming) if (differsBetween(worktree, secondParent, commit, file)) ownFiles.add(file);
   }
   for (const file of ownFiles) mergeFiles.delete(file);
   return { ownFiles, mergeFiles };
 }
 
-function changedFiles(worktree, since) {
-  return lines(git(worktree, ["diff", "--name-only", "--no-renames", `${since}..HEAD`]));
+function changedEntries(worktree, since) {
+  const output = execFileSync("git", ["-C", worktree, "diff", "--raw", "-z", "--no-renames", `${since}..HEAD`], {
+    encoding: "buffer", maxBuffer: GIT_TEXT_MAX_BUFFER, stdio: ["ignore", "pipe", "pipe"],
+  });
+  const fields = splitZero(output);
+  const result = [];
+  for (let index = 0; index < fields.length; index += 2) {
+    const header = /^:(\d+) (\d+) ([0-9a-f]+) ([0-9a-f]+) ([A-Z])$/.exec(fields[index]);
+    const file = fields[index + 1];
+    if (!header || file === undefined) throw new Error("git diff returned an unreadable raw change record");
+    result.push({ path: file, status: header[5], oldMode: header[1], newMode: header[2], modeChanged: header[1] !== header[2] });
+  }
+  return result;
 }
 
 function screenEvidence(entry, recorded) {
@@ -259,7 +270,7 @@ function withWarnings(result, warnings) {
 }
 
 /** Classifies by proving safe files first; every unproven file is at least Lanes only. */
-export function classifyQaImpact({ files, before, after, importers, featureMap, evidence, laneSelections, ownFiles = new Set(), mergeFiles = new Set(), config, typescript }) {
+export function classifyQaImpact({ files, before, after, changes = new Map(), importers, featureMap, evidence, laneSelections, ownFiles = new Set(), mergeFiles = new Set(), config }) {
   const recorded = evidenceById(evidence);
   const entries = Array.isArray(featureMap?.entries) ? featureMap.entries : null;
   const docs = configuredPaths(config, "docs");
@@ -269,13 +280,16 @@ export function classifyQaImpact({ files, before, after, importers, featureMap, 
   for (const file of files) {
     const oldText = before.get(file) ?? null;
     const newText = after.get(file) ?? null;
-    if (isTestFile(file)) {
+    const change = changes.get(file);
+    const readablePair = oldText !== null && newText !== null && !change?.modeChanged && !["A", "D"].includes(change?.status);
+    if (isTestFile(file) && !BARE_FIXTURE.test(file)) {
       tests.push(file);
-    } else if ((!file.includes("/") && SAFE_ROOT_FILES.has(file))
+      unsafe.push(file);
+    } else if (readablePair && ((!file.includes("/") && SAFE_ROOT_FILES.has(file))
       || CI_CONFIG.test(file)
       || versionOnly(file, oldText, newText)
       || (DOC_FILE.test(file) && inConfiguredPath(file, docs))
-      || tokenizerSafeOnly(file, oldText, newText, typescript)) {
+      || commentOnlySafe(file, oldText, newText))) {
       // Explicitly proven unable to change rendered behavior.
     } else {
       unsafe.push(file);
@@ -290,35 +304,33 @@ export function classifyQaImpact({ files, before, after, importers, featureMap, 
     const paths = [file, ...(importing ?? [])];
     const matched = entries?.filter((entry) => featurePaths(entry).some((owner) => paths.some((item) => pathMatches(item, owner)))) ?? [];
     const mergeOnly = mergeFiles.has(file) && !ownFiles.has(file);
+    const test = tests.includes(file);
     const configuredAsUi = inConfiguredPath(file, configuredUi);
-    const uiCapable = UI_CAPABLE.test(file) || UI_CONFIG.test(file) || configuredAsUi || matched.length > 0
+    const uiCapable = !test && (UI_CAPABLE.test(file) || UI_TOKEN_SOURCE.test(file) || UI_CONFIG.test(file) || configuredAsUi || matched.length > 0
       || (LOCKFILE.test(file) && lockfileMovesUi(before.get(file) ?? null, after.get(file) ?? null))
-      || manifestMovesUi(file, before.get(file) ?? null, after.get(file) ?? null);
-    return { file, importing, graphAvailable, matched, mergeOnly, uiCapable };
+      || manifestMovesUi(file, before.get(file) ?? null, after.get(file) ?? null));
+    return { file, importing, graphAvailable, matched, mergeOnly, test, uiCapable };
   });
 
   const prScreenIds = new Set(recorded.keys());
   for (const item of info.filter((entry) => !entry.mergeOnly)) for (const entry of item.matched) prScreenIds.add(entry.id);
   const affected = new Map();
-  const laneFiles = [...tests];
+  const laneFiles = [];
   let visual = false;
   for (const item of info) {
     if (!item.graphAvailable) warnings.push(`import graph unavailable for ${item.file}; classification used file type and screen-map evidence`);
     if (item.mergeOnly && item.graphAvailable && entries !== null) {
       const reached = item.matched.filter((entry) => prScreenIds.has(entry.id));
-      if (reached.length === 0) {
-        laneFiles.push(item.file);
-        continue;
-      }
+      if (reached.length === 0) continue;
       visual ||= item.uiCapable;
       reached.forEach((entry) => affected.set(entry.id, entry));
-      laneFiles.push(item.file);
+      if (item.test || !item.uiCapable) laneFiles.push(item.file);
       continue;
     }
     if (item.mergeOnly && (!item.graphAvailable || entries === null)) {
       warnings.push(`import graph or screen map unavailable for incoming ${item.file}; classified upward for the PR scope`);
     }
-    laneFiles.push(item.file);
+    if (item.test || !item.uiCapable) laneFiles.push(item.file);
     if (item.uiCapable) {
       visual = true;
       if (!item.mergeOnly || item.graphAvailable) item.matched.forEach((entry) => affected.set(entry.id, entry));
@@ -342,25 +354,45 @@ export function classifyQaImpact({ files, before, after, importers, featureMap, 
   return { outcome: QaImpact.None, lanes: [], screens: [], changedFiles: files, reason: "every changed file is explicitly proven safe" };
 }
 
-export function qaImpact({ worktree, since, evidence, graphImporters, featureMap, laneSelections, config, typescript = loadTypeScript(worktree) }) {
+export function qaImpact({ worktree, since, evidence, graphImporters, featureMap, laneSelections, config }) {
   const problems = evidenceProblems(evidence);
   if (problems.length) throw new Error(problems.join("; "));
-  const files = changedFiles(worktree, since);
+  const entries = changedEntries(worktree, since);
+  const files = entries.map((entry) => entry.path);
   const before = new Map(files.map((file) => [file, readAt(worktree, since, file)]));
   const after = new Map(files.map((file) => [file, readHead(worktree, file)]));
   const origins = changeOrigins(worktree, since);
-  const result = classifyQaImpact({ files, before, after, importers: normalizeImporters(graphImporters), featureMap, evidence,
-    laneSelections, ownFiles: origins.ownFiles, mergeFiles: origins.mergeFiles, config, typescript });
+  const result = classifyQaImpact({ files, before, after, changes: new Map(entries.map((entry) => [entry.path, entry])),
+    importers: normalizeImporters(graphImporters), featureMap, evidence,
+    laneSelections, ownFiles: origins.ownFiles, mergeFiles: origins.mergeFiles, config });
   if (result.lanes.length === 0) return result;
-  const relevant = [...new Set([...(result.testFiles ?? []), ...files.filter((file) => !SAFE_ROOT_FILES.has(file))])].sort();
+  const laneMap = normalizeLaneSelections(laneSelections) ?? new Map();
+  const changed = new Set(files);
+  const relevant = [...laneMap.entries()].filter(([file, lanes]) => changed.has(file) && lanes.some((lane) => result.lanes.includes(lane)))
+    .map(([file]) => file).sort();
   const hash = createHash("sha256").update(JSON.stringify(result.lanes));
-  for (const file of relevant) hash.update(`\n${file}\0${semanticSourceText(file, after.get(file) ?? null, typescript) ?? after.get(file) ?? "deleted"}`);
+  for (const file of relevant) hash.update(`\n${file}\0${semanticSourceText(file, after.get(file) ?? null) ?? after.get(file) ?? "unreadable"}`);
   return { ...result, laneKey: hash.digest("hex").slice(0, 16) };
 }
 
 /** Recomputes a caller's impact request in the current worktree. */
 export function qaImpactRequest(worktree, request) {
-  return qaImpact({ worktree, since: request.since, evidence: request.evidence, graphImporters: request.graphImporters,
+  const since = request?.lastQa?.boundary;
+  if (typeof since !== "string" || !since.trim() || (request.since !== undefined && request.since !== since)) {
+    throw new Error("impact request needs lastQa.boundary as its recorded last-QA point");
+  }
+  const head = git(worktree, ["rev-parse", "HEAD"]);
+  let boundary;
+  try {
+    boundary = git(worktree, ["rev-parse", "--verify", `${since}^{commit}`]);
+    execFileSync("git", ["-C", worktree, "merge-base", "--is-ancestor", boundary, head], { stdio: "ignore" });
+  } catch {
+    throw new Error("lastQa.boundary must resolve to an ancestor of HEAD");
+  }
+  if (boundary === head) throw new Error("lastQa.boundary must precede HEAD");
+  const laneMap = normalizeLaneSelections(request.laneSelections);
+  if (!laneMap?.size || ![...laneMap.values()].some((lanes) => lanes.length > 0)) throw new Error("impact request needs non-empty laneSelections");
+  return qaImpact({ worktree, since: boundary, evidence: request.evidence, graphImporters: request.graphImporters,
     featureMap: request.featureMap, laneSelections: request.laneSelections, config: request.config });
 }
 

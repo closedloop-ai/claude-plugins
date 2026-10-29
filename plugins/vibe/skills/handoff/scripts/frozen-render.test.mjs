@@ -450,8 +450,8 @@ test("a recorded line survives unrelated commits and clears only proven unchange
   git(checkout, ["commit", "--quiet", "-m", "docs"], home);
   assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, [], "unrelated docs preserve the render evidence");
   writeFileSync(path.join(checkout, row), "// explanation\nexport const Row = 2;\n");
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((finding) => finding.rule), ["frozen-render"],
-    "without a tokenizer, a comment in the rendered closure is not proven safe");
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, [],
+    "the bundled parser proves a comment in the rendered closure cannot change the render");
   writeFileSync(path.join(checkout, row), "export const Row = 3;\n");
   assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((finding) => finding.rule), ["frozen-render"],
     "a rendered dependency change invalidates the recorded states");

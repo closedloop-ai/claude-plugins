@@ -175,7 +175,7 @@ test("stories: a flipped assertion needs a release, a new entry beside a current
 
 test("a change anywhere in a frozen story's import closure blocks until its identical render is recorded", (t) => {
   const base = {
-    "apps/storybook/stories/row.stories.tsx": "import { Row } from \"@repo/design-system/components/row\";\nexport default { title: \"Composites v1.0/Row\" };\n",
+    "apps/storybook/stories/row.stories.tsx": "import { Row } from \"@repo/design-system/components/row\";\nexport default { title: \"Composites v1.0/Row\" };\nexport const Default = {};\n",
     "packages/design-system/components/row.tsx": "import { cell } from \"./cell\";\nexport const Row = cell;\n",
     "packages/design-system/components/cell.tsx": "export const cell = 1;\n",
     "packages/design-system/components/other.tsx": "export const other = 1;\n",
@@ -183,8 +183,10 @@ test("a change anywhere in a frozen story's import closure blocks until its iden
   const deep = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" } });
   assert.deepEqual(deep.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]]);
   assert.deepEqual(run(t, { base, head: { "packages/design-system/components/other.tsx": "export const other = 2;\n" } }).found, []);
-  const recorded = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: ({ checkout, base: sha }) => `Frozen render unchanged: all 1 story files (1 stories): frozen-render.mjs --base ${sha} --story-file apps/storybook/stories/row.stories.tsx: 1 identical, 0 unstable on base, 0 same failure, 0 blocking; states row--default; inputs ${frozenInputs(checkout, sha, ["apps/storybook/stories/row.stories.tsx"])}; out/results.json\n` });
+  const recorded = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: ({ checkout, base: sha }) => `Frozen render unchanged: all 1 story files (1 stories): frozen-render.mjs --base ${sha} --story-file apps/storybook/stories/row.stories.tsx: 1 identical, 0 unstable on base, 0 same failure, 0 blocking; states composites-v1-0-row--default; inputs ${frozenInputs(checkout, sha, ["apps/storybook/stories/row.stories.tsx"])}; out/results.json\n` });
   assert.deepEqual(recorded.found, []);
+  const substringState = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: ({ checkout, base: sha }) => `Frozen render unchanged: all 1 story files (1 stories): frozen-render.mjs --base ${sha} --story-file apps/storybook/stories/row.stories.tsx: 1 identical, 0 unstable on base, 0 same failure, 0 blocking; states composites-v1-0-row--default-extra; inputs ${frozenInputs(checkout, sha, ["apps/storybook/stories/row.stories.tsx"])}; out/results.json\n` });
+  assert.deepEqual(substringState.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]], "story ids match as exact fields, not substrings");
   // A hand-rolled capture's line no longer passes the gate (ISS-13291).
   const handRolled = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: "Frozen render unchanged: all 1 stories: storybook test-runner on base and branch, identical\n" });
   assert.deepEqual(handRolled.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]]);
@@ -200,6 +202,20 @@ test("frozen story dependency closure includes imported styles and token JSON (I
   };
   for (const file of ["packages/design-system/components/row.css", "packages/design-system/components/row.json"]) {
     const result = run(t, { base, head: { [file]: file.endsWith(".css") ? ".row { color: blue; }\n" : "{\"row\": 2}\n" } });
+    assert.deepEqual(result.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]], file);
+  }
+});
+
+test("frozen story closure follows app aliases, images and fonts", (t) => {
+  const base = {
+    "apps/storybook/stories/row.stories.tsx": "import { Row } from \"@/components/row\";\nexport default { title: \"Composites v1.0/Row\" };\nexport const Default = {};\n",
+    "apps/storybook/src/components/row.tsx": "import logo from \"@/assets/logo.png\";\nimport \"./row.css\";\nexport const Row = () => logo;\n",
+    "apps/storybook/src/components/row.css": "@import \"../fonts/ui.woff2\";\n.row { color: red; }\n",
+    "apps/storybook/src/assets/logo.png": "old image\n",
+    "apps/storybook/src/fonts/ui.woff2": "old font\n",
+  };
+  for (const file of ["apps/storybook/src/assets/logo.png", "apps/storybook/src/fonts/ui.woff2"]) {
+    const result = run(t, { base, head: { [file]: `changed ${file}\n` } });
     assert.deepEqual(result.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]], file);
   }
 });

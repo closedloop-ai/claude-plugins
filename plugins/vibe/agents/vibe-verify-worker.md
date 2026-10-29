@@ -100,11 +100,12 @@ test path>"] }` entries, not a `codeTestsFor` object or a list of basenames.
 When the graph cannot establish tests, a `code_tests_for` row may use
 `tests: null` only with the repository's `related` selection for that file.
 `targetedInventory` has `actor: "read-only"`,
-`source: "final-committed-diff"`, the full final `commit`, a `laneReport`
+`source: "final-committed-diff"`, the full final `commit`, `impactKey` copied
+from `qaImpact.laneKey`, and a `laneReport`
 with `command: "pnpm test:lanes"` and `matches` named by that report, and
 `entries` containing each exact test `kind`, `path`, nonempty `cases` and
 `command`. A lane result in `testRuns` uses `status: "passed"` with its
-exact command and commit, not `"pass"`; a selected test result also names
+exact command, provenance commit and matching `laneKey`, not `"pass"`; a selected test result also names
 its exact path, cases and command. Always write `rerunCycles: []` when no
 failure was rerun. After writing the private JSON, run
 `node ../skills/handoff/scripts/pr-evidence-schema.mjs --file
