@@ -7,10 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### vibe v1.1.17
 
 #### Fixed
-- Vibe and handoff now try supported validation and recovery paths before treating a tooling problem as an engineering-only blocker. Both the worker and vibe root must exhaust safe paths before a pushed handover for a genuine human-only decision, access need, or engineering change outside session authority. Vibe and direct handoff replies always offer to pass the saved work rather than only stopping or waiting.
+- Vibe and handoff now try supported validation and recovery paths before treating a tooling problem as an engineering-only blocker. Both the worker and vibe root must exhaust safe paths before a pushed handover for a genuine human-only decision, access need, or engineering change outside session authority. Vibe and direct handoff replies always offer to pass the saved work rather than only stopping or waiting (ISS-13400).
 - Existing contract checks require both sets of attempts and preserve the real-blocker handover. The real-blocker eval checks worker, root, and human-only blocker content separately from their line order; reply checks verify the pushed work and pass-on offer. The Codex eval parity check includes all 104 cases.
-- The tooling alternative-path eval starts from a recorded `BLOCKED` referral. The person-is-engineer eval covers three independent stops with untried rerun, narrower check, and automatic check paths; regex graders accept recovery evidence across `NEXT` and `ROOT` lines and the installed policy's concluding sentence.
-- A lockfile or other install-managed file changed by the session's own check is backed up privately and restored from the committed version after ownership is proven. Preexisting or person-owned edits are preserved; a fourth eval covers both cases and accepts plain continuing wording.
+- The tooling alternative-path eval starts from a recorded `BLOCKED` referral. The person-is-engineer eval covers rerun, narrower check, and automatic check paths; failed checks get at most one rerun, and a narrowed or CI-deferred check is named in the existing progress or handoff summary.
+- A lockfile or other install-managed file changed by the session's own check is backed up privately and restored from the committed version only when the drift is accidental. A requested dependency manifest edit keeps its matching lockfile; preexisting or person-owned edits remain protected in the fourth eval.
+- The referral contract now scans every vibe Markdown file, including evals, with context-validated exceptions for historical quotes, negative graders, test repair, and verified human-only blockers.
 
 ### vibe v1.1.16
 

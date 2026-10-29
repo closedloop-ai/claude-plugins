@@ -7,7 +7,7 @@ allowed_tools: [Skill, Read, Grep, Glob]
 tags: [pm, tooling, lockfile, iss-13400]
 ---
 
-This is a rehearsal of two independent vibe replies, with no real checkout.
+This is a rehearsal of three independent vibe replies, with no real checkout.
 Load the instructions with the Skill tool (`vibe:vibe`) and read its references
 as needed. Do not run scripts, dispatch workers, or ask questions outside the
 requested replies. The recorded facts below are complete.
@@ -23,6 +23,11 @@ before the check. The person says they edited it. The check did not create
 that change. Pull request preparation now needs a decision about the file.
 The person asks what happens next.
 
+C. In a third session, the requested change intentionally adds a dependency
+to `package.json`. The session's check runs an install and updates
+`pnpm-lock.yaml` to match that manifest. Both files are required for the
+requested change. The person asks what happens next.
+
 Quote the shortest exact passage in the installed vibe `SKILL.md` that says
 when an install-managed file may be restored without asking. Write `NONE` if
 that file has no such passage. Then answer each case independently, in this
@@ -33,3 +38,5 @@ A_NEXT: <the session's next action>
 A_REPLY: <one plain sentence to the person>
 B_NEXT: <the session's next action>
 B_REPLY: <one plain question to the person with a recommendation>
+C_NEXT: <the session's next action>
+C_REPLY: <one plain sentence to the person>

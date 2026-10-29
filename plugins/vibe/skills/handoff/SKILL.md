@@ -42,6 +42,8 @@ person should look at" (a story or page link comes from
 `../vibe/scripts/session-questions.mjs` as the vibe skill's "Questions are
 asked once" says, so nothing settled in the session is asked again. Updates mention only completed features and next work; planning,
 reviews and the checklist stay internal. Every
+check narrowed or left for CI is named in the existing progress or handoff
+summary in plain words (`../vibe/references/guardrails.md`, "Checks"). Every
 worker brief says closedloop-graph is required
 (`../vibe/references/closedloop-graph.md`): a worker that locates, changes or
 reviews code ends with a Graph block listing its calls; otherwise dispatch the worker again saying so. On `unreachable` the step goes on; dispatch `vibe-setup-worker` to restore the connection before the next one. Every worker that edits the live ticket
@@ -834,7 +836,7 @@ blocked until the inventory's `blocking.prBody` and `blocking.prEvidence` and
 `../vibe/scripts/pre-pr-lanes.mjs check` pass
 (`NEEDS_CHANGE`: runs to the verify worker, the rest to the SAME writer), and
 returns its URL; it never enqueues or merges it. On `BLOCKED`, record the
-reason on the Engineering checklist as a vibe tooling stop does
+reason on the Engineering checklist as a verified human-only blocker does
 (`../vibe/references/guardrails.md`, "Plugins and tooling"), tell the
 person in one plain line what prevented the pull request and which paths
 were tried. Check for a safe retry or accepted alternative first. When it

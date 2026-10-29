@@ -62,11 +62,16 @@ person says they are the engineer or asks what
 is next, give the concrete action you can take now or the exact human-only
 action, never just a referral. Apply this in Codex and Claude Code alike
 (`references/guardrails.md`, "Plugins and tooling").
-When a session check or install changes an install-managed file, compare its
-state before that command. If the session caused the change, back it up in
-the session's private area, restore the committed file and continue without
-asking. Ask about restoration only for an earlier or person-owned edit, in
-plain words with a recommendation (`references/guardrails.md`, "Checks").
+A failed check gets at most one rerun. If it still fails, narrow that check
+or use an accepted CI path. Name a narrowed or CI-deferred check in the
+existing progress or handoff summary, in plain words.
+When a check-run install changes an install-managed file, compare its state
+before that command and the requested dependency manifests. Keep a lockfile
+change required by an intended manifest edit. For accidental drift proven
+to come from the check-run install, back up the changed file in the session's
+private area, restore the committed file, and continue without asking. Ask
+about restoration only for an earlier or person-owned edit, in plain words
+with a recommendation (`references/guardrails.md`, "Checks").
 
 Every word the person sees follows `references/plain-words.md`, including
 worker text you relay. Anything you point the person at to look at or open

@@ -18,9 +18,10 @@ Codex and Claude Code, and this section is its one canonical statement:
   and nothing else.
 - Never clone or vendor the plugin's own repository (claude-plugins) to run a
   different version of its tooling.
-- A vibe tooling defect alone does not stop the person's work. First rerun
-  or narrow the failed check, use an accepted remote lane or CI path, classify
-  a failure already on captured main, fix what is in the session's scope,
+- A vibe tooling defect alone does not stop the person's work. Rerun a failed
+  check at most once. If it still fails, narrow that check or use an accepted
+  remote lane or CI path. Classify a failure already on captured main, fix
+  what is in the session's scope,
   and keep building every independent part. Have the setup worker reuse or
   file an issue for vibe's owners with the failing command, error, and
   diagnosis, using its existing bug-ticket flow; this does not delay
@@ -605,12 +606,20 @@ reported.
 ### Install-managed files changed by checks
 
 Before a session-owned install or a check that runs an install, capture the
-tracked and staged state of each install-managed file. Compare the state after
-the command with that snapshot and the owned command receipt. Restore only
-when the file was clean before the command and the receipt or a bounded
-reproduction establishes that the session's own command changed it. A later
-person edit, an earlier change, or uncertain attribution is never session
-owned merely because the file is dirty now.
+tracked and staged state of each install-managed file and its owning
+dependency manifest. Compare the state after the command with that snapshot
+and the owned command receipt. If the requested change intentionally edits
+`package.json` or another owning manifest and requires the resulting lockfile
+change, preserve that manifest and lockfile together, even when the session's
+install wrote the lockfile. Do not classify that pair as accidental drift.
+
+Restore a committed install-managed file only when an install ran as part of
+a check, the file was clean before that command, no intended dependency
+manifest change requires the result, and the receipt or a bounded
+reproduction establishes that the session's own check-run install changed
+it. A later person edit, an earlier change, or uncertain attribution is
+never session owned merely because the file is dirty now. A standalone
+install outside a check never authorizes automatic restoration.
 
 For a proven session-owned change, save the exact changed file in the
 session's private Git metadata before restoring the committed version. Verify
@@ -620,6 +629,9 @@ the person to approve undoing the session's own artifact. If the change
 predates the command or belongs to the person, preserve it and ask one plain
 question with a recommendation before any overwrite. If ownership remains
 unknown, preserve it and keep investigating without claiming a safe restore.
+
+When a check is narrowed or left for CI, name that check in the existing
+progress or handoff summary in plain words. Do not add a new summary template.
 
 ## Repo rules that bite most often
 

@@ -2,5 +2,5 @@
 type: regex
 match: contains
 flags: i
-pattern: 'POLICY:[^\n]*If the session caused the change, back it up'
+pattern: 'POLICY:[^\n]*(?:For accidental drift proven|Keep a lockfile change required by an intended manifest edit)'
 ---
