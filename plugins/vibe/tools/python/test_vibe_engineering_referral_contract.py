@@ -38,6 +38,7 @@ def test_person_facing_templates_have_no_unconditional_engineering_referral() ->
 def test_single_reply_rule_requires_exhaustion_and_supported_handover() -> None:
     skill = flat((VIBE / "SKILL.md").read_text())
     guardrail = flat((VIBE / "references" / "guardrails.md").read_text())
+    handoff = flat((PLUGIN_ROOT / "skills" / "handoff" / "SKILL.md").read_text())
     assert skill.count("Before any reply, including handoff or relayed worker text") == 1
     assert "all available paths are exhausted" in skill
     assert "When the person says they are the engineer or asks what" in skill
@@ -47,6 +48,9 @@ def test_single_reply_rule_requires_exhaustion_and_supported_handover() -> None:
     assert 'Use an engineering referral only for that last category' in guardrail
     assert "A stop or wait alone is never the final reply" in skill
     assert "Never end with only a stop or wait" in guardrail
+    assert "human-only blocker remains after both worker and vibe root exhausted safe paths" in handoff
+    assert "offer to pass saved or pushed work to a named next owner now" in handoff
+    assert "Never end that reply with only a stop or wait" in handoff
     assert "`vibe-environment-worker` in handover mode" in guardrail
     assert "Never edit vibe's checker to force a pass, waive a check" in guardrail
 

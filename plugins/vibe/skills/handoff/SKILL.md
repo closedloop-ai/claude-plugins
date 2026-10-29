@@ -49,7 +49,11 @@ follows `../vibe/references/ticket-template.md`. You and every worker leave
 plugins, plugin marketplaces and plugin caches alone, and never clone the
 plugin's repository to run other tooling (`../vibe/references/guardrails.md`,
 "Plugins and tooling"). Read the person-facing reply rule in
-`../vibe/SKILL.md` before a handoff reply or relaying worker text. A check
+`../vibe/SKILL.md` before a handoff reply or relaying worker text. If a
+human-only blocker remains after both worker and vibe root exhausted safe
+paths, the handoff reply must offer to pass saved or pushed work to a named next owner
+now. Never end that reply with only a stop or wait (`../vibe/references/guardrails.md`,
+"Plugins and tooling"). A check
 that also fails on the main the session captured is not a needed
 fix and never stops the handoff: it is recorded for engineering and the handoff
 goes on (`../vibe/references/quality-loop.md`, "Failures already on main").
