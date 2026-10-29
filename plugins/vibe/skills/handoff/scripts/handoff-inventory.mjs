@@ -68,6 +68,13 @@
 // handoff (vibe SKILL.md section 5); the handoff and pull-request phases block
 // on it. A writer's DONE once waited hours on 49 such renders (2026-10-26).
 //
+// In the handoff and pull-request phases `bundle` is the summarizer's prebuilt
+// evidence (inventory-bundle.mjs): backend paths by kind, guard predicates and
+// flag reads on the changed lines, the session's flag keys, Storybook links to
+// each changed story, and a worktree blast bundle per changed source file. It
+// covers tracked changes, is additive, and reads `{ unavailable }` rather than
+// failing the inventory.
+//
 // `backendChanged` says whether the work touched backend code
 // (`backendFiles`). Handoff adds two workflow-code-review passes when it did;
 // its test run stays targeted either way.
@@ -92,6 +99,7 @@ import { isRootTest, isSnapshot, isTestFile, TEST_SPEC_PATTERN } from "../../vib
 import { readMainSyncProvenance } from "../../vibe/scripts/dist/main-sync.mjs";
 import { isShrinkOnlyAllowlistEdit, SHRINK_ONLY_ALLOWLISTS } from "./allowlist-shrink.mjs";
 import { runDiffRules } from "./diff-rules.mjs";
+import { buildInventoryBundle } from "./inventory-bundle.mjs";
 import { isPortableSurfaceAllowlistEdit, PORTABLE_SURFACE_CHECKER } from "./prototype-allowlist.mjs";
 import { loadOpenPrs, pullRequestFacts } from "./pr-facts.mjs";
 import {
@@ -265,6 +273,7 @@ const result = {
   compileOnlyV1Repairs,
   retitledStories,
   diffRules: { blocking: diffRulesBlocking, deferredToHandoff, requiredTests: diffRules.requiredTests, requiredChecks: diffRules.requiredChecks },
+  ...(values.phase === "build" ? {} : { bundle: buildBundle() }),
   ...prFacts,
 };
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
@@ -303,6 +312,18 @@ function readPullRequestFacts() {
     requiredTests: diffRules.requiredTests,
   });
   return overlapError ? { ...facts, overlapError } : facts;
+}
+
+/** The summarizer's prebuilt evidence (inventory-bundle.mjs) over the session's tracked changes; never fails the inventory. */
+function buildBundle() {
+  const excluded = [...localFixTickets.keys()].map((file) => `:(exclude)${file}`);
+  return buildInventoryBundle({
+    worktree,
+    diffText: git(["diff", "--no-color", "--unified=0", "-M", baseCommit, "--", ".", ":(exclude).closedloop-ai/vibe-plans", ...excluded]),
+    backendFiles: backendFiles.map((file) => file.path),
+    record,
+    readHead: readWorktreeFile,
+  });
 }
 
 function fail(message) {
