@@ -48,6 +48,8 @@ const STRING_LITERAL = /(["'`])((?:(?!\1).)*)\1/g;
 const NAMED_EXPORT = /\bexport\s+(?:const|let|var|function\*?|class)\s+([\w$]+)/g;
 const EXPORT_LIST = /\bexport\s*\{([^}]*)\}/g;
 const EXPORT_ALIAS = /\s+as\s+/;
+const REGEX_PRECEDER = "(,=:[!&|?{};+-*%<>~^";
+const WHITESPACE = /\s/;
 
 /**
  * The scheme a base's story-group-order.ts declares (undefined when the base
@@ -107,8 +109,9 @@ export function storyMetaTags(source) {
 }
 
 export function storyExportNames(source) {
-  const names = new Set([...source.matchAll(NAMED_EXPORT)].map((match) => match[1]));
-  for (const [, list] of source.matchAll(EXPORT_LIST)) {
+  const code = codeOnly(source);
+  const names = new Set([...code.matchAll(NAMED_EXPORT)].map((match) => match[1]));
+  for (const [, list] of code.matchAll(EXPORT_LIST)) {
     for (const entry of list.split(",")) {
       const name = entry.trim().split(EXPORT_ALIAS).at(-1);
       if (name && name !== "default") {
@@ -129,6 +132,97 @@ export function keepsStoryIdentity(base, source) {
     JSON.stringify(storyMetaTags(base)) === JSON.stringify(storyMetaTags(source)) &&
     JSON.stringify(storyExportNames(base)) === JSON.stringify(storyExportNames(source))
   );
+}
+
+/**
+ * `source` with the contents of every string, template literal, regular expression and comment replaced by spaces
+ * (line breaks kept), so a pattern over it sees only code: a fixture string holding `export const` is not an export
+ * (ISS-13317). Template substitutions stay code. A `/` starts a regular expression only where an expression can
+ * start, judged by the previous code character.
+ */
+function codeOnly(source) {
+  const out = [...source];
+  const templates = [];
+  let i = 0;
+  const blank = (from, to) => {
+    for (let k = from; k < to; k++) {
+      if (out[k] !== "\n") out[k] = " ";
+    }
+  };
+  const skipTemplate = () => {
+    const start = i;
+    while (i < source.length && source[i] !== "`") {
+      if (source[i] === "\\") {
+        i += 2;
+      } else if (source[i] === "$" && source[i + 1] === "{") {
+        blank(start, i);
+        i += 2;
+        templates.push(0);
+        return;
+      } else {
+        i++;
+      }
+    }
+    blank(start, i);
+    i++;
+  };
+  let previous = "";
+  while (i < source.length) {
+    const char = source[i];
+    const next = source[i + 1];
+    if (char === "/" && next === "/") {
+      const end = source.indexOf("\n", i);
+      const stop = end === -1 ? source.length : end;
+      blank(i, stop);
+      i = stop;
+    } else if (char === "/" && next === "*") {
+      const end = source.indexOf("*/", i + 2);
+      const stop = end === -1 ? source.length : end + 2;
+      blank(i, stop);
+      i = stop;
+    } else if (char === "\"" || char === "'") {
+      let k = i + 1;
+      while (k < source.length && source[k] !== char && source[k] !== "\n") {
+        k += source[k] === "\\" ? 2 : 1;
+      }
+      blank(i + 1, k);
+      i = k + 1;
+      previous = char;
+    } else if (char === "`") {
+      i++;
+      skipTemplate();
+      previous = "`";
+    } else if (char === "/" && (previous === "" || REGEX_PRECEDER.includes(previous))) {
+      let k = i + 1;
+      let inClass = false;
+      while (k < source.length && source[k] !== "\n" && (inClass || source[k] !== "/")) {
+        if (source[k] === "\\") k++;
+        else if (source[k] === "[") inClass = true;
+        else if (source[k] === "]") inClass = false;
+        k++;
+      }
+      blank(i + 1, k);
+      i = k + 1;
+      previous = "/";
+    } else if (templates.length && (char === "{" || char === "}")) {
+      if (char === "{") {
+        templates[templates.length - 1]++;
+        i++;
+      } else if (templates.at(-1) > 0) {
+        templates[templates.length - 1]--;
+        i++;
+      } else {
+        templates.pop();
+        i++;
+        skipTemplate();
+      }
+      previous = char;
+    } else {
+      if (!WHITESPACE.test(char)) previous = char;
+      i++;
+    }
+  }
+  return out.join("");
 }
 
 function storyTitleRoot(source) {
