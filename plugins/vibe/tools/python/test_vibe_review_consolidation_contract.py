@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -164,3 +165,30 @@ def test_cached_lanes_are_off_by_default_and_never_recorded_or_counted_as_a_pass
     # missingLanes still counts only pass and main-preexisting, so a cached record never satisfies a check that did not opt in
     assert 'record.result === "pass" ||' in lanes
     assert "CACHED-LANE" in lanes and "not a fresh run" in lanes
+
+
+def test_fleet_review_chain_removal_is_off_by_default_and_keeps_the_existing_chain() -> None:
+    script = read(FLEET / "scripts" / "review-chain.mjs")
+    assert 'process.env.FLEET_REVIEW_HANDOFF_ONLY === "1"' in script
+    assert 'if (!enabled) return full("handoff-only review switch is off")' in script
+    skill = read(FLEET / "SKILL.md")
+    assert "`FLEET_REVIEW_HANDOFF_ONLY=1`" in skill
+    assert "Off by default and an open owner decision" in skill
+    # the full chain sentence and its first step are untouched
+    assert "independent review → writer fixes → verification of the fixes" in skill
+    assert "keeps the full chain above" in skill
+
+
+@needs_node
+def test_review_chain_replaces_the_chain_only_for_the_head_the_handoff_review_covered() -> None:
+    head = "a" * 40
+    command = ["node", str(FLEET / "scripts" / "review-chain.mjs")]
+    env = {**os.environ, "FLEET_REVIEW_HANDOFF_ONLY": "1"}
+
+    def mode(*args: str) -> str:
+        out = subprocess.run([*command, *args], capture_output=True, text=True, check=True, env=env)
+        return json.loads(out.stdout)["mode"]
+
+    assert mode("--pr-head", head, "--handoff-reviewed-head", head) == "verify-fixes-only"
+    assert mode("--pr-head", head, "--handoff-reviewed-head", "b" * 40) == "full-chain"
+    assert mode("--pr-head", head) == "full-chain"
