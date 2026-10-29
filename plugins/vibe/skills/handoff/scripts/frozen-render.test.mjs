@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { runDiffRules } from "./diff-rules.mjs";
-import { DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenRenders, frozenStoryFiles, frozenStoryIds, prepareBase, storyFileChanges } from "./frozen-render.mjs";
+import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenRenders, frozenStoryFiles, frozenStoryIds, prepareBase, storyFileChanges } from "./frozen-render.mjs";
 import { CROP_MAX_WIDTH, decodePng, encodePng } from "./png-diff.mjs";
 import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
 
@@ -152,34 +152,67 @@ test("only unstable-on-base and same-failure stories clear: the line names both 
   assert.equal(summary.changeLogLine, `Frozen render unchanged: all 2 story files (3 stories): frozen-render.mjs --base abc --story-file s/a.stories.tsx --story-file s/b.stories.tsx: 1 identical, 1 unstable on base (tour--opening), 1 same failure (shell--populated), 0 blocking; ${path.join(out, "results.json")}`);
 });
 
+test("a blocking story is rendered twice more on the base and becomes unstable on base when the base varies (ISS-13317)", async (t) => {
+  const { out } = sandbox(t);
+  // The first two base renders agree, so the first comparison blocks; the confirmation renders show the base varies.
+  const browser = fakeBrowser({
+    [BASE]: {
+      "a--pixels": [passes(shot(GREY)), passes(shot(GREY)), passes(shot(GREY, BLUE))],
+      "b--play": [passes(shot(GREY)), passes(shot(GREY)), throws("expected dialog", shot(GREY))],
+      "c--changed": passes(shot(GREY)),
+      "d--same": passes(shot(GREY)),
+    },
+    [HEAD]: { "a--pixels": passes(shot(BLUE)), "b--play": throws("expected dialog", shot(GREY)), "c--changed": passes(shot(BLUE)), "d--same": passes(shot(GREY)) },
+  });
+  const summary = await frozenRenders({ ids: ["a--pixels", "b--play", "c--changed", "d--same"], fileCount: 1, baseUrl: BASE, headUrl: HEAD, browser, out, command: "frozen-render.mjs" });
+  const details = JSON.parse(readFileSync(path.join(out, "results.json"), "utf8")).details;
+  assert.deepEqual(details.map((story) => [story.storyId, story.outcome, story.confirmRenders ?? 0]), [
+    ["a--pixels", FrozenOutcome.UnstableOnBase, CONFIRM_RENDERS],
+    ["b--play", FrozenOutcome.UnstableOnBase, CONFIRM_RENDERS],
+    ["c--changed", FrozenOutcome.Blocking, CONFIRM_RENDERS],
+    ["d--same", FrozenOutcome.Identical, 0],
+  ]);
+  assert.equal(details[0].reason, "the 4 base renders differ (found by 2 more base renders after a blocking first comparison)");
+  assert.equal(details[1].reason, "the play's outcome differs between the 4 base renders; the branch matches one of them (found by 2 more base renders after a blocking first comparison)");
+  assert.equal(details[2].reason, "the render changed");
+  // The unstable story's crop shows the base renders that differ, not the branch.
+  assert.ok(existsSync(details[0].crop));
+  assert.deepEqual(Object.keys(details[2].renders), ["base", "base-again", "head", "base-confirm-1", "base-confirm-2"]);
+  const visits = (id) => browser.visits.filter((visit) => visit.id === id).map((visit) => visit.origin === BASE ? "base" : "head");
+  assert.deepEqual(visits("c--changed"), ["base", "base", "head", "base", "base"]);
+  assert.deepEqual(visits("d--same"), ["base", "base", "head"]);
+  assert.deepEqual(summary.blocking.map((story) => story.storyId), ["c--changed"]);
+  assert.ok(existsSync(path.join(out, "base-confirm-2", "c--changed.png")));
+});
+
 test("a base whose play outcome varies clears only when the branch matches one of its outcomes", () => {
   const pass = { verdict: "PASS", reason: "completed with no exception or error event", failure: null, pixels: "p" };
   const fail = (message) => ({ verdict: "FAIL", reason: "storyThrewException fired", failure: { type: "storyThrewException", message }, pixels: "f" });
-  assert.equal(classifyStory(pass, fail("flaky"), fail("flaky")).outcome, FrozenOutcome.UnstableOnBase);
-  assert.equal(classifyStory(pass, fail("flaky"), pass).outcome, FrozenOutcome.UnstableOnBase);
-  const neither = classifyStory(pass, fail("flaky"), fail("other"));
+  assert.equal(classifyStory([pass, fail("flaky")], fail("flaky")).outcome, FrozenOutcome.UnstableOnBase);
+  assert.equal(classifyStory([pass, fail("flaky")], pass).outcome, FrozenOutcome.UnstableOnBase);
+  const neither = classifyStory([pass, fail("flaky")], fail("other"));
   assert.equal(neither.outcome, FrozenOutcome.Blocking);
-  assert.match(neither.reason, /differs between the two base renders and the branch matches neither/);
+  assert.match(neither.reason, /differs between the two base renders and the branch matches none of them/);
   // Same verdict, different error text: a changed failure blocks.
-  const changed = classifyStory(fail("first"), fail("first"), fail("second"));
+  const changed = classifyStory([fail("first"), fail("first")], fail("second"));
   assert.equal(changed.outcome, FrozenOutcome.Blocking);
   assert.equal(changed.reason, "the failure changed: base storyThrewException fired: first, branch storyThrewException fired: second");
   // Fails on the base and passes on the branch: still a change to a frozen story.
-  assert.equal(classifyStory(fail("x"), fail("x"), pass).reason, "play FAIL on the base, PASS on the branch");
+  assert.equal(classifyStory([fail("x"), fail("x")], pass).reason, "play FAIL on the base, PASS on the branch");
 });
 
 test("a multi-line failure message stays on its story's one line", () => {
   const fail = (message) => ({ verdict: "FAIL", reason: "playFunctionThrewException fired", failure: { type: "playFunctionThrewException", message }, pixels: "f" });
   const message = "Unable to find role \"button\"\n\n  Here are the accessible roles:\n    status:";
-  const story = { storyId: "s--x", ...classifyStory(fail(message), fail(message), fail(message)) };
+  const story = { storyId: "s--x", ...classifyStory([fail(message), fail(message)], fail(message)) };
   assert.equal(story.reason, "fails the same way on the base: playFunctionThrewException fired: Unable to find role \"button\" Here are the accessible roles: status:");
 });
 
 test("a play that threw is never identical, even when Storybook reports it finished with success", () => {
   const base = { verdict: "PASS", reason: "ok", failure: null, pixels: "same" };
   const head = { verdict: "FAIL", reason: "playFunctionThrewException fired", failure: { type: "playFunctionThrewException", message: null }, pixels: "same" };
-  assert.equal(classifyStory(base, base, head).outcome, FrozenOutcome.Blocking);
-  assert.equal(classifyStory(head, head, head).outcome, FrozenOutcome.SameFailure);
+  assert.equal(classifyStory([base, base], head).outcome, FrozenOutcome.Blocking);
+  assert.equal(classifyStory([head, head], head).outcome, FrozenOutcome.SameFailure);
 });
 
 test("an unfinished play fails with its timeout and blocks against a passing base", async (t) => {

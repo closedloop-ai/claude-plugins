@@ -50,7 +50,11 @@
 //   blocking          anything else: a stable base render that changed, a
 //                     play that passes on the base and fails on the branch, a
 //                     changed failure, or a play outcome the base never had.
-//                     A cropped diff goes under --out when the pixels differ.
+//                     Before it is reported the story is rendered twice more
+//                     on the base and judged again over every base render, so
+//                     a base that only matched itself by chance ends up
+//                     unstable-on-base. A cropped diff goes under --out when
+//                     the pixels differ.
 // Prints one line per story, a summary line and, when nothing blocks, the
 // `Frozen render unchanged: all N story files (M stories): frozen-render.mjs`
 // line handoff's diff rules accept. Full screenshots and results.json stay
@@ -81,7 +85,9 @@ const DEFAULT_TIMEOUT_MS = 20_000;
 const VIEWPORT = /^(\d{2,5})x(\d{2,5})$/;
 const WHITESPACE_RUN = /\s+/g;
 const FINISH_EVENTS = Object.freeze(["storyFinished", "storyThrewException", "storyErrored", "playFunctionThrewException", "storyMissing", "unhandledErrorsWhilePlaying"]);
-const Side = Object.freeze({ Base: "base", BaseAgain: "base-again", Head: "head" });
+const Side = Object.freeze({ Base: "base", BaseAgain: "base-again", Head: "head", BaseConfirm: "base-confirm" });
+/** Extra base renders a blocking story gets before its verdict is reported. */
+export const CONFIRM_RENDERS = 2;
 export const StoryFileChange = Object.freeze({ Unchanged: "unchanged", Repaired: "repaired", Changed: "changed" });
 const GIT_MAX_BUFFER = 16 * 1024 * 1024;
 
@@ -128,25 +134,29 @@ export async function renderStory(browser, url, id, { viewport = DEFAULT_VIEWPOR
 }
 
 /**
- * The outcome for one story from its two base renders and its branch render.
- * `diff` names the two renders whose cropped diff is owed.
+ * The outcome for one story from its base renders (two, or more after a confirmation) and its branch render. `diff`
+ * names the two renders whose cropped diff is owed.
  */
-export function classifyStory(base, again, head) {
-  const basePlays = new Set([playOutcome(base), playOutcome(again)]);
+export function classifyStory(bases, head) {
+  const [base] = bases;
+  const basePlays = new Set(bases.map(playOutcome));
+  const renders = bases.length === 2 ? "the two base renders" : `the ${bases.length} base renders`;
   if (!basePlays.has(playOutcome(head))) {
-    return { outcome: FrozenOutcome.Blocking, reason: playChange(base, again, head), diff: [Side.Base, Side.Head] };
+    return { outcome: FrozenOutcome.Blocking, reason: playChange(bases, head, renders), diff: [base, head] };
   }
   if (basePlays.size > 1) {
-    return { outcome: FrozenOutcome.UnstableOnBase, reason: "the play's outcome differs between the two base renders; the branch matches one of them", diff: [Side.Base, Side.BaseAgain] };
+    return { outcome: FrozenOutcome.UnstableOnBase, reason: `the play's outcome differs between ${renders}; the branch matches one of them`,
+      diff: [base, bases.find((render) => playOutcome(render) !== playOutcome(base))] };
   }
   if (base.verdict === "FAIL") {
     return { outcome: FrozenOutcome.SameFailure, reason: `fails the same way on the base: ${describePlay(base)}` };
   }
-  if (base.pixels !== again.pixels) {
-    return { outcome: FrozenOutcome.UnstableOnBase, reason: "the two base renders differ", diff: [Side.Base, Side.BaseAgain] };
+  const varied = bases.find((render) => render.pixels !== base.pixels);
+  if (varied) {
+    return { outcome: FrozenOutcome.UnstableOnBase, reason: `${renders} differ`, diff: [base, varied] };
   }
   if (base.pixels !== head.pixels) {
-    return { outcome: FrozenOutcome.Blocking, reason: "the render changed", diff: [Side.Base, Side.Head] };
+    return { outcome: FrozenOutcome.Blocking, reason: "the render changed", diff: [base, head] };
   }
   return { outcome: FrozenOutcome.Identical };
 }
@@ -162,11 +172,23 @@ export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser,
       [Side.Head]: await renderStory(browser, headUrl, id, options),
     };
     for (const [side, render] of Object.entries(renders)) {
-      mkdirSync(path.join(out, side), { recursive: true });
-      writeFileSync(path.join(out, side, `${id}.png`), render.screenshot);
+      saveScreenshot(out, side, id, render);
     }
-    const { diff, ...result } = classifyStory(renders[Side.Base], renders[Side.BaseAgain], renders[Side.Head]);
-    const crop = diff ? writeCrop(out, id, renders[diff[0]].screenshot, renders[diff[1]].screenshot) : null;
+    let { diff, ...result } = classifyStory([renders[Side.Base], renders[Side.BaseAgain]], renders[Side.Head]);
+    if (result.outcome === FrozenOutcome.Blocking) {
+      // A base that matched itself twice can still vary (ISS-13167): a blocking verdict stands only after more base renders agree.
+      for (let n = 1; n <= CONFIRM_RENDERS; n++) {
+        renders[`${Side.BaseConfirm}-${n}`] = await renderStory(browser, baseUrl, id, options);
+        saveScreenshot(out, `${Side.BaseConfirm}-${n}`, id, renders[`${Side.BaseConfirm}-${n}`]);
+      }
+      const bases = Object.entries(renders).filter(([side]) => side !== Side.Head).map(([, render]) => render);
+      ({ diff, ...result } = classifyStory(bases, renders[Side.Head]));
+      result.confirmRenders = CONFIRM_RENDERS;
+      if (result.outcome !== FrozenOutcome.Blocking) {
+        result.reason = `${result.reason} (found by ${CONFIRM_RENDERS} more base renders after a blocking first comparison)`;
+      }
+    }
+    const crop = diff ? writeCrop(out, id, diff[0].screenshot, diff[1].screenshot) : null;
     stories.push({ storyId: id, ...result, ...(crop ? { crop } : {}), ...(repairedIds.has(id) ? { headStoryFile: repairedIds.get(id) } : {}),
       renders: Object.fromEntries(Object.entries(renders).map(([side, { screenshot, ...rest }]) => [side, rest])) });
   }
@@ -259,14 +281,20 @@ function describePlay(render) {
   return `${render.reason}${render.failure?.message ? `: ${render.failure.message.replace(WHITESPACE_RUN, " ").trim()}` : ""}`;
 }
 
-function playChange(base, again, head) {
-  if (playOutcome(base) !== playOutcome(again)) {
-    return `the play's outcome differs between the two base renders and the branch matches neither: branch ${head.verdict} (${describePlay(head)})`;
+function playChange(bases, head, renders) {
+  const [base] = bases;
+  if (new Set(bases.map(playOutcome)).size > 1) {
+    return `the play's outcome differs between ${renders} and the branch matches none of them: branch ${head.verdict} (${describePlay(head)})`;
   }
   if (base.verdict !== head.verdict) {
     return `play ${base.verdict} on the base, ${head.verdict} on the branch${head.verdict === "FAIL" ? ` (${describePlay(head)})` : ""}`;
   }
   return `the failure changed: base ${describePlay(base)}, branch ${describePlay(head)}`;
+}
+
+function saveScreenshot(out, side, id, render) {
+  mkdirSync(path.join(out, side), { recursive: true });
+  writeFileSync(path.join(out, side, `${id}.png`), render.screenshot);
 }
 
 /** The cropped side-by-side diff of two screenshots under `out/diffs`, or null when their pixels match. */
