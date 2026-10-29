@@ -115,6 +115,7 @@ scripts/fleet.sh <orchDir> local|remote session end   <name> --reason stopped|me
 - A pane teammate sees messages only when its turn ends, so writers keep turns short. On `UNACKED`, or an idle worker that ignored a message, resend once, then interrupt after the second unanswered delivery: ask the operator to press Esc in the named pane. A resend never reaches a writer mid-turn: on `UNACKED-SCOPE` or `SCOPE-NOT-STARTED` interrupt at once, or TaskStop and relaunch it with the change in its prompt. Keep long briefs in a file and send its path.
 - A standing duty (main's post-merge health, a PR shepherd, the watcher) always has a live owner: `board.mjs <orchDir> duty <duty> --owner <writer or helper>`. Name the replacement in the same step you stop or move its owner; `helpers.mjs stopped` refuses an owner, and `board.mjs status` prints `UNOWNED-DUTY`.
 - Stop a helper (reviewer, verifier, QA prep, poller) once you accept its result, recorded with `scripts/helpers.mjs <orchDir> start|accepted|stopped <name>`; run `helpers.mjs <orchDir> status` with every monitor event (`STOP`, `ORPHAN`). A helper records each process it starts with `helpers.mjs <orchDir> pid <name> <pid...>` (`--group` only for one it spawned detached), and `stopped` ends them.
+- A long-lived QA helper records its owner, ticket, repository, PR and ending condition when it starts; reserve an empty unique Compose project before starting it, then record exact Docker resources after creation. `helpers.mjs status` reconciles a recorded QA stack when its PR merges or closes, including containers, volumes and networks, and lists any leftover with owner and ticket. Do not clean a process or Docker resource without its matching recorded identity. A refusal stays in the ledger for the next monitor event.
 
 ## Fleet board and direct messages
 
@@ -202,7 +203,7 @@ Hard rule: a ticket, PR body, comment, reply or other artifact for people never 
 
 ## Reporting to the operator
 
-- A remaining-steps report names each step running in parallel and its machine, actual dependencies, every capacity move, and an estimated time to ready from the longest dependent path rather than the serial sum.
+- Before replying with remaining work, fill every field of [Remaining work report](./references/templates.md#remaining-work-report): each step running in parallel and its machine, actual dependencies, every capacity move, and an estimated time to ready from the longest dependent path rather than the serial sum. Report those fields even when a lane has already started.
 - Surface every problem the moment you see it: limits, stalls, failures, new human review comments, blockers. Keep status updates short.
 - Before reporting a count or an "only" claim from a command you ran, check that it exited 0 and that no `head`, `tail` or tool truncation cut its output; otherwise rerun the narrow command or call the figure partial. Principle 2 holds for your own findings too.
 - When the operator steps away (vibe's `away-protocol` hook puts this checklist in context on "brb", "stepping away" and the like, and the return checklist on "I'm back"), keep `<orchDir>/attention.md` current (decision needed, recommendation, what is blocked), keep reading idle writers' last messages, and lead with that list on return.

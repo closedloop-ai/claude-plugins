@@ -1,12 +1,29 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { git, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
 import { processInfo } from "./session-processes.mjs";
+import { withVerifyStorybook } from "./verify-storybook-process.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "verify-storybook-process.mjs");
+
+test("an owned static Storybook build server closes after success and failure", async (t) => {
+  const fixture = makeHome("vibe-verify-static-");
+  t.after(fixture.cleanup);
+  const worktree = path.join(fixture.root, "checkout");
+  makeCheckout({ root: fixture.root, home: fixture.home, checkout: worktree });
+  const staticDir = path.join(worktree, "apps", "storybook", "storybook-static");
+  mkdirSync(staticDir, { recursive: true });
+  writeFileSync(path.join(staticDir, "index.html"), "ready");
+  const served = await withVerifyStorybook(worktree, 6123, async (url) => (await fetch(url)).text(), { staticDir });
+  assert.equal(served, "ready");
+  const record = path.join(git(worktree, ["rev-parse", "--absolute-git-dir"], fixture.home), "vibe-verify-storybook-6123.json");
+  assert.equal(existsSync(record), false);
+  await assert.rejects(withVerifyStorybook(worktree, 6124, async () => { throw new Error("comparison failed"); }, { staticDir }), /comparison failed/);
+  assert.equal(existsSync(path.join(path.dirname(record), "vibe-verify-storybook-6124.json")), false);
+});
 
 test("a verifier starts Storybook with a birth witness and stops only that recorded process", (t) => {
   const fixture = makeHome("vibe-verify-storybook-");

@@ -5,13 +5,45 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { runDiffRules } from "./diff-rules.mjs";
-import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenInputs, frozenRenders, frozenStoryFiles, frozenStoryIds, prepareBase, storyFileChanges } from "./frozen-render.mjs";
+import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenInputs, frozenRenders, frozenStoryFiles, frozenStoryIds, prepareBase, runOwnedFrozenComparison, storyFileChanges } from "./frozen-render.mjs";
 import { CROP_MAX_WIDTH, decodePng, encodePng } from "./png-diff.mjs";
 import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "frozen-render.mjs");
 const BASE = "http://storybook-base";
 const HEAD = "http://storybook-head";
+
+test("the central comparison owns both servers and closes them after success or render failure", async () => {
+  const events = [];
+  const withServer = async (dir, port, action) => {
+    events.push(`start ${dir} ${port}`);
+    try { return await action(`http://${dir}:${port}`); }
+    finally { events.push(`stop ${dir} ${port}`); }
+  };
+  const launch = async () => ({ close: async () => { events.push("browser closed"); } });
+  const args = { repo: "head", baseDir: "base", base: "abc", storyFiles: ["story"], out: "out" };
+  const dependencies = { withServer, nextPort: async (other) => other ? 6122 : 6121, launch };
+  const result = await runOwnedFrozenComparison(args, { ...dependencies,
+    compare: async ({ baseUrl, headUrl }) => ({ baseUrl, headUrl }) });
+  assert.deepEqual(result, { baseUrl: "http://base:6121", headUrl: "http://head:6122" });
+  assert.deepEqual(events, ["start base 6121", "start head 6122", "browser closed", "stop head 6122", "stop base 6121"]);
+  events.length = 0;
+  await assert.rejects(runOwnedFrozenComparison(args, { ...dependencies, compare: async () => { throw new Error("render failed"); } }), /render failed/);
+  assert.deepEqual(events, ["start base 6121", "start head 6122", "browser closed", "stop head 6122", "stop base 6121"]);
+});
+
+test("a second server startup failure still closes the first", async () => {
+  const events = [];
+  const withServer = async (dir, port, action) => {
+    events.push(`start ${dir}`);
+    if (dir === "head") throw new Error("head failed");
+    try { return await action(`http://${dir}:${port}`); }
+    finally { events.push(`stop ${dir}`); }
+  };
+  await assert.rejects(runOwnedFrozenComparison({ repo: "head", baseDir: "base", base: "abc", storyFiles: [], out: "out" },
+    { withServer, nextPort: async (other) => other ? 6122 : 6121, launch: async () => { throw new Error("browser not needed"); } }), /head failed/);
+  assert.deepEqual(events, ["start base", "start head", "stop base"]);
+});
 
 /** A small solid screenshot, with one pixel of `dot` color when given. */
 function shot(color, dot) {
@@ -407,7 +439,7 @@ test("the CLI names a missing argument, a bad --now or a repo without Playwright
   writeFileSync(path.join(repo, "s.stories.tsx"), "export default { title: \"A\" };\nexport const B = {};\n");
   spawnSync("git", ["-C", repo, "add", "-A"]);
   spawnSync("git", ["-C", repo, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "--quiet", "-m", "story"]);
-  const args = [SCRIPT, "--repo", repo, "--base", "HEAD", "--base-url", BASE, "--head-url", HEAD, "--story-file", "s.stories.tsx", "--out", path.join(root, "out")];
+  const args = [SCRIPT, "--repo", repo, "--base", "HEAD", "--base-dir", repo, "--story-file", "s.stories.tsx", "--out", path.join(root, "out")];
   const badNow = spawnSync(process.execPath, [...args, "--now", "yesterday"], { encoding: "utf8" });
   assert.equal(badNow.status, 2);
   assert.match(badNow.stdout, /^error: --now must be an ISO time/);

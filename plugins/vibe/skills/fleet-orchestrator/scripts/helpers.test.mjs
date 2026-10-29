@@ -6,7 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { historyOrigin } from './history-origin.mjs';
-import { endProcesses, isAlive, orphans, parsePids, stopCandidates } from './helpers.mjs';
+import { endProcesses, isAlive, orphans, parsePids, reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const run = (args) => spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), ...args], { encoding: 'utf8' });
@@ -93,6 +93,58 @@ const fakeTable = (processes) => {
 /** A target as `stopped` builds it from the ledger, with the identity recorded at `pid` time. */
 const recorded = (pid, group, identity = `id-${pid}`) => ({ pid, group, identity });
 const FAKE = 2_147_480_000;
+
+test('a terminal PR reconciles only its recorded helper and reports a refused cleanup with owner and ticket', async () => {
+  const record = { owner: 'writer-a', ticket: 'ISS-13420', repo: 'acme/repo', pr: '42', ending: 'pr-terminal',
+    startedAt: '2026-10-29T00:00:00Z', pids: [FAKE + 101], identities: { [FAKE + 101]: 'started-a' },
+    dockerResources: { project: 'qa-owned', containers: [], volumes: [], networks: [] } };
+  const other = { owner: 'writer-b', ticket: 'ISS-OTHER', repo: 'acme/repo', pr: '43', ending: 'pr-terminal',
+    startedAt: '2026-10-29T00:00:00Z', pids: [FAKE + 102], identities: { [FAKE + 102]: 'started-b' } };
+  const ledger = { 'qa-a': record, 'qa-b': other };
+  const ended = [];
+  const cleaned = [];
+  const result = await reconcileTerminalHelpers(ledger, {
+    prState: async (_repo, pr) => pr === '42' ? 'terminal' : 'open',
+    end: async (targets) => { ended.push(targets); return []; },
+    cleanup: (resources) => { cleaned.push(resources.project); },
+    alive: () => false,
+  });
+  assert.equal(result.findings.length, 0);
+  assert.equal(result.changed, true);
+  assert.match(record.stoppedAt, /^\d{4}-/);
+  assert.equal(other.stoppedAt, undefined);
+  assert.deepEqual(ended.map((targets) => targets[0].pid), [FAKE + 101]);
+  assert.deepEqual(cleaned, ['qa-owned']);
+  record.stoppedAt = undefined;
+  const refused = await reconcileTerminalHelpers(ledger, {
+    prState: async () => 'terminal', end: async () => [], alive: () => false,
+    cleanup: () => { throw new Error('Docker witness changed'); },
+  });
+  assert.match(refused.findings[0], /LEFTOVER qa-a owner writer-a ticket ISS-13420: Docker witness changed/);
+  assert.equal(record.stoppedAt, undefined);
+});
+
+test('an unverified or still live process is never marked stopped after PR closure', async () => {
+  const ledger = { qa: { owner: 'writer-a', ticket: 'ISS-13420', repo: 'acme/repo', pr: '42', ending: 'pr-terminal',
+    pids: [FAKE + 103], identities: {} } };
+  let signals = 0;
+  const result = await reconcileTerminalHelpers(ledger, { prState: async () => 'terminal',
+    end: async () => { signals += 1; return []; }, alive: () => true });
+  assert.equal(signals, 1);
+  assert.match(result.findings[0], /LEFTOVER qa owner writer-a ticket ISS-13420/);
+  assert.equal(ledger.qa.stoppedAt, undefined);
+});
+
+test('fleet lifecycle status names the owner and ticket when cleanup proof is incomplete', (t) => {
+  const dir = tempDir(t);
+  writeFileSync(path.join(dir, 'helpers.json'), JSON.stringify({ qa: {
+    startedAt: '2026-10-29T00:00:00Z', owner: 'writer-a', ticket: 'ISS-13420',
+    ending: 'pr-terminal', pr: '42',
+  } }));
+  const result = run([dir, 'status']);
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /LEFTOVER qa owner writer-a ticket ISS-13420: missing ending or ownership record/);
+});
 const waitUntil = async (predicate) => {
   for (let i = 0; i < 100 && !predicate(); i += 1) await new Promise((resolve) => setTimeout(resolve, 50));
   return predicate();

@@ -34,6 +34,9 @@
 // A `--no-build` run also needs its compose project's images recorded as built
 // from that HEAD in that worktree (image-head.mjs, beside the lock folder), and a
 // passing build records them.
+// Generated Compose projects start empty. After a run, exact container,
+// volume and network witnesses are removed before the lock is released; a
+// refusal retains a private pending record. Caller and foreign projects stay.
 //
 // `run` exits with the command's own code. When the stack stays busy past
 // `--wait-seconds` (default 3600) it runs nothing, prints
@@ -205,6 +208,84 @@ export function composeProjectFor(env, token) {
   return env.COMPOSE_PROJECT_NAME || `${COMPOSE_PREFIX}${token.replace(/-/g, "").slice(0, 8)}`;
 }
 
+const DOCKER_KINDS = Object.freeze([
+  { key: "containers", noun: "container", list: ["container", "ls", "-aq"], remove: ["container", "rm", "-f"] },
+  { key: "volumes", noun: "volume", list: ["volume", "ls", "-q"], remove: ["volume", "rm"] },
+  { key: "networks", noun: "network", list: ["network", "ls", "-q"], remove: ["network", "rm"] },
+]);
+
+function dockerRunner(args) {
+  return spawnSync(process.env.VIBE_E2E_DOCKER || "docker", args, { encoding: "utf8", timeout: 30_000 });
+}
+
+function dockerOutput(args, run, { missing = false } = {}) {
+  const result = run(args);
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    if (missing && result.status === 1) return null;
+    throw new Error(`Docker ${args[0]} ${args[1]} failed: ${String(result.stderr ?? "").trim()}`);
+  }
+  return String(result.stdout ?? "").trim();
+}
+
+function resourceWitness(kind, id, run) {
+  const raw = dockerOutput([kind.noun, "inspect", id], run, { missing: true });
+  if (raw === null) return null;
+  const value = JSON.parse(raw)[0];
+  const labels = kind.key === "containers" ? value?.Config?.Labels : value?.Labels;
+  const created = value?.Created ?? value?.CreatedAt;
+  const identity = kind.key === "volumes" ? value?.Name : value?.Id;
+  if (!identity || !created) throw new Error(`Docker ${kind.noun} ${id} has no creation witness.`);
+  return { id: identity, created, project: labels?.["com.docker.compose.project"] ?? null };
+}
+
+/** Capture exact Docker identities, including stopped containers, before later cleanup. */
+export function captureOwnedDockerResources({ project = null, containers, volumes, networks }, { run = dockerRunner } = {}) {
+  if (project !== null && !/^[a-z0-9][a-z0-9_-]{0,62}$/.test(project)) throw new Error("Invalid recorded Compose project.");
+  const record = { project, containers: [], volumes: [], networks: [] };
+  for (const kind of DOCKER_KINDS) {
+    const ids = { containers, volumes, networks }[kind.key] ?? (project
+      ? dockerOutput([...kind.list, "--filter", `label=com.docker.compose.project=${project}`], run).split("\n").filter(Boolean)
+      : []);
+    for (const id of ids) {
+      const witness = resourceWitness(kind, id, run);
+      if (!witness || (project && witness.project !== project)) throw new Error(`Docker ${kind.noun} ${id} is not in the recorded project.`);
+      record[kind.key].push(witness);
+    }
+  }
+  return record;
+}
+
+/** Remove only resources whose exact ID, creation witness and project still match the record. */
+export function removeOwnedDockerResources(record, { run = dockerRunner } = {}) {
+  const targets = [];
+  if (record?.project) {
+    const currentProject = captureOwnedDockerResources({ project: record.project }, { run });
+    for (const kind of DOCKER_KINDS) {
+      const recorded = new Set((record[kind.key] ?? []).map((entry) => entry.id));
+      if (currentProject[kind.key].some((entry) => !recorded.has(entry.id))) {
+        throw new Error(`Docker ${kind.noun} in the project was not recorded; cleanup refused.`);
+      }
+    }
+  }
+  for (const kind of DOCKER_KINDS) {
+    for (const saved of record?.[kind.key] ?? []) {
+      if (!saved?.id || !saved?.created) throw new Error(`Unrecorded Docker ${kind.noun} cannot be removed.`);
+      const current = resourceWitness(kind, saved.id, run);
+      if (current && (current.id !== saved.id || current.created !== saved.created || current.project !== saved.project
+        || (record.project && current.project !== record.project))) {
+        throw new Error(`Docker ${kind.noun} ${saved.id} changed identity; left alone.`);
+      }
+      if (current) targets.push({ kind, saved });
+    }
+  }
+  for (const { kind, saved } of targets) {
+    dockerOutput([...kind.remove, saved.id], run);
+    if (resourceWitness(kind, saved.id, run)) throw new Error(`Docker ${kind.noun} ${saved.id} remains after cleanup.`);
+  }
+  return { removed: targets.map(({ kind, saved }) => ({ kind: kind.noun, id: saved.id })) };
+}
+
 // The action, then the lock's own `--option value` pairs, then the command and its arguments untouched.
 function parseCommandLine(argv) {
   const [action, ...rest] = argv;
@@ -303,6 +384,22 @@ async function main(argv) {
     return BUSY_EXIT;
   }
   const composeProject = composeProjectFor(process.env, owner.token);
+  const generatedProject = !process.env.COMPOSE_PROJECT_NAME;
+  const dockerReady = generatedProject && spawnSync(process.env.VIBE_E2E_DOCKER || "docker", ["version"],
+    { encoding: "utf8", timeout: 10_000 }).status === 0;
+  const cleanupFile = path.join(path.dirname(lockDir), `e2e-cleanup-${owner.token}.json`);
+  if (dockerReady) {
+    try {
+      const existing = captureOwnedDockerResources({ project: composeProject });
+      if (DOCKER_KINDS.some((kind) => existing[kind.key].length > 0)) {
+        throw new Error("The generated Compose project already has resources; it is not this run's.");
+      }
+    } catch (error) {
+      release(lockDir, owner);
+      throw error;
+    }
+    writeFileSync(cleanupFile, JSON.stringify({ project: composeProject, owner }), { mode: 0o600 });
+  }
   process.stderr.write(`e2e-lock: compose project ${composeProject}\ne2e-lock: testing ${tested}\n`);
   const images = { project: composeProject, worktree: owner.worktree, head: tested, command: [command, ...args].join(" "),
     records: path.join(path.dirname(lockDir), "e2e-images") };
@@ -321,7 +418,16 @@ async function main(argv) {
     process.stderr.write(`HEAD-MOVED from ${tested.slice(0, 12)} to ${after.slice(0, 12)} during the run; its result is not for ${tested.slice(0, 12)}\n`);
     return code || 1;
   } finally {
-    release(lockDir, owner);
+    try {
+      if (dockerReady) {
+        const resources = captureOwnedDockerResources({ project: composeProject });
+        writeFileSync(cleanupFile, JSON.stringify({ project: composeProject, owner, resources }), { mode: 0o600 });
+        removeOwnedDockerResources(resources);
+        rmSync(cleanupFile, { force: true });
+      }
+    } finally {
+      release(lockDir, owner);
+    }
   }
 }
 

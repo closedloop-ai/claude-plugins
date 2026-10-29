@@ -1,0 +1,39 @@
+"""Keep every plugin's frozen Storybook server under the owned run wrapper."""
+
+import re
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[4]
+PLUGIN = ROOT / "plugins" / "vibe"
+HANDOFF = PLUGIN / "skills" / "handoff" / "SKILL.md"
+VERIFY = PLUGIN / "agents" / "vibe-verify-worker.md"
+DECOMPOSER = PLUGIN / "agents" / "vibe-storybook-decomposer.md"
+STATIC_LAUNCH = re.compile(
+    r"\b(?:python(?:3)?\s+-m\s+http\.server|npx\s+serve|http-server|busybox\s+httpd|serve\s+-s)\b",
+    re.IGNORECASE,
+)
+
+
+def test_frozen_render_instructions_use_central_server_ownership() -> None:
+    """The three owners never ask a worker to provide servers or their URLs."""
+    for path in (HANDOFF, VERIFY, DECOMPOSER):
+        text = path.read_text()
+        assert "frozen-render.mjs" in text, path
+        assert "verifier" in text and "run" in text, path
+        assert "--base-url" not in text and "--head-url" not in text, path
+        assert "verify-storybook-process.mjs start" not in text, path
+    assert "prepared base worktree" in HANDOFF.read_text()
+    assert "owns both servers" in DECOMPOSER.read_text()
+
+
+def test_no_plugin_instruction_launches_an_ad_hoc_static_server() -> None:
+    """Known static server commands must stay inside the owning wrapper."""
+    for path in (ROOT / "plugins").rglob("*.md"):
+        if "assets" in path.parts:
+            continue
+        for line in path.read_text(errors="ignore").splitlines():
+            # A prohibition is not a launch instruction.
+            if line.lstrip().lower().startswith(("never ", "do not ", "- never ", "- do not ")):
+                continue
+            assert not STATIC_LAUNCH.search(line), f"ad hoc static server instruction: {path.relative_to(ROOT)}"
