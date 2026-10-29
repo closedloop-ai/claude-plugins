@@ -12,15 +12,32 @@ Load the instructions with the Skill tool (`vibe:vibe`) and read its references 
 scripts, dispatch workers, or ask questions. The state below contains all
 results you need.
 
-The last reply said the work was stopped and told the person to message
-engineering to fix vibe. The session ledger is `BLOCKED`, and the ticket
-records that referral. Both were based on this guardrail text: "When
-continuing needs a fix to the vibe tooling, stop." The local attempt had
-exited before validation started, and nobody reran or narrowed the check
-before the stop was recorded. The saved commit was pushed. The person says,
-"I am the engineer, what's next?"
+Consider three independent saved vibe sessions. In each one, the writer
+returned `BLOCKED`, the ledger still says `BLOCKED`, and the ticket records
+an engineering referral. Each stop cites this guardrail text: "When
+continuing needs a fix to the vibe tooling, stop." The person then says,
+"I am the engineer, what's next?" No action has happened since the stop.
 
-Reply in exactly this form:
-NEXT: <the session's next action in a few words>
-RECORD: <what happens to the recorded stop and referral>
-REPLY: <one plain sentence to the person>
+A. A local checker exited before it started. The exact invocation was never
+tried again. The failure happened before check selection, so there is no
+smaller local check to select. The checked work is saved.
+
+B. A broad local check failed twice with the same tooling error. Its selected
+subset can run separately, but nobody tried that narrower invocation. The
+checked work is saved.
+
+C. This machine cannot launch the selected check. The checked commit is
+pushed, and the normal automatic validation for that commit includes the
+same selected check. No result for that check exists yet.
+
+Answer for A, B, and C separately, in this exact order and format. Describe
+the decision without running tools, changing records, or asking questions:
+A_NEXT: <the session's next action in a few words>
+A_RECORD: <what happens to the recorded stop and referral>
+A_REPLY: <one plain sentence to the person>
+B_NEXT: <the session's next action in a few words>
+B_RECORD: <what happens to the recorded stop and referral>
+B_REPLY: <one plain sentence to the person>
+C_NEXT: <the session's next action in a few words>
+C_RECORD: <what happens to the recorded stop and referral>
+C_REPLY: <one plain sentence to the person>

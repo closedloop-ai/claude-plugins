@@ -2,5 +2,5 @@
 type: regex
 match: contains
 flags: i
-pattern: 'NEXT:\s*(?=[^\n]*(?:rerun|re-run|retry|narrow|repeat|try again))(?=[^\n]*(?:check|validat|local|run))[^\n]*'
+pattern: 'A_NEXT:\s*(?=[^\n]*(?:rerun|re-run|retry|repeat|run again|try again))(?=[^\n]*(?:check|checker|invocation|run|same|local))[^\n]*'
 ---
