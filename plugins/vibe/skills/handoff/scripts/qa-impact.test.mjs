@@ -87,7 +87,7 @@ function classifyOne(file, { config = CONFIG, featureMap = { entries: [] }, impo
     ownFiles: new Set([file]), config, typescript: TEST_TYPESCRIPT });
 }
 
-test("comment-only work after QA needs no lanes, screenshots, or critic pass", (t) => {
+test("comment-only work proven by a tokenizer needs no QA (ISS-13411 Daniel ruling, 2026-10-29)", (t) => {
   const f = fixture(t);
   f.write("packages/design-system/button.tsx", "// Why this stays shared.\nexport const Button = () => null;\n");
   f.commit("comment");
@@ -96,7 +96,7 @@ test("comment-only work after QA needs no lanes, screenshots, or critic pass", (
     lanes: [],
     screens: [],
     changedFiles: ["packages/design-system/button.tsx"],
-    reason: "the changes cannot affect automated QA",
+    reason: "every changed file is explicitly proven safe",
   });
 });
 

@@ -419,7 +419,7 @@ test("the CLI names a missing argument, a bad --now or a repo without Playwright
   assert.match(missing.stdout, /^error: Playwright is not installed/);
 });
 
-test("a recorded line survives unrelated commits and clears only the story states and dependencies it rendered (ISS-13411)", async (t) => {
+test("a recorded line survives unrelated commits and clears only proven unchanged story inputs (ISS-13411)", async (t) => {
   const { root, home, out } = sandbox(t);
   const checkout = path.join(root, "wt");
   git(root, ["init", "--quiet", "--initial-branch=main", checkout], home);
@@ -450,7 +450,8 @@ test("a recorded line survives unrelated commits and clears only the story state
   git(checkout, ["commit", "--quiet", "-m", "docs"], home);
   assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, [], "unrelated docs preserve the render evidence");
   writeFileSync(path.join(checkout, row), "// explanation\nexport const Row = 2;\n");
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, [], "a comment in the rendered closure cannot affect the render");
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((finding) => finding.rule), ["frozen-render"],
+    "without a tokenizer, a comment in the rendered closure is not proven safe");
   writeFileSync(path.join(checkout, row), "export const Row = 3;\n");
   assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((finding) => finding.rule), ["frozen-render"],
     "a rendered dependency change invalidates the recorded states");

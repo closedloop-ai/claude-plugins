@@ -284,8 +284,9 @@ hardcode a personal name for the engineering attention contact.
    Record which phases are done: review generations used, the pre-PR visual-QA
    pass, the ordinary review-remediation push, and manual-QA scenarios with
    their tested heads and patch-ids. Name the resume point and do not redo a
-   finished phase; never start a third review generation, a second visual-QA
-   pass, or classifier-driven QA this workflow did not run before. Verify each inherited claim the next step depends on against live
+   finished phase; never start a third review generation or a second visual-QA
+   pass. Do not start classifier-driven QA this workflow did not run before.
+   Verify each inherited claim the next step depends on against live
    state (the PR head matches, checks are as reported, the named focused tests
    pass at the head) instead of trusting prior prose, and redo only what live
    state contradicts.
