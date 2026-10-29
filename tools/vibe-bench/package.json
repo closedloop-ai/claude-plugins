@@ -1,0 +1,12 @@
+{
+  "name": "@closedloop/vibe-bench",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test src/*.test.ts",
+    "bench": "node --experimental-strip-types src/cli.ts"
+  }
+}

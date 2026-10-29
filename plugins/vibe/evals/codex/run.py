@@ -138,7 +138,8 @@ def command(
 
 
 def install(
-    output: Path, plugin: Path, env: dict[str, str], budget: Budget
+    output: Path, plugin: Path, env: dict[str, str], budget: Budget,
+    codex_binary: str = "codex",
 ) -> dict[str, str]:
     """Install worktree snapshots in a private CODEX_HOME, never the user's live install."""
     home = output / "home"
@@ -175,7 +176,7 @@ def install(
         json.dumps({"name": "vibe-eval", "plugins": entries})
     )
     command(
-        ["codex", "plugin", "marketplace", "add", str(market), "--json"],
+        [codex_binary, "plugin", "marketplace", "add", str(market), "--json"],
         output,
         env,
         budget,
@@ -184,7 +185,7 @@ def install(
     )
     for name in ["vibe", "closedloop-core"]:
         command(
-            ["codex", "plugin", "add", name + "@vibe-eval", "--json"],
+            [codex_binary, "plugin", "add", name + "@vibe-eval", "--json"],
             output,
             env,
             budget,
@@ -194,10 +195,13 @@ def install(
     return env
 
 
-def exec_args(model: str, cwd: Path, final: Path, visual: bool = False) -> list[str]:
+def exec_args(
+    model: str, cwd: Path, final: Path, visual: bool = False,
+    codex_binary: str = "codex",
+) -> list[str]:
     """Use only this eval's config and skills; no inherited MCP, hooks or desktop tools."""
     return [
-        "codex",
+        codex_binary,
         "exec",
         "--json",
         "--ignore-rules",
@@ -480,12 +484,14 @@ def run_case(
     budget: Budget,
     model: str,
     grader_model: str,
+    deterministic_only: bool = False,
+    codex_binary: str = "codex",
 ) -> dict[str, Any]:
-    """Run one case and preserve reproducible inputs, trace, grades and usage."""
+    """Run one case, optionally omitting only paid wording, and keep evidence."""
     started = time.monotonic()
     work = output / case["name"]
     work.mkdir()
-    result: dict[str, Any] = dict(case=case["name"], checks=[], usage={}, seconds=0)
+    result: dict[str, Any] = dict(case=case["name"], checks=[], skipped_graders=[], usage={}, seconds=0)
     try:
         visual = "visual-cues" in case["meta"].get("tags", [])
         if visual:
@@ -523,7 +529,7 @@ def run_case(
             + prompt
         )
         (work / "input.txt").write_text(prompt)
-        args = exec_args(model, work, work / "reply.txt", visual)
+        args = exec_args(model, work, work / "reply.txt", visual, codex_binary)
         for image in sorted((work / "images").glob("*.png")):
             args += ["--image", str(image)]
         command(
@@ -559,8 +565,12 @@ def run_case(
                 "installed vibe skill was not read",
             )
         )
+        if wording and deterministic_only:
+            result["skipped_graders"].append(
+                {"grader": "plain-language", "reason": "deterministic-only"}
+            )
         # Do not pay for wording when a deterministic check already failed.
-        if wording and all(c["passed"] for c in result["checks"]):
+        if wording and not deterministic_only and all(c["passed"] for c in result["checks"]):
             grade_dir = work / "wording"
             grade_dir.mkdir()
             schema = grade_dir / "schema.json"
@@ -584,7 +594,7 @@ def run_case(
                 + json.dumps(reply)
             )
             command(
-                exec_args(grader_model, grade_dir, grade_dir / "reply.json")
+                exec_args(grader_model, grade_dir, grade_dir / "reply.json", codex_binary=codex_binary)
                 + [
                     "-c",
                     'plugins."vibe@vibe-eval".enabled=false',
@@ -635,11 +645,20 @@ def run_case(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plugin", type=Path, default=PLUGIN)
+    parser.add_argument("--codex-bin", default="codex")
+    parser.add_argument(
+        "--source-sha",
+        help="Exact source commit when --plugin is a run-owned snapshot without .git",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--case", action="append", default=[])
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--model", default="gpt-6-sol")
     parser.add_argument("--grader-model", default="gpt-6-luna")
+    parser.add_argument(
+        "--deterministic-only", action="store_true",
+        help="Skip paid wording grading while retaining every deterministic check",
+    )
     parser.add_argument("--concurrency", type=int, choices=[1, 2], default=2)
     parser.add_argument("--max-seconds", type=int, default=1800)
     args = parser.parse_args()
@@ -648,6 +667,8 @@ def main() -> int:
         parser.error("unknown or empty case selection")
     if args.max_seconds <= 0:
         parser.error("max-seconds must be positive")
+    if args.source_sha is not None and not re.fullmatch(r"[a-f0-9]{40}", args.source_sha):
+        parser.error("source-sha must be a full lowercase Git commit SHA")
     if args.list:
         print("\n".join(c["name"] for c in selected))
         return 0
@@ -670,9 +691,9 @@ def main() -> int:
     print("Artifacts: " + str(output), flush=True)
     budget = Budget(args.max_seconds)
     try:
-        env = install(output, args.plugin.resolve(), dict(os.environ), budget)
+        env = install(output, args.plugin.resolve(), dict(os.environ), budget, args.codex_bin)
         metadata: dict[str, Any] = dict(
-            source_sha=subprocess.check_output(
+            source_sha=args.source_sha or subprocess.check_output(
                 ["git", "-C", str(args.plugin), "rev-parse", "HEAD"], text=True
             ).strip(),
             skill_sha256=hashlib.sha256(
@@ -680,8 +701,10 @@ def main() -> int:
             ).hexdigest(),
             plugin=str(args.plugin.resolve()),
             version=plugin_version(args.plugin),
+            cli_version=subprocess.check_output([args.codex_bin, "--version"], text=True).strip(),
             model=args.model,
             grader_model=args.grader_model,
+            deterministic_only=args.deterministic_only,
             concurrency=args.concurrency,
             max_seconds=args.max_seconds,
         )
@@ -690,7 +713,8 @@ def main() -> int:
             results = list(
                 pool.map(
                     lambda c: run_case(
-                        c, output, env, budget, args.model, args.grader_model
+                        c, output, env, budget, args.model, args.grader_model,
+                        args.deterministic_only, args.codex_bin,
                     ),
                     selected,
                 )

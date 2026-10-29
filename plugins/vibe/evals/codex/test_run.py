@@ -255,6 +255,40 @@ def test_wording_model_only_runs_after_deterministic_pass(
     assert all(args[-2] == "--" for args in calls)
 
 
+@pytest.mark.parametrize("valid", [True, False])
+def test_deterministic_only_skips_paid_wording_but_keeps_route_grade(
+    tmp_path: Path, monkeypatch, valid: bool
+) -> None:
+    case = next(c for c in runner.cases() if c["name"] == "executive-done-asks-two-way")
+    calls = []
+
+    def fake_command(args, cwd, env, budget, seconds, output):
+        calls.append(args)
+        Path(args[args.index("-o") + 1]).write_text(
+            "REPLY: Do you want me to open a pull request so you can take it through review and merge, or pass it to someone to finish?\nROUTE: "
+            + ("ask-two-way" if valid else "ask-name")
+        )
+        output.write_text(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 10}}))
+
+    monkeypatch.setattr(runner, "command", fake_command)
+    monkeypatch.setattr(
+        runner,
+        "trace_for",
+        lambda *args: [{"name": "exec_command", "arguments": "cat /cache/vibe/1.0.43/skills/vibe/SKILL.md"}],
+    )
+    result = runner.run_case(
+        case, tmp_path, {"CODEX_HOME": str(tmp_path)}, runner.Budget(60),
+        "subject", "cheap", deterministic_only=True,
+    )
+    assert result["passed"] == valid
+    assert result["skipped_graders"] == [
+        {"grader": "plain-language", "reason": "deterministic-only"}
+    ]
+    assert len(calls) == 1
+    assert result["usage"]["input_tokens"] == 10
+    assert ("route" in {c["grader"] for c in result["checks"]})
+
+
 def test_light_and_dark_need_a_logged_check_with_a_result_per_theme(tmp_path: Path) -> None:
     case = next(
         c for c in runner.cases() if c["name"] == "product-manager-static-page-light-and-dark"
