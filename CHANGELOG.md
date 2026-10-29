@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.17
+
+#### Fixed
+- Vibe and handoff now try supported validation and recovery paths before treating a tooling problem as an engineering-only blocker. Replies give a concrete next step or the checked, pushed handover; three evals and a template contract cover these paths.
+
 ### vibe v1.1.16
 
 Gates a vibe session could never clear now either clear with what the session can do or hand the work to engineering (ISS-13321). Findings are numbered as in the ISS-13321 audit.
