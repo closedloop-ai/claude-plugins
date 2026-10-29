@@ -843,8 +843,9 @@ leaves the ticket status In Progress.
 
 Then mark the session handed off:
 `node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --status handed-off`,
-and dispatch `vibe-setup-worker` to stop local Storybook or Desktop if either
-runs.
+and stop local Storybook and Desktop with
+`node ../vibe/scripts/vibe-sessions.mjs stop --worktree "<wt>"`, which signals
+only a recorded process it proves is still the session's own (ISS-13321).
 
 Tell them, in a few lines: the ticket link, the app link as
 `<appUrl>/sign-in` (the app's root sends a signed-out visitor to account
@@ -916,8 +917,8 @@ resumes and every fix goes through this path, never around it:
    every thread through the REST review-comment reply endpoint, a fixed one
    with the fixing commit SHA. Only `scripts/review-threads.mjs resolve`
    resolves, after its check passes in the same run.
-8. `touch --status handed-off` again, stop local Storybook or Desktop if
-   either runs, and tell the person in a line or two what changed and that the
+8. `touch --status handed-off` again, stop local Storybook and Desktop with
+   `vibe-sessions.mjs stop`, and tell the person in a line or two what changed and that the
    pull request is updated, with its link. Never a branch to merge.
 
 Each fix is the SAME writer's; no other worker or helper edits source or

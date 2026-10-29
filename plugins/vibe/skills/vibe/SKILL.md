@@ -1052,8 +1052,9 @@ were going to code it"), explain the two endings plainly in a line or two and
 ask the same question; never jump straight to asking for a name. Never offer
 to send them the branch to merge.
 
-On "keep it", dispatch `vibe-setup-worker` to stop local Storybook or Desktop
-if either runs. Their work stays in the worktree and on the branch until they
+On "keep it", stop local Storybook and Desktop with
+`node scripts/vibe-sessions.mjs stop --worktree "<wt>"`, which signals only a
+recorded process it proves is still the session's own (ISS-13321). Their work stays in the worktree and on the branch until they
 come back and say they are done; remind them that is how it gets a pull
 request or reaches design and engineering. On "throw it away", follow section 9.
 

@@ -22,6 +22,7 @@
 //   vibe-sessions.mjs desktop-auth    --worktree <path> --file <auth-claim.json>
 //   vibe-sessions.mjs desktop-launched --worktree <path> --pid <launch pid> --log <launch log>
 //   vibe-sessions.mjs desktop-tab     --worktree <path>
+//   vibe-sessions.mjs stop            --worktree <path>
 //   vibe-sessions.mjs dispatch-inputs --worktree <path> --out <inputs.json>
 //                                     [--person-email <email>] [--keep-flag-snapshot true|false]
 //                                     (`true` is sent only when the session's previous request
@@ -74,7 +75,9 @@
 // profile in. `desktop-launched` records a running `vibe:profile launch`
 // (its pid and log) and the Desktop browser tab's URL it printed on the
 // session's stack (ISS-12182), or no URL for a worktree whose launcher
-// predates the tab (the Desktop window still runs); `desktop-tab` reports
+// predates the tab (the Desktop window still runs); `stop` stops the recorded
+// Storybook and Desktop, each only when it is still the session's own process,
+// and `discard --confirm` stops them first; `desktop-tab` reports
 // whether that launch is still running and its URL only while it is, so a tab
 // is never reopened on a closed Desktop's port. The URL carries the launch's bridge token, so the record is written
 // owner-only and the URL never goes on the ticket. `environment-result` checks the result `vibe-environment.yml`
@@ -99,6 +102,7 @@ import { listedFlagKeys } from "./flag-keys.mjs";
 import { migrationOrderProblems } from "./migration-order.mjs";
 import { adoptStartupRecord, blockingProblem, conversationId, readStartupRecord } from "./plugin-version.mjs";
 import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublication } from "./prototype-session.mjs";
+import { stopSessionProcesses } from "./session-processes.mjs";
 import { adoptStartupQuestions } from "./session-questions.mjs";
 import { git, readSessionRecord, sessionLiveTicket, writeSessionRecord as writeRecord } from "./session-record.mjs";
 import {
@@ -259,11 +263,13 @@ async function run(command) {
       return { session: recordLocalFix() };
     case "story-replacement":
       return { session: recordStoryReplacement() };
+    case "stop":
+      return stopSession();
     case "discard":
       return discardSession();
     default:
       throw new Error(
-        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, ticket-sections, environment-result, local-fix, story-replacement, discard."
+        "Unknown command. Use one of: repo, list, show, new, new-prototype, prototype-result, touch, flag-snapshot, desktop-auth, desktop-launched, desktop-tab, stop, dispatch-inputs, main-sync-inputs, main-sync-validate, main-sync-push, main-sync-share, codex-sessions, ticket-sections, environment-result, local-fix, story-replacement, discard."
       );
   }
 }
@@ -489,7 +495,25 @@ function showSession() {
  * discarded. The result carries the live ticket and operator read from the
  * record before it is deleted, for the worker that cancels the ticket.
  */
-function discardSession() {
+/**
+ * Stops the session's recorded Storybook and Desktop, each only after proving it is still the process the
+ * session started (alive, that kind of command, running in this worktree); a stale or reused pid is left alone.
+ */
+async function stopSession() {
+  const worktree = requireOption("worktree");
+  const record = requireRecord(worktree);
+  return { worktree, processes: await stopRecorded(worktree, record) };
+}
+
+async function stopRecorded(worktree, record) {
+  const { results, stack } = await stopSessionProcesses(worktree, record.stack);
+  if (record.stack && JSON.stringify(stack) !== JSON.stringify(record.stack)) {
+    writeRecord(worktree, { ...record, stack: Object.keys(stack).length ? stack : null });
+  }
+  return results;
+}
+
+async function discardSession() {
   const worktree = requireOption("worktree");
   const record = requireRecord(worktree);
   const branch = git(worktree, ["rev-parse", "--abbrev-ref", "HEAD"]);
@@ -523,6 +547,8 @@ function discardSession() {
   if (!values.confirm) {
     return { discarded: false, wouldLose };
   }
+  // A discarded worktree's Storybook and Desktop would otherwise keep running with nothing left to stop them (ISS-13321).
+  const stopped = await stopRecorded(worktree, record);
   const executionRoot = realpathSync(process.cwd());
   if (executionRoot === targetRoot || executionRoot.startsWith(`${targetRoot}${path.sep}`)) {
     throw new Error("Confirmed discard must run from a retained checkout outside its target.");
@@ -543,6 +569,7 @@ function discardSession() {
   git(repo, ["branch", "-D", branch]);
   return {
     discarded: true,
+    processes: stopped,
     remoteBranchDeleted: wouldLose.pushed,
     schemaCleanupRequested: wouldLose.pushed && !prototype,
     wouldLose,

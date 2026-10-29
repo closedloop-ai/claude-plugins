@@ -25,6 +25,8 @@ Gates a vibe session could never clear now either clear with what the session ca
 - Stale generated inputs (19): a stale Desktop prebuild output left from an earlier merge (`build-info.ts`, `docs-bundle-manifest.ts`, the migrations manifest, the auth handoff assets) is rewritten by the repository's own producer during `main-sync-inputs` instead of refused. Other generated inputs (Prisma clients, Next route types, Husky) still refuse a difference.
 - Continuations (21): a continuation of the request that just returned DONE reopens it instead of failing.
 - Migrations from main (22): `migration-publish.mjs` leaves out migrations already on the main the branch merged (`--main`, default the merge-base with origin/main).
+- Frozen render line (20): `frozen-render.mjs` puts a digest of the session's changed files in the `Frozen render unchanged` line (`inputs <digest>`) and withholds the line when they change during the run; the diff rules accept the line only while the digest still matches the worktree, so a line from an earlier head no longer clears later changes.
+- Stopping a session's processes (24): new `vibe-sessions.mjs stop` stops the recorded Storybook and Desktop, each only after proving it is still the session's own process (alive and not a zombie, that kind of command line, running in the session's worktree), and leaves a stale or reused pid alone; `discard --confirm` runs it first. The vibe and handoff skills and the setup worker use it instead of a hand signal.
 - Owner refusal (23): main-sync's owner refusal names each differing context field (never its value), and `environment.md` says to pass the launch envelope's `operationContext` verbatim.
 
 #### Changed
