@@ -73,28 +73,24 @@ export async function runBaselineOne(input: SingleRunInput): Promise<BaselineRun
     const changed = git(fixture.agentCheckout, "status", "--porcelain")
       .split("\n").filter(Boolean).map((line) => line.slice(3));
     const taskComplete = changed.length === 1 && changed[0] === BENCHMARK_TASK.file && task.oracleAfter;
-    const provisional = collectClaude({ stream: task.stream, transcripts,
-      identity: identity(input, runId, startedAt, Date.now() - started, taskComplete, false),
-      agentModels: input.snapshot.agentModels });
-    if (!provisional.valid || !taskComplete || !provisional.calls.some((call) =>
-      call.component === "vibe" && call.worker === "vibe-change-worker")) {
-      throw new Error(`benchmark-run-collector-or-worker-invalid:${provisional.invalidReasons.join(",")}`);
-    }
     const prStarted = Date.now();
     proof = prAdapter.publish(fixture, input.runDir, `${input.batchId}-${input.index + 1}`);
-    prAdapter.record(proof, provisional.resultHash, input.runDir, fixture.agentCheckout);
-    prAdapter.close(proof, fixture.agentCheckout);
-    const prMs = Date.now() - prStarted;
     const result = collectClaude({ stream: task.stream, transcripts,
       identity: identity(input, runId, startedAt, Date.now() - started, taskComplete, true),
       agentModels: input.snapshot.agentModels });
-    if (!result.valid || !result.success) throw new Error("benchmark-run-final-invalid");
+    if (!result.valid || !result.success || !result.calls.some((call) =>
+      call.component === "vibe" && call.worker === "vibe-change-worker")) {
+      throw new Error(`benchmark-run-collector-or-worker-invalid:${result.invalidReasons.join(",")}`);
+    }
+    prAdapter.record(proof, result.resultHash, input.runDir, fixture.agentCheckout);
+    prAdapter.close(proof, fixture.agentCheckout);
+    const prMs = Date.now() - prStarted;
     const run: BaselineRun = {
       index: input.index, shape: input.shape, fixtureMs, claudeTaskMs: task.taskMs,
       prMs, versionCheck: task.versionCheck,
       prNumber: proof.number, prUrl: proof.url,
       proofBaseRef: proof.baseRef, proofRef: proof.ref,
-      recordedDigest: provisional.resultHash,
+      recordedDigest: result.resultHash,
       prClosed: proof.closed, proofRefRemoved: proof.refRemoved, result,
     };
     writeFileSync(join(input.runDir, "run-result.json"), `${JSON.stringify(run, null, 2)}\n`,
@@ -113,8 +109,23 @@ export async function runBaselineOne(input: SingleRunInput): Promise<BaselineRun
 
 if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   const input = JSON.parse(readFileSync(process.argv[2], "utf8")) as SingleRunInput;
+  let interrupted: NodeJS.Signals | null = null;
+  let succeeded = false;
+  const onInterrupt = (signal: NodeJS.Signals) => { interrupted = signal; };
+  const onSigint = () => onInterrupt("SIGINT");
+  const onSigterm = () => onInterrupt("SIGTERM");
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
   runBaselineOne(input).then(
-    (run) => process.stdout.write(`${JSON.stringify({ index: run.index, resultHash: run.result.resultHash })}\n`),
-    (error) => { process.stderr.write(`${String(error)}\n`); process.exitCode = 1; },
-  );
+    (run) => {
+      if (interrupted) throw new Error(`benchmark-run-interrupted:${interrupted}`);
+      process.stdout.write(`${JSON.stringify({ index: run.index, resultHash: run.result.resultHash })}\n`);
+      succeeded = true;
+    },
+    (error) => { process.stderr.write(`${String(error)}\n`); },
+  ).catch((error) => { process.stderr.write(`${String(error)}\n`); }).finally(() => {
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigterm);
+    process.exitCode = interrupted === "SIGINT" ? 130 : interrupted === "SIGTERM" ? 143 : succeeded ? 0 : 1;
+  });
 }

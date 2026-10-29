@@ -26,7 +26,7 @@ Compare five valid main results to three valid PR results with:
 node --experimental-strip-types tools/vibe-bench/src/cli.ts compare <five-results.json> <three-results.json> <main-instruction-words> <pr-instruction-words> <output-dir> [explanations.json]
 ```
 
-The arrays must cover the same task, fixture, Claude CLI version, shape, model and effort. Yellow and red signals require an explanation entry keyed by signal with `component`, `phase`, and `why`. Red remains blocked pending Daniel Ochoa's explicit acceptance. Cached input is reported but never gated. Phase 3's model-driven evals run on both runtimes.
+The arrays must cover the same task, fixture, Claude CLI version, shape, model and effort. Yellow and red signals require an explanation entry keyed by signal with `component`, `phase`, and `why`. Red remains blocked pending the benchmark approver's explicit acceptance. Cached input is reported but never gated. Phase 3's model-driven evals run on both runtimes.
 
 Phase 3 runs the shared model-driven case corpus locally on Claude Code and Codex from one committed plugin snapshot. A full run keeps Codex wording grading; deterministic mode skips only that paid wording grader and records every skip. Both modes keep every route, file, tool, and behavior check.
 
@@ -49,4 +49,4 @@ After the benchmark stack is down, run the full Phase 3 eval command without cas
 node --experimental-strip-types tools/vibe-bench/src/cli.ts pr-publish <claude-plugins-checkout> <pr-number> <benchmark-json> <eval-json> <section-output> <gh-binary> [explanations-json]
 ```
 
-Publication rechecks the live full head, replaces exactly one rendered `## Benchmark` body section, confirms the live body, and creates no comment or label. A red result writes the disclosure locally but refuses the PR edit pending Daniel Ochoa's explicit acceptance.
+Publication rechecks the live full head, replaces exactly one rendered `## Benchmark` body section, confirms the live body, and attaches compact evidence in a PR comment without changing labels. A red result publishes the disclosure and remains blocked pending the benchmark approver's explicit acceptance.

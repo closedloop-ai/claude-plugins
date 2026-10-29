@@ -13,6 +13,6 @@ Use this skill only on a developer machine. The benchmark itself runs under Clau
 4. After teardown, run `eval-local` in `full` mode against the same full PR head. Use a fresh empty eval root. Do not select a subset of cases and do not use deterministic mode for publication.
 5. If either comparison is yellow or red, show every non-green `shape:signal` and ask the developer for a concise explanation naming the component, phase and reason. Store the answers in the JSON map accepted by `pr-publish`. Do not invent explanations.
 6. Run `pr-publish`. It rechecks the open PR's branch and full head, verifies the immutable benchmark and complete dual-runtime eval artifacts, replaces exactly one rendered `## Benchmark` section, and confirms the live body. It makes no comment and applies no label.
-7. If the result is red, the command writes the disclosure but refuses the PR edit. Report that Daniel Ochoa must explicitly accept the current-head regression. Never apply `benchmark-not-needed` or `benchmark-regression-accepted`.
+7. If the result is red, publish the disclosure and attached evidence, then report that the authorized benchmark approver must explicitly accept the current-head regression. Never apply `benchmark-not-needed` or `benchmark-regression-accepted`.
 
 Use `node --experimental-strip-types tools/vibe-bench/src/cli.ts` instead of `pnpm` when the parent repository has no workspace command available. Keep run artifacts out of the repository. Always report per-run wall time and dollar cost, full batch wall and cost, and cleanup state.

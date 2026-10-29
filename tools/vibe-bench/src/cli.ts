@@ -12,7 +12,7 @@ import { runLocalEvals } from "./eval-driver.ts";
 import { evalCaseIds } from "./eval-driver.ts";
 import { runDeveloperBenchmark } from "./developer-benchmark.ts";
 import type { DeveloperBenchmarkArtifact } from "./developer-benchmark.ts";
-import { buildDeveloperReport } from "./developer-report.ts";
+import { buildBenchmarkEvidence, buildDeveloperReport } from "./developer-report.ts";
 import type { DeveloperExplanations } from "./developer-report.ts";
 import { listOpenPullRequests, preflightSelectedPullRequest, publishBenchmarkSection } from "./developer-pr.ts";
 import type { LocalEvalResult } from "./eval-collector.ts";
@@ -92,8 +92,8 @@ export async function main(args: string[]): Promise<string> {
     const section = buildDeveloperReport(benchmark, evaluation,
       evalCaseIds(join(repo, "plugins/vibe")), explanations);
     writeFileSync(sectionFile, section, { flag: "wx" });
+    publishBenchmarkSection(repo, selected, sectionFile, buildBenchmarkEvidence(benchmark, evaluation), undefined, gh);
     if (benchmark.status === "red") throw new Error(`benchmark-red-blocked:${sectionFile}`);
-    publishBenchmarkSection(repo, selected, sectionFile, undefined, gh);
     return sectionFile;
   }
   throw new Error("usage: cli.ts collect <phase0-result> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | run-local <symphony-checkout> <sandbox> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | compare <five-baseline-json> <three-pr-json> <base-words> <pr-words> <output-dir> [explanations-json] | baseline <symphony-checkout> <claude-plugins-repo> <pinned-plugin-sha> <empty-run-root> <output-dir> <claude> <gh> | eval-local <claude-plugins-repo> <full-branch-sha> <empty-run-root> <output-dir> <claude> <codex> <python> <full|deterministic> [case ...] | pr-list <claude-plugins-repo> <gh> | pr-run <claude-plugins-repo> <pr-number> <baseline-json> <symphony-checkout> <empty-run-root> <output-dir> <claude> <gh> | pr-publish <claude-plugins-repo> <pr-number> <benchmark-json> <eval-json> <section-output> <gh> [explanations-json]");

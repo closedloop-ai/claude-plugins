@@ -6,9 +6,51 @@ import { verifyDeveloperBenchmarkHash } from "./developer-benchmark.ts";
 import { groupedRows, table } from "./report.ts";
 import type { RegressionExplanation } from "./report.ts";
 import type { BenchmarkShape, ModelCall } from "./result-schema.ts";
+import type { BenchmarkEvidenceArtifact } from "./pr-body-gate.ts";
 
 /** Explanations are keyed by shape and signal because both shapes are gated. */
 export type DeveloperExplanations = Partial<Record<`${BenchmarkShape}:${Signal}`, RegressionExplanation>>;
+
+function breakdown(calls: ModelCall[], facet: "component" | "skill" | "worker" | "phase"):
+  Array<{ name: string; calls: number }> {
+  const counts = new Map<string, number>();
+  for (const call of calls) {
+    const name = call[facet] ?? "unobserved";
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return [...counts].sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, count]) => ({ name, calls: count }));
+}
+
+/** Build the compact PR-attached evidence consumed by the model-free gate. */
+export function buildBenchmarkEvidence(result: DeveloperBenchmarkArtifact,
+  evaluation: LocalEvalResult): BenchmarkEvidenceArtifact {
+  verifyDeveloperBenchmarkHash(result);
+  verifyLocalEvalHash(evaluation);
+  const calls = result.runs.flatMap((run) => run.result.calls);
+  const totals = result.runs.reduce((sum, run) => ({
+    inputTokens: sum.inputTokens + run.result.totals.inputTokens,
+    uncachedInputTokens: sum.uncachedInputTokens + run.result.totals.uncachedInputTokens,
+    outputTokens: sum.outputTokens + run.result.totals.outputTokens,
+  }), { inputTokens: 0, uncachedInputTokens: 0, outputTokens: 0 });
+  return {
+    schemaVersion: 1, headSha: result.pluginSha, resultHash: result.resultHash,
+    evalResultHash: evaluation.resultHash, cliVersion: result.cliVersion,
+    configuredModel: "claude-sonnet-5-5", configuredEffort: "high",
+    valid: result.runs.every((run) => run.result.valid),
+    success: result.runs.every((run) => run.result.success), fullWallMs: result.fullWallMs,
+    costUsd: result.totalCostUsd, modelCalls: calls.length, totals,
+    breakdowns: {
+      component: breakdown(calls, "component"), skill: breakdown(calls, "skill"),
+      worker: breakdown(calls, "worker"), phase: breakdown(calls, "phase"),
+    },
+    comparison: result.status,
+    eval: { pluginSha: evaluation.pluginSha, cases: evaluation.selectedCases.length,
+      runtimes: evaluation.runtimes.map((runtime) => ({ runtime: runtime.runtime,
+        passed: runtime.result?.passed ?? 0,
+        failed: runtime.result?.failed ?? evaluation.selectedCases.length })) },
+  };
+}
 
 function cell(value: number | null): string | number {
   return value === null ? "unknown" : value;
@@ -100,7 +142,8 @@ export function buildDeveloperReport(result: DeveloperBenchmarkArtifact, evaluat
     `Full shared corpus: ${evaluation.selectedCases.length} cases; result hash \`${evaluation.resultHash}\`; plugin \`${evaluation.pluginSha}\`.`,
     ...evaluation.runtimes.map((runtime) => `- ${runtime.runtime}: ${runtime.result!.passed}/${evaluation.selectedCases.length} passed; CLI ${runtime.result!.cliVersion}; native hash \`${runtime.result!.nativeHash}\`.`));
   if (result.status === "red") {
-    lines.push("", "Red regression: blocked pending Daniel Ochoa's explicit acceptance.");
+    lines.push("", `Regression acceptance head: ${result.pluginSha}`,
+      "Red regression: blocked pending the benchmark approver's explicit acceptance.");
   }
   return `${lines.join("\n")}\n`;
 }

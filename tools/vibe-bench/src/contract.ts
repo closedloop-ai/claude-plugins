@@ -58,7 +58,8 @@ export function requirePinnedClaude(
   selection: ClaudeSelection,
   env: NodeJS.ProcessEnv = process.env,
 ): ClaudeSelection {
-  for (const key of ["ANTHROPIC_MODEL", "CLAUDE_CODE_MODEL", "CLAUDE_MODEL"] as const) {
+  for (const key of ["ANTHROPIC_MODEL", "CLAUDE_CODE_MODEL", "CLAUDE_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL"] as const) {
     if (env[key]) throw new Error(`benchmark-model-env-override: ${key}`);
   }
   for (const key of ["CLAUDE_CODE_EFFORT_LEVEL", "CLAUDE_CODE_MODEL_EFFORT", "CLAUDE_EFFORT"] as const) {
@@ -99,13 +100,15 @@ export function validateClaudeResult(observed: ObservedClaudeRun): {
 }
 
 /** Build one immutable Claude invocation; callers cannot substitute another model. */
-export function claudeArgs(pluginDir: string, mcpConfigFile: string, prompt: string): string[] {
-  if (!pluginDir || !mcpConfigFile || !prompt) {
+export function claudeArgs(pluginDir: string, mcpConfigFile: string, settingsFile: string,
+  prompt: string): string[] {
+  if (!pluginDir || !mcpConfigFile || !settingsFile || !prompt) {
     throw new Error("benchmark-claude-argument-missing");
   }
   requirePinnedClaude({ model: BENCHMARK_MODEL, effort: BENCHMARK_EFFORT });
   return [
-    "--print", "--output-format", "stream-json", "--verbose",
+    "--print", "--output-format", "stream-json", "--verbose", "--safe-mode",
+    "--setting-sources", "", "--settings", settingsFile,
     "--model", BENCHMARK_MODEL, "--effort", BENCHMARK_EFFORT,
     "--plugin-dir", pluginDir, "--mcp-config", mcpConfigFile,
     "--strict-mcp-config", "--permission-prompts", "none", prompt,

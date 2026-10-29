@@ -1,20 +1,19 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { agentModels } from "./agent-models.ts";
 import { orchestrateWaves } from "./baseline.ts";
 import type { BaselineRun } from "./baseline.ts";
-import { BENCHMARK_EFFORT, BENCHMARK_MODEL, BENCHMARK_TASK, requirePinnedClaude } from "./contract.ts";
+import { BENCHMARK_EFFORT, BENCHMARK_MODEL, BENCHMARK_TASK, requirePinnedClaude,
+  TARGET_WALL_MS } from "./contract.ts";
 import { ControlWebStackAdapter } from "./control-web-stack.ts";
 import { SeededStackLifecycle } from "./lifecycle.ts";
 import { snapshotMainPlugins, snapshotPluginsAtHead } from "./plugin-snapshot.ts";
 import type { SingleRunInput } from "./single-run.ts";
 import type { BenchmarkShape } from "./result-schema.ts";
-
-const execFileAsync = promisify(execFile);
+import { runOwnedProcess } from "./owned-process.ts";
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trimEnd();
@@ -62,25 +61,31 @@ export interface ClaudeBatchResult {
 /** Run balanced Claude samples on one isolated seeded stack and always tear it down. */
 export async function runClaudeBatch(input: ClaudeBatchInputs): Promise<ClaudeBatchResult> {
   const batchStarted = Date.now();
-  requirePinnedClaude({ model: BENCHMARK_MODEL, effort: BENCHMARK_EFFORT });
-  const source = realpathSync(input.symphonyCheckout);
-  const pluginRepo = realpathSync(input.claudePluginsRepo);
-  const runRoot = realpathSync(input.runRoot);
-  if (readdirSync(runRoot).length) throw new Error("benchmark-run-root-not-empty");
-  const sourceSha = sourceMain(source);
-  const snapshot = input.snapshotMode === "main"
-    ? snapshotMainPlugins(pluginRepo, input.expectedPluginSha, runRoot)
-    : snapshotPluginsAtHead(pluginRepo, input.expectedPluginSha, runRoot);
-  if (JSON.stringify(agentModels(snapshot.vibeDir)) !== JSON.stringify(snapshot.agentModels)) {
-    throw new Error("benchmark-agent-model-snapshot-changed");
-  }
-  const cliVersion = execFileSync(input.claudeExecutable, ["--version"], { encoding: "utf8" }).trim();
-  if (!/^\d+\.\d+\.\d+ \(Claude Code\)$/.test(cliVersion)) throw new Error("benchmark-cli-version-invalid");
-  const preflightMs = Date.now() - batchStarted;
-  const stack = new ControlWebStackAdapter(source, runRoot);
-  const lifecycle = new SeededStackLifecycle(stack);
-  const batchId = randomUUID().slice(0, 8);
-  const measured = await orchestrateWaves<BaselineRun>(input.waves, {
+  const deadline = batchStarted + TARGET_WALL_MS;
+  const abort = new AbortController();
+  const onSignal = () => abort.abort();
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
+  try {
+    requirePinnedClaude({ model: BENCHMARK_MODEL, effort: BENCHMARK_EFFORT });
+    const source = realpathSync(input.symphonyCheckout);
+    const pluginRepo = realpathSync(input.claudePluginsRepo);
+    const runRoot = realpathSync(input.runRoot);
+    if (readdirSync(runRoot).length) throw new Error("benchmark-run-root-not-empty");
+    const sourceSha = sourceMain(source);
+    const snapshot = input.snapshotMode === "main"
+      ? snapshotMainPlugins(pluginRepo, input.expectedPluginSha, runRoot)
+      : snapshotPluginsAtHead(pluginRepo, input.expectedPluginSha, runRoot);
+    if (JSON.stringify(agentModels(snapshot.vibeDir)) !== JSON.stringify(snapshot.agentModels)) {
+      throw new Error("benchmark-agent-model-snapshot-changed");
+    }
+    const cliVersion = execFileSync(input.claudeExecutable, ["--version"], { encoding: "utf8" }).trim();
+    if (!/^\d+\.\d+\.\d+ \(Claude Code\)$/.test(cliVersion)) throw new Error("benchmark-cli-version-invalid");
+    const preflightMs = Date.now() - batchStarted;
+    const stack = new ControlWebStackAdapter(source, runRoot);
+    const lifecycle = new SeededStackLifecycle(stack);
+    const batchId = randomUUID().slice(0, 8);
+    const measured = await orchestrateWaves<BaselineRun>(input.waves, {
     async setup() {
       await lifecycle.acquire({ id: batchId,
         isolationKey: `${sourceSha}:${BENCHMARK_TASK.id}:${input.waves.length}-balanced-waves` });
@@ -99,10 +104,13 @@ export async function runClaudeBatch(input: ClaudeBatchInputs): Promise<ClaudeBa
       writeFileSync(inputFile, `${JSON.stringify(childInput)}\n`, { flag: "wx", mode: 0o600 });
       const childScript = realpathSync(fileURLToPath(new URL("./single-run.ts", import.meta.url)));
       try {
-        const child = await execFileAsync(process.execPath,
+        const child = await runOwnedProcess(process.execPath,
           ["--experimental-strip-types", childScript, inputFile], {
-            cwd: runDir, encoding: "utf8", timeout: 240_000, maxBuffer: 8 * 1024 * 1024,
+            cwd: runDir, deadline, signal: abort.signal, maxBuffer: 8 * 1024 * 1024,
           });
+        if (child.exitCode !== 0 || child.signal) {
+          throw new Error(`exit=${child.exitCode};signal=${child.signal ?? "none"};stderr=${child.stderr}`);
+        }
         writeFileSync(join(runDir, "run-process.log"), `${child.stdout}\n${child.stderr}`,
           { flag: "wx", mode: 0o600 });
       } catch (error) {
@@ -112,7 +120,11 @@ export async function runClaudeBatch(input: ClaudeBatchInputs): Promise<ClaudeBa
     },
     async teardown() { await lifecycle.close(); },
   });
-  return { runs: measured.runs.map((item) => item.value), setupMs: measured.setupMs,
-    teardownMs: measured.teardownMs, preflightMs, fullWallMs: Date.now() - batchStarted,
-    sourceSha, pluginSha: snapshot.sha, cliVersion, batchId };
+    return { runs: measured.runs.map((item) => item.value), setupMs: measured.setupMs,
+      teardownMs: measured.teardownMs, preflightMs, fullWallMs: Date.now() - batchStarted,
+      sourceSha, pluginSha: snapshot.sha, cliVersion, batchId };
+  } finally {
+    process.removeListener("SIGINT", onSignal);
+    process.removeListener("SIGTERM", onSignal);
+  }
 }

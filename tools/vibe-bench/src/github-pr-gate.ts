@@ -1,5 +1,7 @@
-import { BENCHMARK_BYPASS_LABEL, BENCHMARK_RED_ACCEPTANCE_LABEL } from "./pr-body-gate.ts";
+import { BENCHMARK_BYPASS_LABEL, BENCHMARK_EVIDENCE_MARKER,
+  BENCHMARK_RED_ACCEPTANCE_LABEL } from "./pr-body-gate.ts";
 import type { BenchmarkGateInput, GateTimelineEvent } from "./pr-body-gate.ts";
+import type { BenchmarkEvidenceArtifact } from "./pr-body-gate.ts";
 
 /** Minimal fetch boundary injected by tests. */
 export type GateFetch = (input: string, init?: RequestInit) => Promise<Response>;
@@ -70,6 +72,16 @@ function text(value: unknown, code: string): string {
   return value;
 }
 
+function attachedEvidence(body: string): BenchmarkEvidenceArtifact | null {
+  if (!body.includes(BENCHMARK_EVIDENCE_MARKER)) return null;
+  const match = /```json\s*\n([\s\S]*?)\n```/.exec(body);
+  if (!match) throw new Error("benchmark-github-evidence-format-invalid");
+  let value: unknown;
+  try { value = JSON.parse(match[1]); }
+  catch { throw new Error("benchmark-github-evidence-json-invalid"); }
+  return object(value, "benchmark-github-evidence-invalid") as unknown as BenchmarkEvidenceArtifact;
+}
+
 /** Fetch the exact live pull request, changed paths and label provenance used by the gate. */
 export async function fetchBenchmarkGateInput(repository: string, number: number, token: string,
   fetcher: GateFetch = fetch): Promise<BenchmarkGateInput> {
@@ -115,9 +127,18 @@ export async function fetchBenchmarkGateInput(repository: string, number: number
       timelineEvents.push({ event: "committed", sha: text(row.sha,
         "benchmark-github-commit-sha-invalid") });
     } else if (row.event === "head_ref_force_pushed") {
-      timelineEvents.push({ event: "head_ref_force_pushed", sha: text(row.after_commit_id,
+      timelineEvents.push({ event: "head_ref_force_pushed", sha: text(row.commit_id,
         "benchmark-github-force-push-sha-invalid") });
     }
   }
-  return { number, headSha, body, changedFiles: [...changedFiles].sort(), labels, timelineEvents };
+  const commentRows = await paginatedArray(`${root}/issues/${number}/comments?per_page=100`, token,
+    repositoryPath, fetcher);
+  const evidenceArtifacts = commentRows.flatMap((value) => {
+    const row = object(value, "benchmark-github-comment-invalid");
+    const commentBody = text(row.body, "benchmark-github-comment-body-invalid");
+    const artifact = attachedEvidence(commentBody);
+    return artifact ? [artifact] : [];
+  });
+  return { number, headSha, body, changedFiles: [...changedFiles].sort(), labels, timelineEvents,
+    evidenceArtifacts };
 }

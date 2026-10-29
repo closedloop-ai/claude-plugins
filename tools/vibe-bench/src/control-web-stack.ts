@@ -6,6 +6,7 @@ import { createConnection } from "node:net";
 import { join } from "node:path";
 import { LOCAL_MCP_URL } from "./contract.ts";
 import type { SeededStackAdapter } from "./lifecycle.ts";
+import { terminateProcessGroup } from "./owned-process.ts";
 
 interface ControlMeta {
   name: string;
@@ -179,20 +180,25 @@ export class ControlWebStackAdapter implements SeededStackAdapter {
 
   /** Stop this MCP group and this control session, never another ticket's. */
   async stop(): Promise<void> {
+    const failures: unknown[] = [];
     const mcp = this.mcp;
     this.mcp = null;
     if (mcp?.pid) {
-      try { process.kill(-mcp.pid, "SIGTERM"); } catch { /* already stopped */ }
+      try { await terminateProcessGroup(mcp.pid, "SIGTERM"); }
+      catch (error) { failures.push(error); }
     }
     const pid = this.controlPid;
     this.controlPid = null;
     this.detailsValue = null;
     if (pid !== null) {
-      const current = await this.controlStatus();
-      if (current.running && current.meta?.pid === pid) this.control("down", "--session", this.session);
-      else if (current.running) throw new Error("benchmark-stack-owner-changed");
+      try {
+        const current = await this.controlStatus();
+        if (current.running && current.meta?.pid === pid) this.control("down", "--session", this.session);
+        else if (current.running) throw new Error("benchmark-stack-owner-changed");
+      } catch (error) { failures.push(error); }
     }
     rmSync(join(this.sandboxRoot, "seed-api-key"), { force: true });
+    if (failures.length) throw new AggregateError(failures, "benchmark-stack-cleanup-failed");
   }
 
   private control(...args: string[]): unknown {

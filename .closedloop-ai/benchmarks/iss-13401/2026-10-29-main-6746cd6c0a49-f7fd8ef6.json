@@ -69,7 +69,7 @@
       "prUrl": "https://github.com/closedloop-ai/symphony-alpha/pull/9387",
       "proofBaseRef": "proof/e5a03580a185-iss13401-f7fd8ef6-1-base",
       "proofRef": "proof/e5a03580a185-iss13401-f7fd8ef6-1-head",
-      "recordedDigest": "2f645a15e16128b6382d94ecb813a55e8683ac0856a69351b616c9a277677f56",
+      "recordedDigest": "a83e19aa4cde1935fed1dea2e444250f68b1037eb4be1ee2831167f89153061d",
       "prClosed": true,
       "proofRefRemoved": true,
       "result": {
@@ -145,7 +145,7 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": null,
             "phase": "startup",
             "declaredAgentModel": null,
@@ -168,9 +168,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -191,9 +191,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -214,9 +214,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -237,9 +237,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -260,14 +260,14 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": null,
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": null,
             "source": "transcript"
           }
         ],
-        "resultHash": "a1d71de8b09c8a7bade612e44b313fc7d8c0da7e5fb7c28eeb4d98e56da62f51"
+        "resultHash": "a83e19aa4cde1935fed1dea2e444250f68b1037eb4be1ee2831167f89153061d"
       }
     },
     {
@@ -281,7 +281,7 @@
       "prUrl": "https://github.com/closedloop-ai/symphony-alpha/pull/9388",
       "proofBaseRef": "proof/e5a03580a185-iss13401-f7fd8ef6-2-base",
       "proofRef": "proof/e5a03580a185-iss13401-f7fd8ef6-2-head",
-      "recordedDigest": "21c77c0db34716051e57d7bce9e8db4bd874c45dcf01b02d84116df3d3a26f38",
+      "recordedDigest": "677a4ef6d0c13c451cb660ae2d56f1d7030895aa08e18562b6a37b2208a43bd5",
       "prClosed": true,
       "proofRefRemoved": true,
       "result": {
@@ -357,7 +357,7 @@
             "durationMs": null,
             "component": "fleet-orchestrator",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": null,
             "phase": "startup",
             "declaredAgentModel": null,
@@ -380,9 +380,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -403,9 +403,9 @@
             "durationMs": null,
             "component": "fleet-orchestrator",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": null,
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": null,
             "source": "transcript"
           },
@@ -426,9 +426,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -449,9 +449,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -472,9 +472,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -495,9 +495,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -518,14 +518,14 @@
             "durationMs": null,
             "component": "fleet-orchestrator",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": null,
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": null,
             "source": "transcript"
           }
         ],
-        "resultHash": "52868e0157255ae570806024535ae4ef204ffbd6a7f07597f4deec3a5179348e"
+        "resultHash": "677a4ef6d0c13c451cb660ae2d56f1d7030895aa08e18562b6a37b2208a43bd5"
       }
     },
     {
@@ -539,7 +539,7 @@
       "prUrl": "https://github.com/closedloop-ai/symphony-alpha/pull/9390",
       "proofBaseRef": "proof/e5a03580a185-iss13401-f7fd8ef6-3-base",
       "proofRef": "proof/e5a03580a185-iss13401-f7fd8ef6-3-head",
-      "recordedDigest": "0ccb9d3ea4296967906f9c21907ea7293764d8cbe48926722bbab738e9346474",
+      "recordedDigest": "55194737a32bd34b99e11f41220f5ea81de6734a4395e43578355f7def256fbf",
       "prClosed": true,
       "proofRefRemoved": true,
       "result": {
@@ -615,7 +615,7 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": null,
             "phase": "startup",
             "declaredAgentModel": null,
@@ -638,9 +638,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -661,9 +661,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -684,9 +684,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -707,9 +707,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -730,9 +730,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -753,9 +753,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -776,9 +776,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -799,9 +799,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -822,14 +822,14 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": null,
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": null,
             "source": "transcript"
           }
         ],
-        "resultHash": "6edc1c8ed6d65d1b1f6fb5ca3e6e66cf15fc24f93452f7042b99cd5e2edc4af8"
+        "resultHash": "55194737a32bd34b99e11f41220f5ea81de6734a4395e43578355f7def256fbf"
       }
     },
     {
@@ -843,7 +843,7 @@
       "prUrl": "https://github.com/closedloop-ai/symphony-alpha/pull/9389",
       "proofBaseRef": "proof/e5a03580a185-iss13401-f7fd8ef6-4-base",
       "proofRef": "proof/e5a03580a185-iss13401-f7fd8ef6-4-head",
-      "recordedDigest": "9d28c071ca0a466d2916e8a55688744ab0510e5ac589d929392c15da21985f33",
+      "recordedDigest": "fe12d25eedaf4d8286d84677aba07dc152738d7884c84f7035545ae3b26198bf",
       "prClosed": true,
       "proofRefRemoved": true,
       "result": {
@@ -919,7 +919,7 @@
             "durationMs": null,
             "component": "fleet-orchestrator",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": null,
             "phase": "startup",
             "declaredAgentModel": null,
@@ -942,9 +942,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -965,9 +965,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -988,9 +988,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1011,9 +1011,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1034,9 +1034,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1057,9 +1057,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1080,14 +1080,14 @@
             "durationMs": null,
             "component": "fleet-orchestrator",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": null,
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": null,
             "source": "transcript"
           }
         ],
-        "resultHash": "3322843cb2a555cfe39cdc54982590a82e65267ca32dfb52f08ad9dd7f74a384"
+        "resultHash": "fe12d25eedaf4d8286d84677aba07dc152738d7884c84f7035545ae3b26198bf"
       }
     },
     {
@@ -1101,7 +1101,7 @@
       "prUrl": "https://github.com/closedloop-ai/symphony-alpha/pull/9392",
       "proofBaseRef": "proof/e5a03580a185-iss13401-f7fd8ef6-5-base",
       "proofRef": "proof/e5a03580a185-iss13401-f7fd8ef6-5-head",
-      "recordedDigest": "0e163293e02383dbf8ab0139adadf3c0e830b3a88628f561e456a637f2e0af98",
+      "recordedDigest": "e1e1bf20a2b8cff231ed2c3e4cad36a1038302411dfa3b4ef5c7b4d77cea770b",
       "prClosed": true,
       "proofRefRemoved": true,
       "result": {
@@ -1177,7 +1177,7 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": null,
             "phase": "startup",
             "declaredAgentModel": null,
@@ -1200,9 +1200,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1223,9 +1223,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1246,9 +1246,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1269,9 +1269,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1292,9 +1292,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1315,14 +1315,14 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": null,
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": null,
             "source": "transcript"
           }
         ],
-        "resultHash": "4691ba56617171e2d0c23232485879a5c99ef9b9c6b248900253b56812b4bf70"
+        "resultHash": "e1e1bf20a2b8cff231ed2c3e4cad36a1038302411dfa3b4ef5c7b4d77cea770b"
       }
     },
     {
@@ -1336,7 +1336,7 @@
       "prUrl": "https://github.com/closedloop-ai/symphony-alpha/pull/9391",
       "proofBaseRef": "proof/e5a03580a185-iss13401-f7fd8ef6-6-base",
       "proofRef": "proof/e5a03580a185-iss13401-f7fd8ef6-6-head",
-      "recordedDigest": "18abd7642ddceae4f69f0c2b975eab276e850a4ff28e057f428254235470894e",
+      "recordedDigest": "3961d76af8447b9c9f1dfea09917c3c2f0b149b85aa91f7ba3fb6cde8807f215",
       "prClosed": true,
       "proofRefRemoved": true,
       "result": {
@@ -1412,7 +1412,7 @@
             "durationMs": null,
             "component": "fleet-orchestrator",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": null,
             "phase": "startup",
             "declaredAgentModel": null,
@@ -1435,9 +1435,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1458,9 +1458,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1481,9 +1481,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1504,9 +1504,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1527,14 +1527,14 @@
             "durationMs": null,
             "component": "fleet-orchestrator",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": null,
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": null,
             "source": "transcript"
           }
         ],
-        "resultHash": "f5eb3776938f8bae742a6fd0e1aec4e97559d05623885328d376c9261fc527c6"
+        "resultHash": "3961d76af8447b9c9f1dfea09917c3c2f0b149b85aa91f7ba3fb6cde8807f215"
       }
     },
     {
@@ -1548,7 +1548,7 @@
       "prUrl": "https://github.com/closedloop-ai/symphony-alpha/pull/9393",
       "proofBaseRef": "proof/e5a03580a185-iss13401-f7fd8ef6-7-base",
       "proofRef": "proof/e5a03580a185-iss13401-f7fd8ef6-7-head",
-      "recordedDigest": "b0b66b61a2d9ef43a9eeb218792865c41ad11c4b4d6f86ee1c7648b3f2c98f2e",
+      "recordedDigest": "ec277cb87769027e4d6357515eae0697c561a6e76a51b2dd9f158490b0b2db1c",
       "prClosed": true,
       "proofRefRemoved": true,
       "result": {
@@ -1624,7 +1624,7 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": null,
             "phase": "startup",
             "declaredAgentModel": null,
@@ -1647,9 +1647,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1670,9 +1670,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": null,
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": null,
             "source": "transcript"
           },
@@ -1693,9 +1693,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1716,9 +1716,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1739,9 +1739,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1762,9 +1762,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1785,9 +1785,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1808,14 +1808,14 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": null,
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": null,
             "source": "transcript"
           }
         ],
-        "resultHash": "b325ca1e8ae096e98c4e513857a220993fd846855e74aea0f1268f8f27bddc69"
+        "resultHash": "ec277cb87769027e4d6357515eae0697c561a6e76a51b2dd9f158490b0b2db1c"
       }
     },
     {
@@ -1829,7 +1829,7 @@
       "prUrl": "https://github.com/closedloop-ai/symphony-alpha/pull/9394",
       "proofBaseRef": "proof/e5a03580a185-iss13401-f7fd8ef6-8-base",
       "proofRef": "proof/e5a03580a185-iss13401-f7fd8ef6-8-head",
-      "recordedDigest": "f340cdf510af93755607efb5befce39aa1eb7e684d0343b787681be80070ef53",
+      "recordedDigest": "62569fb913e061b5bb7930f790a499ec566ca8f9e045e6c634da75862c49b110",
       "prClosed": true,
       "proofRefRemoved": true,
       "result": {
@@ -1905,7 +1905,7 @@
             "durationMs": null,
             "component": "fleet-orchestrator",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": null,
             "phase": "startup",
             "declaredAgentModel": null,
@@ -1928,9 +1928,9 @@
             "durationMs": null,
             "component": "fleet-orchestrator",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": null,
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": null,
             "source": "transcript"
           },
@@ -1951,9 +1951,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1974,9 +1974,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -1997,9 +1997,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -2020,9 +2020,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -2043,9 +2043,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -2066,14 +2066,14 @@
             "durationMs": null,
             "component": "fleet-orchestrator",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": null,
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": null,
             "source": "transcript"
           }
         ],
-        "resultHash": "9876a413694618618734e5b2665fb030ff23ab53640025845cb8968c5d213784"
+        "resultHash": "62569fb913e061b5bb7930f790a499ec566ca8f9e045e6c634da75862c49b110"
       }
     },
     {
@@ -2087,7 +2087,7 @@
       "prUrl": "https://github.com/closedloop-ai/symphony-alpha/pull/9396",
       "proofBaseRef": "proof/e5a03580a185-iss13401-f7fd8ef6-9-base",
       "proofRef": "proof/e5a03580a185-iss13401-f7fd8ef6-9-head",
-      "recordedDigest": "314b1eb9e53eebffd6c01ee95f7be46065c7c8f20a060313c45a01bc57b193c2",
+      "recordedDigest": "87066cfc53604d3259e4da473d1c9b2563e033a4819aed3690f8d5d970850db1",
       "prClosed": true,
       "proofRefRemoved": true,
       "result": {
@@ -2163,7 +2163,7 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": null,
             "phase": "startup",
             "declaredAgentModel": null,
@@ -2186,9 +2186,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -2209,9 +2209,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -2232,9 +2232,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -2255,9 +2255,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -2278,9 +2278,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -2301,9 +2301,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -2324,14 +2324,14 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:vibe",
             "worker": null,
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": null,
             "source": "transcript"
           }
         ],
-        "resultHash": "03053be16a70b94e6146eff135de69cafee17be83a486a2a2d702ef9843277e6"
+        "resultHash": "87066cfc53604d3259e4da473d1c9b2563e033a4819aed3690f8d5d970850db1"
       }
     },
     {
@@ -2345,7 +2345,7 @@
       "prUrl": "https://github.com/closedloop-ai/symphony-alpha/pull/9395",
       "proofBaseRef": "proof/e5a03580a185-iss13401-f7fd8ef6-10-base",
       "proofRef": "proof/e5a03580a185-iss13401-f7fd8ef6-10-head",
-      "recordedDigest": "2b0032fadc590092b2cfc263a6a02dee0403601071199328558c665d8c3bb247",
+      "recordedDigest": "017a6509f0e2821156ae95a767bbb015a995b2fde9f1bdd1db116b069622e235",
       "prClosed": true,
       "proofRefRemoved": true,
       "result": {
@@ -2421,7 +2421,7 @@
             "durationMs": null,
             "component": "fleet-orchestrator",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": null,
             "phase": "startup",
             "declaredAgentModel": null,
@@ -2444,9 +2444,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -2467,9 +2467,9 @@
             "durationMs": null,
             "component": "fleet-orchestrator",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": null,
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": null,
             "source": "transcript"
           },
@@ -2490,9 +2490,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -2513,9 +2513,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -2536,9 +2536,9 @@
             "durationMs": null,
             "component": "vibe",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": "vibe-change-worker",
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": "sonnet",
             "source": "transcript"
           },
@@ -2559,16 +2559,16 @@
             "durationMs": null,
             "component": "fleet-orchestrator",
             "unattributedReason": null,
-            "skill": null,
+            "skill": "vibe:fleet-orchestrator",
             "worker": null,
-            "phase": "startup",
+            "phase": "build",
             "declaredAgentModel": null,
             "source": "transcript"
           }
         ],
-        "resultHash": "523443bbd2c1b705bd73c90a26a11576b64e9e2038e6f3eabfd9f759b92df87a"
+        "resultHash": "017a6509f0e2821156ae95a767bbb015a995b2fde9f1bdd1db116b069622e235"
       }
     }
   ],
-  "baselineHash": "496c8809c21a811f94c9fecfaef98e2e9f498b39f844d4e1c104ec9dabd0c56a"
+  "baselineHash": "7ce1c9a4a082c025d8b3761155f1123ffdbfa5fcc76edd8f29bf79909a33ac3e"
 }

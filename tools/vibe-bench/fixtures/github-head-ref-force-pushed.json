@@ -1,0 +1,8 @@
+{
+  "event": "head_ref_force_pushed",
+  "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "actor": {
+    "login": "fixture-user"
+  },
+  "created_at": "2026-10-29T20:00:00Z"
+}

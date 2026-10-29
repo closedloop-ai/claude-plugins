@@ -8,7 +8,7 @@ import type { BaselineArtifact, BaselineRun } from "./baseline.ts";
 import { orchestrateWaves } from "./baseline.ts";
 import { finalizeDeveloperBenchmark, instructionWordsAtRef } from "./developer-benchmark.ts";
 import type { DeveloperBenchmarkArtifact } from "./developer-benchmark.ts";
-import { buildDeveloperReport } from "./developer-report.ts";
+import { buildBenchmarkEvidence, buildDeveloperReport } from "./developer-report.ts";
 import { listOpenPullRequests, preflightSelectedPullRequest, publishBenchmarkSection,
   replaceBenchmarkSection } from "./developer-pr.ts";
 import type { DeveloperPrCommands } from "./developer-pr.ts";
@@ -29,10 +29,11 @@ function candidateRuns(): BaselineRun[] {
     payload.identity.pluginSha = HEAD;
     payload.identity.stackSetupMs = 0;
     payload.identity.stackTeardownMs = 0;
+    const result = { ...payload, resultHash: resultHash(payload) };
     return { ...structuredClone(source), index, prNumber: 900 + index,
       prUrl: `https://github.com/closedloop-ai/symphony-alpha/pull/${900 + index}`,
       proofBaseRef: `benchmark/base-${index}`, proofRef: `benchmark/head-${index}`,
-      recordedDigest: "a".repeat(64), result: { ...payload, resultHash: resultHash(payload) } };
+      recordedDigest: result.resultHash, result };
   });
 }
 
@@ -81,11 +82,12 @@ test("three balanced waves reuse one setup and wait for peers before teardown", 
   assert.equal(events.at(-1), "teardown");
 });
 
-test("developer finalizer enforces six proof lifecycles, allocates stack time and hashes comparisons", () => {
+test("developer finalizer enforces six proof lifecycles, final digests and hashes comparisons", () => {
   const artifact = developer();
   assert.equal(artifact.runs.length, 6);
-  assert.equal(artifact.runs[0].result.identity.stackSetupMs, 20);
-  assert.equal(artifact.runs[0].result.identity.stackTeardownMs, 5);
+  assert.equal(artifact.runs[0].result.identity.stackSetupMs, 0);
+  assert.equal(artifact.runs[0].result.identity.stackTeardownMs, 0);
+  assert.equal(artifact.runs[0].recordedDigest, artifact.runs[0].result.resultHash);
   assert.equal(artifact.comparisons.vibe.prPluginSha, HEAD);
   assert.equal(artifact.comparisons["fleet-one-writer"].prPluginSha, HEAD);
   assert.match(artifact.resultHash, /^[a-f0-9]{64}$/);
@@ -136,6 +138,7 @@ class FakePrCommands implements DeveloperPrCommands {
   body = "Purpose\n\n## Benchmark\n\nold\n\n## Tests\n\nkept\n";
   head = HEAD;
   calls: string[] = [];
+  comments: string[] = [];
   run(command: string, args: string[]): string {
     this.calls.push(`${command} ${args.join(" ")}`);
     if (command === "git") {
@@ -156,6 +159,11 @@ class FakePrCommands implements DeveloperPrCommands {
       this.body = readFileSync(file, "utf8");
       return "";
     }
+    if (args[1] === "comment") {
+      const file = args[args.indexOf("--body-file") + 1];
+      this.comments.push(readFileSync(file, "utf8"));
+      return "";
+    }
     throw new Error(`unexpected:${command}:${args.join(" ")}`);
   }
 }
@@ -168,15 +176,18 @@ test("PR selection is read-only and publication is head-safe, section-only and i
   try {
     const section = join(root, "section.md");
     writeFileSync(section, "## Benchmark\n\nnew result\n");
-    publishBenchmarkSection("repo", selected, section, commands, "gh");
+    const attachment = buildBenchmarkEvidence(developer(), evaluation());
+    publishBenchmarkSection("repo", selected, section, attachment, commands, "gh");
     const once = commands.body;
     assert.match(once, /Purpose[\s\S]*new result[\s\S]*## Tests[\s\S]*kept/);
-    publishBenchmarkSection("repo", selected, section, commands, "gh");
+    publishBenchmarkSection("repo", selected, section, attachment, commands, "gh");
     assert.equal(commands.body, once);
     assert.equal((commands.body.match(/^## Benchmark$/gm) ?? []).length, 1);
-    assert.ok(commands.calls.every((call) => !/comment|add-label|remove-label/.test(call)));
+    assert.equal(commands.comments.length, 2);
+    assert.match(commands.comments[0], /vibe-benchmark-evidence-v1/);
+    assert.ok(commands.calls.every((call) => !/add-label|remove-label/.test(call)));
     commands.head = "e".repeat(40);
-    assert.throws(() => publishBenchmarkSection("repo", selected, section, commands, "gh"),
+    assert.throws(() => publishBenchmarkSection("repo", selected, section, attachment, commands, "gh"),
       /head-moved/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -193,13 +204,13 @@ test("rendered section replacement ignores hidden headings and rejects duplicate
   assert.ok(replaced.endsWith("## Tests\nkept  \n\n"));
 });
 
-test("canonical Claude skill and thin Codex adapter expose no label or comment mutation", () => {
+test("canonical Claude skill and thin Codex adapter expose no label mutation", () => {
   const canonical = readFileSync(join(import.meta.dirname, "../../../.claude/skills/vibe-bench/SKILL.md"), "utf8");
   const adapter = readFileSync(join(import.meta.dirname, "../../../.agents/skills/vibe-bench/SKILL.md"), "utf8");
   assert.match(canonical, /^---\nname: vibe-bench\n/);
   assert.match(canonical, /claude-sonnet-5-5` at effort `high/);
   assert.match(canonical, /three paired waves/);
-  assert.doesNotMatch(canonical, /gh pr comment|--add-label|--remove-label/);
+  assert.doesNotMatch(canonical, /--add-label|--remove-label/);
   assert.match(adapter, /\.claude\/skills\/vibe-bench\/SKILL\.md/);
   assert.ok(adapter.length < canonical.length / 3);
 });

@@ -49,7 +49,8 @@ export function runRealProbe(manifestFile: string, claudeExecutable: string): st
   const pluginFlag = launch.args.indexOf("--plugin-dir");
   const pluginDir = launch.args[pluginFlag + 1];
   if (pluginFlag < 0 || !pluginDir ||
-      JSON.stringify(launch.args) !== JSON.stringify(claudeArgs(pluginDir, launch.mcpConfigFile, fixture.taskPrompt))) {
+      JSON.stringify(launch.args) !== JSON.stringify(claudeArgs(pluginDir, launch.mcpConfigFile,
+        launch.settingsFile, fixture.taskPrompt))) {
     throw new Error("benchmark-claude-args-changed");
   }
   if (existsSync(join(fixture.agentCheckout, "tools/vibe-bench/oracle"))) {

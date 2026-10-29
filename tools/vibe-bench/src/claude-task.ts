@@ -43,6 +43,18 @@ export interface ClaudeTaskEvidence {
   versionCheck: "current" | "unknown" | "outdated";
 }
 
+/** Accept only the two inline snapshot plugins plus Claude's built-ins. */
+export function exactSnapshotPlugins(plugins: unknown, snapshot: PluginSnapshot): boolean {
+  if (!Array.isArray(plugins)) return false;
+  const custom = plugins.filter((value): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && (value as Record<string, unknown>).path !== "builtin");
+  return custom.length === 2 && [
+    { name: "closedloop-core", source: "closedloop-core@inline", path: snapshot.coreDir },
+    { name: "vibe", source: "vibe@inline", path: snapshot.vibeDir },
+  ].every((expected) => custom.some((plugin) => plugin.name === expected.name &&
+    plugin.source === expected.source && plugin.path === expected.path));
+}
+
 /** Launch a canonical shape with only local file, skill and agent tools. */
 export async function runClaudeTask(
   fixture: PreparedFixture,
@@ -58,7 +70,7 @@ export async function runClaudeTask(
   if (before.pass) throw new Error("benchmark-task-not-regressed");
   const launch = prepareClaudeLaunch(fixture, snapshot.vibeDir, apiKey);
   const prompt = shapePrompt(shape);
-  const baseArgs = claudeArgs(snapshot.vibeDir, launch.mcpConfigFile, prompt).slice(0, -1);
+  const baseArgs = claudeArgs(snapshot.vibeDir, launch.mcpConfigFile, launch.settingsFile, prompt).slice(0, -1);
   baseArgs.splice(baseArgs.indexOf("--plugin-dir"), 0, "--plugin-dir", snapshot.coreDir);
   const requestedSessionId = randomUUID();
   const started = Date.now();
@@ -94,6 +106,7 @@ export async function runClaudeTask(
   const skills = init?.skills;
   if (observedCliVersion !== cliVersion.split(" ")[0] ||
       (Array.isArray(pluginErrors) && pluginErrors.length > 0) ||
+      !exactSnapshotPlugins(init?.plugins, snapshot) ||
       !Array.isArray(skills) || !skills.includes("vibe:vibe") ||
       !skills.includes("vibe:fleet-orchestrator")) {
     throw new Error("benchmark-claude-plugin-or-cli-mismatch");

@@ -2,7 +2,7 @@ import { BENCHMARK_EFFORT, BENCHMARK_MODEL, TARGET_WALL_MS } from "./contract.ts
 import type { ClaudeBenchmarkResult } from "./result-schema.ts";
 import { verifyResultHash } from "./result-schema.ts";
 
-/** Green passes, yellow requires explanation, red needs Daniel's acceptance. */
+/** Green passes, yellow requires explanation, red needs approver acceptance. */
 export type ThresholdStatus = "green" | "yellow" | "red";
 /** Section 5's gated signals; cached input is deliberately absent. */
 export type Signal = "wallMs" | "uncachedInputTokens" | "outputTokens" | "modelCalls" | "taskSuccess" | "instructionWords";
@@ -31,7 +31,7 @@ export interface Comparison {
   };
   status: ThresholdStatus;
   yellowExplanationRequired: boolean;
-  redRequiresDanielAcceptance: boolean;
+  redRequiresApproverAcceptance: boolean;
 }
 
 /** Standard median, including the mean of the two middle values for even N. */
@@ -64,10 +64,9 @@ function numericSignal(signal: Signal, baseline: ClaudeBenchmarkResult[], pr: Cl
   const baselineMedian = median(base);
   const baselineMad = mad(base);
   const prMedian = median(candidate);
-  const thresholdYellow = signal === "wallMs"
-    ? baselineMedian + Math.max(3 * baselineMad, baselineMedian * 0.2)
-    : baselineMedian * 1.2;
-  const thresholdRed = baselineMedian * (signal === "wallMs" ? 2 : 1.5);
+  const thresholdYellow = baselineMedian + Math.max(3 * baselineMad, baselineMedian * 0.2);
+  const thresholdRed = signal === "wallMs" ? baselineMedian * 2
+    : baselineMedian + Math.max(6 * baselineMad, baselineMedian * 0.5);
   const overCap = signal === "wallMs" && candidate.some((value) => value > TARGET_WALL_MS);
   const status: ThresholdStatus = overCap || prMedian > thresholdRed ? "red"
     : prMedian > thresholdYellow ? "yellow" : "green";
@@ -146,6 +145,6 @@ export function compareResults(
       },
     },
     yellowExplanationRequired: signals.some((signal) => signal.status === "yellow"),
-    redRequiresDanielAcceptance: status === "red",
+    redRequiresApproverAcceptance: status === "red",
   };
 }

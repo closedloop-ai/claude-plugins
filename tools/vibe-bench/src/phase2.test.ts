@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
-import { BASELINE_ORDER, shapePrompt } from "./claude-task.ts";
+import { BASELINE_ORDER, exactSnapshotPlugins, shapePrompt } from "./claude-task.ts";
 import { buildBaselineReport, finalizeBaseline, orchestrateTen, verifyBaselineHash } from "./baseline.ts";
 import type { BaselineRun } from "./baseline.ts";
 import { collectClaude } from "./claude-collector.ts";
@@ -13,6 +13,7 @@ import { BENCHMARK_TASK } from "./contract.ts";
 import { GithubProofPr, PROOF_REMOTE } from "./github-pr.ts";
 import type { PrCommands } from "./github-pr.ts";
 import { snapshotMainPlugins } from "./plugin-snapshot.ts";
+import { runOwnedProcess } from "./owned-process.ts";
 import { sourceMain } from "./phase2-driver.ts";
 import { checkVibeVersion, writeBenchmarkSessionRecord } from "./session-preflight.ts";
 import type { PreparedFixture } from "./fixture.ts";
@@ -115,6 +116,26 @@ test("balanced ten-run paired waves use one stack and wait before teardown", asy
   assert.ok(events.includes("0"), "the peer finishes before stack teardown");
 });
 
+test("batch deadline kills the owned child process group", async () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-bench-process-group-"));
+  const pidFile = join(root, "grandchild.pid");
+  try {
+    const script = [
+      'const { spawn } = require("node:child_process");',
+      'const { writeFileSync } = require("node:fs");',
+      `const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });`,
+      `writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+      'setInterval(() => {}, 1000);',
+    ].join("\n");
+    await assert.rejects(runOwnedProcess(process.execPath, ["-e", script], {
+      cwd: root, deadline: Date.now() + 150,
+    }), /benchmark-batch-budget-exhausted/);
+    const grandchild = Number(readFileSync(pidFile, "utf8"));
+    assert.throws(() => process.kill(grandchild, 0), (error: unknown) =>
+      (error as NodeJS.ErrnoException).code === "ESRCH");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("isolated run child persists a failure before any external operation", () => {
   const root = mkdtempSync(join(tmpdir(), "vibe-bench-run-child-"));
   try {
@@ -180,6 +201,19 @@ test("current-main plugin snapshot archives exact Git objects and Opus frontmatt
     execFileSync("git", ["-C", repo, "update-ref", "refs/remotes/origin/main", moved]);
     assert.throws(() => snapshotMainPlugins(repo, sha, join(root, "second")), /main-moved/);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Claude loads only the two inline plugin snapshots", () => {
+  const snapshot = { sha: "a".repeat(40), vibeDir: "/snapshot/vibe", coreDir: "/snapshot/core",
+    agentModels: {} };
+  const plugins = [
+    { name: "closedloop-core", source: "closedloop-core@inline", path: snapshot.coreDir },
+    { name: "vibe", source: "vibe@inline", path: snapshot.vibeDir },
+    { name: "builtin", source: "builtin@builtin", path: "builtin" },
+  ];
+  assert.equal(exactSnapshotPlugins(plugins, snapshot), true);
+  assert.equal(exactSnapshotPlugins([...plugins,
+    { name: "vibe", source: "vibe@marketplace", path: "/developer/vibe" }], snapshot), false);
 });
 
 test("source preflight rejects a live main advance absent from the checkout", () => {
@@ -313,11 +347,12 @@ function sampleRun(index: number, shape: BenchmarkShape, wallMs = 100): Baseline
   };
   const result = collectClaude({ stream: realStream, transcripts: [{ jsonl: realTranscript }], identity,
     agentModels: { "vibe-change-worker": "sonnet", "vibe-adversarial-reviewer": "opus" }, env: {} });
-  return { index, shape, fixtureMs: 3, claudeTaskMs: 75, prMs: 15,
+  const run: BaselineRun = { index, shape, fixtureMs: 3, claudeTaskMs: 75, prMs: 15,
     versionCheck: "current",
     prNumber: index + 100, prUrl: `https://github.com/closedloop-ai/symphony-alpha/pull/${index + 100}`,
-    proofBaseRef: `proof/${index}-base`, proofRef: `proof/${index}-head`, recordedDigest: "c".repeat(64),
+    proofBaseRef: `proof/${index}-base`, proofRef: `proof/${index}-head`, recordedDigest: result.resultHash,
     prClosed: true, proofRefRemoved: true, result };
+  return run;
 }
 
 test("baseline allocation, noise, cached-input disclosure and hashes are exact", () => {
@@ -327,8 +362,8 @@ test("baseline allocation, noise, cached-input disclosure and hashes are exact",
     sourceSha: "b".repeat(40), cliVersion: "2.1.311 (Claude Code)",
     createdAt: "2026-10-29T18:00:00.000Z" });
   assert.equal(baseline.runs.length, 10);
-  assert.ok(baseline.runs.every((run) => run.result.identity.stackSetupMs === 10 &&
-    run.result.identity.stackTeardownMs === 2));
+  assert.ok(baseline.runs.every((run) => run.result.identity.stackSetupMs === 0 &&
+    run.result.identity.stackTeardownMs === 0 && run.recordedDigest === run.result.resultHash));
   assert.equal(baseline.shapeWall.vibe.medianMs, 100);
   assert.equal(baseline.shapeWall.vibe.madMs, 0);
   assert.deepEqual(baseline.waveSizes, [2, 2, 2, 2, 2]);

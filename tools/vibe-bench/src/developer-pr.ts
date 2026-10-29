@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { SelectedPullRequest } from "./developer-benchmark.ts";
+import { BENCHMARK_EVIDENCE_MARKER } from "./pr-body-gate.ts";
+import type { BenchmarkEvidenceArtifact } from "./pr-body-gate.ts";
 
 const REPOSITORY = "closedloop-ai/claude-plugins";
 
@@ -135,6 +137,7 @@ export function replaceBenchmarkSection(body: string, section: string): string {
 
 /** Recheck the head, edit only the PR body, and confirm the exact live result. */
 export function publishBenchmarkSection(repo: string, selected: SelectedPullRequest, sectionFile: string,
+  evidence: BenchmarkEvidenceArtifact,
   commands: DeveloperPrCommands = new ProcessDeveloperPrCommands(), gh = "gh"): void {
   const live = preflightSelectedPullRequest(repo, selected.number, commands, gh);
   if (live.headSha !== selected.headSha || live.branch !== selected.branch) {
@@ -147,12 +150,18 @@ export function publishBenchmarkSection(repo: string, selected: SelectedPullRequ
   }
   const body = replaceBenchmarkSection(before.body, readFileSync(sectionFile, "utf8"));
   const bodyFile = join(dirname(sectionFile), `.benchmark-pr-${selected.number}-body.md`);
+  const evidenceFile = join(dirname(sectionFile), `.benchmark-pr-${selected.number}-evidence.md`);
   writeFileSync(bodyFile, body, { flag: "wx", mode: 0o600 });
+  writeFileSync(evidenceFile, `${BENCHMARK_EVIDENCE_MARKER}\n\n\`\`\`json\n${JSON.stringify(evidence)}\n\`\`\`\n`,
+    { flag: "wx", mode: 0o600 });
   try {
     commands.run(gh, ["pr", "edit", String(selected.number), "--repo", REPOSITORY,
       "--body-file", bodyFile], repo);
+    commands.run(gh, ["pr", "comment", String(selected.number), "--repo", REPOSITORY,
+      "--body-file", evidenceFile], repo);
   } finally {
     unlinkSync(bodyFile);
+    unlinkSync(evidenceFile);
   }
   const after = JSON.parse(commands.run(gh, viewArgs, repo)) as { body?: unknown; headRefOid?: unknown };
   if (after.headRefOid !== selected.headSha || after.body !== body) throw new Error("benchmark-pr-publish-confirmation-failed");

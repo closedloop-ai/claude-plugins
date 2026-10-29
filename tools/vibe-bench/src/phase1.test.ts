@@ -185,6 +185,12 @@ test("model, effort and environment drift invalidate without changing totals", (
     env: { CLAUDE_CODE_EFFORT_LEVEL: "xhigh" } });
   assert.equal(override.valid, false);
   assert.match(override.invalidReasons.join(" "), /benchmark-effort-env-override/);
+  for (const key of ["CLAUDE_CODE_SUBAGENT_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL"] as const) {
+    const drifted = collectClaude({ stream: realStream, transcripts: [{ jsonl: realTranscript }],
+      identity: identity(), agentModels: {}, env: { [key]: "claude-opus-4-6" } });
+    assert.equal(drifted.valid, false);
+    assert.match(drifted.invalidReasons.join(" "), /benchmark-model-env-override/);
+  }
 });
 
 test("subagent model and phase are preserved; unknown worker gets a reason", () => {
@@ -221,6 +227,10 @@ test("subagent model and phase are preserved; unknown worker gets a reason", () 
   const unknown = collect(stream.replace("vibe-adversarial-reviewer", "custom-worker"));
   assert.equal(unknown.calls[1].component, "unattributed");
   assert.match(unknown.calls[1].unattributedReason ?? "", /unknown-agent/);
+  const undeclaredOverride = collectClaude({ stream, identity: identity(),
+    agentModels: { "vibe-adversarial-reviewer": "sonnet" }, env: {} });
+  assert.equal(undeclaredOverride.valid, false);
+  assert.ok(undeclaredOverride.invalidReasons.includes("benchmark-agent-model-mismatch:vibe-adversarial-reviewer"));
 });
 
 let sampleRunSequence = 0;
@@ -266,10 +276,10 @@ test("five-versus-three median and MAD wall thresholds and cap are exact", () =>
 test("token, call, success and static instruction thresholds follow section 5", () => {
   const yellow = compare([100, 100, 100], [121, 121, 121], [121, 121, 121], [13, 13, 13], [true, true, false], 1021);
   assert.deepEqual(yellow.signals.map((signal) => signal.status), ["green", "yellow", "yellow", "yellow", "yellow", "yellow"]);
-  assert.equal(yellow.redRequiresDanielAcceptance, false);
+  assert.equal(yellow.redRequiresApproverAcceptance, false);
   const red = compare([100, 100, 100], [151, 151, 151], [151, 151, 151], [16, 16, 16], [true, false, false], 1020);
   assert.deepEqual(red.signals.map((signal) => signal.status), ["green", "red", "red", "red", "red", "green"]);
-  assert.equal(red.redRequiresDanielAcceptance, true);
+  assert.equal(red.redRequiresApproverAcceptance, true);
   assert.throws(() => buildReport(collect(), yellow), /benchmark-explanation-missing/);
   const explanations = Object.fromEntries(yellow.signals.filter((signal) => signal.status !== "green")
     .map((signal) => [signal.signal, { component: "vibe", phase: "build", why: "A measured extra model call." }]));
@@ -277,7 +287,7 @@ test("token, call, success and static instruction thresholds follow section 5", 
   assert.match(report, /component \*\*vibe\*\*, phase \*\*build\*\*/);
   const redExplanations = Object.fromEntries(red.signals.filter((signal) => signal.status !== "green")
     .map((signal) => [signal.signal, { component: "vibe", phase: "build", why: "Measured regression." }]));
-  assert.match(buildReport(collect(), red, redExplanations), /Daniel Ochoa's explicit acceptance/);
+  assert.match(buildReport(collect(), red, redExplanations), /benchmark approver's explicit acceptance/);
   const baseline = [90, 100, 100, 100, 110].map((wall) => sampleRun("a".repeat(40), wall, 100, 100, 10));
   const cached = [100, 100, 100].map((wall) => {
     const source = sampleRun("b".repeat(40), wall, 100, 100, 10);
@@ -289,6 +299,19 @@ test("token, call, success and static instruction thresholds follow section 5", 
   assert.equal(informational.status, "green");
   assert.equal(informational.informational.cachedInputTokens.prMedian, 9_999_999);
   assert.match(buildReport(cached[0], informational), /Informational measures \(no independent gate\)/);
+});
+
+test("baseline MAD protects non-wall signals from ordinary unchanged variation", () => {
+  const baseline = [60, 80, 100, 120, 140].map((input, index) =>
+    sampleRun("a".repeat(40), 100 + index, input, input, 10));
+  const candidate = [121, 121, 121].map((input) =>
+    sampleRun("b".repeat(40), 100, input, input, 10));
+  const comparison = compareResults(baseline, candidate, { baseline: 1000, pr: 1000 });
+  const input = comparison.signals.find((signal) => signal.signal === "uncachedInputTokens")!;
+  assert.equal(input.baselineMad, 20);
+  assert.equal(input.thresholdYellow, 160);
+  assert.equal(input.thresholdRed, 220);
+  assert.equal(input.status, "green");
 });
 
 test("local collector CLI surface writes only local, hash-stamped artifacts", () => {

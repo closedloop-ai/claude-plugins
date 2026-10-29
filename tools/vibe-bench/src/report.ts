@@ -86,8 +86,8 @@ export function buildReport(
         lines.push(`- ${signal.signal} (${signal.status}): component **${item.component}**, phase **${item.phase}**: ${item.why}`);
       }
     }
-    if (comparison.redRequiresDanielAcceptance) {
-      lines.push("", "Red regression: blocked pending Daniel Ochoa's explicit acceptance.");
+    if (comparison.redRequiresApproverAcceptance) {
+      lines.push("", "Red regression: blocked pending the benchmark approver's explicit acceptance.");
     }
   }
   return `${lines.join("\n")}\n`;

@@ -356,6 +356,17 @@ export function collectClaude(input: ClaudeCollectorInput): ClaudeBenchmarkResul
   catch (error) { invalidReasons.push(error instanceof Error ? error.message : String(error)); }
   const observedModel = rootModels.size === 1 ? [...rootModels][0] : null;
   if (observedModel !== BENCHMARK_MODEL) invalidReasons.push("benchmark-model-mismatch");
+  for (const call of calls) {
+    if (!call.worker) {
+      if (call.model !== BENCHMARK_MODEL) invalidReasons.push("benchmark-model-mismatch");
+      continue;
+    }
+    const declared = call.declaredAgentModel;
+    const matches = declared === "opus" ? call.model.includes("opus")
+      : declared === "sonnet" ? call.model === BENCHMARK_MODEL
+        : declared !== null && call.model === declared;
+    if (!matches) invalidReasons.push(`benchmark-agent-model-mismatch:${call.worker}`);
+  }
   const initModels = new Set(events.filter((event) => event.type === "system" && event.subtype === "init")
     .map((event) => event.model).filter((model): model is string => typeof model === "string"));
   if (initModels.size > 1 || (initModels.size === 1 && !initModels.has(observedModel ?? ""))) {

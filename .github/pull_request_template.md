@@ -8,5 +8,5 @@ List the exact checks run.
 
 ## Benchmark
 
-<!-- Required for vibe, fleet-orchestrator, vibe-workers and vibe benchmark changes. Run the vibe benchmark skill or use a Daniel-approved bypass. -->
+<!-- Required for vibe, fleet-orchestrator, vibe-workers and vibe benchmark changes. Run the vibe benchmark skill or use an approver-authorized bypass. -->
 Measurement pending

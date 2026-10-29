@@ -8,7 +8,7 @@ import { runClaudeBatch } from "./claude-batch.ts";
 import type { Comparison, ThresholdStatus } from "./comparison.ts";
 import { compareResults } from "./comparison.ts";
 import { TARGET_WALL_MS } from "./contract.ts";
-import { resultHash, verifyResultHash } from "./result-schema.ts";
+import { verifyResultHash } from "./result-schema.ts";
 import type { BenchmarkShape } from "./result-schema.ts";
 
 /** The three balanced pairs used by every developer benchmark. */
@@ -63,13 +63,11 @@ export function instructionWordsAtRef(repo: string, ref: string): number {
     { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }).split(/\s+/).filter(Boolean).length, 0);
 }
 
-function allocatedRuns(input: { runs: BaselineRun[]; setupMs: number; teardownMs: number }): BaselineRun[] {
+function validatedRuns(input: { runs: BaselineRun[] }): BaselineRun[] {
   return input.runs.map((run) => {
     verifyResultHash(run.result);
-    const { resultHash: _ignored, ...payload } = run.result;
-    payload.identity = { ...payload.identity, stackSetupMs: input.setupMs / 6,
-      stackTeardownMs: input.teardownMs / 6 };
-    return { ...run, result: { ...payload, resultHash: resultHash(payload) } };
+    if (run.recordedDigest !== run.result.resultHash) throw new Error("benchmark-recorded-digest-mismatch");
+    return run;
   });
 }
 
@@ -103,7 +101,7 @@ export function finalizeDeveloperBenchmark(input: {
       new Set(input.runs.map((run) => run.proofBaseRef)).size !== 6) {
     throw new Error("benchmark-developer-identity-or-proof-drift");
   }
-  const runs = allocatedRuns(input);
+  const runs = validatedRuns(input);
   for (const run of runs) {
     if (!run.result.valid || run.result.identity.pluginSha !== input.pluginSha ||
         run.result.identity.fixtureVersion !== input.sourceSha || run.result.identity.cliVersion !== input.cliVersion) {

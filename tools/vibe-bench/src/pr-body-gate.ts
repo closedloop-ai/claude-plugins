@@ -1,9 +1,10 @@
-/** GitHub label that permits Daniel to waive a benchmark run for one head SHA. */
+/** GitHub label that permits the benchmark approver to waive one head SHA. */
 export const BENCHMARK_BYPASS_LABEL = "benchmark-not-needed";
-/** GitHub label that records Daniel's acceptance of one red result at one head SHA. */
+/** GitHub label that records approver acceptance of one red result at one head SHA. */
 export const BENCHMARK_RED_ACCEPTANCE_LABEL = "benchmark-regression-accepted";
-/** Daniel Ochoa's GitHub login, verified through the authenticated GitHub API on 2026-10-29. */
+/** Authorized benchmark approver login. */
 export const BENCHMARK_APPROVER_LOGIN = "shafty023";
+export const BENCHMARK_EVIDENCE_MARKER = "<!-- vibe-benchmark-evidence-v1 -->";
 
 const PROTECTED_PATHS = [
   /^plugins\/vibe(?:\/|$)/,
@@ -30,6 +31,32 @@ export interface BenchmarkGateInput {
   changedFiles: string[];
   labels: string[];
   timelineEvents: GateTimelineEvent[];
+  evidenceArtifacts: BenchmarkEvidenceArtifact[];
+}
+
+/** Compact attached evidence checked by trusted base code without a model. */
+export interface BenchmarkEvidenceArtifact {
+  schemaVersion: 1;
+  headSha: string;
+  resultHash: string;
+  evalResultHash: string;
+  cliVersion: string;
+  configuredModel: string;
+  configuredEffort: string;
+  valid: boolean;
+  success: boolean;
+  fullWallMs: number;
+  costUsd: number;
+  modelCalls: number;
+  totals: { inputTokens: number; uncachedInputTokens: number; outputTokens: number };
+  breakdowns: Record<"component" | "skill" | "worker" | "phase",
+    Array<{ name: string; calls: number }>>;
+  comparison: "green" | "yellow" | "red";
+  eval: {
+    pluginSha: string;
+    cases: number;
+    runtimes: Array<{ runtime: "claude" | "codex"; passed: number; failed: number }>;
+  };
 }
 
 /** Stable model-free result suitable for a required GitHub check. */
@@ -127,20 +154,92 @@ function latestLabelEvent(input: BenchmarkGateInput, label: string): {
   return latest;
 }
 
-function validateApproval(input: BenchmarkGateInput, content: string, label: string,
-  headField: string): BenchmarkGateResult | null {
-  if (!input.labels.includes(label)) return fail("benchmark-approval-label-missing", `Daniel must apply \`${label}\` for this head.`);
+function validateApproval(input: BenchmarkGateInput, label: string): BenchmarkGateResult | null {
+  if (!input.labels.includes(label)) return fail("benchmark-approval-label-missing", `The benchmark approver must apply \`${label}\` for this head.`);
   const latest = latestLabelEvent(input, label);
   if (latest?.actor !== BENCHMARK_APPROVER_LOGIN) {
-    return fail("benchmark-approval-actor-invalid", `The latest \`${label}\` event must be from Daniel.`);
+    return fail("benchmark-approval-actor-invalid", `The latest \`${label}\` event must be from the benchmark approver.`);
   }
   if (input.timelineEvents.slice(latest.index + 1).some((item) =>
       item.event === "committed" || item.event === "head_ref_force_pushed")) {
-    return fail("benchmark-approval-label-stale", `Daniel must reapply \`${label}\` after the latest head change.`);
+    return fail("benchmark-approval-label-stale", `The benchmark approver must reapply \`${label}\` after the latest head change.`);
   }
-  const head = lineValue(content, headField);
-  if (!head || !FULL_SHA.test(head) || head !== input.headSha) {
-    return fail("benchmark-approval-head-stale", `${headField} must equal the current full head SHA.`);
+  return null;
+}
+
+function validPositive(value: number): boolean {
+  return Number.isFinite(value) && value > 0;
+}
+
+function tableHasData(content: string, heading: string): boolean {
+  const lines = content.split("\n");
+  const start = lines.findIndex((line) => line === `### ${heading}`);
+  if (start < 0) return false;
+  const end = lines.findIndex((line, index) => index > start && line.startsWith("### "));
+  return lines.slice(start + 1, end < 0 ? undefined : end)
+    .some((line) => /^\|\s*[^|\s][^|]*\|\s*[1-9]\d*\s*\|/.test(line));
+}
+
+function validateEvidence(input: BenchmarkGateInput, content: string,
+  status: "green" | "yellow" | "red"): BenchmarkGateResult | null {
+  const hash = /^Result: .+; hash: `([0-9a-f]{64})`\.$/m.exec(content)?.[1];
+  if (!hash) return fail("benchmark-result-hash-missing", "Benchmark results must include the result hash.");
+  const artifact = input.evidenceArtifacts.find((item) => item.resultHash === hash);
+  if (!artifact) return fail("benchmark-evidence-missing", "Attach the benchmark evidence for this result hash.");
+  if (artifact.schemaVersion !== 1 || artifact.headSha !== input.headSha || artifact.eval.pluginSha !== input.headSha) {
+    return fail("benchmark-evidence-head-mismatch", "Attached evidence must target the current pull request head.");
+  }
+  if (!artifact.valid || !artifact.success || artifact.configuredModel !== "claude-sonnet-5-5" ||
+      artifact.configuredEffort !== "high" || artifact.comparison !== status ||
+      !/^\d+\.\d+\.\d+ \(Claude Code\)$/.test(artifact.cliVersion)) {
+    return fail("benchmark-evidence-invalid", "Attached benchmark evidence is invalid or does not match the disclosure.");
+  }
+  if (![artifact.fullWallMs, artifact.costUsd, artifact.modelCalls, artifact.totals.inputTokens,
+    artifact.totals.uncachedInputTokens, artifact.totals.outputTokens].every(validPositive) ||
+    artifact.totals.uncachedInputTokens > artifact.totals.inputTokens) {
+    return fail("benchmark-evidence-totals-invalid", "Attached benchmark totals must be positive and internally plausible.");
+  }
+  const wall = /^Wall (\d+) ms .*; cost \$(\d+(?:\.\d+)?); (\d+) model calls\.$/m.exec(content);
+  const totals = /^Totals: input (\d+), cached read \d+, uncached input (\d+), cache write \d+, output (\d+), thinking (?:\d+|unknown)\.$/m.exec(content);
+  const runtime = /^Claude Code (\d+\.\d+\.\d+);/m.exec(content)?.[1];
+  if (!wall || !totals || runtime !== artifact.cliVersion.split(" ")[0] || Number(wall[1]) !== artifact.fullWallMs ||
+      Number(wall[2]) !== artifact.costUsd || Number(wall[3]) !== artifact.modelCalls ||
+      Number(totals[1]) !== artifact.totals.inputTokens ||
+      Number(totals[2]) !== artifact.totals.uncachedInputTokens ||
+      Number(totals[3]) !== artifact.totals.outputTokens) {
+    return fail("benchmark-evidence-body-mismatch", "The disclosed runtime and totals must match the attached evidence.");
+  }
+  for (const facet of ["component", "skill", "worker", "phase"] as const) {
+    const rows = artifact.breakdowns[facet];
+    if (!Array.isArray(rows) || !rows.length || rows.some((row) => !row.name || !validPositive(row.calls)) ||
+        rows.reduce((sum, row) => sum + row.calls, 0) !== artifact.modelCalls) {
+      return fail(`benchmark-${facet}-breakdown-invalid`, `Attached ${facet} breakdown is empty or inconsistent.`);
+    }
+    if (!tableHasData(content, `${facet[0].toUpperCase()}${facet.slice(1)} calls`)) {
+      return fail(`benchmark-${facet}-breakdown-empty`, `The disclosed ${facet} breakdown must contain data rows.`);
+    }
+  }
+  if (!artifact.breakdowns.component.some((row) => row.name === "vibe") ||
+      !artifact.breakdowns.component.some((row) => row.name === "fleet-orchestrator") ||
+      !artifact.breakdowns.skill.some((row) => row.name !== "unobserved") ||
+      !artifact.breakdowns.worker.some((row) => row.name !== "unobserved") ||
+      !artifact.breakdowns.phase.some((row) => row.name !== "startup" && row.name !== "unobserved")) {
+    return fail("benchmark-breakdown-unobserved", "Attached evidence must contain observed component, skill, worker and phase data.");
+  }
+  const evalHash = /^Full shared corpus: (\d+) cases; result hash `([0-9a-f]{64})`; plugin `([0-9a-f]{40})`\.$/m.exec(content);
+  if (!evalHash || Number(evalHash[1]) !== artifact.eval.cases || evalHash[2] !== artifact.evalResultHash ||
+      evalHash[3] !== input.headSha || artifact.eval.cases <= 0 || artifact.eval.runtimes.length !== 2 ||
+      new Set(artifact.eval.runtimes.map((runtime) => runtime.runtime)).size !== 2 ||
+      artifact.eval.runtimes.some((runtime) => runtime.failed !== 0 ||
+        runtime.passed !== artifact.eval.cases)) {
+    return fail("benchmark-evals-invalid", "Attached Claude and Codex eval evidence must be non-empty and fully passing.");
+  }
+  for (const runtimeResult of artifact.eval.runtimes) {
+    const displayed = new RegExp(`^- ${runtimeResult.runtime}: (\\d+)\\/(\\d+) passed;`, "m").exec(content);
+    if (!displayed || Number(displayed[1]) !== runtimeResult.passed ||
+        Number(displayed[2]) !== artifact.eval.cases) {
+      return fail("benchmark-evals-body-mismatch", "Disclosed eval counts must match the attached evidence.");
+    }
   }
   return null;
 }
@@ -169,12 +268,13 @@ function validateResult(input: BenchmarkGateInput, content: string): BenchmarkGa
     return fail("benchmark-yellow-explanation-missing", "A yellow comparison requires at least one regression explanation.");
   }
   if (status === "red") {
-    const problem = validateApproval(input, content, BENCHMARK_RED_ACCEPTANCE_LABEL, "Regression acceptance head");
+    const problem = validateApproval(input, BENCHMARK_RED_ACCEPTANCE_LABEL);
     if (problem) return problem;
   } else if (input.labels.includes(BENCHMARK_RED_ACCEPTANCE_LABEL)) {
     return fail("benchmark-red-acceptance-stale", "Remove the red-regression acceptance label from a non-red result.");
   }
-  return pass(`benchmark-result-${status}`, `Benchmark disclosure is complete with a ${status} comparison.`);
+  const evidenceProblem = validateEvidence(input, content, status as "green" | "yellow" | "red");
+  return evidenceProblem ?? pass(`benchmark-result-${status}`, `Benchmark disclosure is complete with a ${status} comparison.`);
 }
 
 /** Validate one live pull request without running a model or mutating GitHub state. */
@@ -198,14 +298,11 @@ export function validateBenchmarkDisclosure(input: BenchmarkGateInput): Benchmar
     }
     const reason = lineValue(section.content, "Bypassed");
     if (!reason) return fail("benchmark-bypass-reason-missing", "An approved bypass requires `Bypassed: <reason>`. ");
-    if (!EVAL_EVIDENCE.test(section.content)) {
-      return fail("benchmark-evals-missing", "A benchmark bypass still requires complete local Claude and Codex eval evidence.");
-    }
-    const problem = validateApproval(input, section.content, BENCHMARK_BYPASS_LABEL, "Bypass head");
-    return problem ?? pass("benchmark-bypassed", `Benchmark bypass approved by Daniel for head ${input.headSha}.`);
+    const problem = validateApproval(input, BENCHMARK_BYPASS_LABEL);
+    return problem ?? pass("benchmark-bypassed", `Benchmark bypass approved for head ${input.headSha}.`);
   }
   if (/^Bypassed:/m.test(section.content)) {
-    return fail("benchmark-bypass-label-missing", "Daniel must apply `benchmark-not-needed` for a bypass.");
+    return fail("benchmark-bypass-label-missing", "The benchmark approver must apply `benchmark-not-needed` for a bypass.");
   }
   return validateResult(input, section.content);
 }

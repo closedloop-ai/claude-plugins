@@ -11,6 +11,7 @@ export interface ClaudeLaunch {
   cwd: string;
   args: string[];
   mcpConfigFile: string;
+  settingsFile: string;
   selection: ClaudeSelection;
 }
 
@@ -22,6 +23,7 @@ export function prepareClaudeLaunch(fixture: PreparedFixture, pluginDir: string,
   verifyPreparedFixture(fixture, LOCAL_MCP_URL);
   const selection = requirePinnedClaude({ model: BENCHMARK_MODEL, effort: BENCHMARK_EFFORT });
   const mcpConfigFile = join(fixture.agentCheckout, "..", "claude-mcp.json");
+  const settingsFile = join(fixture.agentCheckout, "..", "claude-settings.json");
   if (apiKey !== undefined && !/^sk_live_[A-Za-z0-9_-]+$/.test(apiKey)) {
     throw new Error("benchmark-local-api-key-invalid");
   }
@@ -35,11 +37,17 @@ export function prepareClaudeLaunch(fixture: PreparedFixture, pluginDir: string,
     },
   };
   writeFileSync(mcpConfigFile, `${JSON.stringify(config, null, 2)}\n`, { flag: "wx" });
+  writeFileSync(settingsFile, `${JSON.stringify({ env: {
+    CLAUDE_CODE_SUBAGENT_MODEL: BENCHMARK_MODEL,
+    ANTHROPIC_DEFAULT_SONNET_MODEL: BENCHMARK_MODEL,
+    CLAUDE_CODE_EFFORT_LEVEL: BENCHMARK_EFFORT,
+  } }, null, 2)}\n`, { flag: "wx", mode: 0o600 });
   return {
     command: "claude",
     cwd: fixture.agentCheckout,
-    args: claudeArgs(pluginDir, mcpConfigFile, fixture.taskPrompt),
+    args: claudeArgs(pluginDir, mcpConfigFile, settingsFile, fixture.taskPrompt),
     mcpConfigFile,
+    settingsFile,
     selection,
   };
 }

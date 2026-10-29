@@ -29,7 +29,7 @@ export function phaseFromTool(name: string, input: unknown): BenchmarkPhase | nu
   if (/pre-pr-lanes|adversarial|guardrails|review/.test(text)) return "review";
   if (/handoff|handoff-inventory/.test(text)) return "handoff";
   if (/environment|deploy|main-sync-push/.test(text)) return "deploy";
-  if (/commit-worktree|build|backend-worker|primitive-worker|storybook/.test(text)) return "build";
+  if (/commit-worktree|build|change-worker|backend-worker|primitive-worker|storybook/.test(text)) return "build";
   if (/requirements/.test(text)) return "requirements";
   if (name === "Skill" && /vibe:vibe/.test(text)) return "startup";
   return null;
@@ -51,7 +51,8 @@ export function attributeCall(
   agentModels: Record<string, string>,
 ): Attribution {
   const worker = evidence.agentName?.replace(/^vibe:/, "") ?? null;
-  const skill = evidence.skillName ?? null;
+  const directSkill = evidence.skillName ?? null;
+  const skill = directSkill ?? (shape === "vibe" ? "vibe:vibe" : "vibe:fleet-orchestrator");
   let component: TopComponent;
   let unattributedReason: string | null = null;
   if (worker) {
@@ -61,9 +62,9 @@ export function attributeCall(
   } else if (evidence.parentToolUseId) {
     component = "unattributed";
     unattributedReason = `unknown-parent-tool:${evidence.parentToolUseId}`;
-  } else if (skill?.startsWith("fleet-orchestrator")) {
+  } else if (directSkill?.startsWith("fleet-orchestrator")) {
     component = "fleet-orchestrator";
-  } else if (skill?.startsWith("vibe:")) {
+  } else if (directSkill?.startsWith("vibe:")) {
     component = "vibe";
   } else if (!evidence.querySource || evidence.querySource === "repl_main_thread") {
     component = shape === "vibe" ? "vibe" : "fleet-orchestrator";
@@ -76,7 +77,7 @@ export function attributeCall(
     unattributedReason,
     skill,
     worker: component === "vibe" ? worker : null,
-    phase: evidence.phase ?? (worker && component === "vibe" ? workerPhase(worker) : null),
+    phase: worker && component === "vibe" ? workerPhase(worker) ?? evidence.phase ?? null : evidence.phase ?? null,
     declaredAgentModel: worker && component === "vibe" ? agentModels[worker] ?? null : null,
   };
 }

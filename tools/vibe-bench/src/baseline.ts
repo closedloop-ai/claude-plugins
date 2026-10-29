@@ -3,7 +3,7 @@ import { BASELINE_ORDER, BASELINE_WAVES, shapePrompt } from "./claude-task.ts";
 import { TARGET_WALL_MS } from "./contract.ts";
 import { mad, median } from "./comparison.ts";
 import type { BenchmarkShape, ClaudeBenchmarkResult, ModelCall } from "./result-schema.ts";
-import { resultHash, verifyResultHash } from "./result-schema.ts";
+import { verifyResultHash } from "./result-schema.ts";
 
 /** One complete task-to-closed-draft-PR measurement. */
 export interface BaselineRun {
@@ -61,6 +61,7 @@ export async function orchestrateWaves<T>(waves: readonly (readonly BenchmarkSha
   let setupMs = 0;
   let teardownMs = 0;
   const runs: Array<{ shape: BenchmarkShape; value: T }> = [];
+  let primaryFailure: unknown = null;
   try {
     await workflow.setup();
     setupMs = now() - started;
@@ -76,9 +77,16 @@ export async function orchestrateWaves<T>(waves: readonly (readonly BenchmarkSha
       });
       offset += wave.length;
     }
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
   } finally {
     const teardownStarted = now();
-    await workflow.teardown();
+    try { await workflow.teardown(); }
+    catch (error) {
+      if (primaryFailure) throw new AggregateError([primaryFailure, error], "benchmark-run-and-teardown-failed");
+      throw error;
+    }
     teardownMs = now() - teardownStarted;
   }
   return { runs, setupMs, teardownMs, fullWallMs: now() - started };
@@ -112,7 +120,7 @@ export function finalizeBaseline(input: {
 }): BaselineArtifact {
   if (input.runs.length !== 10 || input.runs.some((run, index) => run.index !== index ||
       run.shape !== BASELINE_ORDER[index] || run.result.identity.shape !== run.shape ||
-      !run.prClosed || !run.proofRefRemoved || !run.recordedDigest || run.prNumber <= 0)) {
+        !run.prClosed || !run.proofRefRemoved || run.recordedDigest !== run.result.resultHash || run.prNumber <= 0)) {
     throw new Error("benchmark-baseline-run-count-or-pr-state");
   }
   if (new Set(input.runs.map((run) => run.result.identity.id)).size !== 10 ||
@@ -135,10 +143,7 @@ export function finalizeBaseline(input: {
         run.result.observedEffort !== "high" || run.result.observedModel !== "claude-sonnet-5-5") {
       throw new Error("benchmark-baseline-mixed-or-invalid-run");
     }
-    const { resultHash: _oldHash, ...payload } = run.result;
-    payload.identity = { ...payload.identity,
-      stackSetupMs: input.setupMs / 10, stackTeardownMs: input.teardownMs / 10 };
-    return { ...run, result: { ...payload, resultHash: resultHash(payload) } };
+    return run;
   });
   const shapeWall = Object.fromEntries((["vibe", "fleet-one-writer"] as const).map((shape) => {
     const values = runs.filter((run) => run.shape === shape).map((run) => run.result.identity.wallMs);
