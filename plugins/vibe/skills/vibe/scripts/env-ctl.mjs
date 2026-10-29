@@ -44,6 +44,8 @@ export const NO_ANALYTICS_KEY = "I couldn't find the product's analytics key, so
 export const NOT_CONFIRMED_READY = "Your copy of the app could not be confirmed as ready, so I haven't opened it.";
 // The files commit-worktree.mjs always leaves out of a commit.
 const LEFT_OUT = [/(^|\/)\.env(\.|$)/, /^\.control\//, /^\.closedloop-ai\/vibe-plans\//];
+// Evidence for the agent, not a sentence for the person: the launcher's grant did not reach this script's stdin intact.
+export const MAIN_SYNC_CONTEXT_MISSING = "The parent-issued main-sync context is missing or invalid: expected { \"context\": <operationContext> } on stdin, copied verbatim from the launch envelope (environment.md, Main-sync before publication).";
 export const Status = Object.freeze({
   Done: "DONE", Blocked: "BLOCKED", NeedsPerson: "NEEDS_PERSON", NeedsAgent: "NEEDS_AGENT", NeedsCommit: "NEEDS_COMMIT",
 });
@@ -117,6 +119,17 @@ export function uncommittedDeliverables(porcelain, localFixes = []) {
   const skip = new Set(localFixes);
   return porcelain.split("\n").filter((line) => line.trim() !== "").map((line) => line.slice(3).replace(/^"|"$/g, ""))
     .filter((file) => !skip.has(file) && !LEFT_OUT.some((pattern) => pattern.test(file)));
+}
+
+/**
+ * Null when `stdin` is JSON holding a `context` object; otherwise the BLOCKED result. Only the shape is checked:
+ * the bytes themselves are always forwarded untouched, and every field is judged by main-sync, never here.
+ */
+export function mainSyncContextProblem(stdin) {
+  const blocked = { status: Status.Blocked, code: "MAIN_SYNC_CONTEXT_MISSING", error: MAIN_SYNC_CONTEXT_MISSING };
+  if (typeof stdin !== "string" || stdin.trim() === "") return blocked;
+  const parsed = parseJson(stdin, null);
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed) && parsed.context && typeof parsed.context === "object" && !Array.isArray(parsed.context) ? null : blocked;
 }
 
 /** Builds the controller over its commands; tests inject `run`, `sleep` and `now`. */
@@ -204,6 +217,8 @@ export function createEnvCtl({
   }
 
   async function request({ worktree, mode, personEmail, keepFlagSnapshot, pollSeconds = 15, findSeconds = 600, giveUpSeconds = 2700, stdin }) {
+    const noContext = mainSyncContextProblem(stdin);
+    if (noContext) return noContext;
     const yaml = gh(["workflow", "view", DISPATCH_WORKFLOW, "--repo", repo, "--yaml"]);
     const workflowInputs = parseWorkflowInputs(yaml.stdout);
     const keep = workflowInputs.declared.has("keep_flag_snapshot") ? (keepFlagSnapshot ?? (mode === "flags" ? "false" : "true")) : undefined;
@@ -245,6 +260,8 @@ export function createEnvCtl({
 
   /** The publish checks the worker runs before any push, then the exact-SHA push. */
   function publish({ worktree, since, stdin }) {
+    const noContext = mainSyncContextProblem(stdin);
+    if (noContext) return noContext;
     const record = parseJson(sessions(["show", "--worktree", worktree]).stdout, {});
     const session = record.session ?? record;
     const plans = parseJson(node("local-plans.mjs", ["--worktree", worktree]).stdout, {});
@@ -293,7 +310,7 @@ export function createEnvCtl({
     return edited.status === 0 ? { status: Status.Done, pr: Number(pr) } : { status: Status.Blocked, error: tailLines(edited.stderr, 3) };
   }
 
-  return { flags, request, publish, redeploy, openPullRequest, updatePullRequest, followRun, findRun };
+  return { flags, request, publish, redeploy, openPullRequest, updatePullRequest, followRun, findRun, recordResult };
 }
 
 async function main(argv) {
