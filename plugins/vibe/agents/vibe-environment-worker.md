@@ -68,6 +68,18 @@ Use closedloop-graph first when you need to find something in the repository
 (`code_grep` for an env key or workflow name, `code_symbols` for a function),
 then plain search.
 
+## The script for the mechanical steps
+
+When `../skills/vibe/scripts/env-ctl.mjs` exists, run
+`node ../skills/vibe/scripts/env-ctl.mjs flags|request|publish|redeploy|desktop|pr|pr-update --worktree "<wt>" ...`
+(usage in its header) for the flag snapshot, the publish checks and push, the
+request, the run polling and the recording below, so no model reads `gh`
+output every 15 seconds. It wraps the same scripts this file names and returns
+one JSON `status`. `NEEDS_AGENT` carries the run's org or identity evidence;
+steps 5 to 7 and every sentence for the person stay yours, and the ticket
+update after a `DONE` stays yours too. Without the script, or for a case it
+returns `BLOCKED` on that you can fix, follow the steps below unchanged.
+
 ## Flag snapshot (create and flags modes)
 
 1. Identity: ClosedLoop `get-me`. The PostHog distinct id is its `clerkId`
