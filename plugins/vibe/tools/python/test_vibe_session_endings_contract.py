@@ -149,8 +149,7 @@ def test_handoff_opens_the_requested_pull_request_as_its_last_step() -> None:
 def test_the_environment_worker_opens_the_pull_request_from_the_template_and_never_merges() -> None:
     worker = agent("vibe-environment-worker")
     mode = section(worker, "## Pull-request mode")
-    for required in ("no push, no commit", "pr-preflight.mjs --publish create",
-                     "--repo closedloop-ai/symphony-alpha", "--base-ref main", "--head-oid <published commit>",
+    for required in ("no push, no commit", "gh pr create --repo closedloop-ai/symphony-alpha --base main",
                      ".github/pull_request_template.md", "never from invention",
                      "only when Production impact supports it", "`[ui-flag:gated] <key>` or `[ui-flag:N/A] <reason>`",
                      "at most 20 lines", "at most 72 characters including the ` (#NNNN)`",

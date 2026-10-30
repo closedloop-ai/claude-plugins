@@ -137,11 +137,12 @@ function commandSubstitution(command, start, terminator) {
   return { text, end: command.length - 1 };
 }
 
-function expandSegment(segment, depth) {
+function expandSegment(segment, depth, expandShellPayloads) {
   const words = commandWords(segment);
   const prefix = commandPrefix(words);
   const current = words.slice(prefix.index);
   if (current.length === 0 || depth > 8) return current.length ? [{ env: prefix.env, words: current }] : [];
+  if (!expandShellPayloads) return [{ env: prefix.env, words: current }];
   const program = path.basename(current[0]);
   if (program === 'ssh') {
     let index = 1;
@@ -151,7 +152,7 @@ function expandSegment(segment, depth) {
     }
     index += 1;
     const payload = current.slice(index).join(' ');
-    return payload ? expandCommand(payload, depth + 1) : [{ env: prefix.env, words: current }];
+    return payload ? expandCommand(payload, depth + 1, true) : [{ env: prefix.env, words: current }];
   }
   if (SHELLS.has(program)) {
     let index = 1;
@@ -161,16 +162,16 @@ function expandSegment(segment, depth) {
       if (/c/.test(option.replace(/^[-+]+/, ''))) executes = true;
       if (['-o', '+o', '-O', '+O', '--rcfile', '--init-file'].includes(option)) index += 1;
     }
-    if (executes && index < current.length) return expandCommand(current.slice(index).join(' '), depth + 1);
+    if (executes && index < current.length) return expandCommand(current.slice(index).join(' '), depth + 1, true);
   }
   return [{ env: prefix.env, words: current }];
 }
 
-function expandCommand(command, depth = 0) {
-  return splitCommandText(command).flatMap(segment => expandSegment(segment, depth));
+function expandCommand(command, depth = 0, expandShellPayloads = false) {
+  return splitCommandText(command).flatMap(segment => expandSegment(segment, depth, expandShellPayloads));
 }
 
 /** `{ env, words }` for each simple command in `command`. */
-export function commandSegments(command) {
-  return expandCommand(command);
+export function commandSegments(command, { expandShellPayloads = false } = {}) {
+  return expandCommand(command, 0, expandShellPayloads);
 }

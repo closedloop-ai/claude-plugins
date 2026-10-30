@@ -58,8 +58,7 @@ test("commits the session's changes but never its local fixes or files that neve
   assert.equal(git(checkout, ["log", "-1", "--format=%s"], home), "ISS-7: Add the new panel");
   assert.equal(git(checkout, ["log", "-1", "--format=%b"], home), "Screens: projects");
   assert.equal(result.json.commit, git(checkout, ["rev-parse", "HEAD"], home));
-  assert.equal(result.json.pushDue, false, "a commit made just now is not due, and excluded files left behind do not age it");
-  assert.equal(typeof result.json.unpushedMinutes, "number");
+  assert.equal(result.json.amended, false);
   const leftOver = git(checkout, ["status", "--porcelain", "--untracked-files=all"], home).split("\n").map((line) => line.slice(3));
   assert.deepEqual(leftOver.sort(), [".control/run.json", ".env.local", "apps/app/.env", "scripts/fix.sh", "tools/patched/a.ts"]);
 });
@@ -76,6 +75,26 @@ test("reports nothing to commit without creating a commit", (t) => {
   assert.equal(result.json.committed, false);
   assert.deepEqual(result.json.excluded, ["scripts/fix.sh"]);
   assert.equal(commitCount(checkout, home), before);
+});
+
+test('amends one unpushed commit after a pre-push repair and refuses a published head', t => {
+  const { home, checkout } = setup(t);
+  write(checkout, 'apps/app/page.tsx', 'candidate\n');
+  const first = runNode(SCRIPT, ['--worktree', checkout, '--subject', 'ISS-7: Prepare the candidate'], home);
+  assert.equal(first.status, 0, JSON.stringify(first.json));
+  const count = commitCount(checkout, home);
+  const firstHead = git(checkout, ['rev-parse', 'HEAD'], home);
+  write(checkout, 'apps/app/page.tsx', 'pre-push repair\n');
+  const amended = runNode(SCRIPT, ['--worktree', checkout, '--amend'], home);
+  assert.equal(amended.status, 0, JSON.stringify(amended.json));
+  assert.equal(amended.json.amended, true);
+  assert.equal(commitCount(checkout, home), count, 'repair keeps one local commit');
+  assert.notEqual(git(checkout, ['rev-parse', 'HEAD'], home), firstHead);
+  git(checkout, ['push', '--quiet', 'origin', 'HEAD:refs/heads/published'], home);
+  write(checkout, 'apps/app/page.tsx', 'too late\n');
+  const refused = runNode(SCRIPT, ['--worktree', checkout, '--amend'], home);
+  assert.equal(refused.status, 1);
+  assert.match(refused.json.error, /published|remote/i);
 });
 
 test("local plans stay in the worktree even when staged, without excluding other artifacts", (t) => {

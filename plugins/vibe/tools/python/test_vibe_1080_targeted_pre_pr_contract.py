@@ -22,7 +22,7 @@ def test_handoff_requires_final_diff_inventory_before_pr_creation() -> None:
     assert "post-merge-only lane" in verify
     assert "rerun only that failed case" in verify
     assert "pr-evidence-comment.mjs" in environment
-    assert "either blocking gate false creates nothing" in environment
+    assert "blocking.prEvidence" in environment
 
 
 def test_e2e_tiers_and_operator_override_are_owned_rules() -> None:

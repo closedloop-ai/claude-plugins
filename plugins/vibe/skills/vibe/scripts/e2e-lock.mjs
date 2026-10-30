@@ -52,7 +52,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { imageProblem, recordImages } from "./image-head.mjs";
 import { readProcessIdentity } from "../../../shared/process-identity.mjs";
-import { testedHead, sourceIdentity, sameSource, withStableSource } from "./tested-head.mjs";
+import { testedSource, sameSource, withStableSource } from "./tested-head.mjs";
 
 export const BUSY_EXIT = 75;
 export const DUPLICATE_EXIT = 76;
@@ -359,12 +359,13 @@ async function main(argv) {
   if (action !== "run" || !command) {
     throw new Error("Usage: e2e-lock.mjs run --head <sha> [--owner <writer>] [--ticket <slug>] [--wait-seconds <n>] [--lock-dir <dir>] [--foreign-compose <project>]... <command> [args...]");
   }
-  const tested = testedHead(worktreeOf(process.cwd()), values.head);
+  const worktree = worktreeOf(process.cwd());
+  const enteredSource = testedSource(worktree, values.head);
+  const tested = enteredSource.head;
   const waitSeconds = values["wait-seconds"] === undefined ? DEFAULT_WAIT_SECONDS : Number(values["wait-seconds"]);
   if (!Number.isFinite(waitSeconds) || waitSeconds < 0) {
     throw new Error("--wait-seconds must be zero or a positive number of seconds.");
   }
-  const worktree = worktreeOf(process.cwd());
   const owner = {
     pid: process.pid,
     identity: readProcessIdentity(process.pid),
@@ -416,7 +417,8 @@ async function main(argv) {
   // Fingerprint after waiting: queued edits must not be reported as the command's inputs.
   let source;
   try {
-    source = sourceIdentity(worktree, tested);
+    source = testedSource(worktree, tested);
+    if (!sameSource(enteredSource, source)) throw new Error(`SOURCE-MOVED while queued ${JSON.stringify(enteredSource)} -> ${JSON.stringify(source)}`);
     if (values['source-hash'] !== undefined && values['source-hash'] !== source.treeSha256) {
       throw new Error('SOURCE-HASH-MISMATCH --source-hash must identify the current working tree');
     }

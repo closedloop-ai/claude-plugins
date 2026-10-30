@@ -134,24 +134,16 @@ function invocationIndex(words) {
   }
 }
 
-/** Require committed HEAD plus the actual source tree hash at the external E2E wrapper boundary. */
+/** Require the deployed remote wrapper's real `--head <sha> <owner> <command>` interface. */
 export function e2eSlotProblem(command) {
-  for (const { words } of commandSegments(command)) {
+  for (const { words } of commandSegments(command, { expandShellPayloads: true })) {
     const start = invocationIndex(words);
     if (path.basename(words[start] ?? "") !== "e2e-slot.sh") continue;
-    const identity = {};
-    let index = start + 1;
-    while (['--head', '--source-hash'].includes(words[index])) {
-      const key = words[index];
-      if (identity[key] !== undefined) return 'e2e-slot.sh identity flags must occur once before the owner label';
-      identity[key] = words[index + 1];
-      index += 2;
-    }
-    if (!SHA.test(identity['--head'] ?? '')) {
+    if (words[start + 1] !== '--head' || !SHA.test(words[start + 2] ?? '')) {
       return 'e2e-slot.sh needs --head <sha> before the owner label, the committed HEAD underlying the tested source';
     }
-    if (!/^[a-f0-9]{64}$/i.test(identity['--source-hash'] ?? '')) {
-      return 'e2e-slot.sh needs --source-hash <treeSha256> from tested-head.mjs source; HEAD alone cannot identify uncommitted inputs';
+    if (words[start + 3] === '--source-hash') {
+      return 'e2e-slot.sh does not accept --source-hash; it would treat that flag as the owner label and execute the hash as a command';
     }
   }
   return null;

@@ -6,6 +6,7 @@
 //
 // Usage:
 //   commit-worktree.mjs --worktree <path> --subject <text> [--body <text>] [--exclude <path>]...
+//   commit-worktree.mjs --worktree <path> --amend
 //
 // Stages everything, then leaves out the session's `localFixes` (from the
 // vibe session record, when the worktree has one), files that never belong
@@ -18,9 +19,9 @@
 // names no untracked file is refused, so a typo cannot hide work. A staged
 // merge (MERGE_HEAD) is concluded.
 // Hooks always run; a refused commit commits nothing and reports the end of
-// the hook output. Never amends, squashes, or skips hooks.
-//
-// A commit also reports `pushDue` and `unpushedMinutes` (`push-cadence.mjs`).
+// the hook output. `--amend` is only for a repaired commit that no remote
+// contains yet; it preserves the message and still runs hooks. Never squashes
+// or skips hooks.
 // Prints one JSON object on stdout. Errors print {"ok":false,"error":...} and
 // exit non-zero.
 
@@ -29,7 +30,6 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { committedLocalPlans, isLocalPlanPath } from "./local-plans.mjs";
-import { unpushedAge } from "./push-cadence.mjs";
 import { git, readSessionRecord } from "./session-record.mjs";
 import { mainSyncFailure, prepareMainSync, readMainSyncInput } from "./dist/main-sync.mjs";
 
@@ -47,6 +47,7 @@ const { values } = parseArgs({
     subject: { type: "string" },
     body: { type: "string" },
     exclude: { type: "string", multiple: true, default: [] },
+    amend: { type: "boolean", default: false },
     "prepare-main-sync": { type: "boolean", default: false },
   },
 });
@@ -69,7 +70,11 @@ function commitWorktree() {
     throw new Error("--worktree is required.");
   }
   const worktree = path.resolve(values.worktree);
-  const subject = requireSubject(values.subject);
+  const amend = values.amend;
+  const subject = amend ? git(worktree, ['log', '-1', '--format=%s']) : requireSubject(values.subject);
+  if (amend && git(worktree, ['branch', '-r', '--contains', 'HEAD'])) {
+    throw new Error('Refusing to amend a commit already published on a remote branch.');
+  }
   const localFixes = (readSessionRecord(worktree)?.localFixes ?? []).flatMap((fix) => fix.paths ?? []);
 
   const committedPlans = committedLocalPlans(args => git(worktree, args));
@@ -90,8 +95,8 @@ function commitWorktree() {
   }
 
   const messageFile = path.join(git(worktree, ["rev-parse", "--absolute-git-dir"]), "vibe-commit-message.txt");
-  writeFileSync(messageFile, values.body ? `${subject}\n\n${values.body.trim()}\n` : `${subject}\n`);
-  const result = spawnSync("git", ["commit", "-F", messageFile], {
+  if (!amend) writeFileSync(messageFile, values.body ? `${subject}\n\n${values.body.trim()}\n` : `${subject}\n`);
+  const result = spawnSync("git", amend ? ["commit", "--amend", "--no-edit"] : ["commit", "-F", messageFile], {
     cwd: worktree,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
@@ -104,17 +109,7 @@ function commitWorktree() {
       `The commit was refused (${reason}); nothing was committed. Last lines:\n${output.slice(-HOOK_OUTPUT_LINES).join("\n")}`
     );
   }
-  return { committed: true, commit: git(worktree, ["rev-parse", "HEAD"]), subject, merge: merging, files, excluded, ...pushCadence(worktree, [...excluded, ...localFixes]) };
-}
-
-// A tested checkpoint is pushed at least every 45 minutes (`push-cadence.mjs`); the commit never fails on it.
-function pushCadence(worktree, ignore) {
-  try {
-    const { minutes, due } = unpushedAge(worktree, { ignore });
-    return { pushDue: due, unpushedMinutes: minutes };
-  } catch {
-    return {};
-  }
+  return { committed: true, amended: amend, commit: git(worktree, ["rev-parse", "HEAD"]), subject, merge: merging, files, excluded };
 }
 
 function requireSubject(subject) {

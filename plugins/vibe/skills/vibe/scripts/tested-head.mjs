@@ -12,12 +12,21 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { git } from "./session-record.mjs";
 
-/** Resolve the intended HEAD without requiring a commit for uncommitted checks. */
-export function testedHead(worktree, intended) {
+function matchedHead(worktree, intended) {
   if (!/^[0-9a-f]{7,40}$/i.test(intended ?? "")) throw new Error("name the commit to test as a SHA (--head <sha>)");
   const head = git(worktree, ["rev-parse", "HEAD"]);
   if (!head.startsWith(intended.toLowerCase())) {
     throw new Error(`HEAD-MISMATCH the worktree is at ${head.slice(0, 12)}, not ${intended}: check out the commit to test (a failed checkout leaves the old one)`);
+  }
+  return head;
+}
+
+/** Preserve the external clean-run contract: the named HEAD with no modified tracked file. */
+export function testedHead(worktree, intended) {
+  const head = matchedHead(worktree, intended);
+  const dirty = git(worktree, ["status", "--porcelain", "--untracked-files=no"]);
+  if (dirty) {
+    throw new Error(`DIRTY-WORKTREE modified tracked files would make the run test something other than ${head.slice(0, 12)}: ${dirty.split("\n").map(line => line.replace(/^\s*\S+\s+/, "")).join(", ")}`);
   }
   return head;
 }
@@ -65,16 +74,48 @@ export function treeIdentity(root) {
 /** Identify current tracked and nonignored untracked inputs; staging alone does not alter identity. */
 export function sourceIdentity(worktree, intended = git(worktree, ['rev-parse', 'HEAD'])) {
   worktree = git(worktree, ['rev-parse', '--show-toplevel']);
-  const head = testedHead(worktree, intended);
+  const head = matchedHead(worktree, intended);
   const run = (args) => execFileSync('git', ['-C', worktree, ...args], { maxBuffer: 128 * 1024 * 1024 });
   const names = (args) => run(args).toString('utf8').split('\0').filter(Boolean);
   const untracked = names(['ls-files', '--others', '--exclude-standard', '-z']);
   const files = [...names(['ls-tree', '-r', '--name-only', '-z', 'HEAD']), ...names(['ls-files', '-z'])];
   const changed = names(['diff', '--name-only', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', 'HEAD', '--']);
+  validateSourceEntries(worktree, [...files, ...untracked]);
   const diffSha256 = hashFiles(worktree, [...changed, ...untracked], true);
   const source = { head, diffSha256, treeSha256: hashFiles(worktree, [...files, ...untracked]) };
   if (git(worktree, ['rev-parse', 'HEAD']) !== head) throw new Error('HEAD-MOVED while fingerprinting source');
   return source;
+}
+
+/** Resolve a named HEAD and return its complete dirty-aware source identity. */
+export function testedSource(worktree, intended) {
+  return sourceIdentity(worktree, intended);
+}
+
+function validateSourceEntries(root, files) {
+  const selected = new Set(files.map(file => file.replace(/\/$/, '')));
+  for (const name of selected) {
+    const file = path.join(root, name);
+    let stat;
+    try { stat = lstatSync(file); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    if (stat.isDirectory()) throw new Error(`SOURCE-DIRECTORY-UNSUPPORTED ${name}: nested repositories and submodules are not self-contained source evidence`);
+    if (!stat.isSymbolicLink()) continue;
+    let resolved;
+    let missing = false;
+    try { resolved = realpathSync(file); }
+    catch {
+      resolved = path.resolve(path.dirname(file), readlinkSync(file));
+      if (lstatExists(resolved)) throw new Error(`SYMLINK target cannot be resolved inside selected source: ${name}`);
+      missing = true;
+    }
+    if (!inside(root, resolved)) throw new Error(`SYMLINK outside selected source: ${name}`);
+    if (missing) continue;
+    const target = path.relative(root, resolved);
+    if (!selected.has(target) && ![...selected].some(entry => entry.startsWith(`${target}${path.sep}`))) {
+      throw new Error(`SYMLINK target is not selected source: ${name}`);
+    }
+  }
 }
 
 /** Compare both provenance and content, detecting edits even when HEAD stays unchanged. */

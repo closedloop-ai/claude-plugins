@@ -46,8 +46,9 @@ def test_helpers_record_and_end_their_processes_and_the_watcher_is_checked() -> 
 
 
 def test_push_cadence_and_shepherding_are_wired() -> None:
-    assert "pushDue" in (VIBE / "scripts" / "commit-worktree.mjs").read_text()
-    assert "`pushDue: true`" in _text(VIBE / "SKILL.md")
+    cadence = (VIBE / "scripts" / "push-cadence.mjs").read_text()
+    assert "attention signal" in cadence
+    assert "never permission to" in cadence
     assert "shepherd.mjs --pr <n> --repo <owner/repo>" in _text(HANDOFF / "SKILL.md")
     fleet = _text(FLEET / "SKILL.md")
     assert "cadence never authorizes checkpoint commits" in fleet

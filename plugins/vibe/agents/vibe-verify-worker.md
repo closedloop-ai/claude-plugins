@@ -191,15 +191,17 @@ For targeted E2E, record the repository's capability probe and choose:
    stack with the CI sandbox identity, quarantine exclusion and retries off.
    Do not run host-browser visual-regression specs against Linux baselines;
    list them as `not run locally, covered by CI`.
-3. Tier C: otherwise use the operator's configured remote runner and its
-   tested-source lock with `--head <HEAD> --source-hash <treeSha256>`, building fresh after a
-   worktree switch (`image-head.mjs` refuses stale images).
+3. Tier C: otherwise use the operator's configured remote runner through its
+   real `e2e-slot.sh --head <HEAD> <owner> <command...>` interface, on a clean
+   worktree at the push-ready local commit, building fresh after a switch
+   (`image-head.mjs` refuses stale images). A failure is fixed uncommitted,
+   then the still-unpushed commit is amended and transferred before rerunning.
 
 Record dirty E2E through `e2e-lock.mjs`; retain its `<gitdir>/vibe-e2e-results`
-receipt, not the HEAD-only prepush ledger. An external `e2e-slot.sh` invocation
-also needs `--head <HEAD> --source-hash <treeSha256>`. Verify that machine's
-wrapper supports the contract; if unavailable or incompatible, report that
-boundary and use the owned lock, never infer its internals or push early.
+receipt with `--head <HEAD> --source-hash <treeSha256>`, not the HEAD-only
+prepush ledger. The external `e2e-slot.sh --head <HEAD> <owner> <command...>`
+runs only on a clean worktree; its imported `testedHead` enforces that boundary.
+Never pass it `--source-hash` or infer another interface.
 
 `git config --bool vibe.noNativeE2e` is the machine-local operator override;
 when true, skip Tier B and use C or report no tier. If no tier is available,

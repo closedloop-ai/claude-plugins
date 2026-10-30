@@ -49,6 +49,31 @@ test('stable source rejects sync and async mutations during the operation', asyn
   assert.deepEqual(accepted.source, sourceIdentity(source));
 });
 
+test('testedHead stays clean-only while sourceIdentity identifies dirty inputs', t => {
+  const { source, plugins, home } = snapshotFixture(t);
+  const head = git(source, ['rev-parse', 'HEAD'], home);
+  writeFileSync(path.join(plugins, 'vibe/input.md'), 'dirty candidate');
+  assert.throws(() => identity.testedHead(source, head), /DIRTY-WORKTREE/);
+  assert.equal(sourceIdentity(source, head).head, head);
+  assert.deepEqual(identity.testedSource(source, head), sourceIdentity(source, head));
+});
+
+test('source identity refuses unselected symlink targets and nested repositories', t => {
+  const { root, source, plugins, home } = snapshotFixture(t);
+  const outside = path.join(root, 'outside.txt');
+  writeFileSync(outside, 'outside bytes');
+  symlinkSync(outside, path.join(plugins, 'vibe/outside.md'));
+  git(source, ['add', 'plugins/vibe/outside.md'], home);
+  assert.throws(() => sourceIdentity(source), /SYMLINK|selected source/i);
+  unlinkSync(path.join(plugins, 'vibe/outside.md'));
+  git(source, ['reset', '--quiet'], home);
+  const nested = path.join(plugins, 'vibe/nested');
+  mkdirSync(nested);
+  git(nested, ['init', '--quiet'], home);
+  writeFileSync(path.join(nested, 'helper.js'), 'export default 1;\n');
+  assert.throws(() => sourceIdentity(source), /directory|nested|submodule/i);
+});
+
 for (const escape of ['absolute', 'parent']) test(`snapshot refuses ${escape} symlink escape to ignored private input`, t => {
   const { root, home, source, plugins } = snapshotFixture(t);
   const secret = path.join(plugins, '.env');

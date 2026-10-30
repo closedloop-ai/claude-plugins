@@ -296,8 +296,12 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
       if (validSourceIdentity(source)) {
         try { git(worktree, ['merge-base', '--is-ancestor', source.head, current.head]); ancestor = true; } catch { /* Not proven. */ }
       }
-      if (!validSourceIdentity(source) || source.treeSha256 !== current.treeSha256 || commit !== current.head || !ancestor) {
-        bindingProblems.push('tested source identity does not match current content and its proven commit ancestry');
+      const omitted = source?.head !== current.head
+        && git(worktree, ['status', '--porcelain', '--untracked-files=all', '--ignore-submodules=none']) !== '';
+      if (!validSourceIdentity(source) || source.treeSha256 !== current.treeSha256 || commit !== current.head || !ancestor || omitted) {
+        bindingProblems.push(omitted
+          ? 'published commit omitted uncommitted or untracked inputs covered by the tested source identity'
+          : 'tested source identity does not match current content and its proven commit ancestry');
       } else testedCommit = source.head;
     }
     const files = readDiff(worktree, base).filter((file) => include.has(file.path));

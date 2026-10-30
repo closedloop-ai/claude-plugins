@@ -441,7 +441,8 @@ changes and gates fields.
    these are body edits, not source fixes or new permission requests.
 4. Title: `<live ticket slug>: <plain imperative summary>`, at most 72
    characters including the ` (#NNNN)` GitHub appends, with no mention of AI
-   tools. First `node ../skills/vibe/scripts/pre-pr-lanes.mjs check --worktree "<wt>" --report <the repo's lane report output>`
+   tools; `node ../skills/vibe/scripts/pr-preflight.mjs --title "<title>" --body-file <file> --worktree "<wt>" --base <inventory.baseCommit>`
+   must pass. First `node ../skills/vibe/scripts/pre-pr-lanes.mjs check --worktree "<wt>" --report <the repo's lane report output>`
    must pass (each test lane the report names has a passing run recorded at
    HEAD; `BLOCKED` with its `MISSING-LANE` lines otherwise). On a machine
    without the staging e2e identities it records the local web e2e lane not
@@ -453,18 +454,18 @@ changes and gates fields.
    `MAIN-PREEXISTING-LANE`, and every `testRuns` or `runs` entry recorded
    `main-preexisting`, also fails on the captured main: list each in the
    body under a `Known main failures` line with the main commit it failed
-   on, which `blocking.prBody` checks; it never blocks the pull request.
-   Write `<gitdir>/pr-body-<live ticket slug>.md`, never shared scratch. Rerun
-   step 3 with `--body <file> --runs "<gitdir>/vibe-pr-evidence.json" --commit <published commit>`;
-   either blocking gate false creates nothing. Then run
-   `node ../skills/vibe/scripts/pr-preflight.mjs --title "<title>" --body-file "<file>" --worktree "<wt>" --base <inventory.baseCommit> --base-ref main --repo closedloop-ai/symphony-alpha --head-oid <published commit>`.
-   Keep `receipt.sha256` private; Git metadata stores hashes/context. Publish through
-   `node ../skills/vibe/scripts/pr-preflight.mjs --publish create --verify-receipt <receiptSha256> --title "<title>" --body-file "<file>" --worktree "<wt>" --base <inventory.baseCommit> --base-ref main --repo closedloop-ai/symphony-alpha --head-oid <published commit>`.
-   It rechecks inputs and sends the verified body buffer to `gh`; mismatches block.
-   Never expose paths or body text.
+   on, which `blocking.prBody` checks; it never blocks the pull request. Create it with
+   `gh pr create --repo closedloop-ai/symphony-alpha --base main --head <branch> --title "<title>" --body-file <file>`,
+   the body file in the session's private git directory and named for the
+   live ticket (`pr-body-<live ticket slug>.md`), never a shared name such as
+   `pr-body.md`. Read the file back right before the `gh` command and confirm
+   it names this ticket's slug and summary; parallel workers share scratch
+   space, and one pull request's body can overwrite another's. The same holds for every body or payload file this
+   mode writes. Rerun step 3 with `--body <file> --runs "<gitdir>/vibe-pr-evidence.json" --commit <published commit>`:
+   `blocking.prBody` or `blocking.prEvidence` false creates nothing (`NEEDS_CHANGE`).
    Capture the new URL, render the validated evidence with
    `node ../skills/handoff/scripts/pr-evidence-comment.mjs --evidence "<gitdir>/vibe-pr-evidence.json" --output "<gitdir>/pr-evidence-<live ticket slug>.md"`,
-   and post it with `gh pr comment <url> --body-file "<file>"`. Do not return
+   and post it with `gh pr comment <url> --body-file <file>`. Do not return
    `DONE` until the comment lists the inventory, result SHAs, probe and tier.
 5. Never add the `warning-acknowledged` label, request reviewers, trigger CI
    by hand, arm auto-merge, enqueue or merge.
@@ -494,11 +495,10 @@ or `--body-file`).
   2. Refresh the body from the session record so it matches the diff: build
      it exactly as step 3 does from the refreshed confirmed summary,
      Production impact, Flag changes and gates, tests and check results,
-     gated as in step 4. Keep the current title unless its summary changed.
-     Generate a fresh receipt using step 4 plus `--pr <number>`, the actual
-     `--base-ref`, and `--head-oid <pushed fixing commit>`. Apply only with
-     `node ../skills/vibe/scripts/pr-preflight.mjs --publish update --verify-receipt <receiptSha256> --title "<title>" --body-file "<file>" --worktree "<wt>" --base <inventory.baseCommit> --base-ref "<baseRef>" --repo closedloop-ai/symphony-alpha --pr <number> --head-oid <pushed fixing commit>`.
-     The same verified buffer is sent; changed input blocks the update.
+     gated as in step 4, and apply it with
+     `gh pr edit <number> --repo closedloop-ai/symphony-alpha --body-file <file>`,
+     the file named and re-read as step 4 says.
+     Keep the title unless the summary it names changed.
   3. For each thread, reply through the REST review-comment reply endpoint,
      `gh api -X POST repos/closedloop-ai/symphony-alpha/pulls/<number>/comments/<comment databaseId>/replies --input <payload.json>`,
      never the GraphQL `addPullRequestReviewThreadReply`, a fixed thread with

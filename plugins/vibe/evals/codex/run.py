@@ -48,6 +48,15 @@ def snapshot_metadata(output: Path) -> dict[str, Any]:
     return {"payloads": payloads, "suite": suite, "identity_helper": helper}
 
 
+def copied_source(snapshot: dict[str, Any]) -> dict[str, str]:
+    """Return the exact copied vibe payload identity used by the subject run."""
+    source = snapshot.get("payloads", {}).get("vibe", {})
+    tree = source.get("treeSha256")
+    if not isinstance(tree, str) or re.fullmatch(r"[a-f0-9]{64}", tree) is None:
+        raise RuntimeError("copied vibe payload has no valid tree identity")
+    return {"treeSha256": tree}
+
+
 def document(path: Path) -> tuple[dict[str, Any], str]:
     """Read the same YAML frontmatter used by the Claude suite."""
     _, header, body = path.read_text().split("---", 2)
@@ -715,19 +724,19 @@ def main() -> int:
     budget = Budget(args.max_seconds)
     try:
         identity_script = PLUGIN / "skills/vibe/scripts/tested-head.mjs"
-        source = json.loads(subprocess.check_output(
-            ["node", str(identity_script), "source", str(args.plugin)], text=True
-        ))
         env = install(output, args.plugin.resolve(), dict(os.environ), budget)
         snapshot = json.loads((output / "snapshot.json").read_text())
+        checkout_source = json.loads(subprocess.check_output(
+            ["node", str(identity_script), "source", str(args.plugin)], text=True
+        ))
         copied_plugin = output / "market/plugins/vibe"
         selected_names = {case["name"] for case in selected}
         selected = [case for case in cases(output / "suite") if case["name"] in selected_names]
         if {case["name"] for case in selected} != selected_names:
             raise RuntimeError("case selection changed while copying the eval suite")
         metadata: dict[str, Any] = dict(
-            source_sha=source["head"],
-            source=source,
+            source_sha=checkout_source["head"],
+            source=copied_source(snapshot),
             **snapshot,
             skill_sha256=hashlib.sha256(
                 (copied_plugin / "skills/vibe/SKILL.md").read_bytes()

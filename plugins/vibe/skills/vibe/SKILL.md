@@ -21,7 +21,8 @@ Keep your context for the conversation and session state; NEVER do the work:
   commit hooks. You commit only through `scripts/commit-worktree.mjs`, after the complete
   change is push-ready: iterate uncommitted through all selected checks,
   independent review and verification before the first PR commit. Each result
-  names HEAD plus the diff/tree hashes (`scripts/tested-head.mjs`).
+  names HEAD plus the diff/tree hashes (`scripts/tested-head.mjs`). This extends
+  the fleet-orchestrator push-ready ruling, whose human source is cited once there.
 - You may talk to the person; run this skill's scripts
   (`scripts/vibe-preflight.sh`, `scripts/vibe-sessions.mjs`,
   `scripts/commit-worktree.mjs`, `scripts/local-plans.mjs`,
@@ -1016,9 +1017,7 @@ that waited, and one deploy after the last of them carries them all. A
    for each untracked file the inventory lists as `forbidden` or
    `outsideAllowed` that the session did not write (a person's own files);
    the commit goes ahead without them and without asking anyone to move them. `committed: false`
-   means nothing changed; continue. A commit reporting `pushDue: true`
-   (`scripts/push-cadence.mjs`) is an overdue push-ready publication, never
-   permission for an intermediate commit or deferred required verification. `"ok":false` means the hook refused:
+   means nothing changed; continue. `"ok":false` means the hook refused:
    resume the SAME persistent writer in fix mode with the error, then commit
    again. An existing test or fixture the change broke is repaired there
    (`references/guardrails.md`, "Repair, don't author"). When the writer

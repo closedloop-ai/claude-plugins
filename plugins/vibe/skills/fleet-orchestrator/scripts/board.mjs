@@ -4,7 +4,7 @@
 // a QA guide never heard that its checkpoint was ready, and a UX ruling
 // reached one writer as text while another PR rendered the same behavior.
 //
-// Usage: board.mjs <orchDir> writer <name> [--pr <n>] [--repo <owner/repo>] [--head <sha>] [--ready <sha>] [--base <trusted remote ref or OID>] [--status <text>] [--deps <a,b>] [--runtime codex|claude] [--worktree <path>]
+// Usage: board.mjs <orchDir> writer <name> [--pr <n>] [--repo <owner/repo>] [--head <sha>] [--ready <sha>] [--base <trusted remote ref or OID>] [--status <text>] [--deps <a,b>] [--runtime codex|claude] [--where local|remote] [--worktree <path>]
 //        board.mjs <orchDir> push-check <writer> --head <sha>
 //        board.mjs <orchDir> deliver <item> --to <a,b> [--kind ruling|checkpoint|note|scope] [--reference <file>] [--text <change>] [--head <sha>]
 //        board.mjs <orchDir> told <item> <recipient>
@@ -335,7 +335,7 @@ function pushedHeads(board, texts) {
 export function unreadyCommits(board, pushed = {}) {
   const problems = [];
   for (const [name, row] of Object.entries(board.writers)) {
-    if (!row.worktree) continue;
+    if (!row.worktree || row.where === 'remote') continue;
     const git = (...args) => repositoryGit(row.worktree, args);
     try {
       let base = pushed[name];
@@ -358,6 +358,11 @@ export function unreadyCommits(board, pushed = {}) {
     }
   }
   return problems;
+}
+
+function noHeadRows(board) {
+  return Object.entries(board.writers).filter(([, row]) => row.where === 'remote')
+    .map(([name]) => `NO-HEAD ${name}: remote worktree history is checked on its owning machine`);
 }
 
 const ACTIONS = ["writer", "deliver", "told", "duty", "question", "answered", "ack", "pending", "push-check", "status", "watch-lines"];
@@ -391,7 +396,7 @@ function main(argv) {
       to: { type: "string" }, kind: { type: "string" }, reference: { type: "string" },
       pushed: { type: "string", multiple: true }, threads: { type: "string", multiple: true }, now: { type: "string" },
       runtime: { type: "string" }, owner: { type: "string" }, text: { type: "string" }, ready: { type: "string" }, id: { type: "string" },
-      worktree: { type: "string" }, base: { type: "string" },
+      worktree: { type: "string" }, base: { type: "string" }, where: { type: "string" },
     },
   });
   if (!workDir || !ACTIONS.includes(action)) {
@@ -403,6 +408,7 @@ function main(argv) {
   const at = new Date(now).toISOString();
   if (action === "watch-lines") {
     for (const line of unreadyCommits(board, pushedHeads(board, values.pushed ?? []))) process.stdout.write(`board ${line}\n`);
+    for (const line of noHeadRows(board)) process.stdout.write(`board ${line}\n`);
     const { unanswered, unacked } = lateQuestions(board, now);
     const scope = scopeProblems(board, now);
     for (const entry of unanswered) process.stdout.write(`board QUESTION-UNANSWERED ${entry.writer} ${entry.id}\n`);
@@ -416,6 +422,7 @@ function main(argv) {
     const stale = staleRows(board, pushed);
     const commits = unreadyCommits(board, pushed);
     for (const line of commits) process.stdout.write(`${line}\n`);
+    for (const line of noHeadRows(board)) process.stdout.write(`${line}\n`);
     for (const row of stale) process.stdout.write(`STALE ${row.name} board head ${row.head}, pushed ${row.pushed}\n`);
     const open = untold(board);
     for (const entry of open) process.stdout.write(`UNTOLD ${entry.item} ${entry.recipient}\n`);
@@ -509,20 +516,30 @@ function main(argv) {
     if (values.runtime !== undefined && !RUNTIMES.has(values.runtime)) {
       throw new Error("--runtime must be codex or claude.");
     }
+    if (values.where !== undefined && !['local', 'remote'].includes(values.where)) {
+      throw new Error('--where must be local or remote.');
+    }
     const shapeProblem = board.writers[name] ? null : writerShapeProblem(programShape(orchDir), Object.keys(board.writers));
     if (shapeProblem) throw new Error(shapeProblem);
     const row = board.writers[name] ?? {};
     const worktree = values.worktree === undefined ? undefined : path.resolve(values.worktree);
-    const update = Object.fromEntries(Object.entries({ pr: values.pr, repo: values.repo, head: values.head, ready: values.ready, status: values.status, runtime: values.runtime, worktree })
+    const update = Object.fromEntries(Object.entries({ pr: values.pr, repo: values.repo, head: values.head, ready: values.ready, status: values.status, runtime: values.runtime, worktree, where: values.where })
       .filter(([, value]) => value !== undefined));
     if (values.base !== undefined) {
       const root = worktree ?? row.worktree;
       if (!root || !/^(?:[a-f0-9]{40}|(?:refs\/remotes\/)?[^/\s]+\/.+)$/i.test(values.base)) {
         throw new Error('--base needs an orchestrator-verified remote ref or full base OID and a worktree');
       }
-      update.trustedBase = { ref: values.base, oid: repositoryGit(root, ['rev-parse', '--verify', '--end-of-options', `${values.base}^{commit}`]) };
+      update.trustedBase = (values.where ?? row.where) === 'remote'
+        ? { ref: values.base, oid: /^[a-f0-9]{40}$/i.test(values.base) ? values.base : null }
+        : { ref: values.base, oid: repositoryGit(root, ['rev-parse', '--verify', '--end-of-options', `${values.base}^{commit}`]) };
+      if (!update.trustedBase.oid) throw new Error('a remote writer needs --base <full OID>');
     }
-    if (values.ready && (worktree ?? row.worktree)) {
+    if (values.ready && (values.where ?? row.where) === 'remote') {
+      if (!/^[a-f0-9]{7,40}$/i.test(values.ready) || !(update.trustedBase ?? row.trustedBase)) {
+        throw new Error('a remote push-ready declaration needs a SHA and recorded full base OID');
+      }
+    } else if (values.ready && (worktree ?? row.worktree)) {
       const root = worktree ?? row.worktree;
       const git = (...args) => repositoryGit(root, args);
       const ready = git('rev-parse', '--verify', '--end-of-options', `${values.ready}^{commit}`);

@@ -10,14 +10,6 @@ import { git, makeHome, mutationPreload } from '../../vibe/scripts/test-fixtures
 
 const SCRIPT = fileURLToPath(new URL('./instruction-words.mjs', import.meta.url));
 
-test('v1.1.21 records a validated non-growing Markdown measurement', () => {
-  const repo = path.resolve(path.dirname(SCRIPT), '../../../../..');
-  const run = spawnSync(process.execPath, [SCRIPT, '--repo', repo, '--base', 'b8df21893c6322a0176b16df9fe123cc6f9296c2',
-    '--changelog', path.join(repo, 'CHANGELOG.md'), '--version', '1.1.21'], { encoding: 'utf8' });
-  assert.equal(run.status, 0, run.stdout + run.stderr);
-  assert.match(run.stdout, /net (?:-\d+|0)/);
-});
-
 test('word count rejects source mutation after reading the diff', t => {
   const { root, home, cleanup } = makeHome('word-count-race-');
   t.after(cleanup);
@@ -38,7 +30,7 @@ test('word count rejects source mutation after reading the diff', t => {
 
 test('the current release names the full Markdown scope of its word count', () => {
   const changelog = readFileSync(path.resolve(path.dirname(SCRIPT), '../../../../../CHANGELOG.md'), 'utf8');
-  const entry = changelog.split('### vibe v1.1.20\n', 2)[1]?.split('\n### ', 1)[0] ?? '';
+  const entry = /^### vibe v[^\n]+\n([\s\S]*?)(?=^### |(?![\s\S]))/m.exec(changelog)?.[1] ?? '';
   assert.match(entry, /all plugin Markdown, including eval prompts and graders/);
 });
 

@@ -93,6 +93,22 @@ test('status and watcher report every local commit not declared push-ready, even
   assert.equal(run([dir, 'status']).status, 0);
 });
 
+test('remote writers report NO-HEAD without blocking status or push-check', t => {
+  const dir = tempDir(t);
+  const head = 'a'.repeat(40);
+  const base = 'b'.repeat(40);
+  const recorded = run([dir, 'writer', 'remote-w', '--where', 'remote', '--worktree', '/srv/remote/worktree', '--head', head,
+    '--ready', head, '--base', base]);
+  assert.equal(recorded.status, 0, recorded.stderr);
+  const status = run([dir, 'status', '--pushed', `remote-w=${head}`]);
+  assert.equal(status.status, 0, status.stdout + status.stderr);
+  assert.match(status.stdout, /NO-HEAD remote-w/);
+  assert.doesNotMatch(status.stdout, /PUSH-READY-UNKNOWN/);
+  const push = run([dir, 'push-check', 'remote-w', '--head', head, '--pushed', `remote-w=${head}`]);
+  assert.equal(push.status, 0, push.stdout + push.stderr);
+  assert.match(push.stdout, /^READY remote-w /);
+});
+
 test('the pushed head is read from gh for a row with a PR and repo', (t) => {
   const dir = tempDir(t);
   const gh = path.join(dir, 'gh');

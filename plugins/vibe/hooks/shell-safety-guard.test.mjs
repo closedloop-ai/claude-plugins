@@ -65,15 +65,15 @@ test("set -- $var is refused because zsh does not split it (the merge watcher ne
   for (const command of ["read -r state sha <<< \"$st\"", "set -- \"$st\"", "set -- ${=st}", "set -e"]) assert.equal(wordSplitProblem(command), null, command);
 });
 
-test("e2e-slot.sh names HEAD plus the actual dirty-source hash", () => {
+test("e2e-slot.sh uses the deployed wrapper's --head, owner, command interface", () => {
   for (const command of ["~/vibe-remote/e2e-slot.sh ISS-1 pnpm e2e", "ssh host 'zsh -lic \"cd ~/wt && ~/vibe-remote/e2e-slot.sh ISS-1 e2e/run.sh\"'",
     "zsh e2e-slot.sh --head HEAD ISS-1 run"]) {
     assert.match(e2eSlotProblem(command) ?? "", /--head <sha>/, command);
   }
-  assert.match(e2eSlotProblem('~/vibe-remote/e2e-slot.sh --head 0123abc ISS-1 pnpm prepush --all') ?? '', /--source-hash/);
-  assert.match(e2eSlotProblem('~/vibe-remote/e2e-slot.sh --head 0123abc --source-hash HEAD ISS-1 run') ?? '', /--source-hash/);
-  assert.ok(e2eSlotProblem(`e2e-slot.sh ISS-1 run --head 0123abc --source-hash ${'a'.repeat(64)}`), 'identity flags passed to the child command do not bind the wrapper');
-  for (const command of [`~/vibe-remote/e2e-slot.sh --head 0123abc --source-hash ${'a'.repeat(64)} ISS-1 pnpm e2e`, 'cat ~/vibe-remote/e2e-slot.sh']) assert.equal(e2eSlotProblem(command), null, command);
+  assert.equal(e2eSlotProblem('~/vibe-remote/e2e-slot.sh --head 0123abc ISS-1 pnpm prepush --all'), null);
+  assert.match(e2eSlotProblem(`~/vibe-remote/e2e-slot.sh --head 0123abc --source-hash ${'a'.repeat(64)} ISS-1 run`) ?? '', /does not accept --source-hash/);
+  assert.ok(e2eSlotProblem(`e2e-slot.sh ISS-1 run --head 0123abc`), 'identity flags passed to the child command do not bind the wrapper');
+  assert.equal(e2eSlotProblem('cat ~/vibe-remote/e2e-slot.sh'), null);
   const message = e2eSlotProblem('e2e-slot.sh ISS-1 run');
   assert.doesNotMatch(message, /pushed|before the push/);
 });
@@ -81,14 +81,13 @@ test("e2e-slot.sh names HEAD plus the actual dirty-source hash", () => {
 test('nested remote shell options cannot bypass E2E identity', () => {
   const prefix = "ssh host 'zsh -lic \"~/vibe-remote/e2e-slot.sh";
   assert.match(e2eSlotProblem(`${prefix} ISS-1 run\"'`) ?? '', /--head/);
-  assert.match(e2eSlotProblem(`${prefix} --head 0123abc ISS-1 run\"'`) ?? '', /--source-hash/);
-  const flags = `--head 0123abc --source-hash ${'a'.repeat(64)}`;
+  const flags = `--head 0123abc`;
   for (const command of [`${prefix} ${flags} ISS-1 run\"'`,
     `ssh -p 2222 host 'bash -l -c "zsh -o errexit -lic ~/vibe-remote/e2e-slot.sh ${flags} ISS-1 run"'`]) {
     assert.equal(e2eSlotProblem(command), null, command);
   }
   assert.equal(e2eSlotProblem("printf '%s\\n' 'zsh -lic e2e-slot.sh ISS-1 run'"), null, 'quoted data is not an invocation');
-  assert.match(watcherLaunchProblem({ command: "ssh host 'zsh -lic \"scripts/watch.sh orch\"'" }) ?? '', /run_in_background/, 'the shared shell invocation rule also covers the watcher');
+  assert.equal(watcherLaunchProblem({ command: "ssh host 'zsh -lic \"scripts/watch.sh orch\"'" }), null, 'only the e2e identity guard expands remote shell payloads');
 });
 
 test('assignments and executable wrappers cannot hide the E2E slot', () => {
@@ -111,8 +110,7 @@ test('assignments and executable wrappers cannot hide the E2E slot', () => {
   ];
   for (const form of forms) {
     assert.match(e2eSlotProblem(form('ISS-1 run')) ?? '', /--head/, form('ISS-1 run'));
-    assert.match(e2eSlotProblem(form('--head 0123abc ISS-1 run')) ?? '', /--source-hash/);
-    assert.equal(e2eSlotProblem(form(`--head 0123abc --source-hash ${'a'.repeat(64)} ISS-1 run`)), null);
+    assert.equal(e2eSlotProblem(form('--head 0123abc ISS-1 run')), null);
   }
   assert.equal(e2eSlotProblem(`printf '%s\\n' 'KEY=value env exec ${slot} ISS-1 run'`), null);
   for (const data of [`note; ${slot} ISS-1 run`, `note && ${slot} ISS-1 run`, `note $( ${slot} ISS-1 run )`]) {
@@ -124,17 +122,17 @@ test('assignments and executable wrappers cannot hide the E2E slot', () => {
     suffix => `KEY+=value ${slot} ${suffix}`,
   ]) {
     assert.match(e2eSlotProblem(form('ISS-1 run')) ?? '', /--head/);
-    assert.equal(e2eSlotProblem(form(`--head 0123abc --source-hash ${'a'.repeat(64)} ISS-1 run`)), null);
+    assert.equal(e2eSlotProblem(form('--head 0123abc ISS-1 run')), null);
   }
   for (const form of [
     suffix => `result="$(${slot} ${suffix})"`,
     suffix => `echo "\`${slot} ${suffix}\`"`,
   ]) {
     assert.match(e2eSlotProblem(form('ISS-1 run')) ?? '', /--head/, 'double-quoted substitutions execute');
-    assert.equal(e2eSlotProblem(form(`--head 0123abc --source-hash ${'a'.repeat(64)} ISS-1 run`)), null);
+    assert.equal(e2eSlotProblem(form('--head 0123abc ISS-1 run')), null);
   }
   assert.equal(e2eSlotProblem(`printf '%s\\n' '$(${slot} ISS-1 run)' '\`${slot} ISS-1 run\``), null, 'single-quoted substitutions are data');
-  for (const suffix of [`${slot} ISS-1 run`, `${slot} --head 0123abc --source-hash ${'a'.repeat(64)} ISS-1 run`]) {
+  for (const suffix of [`${slot} ISS-1 run`, `${slot} --head 0123abc ISS-1 run`]) {
     assert.equal(e2eSlotProblem(`printf '%s\\n' "$(echo safe) ${suffix}"`), null, 'literal suffix after substitution stays data');
   }
 });

@@ -33,9 +33,12 @@ uncommitted work until push-ready: selected checks, independent review and
 verification accept the complete diff before ROOT commits. Grader/review fixes
 never need checkpoint commits. Report HEAD plus diff/tree hashes from
 `tested-head.mjs source <worktree>`; fleet writers declare `--ready <sha>`
-through the existing board rule (fleet-orchestrator, Monitoring).
+through the existing board rule (fleet-orchestrator, Monitoring), where the
+operator's push-ready ruling is cited once.
 HEAD-only output from `pnpm prepush --all` is not dirty-source evidence; use the
-E2E lock's HEAD plus diff/tree receipt. No commit is needed to run that harness.
+owned E2E lock's HEAD plus diff/tree receipt. No commit is needed for that local
+harness. The external remote wrapper is the verifier's documented clean-commit
+exception and accepts only `--head`, owner and command.
 
 
 Keep technical preparation internal. Report only short evidence/status to the

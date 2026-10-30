@@ -430,26 +430,10 @@ reports any change under either folder as outside the allowed paths in every
 phase, and step 3 sends it back to the writer to remove. Owned prototype
 sessions skip this step.
 
-### Final main-sync candidate
-
-Stop the owned Desktop, `git fetch origin main`, and pin its OID before review; stage `git merge --no-commit --no-ff <captured-main>`.
-The SAME writer resolves conflicts, generated output, versions and source uncommitted.
-Run `qa-impact.mjs`; rerun the inventory's `requiredChecks` on the merged tree.
-Every main sync is checked for capability removal, this one included: dispatch
-`vibe-guardrails-reviewer` for its check 13 on that merge. A `session-caused`
-result returns to the SAME writer here, before review; fixes restart these gates.
-
-Set `vibe-sessions.mjs touch --worktree "<wt>" --main-merge deferred` to freeze the
-reviewed pin. `--prepare-main-sync` / `main-sync-inputs` require committed inputs: admission,
-never checkpoint preflight. Unsafe dirty preparation blocks.
-
-### Exact pre-push gate inputs
-
-Before review, run actual pre-push commands/producers with the final candidate's
-pinned base, paths, index, generated inputs and prerequisites. Commit-only gates
-need a supported private snapshot naming original HEAD/diff and copied-tree
-hashes, never a publication receipt. Unsupported contracts block. Source changes
-restart the writer's fixes, review and verification. Normal hooks remain mandatory.
+Before step 6, stop Desktop, pin current `origin/main`, and prepare its merge
+without committing. The SAME writer resolves the final candidate uncommitted;
+rerun only checks and QA that `qa-impact.mjs` selects. Any source change repeats
+this preparation before independent review.
 
 ## 6. Independent integrated review
 
@@ -639,27 +623,29 @@ ROOT commits the reviewed deliverable LOCALLY once through normal hooks, still
 unpushed, excluding private plans/localFix source:
 `node ../vibe/scripts/commit-worktree.mjs --worktree "<wt>" --subject "<ticket>: <summary>" --body "<fixes>"`.
 Its tree must match the accepted candidate.
+Then follow [Main-sync before publication](../vibe/references/environment.md#main-sync-before-publication)
+for handoff. `--prepare-main-sync` verifies the committed candidate prepared
+before review; the same actor runs `main-sync-inputs` once and binds its real
+`mainSyncValidation`. Its retained reports are never PASS, readiness is not test
+authority, and `requiredE2eComplete` remains a separate final-coverage gate.
+Every main sync is checked for capability removal, this one included. Use
+`qa-impact.mjs`, dispatch `vibe-guardrails-reviewer` for its check 13 on that
+merge, and rerun the inventory's `requiredChecks` on the merged tree before
+accepting it; a source change returns to the uncommitted review loop.
 
-**Operational merge exception:** an unavoidable merge with the captured trusted
-main may record ancestry only. Capture `git rev-parse HEAD^{tree}` as `candidateTree`.
-The index before commit and HEAD tree after normal hooks must both equal the same captured `candidateTree`:
-zero writer-source delta and zero tree delta. Record necessity/parents. Feature, test, generator, version
-or conflict-resolution changes never qualify; otherwise block.
-
-Use [Main-sync before publication](../vibe/references/environment.md#main-sync-before-publication)
-with the same actor, real grants, handoff purpose and table. `--prepare-main-sync`,
-`main-sync-inputs` and `main-sync-validate` must preserve the pin/tree, using actual
-`mainSyncValidation` and budgets, never retained PASS. Here source fixes are forbidden:
-changed inputs, failed hooks or `NEEDS_COMMIT` block, never creating another writer commit.
 A result listing `mainPreexistingFailures` still has `publicationReady: true`:
-carry every entry to step 8's ticket worker as a Known main failure; never send it
-to the writer as a fix, never stop and never ask the person about it
+carry every entry to step 8's ticket worker as a Known main failure; never send
+it to the writer as a fix, never stop and never ask the person about it
 (["Failures already on main"](../vibe/references/quality-loop.md#failures-already-on-main)).
-
-Dispatch `vibe-environment-worker` with accepted evidence, `mainSyncTransactionId`,
-purpose and fresh grant. It runs normal pre-push checks, pushes and deploys the admitted result.
-Refusal blocks; publication is not test authority or source repair. Preserve canonical no-ops, `NEEDS_DESKTOP_STOP`,
-request-only flags/Desktop rights, CI identity and no manual CI/review triggers.
+Dispatch `vibe-environment-worker` in redeploy mode with the accepted review,
+verification and check evidence. It runs the normal pre-push hook, pushes that
+exact commit, deploys it, and carries verified main-only failures to the ticket.
+If the pre-push hook refuses after the single local commit, the SAME writer
+fixes uncommitted source and reruns the affected review and verification. ROOT runs
+`commit-worktree.mjs --worktree "<wt>" --amend` on that still-unpushed commit,
+then reruns the normal pre-push checks; it never creates a second repair commit.
+Preserve canonical no-ops, `NEEDS_DESKTOP_STOP`, request-only flags/Desktop
+rights, CI identity and no manual CI/review triggers.
 `requiredE2eComplete: false` blocks assignment; Desktop comes back under
 `e2eLeftForCi` instead and does not hold it. Record its `desktop-e2e/validated`
 Engineering checklist entry. A Desktop lane under `e2eLeftForCi` is not such a gap.

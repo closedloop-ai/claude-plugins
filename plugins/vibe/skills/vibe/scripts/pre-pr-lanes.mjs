@@ -59,7 +59,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
 import { git } from "./session-record.mjs";
-import { testedHead, sourceIdentity, sameSource, withStableSource } from "./tested-head.mjs";
+import { testedHead, testedSource, sourceIdentity, sameSource, withStableSource } from "./tested-head.mjs";
 
 const LANE_LINE = /^ {4}((?:[A-Za-z_][A-Za-z0-9_]*=(?:'(?:[^']|'\\'')*'|\S+)\s+)*(?:pnpm|npm|npx|yarn|node)\s.*?)(?:\s+\(.*\))?\s*$/;
 const NOTHING = /nothing to cover|No paths changed/i;
@@ -168,8 +168,8 @@ function main(argv) {
   if (!values.worktree) throw new Error("--worktree is required");
   if (command === "run" || command === "record") {
     if (!values.command?.trim() || (command === "record" && !["pass", "fail"].includes(values.result))) throw new Error(`${command} needs --head, --command${command === "record" ? " and --result pass|fail" : ""}`);
-    const tested = testedHead(values.worktree, values.head);
-    const source = sourceIdentity(values.worktree, tested);
+    const source = testedSource(values.worktree, values.head);
+    const tested = source.head;
     if (command === "record") {
       if (!values.source && source.diffSha256 !== createHash('sha256').digest('hex')) {
         throw new Error('record of uncommitted inputs needs --source <JSON identity captured by the external runner>');
@@ -180,7 +180,12 @@ function main(argv) {
     if (Boolean(values["main-worktree"]) !== Boolean(values["main-sha"]) || (values["main-worktree"] && command !== "run")) {
       throw new Error("--main-worktree and --main-sha go together, on run only");
     }
-    const mainTested = values["main-worktree"] ? testedHead(values["main-worktree"], values["main-sha"]) : null;
+    let mainTested = null;
+    try { mainTested = values["main-worktree"] ? testedHead(values["main-worktree"], values["main-sha"]) : null; }
+    catch (error) {
+      if (!error.message.startsWith('DIRTY-WORKTREE')) throw error;
+      throw new Error('captured main must be clean to establish a main-preexisting failure');
+    }
     let result = values.result;
     let mainSha;
     const mainSource = mainTested ? sourceIdentity(values["main-worktree"], mainTested) : undefined;

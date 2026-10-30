@@ -69,12 +69,8 @@ def test_handoff_publishes_and_routes_main_preexisting_failures_to_the_ticket() 
         '"Failures already on main"',
     ):
         assert required in upload, required
-    candidate = section(HANDOFF_SKILL.read_text(), "### Final main-sync candidate")
-    assert "`session-caused` result returns to the SAME writer here, before review" in candidate
-    assert "source fixes are forbidden" in upload
-    assert "creating another writer commit" in upload
-    text = HANDOFF_SKILL.read_text()
-    assert text.index("### Final main-sync candidate") < text.index("## 6. Independent integrated review")
+    assert "fixes uncommitted source" in upload
+    assert "never creates a second repair commit" in upload
     choose = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
     assert "every `mainPreexistingFailures` entry from step 7 with its main run's log" in choose
 

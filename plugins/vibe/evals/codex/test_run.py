@@ -150,6 +150,11 @@ def test_one_case_per_claude_prompt_and_role_names() -> None:
     )
 
 
+def test_run_source_identity_comes_from_the_copied_vibe_payload() -> None:
+    copied = {"payloads": {"vibe": {"treeSha256": "a" * 64}}}
+    assert runner.copied_source(copied) == {"treeSha256": "a" * 64}
+
+
 @pytest.mark.parametrize("checkpoint", [False, True])
 def test_pr369_nineteen_revision_replay_rejects_intermediate_commits(tmp_path: Path, checkpoint: bool) -> None:
     """The native Claude regex graders and Codex's grader reject a real intermediate commit."""

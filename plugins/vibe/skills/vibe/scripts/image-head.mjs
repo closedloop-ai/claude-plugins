@@ -18,6 +18,7 @@
 // otherwise. A record is `<records dir>/<project>.json`.
 
 import { withStableSource } from "./tested-head.mjs";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { escalation, isSandboxRefusal } from "./sandbox-refusal.mjs";
 import os from "node:os";
@@ -85,7 +86,7 @@ function main(argv) {
     process.stderr.write("Usage: image-head.mjs check|record --project <p> --worktree <path> --head <sha> -- <command...>\n");
     return 2;
   }
-  return withStableSource(values.worktree, source => {
+  const operation = source => {
     const input = { project: values.project, worktree: values.worktree, head: values.head, source, command, records: values.records };
     if (action === "record") {
       try { recordImages(input); }
@@ -99,7 +100,9 @@ function main(argv) {
     const problem = imageProblem(input);
     if (problem) process.stderr.write(`${problem}\n`);
     return { exitCode: problem ? 1 : 0 };
-  }, { head: values.head }).exitCode;
+  };
+  const repository = spawnSync('git', ['-C', values.worktree, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  return (repository.status === 0 ? withStableSource(values.worktree, operation, { head: values.head }) : operation(undefined)).exitCode;
 }
 
 export const ESCALATION_JUSTIFICATION = "Record which version the automatic checks' setup was built from";

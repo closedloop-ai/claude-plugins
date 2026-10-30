@@ -38,6 +38,32 @@ test('precommit evidence binds to identical published content without rewriting 
   assert.match(gate().join('\n'), /source.*(?:changed|match|identity)/i);
 });
 
+test('precommit evidence cannot bind to a commit that omitted an untracked input', t => {
+  const { root, home, cleanup } = makeHome('precommit-omitted-input-');
+  t.after(cleanup);
+  const wt = path.join(root, 'repo');
+  mkdirSync(wt);
+  writeFileSync(path.join(wt, 'a.txt'), 'base\n');
+  git(wt, ['init', '--quiet'], home);
+  git(wt, ['add', 'a.txt'], home);
+  git(wt, ['commit', '--quiet', '-m', 'base'], home);
+  const base = git(wt, ['rev-parse', 'HEAD'], home);
+  writeFileSync(path.join(wt, 'a.txt'), 'candidate\n');
+  writeFileSync(path.join(wt, 'helper.js'), 'export default 1;\n');
+  const source = sourceIdentity(wt);
+  const evidence = { source, touchFlows: [], touchFlowsReason: 'fixture', runs: [], testSelection: [], testRuns: [], rerunCycles: [],
+    e2eCapability: structuredClone(SELECTED.e2eCapability), targetedInventory: { actor: 'read-only', source: 'working-tree', commit: base,
+      laneReport: { command: 'pnpm test:lanes', matches: [] }, entries: [], noTestsReason: 'fixture' } };
+  const gate = () => pullRequestFacts({ worktree: wt, base, include: new Set(['a.txt']), ownBranch: 'main', runs: evidence,
+    commit: git(wt, ['rev-parse', 'HEAD'], home) }).prEvidenceProblems;
+  git(wt, ['add', 'a.txt'], home);
+  git(wt, ['commit', '--quiet', '-m', 'commit only a'], home);
+  assert.match(gate().join('\n'), /commit.*(?:omit|content)|uncommitted|untracked/i);
+  git(wt, ['add', 'helper.js'], home);
+  git(wt, ['commit', '--quiet', '-m', 'commit helper'], home);
+  assert.deepEqual(gate(), []);
+});
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INVENTORY = path.join(HERE, "handoff-inventory.mjs");
 const SCHEMA = path.join(HERE, "pr-evidence-schema.mjs");
