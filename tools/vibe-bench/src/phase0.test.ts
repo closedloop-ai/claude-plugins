@@ -13,6 +13,16 @@ import { ControlWebStackAdapter } from "./control-web-stack.ts";
 import { preparePhase0 } from "./phase0.ts";
 import { projectSearchOracle } from "../oracle/project-search-oracle.ts";
 
+let inheritedClaudeEffort: string | undefined;
+test.beforeEach(() => {
+  inheritedClaudeEffort = process.env.CLAUDE_EFFORT;
+  delete process.env.CLAUDE_EFFORT;
+});
+test.afterEach(() => {
+  if (inheritedClaudeEffort === undefined) delete process.env.CLAUDE_EFFORT;
+  else process.env.CLAUDE_EFFORT = inheritedClaudeEffort;
+});
+
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
 }

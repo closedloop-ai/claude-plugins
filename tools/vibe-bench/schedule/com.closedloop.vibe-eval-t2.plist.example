@@ -19,6 +19,11 @@
     <string>UV_EXECUTABLE</string>
     <string>GH_EXECUTABLE</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>EXECUTABLE_PATH</string>
+  </dict>
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import type { EvalQuarantineEntry } from "./eval-baseline.ts";
 
 const SLACK_POST_TIMEOUT_MS = 30_000;
 
@@ -18,14 +19,30 @@ export interface NightlyMergedPullRequest {
   mergeCommit: string;
 }
 
+/** A first-parent main commit that GitHub does not associate with a pull request. */
+export interface NightlyDirectCommit {
+  commit: string;
+  title: string;
+  url: string;
+  author: string;
+}
+
 /** Complete model-free payload rendered into one #vibe message. */
 export interface NightlyRegressionNotice {
   baselineSha: string;
   currentSha: string;
   cases: NightlyRegressionCase[];
   mergedPullRequests: NightlyMergedPullRequest[];
+  directCommits: NightlyDirectCommit[];
+  expiredQuarantine: EvalQuarantineEntry[];
   quarantineOwner: string;
   resultsArtifact: string;
+}
+
+/** Operator-visible scheduler failure that happened outside model evaluation. */
+export interface NightlyInfrastructureNotice {
+  reason: string;
+  occurredAt: string;
 }
 
 /** Delivery boundary injected by T0 tests. */
@@ -35,23 +52,44 @@ export interface NightlyRegressionReporter {
 
 /** Format one compact message for the team-owned #vibe channel. */
 export function formatNightlyRegressionMessage(notice: NightlyRegressionNotice): string {
-  if (!notice.cases.length) throw new Error("eval-slack-regressions-empty");
-  const cases = notice.cases
+  if (!notice.cases.length && !notice.expiredQuarantine.length) {
+    throw new Error("eval-slack-alert-empty");
+  }
+  const cases = notice.cases.length ? notice.cases
     .map((item) => `• ${item.runtime}: ${item.case}`)
-    .join("\n");
-  const pulls = notice.mergedPullRequests.length
-    ? notice.mergedPullRequests.map((item) =>
-      `• <${item.url}|#${item.number}> by @${item.author}: ${slackText(item.title)}`).join("\n")
-    : "• No merged PR metadata was found. Inspect the commit range in the full results.";
+    .join("\n") : "• None";
+  const changes = [
+    ...notice.mergedPullRequests.map((item) =>
+      `• <${item.url}|#${item.number}> by @${item.author}: ${slackText(item.title)}`),
+    ...notice.directCommits.map((item) =>
+      `• <${item.url}|direct commit ${item.commit.slice(0, 12)}> by ${slackText(item.author)}: ` +
+      slackText(item.title)),
+  ];
+  const expired = notice.expiredQuarantine.map((item) =>
+    `• ${item.runtime}: ${item.case}, owner @${slackText(item.owner)}, expired ${item.deadline}`);
   return [
-    ":rotating_light: Vibe nightly eval regression",
-    `Confirmed regressions between ${notice.baselineSha.slice(0, 12)} and ${notice.currentSha.slice(0, 12)}:`,
-    cases,
-    "Merged PRs since the last green nightly:",
-    pulls,
+    ":rotating_light: Vibe nightly eval attention required",
+    ...(notice.cases.length ? [
+      `Confirmed regressions between ${notice.baselineSha.slice(0, 12)} and ` +
+        `${notice.currentSha.slice(0, 12)}:`, cases,
+      "Changes since the last green nightly:",
+      changes.length ? changes.join("\n") : "• None",
+    ] : []),
+    ...(expired.length ? ["Expired quarantine entries are gating:", expired.join("\n")] : []),
     `Quarantine owner: ${notice.quarantineOwner}`,
     "PR authors and the quarantine owner: coordinate a fix-forward or revert.",
     `Full results: ${notice.resultsArtifact}`,
+  ].join("\n");
+}
+
+/** Format a scheduler failure for the same team-owned channel. */
+export function formatNightlyInfrastructureMessage(notice: NightlyInfrastructureNotice): string {
+  if (!notice.reason.trim()) throw new Error("eval-slack-infrastructure-reason-empty");
+  return [
+    ":warning: Vibe nightly infrastructure failure",
+    `Reason: ${slackText(notice.reason)}`,
+    `Occurred at: ${slackText(notice.occurredAt)}`,
+    "No model result was accepted. Inspect the nightly machine log before the next run.",
   ].join("\n");
 }
 
@@ -62,17 +100,18 @@ function slackText(value: string): string {
 
 function deliveryId(notice: NightlyRegressionNotice): string {
   const hex = createHash("sha256").update(JSON.stringify({ currentSha: notice.currentSha,
-    baselineSha: notice.baselineSha, cases: notice.cases })).digest("hex").slice(0, 32);
+    baselineSha: notice.baselineSha, cases: notice.cases,
+    expiredQuarantine: notice.expiredQuarantine })).digest("hex").slice(0, 32);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-/** Find merged PRs whose merge commits are on the first-parent main range. */
-export function mergedPullRequestsSince(input: {
+/** Attribute every first-parent main commit to a merged PR or a direct commit. */
+export function nightlyChangesSince(input: {
   repo: string;
   ghExecutable: string;
   baselineSha: string;
   currentSha: string;
-}): NightlyMergedPullRequest[] {
+}): { mergedPullRequests: NightlyMergedPullRequest[]; directCommits: NightlyDirectCommit[] } {
   const commits = spawnSync("git", ["-C", input.repo, "rev-list", "--first-parent",
     `${input.baselineSha}..${input.currentSha}`], { encoding: "utf8", timeout: 90_000,
     maxBuffer: 4 * 1024 * 1024 });
@@ -105,8 +144,25 @@ export function mergedPullRequestsSince(input: {
     return [{ number: value.number, title: value.title, url: value.url,
       author: value.author.login, mergeCommit: oid }];
   }).sort((left, right) => left.number - right.number);
-  if (matched.length !== range.size) throw new Error("eval-regression-pull-request-attribution-incomplete");
-  return matched;
+  const matchedCommits = new Set(matched.map((item) => item.mergeCommit));
+  const directCommits = [...range].filter((commit) => !matchedCommits.has(commit)).map((commit) => {
+    const parents = spawnSync("git", ["-C", input.repo, "rev-list", "--parents", "-n", "1", commit],
+      { encoding: "utf8", timeout: 90_000, maxBuffer: 4 * 1024 * 1024 });
+    if (parents.status !== 0) throw new Error("eval-regression-commit-attribution-unavailable");
+    if (parents.stdout.trim().split(/\s+/).length > 2) {
+      throw new Error("eval-regression-pull-request-attribution-incomplete");
+    }
+    const detail = spawnSync("git", ["-C", input.repo, "show", "-s",
+      "--format=%H%x00%s%x00%an%x00%ae", commit],
+    { encoding: "utf8", timeout: 90_000, maxBuffer: 4 * 1024 * 1024 });
+    const [sha, title, authorName, authorEmail] = detail.stdout.trim().split("\0");
+    if (detail.status !== 0 || sha !== commit || !title || !authorName || !authorEmail) {
+      throw new Error("eval-regression-direct-commit-invalid");
+    }
+    return { commit, title, author: `${authorName} <${authorEmail}>`,
+      url: `https://github.com/${repository.stdout.trim()}/commit/${commit}` };
+  });
+  return { mergedPullRequests: matched, directCommits };
 }
 
 /** Post through the existing team Slack bot without storing credentials. */
@@ -120,14 +176,26 @@ export class SlackNightlyRegressionReporter implements NightlyRegressionReporter
   }
 
   async report(notice: NightlyRegressionNotice): Promise<void> {
+    await this.post(formatNightlyRegressionMessage(notice), deliveryId(notice));
+  }
+
+  /** Post one non-model infrastructure failure when credentials are available. */
+  async reportInfrastructure(notice: NightlyInfrastructureNotice): Promise<void> {
+    const hex = createHash("sha256").update(JSON.stringify(notice)).digest("hex").slice(0, 32);
+    const id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-` +
+      `${hex.slice(16, 20)}-${hex.slice(20)}`;
+    await this.post(formatNightlyInfrastructureMessage(notice), id);
+  }
+
+  private async post(text: string, clientMessageId: string): Promise<void> {
     const token = this.env.SLACK_BOT_TOKEN?.trim();
     const channel = this.env.SLACK_CHANNEL_ID?.trim();
     if (!token || !channel) throw new Error("eval-slack-credentials-missing");
     const response = await this.send("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ channel, text: formatNightlyRegressionMessage(notice),
-        client_msg_id: deliveryId(notice), unfurl_links: false, unfurl_media: false }),
+      body: JSON.stringify({ channel, text, client_msg_id: clientMessageId,
+        unfurl_links: false, unfurl_media: false }),
       signal: AbortSignal.timeout(SLACK_POST_TIMEOUT_MS),
     });
     let body: unknown;

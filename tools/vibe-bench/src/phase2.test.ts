@@ -24,6 +24,16 @@ const fixtureDir = join(dirname(new URL(import.meta.url).pathname), "..", "fixtu
 const realStream = readFileSync(join(fixtureDir, "phase0-claude-anonymized.jsonl"), "utf8");
 const realTranscript = readFileSync(join(fixtureDir, "phase0-transcript-anonymized.jsonl"), "utf8");
 
+let inheritedClaudeEffort: string | undefined;
+test.beforeEach(() => {
+  inheritedClaudeEffort = process.env.CLAUDE_EFFORT;
+  delete process.env.CLAUDE_EFFORT;
+});
+test.afterEach(() => {
+  if (inheritedClaudeEffort === undefined) delete process.env.CLAUDE_EFFORT;
+  else process.env.CLAUDE_EFFORT = inheritedClaudeEffort;
+});
+
 test("seeded setup time does not consume the model execution budget", () => {
   const batchStartedAt = 1_000;
   const setupCompletedAt = batchStartedAt + 180_000;

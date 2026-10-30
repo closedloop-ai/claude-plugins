@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { SlackNightlyRegressionReporter } from "./eval-slack.ts";
 import { runOwnedProcess } from "./owned-process.ts";
 
 const NIGHTLY_DEADLINE_MS = 3 * 60 * 60_000;
@@ -23,10 +24,33 @@ class SystemNightlyCommands implements EvalNightlyCommands {
       cwd: process.cwd(), deadline: Date.now() + NIGHTLY_DEADLINE_MS, signal,
       maxBuffer: 16 * 1024 * 1024,
     });
-    if (result.exitCode !== 0) throw new Error("eval-nightly-child-failed");
+    if (result.exitCode !== 0) {
+      const reason = result.stderr.match(/(?:eval|benchmark)-[a-z0-9:-]+/)?.[0] ??
+        "eval-nightly-child-failed";
+      throw new Error(reason);
+    }
     return result.stdout.trim();
   }
   now(): Date { return new Date(); }
+}
+
+function errorReason(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message.trim();
+  return String(error).trim() || "eval-nightly-unknown-failure";
+}
+
+/** Log and report one scheduler infrastructure failure without hiding the original error. */
+export async function reportNightlyInfrastructureFailure(reason: string,
+  reporter: Pick<SlackNightlyRegressionReporter, "reportInfrastructure"> =
+    new SlackNightlyRegressionReporter(),
+  writeError: (message: string) => unknown = (message) => process.stderr.write(message),
+): Promise<void> {
+  writeError(`VIBE_NIGHTLY_INFRA_FAILURE ${reason}\n`);
+  try {
+    await reporter.reportInfrastructure({ reason, occurredAt: new Date().toISOString() });
+  } catch (error) {
+    writeError(`VIBE_NIGHTLY_SLACK_FAILURE ${errorReason(error)}\n`);
+  }
 }
 
 /** Run T2 from a dedicated clean main checkout for a local machine scheduler. */
@@ -61,8 +85,21 @@ export async function main(args: string[],
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  main(process.argv.slice(2)).then(
-    (output) => process.stdout.write(`${output}\n`),
-    (error) => { process.stderr.write(`${String(error)}\n`); process.exitCode = 1; },
-  );
+  const args = process.argv.slice(2);
+  if (args[0] === "--notify-infra" && args.length === 2) {
+    new SlackNightlyRegressionReporter().reportInfrastructure({
+      reason: args[1], occurredAt: new Date().toISOString(),
+    }).catch((error) => {
+      process.stderr.write(`VIBE_NIGHTLY_SLACK_FAILURE ${errorReason(error)}\n`);
+      process.exitCode = 1;
+    });
+  } else {
+    main(args).then(
+      (output) => process.stdout.write(`${output}\n`),
+      async (error) => {
+        await reportNightlyInfrastructureFailure(errorReason(error));
+        process.exitCode = 1;
+      },
+    );
+  }
 }

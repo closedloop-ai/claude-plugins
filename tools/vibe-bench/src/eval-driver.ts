@@ -11,12 +11,13 @@ import { EVAL_POLICY, requireDeveloperMachine } from "./eval-policy.ts";
 import type { EvalRuntime } from "./eval-policy.ts";
 import { snapshotPluginsAtHead, snapshotPluginsAtWorktree } from "./plugin-snapshot.ts";
 import { buildEvalBaseline, evalBaselineFileName, evalBaselineModelsMatchPolicy, publishEvalBaseline,
-  reconcileEvalBaselineQuarantine, requireCurrentEvalQuarantine, resolveLastGreenEvalBaseline,
+  evalQuarantineEntryIsActive, evalQuarantineStatus, reconcileEvalBaselineQuarantine,
+  resolveLastGreenEvalBaseline,
   resolveLatestEvalBaseline } from "./eval-baseline.ts";
-import type { EvalBaselineArtifact } from "./eval-baseline.ts";
+import type { EvalBaselineArtifact, EvalQuarantineEntry } from "./eval-baseline.ts";
 import { evalCaseCatalog } from "./eval-selection.ts";
 import { classifyVibeChangeScopeBetween } from "./vibe-change-scope.ts";
-import { mergedPullRequestsSince, SlackNightlyRegressionReporter } from "./eval-slack.ts";
+import { nightlyChangesSince, SlackNightlyRegressionReporter } from "./eval-slack.ts";
 import type { NightlyRegressionCase, NightlyRegressionReporter } from "./eval-slack.ts";
 import { runOwnedProcess } from "./owned-process.ts";
 
@@ -117,11 +118,6 @@ export function requireCleanT2Snapshot(repo: string, pluginSha: string): void {
       status.stdout.trim() || head.stdout.trim() !== pluginSha || nightlyInvalid) {
     throw new Error("eval-t2-main-snapshot-invalid");
   }
-}
-
-/** Backward-compatible name for the scheduled nightly preflight. */
-export function requireCleanMainSnapshot(repo: string, pluginSha: string): void {
-  requireCleanT2Snapshot(repo, pluginSha);
 }
 
 /** Discover the native Claude case manifests once from the immutable snapshot. */
@@ -330,7 +326,9 @@ function failedCases(result: LocalEvalResult, runtime: EvalRuntime): string[] {
 export function confirmedNightlyRegressions(lastGreen: EvalBaselineArtifact,
   current: EvalBaselineArtifact): NightlyRegressionCase[] {
   const currentCases = new Map(current.cases.map((item) => [item.id, item]));
-  const quarantined = new Set(current.quarantine.map((entry) => `${entry.runtime}:${entry.case}`));
+  const quarantined = new Set(current.quarantine
+    .filter((entry) => evalQuarantineEntryIsActive(entry, current.createdAt))
+    .map((entry) => `${entry.runtime}:${entry.case}`));
   return lastGreen.cases.flatMap((previous) => {
     const next = currentCases.get(previous.id);
     if (!next || next.contentHash !== previous.contentHash) return [];
@@ -359,6 +357,7 @@ interface NightlyPublicationRecord {
   resetLineage: boolean;
   lastGreenSha: string | null;
   regressions: NightlyRegressionCase[];
+  expiredQuarantine?: EvalQuarantineEntry[];
 }
 
 function publicationFiles(store: string): string[] {
@@ -384,17 +383,21 @@ export async function recoverPendingNightlyPublications(input: {
     catch { throw new Error("eval-nightly-publication-malformed"); }
     if (record.schemaVersion !== 1 || typeof record.resetLineage !== "boolean" ||
         !Array.isArray(record.regressions) ||
+        (record.expiredQuarantine !== undefined && !Array.isArray(record.expiredQuarantine)) ||
         (record.lastGreenSha !== null && !/^[a-f0-9]{40}$/.test(record.lastGreenSha))) {
       throw new Error("eval-nightly-publication-invalid");
     }
     const expectedResultFile = evalBaselineFileName(record.artifact);
     let regressionFile: string | null = null;
-    if (record.lastGreenSha && record.regressions.length) {
-      const mergedPullRequests = mergedPullRequestsSince({ repo: input.repo,
-        ghExecutable: input.ghExecutable, baselineSha: record.lastGreenSha,
-        currentSha: record.artifact.pluginSha });
-      const notice = { baselineSha: record.lastGreenSha, currentSha: record.artifact.pluginSha,
-        cases: record.regressions, mergedPullRequests,
+    const expiredQuarantine = record.expiredQuarantine ?? [];
+    if ((record.lastGreenSha && record.regressions.length) || expiredQuarantine.length) {
+      const changes = record.lastGreenSha && record.regressions.length
+        ? nightlyChangesSince({ repo: input.repo, ghExecutable: input.ghExecutable,
+          baselineSha: record.lastGreenSha, currentSha: record.artifact.pluginSha })
+        : { mergedPullRequests: [], directCommits: [] };
+      const notice = { baselineSha: record.lastGreenSha ?? record.artifact.pluginSha,
+        currentSha: record.artifact.pluginSha,
+        cases: record.regressions, ...changes, expiredQuarantine,
         quarantineOwner: record.artifact.quarantine[0]?.owner ?? "vibe-maintainers",
         resultsArtifact: `team nightly results store: ${expectedResultFile}` };
       regressionFile = join(input.store,
@@ -438,7 +441,9 @@ export async function deliverPendingRegressionReports(store: string,
     try { record = JSON.parse(readFileSync(file, "utf8")) as RegressionDeliveryRecord; }
     catch { throw new Error("eval-regression-delivery-malformed"); }
     if (record.schemaVersion !== 1 || !["pending", "sent"].includes(record.delivery) ||
-        !record.notice || !Array.isArray(record.notice.cases) || record.notice.cases.length === 0) {
+        !record.notice || !Array.isArray(record.notice.cases) ||
+        !Array.isArray(record.notice.expiredQuarantine) ||
+        (record.notice.cases.length === 0 && record.notice.expiredQuarantine.length === 0)) {
       throw new Error("eval-regression-delivery-invalid");
     }
     if (record.delivery === "sent") continue;
@@ -470,7 +475,8 @@ reporter: NightlyRegressionReporter = new SlackNightlyRegressionReporter()): Pro
   await deliverPendingRegressionReports(input.outputDir, reporter);
   const existing = existsSync(join(input.outputDir, "eval-t2-latest.json"))
     ? resolveLatestEvalBaseline(input.outputDir) : null;
-  const currentQuarantine = requireCurrentEvalQuarantine();
+  const quarantineStatus = evalQuarantineStatus();
+  const currentQuarantine = quarantineStatus.entries;
   const currentModels = !existing || evalBaselineModelsMatchPolicy(existing.artifact);
   if (existing) {
     const ancestry = spawnSync("git", ["-C", input.repo, "merge-base", "--is-ancestor",
@@ -484,6 +490,18 @@ reporter: NightlyRegressionReporter = new SlackNightlyRegressionReporter()): Pro
       const reconciled = reconcileEvalBaselineQuarantine(existing.artifact, currentQuarantine);
       const jsonFile = reconciled === existing.artifact
         ? existing.file : publishEvalBaseline(input.outputDir, reconciled);
+      if (quarantineStatus.expired.length) {
+        const publicationFile = join(input.outputDir,
+          `eval-t2-publication-${input.pluginSha.slice(0, 12)}.json`);
+        const publication: NightlyPublicationRecord = { schemaVersion: 1, artifact: reconciled,
+          resetLineage: false, lastGreenSha: existing.index.latestGreenFile
+            ? resolveLastGreenEvalBaseline(input.outputDir)?.pluginSha ?? null : null,
+          regressions: [], expiredQuarantine: quarantineStatus.expired };
+        writeFileSync(publicationFile, `${JSON.stringify(publication, null, 2)}\n`,
+          { flag: "wx", mode: 0o600 });
+        await recoverPendingNightlyPublications({ store: input.outputDir, repo: input.repo,
+          ghExecutable: input.ghExecutable }, reporter);
+      }
       return { result: reconciled, jsonFile, skipped: true,
         regressionReportFile: null, lineageReset: false, lineageReason: null };
     }
@@ -525,13 +543,14 @@ reporter: NightlyRegressionReporter = new SlackNightlyRegressionReporter()): Pro
   const publicationFile = join(input.outputDir,
     `eval-t2-publication-${input.pluginSha.slice(0, 12)}.json`);
   const publication: NightlyPublicationRecord = { schemaVersion: 1, artifact: result,
-    resetLineage: !currentModels, lastGreenSha: lastGreen?.pluginSha ?? null, regressions };
+    resetLineage: !currentModels, lastGreenSha: lastGreen?.pluginSha ?? null, regressions,
+    expiredQuarantine: quarantineStatus.expired };
   writeFileSync(publicationFile, `${JSON.stringify(publication, null, 2)}\n`,
     { flag: "wx", mode: 0o600 });
   await recoverPendingNightlyPublications({ store: input.outputDir, repo: input.repo,
     ghExecutable: input.ghExecutable }, reporter);
   const jsonFile = join(input.outputDir, evalBaselineFileName(result));
-  const regressionReportFile = regressions.length
+  const regressionReportFile = regressions.length || quarantineStatus.expired.length
     ? join(input.outputDir, `eval-t2-regression-${input.pluginSha.slice(0, 12)}.json`) : null;
   return { result, jsonFile, skipped: false, regressionReportFile,
     lineageReset: !currentModels,

@@ -240,13 +240,19 @@ export function evalBaselineModelsMatchPolicy(result: EvalBaselineArtifact): boo
     result.models.codexJudge === EVAL_POLICY.codexJudgeModel;
 }
 
-/** Validate the source-owned quarantine before nightly policy is applied. */
-export function requireCurrentEvalQuarantine(now = new Date()): EvalQuarantineEntry[] {
-  const quarantine = loadEvalQuarantine();
+/** Load source-owned quarantine and identify entries whose waiver has expired. */
+export function evalQuarantineStatus(now = new Date()): {
+  entries: EvalQuarantineEntry[];
+  expired: EvalQuarantineEntry[];
+} {
+  const entries = loadEvalQuarantine();
   const today = now.toISOString().slice(0, 10);
-  const expired = quarantine.find((entry) => !entry.owner || entry.deadline < today);
-  if (expired) throw new Error(`eval-quarantine-expired:${expired.runtime}:${expired.case}`);
-  return quarantine;
+  return { entries, expired: entries.filter((entry) => entry.deadline < today) };
+}
+
+/** Whether one waiver still applies at the named nightly's creation time. */
+export function evalQuarantineEntryIsActive(entry: EvalQuarantineEntry, createdAt: string): boolean {
+  return entry.deadline >= createdAt.slice(0, 10);
 }
 
 /** Refresh quarantine metadata without altering stored model observations. */
@@ -373,7 +379,9 @@ export function resolveLastGreenEvalBaseline(storeDir: string): EvalBaselineArti
 
 /** A green nightly has no confirmed, non-quarantined failure. */
 export function isGreenEvalBaseline(artifact: EvalBaselineArtifact): boolean {
-  const quarantined = new Set(artifact.quarantine.map((entry) => `${entry.runtime}:${entry.case}`));
+  const quarantined = new Set(artifact.quarantine
+    .filter((entry) => evalQuarantineEntryIsActive(entry, artifact.createdAt))
+    .map((entry) => `${entry.runtime}:${entry.case}`));
   return artifact.cases.every((item) => (["claude", "codex"] as const).every((runtime) => {
     const outcome = item.outcomes[runtime];
     const last = outcome?.recentNightlyOutcomes.at(-1);

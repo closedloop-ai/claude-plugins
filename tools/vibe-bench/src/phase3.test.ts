@@ -9,7 +9,7 @@ import test from "node:test";
 import { codexCaseId, collectClaudeEval, collectCodexEval, finalizeLocalEval } from "./eval-collector.ts";
 import type { EvalCaseResult, EvalSuiteResult, LocalEvalResult } from "./eval-collector.ts";
 import { buildEvalBaseline, isGreenEvalBaseline, publishEvalBaseline,
-  reconcileEvalBaselineQuarantine, requireCurrentEvalQuarantine, resolveEvalBaselineHistory,
+  evalQuarantineStatus, reconcileEvalBaselineQuarantine, resolveEvalBaselineHistory,
   resolveLastGreenEvalBaseline, resolveLatestEvalBaseline, verifyEvalBaseline } from "./eval-baseline.ts";
 import { loadEvalQuarantine } from "./eval-baseline.ts";
 import type { EvalBaselineArtifact } from "./eval-baseline.ts";
@@ -19,10 +19,11 @@ import { evalCaseCatalog, skillFromPrompt } from "./eval-selection.ts";
 import type { EvalCommands } from "./eval-driver.ts";
 import { codexEvalBudgetSeconds, codexEvalRunnerPath, confirmedNightlyRegressions,
   deliverPendingRegressionReports, evalModelProcessEnv, recoverPendingNightlyPublications,
-  requireCleanMainSnapshot, runLocalEvals, runT2Evals,
+  runLocalEvals, runT2Evals,
   stageFocusedClaudeEvalCases } from "./eval-driver.ts";
-import { main as runEvalNightly } from "./eval-nightly.ts";
-import { formatNightlyRegressionMessage, SlackNightlyRegressionReporter } from "./eval-slack.ts";
+import { main as runEvalNightly, reportNightlyInfrastructureFailure } from "./eval-nightly.ts";
+import { formatNightlyInfrastructureMessage, formatNightlyRegressionMessage, nightlyChangesSince,
+  SlackNightlyRegressionReporter } from "./eval-slack.ts";
 import type { NightlyRegressionNotice } from "./eval-slack.ts";
 import { requireLatestNightlyBenchmarkBaseline } from "./phase2-driver.ts";
 
@@ -32,7 +33,6 @@ test("model evals are local-only and use two failure retries", () => {
   assert.equal(EVAL_POLICY.claudeModel, "claude-sonnet-5-5");
   assert.equal(EVAL_POLICY.claudeJudgeModel, "claude-opus-5-5");
   assert.equal(EVAL_POLICY.failureReruns, 2);
-  assert.equal(EVAL_POLICY.baselineRuns, 1);
   assert.throws(() => requireDeveloperMachine({ GITHUB_ACTIONS: "true" }), /forbidden-in-ci/);
   assert.doesNotThrow(() => requireDeveloperMachine({ CI: "false" }));
 });
@@ -84,28 +84,6 @@ test("case skills come from actual invocations", () => {
   assert.throws(() => skillFromPrompt("no invocation"), /skill-invocation-invalid/);
 });
 
-test("T2 accepts only a clean main checkout at fetched origin main", () => {
-  const root = mkdtempSync(join(tmpdir(), "vibe-eval-main-"));
-  const origin = join(root, "origin.git");
-  const repo = join(root, "repo");
-  try {
-    execFileSync("git", ["init", "--bare", "-q", origin]);
-    execFileSync("git", ["clone", "-q", origin, repo]);
-    execFileSync("git", ["-C", repo, "config", "user.name", "Test"]);
-    execFileSync("git", ["-C", repo, "config", "user.email", "test@example.com"]);
-    execFileSync("git", ["-C", repo, "switch", "-qc", "main"]);
-    writeFileSync(join(repo, "tracked.txt"), "main\n");
-    execFileSync("git", ["-C", repo, "add", "."]);
-    execFileSync("git", ["-C", repo, "commit", "-qm", "main"]);
-    execFileSync("git", ["-C", repo, "push", "-qu", "origin", "main"]);
-    const sha = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-    execFileSync("git", ["-C", repo, "update-ref", "refs/remotes/origin/main", sha]);
-    requireCleanMainSnapshot(repo, sha);
-    writeFileSync(join(repo, "tracked.txt"), "dirty\n");
-    assert.throws(() => requireCleanMainSnapshot(repo, sha), /main-snapshot-invalid/);
-  } finally { rmSync(root, { recursive: true, force: true }); }
-});
-
 test("nightly scheduler fast-forwards main and dispatches one unique T2 run", async () => {
   const root = mkdtempSync(join(tmpdir(), "vibe-eval-nightly-"));
   try {
@@ -137,6 +115,7 @@ test("launchd scheduler keeps T2 behind the local heavy slot", () => {
   assert.match(plist, /NODE_EXECUTABLE[\s\S]*VIBE_EVAL_NIGHTLY_SCRIPT[\s\S]*CLEAN_MAIN_CHECKOUT/);
   assert.match(plist, /RUN_ROOT_PARENT[\s\S]*RESULTS_STORE[\s\S]*CLAUDE_EXECUTABLE/);
   assert.match(plist, /CODEX_EXECUTABLE[\s\S]*UV_EXECUTABLE[\s\S]*GH_EXECUTABLE/);
+  assert.match(plist, /<key>EnvironmentVariables<\/key>[\s\S]*<key>PATH<\/key>[\s\S]*EXECUTABLE_PATH/);
   assert.match(plist, /<key>Hour<\/key>\s*<integer>2<\/integer>/);
   assert.match(plist, /<key>Minute<\/key>\s*<integer>0<\/integer>/);
   assert.doesNotMatch(plist, /SLACK_BOT_TOKEN|SLACK_CHANNEL_ID/);
@@ -158,19 +137,30 @@ test("launchd scheduler keeps T2 behind the local heavy slot", () => {
     const checkout = join(fixture, "repo");
     mkdirSync(checkout);
     const heavySlot = join(fixture, "heavy-slot.sh");
+    const nightly = join(fixture, "eval-nightly.ts");
+    const node = join(fixture, "node");
+    const claude = join(fixture, "claude");
+    const codex = join(fixture, "codex");
+    const uv = join(fixture, "uv");
+    const gh = join(fixture, "gh");
     const argumentsFile = join(fixture, "arguments.txt");
     const environmentFile = join(fixture, "environment.txt");
+    const notificationFile = join(fixture, "notification.txt");
     writeFileSync(privateEnv, "SLACK_BOT_TOKEN='test-token'\nSLACK_CHANNEL_ID='C123'\n",
       { mode: 0o600 });
     writeFileSync(heavySlot, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argumentsFile}'\nprintf '%s\\n%s\\n' "$SLACK_BOT_TOKEN" "$SLACK_CHANNEL_ID" > '${environmentFile}'\n`);
     chmodSync(heavySlot, 0o700);
-    const dispatched = spawnSync(script, [privateEnv, heavySlot, "/node", "/nightly",
-      checkout, "/run-root", "/results", "/claude", "/codex", "/uv", "/gh"],
+    writeFileSync(nightly, "// fixture\n");
+    writeFileSync(node, `#!/bin/sh\nprintf '%s\\n' "$@" > '${notificationFile}'\n`);
+    for (const executable of [claude, codex, uv, gh]) writeFileSync(executable, "#!/bin/sh\nexit 0\n");
+    for (const executable of [node, claude, codex, uv, gh]) chmodSync(executable, 0o700);
+    const dispatched = spawnSync(script, [privateEnv, heavySlot, node, nightly,
+      checkout, "/run-root", "/results", claude, codex, uv, gh],
     { encoding: "utf8" });
     assert.equal(dispatched.status, 0, dispatched.stderr);
     assert.deepEqual(readFileSync(argumentsFile, "utf8").trim().split("\n"), [
-      "vibe-eval-nightly", "/node", "--experimental-strip-types", "/nightly", checkout,
-      "/run-root", "/results", "/claude", "/codex", "/uv", "/gh",
+      "vibe-eval-nightly", node, "--experimental-strip-types", nightly, checkout,
+      "/run-root", "/results", claude, codex, uv, gh,
     ]);
     assert.equal(readFileSync(environmentFile, "utf8"), "test-token\nC123\n");
 
@@ -183,14 +173,14 @@ if [ "$1:$2" = "-c:%u" ]; then id -u; exit 0; fi
 if [ "$1:$2" = "-c:%a" ]; then printf '600\\n'; exit 0; fi
 exit 91
 `, { mode: 0o700 });
-    const gnuDispatched = spawnSync(script, [privateEnv, heavySlot, "/node", "/nightly",
-      checkout, "/run-root", "/results", "/claude", "/codex", "/uv", "/gh"],
+    const gnuDispatched = spawnSync(script, [privateEnv, heavySlot, node, nightly,
+      checkout, "/run-root", "/results", claude, codex, uv, gh],
     { encoding: "utf8", env: { ...process.env, PATH: `${gnuBin}:${process.env.PATH}` } });
     assert.equal(gnuDispatched.status, 0, gnuDispatched.stderr);
 
     chmodSync(privateEnv, 0o644);
-    const openMode = spawnSync(script, [privateEnv, heavySlot, "/node", "/nightly",
-      checkout, "/run-root", "/results", "/claude", "/codex", "/uv", "/gh"],
+    const openMode = spawnSync(script, [privateEnv, heavySlot, node, nightly,
+      checkout, "/run-root", "/results", claude, codex, uv, gh],
     { encoding: "utf8" });
     assert.equal(openMode.status, 78);
     assert.match(openMode.stderr, /mode 0600/);
@@ -198,24 +188,33 @@ exit 91
 
     writeFileSync(privateEnv, "SLACK_BOT_TOKEN=test-token\nSLACK_CHANNEL_ID=C123\nEXTRA_COMMAND=bad\n",
       { mode: 0o600 });
-    const unsupported = spawnSync(script, [privateEnv, heavySlot, "/node", "/nightly",
-      checkout, "/run-root", "/results", "/claude", "/codex", "/uv", "/gh"],
+    const unsupported = spawnSync(script, [privateEnv, heavySlot, node, nightly,
+      checkout, "/run-root", "/results", claude, codex, uv, gh],
     { encoding: "utf8" });
     assert.equal(unsupported.status, 78);
     assert.match(unsupported.stderr, /unsupported key/);
 
     const link = join(fixture, "linked.env");
     symlinkSync(privateEnv, link);
-    const linked = spawnSync(script, [link, heavySlot, "/node", "/nightly",
-      checkout, "/run-root", "/results", "/claude", "/codex", "/uv", "/gh"],
+    const linked = spawnSync(script, [link, heavySlot, node, nightly,
+      checkout, "/run-root", "/results", claude, codex, uv, gh],
     { encoding: "utf8" });
     assert.equal(linked.status, 78);
     assert.match(linked.stderr, /must not be a symlink/);
+
+    rmSync(codex);
+    writeFileSync(privateEnv, "SLACK_BOT_TOKEN=test-token\nSLACK_CHANNEL_ID=C123\n", { mode: 0o600 });
+    const missingBinary = spawnSync(script, [privateEnv, heavySlot, node, nightly,
+      checkout, "/run-root", "/results", claude, codex, uv, gh], { encoding: "utf8" });
+    assert.equal(missingBinary.status, 69);
+    assert.match(missingBinary.stderr, /VIBE_NIGHTLY_INFRA_FAILURE.*Codex/);
+    assert.match(readFileSync(notificationFile, "utf8"), /--notify-infra/);
   } finally { rmSync(fixture, { recursive: true, force: true }); }
   const readme = readFileSync(join(import.meta.dirname, "../README.md"), "utf8");
   assert.match(readme, /Install it only after this change is merged/);
   assert.match(readme, /git clone[\s\S]*pull --ff-only origin main/);
-  assert.match(readme, /command -v node[\s\S]*Do not rely on launchd's `PATH`/);
+  assert.match(readme, /command -v node[\s\S]*Codex npm shim[\s\S]*EXECUTABLE_PATH/);
+  assert.match(readme, /printed environment contains the explicit `PATH`[\s\S]*prints its version/);
   assert.match(readme, /launchctl bootstrap[\s\S]*launchctl print/);
 });
 
@@ -377,13 +376,19 @@ test("nightly baseline accepts failure-only retries and rejects rerunning a pass
   /passing-case-rerun/);
 });
 
-test("historical baselines remain readable while current quarantine expiry fails loudly", () => {
+test("expired quarantine remains readable, gates failures and is surfaced for Slack", () => {
   const catalog = [{ id: "case-a", skill: "vibe" as const, contentHash: "a".repeat(64) }];
   const baseline = buildEvalBaseline({ results: [comparisonEval("a".repeat(40), { "case-a": true })],
     catalog, pluginVersion: "1.2.3", createdAt: "2026-10-29T00:00:00Z" });
   assert.doesNotThrow(() => verifyEvalBaseline(baseline));
-  assert.throws(() => requireCurrentEvalQuarantine(new Date("2026-11-14T00:00:00Z")),
-    /quarantine-expired/);
+  const quarantine = evalQuarantineStatus(new Date("2026-11-14T00:00:00Z"));
+  assert.equal(quarantine.entries.length, 29);
+  assert.equal(quarantine.expired.length, 29);
+  const failedAfterExpiry = buildEvalBaseline({
+    results: [comparisonEval("b".repeat(40), { "case-a": false })], catalog,
+    pluginVersion: "1.2.3", createdAt: "2026-11-14T00:00:00Z",
+  });
+  assert.equal(isGreenEvalBaseline(failedAfterExpiry), false);
   const extended = baseline.quarantine.map((item) => ({ ...item, deadline: "2026-12-01" }));
   const reconciled = reconcileEvalBaselineQuarantine(baseline, extended,
     "2026-11-14T00:00:00Z");
@@ -400,6 +405,7 @@ test("nightly regression Slack message names cases, runtimes, PR authors and res
     mergedPullRequests: [{ number: 368, title: "Start-to-PR benchmark\n<!channel>",
       url: "https://github.com/closedloop-ai/claude-plugins/pull/368", author: "octocat",
       mergeCommit: "b".repeat(40) }],
+    directCommits: [], expiredQuarantine: [],
     quarantineOwner: "vibe-maintainers", resultsArtifact: "eval-t2-result.json",
   };
   const message = formatNightlyRegressionMessage(notice);
@@ -411,6 +417,12 @@ test("nightly regression Slack message names cases, runtimes, PR authors and res
   assert.match(message, /Quarantine owner: vibe-maintainers/);
   assert.match(message, /coordinate a fix-forward or revert/);
   assert.match(message, /Full results: eval-t2-result.json/);
+  const expiryMessage = formatNightlyRegressionMessage({ ...notice, cases: [],
+    mergedPullRequests: [], directCommits: [], expiredQuarantine: [{ runtime: "claude",
+      case: "vibe-route", owner: "vibe-maintainers", deadline: "2026-11-13",
+      reason: "fixture" }] });
+  assert.match(expiryMessage, /Expired quarantine entries are gating/);
+  assert.match(expiryMessage, /claude: vibe-route, owner @vibe-maintainers, expired 2026-11-13/);
 
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const send = (async (url: string | URL | Request, init?: RequestInit) => {
@@ -433,6 +445,46 @@ test("nightly regression Slack message names cases, runtimes, PR authors and res
   assert.ok(requests[0].init?.signal instanceof AbortSignal);
   await assert.rejects(() => new SlackNightlyRegressionReporter({}, send).report(notice),
     /credentials-missing/);
+  assert.match(formatNightlyInfrastructureMessage({ reason: "eval-binary-missing",
+    occurredAt: "2026-10-30T00:00:00Z" }), /eval-binary-missing/);
+  await new SlackNightlyRegressionReporter({ SLACK_BOT_TOKEN: "secret",
+    SLACK_CHANNEL_ID: "C123" }, send).reportInfrastructure({ reason: "eval-binary-missing",
+    occurredAt: "2026-10-30T00:00:00Z" });
+  assert.match(String(requests.at(-1)?.init?.body), /Vibe nightly infrastructure failure/);
+  assert.match(String(requests.at(-1)?.init?.body), /eval-binary-missing/);
+  const logs: string[] = [];
+  await reportNightlyInfrastructureFailure("eval-regression-pull-request-attribution-incomplete",
+    { reportInfrastructure: async () => { throw new Error("eval-slack-post-failed"); } },
+    (line) => logs.push(line));
+  assert.match(logs.join(""), /VIBE_NIGHTLY_INFRA_FAILURE.*attribution-incomplete/);
+  assert.match(logs.join(""), /VIBE_NIGHTLY_SLACK_FAILURE eval-slack-post-failed/);
+});
+
+test("a non-PR main commit is attributed directly instead of wedging alerts", () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-eval-direct-commit-"));
+  try {
+    execFileSync("git", ["init", "-b", "main", root], { stdio: "ignore" });
+    execFileSync("git", ["-C", root, "config", "user.name", "Direct Author"]);
+    execFileSync("git", ["-C", root, "config", "user.email", "direct@example.com"]);
+    writeFileSync(join(root, "file.txt"), "one\n");
+    execFileSync("git", ["-C", root, "add", "."]);
+    execFileSync("git", ["-C", root, "commit", "-m", "baseline"], { stdio: "ignore" });
+    const baselineSha = execFileSync("git", ["-C", root, "rev-parse", "HEAD"],
+      { encoding: "utf8" }).trim();
+    writeFileSync(join(root, "file.txt"), "two\n");
+    execFileSync("git", ["-C", root, "commit", "-am", "direct maintenance"], { stdio: "ignore" });
+    const currentSha = execFileSync("git", ["-C", root, "rev-parse", "HEAD"],
+      { encoding: "utf8" }).trim();
+    const gh = join(root, "gh");
+    writeFileSync(gh, "#!/bin/sh\nif [ \"$1\" = repo ]; then printf 'closedloop-ai/claude-plugins\\n'; else printf '[]\\n'; fi\n",
+      { mode: 0o700 });
+    const changes = nightlyChangesSince({ repo: root, ghExecutable: gh,
+      baselineSha, currentSha });
+    assert.deepEqual(changes.mergedPullRequests, []);
+    assert.equal(changes.directCommits.length, 1);
+    assert.equal(changes.directCommits[0].title, "direct maintenance");
+    assert.match(changes.directCommits[0].author, /Direct Author/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("a failed Slack delivery retries from disk without repeating model work", async () => {
@@ -441,6 +493,7 @@ test("a failed Slack delivery retries from disk without repeating model work", a
   const notice: NightlyRegressionNotice = {
     baselineSha: "a".repeat(40), currentSha: "b".repeat(40),
     cases: [{ runtime: "claude", case: "vibe-route" }], mergedPullRequests: [],
+    directCommits: [], expiredQuarantine: [],
     quarantineOwner: "vibe-maintainers", resultsArtifact: "eval-t2-result.json",
   };
   writeFileSync(file, `${JSON.stringify({ schemaVersion: 1, delivery: "pending",

@@ -19,6 +19,16 @@ const realStream = readFileSync(join(fixtureDir, "phase0-claude-anonymized.jsonl
 const realTranscript = readFileSync(join(fixtureDir, "phase0-transcript-anonymized.jsonl"), "utf8");
 const syntheticOtel = readOtelFile(join(fixtureDir, "phase0-otel-overlay.synthetic.jsonl"));
 
+let inheritedClaudeEffort: string | undefined;
+test.beforeEach(() => {
+  inheritedClaudeEffort = process.env.CLAUDE_EFFORT;
+  delete process.env.CLAUDE_EFFORT;
+});
+test.afterEach(() => {
+  if (inheritedClaudeEffort === undefined) delete process.env.CLAUDE_EFFORT;
+  else process.env.CLAUDE_EFFORT = inheritedClaudeEffort;
+});
+
 function identity(overrides: Partial<ClaudeRunIdentity> = {}): ClaudeRunIdentity {
   return {
     id: "run-1", shape: "vibe", pluginSha: "a".repeat(40), taskId: BENCHMARK_TASK.id,

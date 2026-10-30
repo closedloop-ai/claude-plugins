@@ -16,10 +16,8 @@ export const EVAL_POLICY = {
   failureReruns: 2,
   concurrency: 3,
   codexConcurrency: 2,
-  baselineRuns: 1,
   reliabilityThreshold: 0.95,
   reliabilityMinimumObservations: 3,
-  quarantineDeadlineDays: 14,
 } as const;
 
 /** Refuse every paid eval path in hosted automation environments. */
