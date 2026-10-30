@@ -210,8 +210,13 @@ Ready in approximately **20 minutes**, assuming all lanes pass and the e2e queue
         "Left untouched: qa-foreign keeps running and gets no cleanup or stop. "
         "Final status gives owner writer-a and ticket ISS-13420."
     )
+    codex_cleanup_plain = (
+        "PR 42 closed, so reconcile qa-owned now. After rechecking its PID birth identity and Docker creation witnesses, "
+        "the handler removes only its recorded qa-owned container, volumes and network. Leave qa-foreign untouched. "
+        "Final status: writer-a and ISS-13420 are reconciled."
+    )
     for name, replies in (("orchestrator-parallel-e2e-queued", (codex_lane, codex_lane_with_rejected_history, claude_lane)),
-                          ("orchestrator-owned-qa-cleanup", (codex_cleanup, claude_cleanup))):
+                          ("orchestrator-owned-qa-cleanup", (codex_cleanup, codex_cleanup_plain, claude_cleanup))):
         for reply in replies:
             checks, _ = runner.deterministic(cases[name], reply, tmp_path, [])
             assert all(check["passed"] for check in checks if check["grader"] != "loaded-plugin"), (name, checks)
