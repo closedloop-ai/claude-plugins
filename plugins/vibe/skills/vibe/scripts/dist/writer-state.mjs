@@ -11665,7 +11665,15 @@ function readPluginManifest(root) {
   throw Object.assign(new Error("No vibe plugin manifest exists"), { code: "ENOENT" });
 }
 function installedPluginRoot(metaUrl) {
-  return realpathSync2(resolve(dirname(fileURLToPath2(metaUrl)), "../../../.."));
+  const entry = dirname(fileURLToPath2(metaUrl));
+  for (const candidate of [resolve(entry, "../../../.."), resolve(entry, "../../../plugins/vibe")]) {
+    try {
+      const root = realpathSync2(candidate);
+      if (isPluginRoot(root)) return root;
+    } catch {
+    }
+  }
+  throw new AgentRootError("AGENT_ROOT_INVALID", "The Claude worker entry is not inside the installed vibe plugin or its owning source tree");
 }
 function resolveAgentRoot(supplied, installed, recorded) {
   const fallback = recorded && existsSync(recorded) ? recorded : installed;

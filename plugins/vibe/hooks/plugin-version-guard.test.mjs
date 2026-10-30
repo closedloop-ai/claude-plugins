@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { launchesWorker, launchesWriterAgent, pluginVersionGuard, pluginVersionPromptStart, pluginVersionSkillStart } from "./plugin-version-guard.mjs";
+import { readHookSkill, readHookSkillRecord } from "./hook-session-scope.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SESSION = "11111111-2222-4333-8444-555555555555";
@@ -23,6 +24,11 @@ function record(dir, value, session = SESSION) {
   writeFileSync(recordFile(dir, session), JSON.stringify(value));
 }
 
+function loaded(dir) {
+  pluginVersionSkillStart({ tool_name: "Skill", session_id: SESSION, tool_input: { skill: "vibe:fleet-orchestrator" } }, dir);
+  return readHookSkillRecord(SESSION, dir).loadedSkill;
+}
+
 const agent = { tool_name: "Agent", session_id: SESSION, tool_input: { subagent_type: "general-purpose", prompt: "Invoke vibe:vibe first: resume the vibe session for ISS-1 and write the fix." } };
 const bash = (command) => ({ tool_name: "Bash", session_id: SESSION, tool_input: { command } });
 const OUTDATED = { status: "outdated", versions: "vibe: you have 1.0.84, the latest is 1.0.85" };
@@ -30,6 +36,7 @@ const OUTDATED = { status: "outdated", versions: "vibe: you have 1.0.84, the lat
 test("starting vibe or fleet-orchestrator marks the conversation pending, and worker launches wait for the check", (t) => {
   const dir = home(t);
   assert.equal(pluginVersionSkillStart({ tool_name: "Skill", session_id: SESSION, tool_input: { skill: "vibe:fleet-orchestrator" } }, dir), null);
+  assert.equal(readHookSkill(SESSION, dir), "fleet-orchestrator");
   assert.equal(JSON.parse(readFileSync(recordFile(dir), "utf8")).status, "pending");
   for (const event of [agent, bash("node /plugins/vibe/skills/vibe/scripts/dist/claude-worker.mjs < brief.json"), bash("scripts/fleet.sh /h local session turn w1 --prompt-file p.md")]) {
     const result = pluginVersionGuard(event, dir);
@@ -41,21 +48,38 @@ test("starting vibe or fleet-orchestrator marks the conversation pending, and wo
   assert.equal(pluginVersionGuard(bash("git status"), dir), null);
 });
 
+test("the documented Codex $vibe prompt records exact hook scope", (t) => {
+  const dir = home(t);
+  pluginVersionPromptStart({ session_id: SESSION, prompt: "$vibe build the page" }, dir);
+  assert.equal(readHookSkill(SESSION, dir), "vibe");
+  assert.equal(JSON.parse(readFileSync(recordFile(dir), "utf8")).status, "pending");
+  pluginVersionPromptStart({ session_id: "other", prompt: "show me the $vibe docs" }, dir);
+  assert.equal(readHookSkill("other", dir), null);
+});
+
 test("an outdated plugin with no choice refuses worker launches; either recorded choice lets them through", (t) => {
   const dir = home(t);
-  record(dir, OUTDATED);
+  const loadedSkill = loaded(dir);
+  record(dir, { ...OUTDATED, loadedSkill });
   const refused = pluginVersionGuard(agent, dir);
   assert.equal(refused.decision, "deny");
   assert.match(refused.reason, /plugins are outdated \(vibe: you have 1\.0\.84, the latest is 1\.0\.85\) and the person has not chosen/);
   assert.match(refused.reason, /proceeding on an outdated plugin could give worse results/);
   for (const choice of ["proceed", "update"]) {
-    record(dir, { ...OUTDATED, choice: { choice } });
+    record(dir, { ...OUTDATED, choice: { choice }, loadedSkill });
     assert.equal(pluginVersionGuard(agent, dir), null, choice);
   }
   for (const status of ["current", "unknown"]) {
-    record(dir, { status });
+    record(dir, { status, loadedSkill });
     assert.equal(pluginVersionGuard(agent, dir), null, status);
   }
+});
+
+test("a current version string without machine-observed actor load evidence fails closed", (t) => {
+  const dir = home(t);
+  record(dir, { status: "current", runtime: "claude", loadedSkill: { actorId: SESSION, version: "1.1.21" } });
+  assert.equal(pluginVersionGuard(agent, dir)?.decision, "deny");
+  assert.match(pluginVersionGuard(agent, dir)?.reason ?? "", /machine-observed loaded skill evidence|malformed/);
 });
 
 test("a conversation that never started either skill is never refused, and a later start keeps its record", (t) => {
@@ -93,13 +117,18 @@ test("the hook scripts route the guard: a Skill start then an Agent call is refu
 });
 
 // PR #350 review: every Agent call was refused, so research subagents could not run while the question waited.
-test("only writer launches wait for the answer; other subagents run", (t) => {
+test("every Claude dispatch in an active stale session waits for the current loaded release", (t) => {
   const dir = home(t);
-  record(dir, OUTDATED);
+  record(dir, { ...OUTDATED, loadedSkill: loaded(dir) });
   const research = { ...agent, tool_input: { subagent_type: "Explore", prompt: "find where the board renders writer rows" } };
-  assert.equal(pluginVersionGuard(research, dir), null);
+  assert.equal(pluginVersionGuard(research, dir)?.decision, "deny");
   const worker = { ...agent, tool_input: { subagent_type: "vibe:vibe-setup-worker", prompt: "install node" } };
   assert.equal(pluginVersionGuard(worker, dir)?.decision, "deny");
   assert.equal(pluginVersionGuard(agent, dir)?.decision, "deny", "a writer brief that invokes vibe:vibe");
   assert.equal(launchesWriterAgent({ subagent_type: "general-purpose", prompt: "review the vibe-sessions code" }), false);
+  const send = { tool_name: "SendMessage", session_id: SESSION, cwd: process.cwd(), tool_input: { message: "continue" } };
+  assert.equal(pluginVersionGuard(send, dir)?.decision, "deny");
+  record(dir, { status: "current", loadedSkill: readHookSkillRecord(SESSION, dir).loadedSkill });
+  assert.equal(pluginVersionGuard({ ...send, tool_input: { message: "run handoff/scripts/qa-merge-order.mjs" } }, dir)?.decision, "deny");
+  assert.equal(pluginVersionGuard({ ...send, session_id: "ordinary" }, dir), null, "ordinary sessions remain untouched");
 });

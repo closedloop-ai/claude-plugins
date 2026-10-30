@@ -18,13 +18,17 @@
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { blockingProblem, markPending, readStartupRecord } from "../skills/vibe/scripts/plugin-version.mjs";
+import { blockingProblem, conversationRuntime, markPending, readStartupRecord } from "../skills/vibe/scripts/plugin-version.mjs";
 import { commandSegments } from "./command-segments.mjs";
 import { deny } from "./hook-dispatch.mjs";
+import { recordHookSkill } from "./hook-session-scope.mjs";
+import { loadedSkillEvidenceProblem } from "../skills/vibe/scripts/loaded-skill.mjs";
+import { pluginScriptProblems } from "../skills/fleet-orchestrator/scripts/skill-freshness.mjs";
 
 const SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "skills", "vibe", "scripts", "plugin-version.mjs");
 export const CHECKED_SKILLS = Object.freeze(["vibe:vibe", "vibe:fleet-orchestrator"]);
 const STARTS_SKILL = /^\s*\/(?:vibe:vibe|vibe:fleet-orchestrator)(?:\s|$)/;
+const CODEX_VIBE_START = /^\s*\$vibe(?:\s|$)/;
 const CONVERSATION = /^[A-Za-z0-9_.:-]{1,128}$/;
 const INTERPRETERS = new Set(["node", "bash", "sh", "zsh"]);
 const VIBE_WORKER = /^vibe:vibe-[a-z0-9-]+-worker$/;
@@ -48,7 +52,9 @@ export function launchesWorker(command) {
 /** The refusal for a worker launch in a conversation whose check blocks, or null. */
 export function versionProblem(conversation, home = os.homedir()) {
   if (typeof conversation !== "string" || !CONVERSATION.test(conversation)) return null;
-  const problem = blockingProblem(readStartupRecord(conversation, home));
+  const record = readStartupRecord(conversation, home);
+  if (!record) return null;
+  const problem = blockingProblem(record) ?? loadedSkillEvidenceProblem(record?.loadedSkill, { actorId: conversation, pluginRoot: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..") });
   if (!problem) return null;
   return [
     `Plugin version check first: ${problem}.`,
@@ -60,21 +66,33 @@ export function versionProblem(conversation, home = os.homedir()) {
 
 /** PreToolUse on Skill: starting vibe or fleet-orchestrator marks the conversation pending. Never decides. */
 export function pluginVersionSkillStart(event, home = os.homedir()) {
+  recordHookSkill(event?.session_id, event?.tool_input?.skill, home, new Date(), conversationRuntime() ?? "claude");
   if (CHECKED_SKILLS.includes(event?.tool_input?.skill) && CONVERSATION.test(event?.session_id ?? "")) markPending(event.session_id, home);
   return null;
 }
 
 /** UserPromptSubmit: a `/vibe:vibe` or `/vibe:fleet-orchestrator` prompt marks the conversation pending. Never decides. */
 export function pluginVersionPromptStart(event, home = os.homedir()) {
-  if (STARTS_SKILL.test(String(event?.prompt ?? "")) && CONVERSATION.test(event?.session_id ?? "")) markPending(event.session_id, home);
+  if (CONVERSATION.test(event?.session_id ?? "")) {
+    const prompt = String(event?.prompt ?? "");
+    const skill = CODEX_VIBE_START.test(prompt) ? "vibe:vibe"
+      : /^\s*\/(vibe:vibe|vibe:fleet-orchestrator)(?:\s|$)/.exec(prompt)?.[1];
+    if (skill) recordHookSkill(event.session_id, skill, home, new Date(), conversationRuntime() ?? "claude");
+  }
+  if ((STARTS_SKILL.test(String(event?.prompt ?? "")) || CODEX_VIBE_START.test(String(event?.prompt ?? "")))
+    && CONVERSATION.test(event?.session_id ?? "")) markPending(event.session_id, home);
   return null;
 }
 
 /** PreToolUse on Agent and Bash: refuses a writer launch while the conversation's check blocks. */
 export function pluginVersionGuard(event, home = os.homedir()) {
-  const launch = (event?.tool_name === "Agent" && launchesWriterAgent(event?.tool_input))
-    || (event?.tool_name === "Bash" && launchesWorker(event?.tool_input?.command));
+  const text = event?.tool_name === "Agent" ? event?.tool_input?.prompt
+    : event?.tool_name === "SendMessage" ? event?.tool_input?.message
+      : event?.tool_name === "Bash" ? event?.tool_input?.command : "";
+  const launch = event?.tool_name === "Agent" || event?.tool_name === "SendMessage"
+    || (event?.tool_name === "Bash" && (launchesWorker(event?.tool_input?.command) || /(?:^|\s)claude\s+-p\b/.test(String(text ?? ""))));
   if (!launch) return null;
-  const problem = versionProblem(event?.session_id, home);
+  const problem = versionProblem(event?.session_id, home)
+    ?? pluginScriptProblems(String(text ?? ""), path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."), event?.cwd).at(0);
   return problem ? deny(problem) : null;
 }

@@ -84,6 +84,12 @@ These are checked by the skill, not the script:
   says. Never send the person into the app's Settings to find it.
 - Codex Browser plugin: the in-app Browser must be available. If it is not,
   stop; a human adds it (`guardrails.md`, "Plugins and tooling").
+- Codex plugin hooks: open `/hooks` and have the person review and trust the
+  current vibe hook definition before relying on its PreToolUse refusals.
+  Installing the plugin alone does not trust hooks. Current official Codex
+  hooks documentation confirms Bash and Agent routing but does not establish
+  whether `request_user_input` invokes PreToolUse; treat the question guard's
+  Codex coverage for that tool as UNVERIFIED, never as a safety gate.
 
 ## Commands the sandbox blocks
 

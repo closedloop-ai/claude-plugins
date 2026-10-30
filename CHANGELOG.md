@@ -4,6 +4,22 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.23
+
+#### Added
+- Source-bound reviewer-premise, helper-final, handoff, and preview-capability receipts give Claude and Codex one evidence contract before pull-request publication.
+- Actor-bound skill freshness and installed-script preflight gates cover fleet wake, local and remote Codex turns, Claude workers and messages, helper briefs, and board deliveries.
+
+#### Changed
+- Guardrails, adversarial, Storybook, and verification results must cite verified premises and complete through their runtime-owned evidence path before handoff can accept them.
+- Storybook releases are prepared before the pull request so story checks pass, while one enqueue-time conflict settlement keeps concurrent version reservations from causing repeated main merges.
+- Instruction-weight accounting covers all plugin Markdown, including eval prompts and graders; it is about 2,390 words longer than in 1.1.22.
+
+#### Fixed
+- Fleet first-turn and resume handling, native reviewer capability evidence, helper completion, and pull-request creation now fail closed on missing, stale, forged, or incomplete session evidence.
+- Version questions and code citations use recorded startup state and real repository lines; preview readiness no longer turns missing capabilities into shell, console, or cloud-administration tasks for the person.
+- App Server review evidence reads bounded turn and item pages instead of full thread history, and stale loaded skill instructions cannot name scripts removed from the installed release.
+
 ### vibe v1.1.22
 
 #### Added

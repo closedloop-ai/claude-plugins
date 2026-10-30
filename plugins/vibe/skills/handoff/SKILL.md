@@ -42,6 +42,11 @@ person should look at" (a story or page link comes from
 `../vibe/scripts/session-questions.mjs` as the vibe skill's "Questions are
 asked once" says, so nothing settled in the session is asked again. Updates mention only completed features and next work; planning,
 reviews and the checklist stay internal. Every
+reviewer, verifier and critic follows `../vibe/references/review-premises.md`.
+Before endorsing or forwarding a finding, independently recheck each material
+premise against its cited code line, read-only result or current official
+document. A citation alone does not prove a premise, and an idle notice is not
+a final report. Every
 check narrowed or left for CI is named in the existing progress or handoff
 summary in plain words (`../vibe/references/guardrails.md`, "Checks"). Every
 worker brief says closedloop-graph is required
@@ -474,6 +479,10 @@ Claude Code). ALL confirmed code/story findings resume the SAME writer,
 which verifies and corrects them; recheck its current result and repeat
 validation. A coverage gap goes on the missing tests list; nobody writes a
 test here.
+Save the exact JSON stdout from each mandatory vibe reviewer launcher turn in
+the private git directory. Keep its trace path and completion identity; do not
+retype a summary into a receipt. Guardrails, adversarial and Storybook
+decomposer each need a clean final-source turn before the PR gate.
 
 A finding from any handoff reviewer, step 3's guardrails check included,
 that a mechanism, a one-way door, or an unratified or conflicting decision
@@ -816,6 +825,44 @@ lookup resolved to exactly one user.
 
 Use the accepted uncommitted evidence from step 6. Publication only binds it
 to the pushed tree; it never substitutes a new source-validation round.
+
+For a requested pull request, after step 8 is `DONE`, capture the final
+launcher result for each mandatory read-only review role with
+`node scripts/review-receipts.mjs --worktree "<wt>" --result <exact launcher
+output file> --role <role> --out <private receipt file>`.
+For a native Codex reviewer or verifier, use a managed App Server thread whose
+`thread/read` exposes completed turn items. Register its exact thread ID with
+`helpers.mjs start --kind reviewer|verifier --worker-id <thread ID>
+--capabilities <parent-discovered capability record> --brief <file>
+--role <agent name> --agent-definition <canonical agent file>
+--worktree "<wt>"`. The helper writes a private final deliverable containing
+one JSON object `{runtime:"codex", role, workerId, source, completion:
+{sessionId,turnId,status:"completed"}, observedToolCalls, findings}` followed
+by the exact `FINAL` line from the fleet template. It runs `helpers.mjs final`
+and returns that report path; ROOT reads it and runs `helpers.mjs accepted
+--report` only after the final result is verified. Capture with
+`review-receipts.mjs --native --orch-dir <dir> --helper <name> --worktree
+"<wt>" --role <role> --out <private receipt file>`. The receipt gate rechecks
+the owning helper ledger, role definition, source, completion marker,
+capability record, actual App Server turn items and findings. The helper's
+`observedToolCalls` field is informational; only machine-observed turn items
+prove graph use. A Codex native subagent without a managed readable thread
+must be routed through the managed App Server reviewer path. A hand-written
+Claude launcher JSON file is not a native receipt.
+Rerun a reviewer
+after a source change, then capture its new result; an old source receipt
+cannot pass. Pass the four receipts (guardrails, adversarial, Storybook
+decomposer and final verifier), criteria audit and matrix paths, and verifier evidence path to
+the PR worker. A hand-written empty findings list is never a receipt. Any
+current blocking finding prevents the PR, even if someone marks it waived.
+After composing the final PR body, the PR worker runs `handoff-gate.mjs`
+immediately before `gh pr create` with the body, verifier evidence, receipts,
+current fetched base, and when available the criteria ticket, audit and
+matrix. This gate rechecks mergeability, acceptance criteria, the PR body,
+verifier evidence and machine-produced reviewer findings,
+then records a private witness bound to the source. A later source change
+invalidates it; finish the affected handoff steps and rerun this gate. The
+PreToolUse guard refuses `gh pr create` without a current witness.
 
 Then dispatch
 `vibe-environment-worker` in `pull-request` mode (its own `pull-request`

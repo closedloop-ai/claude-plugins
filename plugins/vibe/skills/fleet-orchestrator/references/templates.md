@@ -23,6 +23,36 @@ Requirement: <ticket, PRD or acceptance criterion this proves>
 
 Prepend to every Claude writer prompt; keep `Takeover` only when replacing a dead Codex writer and `Inherited scope` whenever the writer continues another writer's branch. A Codex writer's prompt starts with `$vibe <ticket or PRD>` instead of the first line.
 
+Before any Claude prompt or reviewer/verifier/critic brief is sent, run
+`node scripts/skill-freshness.mjs <orchDir> <prompt-file> --runtime claude`.
+It refuses a conversation whose loaded fleet/vibe skill is older than the
+installed plugin and refuses plugin script references absent from that exact
+installed release. Never search the home directory for a missing plugin path;
+reload the current skill or correct the brief.
+
+For every separate reviewer, verifier or critic brief, prepend the shared
+[premise verification contract](../../vibe/references/review-premises.md): each
+material premise has a claim and primary-source evidence, `UNVERIFIED` cannot
+support a blocking finding, and the orchestrator independently rechecks it
+before relay. Require the helper's explicit final deliverable before treating
+an idle or turn-end notice as completion.
+
+The helper's last act is to save its report or verified output as a real file
+outside the source worktree, ending with `FINAL <token from helpers.json>
+<start treeSha256> <recorded native worker ID> <actual session ID> <actual turn ID> completed`, then run
+`helpers.mjs <orchDir> final <name> --deliverable <file> --session-id <id>
+--turn-id <id> --out <private report>`.
+The final command consumes the token once; a second final report is refused.
+Return the final report path and completion IDs. The orchestrator reads the
+deliverable and independently checks its premises before `accepted --report`.
+For a native Codex reviewer or verifier, the deliverable starts with one JSON
+object containing `runtime:"codex"`, its actual native worker ID, role,
+source identity, completed session/turn IDs, observed tool calls, and
+structured findings with premises. The `FINAL` line is its last line.
+Use a managed App Server reviewer thread and pass its exact thread ID as the
+helper worker ID. The receipt reader checks that thread's completed turn and
+MCP items; the helper's tool-call list is informational only.
+
 ```
 Invoke vibe:vibe first: resume the vibe session for <ticket or PRD>, or start one for it, and follow its rules for all of the work below.
 You are the only writer on <owner/repo>#<number>, worktree <path> on <machine>, branch <branch>.

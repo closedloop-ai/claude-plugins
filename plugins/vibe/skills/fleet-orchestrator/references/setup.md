@@ -68,6 +68,11 @@ Then set the slot counts from this machine's core count, write the file, and run
 4. Get a branch to another machine's clone without going through the code host: `git push <host>:<path to its clone> <branch>:<branch>`, then on that machine `git worktree add <worktree path> <branch>` and run the bootstrap the target repo's docs name. Push to a branch that is not checked out there.
 5. On each machine, check closedloop-graph answers (its `sync_status` tool) from Claude Code and from Codex.
 6. Check the transport with `fleet.sh <orchDir> local|remote session last <name>` on an existing session.
+7. On each Codex machine, open `/hooks` for the person to review and trust the
+   current vibe hook definition before relying on fleet's PreToolUse guards.
+   Plugin installation alone does not activate trusted hooks. The current
+   official hooks documentation does not verify `request_user_input`
+   PreToolUse coverage; do not claim that question gate is enforced there.
 
 ## Desktop app sidebars
 

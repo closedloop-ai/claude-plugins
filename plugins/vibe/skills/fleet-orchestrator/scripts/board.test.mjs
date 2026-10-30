@@ -5,17 +5,35 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const PLUGIN_ROOT = path.resolve(HERE, '..', '..', '..');
+const actorLoad = (actor = 'test') => loadedSkillEvidence(actor, 'claude', PLUGIN_ROOT, 'fleet-orchestrator');
 // A fleet home's active program dir (fleet-home.mjs), so a watched program is not reported as a flat layout.
 const tempDir = (t) => {
   const home = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   mkdirSync(path.join(home, 'programs', 'p1'), { recursive: true });
   writeFileSync(path.join(home, 'current'), 'p1\n');
-  return path.join(home, 'programs', 'p1');
+  const program = path.join(home, 'programs', 'p1');
+  writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'claude', checkedAt: 'now', loadedSkill: actorLoad(), harnesses: [] }));
+  return program;
 };
 const run = (args, env = {}) => spawnSync(process.execPath, [path.join(HERE, 'board.mjs'), ...args], { encoding: 'utf8', env: { ...process.env, ...env } });
+
+test('scope delivery refuses stale loaded instructions and deleted plugin scripts', (t) => {
+  const dir = tempDir(t);
+  writeFileSync(path.join(dir, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'claude', checkedAt: 'old', loadedSkill: { ...actorLoad('same'), version: '1.0.85' }, harnesses: [] }));
+  let result = run([dir, 'deliver', 'stale', '--to', 'w1', '--text', 'continue']);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /loaded 1\.0\.85/);
+  writeFileSync(path.join(dir, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'claude', checkedAt: 'new', loadedSkill: actorLoad('reloaded'), harnesses: [] }));
+  result = run([dir, 'deliver', 'missing', '--to', 'w1', '--text', 'run handoff/scripts/qa-merge-order.mjs']);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /qa-merge-order\.mjs: plugin script does not exist/);
+  assert.equal(run([dir, 'deliver', 'valid', '--to', 'w1', '--text', 'run handoff/scripts/handoff-gate.mjs']).status, 0);
+});
 
 test('a writer row whose head is behind the pushed head is stale until the writer row is updated', (t) => {
   const dir = tempDir(t);

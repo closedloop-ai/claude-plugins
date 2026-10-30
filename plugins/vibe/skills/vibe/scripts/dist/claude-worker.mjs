@@ -7371,9 +7371,9 @@ var require_dist = __commonJS({
 });
 
 // src/claude-worker.ts
-import { execFileSync as execFileSync2, spawn } from "node:child_process";
+import { execFileSync as execFileSync2, spawn, spawnSync as spawnSync2 } from "node:child_process";
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { closeSync, existsSync as existsSync5, openSync, rmSync as rmSync2, writeFileSync as writeFileSync2, writeSync } from "node:fs";
+import { closeSync, existsSync as existsSync5, openSync, realpathSync as realpathSync6, rmSync as rmSync2, writeFileSync as writeFileSync2, writeSync } from "node:fs";
 import { join as join7 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
@@ -11731,7 +11731,15 @@ function readPluginManifest(root) {
   throw Object.assign(new Error("No vibe plugin manifest exists"), { code: "ENOENT" });
 }
 function installedPluginRoot(metaUrl) {
-  return realpathSync2(resolve(dirname(fileURLToPath2(metaUrl)), "../../../.."));
+  const entry = dirname(fileURLToPath2(metaUrl));
+  for (const candidate of [resolve(entry, "../../../.."), resolve(entry, "../../../plugins/vibe")]) {
+    try {
+      const root = realpathSync2(candidate);
+      if (isPluginRoot(root)) return root;
+    } catch {
+    }
+  }
+  throw new AgentRootError("AGENT_ROOT_INVALID", "The Claude worker entry is not inside the installed vibe plugin or its owning source tree");
 }
 function resolveAgentRoot(supplied, installed, recorded) {
   const fallback = recorded && existsSync(recorded) ? recorded : installed;
@@ -12681,7 +12689,9 @@ var launchSchema = recordContextSchema.extend({
   capabilities: capabilitiesSchema,
   timeoutMs: external_exports.number().int().min(1e3).max(30 * 60 * 1e3).default(15 * 60 * 1e3),
   /** Set only when the person explicitly allowed paid extra usage; otherwise a reached limit or overage stops the turn. */
-  allowCredits: external_exports.boolean().optional()
+  allowCredits: external_exports.boolean().optional(),
+  previewRequirements: external_exports.array(external_exports.enum(["app-preview", "feature-flags", "collaboration"])).min(1).optional(),
+  previewProducer: external_exports.literal("runtime-provider").optional()
 }).strict().refine((data) => !(data.input && data.continuation), "Supply input or continuation, not both");
 var resultSchema = external_exports.object({
   type: external_exports.literal("result"),
@@ -12720,6 +12730,56 @@ var readerRoles = /* @__PURE__ */ new Set([
   "vibe-storybook-decomposer",
   "vibe-verify-worker"
 ]);
+var receiptRoles = /* @__PURE__ */ new Set(["vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-storybook-decomposer", "vibe-verify-worker"]);
+var previewActions = /* @__PURE__ */ new Set(["create", "redeploy", "flags", "desktop"]);
+var pluginScriptReference = /(?:^|[\s'"`(/])((?:skills\/)?([a-z0-9][a-z0-9-]*)\/scripts\/[a-z0-9_./-]+\.(?:mjs|js|cjs|ts|py|sh))(?=$|[\s'"`),:.;\]])/gim;
+function dispatchFreshnessProblem(agentRoot, installedRoot, worktree, text) {
+  const root = realpathSync6(agentRoot);
+  const installed = realpathSync6(installedRoot);
+  const version = (dir) => readPluginManifest(dir).version;
+  if (version(root) !== version(installed)) return "Claude dispatch definition is from a stale installed plugin release; reload or migrate before launch";
+  for (const match of text.matchAll(pluginScriptReference)) {
+    const raw = match[1];
+    const skill = match[2];
+    if (!raw || !skill) continue;
+    const explicit = raw.startsWith("skills/");
+    if (!explicit && existsSync5(join7(worktree, raw))) continue;
+    if (!explicit && !existsSync5(join7(root, "skills", skill))) continue;
+    const relative = explicit ? raw : `skills/${raw}`;
+    if (relative.split("/").includes("..") || !existsSync5(join7(root, relative))) return `${relative}: plugin script is absent from the installed Claude definition root`;
+  }
+  return null;
+}
+function checkPreviewResult(input, output, pluginRoot, worktree, run = spawnSync2) {
+  if (input.agentName !== "vibe-environment-worker" || input.mode !== "record" || !previewActions.has(input.recordAction ?? "") || output.status !== "DONE") return;
+  if (!input.previewProducer && !input.previewRequirements) return;
+  if (input.previewProducer !== "runtime-provider") throw new Error("Preview requirements need an authoritative provider producer declaration");
+  if (!input.previewRequirements?.includes("app-preview")) throw new Error("Environment DONE needs explicit preview requirements including app-preview");
+  const receipt = output.data?.previewReceipt;
+  const environmentId = output.data?.environmentId;
+  if (typeof receipt !== "string" || typeof environmentId !== "string") throw new Error("Environment DONE needs provider preview receipt and environment identity");
+  const args = [
+    realpathSync6(join7(pluginRoot, "skills/vibe/scripts/preview-capabilities.mjs")),
+    "--file",
+    receipt,
+    "--worktree",
+    worktree,
+    "--request-id",
+    input.requestId,
+    "--environment-id",
+    environmentId,
+    ...input.previewRequirements.flatMap((capability) => ["--required", capability])
+  ];
+  const checked = run(process.execPath, args, { encoding: "utf8" });
+  if (checked.status !== 0) throw new Error(`Environment preview is not ready: ${checked.stdout || checked.stderr}`);
+}
+function reviewSourceIdentity(pluginRoot, worktree) {
+  return JSON.parse(execFileSync2(
+    process.execPath,
+    [realpathSync6(join7(pluginRoot, "skills/vibe/scripts/tested-head.mjs")), "source", worktree],
+    { encoding: "utf8" }
+  ));
+}
 function boundDefinition(definition, input) {
   if (!readerRoles.has(input.agentName) && !Object.hasOwn(recordModes, input.agentName)) {
     throw new Error("This role is outside the vibe and handoff owned launcher");
@@ -12755,7 +12815,7 @@ function boundDefinition(definition, input) {
   const storybookEvidencePolicy = input.agentName === "vibe-storybook-decomposer" ? "This advisor may write only verifier-owned Storybook birth records and logs in the private git directory through verify-storybook-process.mjs. Stop each new process before returning. Never edit product source, tests or live records, and never adopt an unrecorded process. " : "";
   const prompt = `${definition.prompt}
 
-Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join7(definition.root, "agents")}. ` + pushPolicy(input) + phasePolicy + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName) ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : `${verifyEvidencePolicy}${storybookEvidencePolicy}`) + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
+Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join7(definition.root, "agents")}. ` + pushPolicy(input) + phasePolicy + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "") + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName) ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : `${verifyEvidencePolicy}${storybookEvidencePolicy}`) + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
   const agent = {
     description: definition.metadata.description,
     prompt,
@@ -12781,12 +12841,16 @@ async function runWorker(rawInput) {
   }
   if (process.platform === "win32") throw new Error("Owned descendant cleanup requires a supported POSIX process-group harness");
   const recorded = input.agentName === "vibe-change-worker" && !input.sessionless ? recordedWriterRoot(input.worktree) : void 0;
-  const agentRoot = resolveAgentRoot(input.agentRoot, installedPluginRoot(import.meta.url), recorded);
+  const installedRoot = installedPluginRoot(import.meta.url);
+  const agentRoot = resolveAgentRoot(input.agentRoot, installedRoot, recorded);
+  const dispatchProblem = dispatchFreshnessProblem(agentRoot, installedRoot, input.worktree, input.input ?? input.continuation ?? "");
+  if (dispatchProblem) throw new Error(dispatchProblem);
   const definition = readDefinition(agentRoot, input.agentName, input.capabilities);
   const bound = boundDefinition(definition, input);
   checkRoleCapabilities(input.agentName, input.capabilities);
   checkClaudeSignIn();
   const { place, target: discardPlace } = resolveRecordContext(input);
+  const reviewSource = receiptRoles.has(input.agentName) ? reviewSourceIdentity(definition.root, place.root) : void 0;
   const persistent = input.agentName === "vibe-change-worker";
   let workerId = randomUUID3();
   let lease;
@@ -12908,6 +12972,10 @@ async function runWorker(rawInput) {
     process.removeListener("SIGINT", cancelBeforeLaunch);
     const output = await launch;
     if (output.sessionId !== workerId) throw new Error("Claude returned a different session identity; no fresh fallback is permitted");
+    if (reviewSource && JSON.stringify(reviewSourceIdentity(definition.root, place.root)) !== JSON.stringify(reviewSource)) {
+      throw new Error("Reviewer source changed during its read-only turn; rerun on the settled source");
+    }
+    checkPreviewResult(input, output, definition.root, place.root);
     if (persistent && lease) changeWriter("finish", {
       worktree: input.worktree,
       workerId,
@@ -12918,6 +12986,11 @@ async function runWorker(rawInput) {
     });
     return {
       ...output,
+      runtime: "claude",
+      agentName: input.agentName,
+      ...reviewSource ? { source: reviewSource } : {},
+      graphToolIdentities: input.capabilities.filter((capability) => capability.service === "graph" && capability.access === "read").map((capability) => mcpToolIdentity(capability.name)),
+      graphToolAliases: [...new Set(input.capabilities.filter((capability) => capability.service === "graph" && capability.access === "read").flatMap((capability) => mcpToolAliases(capability.name)))],
       workerId,
       requestId: input.requestId,
       tracePath,
@@ -13237,6 +13310,8 @@ function workerSessionName(agentName, branch, requestId) {
 export {
   boundDefinition,
   capWorkerResult,
+  checkPreviewResult,
+  dispatchFreshnessProblem,
   main,
   runWorker,
   workerSessionName

@@ -22,7 +22,14 @@ export function readPluginManifest(root: string): Record<string, unknown> {
 
 /** The installed plugin root that owns a bundled entry (`<root>/skills/vibe/scripts/dist/<entry>.mjs`). */
 export function installedPluginRoot(metaUrl: string): string {
-  return realpathSync(resolve(dirname(fileURLToPath(metaUrl)), "../../../.."));
+  const entry = dirname(fileURLToPath(metaUrl));
+  for (const candidate of [resolve(entry, "../../../.."), resolve(entry, "../../../plugins/vibe")]) {
+    try {
+      const root = realpathSync(candidate);
+      if (isPluginRoot(root)) return root;
+    } catch { /* Try the next supported source or bundle layout. */ }
+  }
+  throw new AgentRootError("AGENT_ROOT_INVALID", "The Claude worker entry is not inside the installed vibe plugin or its owning source tree");
 }
 
 /**
