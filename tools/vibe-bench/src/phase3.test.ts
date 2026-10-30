@@ -144,6 +144,8 @@ test("launchd scheduler keeps T2 behind the local heavy slot", () => {
   assert.match(wrapper, /SLACK_BOT_TOKEN/);
   assert.match(wrapper, /SLACK_CHANNEL_ID/);
   assert.match(wrapper, /exec "\$heavy_slot" vibe-eval-nightly/);
+  assert.match(wrapper, /case "\$\(uname -s\)" in[\s\S]*Darwin[\s\S]*stat -f[\s\S]*stat -c/);
+  assert.doesNotMatch(wrapper, /stat -f[^\n]+\|\| stat -c/);
   const script = join(import.meta.dirname, "../schedule/run-nightly.sh");
   const missing = spawnSync(script, ["/missing/private.env", "/heavy", "/node", "/nightly",
     "/repo", "/run-root", "/results", "/claude", "/codex", "/uv", "/gh"],
@@ -171,6 +173,20 @@ test("launchd scheduler keeps T2 behind the local heavy slot", () => {
       "/run-root", "/results", "/claude", "/codex", "/uv", "/gh",
     ]);
     assert.equal(readFileSync(environmentFile, "utf8"), "test-token\nC123\n");
+
+    const gnuBin = join(fixture, "gnu-bin");
+    mkdirSync(gnuBin);
+    writeFileSync(join(gnuBin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o700 });
+    writeFileSync(join(gnuBin, "stat"), `#!/bin/sh
+if [ "$1" = "-f" ]; then printf 'partial-filesystem-output'; exit 1; fi
+if [ "$1:$2" = "-c:%u" ]; then id -u; exit 0; fi
+if [ "$1:$2" = "-c:%a" ]; then printf '600\\n'; exit 0; fi
+exit 91
+`, { mode: 0o700 });
+    const gnuDispatched = spawnSync(script, [privateEnv, heavySlot, "/node", "/nightly",
+      checkout, "/run-root", "/results", "/claude", "/codex", "/uv", "/gh"],
+    { encoding: "utf8", env: { ...process.env, PATH: `${gnuBin}:${process.env.PATH}` } });
+    assert.equal(gnuDispatched.status, 0, gnuDispatched.stderr);
 
     chmodSync(privateEnv, 0o644);
     const openMode = spawnSync(script, [privateEnv, heavySlot, "/node", "/nightly",

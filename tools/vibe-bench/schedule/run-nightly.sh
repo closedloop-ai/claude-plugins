@@ -29,8 +29,16 @@ if [ -L "$private_env" ]; then
   exit 78
 fi
 
-file_owner=$(stat -f '%u' "$private_env" 2>/dev/null || stat -c '%u' "$private_env")
-file_mode=$(stat -f '%Lp' "$private_env" 2>/dev/null || stat -c '%a' "$private_env")
+case "$(uname -s)" in
+  Darwin)
+    file_owner=$(stat -f '%u' "$private_env")
+    file_mode=$(stat -f '%Lp' "$private_env")
+    ;;
+  *)
+    file_owner=$(stat -c '%u' "$private_env")
+    file_mode=$(stat -c '%a' "$private_env")
+    ;;
+esac
 if [ "$file_owner" != "$(id -u)" ] || [ "$file_mode" != "600" ]; then
   echo "vibe nightly Slack credential file must be owned by the current user with mode 0600" >&2
   exit 78
