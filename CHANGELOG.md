@@ -4,6 +4,26 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.22
+
+#### Added
+- A local Claude Code start-to-PR benchmark runs six balanced vibe and fleet-orchestrator samples against one seeded web stack, records per-component attribution, closes its proof pull requests, and removes its proof refs.
+- The repo-local `vibe-bench` skill runs the on-demand benchmark and documents the scheduled dual-runtime nightly, while the read-only `vibe-pr-reviewer` agent checks pull requests against current vibe policy.
+- A private launchd contract runs change-day nightlies from a dedicated clean main checkout through the heavy slot and reports confirmed regressions to `#vibe` through the existing team Slack bot.
+
+#### Changed
+- The Codex eval runner accepts an explicit executable and source commit, records its CLI version and deterministic mode, and can skip only the paid wording grader while retaining every deterministic check and recording each skip.
+- Model-calling evals run only in the scheduled local nightly, once per case on both runtimes with failure-only retries. CI keeps deterministic T0 checks, and pull requests require no paid eval or benchmark evidence.
+- The shared behavior classifier skips nightlies for README, changelog, unreferenced docs, eval, test, and benchmark-only changes while failing closed for unknown plugin paths.
+- The accepted eval baseline advances only through a nightly on main. On-demand benchmark baselines must match the latest accepted nightly rather than a plugin version or release event.
+- Claude nightlies pin the agent to Sonnet 5.5 and the judge to Opus 5.5, split agent and judge cost in the result, and start a comparison-free lineage without Slack delivery whenever any model pin changes.
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 256 words longer than in 1.1.21.
+
+#### Fixed
+- Benchmark measurement keeps seeded setup outside the model execution budget while retaining setup and teardown in full wall time, validates root and subagent model pins, records final digests, and attributes slash-command skills, workers, phases, and components.
+- Confirmed nightly regressions name the affected cases, runtimes, merged pull requests and authors, quarantine owner, and durable result artifact in one Slack message; clean and skipped nights send nothing.
+- Focused Claude eval reruns stage the exact selected cases in the run-owned plugin snapshot instead of relying on an unsupported multi-case glob.
+
 ### vibe v1.1.21
 
 #### Added

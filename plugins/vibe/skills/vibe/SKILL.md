@@ -65,9 +65,16 @@ person says they are the engineer or asks what
 is next, give the concrete action you can take now or the exact human-only
 action, never just a referral. Apply this in Codex and Claude Code alike
 (`references/guardrails.md`, "Plugins and tooling").
-A failed check gets at most one rerun. If it still fails, narrow that check
-or use an accepted CI path. Name a narrowed or CI-deferred check in the
-existing progress or handoff summary, in plain words.
+A failed check gets at most one rerun. If it still fails, narrow that check or
+use an accepted CI path. If it never started, retry that exact invocation once.
+If a broad check fails twice and its selected subset can run separately, run
+that narrower subset instead of retrying the broad check. If this machine
+cannot launch the selected check and automatic validation for the pushed
+commit includes it, wait for and read that automatic check. Replace any
+premature blocked stop or engineering referral with the pending safe path and
+its eventual result. Do not start a handover while any of these safe paths
+remains. Name a narrowed or CI-deferred check in the existing progress or
+handoff summary, in plain words.
 When a check-run install changes an install-managed file, compare its state
 before that command and the requested dependency manifests. Keep a lockfile
 change required by an intended manifest edit. For accidental drift proven
@@ -110,9 +117,11 @@ completed feature, unmet criteria and current work. Other messages are only:
 - the visual QA offer and its results (section 6, step 5).
 
 Research product questions in the single order in `references/quality-loop.md`.
-Interrupt only for one necessary unresolved question with full context. Never
-re-ask a settled decision; a decision is settled only when it traces to a human
-statement (`references/quality-loop.md`, "Communication and product questions").
+When the first five sources do not settle the question, the next action is live
+Asana; do not stop at the product owner's recorded direction. Interrupt only
+for one necessary unresolved question with full context. Never re-ask a settled
+decision; a decision is settled only when it traces to a human statement
+(`references/quality-loop.md`, "Communication and product questions").
 
 This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 
@@ -185,6 +194,12 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   `USAGE_LIMIT_REACHED`. Then start no new worker turn and tell the person
   the same way. Pass `"allowCredits": true` in the launcher input only after
   the person explicitly allowed paid extra usage.
+  A recorded Codex writer whose active turn actually stopped on that limit is
+  different from a pre-launch usage check: when Claude is available, finish
+  the dead turn as `FAILED`, then run `writer-state.mjs migrate` with the
+  recorded writer input and `harnessSwitch` from
+  `references/quality-loop.md`. Never start a side writer outside the session
+  record.
 - Plugin root: the folder two levels above this file (in Codex,
   `~/.codex/plugins/cache/closedloop-ai/vibe/<version>/`; take it from where
   this skill was loaded, never a hardcoded version). Resolve it to an absolute
@@ -519,6 +534,9 @@ Only after the person chose resume, run `node scripts/vibe-sessions.mjs list`
     becomes a criterion on the pull request's one follow-up ticket
     (`scripts/review-followup.mjs`), and the thread gets that ticket's link
     (or why it is invalid) and is resolved, so it never blocks the merge.
+  When recording this sequence, name `vibe-guardrails-reviewer`, the pull
+  request body, and the fixing commit explicitly rather than paraphrasing those
+  required steps away.
 
 Before offering anything, for each `handed-off` session whose
 `livePlanStatus` is `APPROVED`, dispatch `vibe-ticket-worker` in plan mode

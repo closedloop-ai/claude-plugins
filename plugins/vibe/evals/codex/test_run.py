@@ -5,10 +5,13 @@ from __future__ import annotations
 import importlib.util
 import json
 import hashlib
+import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -18,6 +21,31 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC and SPEC.loader
 runner = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runner)
+
+
+def test_active_process_cleanup_stops_nested_model_group(tmp_path: Path) -> None:
+    """An outer interrupt can stop a model process started by a worker thread."""
+    marker = tmp_path / "grandchild.pid"
+    script = (
+        "import pathlib, subprocess, sys, time; "
+        "child=subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+        f"pathlib.Path({str(marker)!r}).write_text(str(child.pid)); "
+        "time.sleep(60)"
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(runner.command, [sys.executable, "-c", script], tmp_path,
+            dict(os.environ), runner.Budget(60), 60, tmp_path / "events.jsonl")
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert marker.exists()
+        child_pid = int(marker.read_text())
+        runner.stop_active_processes()
+        with pytest.raises(RuntimeError):
+            future.result(timeout=5)
+        with pytest.raises(ProcessLookupError):
+            os.kill(child_pid, 0)
+    assert not runner.ACTIVE_PROCESSES
 
 
 def copied_identity_helper(output: Path) -> Path:
@@ -50,13 +78,25 @@ def test_install_freezes_receipt_helper_without_modifying_older_model_payload(tm
     for name in ("vibe", "closedloop-core"):
         (plugins / name).mkdir(parents=True)
         (plugins / name / "input.md").write_text("older payload without identity CLI")
+    (plugins / "vibe/evals/example").mkdir(parents=True)
+    (plugins / "vibe/evals/example/prompt.md").write_text("---\ntags: []\n---\nfixture\n")
     subprocess.run(["git", "init", "--quiet", str(plugins.parent)], check=True)
     subprocess.run(["git", "-C", str(plugins.parent), "add", "."], check=True)
     subprocess.run(["git", "-C", str(plugins.parent), "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "-qm", "base"], check=True)
     output = tmp_path / "output"
     output.mkdir()
+    auth_home = tmp_path / "fixture-auth"
+    auth_home.mkdir()
+    auth = auth_home / "auth.json"
+    auth.write_text('{"token":"fixture"}')
     monkeypatch.setattr(runner, "command", lambda *args: None)
-    runner.install(output, plugins / "vibe", {"CODEX_HOME": str(tmp_path / "fixture-auth")}, runner.Budget(60))
+    installed = runner.install(output, plugins / "vibe", {"CODEX_HOME": str(auth_home)}, runner.Budget(60))
+    linked_auth = Path(installed["CODEX_HOME"]) / "auth.json"
+    assert linked_auth.is_symlink()
+    assert linked_auth.resolve() == auth.resolve()
+    linked_auth.unlink()
+    assert auth.read_text() == '{"token":"fixture"}'
+    Path(installed["CODEX_HOME"]).rmdir()
     assert not (output / "market/plugins/vibe/skills/vibe/scripts/tested-head.mjs").exists()
     receipt_helper = output / "receipt-helper/tested-head.mjs"
     assert receipt_helper.is_file()
@@ -70,6 +110,8 @@ def test_codex_install_uses_selected_safe_snapshot_inputs(tmp_path: Path, monkey
     for name in ("vibe", "closedloop-core"):
         (plugins / name).mkdir(parents=True)
         (plugins / name / "input.md").write_text("selected")
+    (plugins / "vibe/evals/example").mkdir(parents=True)
+    (plugins / "vibe/evals/example/prompt.md").write_text("---\ntags: []\n---\nfixture\n")
     source = plugins.parent
     (source / ".gitignore").write_text(".env\n")
     subprocess.run(["git", "init", "--quiet", str(source)], check=True)
@@ -673,6 +715,40 @@ def test_wording_model_only_runs_after_deterministic_pass(
     assert result["usage"]["input_tokens"] == (20 if valid else 10)
     assert all("allow_login_shell=false" in args for args in calls)
     assert all(args[-2] == "--" for args in calls)
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_deterministic_only_skips_paid_wording_but_keeps_route_grade(
+    tmp_path: Path, monkeypatch, valid: bool
+) -> None:
+    case = next(c for c in runner.cases() if c["name"] == "executive-done-asks-two-way")
+    calls = []
+
+    def fake_command(args, cwd, env, budget, seconds, output):
+        calls.append(args)
+        Path(args[args.index("-o") + 1]).write_text(
+            "REPLY: Do you want me to open a pull request so you can take it through review and merge, or pass it to someone to finish?\nROUTE: "
+            + ("ask-two-way" if valid else "ask-name")
+        )
+        output.write_text(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 10}}))
+
+    monkeypatch.setattr(runner, "command", fake_command)
+    monkeypatch.setattr(
+        runner,
+        "trace_for",
+        lambda *args: [{"name": "exec_command", "arguments": "cat /cache/vibe/1.0.43/skills/vibe/SKILL.md"}],
+    )
+    result = runner.run_case(
+        case, tmp_path, {"CODEX_HOME": str(tmp_path)}, runner.Budget(60),
+        "subject", "cheap", deterministic_only=True,
+    )
+    assert result["passed"] == valid
+    assert result["skipped_graders"] == [
+        {"grader": "plain-language", "reason": "deterministic-only"}
+    ]
+    assert len(calls) == 1
+    assert result["usage"]["input_tokens"] == 10
+    assert ("route" in {c["grader"] for c in result["checks"]})
 
 
 def test_light_and_dark_need_a_logged_check_with_a_result_per_theme(tmp_path: Path) -> None:

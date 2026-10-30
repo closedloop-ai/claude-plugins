@@ -306,7 +306,9 @@ rules are not copied here. The bare minimum:
     is never edited beyond a compile-only repair (prop renames, imports,
     types; no story, title, tag or visual change): its component's new
     states go in a new entry in the current root holding only them, its name
-    descriptive, permanent and without a version number.
+    descriptive, permanent and without a version number. Preserve its level
+    while dropping only the frozen version marker, so
+    `Composites v1.0/...` becomes `Composites/...`.
   - A compile-only repair rewords no comment, description, docs parameter or
     story text either: a renamed identifier inside prose is its only prose
     change.
