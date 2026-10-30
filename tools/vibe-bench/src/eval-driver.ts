@@ -120,7 +120,13 @@ export function runLocalEvals(options: LocalEvalOptions,
     "--output-dir", claudeOutput, "--ablation", "none", "--model", "sonnet",
     "--runs", "1", "--threshold", "1", "--concurrency", "1", "--scaffold",
     "--trust-plugin", "--no-publish"];
-  for (const id of selected) claudeArgs.push("--case", id);
+  // With no explicit selection, omit the singular glob flag so Claude runs
+  // every case. Repeating --case is not additive, so subsets use one brace
+  // glob instead of silently keeping only the last requested case.
+  if (options.selectedCases?.length) {
+    const pattern = selected.length === 1 ? selected[0] : `{${selected.join(",")}}`;
+    claudeArgs.push("--case", pattern);
+  }
   const claudeProcess = commands.run(options.claudeExecutable, claudeArgs, options.runRoot);
   writeProcessLog(join(options.runRoot, "claude-process.log"), claudeProcess);
 

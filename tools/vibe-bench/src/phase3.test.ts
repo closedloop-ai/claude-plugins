@@ -153,7 +153,7 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     const output = runLocalEvals({ repo, pluginSha: sha, runRoot: join(root, "run"),
       outputDir: join(root, "results"), claudeExecutable: "fixture-claude",
       codexExecutable: "fixture-codex", uvExecutable: "fixture-uv",
-      selectedCases: [CASE], deterministicOnly: true }, commands);
+      deterministicOnly: true }, commands);
     assert.equal(output.result.success, true);
     assert.deepEqual(output.result.runtimes.map((item) => item.runtime), ["claude", "codex"]);
     assert.match(output.result.resultHash, /^[a-f0-9]{64}$/);
@@ -165,6 +165,7 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     const claudeCall = modelCalls.find((call) => call.command.includes("claude"))!;
     assert.equal(claudeCall.args[2].endsWith("/plugin-snapshot/plugins"), true);
     assert.equal(claudeCall.args[claudeCall.args.indexOf("--eval-dir") + 1], "vibe/evals");
+    assert.equal(claudeCall.args.includes("--case"), false);
     const codexCall = modelCalls.find((call) => call.command.includes("uv"))!;
     assert.deepEqual(codexCall.args.slice(0, 6),
       ["run", "--with", "Pillow==12.3.0", "--with", "PyYAML", "python"]);
