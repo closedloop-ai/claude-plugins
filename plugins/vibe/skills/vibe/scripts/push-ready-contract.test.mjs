@@ -43,6 +43,7 @@ test('criteria audit, rulings, rollout, independent review and verification prec
     assert.ok(index >= 0 && index < commit && index < push, `${gate} must accept the dirty candidate before first commit/push`);
   }
   assert.doesNotMatch(handoff, /After step 7 verifies the final publication, dispatch read-only/);
+  assert.match(handoff.slice(0, commit), /all CI\s+lanes[\s\S]*exact job shapes[\s\S]*Focused subsets never substitute/i);
   assert.doesNotMatch(handoff.slice(handoff.indexOf('## 8.'), handoff.indexOf('## 9.')), /a behavior\s+answer goes through/, 'post-publication ticket fill cannot start a source-fix/redeploy cycle');
   const monitor = read('../../codex-fleet-monitor/SKILL.md');
   assert.doesNotMatch(monitor, /add the new PR to `prs.txt` and start its review/);

@@ -595,6 +595,11 @@ lane report and that evidence; `None` runs no local lane, screenshot, audit or
 critic, otherwise only its scope. `pre-pr-lanes.mjs check --impact` enforces
 selected lanes; CI remains per push. Re-audit only criteria on affected screens.
 
+Before declaring push-ready, read the repository CI workflow and run **all CI
+lanes** locally in their exact job shapes: checkout depth, runtime/toolchain,
+install, lint/typecheck/test commands, matrix jobs, builds, and generated-dist
+checks. Focused subsets never substitute for this full pre-PR verification.
+
 On a requested pull request, skip assign mode: the ticket stays with the
 person, In Progress. Before dispatch, require the refreshed pinned-base
 Storybook train check. Dispatch `vibe-verify-worker` in `pre-pr` mode on the candidate

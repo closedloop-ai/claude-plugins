@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - Writers and fleet orchestration keep iteration uncommitted until review, verification, and checks make one commit push-ready. Required criteria, ruling, and rollout audits run before pull-request creation (ISS-13430).
-- Across all plugin Markdown, including eval prompts and graders, vibe is about 50 words shorter than in 1.1.20.
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 10 words shorter than in 1.1.20.
 
 #### Fixed
 - Dirty-source checks, QA, image, local E2E, and inventory evidence use the committed head plus a deterministic source fingerprint and reject inputs that change during a run. Fleet board and watcher output report undeclared local writer commits while treating remote history as informational and excluding commits imported from the base branch.
