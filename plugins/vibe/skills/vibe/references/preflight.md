@@ -86,7 +86,9 @@ These are checked by the skill, not the script:
   stop; a human adds it (`guardrails.md`, "Plugins and tooling").
 - Codex plugin hooks: open `/hooks` and have the person review and trust the
   current vibe hook definition before relying on its PreToolUse refusals.
-  Installing the plugin alone does not trust hooks. Current official Codex
+  Installing the plugin alone does not trust hooks; until a hook has recorded
+  the conversation, `plugin-version.mjs loaded` reports `enforced: false` and
+  sessions start without the loaded-skill gate. Current official Codex
   hooks documentation confirms Bash and Agent routing but does not establish
   whether `request_user_input` invokes PreToolUse; treat the question guard's
   Codex coverage for that tool as UNVERIFIED, never as a safety gate.

@@ -15,7 +15,13 @@ it("Claude dispatch binds the exact installed definition root and script referen
   mkdirSync(join(value.worktree, ".codex-plugin"), { recursive: true });
   writeFileSync(join(value.worktree, ".codex-plugin", "plugin.json"), JSON.stringify({ version: "0.0.1" }));
   expect(dispatchFreshnessProblem(value.worktree, value.agentRoot, value.worktree, "continue")).toMatch(/stale installed plugin release/);
-  expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, "run skills/handoff/scripts/missing.mjs")).toMatch(/absent/);
+  expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, "run skills/vibe/scripts/missing.mjs")).toMatch(/does not exist in installed vibe/);
+  // PR #371 review: a repository's own skill scripts are not vibe plugin scripts.
+  expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, "read .claude/skills/control/scripts/app.mjs")).toBeNull();
+  expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, "read skills/control/scripts/app.mjs")).toBeNull();
+  mkdirSync(join(value.worktree, "skills", "vibe", "scripts"), { recursive: true });
+  writeFileSync(join(value.worktree, "skills", "vibe", "scripts", "repo-only.mjs"), "export {};\n");
+  expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, "run skills/vibe/scripts/repo-only.mjs")).toBeNull();
   mkdirSync(join(value.worktree, "handoff", "scripts"), { recursive: true });
   writeFileSync(join(value.worktree, "handoff", "scripts", "repo-tool.mjs"), "export {};\n");
   expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, "run handoff/scripts/repo-tool.mjs")).toBeNull();

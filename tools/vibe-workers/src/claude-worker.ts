@@ -12,6 +12,7 @@ import { readDefinition } from "./definition.js";
 import { acquireRecordTurnAt, attachClaudeProcess, changeWriter, markClaudeStarted, readWriterSummary, recordedWriterRoot,
   registerWriter } from "./ledger.js";
 import { AgentRootError, installedPluginRoot, readPluginManifest, resolveAgentRoot } from "./plugin-root.js";
+import { pluginScriptProblems } from "../../../plugins/vibe/skills/vibe/scripts/plugin-script-references.mjs";
 import { isHandoverContext, isPublisherContext, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 import { CLAUDE_OPERATION_OWNER } from "./main-sync-state.js";
 import type { OperationContext } from "./main-sync-contracts.js";
@@ -52,7 +53,6 @@ const readerRoles = new Set([
 ]);
 const receiptRoles = new Set(["vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-storybook-decomposer", "vibe-verify-worker"]);
 const previewActions = new Set(["create", "redeploy", "flags", "desktop"]);
-const pluginScriptReference = /(?:^|[\s'"`(/])((?:skills\/)?([a-z0-9][a-z0-9-]*)\/scripts\/[a-z0-9_./-]+\.(?:mjs|js|cjs|ts|py|sh))(?=$|[\s'"`),:.;\]])/gim;
 type PreviewProbeRunner = (command: string, args: string[], options: { encoding: "utf8" }) =>
   { status: number | null; stdout?: string | null; stderr?: string | null };
 
@@ -62,16 +62,7 @@ export function dispatchFreshnessProblem(agentRoot: string, installedRoot: strin
   const installed = realpathSync(installedRoot);
   const version = (dir: string) => readPluginManifest(dir).version;
   if (version(root) !== version(installed)) return "Claude dispatch definition is from a stale installed plugin release; reload or migrate before launch";
-  for (const match of text.matchAll(pluginScriptReference)) {
-    const raw = match[1]; const skill = match[2];
-    if (!raw || !skill) continue;
-    const explicit = raw.startsWith("skills/");
-    if (!explicit && existsSync(join(worktree, raw))) continue;
-    if (!explicit && !existsSync(join(root, "skills", skill))) continue;
-    const relative = explicit ? raw : `skills/${raw}`;
-    if (relative.split("/").includes("..") || !existsSync(join(root, relative))) return `${relative}: plugin script is absent from the installed Claude definition root`;
-  }
-  return null;
+  return pluginScriptProblems(text, root, worktree)[0] ?? null;
 }
 
 /** Only a provider receipt verified outside the worker's prose can clear preview readiness. */

@@ -4,16 +4,16 @@
 // installed plugin. This is the single preflight used by Codex fleet turns and
 // Claude reviewer/verifier helper briefs.
 
-import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { loadedSkillEvidenceProblem } from "../../vibe/scripts/loaded-skill.mjs";
+import { loadedSkillEvidenceProblem, loadedSkillRequired } from "../../vibe/scripts/loaded-skill.mjs";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
+import { installedPluginVersion, pluginScriptProblems } from "../../vibe/scripts/plugin-script-references.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const INSTALLED_PLUGIN_ROOT = path.resolve(HERE, "..", "..", "..");
-const SCRIPT_REFERENCE = /(?:^|[\s'"`(/])((?:skills\/)?([a-z0-9][a-z0-9-]*)\/scripts\/[a-z0-9_./-]+\.(?:mjs|js|cjs|ts|py|sh))(?=$|[\s'"`),:.;\]])/gim;
 const VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
 
 function compareVersions(left, right) {
@@ -28,66 +28,20 @@ function readJson(file) {
   catch { return null; }
 }
 
-/** Installed vibe manifest version at one exact plugin root. */
-export function installedPluginVersion(pluginRoot = INSTALLED_PLUGIN_ROOT) {
-  for (const relative of [".codex-plugin/plugin.json", ".claude-plugin/plugin.json"]) {
-    const version = readJson(path.join(pluginRoot, relative))?.version;
-    if (typeof version === "string") return version;
-  }
-  return null;
-}
-
 /** Why the loaded skill release cannot send another brief, or null. */
 export function skillFreshnessProblem(record, { pluginRoot = INSTALLED_PLUGIN_ROOT, actorId } = {}) {
   if (!record) return "the program has no plugin version record; run the version check and reload the current skill before sending a brief";
   const actor = actorId ?? record.loadedSkill?.actorId;
-  if (!actor) return "the target actor has no machine-observed loaded skill version";
+  // Without a load-evidence source (Codex hooks not trusted yet), the check keeps
+  // its earlier behavior and never asks for evidence nothing can produce.
+  if (!actor) return loadedSkillRequired(record) ? "the target actor has no hook-observed loaded skill version" : null;
   return loadedSkillEvidenceProblem(record.loadedSkill, { actorId: actor, pluginRoot });
-}
-
-/** Plugin script references found in prompt prose, normalized below skills/. */
-export function pluginScriptReferences(text, pluginRoot = INSTALLED_PLUGIN_ROOT, worktree = null) {
-  const refs = [];
-  for (const match of String(text ?? "").matchAll(SCRIPT_REFERENCE)) {
-    const raw = match[1];
-    const skill = match[2];
-    const explicit = raw.startsWith("skills/");
-    if (!explicit && worktree && existsSync(path.resolve(worktree, raw))) continue;
-    if (!explicit && !existsSync(path.join(pluginRoot, "skills", skill))) continue;
-    const relative = explicit ? raw : `skills/${raw}`;
-    if (!refs.includes(relative)) refs.push(relative);
-  }
-  return refs;
-}
-
-/** Missing, unsafe or non-file plugin script references in `text`. */
-export function pluginScriptProblems(text, pluginRoot = INSTALLED_PLUGIN_ROOT, worktree = null) {
-  const root = realpathSync(pluginRoot);
-  const problems = [];
-  for (const relative of pluginScriptReferences(text, root, worktree)) {
-    if (relative.split("/").includes("..")) {
-      problems.push(`${relative}: plugin script path escapes its installed root`);
-      continue;
-    }
-    const candidate = path.resolve(root, relative);
-    if (candidate === root || !candidate.startsWith(`${root}${path.sep}`) || !existsSync(candidate)) {
-      problems.push(`${relative}: plugin script does not exist in installed vibe ${installedPluginVersion(root) ?? "unknown"}`);
-      continue;
-    }
-    try {
-      const canonical = realpathSync(candidate);
-      if (!canonical.startsWith(`${root}${path.sep}`) || !lstatSync(canonical).isFile()) problems.push(`${relative}: plugin script is not a contained regular file`);
-    } catch {
-      problems.push(`${relative}: plugin script cannot be verified`);
-    }
-  }
-  return problems;
 }
 
 /** Complete prompt preflight for one program state and installed plugin root. */
 export function promptProblems(record, text, options = {}) {
   const freshness = skillFreshnessProblem(record, options);
-  return [...(freshness ? [freshness] : []), ...pluginScriptProblems(text, options.pluginRoot, options.worktree)];
+  return [...(freshness ? [freshness] : []), ...pluginScriptProblems(text, options.pluginRoot ?? INSTALLED_PLUGIN_ROOT, options.worktree)];
 }
 
 async function main(argv) {

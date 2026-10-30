@@ -8,7 +8,7 @@ import { sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { captureNativeReviewReceipt, captureReviewReceipt, REVIEW_ROLES, reviewReceiptProblems } from "./review-receipts.mjs";
 import { finalMarker } from "../../fleet-orchestrator/scripts/helpers.mjs";
 import { handoffGateProblem, recordHandoffGate } from "./handoff-gate.mjs";
-import { loadedSkillEvidence } from "../../vibe/scripts/loaded-skill.mjs";
+import { LoadBasis, loadedSkillEvidence } from "../../vibe/scripts/loaded-skill.mjs";
 
 test("review receipts require all launcher roles, completion identity, graph use and current findings", () => {
   const worktree = mkdtempSync(path.join(tmpdir(), "review-receipts-"));
@@ -62,7 +62,7 @@ test("Codex native FINAL helper artifacts reach the same four-role handoff gate"
   mkdirSync(orchDir);
   const pluginRoot = path.resolve(new URL("../../..", import.meta.url).pathname);
   writeFileSync(path.join(orchDir, "plugin-version.json"), JSON.stringify({ status: "current", runtime: "codex", checkedAt: "now",
-    loadedSkill: loadedSkillEvidence("native-test", "codex", pluginRoot, "fleet-orchestrator"), harnesses: [] }));
+    loadedSkill: loadedSkillEvidence("native-test", "codex", pluginRoot, "fleet-orchestrator", LoadBasis.HookObserved), harnesses: [] }));
   execFileSync("git", ["init", "-q", "-b", "vibe/example", worktree]);
   writeFileSync(path.join(worktree, "app.txt"), "source\n");
   execFileSync("git", ["-C", worktree, "add", "."]);

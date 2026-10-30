@@ -8,7 +8,7 @@
 // Usage: helpers.mjs <orchDir> start <name> [--kind other] [--stack <stack>]
 //        Reviewer/verifier/critic: --kind <kind> --brief <file> --worktree <dir>
 //        --worker-id <managed thread ID> --role <agent name>
-//        --agent-definition <canonical file> --capabilities <recorded JSON>
+//        --agent-definition <canonical file> --capabilities <recorded JSON> [--runtime claude|codex]
 //        [--owner <writer> --ticket <slug> --repo <owner/repo> --pr <n> --ending pr-terminal]
 //        helpers.mjs <orchDir> pid <name> <pid...> [--group]
 //        helpers.mjs <orchDir> resources <name> [--project <compose>] [--container <id>]...
@@ -62,7 +62,7 @@ import { sameSource, sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { evidenceFingerprint } from "../../handoff/scripts/handoff-evidence.mjs";
 import { graphAliases } from "../../handoff/scripts/mcp-tool-names.mjs";
 import { promptProblems } from "./skill-freshness.mjs";
-import { loadedSkillEvidence } from "../../vibe/scripts/loaded-skill.mjs";
+import { LoadBasis, loadedSkillEvidence } from "../../vibe/scripts/loaded-skill.mjs";
 
 const LEDGER = "helpers.json";
 const STACKS = "#stacks";
@@ -345,12 +345,12 @@ async function main(argv) {
       "worker-id": { type: "string" }, capabilities: { type: "string" },
       role: { type: "string" }, "agent-definition": { type: "string" },
       deliverable: { type: "string" }, out: { type: "string" }, "session-id": { type: "string" }, "turn-id": { type: "string" },
-      "completion-event": { type: "string" },
+      "completion-event": { type: "string" }, runtime: { type: "string" },
       container: { type: "string", multiple: true }, volume: { type: "string", multiple: true }, network: { type: "string", multiple: true },
     },
   });
   if (!workDir || !["start", "pid", "resources", "final", "accepted", "stopped", "hand", "unhand", "status"].includes(action)) {
-    throw new Error("Usage: helpers.mjs <orchDir> start <name> [--kind reviewer|verifier|critic --brief <file> --worktree <dir> --worker-id <thread> --role <name> --agent-definition <file> --capabilities <file>] | final|accepted|stopped|pid|resources|hand|unhand <name> | status");
+    throw new Error("Usage: helpers.mjs <orchDir> start <name> [--kind reviewer|verifier|critic --brief <file> --worktree <dir> --worker-id <thread> --role <name> --agent-definition <file> --capabilities <file> [--runtime claude|codex]] | final|accepted|stopped|pid|resources|hand|unhand <name> | status");
   }
   const orchDir = resolveWorkDir(workDir).dir;
   const ledger = read(orchDir);
@@ -399,9 +399,13 @@ async function main(argv) {
     if (FINAL_KINDS.has(kind) && helperEntries(ledger).some(([, other]) => other.requiresFinal && other.workerId === values["worker-id"])) {
       throw new Error("review helpers cannot share a native worker identity");
     }
+    const runtime = values.runtime ?? "claude";
+    if (!["claude", "codex"].includes(runtime)) throw new Error("--runtime must be claude or codex");
+    // The helper is a fresh thread: record the installed definition it starts on, labeled as such.
+    const spawnLoad = FINAL_KINDS.has(kind) ? loadedSkillEvidence(values["worker-id"], runtime, PLUGIN_ROOT, "fleet-orchestrator", LoadBasis.InstalledAtSpawn) : null;
     if (FINAL_KINDS.has(kind)) {
       const briefFile = path.isAbsolute(values.brief) ? values.brief : path.resolve(orchDir, values.brief);
-      const actorRecord = { loadedSkill: loadedSkillEvidence(values["worker-id"], "claude", PLUGIN_ROOT, "fleet-orchestrator") };
+      const actorRecord = { loadedSkill: spawnLoad };
       const problems = promptProblems(actorRecord, readFileSync(briefFile, "utf8"), { actorId: values["worker-id"], pluginRoot: PLUGIN_ROOT, worktree: values.worktree });
       if (problems.length) throw new Error(problems.join("; "));
     }
@@ -430,7 +434,7 @@ async function main(argv) {
     }
     ledger[name] = { name, kind, requiresFinal: FINAL_KINDS.has(kind), finalToken: randomUUID(), startedAt: at,
       ...(capabilityRecord ? { workerId: values["worker-id"], role: values.role, agentDefinition, capabilities: capabilityRecord,
-        loadedSkill: loadedSkillEvidence(values["worker-id"], "claude", PLUGIN_ROOT, "fleet-orchestrator") } : {}),
+        loadedSkill: spawnLoad } : {}),
       ...(values.brief ? { brief: values.brief } : {}), ...(values.worktree ? { worktree: path.resolve(values.worktree), source: sourceIdentity(values.worktree) } : {}), ...(values.stack ? { stack: values.stack } : {}),
       ...(values.owner ? { owner: values.owner } : {}), ...(values.ticket ? { ticket: values.ticket } : {}),
       ...(values.repo ? { repo: values.repo } : {}), ...(values.pr ? { pr: values.pr } : {}),

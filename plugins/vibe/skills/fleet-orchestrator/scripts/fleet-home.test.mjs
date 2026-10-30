@@ -5,11 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+import { writeRemoteCodexStub } from './fleet-test-support.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, '..', '..', '..');
-const actorLoad = (actor = 'test') => loadedSkillEvidence(actor, 'codex', PLUGIN_ROOT, 'fleet-orchestrator');
+const actorLoad = (actor = 'test') => loadedSkillEvidence(actor, 'codex', PLUGIN_ROOT, 'fleet-orchestrator', LoadBasis.HookObserved);
 const MONITOR = path.join(HERE, '..', '..', 'codex-fleet-monitor', 'scripts');
 const run = (args, env = {}) => spawnSync(process.execPath, [path.join(HERE, 'fleet-home.mjs'), ...args], { encoding: 'utf8', env: { ...process.env, ...env } });
 const tempRoot = (t) => {
@@ -102,6 +103,7 @@ test('fleet.sh in a home keeps local sessions and remote session markers in the 
   mkdirSync(bin);
   writeFileSync(path.join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs) exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`, { mode: 0o755 });
   writeFileSync(path.join(bin, 'ssh'), '#!/usr/bin/env bash\nexec bash -c "${@: -1}"\n', { mode: 0o755 });
+  writeRemoteCodexStub(bin, PLUGIN_ROOT);
   writeFileSync(path.join(home, 'config.env'), `REMOTE_HOST=box\nREMOTE_FLEET_HOME=${root}/remote\nREMOTE_SHELL="bash -c"\nCODEX_MODEL=m\nCODEX_EFFORT=high\n`);
   const prompt = path.join(home, 'programs', 'iss-1', 'prompts', 'w1-01.md');
   writeFileSync(prompt, '$vibe ISS-1\n');

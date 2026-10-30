@@ -9,12 +9,12 @@ import { historyOrigin } from './history-origin.mjs';
 import { removeOwnedDockerResources } from '../../vibe/scripts/e2e-lock.mjs';
 import { sourceIdentity } from '../../vibe/scripts/tested-head.mjs';
 import { evidenceFingerprint } from '../../handoff/scripts/handoff-evidence.mjs';
-import { loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
 import { endProcesses, finalMarker, isAlive, orphans, parsePids, pendingE2eCleanups, readIdentity, reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, '..', '..', '..');
-const actorLoad = (actor = 'test') => loadedSkillEvidence(actor, 'claude', PLUGIN_ROOT, 'fleet-orchestrator');
+const actorLoad = (actor = 'test') => loadedSkillEvidence(actor, 'claude', PLUGIN_ROOT, 'fleet-orchestrator', LoadBasis.HookObserved);
 const run = (args) => {
   const [dir, action] = args;
   const isolated = action === 'status' && !args.includes('--e2e-lock-dir')
@@ -134,6 +134,13 @@ test('idle notice cannot accept or stop a reviewer without its source-bound FINA
   assert.notEqual(run([dir, 'accepted', 'reviewer']).status, 0, 'idle is not a final report');
   assert.notEqual(run([dir, 'stopped', 'reviewer']).status, 0, 'a working reviewer cannot be stopped');
   const helper = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8')).reviewer;
+  // PR #371 review: spawn-time evidence is labeled as such and names the helper's real runtime.
+  assert.deepEqual([helper.loadedSkill.runtime, helper.loadedSkill.basis], ['claude', 'installed-at-spawn']);
+  assert.equal(run([dir, 'start', 'codex-reviewer', '--kind', 'reviewer', '--runtime', 'codex', '--brief', brief, '--worktree', worktree,
+    '--worker-id', 'codex-thread-1', '--role', 'reviewer', '--agent-definition', definition, '--capabilities', capabilities]).status, 0);
+  assert.equal(JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'))['codex-reviewer'].loadedSkill.runtime, 'codex');
+  assert.notEqual(run([dir, 'start', 'bad-runtime', '--kind', 'reviewer', '--runtime', 'gemini', '--brief', brief, '--worktree', worktree,
+    '--worker-id', 'other-thread', '--role', 'reviewer', '--agent-definition', definition, '--capabilities', capabilities]).status, 0);
   const token = helper.finalToken;
   const deliverable = path.join(dir, 'review-final.md');
   writeFileSync(deliverable, 'verified findings\n');

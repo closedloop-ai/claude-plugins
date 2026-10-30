@@ -5,14 +5,15 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+import { writeRemoteCodexStub } from './fleet-test-support.mjs';
 
 const SCRIPTS = fileURLToPath(new URL('.', import.meta.url));
 const FLEET = join(SCRIPTS, 'fleet.sh');
 const TIMEOUT = { timeout: 20_000 };
-const RELATIVE_IMPORT = /^import [^;]*? from '(\.{1,2}\/[^']+)';/gms;
+const RELATIVE_IMPORT = /^import [^;]*? from (['"])(\.{1,2}\/[^'"]+)\1;/gms;
 const PLUGIN_ROOT = realpathSync(join(SCRIPTS, '..', '..', '..'));
-const loadEvidence = (actor = 'test', runtime = 'codex') => loadedSkillEvidence(actor, runtime, PLUGIN_ROOT, 'fleet-orchestrator');
+const loadEvidence = (actor = 'test', runtime = 'codex') => loadedSkillEvidence(actor, runtime, PLUGIN_ROOT, 'fleet-orchestrator', LoadBasis.InstalledAtSpawn);
 
 /**
  * An orchestration dir plus a bin dir that shadows `node` (prints its argv, one per line) and `ssh`
@@ -29,10 +30,9 @@ function fixture(config) {
   // work-dir.mjs resolves the orchestration dir with the real node; every other node call is recorded.
   writeFileSync(join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs|*skill-freshness.mjs) exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`);
   writeFileSync(join(bin, 'ssh'), `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > ${root}/ssh-args\nexec bash -c "\${@: -1}"\n`);
-  writeFileSync(join(bin, 'codex'), `#!${process.execPath}\nconst root=process.env.FAKE_REMOTE_PLUGIN_ROOT||${JSON.stringify(PLUGIN_ROOT)}; console.log(JSON.stringify({installed:[{name:"vibe",installed:true,enabled:true,source:{path:root}}]}));\n`);
+  writeRemoteCodexStub(bin, PLUGIN_ROOT);
   chmodSync(join(bin, 'node'), 0o755);
   chmodSync(join(bin, 'ssh'), 0o755);
-  chmodSync(join(bin, 'codex'), 0o755);
   const prompt = join(root, 'prompts', 'w1-01-start.md');
   mkdirSync(join(root, 'prompts'));
   writeFileSync(prompt, '$vibe ISS-1\n');
@@ -133,21 +133,21 @@ test('remote preflight uses the target host plugin and target actor state', TIME
 });
 
 // A module codex-session.mjs imports that fleet.sh does not ship fails every remote session at load time.
-test('a remote session ships every module codex-session.mjs imports, transitively', TIMEOUT, () => {
+test('a remote session ships every module codex-session.mjs and skill-freshness.mjs import, transitively', TIMEOUT, () => {
   const f = fixture();
   writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
   const result = f.run(['remote', 'session', 'last', 'w1']);
   assert.equal(result.status, 0, result.stderr);
   const shipped = join(f.root, 'remote', 'sessions', '.fleet-orchestrator');
   const skills = join(SCRIPTS, '..', '..');
-  const pending = ['fleet-orchestrator/scripts/codex-session.mjs'];
+  const pending = ['fleet-orchestrator/scripts/codex-session.mjs', 'fleet-orchestrator/scripts/skill-freshness.mjs'];
   const seen = new Set();
   while (pending.length) {
     const file = pending.pop();
     if (seen.has(file)) continue;
     seen.add(file);
     assert.ok(existsSync(join(shipped, file)), `${file} is imported but not shipped`);
-    for (const [, spec] of readFileSync(join(skills, file), 'utf8').matchAll(RELATIVE_IMPORT)) {
+    for (const [, , spec] of readFileSync(join(skills, file), 'utf8').matchAll(RELATIVE_IMPORT)) {
       pending.push(relative(skills, join(skills, dirname(file), spec)));
     }
   }
@@ -159,6 +159,17 @@ test('remote without REMOTE_HOST fails and names the missing key', TIMEOUT, () =
   const result = f.run(['remote', 'session', 'last', 'w1']);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /set REMOTE_HOST in .*config\.env/);
+});
+
+test('remote without the codex CLI names the missing prerequisite and target host', TIMEOUT, () => {
+  const f = fixture();
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root));
+  rmSync(join(f.root, 'bin', 'codex'));
+  const result = f.run(['remote', 'session', 'last', 'w1'], { PATH: `${join(f.root, 'bin')}:/usr/bin:/bin` });
+  assert.equal(result.status, 127, result.stdout + result.stderr);
+  assert.match(result.stderr, /fleet: codex CLI is missing on remote host box/);
+  assert.match(result.stderr, /install Codex CLI/);
+  assert.doesNotMatch(result.stderr, /bash:.*codex: command not found/);
 });
 
 test('slot runs in the given dir with the machine\'s heavy slot count', TIMEOUT, () => {

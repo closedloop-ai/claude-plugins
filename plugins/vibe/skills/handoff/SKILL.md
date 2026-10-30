@@ -832,7 +832,7 @@ launcher result for each mandatory read-only review role with
 output file> --role <role> --out <private receipt file>`.
 For a native Codex reviewer or verifier, use a managed App Server thread whose
 `thread/read` exposes completed turn items. Register its exact thread ID with
-`helpers.mjs start --kind reviewer|verifier --worker-id <thread ID>
+`helpers.mjs start --kind reviewer|verifier --runtime codex --worker-id <thread ID>
 --capabilities <parent-discovered capability record> --brief <file>
 --role <agent name> --agent-definition <canonical agent file>
 --worktree "<wt>"`. The helper writes a private final deliverable containing

@@ -86,6 +86,31 @@ test("a code citation must point at a real regular line in the event repository"
   }
 });
 
+// PR #371 review: an orchestrator whose cwd is not a repository, or that cites a writer's
+// worktree, was refused although the cited line was real.
+test("an absolute citation is checked in its own repository, wherever the hook runs", (t) => {
+  const base = mkdtempSync(path.join(tmpdir(), "question-citation-elsewhere-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const writer = path.join(base, "writer-worktree");
+  const orchestration = path.join(base, "handoffs");
+  const outside = path.join(base, "loose.ts");
+  mkdirSync(orchestration);
+  execFileSync("git", ["init", "-q", writer]);
+  writeFileSync(path.join(writer, "source.ts"), "first\nsecond\n");
+  writeFileSync(outside, "first\n");
+  const other = path.join(base, "other-repo");
+  execFileSync("git", ["init", "-q", other]);
+  const cited = (reference) => `May I change this? checked in code: ${reference}`;
+  const source = transcript(t, fleetSkill);
+  for (const cwd of [orchestration, other]) {
+    assert.equal(ask(source, cited(`${path.join(writer, "source.ts")}:2`), "AskUserQuestion", { cwd }), null, cwd);
+    for (const reference of [`${path.join(writer, "source.ts")}:3`, `${path.join(writer, "missing.ts")}:1`, `${outside}:1`, `${writer}:1`, `${path.join(writer, ".git", "HEAD")}:1`]) {
+      assert.equal(ask(source, cited(reference), "AskUserQuestion", { cwd })?.decision, "deny", `${cwd}: ${reference}`);
+    }
+  }
+  assert.equal(ask(source, cited("source.ts:1"), "AskUserQuestion", { cwd: orchestration })?.decision, "deny", "a relative path outside any repository has nothing to resolve against");
+});
+
 test("other sessions and tools are untouched, and the PreToolUse hook routes the question tools", (t) => {
   assert.equal(ask(transcript(t, { type: "user", message: { content: "fix the table" } }), BACKUP), null);
   assert.equal(ask(undefined, BACKUP), null);

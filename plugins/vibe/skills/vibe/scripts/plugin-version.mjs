@@ -33,8 +33,11 @@
 // A check run again in the same conversation with the same outdated versions
 // keeps the answer already recorded; a new conversation asks again.
 // `loaded` records the installed vibe release whose current skill file this
-// conversation has read. Later checks preserve it, so fleet wake and prompt
-// gates can refuse stale remembered steps after an in-place plugin update.
+// conversation has read, as the Skill or UserPromptSubmit hook observed it.
+// Later checks preserve it, so fleet wake and prompt gates can refuse stale
+// remembered steps after an in-place plugin update. Where no hook has recorded
+// the conversation (Codex before its hooks are trusted) it records that the
+// gate is not enforced instead of failing.
 // `choose` records the person's answer. `proceed` records that they accepted
 // that an outdated plugin could give worse results. `update` refuses unless
 // the recorded choice is `update`; it refreshes the marketplace and updates
@@ -371,8 +374,8 @@ export function blockingProblem(record) {
   if (record?.status === VersionStatus.Outdated && !record.choice) {
     return `plugins are outdated (${record.versions}) and the person has not chosen to update or to proceed`;
   }
-  if (record && !record.loadedSkill?.actorId) {
-    return "the target actor has no machine-observed loaded skill evidence; load the current vibe/fleet skill before continuing";
+  if (record?.loadedSkillRequired === true && !record.loadedSkill?.actorId) {
+    return "this conversation's hooks recorded no load of the current vibe/fleet skill; load it with the Skill tool or its start prompt before continuing";
   }
   return loadedSkillProblem(record);
 }
@@ -592,9 +595,17 @@ function startupDir(home) {
   return path.join(home, ".codex", "vibe", "plugin-version");
 }
 
-function observedLoadedSkill(conversation, home) {
+function hookRecord(conversation, home) {
   const record = readJson(path.join(home, ".vibe-hook-scope", `${conversation}.json`));
-  return record?.sessionId === conversation ? record.loadedSkill ?? null : null;
+  return record?.sessionId === conversation ? record : null;
+}
+
+function hookRecordExists(conversation, home) {
+  return hookRecord(conversation, home) !== null;
+}
+
+function observedLoadedSkill(conversation, home) {
+  return hookRecord(conversation, home)?.loadedSkill ?? null;
 }
 
 function readJson(file) {
@@ -714,15 +725,24 @@ async function main(argv, env, home) {
     if (!Object.values(Harness).includes(runtime)) throw new Error("loaded needs --runtime codex or claude");
     const conversation = values.conversation ?? conversationId(env);
     const harnesses = localInstalled({ clis, env, home });
+    const previous = store.read() ?? {};
+    if (!hookRecordExists(conversation, home)) {
+      // No hook has run in this conversation (Codex hooks run only once the person trusts them),
+      // so nothing can observe a load: keep the earlier behavior rather than block every session.
+      const record = { ...previous, conversation, runtime, harnesses, loadedSkillRequired: false };
+      delete record.loadedSkill;
+      delete record.reloadRequired;
+      store.write(record);
+      return { code: 0, output: { ok: true, loadedSkill: null, enforced: false, reason: "no hook has recorded this conversation, so loaded-skill evidence is not enforced", state: store.where } };
+    }
     const loadedSkill = observedLoadedSkill(conversation, home);
     if (!loadedSkill || loadedSkill.actorId !== conversation || loadedSkill.runtime !== runtime) {
       throw new Error("the current Skill/UserPrompt hook has not observed this actor loading vibe or fleet");
     }
-    const previous = store.read() ?? {};
-    const record = { ...previous, conversation, runtime, harnesses, loadedSkill };
+    const record = { ...previous, conversation, runtime, harnesses, loadedSkill, loadedSkillRequired: true };
     delete record.reloadRequired;
     store.write(record);
-    return { code: 0, output: { ok: true, loadedSkill, state: store.where } };
+    return { code: 0, output: { ok: true, loadedSkill, enforced: true, state: store.where } };
   }
   if (command === "check") {
     const timeoutMs = Number(values["timeout-ms"]);
@@ -736,7 +756,10 @@ async function main(argv, env, home) {
     const conversation = values.conversation ?? conversationId(env);
     const previous = store.read();
     const record = { ...result, conversation, checkedAt: now.toISOString(), ...(runtime ? { runtime } : {}) };
-    if (runtime) {
+    // Load evidence is enforced only where a hook has recorded this conversation; without one
+    // (Codex hooks not trusted yet) the check behaves as it did before loaded-skill evidence.
+    if (runtime && hookRecordExists(conversation, home)) {
+      record.loadedSkillRequired = true;
       record.loadedSkill = observedLoadedSkill(conversation, home) ?? loadedSkillForCheck(previous, record, conversation, runtime, now);
       const problem = loadedSkillProblem(record);
       if (problem) record.reloadRequired = { loaded: record.loadedSkill.version, installed: installedVibeVersion(record, runtime), problem };

@@ -5,11 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, '..', '..', '..');
-const actorLoad = (actor = 'test') => loadedSkillEvidence(actor, 'claude', PLUGIN_ROOT, 'fleet-orchestrator');
+const actorLoad = (actor = 'test') => loadedSkillEvidence(actor, 'claude', PLUGIN_ROOT, 'fleet-orchestrator', LoadBasis.HookObserved);
 // A fleet home's active program dir (fleet-home.mjs), so a watched program is not reported as a flat layout.
 const tempDir = (t) => {
   const home = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-'));

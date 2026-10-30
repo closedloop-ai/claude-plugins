@@ -43,21 +43,35 @@ export function isVersionQuestion(question) {
   return VERSION_SUBJECT.test(question) && VERSION_CHANGE.test(question) && VERSION_CHOICE.test(question);
 }
 
-/** A cited code line must exist inside the current repository, including through symlinks. */
+/**
+ * A cited code line must exist in a regular file inside a git repository, including through
+ * symlinks. An absolute path is checked against its own repository or worktree, so an
+ * orchestrator outside any repository can cite a writer's worktree (PR #371 review); a relative
+ * path resolves against the hook cwd's repository, or the cwd itself outside one.
+ */
 export function codeCitationProblem(question, cwd) {
   const match = CODE_CITATION.exec(question);
   if (!match) return "checked in code: <file>:<line> is missing";
   const [, raw, number] = match;
   if (raw.split(/[\\/]/).includes("..")) return "checked in code path may not traverse out of the repository";
+  let file;
   try {
-    const repo = realpathSync(execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
-    const file = realpathSync(path.isAbsolute(raw) ? raw : path.join(repo, raw));
-    if (!file.startsWith(`${repo}${path.sep}`) || !statSync(file).isFile()) return "checked in code path is not a regular repository file";
+    file = realpathSync(path.isAbsolute(raw) ? raw : path.join(repositoryRoot(cwd) ?? cwd, raw));
+  } catch { return "checked in code file cannot be read; cite an absolute path or one relative to the repository"; }
+  const repo = repositoryRoot(path.dirname(file));
+  try {
+    if (!repo || !file.startsWith(`${repo}${path.sep}`) || !statSync(file).isFile()) return "checked in code path is not a regular file inside a git repository";
     const content = readFileSync(file, "utf8");
     const lines = content === "" ? 0 : content.split("\n").length - (content.endsWith("\n") ? 1 : 0);
     if (Number(number) < 1 || Number(number) > lines) return "checked in code line is outside the file";
     return null;
-  } catch { return "checked in code file cannot be read inside the repository"; }
+  } catch { return "checked in code file cannot be read inside its repository"; }
+}
+
+function repositoryRoot(dir) {
+  try {
+    return realpathSync(execFileSync("git", ["-C", dir, "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+  } catch { return null; }
 }
 
 /** The PreToolUse result for a question tool call: a deny for a question off its skill's path, or null. */

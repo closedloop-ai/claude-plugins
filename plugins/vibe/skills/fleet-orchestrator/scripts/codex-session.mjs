@@ -25,7 +25,7 @@ import {
   workerThreadName,
 } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
 import { readSessionRecord } from '../../vibe/scripts/session-record.mjs';
-import { loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -292,7 +292,9 @@ export async function run(client, options, { warn = (text) => console.error(`cod
     if (!saved) throw new Error(`no session ${options.name} in ${options.stateDir}`);
     state = await steerTurn(client, saved, prompt, promptFile);
   }
-  if (!saved) state.loadedSkill = loadedSkillEvidence(state.threadId, 'codex', options.pluginRoot ?? PLUGIN_ROOT, 'vibe');
+  // A fresh thread reads the installed skill on its first $vibe turn; this records that definition
+  // at spawn, which is not an observation of the read.
+  if (!saved) state.loadedSkill = loadedSkillEvidence(state.threadId, 'codex', options.pluginRoot ?? PLUGIN_ROOT, 'vibe', LoadBasis.InstalledAtSpawn);
   saveState(options.stateDir, options.name, state);
   const { turnId, kind } = state.turns.at(-1);
   return `${options.name} ${kind} ${state.threadId} ${turnId}`;

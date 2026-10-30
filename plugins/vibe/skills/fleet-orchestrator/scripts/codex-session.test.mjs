@@ -160,6 +160,8 @@ test('turn on a new session starts a thread, names it, moves it into Fleet worke
   const saved = JSON.parse(readFileSync(join(dir, 'w1.json'), 'utf8'));
   assert.equal(saved.loadedSkill.actorId, 'T1');
   assert.equal(saved.loadedSkill.skill, 'vibe');
+  // PR #371 review: spawn-time evidence is the installed definition, never claimed as an observed read.
+  assert.deepEqual([saved.loadedSkill.runtime, saved.loadedSkill.basis], ['codex', 'installed-at-spawn']);
   delete saved.loadedSkill;
   assert.deepEqual(saved, {
     threadId: 'T1', cwd: '/wt', model: 'm', effort: 'high', turns: [{ turnId: 'U1', kind: 'turn', promptFile }], ticket: 'ISS-1',

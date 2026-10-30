@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
 
 const SNAPSHOT = fileURLToPath(new URL('./snapshot.sh', import.meta.url));
 const PLUGIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -225,7 +225,7 @@ test('board lines are snapshot lines: a scope change the writer has not acknowle
   assert.equal(boardRun('writer', 'w1', '--worktree', tree).status, 0);
   writeFileSync(join(f.work, 'plugin-version.json'), JSON.stringify({
     status: 'current',
-    loadedSkill: loadedSkillEvidence('snapshot-orchestrator', 'claude', PLUGIN_ROOT, 'fleet-orchestrator'),
+    loadedSkill: loadedSkillEvidence('snapshot-orchestrator', 'claude', PLUGIN_ROOT, 'fleet-orchestrator', LoadBasis.HookObserved),
   }));
   assert.equal(boardRun('deliver', 'item-4', '--kind', 'scope', '--to', 'w1', '--text', 'match legacy Archived Projects').status, 0);
   assert.equal(boardRun('told', 'item-4', 'w1', '--now', new Date(Date.now() - 20 * 60_000).toISOString()).status, 0);

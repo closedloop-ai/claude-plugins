@@ -367,7 +367,9 @@ its question is never repeated and does not go through
 
 After this current skill file has been loaded, reconcile its hook-observed release
 with `node scripts/plugin-version.mjs loaded --runtime codex` (or
-`--runtime claude`). The command cannot self-attest a load. A later check in the same conversation preserves that
+`--runtime claude`). The command cannot self-attest a load; where no hook has
+recorded this conversation (Codex before its hooks are trusted) it answers
+`enforced: false` and you carry on. A later check in the same conversation preserves that
 loaded release: when the installed plugin has moved ahead, worker and brief
 gates refuse until the current skill is reloaded and `loaded` is recorded
 again. Never continue from remembered steps or search the home directory for

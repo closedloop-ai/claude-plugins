@@ -31,7 +31,7 @@ case "$where" in
   *) usage ;;
 esac
 
-ship=(codex-fleet-monitor/scripts/liveness.mjs codex-fleet-monitor/scripts/thread-sidebar.mjs codex-fleet-monitor/scripts/work-dir.mjs fleet-orchestrator/scripts/codex-session.mjs fleet-orchestrator/scripts/skill-freshness.mjs vibe/scripts/session-record.mjs vibe/scripts/loaded-skill.mjs fleet-orchestrator/scripts/slot-lock.sh fleet-orchestrator/scripts/load-check.sh fleet-orchestrator/scripts/request-visual.mjs)
+ship=(codex-fleet-monitor/scripts/liveness.mjs codex-fleet-monitor/scripts/thread-sidebar.mjs codex-fleet-monitor/scripts/work-dir.mjs fleet-orchestrator/scripts/codex-session.mjs fleet-orchestrator/scripts/skill-freshness.mjs vibe/scripts/plugin-script-references.mjs vibe/scripts/session-record.mjs vibe/scripts/loaded-skill.mjs fleet-orchestrator/scripts/slot-lock.sh fleet-orchestrator/scripts/load-check.sh fleet-orchestrator/scripts/request-visual.mjs)
 extra=()
 
 # Runs a shell command line on REMOTE_HOST after unpacking the shipped scripts (and `extra`) into remote_dir.
@@ -102,6 +102,9 @@ session() {
   if [ -f "$orch/rulings.md" ]; then extra+=("-C" "$orch" "rulings.md"); fi
   if [ -n "$FLEET_HOME" ] && [ -f "$FLEET_HOME/standing-rulings.md" ]; then extra+=("-C" "$FLEET_HOME" "standing-rulings.md"); fi
   local remote_root='$(codex plugin list --json | jq -er '\''.installed[] | select(.name == "vibe" and .installed == true and .enabled == true) | .source.path'\'' | head -n 1)'
+  # Check the target shell before its plugin lookup, so a missing CLI cannot be
+  # hidden by a later mocked or successful node command.
+  local codex_check="command -v codex >/dev/null 2>&1 || { printf 'fleet: codex CLI is missing on remote host %s (PATH=%s); install Codex CLI on that host and make it available in REMOTE_SHELL\\n' $(printf %q "$REMOTE_HOST") \"\$PATH\" >&2; exit 127; }; "
   local preflight=
   if [ -n "$prompt" ]; then
     local remote_bootstrap=
@@ -110,7 +113,7 @@ session() {
   fi
   local plugin_arg=
   if [ "$command" = turn ]; then plugin_arg=' --plugin-root "$remote_root"'; fi
-  run_remote "remote_root=$remote_root; ${preflight}$(printf '%q ' node "$remote_dir/fleet-orchestrator/scripts/codex-session.mjs" "$command" "$REMOTE_STATE_DIR" "$name" ${args[@]+"${args[@]}"})$plugin_arg"
+  run_remote "${codex_check}remote_root=$remote_root; ${preflight}$(printf '%q ' node "$remote_dir/fleet-orchestrator/scripts/codex-session.mjs" "$command" "$REMOTE_STATE_DIR" "$name" ${args[@]+"${args[@]}"})$plugin_arg"
 }
 
 slot() {
