@@ -48,7 +48,7 @@ def test_writers_and_reports_preserve_parallel_work() -> None:
         assert "move a lane waiting only on load or a full slot to another allowed machine" in prompt
     report = section(templates, "## Remaining work report")
     for fact in ("integration, typecheck", "start immediately", "concurrently with queued or running e2e",
-                 "moved for capacity", "time to ready", "longest dependent path"):
+                 "moved for capacity", "readiness estimate", "chain of prerequisites that finishes last"):
         assert fact in report, fact
     fleet_text = FLEET.read_text()
     fleet_report = section(fleet_text, "## Principles")
@@ -70,9 +70,12 @@ def test_operator_reporting_requires_visible_critical_path_eta() -> None:
     assert "longest dependent path" in reporting
     assert "dependency graph" in reporting
     assert "incomplete" in reporting
-    assert "State time to ready" in template
+    assert "Give the readiness estimate" in template
+    assert "chain of prerequisites that finishes last" in template
     assert "named steps and assumptions" in template
-    assert "not a sum of independent lanes" in template
+    assert "never add durations from lanes that can overlap" in template
+    assert "time to ready" not in template.lower()
+    assert "longest dependent path" not in template.lower()
     assert '"Reporting to the operator" section' in prompt
     assert '"Remaining work report" template' in prompt
 

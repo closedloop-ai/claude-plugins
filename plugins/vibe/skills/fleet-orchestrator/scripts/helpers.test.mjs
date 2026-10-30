@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { historyOrigin } from './history-origin.mjs';
 import { removeOwnedDockerResources } from '../../vibe/scripts/e2e-lock.mjs';
-import { endProcesses, isAlive, orphans, parsePids, readIdentity, reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
+import { endProcesses, isAlive, orphans, parsePids, pendingE2eCleanups, readIdentity, reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const run = (args) => {
@@ -203,6 +203,28 @@ test('fleet status lists private pending e2e cleanup with owner and ticket', (t)
   assert.match(status.stdout, /LEFTOVER .*owner writer-a ticket ticket-one.*pending e2e cleanup/i);
   rmSync(pending);
   assert.equal(run([dir, 'status', '--e2e-lock-dir', lockDir]).status, 0);
+});
+
+test('fleet status hides only the cleanup record for the same live lock owner birth', (t) => {
+  const dir = tempDir(t);
+  const lockDir = path.join(dir, 'locks', 'e2e-stack');
+  const pending = path.join(path.dirname(lockDir), 'e2e-cleanup-current-token.json');
+  const owner = { pid: 4242, token: 'current-token', identity: 'birth-a', worktree: 'writer-a', ticket: 'ticket-one' };
+  mkdirSync(lockDir, { recursive: true });
+  writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify(owner));
+  writeFileSync(pending, JSON.stringify({ project: 'qa-owned', owner }));
+  const current = { alive: () => true, identityOf: () => 'birth-a' };
+  assert.deepEqual(pendingE2eCleanups(lockDir, current), [], 'the current run is not a leftover');
+  assert.equal(pendingE2eCleanups(lockDir, { alive: () => true, identityOf: () => 'birth-b' }).length, 1, 'pid reuse fails closed');
+  assert.equal(pendingE2eCleanups(lockDir, { alive: () => false, identityOf: () => null }).length, 1, 'dead owner stays visible');
+  writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({ ...owner, pid: 4343, token: 'other-token' }));
+  assert.equal(pendingE2eCleanups(lockDir, current).length, 1, 'a different live lock stays visible');
+  writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify(owner));
+  writeFileSync(pending, JSON.stringify({ project: 'qa-owned', owner: { ...owner, identity: undefined } }));
+  assert.equal(pendingE2eCleanups(lockDir, current).length, 1, 'missing birth identity fails closed');
+  writeFileSync(pending, JSON.stringify({ project: 'qa-owned', owner }));
+  rmSync(lockDir, { recursive: true, force: true });
+  assert.equal(pendingE2eCleanups(lockDir, current).length, 1, 'missing lock stays visible');
 });
 
 test('fleet lifecycle status names the owner and ticket when cleanup proof is incomplete', (t) => {

@@ -15,9 +15,9 @@ FLEET = PLUGIN / "skills" / "fleet-orchestrator" / "SKILL.md"
 FLEET_TEMPLATES = PLUGIN / "skills" / "fleet-orchestrator" / "references" / "templates.md"
 CLEANUP_PROMPT = PLUGIN / "evals" / "orch-owned-qa-cleanup" / "prompt.md"
 STATIC_LAUNCH = re.compile(
-    r"\b(?:python(?:3(?:\.\d+)?)?\s+-m\s+http\.server|"
+    r"\b(?:python(?:3(?:\.\d+)?)?\s+-m\s+(?:http\.server|SimpleHTTPServer)|"
     r"(?:npx|pnpm\s+dlx|yarn\s+dlx|bunx)\s+(?:(?:--yes|-y)\s+)?"
-    r"(?:serve|sirv-cli|http-server)|http-server|busybox\s+httpd|serve\s+-s)\b",
+    r"(?:serve|sirv(?:-cli)?|http-server)|http-server|sirv|php\s+-S|busybox\s+httpd|serve\s+-s)\b",
     re.IGNORECASE,
 )
 
@@ -48,9 +48,16 @@ def test_static_server_detector_covers_runner_variants_even_in_prohibitions() ->
     for line in (
         "python3 -m http.server 3000", "npx serve", "npx --yes serve",
         "npx sirv-cli", "pnpm dlx serve", "http-server", "busybox httpd",
-        "serve -s build", "Never run npx --yes serve",
+        "serve -s build", "sirv build", "php -S 127.0.0.1:8000",
+        "python -m SimpleHTTPServer", "Never run npx --yes serve",
     ):
         assert STATIC_LAUNCH.search(line), line
+
+
+def test_instruction_scan_never_skips_prohibitions() -> None:
+    """A leading Never does not exempt a copied server launch from the scan."""
+    source = Path(__file__).read_text()
+    assert not re.search(r"if\s+.*(?:startswith|starts_with)\([^\n]*Never[^\n]*\)[^\n]*:\s*(?:\n\s*)?continue", source, re.IGNORECASE)
 
 
 def test_terminal_cleanup_response_names_foreign_resources_left_alone() -> None:

@@ -49,7 +49,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
-import { captureOwnedDockerResources, defaultLockDir, removeOwnedDockerResources } from "../../vibe/scripts/e2e-lock.mjs";
+import { captureOwnedDockerResources, defaultLockDir, readHolder, removeOwnedDockerResources } from "../../vibe/scripts/e2e-lock.mjs";
 
 const LEDGER = "helpers.json";
 const STACKS = "#stacks";
@@ -83,7 +83,8 @@ function pendingRecordedProcess(target, alive = isAlive, identityOf = readIdenti
 }
 
 /** Pending private e2e cleanup records remain visible until their owned resource reconciliation succeeds. */
-export function pendingE2eCleanups(lockDir = defaultLockDir()) {
+export function pendingE2eCleanups(lockDir = defaultLockDir(),
+  { alive = isAlive, identityOf = readIdentity, holderOf = readHolder } = {}) {
   const dir = path.dirname(lockDir);
   let names;
   try { names = readdirSync(dir).filter((name) => /^e2e-cleanup-[a-zA-Z0-9_-]+\.json$/.test(name)); }
@@ -97,10 +98,17 @@ export function pendingE2eCleanups(lockDir = defaultLockDir()) {
       record = JSON.parse(readFileSync(file, "utf8"));
     } catch { record = {}; }
     const owner = record.owner ?? {};
+    const holder = holderOf(lockDir);
+    const isCurrentRun = Number.isSafeInteger(owner.pid) && typeof owner.token === "string"
+      && typeof owner.identity === "string" && owner.identity !== ""
+      && name === `e2e-cleanup-${owner.token}.json`
+      && alive(owner.pid) && identityOf(owner.pid) === owner.identity
+      && holder?.pid === owner.pid && holder?.token === owner.token && holder?.identity === owner.identity;
+    if (isCurrentRun) return null;
     const ownerName = owner.name ?? owner.writer ?? (path.basename(owner.worktree ?? "") || "unknown");
     const ticket = owner.ticket ?? /iss[-_](\d+)/i.exec(owner.worktree ?? "")?.[0]?.toUpperCase().replace("_", "-") ?? "unknown";
     return `LEFTOVER ${name} owner ${ownerName} ticket ${ticket}: pending e2e cleanup for ${record.project ?? "unknown project"}`;
-  });
+  }).filter(Boolean);
 }
 
 /** Whether endProcesses may signal a pid: kill(-1) reaches every process the user owns and kill(0) the caller's own group. */

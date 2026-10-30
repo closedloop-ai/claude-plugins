@@ -25,6 +25,7 @@ const owner = (pid, token) => ({ pid, token, cwd: root, command: "e2e", startedA
 // A pid that cannot exist: above the macOS and Linux pid ceilings.
 const DEAD_PID = 99_999_999;
 const FULL_CONTAINER_ID = "a".repeat(64);
+const FULL_NETWORK_ID = "c".repeat(64);
 
 test("Docker inspect read failures retain an owned resource; only exact absence counts gone", () => {
   const record = { project: null, containers: [{ id: FULL_CONTAINER_ID, created: "2026-10-29T00:00:00Z", project: "qa-owned" }], volumes: [], networks: [] };
@@ -35,10 +36,55 @@ test("Docker inspect read failures retain an owned resource; only exact absence 
   assert.throws(() => removeOwnedDockerResources(record, { run: refused }), /Docker .*inspect failed/);
   assert.equal(removed, false);
   const absent = ([, action]) => action === "inspect"
-    ? { status: 1, stderr: `Error: No such object: ${FULL_CONTAINER_ID}` }
+    ? { status: 1, stdout: "[]\n", stderr: `Error response from daemon: No such container: ${FULL_CONTAINER_ID}` }
     : (removed = true, { status: 0 });
   assert.deepEqual(removeOwnedDockerResources(record, { run: absent }).removed, []);
   assert.equal(removed, false);
+});
+
+test("Docker project capture requests full network IDs before comparing inspect identity", () => {
+  const project = "vibe-e2e-test";
+  const fullNetworkId = "b".repeat(64);
+  const shortNetworkId = fullNetworkId.slice(0, 12);
+  const lists = [];
+  const run = ([kind, action, ...args]) => {
+    if (action === "ls") {
+      lists.push([kind, ...args]);
+      if (kind !== "network") return { status: 0, stdout: "" };
+      return { status: 0, stdout: args.includes("--no-trunc") ? fullNetworkId : shortNetworkId };
+    }
+    if (kind === "network" && action === "inspect") {
+      return { status: 0, stdout: JSON.stringify([{ Id: fullNetworkId, Created: "2026-10-29T00:00:00Z",
+        Labels: { "com.docker.compose.project": project } }]) };
+    }
+    throw new Error(`unexpected Docker action ${kind} ${action}`);
+  };
+  const record = captureOwnedDockerResources({ project }, { run });
+  assert.deepEqual(record.networks.map((entry) => entry.id), [fullNetworkId]);
+  assert.ok(lists.find(([kind]) => kind === "container").includes("--no-trunc"));
+  assert.ok(lists.find(([kind]) => kind === "network").includes("--no-trunc"));
+  assert.ok(!lists.find(([kind]) => kind === "volume").includes("--no-trunc"), "Docker volume ls has no no-trunc option");
+});
+
+test("Docker 29 volume and network not-found replies prove exact absence", () => {
+  const record = {
+    project: null,
+    containers: [],
+    volumes: [{ id: "owned-volume", created: "2026-10-29T00:00:00Z", project: "qa-owned" }],
+    networks: [{ id: FULL_NETWORK_ID, created: "2026-10-29T00:00:01Z", project: "qa-owned" }],
+  };
+  const absent = ([kind, action, id]) => {
+    assert.equal(action, "inspect");
+    if (kind === "volume") return { status: 1, stdout: "[]\n",
+      stderr: `Error response from daemon: get ${id}: no such volume` };
+    if (kind === "network") return { status: 1, stdout: "[]\n",
+      stderr: `Error response from daemon: network ${id} not found` };
+    throw new Error(`unexpected Docker kind ${kind}`);
+  };
+  assert.deepEqual(removeOwnedDockerResources(record, { run: absent }).removed, []);
+  assert.throws(() => removeOwnedDockerResources(record, { run: ([kind, action, id]) => ({ status: 1,
+    stderr: kind === "volume" ? `Error response from daemon: get other: no such volume`
+      : `Error response from daemon: network ${id} permission denied` }) }), /Docker .*inspect failed/);
 });
 
 test("Docker capture refuses container prefixes, resolved ID mismatch, missing ownership and invalid birth", () => {
@@ -58,15 +104,19 @@ test("recorded Docker resources are removed with stopped containers, volumes and
   const resources = new Map([
     [`container:${FULL_CONTAINER_ID}`, { Id: FULL_CONTAINER_ID, Created: "2026-10-29T00:00:00Z", Config: { Labels: { "com.docker.compose.project": project } } }],
     ["volume:v1", { Name: "v1", CreatedAt: "2026-10-29T00:00:01Z", Labels: { "com.docker.compose.project": project } }],
-    ["network:n1", { Id: "n1", Created: "2026-10-29T00:00:02Z", Labels: { "com.docker.compose.project": project } }],
+    [`network:${FULL_NETWORK_ID}`, { Id: FULL_NETWORK_ID, Created: "2026-10-29T00:00:02Z", Labels: { "com.docker.compose.project": project } }],
   ]);
   const removed = [];
   const run = ([kind, action, ...args]) => {
     if (action === "ls") return { status: 0, stdout: [...resources.keys()].filter((key) => key.startsWith(`${kind}:`)).map((key) => key.split(":")[1]).join("\n") };
     const id = args.at(-1);
-    if (action === "inspect") return resources.has(`${kind}:${id}`)
-      ? { status: 0, stdout: JSON.stringify([resources.get(`${kind}:${id}`)]) }
-      : { status: 1, stderr: `Error: No such object: ${id}` };
+    if (action === "inspect") {
+      if (resources.has(`${kind}:${id}`)) return { status: 0, stdout: JSON.stringify([resources.get(`${kind}:${id}`)]) };
+      const stderr = kind === "container" ? `Error response from daemon: No such container: ${id}`
+        : kind === "volume" ? `Error response from daemon: get ${id}: no such volume`
+          : `Error response from daemon: network ${id} not found`;
+      return { status: 1, stdout: "[]\n", stderr };
+    }
     if (action === "rm") {
       removed.push(`${kind}:${id}`);
       resources.delete(`${kind}:${id}`);
@@ -76,8 +126,8 @@ test("recorded Docker resources are removed with stopped containers, volumes and
   };
   const record = captureOwnedDockerResources({ project }, { run });
   assert.deepEqual(record.containers.map((entry) => entry.id), [FULL_CONTAINER_ID]);
-  assert.deepEqual(removeOwnedDockerResources(record, { run }).removed.map((entry) => entry.id), [FULL_CONTAINER_ID, "v1", "n1"]);
-  assert.deepEqual(removed, [`container:${FULL_CONTAINER_ID}`, "volume:v1", "network:n1"]);
+  assert.deepEqual(removeOwnedDockerResources(record, { run }).removed.map((entry) => entry.id), [FULL_CONTAINER_ID, "v1", FULL_NETWORK_ID]);
+  assert.deepEqual(removed, [`container:${FULL_CONTAINER_ID}`, "volume:v1", `network:${FULL_NETWORK_ID}`]);
 });
 
 test("a changed Docker creation witness or foreign label refuses all removal", () => {
@@ -124,10 +174,10 @@ case "$1 $2" in
   "version ") exit 0 ;;
   "container ls") [ -f "$dir/container" ] && echo ${FULL_CONTAINER_ID}; exit 0 ;;
   "volume ls") [ -f "$dir/volume" ] && echo v1; exit 0 ;;
-  "network ls") [ -f "$dir/network" ] && echo n1; exit 0 ;;
-  "container inspect") [ -f "$dir/container" ] || { printf 'Error: No such object: %s\n' "$last" >&2; exit 1; }; printf '[{"Id":"${FULL_CONTAINER_ID}","Created":"2026-10-29T00:00:00Z","Config":{"Labels":{"com.docker.compose.project":"%s"}}}]\n' "$(cat "$dir/project")"; exit 0 ;;
-  "volume inspect") [ -f "$dir/volume" ] || { printf 'Error: No such object: %s\n' "$last" >&2; exit 1; }; printf '[{"Name":"v1","CreatedAt":"2026-10-29T00:00:00Z","Labels":{"com.docker.compose.project":"%s"}}]\n' "$(cat "$dir/project")"; exit 0 ;;
-  "network inspect") [ -f "$dir/network" ] || { printf 'Error: No such object: %s\n' "$last" >&2; exit 1; }; printf '[{"Id":"n1","Created":"2026-10-29T00:00:00Z","Labels":{"com.docker.compose.project":"%s"}}]\n' "$(cat "$dir/project")"; exit 0 ;;
+  "network ls") [ -f "$dir/network" ] && echo ${FULL_NETWORK_ID}; exit 0 ;;
+  "container inspect") [ -f "$dir/container" ] || { printf 'Error response from daemon: No such container: %s\n' "$last" >&2; exit 1; }; printf '[{"Id":"${FULL_CONTAINER_ID}","Created":"2026-10-29T00:00:00Z","Config":{"Labels":{"com.docker.compose.project":"%s"}}}]\n' "$(cat "$dir/project")"; exit 0 ;;
+  "volume inspect") [ -f "$dir/volume" ] || { printf 'Error response from daemon: get %s: no such volume\n' "$last" >&2; exit 1; }; printf '[{"Name":"v1","CreatedAt":"2026-10-29T00:00:00Z","Labels":{"com.docker.compose.project":"%s"}}]\n' "$(cat "$dir/project")"; exit 0 ;;
+  "network inspect") [ -f "$dir/network" ] || { printf 'Error response from daemon: network %s not found\n' "$last" >&2; exit 1; }; printf '[{"Id":"${FULL_NETWORK_ID}","Created":"2026-10-29T00:00:00Z","Labels":{"com.docker.compose.project":"%s"}}]\n' "$(cat "$dir/project")"; exit 0 ;;
   "container rm") rm "$dir/container"; exit 0 ;;
   "volume rm") rm "$dir/volume"; exit 0 ;;
   "network rm") rm "$dir/network"; exit 0 ;;

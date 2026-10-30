@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -56,15 +56,98 @@ test("static comparison rebuilds both outputs for the named current heads before
   }
   const events = [];
   const withServer = async (dir, _port, action) => { events.push(`serve ${dir}`); return action(`http://${dir}`); };
-  await runOwnedFrozenComparison({ repo, baseDir, base: "base-commit", storyFiles: [], out: fixture.root }, {
+  await runOwnedFrozenComparison({ repo, baseDir, base: "main~1", storyFiles: [], out: fixture.root }, {
     withServer, nextPort: async (other) => other ? 6122 : 6121,
-    headOf: (dir) => dir === repo ? "head-commit" : "base-commit",
+    resolveCommit: (dir, ref) => { events.push(`resolve ${dir} ${ref}`); return "base-commit-full"; },
+    headOf: (dir) => dir === repo ? "head-commit" : "base-commit-full",
     buildStatic: async (dir, head) => { events.push(`build ${dir} ${head}`); },
     launch: async () => ({ close: async () => {} }), compare: async () => ({}),
   });
   assert.deepEqual(events, [
-    `build ${baseDir} base-commit`, `build ${repo} head-commit`, `serve ${baseDir}`, `serve ${repo}`,
+    `resolve ${repo} main~1`, `build ${baseDir} base-commit-full`, `build ${repo} head-commit`, `serve ${baseDir}`, `serve ${repo}`,
   ]);
+});
+
+test("static rebuild waits in the fleet heavy slot and preserves the old build until the new build starts", async (t) => {
+  const fixture = makeHome("vibe-frozen-heavy-slot-");
+  t.after(fixture.cleanup);
+  const baseDir = path.join(fixture.root, "base");
+  const repo = path.join(fixture.root, "head");
+  const bin = path.join(fixture.root, "bin");
+  const locks = path.join(fixture.root, "locks");
+  mkdirSync(bin, { recursive: true });
+  for (const dir of [baseDir, repo]) {
+    mkdirSync(path.join(dir, "apps", "storybook", "storybook-static"), { recursive: true });
+    writeFileSync(path.join(dir, "apps", "storybook", "storybook-static", "index.html"), "old");
+  }
+  const fakePnpm = path.join(bin, "pnpm");
+  writeFileSync(fakePnpm, `#!/bin/sh
+out=
+for arg in "$@"; do out="$arg"; done
+test -f storybook-static/index.html || { echo old-build-removed-too-early >&2; exit 41; }
+test -f "$SLOT_LOCK_DIR/heavy-1.lock/owner" || { echo heavy-slot-not-held >&2; exit 42; }
+mkdir -p "$out"
+printf fresh >"$out/index.html"
+`);
+  chmodSync(fakePnpm, 0o700);
+  const before = { PATH: process.env.PATH, SLOT_LOCK_DIR: process.env.SLOT_LOCK_DIR, SLOT_LOCK_POLL_SECONDS: process.env.SLOT_LOCK_POLL_SECONDS };
+  process.env.PATH = `${bin}:${process.env.PATH}`;
+  process.env.SLOT_LOCK_DIR = locks;
+  process.env.SLOT_LOCK_POLL_SECONDS = "0.01";
+  t.after(() => {
+    for (const [key, value] of Object.entries(before)) value === undefined ? delete process.env[key] : process.env[key] = value;
+  });
+  await runOwnedFrozenComparison({ repo, baseDir, base: "base-ref", storyFiles: [], out: fixture.root }, {
+    withServer: async (dir, _port, action) => action(`http://${dir}`), nextPort: async (other) => other ? 6122 : 6121,
+    resolveCommit: () => "base-full", headOf: (dir) => dir === repo ? "head-full" : "base-full",
+    launch: async () => ({ close: async () => {} }), compare: async () => ({}),
+  });
+  for (const dir of [baseDir, repo]) {
+    assert.equal(readFileSync(path.join(dir, "apps", "storybook", "storybook-static", "index.html"), "utf8"), "fresh");
+  }
+});
+
+test("a failed locked static rebuild preserves the prior output and removes its staging directory", async (t) => {
+  const fixture = makeHome("vibe-frozen-heavy-failure-");
+  t.after(fixture.cleanup);
+  const baseDir = path.join(fixture.root, "base");
+  const repo = path.join(fixture.root, "head");
+  const bin = path.join(fixture.root, "bin");
+  const locks = path.join(fixture.root, "locks");
+  mkdirSync(bin, { recursive: true });
+  for (const dir of [baseDir, repo]) {
+    mkdirSync(path.join(dir, "apps", "storybook", "storybook-static"), { recursive: true });
+    writeFileSync(path.join(dir, "apps", "storybook", "storybook-static", "index.html"), `old-${path.basename(dir)}`);
+  }
+  const fakePnpm = path.join(bin, "pnpm");
+  writeFileSync(fakePnpm, `#!/bin/sh
+out=
+for arg in "$@"; do out="$arg"; done
+test -f storybook-static/index.html || { echo old-build-removed-too-early >&2; exit 41; }
+test -f "$SLOT_LOCK_DIR/heavy-1.lock/owner" || { echo heavy-slot-not-held >&2; exit 42; }
+mkdir -p "$out"
+printf partial >"$out/index.html"
+exit 43
+`);
+  chmodSync(fakePnpm, 0o700);
+  const before = { PATH: process.env.PATH, SLOT_LOCK_DIR: process.env.SLOT_LOCK_DIR, SLOT_LOCK_POLL_SECONDS: process.env.SLOT_LOCK_POLL_SECONDS };
+  process.env.PATH = `${bin}:${process.env.PATH}`;
+  process.env.SLOT_LOCK_DIR = locks;
+  process.env.SLOT_LOCK_POLL_SECONDS = "0.01";
+  t.after(() => {
+    for (const [key, value] of Object.entries(before)) value === undefined ? delete process.env[key] : process.env[key] = value;
+  });
+  await assert.rejects(runOwnedFrozenComparison({ repo, baseDir, base: "base-ref", storyFiles: [], out: fixture.root }, {
+    withServer: async () => { throw new Error("servers must not start"); }, nextPort: async (other) => other ? 6122 : 6121,
+    resolveCommit: () => "base-full", headOf: (dir) => dir === repo ? "head-full" : "base-full",
+    launch: async () => ({ close: async () => {} }), compare: async () => ({}),
+  }), /Storybook static build failed/);
+  assert.equal(readFileSync(path.join(baseDir, "apps", "storybook", "storybook-static", "index.html"), "utf8"), "old-base");
+  assert.equal(readFileSync(path.join(repo, "apps", "storybook", "storybook-static", "index.html"), "utf8"), "old-head");
+  for (const dir of [baseDir, repo]) {
+    const storybook = path.join(dir, "apps", "storybook");
+    assert.deepEqual(readdirSync(storybook).filter((name) => name.startsWith("storybook-static.vibe-")), []);
+  }
 });
 
 /** A small solid screenshot, with one pixel of `dot` color when given. */

@@ -93,7 +93,7 @@ Branch isolation: one writer per branch; helpers never edit or touch the ticket 
 
 ## Remaining work report
 
-Before sending, verify the reply says which selected integration, typecheck and other lanes start immediately on which allowed machines; what waits on a real prerequisite; what runs concurrently with queued or running e2e; and which lane moved for capacity. State time to ready from the dependency graph's longest dependent path with its named steps and assumptions, not a sum of independent lanes. Do not send a report missing any applicable fact.
+Before sending, verify the reply says which selected integration, typecheck and other lanes start immediately on which allowed machines; what waits on a real prerequisite; what runs concurrently with queued or running e2e; and which lane moved for capacity. Give the readiness estimate from the chain of prerequisites that finishes last, with its named steps and assumptions; never add durations from lanes that can overlap. Do not send a report missing any applicable fact.
 
 ## Lifecycle cleanup report
 

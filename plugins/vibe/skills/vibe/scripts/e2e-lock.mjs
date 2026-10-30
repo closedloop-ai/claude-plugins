@@ -179,6 +179,15 @@ function isAlive(pid) {
   }
 }
 
+/** A process birth witness used to distinguish a live owner from PID reuse. */
+function processIdentity(pid) {
+  const result = spawnSync("ps", ["-o", "lstart=,command=", "-p", String(pid)], {
+    encoding: "utf8", env: { ...process.env, LC_ALL: "C" },
+  });
+  const identity = result.stdout?.trim();
+  return result.status === 0 && identity ? identity : null;
+}
+
 const OWN_OPTIONS = new Set(["--head", "--owner", "--ticket", "--wait-seconds", "--lock-dir", "--foreign-compose"]);
 const REPEATED_OPTIONS = new Set(["--foreign-compose"]);
 
@@ -211,7 +220,7 @@ export function composeProjectFor(env, token) {
 const DOCKER_KINDS = Object.freeze([
   { key: "containers", noun: "container", list: ["container", "ls", "-aq", "--no-trunc"], remove: ["container", "rm", "-f"] },
   { key: "volumes", noun: "volume", list: ["volume", "ls", "-q"], remove: ["volume", "rm"] },
-  { key: "networks", noun: "network", list: ["network", "ls", "-q"], remove: ["network", "rm"] },
+  { key: "networks", noun: "network", list: ["network", "ls", "--no-trunc", "-q"], remove: ["network", "rm"] },
 ]);
 
 function dockerRunner(args) {
@@ -224,8 +233,12 @@ function dockerOutput(args, run, { missing = false } = {}) {
   if (result.status !== 0) {
     const message = String(result.stderr ?? "").trim();
     const id = args.at(-1);
-    if (missing && result.status === 1 && ["Error", "Error response from daemon"].some((prefix) =>
-      ["object", args[0]].some((noun) => message === `${prefix}: No such ${noun}: ${id}`))) return null;
+    const notFound = {
+      container: `Error response from daemon: No such container: ${id}`,
+      volume: `Error response from daemon: get ${id}: no such volume`,
+      network: `Error response from daemon: network ${id} not found`,
+    }[args[0]];
+    if (missing && result.status === 1 && message === notFound) return null;
     throw new Error(`Docker ${args[0]} ${args[1]} failed: ${String(result.stderr ?? "").trim()}`);
   }
   return String(result.stdout ?? "").trim();
@@ -362,6 +375,7 @@ async function main(argv) {
   const worktree = worktreeOf(process.cwd());
   const owner = {
     pid: process.pid,
+    identity: processIdentity(process.pid),
     token: randomUUID(),
     cwd: process.cwd(),
     worktree,
@@ -370,6 +384,7 @@ async function main(argv) {
     command: [command, ...args].join(" ").slice(0, 500),
     startedAt: new Date().toISOString(),
   };
+  if (!owner.identity) throw new Error("The e2e lock owner has no process birth witness.");
   const duplicate = sameWorktreeEntry(lockDir, owner.worktree);
   if (duplicate) {
     process.stdout.write(`${JSON.stringify({ status: "duplicate", entry: duplicate, reason: "this worktree already holds or waits for the stack; put every selected spec in one run per head" })}\n`);
