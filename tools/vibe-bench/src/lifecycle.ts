@@ -69,11 +69,8 @@ export class SeededStackLifecycle {
 
   private async stop(): Promise<void> {
     if (!this.started) return;
-    try {
-      await this.adapter.stop();
-    } finally {
-      this.started = false;
-      this.isolationKey = null;
-    }
+    await this.adapter.stop();
+    this.started = false;
+    this.isolationKey = null;
   }
 }

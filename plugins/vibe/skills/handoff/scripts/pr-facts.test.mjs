@@ -8,6 +8,62 @@ import { capabilityProbeProblems, ciCheckProblems, evidenceProblems, knownMainFa
 import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
 import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
 import { qaImpactRequest } from "./qa-impact.mjs";
+import { sourceIdentity } from '../../vibe/scripts/tested-head.mjs';
+
+test('dirty precommit evidence cannot bind unchanged HEAD and binds only after the candidate is committed', t => {
+  const { root, home, cleanup } = makeHome('precommit-evidence-binding-');
+  t.after(cleanup);
+  const wt = path.join(root, 'repo');
+  mkdirSync(wt);
+  writeFileSync(path.join(wt, 'notes.md'), 'base');
+  git(wt, ['init', '--quiet'], home);
+  git(wt, ['add', '.'], home);
+  git(wt, ['commit', '--quiet', '-m', 'base'], home);
+  const base = git(wt, ['rev-parse', 'HEAD'], home);
+  writeFileSync(path.join(wt, 'notes.md'), 'checked candidate');
+  const source = sourceIdentity(wt);
+  const evidence = { source, touchFlows: [], touchFlowsReason: 'docs only', runs: [], testSelection: [], testRuns: [], rerunCycles: [],
+    e2eCapability: structuredClone(SELECTED.e2eCapability),
+    targetedInventory: { actor: 'read-only', source: 'working-tree', commit: base,
+      laneReport: { command: 'pnpm test:lanes', matches: [] }, entries: [], noTestsReason: 'docs only' } };
+  const gate = () => pullRequestFacts({ worktree: wt, base, include: new Set(['notes.md']), ownBranch: 'main', runs: evidence,
+    commit: git(wt, ['rev-parse', 'HEAD'], home) }).prEvidenceProblems;
+  assert.match(gate().join('\n'), /commit.*(?:omit|content)|uncommitted|untracked/i,
+    'dirty evidence cannot bind to the unchanged commit that contains none of its edits');
+  git(wt, ['add', '.'], home);
+  git(wt, ['commit', '--quiet', '-m', 'one push-ready commit'], home);
+  assert.deepEqual(gate(), [], 'only identical content can carry the accepted source evidence');
+  assert.equal(evidence.targetedInventory.commit, base);
+  assert.equal(evidence.source.head, base);
+  writeFileSync(path.join(wt, 'notes.md'), 'unchecked post-verification change');
+  assert.match(gate().join('\n'), /source.*(?:changed|match|identity)/i);
+});
+
+test('precommit evidence cannot bind to a commit that omitted an untracked input', t => {
+  const { root, home, cleanup } = makeHome('precommit-omitted-input-');
+  t.after(cleanup);
+  const wt = path.join(root, 'repo');
+  mkdirSync(wt);
+  writeFileSync(path.join(wt, 'a.txt'), 'base\n');
+  git(wt, ['init', '--quiet'], home);
+  git(wt, ['add', 'a.txt'], home);
+  git(wt, ['commit', '--quiet', '-m', 'base'], home);
+  const base = git(wt, ['rev-parse', 'HEAD'], home);
+  writeFileSync(path.join(wt, 'a.txt'), 'candidate\n');
+  writeFileSync(path.join(wt, 'helper.js'), 'export default 1;\n');
+  const source = sourceIdentity(wt);
+  const evidence = { source, touchFlows: [], touchFlowsReason: 'fixture', runs: [], testSelection: [], testRuns: [], rerunCycles: [],
+    e2eCapability: structuredClone(SELECTED.e2eCapability), targetedInventory: { actor: 'read-only', source: 'working-tree', commit: base,
+      laneReport: { command: 'pnpm test:lanes', matches: [] }, entries: [], noTestsReason: 'fixture' } };
+  const gate = () => pullRequestFacts({ worktree: wt, base, include: new Set(['a.txt']), ownBranch: 'main', runs: evidence,
+    commit: git(wt, ['rev-parse', 'HEAD'], home) }).prEvidenceProblems;
+  git(wt, ['add', 'a.txt'], home);
+  git(wt, ['commit', '--quiet', '-m', 'commit only a'], home);
+  assert.match(gate().join('\n'), /commit.*(?:omit|content)|uncommitted|untracked/i);
+  git(wt, ['add', 'helper.js'], home);
+  git(wt, ['commit', '--quiet', '-m', 'commit helper'], home);
+  assert.deepEqual(gate(), []);
+});
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INVENTORY = path.join(HERE, "handoff-inventory.mjs");

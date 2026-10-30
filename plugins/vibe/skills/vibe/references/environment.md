@@ -115,8 +115,10 @@ orchestrator makes one commit of everything changed since the last redeploy, nev
 `scripts/commit-worktree.mjs` (the repository's commit hook runs there; no
 worker ever commits). Then the worker pushes, requests the environment again
 with the same mode, reads the deployed commit from that run, and tells the
-orchestrator when the app and Storybook show it. Each redeploy is its own
-commit; nothing is squashed or amended later.
+orchestrator when the app and Storybook show it. A failed pre-push check may be
+fixed and amended while that commit is still local. After push, each redeploy
+is immutable; every required correction is a new commit, never an amend or
+force push.
 
 ## What runs on this Mac
 
@@ -321,7 +323,9 @@ not silently included or discarded. A clean result needs no extra local commit.
    unless the person asked for a pull request, and the writer only repairs
    existing tests the merge broke (`guardrails.md`, "Tests").
 3. Only the root commits the staged merge/fixes through the existing commit
-   script and normal hooks. Then resume that SAME writer for its exact
+   script and normal hooks. This ordinary main-sync merge is the one extra
+   commit allowed after the reviewed feature commit; it brings in main and is
+   not iteration. Then resume that SAME writer for its exact
    source-owned record continuation (`progress`) with the captured
    `mainSyncTransactionId` and root-controlled `publicationPurpose`.
    Run `node <plugin-root>/skills/vibe/scripts/vibe-sessions.mjs main-sync-inputs --worktree "<wt>"`

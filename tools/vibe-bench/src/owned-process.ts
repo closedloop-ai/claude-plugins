@@ -42,10 +42,12 @@ export function runOwnedProcess(command: string, args: string[], options: {
   deadline: number;
   signal?: AbortSignal;
   maxBuffer?: number;
+  env?: NodeJS.ProcessEnv;
 }): Promise<OwnedProcessResult> {
   if (options.deadline <= Date.now()) return Promise.reject(new Error("benchmark-batch-budget-exhausted"));
+  if (options.signal?.aborted) return Promise.reject(new Error("benchmark-batch-interrupted"));
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd: options.cwd, detached: true,
+    const child = spawn(command, args, { cwd: options.cwd, detached: true, env: options.env,
       stdio: ["ignore", "pipe", "pipe"] });
     if (!child.pid) { reject(new Error("benchmark-child-pid-missing")); return; }
     const pid = child.pid;
@@ -74,12 +76,17 @@ export function runOwnedProcess(command: string, args: string[], options: {
       reject(reason);
     }
     child.once("error", (error) => void stop(error));
-    child.once("exit", (exitCode, signal) => {
+    child.once("exit", (exitCode, signal) => void (async () => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
-      resolve({ stdout, stderr, exitCode, signal });
-    });
+      try {
+        if (groupAlive(pid)) await terminateProcessGroup(pid, "SIGTERM");
+        resolve({ stdout, stderr, exitCode, signal });
+      } catch (error) {
+        reject(new AggregateError([error], "benchmark-child-exit-cleanup-failed"));
+      }
+    })());
   });
 }

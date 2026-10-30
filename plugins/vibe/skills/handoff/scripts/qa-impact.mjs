@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs, TextDecoder } from "node:util";
+import { withStableSource } from "../../vibe/scripts/tested-head.mjs";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { commentlessAst, sourceComments } from "../../vibe/scripts/dist/qa-impact-parser.mjs";
 
@@ -64,7 +65,11 @@ function readAt(worktree, ref, file) {
 }
 
 function readHead(worktree, file) {
-  return readAt(worktree, "HEAD", file);
+  try {
+    if (git(worktree, ["ls-files", "--stage", "--", file]).startsWith("160000 ")) return null;
+    const content = readFileSync(path.join(worktree, file));
+    return content.includes(0) ? null : UTF8.decode(content);
+  } catch { return null; }
 }
 
 /** Canonical AST text from the compiler bundled with this plugin, with comments removed. */
@@ -250,8 +255,8 @@ export function changeOrigins(worktree, since) {
   return { ownFiles, mergeFiles };
 }
 
-function changedEntries(worktree, since) {
-  const output = execFileSync("git", ["-C", worktree, "diff", "--raw", "-z", "--no-renames", `${since}..HEAD`], {
+function rawEntries(worktree, refs) {
+  const output = execFileSync("git", ["-C", worktree, "diff", "--raw", "-z", "--no-renames", ...refs], {
     encoding: "buffer", maxBuffer: GIT_TEXT_MAX_BUFFER, stdio: ["ignore", "pipe", "pipe"],
   });
   const fields = splitZero(output);
@@ -261,6 +266,18 @@ function changedEntries(worktree, since) {
     const file = fields[index + 1];
     if (!header || file === undefined) throw new Error("git diff returned an unreadable raw change record");
     result.push({ path: file, status: header[5], oldMode: header[1], newMode: header[2], modeChanged: header[1] !== header[2] });
+  }
+  return result;
+}
+
+function changedEntries(worktree, since) {
+  const result = rawEntries(worktree, [since]);
+  // A gitlink can leave a regular file on disk; preserve the committed type change.
+  for (const entry of rawEntries(worktree, [since, 'HEAD']).filter(entry => entry.newMode === '160000')) {
+    if (!result.some(item => item.path === entry.path)) result.push(entry);
+  }
+  for (const file of git(worktree, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean)) {
+    if (!result.some(entry => entry.path === file)) result.push({ path: file, status: "A", oldMode: "000000", newMode: "100644", modeChanged: true });
   }
   return result;
 }
@@ -380,25 +397,33 @@ export function classifyQaImpact({ files, before, after, changes = new Map(), im
   return { outcome: QaImpact.None, lanes: [], screens: [], changedFiles: files, reason: "every changed file is explicitly proven safe" };
 }
 
+/** Classify the current working tree against a recorded QA boundary, with exact input evidence. */
 export function qaImpact({ worktree, since, evidence, graphImporters, featureMap, laneSelections, config }) {
-  const problems = evidenceProblems(evidence);
-  if (problems.length) throw new Error(problems.join("; "));
-  const entries = changedEntries(worktree, since);
-  const files = entries.map((entry) => entry.path);
-  const before = new Map(files.map((file) => [file, readAt(worktree, since, file)]));
-  const after = new Map(files.map((file) => [file, readHead(worktree, file)]));
-  const origins = changeOrigins(worktree, since);
-  const result = classifyQaImpact({ files, before, after, changes: new Map(entries.map((entry) => [entry.path, entry])),
-    importers: normalizeImporters(graphImporters), featureMap, evidence,
-    laneSelections, ownFiles: origins.ownFiles, mergeFiles: origins.mergeFiles, config });
-  if (result.lanes.length === 0) return result;
-  const laneMap = normalizeLaneSelections(laneSelections) ?? new Map();
-  const changed = new Set(files);
-  const relevant = [...laneMap.entries()].filter(([file, lanes]) => changed.has(file) && lanes.some((lane) => result.lanes.includes(lane)))
-    .map(([file]) => file).sort();
-  const hash = createHash("sha256").update(JSON.stringify(result.lanes));
-  for (const file of relevant) hash.update(`\n${file}\0${semanticSourceText(file, after.get(file) ?? null) ?? after.get(file) ?? "unreadable"}`);
-  return { ...result, laneKey: hash.digest("hex").slice(0, 16) };
+  return withStableSource(worktree, () => {
+    const problems = evidenceProblems(evidence);
+    if (problems.length) throw new Error(problems.join("; "));
+    const entries = changedEntries(worktree, since);
+    const files = entries.map((entry) => entry.path);
+    const before = new Map(files.map((file) => [file, readAt(worktree, since, file)]));
+    const after = new Map(files.map((file) => [file, readHead(worktree, file)]));
+    const origins = changeOrigins(worktree, since);
+    for (const file of [...git(worktree, ['diff', '--name-only', '-z', 'HEAD']).split('\0'),
+      ...git(worktree, ['ls-files', '--others', '--exclude-standard', '-z']).split('\0')].filter(Boolean)) {
+      origins.ownFiles.add(file);
+      origins.mergeFiles.delete(file);
+    }
+    const result = classifyQaImpact({ files, before, after, changes: new Map(entries.map((entry) => [entry.path, entry])),
+      importers: normalizeImporters(graphImporters), featureMap, evidence,
+      laneSelections, ownFiles: origins.ownFiles, mergeFiles: origins.mergeFiles, config });
+    if (result.lanes.length === 0) return result;
+    const laneMap = normalizeLaneSelections(laneSelections) ?? new Map();
+    const changed = new Set(files);
+    const relevant = [...laneMap.entries()].filter(([file, lanes]) => changed.has(file) && lanes.some((lane) => result.lanes.includes(lane)))
+      .map(([file]) => file).sort();
+    const hash = createHash("sha256").update(JSON.stringify(result.lanes));
+    for (const file of relevant) hash.update(`\n${file}\0${semanticSourceText(file, after.get(file) ?? null) ?? after.get(file) ?? "unreadable"}`);
+    return { ...result, laneKey: hash.digest("hex").slice(0, 16) };
+  });
 }
 
 /** Recomputes a caller's impact request in the current worktree. */
@@ -415,7 +440,7 @@ export function qaImpactRequest(worktree, request) {
   } catch {
     throw new Error("lastQa.boundary must resolve to an ancestor of HEAD");
   }
-  if (boundary === head) throw new Error("lastQa.boundary must precede HEAD");
+  if (boundary === head && !git(worktree, ["status", "--porcelain"])) throw new Error("lastQa.boundary must precede HEAD");
   const laneMap = normalizeLaneSelections(request.laneSelections);
   if (!laneMap?.size || ![...laneMap.values()].some((lanes) => lanes.length > 0)) throw new Error("impact request needs non-empty laneSelections");
   return qaImpact({ worktree, since: boundary, evidence: request.evidence, graphImporters: request.graphImporters,

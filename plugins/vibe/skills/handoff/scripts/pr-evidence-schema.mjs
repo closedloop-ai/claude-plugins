@@ -2,6 +2,7 @@
 // verifier writes this evidence; neither consumer may reinterpret a path-only
 // object as exact test coverage.
 
+import { validSourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -47,10 +48,14 @@ export function readTestSelection(evidence) {
 export function prEvidenceShapeProblems(evidence) {
   const problems = [...readTestSelection(evidence).problems];
   const inventory = evidence?.targetedInventory;
+  if (evidence?.source !== undefined && !validSourceIdentity(evidence.source)) problems.push('source identity needs HEAD plus full diff/tree hashes');
+  if (inventory?.source === 'working-tree' && (!validSourceIdentity(evidence?.source) || inventory.commit !== evidence.source.head)) {
+    problems.push('working-tree inventory must name the actual tested HEAD and complete source identity');
+  }
   if (!inventory || typeof inventory !== "object" || Array.isArray(inventory)) {
     problems.push("targeted inventory of the final committed diff is missing");
   } else {
-    if (inventory.actor !== "read-only" || inventory.source !== "final-committed-diff" || !/^[a-f0-9]{40}$/.test(inventory.commit ?? "")) {
+    if (inventory.actor !== "read-only" || !["final-committed-diff", "working-tree"].includes(inventory.source) || !/^[a-f0-9]{40}$/.test(inventory.commit ?? "")) {
       problems.push("targetedInventory must identify a read-only actor, the final committed diff and its full commit SHA");
     }
     if (evidence?.qaImpact !== undefined

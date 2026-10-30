@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BENCHMARK_EFFORT, BENCHMARK_MODEL, claudeArgs, LOCAL_MCP_URL, requirePinnedClaude, validateClaudeResult } from "./contract.ts";
 import type { ClaudeSelection, ObservedClaudeRun } from "./contract.ts";
@@ -36,7 +36,7 @@ export function prepareClaudeLaunch(fixture: PreparedFixture, pluginDir: string,
       },
     },
   };
-  writeFileSync(mcpConfigFile, `${JSON.stringify(config, null, 2)}\n`, { flag: "wx" });
+  writeFileSync(mcpConfigFile, `${JSON.stringify(config, null, 2)}\n`, { flag: "wx", mode: 0o600 });
   writeFileSync(settingsFile, `${JSON.stringify({ env: {
     CLAUDE_CODE_SUBAGENT_MODEL: BENCHMARK_MODEL,
     ANTHROPIC_DEFAULT_SONNET_MODEL: BENCHMARK_MODEL,
@@ -50,6 +50,12 @@ export function prepareClaudeLaunch(fixture: PreparedFixture, pluginDir: string,
     settingsFile,
     selection,
   };
+}
+
+/** Remove the run-owned MCP bearer and settings after the Claude process exits. */
+export function cleanupClaudeLaunch(launch: Pick<ClaudeLaunch, "mcpConfigFile" | "settingsFile">): void {
+  rmSync(launch.mcpConfigFile, { force: true });
+  rmSync(launch.settingsFile, { force: true });
 }
 
 /**

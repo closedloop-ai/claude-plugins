@@ -1,5 +1,7 @@
 # Implementation Plan: ISS-13401 Phase 3 local dual-runtime evals
 
+> Superseded final state, 2026-10-30: model-driven evals run only in the scheduled dual-runtime change-day nightly. The nightly runs each case once and retries only failures at most twice. There is no per-PR or release eval mode.
+
 ## Summary
 
 Make the existing vibe model-driven eval corpus runnable and reportable on both Claude Code and Codex from one local command. Daniel's final decisions in PLN-2237 v5 replace the earlier Phase 3 self-hosted CI runner proposal: model-driven evals always run on a developer machine, while later model-free CI checks enforce PR disclosure. The start-to-PR benchmark remains Claude Code only.

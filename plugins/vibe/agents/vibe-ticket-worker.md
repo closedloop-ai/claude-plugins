@@ -169,8 +169,12 @@ F. Status. The PLN's status follows the work:
    `Self-approved` line `session-plan.mjs` renders (version an older text
    in D first). Before setting it, save the PLN's
    `get-document` JSON and its latest text and run
-   `node ../skills/handoff/scripts/rulings-check.mjs --plan <json> --plan-body <text>`;
-   each exclusion it names (out of scope, deferred, not covered, a GAP line)
+   `node ../skills/handoff/scripts/rulings-check.mjs --plan <json> --plan-body <text>`.
+   Every nonempty `session-plan.mjs` render starts with that `Self-approved`
+   line, so a current published render already meets that prerequisite. Run
+   `rulings-check.mjs` yourself; do not block because its result was not
+   supplied in advance.
+   Each exclusion it names (out of scope, deferred, not covered, a GAP line)
    goes back to the writer as `NEEDS_CHANGE`: cite the ticket AC, PRD or
    operator ruling behind it, or bring the work back into scope.
 
@@ -181,7 +185,8 @@ F. Status. The PLN's status follows the work:
    date-range name covering today. If no weekly project covers today, select
    the latest weekly project by its ending date and continue. Note that
    fallback and the selected project under What this is; never stop or ask the
-   person because the current week is absent.
+   person because the current week is absent. Continue normal ticket creation
+   without adding a status label to the fallback note.
 2. Before creating, run closedloop-graph `query_collisions` and
    `search_nodes` with the summary; mention overlapping open tickets under
    What this is. When the source is a PRD, fetch every child and its comments,
@@ -360,6 +365,7 @@ historical inspections accurately. Preserve the existing grading block.
      to update and never claims the branch edited one. A docs page in the diff
      (`git -C "<wt>" diff --stat <inventory baseCommit> apps/web/content/docs docs`)
      returns `NEEDS_CHANGE`, because nothing agent-written goes into public docs.
+   - Feature map line: copies each `Feature map:` line from the writer's change log verbatim into Handoff, or records "None: no screen behavior or reach changed".
    - Missing tests lists every entry of the writer's missing tests list, each
      with its behavior, row ID and files to cover.
    - Retired tests deleted lists every `retiredTests` entry the inventory

@@ -111,7 +111,15 @@ export function cleanupRecordedProof(runDir: string, expectedBaseRef: string, ex
   const record = parseLifecycle(runDir, expectedBaseRef, expectedRef);
   if (!record) return [];
   const failures: string[] = [];
-  if (record.number === 0 && record.refPushed) {
+  const present = new Map<"head" | "base", boolean>();
+  for (const [key, ref] of [["head", record.ref], ["base", record.baseRef]] as const) {
+    try {
+      present.set(key, Boolean(commands.run("git", ["ls-remote", "--heads", PROOF_REMOTE, ref], record.cwd)));
+    } catch (error) {
+      failures.push(`${key}-probe:${String(error)}`);
+    }
+  }
+  if (record.number === 0) {
     try {
       const rows = JSON.parse(commands.run(gh, ["pr", "list", "--repo", PROOF_REPO,
         "--state", "all", "--head", record.ref, "--json", "number"], record.cwd)) as Array<{ number?: number }>;
@@ -146,22 +154,24 @@ export function cleanupRecordedProof(runDir: string, expectedBaseRef: string, ex
       persistRecord(runDir, record);
     } catch (error) { failures.push(`close:${String(error)}`); }
   }
-  for (const [key, pushed, removed] of [
-    ["head", record.refPushed, record.headRefRemoved],
-    ["base", record.baseRefPushed, record.baseRefRemoved],
+  for (const [key, removed] of [
+    ["head", record.headRefRemoved],
+    ["base", record.baseRefRemoved],
   ] as const) {
-    if (!pushed || removed) continue;
+    if (present.get(key) === undefined) continue;
     const ref = key === "head" ? record.ref : record.baseRef;
     try {
-      if (commands.run("git", ["ls-remote", "--heads", PROOF_REMOTE, ref], record.cwd)) {
+      if (present.get(key)) {
         commands.run("git", ["push", PROOF_REMOTE, `:refs/heads/${ref}`], record.cwd);
       }
       if (commands.run("git", ["ls-remote", "--heads", PROOF_REMOTE, ref], record.cwd)) {
         throw new Error("benchmark-proof-ref-not-removed");
       }
-      if (key === "head") record.headRefRemoved = true;
-      else record.baseRefRemoved = true;
-      persistRecord(runDir, record);
+      if (!removed) {
+        if (key === "head") record.headRefRemoved = true;
+        else record.baseRefRemoved = true;
+        persistRecord(runDir, record);
+      }
     } catch (error) { failures.push(`${key}-ref:${String(error)}`); }
   }
   return failures;

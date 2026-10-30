@@ -1,5 +1,7 @@
 # Implementation Plan: ISS-13401 Phase 2 Claude start-to-PR baseline
 
+> Final-state note, 2026-10-30: the first measured baseline below remains historical evidence. The on-demand harness now uses three balanced pairs, six runs total, to preserve the under-ten-minute goal.
+
 ## Summary
 
 Run the first immutable ten-run Claude Code baseline for the fixed Projects search task. Measure five vibe sessions and five fleet-orchestrator sessions with one writer each, against the same pinned plugin, fixture, seeded local web stack, model, effort, CLI and PR contract. A sequential screen refuted its schedule against the fixed speed target. Immediate launch preflights rejected four-way contention, so the final batch uses five balanced `AB` waves.

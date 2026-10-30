@@ -182,22 +182,31 @@ export class ControlWebStackAdapter implements SeededStackAdapter {
   async stop(): Promise<void> {
     const failures: unknown[] = [];
     const mcp = this.mcp;
-    this.mcp = null;
+    let mcpStopped = !mcp?.pid;
     if (mcp?.pid) {
-      try { await terminateProcessGroup(mcp.pid, "SIGTERM"); }
+      try { await terminateProcessGroup(mcp.pid, "SIGTERM"); mcpStopped = true; }
       catch (error) { failures.push(error); }
     }
+    if (mcpStopped) this.mcp = null;
     const pid = this.controlPid;
-    this.controlPid = null;
-    this.detailsValue = null;
+    let controlStopped = pid === null;
     if (pid !== null) {
       try {
         const current = await this.controlStatus();
-        if (current.running && current.meta?.pid === pid) this.control("down", "--session", this.session);
+        if (current.running && current.meta?.pid === pid) {
+          this.control("down", "--session", this.session);
+          const after = await this.controlStatus();
+          if (after.running) throw new Error("benchmark-stack-control-survived-down");
+        }
         else if (current.running) throw new Error("benchmark-stack-owner-changed");
+        controlStopped = true;
       } catch (error) { failures.push(error); }
     }
-    rmSync(join(this.sandboxRoot, "seed-api-key"), { force: true });
+    if (controlStopped) this.controlPid = null;
+    if (mcpStopped && controlStopped) {
+      this.detailsValue = null;
+      rmSync(join(this.sandboxRoot, "seed-api-key"), { force: true });
+    }
     if (failures.length) throw new AggregateError(failures, "benchmark-stack-cleanup-failed");
   }
 

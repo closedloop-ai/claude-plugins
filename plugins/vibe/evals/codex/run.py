@@ -15,6 +15,7 @@ import signal
 import subprocess
 import tempfile
 import sys
+import threading
 import time
 from typing import Any
 
@@ -25,6 +26,38 @@ PLUGIN = EVALS.parent
 MANIFESTS = (".codex-plugin/plugin.json", ".claude-plugin/plugin.json")
 PERSONAS = {"exec-": "executive-", "pm-": "product-manager-", "orch-": "orchestrator-"}
 SKILLS = ("fleet-orchestrator", "handoff", "vibe")
+ACTIVE_PROCESSES: set[subprocess.Popen[str]] = set()
+ACTIVE_PROCESSES_LOCK = threading.Lock()
+
+
+def snapshot_metadata(output: Path) -> dict[str, Any]:
+    """Identify actual copied payloads through the shared Claude/Codex identity helper."""
+    script = output / "receipt-helper/tested-head.mjs"
+    if not script.is_file():
+        script = output / "market/plugins/vibe/skills/vibe/scripts/tested-head.mjs"
+    payloads = {
+        name: json.loads(subprocess.check_output(
+            ["node", str(script), "tree", str(output / "market/plugins" / name)], text=True
+        ))
+        for name in ("vibe", "closedloop-core")
+    }
+    suite = json.loads(subprocess.check_output(
+        ["node", str(script), "tree", str(output / "suite")], text=True
+    ))
+    helper = {
+        "sha256": hashlib.sha256(script.read_bytes()).hexdigest(),
+        "session_record_sha256": hashlib.sha256(script.with_name("session-record.mjs").read_bytes()).hexdigest(),
+    }
+    return {"payloads": payloads, "suite": suite, "identity_helper": helper}
+
+
+def copied_source(snapshot: dict[str, Any]) -> dict[str, str]:
+    """Return the exact copied vibe payload identity used by the subject run."""
+    source = snapshot.get("payloads", {}).get("vibe", {})
+    tree = source.get("treeSha256")
+    if not isinstance(tree, str) or re.fullmatch(r"[a-f0-9]{64}", tree) is None:
+        raise RuntimeError("copied vibe payload has no valid tree identity")
+    return {"treeSha256": tree}
 
 
 def document(path: Path) -> tuple[dict[str, Any], str]:
@@ -61,6 +94,17 @@ def cases(root: Path = EVALS) -> list[dict[str, Any]]:
     result = []
     for path in sorted(root.glob("*/prompt.md")):
         meta, prompt = document(path)
+        config = path.parent / "case.yaml"
+        if config.is_file():
+            case_config = yaml.safe_load(config.read_text()) or {}
+            scaffold = case_config.get("context", {}).get("scaffold_script")
+            if scaffold:
+                if not isinstance(scaffold, str):
+                    raise ValueError(f"unsafe scaffold_script in {config}")
+                scaffold_path = Path(scaffold)
+                if scaffold_path.is_absolute() or ".." in scaffold_path.parts:
+                    raise ValueError(f"unsafe scaffold_script in {config}")
+                meta["scaffold_script"] = scaffold
         name = path.parent.name
         for prefix, persona in PERSONAS.items():
             if name.startswith(prefix):
@@ -78,6 +122,14 @@ def stop(process: subprocess.Popen[str]) -> None:
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+
+
+def stop_active_processes() -> None:
+    """Stop every model process group currently owned by worker threads."""
+    with ACTIVE_PROCESSES_LOCK:
+        active = list(ACTIVE_PROCESSES)
+    for process in active:
+        stop(process)
 
 
 class Budget:
@@ -113,6 +165,8 @@ def command(
             start_new_session=True,
             text=True,
         )
+        with ACTIVE_PROCESSES_LOCK:
+            ACTIVE_PROCESSES.add(process)
         try:
             code = process.wait(timeout=limit)
         except subprocess.TimeoutExpired:
@@ -125,6 +179,9 @@ def command(
             stop(process)
             process.wait()
             raise
+        finally:
+            with ACTIVE_PROCESSES_LOCK:
+                ACTIVE_PROCESSES.discard(process)
     if code:
         failures = [
             e.get("error", {}).get("message", e.get("message", ""))
@@ -142,57 +199,71 @@ def install(
     codex_binary: str = "codex",
 ) -> dict[str, str]:
     """Install worktree snapshots in a private CODEX_HOME, never the user's live install."""
-    home = output / "home"
-    home.mkdir(mode=0o700)
+    home = Path(tempfile.mkdtemp(prefix="vibe-codex-home-"))
+    home.chmod(0o700)
     auth_home = Path(env.get("CODEX_HOME", str(Path.home() / ".codex")))
     auth = auth_home / "auth.json"
     if auth.exists():
-        shutil.copyfile(auth, home / "auth.json")
-        (home / "auth.json").chmod(0o600)
+        # Keep the normal credential store authoritative. The run owns only a
+        # disposable link, so a hard kill cannot strand a copied credential.
+        (home / "auth.json").symlink_to(auth.resolve())
     env = {**env, "CODEX_HOME": str(home)}
-    market = output / "market"
-    catalog = market / ".agents/plugins"
-    catalog.mkdir(parents=True)
-    entries = []
-    for name in ["vibe", "closedloop-core"]:
-        source = plugin if name == "vibe" else plugin.parent / name
-        target = market / "plugins" / name
-        target.parent.mkdir(exist_ok=True)
-        # A snapshot makes concurrent worktree edits and later installs irrelevant.
-        shutil.copytree(
-            source,
-            target,
-            ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"),
-        )
-        entries.append(
-            dict(
-                name=name,
-                source={"source": "local", "path": "./plugins/" + name},
-                policy={"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
-                category="Development",
+    try:
+        market = output / "market"
+        catalog = market / ".agents/plugins"
+        catalog.mkdir(parents=True)
+        entries = []
+        for name in ["vibe", "closedloop-core"]:
+            source = plugin if name == "vibe" else plugin.parent / name
+            target = market / "plugins" / name
+            target.parent.mkdir(exist_ok=True)
+            # Both runtimes use the same Git-selected, symlink-confined copier.
+            subprocess.check_output(
+                ["node", str(PLUGIN / "skills/vibe/scripts/tested-head.mjs"), "copy", str(source), str(target)],
+                text=True, timeout=min(60, budget.remaining()),
             )
+            entries.append(
+                dict(
+                    name=name,
+                    source={"source": "local", "path": "./plugins/" + name},
+                    policy={"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+                    category="Development",
+                )
+            )
+        (catalog / "marketplace.json").write_text(
+            json.dumps({"name": "vibe-eval", "plugins": entries})
         )
-    (catalog / "marketplace.json").write_text(
-        json.dumps({"name": "vibe-eval", "plugins": entries})
-    )
-    command(
-        [codex_binary, "plugin", "marketplace", "add", str(market), "--json"],
-        output,
-        env,
-        budget,
-        60,
-        output / "marketplace.json",
-    )
-    for name in ["vibe", "closedloop-core"]:
+        subprocess.check_output(
+            ["node", str(PLUGIN / "skills/vibe/scripts/tested-head.mjs"), "copy", str(plugin / "evals"), str(output / "suite")],
+            text=True, timeout=min(60, budget.remaining()),
+        )
+        # Freeze the hashing runtime separately so older model payloads remain byte-for-byte unchanged.
+        subprocess.check_output(
+            ["node", str(PLUGIN / "skills/vibe/scripts/tested-head.mjs"), "copy", str(PLUGIN / "skills/vibe/scripts"), str(output / "receipt-helper")],
+            text=True, timeout=min(60, budget.remaining()),
+        )
+        (output / "snapshot.json").write_text(json.dumps(snapshot_metadata(output), indent=2))
         command(
-            [codex_binary, "plugin", "add", name + "@vibe-eval", "--json"],
+            [codex_binary, "plugin", "marketplace", "add", str(market), "--json"],
             output,
             env,
             budget,
             60,
-            output / (name + "-install.json"),
+            output / "marketplace.json",
         )
-    return env
+        for name in ["vibe", "closedloop-core"]:
+            command(
+                [codex_binary, "plugin", "add", name + "@vibe-eval", "--json"],
+                output,
+                env,
+                budget,
+                60,
+                output / (name + "-install.json"),
+            )
+        return env
+    except BaseException:
+        shutil.rmtree(home, ignore_errors=True)
+        raise
 
 
 def exec_args(
@@ -267,6 +338,12 @@ def tool_text(call: dict[str, Any]) -> str:
         + " "
         + str(call.get("arguments", call.get("input", "")))
     )
+
+
+def loaded_plugin_read(trace: list[dict[str, Any]], skill: str) -> bool:
+    """Accept a read of the installed versioned skill or this runner's private snapshot."""
+    pattern = r"(?:/market/plugins/vibe/skills|/vibe/[^ ]*/skills)/" + re.escape(skill) + r"/SKILL\.md"
+    return any(re.search(pattern, tool_text(call)) for call in trace)
 
 
 def check(name: str, passed: bool, reason: str) -> dict[str, Any]:
@@ -494,9 +571,11 @@ def run_case(
     result: dict[str, Any] = dict(case=case["name"], checks=[], skipped_graders=[], usage={}, seconds=0)
     try:
         visual = "visual-cues" in case["meta"].get("tags", [])
-        if visual:
+        scaffold_script = case["meta"].get("scaffold_script")
+        scaffolded = visual or bool(case["meta"].get("scaffold")) or bool(scaffold_script)
+        if scaffolded:
             command(
-                ["bash", str(case["source"] / "scaffold.sh")],
+                ["bash", str(case["source"] / (scaffold_script or "scaffold.sh"))],
                 work,
                 env,
                 budget,
@@ -529,7 +608,7 @@ def run_case(
             + prompt
         )
         (work / "input.txt").write_text(prompt)
-        args = exec_args(model, work, work / "reply.txt", visual, codex_binary)
+        args = exec_args(model, work, work / "reply.txt", scaffolded, codex_binary)
         for image in sorted((work / "images").glob("*.png")):
             args += ["--image", str(image)]
         command(
@@ -537,7 +616,7 @@ def run_case(
             work,
             env,
             budget,
-            300 if visual else 180,
+            300 if scaffolded else 180,
             work / "events.jsonl",
         )
         events = read_events(work / "events.jsonl")
@@ -556,12 +635,7 @@ def run_case(
         result["checks"].append(
             check(
                 "loaded-plugin",
-                any(
-                    re.search(
-                        r"/vibe/[^ ]*/skills/" + skill + r"/SKILL.md", tool_text(t)
-                    )
-                    for t in trace
-                ),
+                loaded_plugin_read(trace, skill),
                 "installed vibe skill was not read",
             )
         )
@@ -662,7 +736,11 @@ def main() -> int:
     parser.add_argument("--concurrency", type=int, choices=[1, 2], default=2)
     parser.add_argument("--max-seconds", type=int, default=1800)
     args = parser.parse_args()
-    selected = [c for c in cases() if not args.case or c["name"] in args.case]
+    subject_plugin = args.plugin.resolve()
+    selected = [
+        c for c in cases(subject_plugin / "evals")
+        if not args.case or c["name"] in args.case
+    ]
     if not selected or any(n not in [c["name"] for c in selected] for n in args.case):
         parser.error("unknown or empty case selection")
     if args.max_seconds <= 0:
@@ -690,17 +768,38 @@ def main() -> int:
     output.chmod(0o700)
     print("Artifacts: " + str(output), flush=True)
     budget = Budget(args.max_seconds)
+    private_home: Path | None = None
+    prior_handlers: dict[int, Any] = {}
+    def interrupt(signum: int, _frame: Any) -> None:
+        stop_active_processes()
+        raise KeyboardInterrupt(f"eval interrupted by signal {signum}")
     try:
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            prior_handlers[signum] = signal.signal(signum, interrupt)
         env = install(output, args.plugin.resolve(), dict(os.environ), budget, args.codex_bin)
+        private_home = Path(env["CODEX_HOME"])
+        identity_script = PLUGIN / "skills/vibe/scripts/tested-head.mjs"
+        snapshot = json.loads((output / "snapshot.json").read_text())
+        source_sha = args.source_sha
+        if source_sha is None:
+            checkout_source = json.loads(subprocess.check_output(
+                ["node", str(identity_script), "source", str(args.plugin)], text=True
+            ))
+            source_sha = checkout_source["head"]
+        copied_plugin = output / "market/plugins/vibe"
+        selected_names = {case["name"] for case in selected}
+        selected = [case for case in cases(output / "suite") if case["name"] in selected_names]
+        if {case["name"] for case in selected} != selected_names:
+            raise RuntimeError("case selection changed while copying the eval suite")
         metadata: dict[str, Any] = dict(
-            source_sha=args.source_sha or subprocess.check_output(
-                ["git", "-C", str(args.plugin), "rev-parse", "HEAD"], text=True
-            ).strip(),
+            source_sha=source_sha,
+            source=copied_source(snapshot),
+            **snapshot,
             skill_sha256=hashlib.sha256(
-                (args.plugin / "skills/vibe/SKILL.md").read_bytes()
+                (copied_plugin / "skills/vibe/SKILL.md").read_bytes()
             ).hexdigest(),
             plugin=str(args.plugin.resolve()),
-            version=plugin_version(args.plugin),
+            version=plugin_version(copied_plugin),
             cli_version=subprocess.check_output([args.codex_bin, "--version"], text=True).strip(),
             model=args.model,
             grader_model=args.grader_model,
@@ -720,6 +819,7 @@ def main() -> int:
                 )
             )
         metadata["elapsed_seconds"] = round(args.max_seconds - budget.remaining(), 1)
+        metadata["snapshot_unchanged"] = snapshot_metadata(output) == snapshot
         metadata["usage"] = {
             key: sum(r["usage"].get(key, 0) for r in results)
             for key in {k for r in results for k in r["usage"]}
@@ -727,10 +827,13 @@ def main() -> int:
         (output / "results.json").write_text(
             json.dumps(dict(run=metadata, cases=results), indent=2)
         )
-        return 0 if all(r["passed"] for r in results) else 1
+        return 0 if metadata["snapshot_unchanged"] and all(r["passed"] for r in results) else 1
     finally:
-        # Authentication is disposable even when installation or a run fails.
-        (output / "home/auth.json").unlink(missing_ok=True)
+        stop_active_processes()
+        if private_home is not None:
+            shutil.rmtree(private_home, ignore_errors=True)
+        for signum, handler in prior_handlers.items():
+            signal.signal(signum, handler)
 
 
 if __name__ == "__main__":

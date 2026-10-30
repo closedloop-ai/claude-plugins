@@ -18,12 +18,12 @@ test("vibe PR reviewer is repo-local, read-only and contains all ten current che
   assert.doesNotMatch(frontmatter, /\b(?:Write|Edit)\b/);
   for (const heading of ["Vision fit", "Hardcoding and allowed coupling", "Duplication and ownership",
     "Instruction weight", "Tests and evals", "Heavy and real runs", "Repository rules",
-    "Sandbox and network", "Correctness regression classes", "Benchmark and eval results"]) {
+    "Sandbox and network", "Correctness regression classes", "Benchmark and nightly eval results"]) {
     assert.match(source, new RegExp(`^## \\d+\\. ${heading}$`, "m"));
   }
   for (const currentRule of ["symphony-alpha path or name is not", "release smoke is optional",
-    "claude-sonnet-5-5` at effort `high", "Model-driven vibe evals remain local",
-    "Only the authorized benchmark approver can apply `benchmark-not-needed`", "never runs in CI"]) {
+    "claude-sonnet-5-5` at effort `high", "Model-driven vibe evals run only",
+    "never run per PR", "CI runs only model-free T0"]) {
     assert.match(source, new RegExp(currentRule.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
   }
   for (const field of ["severity", "file:line", "concrete triggering input or state",
@@ -55,8 +55,8 @@ test("frozen PR 362 eval pins three findings and rejects superseded guidance", (
 
 test("reusable benchmark surfaces contain no person names", () => {
   const files = [AGENT, join(ROOT, ".claude/skills/vibe-bench/SKILL.md"),
-    join(ROOT, ".github/pull_request_template.md"), join(ROOT, "tools/vibe-bench/README.md"),
-    ...["comparison.ts", "report.ts", "developer-report.ts", "pr-body-gate.ts"]
+    join(ROOT, "tools/vibe-bench/README.md"),
+    ...["comparison.ts", "report.ts", "eval-driver.ts", "eval-slack.ts"]
       .map((name) => join(ROOT, "tools/vibe-bench/src", name))];
   const forbidden = new RegExp(["Dan", "iel|O", "choa"].join(""), "i");
   for (const file of files) assert.doesNotMatch(readFileSync(file, "utf8"), forbidden, file);

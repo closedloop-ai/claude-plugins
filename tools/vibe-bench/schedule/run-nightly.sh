@@ -1,0 +1,81 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 11 ]; then
+  echo "usage: run-nightly.sh <private-env> <heavy-slot> <node> <nightly-script> <clean-main-checkout> <run-root-parent> <results-store> <claude> <codex> <uv> <gh>" >&2
+  exit 64
+fi
+
+private_env=$1
+heavy_slot=$2
+node_executable=$3
+nightly_script=$4
+clean_main_checkout=$5
+run_root_parent=$6
+results_store=$7
+claude_executable=$8
+codex_executable=$9
+shift 9
+uv_executable=$1
+gh_executable=$2
+
+if [ ! -f "$private_env" ]; then
+  echo "vibe nightly Slack credential file is missing" >&2
+  exit 78
+fi
+
+if [ -L "$private_env" ]; then
+  echo "vibe nightly Slack credential file must not be a symlink" >&2
+  exit 78
+fi
+
+file_owner=$(stat -f '%u' "$private_env" 2>/dev/null || stat -c '%u' "$private_env")
+file_mode=$(stat -f '%Lp' "$private_env" 2>/dev/null || stat -c '%a' "$private_env")
+if [ "$file_owner" != "$(id -u)" ] || [ "$file_mode" != "600" ]; then
+  echo "vibe nightly Slack credential file must be owned by the current user with mode 0600" >&2
+  exit 78
+fi
+
+private_env_real=$(realpath "$private_env")
+checkout_real=$(realpath "$clean_main_checkout")
+case "$private_env_real/" in
+  "$checkout_real/"*)
+    echo "vibe nightly Slack credential file must be outside the repository" >&2
+    exit 78
+    ;;
+esac
+
+if grep -Ev '^(#.*|[[:space:]]*|SLACK_BOT_TOKEN=.*|SLACK_CHANNEL_ID=.*)$' "$private_env" | grep -q .; then
+  echo "vibe nightly Slack credential file contains an unsupported key" >&2
+  exit 78
+fi
+
+private_value() {
+  key=$1
+  count=$(grep -c "^${key}=" "$private_env" || true)
+  if [ "$count" -ne 1 ]; then
+    echo "vibe nightly Slack credential file must define each required key once" >&2
+    exit 78
+  fi
+  value=$(grep "^${key}=" "$private_env")
+  value=${value#*=}
+  case "$value" in
+    \'*\') value=${value#\'}; value=${value%\'} ;;
+    \"*\") value=${value#\"}; value=${value%\"} ;;
+  esac
+  printf '%s' "$value"
+}
+
+SLACK_BOT_TOKEN=$(private_value SLACK_BOT_TOKEN)
+SLACK_CHANNEL_ID=$(private_value SLACK_CHANNEL_ID)
+export SLACK_BOT_TOKEN SLACK_CHANNEL_ID
+
+if [ -z "${SLACK_BOT_TOKEN:-}" ] || [ -z "${SLACK_CHANNEL_ID:-}" ]; then
+  echo "vibe nightly requires SLACK_BOT_TOKEN and SLACK_CHANNEL_ID" >&2
+  exit 78
+fi
+
+exec "$heavy_slot" vibe-eval-nightly \
+  "$node_executable" --experimental-strip-types "$nightly_script" \
+  "$clean_main_checkout" "$run_root_parent" "$results_store" \
+  "$claude_executable" "$codex_executable" "$uv_executable" "$gh_executable"

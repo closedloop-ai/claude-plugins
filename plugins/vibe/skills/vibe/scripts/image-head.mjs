@@ -17,6 +17,8 @@
 // the build only when the command built (no `--no-build`). Both exit 0
 // otherwise. A record is `<records dir>/<project>.json`.
 
+import { withStableSource } from "./tested-head.mjs";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { escalation, isSandboxRefusal } from "./sandbox-refusal.mjs";
 import os from "node:os";
@@ -42,7 +44,7 @@ export function imageRecordFile(project, records = defaultRecordsDir()) {
 }
 
 /** The refusal for a run that would reuse images not built from `head` in `worktree`, or null. */
-export function imageProblem({ project, worktree, head, command, records }) {
+export function imageProblem({ project, worktree, head, source, command, records }) {
   if (!reusesImages(command)) return null;
   let built;
   try { built = JSON.parse(readFileSync(imageRecordFile(project, records), "utf8")); }
@@ -51,16 +53,17 @@ export function imageProblem({ project, worktree, head, command, records }) {
   if (!built.head.startsWith(head.toLowerCase())) {
     return `STALE-IMAGES ${project}'s images were built from ${built.head.slice(0, 12)}, not ${head.slice(0, 12)}: drop --no-build and build fresh`;
   }
+  if ((source || built.source) && source?.treeSha256 !== built.source?.treeSha256) return `STALE-IMAGES ${project} images have different uncommitted inputs: build fresh`;
   if (built.worktree !== worktree) return `STALE-IMAGES ${project}'s images were built in ${built.worktree}, not ${worktree}: build fresh after a worktree switch`;
   return null;
 }
 
 /** Records that `command` built `project`'s images from `head` in `worktree`; a reusing command records nothing. */
-export function recordImages({ project, worktree, head, command, records }) {
+export function recordImages({ project, worktree, head, source, command, records }) {
   if (reusesImages(command)) return false;
   const file = imageRecordFile(project, records);
   mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(`${file}.tmp`, `${JSON.stringify({ head, worktree, builtAt: new Date().toISOString() })}\n`, { mode: 0o600 });
+  writeFileSync(`${file}.tmp`, `${JSON.stringify({ head, source, worktree, builtAt: new Date().toISOString() })}\n`, { mode: 0o600 });
   renameSync(`${file}.tmp`, file);
   return true;
 }
@@ -83,19 +86,23 @@ function main(argv) {
     process.stderr.write("Usage: image-head.mjs check|record --project <p> --worktree <path> --head <sha> -- <command...>\n");
     return 2;
   }
-  const input = { project: values.project, worktree: values.worktree, head: values.head, command, records: values.records };
-  if (action === "record") {
-    try { recordImages(input); }
-    catch (error) {
-      if (!isSandboxRefusal(error)) throw error;
-      process.stdout.write(`${JSON.stringify(escalation(error, ESCALATION_JUSTIFICATION))}\n`);
-      return 1;
+  const operation = source => {
+    const input = { project: values.project, worktree: values.worktree, head: values.head, source, command, records: values.records };
+    if (action === "record") {
+      try { recordImages(input); }
+      catch (error) {
+        if (!isSandboxRefusal(error)) throw error;
+        process.stdout.write(`${JSON.stringify(escalation(error, ESCALATION_JUSTIFICATION))}\n`);
+        return { exitCode: 1 };
+      }
+      return { exitCode: 0 };
     }
-    return 0;
-  }
-  const problem = imageProblem(input);
-  if (problem) process.stderr.write(`${problem}\n`);
-  return problem ? 1 : 0;
+    const problem = imageProblem(input);
+    if (problem) process.stderr.write(`${problem}\n`);
+    return { exitCode: problem ? 1 : 0 };
+  };
+  const repository = spawnSync('git', ['-C', values.worktree, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  return (repository.status === 0 ? withStableSource(values.worktree, operation, { head: values.head }) : operation(undefined)).exitCode;
 }
 
 export const ESCALATION_JUSTIFICATION = "Record which version the automatic checks' setup was built from";

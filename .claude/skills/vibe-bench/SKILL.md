@@ -1,19 +1,32 @@
 ---
 name: vibe-bench
-description: Run and publish the local ISS-13401 vibe benchmark for one open claude-plugins pull request.
+description: Run the repository's on-demand local Claude Code benchmark or operate its local nightly eval baseline.
 ---
 
 # Vibe benchmark
 
-Use this skill only on a developer machine. The benchmark itself runs under Claude Code with `claude-sonnet-5-5` at effort `high`. Model-driven evals run locally on both Claude Code and Codex after the benchmark stack is down. Never run either workload in CI.
+Use this skill only on a developer machine. Never start a paid eval or benchmark for a pull request, never add one to CI, and never publish paid evidence into a pull request body.
 
-1. From the clean claude-plugins PR checkout, run `pnpm -C tools/vibe-bench bench -- pr-list <repo> <gh>` and show the open PR choices. Ask the developer which PR to update. Do not start paid work before the answer.
-2. Run `pr-run` for that PR using the accepted baseline JSON, a clean symphony-alpha checkout at the baseline's exact fixture SHA, one empty run root, one output directory, and explicit Claude and GitHub executables. Fetch symphony-alpha `origin/main` first; the fixture commit must still be on live main. This preflight refuses a branch or full-head mismatch. It runs three paired waves, each containing one vibe and one fleet sample, on one isolated seeded web stack plus local MCP. Do not change the pinned model, effort, task, concurrency, or run count.
-3. Confirm the artifact reports six valid runs, all proof PRs closed, all owned proof refs removed, teardown complete, wall time, cost, tokens, calls, and component, skill, worker and phase evidence. Stop on an invalid artifact or cleanup failure.
-4. After teardown, compare one complete `eval-local` run for the candidate with the same corpus on main. Both runs use `full` mode and both Claude Code and Codex. A same-day main artifact is reusable only when its main SHA, case list and runtime identities match exactly. Cases that pass on main and fail on the candidate are regressions and must be fixed with the graders unchanged. Cases that fail on both are pre-existing and remain disclosure evidence.
-5. On the final PR head, run `eval-local` in `full` mode for only the regression cases plus a small stable control sample. Pass the `uv` executable so the driver provisions its pinned Python dependencies. Run `eval-compare` with the main, complete candidate and focused current-head artifacts. It fails unless every regression and control passes on both runtimes.
-6. If either benchmark comparison is yellow or red, show every non-green `shape:signal` and ask the developer for a concise explanation naming the component, phase and reason. Store the answers in the JSON map accepted by `pr-publish`. Do not invent explanations.
-7. Run `pr-publish` with the eval-comparison artifact. It rechecks the open PR's branch and full head, verifies the immutable benchmark, main comparison and focused dual-runtime rerun, replaces exactly one rendered `## Benchmark` section, attaches compact current-head evidence in a PR comment, and confirms the live body. It applies no label.
-8. If the result is red, publish the disclosure and attached evidence, then report that the authorized benchmark approver must explicitly accept the current-head regression. Never apply `benchmark-not-needed` or `benchmark-regression-accepted`.
+## On-demand start-to-PR benchmark
 
-Use `node --experimental-strip-types tools/vibe-bench/src/cli.ts` instead of `pnpm` when the parent repository has no workspace command available. Keep run artifacts out of the repository. Always report per-run wall time and dollar cost, full batch wall and cost, and cleanup state.
+1. Confirm the request is explicitly for the on-demand benchmark. It is a local diagnostic, not a pull request gate.
+2. Resolve the latest accepted nightly eval baseline. Use its claude-plugins SHA as the benchmark baseline. Refuse when no accepted nightly exists.
+3. Run the benchmark only under Claude Code with `claude-sonnet-5-5` at effort `high`. Agent frontmatter may select another model for that agent, and the result must record it. The harness rejects any root or subagent model mismatch and keeps the normal Claude credential store available while isolating settings.
+4. Use one isolated seeded web stack and one local MCP server for all six samples: three vibe and three fleet-orchestrator in three balanced paired waves. Keep setup outside the model execution budget, record setup separately, and target less than ten minutes for the full measured batch.
+5. Every proof pull request is a draft with `DO NOT MERGE` in its title and a body that says it is benchmark evidence. The harness closes every proof pull request and deletes every owned proof ref on success, failure, timeout, or interrupt.
+6. Report wall time, cost, tokens, calls, model and effort, cleanup, and component, skill, worker, and phase breakdowns. Yellow and red signals require a concrete local explanation. Never apply a bypass or acceptance label.
+
+## Nightly eval baseline
+
+The nightly is the only routine model-driven eval. It runs from a dedicated clean `main` checkout on the scheduled local host, never from a worker worktree and never in CI.
+
+1. Fetch and fast-forward to `origin/main`, then require a clean `main` checkout at that exact commit.
+2. Compare paths since the latest accepted baseline with the shared behavior classifier. Skip without a model call when only README, changelog, unreferenced docs, eval, test, benchmark-infrastructure, or version-only manifest files changed. A semantic manifest change or runtime-referenced document is behavior. An unknown new path in `plugins/vibe` fails closed and triggers.
+3. On a change-day, run the full corpus once on Claude Code and Codex. Claude uses `claude-sonnet-5-5` as the agent and `claude-opus-5-5` as the judge. Codex uses the full agent and judge IDs in source policy. Rerun only failing cases, at most twice. Cases added or changed are recorded and are not compared with older content.
+4. Advance the accepted baseline only through this nightly. Baseline lineages are keyed by all agent and judge model IDs. A model change starts a new lineage without comparison or Slack delivery that night. Reliability history, must-pass status, quarantine owner, and quarantine deadline remain in the stored artifact.
+5. When a reliable unchanged case still fails after its retries, write the regression report and post exactly one message to `#vibe`. Name the cases, runtimes, merged pull requests since the last green nightly with their authors, the quarantine owner, and the durable result artifact. Send nothing on a clean or skipped night.
+6. Record Claude agent cost, Claude judge cost, and their total separately. Read `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID` only from the scheduler's private environment file. Never commit, print, copy, or pass either credential to a model or grader process. A missing credential fails loudly in the job log. Retry a pending delivery before any later paid work.
+
+The start-to-PR benchmark baseline is tied to the latest accepted nightly, not to plugin versions. There is no release mode, promotion command, per-PR eval, per-PR benchmark, PR body section, approver label, or bypass flow.
+
+Use `node --experimental-strip-types tools/vibe-bench/src/cli.ts` when the parent repository has no workspace command. Keep all run roots and result stores outside the repository, acquire the machine's heavy slot, and report exact cleanup state.

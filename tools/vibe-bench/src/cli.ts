@@ -6,27 +6,33 @@ import type { RegressionExplanation } from "./report.ts";
 import type { Signal } from "./comparison.ts";
 import { collectLocalProbe, runLocalClaude } from "./driver.ts";
 import { buildReport } from "./report.ts";
-import { runPhase2Baseline } from "./phase2-driver.ts";
+import { requireLatestNightlyBenchmarkBaseline, runPhase2Baseline } from "./phase2-driver.ts";
+import type { BaselineArtifact } from "./baseline.ts";
 import type { ClaudeBenchmarkResult } from "./result-schema.ts";
-import { runLocalEvals } from "./eval-driver.ts";
-import { buildEvalComparisonReport, compareLocalEvals } from "./eval-comparison.ts";
-import type { EvalComparisonArtifact } from "./eval-comparison.ts";
-import { runDeveloperBenchmark } from "./developer-benchmark.ts";
-import type { DeveloperBenchmarkArtifact } from "./developer-benchmark.ts";
-import { buildBenchmarkEvidence, buildDeveloperReport } from "./developer-report.ts";
-import type { DeveloperExplanations } from "./developer-report.ts";
-import { listOpenPullRequests, preflightSelectedPullRequest, publishBenchmarkSection } from "./developer-pr.ts";
-import type { LocalEvalResult } from "./eval-collector.ts";
+import type { BenchmarkShape } from "./result-schema.ts";
+import { runLocalEvals, runT2Evals } from "./eval-driver.ts";
+import { requireDeveloperMachine } from "./eval-policy.ts";
+import { evalChangedFiles } from "./eval-selection.ts";
+import { classifyVibeWorkingTreeScope } from "./vibe-change-scope.ts";
 
-function readResults(path: string): ClaudeBenchmarkResult[] {
+function readResults(path: string, shape: BenchmarkShape): ClaudeBenchmarkResult[] {
   const value: unknown = JSON.parse(readFileSync(path, "utf8"));
-  if (!Array.isArray(value)) throw new Error("benchmark-results-array-required");
-  return value as ClaudeBenchmarkResult[];
+  const results = Array.isArray(value) ? value as ClaudeBenchmarkResult[]
+    : Array.isArray((value as Partial<BaselineArtifact>).runs)
+      ? (value as BaselineArtifact).runs.map((run) => run.result)
+      : null;
+  if (!results) throw new Error("benchmark-results-array-or-batch-required");
+  const selected = results.filter((result) => result.identity.shape === shape);
+  if (selected.length < 3) throw new Error(`benchmark-shape-sample-missing:${shape}`);
+  return selected;
 }
 
 /** Local-only CLI; comparison requires explicit human explanations for regressions. */
 export async function main(args: string[]): Promise<string> {
   const [command, ...rest] = args;
+  if (["run-local", "baseline", "eval-local", "eval-t2"].includes(command ?? "")) {
+    requireDeveloperMachine();
+  }
   if (command === "collect" && (rest.length >= 3 && rest.length <= 5)) {
     const output = collectLocalProbe(rest[0], rest[1], rest[2], rest[3], rest[4]);
     return `${output.jsonFile}\n${output.markdownFile}`;
@@ -35,23 +41,29 @@ export async function main(args: string[]): Promise<string> {
     const output = await runLocalClaude(rest[0], rest[1], rest[2], rest[3], rest[4], rest[5]);
     return `${output.jsonFile}\n${output.markdownFile}`;
   }
-  if (command === "compare" && (rest.length === 5 || rest.length === 6)) {
-    const [baselineFile, prFile, baseWordsRaw, prWordsRaw, outputDir, explanationFile] = rest;
+  if (command === "compare" && (rest.length === 6 || rest.length === 7)) {
+    const [baselineFile, candidateFile, baseWordsRaw, candidateWordsRaw, outputDir,
+      shapeRaw, explanationFile] = rest;
+    if (shapeRaw !== "vibe" && shapeRaw !== "fleet-one-writer") {
+      throw new Error("benchmark-shape-invalid");
+    }
     const baselineWords = Number(baseWordsRaw);
-    const prWords = Number(prWordsRaw);
-    const baseline = readResults(baselineFile);
-    const pr = readResults(prFile);
-    const comparison = compareResults(baseline, pr, { baseline: baselineWords, pr: prWords });
+    const candidateWords = Number(candidateWordsRaw);
+    const baseline = readResults(baselineFile, shapeRaw);
+    const candidate = readResults(candidateFile, shapeRaw);
+    const comparison = compareResults(baseline, candidate,
+      { baseline: baselineWords, candidate: candidateWords });
     const explanations = explanationFile
       ? JSON.parse(readFileSync(explanationFile, "utf8")) as Partial<Record<Signal, RegressionExplanation>> : {};
-    const report = buildReport(pr[pr.length - 1], comparison, explanations);
+    const report = buildReport(candidate[candidate.length - 1], comparison, explanations);
     const jsonFile = join(outputDir, "phase1-comparison.json");
     const markdownFile = join(outputDir, "phase1-comparison.md");
     writeFileSync(jsonFile, `${JSON.stringify(comparison, null, 2)}\n`, { flag: "wx" });
     writeFileSync(markdownFile, report, { flag: "wx" });
     return `${jsonFile}\n${markdownFile}`;
   }
-  if (command === "baseline" && rest.length === 7) {
+  if (command === "baseline" && rest.length === 8) {
+    requireLatestNightlyBenchmarkBaseline(rest[2], rest[7]);
     const output = await runPhase2Baseline({
       symphonyCheckout: rest[0], claudePluginsRepo: rest[1], expectedPluginSha: rest[2],
       runRoot: rest[3], outputDir: rest[4], claudeExecutable: rest[5], ghExecutable: rest[6],
@@ -61,52 +73,25 @@ export async function main(args: string[]): Promise<string> {
   if (command === "eval-local" && rest.length >= 8) {
     const mode = rest[7];
     if (mode !== "full" && mode !== "deterministic") throw new Error("eval-mode-invalid");
-    const output = runLocalEvals({ repo: rest[0], pluginSha: rest[1], runRoot: rest[2],
+    const output = await runLocalEvals({ repo: rest[0], pluginSha: rest[1], runRoot: rest[2],
       outputDir: rest[3], claudeExecutable: rest[4], codexExecutable: rest[5],
       uvExecutable: rest[6], deterministicOnly: mode === "deterministic",
       selectedCases: rest.slice(8) });
     return `${output.jsonFile}\n${output.reportFile}`;
   }
-  if (command === "eval-compare" && rest.length >= 5) {
-    const [baselineFile, candidateFile, rerunFile, outputDir, ...controls] = rest;
-    const comparison = compareLocalEvals(
-      JSON.parse(readFileSync(baselineFile, "utf8")) as LocalEvalResult,
-      JSON.parse(readFileSync(candidateFile, "utf8")) as LocalEvalResult,
-      JSON.parse(readFileSync(rerunFile, "utf8")) as LocalEvalResult, controls);
-    const stem = `eval-comparison-${comparison.headSha.slice(0, 12)}-${comparison.resultHash.slice(0, 12)}`;
-    const jsonFile = join(outputDir, `${stem}.json`);
-    const reportFile = join(outputDir, `${stem}.md`);
-    writeFileSync(jsonFile, `${JSON.stringify(comparison, null, 2)}\n`, { flag: "wx" });
-    writeFileSync(reportFile, buildEvalComparisonReport(comparison), { flag: "wx" });
-    return `${jsonFile}\n${reportFile}`;
+  if (command === "eval-scope" && rest.length === 2) {
+    return JSON.stringify(classifyVibeWorkingTreeScope(rest[0], rest[1],
+      evalChangedFiles(rest[0], rest[1])), null, 2);
   }
-  if (command === "pr-list" && rest.length === 2) {
-    return JSON.stringify(listOpenPullRequests(rest[0], undefined, rest[1]), null, 2);
+  if (command === "eval-t2" && rest.length === 8) {
+    const output = await runT2Evals({ repo: rest[0], pluginSha: rest[1], runRoot: rest[2],
+      outputDir: rest[3], claudeExecutable: rest[4], codexExecutable: rest[5],
+      uvExecutable: rest[6], ghExecutable: rest[7] });
+    if (output.skipped) return `SKIPPED ${output.jsonFile}`;
+    return output.lineageReset
+      ? `NEW_LINEAGE ${output.lineageReason}\n${output.jsonFile}` : output.jsonFile;
   }
-  if (command === "pr-run" && rest.length === 8) {
-    const selected = preflightSelectedPullRequest(rest[0], Number(rest[1]), undefined, rest[7]);
-    const output = await runDeveloperBenchmark({ selectedPr: selected, baselineFile: rest[2],
-      symphonyCheckout: rest[3], claudePluginsRepo: rest[0], runRoot: rest[4], outputDir: rest[5],
-      claudeExecutable: rest[6], ghExecutable: rest[7] });
-    return output.jsonFile;
-  }
-  if (command === "pr-publish" && (rest.length === 6 || rest.length === 7)) {
-    const [repo, numberRaw, benchmarkFile, evalFile, sectionFile, gh, explanationFile] = rest;
-    const selected = preflightSelectedPullRequest(repo, Number(numberRaw), undefined, gh);
-    const benchmark = JSON.parse(readFileSync(benchmarkFile, "utf8")) as DeveloperBenchmarkArtifact;
-    const evaluation = JSON.parse(readFileSync(evalFile, "utf8")) as EvalComparisonArtifact;
-    if (benchmark.selectedPr.number !== selected.number || benchmark.selectedPr.headSha !== selected.headSha) {
-      throw new Error("benchmark-pr-artifact-selection-mismatch");
-    }
-    const explanations = explanationFile
-      ? JSON.parse(readFileSync(explanationFile, "utf8")) as DeveloperExplanations : {};
-    const section = buildDeveloperReport(benchmark, evaluation, explanations);
-    writeFileSync(sectionFile, section, { flag: "wx" });
-    publishBenchmarkSection(repo, selected, sectionFile, buildBenchmarkEvidence(benchmark, evaluation), undefined, gh);
-    if (benchmark.status === "red") throw new Error(`benchmark-red-blocked:${sectionFile}`);
-    return sectionFile;
-  }
-  throw new Error("usage: cli.ts collect <phase0-result> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | run-local <symphony-checkout> <sandbox> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | compare <five-baseline-json> <three-pr-json> <base-words> <pr-words> <output-dir> [explanations-json] | baseline <symphony-checkout> <claude-plugins-repo> <pinned-plugin-sha> <empty-run-root> <output-dir> <claude> <gh> | eval-local <claude-plugins-repo> <full-branch-sha> <empty-run-root> <output-dir> <claude> <codex> <uv> <full|deterministic> [case ...] | eval-compare <main-json> <candidate-json> <rerun-json> <output-dir> <control-case...> | pr-list <claude-plugins-repo> <gh> | pr-run <claude-plugins-repo> <pr-number> <baseline-json> <symphony-checkout> <empty-run-root> <output-dir> <claude> <gh> | pr-publish <claude-plugins-repo> <pr-number> <benchmark-json> <eval-comparison-json> <section-output> <gh> [explanations-json]");
+  throw new Error("usage: cli.ts collect <phase0-result> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | run-local <symphony-checkout> <sandbox> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | compare <baseline-results-or-batch-json> <candidate-results-or-batch-json> <base-words> <candidate-words> <output-dir> <vibe-or-fleet-one-writer> [explanations-json] | baseline <symphony-checkout> <claude-plugins-repo> <pinned-plugin-sha> <empty-run-root> <output-dir> <claude> <gh> <nightly-results-store> | eval-scope <claude-plugins-repo> <base-ref> | eval-local <claude-plugins-repo> <full-branch-sha> <empty-run-root> <output-dir> <claude> <codex> <uv> <full-or-deterministic> [case ...] | eval-t2 <clean-main-repo> <sha> <empty-run-root> <results-store> <claude> <codex> <uv> <gh>");
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {

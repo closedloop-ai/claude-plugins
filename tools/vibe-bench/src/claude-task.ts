@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -6,17 +5,16 @@ import { BENCHMARK_EFFORT, BENCHMARK_MODEL, BENCHMARK_TASK, claudeArgs,
   LOCAL_MCP_URL, requirePinnedClaude } from "./contract.ts";
 import type { BenchmarkShape } from "./result-schema.ts";
 import type { PreparedFixture } from "./fixture.ts";
-import { prepareClaudeLaunch } from "./launch.ts";
+import { cleanupClaudeLaunch, prepareClaudeLaunch } from "./launch.ts";
 import type { PluginSnapshot } from "./plugin-snapshot.ts";
 import { projectSearchOracle } from "../oracle/project-search-oracle.ts";
 import { checkVibeVersion, writeBenchmarkSessionRecord } from "./session-preflight.ts";
+import { runOwnedProcess } from "./owned-process.ts";
 
 const BENCHMARK_SCOPE = `This is an authorized, isolated benchmark of the fixed Projects search task. The harness already supplies the clean checkout, seeded web app, local MCP, hidden oracle and draft-PR lifecycle. Skip ticket creation, Vercel, browser/desktop, installs, Git, GitHub, tests, review and handoff. Do not ask a question. Do not use Bash, web or MCP tools. Delegate to exactly one vibe-change-worker. Its only job is to change the Projects search predicate so a trimmed, case-insensitive query matches anywhere in the name. The agent may edit only that one source file. Stop as soon as the edit is done. The harness verifies the edit and handles the draft PR.`;
 
 /** Comparable paired waves: each wave has equal A and B contention. */
 export const BASELINE_WAVES = [
-  ["vibe", "fleet-one-writer"],
-  ["vibe", "fleet-one-writer"],
   ["vibe", "fleet-one-writer"],
   ["vibe", "fleet-one-writer"],
   ["vibe", "fleet-one-writer"],
@@ -69,6 +67,7 @@ export async function runClaudeTask(
   const before = projectSearchOracle(fixture.agentCheckout);
   if (before.pass) throw new Error("benchmark-task-not-regressed");
   const launch = prepareClaudeLaunch(fixture, snapshot.vibeDir, apiKey);
+  try {
   const prompt = shapePrompt(shape);
   const baseArgs = claudeArgs(snapshot.vibeDir, launch.mcpConfigFile, launch.settingsFile, prompt).slice(0, -1);
   baseArgs.splice(baseArgs.indexOf("--plugin-dir"), 0, "--plugin-dir", snapshot.coreDir);
@@ -84,13 +83,13 @@ export async function runClaudeTask(
     "--permission-mode", "acceptEdits", "--max-turns", "24",
     "--forward-subagent-text", "--session-id", requestedSessionId, prompt,
   ];
-  const completed = spawnSync(claudeExecutable, args, {
-    cwd: fixture.agentCheckout, encoding: "utf8", timeout: 180_000,
+  const completed = await runOwnedProcess(claudeExecutable, args, {
+    cwd: fixture.agentCheckout, deadline: Date.now() + 180_000,
     maxBuffer: 16 * 1024 * 1024,
   });
-  const stream = completed.stdout ?? "";
+  const stream = completed.stdout;
   writeFileSync(join(runDir, "claude-stream.jsonl"), stream, { flag: "wx", mode: 0o600 });
-  writeFileSync(join(runDir, "claude-stderr.txt"), completed.stderr ?? "", { flag: "wx", mode: 0o600 });
+  writeFileSync(join(runDir, "claude-stderr.txt"), completed.stderr, { flag: "wx", mode: 0o600 });
   const events = stream.trim().split("\n").map((line) => {
     try { return JSON.parse(line) as Record<string, unknown>; }
     catch { throw new Error("benchmark-claude-stream-truncated"); }
@@ -133,14 +132,17 @@ export async function runClaudeTask(
   const allowed = new Set(["Read", "Edit", "Write", "Grep", "Glob", "Skill", "Agent"]);
   if (toolNames.some((name) => !allowed.has(name))) throw new Error("benchmark-claude-external-tool-used");
   const after = projectSearchOracle(fixture.agentCheckout);
-  if (completed.status !== 0 || completed.signal || completed.error || !after.pass || !mcpConnected ||
+  if (completed.exitCode !== 0 || completed.signal || !after.pass || !mcpConnected ||
       model !== BENCHMARK_MODEL || sessionId !== requestedSessionId ||
       !oneWriter) {
-    throw new Error(`benchmark-claude-task-failed: exit=${completed.status}, signal=${completed.signal}, ` +
-      `error=${completed.error?.message ?? "none"}, oracle=${after.pass}, mcp=${mcpConnected}, ` +
+    throw new Error(`benchmark-claude-task-failed: exit=${completed.exitCode}, signal=${completed.signal}, ` +
+      `oracle=${after.pass}, mcp=${mcpConnected}, ` +
       `model=${model}, oneWriter=${oneWriter}`);
   }
   return { stream, sessionId, taskMs: Date.now() - started, mcpConnected,
     oracleBefore: before.pass, oracleAfter: after.pass, observedRootModel: model, toolNames,
     versionCheck: checked.status };
+  } finally {
+    cleanupClaudeLaunch(launch);
+  }
 }

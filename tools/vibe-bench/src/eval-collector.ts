@@ -16,6 +16,8 @@ export interface EvalSuiteResult {
   passed: number;
   failed: number;
   wallMs: number;
+  agentCostUsd: number | null;
+  judgeCostUsd: number | null;
   costUsd: number | null;
   tokens: Record<string, number> | null;
   nativeHash: string;
@@ -29,7 +31,7 @@ export interface EvalRuntimeRecord {
   invalidReason: string | null;
 }
 
-/** Immutable local dual-runtime result consumed by later benchmark disclosure. */
+/** Immutable result for one or both local eval runtimes. */
 export interface LocalEvalResult {
   schemaVersion: 1;
   pluginSha: string;
@@ -87,12 +89,15 @@ export function verifyLocalEvalHash(result: LocalEvalResult): void {
 /** Parse one complete native Claude eval JSON against the snapshot's manifest IDs. */
 export function collectClaudeEval(raw: unknown, expectedCases: string[], expected: {
   version: string; coreVersion: string; cliVersion: string; vibePath: string; corePath: string;
+  model?: string; runs?: number;
 }): EvalSuiteResult {
   const root = object(raw, "eval-claude-json-invalid");
   if (root.schemaVersion !== 1 || root.partial !== false) throw new Error("eval-claude-partial-or-schema");
   if (root.claudeVersion !== expected.cliVersion) throw new Error("eval-claude-cli-mismatch");
   const suite = object(root.suite, "eval-claude-suite-missing");
-  if (suite.ablation !== "none" || suite.modelOverride !== "sonnet") throw new Error("eval-claude-mode-mismatch");
+  if (suite.ablation !== "none" || suite.modelOverride !== (expected.model ?? "sonnet")) {
+    throw new Error("eval-claude-mode-mismatch");
+  }
   const plugins = array(suite.plugins, "eval-claude-plugins-missing").map((item) =>
     object(item, "eval-claude-plugin-invalid"));
   if (plugins.length !== 2 || !plugins.some((item) => item.name === "vibe" &&
@@ -104,32 +109,48 @@ export function collectClaudeEval(raw: unknown, expectedCases: string[], expecte
   const native = array(root.cases, "eval-claude-cases-missing").map((value) =>
     object(value, "eval-claude-case-invalid"));
   exactCoverage(native.map((item) => String(item.name ?? "")), expectedCases);
+  let agentCostUsd = 0;
+  let judgeCostUsd = 0;
   const cases = native.map((item): EvalCaseResult => {
-    if (item.runsPerCase !== 1) throw new Error("eval-claude-runs-mismatch");
+    const expectedRuns = expected.runs ?? 1;
+    if (item.runsPerCase !== expectedRuns) throw new Error("eval-claude-runs-mismatch");
     const arm = array(object(item.arms, "eval-claude-arms-missing").with,
       "eval-claude-with-arm-missing");
-    if (arm.length !== 1) throw new Error("eval-claude-with-arm-count");
-    const run = object(arm[0], "eval-claude-run-invalid");
-    if (typeof run.passed !== "boolean" || run.error != null || run.skippedPaidGraders !== false) {
-      throw new Error("eval-claude-run-incomplete");
+    if (arm.length !== expectedRuns) throw new Error("eval-claude-with-arm-count");
+    const failed = new Set<string>();
+    let passed = false;
+    for (const value of arm) {
+      const run = object(value, "eval-claude-run-invalid");
+      if (typeof run.passed !== "boolean" || run.error != null || run.skippedPaidGraders !== false) {
+        throw new Error("eval-claude-run-incomplete");
+      }
+      agentCostUsd += finite(run.costUsd, "eval-claude-agent-cost-invalid");
+      judgeCostUsd += finite(run.judgeCostUsd, "eval-claude-judge-cost-invalid");
+      const graders = array(run.graders, "eval-claude-graders-missing").map((grader) =>
+        object(grader, "eval-claude-grader-invalid"));
+      if (graders.length === 0 || graders.some((grader) => typeof grader.name !== "string" ||
+          typeof grader.passed !== "boolean")) throw new Error("eval-claude-graders-invalid");
+      const runFailures = graders.filter((grader) => grader.scored !== false &&
+        !grader.passed).map((grader) => String(grader.name));
+      if (run.passed !== (runFailures.length === 0)) throw new Error("eval-claude-grader-conflict");
+      runFailures.forEach((grader) => failed.add(grader));
+      passed ||= run.passed;
     }
-    const graders = array(run.graders, "eval-claude-graders-missing").map((value) =>
-      object(value, "eval-claude-grader-invalid"));
-    if (graders.length === 0 || graders.some((grader) => typeof grader.name !== "string" ||
-        typeof grader.passed !== "boolean")) throw new Error("eval-claude-graders-invalid");
-    const failedGraders = graders.filter((grader) => grader.scored !== false &&
-      !grader.passed).map((grader) => String(grader.name));
-    if (run.passed !== (failedGraders.length === 0)) throw new Error("eval-claude-grader-conflict");
-    return { id: String(item.name), passed: run.passed, failedGraders, skippedGraders: [] };
+    return { id: String(item.name), passed, failedGraders: passed ? [] : [...failed].sort(),
+      skippedGraders: [] };
   });
   const aggregate = object(root.aggregates, "eval-claude-aggregate-missing");
   const passed = cases.filter((item) => item.passed).length;
   if (aggregate.casesTotal !== cases.length || aggregate.casesPassed !== passed) {
     throw new Error("eval-claude-aggregate-mismatch");
   }
+  const rootAgentCost = finite(root.costUsd, "eval-claude-cost-invalid");
+  if (Math.abs(rootAgentCost - agentCostUsd) > 0.000001) {
+    throw new Error("eval-claude-agent-cost-mismatch");
+  }
   return { runtime: "claude", cliVersion: expected.cliVersion, cases, passed,
     failed: cases.length - passed, wallMs: finite(root.durationSeconds, "eval-claude-duration-invalid") * 1000,
-    costUsd: finite(root.costUsd, "eval-claude-cost-invalid"), tokens: null,
+    agentCostUsd, judgeCostUsd, costUsd: agentCostUsd + judgeCostUsd, tokens: null,
     nativeHash: hash(raw) };
 }
 
@@ -177,19 +198,19 @@ export function collectCodexEval(raw: unknown, expectedCases: string[], expected
   const passed = cases.filter((item) => item.passed).length;
   return { runtime: "codex", cliVersion: expected.cliVersion, cases, passed,
     failed: cases.length - passed, wallMs: finite(run.elapsed_seconds,
-      "eval-codex-duration-invalid") * 1000, costUsd: null, tokens: normalizedTokens,
+      "eval-codex-duration-invalid") * 1000, agentCostUsd: null, judgeCostUsd: null,
+    costUsd: null, tokens: normalizedTokens,
     nativeHash: hash(raw) };
 }
 
 
-/** Finalize exactly one complete result from each runtime, preserving red cases. */
+/** Finalize one or both runtime results while preserving red cases. */
 export function finalizeLocalEval(input: Omit<LocalEvalResult, "schemaVersion" | "success" |
   "resultHash" | "runtimes"> & { runtimes: EvalRuntimeRecord[] }): LocalEvalResult {
   if (!/^[a-f0-9]{40}$/.test(input.pluginSha)) throw new Error("eval-plugin-sha-invalid");
   exactCoverage(input.selectedCases, [...input.selectedCases].sort());
-  if (input.runtimes.length !== 2 || new Set(input.runtimes.map((item) => item.runtime)).size !== 2 ||
-      !input.runtimes.some((item) => item.runtime === "claude") ||
-      !input.runtimes.some((item) => item.runtime === "codex")) {
+  if (input.runtimes.length < 1 || input.runtimes.length > 2 ||
+      new Set(input.runtimes.map((item) => item.runtime)).size !== input.runtimes.length) {
     throw new Error("eval-runtime-coverage-mismatch");
   }
   const runtimes = [...input.runtimes].sort((left, right) => left.runtime.localeCompare(right.runtime));
@@ -221,20 +242,22 @@ export function finalizeLocalEval(input: Omit<LocalEvalResult, "schemaVersion" |
 /** Human report with identities and counts, but no developer-machine paths. */
 export function buildLocalEvalReport(result: LocalEvalResult): string {
   const lines = [
-    "# Vibe local dual-runtime eval",
+    "# Vibe local model eval",
     "",
     `Plugin ${result.pluginSha}; result hash \`${result.resultHash}\`.`,
     `Cases ${result.selectedCases.length}; wall ${result.wallMs} ms; ` +
       `Codex deterministic-only ${result.deterministicOnly ? "yes" : "no"}.`,
     `Verdict: ${result.success ? "PASS" : "FAIL"}.`,
     "",
-    "| runtime | status | passed | failed | CLI | native hash |",
-    "| --- | --- | ---: | ---: | --- | --- |",
+    "| runtime | status | passed | failed | agent USD | judge USD | total USD | CLI | native hash |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |",
   ];
   for (const record of result.runtimes) {
     const suite = record.result;
     lines.push(`| ${record.runtime} | ${suite ? "complete" : record.invalidReason} | ` +
       `${suite?.passed ?? 0} | ${suite?.failed ?? result.selectedCases.length} | ` +
+      `${suite?.agentCostUsd ?? "unavailable"} | ${suite?.judgeCostUsd ?? "unavailable"} | ` +
+      `${suite?.costUsd ?? "unavailable"} | ` +
       `${suite?.cliVersion ?? "unknown"} | ${suite?.nativeHash ?? "unavailable"} |`);
   }
   lines.push("", "## Failed or skipped graders", "");

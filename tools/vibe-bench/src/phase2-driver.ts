@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { finalizeBaseline, buildBaselineReport } from "./baseline.ts";
 import type { BaselineArtifact, BaselineRun } from "./baseline.ts";
 import { runClaudeBatch } from "./claude-batch.ts";
+import { resolveLatestEvalBaseline } from "./eval-baseline.ts";
 export { sourceMain } from "./claude-batch.ts";
 
 /** Exact Phase 2 entry inputs; no installed plugin or convenience env override. */
@@ -16,11 +17,20 @@ export interface Phase2Inputs {
   ghExecutable: string;
 }
 
-/** Run ten isolated Claude tasks on one owned stack and close every proof PR. */
+/** Tie every on-demand benchmark baseline to the latest accepted nightly. */
+export function requireLatestNightlyBenchmarkBaseline(expectedPluginSha: string,
+  nightlyStore: string): void {
+  const latest = resolveLatestEvalBaseline(nightlyStore).artifact;
+  if (latest.pluginSha !== expectedPluginSha) {
+    throw new Error(`benchmark-baseline-not-latest-nightly:${latest.pluginSha}`);
+  }
+}
+
+/** Run six isolated Claude tasks on one owned stack and close every proof PR. */
 export async function runPhase2Baseline(input: Phase2Inputs): Promise<{ baseline: BaselineArtifact;
   jsonFile: string; reportFile: string }> {
   const measured = await runClaudeBatch({ ...input, snapshotMode: "main",
-    waves: Array.from({ length: 5 }, () => ["vibe", "fleet-one-writer"] as const) });
+    waves: Array.from({ length: 3 }, () => ["vibe", "fleet-one-writer"] as const) });
   const baseline = finalizeBaseline({ runs: measured.runs,
     setupMs: measured.setupMs, teardownMs: measured.teardownMs,
     preflightMs: measured.preflightMs, fullWallMs: measured.fullWallMs,
@@ -42,7 +52,7 @@ export async function runPhase2Baseline(input: Phase2Inputs): Promise<{ baseline
     `B median/MAD ${baseline.shapeWall["fleet-one-writer"].medianMs}/${baseline.shapeWall["fleet-one-writer"].madMs} ms.\n` +
     `Verdict: ${baseline.targetMet && baseline.shapeANoiseMet ? "BASELINE ACCEPTED" : "TARGET OR NOISE MISSED"}. ` +
     `Immutable artifact: ${stem}.json (SHA-256 ${baseline.baselineHash}).\n` +
-    `Measured: ten task-to-closed-PR runs and shared setup/teardown. Not measured: Phase 3 model-driven evals. ` +
+    `Measured: six task-to-closed-PR runs and shared setup/teardown. Not measured: model-driven evals. ` +
     `Re-check if task, source, plugin, model, effort, CLI or machine conditions change.\n`);
   return { baseline, jsonFile, reportFile };
 }

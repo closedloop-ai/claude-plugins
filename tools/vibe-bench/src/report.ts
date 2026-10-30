@@ -68,16 +68,16 @@ export function buildReport(
   lines.push("", "### Declared agent models", "",
     table(["agent", "frontmatter model"], Object.entries(result.agentModels).sort(([a], [b]) => a.localeCompare(b))));
   if (comparison) {
-    lines.push("", `Comparison: ${comparison.status}.`, "", "### Comparison with main", "",
-      table(["signal", "main median", "main MAD", "PR median", "yellow above", "red above", "status"],
+    lines.push("", `Comparison: ${comparison.status}.`, "", "### Comparison with baseline", "",
+      table(["signal", "baseline median", "baseline MAD", "candidate median", "yellow above", "red above", "status"],
         comparison.signals.map((signal) => [signal.signal, signal.baselineMedian, signal.baselineMad,
-          signal.prMedian, signal.thresholdYellow, signal.thresholdRed, signal.status])));
+          signal.candidateMedian, signal.thresholdYellow, signal.thresholdRed, signal.status])));
     lines.push("", "### Informational measures (no independent gate)", "",
-      table(["measure", "main median", "PR median"], [
+      table(["measure", "baseline median", "candidate median"], [
         ["cached input tokens", comparison.informational.cachedInputTokens.baselineMedian,
-          comparison.informational.cachedInputTokens.prMedian],
+          comparison.informational.cachedInputTokens.candidateMedian],
         ["dollar cost", comparison.informational.costUsd.baselineMedian,
-          comparison.informational.costUsd.prMedian],
+          comparison.informational.costUsd.candidateMedian],
       ]));
     if (comparison.status !== "green") {
       lines.push("", "### Regression explanations", "");
@@ -85,9 +85,6 @@ export function buildReport(
         const item = explanations[signal.signal]!;
         lines.push(`- ${signal.signal} (${signal.status}): component **${item.component}**, phase **${item.phase}**: ${item.why}`);
       }
-    }
-    if (comparison.redRequiresApproverAcceptance) {
-      lines.push("", "Red regression: blocked pending the benchmark approver's explicit acceptance.");
     }
   }
   return `${lines.join("\n")}\n`;

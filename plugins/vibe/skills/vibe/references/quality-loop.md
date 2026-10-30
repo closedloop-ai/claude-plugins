@@ -124,6 +124,15 @@ Keep one active request. Plans, findings, answers and commit waits continue it;
 this does not authorize starting the next queued request or a fresh writer. Use the owned state API and block on
 unverifiable identity, branch or resume.
 
+Fleet may assign a helper outside this session only on a separate branch and
+worktree with an exclusive file allowlist disjoint from this writer's concurrent
+files and every other helper. The helper may own authorized proof tests or a
+whole new disjoint module or file set, but cannot edit this ticket branch,
+repair a defect in this writer's code, integrate, or take this session's ticket
+and plan records. This session keeps its one persistent writer and serial queue;
+that writer alone reviews and integrates a helper's returned commit or proof.
+Reviewers stay independent and read-only.
+
 During a requested pull-request writer turn, run
 `node ../handoff/scripts/parallel-prep.mjs --writer-state running --pull-request`.
 Draft the targeted inventory from the live
@@ -344,7 +353,7 @@ Claude's owned launcher acquires/releases the same mutex around its actual
 child group and retains unsafe locks when group cleanup is unproven.
 
 Deployment waits for the writer's quick checks and the orchestrator's
-commit; reviews wait for handoff. A read-only specialist cannot apply its own
+commit; PR review and verification finish before PR creation. A read-only specialist cannot apply its own
 findings.
 
 ## Session decision table before code
@@ -499,7 +508,13 @@ canonical procedure's writer/worktree creation or technical-plan confirmation
 with this single-writer boundary; preserve its real app/prototype contracts,
 visual/product approvals, validation and publication semantics.
 
-No worker commits; the orchestrator still uses the owned commit script. Vibe
+No worker commits; the orchestrator still uses the owned commit script.
+Iterate uncommitted through grader fixes, selected checks, independent review
+and verification before declaring push-ready. Evidence uses
+`tested-head.mjs source <worktree>` (HEAD, diff/tree hashes).
+Claude evals use `tested-head.mjs claude-eval <plugins dir> <empty output dir>
+<eval flags>`; Codex uses `evals/codex/run.py`. Both hash copied payloads and
+reject snapshot mutation. Vibe
 and handoff open no PR unless the person asks for one; then handoff opens it
 at its end ("Tests: repair, don't author"). Operational publishing uses this
 same session branch.
@@ -507,21 +522,20 @@ same session branch.
 **A dependency on an open pull request never idles the session**. Never
 pause, wait for the merge, or ask the person to restart anything.
 
-- The writer commits every change that compiles without the unmerged code, so
-  only the dependent import waits.
+- The writer develops and checks independent changes uncommitted; only the
+  dependent import waits. Compilation alone never declares readiness.
 - ROOT reads `gh pr view <number> --json state,mergedAt,headRefOid` at every
   resume until a main sync brings it in.
 - Never base or merge the session on that unmerged head; the inventory would
   count its files as the session's.
-- Merged work is pushed as soon as it compiles and its targeted tests pass,
-  with e2e results following.
+- Merged work completes the selected tests, review and verification before
+  the orchestrator declares it push-ready and commits.
 - A publish-helper failure is reported at once with its command and error.
 
 ## Lean build loop
 
-The build loop is quick prep, the build, the quick checks the commit hooks
-need, the orchestrator's commit, deploy, and showing the person. Nothing heavier runs
-between a request and the person seeing it.
+The build loop is quick prep, build and checks on uncommitted inputs, then
+the orchestrator's push-ready commit, deploy and showing the person.
 
 - Quick prep: the bounded lookup in `design-pass.md`, the local plan and the
   session decision table rows, with no plan review. Before a story is
@@ -541,7 +555,7 @@ between a request and the person seeing it.
   `DONE` on a UI change the writer screenshots the touched screen, in light
   and in dark wherever it supports both, and compares it with that image
   ("Visual references", "The reference check before ready" below).
-- Commit, deploy and show: after each finished change the orchestrator
+- Commit, deploy and show: after the complete change is push-ready the orchestrator
   commits with its script and deploys through the existing publication gate
   without being asked (`SKILL.md`, section 6), batching changes that arrive
   while a deploy runs into the next one, then tells the person it's ready to

@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { BASELINE_ORDER, exactSnapshotPlugins, shapePrompt } from "./claude-task.ts";
 import { modelBudgetDeadline } from "./claude-batch.ts";
-import { buildBaselineReport, finalizeBaseline, orchestrateTen, verifyBaselineHash } from "./baseline.ts";
+import { buildBaselineReport, finalizeBaseline, orchestrateSix, verifyBaselineHash } from "./baseline.ts";
 import type { BaselineRun } from "./baseline.ts";
 import { collectClaude } from "./claude-collector.ts";
 import { BENCHMARK_TASK } from "./contract.ts";
@@ -86,14 +86,14 @@ test("version-check launcher uses a physical plugin path so its CLI main guard r
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("balanced ten-run paired waves use one stack and wait before teardown", async () => {
+test("balanced six-run paired waves use one stack and wait before teardown", async () => {
   assert.deepEqual(BASELINE_ORDER, ["vibe", "fleet-one-writer", "vibe", "fleet-one-writer",
-    "vibe", "fleet-one-writer", "vibe", "fleet-one-writer", "vibe", "fleet-one-writer"]);
-  assert.equal(BASELINE_ORDER.filter((shape) => shape === "vibe").length, 5);
+    "vibe", "fleet-one-writer"]);
+  assert.equal(BASELINE_ORDER.filter((shape) => shape === "vibe").length, 3);
   const events: string[] = [];
   let active = 0;
   let maxActive = 0;
-  const complete = await orchestrateTen({
+  const complete = await orchestrateSix({
     async setup() { events.push("start"); },
     async run(index, shape) {
       active++;
@@ -105,14 +105,14 @@ test("balanced ten-run paired waves use one stack and wait before teardown", asy
     },
     async teardown() { events.push("stop"); },
   });
-  assert.equal(complete.runs.length, 10);
+  assert.equal(complete.runs.length, 6);
   assert.equal(events.filter((event) => event === "start").length, 1);
   assert.equal(events.filter((event) => event === "stop").length, 1);
   assert.equal(maxActive, 2);
   assert.match(shapePrompt("vibe"), /^\/vibe:vibe/);
   assert.match(shapePrompt("fleet-one-writer"), /^\/vibe:fleet-orchestrator/);
   events.length = 0;
-  await assert.rejects(orchestrateTen({
+  await assert.rejects(orchestrateSix({
     async setup() { events.push("start"); },
     async run(index) {
       if (index === 1) throw new Error("fixture failure");
@@ -137,8 +137,40 @@ test("batch deadline kills the owned child process group", async () => {
       'setInterval(() => {}, 1000);',
     ].join("\n");
     await assert.rejects(runOwnedProcess(process.execPath, ["-e", script], {
-      cwd: root, deadline: Date.now() + 150,
+      cwd: root, deadline: Date.now() + 1_500,
     }), /benchmark-batch-budget-exhausted/);
+    const grandchild = Number(readFileSync(pidFile, "utf8"));
+    assert.throws(() => process.kill(grandchild, 0), (error: unknown) =>
+      (error as NodeJS.ErrnoException).code === "ESRCH");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("an already-aborted owner never spawns a child", async () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-bench-preaborted-"));
+  try {
+    const marker = join(root, "spawned");
+    const abort = new AbortController();
+    abort.abort();
+    await assert.rejects(runOwnedProcess(process.execPath,
+      ["-e", `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "yes")`], {
+        cwd: root, deadline: Date.now() + 5_000, signal: abort.signal,
+      }), /benchmark-batch-interrupted/);
+    assert.equal(existsSync(marker), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("normal child exit still reaps a surviving descendant", async () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-bench-exit-descendant-"));
+  try {
+    const pidFile = join(root, "grandchild.pid");
+    const script = `const {spawn}=require("node:child_process");` +
+      `const {writeFileSync}=require("node:fs");` +
+      `const child=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"});` +
+      `child.unref();writeFileSync(${JSON.stringify(pidFile)},String(child.pid));`;
+    const result = await runOwnedProcess(process.execPath, ["-e", script], {
+      cwd: root, deadline: Date.now() + 5_000,
+    });
+    assert.equal(result.exitCode, 0);
     const grandchild = Number(readFileSync(pidFile, "utf8"));
     assert.throws(() => process.kill(grandchild, 0), (error: unknown) =>
       (error as NodeJS.ErrnoException).code === "ESRCH");
@@ -175,7 +207,7 @@ test("isolated run child persists a failure before any external operation", () =
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("current-main plugin snapshot archives exact Git objects and Opus frontmatter", () => {
+test("accepted-nightly plugin snapshot archives exact Git objects and tolerates documentation-only main advances", () => {
   const root = mkdtempSync(join(tmpdir(), "vibe-bench-plugin-snapshot-"));
   try {
     const repo = join(root, "repo");
@@ -201,6 +233,11 @@ test("current-main plugin snapshot archives exact Git objects and Opus frontmatt
     const snapshot = snapshotMainPlugins(repo, sha, out);
     assert.equal(snapshot.sha, sha);
     assert.equal(snapshot.agentModels["vibe-adversarial-reviewer"], "opus");
+    assert.equal(execFileSync("git", ["-C", snapshot.vibeDir, "status", "--porcelain"],
+      { encoding: "utf8" }), "");
+    assert.equal(execFileSync("git", ["-C", snapshot.vibeDir, "ls-files", "--error-unmatch",
+      "agents/vibe-change-worker.md"], { encoding: "utf8" }).trim(),
+    "agents/vibe-change-worker.md");
     assert.throws(() => snapshotMainPlugins(repo, sha, out), /snapshot-exists/);
     writeFileSync(join(repo, "new-main"), "moved\n");
     execFileSync("git", ["-C", repo, "add", "."]);
@@ -208,7 +245,10 @@ test("current-main plugin snapshot archives exact Git objects and Opus frontmatt
       "commit", "-m", "new main"], { stdio: "ignore" });
     const moved = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
     execFileSync("git", ["-C", repo, "update-ref", "refs/remotes/origin/main", moved]);
-    assert.throws(() => snapshotMainPlugins(repo, sha, join(root, "second")), /main-moved/);
+    const second = snapshotMainPlugins(repo, sha, join(root, "second"));
+    assert.equal(second.sha, sha);
+    assert.throws(() => snapshotMainPlugins(repo, "f".repeat(40), join(root, "third")),
+      /nightly-not-on-main/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -369,7 +409,7 @@ test("parent closes the PR and removes refs after a child is killed during publi
       "setInterval(() => {}, 1000);",
     ].join("\n");
     await assert.rejects(runOwnedProcess(process.execPath, ["-e", script], {
-      cwd: root, deadline: Date.now() + 150,
+      cwd: root, deadline: Date.now() + 1_500,
     }), /benchmark-batch-budget-exhausted/);
     const commands = new FakePrCommands("a".repeat(40));
     commands.refs.add(baseRef);
@@ -384,6 +424,28 @@ test("parent closes the PR and removes refs after a child is killed during publi
     };
     assert.deepEqual(cleaned, { ...cleaned, number: 123, closed: true,
       headRefRemoved: true, baseRefRemoved: true });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("parent probes and removes refs when a push wins the lifecycle journal race", () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-bench-pr-journal-race-"));
+  try {
+    const agent = join(root, "agent");
+    mkdirSync(agent);
+    const baseRef = `proof/${"a".repeat(12)}-iss13401-deadbeef-1-base`;
+    const ref = `proof/${"a".repeat(12)}-iss13401-deadbeef-1-head`;
+    const record = { schemaVersion: 1, cwd: realpathSync(agent), baseRef, ref, number: 0,
+      baseRefPushed: false, refPushed: false, closed: false,
+      headRefRemoved: false, baseRefRemoved: false };
+    writeFileSync(join(root, PROOF_LIFECYCLE_FILE), `${JSON.stringify(record)}\n`);
+    const commands = new FakePrCommands("a".repeat(40));
+    commands.refs.add(baseRef);
+    commands.refs.add(ref);
+    commands.pr = { number: 123, draft: true, state: "OPEN", title: "proof", body: "proof",
+      ref, baseRef };
+    assert.deepEqual(cleanupRecordedProof(root, baseRef, ref, commands, "gh"), []);
+    assert.equal(commands.pr.state, "CLOSED");
+    assert.equal(commands.refs.size, 0);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -411,13 +473,13 @@ test("baseline allocation, noise, cached-input disclosure and hashes are exact",
     preflightMs: 10, fullWallMs: 1130, pluginSha: "a".repeat(40),
     sourceSha: "b".repeat(40), cliVersion: "2.1.311 (Claude Code)",
     createdAt: "2026-10-29T18:00:00.000Z" });
-  assert.equal(baseline.runs.length, 10);
+  assert.equal(baseline.runs.length, 6);
   assert.ok(baseline.runs.every((run) => run.result.identity.stackSetupMs === 0 &&
     run.result.identity.stackTeardownMs === 0 && run.recordedDigest === run.result.resultHash));
   assert.equal(baseline.shapeWall.vibe.medianMs, 100);
   assert.equal(baseline.shapeWall.vibe.madMs, 0);
-  assert.deepEqual(baseline.waveSizes, [2, 2, 2, 2, 2]);
-  assert.deepEqual(baseline.waveWallMs, [100, 100, 100, 100, 100]);
+  assert.deepEqual(baseline.waveSizes, [2, 2, 2]);
+  assert.deepEqual(baseline.waveWallMs, [100, 100, 100]);
   assert.equal(baseline.shapeANoiseMet, true);
   assert.equal(baseline.targetMet, true);
   assert.match(buildBaselineReport(baseline), /Cached input is informational/);

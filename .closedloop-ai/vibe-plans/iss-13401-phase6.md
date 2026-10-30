@@ -1,5 +1,7 @@
 # Implementation Plan: ISS-13401 Phase 6 developer benchmark skill
 
+> Superseded final state, 2026-10-30: the skill no longer selects or updates a pull request. It documents the on-demand Claude benchmark and the scheduled dual-runtime change-day nightly. There is no PR publication, label, bypass, release mode, or promotion mode.
+
 ## Summary
 
 Add a repo-local `vibe-bench` skill for Claude Code and Codex that asks which open pull request to update, verifies the selected PR is the current branch head, runs three Claude benchmark samples per shape on one isolated seeded stack, runs the shared model eval corpus locally on Claude Code and Codex, compares against the accepted baseline, and idempotently replaces that PR's `## Benchmark` section.

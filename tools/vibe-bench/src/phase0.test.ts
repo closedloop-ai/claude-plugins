@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { BENCHMARK_EFFORT, BENCHMARK_MODEL, BENCHMARK_TASK, advanceBenchmarkPr, benchmarkPr, requirePinnedClaude, wallVerdict } from "./contract.ts";
 import { agentModels } from "./agent-models.ts";
 import { prepareFixture, verifyPreparedFixture } from "./fixture.ts";
-import { prepareClaudeLaunch, evaluateClaudeStream } from "./launch.ts";
+import { cleanupClaudeLaunch, prepareClaudeLaunch, evaluateClaudeStream } from "./launch.ts";
 import { SeededStackLifecycle } from "./lifecycle.ts";
 import { ControlWebStackAdapter } from "./control-web-stack.ts";
 import { preparePhase0 } from "./phase0.ts";
@@ -85,7 +85,11 @@ test("pinned launch reaches local MCP boundary and rejects remote changes", () =
     assert.ok(launch.args.includes("--strict-mcp-config"));
     assert.equal(launch.args[launch.args.indexOf("--permission-prompts") + 1], "none");
     assert.equal(JSON.parse(readFileSync(launch.mcpConfigFile, "utf8")).mcpServers.closedloop.url, "http://127.0.0.1:3010/mcp");
+    assert.equal(statSync(launch.mcpConfigFile).mode & 0o777, 0o600);
     assert.equal(launch.cwd, fixture.agentCheckout);
+    cleanupClaudeLaunch(launch);
+    assert.equal(existsSync(launch.mcpConfigFile), false);
+    assert.equal(existsSync(launch.settingsFile), false);
     git(fixture.agentCheckout, "remote", "set-url", "--push", "origin", "https://github.com/closedloop-ai/symphony-alpha.git");
     assert.throws(() => verifyPreparedFixture(fixture, "http://127.0.0.1:3010/mcp"), /benchmark-remote-not-local-path/);
     git(fixture.agentCheckout, "remote", "set-url", "--push", "origin", fixture.bareRemote);
@@ -179,6 +183,22 @@ test("parallel leases reuse one seeded stack and cleanup waits for the last run"
   assert.deepEqual(events, ["start", "healthy"]);
   await lifecycle.release("run-b");
   assert.deepEqual(events, ["start", "healthy", "stop"]);
+});
+
+test("failed stack teardown retains ownership for a bounded caller retry", async () => {
+  let stops = 0;
+  const lifecycle = new SeededStackLifecycle({
+    async start() {},
+    async healthy() { return true; },
+    async stop() {
+      stops += 1;
+      if (stops === 1) throw new Error("fixture-stop-failed");
+    },
+  });
+  await lifecycle.acquire({ id: "run", isolationKey: "seed" });
+  await assert.rejects(lifecycle.close(), /fixture-stop-failed/);
+  await lifecycle.close();
+  assert.equal(stops, 2);
 });
 
 test("web-only control adapter owns no stack before acquisition", async () => {

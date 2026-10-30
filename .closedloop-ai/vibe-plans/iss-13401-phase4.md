@@ -1,5 +1,7 @@
 # Implementation Plan: ISS-13401 Phase 4 model-free benchmark disclosure gate
 
+> Superseded final state, 2026-10-30: the PR-body gate, template section, approver labels, bypass flow, and paid-evidence workflow described below were removed by the nightly-only cost ruling. CI keeps only deterministic T0 checks.
+
 ## Summary
 
 Require every pull request that changes the shipped vibe surfaces or their benchmark tooling to carry a populated `## Benchmark` section. The gate reads the live pull request and changed files without running a model, validates structured benchmark disclosure, and permits only Daniel's head-bound bypass or red-regression acceptance.

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { agentModels } from "./agent-models.ts";
@@ -143,6 +143,9 @@ export async function runClaudeBatch(input: ClaudeBatchInputs): Promise<ClaudeBa
           { flag: "wx", mode: 0o600 });
       } catch (error) {
         childFailure = error;
+      } finally {
+        rmSync(join(runDir, "claude-mcp.json"), { force: true });
+        rmSync(join(runDir, "claude-settings.json"), { force: true });
       }
       let cleanupFailures: string[] = [];
       try {

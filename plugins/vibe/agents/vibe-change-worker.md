@@ -28,7 +28,18 @@ requirements read from the reference; build those, as cut or changed by the
 person. A
 continuation belongs to the same active request and writer ID. Finish it before the next
 queued request. Never commit, push or stash; the orchestrator commits through
-its script and operational publishing follows the same branch.
+its script and operational publishing follows the same branch. Iterate on
+uncommitted work until push-ready: selected checks, independent review and
+verification accept the complete diff before ROOT commits. Grader/review fixes
+never need checkpoint commits. Report HEAD plus diff/tree hashes from
+`tested-head.mjs source <worktree>`; fleet writers declare `--ready <sha>`
+through the existing board rule (fleet-orchestrator, Monitoring), where the
+operator's push-ready ruling is cited once.
+HEAD-only output from `pnpm prepush --all` is not dirty-source evidence; use the
+owned E2E lock's HEAD plus diff/tree receipt. No commit is needed for that local
+harness. The external remote wrapper is the verifier's documented clean-commit
+exception and accepts only `--head`, owner and command.
+
 
 Keep technical preparation internal. Report only short evidence/status to the
 orchestrator; it tells the person completed features and next work, not an
@@ -144,8 +155,8 @@ unverifiable binding remains BLOCKED internally.
 
 The canonical change log is
 `$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-changes.md`.
-Keep required `Control:`, `Comparator:`, `Engineering needed`, compile-only
-repair, and other exact guardrail lines there as you make the decision.
+Keep required `Control:`, `Comparator:`, `Engineering needed`, `Feature map:`,
+compile-only repair, and other exact guardrail lines there as you make the decision.
 `diff-rules.mjs` and handoff inventory read that private file. A line only
 in the decision table, plan, ticket or chat does not clear the guardrail.
 The decision table records behavior and provenance; this log records the

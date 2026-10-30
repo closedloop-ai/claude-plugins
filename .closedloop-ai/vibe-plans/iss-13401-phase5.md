@@ -1,5 +1,7 @@
 # Implementation Plan: ISS-13401 Phase 5 vibe pull request reviewer
 
+> Superseded final state, 2026-10-30: the reviewer no longer requires per-PR benchmark or eval evidence. It checks deterministic coverage and that paid work remains confined to the scheduled local nightly or an explicitly requested on-demand benchmark.
+
 ## Summary
 
 Add a repo-local, read-only reviewer agent that applies the ten evidence-backed vibe contribution checks from PLN-2237, reads local eval and benchmark disclosures, and produces specific review findings without posting or starting another model-driven workflow. Freeze the three accepted PR #362 regressions as a local eval case.

@@ -107,6 +107,15 @@ the pull request and reviews it before it merges. When the person asks for
 one ("Tests"), handoff opens the pull request for them to take through review
 and merge.
 
+A fleet helper branch is outside this one-writer vibe session. Its explicit
+file allowlist contains only disjoint proof tests or a whole new module or file
+set; it never edits the ticket branch or a file another helper or the ticket
+writer concurrently owns. It never repairs defects in ticket-writer code or
+integrates. The ticket writer reviews and integrates returned commits or proof,
+and independent reviewers remain read-only. A helper authors proof tests only
+under existing test-authoring authority or an explicit user test request; the
+normal build and handoff test prohibition below remains in force.
+
 | Frontend (the sole persistent `vibe-change-worker`) | Never |
 |---|---|
 | `apps/app/**` (web pages and route shells) | `apps/mcp/**`, `apps/relay/**`, `apps/realtime/**` |
@@ -297,7 +306,9 @@ rules are not copied here. The bare minimum:
     is never edited beyond a compile-only repair (prop renames, imports,
     types; no story, title, tag or visual change): its component's new
     states go in a new entry in the current root holding only them, its name
-    descriptive, permanent and without a version number.
+    descriptive, permanent and without a version number. Preserve its level
+    while dropping only the frozen version marker, so
+    `Composites v1.0/...` becomes `Composites/...`.
   - A compile-only repair rewords no comment, description, docs parameter or
     story text either: a renamed identifier inside prose is its only prose
     change.
@@ -434,6 +445,10 @@ reviewer, the ticket worker and the handoff skill point at it.
   allowed paths in every phase. An edit found there is removed by the same
   writer and recorded on the Feature docs line instead, never kept as a
   draft.
+
+## Feature map lines
+
+Use the target repo's screen map and its writer policy. A feature branch never edits or regenerates a map reserved for a bot or refresh skill. When a screen's behavior or reach changes, write one `Feature map: <entry id or screen>: <what changed>` line per screen in the existing change log as the change is made. Use the discovered entry id; for a new screen without an entry, use its screen name. Write no line when nothing user visible changed. Handoff copies the lines verbatim to the ticket and a requested pull request.
 
 ## No new tech debt
 

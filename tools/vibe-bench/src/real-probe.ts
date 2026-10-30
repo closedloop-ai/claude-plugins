@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +8,7 @@ import type { PreparedFixture } from "./fixture.ts";
 import { evaluateClaudeStream } from "./launch.ts";
 import type { ClaudeLaunch } from "./launch.ts";
 import { projectSearchOracle } from "../oracle/project-search-oracle.ts";
+import { runOwnedProcess } from "./owned-process.ts";
 
 interface Phase0Manifest {
   fixture: PreparedFixture;
@@ -28,7 +28,7 @@ interface Phase0Manifest {
  * mode and the explicit tool list confine it to local file edits; the benchmark
  * PR and any external service are outside this Phase 0 probe.
  */
-export function runRealProbe(manifestFile: string, claudeExecutable: string): string {
+export async function runRealProbe(manifestFile: string, claudeExecutable: string): Promise<string> {
   const manifest = JSON.parse(readFileSync(manifestFile, "utf8")) as Phase0Manifest;
   const { fixture, launch } = manifest;
   verifyPreparedFixture(fixture, LOCAL_MCP_URL);
@@ -66,14 +66,12 @@ export function runRealProbe(manifestFile: string, claudeExecutable: string): st
     "--permission-mode", "acceptEdits", "--max-turns", "8", prompt,
   ];
   const started = Date.now();
-  const completed = spawnSync(claudeExecutable, args, {
-    cwd: fixture.agentCheckout,
-    encoding: "utf8",
-    timeout: 180_000,
+  const completed = await runOwnedProcess(claudeExecutable, args, {
+    cwd: fixture.agentCheckout, deadline: Date.now() + 180_000,
     maxBuffer: 8 * 1024 * 1024,
   });
-  const stdout = completed.stdout ?? "";
-  const stderr = completed.stderr ?? "";
+  const stdout = completed.stdout;
+  const stderr = completed.stderr;
   const stream = evaluateClaudeStream(stdout.split("\n"), BENCHMARK_EFFORT);
   const events = stdout.split("\n").filter(Boolean).map((line) => JSON.parse(line));
   const init = events.find((event) => event.type === "system" && event.subtype === "init");
@@ -85,9 +83,9 @@ export function runRealProbe(manifestFile: string, claudeExecutable: string): st
     model: BENCHMARK_MODEL,
     effort: BENCHMARK_EFFORT,
     observed: stream,
-    exitCode: completed.status,
+    exitCode: completed.exitCode,
     signal: completed.signal,
-    error: completed.error?.message ?? null,
+    error: null,
     wallMs: Date.now() - started,
     oracleBefore,
     oracleAfter,
@@ -107,7 +105,7 @@ export function runRealProbe(manifestFile: string, claudeExecutable: string): st
   };
   const reportFile = join(dirname(manifestFile), "phase0-real-probe.json");
   writeFileSync(reportFile, `${JSON.stringify(report, null, 2)}\n`, { flag: "wx" });
-  if (completed.status !== 0 || !stream.valid || !oracleAfter.pass ||
+  if (completed.exitCode !== 0 || !stream.valid || !oracleAfter.pass ||
       (manifest.liveStack && !mcpConnected)) {
     throw new Error(`benchmark-real-probe-failed: ${reportFile}`);
   }
@@ -116,5 +114,8 @@ export function runRealProbe(manifestFile: string, claudeExecutable: string): st
 
 if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   if (process.argv.length !== 4) throw new Error("usage: real-probe.ts <phase0-manifest.json> <absolute claude binary>");
-  process.stdout.write(`${runRealProbe(resolve(process.argv[2]), resolve(process.argv[3]))}\n`);
+  runRealProbe(resolve(process.argv[2]), resolve(process.argv[3])).then(
+    (file) => process.stdout.write(`${file}\n`),
+    (error) => { process.stderr.write(`${String(error)}\n`); process.exitCode = 1; },
+  );
 }

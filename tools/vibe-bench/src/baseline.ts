@@ -23,7 +23,7 @@ export interface BaselineRun {
   result: ClaudeBenchmarkResult;
 }
 
-/** An immutable, hash-stamped ten-run main baseline. */
+/** An immutable, hash-stamped six-run main baseline. */
 export interface BaselineArtifact {
   schemaVersion: 1;
   createdAt: string;
@@ -92,8 +92,8 @@ export async function orchestrateWaves<T>(waves: readonly (readonly BenchmarkSha
   return { runs, setupMs, teardownMs, fullWallMs: now() - started };
 }
 
-/** Testable one-stack orchestration with five balanced AB waves. */
-export async function orchestrateTen<T>(workflow: {
+/** Testable one-stack orchestration with three balanced AB waves. */
+export async function orchestrateSix<T>(workflow: {
   setup(): Promise<void>;
   run(index: number, shape: BenchmarkShape): Promise<T>;
   teardown(): Promise<void>;
@@ -118,15 +118,15 @@ export function finalizeBaseline(input: {
   cliVersion: string;
   createdAt: string;
 }): BaselineArtifact {
-  if (input.runs.length !== 10 || input.runs.some((run, index) => run.index !== index ||
+  if (input.runs.length !== BASELINE_ORDER.length || input.runs.some((run, index) => run.index !== index ||
       run.shape !== BASELINE_ORDER[index] || run.result.identity.shape !== run.shape ||
         !run.prClosed || !run.proofRefRemoved || run.recordedDigest !== run.result.resultHash || run.prNumber <= 0)) {
     throw new Error("benchmark-baseline-run-count-or-pr-state");
   }
-  if (new Set(input.runs.map((run) => run.result.identity.id)).size !== 10 ||
-      new Set(input.runs.map((run) => run.prNumber)).size !== 10 ||
-      new Set(input.runs.map((run) => run.proofRef)).size !== 10 ||
-      new Set(input.runs.map((run) => run.proofBaseRef)).size !== 10) {
+  if (new Set(input.runs.map((run) => run.result.identity.id)).size !== BASELINE_ORDER.length ||
+      new Set(input.runs.map((run) => run.prNumber)).size !== BASELINE_ORDER.length ||
+      new Set(input.runs.map((run) => run.proofRef)).size !== BASELINE_ORDER.length ||
+      new Set(input.runs.map((run) => run.proofBaseRef)).size !== BASELINE_ORDER.length) {
     throw new Error("benchmark-baseline-duplicate-run-or-proof");
   }
   for (const key of ["setupMs", "teardownMs", "preflightMs", "fullWallMs"] as const) {
@@ -205,7 +205,7 @@ function facetRows(runs: BaselineRun[], facet: "component" | "skill" | "worker" 
   });
 }
 
-/** Render all ten runs and the measured drivers without fabricating call cost. */
+/** Render all six runs and the measured drivers without fabricating call cost. */
 export function buildBaselineReport(baseline: BaselineArtifact): string {
   verifyBaselineHash(baseline);
   const runs = baseline.runs;

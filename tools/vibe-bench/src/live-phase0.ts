@@ -1,12 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BENCHMARK_EFFORT, BENCHMARK_MODEL, BENCHMARK_TASK, requirePinnedClaude, wallVerdict } from "./contract.ts";
 import { agentModels } from "./agent-models.ts";
 import { ControlWebStackAdapter } from "./control-web-stack.ts";
 import { prepareFixture } from "./fixture.ts";
-import { prepareClaudeLaunch } from "./launch.ts";
+import { cleanupClaudeLaunch, prepareClaudeLaunch } from "./launch.ts";
+import type { ClaudeLaunch } from "./launch.ts";
 import { SeededStackLifecycle } from "./lifecycle.ts";
 import { runRealProbe } from "./real-probe.ts";
 
@@ -37,7 +38,7 @@ export async function runLivePhase0(
   let setupMs: number | null = null;
   let teardownMs: number | null = null;
   let liveError: string | null = null;
-  let mcpConfigFile: string | null = null;
+  let launchFiles: ClaudeLaunch | null = null;
   try {
     await lifecycle.acquire({ id: "phase0-probe", isolationKey });
     stackHeld = true;
@@ -49,7 +50,7 @@ export async function runLivePhase0(
     const credentials = JSON.parse(readFileSync(details.apiKeyFile, "utf8")) as { apiBearer?: string };
     if (!credentials.apiBearer) throw new Error("benchmark-seed-key-missing");
     const launch = prepareClaudeLaunch(fixture, realpathSync(pluginDir), credentials.apiBearer);
-    mcpConfigFile = launch.mcpConfigFile;
+    launchFiles = launch;
     const manifestFile = join(sandbox, "phase0-manifest.json");
     writeFileSync(manifestFile, `${JSON.stringify({
       fixture,
@@ -64,7 +65,7 @@ export async function runLivePhase0(
       },
     }, null, 2)}\n`, { flag: "wx" });
     setupMs = Date.now() - started;
-    const probeFile = runRealProbe(manifestFile, claudeExecutable);
+    const probeFile = await runRealProbe(manifestFile, claudeExecutable);
     probeReport = JSON.parse(readFileSync(probeFile, "utf8")) as Record<string, unknown>;
   } catch (error) {
     liveError = error instanceof Error ? error.message : String(error);
@@ -74,7 +75,7 @@ export async function runLivePhase0(
       try { await lifecycle.release("phase0-probe"); }
       catch (error) { liveError = `${liveError ?? ""}; teardown: ${String(error)}`; }
     }
-    if (mcpConfigFile) rmSync(mcpConfigFile, { force: true });
+    if (launchFiles) cleanupClaudeLaunch(launchFiles);
     teardownMs = Date.now() - teardownStarted;
   }
   const wallMs = Date.now() - started;

@@ -255,10 +255,11 @@ test("subagent model and phase are preserved; unknown worker gets a reason", () 
 });
 
 let sampleRunSequence = 0;
-function sampleRun(pluginSha: string, wallMs: number, input: number, output: number, calls: number, success = true): ClaudeBenchmarkResult {
+function sampleRun(pluginSha: string, wallMs: number, input: number, output: number, calls: number,
+  success = true, shape: "vibe" | "fleet-one-writer" = "vibe"): ClaudeBenchmarkResult {
   const source = collect();
   const { resultHash: _hash, ...payload } = source;
-  payload.identity = { ...source.identity, id: `sample-${++sampleRunSequence}`, pluginSha, wallMs };
+  payload.identity = { ...source.identity, id: `sample-${++sampleRunSequence}`, pluginSha, wallMs, shape };
   payload.totals = { ...source.totals, uncachedInputTokens: input, inputTokens: input, outputTokens: output };
   payload.modelCalls = calls;
   payload.success = success;
@@ -267,11 +268,11 @@ function sampleRun(pluginSha: string, wallMs: number, input: number, output: num
 
 function compare(walls: number[], inputs = [100, 100, 100], outputs = [100, 100, 100], calls = [10, 10, 10], successes = [true, true, true], words = 1000) {
   const baseline = [90, 100, 100, 100, 110].map((wall) => sampleRun("a".repeat(40), wall, 100, 100, 10));
-  const pr = walls.map((wall, index) => sampleRun("b".repeat(40), wall, inputs[index], outputs[index], calls[index], successes[index]));
-  return compareResults(baseline, pr, { baseline: 1000, pr: words });
+  const candidate = walls.map((wall, index) => sampleRun("b".repeat(40), wall, inputs[index], outputs[index], calls[index], successes[index]));
+  return compareResults(baseline, candidate, { baseline: 1000, candidate: words });
 }
 
-test("five-versus-three median and MAD wall thresholds and cap are exact", () => {
+test("local sample median and MAD wall thresholds and cap are exact", () => {
   assert.equal(median([1, 9, 3]), 3);
   assert.equal(mad([90, 100, 100, 100, 110]), 0);
   assert.equal(compare([120, 120, 120]).signals[0].status, "green");
@@ -280,27 +281,25 @@ test("five-versus-three median and MAD wall thresholds and cap are exact", () =>
   assert.equal(compare([100, 100, 600_001]).signals[0].status, "red");
   assert.equal(compare([100, 100, 600_001]).signals[0].thresholdRed, 200);
   const noisyBase = [60, 80, 100, 120, 140].map((wall) => sampleRun("a".repeat(40), wall, 100, 100, 10));
-  const noisyPr = [161, 161, 161].map((wall) => sampleRun("b".repeat(40), wall, 100, 100, 10));
-  const noisy = compareResults(noisyBase, noisyPr, { baseline: 1000, pr: 1000 });
+  const noisyCandidate = [161, 161, 161].map((wall) => sampleRun("b".repeat(40), wall, 100, 100, 10));
+  const noisy = compareResults(noisyBase, noisyCandidate, { baseline: 1000, candidate: 1000 });
   assert.equal(noisy.signals[0].baselineMad, 20);
   assert.equal(noisy.signals[0].thresholdYellow, 160);
   assert.equal(noisy.signals[0].status, "yellow");
-  assert.throws(() => compareResults([], [], { baseline: 1000, pr: 1000 }), /run-count/);
-  assert.throws(() => compareResults([noisyBase[0], noisyBase[0], ...noisyBase.slice(2)], noisyPr,
-    { baseline: 1000, pr: 1000 }), /duplicate-run/);
-  const { resultHash: _hash, ...missingEffort } = noisyPr[0];
+  assert.throws(() => compareResults([], [], { baseline: 1000, candidate: 1000 }), /run-count/);
+  assert.throws(() => compareResults([noisyBase[0], noisyBase[0], ...noisyBase.slice(2)], noisyCandidate,
+    { baseline: 1000, candidate: 1000 }), /duplicate-run/);
+  const { resultHash: _hash, ...missingEffort } = noisyCandidate[0];
   missingEffort.observedEffort = null;
   assert.throws(() => compareResults(noisyBase, [{ ...missingEffort, resultHash: resultHash(missingEffort) },
-    ...noisyPr.slice(1)], { baseline: 1000, pr: 1000 }), /invalid-run/);
+    ...noisyCandidate.slice(1)], { baseline: 1000, candidate: 1000 }), /invalid-run/);
 });
 
 test("token, call, success and static instruction thresholds follow section 5", () => {
   const yellow = compare([100, 100, 100], [121, 121, 121], [121, 121, 121], [13, 13, 13], [true, true, false], 1021);
   assert.deepEqual(yellow.signals.map((signal) => signal.status), ["green", "yellow", "yellow", "yellow", "yellow", "yellow"]);
-  assert.equal(yellow.redRequiresApproverAcceptance, false);
   const red = compare([100, 100, 100], [151, 151, 151], [151, 151, 151], [16, 16, 16], [true, false, false], 1020);
   assert.deepEqual(red.signals.map((signal) => signal.status), ["green", "red", "red", "red", "red", "green"]);
-  assert.equal(red.redRequiresApproverAcceptance, true);
   assert.throws(() => buildReport(collect(), yellow), /benchmark-explanation-missing/);
   const explanations = Object.fromEntries(yellow.signals.filter((signal) => signal.status !== "green")
     .map((signal) => [signal.signal, { component: "vibe", phase: "build", why: "A measured extra model call." }]));
@@ -308,7 +307,7 @@ test("token, call, success and static instruction thresholds follow section 5", 
   assert.match(report, /component \*\*vibe\*\*, phase \*\*build\*\*/);
   const redExplanations = Object.fromEntries(red.signals.filter((signal) => signal.status !== "green")
     .map((signal) => [signal.signal, { component: "vibe", phase: "build", why: "Measured regression." }]));
-  assert.match(buildReport(collect(), red, redExplanations), /benchmark approver's explicit acceptance/);
+  assert.doesNotMatch(buildReport(collect(), red, redExplanations), /approver|acceptance/);
   const baseline = [90, 100, 100, 100, 110].map((wall) => sampleRun("a".repeat(40), wall, 100, 100, 10));
   const cached = [100, 100, 100].map((wall) => {
     const source = sampleRun("b".repeat(40), wall, 100, 100, 10);
@@ -316,9 +315,9 @@ test("token, call, success and static instruction thresholds follow section 5", 
     payload.totals = { ...source.totals, cachedInputTokens: 9_999_999 };
     return { ...payload, resultHash: resultHash(payload) };
   });
-  const informational = compareResults(baseline, cached, { baseline: 1000, pr: 1000 });
+  const informational = compareResults(baseline, cached, { baseline: 1000, candidate: 1000 });
   assert.equal(informational.status, "green");
-  assert.equal(informational.informational.cachedInputTokens.prMedian, 9_999_999);
+  assert.equal(informational.informational.cachedInputTokens.candidateMedian, 9_999_999);
   assert.match(buildReport(cached[0], informational), /Informational measures \(no independent gate\)/);
 });
 
@@ -327,7 +326,7 @@ test("baseline MAD protects non-wall signals from ordinary unchanged variation",
     sampleRun("a".repeat(40), 100 + index, input, input, 10));
   const candidate = [121, 121, 121].map((input) =>
     sampleRun("b".repeat(40), 100, input, input, 10));
-  const comparison = compareResults(baseline, candidate, { baseline: 1000, pr: 1000 });
+  const comparison = compareResults(baseline, candidate, { baseline: 1000, candidate: 1000 });
   const input = comparison.signals.find((signal) => signal.signal === "uncachedInputTokens")!;
   assert.equal(input.baselineMad, 20);
   assert.equal(input.thresholdYellow, 160);
@@ -381,19 +380,39 @@ test("porcelain status keeps its leading columns for task-scope checks", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("compare CLI writes one local five-versus-three verdict and report", async () => {
+test("compare CLI writes one local baseline-versus-candidate verdict and report", async () => {
   const root = mkdtempSync(join(tmpdir(), "vibe-bench-compare-"));
   try {
     const baselineFile = join(root, "baseline.json");
-    const prFile = join(root, "pr.json");
+    const candidateFile = join(root, "candidate.json");
     writeFileSync(baselineFile, JSON.stringify([90, 100, 100, 100, 110]
       .map((wall) => sampleRun("a".repeat(40), wall, 100, 100, 10))));
-    writeFileSync(prFile, JSON.stringify([95, 100, 105]
+    writeFileSync(candidateFile, JSON.stringify([95, 100, 105]
       .map((wall) => sampleRun("b".repeat(40), wall, 100, 100, 10))));
-    const paths = await benchmarkCli(["compare", baselineFile, prFile, "1000", "1000", root]);
+    const paths = await benchmarkCli(["compare", baselineFile, candidateFile, "1000", "1000", root,
+      "vibe"]);
     assert.match(paths, /phase1-comparison\.json/);
     assert.equal(JSON.parse(readFileSync(join(root, "phase1-comparison.json"), "utf8")).status, "green");
     assert.match(readFileSync(join(root, "phase1-comparison.md"), "utf8"), /## Benchmark/);
+
+    const mixedBaseline = join(root, "mixed-baseline.json");
+    const mixedCandidate = join(root, "mixed-candidate.json");
+    writeFileSync(mixedBaseline, JSON.stringify([
+      ...[90, 100, 110].map((wall) => sampleRun("a".repeat(40), wall, 100, 100, 10)),
+      ...[190, 200, 210].map((wall) => sampleRun("a".repeat(40), wall, 100, 100, 10,
+        true, "fleet-one-writer")),
+    ]));
+    writeFileSync(mixedCandidate, JSON.stringify([
+      ...[95, 100, 105].map((wall) => sampleRun("b".repeat(40), wall, 100, 100, 10)),
+      ...[195, 200, 205].map((wall) => sampleRun("b".repeat(40), wall, 100, 100, 10,
+        true, "fleet-one-writer")),
+    ]));
+    const fleetDir = join(root, "fleet");
+    mkdirSync(fleetDir);
+    await benchmarkCli(["compare", mixedBaseline, mixedCandidate, "1000", "1000", fleetDir,
+      "fleet-one-writer"]);
+    assert.equal(JSON.parse(readFileSync(join(fleetDir, "phase1-comparison.json"), "utf8")).shape,
+      "fleet-one-writer");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

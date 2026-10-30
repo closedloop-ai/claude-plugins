@@ -1,52 +1,109 @@
-# Local Claude benchmark scaffold
+# Local vibe benchmark and nightly evals
 
-This package measures the Claude Code arm of ISS-13401. Phase 0 supplies the fake symphony-alpha origin, private oracle, isolated web-only seeded stack, local MCP, and pinned `claude-sonnet-5-5` / `high` launch. Phase 1 adds authoritative collection and comparison. Its local probe creates no GitHub PR, so task-to-PR success remains false there. Phase 2 runs the full benchmark and owns the draft PR lifecycle. It never creates a ClosedLoop ticket or Vercel deployment.
+This package owns two local-only measurement paths:
 
-Run the live path only through an owned heavy slot, for example:
+- An on-demand Claude Code start-to-PR benchmark. It is a diagnostic, never a pull request requirement.
+- A scheduled change-day eval baseline across Claude Code and Codex. It is the only routine model-driven eval.
 
-```sh
-heavy-slot.sh iss-13401-bench node --experimental-strip-types tools/vibe-bench/src/cli.ts run-local <symphony-alpha-checkout> <empty-sandbox> <vibe-plugin-directory> <claude-binary>
-```
+No model-calling command runs in CI. CI runs only T0 contract tests, type checking, plugin validation, and the deterministic Codex runner tests. Pull requests do not need a benchmark section, eval evidence, an approval label, or a bypass.
 
-The CLI writes `phase1-claude-result.json` and `phase1-claude-report.md` under the run sandbox. `collect <phase0-live-result.json> <vibe-plugin-directory> <claude-binary> [otel-jsonl] [transcript-manifest]` re-collects an existing local probe. With its Phase 0 manifest present, it discovers only that run's root and subagent Claude transcripts; an explicit transcript manifest is a JSON array of `{ "path", "agentName"?, "parentToolUseId"? }` entries. OTEL is optional and, when supplied, must be run-owned JSONL `claude_code.api_request` records with request IDs, effort and token fields. Missing or irreconcilable records fail.
+## Behavior scope
 
-The full Phase 2 baseline snapshots `vibe` and `closedloop-core` from one exact claude-plugins `origin/main` SHA. It verifies a clean symphony-alpha worktree at the current live `origin/main` before starting, then pins that source commit for all ten runs. One isolated web stack and local MCP serve five balanced `AB` waves: each wave runs one vibe and one fleet-orchestrator writer session concurrently. Every run gets a fresh fake-origin checkout, the plugin's real version check and private local session record, a restricted Claude Code conversation, a hidden oracle, and a harness-owned GitHub draft PR. The PR title includes `DO NOT MERGE`; its body identifies the vibe benchmark. The harness records a provisional result, closes the PR, then removes both run-owned proof refs. The two refs represent the deliberately broken fixture base and its repaired head; the repaired tree equals healthy main, so a PR directly against main would have no diff.
+`vibe-change-scope.ts` is the shared change-day classifier. Claude Code and Codex load the plugin manifests, skills, agents, hooks, and files those runtime components read or execute. Semantic manifest changes and runtime paths are behavior; a required manifest edit that changes only `version` is not. Unreferenced READMEs, changelogs, docs, evals, tests, and benchmark infrastructure are non-behavior. A Markdown reference read by a loaded skill is behavior even when it looks like documentation. An unknown new path under `plugins/vibe` fails closed and triggers the nightly. A path-only classifier cannot prove that a runtime source edit changes comments only, so runtime source remains behavior.
 
-From a clean, bootstrapped symphony-alpha worktree and an empty run root, invoke the batch through the owned heavy slot:
-
-```sh
-heavy-slot.sh iss-13401-baseline node --experimental-strip-types tools/vibe-bench/src/cli.ts baseline <symphony-checkout> <claude-plugins-checkout> <full-main-plugin-sha> <empty-run-root> <output-dir> <claude-binary> <gh-binary>
-```
-
-The dated JSON and Markdown in the output directory are immutable. `measurement-log.md` is append-only. The baseline records five results per shape, full batch wall, one setup/teardown allocation, per-run Claude final totals and cost, version check, model and effort, CLI version, plugin/source/task hashes, PR closure, and component/skill/worker/phase attribution where observable. Concurrent run durations overlap, so the report shows wave maxima and aggregate process-time drivers separately. Cached input is informational. The fixed full-batch target is 600 seconds; a miss stays a miss, with measured drivers reported.
-
-Compare five valid main results to three valid PR results with:
+Inspect a diff without making a model call:
 
 ```sh
-node --experimental-strip-types tools/vibe-bench/src/cli.ts compare <five-results.json> <three-results.json> <main-instruction-words> <pr-instruction-words> <output-dir> [explanations.json]
+node --experimental-strip-types tools/vibe-bench/src/cli.ts eval-scope <claude-plugins-checkout> <base-ref>
 ```
 
-The arrays must cover the same task, fixture, Claude CLI version, shape, model and effort. Yellow and red signals require an explanation entry keyed by signal with `component`, `phase`, and `why`. Red remains blocked pending the benchmark approver's explicit acceptance. Cached input is reported but never gated. Phase 3's model-driven evals run on both runtimes.
+## Nightly T2 baseline
 
-Phase 3 runs the shared model-driven case corpus locally on Claude Code and Codex from one committed plugin snapshot. A full run keeps Codex wording grading; deterministic mode skips only that paid wording grader and records every skip. Both modes keep every route, file, tool, and behavior check.
+The nightly starts from a dedicated clean `main` checkout at fetched `origin/main`. If no behavior path changed since the latest accepted baseline, it prints `SKIPPED` and makes no model call. Otherwise it runs the full corpus once on both runtimes, then reruns only failures at most twice. Claude pins the agent to `claude-sonnet-5-5` and the judge to `claude-opus-5-5`. Codex pins its own agent and judge in `eval-policy.ts`.
+
+Claude Code 2.1.311's embedded model catalog names the judge model `claude-opus-5-5`. Anthropic's public model-status and prompting pages currently describe the public Opus family as `claude-opus-5`, so the installed Claude Code runtime catalog is the exact authority for this local `claude plugin eval` pin. The relevant public references are [Anthropic model deprecations](https://docs.anthropic.com/en/docs/about-claude/model-deprecations) and [Anthropic prompt templates and variables](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/prompt-templates-and-variables).
+
+The stored artifact contains content-keyed case results, reliability history, the quarantine owner and deadline, separate Claude agent and judge costs, and an atomic latest pointer. Added or changed cases run and are reported but are not compared with older content. A case becomes must-pass after at least three observations at a 95 percent pass rate. The initial 29 runtime-specific main failures live in `eval-quarantine.json`.
+
+The accepted lineage is keyed by every agent and judge model ID. A model-policy change runs the corpus even when no behavior path changed, prints `NEW_LINEAGE` with the old and new judge IDs, stores a fresh one-entry history, and sends no regression Slack message. The following comparable nightly can compare within the new lineage. The Haiku 4.5 result from 2026-10-30 remains historical evidence for the initial quarantine only; it is never compared with the Opus 5.5 lineage.
+
+Run one nightly manually through the machine heavy slot:
 
 ```sh
-heavy-slot.sh iss-13401-evals node --experimental-strip-types tools/vibe-bench/src/cli.ts eval-local <claude-plugins-checkout> <full-branch-sha> <empty-run-root> <output-dir> <claude-binary> <codex-binary> <uv-binary> <full-or-deterministic> [case ...]
+<heavy-slot> vibe-eval-nightly <node> --experimental-strip-types tools/vibe-bench/src/eval-nightly.ts <clean-main-checkout> <run-root-parent> <results-store> <claude> <codex> <uv> <gh>
 ```
 
-Omit case names to select every native prompt manifest in the snapshot. The command writes the two native result trees plus one hashed JSON and Markdown summary. It provisions the Codex runner's pinned Pillow and PyYAML dependencies through uv, rather than depending on the developer's system Python. It reports failure when either runtime is partial, malformed, identity-mismatched, missing a selected case, or red. Native Claude eval output does not expose token counts, so the combined result records those tokens as unavailable instead of zero.
+The scheduler validates Slack credentials before acquiring the slot. On a confirmed regression, it writes a regression artifact and posts one message to `#vibe` through the existing team Slack bot. The message names the case and runtime, the pull requests merged since the last green nightly with their authors, the quarantine owner, and the result artifact. Clean and skipped nights send no message. The bot call uses Slack `chat.postMessage`; tests use a stub sender and never contact Slack.
 
-Phase 6 exposes the complete developer workflow as the repo-local `vibe-bench` skill. It lists the authenticated developer's open claude-plugins pull requests before paid work and asks which one to update. The selected PR must be open against main, and its branch and full head SHA must equal the clean checkout. The symphony-alpha checkout must be clean at the baseline's exact fixture SHA, with its fetched `origin/main` containing that fixture. This keeps a developer run comparable when symphony-alpha main advances after the baseline. The benchmark then uses the Phase 2 batch implementation for exactly three balanced `AB` waves on one seeded stack. This gives three candidate samples per shape while preserving the fixed under-ten-minute wall target.
+Slack credentials are stripped from model and grader child environments. If delivery fails after the baseline is stored, the pending regression artifact is retried before any later paid work, so a transient Slack failure does not force another corpus run.
+
+## Private launchd installation
+
+Do not install the job from a feature branch. Install it only after this change is merged and the same tree is present on `main` in the dedicated checkout.
+
+The example runs at 02:00 local time. The heavy slot is the concurrency guard. The off-hours time also avoids spending an interactive session waiting for the slot, but correctness does not depend on working-hour avoidance.
+
+1. Create a dedicated clone that always stays on `main`. Do not use a worker worktree:
+
+   ```sh
+   git clone git@github.com:closedloop-ai/claude-plugins.git <clean-main-checkout>
+   git -C <clean-main-checkout> switch main
+   git -C <clean-main-checkout> pull --ff-only origin main
+   ```
+
+2. Create private scheduler, run, result, and log locations outside the repository:
+
+   ```sh
+   install -d -m 0700 <scheduler-private-dir> <run-root-parent> <results-store> <log-dir>
+   ```
+
+3. Record absolute paths from `command -v node`, `command -v claude`, `command -v codex`, `command -v uv`, and `command -v gh`, plus the absolute machine heavy-slot path. Do not rely on launchd's `PATH`.
+4. Create `<scheduler-private-dir>/vibe-eval.env` outside the repository with mode `0600`:
+
+   ```sh
+   SLACK_BOT_TOKEN='<existing team bot OAuth token>'
+   SLACK_CHANNEL_ID='<#vibe channel ID>'
+   ```
+
+   Then protect it with `chmod 0600 <scheduler-private-dir>/vibe-eval.env`. The wrapper rejects a symlink, a file owned by another user, any mode other than `0600`, a location inside the checkout, duplicate keys, and every key other than the two exact Slack names. It parses values as data and never sources the file as shell code.
+
+   Reuse the existing team Slack bot and its `chat:write` permission. Ensure the bot is a member of `#vibe`. Do not create a second app or commit either value.
+5. Copy `schedule/com.closedloop.vibe-eval-t2.plist.example` to `<scheduler-private-dir>/com.closedloop.vibe-eval-t2.plist`. Replace every placeholder with an absolute path: the nightly wrapper, private environment file, heavy slot, Node, nightly TypeScript entrypoint, dedicated checkout, external run-root parent, external results store, Claude, Codex, uv, gh, and the two log files. Keep the private plist outside the clone.
+6. Validate and install the private copy:
+
+   ```sh
+   plutil -lint <scheduler-private-dir>/com.closedloop.vibe-eval-t2.plist
+   launchctl bootstrap gui/$(id -u) <scheduler-private-dir>/com.closedloop.vibe-eval-t2.plist
+   launchctl print gui/$(id -u)/com.closedloop.vibe-eval-t2
+   ```
+
+7. Confirm the printed `ProgramArguments` are absolute and point to the clean main clone, external run-root parent and results store, private environment file, explicit tool binaries, and heavy-slot script.
+8. Do not force a paid first run. Let the next 02:00 invocation perform change detection, or use `launchctl kickstart` only when an operator explicitly requests a run.
+
+`schedule/run-nightly.sh` fails with a clear job-log error when the environment file or either Slack value is missing. The plist holds no credential.
+
+## On-demand start-to-PR benchmark
+
+The benchmark measures the real Claude Code task-to-draft-PR path against a local seeded web stack and local MCP server. It pins `claude-sonnet-5-5` at effort `high`, records frontmatter model exceptions, and rejects root or subagent model drift. It uses the normal Claude credential store while isolating run-owned settings.
+
+The benchmark baseline must use the claude-plugins SHA in the latest accepted nightly. The CLI checks that relationship before setup or model work:
 
 ```sh
-node --experimental-strip-types tools/vibe-bench/src/cli.ts pr-list <claude-plugins-checkout> <gh-binary>
-node --experimental-strip-types tools/vibe-bench/src/cli.ts pr-run <claude-plugins-checkout> <pr-number> <baseline-json> <symphony-checkout> <empty-run-root> <output-dir> <claude-binary> <gh-binary>
+<heavy-slot> vibe-benchmark <node> --experimental-strip-types tools/vibe-bench/src/cli.ts baseline <symphony-checkout> <claude-plugins-checkout> <latest-nightly-sha> <empty-run-root> <output-dir> <claude> <gh> <nightly-results-store>
 ```
 
-After the benchmark stack is down, run the full Phase 3 eval command without case selectors against the same head. Publishing requires both immutable artifacts, the full corpus, and explanations keyed by `shape:signal` for every yellow or red signal.
+One isolated seeded stack and one local MCP process are reused across the balanced samples. Setup time is recorded separately and does not consume the model execution budget. Full wall time still includes preflight, setup, model work, cleanup, and teardown. The target is less than ten minutes; a miss remains a measured miss.
+
+Every proof pull request is a draft whose title contains `DO NOT MERGE` and whose body says it belongs to the benchmark. Each proof pull request is closed and every owned proof ref is removed on success, failure, timeout, or interrupt. Artifacts report every run, wall time, cost, tokens, calls, model and effort, and component, skill, worker, and phase attribution.
+
+Use `compare` for a local trend comparison between immutable benchmark artifacts. Pass either `vibe` or `fleet-one-writer` explicitly so a balanced six-run artifact is partitioned into comparable three-run samples. Yellow or red values require a concrete local explanation. There is no publication command, PR body mutation, label, bypass, regression acceptance, release mode, or promotion mode.
+
+## Focused diagnosis
+
+`eval-local` remains available for an explicitly requested focused local investigation. It is not a gate:
 
 ```sh
-node --experimental-strip-types tools/vibe-bench/src/cli.ts pr-publish <claude-plugins-checkout> <pr-number> <benchmark-json> <eval-json> <section-output> <gh-binary> [explanations-json]
+<heavy-slot> vibe-eval-diagnosis <node> --experimental-strip-types tools/vibe-bench/src/cli.ts eval-local <claude-plugins-checkout> <full-sha> <empty-run-root> <output-dir> <claude> <codex> <uv> <full-or-deterministic> [case ...]
 ```
 
-Publication rechecks the live full head, replaces exactly one rendered `## Benchmark` body section, confirms the live body, and attaches compact evidence in a PR comment without changing labels. A red result publishes the disclosure and remains blocked pending the benchmark approver's explicit acceptance.
+Omit case names for the full snapshot corpus. The command writes native result trees plus one hashed JSON and Markdown summary. Deterministic mode skips only the paid Codex wording grader and records every skip.
