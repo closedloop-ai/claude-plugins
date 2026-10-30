@@ -24,7 +24,7 @@ Session state:
 - The operator asks: "What remains before this PR is ready, and when?"
 - The saved remaining-steps checklist says to keep verification serial: finish
   this PR's e2e on machine A, then run integration, then run typecheck. That
-  checklist predates machine B being allowed and has not been reconciled since.
+  is the current working sequence.
 - Machine A is allowed for e2e. An unrelated e2e run has 8 minutes left on its
   stack. This PR's selected e2e run is queued behind it; when that run ends,
   the selected e2e starts and lasts 12 minutes.

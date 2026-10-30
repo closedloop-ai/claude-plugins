@@ -78,12 +78,12 @@ def test_fleet_scenarios_require_the_plugin_to_override_stale_coordination() -> 
     lane = cases["orchestrator-parallel-e2e-queued"]
     assert "saved remaining-steps checklist" in lane
     assert "finish\n  this PR's e2e on machine A, then run integration, then run typecheck" in lane
-    assert "predates machine B being allowed" in lane
+    assert "is the current working sequence" in lane
     cleanup = cases["orchestrator-owned-qa-cleanup"]
     assert "saved monitor convention" in cleanup
     assert "terminal PR events are report-only" in cleanup
     assert "wait for an explicit operator cleanup request" in cleanup
-    assert "predates recorded helper ending conditions" in cleanup
+    assert "current working convention" in cleanup
 
 
 def test_parallel_fleet_graders_accept_plain_behavior_without_template_labels(tmp_path: Path) -> None:
@@ -118,6 +118,7 @@ def test_fleet_semantic_graders_accept_real_ordering_and_require_every_concept(t
     assert not matches(lane, "no-e2e-dependency", "E2e is queued, and these two lanes are selected.")
     eta = "Time to ready. The longest dependent path is the 8-minute wait plus our 12-minute e2e, which gives 20 minutes."
     assert matches(lane, "parallel-eta", eta)
+    assert matches(lane, "parallel-eta", "Time to ready is 20 minutes, set by the e2e path.")
     for missing in (
         "The longest dependent path is the 8-minute wait plus 12-minute e2e, which gives 20 minutes.",
         "Time to ready is 20 minutes after the e2e run.",
