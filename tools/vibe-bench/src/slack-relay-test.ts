@@ -41,7 +41,7 @@ export async function runApprovedSlackTest(args: string[],
   dependencies: ApprovedSlackTestDependencies = {}): Promise<ApprovedSlackTestResult> {
   if (args.length !== 1 || !args[0]) {
     return { exitCode: 64, line: "VIBE_NIGHTLY_SLACK_TEST " + JSON.stringify({
-      result: "FAILED", identity: null,
+      result: "FAILED",
       error: "usage: slack-relay-test.ts <absolute-claude-executable>",
     }) };
   }
@@ -55,7 +55,7 @@ export async function runApprovedSlackTest(args: string[],
     }) };
   } catch (error) {
     return { exitCode: 1, line: "VIBE_NIGHTLY_SLACK_TEST " + JSON.stringify({
-      result: "FAILED", identity: null,
+      result: "FAILED",
       error: error instanceof Error ? error.message : String(error),
     }) };
   }

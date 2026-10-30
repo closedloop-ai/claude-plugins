@@ -24,7 +24,6 @@ export const SLACK_DELIVERY_TEST_MESSAGE =
 
 /** Observable delivery metadata returned by Slack's send-message result. */
 export interface SlackDeliveryReceipt {
-  identity: string;
   timestamp: string | null;
   permalink: string | null;
 }
@@ -334,10 +333,8 @@ function verifySlackTranscript(stdout: string, expectedText: string): SlackDeliv
   }
   const content = matchingResults[0].content;
   return {
-    identity: firstReceiptValue(content,
-      ["user", "user_id", "userId", "username", "bot_id", "botId"]) ?? "unknown",
     timestamp: firstReceiptValue(content, ["ts", "message_ts", "timestamp"]),
-    permalink: firstReceiptValue(content, ["permalink"]),
+    permalink: firstReceiptValue(content, ["permalink", "message_link"]),
   };
 }
 
@@ -374,7 +371,7 @@ export class SlackNightlyRegressionReporter implements NightlyRegressionReporter
     await this.post(formatNightlyInfrastructureMessage(notice));
   }
 
-  /** Send the single operator-approved fixed relay test and return its Slack identity. */
+  /** Send the single operator-approved fixed relay test and return its Slack receipt. */
   async reportApprovedTest(): Promise<SlackDeliveryReceipt> {
     return await this.post(SLACK_DELIVERY_TEST_MESSAGE);
   }

@@ -429,9 +429,10 @@ test("nightly regression Slack message names cases, runtimes, PR authors and res
       input: { channel_id: "C0CC9G7V01G", message: text } }] } },
     ...extras,
     { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tool-1",
-      is_error: false, content: JSON.stringify({ ok: true, channel: "C0CC9G7V01G",
-        ts: "1793393000.000100", permalink: "https://closedloop.slack.com/archives/test",
-        message: { user: "U-DANIEL", text } }) }] } },
+      is_error: false, content: JSON.stringify({
+        message_context: { channel_id: "C0CC9G7V01G", message_ts: "1793393000.000100" },
+        message_link: "https://closedloop.slack.com/archives/test",
+      }) }] } },
     { type: "result", subtype: "success", is_error: false },
   ].map((event) => JSON.stringify(event)).join("\n") + "\n";
   const pluginList = JSON.stringify([{ id: "slack@anthropic-plugin-directory", enabled: true,
@@ -536,7 +537,7 @@ test("nightly regression Slack message names cases, runtimes, PR authors and res
     /VIBE_NIGHTLY_SLACK_FAILURE eval-slack-credentials-unavailable: macOS login keychain is locked.*unlock the login keychain.*GUI session logged in/);
   const approved = await new SlackNightlyRegressionReporter("/opt/claude", run)
     .reportApprovedTest();
-  assert.deepEqual(approved, { identity: "U-DANIEL", timestamp: "1793393000.000100",
+  assert.deepEqual(approved, { timestamp: "1793393000.000100",
     permalink: "https://closedloop.slack.com/archives/test" });
   assert.deepEqual(JSON.parse(invocations.at(-1)!.input.split("\n").at(-1)!),
     { channel_id: "C0CC9G7V01G", message: SLACK_DELIVERY_TEST_MESSAGE });
@@ -560,7 +561,7 @@ test("nightly regression Slack message names cases, runtimes, PR authors and res
   assert.match(successLogs.join(""), /VIBE_NIGHTLY_SLACK_POSTED/);
 });
 
-test("approved Slack relay test is fixed, one-shot and prints the posting identity", async () => {
+test("approved Slack relay test is fixed, one-shot and prints the Slack receipt", async () => {
   let claims = 0;
   let relayCalls = 0;
   const result = await runApprovedSlackTest(["/absolute/claude"], {
@@ -569,7 +570,7 @@ test("approved Slack relay test is fixed, one-shot and prints the posting identi
       assert.equal(claude, "/absolute/claude");
       return { reportApprovedTest: async () => {
         relayCalls += 1;
-        return { identity: "U-DANIEL", timestamp: "1793393000.000100",
+        return { timestamp: "1793393000.000100",
           permalink: "https://closedloop.slack.com/archives/test" };
       } };
     },
@@ -578,7 +579,7 @@ test("approved Slack relay test is fixed, one-shot and prints the posting identi
   assert.equal(claims, 1);
   assert.equal(relayCalls, 1);
   assert.deepEqual(JSON.parse(result.line.slice("VIBE_NIGHTLY_SLACK_TEST ".length)), {
-    result: "POSTED", identity: "U-DANIEL", timestamp: "1793393000.000100",
+    result: "POSTED", timestamp: "1793393000.000100",
     permalink: "https://closedloop.slack.com/archives/test",
   });
 
@@ -586,7 +587,7 @@ test("approved Slack relay test is fixed, one-shot and prints the posting identi
     claimAttempt: () => { throw new Error("eval-slack-approved-test-already-attempted"); },
     reporter: () => ({ reportApprovedTest: async () => {
       relayCalls += 1;
-      return { identity: "unexpected", timestamp: null, permalink: null };
+      return { timestamp: null, permalink: null };
     } }),
   });
   assert.equal(duplicate.exitCode, 1);
@@ -601,7 +602,7 @@ test("approved Slack relay test is fixed, one-shot and prints the posting identi
   });
   assert.equal(locked.exitCode, 1);
   assert.deepEqual(JSON.parse(locked.line.slice("VIBE_NIGHTLY_SLACK_TEST ".length)), {
-    result: "FAILED", identity: null,
+    result: "FAILED",
     error: "eval-slack-credentials-unavailable: macOS login keychain is locked; " +
       "unlock the login keychain or keep the GUI session logged in",
   });
