@@ -132,6 +132,32 @@ test('remote preflight uses the target host plugin and target actor state', TIME
   assert.equal(result.status, 0, result.stderr);
 });
 
+// A writer thread saved before vibe 1.1.23 has no loadedSkill and nothing can add one; refusing it
+// stranded every running fleet writer the moment vibe updated.
+test('a writer thread saved before loaded-skill evidence keeps working, local and remote, with its scripts still checked', TIMEOUT, () => {
+  const f = fixture('CODEX_MODEL=m\nCODEX_EFFORT=high\n');
+  const legacy = { threadId: 'pre-1-1-23', cwd: '/wt', model: 'm', effort: 'high', turns: [{ turnId: 'U1', kind: 'turn', promptFile: f.prompt }], ticket: 'ISS-1' };
+  mkdirSync(join(f.orch, 'sessions'), { recursive: true });
+  writeFileSync(join(f.orch, 'sessions', 'w1.json'), JSON.stringify(legacy));
+  writeFileSync(f.prompt, 'Continue with the review fixes.\n');
+  for (const command of ['turn', 'steer']) {
+    const result = f.run(['local', 'session', command, 'w1', '--prompt-file', f.prompt]);
+    assert.equal(result.status, 0, `${command}: ${result.stderr}`);
+    assert.match(result.stderr, /predates loaded-skill evidence \(vibe before 1\.1\.23\); its loaded skill is not checked/);
+  }
+  writeFileSync(f.prompt, 'Run handoff/scripts/qa-merge-order.mjs.\n');
+  const removed = f.run(['local', 'session', 'steer', 'w1', '--prompt-file', f.prompt]);
+  assert.equal(removed.status, 2, removed.stdout + removed.stderr);
+  assert.match(removed.stderr, /qa-merge-order\.mjs: plugin script does not exist/);
+  writeFileSync(join(f.orch, 'config.env'), remoteConfig(f.root, 'CODEX_EFFORT=high\n'));
+  mkdirSync(join(f.root, 'remote', 'sessions'), { recursive: true });
+  writeFileSync(join(f.root, 'remote', 'sessions', 'w1.json'), JSON.stringify(legacy));
+  writeFileSync(f.prompt, 'Continue with the review fixes.\n');
+  const remote = f.run(['remote', 'session', 'turn', 'w1', '--prompt-file', f.prompt, '--cwd', '/remote wt']);
+  assert.equal(remote.status, 0, remote.stderr);
+  assert.match(remote.stderr, /predates loaded-skill evidence/);
+});
+
 // A module codex-session.mjs imports that fleet.sh does not ship fails every remote session at load time.
 test('a remote session ships every module codex-session.mjs and skill-freshness.mjs import, transitively', TIMEOUT, () => {
   const f = fixture();

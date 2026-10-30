@@ -56,16 +56,20 @@ async function main(argv) {
     : readJson(path.join(program, "plugin-version.json"));
   const prompt = readFileSync(path.resolve(promptFile), "utf8");
   const bootstrap = values.bootstrap && !actorState && /^\s*\$vibe\b/.test(prompt);
+  // A thread saved before vibe 1.1.23 has no load evidence and nothing can add it: version-skewed
+  // state keeps working, unchecked, rather than stranding every running writer on an update.
+  const legacyThread = Boolean(actorState) && !actorState.loadedSkill;
+  if (legacyThread) process.stderr.write(`skill-freshness: ${path.resolve(values["actor-state"])} predates loaded-skill evidence (vibe before 1.1.23); its loaded skill is not checked\n`);
   const targetVersion = installedPluginVersion(values["plugin-root"] ?? INSTALLED_PLUGIN_ROOT);
   const expectedOrder = values["expected-version"] ? compareVersions(targetVersion, values["expected-version"]) : 0;
   const problems = [
     ...(values["expected-version"] && (expectedOrder === null || expectedOrder < 0)
       ? [`target host has vibe ${targetVersion ?? "unknown"}, expected at least ${values["expected-version"]}`] : []),
-    ...(bootstrap ? [] : [skillFreshnessProblem(record, { pluginRoot: values["plugin-root"] ?? INSTALLED_PLUGIN_ROOT, actorId: values.actor })].filter(Boolean)),
+    ...(bootstrap || legacyThread ? [] : [skillFreshnessProblem(record, { pluginRoot: values["plugin-root"] ?? INSTALLED_PLUGIN_ROOT, actorId: values.actor })].filter(Boolean)),
     ...pluginScriptProblems(prompt, values["plugin-root"] ?? INSTALLED_PLUGIN_ROOT, values.worktree),
   ];
   if (problems.length) throw new Error(problems.join("; "));
-  return { ok: true, loaded: record?.loadedSkill?.version ?? null, installed: targetVersion, prompt: path.resolve(promptFile) };
+  return { ok: true, loaded: record?.loadedSkill?.version ?? null, installed: targetVersion, loadedSkillChecked: !bootstrap && !legacyThread, prompt: path.resolve(promptFile) };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

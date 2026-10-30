@@ -8,7 +8,7 @@ import { handoffGateProblem, mergeabilityProblem, recordHandoffGate, resolvePrBa
 import { sourceIdentity } from "../skills/vibe/scripts/tested-head.mjs";
 import { captureReviewReceipt, REVIEW_ROLES } from "../skills/handoff/scripts/review-receipts.mjs";
 import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
-import { createsPullRequest, prCreateGuard, vibeRepository } from "./pr-create-guard.mjs";
+import { createsPullRequest, prCreateGuard, vibeWorktree } from "./pr-create-guard.mjs";
 import { readHookSkill, recordHookSkill } from "./hook-session-scope.mjs";
 import { pluginVersionPromptStart } from "./plugin-version-guard.mjs";
 
@@ -114,9 +114,10 @@ test("null transcript uses only an active exact-session marker or recorded vibe 
   assert.equal(prCreateGuard(event, home), null, "stale marker does not scope the session");
 });
 
-// PR #371 review: a conversation that once loaded vibe or fleet was refused `gh pr create` in
-// every repository for seven days.
-test("a vibe-scoped conversation is refused a session-less PR only in a repository with live vibe work", () => {
+// PR #371 reviews: a conversation that once loaded vibe or fleet was refused `gh pr create` in
+// every repository for seven days, and then in every worktree of a repository where any other
+// worktree kept an abandoned `active` session record.
+test("a vibe-scoped conversation is refused a session-less PR only from a vibe/ branch or outside a repository", () => {
   const home = mkdtempSync(path.join(tmpdir(), "hook-scope-home-"));
   const repo = (branch) => {
     const dir = mkdtempSync(path.join(tmpdir(), "hook-scope-git-"));
@@ -124,26 +125,25 @@ test("a vibe-scoped conversation is refused a session-less PR only in a reposito
     execFileSync("git", ["-C", dir, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "--allow-empty", "-m", "base"]);
     return dir;
   };
-  const linkedSession = (dir, status) => {
+  const linkedSession = (dir, record) => {
     const linked = path.join(dir, "..", `${path.basename(dir)}-wt`);
     execFileSync("git", ["-C", dir, "worktree", "add", "-q", "-b", `vibe/${path.basename(dir)}`, linked]);
     const gitDir = execFileSync("git", ["-C", linked, "rev-parse", "--absolute-git-dir"], { encoding: "utf8" }).trim();
-    writeFileSync(path.join(gitDir, "vibe-session.json"), JSON.stringify({ status }));
+    writeFileSync(path.join(gitDir, "vibe-session.json"), JSON.stringify(record));
+    return linked;
   };
   const create = (cwd) => ({ cwd, session_id: "scoped", transcript_path: null, tool_input: { command: "gh pr create --base main --body-file body.md" } });
   pluginVersionPromptStart({ session_id: "scoped", prompt: "/vibe:fleet-orchestrator resume" }, home);
   const unrelated = repo("main");
-  assert.equal(vibeRepository(unrelated), false);
+  assert.equal(vibeWorktree(unrelated), false);
   assert.equal(prCreateGuard(create(unrelated), home), null, "a repository with no vibe work is not vibe work");
-  const ended = repo("main");
-  linkedSession(ended, "handed-off");
-  assert.equal(prCreateGuard(create(ended), home), null, "a repository whose vibe sessions were handed off");
-  const live = repo("main");
-  linkedSession(live, "active");
-  assert.match(prCreateGuard(create(live), home)?.reason ?? "", /no vibe session record/, "another worktree's active session makes the repository vibe work");
-  assert.match(prCreateGuard(create(repo("vibe/new-page")), home)?.reason ?? "", /no vibe session record/, "a vibe/ branch is vibe work");
+  const shared = repo("main");
+  const abandoned = linkedSession(shared, { status: "active", createdAt: "2026-10-16T00:00:00Z" });
+  assert.equal(prCreateGuard(create(shared), home), null, "another worktree's old active record does not decide for this worktree");
+  assert.match(prCreateGuard(create(abandoned), home)?.reason ?? "", /gh pr create refused/, "the worktree that owns the record still needs its handoff gate");
+  assert.match(prCreateGuard(create(repo("vibe/new-page")), home)?.reason ?? "", /no vibe session record/, "a session-less vibe/ branch is vibe work");
   const notRepo = mkdtempSync(path.join(tmpdir(), "hook-scope-plain-"));
-  assert.equal(vibeRepository(notRepo), null);
+  assert.equal(vibeWorktree(notRepo), null);
   assert.match(prCreateGuard(create(notRepo), home)?.reason ?? "", /no vibe session record/, "outside a repository nothing proves the PR is unrelated");
-  assert.equal(prCreateGuard({ ...create(live), session_id: "unscoped" }, home), null, "an unscoped conversation is untouched");
+  assert.equal(prCreateGuard({ ...create(shared), session_id: "unscoped" }, home), null, "an unscoped conversation is untouched");
 });

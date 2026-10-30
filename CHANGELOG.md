@@ -23,7 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Installed-script checks run only for writer launches and inside vibe or fleet conversations, and count a path only when it names a vibe skill, so a repository's own `skills/<name>/scripts/` files are not refused.
 - A `checked in code` citation is resolved in the cited file's own repository, so an orchestrator outside a repository can cite a writer worktree.
 - Loaded-skill evidence is enforced only where a hook has recorded the conversation; hook records read the runtime from the hook input, `$fleet-orchestrator` prompts record scope, and Codex prompts no longer mark the version check pending, so Codex sessions start before hooks are trusted.
-- A session-less `gh pr create` from a vibe or fleet conversation is refused only on a `vibe/` branch or in a repository with an active vibe session, and spawn-time load evidence is labeled `installed-at-spawn`.
+- A session-less `gh pr create` from a vibe or fleet conversation is refused only from a worktree on a `vibe/` branch or outside a repository; other worktrees' session records no longer decide. Spawn-time load evidence is labeled `installed-at-spawn`.
+- A fleet writer thread saved before 1.1.23, which has no load evidence, keeps taking turns and steers with its loaded skill unchecked and a log line saying so; its prompt's plugin script paths are still checked.
 
 ### vibe v1.1.22
 

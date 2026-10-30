@@ -1,6 +1,5 @@
 // A vibe PR must carry a current private handoff witness for its exact source.
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { commandSegments } from "./command-segments.mjs";
 import { deny, eventCwd } from "./hook-dispatch.mjs";
@@ -55,24 +54,16 @@ export function prCreateCalls(command, initialCwd) {
 }
 
 /**
- * Whether a session-less PR in `cwd` is vibe work: null outside a git repository, else true on a
- * vibe/ branch or when any worktree of the repository has an active vibe session. A repository
- * with no vibe work, or whose vibe sessions were all handed off, is not (PR #371 review: a
- * conversation that once loaded vibe or fleet was refused every PR, in every repository, for days).
+ * Whether a session-less PR from `cwd` is vibe work, judged by that worktree alone: null outside a
+ * git repository, true on a vibe/ branch, else false. Other worktrees' session records never
+ * decide, because an abandoned session keeps an `active` record indefinitely (PR #371 review: a
+ * repository with any such record refused every scoped conversation's PRs in all its worktrees).
  */
-export function vibeRepository(cwd) {
-  let common;
-  try { common = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]); }
+export function vibeWorktree(cwd) {
+  try { git(cwd, ["rev-parse", "--git-dir"]); }
   catch { return null; }
-  try { if (git(cwd, ["branch", "--show-current"]).startsWith(VIBE_BRANCH)) return true; }
-  catch { /* A detached or unborn HEAD names no branch. */ }
-  let linked = [];
-  try { linked = readdirSync(path.join(common, "worktrees")).map((name) => path.join(common, "worktrees", name)); }
-  catch { /* No linked worktrees. */ }
-  return [common, ...linked].some((gitDir) => {
-    try { return (JSON.parse(readFileSync(path.join(gitDir, "vibe-session.json"), "utf8")).status ?? "active") === "active"; }
-    catch { return false; }
-  });
+  try { return git(cwd, ["branch", "--show-current"]).startsWith(VIBE_BRANCH); }
+  catch { return false; }
 }
 
 /** Refuse PR publication in a vibe session without the final handoff witness. */
@@ -86,7 +77,7 @@ export function prCreateGuard(event, home = os.homedir()) {
   for (const call of calls) {
     if (call.remote || call.uncertainCwd) return deny("gh pr create refused: remote or unresolved shell cwd cannot prove a local vibe handoff gate");
     if (!inVibeSession(call.cwd)) {
-      if (vibeRepository(call.cwd) === false) continue;
+      if (vibeWorktree(call.cwd) === false) continue;
       return deny("gh pr create refused: no vibe session record in the command worktree");
     }
     const problem = handoffGateProblem(call.cwd, { base: call.base, bodyFile: call.bodyFile });
