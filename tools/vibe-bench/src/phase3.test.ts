@@ -23,10 +23,12 @@ import { codexEvalBudgetSeconds, codexEvalRunnerPath, confirmedNightlyRegression
   stageFocusedClaudeEvalCases } from "./eval-driver.ts";
 import { main as runEvalNightly, reportNightlyInfrastructureFailure } from "./eval-nightly.ts";
 import { formatNightlyInfrastructureMessage, formatNightlyRegressionMessage, nightlyChangesSince,
-  SlackDeliveryError, SlackNightlyRegressionReporter } from "./eval-slack.ts";
+  SLACK_DELIVERY_TEST_MESSAGE, SlackDeliveryError,
+  SlackNightlyRegressionReporter } from "./eval-slack.ts";
 import type { NightlyRegressionNotice } from "./eval-slack.ts";
 import { formatNightlyTaskSummary, nightlyTaskSummary } from "./nightly-summary.ts";
 import { requireLatestNightlyBenchmarkBaseline } from "./phase2-driver.ts";
+import { runApprovedSlackTest } from "./slack-relay-test.ts";
 import { slackToolGateDecision } from "./slack-tool-gate.ts";
 
 const CASE = "pm-new-session-first-reply";
@@ -427,7 +429,9 @@ test("nightly regression Slack message names cases, runtimes, PR authors and res
       input: { channel_id: "C0CC9G7V01G", message: text } }] } },
     ...extras,
     { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tool-1",
-      is_error: false, content: "Message sent" }] } },
+      is_error: false, content: JSON.stringify({ ok: true, channel: "C0CC9G7V01G",
+        ts: "1793393000.000100", permalink: "https://closedloop.slack.com/archives/test",
+        message: { user: "U-DANIEL", text } }) }] } },
     { type: "result", subtype: "success", is_error: false },
   ].map((event) => JSON.stringify(event)).join("\n") + "\n";
   const pluginList = JSON.stringify([{ id: "slack@anthropic-plugin-directory", enabled: true,
@@ -437,10 +441,15 @@ test("nightly regression Slack message names cases, runtimes, PR authors and res
   }) => { status: number | null; stdout: string; stderr: string; error?: Error }) =>
     (command: string, args: string[], options: { input: string; timeout: number }) =>
       args[0] === "plugin" ? { status: 0, stdout: pluginList, stderr: "" }
+        : args.includes("mcp") && args.includes("list")
+          ? { status: 0, stdout: "plugin:slack:slack - ✔ Connected\n", stderr: "" }
         : delivery(command, args, options);
   const run = (command: string, args: string[], options: { input: string; timeout: number }) => {
     invocations.push({ command, args, ...options });
     if (args[0] === "plugin") return { status: 0, stdout: pluginList, stderr: "" };
+    if (args.includes("mcp") && args.includes("list")) {
+      return { status: 0, stdout: "plugin:slack:slack - ✔ Connected\n", stderr: "" };
+    }
     const payload = JSON.parse(options.input.split("\n").at(-1)!) as {
       channel_id: string; message: string;
     };
@@ -456,7 +465,10 @@ test("nightly regression Slack message names cases, runtimes, PR authors and res
   await new SlackNightlyRegressionReporter("/opt/claude", run).report(notice);
   assert.deepEqual(invocations[0].args, ["plugin", "list", "--json"]);
   assert.equal(invocations[0].timeout, 5_000);
-  const delivery = invocations[1];
+  assert.deepEqual(invocations[1].args, ["--plugin-dir", "/plugins/slack",
+    "--setting-sources", "", "--settings", "{}", "mcp", "list"]);
+  assert.equal(invocations[1].timeout, 10_000);
+  const delivery = invocations[2];
   assert.equal(delivery.command, "/opt/claude");
   assert.equal(delivery.args[delivery.args.indexOf("--model") + 1],
     "claude-haiku-5-5");
@@ -498,6 +510,36 @@ test("nightly regression Slack message names cases, runtimes, PR authors and res
   await assert.rejects(() => new SlackNightlyRegressionReporter("/claude",
     withPlugin(timedOut)).report(notice),
     /claude-timeout/);
+  const lockedKeychain = (_command: string, args: string[]) => {
+    if (args[0] === "plugin") return { status: 0, stdout: pluginList, stderr: "" };
+    if (args.includes("mcp") && args.includes("list")) {
+      return { status: 0, stdout: "Checking MCP server health…\n\n" +
+        "plugin:slack:slack: https://mcp.slack.com/mcp (HTTP) - ✘ Failed to connect — " +
+        "Couldn't read the stored credentials because the Mac's keychain is locked.\n",
+      stderr: "" };
+    }
+    return { status: 0, stdout: [
+      { type: "system", subtype: "init", mcp_servers: [
+        { name: "plugin:slack:slack", status: "failed", source: "plugin" },
+      ] },
+      { type: "result", subtype: "success", is_error: false },
+    ].map((event) => JSON.stringify(event)).join("\n") + "\n", stderr: "" };
+  };
+  await assert.rejects(() => new SlackNightlyRegressionReporter("/claude",
+    lockedKeychain).report(notice),
+  /macOS login keychain is locked.*unlock the login keychain.*GUI session logged in/);
+  const lockedLogs: string[] = [];
+  await reportNightlyInfrastructureFailure("eval-fixture-failure",
+    new SlackNightlyRegressionReporter("/claude", lockedKeychain),
+    (line) => lockedLogs.push(line));
+  assert.match(lockedLogs.join(""),
+    /VIBE_NIGHTLY_SLACK_FAILURE eval-slack-credentials-unavailable: macOS login keychain is locked.*unlock the login keychain.*GUI session logged in/);
+  const approved = await new SlackNightlyRegressionReporter("/opt/claude", run)
+    .reportApprovedTest();
+  assert.deepEqual(approved, { identity: "U-DANIEL", timestamp: "1793393000.000100",
+    permalink: "https://closedloop.slack.com/archives/test" });
+  assert.deepEqual(JSON.parse(invocations.at(-1)!.input.split("\n").at(-1)!),
+    { channel_id: "C0CC9G7V01G", message: SLACK_DELIVERY_TEST_MESSAGE });
   assert.match(formatNightlyInfrastructureMessage({ reason: "eval-binary-missing",
     occurredAt: "2026-10-30T00:00:00Z" }), /eval-binary-missing/);
   await new SlackNightlyRegressionReporter("/opt/claude", run).reportInfrastructure({
@@ -516,6 +558,54 @@ test("nightly regression Slack message names cases, runtimes, PR authors and res
     { reportInfrastructure: async () => {} }, (line) => successLogs.push(line),
     (line) => successLogs.push(line));
   assert.match(successLogs.join(""), /VIBE_NIGHTLY_SLACK_POSTED/);
+});
+
+test("approved Slack relay test is fixed, one-shot and prints the posting identity", async () => {
+  let claims = 0;
+  let relayCalls = 0;
+  const result = await runApprovedSlackTest(["/absolute/claude"], {
+    claimAttempt: () => { claims += 1; },
+    reporter: (claude) => {
+      assert.equal(claude, "/absolute/claude");
+      return { reportApprovedTest: async () => {
+        relayCalls += 1;
+        return { identity: "U-DANIEL", timestamp: "1793393000.000100",
+          permalink: "https://closedloop.slack.com/archives/test" };
+      } };
+    },
+  });
+  assert.equal(result.exitCode, 0);
+  assert.equal(claims, 1);
+  assert.equal(relayCalls, 1);
+  assert.deepEqual(JSON.parse(result.line.slice("VIBE_NIGHTLY_SLACK_TEST ".length)), {
+    result: "POSTED", identity: "U-DANIEL", timestamp: "1793393000.000100",
+    permalink: "https://closedloop.slack.com/archives/test",
+  });
+
+  const duplicate = await runApprovedSlackTest(["/absolute/claude"], {
+    claimAttempt: () => { throw new Error("eval-slack-approved-test-already-attempted"); },
+    reporter: () => ({ reportApprovedTest: async () => {
+      relayCalls += 1;
+      return { identity: "unexpected", timestamp: null, permalink: null };
+    } }),
+  });
+  assert.equal(duplicate.exitCode, 1);
+  assert.match(duplicate.line, /already-attempted/);
+  assert.equal(relayCalls, 1);
+  const locked = await runApprovedSlackTest(["/absolute/claude"], {
+    claimAttempt: () => {},
+    reporter: () => ({ reportApprovedTest: async () => {
+      throw new Error("eval-slack-credentials-unavailable: macOS login keychain is locked; " +
+        "unlock the login keychain or keep the GUI session logged in");
+    } }),
+  });
+  assert.equal(locked.exitCode, 1);
+  assert.deepEqual(JSON.parse(locked.line.slice("VIBE_NIGHTLY_SLACK_TEST ".length)), {
+    result: "FAILED", identity: null,
+    error: "eval-slack-credentials-unavailable: macOS login keychain is locked; " +
+      "unlock the login keychain or keep the GUI session logged in",
+  });
+  assert.equal((await runApprovedSlackTest(["/claude", "arbitrary message"])).exitCode, 64);
 });
 
 test("Slack pre-tool gate denies altered and repeated requests before execution", () => {

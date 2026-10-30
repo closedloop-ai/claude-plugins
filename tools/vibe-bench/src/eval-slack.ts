@@ -6,14 +6,28 @@ import { fileURLToPath } from "node:url";
 import type { EvalQuarantineEntry } from "./eval-baseline.ts";
 
 const SLACK_POST_TIMEOUT_MS = 20_000;
+const SLACK_HEALTH_TIMEOUT_MS = 10_000;
 const SLACK_CHANNEL_ID = "C0CC9G7V01G";
 const SLACK_POST_TOOL = "mcp__plugin_slack_slack__slack_send_message";
 const SLACK_DELIVERY_MODEL = "claude-haiku-5-5";
 const SLACK_PLUGIN_ID = "slack@anthropic-plugin-directory";
+const SLACK_MCP_SERVER = "plugin:slack:slack";
 const SLACK_DETAIL_LIMIT = 50;
 const SLACK_FIELD_LIMIT = 500;
 const SLACK_MESSAGE_BYTE_LIMIT = 30_000;
 const CHANGE_ATTRIBUTION_LIMIT = 1_000;
+
+/** Operator-approved one-shot message for validating the nightly Slack relay. */
+export const SLACK_DELIVERY_TEST_MESSAGE =
+  "vibe nightly: test post from the second laptop to confirm Slack delivery (ISS-13478). " +
+  "No action needed.";
+
+/** Observable delivery metadata returned by Slack's send-message result. */
+export interface SlackDeliveryReceipt {
+  identity: string;
+  timestamp: string | null;
+  permalink: string | null;
+}
 
 /** One unchanged, reliable case that failed all nightly attempts. */
 export interface NightlyRegressionCase {
@@ -246,7 +260,47 @@ function deliveryPrompt(text: string): string {
   ].join("\n");
 }
 
-function verifySlackTranscript(stdout: string, expectedText: string): void {
+function embeddedValues(value: unknown): unknown[] {
+  const values: unknown[] = [];
+  const queue = [value];
+  while (queue.length) {
+    const current = queue.shift();
+    values.push(current);
+    if (Array.isArray(current)) {
+      queue.push(...current);
+    } else if (current && typeof current === "object") {
+      queue.push(...Object.values(current));
+    } else if (typeof current === "string") {
+      const trimmed = current.trim();
+      const candidates = [trimmed];
+      const firstBrace = trimmed.indexOf("{");
+      const lastBrace = trimmed.lastIndexOf("}");
+      if (firstBrace >= 0 && lastBrace > firstBrace) {
+        candidates.push(trimmed.slice(firstBrace, lastBrace + 1));
+      }
+      for (const candidate of candidates) {
+        try {
+          const parsed = JSON.parse(candidate) as unknown;
+          if (parsed !== current) queue.push(parsed);
+        } catch { /* Non-JSON tool-result text has no structured receipt fields. */ }
+      }
+    }
+  }
+  return values;
+}
+
+function firstReceiptValue(value: unknown, keys: string[]): string | null {
+  for (const candidate of embeddedValues(value)) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const record = candidate as Record<string, unknown>;
+    for (const key of keys) {
+      if (typeof record[key] === "string" && record[key].trim()) return record[key];
+    }
+  }
+  return null;
+}
+
+function verifySlackTranscript(stdout: string, expectedText: string): SlackDeliveryReceipt {
   const events = stdout.split("\n").filter(Boolean).map((line) => {
     try { return JSON.parse(line) as Record<string, unknown>; }
     catch { throw new Error("eval-slack-claude-output-malformed"); }
@@ -273,11 +327,32 @@ function verifySlackTranscript(stdout: string, expectedText: string): void {
     return Array.isArray(message?.content) ? message.content.filter((block) => {
       const value = block as { type?: unknown; tool_use_id?: unknown };
       return value.type === "tool_result" && value.tool_use_id === toolUse.id;
-    }) as Array<{ is_error?: unknown }> : [];
+    }) as Array<{ is_error?: unknown; content?: unknown }> : [];
   });
   if (matchingResults.length !== 1 || matchingResults[0].is_error === true) {
     throw new Error("eval-slack-tool-result-failed");
   }
+  const content = matchingResults[0].content;
+  return {
+    identity: firstReceiptValue(content,
+      ["user", "user_id", "userId", "username", "bot_id", "botId"]) ?? "unknown",
+    timestamp: firstReceiptValue(content, ["ts", "message_ts", "timestamp"]),
+    permalink: firstReceiptValue(content, ["permalink"]),
+  };
+}
+
+function requireSlackMcpConnection(result: SlackClaudeResult): void {
+  const output = `${result.stdout}\n${result.stderr}`;
+  const slackLine = output.split(/\r?\n/).find((line) => line.includes(SLACK_MCP_SERVER));
+  if (!result.error && result.status === 0 && slackLine && /\bConnected\b/.test(slackLine)) return;
+  if (slackLine && /credential|authenticat|keychain/i.test(slackLine)) {
+    throw new SlackDeliveryError(
+      "eval-slack-credentials-unavailable: macOS login keychain is locked or Slack MCP " +
+      "credentials are missing; unlock the login keychain or keep the GUI session logged in",
+      true,
+    );
+  }
+  throw new SlackDeliveryError("eval-slack-mcp-unavailable", true);
 }
 
 /** Post a pre-rendered notice through the authenticated Slack MCP connection. */
@@ -299,7 +374,12 @@ export class SlackNightlyRegressionReporter implements NightlyRegressionReporter
     await this.post(formatNightlyInfrastructureMessage(notice));
   }
 
-  private async post(text: string): Promise<void> {
+  /** Send the single operator-approved fixed relay test and return its Slack identity. */
+  async reportApprovedTest(): Promise<SlackDeliveryReceipt> {
+    return await this.post(SLACK_DELIVERY_TEST_MESSAGE);
+  }
+
+  private async post(text: string): Promise<SlackDeliveryReceipt> {
     const plugins = this.run(this.claudeExecutable, ["plugin", "list", "--json"], {
       input: "", timeout: 5_000,
     });
@@ -317,6 +397,11 @@ export class SlackNightlyRegressionReporter implements NightlyRegressionReporter
         !slack.installPath.startsWith("/")) {
       throw new SlackDeliveryError("eval-slack-plugin-unavailable", true);
     }
+    const health = this.run(this.claudeExecutable, ["--plugin-dir", slack.installPath,
+      "--setting-sources", "", "--settings", "{}", "mcp", "list"], {
+      input: "", timeout: SLACK_HEALTH_TIMEOUT_MS,
+    });
+    requireSlackMcpConnection(health);
     const gateRoot = mkdtempSync(join(tmpdir(), "vibe-slack-gate-"));
     try {
       const expectedPath = join(gateRoot, "expected.json");
@@ -337,7 +422,7 @@ export class SlackNightlyRegressionReporter implements NightlyRegressionReporter
       const result = this.run(this.claudeExecutable, args, {
         input: deliveryPrompt(text), timeout: SLACK_POST_TIMEOUT_MS,
       });
-      try { verifySlackTranscript(result.stdout, text); }
+      try { return verifySlackTranscript(result.stdout, text); }
       catch (error) {
         if (result.error?.message.includes("ETIMEDOUT") ||
             result.error?.message.includes("timed out")) {
