@@ -290,8 +290,11 @@ records the change log line it names. A `frozen-render` finding is settled
 only by `scripts/frozen-render.mjs`, run in step 4 by
 `vibe-storybook-decomposer`: the writer records the `Frozen render
 unchanged` line that command prints, and nobody captures frozen stories any
-other way. The line names the session files it rendered and counts only while
-their story states and dependency inputs are unchanged. A later commit or main
+other way. Give it the prepared base worktree, never base or head server URLs:
+the renderer starts both through the verifier's owned run wrapper and stops
+both before it returns, including after failure. The line names the session
+files it rendered and counts only while their story states and dependency
+inputs are unchanged. A later commit or main
 merge reruns it only when `qa-impact.mjs` names one of those states or the
 frozen-render dependency digest changes (ISS-13411). A finding's `fix` is written for the writer, never relayed to the
 person as a step (`../vibe/references/plain-words.md`, "What the person is

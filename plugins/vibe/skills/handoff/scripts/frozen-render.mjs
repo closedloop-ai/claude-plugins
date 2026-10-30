@@ -5,13 +5,13 @@
 // story in those files twice on a Storybook serving the base and once on one
 // serving the branch, waits for each play to finish, judges the play with
 // story-play-verdict.mjs and compares the screenshots pixel for pixel, with
-// no threshold (png-diff.mjs). Sessions never write their own capture loop for
-// this gate.
+// no threshold (png-diff.mjs). Its CLI owns both Storybook servers through
+// verify-storybook-process.mjs, including failure cleanup. Sessions never
+// write their own capture loop or supply externally served URLs for this gate.
 //
 // Usage:
 //   frozen-render.mjs --repo <session worktree> --base <base commit>
-//                     --base-url <Storybook URL serving the base>
-//                     --head-url <Storybook URL serving the branch>
+//                     --base-dir <prepared base worktree>
 //                     --story-file <repo-relative story path> [--story-file ...]
 //                     --out <dir> [--viewport 1280x800] [--timeout-ms 20000]
 //                     [--now <ISO time>]
@@ -61,19 +61,24 @@
 // under --out; read only the cropped diffs. Exits 0 when nothing blocks, 1
 // when something does, 2 on a usage or setup error.
 
-import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { createServer } from "node:net";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { PLAY_EVENT_RECORDER, playVerdicts } from "../../vibe/scripts/story-play-verdict.mjs";
+import { withVerifyStorybook } from "../../vibe/scripts/verify-storybook-process.mjs";
 import { storyId } from "./diff-rules.mjs";
 import { cropDiffPng, decodePng, pixelHash } from "./png-diff.mjs";
 import { semanticSourceText } from "./qa-impact.mjs";
 import { IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.mjs";
 import { keepsStoryIdentity, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
+
+const SLOT_LOCK = fileURLToPath(new URL("../../fleet-orchestrator/scripts/slot-lock.sh", import.meta.url));
+const RUN_BOUNDED = fileURLToPath(new URL("../../vibe/scripts/run-bounded.mjs", import.meta.url));
 
 export const FrozenOutcome = Object.freeze({ Identical: "identical", UnstableOnBase: "unstable-on-base", SameFailure: "same-failure", Blocking: "blocking" });
 /** Software rasterizing on one thread with fixed color and font handling, as the ISS-13164 capture launches Chromium. */
@@ -98,6 +103,95 @@ const FROZEN_GLOBAL_INPUT = /\.(?:css|scss|sass|less)$|(?:^|\/)(?:tokens?|themes
 /** Global inputs that can affect every frozen story without a direct import. */
 export function isFrozenGlobalInput(file) {
   return FROZEN_GLOBAL_INPUT.test(file);
+}
+
+/** Pick separate loopback ports; the verifier still refuses a port already recorded by a peer. */
+async function freePort(exclude) {
+  for (;;) {
+    const server = createServer();
+    const port = await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve(server.address().port));
+    });
+    await new Promise((resolve) => server.close(resolve));
+    if (port !== exclude) return port;
+  }
+}
+
+/** Rebuild a static Storybook under the fleet heavy lock, preserving the prior output until success. */
+export function rebuildStatic(worktree, { run = spawnSync, env = process.env } = {}) {
+  const output = path.join(worktree, "apps", "storybook", "storybook-static");
+  const token = randomUUID();
+  const staging = `${output}.vibe-build-${token}`;
+  const previous = `${output}.vibe-previous-${token}`;
+  const slots = String(env.HEAVY_SLOTS || "1");
+  const result = run("bash", [SLOT_LOCK, "--slots", slots, "heavy", `frozen-render ${path.basename(worktree)}`,
+    process.execPath, RUN_BOUNDED, "600", "pnpm", "exec", "storybook", "build", "--output-dir", staging], {
+    cwd: path.join(worktree, "apps", "storybook"), encoding: "utf8", env,
+  });
+  if (result.error || result.status !== 0 || !existsSync(path.join(staging, "index.html"))) {
+    rmSync(staging, { recursive: true, force: true });
+    throw new Error(`Storybook static build failed for the named checkout: ${result.error?.message ?? result.stderr ?? "missing index"}`);
+  }
+  let movedPrevious = false;
+  let installedStaging = false;
+  try {
+    if (existsSync(output)) {
+      renameSync(output, previous);
+      movedPrevious = true;
+    }
+    renameSync(staging, output);
+    installedStaging = true;
+    rmSync(previous, { recursive: true, force: true });
+  } catch (error) {
+    if (installedStaging) rmSync(output, { recursive: true, force: true });
+    if (movedPrevious && existsSync(previous)) renameSync(previous, output);
+    rmSync(staging, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function currentHead(worktree) {
+  return execFileSync("git", ["-C", worktree, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+}
+
+function resolveCommit(worktree, ref) {
+  return execFileSync("git", ["-C", worktree, "rev-parse", `${ref}^{commit}`], { encoding: "utf8" }).trim();
+}
+
+/** Own both comparison servers and the browser for the whole render, including failures. */
+export async function runOwnedFrozenComparison({ repo, baseDir, base, storyFiles, out, viewport, timeoutMs, now },
+  { withServer = withVerifyStorybook, nextPort = freePort, launch, compare = frozenStoryFiles,
+    headOf = currentHead, resolveCommit: resolve = resolveCommit, buildStatic = rebuildStatic } = {}) {
+  const basePort = await nextPort();
+  const headPort = await nextPort(basePort);
+  const baseStatic = path.join(baseDir, "apps", "storybook", "storybook-static");
+  const headStatic = path.join(repo, "apps", "storybook", "storybook-static");
+  const useStatic = existsSync(baseStatic) && existsSync(headStatic);
+  if (existsSync(baseStatic) !== existsSync(headStatic)) {
+    throw new Error("Frozen render needs both Storybook builds or neither; one side has no build.");
+  }
+  let comparisonBase = base;
+  if (useStatic) {
+    comparisonBase = resolve(repo, base);
+    const baseHead = headOf(baseDir);
+    const head = headOf(repo);
+    if (baseHead !== comparisonBase) throw new Error("Prepared base checkout does not match the named base commit.");
+    await buildStatic(baseDir, baseHead);
+    await buildStatic(repo, head);
+    if (headOf(baseDir) !== baseHead || headOf(repo) !== head) {
+      throw new Error("Storybook checkout head moved during its static build; comparison refused.");
+    }
+  }
+  return withServer(baseDir, basePort, (baseUrl) => withServer(repo, headPort, async (headUrl) => {
+    const browser = await launch();
+    try {
+      return await compare({ repo, base: comparisonBase, storyFiles, out, viewport, timeoutMs, now, baseUrl, headUrl, browser });
+    } finally {
+      await browser.close();
+    }
+  }, useStatic ? { staticDir: headStatic } : {}),
+  useStatic ? { staticDir: baseStatic } : {});
 }
 
 /** Every story ID in `storyFiles`, read from their text at `base` in `repo`. */
@@ -409,7 +503,7 @@ function parseViewport(text) {
 
 async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: {
-    repo: { type: "string" }, base: { type: "string" }, "base-url": { type: "string" }, "head-url": { type: "string" },
+    repo: { type: "string" }, base: { type: "string" }, "base-dir": { type: "string" },
     "story-file": { type: "string", multiple: true }, out: { type: "string" }, viewport: { type: "string" }, "timeout-ms": { type: "string" },
     now: { type: "string" }, dir: { type: "string" },
   } });
@@ -423,8 +517,8 @@ async function main(argv) {
   if (positionals.length) {
     throw new Error(`unknown command ${positionals[0]}; the only command is prepare-base`);
   }
-  if (!values.repo || !values.base || !values["base-url"] || !values["head-url"] || !values["story-file"]?.length || !values.out) {
-    throw new Error("Usage: frozen-render.mjs --repo <worktree> --base <commit> --base-url <url> --head-url <url> --story-file <path> [--story-file ...] --out <dir> [--viewport WxH] [--timeout-ms N] [--now <ISO time>]");
+  if (!values.repo || !values.base || !values["base-dir"] || !values["story-file"]?.length || !values.out) {
+    throw new Error("Usage: frozen-render.mjs --repo <worktree> --base <commit> --base-dir <prepared worktree> --story-file <path> [--story-file ...] --out <dir> [--viewport WxH] [--timeout-ms N] [--now <ISO time>]");
   }
   const timeoutMs = values["timeout-ms"] === undefined ? DEFAULT_TIMEOUT_MS : Number(values["timeout-ms"]);
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1000) {
@@ -435,13 +529,10 @@ async function main(argv) {
     throw new Error("--now must be an ISO time, such as 2026-01-01T12:00:00.000Z");
   }
   const viewport = parseViewport(values.viewport);
-  const browser = await loadChromium(values.repo).launch({ args: [...DETERMINISTIC_CHROMIUM_ARGS] });
-  try {
-    return await frozenStoryFiles({ repo: values.repo, base: values.base, storyFiles: values["story-file"], baseUrl: values["base-url"],
-      headUrl: values["head-url"], browser, out: path.resolve(values.out), viewport, timeoutMs, now });
-  } finally {
-    await browser.close();
-  }
+  const chromium = loadChromium(values.repo);
+  return runOwnedFrozenComparison({ repo: values.repo, baseDir: values["base-dir"], base: values.base,
+    storyFiles: values["story-file"], out: path.resolve(values.out), viewport, timeoutMs, now },
+  { launch: () => chromium.launch({ args: [...DETERMINISTIC_CHROMIUM_ARGS], handleSIGINT: false, handleSIGTERM: false }) });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
@@ -451,6 +542,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     process.exitCode = summary.ok ? 0 : 1;
   } catch (error) {
     process.stdout.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 2;
+    if (process.exitCode !== 130 && process.exitCode !== 143) process.exitCode = 2;
   }
 }

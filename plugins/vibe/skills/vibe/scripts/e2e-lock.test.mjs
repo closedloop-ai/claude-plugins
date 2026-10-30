@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BUSY_EXIT, DUPLICATE_EXIT, composeProjectFor, defaultLockDir, readHolder, release, runningForeignCompose, sameWorktreeEntry, tryAcquire } from "./e2e-lock.mjs";
+import { BUSY_EXIT, DUPLICATE_EXIT, captureOwnedDockerResources, composeProjectFor, defaultLockDir, readHolder, release, removeOwnedDockerResources, runningForeignCompose, sameWorktreeEntry, tryAcquire } from "./e2e-lock.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "e2e-lock.mjs");
 const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "vibe-e2e-lock-")));
@@ -24,6 +24,195 @@ process.chdir(root);
 const owner = (pid, token) => ({ pid, token, cwd: root, command: "e2e", startedAt: "2026-10-19T00:00:00.000Z" });
 // A pid that cannot exist: above the macOS and Linux pid ceilings.
 const DEAD_PID = 99_999_999;
+const FULL_CONTAINER_ID = "a".repeat(64);
+const FULL_NETWORK_ID = "c".repeat(64);
+
+test("e2e lock and fleet helpers share the raw process identity primitive", () => {
+  const e2e = readFileSync(SCRIPT, "utf8");
+  const helpers = readFileSync(path.resolve(path.dirname(SCRIPT), "../../fleet-orchestrator/scripts/helpers.mjs"), "utf8");
+  const session = readFileSync(path.join(path.dirname(SCRIPT), "session-processes.mjs"), "utf8");
+  const shared = readFileSync(path.resolve(path.dirname(SCRIPT), "../../../shared/process-identity.mjs"), "utf8");
+  assert.match(shared, /export function readProcessIdentity\(/);
+  assert.match(e2e, /import \{ readProcessIdentity \} from "\.\.\/\.\.\/\.\.\/shared\/process-identity\.mjs"/);
+  assert.doesNotMatch(e2e, /function (?:processIdentity|readProcessIdentity)\(/);
+  assert.match(helpers, /import \{ readProcessIdentity \} from "\.\.\/\.\.\/\.\.\/shared\/process-identity\.mjs"/);
+  assert.match(helpers, /export const readIdentity = readProcessIdentity/);
+  assert.doesNotMatch(helpers, /function readIdentity\(/);
+  assert.match(session, /\nfunction processIdentity\(/);
+  assert.doesNotMatch(session, /export function processIdentity\(/);
+});
+
+test("Docker inspect read failures retain an owned resource; only exact absence counts gone", () => {
+  const record = { project: null, containers: [{ id: FULL_CONTAINER_ID, created: "2026-10-29T00:00:00Z", project: "qa-owned" }], volumes: [], networks: [] };
+  let removed = false;
+  const refused = ([, action]) => action === "inspect"
+    ? { status: 1, stderr: "permission denied while connecting to daemon" }
+    : (removed = true, { status: 0 });
+  assert.throws(() => removeOwnedDockerResources(record, { run: refused }), /Docker .*inspect failed/);
+  assert.equal(removed, false);
+  const absent = ([, action]) => action === "inspect"
+    ? { status: 1, stdout: "[]\n", stderr: `Error response from daemon: No such container: ${FULL_CONTAINER_ID}` }
+    : (removed = true, { status: 0 });
+  assert.deepEqual(removeOwnedDockerResources(record, { run: absent }).removed, []);
+  assert.equal(removed, false);
+});
+
+test("Docker project capture requests full network IDs before comparing inspect identity", () => {
+  const project = "vibe-e2e-test";
+  const fullNetworkId = "b".repeat(64);
+  const shortNetworkId = fullNetworkId.slice(0, 12);
+  const lists = [];
+  const run = ([kind, action, ...args]) => {
+    if (action === "ls") {
+      lists.push([kind, ...args]);
+      if (kind !== "network") return { status: 0, stdout: "" };
+      return { status: 0, stdout: args.includes("--no-trunc") ? fullNetworkId : shortNetworkId };
+    }
+    if (kind === "network" && action === "inspect") {
+      return { status: 0, stdout: JSON.stringify([{ Id: fullNetworkId, Created: "2026-10-29T00:00:00Z",
+        Labels: { "com.docker.compose.project": project } }]) };
+    }
+    throw new Error(`unexpected Docker action ${kind} ${action}`);
+  };
+  const record = captureOwnedDockerResources({ project }, { run });
+  assert.deepEqual(record.networks.map((entry) => entry.id), [fullNetworkId]);
+  assert.ok(lists.find(([kind]) => kind === "container").includes("--no-trunc"));
+  assert.ok(lists.find(([kind]) => kind === "network").includes("--no-trunc"));
+  assert.ok(!lists.find(([kind]) => kind === "volume").includes("--no-trunc"), "Docker volume ls has no no-trunc option");
+});
+
+test("Docker 29 volume and network not-found replies prove exact absence", () => {
+  const record = {
+    project: null,
+    containers: [],
+    volumes: [{ id: "owned-volume", created: "2026-10-29T00:00:00Z", project: "qa-owned" }],
+    networks: [{ id: FULL_NETWORK_ID, created: "2026-10-29T00:00:01Z", project: "qa-owned" }],
+  };
+  const absent = ([kind, action, id]) => {
+    assert.equal(action, "inspect");
+    if (kind === "volume") return { status: 1, stdout: "[]\n",
+      stderr: `Error response from daemon: get ${id}: no such volume` };
+    if (kind === "network") return { status: 1, stdout: "[]\n",
+      stderr: `Error response from daemon: network ${id} not found` };
+    throw new Error(`unexpected Docker kind ${kind}`);
+  };
+  assert.deepEqual(removeOwnedDockerResources(record, { run: absent }).removed, []);
+  assert.throws(() => removeOwnedDockerResources(record, { run: ([kind, action, id]) => ({ status: 1,
+    stderr: kind === "volume" ? `Error response from daemon: get other: no such volume`
+      : `Error response from daemon: network ${id} permission denied` }) }), /Docker .*inspect failed/);
+});
+
+test("Docker capture refuses container prefixes, resolved ID mismatch, missing ownership and invalid birth", () => {
+  const inspect = (value) => ([, action]) => action === "inspect"
+    ? { status: 0, stdout: JSON.stringify([value]) } : { status: 0, stdout: "" };
+  const value = { Id: FULL_CONTAINER_ID, Created: "2026-10-29T00:00:00Z",
+    Config: { Labels: { "com.docker.compose.project": "qa-owned" } } };
+  const capture = (id, body) => captureOwnedDockerResources({ containers: [id], volumes: [], networks: [] }, { run: inspect(body) });
+  assert.throws(() => capture(FULL_CONTAINER_ID.slice(0, 12), value), /full container ID/);
+  assert.throws(() => capture("b".repeat(64), value), /changed identity|resolved ID/);
+  assert.throws(() => capture(FULL_CONTAINER_ID, { ...value, Config: { Labels: {} } }), /project ownership/);
+  assert.throws(() => capture(FULL_CONTAINER_ID, { ...value, Created: "not-a-date" }), /creation witness/);
+});
+
+test("recorded Docker resources are removed with stopped containers, volumes and networks", () => {
+  const project = "vibe-e2e-test";
+  const resources = new Map([
+    [`container:${FULL_CONTAINER_ID}`, { Id: FULL_CONTAINER_ID, Created: "2026-10-29T00:00:00Z", Config: { Labels: { "com.docker.compose.project": project } } }],
+    ["volume:v1", { Name: "v1", CreatedAt: "2026-10-29T00:00:01Z", Labels: { "com.docker.compose.project": project } }],
+    [`network:${FULL_NETWORK_ID}`, { Id: FULL_NETWORK_ID, Created: "2026-10-29T00:00:02Z", Labels: { "com.docker.compose.project": project } }],
+  ]);
+  const removed = [];
+  const run = ([kind, action, ...args]) => {
+    if (action === "ls") return { status: 0, stdout: [...resources.keys()].filter((key) => key.startsWith(`${kind}:`)).map((key) => key.split(":")[1]).join("\n") };
+    const id = args.at(-1);
+    if (action === "inspect") {
+      if (resources.has(`${kind}:${id}`)) return { status: 0, stdout: JSON.stringify([resources.get(`${kind}:${id}`)]) };
+      const stderr = kind === "container" ? `Error response from daemon: No such container: ${id}`
+        : kind === "volume" ? `Error response from daemon: get ${id}: no such volume`
+          : `Error response from daemon: network ${id} not found`;
+      return { status: 1, stdout: "[]\n", stderr };
+    }
+    if (action === "rm") {
+      removed.push(`${kind}:${id}`);
+      resources.delete(`${kind}:${id}`);
+      return { status: 0, stdout: "" };
+    }
+    throw new Error(`unexpected Docker action ${kind} ${action}`);
+  };
+  const record = captureOwnedDockerResources({ project }, { run });
+  assert.deepEqual(record.containers.map((entry) => entry.id), [FULL_CONTAINER_ID]);
+  assert.deepEqual(removeOwnedDockerResources(record, { run }).removed.map((entry) => entry.id), [FULL_CONTAINER_ID, "v1", FULL_NETWORK_ID]);
+  assert.deepEqual(removed, [`container:${FULL_CONTAINER_ID}`, "volume:v1", `network:${FULL_NETWORK_ID}`]);
+});
+
+test("a changed Docker creation witness or foreign label refuses all removal", () => {
+  const project = "vibe-e2e-test";
+  const resource = { Id: FULL_CONTAINER_ID, Created: "2026-10-29T00:00:00Z", Config: { Labels: { "com.docker.compose.project": project } } };
+  let calls = 0;
+  const run = ([kind, action]) => {
+    if (action === "inspect") return { status: 0, stdout: JSON.stringify([resource]) };
+    if (action === "rm") calls += 1;
+    return { status: 0, stdout: "" };
+  };
+  const record = captureOwnedDockerResources({ project, containers: [FULL_CONTAINER_ID], volumes: [], networks: [] }, { run });
+  resource.Created = "2026-10-29T00:00:01Z";
+  assert.throws(() => removeOwnedDockerResources(record, { run }), /changed identity/);
+  assert.equal(calls, 0);
+  resource.Created = "2026-10-29T00:00:00Z";
+  resource.Config.Labels["com.docker.compose.project"] = "foreign";
+  assert.throws(() => removeOwnedDockerResources(record, { run }), /changed identity/);
+  assert.equal(calls, 0);
+});
+
+test("a new unrecorded resource in an owned project is left for an owner to inspect", () => {
+  let removals = 0;
+  const project = "vibe-e2e-test";
+  const run = ([kind, action]) => {
+    if (action === "ls") return { status: 0, stdout: kind === "container" ? FULL_CONTAINER_ID : "" };
+    if (action === "inspect") return { status: 0, stdout: JSON.stringify([{ Id: FULL_CONTAINER_ID, Created: "2026-10-29T00:00:00Z",
+      Config: { Labels: { "com.docker.compose.project": project } } }]) };
+    if (action === "rm") removals += 1;
+    return { status: 0, stdout: "" };
+  };
+  assert.throws(() => removeOwnedDockerResources({ project, containers: [], volumes: [], networks: [] }, { run }), /not recorded/);
+  assert.equal(removals, 0);
+});
+
+test("a run removes its fake Docker project even when the command fails", () => {
+  const dir = path.join(root, "owned-docker-fixture");
+  mkdirSync(dir);
+  const docker = path.join(dir, "docker");
+  writeFileSync(docker, `#!/bin/sh
+dir=${JSON.stringify(dir)}
+for arg in "$@"; do last="$arg"; done
+case "$1 $2" in
+  "version ") exit 0 ;;
+  "container ls") [ -f "$dir/container" ] && echo ${FULL_CONTAINER_ID}; exit 0 ;;
+  "volume ls") [ -f "$dir/volume" ] && echo v1; exit 0 ;;
+  "network ls") [ -f "$dir/network" ] && echo ${FULL_NETWORK_ID}; exit 0 ;;
+  "container inspect") [ -f "$dir/container" ] || { printf 'Error response from daemon: No such container: %s\n' "$last" >&2; exit 1; }; printf '[{"Id":"${FULL_CONTAINER_ID}","Created":"2026-10-29T00:00:00Z","Config":{"Labels":{"com.docker.compose.project":"%s"}}}]\n' "$(cat "$dir/project")"; exit 0 ;;
+  "volume inspect") [ -f "$dir/volume" ] || { printf 'Error response from daemon: get %s: no such volume\n' "$last" >&2; exit 1; }; printf '[{"Name":"v1","CreatedAt":"2026-10-29T00:00:00Z","Labels":{"com.docker.compose.project":"%s"}}]\n' "$(cat "$dir/project")"; exit 0 ;;
+  "network inspect") [ -f "$dir/network" ] || { printf 'Error response from daemon: network %s not found\n' "$last" >&2; exit 1; }; printf '[{"Id":"${FULL_NETWORK_ID}","Created":"2026-10-29T00:00:00Z","Labels":{"com.docker.compose.project":"%s"}}]\n' "$(cat "$dir/project")"; exit 0 ;;
+  "container rm") rm "$dir/container"; exit 0 ;;
+  "volume rm") rm "$dir/volume"; exit 0 ;;
+  "network rm") rm "$dir/network"; exit 0 ;;
+esac
+exit 9
+`);
+  chmodSync(docker, 0o700);
+  const create = `const fs=require('node:fs');const d=${JSON.stringify(dir)};fs.writeFileSync(d+'/project',process.env.COMPOSE_PROJECT_NAME);for(const x of ['container','volume','network'])fs.writeFileSync(d+'/'+x,'created');const p=fs.readdirSync(d).find(x=>x.startsWith('e2e-cleanup-'));fs.writeFileSync(d+'/owner.json',JSON.stringify(JSON.parse(fs.readFileSync(d+'/'+p)).owner));process.exit(7)`;
+  const env = { ...process.env, VIBE_E2E_DOCKER: docker };
+  Reflect.deleteProperty(env, "COMPOSE_PROJECT_NAME");
+  Reflect.deleteProperty(env, "VIBE_E2E_FOREIGN_COMPOSE");
+  const result = spawnSync(process.execPath, [SCRIPT, "run", "--head", SHA, "--owner", "writer-a", "--ticket", "ticket-one",
+    "--lock-dir", path.join(dir, "lock"), process.execPath, "-e", create],
+    { encoding: "utf8", env });
+  assert.equal(result.status, 7, result.stderr);
+  const savedOwner = JSON.parse(readFileSync(path.join(dir, "owner.json"), "utf8"));
+  assert.equal(savedOwner.name, "writer-a");
+  assert.equal(savedOwner.ticket, "ticket-one");
+  for (const kind of ["container", "volume", "network"]) assert.equal(existsSync(path.join(dir, kind)), false, kind);
+});
 
 test("the lock is one folder per machine, under the vibe home", () => {
   assert.equal(defaultLockDir("/home/someone"), path.join("/home/someone", ".codex", "vibe", "locks", "e2e-stack"));

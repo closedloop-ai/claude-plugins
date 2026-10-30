@@ -15,14 +15,13 @@ Save `pnpm test:lanes` output as `<gitdir>/vibe-lane-report.txt` so
 `pre-pr-lanes.mjs check --report` reads a private, owned report.
 The `control` procedure may write only its own gitignored `.control/` runtime
 files, then must move its captures out of the worktree as directed below.
-When a check needs a Storybook dev server, start each new server through
-`node ../skills/vibe/scripts/verify-storybook-process.mjs start --worktree
-"<the server's own worktree>" --port <port>`. It writes a private process
-birth record and log in that worktree's git directory. Stop each server this
-turn started with the matching `stop` command before returning, even after a
-failed render. Never launch Storybook with raw `nohup`, a backgrounded shell,
-or a pattern-based killer. Do not adopt an unrecorded server that was already
-running; report its exact port and PID for engineering.
+For a frozen comparison, run handoff's `frozen-render.mjs` with its prepared
+base worktree; it owns both servers and their URLs through the verifier run
+wrapper. For another check needing Storybook, use
+`verify-storybook-process.mjs run` so its finalizer stops the server on success
+or failure. Never launch an ad hoc static server, use separate start and stop
+commands for a comparison, or adopt an unrecorded server already running.
+Report an existing port and PID without signaling it.
 All source fixes go to the SAME persistent `vibe-change-worker`. Nobody writes
 tests in vibe or handoff unless the person explicitly asks for a pull request;
 the writer only repairs existing tests its change broke

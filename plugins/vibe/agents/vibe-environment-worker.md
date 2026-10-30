@@ -414,6 +414,7 @@ changes and gates fields.
      "Keys to see this work", then every `overlap`, `assertionChanges`,
      `contractChanges` and answered `asks` entry, plus the change log's
      `Control:`, `Baseline inventory:` and `Baseline element:` ledger lines.
+      Add each `Feature map:` line from the change log as a standalone line in Summary, verbatim. Add none when the log has none.
      Copy each `assertionChanges` path and line exactly, not just a test-file
      name or a count. For each `overlapUnavailable`, add its exact
      `Overlap unavailable: #<number> (<reason>)` line and do not claim no

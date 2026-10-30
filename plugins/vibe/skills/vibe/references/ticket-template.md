@@ -248,6 +248,7 @@ plus Codex subagent ids when applicable. A worker id is not an orchestrator id.>
   branch. Internal engineering docs under `docs/` are left to engineering's
   pull request>, or
   "None: no existing product docs page describes the changed features"
+- Feature map: <each `Feature map:` line from the writer's change log, verbatim, for the requested pull request>, or "None: no screen behavior or reach changed"
 - Missing tests (engineering scope): <every test the session still needs,
   which engineering writes in its pull request: the behavior and stable row
   ID each covers, the files that need coverage, and any existing test a human

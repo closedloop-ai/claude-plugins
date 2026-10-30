@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import re
 import time
 
 import pytest
@@ -19,7 +20,7 @@ SPEC.loader.exec_module(runner)
 
 def test_one_case_per_claude_prompt_and_role_names() -> None:
     found = runner.cases()
-    assert len(found) == 105
+    assert len(found) == 108
     assert len({c["name"] for c in found}) == len(found)
     assert all(c["name"].startswith(("executive-", "product-manager-", "orchestrator-")) for c in found)
     for case in found:
@@ -31,6 +32,238 @@ def test_one_case_per_claude_prompt_and_role_names() -> None:
     assert "my name is the product manager" in next(
         c["prompt"] for c in found if "real-exchange" in c["name"]
     )
+
+
+def test_fleet_cases_load_the_installed_skill_without_leaking_answer_lines() -> None:
+    """Both runtimes consult the same plugin instructions before grading behavior."""
+    cases = {case["name"]: case["prompt"] for case in runner.cases()}
+    for name in ("orchestrator-parallel-e2e-queued", "orchestrator-owned-qa-cleanup", "orchestrator-parallel-build-helpers"):
+        prompt = cases[name]
+        assert "if you are in Claude Code, load `vibe:fleet-orchestrator`" in prompt
+        assert "If you are in Codex, read the installed repository snapshot" in prompt
+        assert "../market/plugins/vibe/skills/fleet-orchestrator/SKILL.md" in prompt
+        assert "../market/plugins/vibe/skills/fleet-orchestrator/references/templates.md" in prompt
+        assert "Do not answer until you have read the instructions" in prompt
+        assert "Let the skill and its template determine the response shape" in prompt
+        assert "Reply in exactly this form" not in prompt
+        for label in ("START_INTEGRATION:", "START_TYPECHECK:", "DEPENDENCIES:",
+                      "REPORT:", "ETA:", "ACTION:", "DOCKER:", "FOREIGN:", "STATUS:"):
+            assert label not in prompt, (name, label)
+    snapshot_read = [{"name": "exec_command", "arguments": "cat ../market/plugins/vibe/skills/fleet-orchestrator/SKILL.md"}]
+    assert runner.loaded_plugin_read(snapshot_read, "fleet-orchestrator")
+    source_read = [{"name": "exec_command", "arguments": "cat plugins/vibe/skills/fleet-orchestrator/SKILL.md"}]
+    assert not runner.loaded_plugin_read(source_read, "fleet-orchestrator")
+
+
+def test_parallel_e2e_scenario_states_queue_wait_and_run_duration() -> None:
+    """The e2e critical path has both durations needed for the expected ETA."""
+    prompt = next(case["prompt"] for case in runner.cases() if case["name"] == "orchestrator-parallel-e2e-queued")
+    wait = re.search(r"unrelated e2e run has (\d+) minutes left", prompt)
+    assert "This PR's selected e2e run is queued behind it; when that run ends" in prompt
+    duration = re.search(r"selected e2e starts and lasts (\d+) minutes", prompt)
+    integration = re.search(r"Integration takes (\d+) minutes", prompt)
+    typecheck = re.search(r"typecheck takes (\d+) minutes", prompt)
+    assert wait is not None
+    assert duration is not None
+    assert integration is not None
+    assert typecheck is not None
+    assert "no prerequisite edge to each other or to e2e" in prompt
+    assert max(int(wait.group(1)) + int(duration.group(1)),
+               int(integration.group(1)), int(typecheck.group(1))) == 20
+
+
+def test_fleet_scenarios_require_the_plugin_to_override_stale_coordination() -> None:
+    """Main should follow stale coordination that only the new fleet rules supersede."""
+    cases = {case["name"]: case["prompt"] for case in runner.cases()}
+    lane = cases["orchestrator-parallel-e2e-queued"]
+    assert "saved remaining-steps checklist" in lane
+    assert "finish\n  this PR's e2e on machine A, then run integration, then run typecheck" in lane
+    assert "is the current working sequence" in lane
+    cleanup = cases["orchestrator-owned-qa-cleanup"]
+    assert "saved monitor convention" in cleanup
+    assert "terminal PR events are report-only" in cleanup
+    assert "wait for an explicit operator cleanup request" in cleanup
+    assert "current working convention" in cleanup
+    assert "action the monitor-event handler\ntakes as it processes this event" in cleanup
+    assert "Do not substitute a pending state" in cleanup
+
+
+def test_parallel_fleet_graders_accept_plain_behavior_without_template_labels(tmp_path: Path) -> None:
+    """Behavior, not copied answer labels, decides the lane and helper evals."""
+    cases = {case["name"]: case for case in runner.cases()}
+    lane = cases["orchestrator-parallel-e2e-queued"]
+    parallel = (
+        "Start integration and typecheck immediately on allowed machine B, concurrently while e2e is queued on machine A. "
+        "Neither lane depends on e2e. Machine A waits 8 minutes, then its e2e takes 12 minutes; "
+        "machine B runs integration for 10 minutes and typecheck for 4 minutes at the same time. "
+        "Time to ready is 20 minutes, from the longest dependent path on A: wait then e2e."
+    )
+    checks, _ = runner.deterministic(lane, parallel, tmp_path, [])
+    assert all(check["passed"] for check in checks if check["grader"] != "loaded-plugin"), checks
+    serial = "Wait for e2e on machine A to finish, then start integration and typecheck on B. Time to ready is 34 minutes."
+    checks, _ = runner.deterministic(lane, serial, tmp_path, [])
+    assert any(not check["passed"] for check in checks if check["grader"] != "loaded-plugin")
+
+
+def test_fleet_semantic_graders_accept_real_ordering_and_require_every_concept(tmp_path: Path) -> None:
+    """Transcript wording order must not decide the four behavior checks."""
+    cases = {case["name"]: case for case in runner.cases()}
+    def matches(case: str, grader: str, reply: str) -> bool:
+        path = Path(__file__).parents[1] / case / "graders" / f"{grader}.md"
+        meta, _ = runner.document(path)
+        return re.search(meta["pattern"], reply, re.IGNORECASE) is not None
+
+    lane = "orch-parallel-e2e-queued"
+    dependency = "These two have no prerequisite on each other or on e2e, so they run in parallel."
+    assert matches(lane, "no-e2e-dependency", dependency)
+    assert matches(lane, "no-e2e-dependency", "E2e is queued. Nothing waits on a true prerequisite; all three lanes are independent.")
+    assert matches(lane, "no-e2e-dependency", "E2e is queued. No lane has a true prerequisite; the checks run independently.")
+    assert not matches(lane, "no-e2e-dependency", "These two have no prerequisite on each other, so they run in parallel.")
+    assert not matches(lane, "no-e2e-dependency", "E2e is queued, and these two lanes are selected.")
+    eta = "Time to ready. The longest dependent path is the 8-minute wait plus our 12-minute e2e, which gives 20 minutes."
+    assert matches(lane, "parallel-eta", eta)
+    assert matches(lane, "parallel-eta", "Time to ready is 20 minutes, set by the e2e path.")
+    for missing in (
+        "The longest dependent path is the 8-minute wait plus 12-minute e2e, which gives 20 minutes.",
+        "Time to ready is 20 minutes after the e2e run.",
+        "Time to ready follows the longest dependent path through the wait and e2e.",
+    ):
+        assert not matches(lane, "parallel-eta", missing), missing
+
+    cleanup = "orch-owned-qa-cleanup"
+    foreign = "Left untouched:\nqa-foreign keeps running and gets no cleanup, no stop."
+    assert matches(cleanup, "leave-foreign-alone", foreign)
+    assert not matches(cleanup, "leave-foreign-alone", "The other stack keeps running and gets no cleanup.")
+    assert not matches(cleanup, "leave-foreign-alone", "qa-foreign is recorded on the board.")
+    assert not matches(cleanup, "leave-foreign-alone", "qa-foreign will be removed. qa-owned gets no cleanup.")
+    assert not matches(cleanup, "leave-foreign-alone", "Left untouched: qa-foreign will be removed.")
+    terminal = "PR 42 is closed, so I reconcile the recorded helper now.\nqa-owned has reached its ending condition."
+    assert matches(cleanup, "reconcile-terminal-pr", terminal)
+    assert matches(cleanup, "reconcile-terminal-pr", "Reconcile qa-owned now for acme/app#42 after PR closure.")
+    for missing in (
+        "PR 42 is still open, so I reconcile qa-owned now.",
+        "PR 42 is closed, so I reconcile the recorded helper now.",
+        "PR 42 is closed; qa-owned remains recorded.",
+        "PR 42 is closed, so I reconcile qa-owned later.",
+        "PR 42 is closed. I inspect qa-foreign now; I will reconcile qa-owned later.",
+    ):
+        assert not matches(cleanup, "reconcile-terminal-pr", missing), missing
+
+    helpers = cases["orchestrator-parallel-build-helpers"]
+    split = (
+        "Assign the proof test tests/criterion-a.test.ts exclusively to helper branch proof-a. "
+        "Assign the whole new module src/new-index/index.ts and src/new-index/mapper.ts exclusively to a different helper branch module-b. "
+        "These allowlists are disjoint, with one writer per branch. Helpers never edit the ticket branch and never repair defects "
+        "in the ticket writer's code; route such defects back to the ticket writer. "
+        "Helpers return commits or proof but never integrate them. The ticket writer alone integrates, "
+        "and an independent read-only reviewer checks the work."
+    )
+    checks, _ = runner.deterministic(helpers, split, tmp_path, [])
+    assert all(check["passed"] for check in checks if check["grader"] != "loaded-plugin"), checks
+    overlap = (
+        "Use one helper branch to edit tests/criterion-a.test.ts, src/new-index/index.ts and "
+        "src/new-index/mapper.ts while the ticket writer also edits that branch. "
+        "The helper repairs the ticket writer's defect and merges directly."
+    )
+    checks, _ = runner.deterministic(helpers, overlap, tmp_path, [])
+    assert any(not check["passed"] for check in checks if check["grader"] != "loaded-plugin")
+
+    cleanup = cases["orchestrator-owned-qa-cleanup"]
+    owned = (
+        "PR 42 closed, so reconcile qa-owned now without waiting for the operator. "
+        "Stop only its recorded process and remove the exact recorded Docker container, volume and network "
+        "after checking identity and creation witnesses. Leave qa-foreign untouched because it belongs to another worker "
+        "and has no record. Fleet status: qa-owned owner writer-a ticket ISS-13420 is cleaned up; qa-foreign remains."
+    )
+    checks, _ = runner.deterministic(cleanup, owned, tmp_path, [])
+    assert all(check["passed"] for check in checks if check["grader"] != "loaded-plugin"), checks
+    foreign_removed = "PR 42 closed. Remove qa-foreign with its container, volume and network; qa-owned can wait."
+    checks, _ = runner.deterministic(cleanup, foreign_removed, tmp_path, [])
+    assert any(not check["passed"] for check in checks if check["grader"] != "loaded-plugin")
+
+
+def test_fleet_graders_accept_preserved_codex_and_claude_reply_word_orders(tmp_path: Path) -> None:
+    """Preserved Codex replies and Claude-style paragraph orders carry the same behavior."""
+    cases = {case["name"]: case for case in runner.cases()}
+    codex_lane = """Integration and typecheck start now on Machine B in parallel, using its two free heavy slots. The selected e2e remains queued on Machine A: 8 minutes for the unrelated run, then 12 minutes for this PR’s e2e.
+
+There are no prerequisite edges between these lanes, so integration (10 minutes) and typecheck (4 minutes) run concurrently with the queued/running e2e. No capacity move or scheduling change is needed.
+
+Ready in approximately **20 minutes**, assuming all lanes pass and the e2e queue timing holds. The longest path is **8 minutes queued → 12 minutes e2e**; integration and typecheck finish within that window."""
+    codex_lane_with_rejected_history = (
+        "The saved checklist says to wait for e2e before integration and typecheck. "
+        "That serial order is superseded. " + codex_lane
+    )
+    codex_cleanup = """Lifecycle cleanup report
+
+- Reconcile recorded helper `qa-owned` now because `acme/app#42` is closed; no operator cleanup request is required.
+- Recheck its PID birth identity and creation witnesses, then remove only the exact recorded `qa-owned` container, volumes, and network. Refuse removal if any recorded identity or witness no longer matches.
+- Leave all `qa-foreign` resources untouched: they are unrecorded by this program and belong to another worker and ticket.
+- Final status: `qa-owned` cleanup pending reconciliation; owner `writer-a`, ticket `ISS-13420`, PR `acme/app#42` closed. Re-arm the fleet watcher after handling the event."""
+    claude_lane = (
+        "Machine B can start typecheck and integration now in parallel while e2e remains queued on Machine A. "
+        "These two have no prerequisite on each other or on e2e. Time to ready is 20 minutes. "
+        "The longest dependent path is the 8-minute queue followed by the 12-minute e2e."
+    )
+    claude_cleanup = (
+        "PR 42 is closed, so I reconcile the recorded helper now. qa-owned has reached its ending condition. "
+        "After checking exact identity and creation witnesses, remove its exact recorded containers, volumes and network. "
+        "Left untouched: qa-foreign keeps running and gets no cleanup or stop. "
+        "Final status gives owner writer-a and ticket ISS-13420."
+    )
+    codex_cleanup_plain = (
+        "PR 42 closed, so reconcile qa-owned now. After rechecking its PID birth identity and Docker creation witnesses, "
+        "the handler removes only its recorded qa-owned container, volumes and network. Leave qa-foreign untouched. "
+        "Final status: writer-a and ISS-13420 are reconciled."
+    )
+    codex_cleanup_match = (
+        "Reconcile qa-owned now for writer-a and ISS-13420 after PR closure on acme/app#42. "
+        "Remove the exact recorded container, volumes and network whose creation witnesses match qa-owned. "
+        "Leave qa-foreign untouched. Final status: qa-owned is cleaned up."
+    )
+    for name, replies in (("orchestrator-parallel-e2e-queued", (codex_lane, codex_lane_with_rejected_history, claude_lane)),
+                          ("orchestrator-owned-qa-cleanup", (codex_cleanup, codex_cleanup_plain, codex_cleanup_match, claude_cleanup))):
+        for reply in replies:
+            checks, _ = runner.deterministic(cases[name], reply, tmp_path, [])
+            assert all(check["passed"] for check in checks if check["grader"] != "loaded-plugin"), (name, checks)
+
+    def graded(name: str, grader: str, reply: str) -> bool:
+        checks, _ = runner.deterministic(cases[name], reply, tmp_path, [])
+        return next(check["passed"] for check in checks if check["grader"] == grader)
+
+    lane = "orchestrator-parallel-e2e-queued"
+    for grader, reply in (
+        ("integration-starts-on-b", codex_lane.replace("Integration and typecheck start now", "Typecheck starts now; integration waits")),
+        ("typecheck-starts-on-b", codex_lane.replace("Integration and typecheck start now", "Integration starts now; typecheck waits")),
+        ("no-e2e-dependency", codex_lane.replace("There are no prerequisite edges between these lanes", "E2e is a prerequisite for these lanes")),
+        ("parallel-report", codex_lane.replace("in parallel", "in sequence").replace("run concurrently", "run in sequence")),
+        ("parallel-report", codex_lane.replace("Machine A", "Machine C")),
+        ("parallel-report", codex_lane.replace("Machine B", "Machine C")),
+        ("parallel-eta", codex_lane.replace("**20 minutes**", "**34 minutes**")),
+        ("parallel-eta", codex_lane.replace("The longest path", "The total duration")),
+    ):
+        assert not graded(lane, grader, reply), grader
+
+    cleanup = "orchestrator-owned-qa-cleanup"
+    for grader, reply in (
+        ("reconcile-terminal-pr", codex_cleanup.replace("is closed", "is open").replace("#42` closed", "#42` open")),
+        ("reconcile-terminal-pr", codex_cleanup.replace("now because", "later because")),
+        ("reconcile-terminal-pr", codex_cleanup.replace("qa-owned", "qa-other")),
+        ("remove-owned-docker", codex_cleanup.replace("exact recorded", "unverified")),
+        (
+            "remove-owned-docker",
+            codex_cleanup
+            .replace("Recheck its PID birth identity and creation witnesses, then ", "")
+            .replace(" Refuse removal if any recorded identity or witness no longer matches.", ""),
+        ),
+        ("remove-owned-docker", codex_cleanup.replace("container, volumes, and network", "volumes and network")),
+        ("remove-owned-docker", codex_cleanup.replace("container, volumes, and network", "container and network")),
+        ("remove-owned-docker", codex_cleanup.replace("container, volumes, and network", "container and volumes")),
+        ("leave-foreign-alone", codex_cleanup.replace("Leave all `qa-foreign` resources untouched", "Remove all `qa-foreign` resources")),
+        ("report-owner-ticket", codex_cleanup.replace("writer-a", "writer-b")),
+        ("report-owner-ticket", codex_cleanup.replace("ISS-13420", "another ticket")),
+    ):
+        assert not graded(cleanup, grader, reply), grader
 
 
 @pytest.mark.parametrize("layout", [".codex-plugin", ".claude-plugin"])
