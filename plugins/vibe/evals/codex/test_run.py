@@ -202,7 +202,7 @@ Ready in approximately **20 minutes**, assuming all lanes pass and the e2e queue
     )
     claude_cleanup = (
         "PR 42 is closed, so I reconcile the recorded helper now. qa-owned has reached its ending condition. "
-        "After checking exact identity and creation witnesses, remove its recorded container, volumes and network. "
+        "After checking exact identity and creation witnesses, remove its exact recorded containers, volumes and network. "
         "Left untouched: qa-foreign keeps running and gets no cleanup or stop. "
         "Final status gives owner writer-a and ticket ISS-13420."
     )
