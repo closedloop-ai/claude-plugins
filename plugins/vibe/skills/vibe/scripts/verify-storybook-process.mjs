@@ -3,7 +3,7 @@
 // without adopting a process already running. Reuses session-processes' birth
 // and cwd checks; the run wrapper owns cleanup on success and failure.
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, lstatSync, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -75,27 +75,62 @@ async function ready(url, child) {
   throw new Error("The owned Storybook server did not become ready.");
 }
 
+/** Complete the existing ownership-checked stop before another signal listener can exit. */
+function stopBeforeSignalExit(worktree, port) {
+  const result = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "stop", "--worktree", worktree, "--port", String(port)],
+    { encoding: "utf8", timeout: 65_000 });
+  if (result.error || result.status !== 0) {
+    throw new Error(`Owned Storybook signal cleanup refused: ${result.error?.message ?? result.stdout ?? result.stderr}`);
+  }
+}
+
 /** Run a comparison or command while one verified server is owned, always stopping it. */
 export async function withVerifyStorybook(worktree, port, action, options = {}) {
+  const { startOwned = startVerifyStorybook, stopOwned = stopVerifyStorybook, waitReady = ready,
+    stopOwnedSync = stopBeforeSignalExit, signalEmitter = process, setExitCode = (code) => { process.exitCode = code; } } = options;
   const controller = new AbortController();
   let rejectInterrupt;
   const interruption = new Promise((_, reject) => { rejectInterrupt = reject; });
   interruption.catch(() => {});
-  const onSignal = (name) => { controller.abort(); rejectInterrupt(new Error(`Owned Storybook run interrupted by ${name}.`)); };
+  let interrupted;
+  let started;
+  let stoppedOnSignal = false;
+  const onSignal = (name) => {
+    if (interrupted) return;
+    interrupted = name;
+    if (started) {
+      try { stopOwnedSync(worktree, port); stoppedOnSignal = true; }
+      catch { /* The async finally retries and retains a refused private record. */ }
+    }
+    setExitCode(name === "SIGINT" ? 130 : 143);
+    controller.abort();
+    rejectInterrupt(new Error(`Owned Storybook run interrupted by ${name}.`));
+  };
   const onInt = () => onSignal("SIGINT");
   const onTerm = () => onSignal("SIGTERM");
-  process.on("SIGINT", onInt);
-  process.on("SIGTERM", onTerm);
-  let started;
+  // The caller may have a signal handler that exits immediately. Hold it until
+  // the owned server is stopped, including while startup is still pending.
+  const prior = new Map([["SIGINT", signalEmitter.rawListeners("SIGINT")], ["SIGTERM", signalEmitter.rawListeners("SIGTERM")]]);
+  for (const name of prior.keys()) signalEmitter.removeAllListeners(name);
+  signalEmitter.on("SIGINT", onInt);
+  signalEmitter.on("SIGTERM", onTerm);
   try {
-    started = await startVerifyStorybook(worktree, port, options);
+    started = await startOwned(worktree, port, options);
+    if (interrupted) throw new Error(`Owned Storybook run interrupted by ${interrupted}.`);
     const url = `http://127.0.0.1:${port}`;
-    await ready(url, { get exitCode() { return started.pid && processAlive(started.pid) ? null : 1; } });
+    await Promise.race([waitReady(url, { get exitCode() { return started.pid && processAlive(started.pid) ? null : 1; } }), interruption]);
     return await Promise.race([action(url, controller.signal), interruption]);
   } finally {
-    process.off("SIGINT", onInt);
-    process.off("SIGTERM", onTerm);
-    if (started) await stopVerifyStorybook(worktree, port);
+    try {
+      if (started && !stoppedOnSignal) await stopOwned(worktree, port);
+    } finally {
+      signalEmitter.off("SIGINT", onInt);
+      signalEmitter.off("SIGTERM", onTerm);
+      for (const [name, listeners] of prior) for (const listener of listeners) signalEmitter.on(name, listener);
+      if (interrupted) {
+        for (const listener of prior.get(interrupted) ?? []) listener.call(signalEmitter);
+      }
+    }
   }
 }
 
@@ -177,6 +212,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     }
   } catch (error) {
     process.stdout.write(`${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })}\n`);
-    process.exitCode = 1;
+    if (process.exitCode !== 130 && process.exitCode !== 143) process.exitCode = 1;
   }
 }

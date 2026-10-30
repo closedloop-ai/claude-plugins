@@ -1,15 +1,21 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { historyOrigin } from './history-origin.mjs';
-import { endProcesses, isAlive, orphans, parsePids, reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
+import { removeOwnedDockerResources } from '../../vibe/scripts/e2e-lock.mjs';
+import { endProcesses, isAlive, orphans, parsePids, readIdentity, reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const run = (args) => spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), ...args], { encoding: 'utf8' });
+const run = (args) => {
+  const [dir, action] = args;
+  const isolated = action === 'status' && !args.includes('--e2e-lock-dir')
+    ? [...args, '--e2e-lock-dir', path.join(dir, 'test-e2e-stack')] : args;
+  return spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), ...isolated], { encoding: 'utf8' });
+};
 const tempDir = (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-helpers-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -135,6 +141,70 @@ test('an unverified or still live process is never marked stopped after PR closu
   assert.equal(ledger.qa.stoppedAt, undefined);
 });
 
+test('a reused live PID is foreign and does not block owned Docker reconciliation', async () => {
+  const pid = FAKE + 104;
+  const ledger = { qa: { owner: 'writer-a', ticket: 'ticket-one', repo: 'acme/repo', pr: '42', ending: 'pr-terminal',
+    pids: [pid], identities: { [pid]: 'old process birth' },
+    dockerResources: { project: 'qa-owned', containers: [], volumes: [], networks: [] } } };
+  let cleaned = 0;
+  const result = await reconcileTerminalHelpers(ledger, { prState: async () => 'terminal',
+    end: async () => [], alive: () => true, identityOf: () => 'new foreign process birth',
+    cleanup: () => { cleaned += 1; } });
+  assert.deepEqual(result.findings, []);
+  assert.equal(cleaned, 1);
+  assert.ok(ledger.qa.stoppedAt);
+  assert.deepEqual(orphans({ qa: { stoppedAt: 'now', pids: [pid], identities: { [pid]: 'old process birth' } } },
+    () => true, () => 'new foreign process birth'), []);
+});
+
+test('a Docker inspect read error reports a leftover and keeps the terminal helper active', async () => {
+  const id = 'a'.repeat(64);
+  const ledger = { qa: { owner: 'writer-a', ticket: 'ticket-one', repo: 'acme/repo', pr: '42', ending: 'pr-terminal',
+    dockerResources: { project: null, containers: [{ id, created: '2026-10-29T00:00:00Z', project: 'qa-owned' }],
+      volumes: [], networks: [] } } };
+  const result = await reconcileTerminalHelpers(ledger, { prState: async () => 'terminal', end: async () => [], alive: () => false,
+    cleanup: (resources) => removeOwnedDockerResources(resources, { run: ([, action]) => action === 'inspect'
+      ? { status: 1, stderr: 'daemon read failed' } : { status: 0, stdout: '' } }) });
+  assert.match(result.findings[0], /LEFTOVER qa owner writer-a ticket ticket-one: Docker container inspect failed/);
+  assert.equal(ledger.qa.stoppedAt, undefined);
+  assert.ok(ledger.qa.dockerResources);
+});
+
+test('unknown endings and an uncaptured Compose project cannot reach stopped', (t) => {
+  const dir = tempDir(t);
+  const unknown = run([dir, 'start', 'qa', '--ending', 'whenever']);
+  assert.equal(unknown.status, 2);
+  assert.match(unknown.stderr, /ending/);
+  writeFileSync(path.join(dir, 'helpers.json'), JSON.stringify({ qa: { startedAt: '2026-10-29T00:00:00Z',
+    owner: 'writer-a', ticket: 'ticket-one', project: 'qa-owned', ending: 'pr-terminal' } }));
+  const stopped = run([dir, 'stopped', 'qa']);
+  assert.equal(stopped.status, 2);
+  assert.match(stopped.stderr, /resources|witness/i);
+  assert.equal(JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8')).qa.stoppedAt, undefined);
+});
+
+test('terminal reconciliation refuses a Compose project without captured resources', async () => {
+  const ledger = { qa: { startedAt: '2026-10-29T00:00:00Z', owner: 'writer-a', ticket: 'ticket-one',
+    repo: 'acme/repo', pr: '42', project: 'qa-owned', ending: 'pr-terminal' } };
+  const result = await reconcileTerminalHelpers(ledger, { prState: async () => 'terminal', end: async () => [], alive: () => false });
+  assert.match(result.findings[0], /LEFTOVER qa owner writer-a ticket ticket-one:.*resources|witness/i);
+  assert.equal(ledger.qa.stoppedAt, undefined);
+});
+
+test('fleet status lists private pending e2e cleanup with owner and ticket', (t) => {
+  const dir = tempDir(t);
+  const lockDir = path.join(dir, 'locks', 'e2e-stack');
+  const pending = path.join(path.dirname(lockDir), 'e2e-cleanup-token.json');
+  mkdirSync(path.dirname(lockDir), { recursive: true });
+  writeFileSync(pending, JSON.stringify({ project: 'qa-owned', owner: { worktree: 'writer-a', ticket: 'ticket-one' },
+    resources: { project: 'qa-owned', containers: [], volumes: [], networks: [] } }));
+  const status = run([dir, 'status', '--e2e-lock-dir', lockDir]);
+  assert.equal(status.status, 1);
+  assert.match(status.stdout, /LEFTOVER .*owner writer-a ticket ticket-one.*pending e2e cleanup/i);
+  rmSync(pending);
+  assert.equal(run([dir, 'status', '--e2e-lock-dir', lockDir]).status, 0);
+});
+
 test('fleet lifecycle status names the owner and ticket when cleanup proof is incomplete', (t) => {
   const dir = tempDir(t);
   writeFileSync(path.join(dir, 'helpers.json'), JSON.stringify({ qa: {
@@ -192,7 +262,8 @@ test('stopping a helper ends the processes it recorded, and a stopped helper wit
   assert.equal(run([dir, 'status']).status, 0);
 
   const left = child(t, 'sleep', ['60']);
-  assert.deepEqual(orphans({ 'qa-b': { stoppedAt: 'x', pids: [left] }, 'qa-c': { pids: [left] } }), [{ name: 'qa-b', pids: [left] }]);
+  assert.deepEqual(orphans({ 'qa-b': { stoppedAt: 'x', pids: [left], identities: { [left]: 'owned' } }, 'qa-c': { pids: [left] } },
+    () => true, () => 'owned'), [{ name: 'qa-b', pids: [left] }]);
   assert.deepEqual(orphans({ '#stacks': { s: { guide: 'g' } } }), []);
 });
 
@@ -208,7 +279,8 @@ test('a process that ignores SIGTERM is killed after the grace; a survivor keeps
 
   const ledger = path.join(dir, 'helpers.json');
   const left = child(t, 'sleep', ['60']);
-  writeFileSync(ledger, JSON.stringify({ 'qa-e': { startedAt: 'x', pids: [left] }, 'qa-f': { stoppedAt: 'x', pids: [left] } }));
+  writeFileSync(ledger, JSON.stringify({ 'qa-e': { startedAt: 'x', pids: [left] },
+    'qa-f': { stoppedAt: 'x', pids: [left], identities: { [left]: readIdentity(left) } } }));
   const status = run([dir, 'status']);
   assert.equal(status.status, 1);
   assert.match(status.stdout, new RegExp(`^ORPHAN qa-f ${left} still running$`, 'm'));

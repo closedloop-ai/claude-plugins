@@ -7,7 +7,7 @@
 // stack to be free, runs the command, and releases the lock when the command
 // ends. A lock left by a process that no longer exists is taken over.
 //
-// Usage: e2e-lock.mjs run --head <sha> [--wait-seconds <n>] [--lock-dir <dir>] [--foreign-compose <project>]... <command> [args...]
+// Usage: e2e-lock.mjs run --head <sha> [--owner <writer>] [--ticket <slug>] [--wait-seconds <n>] [--lock-dir <dir>] [--foreign-compose <project>]... <command> [args...]
 //        e2e-lock.mjs status [--lock-dir <dir>]
 //
 // The lock's own options come first; the first other word starts the command,
@@ -179,7 +179,7 @@ function isAlive(pid) {
   }
 }
 
-const OWN_OPTIONS = new Set(["--head", "--wait-seconds", "--lock-dir", "--foreign-compose"]);
+const OWN_OPTIONS = new Set(["--head", "--owner", "--ticket", "--wait-seconds", "--lock-dir", "--foreign-compose"]);
 const REPEATED_OPTIONS = new Set(["--foreign-compose"]);
 
 /** The first of `projects` that `docker compose ls` lists as running, or null; no Docker means none. */
@@ -209,7 +209,7 @@ export function composeProjectFor(env, token) {
 }
 
 const DOCKER_KINDS = Object.freeze([
-  { key: "containers", noun: "container", list: ["container", "ls", "-aq"], remove: ["container", "rm", "-f"] },
+  { key: "containers", noun: "container", list: ["container", "ls", "-aq", "--no-trunc"], remove: ["container", "rm", "-f"] },
   { key: "volumes", noun: "volume", list: ["volume", "ls", "-q"], remove: ["volume", "rm"] },
   { key: "networks", noun: "network", list: ["network", "ls", "-q"], remove: ["network", "rm"] },
 ]);
@@ -222,21 +222,31 @@ function dockerOutput(args, run, { missing = false } = {}) {
   const result = run(args);
   if (result.error) throw result.error;
   if (result.status !== 0) {
-    if (missing && result.status === 1) return null;
+    const message = String(result.stderr ?? "").trim();
+    const id = args.at(-1);
+    if (missing && result.status === 1 && ["Error", "Error response from daemon"].some((prefix) =>
+      ["object", args[0]].some((noun) => message === `${prefix}: No such ${noun}: ${id}`))) return null;
     throw new Error(`Docker ${args[0]} ${args[1]} failed: ${String(result.stderr ?? "").trim()}`);
   }
   return String(result.stdout ?? "").trim();
 }
 
 function resourceWitness(kind, id, run) {
+  if (kind.key === "containers" && !/^[a-f0-9]{64}$/.test(id)) throw new Error("Docker container needs a full container ID.");
   const raw = dockerOutput([kind.noun, "inspect", id], run, { missing: true });
   if (raw === null) return null;
-  const value = JSON.parse(raw)[0];
+  const parsed = JSON.parse(raw);
+  const value = Array.isArray(parsed) ? parsed[0] : null;
   const labels = kind.key === "containers" ? value?.Config?.Labels : value?.Labels;
   const created = value?.Created ?? value?.CreatedAt;
   const identity = kind.key === "volumes" ? value?.Name : value?.Id;
-  if (!identity || !created) throw new Error(`Docker ${kind.noun} ${id} has no creation witness.`);
-  return { id: identity, created, project: labels?.["com.docker.compose.project"] ?? null };
+  if (identity !== id) throw new Error(`Docker ${kind.noun} ${id} resolved ID changed identity.`);
+  if (typeof created !== "string" || !Number.isFinite(Date.parse(created))) {
+    throw new Error(`Docker ${kind.noun} ${id} has no parseable creation witness.`);
+  }
+  const project = labels?.["com.docker.compose.project"];
+  if (typeof project !== "string" || !project) throw new Error(`Docker ${kind.noun} ${id} has no project ownership label.`);
+  return { id: identity, created, project };
 }
 
 /** Capture exact Docker identities, including stopped containers, before later cleanup. */
@@ -270,7 +280,10 @@ export function removeOwnedDockerResources(record, { run = dockerRunner } = {}) 
   }
   for (const kind of DOCKER_KINDS) {
     for (const saved of record?.[kind.key] ?? []) {
-      if (!saved?.id || !saved?.created) throw new Error(`Unrecorded Docker ${kind.noun} cannot be removed.`);
+      if (!saved?.id || typeof saved?.created !== "string" || !Number.isFinite(Date.parse(saved.created))
+        || typeof saved?.project !== "string" || !saved.project) {
+        throw new Error(`Unrecorded Docker ${kind.noun} has no exact creation witness and project ownership.`);
+      }
       const current = resourceWitness(kind, saved.id, run);
       if (current && (current.id !== saved.id || current.created !== saved.created || current.project !== saved.project
         || (record.project && current.project !== record.project))) {
@@ -322,6 +335,13 @@ function runCommand(command, args, env) {
   });
 }
 
+function ticketFromBranch(worktree) {
+  try {
+    const branch = execFileSync("git", ["-C", worktree, "branch", "--show-current"], { encoding: "utf8" }).trim();
+    return /\bISS-\d+\b/i.exec(branch)?.[0].toUpperCase() ?? null;
+  } catch { return null; }
+}
+
 async function main(argv) {
   const { action, values, command, args } = parseCommandLine(argv);
   const lockDir = path.resolve(values["lock-dir"] ?? defaultLockDir());
@@ -332,18 +352,21 @@ async function main(argv) {
     return 0;
   }
   if (action !== "run" || !command) {
-    throw new Error("Usage: e2e-lock.mjs run --head <sha> [--wait-seconds <n>] [--lock-dir <dir>] [--foreign-compose <project>]... <command> [args...]");
+    throw new Error("Usage: e2e-lock.mjs run --head <sha> [--owner <writer>] [--ticket <slug>] [--wait-seconds <n>] [--lock-dir <dir>] [--foreign-compose <project>]... <command> [args...]");
   }
   const tested = testedHead(worktreeOf(process.cwd()), values.head);
   const waitSeconds = values["wait-seconds"] === undefined ? DEFAULT_WAIT_SECONDS : Number(values["wait-seconds"]);
   if (!Number.isFinite(waitSeconds) || waitSeconds < 0) {
     throw new Error("--wait-seconds must be zero or a positive number of seconds.");
   }
+  const worktree = worktreeOf(process.cwd());
   const owner = {
     pid: process.pid,
     token: randomUUID(),
     cwd: process.cwd(),
-    worktree: worktreeOf(process.cwd()),
+    worktree,
+    name: values.owner ?? path.basename(worktree),
+    ticket: values.ticket ?? ticketFromBranch(worktree),
     command: [command, ...args].join(" ").slice(0, 500),
     startedAt: new Date().toISOString(),
   };

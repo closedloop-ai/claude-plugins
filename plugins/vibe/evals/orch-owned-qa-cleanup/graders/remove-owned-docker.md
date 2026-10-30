@@ -2,7 +2,7 @@
 type: regex
 match: contains
 flags: i
-pattern: 'DOCKER:(?=[^\n]*(?:remov|delete))(?=[^\n]*container)(?=[^\n]*volum)(?=[^\n]*network)[^\n]+'
+pattern: '(?=[\s\S]*(?:remov|delet)[^\n]{0,120}container)(?=[\s\S]*volum)(?=[\s\S]*network)[\s\S]+'
 ---
 
 The recorded container, volumes and network are removed, not merely stopped.

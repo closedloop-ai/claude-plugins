@@ -45,6 +45,28 @@ test("a second server startup failure still closes the first", async () => {
   assert.deepEqual(events, ["start base", "start head", "stop base"]);
 });
 
+test("static comparison rebuilds both outputs for the named current heads before serving", async (t) => {
+  const fixture = makeHome("vibe-frozen-build-");
+  t.after(fixture.cleanup);
+  const baseDir = path.join(fixture.root, "base");
+  const repo = path.join(fixture.root, "head");
+  for (const dir of [baseDir, repo]) {
+    mkdirSync(path.join(dir, "apps", "storybook", "storybook-static"), { recursive: true });
+    writeFileSync(path.join(dir, "apps", "storybook", "storybook-static", "index.html"), "stale");
+  }
+  const events = [];
+  const withServer = async (dir, _port, action) => { events.push(`serve ${dir}`); return action(`http://${dir}`); };
+  await runOwnedFrozenComparison({ repo, baseDir, base: "base-commit", storyFiles: [], out: fixture.root }, {
+    withServer, nextPort: async (other) => other ? 6122 : 6121,
+    headOf: (dir) => dir === repo ? "head-commit" : "base-commit",
+    buildStatic: async (dir, head) => { events.push(`build ${dir} ${head}`); },
+    launch: async () => ({ close: async () => {} }), compare: async () => ({}),
+  });
+  assert.deepEqual(events, [
+    `build ${baseDir} base-commit`, `build ${repo} head-commit`, `serve ${baseDir}`, `serve ${repo}`,
+  ]);
+});
+
 /** A small solid screenshot, with one pixel of `dot` color when given. */
 function shot(color, dot) {
   const [width, height] = [6, 4];

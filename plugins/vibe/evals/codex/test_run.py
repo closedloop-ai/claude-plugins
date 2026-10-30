@@ -72,6 +72,55 @@ def test_parallel_e2e_scenario_states_queue_wait_and_run_duration() -> None:
                int(integration.group(1)), int(typecheck.group(1))) == 20
 
 
+def test_parallel_fleet_graders_accept_plain_behavior_without_template_labels(tmp_path: Path) -> None:
+    """Behavior, not copied answer labels, decides the lane and helper evals."""
+    cases = {case["name"]: case for case in runner.cases()}
+    lane = cases["orchestrator-parallel-e2e-queued"]
+    parallel = (
+        "Start integration and typecheck immediately on allowed machine B, concurrently while e2e is queued on machine A. "
+        "Neither lane depends on e2e. Machine A waits 8 minutes, then its e2e takes 12 minutes; "
+        "machine B runs integration for 10 minutes and typecheck for 4 minutes at the same time. "
+        "Time to ready is 20 minutes, from the longest dependent path on A: wait then e2e."
+    )
+    checks, _ = runner.deterministic(lane, parallel, tmp_path, [])
+    assert all(check["passed"] for check in checks if check["grader"] != "loaded-plugin"), checks
+    serial = "Wait for e2e on machine A to finish, then start integration and typecheck on B. Time to ready is 34 minutes."
+    checks, _ = runner.deterministic(lane, serial, tmp_path, [])
+    assert any(not check["passed"] for check in checks if check["grader"] != "loaded-plugin")
+
+    helpers = cases["orchestrator-parallel-build-helpers"]
+    split = (
+        "Assign the proof test tests/criterion-a.test.ts exclusively to helper branch proof-a. "
+        "Assign the whole new module src/new-index/index.ts and src/new-index/mapper.ts exclusively to a different helper branch module-b. "
+        "These allowlists are disjoint, with one writer per branch. Helpers never edit the ticket branch and never repair defects "
+        "in the ticket writer's code; route such defects back to the ticket writer. "
+        "Helpers return commits or proof but never integrate them. The ticket writer alone integrates, "
+        "and an independent read-only reviewer checks the work."
+    )
+    checks, _ = runner.deterministic(helpers, split, tmp_path, [])
+    assert all(check["passed"] for check in checks if check["grader"] != "loaded-plugin"), checks
+    overlap = (
+        "Use one helper branch to edit tests/criterion-a.test.ts, src/new-index/index.ts and "
+        "src/new-index/mapper.ts while the ticket writer also edits that branch. "
+        "The helper repairs the ticket writer's defect and merges directly."
+    )
+    checks, _ = runner.deterministic(helpers, overlap, tmp_path, [])
+    assert any(not check["passed"] for check in checks if check["grader"] != "loaded-plugin")
+
+    cleanup = cases["orchestrator-owned-qa-cleanup"]
+    owned = (
+        "PR 42 closed, so reconcile qa-owned now without waiting for the operator. "
+        "Stop only its recorded process and remove the exact recorded Docker container, volume and network "
+        "after checking identity and creation witnesses. Leave qa-foreign untouched because it belongs to another worker "
+        "and has no record. Fleet status: qa-owned owner writer-a ticket ISS-13420 is cleaned up; qa-foreign remains."
+    )
+    checks, _ = runner.deterministic(cleanup, owned, tmp_path, [])
+    assert all(check["passed"] for check in checks if check["grader"] != "loaded-plugin"), checks
+    foreign_removed = "PR 42 closed. Remove qa-foreign with its container, volume and network; qa-owned can wait."
+    checks, _ = runner.deterministic(cleanup, foreign_removed, tmp_path, [])
+    assert any(not check["passed"] for check in checks if check["grader"] != "loaded-plugin")
+
+
 @pytest.mark.parametrize("layout", [".codex-plugin", ".claude-plugin"])
 def test_plugin_version_accepts_either_runtime_manifest(tmp_path: Path, layout: str) -> None:
     manifest = tmp_path / layout / "plugin.json"

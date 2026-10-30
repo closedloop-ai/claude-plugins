@@ -34,6 +34,7 @@ Tests: run the repository-selected lanes for the feature-complete change. After 
 Start independent repository selected validation lanes concurrently through assigned heavy slots, including non-e2e lanes while e2e runs elsewhere. Ask the orchestrator to move a lane waiting only on load or a full slot to another allowed machine; report the move and obey exclusions and limits.
 Heavy checks go through <fleet.sh slot command for the chosen machine>; never run windowed e2e on the operator's daily machine.
 Record every long-lived QA helper's owner, ticket, PR and ending condition. Reserve its empty Compose project before startup and record exact process and Docker identities when started; the fleet status check reconciles only those recorded resources after the PR merges or closes.
+For a PR-owned stack, set `--ending pr-terminal` at `helpers.mjs start` and run `helpers.mjs resources` with its recorded `--project` after startup to capture every exact resource and creation witness before it can stop.
 Messages reach you only when your turn ends: commands expected to take more than a few minutes run in the background, never a foreground wait or a `sleep` poll, and you end the turn while they run.
 Before each commit and each verification phase, run `board.mjs <orchDir> pending <you>`; apply and acknowledge (`ack <you> --id <id>`) each change and answer it lists, naming what you applied in your next status.
 Questions to the orchestrator end with `If no answer by <time, 30 minutes on>: <your default>` and an id, recorded with `board.mjs <orchDir> question <you> --id <id> --text <question>`; keep working meanwhile and past it proceed on the default (never for a flag, copy, destructive, credential or scope question). A question never holds your PR: ship what is done, arm auto-merge, put the answer-dependent part in a follow-up.
@@ -67,6 +68,7 @@ Tests: run the repository-selected lanes for the feature-complete change. After 
 Start independent repository selected validation lanes concurrently through assigned heavy slots, including non-e2e lanes while e2e runs elsewhere. Ask the orchestrator to move a lane waiting only on load or a full slot to another allowed machine; report the move and obey exclusions and limits.
 Budget: effort <CODEX_EFFORT>; no computer use (no browser, in-app browser, desktop app UI or screenshots).
 Record every long-lived QA helper's owner, ticket, PR and ending condition. Reserve its empty Compose project before startup and record exact process and Docker identities when started; the fleet status check reconciles only those recorded resources after the PR merges or closes.
+For a PR-owned stack, set `--ending pr-terminal` at `helpers.mjs start` and run `helpers.mjs resources` with its recorded `--project` after startup to capture every exact resource and creation witness before it can stop.
 Visual requests: draft one from the fleet-orchestrator skill's visual request template and file it only with `node <request-visual.mjs on this machine> <requests dir> <draft>` from your worktree; it refuses an unpushed or stale head.
 Plugin version: the operator answered this program's version check; when vibe's check finds a plugin outdated, record `plugin-version.mjs choose --choice proceed --by opening-message` and carry on.
 Who speaks: this orchestrator's own directions are operational and are recorded as `(orchestrator)`, never as a human ruling; only operator words it quotes, with their source, are rulings.
@@ -87,31 +89,15 @@ Test authority: <existing authorization for proof tests, or not applicable>
 Return: <commit or proof to the ticket writer; helper does not integrate>
 Defect: <send any defect in ticket-writer code to that writer; helper does not repair it>
 Review: <independent read-only reviewer, never this helper>
-BRANCH_ISOLATION: one writer per branch; helpers never edit or touch the ticket branch
+Branch isolation: one writer per branch; helpers never edit or touch the ticket branch
 
 ## Remaining work report
 
-Pre-send audit: in the final draft, `START_INTEGRATION:`, `START_TYPECHECK:`, `DEPENDENCIES:`, `REPORT:` and `ETA:` each occur exactly once with nonempty content after the colon. If a line is missing, duplicate or blank, complete it and audit again. Do not send an incomplete draft or include this audit note in the reply.
-
-START_INTEGRATION: <machine and immediate start, or a specific dependency>
-START_TYPECHECK: <machine and immediate start, or a specific dependency>
-DEPENDENCIES: <actual prerequisites, or none>
-REPORT: <one line naming every parallel and queued step and its machine; no following bullet block>
-ETA: <duration>; Time to ready: <same duration>; longest dependent path: <named steps and assumptions>
-Parallel now: <each independent step and its machine, or none>
-Waiting on a real dependency: <step and prerequisite, or none>
-Moved for capacity: <step, source machine, destination machine, or none>
-
-Compute the ETA from the dependency graph's longest dependent path, not a sum of independent lanes. Keep both time labels and the named path on that one human-visible line; do not send the report until they agree.
+Before sending, verify the reply says which selected integration, typecheck and other lanes start immediately on which allowed machines; what waits on a real prerequisite; what runs concurrently with queued or running e2e; and which lane moved for capacity. State time to ready from the dependency graph's longest dependent path with its named steps and assumptions, not a sum of independent lanes. Do not send a report missing any applicable fact.
 
 ## Lifecycle cleanup report
 
-Pre-send audit: in the final draft, `ACTION:`, `DOCKER:`, `FOREIGN:` and `STATUS:` each occur exactly once with nonempty content after the colon. If a line is missing, duplicate or blank, complete it and audit again. Do not send an incomplete draft or include this audit note in the reply.
-
-ACTION: <owned QA helper reconciled now, or exact refusal>
-DOCKER: <recorded container, volumes and network removed or exact refusal>
-FOREIGN: leave <other worker or unrecorded resource id> untouched because <ownership reason>; or none
-STATUS: <owner, ticket and cleanup result or leftover>
+Before sending, verify the reply names the recorded helper reconciled now or the exact refusal, the recorded container, volumes and network removed or retained, the other worker's unrecorded resources left untouched with the ownership reason, and the final status with owner and ticket. Do not send a report missing any applicable fact.
 
 ## QA guide prompt
 

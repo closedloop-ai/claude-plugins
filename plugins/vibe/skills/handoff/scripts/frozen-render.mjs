@@ -61,9 +61,9 @@
 // under --out; read only the cropped diffs. Exits 0 when nothing blocks, 1
 // when something does, 2 on a usage or setup error.
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import path from "node:path";
@@ -115,9 +115,26 @@ async function freePort(exclude) {
   }
 }
 
+/** Rebuild a static Storybook from this checkout, replacing any earlier output. */
+function rebuildStatic(worktree) {
+  const output = path.join(worktree, "apps", "storybook", "storybook-static");
+  rmSync(output, { recursive: true, force: true });
+  const result = spawnSync("pnpm", ["exec", "storybook", "build", "--output-dir", output], {
+    cwd: path.join(worktree, "apps", "storybook"), encoding: "utf8", timeout: 600_000,
+  });
+  if (result.error || result.status !== 0 || !existsSync(path.join(output, "index.html"))) {
+    throw new Error(`Storybook static build failed for the named checkout: ${result.error?.message ?? result.stderr ?? "missing index"}`);
+  }
+}
+
+function currentHead(worktree) {
+  return execFileSync("git", ["-C", worktree, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+}
+
 /** Own both comparison servers and the browser for the whole render, including failures. */
 export async function runOwnedFrozenComparison({ repo, baseDir, base, storyFiles, out, viewport, timeoutMs, now },
-  { withServer = withVerifyStorybook, nextPort = freePort, launch, compare = frozenStoryFiles } = {}) {
+  { withServer = withVerifyStorybook, nextPort = freePort, launch, compare = frozenStoryFiles,
+    headOf = currentHead, buildStatic = rebuildStatic } = {}) {
   const basePort = await nextPort();
   const headPort = await nextPort(basePort);
   const baseStatic = path.join(baseDir, "apps", "storybook", "storybook-static");
@@ -125,6 +142,16 @@ export async function runOwnedFrozenComparison({ repo, baseDir, base, storyFiles
   const useStatic = existsSync(baseStatic) && existsSync(headStatic);
   if (existsSync(baseStatic) !== existsSync(headStatic)) {
     throw new Error("Frozen render needs both Storybook builds or neither; one side has no build.");
+  }
+  if (useStatic) {
+    const baseHead = headOf(baseDir);
+    const head = headOf(repo);
+    if (baseHead !== base) throw new Error("Prepared base checkout does not match the named base commit.");
+    await buildStatic(baseDir, baseHead);
+    await buildStatic(repo, head);
+    if (headOf(baseDir) !== baseHead || headOf(repo) !== head) {
+      throw new Error("Storybook checkout head moved during its static build; comparison refused.");
+    }
   }
   return withServer(baseDir, basePort, (baseUrl) => withServer(repo, headPort, async (headUrl) => {
     const browser = await launch();
@@ -475,7 +502,7 @@ async function main(argv) {
   const chromium = loadChromium(values.repo);
   return runOwnedFrozenComparison({ repo: values.repo, baseDir: values["base-dir"], base: values.base,
     storyFiles: values["story-file"], out: path.resolve(values.out), viewport, timeoutMs, now },
-  { launch: () => chromium.launch({ args: [...DETERMINISTIC_CHROMIUM_ARGS] }) });
+  { launch: () => chromium.launch({ args: [...DETERMINISTIC_CHROMIUM_ARGS], handleSIGINT: false, handleSIGTERM: false }) });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
@@ -485,6 +512,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     process.exitCode = summary.ok ? 0 : 1;
   } catch (error) {
     process.stdout.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 2;
+    if (process.exitCode !== 130 && process.exitCode !== 143) process.exitCode = 2;
   }
 }

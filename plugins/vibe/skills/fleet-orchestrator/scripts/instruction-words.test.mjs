@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -8,6 +8,12 @@ import { fileURLToPath } from 'node:url';
 import { changelogProblems, countWords } from './instruction-words.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./instruction-words.mjs', import.meta.url));
+
+test('the current release names the full Markdown scope of its word count', () => {
+  const changelog = readFileSync(path.resolve(path.dirname(SCRIPT), '../../../../../CHANGELOG.md'), 'utf8');
+  const entry = changelog.split('### vibe v1.1.20\n', 2)[1]?.split('\n### ', 1)[0] ?? '';
+  assert.match(entry, /all plugin Markdown, including eval prompts and graders/);
+});
 
 test('counts words on added and removed lines only', () => {
   assert.deepEqual(countWords('--- a/x.md\n+++ b/x.md\n@@ -1 +1 @@\n-one two three\n+one two\n'), { added: 2, removed: 3, net: -1 });

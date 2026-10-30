@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -23,6 +24,44 @@ test("an owned static Storybook build server closes after success and failure", 
   assert.equal(existsSync(record), false);
   await assert.rejects(withVerifyStorybook(worktree, 6124, async () => { throw new Error("comparison failed"); }, { staticDir }), /comparison failed/);
   assert.equal(existsSync(path.join(path.dirname(record), "vibe-verify-storybook-6124.json")), false);
+});
+
+test("SIGINT stops a pending owned base server before another handler can exit 130", async () => {
+  const signals = new EventEmitter();
+  const events = [];
+  signals.on("SIGINT", () => events.push("caller exit"));
+  const ready = new Promise(() => {});
+  const running = withVerifyStorybook("fake-base", 6125, async () => {}, {
+    signalEmitter: signals,
+    startOwned: async () => { events.push("base started"); return { pid: 2_147_480_000 }; },
+    waitReady: async () => ready,
+    stopOwnedSync: () => { events.push("base stopped"); },
+    stopOwned: async () => { events.push("base stopped"); },
+    setExitCode: (code) => { events.push(`exit ${code}`); },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  signals.emit("SIGINT");
+  await assert.rejects(running, /SIGINT/);
+  assert.deepEqual(events, ["base started", "base stopped", "exit 130", "caller exit"]);
+});
+
+test("SIGINT during base startup waits for its owned stop before replaying exit", async () => {
+  const signals = new EventEmitter();
+  const events = [];
+  signals.on("SIGINT", () => events.push("caller exit"));
+  let completeStart;
+  const running = withVerifyStorybook("fake-base", 6126, async () => {}, {
+    signalEmitter: signals,
+    startOwned: () => new Promise((resolve) => { completeStart = resolve; }),
+    stopOwnedSync: () => { events.push("sync stop"); },
+    stopOwned: async () => { events.push("base stopped"); },
+    waitReady: async () => { throw new Error("must not wait after interrupt"); },
+    setExitCode: (code) => { events.push(`exit ${code}`); },
+  });
+  signals.emit("SIGINT");
+  completeStart({ pid: 2_147_480_001 });
+  await assert.rejects(running, /SIGINT/);
+  assert.deepEqual(events, ["exit 130", "base stopped", "caller exit"]);
 });
 
 test("a verifier starts Storybook with a birth witness and stops only that recorded process", (t) => {

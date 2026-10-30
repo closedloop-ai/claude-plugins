@@ -24,20 +24,49 @@ process.chdir(root);
 const owner = (pid, token) => ({ pid, token, cwd: root, command: "e2e", startedAt: "2026-10-19T00:00:00.000Z" });
 // A pid that cannot exist: above the macOS and Linux pid ceilings.
 const DEAD_PID = 99_999_999;
+const FULL_CONTAINER_ID = "a".repeat(64);
+
+test("Docker inspect read failures retain an owned resource; only exact absence counts gone", () => {
+  const record = { project: null, containers: [{ id: FULL_CONTAINER_ID, created: "2026-10-29T00:00:00Z", project: "qa-owned" }], volumes: [], networks: [] };
+  let removed = false;
+  const refused = ([, action]) => action === "inspect"
+    ? { status: 1, stderr: "permission denied while connecting to daemon" }
+    : (removed = true, { status: 0 });
+  assert.throws(() => removeOwnedDockerResources(record, { run: refused }), /Docker .*inspect failed/);
+  assert.equal(removed, false);
+  const absent = ([, action]) => action === "inspect"
+    ? { status: 1, stderr: `Error: No such object: ${FULL_CONTAINER_ID}` }
+    : (removed = true, { status: 0 });
+  assert.deepEqual(removeOwnedDockerResources(record, { run: absent }).removed, []);
+  assert.equal(removed, false);
+});
+
+test("Docker capture refuses container prefixes, resolved ID mismatch, missing ownership and invalid birth", () => {
+  const inspect = (value) => ([, action]) => action === "inspect"
+    ? { status: 0, stdout: JSON.stringify([value]) } : { status: 0, stdout: "" };
+  const value = { Id: FULL_CONTAINER_ID, Created: "2026-10-29T00:00:00Z",
+    Config: { Labels: { "com.docker.compose.project": "qa-owned" } } };
+  const capture = (id, body) => captureOwnedDockerResources({ containers: [id], volumes: [], networks: [] }, { run: inspect(body) });
+  assert.throws(() => capture(FULL_CONTAINER_ID.slice(0, 12), value), /full container ID/);
+  assert.throws(() => capture("b".repeat(64), value), /changed identity|resolved ID/);
+  assert.throws(() => capture(FULL_CONTAINER_ID, { ...value, Config: { Labels: {} } }), /project ownership/);
+  assert.throws(() => capture(FULL_CONTAINER_ID, { ...value, Created: "not-a-date" }), /creation witness/);
+});
 
 test("recorded Docker resources are removed with stopped containers, volumes and networks", () => {
   const project = "vibe-e2e-test";
   const resources = new Map([
-    ["container:c1", { Id: "c1", Created: "first", Config: { Labels: { "com.docker.compose.project": project } } }],
-    ["volume:v1", { Name: "v1", CreatedAt: "second", Labels: { "com.docker.compose.project": project } }],
-    ["network:n1", { Id: "n1", Created: "third", Labels: { "com.docker.compose.project": project } }],
+    [`container:${FULL_CONTAINER_ID}`, { Id: FULL_CONTAINER_ID, Created: "2026-10-29T00:00:00Z", Config: { Labels: { "com.docker.compose.project": project } } }],
+    ["volume:v1", { Name: "v1", CreatedAt: "2026-10-29T00:00:01Z", Labels: { "com.docker.compose.project": project } }],
+    ["network:n1", { Id: "n1", Created: "2026-10-29T00:00:02Z", Labels: { "com.docker.compose.project": project } }],
   ]);
   const removed = [];
   const run = ([kind, action, ...args]) => {
     if (action === "ls") return { status: 0, stdout: [...resources.keys()].filter((key) => key.startsWith(`${kind}:`)).map((key) => key.split(":")[1]).join("\n") };
     const id = args.at(-1);
     if (action === "inspect") return resources.has(`${kind}:${id}`)
-      ? { status: 0, stdout: JSON.stringify([resources.get(`${kind}:${id}`)]) } : { status: 1, stdout: "" };
+      ? { status: 0, stdout: JSON.stringify([resources.get(`${kind}:${id}`)]) }
+      : { status: 1, stderr: `Error: No such object: ${id}` };
     if (action === "rm") {
       removed.push(`${kind}:${id}`);
       resources.delete(`${kind}:${id}`);
@@ -46,25 +75,25 @@ test("recorded Docker resources are removed with stopped containers, volumes and
     throw new Error(`unexpected Docker action ${kind} ${action}`);
   };
   const record = captureOwnedDockerResources({ project }, { run });
-  assert.deepEqual(record.containers.map((entry) => entry.id), ["c1"]);
-  assert.deepEqual(removeOwnedDockerResources(record, { run }).removed.map((entry) => entry.id), ["c1", "v1", "n1"]);
-  assert.deepEqual(removed, ["container:c1", "volume:v1", "network:n1"]);
+  assert.deepEqual(record.containers.map((entry) => entry.id), [FULL_CONTAINER_ID]);
+  assert.deepEqual(removeOwnedDockerResources(record, { run }).removed.map((entry) => entry.id), [FULL_CONTAINER_ID, "v1", "n1"]);
+  assert.deepEqual(removed, [`container:${FULL_CONTAINER_ID}`, "volume:v1", "network:n1"]);
 });
 
 test("a changed Docker creation witness or foreign label refuses all removal", () => {
   const project = "vibe-e2e-test";
-  const resource = { Id: "c1", Created: "first", Config: { Labels: { "com.docker.compose.project": project } } };
+  const resource = { Id: FULL_CONTAINER_ID, Created: "2026-10-29T00:00:00Z", Config: { Labels: { "com.docker.compose.project": project } } };
   let calls = 0;
   const run = ([kind, action]) => {
     if (action === "inspect") return { status: 0, stdout: JSON.stringify([resource]) };
     if (action === "rm") calls += 1;
     return { status: 0, stdout: "" };
   };
-  const record = captureOwnedDockerResources({ project, containers: ["c1"], volumes: [], networks: [] }, { run });
-  resource.Created = "later";
+  const record = captureOwnedDockerResources({ project, containers: [FULL_CONTAINER_ID], volumes: [], networks: [] }, { run });
+  resource.Created = "2026-10-29T00:00:01Z";
   assert.throws(() => removeOwnedDockerResources(record, { run }), /changed identity/);
   assert.equal(calls, 0);
-  resource.Created = "first";
+  resource.Created = "2026-10-29T00:00:00Z";
   resource.Config.Labels["com.docker.compose.project"] = "foreign";
   assert.throws(() => removeOwnedDockerResources(record, { run }), /changed identity/);
   assert.equal(calls, 0);
@@ -74,8 +103,8 @@ test("a new unrecorded resource in an owned project is left for an owner to insp
   let removals = 0;
   const project = "vibe-e2e-test";
   const run = ([kind, action]) => {
-    if (action === "ls") return { status: 0, stdout: kind === "container" ? "c2" : "" };
-    if (action === "inspect") return { status: 0, stdout: JSON.stringify([{ Id: "c2", Created: "2026-10-29T00:00:00Z",
+    if (action === "ls") return { status: 0, stdout: kind === "container" ? FULL_CONTAINER_ID : "" };
+    if (action === "inspect") return { status: 0, stdout: JSON.stringify([{ Id: FULL_CONTAINER_ID, Created: "2026-10-29T00:00:00Z",
       Config: { Labels: { "com.docker.compose.project": project } } }]) };
     if (action === "rm") removals += 1;
     return { status: 0, stdout: "" };
@@ -93,12 +122,12 @@ dir=${JSON.stringify(dir)}
 for arg in "$@"; do last="$arg"; done
 case "$1 $2" in
   "version ") exit 0 ;;
-  "container ls") [ -f "$dir/container" ] && echo c1; exit 0 ;;
+  "container ls") [ -f "$dir/container" ] && echo ${FULL_CONTAINER_ID}; exit 0 ;;
   "volume ls") [ -f "$dir/volume" ] && echo v1; exit 0 ;;
   "network ls") [ -f "$dir/network" ] && echo n1; exit 0 ;;
-  "container inspect") [ -f "$dir/container" ] || exit 1; printf '[{"Id":"c1","Created":"2026-10-29T00:00:00Z","Config":{"Labels":{"com.docker.compose.project":"%s"}}}]\n' "$(cat "$dir/project")"; exit 0 ;;
-  "volume inspect") [ -f "$dir/volume" ] || exit 1; printf '[{"Name":"v1","CreatedAt":"2026-10-29T00:00:00Z","Labels":{"com.docker.compose.project":"%s"}}]\n' "$(cat "$dir/project")"; exit 0 ;;
-  "network inspect") [ -f "$dir/network" ] || exit 1; printf '[{"Id":"n1","Created":"2026-10-29T00:00:00Z","Labels":{"com.docker.compose.project":"%s"}}]\n' "$(cat "$dir/project")"; exit 0 ;;
+  "container inspect") [ -f "$dir/container" ] || { printf 'Error: No such object: %s\n' "$last" >&2; exit 1; }; printf '[{"Id":"${FULL_CONTAINER_ID}","Created":"2026-10-29T00:00:00Z","Config":{"Labels":{"com.docker.compose.project":"%s"}}}]\n' "$(cat "$dir/project")"; exit 0 ;;
+  "volume inspect") [ -f "$dir/volume" ] || { printf 'Error: No such object: %s\n' "$last" >&2; exit 1; }; printf '[{"Name":"v1","CreatedAt":"2026-10-29T00:00:00Z","Labels":{"com.docker.compose.project":"%s"}}]\n' "$(cat "$dir/project")"; exit 0 ;;
+  "network inspect") [ -f "$dir/network" ] || { printf 'Error: No such object: %s\n' "$last" >&2; exit 1; }; printf '[{"Id":"n1","Created":"2026-10-29T00:00:00Z","Labels":{"com.docker.compose.project":"%s"}}]\n' "$(cat "$dir/project")"; exit 0 ;;
   "container rm") rm "$dir/container"; exit 0 ;;
   "volume rm") rm "$dir/volume"; exit 0 ;;
   "network rm") rm "$dir/network"; exit 0 ;;
@@ -106,13 +135,17 @@ esac
 exit 9
 `);
   chmodSync(docker, 0o700);
-  const create = `const fs=require('node:fs');const d=${JSON.stringify(dir)};fs.writeFileSync(d+'/project',process.env.COMPOSE_PROJECT_NAME);for(const x of ['container','volume','network'])fs.writeFileSync(d+'/'+x,'created');process.exit(7)`;
+  const create = `const fs=require('node:fs');const d=${JSON.stringify(dir)};fs.writeFileSync(d+'/project',process.env.COMPOSE_PROJECT_NAME);for(const x of ['container','volume','network'])fs.writeFileSync(d+'/'+x,'created');const p=fs.readdirSync(d).find(x=>x.startsWith('e2e-cleanup-'));fs.writeFileSync(d+'/owner.json',JSON.stringify(JSON.parse(fs.readFileSync(d+'/'+p)).owner));process.exit(7)`;
   const env = { ...process.env, VIBE_E2E_DOCKER: docker };
   Reflect.deleteProperty(env, "COMPOSE_PROJECT_NAME");
   Reflect.deleteProperty(env, "VIBE_E2E_FOREIGN_COMPOSE");
-  const result = spawnSync(process.execPath, [SCRIPT, "run", "--head", SHA, "--lock-dir", path.join(dir, "lock"), process.execPath, "-e", create],
+  const result = spawnSync(process.execPath, [SCRIPT, "run", "--head", SHA, "--owner", "writer-a", "--ticket", "ticket-one",
+    "--lock-dir", path.join(dir, "lock"), process.execPath, "-e", create],
     { encoding: "utf8", env });
   assert.equal(result.status, 7, result.stderr);
+  const savedOwner = JSON.parse(readFileSync(path.join(dir, "owner.json"), "utf8"));
+  assert.equal(savedOwner.name, "writer-a");
+  assert.equal(savedOwner.ticket, "ticket-one");
   for (const kind of ["container", "volume", "network"]) assert.equal(existsSync(path.join(dir, kind)), false, kind);
 });
 
