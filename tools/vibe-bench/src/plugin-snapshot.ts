@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { agentModels } from "./agent-models.ts";
 
@@ -20,8 +20,10 @@ function archivePlugins(repo: string, expectedSha: string, runRoot: string): Plu
     "plugins/vibe", "plugins/closedloop-core"], { maxBuffer: 80 * 1024 * 1024 });
   const unpack = spawnSync("tar", ["-xf", "-"], { cwd: snapshotDir, input: archive, encoding: "utf8" });
   if (unpack.status !== 0) throw new Error(`benchmark-plugin-archive-failed:${unpack.stderr ?? "unknown"}`);
-  const vibeDir = join(snapshotDir, "plugins/vibe");
-  const coreDir = join(snapshotDir, "plugins/closedloop-core");
+  // Native evaluators resolve macOS aliases such as /tmp to /private/tmp in
+  // their artifacts. Keep the launch and evidence identity physical too.
+  const vibeDir = realpathSync(join(snapshotDir, "plugins/vibe"));
+  const coreDir = realpathSync(join(snapshotDir, "plugins/closedloop-core"));
   const vibeManifest = JSON.parse(readFileSync(join(vibeDir, ".claude-plugin/plugin.json"), "utf8")) as {
     name?: string; dependencies?: string[];
   };

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -169,6 +169,7 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     assert.ok(modelCalls.every((call) => call.args[call.args.indexOf("--concurrency") + 1] === "1"));
     const claudeCall = modelCalls.find((call) => call.command.includes("claude"))!;
     assert.equal(claudeCall.args[2].endsWith("/plugin-snapshot/plugins"), true);
+    assert.equal(claudeCall.args[2], realpathSync(claudeCall.args[2]));
     assert.equal(claudeCall.args[claudeCall.args.indexOf("--eval-dir") + 1], "vibe/evals");
     assert.equal(claudeCall.args.includes("--case"), false);
     const codexCall = modelCalls.find((call) => call.command.includes("uv"))!;
