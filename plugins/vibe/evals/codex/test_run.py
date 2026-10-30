@@ -115,6 +115,7 @@ def test_fleet_semantic_graders_accept_real_ordering_and_require_every_concept(t
     dependency = "These two have no prerequisite on each other or on e2e, so they run in parallel."
     assert matches(lane, "no-e2e-dependency", dependency)
     assert matches(lane, "no-e2e-dependency", "E2e is queued. Nothing waits on a true prerequisite; all three lanes are independent.")
+    assert matches(lane, "no-e2e-dependency", "E2e is queued. No lane has a true prerequisite; the checks run independently.")
     assert not matches(lane, "no-e2e-dependency", "These two have no prerequisite on each other, so they run in parallel.")
     assert not matches(lane, "no-e2e-dependency", "E2e is queued, and these two lanes are selected.")
     eta = "Time to ready. The longest dependent path is the 8-minute wait plus our 12-minute e2e, which gives 20 minutes."
