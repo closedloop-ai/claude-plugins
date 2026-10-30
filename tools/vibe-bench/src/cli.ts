@@ -9,7 +9,8 @@ import { buildReport } from "./report.ts";
 import { runPhase2Baseline } from "./phase2-driver.ts";
 import type { ClaudeBenchmarkResult } from "./result-schema.ts";
 import { runLocalEvals } from "./eval-driver.ts";
-import { evalCaseIds } from "./eval-driver.ts";
+import { buildEvalComparisonReport, compareLocalEvals } from "./eval-comparison.ts";
+import type { EvalComparisonArtifact } from "./eval-comparison.ts";
 import { runDeveloperBenchmark } from "./developer-benchmark.ts";
 import type { DeveloperBenchmarkArtifact } from "./developer-benchmark.ts";
 import { buildBenchmarkEvidence, buildDeveloperReport } from "./developer-report.ts";
@@ -64,10 +65,20 @@ export async function main(args: string[]): Promise<string> {
       outputDir: rest[3], claudeExecutable: rest[4], codexExecutable: rest[5],
       uvExecutable: rest[6], deterministicOnly: mode === "deterministic",
       selectedCases: rest.slice(8) });
-    if (!output.result.success) {
-      throw new Error(`eval-failed:${output.jsonFile}:${output.reportFile}`);
-    }
     return `${output.jsonFile}\n${output.reportFile}`;
+  }
+  if (command === "eval-compare" && rest.length >= 5) {
+    const [baselineFile, candidateFile, rerunFile, outputDir, ...controls] = rest;
+    const comparison = compareLocalEvals(
+      JSON.parse(readFileSync(baselineFile, "utf8")) as LocalEvalResult,
+      JSON.parse(readFileSync(candidateFile, "utf8")) as LocalEvalResult,
+      JSON.parse(readFileSync(rerunFile, "utf8")) as LocalEvalResult, controls);
+    const stem = `eval-comparison-${comparison.headSha.slice(0, 12)}-${comparison.resultHash.slice(0, 12)}`;
+    const jsonFile = join(outputDir, `${stem}.json`);
+    const reportFile = join(outputDir, `${stem}.md`);
+    writeFileSync(jsonFile, `${JSON.stringify(comparison, null, 2)}\n`, { flag: "wx" });
+    writeFileSync(reportFile, buildEvalComparisonReport(comparison), { flag: "wx" });
+    return `${jsonFile}\n${reportFile}`;
   }
   if (command === "pr-list" && rest.length === 2) {
     return JSON.stringify(listOpenPullRequests(rest[0], undefined, rest[1]), null, 2);
@@ -83,20 +94,19 @@ export async function main(args: string[]): Promise<string> {
     const [repo, numberRaw, benchmarkFile, evalFile, sectionFile, gh, explanationFile] = rest;
     const selected = preflightSelectedPullRequest(repo, Number(numberRaw), undefined, gh);
     const benchmark = JSON.parse(readFileSync(benchmarkFile, "utf8")) as DeveloperBenchmarkArtifact;
-    const evaluation = JSON.parse(readFileSync(evalFile, "utf8")) as LocalEvalResult;
+    const evaluation = JSON.parse(readFileSync(evalFile, "utf8")) as EvalComparisonArtifact;
     if (benchmark.selectedPr.number !== selected.number || benchmark.selectedPr.headSha !== selected.headSha) {
       throw new Error("benchmark-pr-artifact-selection-mismatch");
     }
     const explanations = explanationFile
       ? JSON.parse(readFileSync(explanationFile, "utf8")) as DeveloperExplanations : {};
-    const section = buildDeveloperReport(benchmark, evaluation,
-      evalCaseIds(join(repo, "plugins/vibe")), explanations);
+    const section = buildDeveloperReport(benchmark, evaluation, explanations);
     writeFileSync(sectionFile, section, { flag: "wx" });
     publishBenchmarkSection(repo, selected, sectionFile, buildBenchmarkEvidence(benchmark, evaluation), undefined, gh);
     if (benchmark.status === "red") throw new Error(`benchmark-red-blocked:${sectionFile}`);
     return sectionFile;
   }
-  throw new Error("usage: cli.ts collect <phase0-result> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | run-local <symphony-checkout> <sandbox> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | compare <five-baseline-json> <three-pr-json> <base-words> <pr-words> <output-dir> [explanations-json] | baseline <symphony-checkout> <claude-plugins-repo> <pinned-plugin-sha> <empty-run-root> <output-dir> <claude> <gh> | eval-local <claude-plugins-repo> <full-branch-sha> <empty-run-root> <output-dir> <claude> <codex> <uv> <full|deterministic> [case ...] | pr-list <claude-plugins-repo> <gh> | pr-run <claude-plugins-repo> <pr-number> <baseline-json> <symphony-checkout> <empty-run-root> <output-dir> <claude> <gh> | pr-publish <claude-plugins-repo> <pr-number> <benchmark-json> <eval-json> <section-output> <gh> [explanations-json]");
+  throw new Error("usage: cli.ts collect <phase0-result> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | run-local <symphony-checkout> <sandbox> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | compare <five-baseline-json> <three-pr-json> <base-words> <pr-words> <output-dir> [explanations-json] | baseline <symphony-checkout> <claude-plugins-repo> <pinned-plugin-sha> <empty-run-root> <output-dir> <claude> <gh> | eval-local <claude-plugins-repo> <full-branch-sha> <empty-run-root> <output-dir> <claude> <codex> <uv> <full|deterministic> [case ...] | eval-compare <main-json> <candidate-json> <rerun-json> <output-dir> <control-case...> | pr-list <claude-plugins-repo> <gh> | pr-run <claude-plugins-repo> <pr-number> <baseline-json> <symphony-checkout> <empty-run-root> <output-dir> <claude> <gh> | pr-publish <claude-plugins-repo> <pr-number> <benchmark-json> <eval-comparison-json> <section-output> <gh> [explanations-json]");
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {

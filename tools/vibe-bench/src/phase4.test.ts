@@ -55,9 +55,15 @@ Comparison: ${status}.
 
 ### Model-driven evals
 
-Full shared corpus: 12 cases; result hash \`${"d".repeat(64)}\`; plugin \`${HEAD}\`.
-- claude: 12/12 passed; CLI 2.1.311; native hash \`${"e".repeat(64)}\`.
-- codex: 12/12 passed; CLI codex-cli; native hash \`${"f".repeat(64)}\`.
+Full shared corpus: 12 cases; comparison hash \`${"d".repeat(64)}\`; main \`${"c".repeat(40)}\`; candidate \`${"b".repeat(40)}\`; current head \`${HEAD}\`.
+- claude: main 11/12, candidate 11/12, regressions 0.
+- codex: main 10/12, candidate 10/12, regressions 0.
+Focused current-head rerun: 2 cases passed on both runtimes; result hash \`${"9".repeat(64)}\`.
+
+### Pre-existing eval failures
+
+- claude case-old: route.
+- codex case-old: route.
 ${extra}`;
 }
 
@@ -76,9 +82,14 @@ function evidence(overrides: Partial<BenchmarkEvidenceArtifact> = {}): Benchmark
       phase: [{ name: "build", calls: 3 }, { name: "startup", calls: 1 }],
     },
     comparison: "green",
-    eval: { pluginSha: HEAD, cases: 12, runtimes: [
-      { runtime: "claude", passed: 12, failed: 0 },
-      { runtime: "codex", passed: 12, failed: 0 },
+    eval: { headSha: HEAD, baselinePluginSha: "c".repeat(40), candidatePluginSha: "b".repeat(40),
+      cases: 12, rerunResultHash: "9".repeat(64), rerunCases: ["case-control", "case-old"],
+      regressions: [], preExisting: [
+        { runtime: "claude", id: "case-old", reason: "route" },
+        { runtime: "codex", id: "case-old", reason: "route" },
+      ], runtimes: [
+        { runtime: "claude", baselinePassed: 11, candidatePassed: 11, regressions: 0, preExisting: 1 },
+        { runtime: "codex", baselinePassed: 10, candidatePassed: 10, regressions: 0, preExisting: 1 },
     ] },
     ...overrides,
   };
@@ -93,9 +104,10 @@ function input(overrides: Partial<BenchmarkGateInput> = {}): BenchmarkGateInput 
 const evalEvidence = `
 ### Model-driven evals
 
-Full shared corpus: 12 cases; result hash \`${"d".repeat(64)}\`; plugin \`${"c".repeat(40)}\`.
-- claude: 12/12 passed; CLI 2.1.311; native hash \`${"e".repeat(64)}\`.
-- codex: 12/12 passed; CLI codex-cli; native hash \`${"f".repeat(64)}\`.
+Full shared corpus: 12 cases; comparison hash \`${"d".repeat(64)}\`; main \`${"c".repeat(40)}\`; candidate \`${"b".repeat(40)}\`; current head \`${"c".repeat(40)}\`.
+- claude: main 11/12, candidate 11/12, regressions 0.
+- codex: main 10/12, candidate 10/12, regressions 0.
+Focused current-head rerun: 2 cases passed on both runtimes; result hash \`${"9".repeat(64)}\`.
 `;
 
 function event(eventName: "labeled" | "unlabeled", label: string,
@@ -127,6 +139,14 @@ test("rendered Benchmark section rejects hidden, duplicate and placeholder forms
 
 test("green and explained yellow result disclosures pass", () => {
   assert.equal(validateBenchmarkDisclosure(input()).code, "benchmark-result-green");
+  const resolved = evidence();
+  resolved.eval.regressions = [{ runtime: "claude", id: "case-control", reason: "route" }];
+  resolved.eval.runtimes[0].regressions = 1;
+  const resolvedBody = resultSection("green").replace(
+    "- claude: main 11/12, candidate 11/12, regressions 0.",
+    "- claude: main 11/12, candidate 11/12, regressions 1.");
+  assert.equal(validateBenchmarkDisclosure(input({ body: resolvedBody,
+    evidenceArtifacts: [resolved] })).code, "benchmark-result-green");
   assert.equal(validateBenchmarkDisclosure(input({ body: resultSection("yellow"),
     evidenceArtifacts: [evidence({ comparison: "yellow" })] })).code,
     "benchmark-yellow-explanation-missing");
@@ -154,7 +174,8 @@ test("fabricated disclosure, empty evidence and failing evals fail closed", () =
   assert.equal(validateBenchmarkDisclosure(input({ evidenceArtifacts: [shapeDefault] })).code,
     "benchmark-skill-breakdown-default-only");
   const failed = evidence();
-  failed.eval.runtimes[0] = { runtime: "claude", passed: 11, failed: 1 };
+  failed.eval.regressions = [{ runtime: "claude", id: "case-new", reason: "route" }];
+  failed.eval.runtimes[0].regressions = 1;
   assert.equal(validateBenchmarkDisclosure(input({ evidenceArtifacts: [failed] })).code,
     "benchmark-evals-invalid");
   const zeroBody = resultSection("green")
@@ -164,7 +185,8 @@ test("fabricated disclosure, empty evidence and failing evals fail closed", () =
       "Totals: input 0, cached read 0, uncached input 0, cache write 0, output 0");
   assert.equal(validateBenchmarkDisclosure(input({ body: zeroBody })).code,
     "benchmark-evidence-body-mismatch");
-  const failedBody = resultSection("green").replace("- codex: 12/12 passed", "- codex: 0/12 passed");
+  const failedBody = resultSection("green").replace("- codex: main 10/12, candidate 10/12",
+    "- codex: main 0/12, candidate 10/12");
   assert.equal(validateBenchmarkDisclosure(input({ body: failedBody })).code,
     "benchmark-evals-body-mismatch");
 });

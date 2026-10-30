@@ -1,5 +1,5 @@
-import type { LocalEvalResult } from "./eval-collector.ts";
-import { verifyLocalEvalHash } from "./eval-collector.ts";
+import type { EvalComparisonArtifact } from "./eval-comparison.ts";
+import { verifyEvalComparisonHash } from "./eval-comparison.ts";
 import type { Signal } from "./comparison.ts";
 import type { DeveloperBenchmarkArtifact } from "./developer-benchmark.ts";
 import { verifyDeveloperBenchmarkHash } from "./developer-benchmark.ts";
@@ -24,9 +24,10 @@ function breakdown(calls: ModelCall[], facet: "component" | "skill" | "worker" |
 
 /** Build the compact PR-attached evidence consumed by the model-free gate. */
 export function buildBenchmarkEvidence(result: DeveloperBenchmarkArtifact,
-  evaluation: LocalEvalResult): BenchmarkEvidenceArtifact {
+  evaluation: EvalComparisonArtifact): BenchmarkEvidenceArtifact {
   verifyDeveloperBenchmarkHash(result);
-  verifyLocalEvalHash(evaluation);
+  verifyEvalComparisonHash(evaluation);
+  if (evaluation.headSha !== result.pluginSha) throw new Error("benchmark-eval-head-mismatch");
   const calls = result.runs.flatMap((run) => run.result.calls);
   const totals = result.runs.reduce((sum, run) => ({
     inputTokens: sum.inputTokens + run.result.totals.inputTokens,
@@ -45,10 +46,11 @@ export function buildBenchmarkEvidence(result: DeveloperBenchmarkArtifact,
       worker: breakdown(calls, "worker"), phase: breakdown(calls, "phase"),
     },
     comparison: result.status,
-    eval: { pluginSha: evaluation.pluginSha, cases: evaluation.selectedCases.length,
-      runtimes: evaluation.runtimes.map((runtime) => ({ runtime: runtime.runtime,
-        passed: runtime.result?.passed ?? 0,
-        failed: runtime.result?.failed ?? evaluation.selectedCases.length })) },
+    eval: { headSha: evaluation.headSha, baselinePluginSha: evaluation.baselinePluginSha,
+      candidatePluginSha: evaluation.candidatePluginSha, cases: evaluation.cases,
+      rerunResultHash: evaluation.rerunResultHash, rerunCases: evaluation.rerunCases,
+      regressions: evaluation.regressions, preExisting: evaluation.preExisting,
+      runtimes: evaluation.runtimes },
   };
 }
 
@@ -56,21 +58,12 @@ function cell(value: number | null): string | number {
   return value === null ? "unknown" : value;
 }
 
-function exactCoverage(actual: string[], expected: string[]): void {
-  if (actual.length !== expected.length || new Set(actual).size !== actual.length ||
-      [...actual].sort().join("\0") !== [...expected].sort().join("\0")) {
-    throw new Error("benchmark-eval-case-coverage-mismatch");
-  }
-}
-
 /** Render the one publishable Benchmark section after all local evidence is complete. */
-export function buildDeveloperReport(result: DeveloperBenchmarkArtifact, evaluation: LocalEvalResult,
-  expectedEvalCases: string[], explanations: DeveloperExplanations = {}): string {
+export function buildDeveloperReport(result: DeveloperBenchmarkArtifact,
+  evaluation: EvalComparisonArtifact, explanations: DeveloperExplanations = {}): string {
   verifyDeveloperBenchmarkHash(result);
-  verifyLocalEvalHash(evaluation);
-  exactCoverage(evaluation.selectedCases, expectedEvalCases);
-  if (!evaluation.success || evaluation.deterministicOnly || evaluation.pluginSha !== result.pluginSha ||
-      evaluation.runtimes.some((runtime) => !runtime.result || runtime.result.failed !== 0)) {
+  verifyEvalComparisonHash(evaluation);
+  if (evaluation.headSha !== result.pluginSha) {
     throw new Error("benchmark-eval-not-publishable");
   }
   const regressions = Object.entries(result.comparisons).flatMap(([shape, comparison]) =>
@@ -139,8 +132,12 @@ export function buildDeveloperReport(result: DeveloperBenchmarkArtifact, evaluat
     }
   }
   lines.push("", "### Model-driven evals", "",
-    `Full shared corpus: ${evaluation.selectedCases.length} cases; result hash \`${evaluation.resultHash}\`; plugin \`${evaluation.pluginSha}\`.`,
-    ...evaluation.runtimes.map((runtime) => `- ${runtime.runtime}: ${runtime.result!.passed}/${evaluation.selectedCases.length} passed; CLI ${runtime.result!.cliVersion}; native hash \`${runtime.result!.nativeHash}\`.`));
+    `Full shared corpus: ${evaluation.cases} cases; comparison hash \`${evaluation.resultHash}\`; main \`${evaluation.baselinePluginSha}\`; candidate \`${evaluation.candidatePluginSha}\`; current head \`${evaluation.headSha}\`.`,
+    ...evaluation.runtimes.map((runtime) => `- ${runtime.runtime}: main ${runtime.baselinePassed}/${evaluation.cases}, candidate ${runtime.candidatePassed}/${evaluation.cases}, regressions ${runtime.regressions}.`),
+    `Focused current-head rerun: ${evaluation.rerunCases.length} cases passed on both runtimes; result hash \`${evaluation.rerunResultHash}\`.`,
+    "", "### Pre-existing eval failures", "",
+    ...(evaluation.preExisting.length ? evaluation.preExisting.map((item) =>
+      `- ${item.runtime} ${item.id}: ${item.reason}.`) : ["None."]));
   if (result.status === "red") {
     lines.push("", `Regression acceptance head: ${result.pluginSha}`,
       "Red regression: blocked pending the benchmark approver's explicit acceptance.");

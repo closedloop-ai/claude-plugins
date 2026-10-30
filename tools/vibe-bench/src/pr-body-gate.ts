@@ -16,7 +16,7 @@ const PROTECTED_PATHS = [
 
 const PLACEHOLDER = /^(?:tbd|todo|not run|measurement pending|replace this section)$/i;
 const FULL_SHA = /^[0-9a-f]{40}$/;
-const EVAL_EVIDENCE = /^### Model-driven evals$[\s\S]*^Full shared corpus: \d+ cases; result hash `[0-9a-f]{64}`; plugin `[0-9a-f]{40}`\.$[\s\S]*^- claude: \d+\/\d+ passed;[\s\S]*^- codex: \d+\/\d+ passed;/m;
+const EVAL_EVIDENCE = /^### Model-driven evals$[\s\S]*^Full shared corpus: \d+ cases; comparison hash `[0-9a-f]{64}`; main `[0-9a-f]{40}`; candidate `[0-9a-f]{40}`; current head `[0-9a-f]{40}`\.$[\s\S]*^- claude: main \d+\/\d+, candidate \d+\/\d+, regressions \d+\.$[\s\S]*^- codex: main \d+\/\d+, candidate \d+\/\d+, regressions \d+\.$[\s\S]*^Focused current-head rerun: \d+ cases passed on both runtimes; result hash `[0-9a-f]{64}`\.$/m;
 
 /** Relevant GitHub issue timeline event, preserved in API order. */
 export type GateTimelineEvent =
@@ -53,9 +53,16 @@ export interface BenchmarkEvidenceArtifact {
     Array<{ name: string; calls: number }>>;
   comparison: "green" | "yellow" | "red";
   eval: {
-    pluginSha: string;
+    headSha: string;
+    baselinePluginSha: string;
+    candidatePluginSha: string;
     cases: number;
-    runtimes: Array<{ runtime: "claude" | "codex"; passed: number; failed: number }>;
+    rerunResultHash: string;
+    rerunCases: string[];
+    regressions: Array<{ runtime: "claude" | "codex"; id: string; reason: string }>;
+    preExisting: Array<{ runtime: "claude" | "codex"; id: string; reason: string }>;
+    runtimes: Array<{ runtime: "claude" | "codex"; baselinePassed: number;
+      candidatePassed: number; regressions: number; preExisting: number }>;
   };
 }
 
@@ -186,7 +193,7 @@ function validateEvidence(input: BenchmarkGateInput, content: string,
   if (!hash) return fail("benchmark-result-hash-missing", "Benchmark results must include the result hash.");
   const artifact = input.evidenceArtifacts.find((item) => item.resultHash === hash);
   if (!artifact) return fail("benchmark-evidence-missing", "Attach the benchmark evidence for this result hash.");
-  if (artifact.schemaVersion !== 1 || artifact.headSha !== input.headSha || artifact.eval.pluginSha !== input.headSha) {
+  if (artifact.schemaVersion !== 1 || artifact.headSha !== input.headSha || artifact.eval.headSha !== input.headSha) {
     return fail("benchmark-evidence-head-mismatch", "Attached evidence must target the current pull request head.");
   }
   if (!artifact.valid || !artifact.success || artifact.configuredModel !== "claude-sonnet-5-5" ||
@@ -231,19 +238,39 @@ function validateEvidence(input: BenchmarkGateInput, content: string,
       !artifact.breakdowns.phase.some((row) => row.name !== "startup" && row.name !== "unobserved")) {
     return fail("benchmark-breakdown-unobserved", "Attached evidence must contain observed component, skill, worker and phase data.");
   }
-  const evalHash = /^Full shared corpus: (\d+) cases; result hash `([0-9a-f]{64})`; plugin `([0-9a-f]{40})`\.$/m.exec(content);
-  if (!evalHash || Number(evalHash[1]) !== artifact.eval.cases || evalHash[2] !== artifact.evalResultHash ||
-      evalHash[3] !== input.headSha || artifact.eval.cases <= 0 || artifact.eval.runtimes.length !== 2 ||
+  const evalHash = /^Full shared corpus: (\d+) cases; comparison hash `([0-9a-f]{64})`; main `([0-9a-f]{40})`; candidate `([0-9a-f]{40})`; current head `([0-9a-f]{40})`\.$/m.exec(content);
+  const rerun = /^Focused current-head rerun: (\d+) cases passed on both runtimes; result hash `([0-9a-f]{64})`\.$/m.exec(content);
+  if (!evalHash || !rerun || Number(evalHash[1]) !== artifact.eval.cases ||
+      evalHash[2] !== artifact.evalResultHash || evalHash[3] !== artifact.eval.baselinePluginSha ||
+      evalHash[4] !== artifact.eval.candidatePluginSha || evalHash[5] !== input.headSha ||
+      Number(rerun[1]) !== artifact.eval.rerunCases.length || rerun[2] !== artifact.eval.rerunResultHash ||
+      artifact.eval.cases <= 0 || !artifact.eval.rerunCases.length ||
+      new Set(artifact.eval.rerunCases).size !== artifact.eval.rerunCases.length ||
+      artifact.eval.regressions.some((item) => !item.id || !item.reason ||
+        !artifact.eval.rerunCases.includes(item.id)) || artifact.eval.runtimes.length !== 2 ||
       new Set(artifact.eval.runtimes.map((runtime) => runtime.runtime)).size !== 2 ||
-      artifact.eval.runtimes.some((runtime) => runtime.failed !== 0 ||
-        runtime.passed !== artifact.eval.cases)) {
-    return fail("benchmark-evals-invalid", "Attached Claude and Codex eval evidence must be non-empty and fully passing.");
+      artifact.eval.runtimes.some((runtime) =>
+        runtime.regressions !== artifact.eval.regressions.filter((item) => item.runtime === runtime.runtime).length ||
+        runtime.baselinePassed < 0 || runtime.baselinePassed > artifact.eval.cases ||
+        runtime.candidatePassed < 0 || runtime.candidatePassed > artifact.eval.cases ||
+        runtime.preExisting !== artifact.eval.preExisting.filter((item) =>
+          item.runtime === runtime.runtime).length) || artifact.eval.preExisting.some((item) =>
+        !item.id || !item.reason)) {
+    return fail("benchmark-evals-invalid", "Attached eval evidence must cover every main-to-candidate regression in a passing current-head rerun.");
   }
   for (const runtimeResult of artifact.eval.runtimes) {
-    const displayed = new RegExp(`^- ${runtimeResult.runtime}: (\\d+)\\/(\\d+) passed;`, "m").exec(content);
-    if (!displayed || Number(displayed[1]) !== runtimeResult.passed ||
-        Number(displayed[2]) !== artifact.eval.cases) {
+    const displayed = new RegExp(`^- ${runtimeResult.runtime}: main (\\d+)\\/(\\d+), candidate (\\d+)\\/(\\d+), regressions (\\d+)\\.$`, "m").exec(content);
+    if (!displayed || Number(displayed[1]) !== runtimeResult.baselinePassed ||
+        Number(displayed[2]) !== artifact.eval.cases ||
+        Number(displayed[3]) !== runtimeResult.candidatePassed ||
+        Number(displayed[4]) !== artifact.eval.cases ||
+        Number(displayed[5]) !== runtimeResult.regressions) {
       return fail("benchmark-evals-body-mismatch", "Disclosed eval counts must match the attached evidence.");
+    }
+  }
+  for (const item of artifact.eval.preExisting) {
+    if (!content.includes(`- ${item.runtime} ${item.id}: ${item.reason}.`)) {
+      return fail("benchmark-evals-body-mismatch", "Disclosed pre-existing failures must match the attached evidence.");
     }
   }
   return null;

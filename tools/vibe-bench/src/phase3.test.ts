@@ -6,10 +6,52 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { collectClaudeEval, collectCodexEval, finalizeLocalEval } from "./eval-collector.ts";
+import type { EvalCaseResult, EvalSuiteResult, LocalEvalResult } from "./eval-collector.ts";
+import { compareLocalEvals, verifyEvalComparisonHash } from "./eval-comparison.ts";
 import type { EvalCommands } from "./eval-driver.ts";
 import { codexEvalBudgetSeconds, runLocalEvals } from "./eval-driver.ts";
 
 const CASE = "pm-new-session-first-reply";
+
+function comparisonEval(sha: string, states: Record<string, boolean>): LocalEvalResult {
+  const ids = Object.keys(states).sort();
+  const runtime = (name: "claude" | "codex"): EvalSuiteResult => {
+    const cases: EvalCaseResult[] = ids.map((id) => ({ id, passed: states[id],
+      failedGraders: states[id] ? [] : [`${name}-route`], skippedGraders: [] }));
+    const passed = cases.filter((item) => item.passed).length;
+    return { runtime: name, cliVersion: name === "claude" ? "2.1.311" : "codex-cli 0.163.0",
+      cases, passed, failed: cases.length - passed, wallMs: 10, costUsd: name === "claude" ? 0.1 : null,
+      tokens: name === "codex" ? { input_tokens: 1 } : null, nativeHash: name[0].repeat(64) };
+  };
+  return finalizeLocalEval({ pluginSha: sha, createdAt: "2026-10-29T00:00:00Z", wallMs: 20,
+    deterministicOnly: false, selectedCases: ids, runtimes: [
+      { runtime: "claude", exitCode: ids.some((id) => !states[id]) ? 1 : 0,
+        result: runtime("claude"), invalidReason: null },
+      { runtime: "codex", exitCode: ids.some((id) => !states[id]) ? 1 : 0,
+        result: runtime("codex"), invalidReason: null },
+    ] });
+}
+
+test("eval comparison separates regressions from main failures and requires a current-head rerun", () => {
+  const main = comparisonEval("a".repeat(40), { "control-case": true, "pre-existing": false,
+    "regressed-case": true });
+  const candidate = comparisonEval("b".repeat(40), { "control-case": true, "pre-existing": false,
+    "regressed-case": false });
+  const rerun = comparisonEval("c".repeat(40), { "control-case": true, "regressed-case": true });
+  const comparison = compareLocalEvals(main, candidate, rerun, ["control-case"]);
+  assert.equal(comparison.success, true);
+  assert.deepEqual(comparison.regressions.map((item) => `${item.runtime}:${item.id}`),
+    ["claude:regressed-case", "codex:regressed-case"]);
+  assert.deepEqual(comparison.preExisting.map((item) => `${item.runtime}:${item.id}`),
+    ["claude:pre-existing", "codex:pre-existing"]);
+  assert.deepEqual(comparison.rerunCases, ["control-case", "regressed-case"]);
+  verifyEvalComparisonHash(comparison);
+  assert.throws(() => compareLocalEvals(main, candidate,
+    comparisonEval("c".repeat(40), { "control-case": true }), ["control-case"]), /rerun-coverage/);
+  assert.throws(() => compareLocalEvals(main, main,
+    comparisonEval("c".repeat(40), { "control-case": true, "pre-existing": true,
+      "regressed-case": true }), ["control-case"]), /identity/);
+});
 
 test("serial Codex eval budget scales with the full corpus", () => {
   assert.equal(codexEvalBudgetSeconds(1), 1800);

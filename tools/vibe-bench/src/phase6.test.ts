@@ -14,6 +14,8 @@ import { listOpenPullRequests, preflightSelectedPullRequest, publishBenchmarkSec
 import type { DeveloperPrCommands } from "./developer-pr.ts";
 import { finalizeLocalEval } from "./eval-collector.ts";
 import type { EvalSuiteResult, LocalEvalResult } from "./eval-collector.ts";
+import { compareLocalEvals } from "./eval-comparison.ts";
+import type { EvalComparisonArtifact } from "./eval-comparison.ts";
 import { resultHash } from "./result-schema.ts";
 
 const baselinePath = join(import.meta.dirname,
@@ -59,6 +61,11 @@ function evaluation(pluginSha = HEAD, deterministicOnly = false): LocalEvalResul
     ] });
 }
 
+function evaluationComparison(): EvalComparisonArtifact {
+  return compareLocalEvals(evaluation("a".repeat(40)), evaluation("b".repeat(40)),
+    evaluation(HEAD), ["case-a"]);
+}
+
 test("three balanced waves reuse one setup and wait for peers before teardown", async () => {
   const events: string[] = [];
   let active = 0;
@@ -101,18 +108,16 @@ test("developer finalizer enforces six proof lifecycles, final digests and hashe
 });
 
 test("publication report requires exact full dual-runtime eval identity", () => {
-  const report = buildDeveloperReport(developer(), evaluation(), ["case-a"]);
+  const report = buildDeveloperReport(developer(), evaluationComparison());
   assert.match(report, /^## Benchmark$/m);
   assert.match(report, /^### Component calls$/m);
   assert.match(report, /^### Model-driven evals$/m);
-  assert.match(report, /claude: 1\/1 passed/);
-  assert.match(report, /codex: 1\/1 passed/);
-  assert.throws(() => buildDeveloperReport(developer(), evaluation(HEAD, true), ["case-a"]),
-    /eval-not-publishable/);
-  assert.throws(() => buildDeveloperReport(developer(), evaluation("e".repeat(40)), ["case-a"]),
-    /eval-not-publishable/);
-  assert.throws(() => buildDeveloperReport(developer(), evaluation(), ["case-b"]),
-    /case-coverage-mismatch/);
+  assert.match(report, /claude: main 1\/1, candidate 1\/1, regressions 0/);
+  assert.match(report, /codex: main 1\/1, candidate 1\/1, regressions 0/);
+  assert.match(report, /Focused current-head rerun: 1 cases passed on both runtimes/);
+  const wrongHead = structuredClone(evaluationComparison());
+  wrongHead.headSha = "e".repeat(40);
+  assert.throws(() => buildDeveloperReport(developer(), wrongHead), /eval-comparison-hash-mismatch/);
 });
 
 test("instruction word counts are absolute at each committed ref", () => {
@@ -176,7 +181,7 @@ test("PR selection is read-only and publication is head-safe, section-only and i
   try {
     const section = join(root, "section.md");
     writeFileSync(section, "## Benchmark\n\nnew result\n");
-    const attachment = buildBenchmarkEvidence(developer(), evaluation());
+    const attachment = buildBenchmarkEvidence(developer(), evaluationComparison());
     publishBenchmarkSection("repo", selected, section, attachment, commands, "gh");
     const once = commands.body;
     assert.match(once, /Purpose[\s\S]*new result[\s\S]*## Tests[\s\S]*kept/);
