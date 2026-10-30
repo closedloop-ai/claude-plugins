@@ -62,7 +62,7 @@ export async function main(args: string[]): Promise<string> {
     if (mode !== "full" && mode !== "deterministic") throw new Error("eval-mode-invalid");
     const output = runLocalEvals({ repo: rest[0], pluginSha: rest[1], runRoot: rest[2],
       outputDir: rest[3], claudeExecutable: rest[4], codexExecutable: rest[5],
-      pythonExecutable: rest[6], deterministicOnly: mode === "deterministic",
+      uvExecutable: rest[6], deterministicOnly: mode === "deterministic",
       selectedCases: rest.slice(8) });
     if (!output.result.success) {
       throw new Error(`eval-failed:${output.jsonFile}:${output.reportFile}`);
@@ -96,7 +96,7 @@ export async function main(args: string[]): Promise<string> {
     if (benchmark.status === "red") throw new Error(`benchmark-red-blocked:${sectionFile}`);
     return sectionFile;
   }
-  throw new Error("usage: cli.ts collect <phase0-result> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | run-local <symphony-checkout> <sandbox> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | compare <five-baseline-json> <three-pr-json> <base-words> <pr-words> <output-dir> [explanations-json] | baseline <symphony-checkout> <claude-plugins-repo> <pinned-plugin-sha> <empty-run-root> <output-dir> <claude> <gh> | eval-local <claude-plugins-repo> <full-branch-sha> <empty-run-root> <output-dir> <claude> <codex> <python> <full|deterministic> [case ...] | pr-list <claude-plugins-repo> <gh> | pr-run <claude-plugins-repo> <pr-number> <baseline-json> <symphony-checkout> <empty-run-root> <output-dir> <claude> <gh> | pr-publish <claude-plugins-repo> <pr-number> <benchmark-json> <eval-json> <section-output> <gh> [explanations-json]");
+  throw new Error("usage: cli.ts collect <phase0-result> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | run-local <symphony-checkout> <sandbox> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | compare <five-baseline-json> <three-pr-json> <base-words> <pr-words> <output-dir> [explanations-json] | baseline <symphony-checkout> <claude-plugins-repo> <pinned-plugin-sha> <empty-run-root> <output-dir> <claude> <gh> | eval-local <claude-plugins-repo> <full-branch-sha> <empty-run-root> <output-dir> <claude> <codex> <uv> <full|deterministic> [case ...] | pr-list <claude-plugins-repo> <gh> | pr-run <claude-plugins-repo> <pr-number> <baseline-json> <symphony-checkout> <empty-run-root> <output-dir> <claude> <gh> | pr-publish <claude-plugins-repo> <pr-number> <benchmark-json> <eval-json> <section-output> <gh> [explanations-json]");
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {

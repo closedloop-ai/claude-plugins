@@ -103,7 +103,7 @@ class FakeCommands implements EvalCommands {
         "2.1.311 (Claude Code)\n" : "codex-cli 0.163.0\n", stderr: "" };
     }
     if (command.includes("claude")) {
-      const vibePath = args[2];
+      const vibePath = args.includes("--eval-dir") ? join(args[2], "vibe") : args[2];
       const resultFile = args[args.indexOf("--json") + 1];
       writeFileSync(resultFile, JSON.stringify(claudeNative(vibePath, join(dirname(vibePath),
         "closedloop-core"))));
@@ -152,7 +152,7 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     const commands = new FakeCommands();
     const output = runLocalEvals({ repo, pluginSha: sha, runRoot: join(root, "run"),
       outputDir: join(root, "results"), claudeExecutable: "fixture-claude",
-      codexExecutable: "fixture-codex", pythonExecutable: "fixture-python",
+      codexExecutable: "fixture-codex", uvExecutable: "fixture-uv",
       selectedCases: [CASE], deterministicOnly: true }, commands);
     assert.equal(output.result.success, true);
     assert.deepEqual(output.result.runtimes.map((item) => item.runtime), ["claude", "codex"]);
@@ -162,9 +162,15 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     const modelCalls = commands.calls.filter((call) => !call.args.includes("--version"));
     assert.equal(modelCalls.length, 2);
     assert.ok(modelCalls.every((call) => call.args[call.args.indexOf("--concurrency") + 1] === "1"));
+    const claudeCall = modelCalls.find((call) => call.command.includes("claude"))!;
+    assert.equal(claudeCall.args[2].endsWith("/plugin-snapshot/plugins"), true);
+    assert.equal(claudeCall.args[claudeCall.args.indexOf("--eval-dir") + 1], "vibe/evals");
+    const codexCall = modelCalls.find((call) => call.command.includes("uv"))!;
+    assert.deepEqual(codexCall.args.slice(0, 6),
+      ["run", "--with", "Pillow==12.3.0", "--with", "PyYAML", "python"]);
     assert.throws(() => runLocalEvals({ repo, pluginSha: sha, runRoot: join(root, "run"),
       outputDir: join(root, "results"), claudeExecutable: "fixture-claude",
-      codexExecutable: "fixture-codex", pythonExecutable: "fixture-python" }, commands),
+      codexExecutable: "fixture-codex", uvExecutable: "fixture-uv" }, commands),
     /run-root-exists/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

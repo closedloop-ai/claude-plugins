@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { buildLocalEvalReport, codexCaseId, collectClaudeEval, collectCodexEval,
   finalizeLocalEval } from "./eval-collector.ts";
 import type { EvalRuntimeRecord, EvalSuiteResult, LocalEvalResult } from "./eval-collector.ts";
@@ -15,7 +15,7 @@ export interface LocalEvalOptions {
   outputDir: string;
   claudeExecutable: string;
   codexExecutable: string;
-  pythonExecutable: string;
+  uvExecutable: string;
   selectedCases?: string[];
   deterministicOnly?: boolean;
 }
@@ -113,7 +113,10 @@ export function runLocalEvals(options: LocalEvalOptions,
   const codexOutput = join(options.runRoot, "codex");
   mkdirSync(claudeOutput);
   const claudeJson = join(claudeOutput, "result.json");
-  const claudeArgs = ["plugin", "eval", snapshot.vibeDir, "--json", claudeJson,
+  // The case manifests load vibe and its sibling closedloop-core snapshot. Use
+  // their shared parent as the containment root while selecting vibe's suite.
+  const claudeArgs = ["plugin", "eval", dirname(snapshot.vibeDir), "--eval-dir", "vibe/evals",
+    "--json", claudeJson,
     "--output-dir", claudeOutput, "--ablation", "none", "--model", "sonnet",
     "--runs", "1", "--threshold", "1", "--concurrency", "1", "--scaffold",
     "--trust-plugin", "--no-publish"];
@@ -121,12 +124,15 @@ export function runLocalEvals(options: LocalEvalOptions,
   const claudeProcess = commands.run(options.claudeExecutable, claudeArgs, options.runRoot);
   writeProcessLog(join(options.runRoot, "claude-process.log"), claudeProcess);
 
-  const codexArgs = [join(snapshot.vibeDir, "evals/codex/run.py"), "--plugin", snapshot.vibeDir,
+  // The native runner documents these isolated Python dependencies. Provision
+  // them through uv instead of relying on the developer's system Python.
+  const codexArgs = ["run", "--with", "Pillow==12.3.0", "--with", "PyYAML", "python",
+    join(snapshot.vibeDir, "evals/codex/run.py"), "--plugin", snapshot.vibeDir,
     "--source-sha", options.pluginSha, "--output", codexOutput, "--codex-bin",
     options.codexExecutable, "--concurrency", "1", "--max-seconds", "1800"];
   if (options.deterministicOnly) codexArgs.push("--deterministic-only");
   for (const id of selected) codexArgs.push("--case", codexCaseId(id));
-  const codexProcess = commands.run(options.pythonExecutable, codexArgs, options.runRoot);
+  const codexProcess = commands.run(options.uvExecutable, codexArgs, options.runRoot);
   writeProcessLog(join(options.runRoot, "codex-process.log"), codexProcess);
 
   const vibeVersion = manifestVersion(snapshot.vibeDir);
