@@ -97,6 +97,28 @@ test('amends one unpushed commit after a pre-push repair and refuses a published
   assert.match(refused.json.error, /published|remote/i);
 });
 
+test('amend fetches its upstream and refuses a head published from elsewhere', t => {
+  const { home, checkout } = setup(t);
+  write(checkout, 'apps/app/page.tsx', 'first local commit\n');
+  assert.equal(runNode(SCRIPT, ['--worktree', checkout, '--subject', 'ISS-7: First'], home).status, 0);
+  git(checkout, ['push', '--quiet', '-u', 'origin', 'HEAD:published'], home);
+  write(checkout, 'apps/app/page.tsx', 'second local commit\n');
+  assert.equal(runNode(SCRIPT, ['--worktree', checkout, '--subject', 'ISS-7: Second'], home).status, 0);
+  const current = git(checkout, ['rev-parse', 'HEAD'], home);
+  const staleTracking = git(checkout, ['rev-parse', 'refs/remotes/origin/published'], home);
+  assert.notEqual(staleTracking, current);
+  const origin = git(checkout, ['remote', 'get-url', 'origin'], home);
+  git(checkout, ['push', '--quiet', 'origin', `${current}:refs/heads/external-transfer`], home);
+  git(origin, ['update-ref', 'refs/heads/published', current], home);
+  git(origin, ['update-ref', '-d', 'refs/heads/external-transfer'], home);
+  git(checkout, ['update-ref', '-d', 'refs/remotes/origin/external-transfer'], home);
+  write(checkout, 'apps/app/page.tsx', 'repair after external push\n');
+  const refused = runNode(SCRIPT, ['--worktree', checkout, '--amend'], home);
+  assert.equal(refused.status, 1);
+  assert.match(refused.json.error, /published|remote/i);
+  assert.equal(git(checkout, ['rev-parse', 'HEAD'], home), current);
+});
+
 test("local plans stay in the worktree even when staged, without excluding other artifacts", (t) => {
   const { home, checkout } = setup(t);
   const plan = ".closedloop-ai/vibe-plans/request-1.md";

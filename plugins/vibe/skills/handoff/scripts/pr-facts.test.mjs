@@ -10,7 +10,7 @@ import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fi
 import { qaImpactRequest } from "./qa-impact.mjs";
 import { sourceIdentity } from '../../vibe/scripts/tested-head.mjs';
 
-test('precommit evidence binds to identical published content without rewriting tested HEAD', t => {
+test('dirty precommit evidence cannot bind unchanged HEAD and binds only after the candidate is committed', t => {
   const { root, home, cleanup } = makeHome('precommit-evidence-binding-');
   t.after(cleanup);
   const wt = path.join(root, 'repo');
@@ -28,7 +28,8 @@ test('precommit evidence binds to identical published content without rewriting 
       laneReport: { command: 'pnpm test:lanes', matches: [] }, entries: [], noTestsReason: 'docs only' } };
   const gate = () => pullRequestFacts({ worktree: wt, base, include: new Set(['notes.md']), ownBranch: 'main', runs: evidence,
     commit: git(wt, ['rev-parse', 'HEAD'], home) }).prEvidenceProblems;
-  assert.deepEqual(gate(), [], 'the dirty candidate is checked before its first commit');
+  assert.match(gate().join('\n'), /commit.*(?:omit|content)|uncommitted|untracked/i,
+    'dirty evidence cannot bind to the unchanged commit that contains none of its edits');
   git(wt, ['add', '.'], home);
   git(wt, ['commit', '--quiet', '-m', 'one push-ready commit'], home);
   assert.deepEqual(gate(), [], 'only identical content can carry the accepted source evidence');

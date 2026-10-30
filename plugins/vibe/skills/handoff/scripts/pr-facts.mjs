@@ -296,8 +296,7 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
       if (validSourceIdentity(source)) {
         try { git(worktree, ['merge-base', '--is-ancestor', source.head, current.head]); ancestor = true; } catch { /* Not proven. */ }
       }
-      const omitted = source?.head !== current.head
-        && git(worktree, ['status', '--porcelain', '--untracked-files=all', '--ignore-submodules=none']) !== '';
+      const omitted = git(worktree, ['status', '--porcelain', '--untracked-files=all', '--ignore-submodules=none']) !== '';
       if (!validSourceIdentity(source) || source.treeSha256 !== current.treeSha256 || commit !== current.head || !ancestor || omitted) {
         bindingProblems.push(omitted
           ? 'published commit omitted uncommitted or untracked inputs covered by the tested source identity'

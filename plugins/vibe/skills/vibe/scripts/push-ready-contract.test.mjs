@@ -93,4 +93,7 @@ test('review and verification precede the commit, with one unpushed amend recove
   assert.ok(review < commit && commit < push);
   const recovery = handoff.slice(commit, handoff.indexOf('## 8.'));
   assert.match(recovery, /pre-push hook[\s\S]*fix(?:es)?\s+uncommitted[\s\S]*--amend[\s\S]*unpushed[\s\S]*rerun/i);
+  assert.match(recovery, /--prepare-main-sync[\s\S]*fetch(?:es)? fresh `origin\/main`[\s\S]*--amend[\s\S]*still-unpushed/i);
+  const ticketFill = handoff.slice(handoff.indexOf('## 8.'), handoff.indexOf('## 9.'));
+  assert.match(ticketFill, /source or\s+criterion mismatch[\s\S]*SAME writer[\s\S]*steps 3 through 7[\s\S]*retry/i);
 });

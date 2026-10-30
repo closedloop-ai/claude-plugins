@@ -72,7 +72,7 @@ function commitWorktree() {
   const worktree = path.resolve(values.worktree);
   const amend = values.amend;
   const subject = amend ? git(worktree, ['log', '-1', '--format=%s']) : requireSubject(values.subject);
-  if (amend && git(worktree, ['branch', '-r', '--contains', 'HEAD'])) {
+  if (amend && publishedHead(worktree)) {
     throw new Error('Refusing to amend a commit already published on a remote branch.');
   }
   const localFixes = (readSessionRecord(worktree)?.localFixes ?? []).flatMap((fix) => fix.paths ?? []);
@@ -110,6 +110,32 @@ function commitWorktree() {
     );
   }
   return { committed: true, amended: amend, commit: git(worktree, ["rev-parse", "HEAD"]), subject, merge: merging, files, excluded };
+}
+
+function publishedHead(worktree) {
+  const head = git(worktree, ['rev-parse', 'HEAD']);
+  let upstream = null;
+  try { upstream = git(worktree, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']); }
+  catch { /* A never-pushed branch may have no upstream. */ }
+  if (upstream) {
+    const slash = upstream.indexOf('/');
+    const remote = upstream.slice(0, slash);
+    const branch = upstream.slice(slash + 1);
+    const fetched = spawnSync('git', ['fetch', '--quiet', remote, `+refs/heads/${branch}:refs/remotes/${upstream}`], {
+      cwd: worktree, encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (fetched.error || fetched.status !== 0) throw new Error('Cannot verify whether the commit was published to its upstream; refusing to amend.');
+    return Boolean(git(worktree, ['branch', '-r', '--contains', head]));
+  }
+  const remotes = git(worktree, ['remote']).split('\n').filter(Boolean);
+  for (const remote of remotes) {
+    const listed = spawnSync('git', ['ls-remote', '--heads', remote], {
+      cwd: worktree, encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (listed.error || listed.status !== 0) throw new Error('Cannot verify whether the commit was published to a remote; refusing to amend.');
+    if (listed.stdout.split('\n').some(line => line.startsWith(`${head}\t`))) return true;
+  }
+  return false;
 }
 
 function requireSubject(subject) {

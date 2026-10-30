@@ -629,10 +629,14 @@ unpushed, excluding private plans/localFix source:
 `node ../vibe/scripts/commit-worktree.mjs --worktree "<wt>" --subject "<ticket>: <summary>" --body "<fixes>"`.
 Its tree must match the accepted candidate.
 Then follow [Main-sync before publication](../vibe/references/environment.md#main-sync-before-publication)
-for handoff. `--prepare-main-sync` verifies the committed candidate prepared
-before review; the same actor runs `main-sync-inputs` once and binds its real
-`mainSyncValidation`. Its retained reports are never PASS, readiness is not test
-authority, and `requiredE2eComplete` remains a separate final-coverage gate.
+for handoff. `--prepare-main-sync` fetches fresh `origin/main`; when it stages a
+merge newer than step 5's reviewed pin, the SAME writer resolves it uncommitted
+and reruns affected review, verification, and all CI lanes. ROOT uses
+`commit-worktree.mjs --worktree "<wt>" --amend` on the still-unpushed commit,
+then repeats preparation. Only the settled amended tree reaches the same actor's
+one `main-sync-inputs` pass and real `mainSyncValidation`. Its retained reports
+are never PASS, readiness is not test authority, and `requiredE2eComplete`
+remains a separate final-coverage gate.
 Every main sync is checked for capability removal, this one included. Use
 `qa-impact.mjs`, dispatch `vibe-guardrails-reviewer` for its check 13 on that
 merge, and rerun the inventory's `requiredChecks` on the merged tree before
@@ -791,7 +795,8 @@ no `APPROVED` PLN recorded. It returns:
   a post-publication source-fix/redeploy cycle.
 - `NEEDS_CHANGE` for private plan or ticket metadata that would publish a local
   path, username, secret or private input: correct that metadata. A source or
-  criterion mismatch violates the accepted precommit evidence and blocks handoff.
+  criterion mismatch returns to the SAME writer: repeat steps 3 through 7 on
+  the corrected source, publish the repaired head, then retry ticket fill.
 
 Repeat until it returns `DONE`. Never go on to step 9 while a behavior answer
 has not been through the change worker, while its re-run checks, reviews,
