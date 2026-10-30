@@ -184,6 +184,10 @@ def test_fleet_graders_accept_preserved_codex_and_claude_reply_word_orders(tmp_p
 There are no prerequisite edges between these lanes, so integration (10 minutes) and typecheck (4 minutes) run concurrently with the queued/running e2e. No capacity move or scheduling change is needed.
 
 Ready in approximately **20 minutes**, assuming all lanes pass and the e2e queue timing holds. The longest path is **8 minutes queued → 12 minutes e2e**; integration and typecheck finish within that window."""
+    codex_lane_with_rejected_history = (
+        "The saved checklist says to wait for e2e before integration and typecheck. "
+        "That serial order is superseded. " + codex_lane
+    )
     codex_cleanup = """Lifecycle cleanup report
 
 - Reconcile recorded helper `qa-owned` now because `acme/app#42` is closed; no operator cleanup request is required.
@@ -201,7 +205,7 @@ Ready in approximately **20 minutes**, assuming all lanes pass and the e2e queue
         "Left untouched: qa-foreign keeps running and gets no cleanup or stop. "
         "Final status gives owner writer-a and ticket ISS-13420."
     )
-    for name, replies in (("orchestrator-parallel-e2e-queued", (codex_lane, claude_lane)),
+    for name, replies in (("orchestrator-parallel-e2e-queued", (codex_lane, codex_lane_with_rejected_history, claude_lane)),
                           ("orchestrator-owned-qa-cleanup", (codex_cleanup, claude_cleanup))):
         for reply in replies:
             checks, _ = runner.deterministic(cases[name], reply, tmp_path, [])
