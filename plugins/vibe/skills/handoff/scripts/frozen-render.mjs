@@ -61,6 +61,7 @@
 // under --out; read only the cropped diffs. Exits 0 when nothing blocks, 1
 // when something does, 2 on a usage or setup error.
 
+import { withStableSource } from "../../vibe/scripts/tested-head.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -304,26 +305,32 @@ export async function frozenRenders({ ids, fileCount, baseUrl, headUrl, browser,
  * their stories in parentheses. It pins HEAD before rendering and withholds the line if HEAD changes.
  */
 export async function frozenStoryFiles({ repo, base, storyFiles, ...render }) {
-  const files = [...new Set(storyFiles)];
-  const changes = storyFileChanges(repo, base, files);
-  const idsOf = (change) => frozenStoryIds(repo, base, [change.file]);
-  const compared = changes.filter((change) => change.change !== StoryFileChange.Changed);
-  const repairedIds = new Map(compared.filter((change) => change.change === StoryFileChange.Repaired)
-    .flatMap((change) => idsOf(change).map((id) => [id, change.file])));
-  const refused = changes.filter((change) => change.change === StoryFileChange.Changed).flatMap((change) => idsOf(change).map((id) => ({
-    storyId: id, reason: `${change.file} changed beyond a compile-only repair (${change.headText === null ? "it is gone" : "its title, tags or story names differ"}), so it is not compared`,
-  })));
-  const command = `frozen-render.mjs --base ${base} --story-file ${files.join(" --story-file ")}`;
-  const head = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-  const inputs = frozenInputs(repo, base, files);
-  const summary = await frozenRenders({ ...render, ids: compared.flatMap(idsOf), fileCount: files.length, command, head, inputs, repairedIds, refused });
-  // A source edit during rendering can make the comparison internally inconsistent.
-  if (summary.changeLogLine && (execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim() !== head
-    || frozenInputs(repo, base, files) !== inputs)) {
-    const { changeLogLine, ...rest } = summary;
-    return { ...rest, ok: false, lines: [...rest.lines, "the session's files changed during the run; run it again"] };
+  try {
+    return await withStableSource(repo, async source => {
+      const files = [...new Set(storyFiles)];
+      const changes = storyFileChanges(repo, base, files);
+      const idsOf = (change) => frozenStoryIds(repo, base, [change.file]);
+      const compared = changes.filter((change) => change.change !== StoryFileChange.Changed);
+      const repairedIds = new Map(compared.filter((change) => change.change === StoryFileChange.Repaired)
+        .flatMap((change) => idsOf(change).map((id) => [id, change.file])));
+      const refused = changes.filter((change) => change.change === StoryFileChange.Changed).flatMap((change) => idsOf(change).map((id) => ({
+        storyId: id, reason: `${change.file} changed beyond a compile-only repair (${change.headText === null ? "it is gone" : "its title, tags or story names differ"}), so it is not compared`,
+      })));
+      const command = `frozen-render.mjs --base ${base} --story-file ${files.join(" --story-file ")}`;
+      const head = source.head;
+      const inputs = frozenInputs(repo, base, files);
+      const summary = await frozenRenders({ ...render, ids: compared.flatMap(idsOf), fileCount: files.length, command, head, inputs, repairedIds, refused });
+      // A source edit during rendering can make the comparison internally inconsistent.
+      if (summary.changeLogLine && frozenInputs(repo, base, files) !== inputs) {
+        const { changeLogLine, ...rest } = summary;
+        return { ...rest, ok: false, lines: [...rest.lines, "the session's files changed during the run; run it again"] };
+      }
+      return summary;
+    });
+  } catch (error) {
+    if (!error.message.startsWith('SOURCE-MOVED')) throw error;
+    return { ok: false, lines: [error.message], blocking: [], stories: [] };
   }
-  return summary;
 }
 
 /**

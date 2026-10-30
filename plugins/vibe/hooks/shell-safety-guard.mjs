@@ -14,7 +14,7 @@
 // Runs from pre-tool-use.mjs.
 
 import path from "node:path";
-import { commandSegments } from "./command-segments.mjs";
+import { commandPrefix, commandSegments } from "./command-segments.mjs";
 import { deny } from "./hook-dispatch.mjs";
 
 const TOKEN = /(?:\b(?:gh_token|github_token|[a-z][a-z0-9_]*token)\b|\$\{?[a-z][a-z0-9_]*token\}?|--password(?:-stdin)?\b|(?:^|\s)-p(?:\s|$)|["']?auth["']?\s*:)/i;
@@ -109,22 +109,48 @@ function unquotedWords(command) {
   return words;
 }
 
-/** The refusal for an e2e-slot.sh run that does not name the commit it must test, or null. */
+// Resolve leading shells (including combined -lic/-c options) and ssh's remote
+// command, without treating quoted printf/cat arguments as executable commands.
+function invocationIndex(words) {
+  let index = 0;
+  for (;;) {
+    index = commandPrefix(words, index).index;
+    if (path.basename(words[index] ?? '') === 'ssh') {
+      index += 1;
+      while (words[index]?.startsWith('-')) {
+        const flag = words[index++];
+        if (['-p', '-i', '-o', '-J', '-F', '-l', '-S', '-W', '-L', '-R', '-D', '-b'].includes(flag)) index += 1;
+      }
+      index += 1; // remote host
+    } else if (SHELLS.has(path.basename(words[index] ?? ''))) {
+      index += 1;
+      while (/^[-+]/.test(words[index] ?? '')) {
+        const option = words[index++];
+        if (['-o', '+o', '-O', '+O', '--rcfile', '--init-file'].includes(option)) index += 1;
+      }
+    } else {
+      return index;
+    }
+  }
+}
+
+/** Require the deployed remote wrapper's real `--head <sha> <owner> <command>` interface. */
 export function e2eSlotProblem(command) {
-  for (const { words } of commandSegments(command)) {
-    const start = words.findIndex((word, index) => path.basename(word) === "e2e-slot.sh" && (index === 0 || SHELLS.has(path.basename(words[index - 1]))));
-    if (start < 0) continue;
-    const head = words.indexOf("--head", start);
-    if (head < 0 || !SHA.test(words[head + 1] ?? "")) {
-      return "e2e-slot.sh needs --head <sha> before the owner label, the pushed commit to test: without it a rerun started before the push tests the old HEAD";
+  for (const { words } of commandSegments(command, { expandShellPayloads: true })) {
+    const start = invocationIndex(words);
+    if (path.basename(words[start] ?? "") !== "e2e-slot.sh") continue;
+    if (words[start + 1] !== '--head' || !SHA.test(words[start + 2] ?? '')) {
+      return 'e2e-slot.sh needs --head <sha> before the owner label, the committed HEAD underlying the tested source';
+    }
+    if (words[start + 3] === '--source-hash') {
+      return 'e2e-slot.sh does not accept --source-hash; it would treat that flag as the owner label and execute the hash as a command';
     }
   }
   return null;
 }
 
 function invokes(words, script) {
-  const name = path.basename(words[0]);
-  return name === script || (SHELLS.has(name) && path.basename(words[1] ?? "") === script);
+  return path.basename(words[invocationIndex(words)] ?? '') === script;
 }
 
 /** The PreToolUse result for a Bash call: a deny for the first unsafe shape it finds, or null. */

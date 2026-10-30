@@ -118,10 +118,9 @@ def test_agent_rationale_cannot_source_a_rule_or_exemption() -> None:
 def test_handoff_records_same_storybook_version_claims() -> None:
     handoff = flat(HANDOFF.read_text())
     assert_all(handoff, (
-        "read the Storybook package version on the final branch",
-        "list every other open pull request",
-        "claimed Storybook version",
-        "Record the version and matching pull request numbers",
+        "Read the final branch's Storybook version",
+        "inspect every open pull request's files and claimed version",
+        "Record matching PR numbers or `None`",
     ))
     assert "same-Storybook-version check" in flat(agent("vibe-ticket-worker"))
 

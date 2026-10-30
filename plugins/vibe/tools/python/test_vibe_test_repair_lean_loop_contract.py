@@ -129,8 +129,8 @@ def test_reviewers_check_that_repairs_changed_no_assertion() -> None:
 
 def test_the_build_loop_is_lean() -> None:
     lean = section(QUALITY.read_text(), "## Lean build loop")
-    for required in ("quick prep, the build, the quick checks the commit hooks need, the orchestrator's commit, "
-                     "deploy, and showing the person", "with no plan review",
+    for required in ("quick prep, build and checks on uncommitted inputs, then the orchestrator's push-ready commit, "
+                     "deploy and showing the person", "with no plan review",
                      "Biome on the changed files, the affected typecheck and the source gates",
                      "the guardrails and adversarial reviews", "`workflow-code-review`",
                      "run at `$handoff`, never during the loop", "handoff runs them",

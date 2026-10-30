@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { BUSY_EXIT, DUPLICATE_EXIT, captureOwnedDockerResources, composeProjectFor, defaultLockDir, readHolder, release, removeOwnedDockerResources, runningForeignCompose, sameWorktreeEntry, tryAcquire } from "./e2e-lock.mjs";
+import { sourceIdentity } from './tested-head.mjs';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "e2e-lock.mjs");
 const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "vibe-e2e-lock-")));
@@ -18,8 +19,10 @@ const commitAt = (dir) => {
   git("commit", "--quiet", "--allow-empty", "-m", "base");
   return git("rev-parse", "HEAD");
 };
-const SHA = commitAt(root);
-process.chdir(root);
+const defaultWorktree = path.join(root, "default-worktree");
+mkdirSync(defaultWorktree);
+const SHA = commitAt(defaultWorktree);
+process.chdir(defaultWorktree);
 
 const owner = (pid, token) => ({ pid, token, cwd: root, command: "e2e", startedAt: "2026-10-19T00:00:00.000Z" });
 // A pid that cannot exist: above the macOS and Linux pid ceilings.
@@ -395,8 +398,11 @@ test("run tests only the named commit of a clean worktree and names it (23/23 re
   assert.match(stale.stderr, /^HEAD-MISMATCH /);
   writeFileSync(path.join(wt, "tracked.txt"), "leftover\n");
   const dirty = run(head, ...ok);
-  assert.equal(dirty.status, 2);
-  assert.match(dirty.stderr, /^DIRTY-WORKTREE .*tracked\.txt/);
+  assert.equal(dirty.status, 0, dirty.stderr);
+  assert.match(dirty.stderr, /diffSha256.*[a-f0-9]{64}/);
+  const mutation = run(head, process.execPath, '-e', "require('fs').writeFileSync('tracked.txt','edited during run')");
+  assert.equal(mutation.status, 1, mutation.stderr);
+  assert.match(mutation.stderr, /SOURCE-MOVED/);
   spawnSync("git", ["-C", wt, "checkout", "--quiet", "--", "tracked.txt"]);
   const clean = run(head.slice(0, 8), ...ok);
   assert.equal(clean.status, 0, clean.stderr);
@@ -404,6 +410,31 @@ test("run tests only the named commit of a clean worktree and names it (23/23 re
   const moved = run(head, "git", "checkout", "--quiet", SHA);
   assert.equal(moved.status, 1);
   assert.match(moved.stderr, /^HEAD-MOVED /m);
+});
+
+test('dirty headless-harness boundary carries a source hash even when prepush emits only HEAD', () => {
+  const wt = path.join(root, 'dirty-harness-boundary');
+  mkdirSync(wt);
+  const head = commitAt(wt);
+  writeFileSync(path.join(wt, 'candidate.txt'), 'uncommitted candidate');
+  const source = sourceIdentity(wt);
+  const lock = path.join(root, 'dirty-harness-lock');
+  // Model only prepush's evidence boundary, never its Docker/Playwright/Electron execution.
+  const command = [process.execPath, '-e', "process.stdout.write(require('child_process').execFileSync('git',['rev-parse','HEAD']))"];
+  const run = hash => spawnSync(process.execPath, [SCRIPT, 'run', '--head', head, '--source-hash', hash, '--lock-dir', lock, ...command], {
+    cwd: wt, encoding: 'utf8', env: { ...process.env, COMPOSE_PROJECT_NAME: 'fixture-source-identity' },
+  });
+  const accepted = run(source.treeSha256);
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.equal(accepted.stdout.trim(), head, 'the legacy producer still emits only HEAD');
+  const receipts = readdirSync(path.join(wt, '.git/vibe-e2e-results'));
+  assert.equal(receipts.length, 1);
+  const receipt = JSON.parse(readFileSync(path.join(wt, '.git/vibe-e2e-results', receipts[0]), 'utf8'));
+  assert.deepEqual(receipt.source, source, 'the owner receipt identifies the dirty inputs that really ran');
+  assert.equal(receipt.exitCode, 0);
+  const stale = run('0'.repeat(64));
+  assert.equal(stale.status, 2);
+  assert.match(stale.stderr, /SOURCE-HASH-MISMATCH/);
 });
 
 test("a --no-build run needs images built from the head it tests in the same worktree (stale-image reruns, ISS-13067)", () => {

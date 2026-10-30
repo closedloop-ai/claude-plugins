@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import hashlib
 from pathlib import Path
 import re
+import subprocess
 import time
 
 import pytest
@@ -18,9 +20,123 @@ runner = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runner)
 
 
+def copied_identity_helper(output: Path) -> Path:
+    """Place real runtime helper bytes in the fixture's installed payload."""
+    target = output / "market/plugins/vibe/skills/vibe/scripts"
+    target.mkdir(parents=True, exist_ok=True)
+    for name in ("tested-head.mjs", "session-record.mjs"):
+        (target / name).write_bytes((runner.PLUGIN / "skills/vibe/scripts" / name).read_bytes())
+    return target / "tested-head.mjs"
+
+
+def test_receipts_use_copied_helper_after_live_helper_mutates(tmp_path: Path, monkeypatch) -> None:
+    copied = copied_identity_helper(tmp_path)
+    (tmp_path / "market/plugins/closedloop-core").mkdir()
+    (tmp_path / "suite").mkdir()
+    live = tmp_path / "live"
+    live_scripts = live / "skills/vibe/scripts"
+    live_scripts.mkdir(parents=True)
+    for name in ("tested-head.mjs", "session-record.mjs"):
+        (live_scripts / name).write_bytes((copied.parent / name).read_bytes())
+    monkeypatch.setattr(runner, "PLUGIN", live)
+    before = runner.snapshot_metadata(tmp_path)
+    (live_scripts / "tested-head.mjs").write_text('process.stdout.write(JSON.stringify({treeSha256:"forged-live-helper"}));')
+    assert runner.snapshot_metadata(tmp_path) == before
+    assert before["identity_helper"]["sha256"] == hashlib.sha256(copied.read_bytes()).hexdigest()
+
+
+def test_install_freezes_receipt_helper_without_modifying_older_model_payload(tmp_path: Path, monkeypatch) -> None:
+    plugins = tmp_path / "source/plugins"
+    for name in ("vibe", "closedloop-core"):
+        (plugins / name).mkdir(parents=True)
+        (plugins / name / "input.md").write_text("older payload without identity CLI")
+    subprocess.run(["git", "init", "--quiet", str(plugins.parent)], check=True)
+    subprocess.run(["git", "-C", str(plugins.parent), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(plugins.parent), "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "-qm", "base"], check=True)
+    output = tmp_path / "output"
+    output.mkdir()
+    monkeypatch.setattr(runner, "command", lambda *args: None)
+    runner.install(output, plugins / "vibe", {"CODEX_HOME": str(tmp_path / "fixture-auth")}, runner.Budget(60))
+    assert not (output / "market/plugins/vibe/skills/vibe/scripts/tested-head.mjs").exists()
+    receipt_helper = output / "receipt-helper/tested-head.mjs"
+    assert receipt_helper.is_file()
+    receipt = json.loads((output / "snapshot.json").read_text())
+    assert receipt["identity_helper"]["sha256"] == hashlib.sha256(receipt_helper.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("escape", ["absolute", "parent", "ignored"])
+def test_codex_install_uses_selected_safe_snapshot_inputs(tmp_path: Path, monkeypatch, escape: str) -> None:
+    plugins = tmp_path / "source/plugins"
+    for name in ("vibe", "closedloop-core"):
+        (plugins / name).mkdir(parents=True)
+        (plugins / name / "input.md").write_text("selected")
+    source = plugins.parent
+    (source / ".gitignore").write_text(".env\n")
+    subprocess.run(["git", "init", "--quiet", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(source), "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "-qm", "base"], check=True)
+    secret = plugins / ".env"
+    secret.write_text("PRIVATE=never-copy")
+    if escape != "ignored":
+        (plugins / "vibe/leak.md").symlink_to(secret if escape == "absolute" else "../.env")
+    else:
+        (plugins / "vibe/.env").write_text("PRIVATE=never-copy")
+    output = tmp_path / "output"
+    output.mkdir()
+    monkeypatch.setattr(runner, "command", lambda *args: None)
+    monkeypatch.setattr(runner, "snapshot_metadata", lambda *args: {})
+    if escape != "ignored":
+        with pytest.raises(subprocess.CalledProcessError):
+            runner.install(output, plugins / "vibe", {"CODEX_HOME": str(tmp_path / "fixture-auth")}, runner.Budget(60))
+    else:
+        runner.install(output, plugins / "vibe", {"CODEX_HOME": str(tmp_path / "fixture-auth")}, runner.Budget(60))
+        assert not (output / "market/plugins/vibe/.env").exists()
+
+
+def test_copied_payload_receipt_survives_live_source_edits(tmp_path: Path) -> None:
+    """Codex metadata names the installed copy, not a later live SKILL read."""
+    payload = tmp_path / "market/plugins/vibe/skills/vibe"
+    payload.mkdir(parents=True)
+    (payload / "SKILL.md").write_text("grader revision 19")
+    core = tmp_path / "market/plugins/closedloop-core"
+    core.mkdir(parents=True)
+    (core / "core.md").write_text("core payload")
+    (tmp_path / "suite").mkdir()
+    (tmp_path / "suite/graders.md").write_text("frozen grader contract")
+    copied_identity_helper(tmp_path)
+    receipt = runner.snapshot_metadata(tmp_path)
+    assert re.fullmatch(r"[a-f0-9]{64}", receipt["payloads"]["vibe"]["treeSha256"])
+    (payload / "SKILL.md").write_text("concurrent edit")
+    assert runner.snapshot_metadata(tmp_path) != receipt
+    changed_payload = runner.snapshot_metadata(tmp_path)
+    (tmp_path / "suite/graders.md").write_text("concurrent grader tweak")
+    assert runner.snapshot_metadata(tmp_path) != changed_payload
+
+
+def test_claude_eval_uses_an_identified_uncommitted_snapshot(tmp_path: Path) -> None:
+    """The shared CLI freezes Claude inputs before starting the native eval runner."""
+    plugins = tmp_path / "source/plugins"
+    for name in ("vibe", "closedloop-core"):
+        target = plugins / name
+        target.mkdir(parents=True)
+        (target / "input.md").write_text("base")
+    subprocess.run(["git", "init", "--quiet", str(plugins.parent)], check=True)
+    subprocess.run(["git", "-C", str(plugins.parent), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(plugins.parent), "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "--quiet", "-m", "base"], check=True)
+    (plugins / "vibe/input.md").write_text("uncommitted grader revision 19")
+    out = tmp_path / "out"
+    script = runner.PLUGIN / "skills/vibe/scripts/tested-head.mjs"
+    run = subprocess.run(["node", str(script), "snapshot", str(plugins), str(out)], capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    receipt = json.loads((out / "snapshot.json").read_text())
+    assert receipt["payloads"]["vibe"]["treeSha256"]
+    assert (out / "plugins/vibe/input.md").read_text() == "uncommitted grader revision 19"
+    assert json.loads(run.stdout) == receipt
+
+
 def test_one_case_per_claude_prompt_and_role_names() -> None:
     found = runner.cases()
-    assert len(found) == 108
+    assert len(found) == 109
     assert len({c["name"] for c in found}) == len(found)
     assert all(c["name"].startswith(("executive-", "product-manager-", "orchestrator-")) for c in found)
     for case in found:
@@ -32,6 +148,31 @@ def test_one_case_per_claude_prompt_and_role_names() -> None:
     assert "my name is the product manager" in next(
         c["prompt"] for c in found if "real-exchange" in c["name"]
     )
+
+
+def test_run_source_identity_comes_from_the_copied_vibe_payload() -> None:
+    copied = {"payloads": {"vibe": {"treeSha256": "a" * 64}}}
+    assert runner.copied_source(copied) == {"treeSha256": "a" * 64}
+
+
+@pytest.mark.parametrize("checkpoint", [False, True])
+def test_pr369_nineteen_revision_replay_rejects_intermediate_commits(tmp_path: Path, checkpoint: bool) -> None:
+    """The native Claude regex graders and Codex's grader reject a real intermediate commit."""
+    case = next(c for c in runner.cases() if c["name"] == "orchestrator-push-ready-grader-loop")
+    assert case["meta"]["scaffold_script"] == "scaffold.sh"
+    subprocess.run(["bash", str(case["source"] / case["meta"]["scaffold_script"])], cwd=tmp_path, check=True)
+    repo = tmp_path / "session"
+    base = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    for revision in range(1, 20):
+        (repo / "grader.txt").write_text(str(revision) + "\n")
+        subprocess.run(["node", str(repo / "check.mjs"), str(revision)], check=True, capture_output=True)
+        if checkpoint and revision == 7:
+            subprocess.run(["git", "-C", str(repo), "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "-qam", "grader tweak"], check=True)
+    grades, _ = runner.deterministic(case, "Awaiting independent acceptance", tmp_path, [])
+    assert all(g["passed"] for g in grades) is not checkpoint, grades
+    if not checkpoint:
+        assert subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip() == base
+        assert len({line.split()[2] for line in (repo / ".git/grader-runs").read_text().splitlines()}) == 19
 
 
 def test_fleet_cases_load_the_installed_skill_without_leaking_answer_lines() -> None:

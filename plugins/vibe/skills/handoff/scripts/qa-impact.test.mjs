@@ -5,7 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { QaImpact, classifyQaImpact, lockfileUiPackage, qaImpact, qaImpactRequest, semanticSourceText } from "./qa-impact.mjs";
-import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
+import { sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
+import { git, makeHome, mutateSourceRead } from "../../vibe/scripts/test-fixtures.mjs";
 
 const FEATURE_MAP = {
   version: 1,
@@ -59,6 +60,33 @@ function lanesFor(...files) {
   return { files: Object.fromEntries(files.map((file) => [file, [LANE]])) };
 }
 
+test('impact rejects mutation during input reads before identity attribution', t => {
+  const f = fixture(t);
+  const file = path.join(f.worktree, 'packages/api/service.ts');
+  f.write('packages/api/service.ts', 'export const value = 2;\n');
+  const mutation = mutateSourceRead({ file, caller: 'readHead', text: 'export const value = 3;\n' });
+  t.after(mutation.restore);
+  assert.throws(() => qaImpact({ worktree: f.worktree, since: f.base, evidence: EVIDENCE,
+    graphImporters: { importers: {} }, featureMap: FEATURE_MAP, laneSelections: lanesFor('packages/api/service.ts'), config: CONFIG }), /SOURCE-MOVED/);
+  assert.equal(mutation.mutated(), true);
+});
+
+test('impact selects staged, unstaged and untracked work without a checkpoint commit', t => {
+  const f = fixture(t);
+  f.write('packages/api/service.ts', 'export const value = 2;\n');
+  f.write('packages/api/new.test.ts', 'export const test = true;\n');
+  git(f.worktree, ['add', 'packages/api/service.ts'], f.home);
+  const request = { lastQa: { boundary: f.base }, evidence: EVIDENCE, graphImporters: { importers: {} },
+    featureMap: FEATURE_MAP, laneSelections: lanesFor('packages/api/service.ts', 'packages/api/new.test.ts'), config: CONFIG };
+  const impact = qaImpactRequest(f.worktree, request);
+  assert.equal(impact.outcome, QaImpact.LanesOnly);
+  assert.deepEqual(impact.changedFiles.sort(), ['packages/api/new.test.ts', 'packages/api/service.ts']);
+  assert.match(impact.source.diffSha256, /^[a-f0-9]{64}$/);
+  f.write('packages/api/service.ts', 'export const value = 3;\n');
+  assert.notEqual(qaImpactRequest(f.worktree, request).laneKey, impact.laneKey);
+  assert.equal(git(f.worktree, ['rev-parse', 'HEAD'], f.home), f.base);
+});
+
 function classify(f, since, importers = {}, laneSelections = null, evidence = EVIDENCE, options = {}) {
   return qaImpact({ worktree: f.worktree, since, evidence, graphImporters: { importers }, featureMap: FEATURE_MAP,
     laneSelections, config: CONFIG, ...options });
@@ -75,6 +103,7 @@ test("comment-only work proven by the bundled compiler AST needs no QA (ISS-1341
   f.write("packages/design-system/button.tsx", "// Why this stays shared.\nexport const Button = () => null;\n");
   f.commit("comment");
   assert.deepEqual(classify(f, f.base, { "packages/design-system/button.tsx": ["apps/app/documents/page.tsx"] }), {
+    source: sourceIdentity(f.worktree),
     outcome: QaImpact.None,
     lanes: [],
     screens: [],
@@ -484,7 +513,7 @@ test("missing graph or FEATURE_MAP classifies UI upward but leaves docs and test
 
 test("the CLI degrades without graph and FEATURE_MAP instead of exiting 2", (t) => {
   const run = (f) => {
-    const evidence = path.join(f.worktree, "evidence.json");
+    const evidence = path.join(f.worktree, ".git/evidence.json");
     writeFileSync(evidence, JSON.stringify(EVIDENCE));
     return spawnSync(process.execPath, [SCRIPT, "--worktree", f.worktree, "--since", f.base, "--evidence", evidence], { encoding: "utf8" });
   };
@@ -514,13 +543,19 @@ test("feature path matching respects sibling boundaries", (t) => {
   assert.ok(!result.screens.some((screen) => screen.id === "wrong"), "a sibling prefix is not a matched screen");
 });
 
-test("classification reads the committed head, not later working-tree bytes", (t) => {
+test("classification reads current working-tree bytes and identifies the uncommitted revision", (t) => {
   const f = fixture(t);
   f.write("packages/design-system/button.tsx", "export const Button = () => 'committed UI change';\n");
   f.commit("ui");
   f.write("packages/design-system/button.tsx", "// uncommitted comment only\nexport const Button = () => null;\n");
   const result = classify(f, f.base, { "packages/design-system/button.tsx": ["apps/app/documents/page.tsx"] });
-  assert.equal(result.outcome, QaImpact.Visual);
+  assert.equal(result.outcome, QaImpact.None, 'the current tree has only a comment relative to the QA boundary');
+  const checked = result.source;
+  f.write("packages/design-system/button.tsx", "export const Button = () => 'new uncommitted UI';\n");
+  const next = classify(f, f.base, { "packages/design-system/button.tsx": ["apps/app/documents/page.tsx"] });
+  assert.equal(next.outcome, QaImpact.Visual);
+  assert.equal(next.source.head, checked.head);
+  assert.notEqual(next.source.diffSha256, checked.diffSha256);
 });
 
 test("backend source with no rendered importer is at least Lanes only", (t) => {

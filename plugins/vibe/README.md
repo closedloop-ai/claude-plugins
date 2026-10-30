@@ -291,7 +291,7 @@ reasoning effort `high`.
 
 ### Evals
 
-`evals/` holds a `claude plugin eval` suite of 108 one-turn rehearsals. Each
+`evals/` holds a `claude plugin eval` suite of 109 one-turn rehearsals. Each
 case carries the session state in its prompt, so it needs no symphony-alpha
 checkout. Cases are named by persona: `exec-` for someone who describes the
 work and passes it on, `pm-` for someone who iterates from reference
@@ -308,12 +308,12 @@ fleet orchestrator. Tags select a group, for example:
   `qa-lessons`, `ticket-lessons`, `ledger-lessons`, `plan-links`;
 - orchestration: `orchestrator`, `orchestration-lessons`, `fleet-single-use`.
 
-The cases load `closedloop-core` too, which sits outside this plugin, so run
-the suite from the repository's `plugins/` folder:
+Run from the repository root. Each wrapper call requires a fresh empty output
+directory and records both copied plugins before starting Claude:
 
 ```bash
-cd plugins
-claude plugin eval . --eval-dir vibe/evals --model sonnet -j 2 --max-cost-usd 5 --no-publish
+eval_output=$(mktemp -d)
+node plugins/vibe/skills/vibe/scripts/tested-head.mjs claude-eval "$PWD/plugins" "$eval_output" --model sonnet -j 2 --max-cost-usd 5 --no-publish
 ```
 
 Add `--ablation none` to skip the no-plugin baseline arm. CI does not run it.
@@ -324,8 +324,8 @@ Storybook, because the eval sandbox has no browser. Run them with the scaffold
 and write tools:
 
 ```bash
-cd plugins
-claude plugin eval . --eval-dir vibe/evals --tag visual-cues --scaffold --allow-tools Bash Write Edit --model opus --runs 3 -j 4 --no-publish --ablation none
+eval_output=$(mktemp -d)
+node plugins/vibe/skills/vibe/scripts/tested-head.mjs claude-eval "$PWD/plugins" "$eval_output" --tag visual-cues --scaffold --allow-tools Bash Write Edit --model opus --runs 3 -j 4 --no-publish --ablation none
 ```
 
 Run the matching Codex suite from the repository root with
@@ -334,7 +334,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.20` contains 12 skills, 16 agents, and one hook manifest
+Version `1.1.21` contains 12 skills, 16 agents, and one hook manifest
 (`hooks/hooks.json`). It has no standalone commands, root-level shell scripts,
 or production Python tools under `tools/python/`; that directory contains the
 skill-contract test modules and `vibe_contract_text.py`, the text helpers they

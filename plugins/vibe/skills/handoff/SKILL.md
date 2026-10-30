@@ -115,9 +115,9 @@ answer on every screen it touches and reports it already met (with evidence)
 or builds it under its usual rules. If
 it changed any file, re-run before the ticket is finished: step 3 (inventory
 and guardrails), step 4 when a component or story changed, step 5 (checks),
-step 6 on the result (lighter: both reviewers; backend: one
-`workflow-code-review` pass), step 7 (the redeploy) and step 8's running app
-verification. Only then does the answer go to `vibe-ticket-worker`.
+step 5's final main-sync/pre-push candidate, then step 6's reviews and
+running-app verification (lighter: both reviewers; backend: one
+`workflow-code-review` pass). Only then may step 7 commit and publish. Only then does the answer go to `vibe-ticket-worker`.
 Before code, extend the same session decision table with the answer's source,
 row IDs, cross-request interactions and explicit Superseded decisions, and add
 the answer to its `## Acceptance Criteria` list
@@ -169,7 +169,7 @@ where their adapters differ, and every entry on the missing tests list. Run
 `node scripts/handoff-inventory.mjs --worktree "<wt>" --phase pull-request`,
 then step 3's guardrail check, step 5's checks with the new tests included and
 step 6's review on the result, with the repo's `review-soul` critic required
-on those tests, then step 7's commit and its push and publication through
+on those tests, then the remaining step 6 candidate gates before step 7's commit and its push and publication through
 `vibe-environment-worker` in redeploy mode. The pull request does not open
 until those tests pass, their independent review is clean and step 9's gate passes.
 
@@ -430,6 +430,11 @@ reports any change under either folder as outside the allowed paths in every
 phase, and step 3 sends it back to the writer to remove. Owned prototype
 sessions skip this step.
 
+Before step 6, stop Desktop, pin current `origin/main`, and prepare its merge
+without committing. The SAME writer resolves the final candidate uncommitted;
+rerun only checks and QA that `qa-impact.mjs` selects. Any source change repeats
+this preparation before independent review.
+
 ## 6. Independent integrated review
 
 Exclude exactly `.closedloop-ai/vibe-plans/` and historical `localFixes` from
@@ -532,113 +537,18 @@ Storybook plays run in a real browser, and card or narrow-layout
 interactions on WebKit iPhone and Chromium Pixel, as the verify worker's
 checks mode says; a requested pull request cannot open without them (step 9).
 
-## 7. Upload the last changes
-
-ROOT commits the reviewed deliverable LOCALLY through the existing commit
-script/normal hooks, still unpushed, before `commit-worktree.mjs --prepare-main-sync`.
-This includes the SAME writer's reviewed handoff fixes, not
-private plans or protected localFix source. No change needs no extra local commit.
-
-Then repeat `../vibe/references/environment.md`, "Main-sync before publication",
-with handoff purpose and the whole session table: the same actor runs
-`main-sync-inputs` once, after the Root-owned committed merge/fix result, and
-its witness becomes that actor's `mainSyncValidation`. Its retained reports are
-never PASS; readiness is not test authority or completed coverage, and
-`requiredE2eComplete` must still be true before final coverage/assignment. The
-Desktop Electron lane, which no vibe machine runs, comes back under
-`e2eLeftForCi` instead and does not hold it (ISS-13321): carry each entry to
-step 8's ticket worker for the Engineering checklist, covered by the post-merge
-`desktop-e2e/validated` run.
-
-Run the same harness-specific session command again, then ROOT commits the staged merge and any subsequent reviewed fixes as one more
-commit (nothing is squashed or amended):
-`node ../vibe/scripts/commit-worktree.mjs --worktree "<wt>" --subject "<live ticket slug>: <plain imperative summary of the handoff fixes>" --body "<what was fixed, one per line>"`
-(under 72 characters, no mention of AI tools), with `--exclude <path>` for
-each untracked file the inventory lists as `forbidden` or `outsideAllowed`
-that the session did not write (`../vibe/SKILL.md`, section 6, step 3).
-`committed: false` means nothing changed. A commit the hook refused goes back to step 5's fixing, then
-this step again. Once the merge is committed, run `qa-impact.mjs` from the
-last handoff evidence. `None` carries it; otherwise run only the named lanes
-or screens. Every main sync is checked for capability removal, this one
-included: dispatch `vibe-guardrails-reviewer` for its check 13 on that merge.
-Dispatch the rest of that reviewer only for hand-resolved source changes,
-never for a clean main merge. For the files `qa-impact.mjs` selects, rerun the
-inventory's `requiredChecks` on the merged tree; do not widen that set to
-unaffected files.
-Resume the SAME writer's source-owned `progress` continuation
-with parent-controlled handoff purpose/transaction to execute
-`main-sync-validate` against committed input.
-
-A handoff check that fails is compared against the captured `mainSha` by the
-executor itself (`../vibe/references/quality-loop.md`, "Failures already on
-main"). A result that lists
-`mainPreexistingFailures` still has `publicationReady: true`: continue with the
-redeploy below, carry every entry to step 8's ticket worker as a Known main
-failure, never send it to the writer as a fix, never stop and never ask the
-person about it. `machineLimitedChecks` (a check that ran out of time on the
-session commit and on the captured main alike) are handled the same way, as
-checks that ran out of time on this machine (ISS-13321). A refusal whose error says `session-caused` (it passes on the
-captured main and failed again on a rerun, or it could not run on the captured
-main) blocks as before and goes back to the SAME writer to fix the session's
-own code. `flakyChecks` passed on their one rerun; they block nothing.
-Then dispatch `vibe-environment-worker` in redeploy mode
-from handoff with the worktree, the live ticket slug, the confirmed summary,
-the inventory's `localFixes` paths, the missing tests list (including any
-obsolete expectation with its human ruling), the `mainPreexistingFailures`
-the validation returned, and any other verified pre-existing failures outside
-this work. It runs the tests, pushes through the repo's pre-push
-checks, requests the environment again so that commit is deployed, and
-updates the ticket. Pass matching `mainSyncTransactionId`, handoff purpose and
-actual new grant context on stdin. `main-sync-push` returns
-`alreadyPublished: true`, `pushed: false` only for the exact checked/verified
-current result; issue NO synthetic request/redeploy then. Explicit flags/Desktop
-work remains distinct under its own request-only grant, never publisher rights.
-A push refused by the
-repo's checks goes back to step 5's fixing, then the commit and this step
-again. On `NEEDS_DESKTOP_STOP`, dispatch
-`vibe-setup-worker` to stop Desktop, then this step again (Desktop is not
-started again at handoff).
-Every publication helper also receives the same required table path and
-whole-table alignment/row evidence from step 6; it never authors or replaces
-that artifact or claims missing final evidence is a successful handoff.
-
-Publication readiness may precede external E2E completion for this FINAL
-handoff snapshot: retain exact named limitations, safely publish the committed
-source for ordinary CI and live QA, and keep final coverage/assignment incomplete.
-No automatic manual-CI trigger is added, and no feature PR opens here; a
-requested one opens in step 9. ROOT routes CI permission
-internally; never ask the vibe coder for technical-plan approval.
-For actual authorized/completed evidence, ROOT binds `mainSyncCiRun: {runId, attempt}`
-in the SAME writer's actual source progress/handoff grant, then resumes
-`main-sync-validate` on the same captured-main transaction without another fetch
-loop. The consumer verifies real run/job/step and tested-source identity, not
-caller PASS or workflow head_sha. CI is per push; `qa-impact.mjs` decides local evidence. Keep whole-table
-tests/reviews and source-phase authority separate from the CI reader.
-Do not proceed to final assignment/alignment with `requiredE2eComplete: false`
-or any other required coverage gap, even when publicationReady is true. A
-Desktop lane under `e2eLeftForCi` is not such a gap.
-
-## 8. Choose who picks it up, then check the ticket
-
 ### Running app verification
 
-After step 7 verifies the final publication, dispatch read-only
-`vibe-verify-worker` in control mode with the worktree, the inventory and the
-screens the session touched. It drives the running web app and Desktop with
-the repository's control skill (`<repo-root>/.claude/skills/control/SKILL.md`,
-the `pnpm control` CLI) on that final commit, for each touched screen, and
-follows that skill's own rules: hidden browser and app only (never
-`--headed`, and never a visible window on the person's Mac; on Linux, Desktop
-runs displayless), read-only sessions (never `--allow-write`), and
-`pnpm control down` for every session it started. Control's own throwaway Desktop
-profile is separate from the session's Desktop, which stays stopped. It
-relocates only that turn's `.control/runs/` captures through
-`../vibe/scripts/control-evidence.mjs` to private git storage before a later
-publication check reads the worktree; retain those returned private paths.
-It
-captures each screen's evidence (capture, console errors and page errors,
-network, API reads and Desktop IPC reads where relevant), before and after
-when a baseline exists, and returns each artifact path with what it proves.
+Before the first commit or push, dispatch read-only `vibe-verify-worker` control
+mode on every locally served uncommitted candidate screen, naming HEAD plus
+diff/tree hashes. Use the repository's control skill
+(`<repo-root>/.claude/skills/control/SKILL.md`, `pnpm control`): hidden browser
+and displayless Desktop only, never `--headed` or `--allow-write`. Close owned
+sessions with `pnpm control down`; its throwaway Desktop profile stays separate
+from the session's stopped profile. Relocate captures with
+`../vibe/scripts/control-evidence.mjs` into private Git storage. Return captures,
+console/page errors, network/API/IPC evidence and baseline comparisons with
+what each proves.
 
 A static or generated page control cannot drive (an HTML page a script or a
 main-process module writes, such as Desktop's sign-in return page) is
@@ -649,13 +559,115 @@ not accepted for such a page. Any other surface it can neither drive nor
 render comes back with the exact control command and the reason, never as
 verified. A console error, page error, failed request or
 broken screen this session caused resumes the SAME writer in fix mode, then
-steps 3 to 7 and this check again. Owned prototype sessions skip this check
+steps 3 to 6 and this check again before committing. Owned prototype sessions skip this check
 and record why: a mockup changes no web app or Desktop screen. The build loop
 has no control step; this check runs only here. The writer's single control
 read for an acceptance criterion (`../vibe/references/quality-loop.md`,
 "Acceptance criteria before ready") is not this check. Its evidence goes into the
 Design Review's Visual evidence and the Handoff Running app checks line,
 separated from source-only claims.
+
+### Pinned-base Storybook train
+
+Read the final branch's Storybook version and inspect every open pull request's
+files and claimed version. Record matching PR numbers or `None` in the ticket
+and PR packet. Before the first commit, verify the bump, single release-history
+entry and component/story counts against the pinned base. The SAME writer fixes
+wrong counts or bumps before readiness. Inspect each train PR's reserved version;
+a reservation is coordination evidence, never a stop. Take the next free version,
+say so in the pull request packet with the reserving pull request's number.
+Main moving after the pin is not stale: one merge after QA suffices. Classify it
+with `scripts/qa-impact.mjs`; never sync main again only to chase a newer Storybook
+release. The queue settles later collisions (ISS-13321).
+
+### Candidate audits and pre-PR verification
+
+Before the first commit/push, after independent review and running-app
+verification, audit the uncommitted candidate:
+`scripts/criteria-audit.mjs --ticket <body> --audit <audit> --matrix <matrix>`
+`node scripts/rulings-check.mjs --ticket <body> --record <QA record> --plan <each linked PLN's get-document JSON> --plan-body <its latest text>`
+`node scripts/rollout-gate.mjs --worktree "<wt>" --ticket <body> --slug <ticket> --prd <PRD body> --prd-slug <PRD>`.
+Record each rollout requirement as `Rollout: <id>:` with code or a ticket/PRD-specific
+human ruling. The ticket carries every ruling and amended criterion; no plan
+excludes scope without human authority. QA evidence names screen, host, state and
+flag arm. Later changes use `scripts/qa-impact.mjs` with importers, FEATURE_MAP,
+lane report and that evidence; `None` runs no local lane, screenshot, audit or
+critic, otherwise only its scope. `pre-pr-lanes.mjs check --impact` enforces
+selected lanes; CI remains per push. Re-audit only criteria on affected screens.
+
+Before declaring push-ready, read the repository CI workflow and run **all CI
+lanes** locally in their exact job shapes: checkout depth, runtime/toolchain,
+install, lint/typecheck/test commands, matrix jobs, builds, and generated-dist
+checks. Focused subsets never substitute for this full pre-PR verification.
+
+On a requested pull request, skip assign mode: the ticket stays with the
+person, In Progress. Before dispatch, require the refreshed pinned-base
+Storybook train check. Dispatch `vibe-verify-worker` in `pre-pr` mode on the candidate
+HEAD plus diff/tree hashes. It records read-only inventory, results, SHAs, E2E probe and tier in
+`<gitdir>/vibe-pr-evidence.json`; after a fix only failed cases rerun.
+Keep the verifier's actual tested HEAD and source hashes. After publication,
+bind that evidence to the committed tree only when the source hash matches;
+metadata binding never claims a rerun. Resolve behavior answers, code gaps and
+Frozen Behavior before declaring readiness; later ticket filling is metadata-only.
+
+Before readiness in step 6, resume the SAME writer to add the
+session decision table's `## Frozen Behavior` section, listing the rows the
+person accepted (`../vibe/references/quality-loop.md`, "Frozen behavior at
+handoff"). Have it refresh that section after any behavior answer that changes
+the table, before the ticket worker sees the table again.
+
+The read-only verifier runs `scripts/live-ticket-check.mjs` on the private candidate ticket
+before readiness. Behavior questions and code gaps return to the SAME writer
+and repeat these gates before the first commit. After publication, the ticket
+worker binds accepted evidence and deployment metadata. A metadata-only mismatch
+is corrected there; any required source correction follows the new-commit recovery
+below, never a readiness-only refusal or rewrite of a published commit.
+
+## 7. Upload the last changes
+
+ROOT commits the reviewed deliverable LOCALLY once through normal hooks, still
+unpushed, excluding private plans/localFix source:
+`node ../vibe/scripts/commit-worktree.mjs --worktree "<wt>" --subject "<ticket>: <summary>" --body "<fixes>"`.
+Its tree must match the accepted candidate.
+Then follow [Main-sync before publication](../vibe/references/environment.md#main-sync-before-publication)
+for handoff. `--prepare-main-sync` fetches fresh `origin/main`; when it stages a
+merge newer than step 5's reviewed pin, the SAME writer resolves it uncommitted
+and reruns affected review, verification, and all CI lanes. ROOT then records
+that staged result as an ordinary merge commit through `commit-worktree.mjs`.
+This is the one extra main-sync commit allowed after the reviewed feature commit;
+it brings in main and is not iteration. Only the settled committed merge tree
+reaches the same actor's one `main-sync-inputs` pass and real
+`mainSyncValidation`. Its retained reports are never PASS, readiness is not test
+authority, and `requiredE2eComplete` remains a separate final-coverage gate.
+Every main sync is checked for capability removal, this one included. Use
+`qa-impact.mjs`, dispatch `vibe-guardrails-reviewer` for its check 13 on that
+merge, and rerun the inventory's `requiredChecks` on the merged tree before
+accepting it; a source change returns to the uncommitted review loop.
+
+A result listing `mainPreexistingFailures` still has `publicationReady: true`:
+carry every entry to step 8's ticket worker as a Known main failure; never send
+it to the writer as a fix, never stop and never ask the person about it
+(["Failures already on main"](../vibe/references/quality-loop.md#failures-already-on-main)).
+Dispatch `vibe-environment-worker` in redeploy mode with the accepted review,
+verification and check evidence. It runs the normal pre-push hook, pushes that
+exact commit, deploys it, and carries verified main-only failures to the ticket.
+If the pre-push hook refuses after the single local commit, the SAME writer
+fixes uncommitted source and reruns the affected review and verification. ROOT runs
+`commit-worktree.mjs --worktree "<wt>" --amend` on that still-unpushed commit,
+then reruns the normal pre-push checks; it never creates a second repair commit.
+Once pushed, that commit is immutable in this flow. Any later required source fix
+from CI, review, or ticket/source verification goes through the SAME writer and
+all affected checks, then ROOT makes a new commit; never amend a pushed commit and
+never force push. The pull request body records why the local pre-push evidence
+missed the required correction.
+Preserve canonical no-ops, `NEEDS_DESKTOP_STOP`, request-only flags/Desktop
+rights, CI identity and no manual CI/review triggers.
+`requiredE2eComplete: false` blocks assignment; Desktop comes back under
+`e2eLeftForCi` instead and does not hold it. Record its `desktop-e2e/validated`
+Engineering checklist entry. A Desktop lane under `e2eLeftForCi` is not such a gap.
+No PR opens here.
+
+## 8. Choose who picks it up, then check the ticket
 
 ### Design Review evidence at handoff
 
@@ -720,24 +732,6 @@ packet and distinguish historical evidence from the actual delivered result.
 Unavailable evidence is a truthful gap, not a fabricated pass. This section is
 finished-work metadata, never a technical plan uploaded for approval.
 
-For every handoff, read the Storybook package version on the final branch,
-list every other open pull request, and inspect the files and claimed
-Storybook version in each one. Record the version and matching pull request
-numbers, or `None`, in the live ticket and, when opening one, the pull request
-packet. A matching claim is coordination evidence to note, never a stop.
-Immediately before a requested pull request is created, repeat this check
-against the pinned pull request base: the branch's bump and its one release
-history entry must be correct relative to that base, and the component and
-story counts must match the branch. A wrong bump or count returns to the same
-writer, and every in-flight train pull request is inspected for its
-reserved version. Main moving on after the pin is not a stale base, and the one main
-merge after QA is enough: classify its diff with `scripts/qa-impact.mjs` and
-never sync main again only to chase a newer Storybook
-release. A version another open pull request already reserves does not block
-creation either; the merge queue settles it. Take the next free version, say
-so in the pull request packet with the reserving pull request's number, and
-go on (ISS-13321).
-
 On a requested pull request (step 0), skip the question and the lookup: the
 next owner is the session's operator, the person who ran it, and the ticket
 stays with them.
@@ -769,12 +763,6 @@ exact words. It reads every ClosedLoop user, matches the words through
 Never pick the person yourself and never fall back to anyone by default: the
 ticket goes only to the user the person named. Design reviewing first and
 engineering finishing is the usual route, but the person decides.
-
-Before the handoff-mode dispatch below, resume the SAME writer to add the
-session decision table's `## Frozen Behavior` section, listing the rows the
-person accepted (`../vibe/references/quality-loop.md`, "Frozen behavior at
-handoff"). Have it refresh that section after any behavior answer that changes
-the table, before the ticket worker sees the table again.
 
 Then dispatch `vibe-ticket-worker` in handoff mode with: the worktree, the live
 ticket slug, the next owner (full name and email), whether the person asked
@@ -808,15 +796,16 @@ opens, then runs
 no `APPROVED` PLN recorded. It returns:
 
 - `DONE` when the ticket is complete.
-- `NEEDS_PERSON` with what only the person can supply (for example acceptance
-  criteria they never stated), marked `behavior` or `wording`. Ask the person,
-  then route their answer as "Answers from the person" says: a behavior
-  answer goes through the change worker, the checks, the reviews, and the
-  redeploy before the ticket worker sees it again.
-- `NEEDS_CHANGE` with an answer or criterion the code has not been checked
-  against, or with plan lines that would publish a local path, a username, a
-  secret or a private input. Resume the SAME persistent writer in fix mode
-  (for plan lines, to fix its local plan) and continue the same way.
+- `NEEDS_PERSON` for ticket wording or owner metadata: ask the person and
+  refresh only that metadata. Missing behavior criteria should have failed
+  candidate preflight; if discovered after publication, follow the new-commit
+  source recovery below rather than treating it as an invariant-only block.
+- `NEEDS_CHANGE` for private plan or ticket metadata that would publish a local
+  path, username, secret or private input: correct that metadata. A source or
+  criterion mismatch returns to the SAME writer: repeat steps 3 through 7 on
+  the corrected source and have ROOT make a new commit; never amend a pushed
+  commit. The pull request body says why local checks missed the correction;
+  publish the repaired head, then retry ticket fill.
 
 Repeat until it returns `DONE`. Never go on to step 9 while a behavior answer
 has not been through the change worker, while its re-run checks, reviews,
@@ -825,11 +814,9 @@ lookup resolved to exactly one user.
 
 ## 9. Hand it over
 
-On a requested pull request, skip assign mode: the ticket stays with the
-person, In Progress. Before dispatch, require the refreshed pinned-base
-Storybook train check. Dispatch `vibe-verify-worker` in `pre-pr` mode on final
-HEAD. It records read-only inventory, results, SHAs, E2E probe and tier in
-`<gitdir>/vibe-pr-evidence.json`; after a fix only failed cases rerun.
+Use the accepted uncommitted evidence from step 6. Publication only binds it
+to the pushed tree; it never substitutes a new source-validation round.
+
 Then dispatch
 `vibe-environment-worker` in `pull-request` mode (its own `pull-request`
 record action, an exclusive record turn with no record writes) with the
@@ -946,20 +933,7 @@ resumes and every fix goes through this path, never around it:
 Each fix is the SAME writer's; no other worker or helper edits source or
 tests here, and no step above is skipped because the change looks small.
 
-A pull request gets one feature-complete QA pass, recorded by screen, host,
-state and flag arm. Later changes run `scripts/qa-impact.mjs` with importers,
-FEATURE_MAP, lane report and that evidence. `None` runs no local lane,
-screenshot, audit or critic; otherwise run only its scope. CI is per push and
-`pre-pr-lanes.mjs check --impact` enforces lanes. A fresh-context reviewer given only the ticket's criteria and the diff runs
-`scripts/criteria-audit.mjs --ticket <body> --audit <audit> --matrix <matrix>`
-for initial QA and again only for criteria on a named screen.
-`node scripts/rulings-check.mjs --ticket <body> --record <QA record> --plan <each linked PLN's get-document JSON> --plan-body <its latest text>`
-must pass too, and so must
-`node scripts/rollout-gate.mjs --worktree "<wt>" --ticket <body> --slug <ticket> --prd <PRD body> --prd-slug <PRD>`
-(each flag, rollback or rollout requirement recorded as `Rollout: <id>:` with
-its code at HEAD or a human ruling that names the ticket or PRD). In the rulings check, every ruling made during the work is on the ticket with the
-criteria it amends, and a plan no human approved excludes nothing without
-citing a ticket AC, PRD or operator ruling. From then on the pull request is shepherded:
+From then on the pull request is shepherded:
 `node ../vibe/scripts/shepherd.mjs --pr <n> --repo <owner/repo>` polls it
 every two minutes and stops on a conflict (merge main at once in final-merge
 mode, push, run it again), failed checks (the SAME writer fixes them), an

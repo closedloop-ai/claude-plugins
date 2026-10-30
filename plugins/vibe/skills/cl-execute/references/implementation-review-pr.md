@@ -54,9 +54,9 @@ on leaving implementation using the [display reporter](../../cl-sweep/references
      hypothesis, revert the edits it motivated before trying the next. A guard
      that silences the symptom (a null check, a catch, a default, a retry) is
      not a fix unless the root cause is that the value is legitimately absent.
-   - Commit the focused test that fails on the base first, with its recorded
-     failure, then commit the fix, so the history shows red then green. Push
-     them together. This test is the Residual contract testability probe from
+   - Keep the recorded failing run on the base as evidence while iterating
+     uncommitted through the fix, selected checks, independent review and
+     verification. Commit test and fix together only when push-ready. This test is the Residual contract testability probe from
      [planning-and-gates.md](planning-and-gates.md), not a second one. The red
      run must fail for the bug's reason: an assertion on the wrong behavior or
      the reported error. A failure from a missing export, an import or type
@@ -66,9 +66,8 @@ on leaving implementation using the [display reporter](../../cl-sweep/references
      say which signal it locks. The check-integrity boundary in
      [SKILL.md](../SKILL.md) still applies: never loosen an existing assertion
      to make the fix pass.
-   - If a mandatory commit hook runs the new test and rejects the red commit,
-     do not bypass the hook. Keep the recorded failing run on the base as the
-     red evidence and commit test and fix together.
+   - Never bypass a mandatory commit hook or make a red checkpoint commit;
+     preserve the failing command and assertion in the final evidence.
    - When no cheap test path exists (it would need broad harness setup,
      production-only state, or mostly mocks), record why and use the closest
      runtime evidence as the red step instead, such as the pre-fix
