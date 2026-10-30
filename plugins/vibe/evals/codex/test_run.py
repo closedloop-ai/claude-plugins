@@ -139,6 +139,7 @@ def test_fleet_semantic_graders_accept_real_ordering_and_require_every_concept(t
     assert not matches(cleanup, "leave-foreign-alone", "Left untouched: qa-foreign will be removed.")
     terminal = "PR 42 is closed, so I reconcile the recorded helper now.\nqa-owned has reached its ending condition."
     assert matches(cleanup, "reconcile-terminal-pr", terminal)
+    assert matches(cleanup, "reconcile-terminal-pr", "Reconcile qa-owned now for acme/app#42 after PR closure.")
     for missing in (
         "PR 42 is still open, so I reconcile qa-owned now.",
         "PR 42 is closed, so I reconcile the recorded helper now.",
@@ -215,8 +216,13 @@ Ready in approximately **20 minutes**, assuming all lanes pass and the e2e queue
         "the handler removes only its recorded qa-owned container, volumes and network. Leave qa-foreign untouched. "
         "Final status: writer-a and ISS-13420 are reconciled."
     )
+    codex_cleanup_match = (
+        "Reconcile qa-owned now for writer-a and ISS-13420 after PR closure on acme/app#42. "
+        "Remove the exact recorded container, volumes and network whose creation witnesses match qa-owned. "
+        "Leave qa-foreign untouched. Final status: qa-owned is cleaned up."
+    )
     for name, replies in (("orchestrator-parallel-e2e-queued", (codex_lane, codex_lane_with_rejected_history, claude_lane)),
-                          ("orchestrator-owned-qa-cleanup", (codex_cleanup, codex_cleanup_plain, claude_cleanup))):
+                          ("orchestrator-owned-qa-cleanup", (codex_cleanup, codex_cleanup_plain, codex_cleanup_match, claude_cleanup))):
         for reply in replies:
             checks, _ = runner.deterministic(cases[name], reply, tmp_path, [])
             assert all(check["passed"] for check in checks if check["grader"] != "loaded-plugin"), (name, checks)
@@ -244,7 +250,12 @@ Ready in approximately **20 minutes**, assuming all lanes pass and the e2e queue
         ("reconcile-terminal-pr", codex_cleanup.replace("now because", "later because")),
         ("reconcile-terminal-pr", codex_cleanup.replace("qa-owned", "qa-other")),
         ("remove-owned-docker", codex_cleanup.replace("exact recorded", "unverified")),
-        ("remove-owned-docker", codex_cleanup.replace("Recheck its PID birth identity and creation witnesses, then ", "")),
+        (
+            "remove-owned-docker",
+            codex_cleanup
+            .replace("Recheck its PID birth identity and creation witnesses, then ", "")
+            .replace(" Refuse removal if any recorded identity or witness no longer matches.", ""),
+        ),
         ("remove-owned-docker", codex_cleanup.replace("container, volumes, and network", "volumes and network")),
         ("remove-owned-docker", codex_cleanup.replace("container, volumes, and network", "container and network")),
         ("remove-owned-docker", codex_cleanup.replace("container, volumes, and network", "container and volumes")),
