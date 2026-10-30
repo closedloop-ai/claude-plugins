@@ -16,6 +16,9 @@ through the Skill tool. If you are in Codex, read the installed repository snaps
 Do not answer until you have read the instructions for your runtime. You may
 read plugin skill and reference files, but do not run scripts, start workers
 or contact a service.
+Because this is a rehearsal, describe the action the monitor-event handler
+takes as it processes this event. Do not substitute a pending state merely
+because no script runs in the rehearsal.
 Read the fleet skill's "Monitoring" section and the "Lifecycle cleanup report"
 template before answering.
 

@@ -84,6 +84,8 @@ def test_fleet_scenarios_require_the_plugin_to_override_stale_coordination() -> 
     assert "terminal PR events are report-only" in cleanup
     assert "wait for an explicit operator cleanup request" in cleanup
     assert "current working convention" in cleanup
+    assert "action the monitor-event handler\n takes as it processes this event" in cleanup
+    assert "Do not substitute a pending state" in cleanup
 
 
 def test_parallel_fleet_graders_accept_plain_behavior_without_template_labels(tmp_path: Path) -> None:
