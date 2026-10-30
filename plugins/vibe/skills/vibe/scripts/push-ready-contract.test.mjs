@@ -44,7 +44,7 @@ test('criteria audit, rulings, rollout, independent review and verification prec
   }
   assert.doesNotMatch(handoff, /After step 7 verifies the final publication, dispatch read-only/);
   assert.match(handoff.slice(0, commit), /all CI\s+lanes[\s\S]*exact job shapes[\s\S]*Focused subsets never substitute/i);
-  assert.doesNotMatch(handoff.slice(handoff.indexOf('## 8.'), handoff.indexOf('## 9.')), /a behavior\s+answer goes through/, 'post-publication ticket fill cannot start a source-fix/redeploy cycle');
+  assert.match(handoff.slice(handoff.indexOf('## 8.'), handoff.indexOf('## 9.')), /discovered after publication[\s\S]*new-commit[\s\S]*never amend a pushed/i);
   const monitor = read('../../codex-fleet-monitor/SKILL.md');
   assert.doesNotMatch(monitor, /add the new PR to `prs.txt` and start its review/);
   assert.match(monitor, /observe automatically started checks and reviews/);
@@ -84,8 +84,9 @@ test('writer E2E guidance separates dirty local receipts from the clean remote w
   assert.match(verifier, /working-tree/);
 });
 
-test('review and verification precede the commit, with one unpushed amend recovery path', () => {
+test('review and verification precede publication, with explicit commit recovery boundaries', () => {
   const handoff = read('../../handoff/SKILL.md');
+  const environment = read('../references/environment.md');
   const review = handoff.indexOf('## 6. Independent integrated review');
   const upload = handoff.indexOf('## 7. Upload the last changes');
   const commit = handoff.indexOf('ROOT commits the reviewed deliverable LOCALLY', upload);
@@ -93,7 +94,10 @@ test('review and verification precede the commit, with one unpushed amend recove
   assert.ok(review < commit && commit < push);
   const recovery = handoff.slice(commit, handoff.indexOf('## 8.'));
   assert.match(recovery, /pre-push hook[\s\S]*fix(?:es)?\s+uncommitted[\s\S]*--amend[\s\S]*unpushed[\s\S]*rerun/i);
-  assert.match(recovery, /--prepare-main-sync[\s\S]*fetch(?:es)? fresh `origin\/main`[\s\S]*--amend[\s\S]*still-unpushed/i);
+  assert.match(recovery, /--prepare-main-sync[\s\S]*fetch(?:es)? fresh `origin\/main`[\s\S]*ordinary merge commit[\s\S]*one extra[\s\S]*not iteration/i);
+  assert.match(environment, /root commits the staged merge[\s\S]*one extra[\s\S]*not iteration/i);
+  assert.match(environment, /failed pre-push check[\s\S]*still local[\s\S]*After push[\s\S]*immutable[\s\S]*new commit[\s\S]*never an amend[\s\S]*force push/i);
+  assert.match(recovery, /Once pushed[\s\S]*immutable[\s\S]*required source fix[\s\S]*new commit[\s\S]*never amend[\s\S]*never force/i);
   const ticketFill = handoff.slice(handoff.indexOf('## 8.'), handoff.indexOf('## 9.'));
-  assert.match(ticketFill, /source or\s+criterion mismatch[\s\S]*SAME writer[\s\S]*steps 3 through 7[\s\S]*retry/i);
+  assert.match(ticketFill, /source or\s+criterion mismatch[\s\S]*SAME writer[\s\S]*steps 3 through 7[\s\S]*new commit[\s\S]*never amend[\s\S]*(?:pull request|PR) body[\s\S]*retry/i);
 });

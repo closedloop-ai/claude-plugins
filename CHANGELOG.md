@@ -11,11 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - Writers and fleet orchestration keep iteration uncommitted until review, verification, and checks make one commit push-ready. Required criteria, ruling, and rollout audits run before pull-request creation (ISS-13430).
-- Across all plugin Markdown, including eval prompts and graders, vibe is about 43 words longer than in 1.1.20.
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 206 words longer than in 1.1.20.
 
 #### Fixed
 - Dirty-source checks, QA, image, local E2E, and inventory evidence use the committed head plus a deterministic source fingerprint and reject inputs that change during a run. Fleet board and watcher output report undeclared local writer commits while treating remote history as informational and excluding commits imported from the base branch.
-- Shallow-CI release checks are self-contained; the remote E2E guard matches its deployed clean-worktree interface; dirty precommit evidence cannot bind even when HEAD is unchanged; remote shell payloads are inspected only by the E2E identity guard; and live-upstream, main-sync, or post-publication repairs amend one still-unpushed commit.
+- Shallow-CI release checks are self-contained; the remote E2E guard matches its deployed clean-worktree interface; dirty precommit evidence cannot bind even when HEAD is unchanged; remote shell payloads are inspected only by the E2E identity guard; remote ancestry blocks unsafe amends; pre-push repairs amend only an unpushed commit; main sync may add one ordinary merge commit; and post-publication fixes use new commits.
 
 ### vibe v1.1.20
 

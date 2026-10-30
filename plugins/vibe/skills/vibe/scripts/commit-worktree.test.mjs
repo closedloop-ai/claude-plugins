@@ -12,8 +12,8 @@ function setup(t) {
   const fixture = makeHome("commit-worktree-");
   t.after(fixture.cleanup);
   const checkout = path.join(fixture.root, "symphony-alpha");
-  makeCheckout({ root: fixture.root, home: fixture.home, checkout, files: { "apps/app/page.tsx": "one\n" } });
-  return { ...fixture, checkout };
+  const { origin } = makeCheckout({ root: fixture.root, home: fixture.home, checkout, files: { "apps/app/page.tsx": "one\n" } });
+  return { ...fixture, checkout, origin };
 }
 
 function write(checkout, file, content) {
@@ -117,6 +117,49 @@ test('amend fetches its upstream and refuses a head published from elsewhere', t
   assert.equal(refused.status, 1);
   assert.match(refused.json.error, /published|remote/i);
   assert.equal(git(checkout, ['rev-parse', 'HEAD'], home), current);
+});
+
+test('amend without an upstream refuses a head retained by a local remote-tracking ref', t => {
+  const { home, checkout, origin } = setup(t);
+  write(checkout, 'apps/app/page.tsx', 'published without upstream\n');
+  assert.equal(runNode(SCRIPT, ['--worktree', checkout, '--subject', 'ISS-7: Publish'], home).status, 0);
+  const published = git(checkout, ['rev-parse', 'HEAD'], home);
+  git(checkout, ['branch', '--unset-upstream'], home);
+  git(checkout, ['push', '--quiet', 'origin', 'HEAD:refs/heads/published'], home);
+  assert.equal(git(checkout, ['rev-parse', 'refs/remotes/origin/published'], home), published);
+  git(origin, ['update-ref', '-d', 'refs/heads/published'], home);
+  write(checkout, 'apps/app/page.tsx', 'unsafe rewrite\n');
+
+  const refused = runNode(SCRIPT, ['--worktree', checkout, '--amend'], home);
+
+  assert.equal(refused.status, 1);
+  assert.match(refused.json.error, /published|remote/i);
+  assert.equal(git(checkout, ['rev-parse', 'HEAD'], home), published);
+});
+
+test('amend without an upstream fetches remote descendants before allowing a rewrite', t => {
+  const { root, home, checkout, origin } = setup(t);
+  write(checkout, 'apps/app/page.tsx', 'published ancestor\n');
+  assert.equal(runNode(SCRIPT, ['--worktree', checkout, '--subject', 'ISS-7: Publish'], home).status, 0);
+  const published = git(checkout, ['rev-parse', 'HEAD'], home);
+  git(checkout, ['branch', '--unset-upstream'], home);
+  git(checkout, ['push', '--quiet', 'origin', 'HEAD:refs/heads/published'], home);
+
+  const other = path.join(root, 'other');
+  git(root, ['clone', '--quiet', origin, other], home);
+  git(other, ['checkout', '--quiet', '-b', 'published', 'origin/published'], home);
+  write(other, 'apps/app/page.tsx', 'remote descendant\n');
+  git(other, ['add', '-A'], home);
+  git(other, ['commit', '--quiet', '-m', 'remote descendant'], home);
+  git(other, ['push', '--quiet', 'origin', 'HEAD:refs/heads/published'], home);
+  git(checkout, ['update-ref', '-d', 'refs/remotes/origin/published'], home);
+  write(checkout, 'apps/app/page.tsx', 'unsafe ancestor rewrite\n');
+
+  const refused = runNode(SCRIPT, ['--worktree', checkout, '--amend'], home);
+
+  assert.equal(refused.status, 1);
+  assert.match(refused.json.error, /published|remote/i);
+  assert.equal(git(checkout, ['rev-parse', 'HEAD'], home), published);
 });
 
 test("local plans stay in the worktree even when staged, without excluding other artifacts", (t) => {

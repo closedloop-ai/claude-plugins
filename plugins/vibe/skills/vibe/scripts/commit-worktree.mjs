@@ -114,26 +114,34 @@ function commitWorktree() {
 
 function publishedHead(worktree) {
   const head = git(worktree, ['rev-parse', 'HEAD']);
-  let upstream = null;
-  try { upstream = git(worktree, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']); }
-  catch { /* A never-pushed branch may have no upstream. */ }
-  if (upstream) {
-    const slash = upstream.indexOf('/');
-    const remote = upstream.slice(0, slash);
-    const branch = upstream.slice(slash + 1);
-    const fetched = spawnSync('git', ['fetch', '--quiet', remote, `+refs/heads/${branch}:refs/remotes/${upstream}`], {
-      cwd: worktree, encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    if (fetched.error || fetched.status !== 0) throw new Error('Cannot verify whether the commit was published to its upstream; refusing to amend.');
-    return Boolean(git(worktree, ['branch', '-r', '--contains', head]));
-  }
+  const trackedRemotely = () => Boolean(git(worktree, ['branch', '-r', '--contains', head]));
+  if (trackedRemotely()) return true;
   const remotes = git(worktree, ['remote']).split('\n').filter(Boolean);
   for (const remote of remotes) {
     const listed = spawnSync('git', ['ls-remote', '--heads', remote], {
       cwd: worktree, encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'],
     });
     if (listed.error || listed.status !== 0) throw new Error('Cannot verify whether the commit was published to a remote; refusing to amend.');
-    if (listed.stdout.split('\n').some(line => line.startsWith(`${head}\t`))) return true;
+    const advertised = listed.stdout.split('\n').filter(Boolean).map(line => {
+      const [oid, ref] = line.split('\t');
+      return { oid, ref };
+    });
+    if (advertised.some(({ oid }) => oid === head)) return true;
+    if (advertised.length === 0) continue;
+    // A remote tip may be a descendant of HEAD, so exact OID comparison is
+    // insufficient. Refresh every advertised branch and ask Git about reachability.
+    const fetched = spawnSync('git', ['fetch', '--quiet', '--no-tags', remote, `+refs/heads/*:refs/remotes/${remote}/*`], {
+      cwd: worktree, encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (fetched.error || fetched.status !== 0) throw new Error('Cannot verify remote branch ancestry; refusing to amend.');
+    for (const { oid, ref } of advertised) {
+      const branch = ref.slice('refs/heads/'.length);
+      let fetchedOid = null;
+      try { fetchedOid = git(worktree, ['rev-parse', '--verify', `refs/remotes/${remote}/${branch}^{commit}`]); }
+      catch { /* The branch moved or disappeared between listing and fetch. */ }
+      if (fetchedOid !== oid) throw new Error('Remote branches changed while verifying amend safety; refusing to amend.');
+    }
+    if (trackedRemotely()) return true;
   }
   return false;
 }

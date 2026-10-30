@@ -619,8 +619,9 @@ the table, before the ticket worker sees the table again.
 The read-only verifier runs `scripts/live-ticket-check.mjs` on the private candidate ticket
 before readiness. Behavior questions and code gaps return to the SAME writer
 and repeat these gates before the first commit. After publication, the ticket
-worker only binds accepted evidence and deployment metadata. A mismatch blocks
-handoff and is reported as a readiness invariant failure, never another source commit.
+worker binds accepted evidence and deployment metadata. A metadata-only mismatch
+is corrected there; any required source correction follows the new-commit recovery
+below, never a readiness-only refusal or rewrite of a published commit.
 
 ## 7. Upload the last changes
 
@@ -631,12 +632,13 @@ Its tree must match the accepted candidate.
 Then follow [Main-sync before publication](../vibe/references/environment.md#main-sync-before-publication)
 for handoff. `--prepare-main-sync` fetches fresh `origin/main`; when it stages a
 merge newer than step 5's reviewed pin, the SAME writer resolves it uncommitted
-and reruns affected review, verification, and all CI lanes. ROOT uses
-`commit-worktree.mjs --worktree "<wt>" --amend` on the still-unpushed commit,
-then repeats preparation. Only the settled amended tree reaches the same actor's
-one `main-sync-inputs` pass and real `mainSyncValidation`. Its retained reports
-are never PASS, readiness is not test authority, and `requiredE2eComplete`
-remains a separate final-coverage gate.
+and reruns affected review, verification, and all CI lanes. ROOT then records
+that staged result as an ordinary merge commit through `commit-worktree.mjs`.
+This is the one extra main-sync commit allowed after the reviewed feature commit;
+it brings in main and is not iteration. Only the settled committed merge tree
+reaches the same actor's one `main-sync-inputs` pass and real
+`mainSyncValidation`. Its retained reports are never PASS, readiness is not test
+authority, and `requiredE2eComplete` remains a separate final-coverage gate.
 Every main sync is checked for capability removal, this one included. Use
 `qa-impact.mjs`, dispatch `vibe-guardrails-reviewer` for its check 13 on that
 merge, and rerun the inventory's `requiredChecks` on the merged tree before
@@ -653,6 +655,11 @@ If the pre-push hook refuses after the single local commit, the SAME writer
 fixes uncommitted source and reruns the affected review and verification. ROOT runs
 `commit-worktree.mjs --worktree "<wt>" --amend` on that still-unpushed commit,
 then reruns the normal pre-push checks; it never creates a second repair commit.
+Once pushed, that commit is immutable in this flow. Any later required source fix
+from CI, review, or ticket/source verification goes through the SAME writer and
+all affected checks, then ROOT makes a new commit; never amend a pushed commit and
+never force push. The pull request body records why the local pre-push evidence
+missed the required correction.
 Preserve canonical no-ops, `NEEDS_DESKTOP_STOP`, request-only flags/Desktop
 rights, CI identity and no manual CI/review triggers.
 `requiredE2eComplete: false` blocks assignment; Desktop comes back under
@@ -791,12 +798,14 @@ no `APPROVED` PLN recorded. It returns:
 - `DONE` when the ticket is complete.
 - `NEEDS_PERSON` for ticket wording or owner metadata: ask the person and
   refresh only that metadata. Missing behavior criteria should have failed
-  candidate preflight; report that readiness failure rather than starting
-  a post-publication source-fix/redeploy cycle.
+  candidate preflight; if discovered after publication, follow the new-commit
+  source recovery below rather than treating it as an invariant-only block.
 - `NEEDS_CHANGE` for private plan or ticket metadata that would publish a local
   path, username, secret or private input: correct that metadata. A source or
   criterion mismatch returns to the SAME writer: repeat steps 3 through 7 on
-  the corrected source, publish the repaired head, then retry ticket fill.
+  the corrected source and have ROOT make a new commit; never amend a pushed
+  commit. The pull request body says why local checks missed the correction;
+  publish the repaired head, then retry ticket fill.
 
 Repeat until it returns `DONE`. Never go on to step 9 while a behavior answer
 has not been through the change worker, while its re-run checks, reviews,
