@@ -14,7 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Frozen-render comparisons own and close their base and head Storybook servers on success and failure. Recorded QA stacks and Docker resources are reconciled when a pull request merges or closes; cleanup verifies ownership and leaves unrecorded resources untouched (ISS-13420).
 
 #### Changed
-- Across all plugin Markdown, including eval prompts and graders, vibe is about 2,833 words longer than in 1.1.18.
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 2,914 words longer than in 1.1.18.
 
 ### vibe v1.1.18
 
