@@ -88,6 +88,47 @@ def test_parallel_fleet_graders_accept_plain_behavior_without_template_labels(tm
     checks, _ = runner.deterministic(lane, serial, tmp_path, [])
     assert any(not check["passed"] for check in checks if check["grader"] != "loaded-plugin")
 
+
+def test_fleet_semantic_graders_accept_real_ordering_and_require_every_concept(tmp_path: Path) -> None:
+    """Transcript wording order must not decide the four behavior checks."""
+    cases = {case["name"]: case for case in runner.cases()}
+    def matches(case: str, grader: str, reply: str) -> bool:
+        path = Path(__file__).parents[1] / case / "graders" / f"{grader}.md"
+        meta, _ = runner.document(path)
+        return re.search(meta["pattern"], reply, re.IGNORECASE) is not None
+
+    lane = "orch-parallel-e2e-queued"
+    dependency = "These two have no prerequisite on each other or on e2e, so they run in parallel."
+    assert matches(lane, "no-e2e-dependency", dependency)
+    assert not matches(lane, "no-e2e-dependency", "These two have no prerequisite on each other, so they run in parallel.")
+    assert not matches(lane, "no-e2e-dependency", "E2e is queued, and these two lanes are selected.")
+    eta = "Time to ready. The longest dependent path is the 8-minute wait plus our 12-minute e2e, which gives 20 minutes."
+    assert matches(lane, "parallel-eta", eta)
+    for missing in (
+        "The longest dependent path is the 8-minute wait plus 12-minute e2e, which gives 20 minutes.",
+        "Time to ready is 20 minutes after the e2e run.",
+        "Time to ready follows the longest dependent path through the wait and e2e.",
+    ):
+        assert not matches(lane, "parallel-eta", missing), missing
+
+    cleanup = "orch-owned-qa-cleanup"
+    foreign = "Left untouched:\nqa-foreign keeps running and gets no cleanup, no stop."
+    assert matches(cleanup, "leave-foreign-alone", foreign)
+    assert not matches(cleanup, "leave-foreign-alone", "The other stack keeps running and gets no cleanup.")
+    assert not matches(cleanup, "leave-foreign-alone", "qa-foreign is recorded on the board.")
+    assert not matches(cleanup, "leave-foreign-alone", "qa-foreign will be removed. qa-owned gets no cleanup.")
+    assert not matches(cleanup, "leave-foreign-alone", "Left untouched: qa-foreign will be removed.")
+    terminal = "PR 42 is closed, so I reconcile the recorded helper now.\nqa-owned has reached its ending condition."
+    assert matches(cleanup, "reconcile-terminal-pr", terminal)
+    for missing in (
+        "PR 42 is still open, so I reconcile qa-owned now.",
+        "PR 42 is closed, so I reconcile the recorded helper now.",
+        "PR 42 is closed; qa-owned remains recorded.",
+        "PR 42 is closed, so I reconcile qa-owned later.",
+        "PR 42 is closed. I inspect qa-foreign now; I will reconcile qa-owned later.",
+    ):
+        assert not matches(cleanup, "reconcile-terminal-pr", missing), missing
+
     helpers = cases["orchestrator-parallel-build-helpers"]
     split = (
         "Assign the proof test tests/criterion-a.test.ts exclusively to helper branch proof-a. "
