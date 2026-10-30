@@ -27,6 +27,11 @@ test("an orchestrator cannot launch a vibe worker directly outside a vibe sessio
   execFileSync("git", ["init", "--quiet", "--initial-branch=main", dir]);
   const gitDir = execFileSync("git", ["-C", dir, "rev-parse", "--absolute-git-dir"], { encoding: "utf8" }).trim();
   writeFileSync(path.join(gitDir, "vibe-session.json"), "{}\n");
-  assert.equal(run("vibe:vibe-change-worker", dir).stdout, "", "the vibe skill may dispatch its own worker inside a session");
+  assert.equal(JSON.parse(run("vibe:vibe-change-worker", dir).stdout).hookSpecificOutput.permissionDecision, "deny", "the skill also uses the capability-binding launcher inside a session");
+  for (const role of ["guardrails-reviewer", "adversarial-reviewer", "storybook-decomposer"]) {
+    const name = `vibe:vibe-${role}`;
+    assert.match(agentLaunchProblem({ subagent_type: name }), /capability-binding worker launcher/);
+    assert.equal(JSON.parse(run(name, dir).stdout).hookSpecificOutput.permissionDecision, "deny", `${name} needs bound graph tools even inside a session`);
+  }
   assert.ok(PRE_TOOL_USE_ROUTES.Agent.some((guard) => guard.run === agentGuard), "the Agent guard is routed");
 });

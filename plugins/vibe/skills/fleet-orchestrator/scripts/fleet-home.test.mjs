@@ -5,8 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+import { writeRemoteCodexStub } from './fleet-test-support.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const PLUGIN_ROOT = path.resolve(HERE, '..', '..', '..');
+const actorLoad = (actor = 'test') => loadedSkillEvidence(actor, 'codex', PLUGIN_ROOT, 'fleet-orchestrator', LoadBasis.HookObserved);
 const MONITOR = path.join(HERE, '..', '..', 'codex-fleet-monitor', 'scripts');
 const run = (args, env = {}) => spawnSync(process.execPath, [path.join(HERE, 'fleet-home.mjs'), ...args], { encoding: 'utf8', env: { ...process.env, ...env } });
 const tempRoot = (t) => {
@@ -38,7 +42,7 @@ test('a new program reads none of an earlier program; resume names the active on
   assert.equal(run(['start', 'iss-2', '--shape', 'fleet', '--home', home]).status, 0);
   const second = run(['resume', '--home', home]).stdout;
   assert.match(second, /^ACTIVE iss-2 /m);
-  assert.doesNotMatch(second, /iss-1/, 'the new program is shown nothing of the earlier one');
+  assert.doesNotMatch(second, /^ACTIVE iss-1 |\/programs\/iss-1(?:\/|$)/m, 'the new program is shown nothing of the earlier one');
   assert.equal(readFileSync(path.join(home, 'programs', 'iss-2', 'resume-log.md'), 'utf8'), '');
 });
 
@@ -99,6 +103,7 @@ test('fleet.sh in a home keeps local sessions and remote session markers in the 
   mkdirSync(bin);
   writeFileSync(path.join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs) exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`, { mode: 0o755 });
   writeFileSync(path.join(bin, 'ssh'), '#!/usr/bin/env bash\nexec bash -c "${@: -1}"\n', { mode: 0o755 });
+  writeRemoteCodexStub(bin, PLUGIN_ROOT);
   writeFileSync(path.join(home, 'config.env'), `REMOTE_HOST=box\nREMOTE_FLEET_HOME=${root}/remote\nREMOTE_SHELL="bash -c"\nCODEX_MODEL=m\nCODEX_EFFORT=high\n`);
   const prompt = path.join(home, 'programs', 'iss-1', 'prompts', 'w1-01.md');
   writeFileSync(prompt, '$vibe ISS-1\n');
@@ -185,7 +190,18 @@ test('resume tells a new chat to run the plugin version check, and flags an outd
   assert.match(run(['resume', '--home', home]).stdout, new RegExp(`^PLUGIN-VERSION-UNCHECKED: run \`node \\S+/vibe/scripts/plugin-version\\.mjs check --state ${program}/plugin-version\\.json\``, 'm'));
   writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'outdated', versions: 'vibe: you have 1.0.84, the latest is 1.0.85', checkedAt: 'then' }));
   assert.match(run(['resume', '--home', home]).stdout, /^PLUGIN-VERSION-UNANSWERED vibe: you have 1\.0\.84, the latest is 1\.0\.85: ask the operator to update now or proceed knowing an outdated plugin could give worse results/m);
-  writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'outdated', versions: 'v', checkedAt: 'then', choice: { choice: 'proceed' } }));
+  writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'outdated', versions: 'v', checkedAt: 'then', choice: { choice: 'proceed' },
+    runtime: 'codex', loadedSkill: actorLoad('c'), harnesses: [] }));
   assert.match(run(['resume', '--home', home]).stdout, /^PLUGIN-VERSION outdated proceed at then: run `.+` in every chat; in the same chat it keeps the recorded answer$/m);
   assert.equal(run(['check', '--home', home]).status, 0, 'program.json and plugin-version.json are program state, not strays');
+});
+
+test('resume refuses a stale loaded skill until the current installed release is recorded', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  run(['start', 'p1', '--shape', 'one-writer', '--home', home]);
+  const program = path.join(home, 'programs', 'p1');
+  writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'codex', checkedAt: 'then', loadedSkill: { ...actorLoad('same-chat'), version: '1.0.85' }, harnesses: [] }));
+  assert.match(run(['resume', '--home', home]).stdout, /PLUGIN-RELOAD-REQUIRED: target actor loaded 1\.0\.85/);
+  writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'codex', checkedAt: 'now', loadedSkill: actorLoad('new-chat'), harnesses: [] }));
+  assert.match(run(['resume', '--home', home]).stdout, /^PLUGIN-VERSION current at now/m);
 });

@@ -5,12 +5,18 @@
 // brief at the next trigger. `status` lists every helper whose result was
 // accepted more than --idle-minutes ago and that is not recorded as stopped.
 //
-// Usage: helpers.mjs <orchDir> start <name> [--brief <file>] [--stack <stack>]
+// Usage: helpers.mjs <orchDir> start <name> [--kind other] [--stack <stack>]
+//        Reviewer/verifier/critic: --kind <kind> --brief <file> --worktree <dir>
+//        --worker-id <managed thread ID> --role <agent name>
+//        --agent-definition <canonical file> --capabilities <recorded JSON> [--runtime claude|codex]
 //        [--owner <writer> --ticket <slug> --repo <owner/repo> --pr <n> --ending pr-terminal]
 //        helpers.mjs <orchDir> pid <name> <pid...> [--group]
 //        helpers.mjs <orchDir> resources <name> [--project <compose>] [--container <id>]...
 //        [--volume <id>]... [--network <id>]...
-//        helpers.mjs <orchDir> accepted <name>
+//        helpers.mjs <orchDir> final <name> --deliverable <file> --session-id <id> --turn-id <id> --out <file>
+//        [--completion-event <saved thread/read JSON>]; deliverable ends with
+//        FINAL <one-time token> <start tree> <worker ID> <session ID> <turn ID> completed
+//        helpers.mjs <orchDir> accepted <name> --report <helper-final.json>
 //        helpers.mjs <orchDir> stopped <name> [--grace-seconds <n, default 10>]
 //        helpers.mjs <orchDir> hand <stack> --to <guide>
 //        helpers.mjs <orchDir> unhand <stack>
@@ -44,13 +50,19 @@
 // and exits 1 when any helper should be stopped or left processes running.
 
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { captureOwnedDockerResources, defaultLockDir, readHolder, removeOwnedDockerResources } from "../../vibe/scripts/e2e-lock.mjs";
 import { readProcessIdentity } from "../../../shared/process-identity.mjs";
+import { sameSource, sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
+import { evidenceFingerprint } from "../../handoff/scripts/handoff-evidence.mjs";
+import { graphAliases } from "../../handoff/scripts/mcp-tool-names.mjs";
+import { promptProblems } from "./skill-freshness.mjs";
+import { LoadBasis, loadedSkillEvidence } from "../../vibe/scripts/loaded-skill.mjs";
 
 const LEDGER = "helpers.json";
 const STACKS = "#stacks";
@@ -58,6 +70,48 @@ const DEFAULT_IDLE_MINUTES = 5;
 const DEFAULT_GRACE_SECONDS = 10;
 const POLL_MS = 200;
 const ENDINGS = new Set(["pr-terminal"]);
+const FINAL_KINDS = new Set(["reviewer", "verifier", "critic"]);
+const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+
+/** The helper writes this exact last line only after its deliverable is complete. */
+export function finalMarker(helper, completion) {
+  return `FINAL ${helper.finalToken} ${helper.source.treeSha256} ${helper.workerId} ${completion.sessionId} ${completion.turnId} completed`;
+}
+
+/** App Server thread/read is a first-party completion witness when its thread is available. */
+export function completionEventProblem(event, completion) {
+  const thread = event?.thread ?? event;
+  const turn = Array.isArray(thread?.turns) ? thread.turns.find(item => item?.id === completion.turnId) : null;
+  if (thread?.id !== completion.sessionId || turn?.status !== "completed") return "runtime did not confirm the named completed turn";
+  return null;
+}
+
+/** Only the helper's explicit final report and unchanged deliverable justify acceptance. */
+export function finalReportProblem(helper, reportFile) {
+  if (!helper?.startedAt || !helper.worktree || !helper.finalToken || !helper.requiresFinal || !reportFile) return "helper needs a registered worktree and final report";
+  try { if (!helper.finalizedAt || helper.finalReportPath !== evidenceFingerprint(reportFile).path) return "helper FINAL token was not consumed for this report"; }
+  catch { return "helper final report cannot be read"; }
+  let report;
+  try { report = JSON.parse(readFileSync(evidenceFingerprint(reportFile).path, "utf8")); }
+  catch { return "helper final report cannot be read"; }
+  if (report.helper !== helper.name || report.token !== helper.finalToken || report.status !== "FINAL") return "helper report is not its final deliverable";
+  if (report.workerId !== helper.workerId) return "helper report names another worker";
+  if (!report.completion?.sessionId || !report.completion?.turnId) return "helper report lacks completed session and turn identity";
+  try {
+    if (!sameSource(helper.source ?? {}, sourceIdentity(helper.worktree))) return "helper source changed since start";
+    if (JSON.stringify(evidenceFingerprint(helper.capabilities?.path)) !== JSON.stringify(helper.capabilities)) return "helper capability record changed";
+    if (JSON.stringify(evidenceFingerprint(helper.agentDefinition?.path)) !== JSON.stringify(helper.agentDefinition)) return "helper canonical agent definition changed";
+    if (report.completionEvidence) {
+      if (JSON.stringify(evidenceFingerprint(report.completionEvidence.path)) !== JSON.stringify(report.completionEvidence)) return "helper runtime completion evidence changed";
+      const runtimeProblem = completionEventProblem(JSON.parse(readFileSync(report.completionEvidence.path, "utf8")), report.completion);
+      if (runtimeProblem) return runtimeProblem;
+    }
+    if (!sameSource(report.source ?? {}, sourceIdentity(helper.worktree))) return "helper report is stale for the current source";
+    if (JSON.stringify(evidenceFingerprint(report.deliverable?.path)) !== JSON.stringify(report.deliverable)) return "helper final deliverable changed";
+    if (!readFileSync(report.deliverable.path, "utf8").trimEnd().endsWith(finalMarker(helper, report.completion))) return "helper deliverable lacks its FINAL marker";
+  } catch { return "helper final deliverable cannot be verified"; }
+  return null;
+}
 
 /** Helpers to stop: accepted more than `idleMinutes` before `now` and never recorded stopped. */
 export function stopCandidates(ledger, now, idleMinutes = DEFAULT_IDLE_MINUTES) {
@@ -146,7 +200,7 @@ export const readIdentity = readProcessIdentity;
 
 /** The process group id of `pid`, or null when it cannot be read. */
 export function readGroupId(pid) {
-  const result = spawnSync("ps", ["-o", "pgid=", "-p", String(pid)], { encoding: "utf8" });
+  const result = spawnSync("ps", ["-o", "pgid=", String(pid)], { encoding: "utf8" });
   const group = Number(result.stdout?.trim());
   return result.status === 0 && Number.isSafeInteger(group) ? group : null;
 }
@@ -286,11 +340,17 @@ async function main(argv) {
       owner: { type: "string" }, ticket: { type: "string" }, repo: { type: "string" }, pr: { type: "string" },
       ending: { type: "string" }, project: { type: "string" },
       "e2e-lock-dir": { type: "string" },
+      worktree: { type: "string" }, report: { type: "string" },
+      kind: { type: "string" },
+      "worker-id": { type: "string" }, capabilities: { type: "string" },
+      role: { type: "string" }, "agent-definition": { type: "string" },
+      deliverable: { type: "string" }, out: { type: "string" }, "session-id": { type: "string" }, "turn-id": { type: "string" },
+      "completion-event": { type: "string" }, runtime: { type: "string" },
       container: { type: "string", multiple: true }, volume: { type: "string", multiple: true }, network: { type: "string", multiple: true },
     },
   });
-  if (!workDir || !["start", "pid", "resources", "accepted", "stopped", "hand", "unhand", "status"].includes(action)) {
-    throw new Error("Usage: helpers.mjs <orchDir> start|pid|resources|accepted|stopped|hand|unhand <name> | status [--idle-minutes <n>]");
+  if (!workDir || !["start", "pid", "resources", "final", "accepted", "stopped", "hand", "unhand", "status"].includes(action)) {
+    throw new Error("Usage: helpers.mjs <orchDir> start <name> [--kind reviewer|verifier|critic --brief <file> --worktree <dir> --worker-id <thread> --role <name> --agent-definition <file> --capabilities <file> [--runtime claude|codex]] | final|accepted|stopped|pid|resources|hand|unhand <name> | status");
   }
   const orchDir = resolveWorkDir(workDir).dir;
   const ledger = read(orchDir);
@@ -332,6 +392,28 @@ async function main(argv) {
     return 0;
   }
   if (action === "start") {
+    const kind = values.kind ?? "other";
+    if (![...FINAL_KINDS, "other"].includes(kind)) throw new Error("helper kind must be reviewer, verifier, critic or other");
+    if (FINAL_KINDS.has(kind) && (!values.brief || !values.worktree || !values["worker-id"] || !values.capabilities
+      || !values.role || !values["agent-definition"])) throw new Error("reviewer, verifier and critic helpers need brief, worktree, worker ID, role, agent definition and capability record");
+    if (FINAL_KINDS.has(kind) && helperEntries(ledger).some(([, other]) => other.requiresFinal && other.workerId === values["worker-id"])) {
+      throw new Error("review helpers cannot share a native worker identity");
+    }
+    const runtime = values.runtime ?? "claude";
+    if (!["claude", "codex"].includes(runtime)) throw new Error("--runtime must be claude or codex");
+    // The helper is a fresh thread: record the installed definition it starts on, labeled as such.
+    const spawnLoad = FINAL_KINDS.has(kind) ? loadedSkillEvidence(values["worker-id"], runtime, PLUGIN_ROOT, "fleet-orchestrator", LoadBasis.InstalledAtSpawn) : null;
+    if (FINAL_KINDS.has(kind)) {
+      const briefFile = path.isAbsolute(values.brief) ? values.brief : path.resolve(orchDir, values.brief);
+      const actorRecord = { loadedSkill: spawnLoad };
+      const problems = promptProblems(actorRecord, readFileSync(briefFile, "utf8"), { actorId: values["worker-id"], pluginRoot: PLUGIN_ROOT, worktree: values.worktree });
+      if (problems.length) throw new Error(problems.join("; "));
+    }
+    const capabilityRecord = FINAL_KINDS.has(kind) ? evidenceFingerprint(values.capabilities) : null;
+    if (capabilityRecord) graphAliases(JSON.parse(readFileSync(capabilityRecord.path, "utf8")));
+    const agentDefinition = FINAL_KINDS.has(kind) ? evidenceFingerprint(values["agent-definition"]) : null;
+    if (agentDefinition && !readFileSync(agentDefinition.path, "utf8").split("\n").slice(0, 12)
+      .some(line => line.trim() === `name: ${values.role}`)) throw new Error("canonical agent definition does not name the requested role");
     // A QA rerun must never change the stack a human is testing on.
     if (values.stack && stacks[values.stack]) {
       process.stderr.write(`stack ${values.stack} is handed to ${stacks[values.stack].guide}; launch this helper on its own stack\n`);
@@ -350,7 +432,10 @@ async function main(argv) {
         throw new Error("The requested Docker project has existing resources; it is not this helper's.");
       }
     }
-    ledger[name] = { startedAt: at, ...(values.brief ? { brief: values.brief } : {}), ...(values.stack ? { stack: values.stack } : {}),
+    ledger[name] = { name, kind, requiresFinal: FINAL_KINDS.has(kind), finalToken: randomUUID(), startedAt: at,
+      ...(capabilityRecord ? { workerId: values["worker-id"], role: values.role, agentDefinition, capabilities: capabilityRecord,
+        loadedSkill: spawnLoad } : {}),
+      ...(values.brief ? { brief: values.brief } : {}), ...(values.worktree ? { worktree: path.resolve(values.worktree), source: sourceIdentity(values.worktree) } : {}), ...(values.stack ? { stack: values.stack } : {}),
       ...(values.owner ? { owner: values.owner } : {}), ...(values.ticket ? { ticket: values.ticket } : {}),
       ...(values.repo ? { repo: values.repo } : {}), ...(values.pr ? { pr: values.pr } : {}),
       ...(values.ending ? { ending: values.ending } : {}), ...(values.project ? { project: values.project } : {}) };
@@ -388,10 +473,41 @@ async function main(argv) {
       identities: { ...(entry.identities ?? {}), ...identities },
       ...(groups.length > 0 ? { groups } : {}),
     };
+  } else if (action === "final") {
+    const entry = ledger[name];
+    if (!entry?.startedAt || entry.stoppedAt || entry.finalizedAt || !entry.worktree || !entry.requiresFinal || !values.deliverable || !values.out
+      || !values["session-id"] || !values["turn-id"]) throw new Error("final needs an active helper, worktree, deliverable, completed session/turn and output file");
+    if (!sameSource(entry.source ?? {}, sourceIdentity(entry.worktree))) throw new Error("helper source changed since start");
+    const completion = { sessionId: values["session-id"], turnId: values["turn-id"] };
+    const completionEvidence = values["completion-event"] ? evidenceFingerprint(values["completion-event"]) : null;
+    if (completionEvidence) {
+      const problem = completionEventProblem(JSON.parse(readFileSync(completionEvidence.path, "utf8")), completion);
+      if (problem) throw new Error(problem);
+    }
+    evidenceFingerprint(values.deliverable);
+    if (!readFileSync(values.deliverable, "utf8").trimEnd().endsWith(finalMarker(entry, completion))) throw new Error("helper deliverable lacks its FINAL marker");
+    const out = path.resolve(values.out);
+    if (out === entry.worktree || out.startsWith(`${entry.worktree}${path.sep}`)) throw new Error("final report belongs outside the source worktree");
+    const report = { helper: name, token: entry.finalToken, status: "FINAL", workerId: entry.workerId, source: sourceIdentity(entry.worktree),
+      completion, ...(completionEvidence ? { completionEvidence } : {}), deliverable: evidenceFingerprint(values.deliverable) };
+    writeFileSync(out, `${JSON.stringify(report)}\n`, { mode: 0o600, flag: "wx" });
+    entry.finalReportPath = evidenceFingerprint(out).path;
+    entry.finalizedAt = at;
+    write(orchDir, ledger);
+    return 0;
   } else if (action === "accepted") {
-    ledger[name] = { ...(ledger[name] ?? {}), acceptedAt: at };
+    const entry = ledger[name];
+    const problem = finalReportProblem(entry, values.report);
+    if (problem) throw new Error(problem);
+    ledger[name] = { ...entry, acceptedAt: at, report: evidenceFingerprint(values.report) };
   } else {
     const entry = ledger[name] ?? {};
+    if (entry.requiresFinal && !entry.acceptedAt) throw new Error("review helper has no accepted final deliverable");
+    if (entry.acceptedAt) {
+      if (!entry.report || JSON.stringify(evidenceFingerprint(entry.report.path)) !== JSON.stringify(entry.report)) throw new Error("helper final report changed after acceptance");
+      const problem = finalReportProblem(entry, entry.report.path);
+      if (problem) throw new Error(problem);
+    }
     if (entry.project && entry.dockerResources?.project !== entry.project) {
       throw new Error("Compose resources and creation witnesses were not recorded.");
     }

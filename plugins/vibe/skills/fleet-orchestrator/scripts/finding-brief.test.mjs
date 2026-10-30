@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { dispositionProblems, findingProblems } from './finding-brief.mjs';
+import { writeRemoteCodexStub } from './fleet-test-support.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./finding-brief.mjs', import.meta.url));
 const FLEET = fileURLToPath(new URL('./fleet.sh', import.meta.url));
@@ -49,6 +50,7 @@ test('a remote brief copies the screenshots beside the prompt, names them at the
   mkdirSync(bin);
   writeFileSync(join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs) exec ${JSON.stringify(process.execPath)} "$@";; esac\nexit 0\n`, { mode: 0o755 });
   writeFileSync(join(bin, 'ssh'), '#!/usr/bin/env bash\nexec bash -c "${@: -1}"\n', { mode: 0o755 });
+  writeRemoteCodexStub(bin, realpathSync(new URL('../../..', import.meta.url)));
   const sent = spawnSync('bash', [FLEET, f.orch, 'remote', 'session', 'turn', 'w2', '--prompt-file', prompt, '--cwd', '/wt'], {
     encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CODEX_EFFORT: 'high' },
   });

@@ -11,7 +11,7 @@ import { projectSearchOracle } from "../oracle/project-search-oracle.ts";
 import { checkVibeVersion, writeBenchmarkSessionRecord } from "./session-preflight.ts";
 import { runOwnedProcess } from "./owned-process.ts";
 
-const BENCHMARK_SCOPE = `This is an authorized, isolated benchmark of the fixed Projects search task. The harness already supplies the clean checkout, seeded web app, local MCP, hidden oracle and draft-PR lifecycle. Skip ticket creation, Vercel, browser/desktop, installs, Git, GitHub, tests, review and handoff. Do not ask a question. Do not use Bash, web or MCP tools. Delegate to exactly one vibe-change-worker. Its only job is to change the Projects search predicate so a trimmed, case-insensitive query matches anywhere in the name. The agent may edit only that one source file. Stop as soon as the edit is done. The harness verifies the edit and handles the draft PR.`;
+const BENCHMARK_SCOPE = `This is an authorized, isolated benchmark of the fixed Projects search task. The harness already supplies the clean checkout, seeded web app, local MCP, hidden oracle and draft-PR lifecycle. Skip ticket creation, Vercel, browser/desktop, installs, Git, GitHub, tests, review and handoff. Do not ask a question. Use Bash only to invoke vibe's canonical capability-bound claude-worker launcher for exactly one vibe-change-worker; never dispatch that worker through the native Agent tool and do not run any other shell command. Its only job is to change the Projects search predicate so a trimmed, case-insensitive query matches anywhere in the name. The agent may edit only that one source file. Stop as soon as the edit is done. The harness verifies the edit and handles the draft PR.`;
 
 /** Comparable paired waves: each wave has equal A and B contention. */
 export const BASELINE_WAVES = [
@@ -79,7 +79,7 @@ export async function runClaudeTask(
     `benchmark/${fixture.taskId}`, "seeded", fixture.baseSha);
   const args = [
     ...baseArgs,
-    "--restricted", "--tools", "Read,Edit,Write,Grep,Glob,Skill,Agent",
+    "--restricted", "--tools", "Read,Edit,Write,Grep,Glob,Skill,Bash",
     "--permission-mode", "acceptEdits", "--max-turns", "24",
     "--forward-subagent-text", "--session-id", requestedSessionId, prompt,
   ];
@@ -124,12 +124,10 @@ export async function runClaudeTask(
   }
   const toolBlocks = [...seenToolBlocks.values()];
   const toolNames = toolBlocks.map((block) => block.name!);
-  const agentBlocks = toolBlocks.filter((block) => block.name === "Agent");
-  const oneWriter = agentBlocks.length === 1 && typeof agentBlocks[0].input === "object" &&
-    agentBlocks[0].input !== null &&
-    ["vibe-change-worker", "vibe:vibe-change-worker"].includes(
-      String((agentBlocks[0].input as { subagent_type?: unknown }).subagent_type ?? ""));
-  const allowed = new Set(["Read", "Edit", "Write", "Grep", "Glob", "Skill", "Agent"]);
+  const launcherBlocks = toolBlocks.filter((block) => block.name === "Bash" && typeof block.input === "object"
+    && block.input !== null && /(?:^|\/)claude-worker\.mjs\b/.test(String((block.input as { command?: unknown }).command ?? "")));
+  const oneWriter = launcherBlocks.length === 1;
+  const allowed = new Set(["Read", "Edit", "Write", "Grep", "Glob", "Skill", "Bash"]);
   if (toolNames.some((name) => !allowed.has(name))) throw new Error("benchmark-claude-external-tool-used");
   const after = projectSearchOracle(fixture.agentCheckout);
   if (completed.exitCode !== 0 || completed.signal || !after.pass || !mcpConnected ||
