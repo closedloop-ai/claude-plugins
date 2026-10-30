@@ -9,7 +9,7 @@ No model-calling command runs in CI. CI runs only T0 contract tests, type checki
 
 ## Behavior scope
 
-`vibe-change-scope.ts` is the shared change-day classifier. Claude Code and Codex load the plugin manifests, skills, agents, hooks, and files those runtime components read or execute. Semantic manifest changes and runtime paths are behavior; a required manifest edit that changes only `version` is not. Unreferenced READMEs, changelogs, docs, evals, tests, and benchmark infrastructure are non-behavior. A Markdown reference read by a loaded skill is behavior even when it looks like documentation. An unknown new path under `plugins/vibe` fails closed and triggers the nightly. A path-only classifier cannot prove that a runtime source edit changes comments only, so runtime source remains behavior.
+`vibe-change-scope.ts` is the shared change-day classifier. Claude Code and Codex load the plugin manifests, skills, agents, hooks, and files those runtime components read or execute. Semantic manifest changes and runtime paths are behavior; a required manifest edit that changes only `version` is not. A behavior change to a closedloop-core skill is also in scope when any non-test, non-documentation vibe runtime source references that skill; reference discovery scans those sources from both repository trees, including future paths that fail closed as runtime behavior, so a new reference needs no allowlist edit. Unreferenced core skills, READMEs, changelogs, docs, evals, tests, fixture helpers, and benchmark infrastructure are non-behavior. A Markdown reference read by a loaded skill is behavior even when it looks like documentation. An unknown new path under `plugins/vibe` fails closed and triggers the nightly. A path-only classifier cannot prove that a runtime source edit changes comments only, so runtime source remains behavior.
 
 Inspect a diff without making a model call:
 
@@ -33,54 +33,27 @@ Run one nightly manually through the machine heavy slot:
 <heavy-slot> vibe-eval-nightly <node> --experimental-strip-types tools/vibe-bench/src/eval-nightly.ts <clean-main-checkout> <run-root-parent> <results-store> <claude> <codex> <uv> <gh>
 ```
 
-The scheduler validates Slack credentials before acquiring the slot. On a confirmed regression, it writes a regression artifact and posts one message to `#vibe` through the existing team Slack bot. The message names the case and runtime, the pull requests merged since the last green nightly with their authors, any direct commits on `main` with their authors, the quarantine owner, and the result artifact. An expired quarantine entry is included in the same alert and names its owner. Clean and skipped nights with no expiry send no message. The bot call uses Slack `chat.postMessage`; tests use a stub sender and never contact Slack.
+On a confirmed regression, the nightly writes a regression artifact and posts one message to `#vibe` through the Slack MCP connection already authenticated in Claude Code on the nightly Mac. The message names the case and runtime, the pull requests merged since the last green nightly with their authors, any direct commits on `main` with their authors, the quarantine owner, and the result artifact. An expired quarantine entry is included in the same alert and names its owner. Clean and skipped nights with no expiry send no message.
 
-Slack credentials are stripped from model and grader child environments. Missing credentials, missing executables, attribution failures, and failed Slack delivery produce a `VIBE_NIGHTLY_INFRA_FAILURE` or `VIBE_NIGHTLY_SLACK_FAILURE` job-log line. The job also posts one infrastructure message to `#vibe` whenever working Slack credentials and the Node entrypoint are available. If delivery fails after the baseline is stored, the pending regression artifact is retried before any later paid work, so a transient Slack failure does not force another corpus run.
+Slack delivery uses a short, non-persistent headless Claude Code call pinned to `claude-haiku-5-5`. It discovers the enabled Slack plugin path, disables built-in tools and ordinary user/project/local settings for the relay process, and permission-allows only `mcp__plugin_slack_slack__slack_send_message`. The formatter supplies the verified public `#vibe` channel ID `C0CC9G7V01G` and pre-rendered text. A run-owned `PreToolUse` gate permits exactly one call only when its `channel_id` and `message` byte-match those values, before the MCP write occurs; transcript verification remains a second check. Tests stub both Claude processes and never contact Slack. The Slack MCP connection acts on behalf of its authenticated user, so messages are expected to appear as that user rather than the team bot.
 
-## Private launchd installation
+Missing executables, attribution failures, unavailable Claude or Slack MCP auth, timeouts, altered tool inputs, and failed delivery produce a `VIBE_NIGHTLY_INFRA_FAILURE` or `VIBE_NIGHTLY_SLACK_FAILURE` job-log line. Slack failure never blocks the eval run. Version 1 `pending` and `sent` delivery records remain readable and are upgraded to version 2 on their next transition. A failure proven to occur before the relay starts remains `pending` and can retry before later paid work. Once a relay attempt begins, its journal stays `attempting` unless an exact successful tool result is observed; it is not replayed automatically because the Slack MCP schema has no idempotency key. This at-most-once policy prevents an acknowledged-but-interrupted post from being duplicated. To reconcile, first check `#vibe`: set the version 2 record to `sent` with `deliveredAt` when the exact message exists, or set it to `pending` with `attemptedAt: null` only after confirming it was not posted. The machine-wide heavy slot is the single delivery owner, so no sidecar lock participates in reconciliation.
 
-Do not install the job from a feature branch. Install it only after this change is merged and the same tree is present on `main` in the dedicated checkout.
+## Local scheduled task installation
 
-The example runs at 02:00 local time. The heavy slot is the concurrency guard. The off-hours time also avoids spending an interactive session waiting for the slot, but correctness does not depend on working-hour avoidance.
+The nightly is launched by a visible ChatGPT scheduled task rather than a hidden launch agent. On the configured Mac, the task has **Run on this computer** enabled, starts a new chat every day at 2:00 AM Central, and runs exactly one command:
 
-1. Create a dedicated clone that always stays on `main`. Do not use a worker worktree:
+```sh
+<home>/.config/vibe-eval-nightly/run-nightly.sh
+```
 
-   ```sh
-   git clone git@github.com:closedloop-ai/claude-plugins.git <clean-main-checkout>
-   git -C <clean-main-checkout> switch main
-   git -C <clean-main-checkout> pull --ff-only origin main
-   ```
+The private entry script is mode `0700` and lives outside every checkout. It supplies the explicit scheduler `PATH` and absolute Node, Claude, Codex, uv, gh, heavy-slot, clean-main, run-root, result-store, and log paths. It calls `schedule/run-nightly.sh` from the dedicated clean-main checkout, so future merges take effect without changing the scheduled task. The repository wrapper remains the owner of heavy-slot acquisition.
 
-2. Create private scheduler, run, result, and log locations outside the repository:
+The entry script captures each run in `~/Library/Logs/vibe-eval-nightly/task-<UTC timestamp>.log` and prints exactly one final `VIBE_NIGHTLY_SUMMARY` JSON line. The line reports `result` (`SKIPPED`, `RAN`, or `FAILED`), passed and failed counts, whether Slack was posted, the artifact or log path, and the last `VIBE_NIGHTLY_*_FAILURE` line when present. The task reports those fields in its chat.
 
-   ```sh
-   install -d -m 0700 <scheduler-private-dir> <run-root-parent> <results-store> <log-dir>
-   ```
+Keep the dedicated clone on `main`; do not point the task at a worker worktree. Before relying on alerts, run `claude mcp list` in the same macOS user account and require `plugin:slack:slack: https://mcp.slack.com/mcp ... Connected`. Complete Claude Code and Slack OAuth interactively if unavailable. The task reads the normal per-user credential stores; do not create a Slack token file.
 
-3. Record absolute paths from `command -v node`, `command -v claude`, `command -v codex`, `command -v uv`, and `command -v gh`, plus the absolute machine heavy-slot path. Inspect the first line of each CLI. The Codex npm shim uses `/usr/bin/env node`, so the private plist must also replace `EXECUTABLE_PATH` with the Node executable's directory followed by `/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`. This is an explicit launchd `PATH`, not the interactive shell's inherited value.
-4. Create `<scheduler-private-dir>/vibe-eval.env` outside the repository with mode `0600`:
-
-   ```sh
-   SLACK_BOT_TOKEN='<existing team bot OAuth token>'
-   SLACK_CHANNEL_ID='<#vibe channel ID>'
-   ```
-
-   Then protect it with `chmod 0600 <scheduler-private-dir>/vibe-eval.env`. The wrapper rejects a symlink, a file owned by another user, any mode other than `0600`, a location inside the checkout, duplicate keys, and every key other than the two exact Slack names. It parses values as data and never sources the file as shell code.
-
-   Reuse the existing team Slack bot and its `chat:write` permission. Ensure the bot is a member of `#vibe`. Do not create a second app or commit either value.
-5. Copy `schedule/com.closedloop.vibe-eval-t2.plist.example` to `<scheduler-private-dir>/com.closedloop.vibe-eval-t2.plist`. Replace every placeholder with an absolute path: the nightly wrapper, private environment file, heavy slot, Node, nightly TypeScript entrypoint, dedicated checkout, external run-root parent, external results store, Claude, Codex, uv, gh, the two log files, and `EXECUTABLE_PATH`. Keep the private plist outside the clone.
-6. Validate and install the private copy:
-
-   ```sh
-   plutil -lint <scheduler-private-dir>/com.closedloop.vibe-eval-t2.plist
-   launchctl bootstrap gui/$(id -u) <scheduler-private-dir>/com.closedloop.vibe-eval-t2.plist
-   launchctl print gui/$(id -u)/com.closedloop.vibe-eval-t2
-   ```
-
-7. Confirm the printed `ProgramArguments` are absolute and point to the clean main clone, external run-root parent and results store, private environment file, explicit tool binaries, and heavy-slot script. Confirm the printed environment contains the explicit `PATH` and that running the recorded Codex executable with that exact `PATH` prints its version.
-8. Do not force a paid first run. Let the next 02:00 invocation perform change detection, or use `launchctl kickstart` only when an operator explicitly requests a run.
-
-`schedule/run-nightly.sh` fails with a clear job-log error when the environment file, either Slack value, or a required executable is missing. The plist holds no credential.
+Any equivalent visible local scheduler may call the same stable entry script. Do not add a second scheduler for the same nightly, and do not force a paid first run: execute the entry once manually and accept `SKIPPED` or a clear `FAILED` summary from preflight.
 
 ## On-demand start-to-PR benchmark
 

@@ -17,7 +17,8 @@ import { buildEvalBaseline, evalBaselineFileName, evalBaselineModelsMatchPolicy,
 import type { EvalBaselineArtifact, EvalQuarantineEntry } from "./eval-baseline.ts";
 import { evalCaseCatalog } from "./eval-selection.ts";
 import { classifyVibeChangeScopeBetween } from "./vibe-change-scope.ts";
-import { nightlyChangesSince, SlackNightlyRegressionReporter } from "./eval-slack.ts";
+import { isRetrySafeSlackFailure, nightlyChangesSince,
+  SlackNightlyRegressionReporter } from "./eval-slack.ts";
 import type { NightlyRegressionCase, NightlyRegressionReporter } from "./eval-slack.ts";
 import { runOwnedProcess } from "./owned-process.ts";
 
@@ -48,7 +49,7 @@ export interface EvalCommands {
   }): Promise<{ status: number; stdout: string; stderr: string }>;
 }
 
-/** Keep scheduler-only Slack credentials out of every model and grader process. */
+/** Give model and grader processes only the documented local-runtime environment. */
 export function evalModelProcessEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const forbidden = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "ANTHROPIC_BASE_URL",
@@ -345,8 +346,9 @@ export function confirmedNightlyRegressions(lastGreen: EvalBaselineArtifact,
 }
 
 interface RegressionDeliveryRecord {
-  schemaVersion: 1;
-  delivery: "pending" | "sent";
+  schemaVersion: 1 | 2;
+  delivery: "pending" | "attempting" | "sent";
+  attemptedAt?: string | null;
   deliveredAt: string | null;
   notice: Parameters<NightlyRegressionReporter["report"]>[0];
 }
@@ -358,6 +360,15 @@ interface NightlyPublicationRecord {
   lastGreenSha: string | null;
   regressions: NightlyRegressionCase[];
   expiredQuarantine?: EvalQuarantineEntry[];
+}
+
+function slackFailureReason(error: unknown): string {
+  return error instanceof Error && error.message.trim()
+    ? error.message.trim() : "eval-slack-unknown-failure";
+}
+
+function logSlackFailure(error: unknown): void {
+  process.stderr.write(`VIBE_NIGHTLY_SLACK_FAILURE ${slackFailureReason(error)}\n`);
 }
 
 function publicationFiles(store: string): string[] {
@@ -403,15 +414,16 @@ export async function recoverPendingNightlyPublications(input: {
       regressionFile = join(input.store,
         `eval-t2-regression-${record.artifact.pluginSha.slice(0, 12)}.json`);
       if (!existsSync(regressionFile)) {
-        const delivery: RegressionDeliveryRecord = { schemaVersion: 1, delivery: "pending",
-          deliveredAt: null, notice };
+        const delivery: RegressionDeliveryRecord = { schemaVersion: 2, delivery: "pending",
+          attemptedAt: null, deliveredAt: null, notice };
         writeFileSync(regressionFile, `${JSON.stringify(delivery, null, 2)}\n`,
           { flag: "wx", mode: 0o600 });
       } else {
         let retained: RegressionDeliveryRecord;
         try { retained = JSON.parse(readFileSync(regressionFile, "utf8")) as RegressionDeliveryRecord; }
         catch { throw new Error("eval-regression-delivery-malformed"); }
-        if (retained.schemaVersion !== 1 || JSON.stringify(retained.notice) !== JSON.stringify(notice)) {
+        if (![1, 2].includes(retained.schemaVersion) ||
+            JSON.stringify(retained.notice) !== JSON.stringify(notice)) {
           throw new Error("eval-regression-delivery-conflict");
         }
       }
@@ -421,14 +433,27 @@ export async function recoverPendingNightlyPublications(input: {
     if (latest?.artifact.resultHash !== record.artifact.resultHash) {
       publishEvalBaseline(input.store, record.artifact, { resetLineage: record.resetLineage });
     }
-    if (regressionFile) await deliverPendingRegressionReports(input.store, reporter);
+    if (regressionFile) {
+      try { await deliverPendingRegressionReports(input.store, reporter); }
+      catch (error) { logSlackFailure(error); }
+    }
     unlinkSync(file);
     completed.push(file);
   }
   return completed;
 }
 
-/** Retry an interrupted Slack delivery without repeating any paid model work. */
+function replaceRegressionDelivery(file: string, record: RegressionDeliveryRecord): void {
+  const temporary = `${file}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(record, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+  renameSync(temporary, file);
+}
+
+/**
+ * Deliver pending notices once. A process or acknowledgement failure after the
+ * attempt begins remains `attempting` and is never replayed without manual
+ * reconciliation because the Slack MCP schema has no idempotency key.
+ */
 export async function deliverPendingRegressionReports(store: string,
   reporter: NightlyRegressionReporter): Promise<string[]> {
   if (!existsSync(store)) return [];
@@ -440,19 +465,37 @@ export async function deliverPendingRegressionReports(store: string,
     let record: RegressionDeliveryRecord;
     try { record = JSON.parse(readFileSync(file, "utf8")) as RegressionDeliveryRecord; }
     catch { throw new Error("eval-regression-delivery-malformed"); }
-    if (record.schemaVersion !== 1 || !["pending", "sent"].includes(record.delivery) ||
+    const deliveryValid = record.schemaVersion === 1
+      ? ["pending", "sent"].includes(record.delivery)
+      : record.schemaVersion === 2 && ["pending", "attempting", "sent"].includes(record.delivery);
+    if (!deliveryValid ||
         !record.notice || !Array.isArray(record.notice.cases) ||
         !Array.isArray(record.notice.expiredQuarantine) ||
         (record.notice.cases.length === 0 && record.notice.expiredQuarantine.length === 0)) {
       throw new Error("eval-regression-delivery-invalid");
     }
-    if (record.delivery === "sent") continue;
-    await reporter.report(record.notice);
-    const sent: RegressionDeliveryRecord = { ...record, delivery: "sent",
+    if (record.delivery !== "pending") continue;
+    // The machine-wide heavy slot serializes nightly delivery. This atomic
+    // journal transition is therefore the sole durable ownership boundary:
+    // a crash before rename is safely pending; a crash after rename is an
+    // ambiguous attempt that must not be replayed.
+    const attempting: RegressionDeliveryRecord = { ...record, schemaVersion: 2,
+      delivery: "attempting",
+      attemptedAt: new Date().toISOString() };
+    replaceRegressionDelivery(file, attempting);
+    try {
+      await reporter.report(record.notice);
+    } catch (error) {
+      if (isRetrySafeSlackFailure(error)) {
+        replaceRegressionDelivery(file, { ...record, schemaVersion: 2,
+          delivery: "pending", attemptedAt: null });
+      }
+      throw error;
+    }
+    process.stdout.write("VIBE_NIGHTLY_SLACK_POSTED\n");
+    const sent: RegressionDeliveryRecord = { ...attempting, delivery: "sent",
       deliveredAt: new Date().toISOString() };
-    const temporary = `${file}.${process.pid}.tmp`;
-    writeFileSync(temporary, `${JSON.stringify(sent, null, 2)}\n`, { flag: "wx", mode: 0o600 });
-    renameSync(temporary, file);
+    replaceRegressionDelivery(file, sent);
     delivered.push(file);
   }
   return delivered;
@@ -462,17 +505,19 @@ export async function deliverPendingRegressionReports(store: string,
 export async function runT2Evals(input: Omit<LocalEvalOptions, "selectedCases" | "deterministicOnly" |
   "snapshotMode" | "runtimes"> & { ghExecutable: string },
 commands: EvalCommands = new SystemEvalCommands(),
-reporter: NightlyRegressionReporter = new SlackNightlyRegressionReporter()): Promise<{
+reporter?: NightlyRegressionReporter): Promise<{
     result: EvalBaselineArtifact; jsonFile: string; skipped: boolean;
     regressionReportFile: string | null;
     lineageReset: boolean;
     lineageReason: string | null;
   }> {
+  const deliveryReporter = reporter ?? new SlackNightlyRegressionReporter(input.claudeExecutable);
   requireCleanT2Snapshot(input.repo, input.pluginSha);
   mkdirSync(input.outputDir, { recursive: true });
   await recoverPendingNightlyPublications({ store: input.outputDir, repo: input.repo,
-    ghExecutable: input.ghExecutable }, reporter);
-  await deliverPendingRegressionReports(input.outputDir, reporter);
+    ghExecutable: input.ghExecutable }, deliveryReporter);
+  try { await deliverPendingRegressionReports(input.outputDir, deliveryReporter); }
+  catch (error) { logSlackFailure(error); }
   const existing = existsSync(join(input.outputDir, "eval-t2-latest.json"))
     ? resolveLatestEvalBaseline(input.outputDir) : null;
   const quarantineStatus = evalQuarantineStatus();
@@ -500,7 +545,7 @@ reporter: NightlyRegressionReporter = new SlackNightlyRegressionReporter()): Pro
         writeFileSync(publicationFile, `${JSON.stringify(publication, null, 2)}\n`,
           { flag: "wx", mode: 0o600 });
         await recoverPendingNightlyPublications({ store: input.outputDir, repo: input.repo,
-          ghExecutable: input.ghExecutable }, reporter);
+          ghExecutable: input.ghExecutable }, deliveryReporter);
       }
       return { result: reconciled, jsonFile, skipped: true,
         regressionReportFile: null, lineageReset: false, lineageReason: null };
@@ -548,7 +593,7 @@ reporter: NightlyRegressionReporter = new SlackNightlyRegressionReporter()): Pro
   writeFileSync(publicationFile, `${JSON.stringify(publication, null, 2)}\n`,
     { flag: "wx", mode: 0o600 });
   await recoverPendingNightlyPublications({ store: input.outputDir, repo: input.repo,
-    ghExecutable: input.ghExecutable }, reporter);
+    ghExecutable: input.ghExecutable }, deliveryReporter);
   const jsonFile = join(input.outputDir, evalBaselineFileName(result));
   const regressionReportFile = regressions.length || quarantineStatus.expired.length
     ? join(input.outputDir, `eval-t2-regression-${input.pluginSha.slice(0, 12)}.json`) : null;
