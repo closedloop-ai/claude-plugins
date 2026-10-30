@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync,
-  rmSync, symlinkSync, writeFileSync } from "node:fs";
+  rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -23,9 +23,11 @@ import { codexEvalBudgetSeconds, codexEvalRunnerPath, confirmedNightlyRegression
   stageFocusedClaudeEvalCases } from "./eval-driver.ts";
 import { main as runEvalNightly, reportNightlyInfrastructureFailure } from "./eval-nightly.ts";
 import { formatNightlyInfrastructureMessage, formatNightlyRegressionMessage, nightlyChangesSince,
-  SlackNightlyRegressionReporter } from "./eval-slack.ts";
+  SlackDeliveryError, SlackNightlyRegressionReporter } from "./eval-slack.ts";
 import type { NightlyRegressionNotice } from "./eval-slack.ts";
+import { formatNightlyTaskSummary, nightlyTaskSummary } from "./nightly-summary.ts";
 import { requireLatestNightlyBenchmarkBaseline } from "./phase2-driver.ts";
+import { slackToolGateDecision } from "./slack-tool-gate.ts";
 
 const CASE = "pm-new-session-first-reply";
 
@@ -37,9 +39,9 @@ test("model evals are local-only and use two failure retries", () => {
   assert.doesNotThrow(() => requireDeveloperMachine({ CI: "false" }));
 });
 
-test("model processes never inherit nightly Slack credentials", () => {
-  const inherited = evalModelProcessEnv({ PATH: "/bin", SLACK_BOT_TOKEN: "secret",
-    SLACK_CHANNEL_ID: "C123", GH_TOKEN: "github-secret", RANDOM_SECRET: "secret" });
+test("model processes inherit only the explicit environment allow-list", () => {
+  const inherited = evalModelProcessEnv({ PATH: "/bin", GH_TOKEN: "github-secret",
+    RANDOM_SECRET: "secret" });
   assert.deepEqual(inherited, { PATH: "/bin" });
   assert.throws(() => evalModelProcessEnv({ PATH: "/bin", ANTHROPIC_API_KEY: "secret" }),
     /eval-model-api-credential-forbidden:ANTHROPIC_API_KEY/);
@@ -108,32 +110,47 @@ test("nightly scheduler fast-forwards main and dispatches one unique T2 run", as
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("launchd scheduler keeps T2 behind the local heavy slot", () => {
-  const plist = readFileSync(join(import.meta.dirname,
-    "../schedule/com.closedloop.vibe-eval-t2.plist.example"), "utf8");
-  assert.match(plist, /NIGHTLY_WRAPPER_SCRIPT[\s\S]*PRIVATE_ENV_FILE[\s\S]*HEAVY_SLOT_EXECUTABLE/);
-  assert.match(plist, /NODE_EXECUTABLE[\s\S]*VIBE_EVAL_NIGHTLY_SCRIPT[\s\S]*CLEAN_MAIN_CHECKOUT/);
-  assert.match(plist, /RUN_ROOT_PARENT[\s\S]*RESULTS_STORE[\s\S]*CLAUDE_EXECUTABLE/);
-  assert.match(plist, /CODEX_EXECUTABLE[\s\S]*UV_EXECUTABLE[\s\S]*GH_EXECUTABLE/);
-  assert.match(plist, /<key>EnvironmentVariables<\/key>[\s\S]*<key>PATH<\/key>[\s\S]*EXECUTABLE_PATH/);
-  assert.match(plist, /<key>Hour<\/key>\s*<integer>2<\/integer>/);
-  assert.match(plist, /<key>Minute<\/key>\s*<integer>0<\/integer>/);
-  assert.doesNotMatch(plist, /SLACK_BOT_TOKEN|SLACK_CHANNEL_ID/);
+test("scheduled task summary line reports skipped, run and failed outcomes", () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-nightly-summary-"));
+  const log = join(root, "nightly.log");
+  const artifact = join(root, "eval-t2-result.json");
+  try {
+    writeFileSync(artifact, JSON.stringify({ cases: [
+      { outcomes: { claude: { recentNightlyOutcomes: [{ passes: 2, runs: 3 }] },
+        codex: { recentNightlyOutcomes: [{ passes: 4, runs: 4 }] } } },
+    ] }));
+    const ran = nightlyTaskSummary(0, `${artifact}\nVIBE_NIGHTLY_SLACK_POSTED\n`, log);
+    assert.deepEqual(ran, { result: "RAN", passed: 6, failed: 1, posted: "yes",
+      path: artifact, failure: null });
+    const line = formatNightlyTaskSummary(ran);
+    assert.match(line, /^VIBE_NIGHTLY_SUMMARY \{"result":"RAN","passed":6,"failed":1,/);
+    assert.deepEqual(JSON.parse(line.slice("VIBE_NIGHTLY_SUMMARY ".length)), ran);
+    assert.deepEqual(nightlyTaskSummary(0, `SKIPPED ${artifact}\n`, log),
+      { result: "SKIPPED", passed: 0, failed: 0, posted: "no", path: artifact,
+        failure: null });
+    const failure = "VIBE_NIGHTLY_SLACK_FAILURE eval-slack-claude-timeout";
+    assert.deepEqual(nightlyTaskSummary(0, `${artifact}\n${failure}\n`, log),
+      { result: "FAILED", passed: 0, failed: 0, posted: "no", path: artifact,
+        failure });
+    assert.deepEqual(nightlyTaskSummary(69, "wrapper failed\n", log),
+      { result: "FAILED", passed: 0, failed: 0, posted: "no", path: log,
+        failure: "VIBE_NIGHTLY_INFRA_FAILURE nightly process exited with status 69" });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("scheduled task wrapper keeps T2 behind the local heavy slot", () => {
   const wrapper = readFileSync(join(import.meta.dirname, "../schedule/run-nightly.sh"), "utf8");
-  assert.match(wrapper, /SLACK_BOT_TOKEN/);
-  assert.match(wrapper, /SLACK_CHANNEL_ID/);
+  assert.doesNotMatch(wrapper, /private_env|SLACK_BOT_TOKEN|SLACK_CHANNEL_ID/);
   assert.match(wrapper, /exec "\$heavy_slot" vibe-eval-nightly/);
-  assert.match(wrapper, /case "\$\(uname -s\)" in[\s\S]*Darwin[\s\S]*stat -f[\s\S]*stat -c/);
-  assert.doesNotMatch(wrapper, /stat -f[^\n]+\|\| stat -c/);
   const script = join(import.meta.dirname, "../schedule/run-nightly.sh");
-  const missing = spawnSync(script, ["/missing/private.env", "/heavy", "/node", "/nightly",
-    "/repo", "/run-root", "/results", "/claude", "/codex", "/uv", "/gh"],
+  const missing = spawnSync(script, ["/heavy", "/node", "/nightly", "/repo", "/run-root",
+    "/results", "/claude", "/codex", "/uv", "/gh"],
   { encoding: "utf8" });
-  assert.equal(missing.status, 78);
-  assert.match(missing.stderr, /credential file is missing/);
+  assert.equal(missing.status, 69);
+  assert.match(missing.stderr, /clean main checkout is missing/);
+  assert.match(missing.stderr, /VIBE_NIGHTLY_SLACK_FAILURE/);
   const fixture = mkdtempSync(join(tmpdir(), "vibe-nightly-wrapper-"));
   try {
-    const privateEnv = join(fixture, "vibe-eval.env");
     const checkout = join(fixture, "repo");
     mkdirSync(checkout);
     const heavySlot = join(fixture, "heavy-slot.sh");
@@ -144,17 +161,20 @@ test("launchd scheduler keeps T2 behind the local heavy slot", () => {
     const uv = join(fixture, "uv");
     const gh = join(fixture, "gh");
     const argumentsFile = join(fixture, "arguments.txt");
-    const environmentFile = join(fixture, "environment.txt");
     const notificationFile = join(fixture, "notification.txt");
-    writeFileSync(privateEnv, "SLACK_BOT_TOKEN='test-token'\nSLACK_CHANNEL_ID='C123'\n",
-      { mode: 0o600 });
-    writeFileSync(heavySlot, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argumentsFile}'\nprintf '%s\\n%s\\n' "$SLACK_BOT_TOKEN" "$SLACK_CHANNEL_ID" > '${environmentFile}'\n`);
+    const artifact = join(fixture, "eval-t2-result.json");
+    writeFileSync(artifact, JSON.stringify({ cases: [{ outcomes: {
+      claude: { recentNightlyOutcomes: [{ passes: 1, runs: 1 }] },
+      codex: { recentNightlyOutcomes: [{ passes: 1, runs: 2 }] },
+    } }] }));
+    writeFileSync(heavySlot, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argumentsFile}'\n` +
+      `printf '%s\\n' '${artifact}' 'VIBE_NIGHTLY_SLACK_POSTED'\n`);
     chmodSync(heavySlot, 0o700);
     writeFileSync(nightly, "// fixture\n");
     writeFileSync(node, `#!/bin/sh\nprintf '%s\\n' "$@" > '${notificationFile}'\n`);
     for (const executable of [claude, codex, uv, gh]) writeFileSync(executable, "#!/bin/sh\nexit 0\n");
     for (const executable of [node, claude, codex, uv, gh]) chmodSync(executable, 0o700);
-    const dispatched = spawnSync(script, [privateEnv, heavySlot, node, nightly,
+    const dispatched = spawnSync(script, [heavySlot, node, nightly,
       checkout, "/run-root", "/results", claude, codex, uv, gh],
     { encoding: "utf8" });
     assert.equal(dispatched.status, 0, dispatched.stderr);
@@ -162,60 +182,30 @@ test("launchd scheduler keeps T2 behind the local heavy slot", () => {
       "vibe-eval-nightly", node, "--experimental-strip-types", nightly, checkout,
       "/run-root", "/results", claude, codex, uv, gh,
     ]);
-    assert.equal(readFileSync(environmentFile, "utf8"), "test-token\nC123\n");
-
-    const gnuBin = join(fixture, "gnu-bin");
-    mkdirSync(gnuBin);
-    writeFileSync(join(gnuBin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o700 });
-    writeFileSync(join(gnuBin, "stat"), `#!/bin/sh
-if [ "$1" = "-f" ]; then printf 'partial-filesystem-output'; exit 1; fi
-if [ "$1:$2" = "-c:%u" ]; then id -u; exit 0; fi
-if [ "$1:$2" = "-c:%a" ]; then printf '600\\n'; exit 0; fi
-exit 91
-`, { mode: 0o700 });
-    const gnuDispatched = spawnSync(script, [privateEnv, heavySlot, node, nightly,
-      checkout, "/run-root", "/results", claude, codex, uv, gh],
-    { encoding: "utf8", env: { ...process.env, PATH: `${gnuBin}:${process.env.PATH}` } });
-    assert.equal(gnuDispatched.status, 0, gnuDispatched.stderr);
-
-    chmodSync(privateEnv, 0o644);
-    const openMode = spawnSync(script, [privateEnv, heavySlot, node, nightly,
-      checkout, "/run-root", "/results", claude, codex, uv, gh],
-    { encoding: "utf8" });
-    assert.equal(openMode.status, 78);
-    assert.match(openMode.stderr, /mode 0600/);
-    chmodSync(privateEnv, 0o600);
-
-    writeFileSync(privateEnv, "SLACK_BOT_TOKEN=test-token\nSLACK_CHANNEL_ID=C123\nEXTRA_COMMAND=bad\n",
-      { mode: 0o600 });
-    const unsupported = spawnSync(script, [privateEnv, heavySlot, node, nightly,
-      checkout, "/run-root", "/results", claude, codex, uv, gh],
-    { encoding: "utf8" });
-    assert.equal(unsupported.status, 78);
-    assert.match(unsupported.stderr, /unsupported key/);
-
-    const link = join(fixture, "linked.env");
-    symlinkSync(privateEnv, link);
-    const linked = spawnSync(script, [link, heavySlot, node, nightly,
-      checkout, "/run-root", "/results", claude, codex, uv, gh],
-    { encoding: "utf8" });
-    assert.equal(linked.status, 78);
-    assert.match(linked.stderr, /must not be a symlink/);
+    const wrapperLog = join(fixture, "wrapper.log");
+    writeFileSync(wrapperLog, dispatched.stdout);
+    const summaryCli = join(import.meta.dirname, "nightly-summary.ts");
+    const summary = spawnSync(process.execPath, ["--experimental-strip-types", summaryCli,
+      "0", wrapperLog], { encoding: "utf8" });
+    assert.equal(summary.status, 0, summary.stderr);
+    assert.match(summary.stdout,
+      /^VIBE_NIGHTLY_SUMMARY \{"result":"RAN","passed":2,"failed":1,"posted":"yes",/);
 
     rmSync(codex);
-    writeFileSync(privateEnv, "SLACK_BOT_TOKEN=test-token\nSLACK_CHANNEL_ID=C123\n", { mode: 0o600 });
-    const missingBinary = spawnSync(script, [privateEnv, heavySlot, node, nightly,
+    const missingBinary = spawnSync(script, [heavySlot, node, nightly,
       checkout, "/run-root", "/results", claude, codex, uv, gh], { encoding: "utf8" });
     assert.equal(missingBinary.status, 69);
     assert.match(missingBinary.stderr, /VIBE_NIGHTLY_INFRA_FAILURE.*Codex/);
-    assert.match(readFileSync(notificationFile, "utf8"), /--notify-infra/);
+    const notification = readFileSync(notificationFile, "utf8").trim().split("\n");
+    const notifyIndex = notification.indexOf("--notify-infra");
+    assert.deepEqual(notification.slice(notifyIndex, notifyIndex + 2), ["--notify-infra", claude]);
   } finally { rmSync(fixture, { recursive: true, force: true }); }
   const readme = readFileSync(join(import.meta.dirname, "../README.md"), "utf8");
-  assert.match(readme, /Install it only after this change is merged/);
-  assert.match(readme, /git clone[\s\S]*pull --ff-only origin main/);
-  assert.match(readme, /command -v node[\s\S]*Codex npm shim[\s\S]*EXECUTABLE_PATH/);
-  assert.match(readme, /printed environment contains the explicit `PATH`[\s\S]*prints its version/);
-  assert.match(readme, /launchctl bootstrap[\s\S]*launchctl print/);
+  assert.match(readme, /visible ChatGPT scheduled task[\s\S]*Run on this computer/);
+  assert.match(readme, /<home>\/\.config\/vibe-eval-nightly\/run-nightly\.sh/);
+  assert.match(readme, /VIBE_NIGHTLY_SUMMARY[\s\S]*SKIPPED[\s\S]*RAN[\s\S]*FAILED/);
+  assert.doesNotMatch(readme, /launchctl|LaunchAgent|\.plist/);
+  assert.doesNotMatch(readme, /SLACK_BOT_TOKEN|SLACK_CHANNEL_ID|vibe-eval\.env/);
 });
 
 test("the initial quarantine names all 29 runtime failures with one owner and deadline", () => {
@@ -417,6 +407,11 @@ test("nightly regression Slack message names cases, runtimes, PR authors and res
   assert.match(message, /Quarantine owner: vibe-maintainers/);
   assert.match(message, /coordinate a fix-forward or revert/);
   assert.match(message, /Full results: eval-t2-result.json/);
+  const escaped = formatNightlyRegressionMessage({ ...notice,
+    cases: [{ runtime: "claude", case: "case-<!channel>" }],
+    quarantineOwner: "owner<@U123>", resultsArtifact: "result<@U123>.json" });
+  assert.doesNotMatch(escaped, /<!channel>|<@U123>/);
+  assert.match(escaped, /case-&lt;!channel&gt;/);
   const expiryMessage = formatNightlyRegressionMessage({ ...notice, cases: [],
     mergedPullRequests: [], directCommits: [], expiredQuarantine: [{ runtime: "claude",
       case: "vibe-route", owner: "vibe-maintainers", deadline: "2026-11-13",
@@ -424,44 +419,139 @@ test("nightly regression Slack message names cases, runtimes, PR authors and res
   assert.match(expiryMessage, /Expired quarantine entries are gating/);
   assert.match(expiryMessage, /claude: vibe-route, owner @vibe-maintainers, expired 2026-11-13/);
 
-  const requests: Array<{ url: string; init?: RequestInit }> = [];
-  const send = (async (url: string | URL | Request, init?: RequestInit) => {
-    requests.push({ url: String(url), init });
-    return new Response(JSON.stringify({ ok: true }), { status: 200,
-      headers: { "content-type": "application/json" } });
-  }) as typeof fetch;
-  await new SlackNightlyRegressionReporter({ SLACK_BOT_TOKEN: "secret", SLACK_CHANNEL_ID: "C123" },
-    send).report(notice);
-  assert.equal(requests[0].url, "https://slack.com/api/chat.postMessage");
-  assert.match(String(requests[0].init?.headers && JSON.stringify(requests[0].init.headers)),
-    /Bearer secret/);
-  assert.match(String(requests[0].init?.body), /C123/);
-  await new SlackNightlyRegressionReporter({ SLACK_BOT_TOKEN: "secret", SLACK_CHANNEL_ID: "C123" },
-    send).report(notice);
-  const firstBody = JSON.parse(String(requests[0].init?.body)) as { client_msg_id?: string };
-  const secondBody = JSON.parse(String(requests[1].init?.body)) as { client_msg_id?: string };
-  assert.match(firstBody.client_msg_id ?? "", /^[a-f0-9-]{36}$/);
-  assert.equal(secondBody.client_msg_id, firstBody.client_msg_id);
-  assert.ok(requests[0].init?.signal instanceof AbortSignal);
-  await assert.rejects(() => new SlackNightlyRegressionReporter({}, send).report(notice),
-    /credentials-missing/);
+  const invocations: Array<{ command: string; args: string[]; input: string; timeout: number }> = [];
+  const transcript = (text: string, extras: object[] = []) => [
+    { type: "system", subtype: "init" },
+    { type: "assistant", message: { content: [{ type: "tool_use", id: "tool-1",
+      name: "mcp__plugin_slack_slack__slack_send_message",
+      input: { channel_id: "C0CC9G7V01G", message: text } }] } },
+    ...extras,
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tool-1",
+      is_error: false, content: "Message sent" }] } },
+    { type: "result", subtype: "success", is_error: false },
+  ].map((event) => JSON.stringify(event)).join("\n") + "\n";
+  const pluginList = JSON.stringify([{ id: "slack@anthropic-plugin-directory", enabled: true,
+    installPath: "/plugins/slack" }]);
+  const withPlugin = (delivery: (command: string, args: string[], options: {
+    input: string; timeout: number;
+  }) => { status: number | null; stdout: string; stderr: string; error?: Error }) =>
+    (command: string, args: string[], options: { input: string; timeout: number }) =>
+      args[0] === "plugin" ? { status: 0, stdout: pluginList, stderr: "" }
+        : delivery(command, args, options);
+  const run = (command: string, args: string[], options: { input: string; timeout: number }) => {
+    invocations.push({ command, args, ...options });
+    if (args[0] === "plugin") return { status: 0, stdout: pluginList, stderr: "" };
+    const payload = JSON.parse(options.input.split("\n").at(-1)!) as {
+      channel_id: string; message: string;
+    };
+    const relaySettings = JSON.parse(args[args.indexOf("--settings") + 1]);
+    const gateCommand = relaySettings.hooks.PreToolUse[0].hooks[0].command as string;
+    const gated = spawnSync("/bin/sh", ["-c", gateCommand], { encoding: "utf8", input: JSON.stringify({
+      tool_name: "mcp__plugin_slack_slack__slack_send_message", tool_input: payload,
+    }) });
+    assert.equal(gated.status, 0, gated.stderr);
+    assert.equal(JSON.parse(gated.stdout).hookSpecificOutput.permissionDecision, "allow");
+    return { status: 0, stdout: transcript(payload.message), stderr: "" };
+  };
+  await new SlackNightlyRegressionReporter("/opt/claude", run).report(notice);
+  assert.deepEqual(invocations[0].args, ["plugin", "list", "--json"]);
+  assert.equal(invocations[0].timeout, 5_000);
+  const delivery = invocations[1];
+  assert.equal(delivery.command, "/opt/claude");
+  assert.equal(delivery.args[delivery.args.indexOf("--model") + 1],
+    "claude-haiku-5-5");
+  assert.equal(delivery.args[delivery.args.indexOf("--tools") + 1], "");
+  assert.equal(delivery.args[delivery.args.indexOf("--allowedTools") + 1],
+    "mcp__plugin_slack_slack__slack_send_message");
+  assert.equal(delivery.args[delivery.args.indexOf("--max-budget-usd") + 1], "0.20");
+  assert.equal(delivery.args[delivery.args.indexOf("--setting-sources") + 1], "");
+  const settings = JSON.parse(delivery.args[delivery.args.indexOf("--settings") + 1]);
+  assert.equal(settings.hooks.PreToolUse[0].matcher,
+    "mcp__plugin_slack_slack__slack_send_message");
+  assert.deepEqual(Object.keys(settings.hooks.PreToolUse[0].hooks[0]).sort(),
+    ["command", "timeout", "type"]);
+  assert.match(settings.hooks.PreToolUse[0].hooks[0].command, /slack-tool-gate\.ts/);
+  assert.equal(delivery.args[delivery.args.indexOf("--plugin-dir") + 1], "/plugins/slack");
+  assert.equal(delivery.args.includes("--no-session-persistence"), true);
+  assert.equal(delivery.args.includes("stream-json"), true);
+  assert.equal(delivery.timeout, 20_000);
+  assert.deepEqual(JSON.parse(delivery.input.split("\n").at(-1)!),
+    { channel_id: "C0CC9G7V01G", message });
+
+  const altered = () => ({ status: 0, stdout: transcript(`${message} altered`), stderr: "" });
+  await assert.rejects(() => new SlackNightlyRegressionReporter("/claude",
+    withPlugin(altered)).report(notice),
+    /tool-call-altered/);
+  const extra = { type: "assistant", message: { content: [{ type: "tool_use", id: "tool-2",
+    name: "mcp__plugin_slack_slack__slack_send_message",
+    input: { channel_id: "C0CC9G7V01G", message } }] } };
+  const duplicated = () => ({ status: 0, stdout: transcript(message, [extra]), stderr: "" });
+  await assert.rejects(() => new SlackNightlyRegressionReporter("/claude",
+    withPlugin(duplicated)).report(notice),
+    /tool-call-count-invalid/);
+  const failed = () => ({ status: 1, stdout: "", stderr: "auth unavailable" });
+  await assert.rejects(() => new SlackNightlyRegressionReporter("/claude",
+    withPlugin(failed)).report(notice),
+    /claude-failed/);
+  const timedOut = () => ({ status: null, stdout: "", stderr: "",
+    error: new Error("spawnSync /claude ETIMEDOUT") });
+  await assert.rejects(() => new SlackNightlyRegressionReporter("/claude",
+    withPlugin(timedOut)).report(notice),
+    /claude-timeout/);
   assert.match(formatNightlyInfrastructureMessage({ reason: "eval-binary-missing",
     occurredAt: "2026-10-30T00:00:00Z" }), /eval-binary-missing/);
-  await new SlackNightlyRegressionReporter({ SLACK_BOT_TOKEN: "secret",
-    SLACK_CHANNEL_ID: "C123" }, send).reportInfrastructure({ reason: "eval-binary-missing",
+  await new SlackNightlyRegressionReporter("/opt/claude", run).reportInfrastructure({
+    reason: "eval-binary-missing",
     occurredAt: "2026-10-30T00:00:00Z" });
-  assert.match(String(requests.at(-1)?.init?.body), /Vibe nightly infrastructure failure/);
-  assert.match(String(requests.at(-1)?.init?.body), /eval-binary-missing/);
+  assert.match(invocations.at(-1)!.input, /Vibe nightly infrastructure failure/);
+  assert.match(invocations.at(-1)!.input, /eval-binary-missing/);
   const logs: string[] = [];
   await reportNightlyInfrastructureFailure("eval-regression-pull-request-attribution-incomplete",
     { reportInfrastructure: async () => { throw new Error("eval-slack-post-failed"); } },
     (line) => logs.push(line));
   assert.match(logs.join(""), /VIBE_NIGHTLY_INFRA_FAILURE.*attribution-incomplete/);
   assert.match(logs.join(""), /VIBE_NIGHTLY_SLACK_FAILURE eval-slack-post-failed/);
+  const successLogs: string[] = [];
+  await reportNightlyInfrastructureFailure("eval-fetch-failed",
+    { reportInfrastructure: async () => {} }, (line) => successLogs.push(line),
+    (line) => successLogs.push(line));
+  assert.match(successLogs.join(""), /VIBE_NIGHTLY_SLACK_POSTED/);
+});
+
+test("Slack pre-tool gate denies altered and repeated requests before execution", () => {
+  const expected = { channel_id: "C0CC9G7V01G", message: "fixed message" };
+  const exact = slackToolGateDecision({
+    tool_name: "mcp__plugin_slack_slack__slack_send_message", tool_input: expected,
+  }, expected);
+  assert.equal(exact.hookSpecificOutput.permissionDecision, "allow");
+  assert.deepEqual(exact.hookSpecificOutput.updatedInput, expected);
+  const altered = slackToolGateDecision({
+    tool_name: "mcp__plugin_slack_slack__slack_send_message",
+    tool_input: { ...expected, message: "model changed it" },
+  }, expected);
+  assert.equal(altered.hookSpecificOutput.permissionDecision, "deny");
+
+  const root = mkdtempSync(join(tmpdir(), "vibe-slack-gate-"));
+  try {
+    const expectedFile = join(root, "expected.json");
+    const attemptFile = join(root, "attempted");
+    writeFileSync(expectedFile, JSON.stringify(expected));
+    const gate = join(import.meta.dirname, "slack-tool-gate.ts");
+    const input = JSON.stringify({
+      tool_name: "mcp__plugin_slack_slack__slack_send_message", tool_input: expected,
+    });
+    const first = spawnSync(process.execPath, ["--experimental-strip-types", gate,
+      expectedFile, attemptFile], { input, encoding: "utf8" });
+    assert.equal(JSON.parse(first.stdout).hookSpecificOutput.permissionDecision, "allow");
+    const second = spawnSync(process.execPath, ["--experimental-strip-types", gate,
+      expectedFile, attemptFile], { input, encoding: "utf8" });
+    assert.equal(JSON.parse(second.stdout).hookSpecificOutput.permissionDecision, "deny");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("a non-PR main commit is attributed directly instead of wedging alerts", () => {
   const root = mkdtempSync(join(tmpdir(), "vibe-eval-direct-commit-"));
+  const priorPath = process.env.PATH;
   try {
     execFileSync("git", ["init", "-b", "main", root], { stdio: "ignore" });
     execFileSync("git", ["-C", root, "config", "user.name", "Direct Author"]);
@@ -473,21 +563,56 @@ test("a non-PR main commit is attributed directly instead of wedging alerts", ()
       { encoding: "utf8" }).trim();
     writeFileSync(join(root, "file.txt"), "two\n");
     execFileSync("git", ["-C", root, "commit", "-am", "direct maintenance"], { stdio: "ignore" });
+    writeFileSync(join(root, "file.txt"), "three\n");
+    execFileSync("git", ["-C", root, "commit", "-am", "second direct maintenance"],
+      { stdio: "ignore" });
     const currentSha = execFileSync("git", ["-C", root, "rev-parse", "HEAD"],
       { encoding: "utf8" }).trim();
     const gh = join(root, "gh");
     writeFileSync(gh, "#!/bin/sh\nif [ \"$1\" = repo ]; then printf 'closedloop-ai/claude-plugins\\n'; else printf '[]\\n'; fi\n",
       { mode: 0o700 });
+    const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+    const bin = join(root, "bin");
+    const gitLog = join(root, "git-calls.txt");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "git"), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${gitLog}'\n` +
+      `exec '${realGit}' "$@"\n`, { mode: 0o700 });
+    process.env.PATH = `${bin}:${priorPath}`;
     const changes = nightlyChangesSince({ repo: root, ghExecutable: gh,
       baselineSha, currentSha });
     assert.deepEqual(changes.mergedPullRequests, []);
-    assert.equal(changes.directCommits.length, 1);
-    assert.equal(changes.directCommits[0].title, "direct maintenance");
+    assert.equal(changes.directCommits.length, 2);
+    assert.deepEqual(changes.directCommits.map((item) => item.title),
+      ["second direct maintenance", "direct maintenance"]);
     assert.match(changes.directCommits[0].author, /Direct Author/);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+    assert.equal(readFileSync(gitLog, "utf8").split("\n")
+      .filter((line) => line.includes("show -s")).length, 1);
+  } finally {
+    process.env.PATH = priorPath;
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
-test("a failed Slack delivery retries from disk without repeating model work", async () => {
+test("nightly attribution rejects an over-limit commit range before GitHub lookup", () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-eval-attribution-limit-"));
+  const priorPath = process.env.PATH;
+  try {
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    const git = join(bin, "git");
+    writeFileSync(git, "#!/bin/sh\ni=0\nwhile [ $i -le 1000 ]; do printf '%040d\\n' \"$i\"; i=$((i + 1)); done\n",
+      { mode: 0o700 });
+    process.env.PATH = `${bin}:${priorPath}`;
+    assert.throws(() => nightlyChangesSince({ repo: root, ghExecutable: "/never-called-gh",
+      baselineSha: "a".repeat(40), currentSha: "b".repeat(40) }),
+    /commit-range-too-large/);
+  } finally {
+    process.env.PATH = priorPath;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("only proven pre-send Slack failures retry; ambiguous attempts never replay", async () => {
   const store = mkdtempSync(join(tmpdir(), "vibe-eval-slack-pending-"));
   const file = join(store, `eval-t2-regression-${"b".repeat(12)}.json`);
   const notice: NightlyRegressionNotice = {
@@ -500,17 +625,31 @@ test("a failed Slack delivery retries from disk without repeating model work", a
     deliveredAt: null, notice })}\n`);
   try {
     await assert.rejects(() => deliverPendingRegressionReports(store,
-      { report: async () => { throw new Error("fixture-slack-unavailable"); } }),
+      { report: async () => { throw new SlackDeliveryError("fixture-slack-unavailable", true); } }),
     /fixture-slack-unavailable/);
     assert.equal(JSON.parse(readFileSync(file, "utf8")).delivery, "pending");
     const delivered: NightlyRegressionNotice[] = [];
     await deliverPendingRegressionReports(store,
       { report: async (item) => { delivered.push(item); } });
     assert.deepEqual(delivered, [notice]);
-    assert.equal(JSON.parse(readFileSync(file, "utf8")).delivery, "sent");
+    const sentRecord = JSON.parse(readFileSync(file, "utf8"));
+    assert.equal(sentRecord.schemaVersion, 2);
+    assert.equal(sentRecord.delivery, "sent");
     await deliverPendingRegressionReports(store,
       { report: async (item) => { delivered.push(item); } });
     assert.deepEqual(delivered, [notice]);
+
+    const ambiguousFile = join(store, `eval-t2-regression-${"c".repeat(12)}.json`);
+    writeFileSync(ambiguousFile, `${JSON.stringify({ schemaVersion: 1, delivery: "pending",
+      attemptedAt: null, deliveredAt: null, notice })}\n`);
+    let attempts = 0;
+    await assert.rejects(() => deliverPendingRegressionReports(store, { report: async () => {
+      attempts += 1;
+      throw new Error("fixture-after-side-effect-timeout");
+    } }), /after-side-effect-timeout/);
+    assert.equal(JSON.parse(readFileSync(ambiguousFile, "utf8")).delivery, "attempting");
+    await deliverPendingRegressionReports(store, { report: async () => { attempts += 1; } });
+    assert.equal(attempts, 1);
   } finally { rmSync(store, { recursive: true, force: true }); }
 });
 
@@ -823,13 +962,26 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     const lineageClaude = lineageCommands.calls.find((call) => call.args.includes("--judge-model"));
     assert.equal(lineageClaude?.args[lineageClaude.args.indexOf("--judge-model") + 1],
       "claude-opus-5-5");
+    const pendingFile = join(store, `eval-t2-regression-${sha.slice(0, 12)}.json`);
+    const pendingNotice: NightlyRegressionNotice = { baselineSha: sha, currentSha: sha,
+      cases: [{ runtime: "claude", case: CASE }], mergedPullRequests: [], directCommits: [],
+      expiredQuarantine: [], quarantineOwner: "vibe-maintainers",
+      resultsArtifact: "fixture-result.json" };
+    writeFileSync(pendingFile, `${JSON.stringify({ schemaVersion: 1, delivery: "pending",
+      deliveredAt: null, notice: pendingNotice })}\n`);
     const skippedCommands = new FakeCommands();
+    let failedDeliveryAttempts = 0;
     const skipped = await runT2Evals({ repo, pluginSha: sha, runRoot: join(root, "t2-skipped"),
       outputDir: store, claudeExecutable: "fixture-claude",
       codexExecutable: "fixture-codex", uvExecutable: "fixture-uv",
-      ghExecutable: "fixture-gh" }, skippedCommands);
+      ghExecutable: "fixture-gh" }, skippedCommands, { report: async () => {
+        failedDeliveryAttempts += 1;
+        throw new Error("fixture-slack-unavailable");
+      } });
     assert.equal(skipped.skipped, true);
     assert.equal(skippedCommands.calls.length, 0);
+    assert.equal(failedDeliveryAttempts, 1);
+    assert.equal(JSON.parse(readFileSync(pendingFile, "utf8")).delivery, "attempting");
     assert.equal(resolveLatestEvalBaseline(store).artifact.resultHash, acceptedHash);
 
     const driftStore = join(root, "t2-drift-store");

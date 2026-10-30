@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 
 export type VibePathKind = "behavior" | "non-behavior" | "unrelated";
@@ -17,10 +17,18 @@ export interface VibeChangeScope {
 }
 
 const PLUGIN_PREFIX = "plugins/vibe/";
+const CORE_SKILL_PREFIX = "plugins/closedloop-core/skills/";
+const VIBE_RUNTIME_DIRECTORIES = [
+  ".claude-plugin", ".codex-plugin", "skills", "agents", "commands", "hooks", "shared",
+  "scripts", "monitors", "output-styles", "themes", "workflows",
+];
+const VIBE_RUNTIME_FILES = ["plugin.json", "mcp.json", ".mcp.json", ".lsp.json"];
+const VIBE_RUNTIME_DIRECTORY_PATTERN = new RegExp(
+  `^plugins/vibe/(?:${VIBE_RUNTIME_DIRECTORIES.map(escapeRegExp).join("|")})(?:/|$)`,
+);
 const BEHAVIOR_PATHS = [
-  /^plugins\/vibe\/(?:\.claude-plugin|\.codex-plugin)(?:\/|$)/,
-  /^plugins\/vibe\/(?:plugin\.json|mcp\.json|\.mcp\.json|\.lsp\.json)$/,
-  /^plugins\/vibe\/(?:skills|agents|commands|hooks|shared|scripts|monitors|output-styles|themes|workflows)(?:\/|$)/,
+  VIBE_RUNTIME_DIRECTORY_PATTERN,
+  new RegExp(`^plugins/vibe/(?:${VIBE_RUNTIME_FILES.map(escapeRegExp).join("|")})$`),
 ];
 const BENCHMARK_INFRASTRUCTURE = [
   /^tools\/vibe-bench(?:\/|$)/,
@@ -38,12 +46,20 @@ const TEST_ONLY = [
   /^plugins\/vibe\/evals(?:\/|$)/,
   /(?:^|\/)(?:__tests__|tests?)(?:\/|$)/,
   /(?:^|\/)(?:test-fixtures|fixture-helper)\.[^/]+$/,
+  /(?:^|\/)[^/]+-fixture\.[^/]+$/,
   /(?:^|\/)[^/]+\.(?:test|spec)\.[^/]+$/,
   /(?:^|\/)test_[^/]+\.py$/,
 ];
 
+function runtimeReferenceSource(path: string): boolean {
+  return path.startsWith(PLUGIN_PREFIX) &&
+    !TEST_ONLY.some((pattern) => pattern.test(path)) &&
+    !DOCUMENTATION_ONLY.some((pattern) => pattern.test(path));
+}
+
 function filesBelow(root: string): string[] {
   if (!existsSync(root)) return [];
+  if (statSync(root).isFile()) return [root];
   return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
     const path = join(root, entry.name);
     if (entry.isDirectory()) return filesBelow(path);
@@ -55,6 +71,15 @@ function slash(path: string): string {
   return sep === "/" ? path : path.split(sep).join("/");
 }
 
+function fromDecisions(decisions: VibePathDecision[]): VibeChangeScope {
+  return {
+    decisions,
+    behaviorFiles: decisions.filter((item) => item.kind === "behavior").map((item) => item.path),
+    nonBehaviorFiles: decisions.filter((item) => item.kind === "non-behavior")
+      .map((item) => item.path),
+  };
+}
+
 /**
  * Detect documentation outside a runtime component that is nevertheless read
  * by a loaded skill, agent, manifest, or hook. Runtime documentation is part
@@ -63,8 +88,8 @@ function slash(path: string): string {
 function referencedByRuntime(vibeDir: string, changedPath: string): boolean {
   const target = join(dirname(dirname(vibeDir)), changedPath);
   if (!existsSync(target)) return false;
-  const roots = ["skills", "agents", "hooks", ".claude-plugin", ".codex-plugin"]
-    .flatMap((name) => filesBelow(join(vibeDir, name)));
+  const roots = filesBelow(vibeDir).filter((path) => runtimeReferenceSource(
+    `${PLUGIN_PREFIX}${slash(relative(vibeDir, path))}`));
   return roots.filter((source) => !TEST_ONLY.some((pattern) => pattern.test(
     `${PLUGIN_PREFIX}${slash(relative(vibeDir, source))}`)))
     .some((source) => {
@@ -108,11 +133,7 @@ export function classifyVibePath(path: string, vibeDir: string): VibePathDecisio
 /** Classify a complete diff once for nightly change detection and local audits. */
 export function classifyVibeChangeScope(changedFiles: string[], vibeDir: string): VibeChangeScope {
   const decisions = [...new Set(changedFiles)].sort().map((path) => classifyVibePath(path, vibeDir));
-  return {
-    decisions,
-    behaviorFiles: decisions.filter((item) => item.kind === "behavior").map((item) => item.path),
-    nonBehaviorFiles: decisions.filter((item) => item.kind === "non-behavior").map((item) => item.path),
-  };
+  return fromDecisions(decisions);
 }
 
 const VERSIONED_MANIFESTS = new Set([
@@ -141,14 +162,84 @@ function gitFile(repo: string, ref: string, path: string): string {
   return execFileSync("git", ["-C", repo, "show", `${ref}:${path}`], { encoding: "utf8" });
 }
 
-function referencedInGitTree(repo: string, ref: string, changedPath: string): boolean {
-  try { gitFile(repo, ref, changedPath); } catch { return false; }
-  const roots = ["skills", "agents", "hooks", ".claude-plugin", ".codex-plugin"]
-    .map((name) => `${PLUGIN_PREFIX}${name}`);
+function coreSkillName(path: string): string | null {
+  if (!path.startsWith(CORE_SKILL_PREFIX)) return null;
+  return path.slice(CORE_SKILL_PREFIX.length).split("/", 1)[0] || null;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function referencedCoreSkills(skillNames: string[], sources: Array<{ path: string; text: string }>): Set<string> {
+  return new Set(skillNames.filter((name) => {
+    const reference = new RegExp(`(?:\\$|closedloop-core:|closedloop-core/skills/)` +
+      `${escapeRegExp(name)}(?![A-Za-z0-9_-])`);
+    return sources.some((source) => !TEST_ONLY.some((pattern) => pattern.test(source.path)) &&
+      reference.test(source.text));
+  }));
+}
+
+/**
+ * Find core skills named by non-test Vibe runtime sources in one committed
+ * tree. Callers union base and head so both removed and newly added references
+ * keep the corresponding core-skill behavior change in scope.
+ */
+function coreReferencesInGitTree(repo: string, ref: string): Set<string> {
+  let skillNames: string[];
   let sources: string[];
   try {
-    sources = execFileSync("git", ["-C", repo, "ls-tree", "-r", "--name-only", ref, "--", ...roots],
-      { encoding: "utf8" }).split("\n").filter(Boolean);
+    skillNames = execFileSync("git", ["-C", repo, "ls-tree", "-d", "--name-only",
+      `${ref}:plugins/closedloop-core/skills`], { encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"] }).split("\n").filter(Boolean);
+    sources = execFileSync("git", ["-C", repo, "ls-tree", "-r", "--name-only", ref, "--",
+      "plugins/vibe"], { encoding: "utf8" }).split("\n").filter(runtimeReferenceSource);
+  } catch { return new Set(); }
+  return referencedCoreSkills(skillNames, sources.flatMap((path) => {
+    try { return [{ path, text: gitFile(repo, ref, path) }]; }
+    catch { return []; }
+  }));
+}
+
+/** Union the current worktree's actual core-skill directories and runtime references. */
+function coreReferencesInWorkingTree(repo: string): Set<string> {
+  const coreRoot = join(repo, CORE_SKILL_PREFIX);
+  let skillNames: string[];
+  try {
+    skillNames = readdirSync(coreRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+  } catch { return new Set(); }
+  const sources = filesBelow(join(repo, PLUGIN_PREFIX)).filter((path) =>
+    runtimeReferenceSource(slash(relative(repo, path))))
+    .flatMap((path) => {
+      try { return [{ path: slash(relative(repo, path)), text: readFileSync(path, "utf8") }]; }
+      catch { return []; }
+    });
+  return referencedCoreSkills(skillNames, sources);
+}
+
+function reclassifyCoreSkills(scope: VibeChangeScope, references: Set<string>): VibeChangeScope {
+  return fromDecisions(scope.decisions.map((decision): VibePathDecision => {
+    const skill = coreSkillName(decision.path);
+    if (!skill) return decision;
+    if (TEST_ONLY.some((pattern) => pattern.test(decision.path))) {
+      return { ...decision, kind: "non-behavior", reason: "test-only" };
+    }
+    if (/(?:^|\/)(?:README|CHANGELOG)(?:\.[^/]+)?$/i.test(decision.path)) {
+      return { ...decision, kind: "non-behavior", reason: "core-skill-documentation" };
+    }
+    return references.has(skill)
+      ? { ...decision, kind: "behavior", reason: "runtime-referenced-core-skill" }
+      : { ...decision, kind: "non-behavior", reason: "unreferenced-core-skill" };
+  }));
+}
+
+function referencedInGitTree(repo: string, ref: string, changedPath: string): boolean {
+  try { gitFile(repo, ref, changedPath); } catch { return false; }
+  let sources: string[];
+  try {
+    sources = execFileSync("git", ["-C", repo, "ls-tree", "-r", "--name-only", ref, "--",
+      "plugins/vibe"], { encoding: "utf8" }).split("\n").filter(runtimeReferenceSource);
   } catch { return false; }
   return sources.filter((source) => !TEST_ONLY.some((pattern) => pattern.test(source)))
     .some((source) => {
@@ -170,11 +261,7 @@ function reclassifyTreeReferencedDocs(scope: VibeChangeScope, repo: string,
       ? { ...decision, kind: "behavior", reason: "runtime-referenced-documentation" }
       : decision;
   });
-  return {
-    decisions,
-    behaviorFiles: decisions.filter((item) => item.kind === "behavior").map((item) => item.path),
-    nonBehaviorFiles: decisions.filter((item) => item.kind === "non-behavior").map((item) => item.path),
-  };
+  return fromDecisions(decisions);
 }
 
 function reclassifyVersionOnly(scope: VibeChangeScope, repo: string, baseRef: string,
@@ -191,11 +278,7 @@ function reclassifyVersionOnly(scope: VibeChangeScope, repo: string, baseRef: st
         : decision;
     } catch { return decision; }
   });
-  return {
-    decisions,
-    behaviorFiles: decisions.filter((item) => item.kind === "behavior").map((item) => item.path),
-    nonBehaviorFiles: decisions.filter((item) => item.kind === "non-behavior").map((item) => item.path),
-  };
+  return fromDecisions(decisions);
 }
 
 /** Classify an exact committed range, including version-only manifest bumps. */
@@ -203,15 +286,21 @@ export function classifyVibeChangeScopeBetween(repo: string, baseRef: string,
   headRef: string): VibeChangeScope {
   const changed = execFileSync("git", ["-C", repo, "diff", "--name-only", baseRef, headRef],
     { encoding: "utf8" }).split("\n").filter(Boolean);
-  const scope = reclassifyTreeReferencedDocs(
+  let scope = reclassifyTreeReferencedDocs(
     classifyVibeChangeScope(changed, join(repo, "plugins/vibe")), repo, [baseRef, headRef]);
+  const coreReferences = new Set([...coreReferencesInGitTree(repo, baseRef),
+    ...coreReferencesInGitTree(repo, headRef)]);
+  scope = reclassifyCoreSkills(scope, coreReferences);
   return reclassifyVersionOnly(scope, repo, baseRef, headRef);
 }
 
 /** Classify the current working tree against a base for local model-free audits. */
 export function classifyVibeWorkingTreeScope(repo: string, baseRef: string,
   changedFiles: string[]): VibeChangeScope {
-  const scope = reclassifyTreeReferencedDocs(
+  let scope = reclassifyTreeReferencedDocs(
     classifyVibeChangeScope(changedFiles, join(repo, "plugins/vibe")), repo, [baseRef]);
+  const coreReferences = new Set([...coreReferencesInGitTree(repo, baseRef),
+    ...coreReferencesInWorkingTree(repo)]);
+  scope = reclassifyCoreSkills(scope, coreReferences);
   return reclassifyVersionOnly(scope, repo, baseRef, null);
 }

@@ -44,10 +44,12 @@ export async function reportNightlyInfrastructureFailure(reason: string,
   reporter: Pick<SlackNightlyRegressionReporter, "reportInfrastructure"> =
     new SlackNightlyRegressionReporter(),
   writeError: (message: string) => unknown = (message) => process.stderr.write(message),
+  writeOutput: (message: string) => unknown = (message) => process.stdout.write(message),
 ): Promise<void> {
   writeError(`VIBE_NIGHTLY_INFRA_FAILURE ${reason}\n`);
   try {
     await reporter.reportInfrastructure({ reason, occurredAt: new Date().toISOString() });
+    writeOutput("VIBE_NIGHTLY_SLACK_POSTED\n");
   } catch (error) {
     writeError(`VIBE_NIGHTLY_SLACK_FAILURE ${errorReason(error)}\n`);
   }
@@ -86,10 +88,10 @@ export async function main(args: string[],
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2);
-  if (args[0] === "--notify-infra" && args.length === 2) {
-    new SlackNightlyRegressionReporter().reportInfrastructure({
-      reason: args[1], occurredAt: new Date().toISOString(),
-    }).catch((error) => {
+  if (args[0] === "--notify-infra" && args.length === 3) {
+    new SlackNightlyRegressionReporter(args[1]).reportInfrastructure({
+      reason: args[2], occurredAt: new Date().toISOString(),
+    }).then(() => process.stdout.write("VIBE_NIGHTLY_SLACK_POSTED\n")).catch((error) => {
       process.stderr.write(`VIBE_NIGHTLY_SLACK_FAILURE ${errorReason(error)}\n`);
       process.exitCode = 1;
     });
@@ -97,7 +99,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     main(args).then(
       (output) => process.stdout.write(`${output}\n`),
       async (error) => {
-        await reportNightlyInfrastructureFailure(errorReason(error));
+        const claude = args.length === 7 ? args[3] : "claude";
+        await reportNightlyInfrastructureFailure(errorReason(error),
+          new SlackNightlyRegressionReporter(claude));
         process.exitCode = 1;
       },
     );
