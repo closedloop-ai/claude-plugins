@@ -66,6 +66,12 @@ function wordingCaseIds(vibeDir: string, selected: string[]): string[] {
     existsSync(join(vibeDir, "evals", id, "graders", grader))));
 }
 
+/** Give a serial Codex corpus at least 90 seconds per case and a 30 minute floor. */
+export function codexEvalBudgetSeconds(caseCount: number): number {
+  if (!Number.isInteger(caseCount) || caseCount <= 0) throw new Error("eval-case-count-invalid");
+  return Math.max(1800, caseCount * 90);
+}
+
 function version(commands: EvalCommands, executable: string, cwd: string, runtime: string): string {
   const result = commands.run(executable, ["--version"], cwd);
   if (result.status !== 0 || !result.stdout.trim()) throw new Error(`eval-${runtime}-version-unavailable`);
@@ -135,7 +141,8 @@ export function runLocalEvals(options: LocalEvalOptions,
   const codexArgs = ["run", "--with", "Pillow==12.3.0", "--with", "PyYAML", "python",
     join(snapshot.vibeDir, "evals/codex/run.py"), "--plugin", snapshot.vibeDir,
     "--source-sha", options.pluginSha, "--output", codexOutput, "--codex-bin",
-    options.codexExecutable, "--concurrency", "1", "--max-seconds", "1800"];
+    options.codexExecutable, "--concurrency", "1", "--max-seconds",
+    String(codexEvalBudgetSeconds(selected.length))];
   if (options.deterministicOnly) codexArgs.push("--deterministic-only");
   for (const id of selected) codexArgs.push("--case", codexCaseId(id));
   const codexProcess = commands.run(options.uvExecutable, codexArgs, options.runRoot);

@@ -7,9 +7,14 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { collectClaudeEval, collectCodexEval, finalizeLocalEval } from "./eval-collector.ts";
 import type { EvalCommands } from "./eval-driver.ts";
-import { runLocalEvals } from "./eval-driver.ts";
+import { codexEvalBudgetSeconds, runLocalEvals } from "./eval-driver.ts";
 
 const CASE = "pm-new-session-first-reply";
+
+test("serial Codex eval budget scales with the full corpus", () => {
+  assert.equal(codexEvalBudgetSeconds(1), 1800);
+  assert.equal(codexEvalBudgetSeconds(105), 9450);
+});
 
 function claudeNative(vibePath = "/snapshot/vibe", corePath = "/snapshot/core", passed = true) {
   return {
