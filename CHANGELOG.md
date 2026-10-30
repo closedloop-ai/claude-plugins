@@ -11,10 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The fleet starts independent integration, unit, typecheck, and lint work on allowed machines while e2e is queued or running elsewhere. Disjoint proof tests or new modules may be assigned to helpers with exclusive branches and file allowlists; the ticket writer alone integrates their work (ISS-13418).
 
 #### Fixed
-- Frozen-render comparisons own and close their base and head Storybook servers on success and failure. Recorded QA stacks and Docker resources are reconciled when a pull request merges or closes; cleanup verifies ownership and leaves unrecorded resources untouched (ISS-13420).
+- Frozen-render comparisons resolve base refs, rebuild under the fleet heavy slot into staging, preserve prior static output until success, and close both Storybook servers. Docker cleanup captures full network IDs, recognizes exact Docker 29 absence replies, hides only a live lock owner's pending record, verifies ownership, and leaves unrecorded resources untouched (ISS-13420).
 
 #### Changed
-- Across all plugin Markdown, including eval prompts and graders, vibe is about 2,914 words longer than in 1.1.18.
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 2,917 words longer than in 1.1.18.
 
 ### vibe v1.1.18
 
