@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { runDiffRules } from "./diff-rules.mjs";
-import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenInputs, frozenRenders, frozenStoryFiles, frozenStoryIds, prepareBase, runOwnedFrozenComparison, storyFileChanges } from "./frozen-render.mjs";
+import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenInputs, frozenRenders, frozenStoryFiles, frozenStoryIds, prepareBase, rebuildStatic, runOwnedFrozenComparison, storyFileChanges } from "./frozen-render.mjs";
 import { CROP_MAX_WIDTH, decodePng, encodePng } from "./png-diff.mjs";
 import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
 
@@ -148,6 +148,34 @@ exit 43
     const storybook = path.join(dir, "apps", "storybook");
     assert.deepEqual(readdirSync(storybook).filter((name) => name.startsWith("storybook-static.vibe-")), []);
   }
+});
+
+test("the configured heavy slot wait wraps the bounded Storybook build", (t) => {
+  const fixture = makeHome("vibe-frozen-slot-shape-");
+  t.after(fixture.cleanup);
+  const worktree = path.join(fixture.root, "head");
+  const output = path.join(worktree, "apps", "storybook", "storybook-static");
+  mkdirSync(output, { recursive: true });
+  writeFileSync(path.join(output, "index.html"), "old");
+  const calls = [];
+  const run = (command, args, options) => {
+    calls.push({ command, args, options });
+    assert.equal(readFileSync(path.join(output, "index.html"), "utf8"), "old", "slot acquisition precedes output changes");
+    assert.equal(options.timeout, undefined, "heavy-slot waiting has no build timeout");
+    const slot = args.findIndex((arg) => path.basename(arg) === "slot-lock.sh");
+    const bounded = args.findIndex((arg) => path.basename(arg) === "run-bounded.mjs");
+    const pnpm = args.indexOf("pnpm");
+    assert.ok(slot >= 0 && bounded > slot && pnpm > bounded, JSON.stringify(args));
+    assert.deepEqual(args.slice(slot + 1, slot + 5), ["--slots", "3", "heavy", `frozen-render ${path.basename(worktree)}`]);
+    assert.deepEqual(args.slice(bounded + 1, bounded + 3), ["600", "pnpm"]);
+    const staging = args.at(-1);
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(path.join(staging, "index.html"), "fresh");
+    return { status: 0, stdout: "", stderr: "" };
+  };
+  rebuildStatic(worktree, { run, env: { HEAVY_SLOTS: "3" } });
+  assert.equal(calls.length, 1);
+  assert.equal(readFileSync(path.join(output, "index.html"), "utf8"), "fresh");
 });
 
 /** A small solid screenshot, with one pixel of `dot` color when given. */

@@ -391,15 +391,29 @@ test('identity is read again before every signal: a pid reused during the grace 
   assert.equal(fake.state(FAKE + 14), 'alive', 'the app now holding the pid is not killed');
 });
 
-test('pid records each process with its start time and command, and refuses one it cannot read', (t) => {
+test('pid preserves the raw start time and command identity format and refuses one it cannot read', (t) => {
   const dir = tempDir(t);
   const server = child(t, 'sleep', ['60']);
   assert.equal(run([dir, 'pid', 'qa-i', String(server)]).status, 0);
   const identity = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'))['qa-i'].identities[server];
   assert.match(identity, /sleep 60/);
+  assert.equal(identity, readIdentity(server));
   const refused = run([dir, 'pid', 'qa-j', String(FAKE + 15)]);
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /cannot read the start time and command/);
+});
+
+test('a pre-upgrade raw process identity still matches through the default stopped path', (t) => {
+  const dir = tempDir(t);
+  const server = child(t, 'sleep', ['60']);
+  const identity = readIdentity(server);
+  assert.match(identity, /sleep 60/);
+  writeFileSync(path.join(dir, 'helpers.json'), JSON.stringify({ qa: {
+    startedAt: '2026-10-29T00:00:00Z', pids: [server], identities: { [server]: identity },
+  } }));
+  const stopped = run([dir, 'stopped', 'qa', '--grace-seconds', '2']);
+  assert.equal(stopped.status, 0, stopped.stdout + stopped.stderr);
+  assert.ok(JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8')).qa.stoppedAt);
 });
 
 test('stopping a helper recorded with --group ends its whole process group', { timeout: 30_000 }, async (t) => {

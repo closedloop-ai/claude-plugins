@@ -78,6 +78,7 @@ import { IMPORT_SPECIFIER, resolveImport, SOURCE_FILE } from "./source-imports.m
 import { keepsStoryIdentity, storyExportNames, storyMetaTitle } from "./storybook-taxonomy.mjs";
 
 const SLOT_LOCK = fileURLToPath(new URL("../../fleet-orchestrator/scripts/slot-lock.sh", import.meta.url));
+const RUN_BOUNDED = fileURLToPath(new URL("../../vibe/scripts/run-bounded.mjs", import.meta.url));
 
 export const FrozenOutcome = Object.freeze({ Identical: "identical", UnstableOnBase: "unstable-on-base", SameFailure: "same-failure", Blocking: "blocking" });
 /** Software rasterizing on one thread with fixed color and font handling, as the ISS-13164 capture launches Chromium. */
@@ -118,14 +119,15 @@ async function freePort(exclude) {
 }
 
 /** Rebuild a static Storybook under the fleet heavy lock, preserving the prior output until success. */
-function rebuildStatic(worktree) {
+export function rebuildStatic(worktree, { run = spawnSync, env = process.env } = {}) {
   const output = path.join(worktree, "apps", "storybook", "storybook-static");
   const token = randomUUID();
   const staging = `${output}.vibe-build-${token}`;
   const previous = `${output}.vibe-previous-${token}`;
-  const result = spawnSync("bash", [SLOT_LOCK, "heavy", `frozen-render ${path.basename(worktree)}`,
-    "pnpm", "exec", "storybook", "build", "--output-dir", staging], {
-    cwd: path.join(worktree, "apps", "storybook"), encoding: "utf8", timeout: 600_000,
+  const slots = String(env.HEAVY_SLOTS || "1");
+  const result = run("bash", [SLOT_LOCK, "--slots", slots, "heavy", `frozen-render ${path.basename(worktree)}`,
+    process.execPath, RUN_BOUNDED, "600", "pnpm", "exec", "storybook", "build", "--output-dir", staging], {
+    cwd: path.join(worktree, "apps", "storybook"), encoding: "utf8", env,
   });
   if (result.error || result.status !== 0 || !existsSync(path.join(staging, "index.html"))) {
     rmSync(staging, { recursive: true, force: true });

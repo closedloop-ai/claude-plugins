@@ -27,6 +27,21 @@ const DEAD_PID = 99_999_999;
 const FULL_CONTAINER_ID = "a".repeat(64);
 const FULL_NETWORK_ID = "c".repeat(64);
 
+test("e2e lock and fleet helpers share the raw process identity primitive", () => {
+  const e2e = readFileSync(SCRIPT, "utf8");
+  const helpers = readFileSync(path.resolve(path.dirname(SCRIPT), "../../fleet-orchestrator/scripts/helpers.mjs"), "utf8");
+  const session = readFileSync(path.join(path.dirname(SCRIPT), "session-processes.mjs"), "utf8");
+  const shared = readFileSync(path.resolve(path.dirname(SCRIPT), "../../../shared/process-identity.mjs"), "utf8");
+  assert.match(shared, /export function readProcessIdentity\(/);
+  assert.match(e2e, /import \{ readProcessIdentity \} from "\.\.\/\.\.\/\.\.\/shared\/process-identity\.mjs"/);
+  assert.doesNotMatch(e2e, /function (?:processIdentity|readProcessIdentity)\(/);
+  assert.match(helpers, /import \{ readProcessIdentity \} from "\.\.\/\.\.\/\.\.\/shared\/process-identity\.mjs"/);
+  assert.match(helpers, /export const readIdentity = readProcessIdentity/);
+  assert.doesNotMatch(helpers, /function readIdentity\(/);
+  assert.match(session, /\nfunction processIdentity\(/);
+  assert.doesNotMatch(session, /export function processIdentity\(/);
+});
+
 test("Docker inspect read failures retain an owned resource; only exact absence counts gone", () => {
   const record = { project: null, containers: [{ id: FULL_CONTAINER_ID, created: "2026-10-29T00:00:00Z", project: "qa-owned" }], volumes: [], networks: [] };
   let removed = false;

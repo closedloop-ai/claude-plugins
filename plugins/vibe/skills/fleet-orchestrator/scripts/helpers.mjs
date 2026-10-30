@@ -50,6 +50,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { captureOwnedDockerResources, defaultLockDir, readHolder, removeOwnedDockerResources } from "../../vibe/scripts/e2e-lock.mjs";
+import { readProcessIdentity } from "../../../shared/process-identity.mjs";
 
 const LEDGER = "helpers.json";
 const STACKS = "#stacks";
@@ -140,12 +141,8 @@ export function isAlive(pid) {
   return probe(pid) !== "gone";
 }
 
-/** A process's start time and command (`ps -o lstart=,command=`), or null when it cannot be read. */
-export function readIdentity(pid) {
-  const result = spawnSync("ps", ["-o", "lstart=,command=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } });
-  const identity = result.stdout?.trim();
-  return result.status === 0 && identity ? identity : null;
-}
+/** The shared process-birth fingerprint, preserved under the helper module's existing API name. */
+export const readIdentity = readProcessIdentity;
 
 /** The process group id of `pid`, or null when it cannot be read. */
 export function readGroupId(pid) {

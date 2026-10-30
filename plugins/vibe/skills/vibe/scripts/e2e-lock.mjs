@@ -51,6 +51,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { imageProblem, recordImages } from "./image-head.mjs";
+import { readProcessIdentity } from "../../../shared/process-identity.mjs";
 import { testedHead } from "./tested-head.mjs";
 
 export const BUSY_EXIT = 75;
@@ -177,15 +178,6 @@ function isAlive(pid) {
     // EPERM: the process exists but belongs to someone else.
     return error?.code === "EPERM";
   }
-}
-
-/** A process birth witness used to distinguish a live owner from PID reuse. */
-function processIdentity(pid) {
-  const result = spawnSync("ps", ["-o", "lstart=,command=", "-p", String(pid)], {
-    encoding: "utf8", env: { ...process.env, LC_ALL: "C" },
-  });
-  const identity = result.stdout?.trim();
-  return result.status === 0 && identity ? identity : null;
 }
 
 const OWN_OPTIONS = new Set(["--head", "--owner", "--ticket", "--wait-seconds", "--lock-dir", "--foreign-compose"]);
@@ -375,7 +367,7 @@ async function main(argv) {
   const worktree = worktreeOf(process.cwd());
   const owner = {
     pid: process.pid,
-    identity: processIdentity(process.pid),
+    identity: readProcessIdentity(process.pid),
     token: randomUUID(),
     cwd: process.cwd(),
     worktree,

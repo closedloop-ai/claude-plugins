@@ -22,6 +22,22 @@ STATIC_LAUNCH = re.compile(
 )
 
 
+def find_ad_hoc_static_servers(root_or_paths: Path | list[Path] | tuple[Path, ...]) -> list[str]:
+    """Return every plugin instruction line that launches an unowned static server."""
+    if isinstance(root_or_paths, Path):
+        paths = root_or_paths.rglob("*.md") if root_or_paths.is_dir() else [root_or_paths]
+    else:
+        paths = root_or_paths
+    findings: list[str] = []
+    for path in sorted(paths):
+        if "assets" in path.parts:
+            continue
+        for number, line in enumerate(path.read_text(errors="ignore").splitlines(), 1):
+            if STATIC_LAUNCH.search(line):
+                findings.append(f"ad hoc static server instruction: {path}:{number}")
+    return findings
+
+
 def test_frozen_render_instructions_use_central_server_ownership() -> None:
     """The three owners never ask a worker to provide servers or their URLs."""
     for path in (HANDOFF, VERIFY, DECOMPOSER):
@@ -36,11 +52,7 @@ def test_frozen_render_instructions_use_central_server_ownership() -> None:
 
 def test_no_plugin_instruction_launches_an_ad_hoc_static_server() -> None:
     """Known static server commands must stay inside the owning wrapper."""
-    for path in (ROOT / "plugins").rglob("*.md"):
-        if "assets" in path.parts:
-            continue
-        for line in path.read_text(errors="ignore").splitlines():
-            assert not STATIC_LAUNCH.search(line), f"ad hoc static server instruction: {path.relative_to(ROOT)}"
+    assert find_ad_hoc_static_servers(ROOT / "plugins") == []
 
 
 def test_static_server_detector_covers_runner_variants_even_in_prohibitions() -> None:
@@ -55,9 +67,15 @@ def test_static_server_detector_covers_runner_variants_even_in_prohibitions() ->
 
 
 def test_instruction_scan_never_skips_prohibitions() -> None:
-    """A leading Never does not exempt a copied server launch from the scan."""
-    source = Path(__file__).read_text()
-    assert not re.search(r"if\s+.*(?:startswith|starts_with)\([^\n]*Never[^\n]*\)[^\n]*:\s*(?:\n\s*)?continue", source, re.IGNORECASE)
+    """The production scanner also catches prohibited commands in negative prose."""
+    assert find_ad_hoc_static_servers(PLUGIN) == []
+
+
+def test_instruction_scanner_uses_the_same_path_for_never_fixture(tmp_path: Path) -> None:
+    """Filtering leading prohibitions cannot bypass the production scanner."""
+    fixture = tmp_path / "fixture.md"
+    fixture.write_text("Never run python -m SimpleHTTPServer here.\n")
+    assert find_ad_hoc_static_servers([fixture]) == [f"ad hoc static server instruction: {fixture}:1"]
 
 
 def test_terminal_cleanup_response_names_foreign_resources_left_alone() -> None:
