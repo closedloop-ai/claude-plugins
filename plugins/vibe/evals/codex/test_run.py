@@ -72,6 +72,20 @@ def test_parallel_e2e_scenario_states_queue_wait_and_run_duration() -> None:
                int(integration.group(1)), int(typecheck.group(1))) == 20
 
 
+def test_fleet_scenarios_require_the_plugin_to_override_stale_coordination() -> None:
+    """Main should follow stale coordination that only the new fleet rules supersede."""
+    cases = {case["name"]: case["prompt"] for case in runner.cases()}
+    lane = cases["orchestrator-parallel-e2e-queued"]
+    assert "saved remaining-steps checklist" in lane
+    assert "finish\n  this PR's e2e on machine A, then run integration, then run typecheck" in lane
+    assert "predates machine B being allowed" in lane
+    cleanup = cases["orchestrator-owned-qa-cleanup"]
+    assert "saved monitor convention" in cleanup
+    assert "terminal PR events are report-only" in cleanup
+    assert "wait for an explicit operator cleanup request" in cleanup
+    assert "predates recorded helper ending conditions" in cleanup
+
+
 def test_parallel_fleet_graders_accept_plain_behavior_without_template_labels(tmp_path: Path) -> None:
     """Behavior, not copied answer labels, decides the lane and helper evals."""
     cases = {case["name"]: case for case in runner.cases()}
