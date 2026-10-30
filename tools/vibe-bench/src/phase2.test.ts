@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { BASELINE_ORDER, exactSnapshotPlugins, shapePrompt } from "./claude-task.ts";
+import { modelBudgetDeadline } from "./claude-batch.ts";
 import { buildBaselineReport, finalizeBaseline, orchestrateTen, verifyBaselineHash } from "./baseline.ts";
 import type { BaselineRun } from "./baseline.ts";
 import { collectClaude } from "./claude-collector.ts";
@@ -22,6 +23,14 @@ import type { BenchmarkShape, ClaudeRunIdentity } from "./result-schema.ts";
 const fixtureDir = join(dirname(new URL(import.meta.url).pathname), "..", "fixtures");
 const realStream = readFileSync(join(fixtureDir, "phase0-claude-anonymized.jsonl"), "utf8");
 const realTranscript = readFileSync(join(fixtureDir, "phase0-transcript-anonymized.jsonl"), "utf8");
+
+test("seeded setup time does not consume the model execution budget", () => {
+  const batchStartedAt = 1_000;
+  const setupCompletedAt = batchStartedAt + 180_000;
+  const deadline = modelBudgetDeadline(setupCompletedAt);
+  assert.equal(deadline - setupCompletedAt, 10 * 60 * 1000);
+  assert.ok(deadline > batchStartedAt + 10 * 60 * 1000);
+});
 
 test("main plugin hooks require a checked conversation and a run-owned session record", async () => {
   const vibeDir = join(dirname(new URL(import.meta.url).pathname), "../../../plugins/vibe");

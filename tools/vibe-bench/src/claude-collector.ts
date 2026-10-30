@@ -13,6 +13,7 @@ interface StreamEvent {
   parentToolUseID?: string | null;
   effort?: string;
   perTurnEffort?: string;
+  attributionSkill?: string;
   model?: string;
   message?: {
     id?: string;
@@ -117,13 +118,16 @@ function sameInput(a: CallTokens, b: CallTokens): boolean {
     a.cacheWriteTokens === b.cacheWriteTokens;
 }
 
-function invokedSkill(name: string, input: unknown): string | null {
-  if (name !== "Skill" || !input || typeof input !== "object" || Array.isArray(input)) return null;
-  const value = input as Record<string, unknown>;
-  const candidate = value.skill ?? value.skill_name ?? value.command;
+function normalizedSkill(candidate: unknown): string | null {
   if (typeof candidate !== "string") return null;
   const normalized = candidate.trim().replace(/^\//, "");
   return /^[a-z0-9-]+:[a-z0-9-]+$/.test(normalized) ? normalized : null;
+}
+
+function invokedSkill(name: string, input: unknown): string | null {
+  if (name !== "Skill" || !input || typeof input !== "object" || Array.isArray(input)) return null;
+  const value = input as Record<string, unknown>;
+  return normalizedSkill(value.skill ?? value.skill_name ?? value.command);
 }
 
 /** Collect authoritative final totals and reconcile optional per-request OTEL. */
@@ -221,12 +225,14 @@ export function collectClaude(input: ClaudeCollectorInput): ClaudeBenchmarkResul
       skills.set(source.scope, parentToolUseId ? parentSkills.get(parentToolUseId) ?? null : null);
       phases.set(source.scope, null);
     }
+    const transcriptSkill = source.transcript ? normalizedSkill(event.attributionSkill) : null;
+    if (transcriptSkill) skills.set(source.scope, transcriptSkill);
     const reportedEffort = event.effort ?? event.perTurnEffort ?? null;
     const attribution = attributeCall({
       parentToolUseId,
       agentName,
       skillName: skills.get(source.scope) ?? null,
-      phase: phases.get(source.scope) ?? null,
+      phase: previous?.phase ?? phases.get(source.scope) ?? null,
     }, identity.shape, agentModels);
     if (previous) {
       if (previous.messageId !== message.id || previous.model !== message.model ||
@@ -237,7 +243,8 @@ export function collectClaude(input: ClaudeCollectorInput): ClaudeBenchmarkResul
         throw new Error("benchmark-collector-transcript-effort-conflict");
       }
       if (reportedEffort) previous.effort = reportedEffort;
-      if (source.transcript && agentName && previous.worker === null) Object.assign(previous, attribution);
+      if (source.transcript && ((agentName && previous.worker === null) ||
+          (transcriptSkill && previous.skill !== transcriptSkill))) Object.assign(previous, attribution);
     } else {
       requests.set(requestId, {
         id: requestId, requestId, messageId: message.id,

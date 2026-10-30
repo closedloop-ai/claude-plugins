@@ -71,10 +71,20 @@ export interface ClaudeBatchResult {
   batchId: string;
 }
 
+/**
+ * Bound paid model execution without charging seeded-stack setup to that budget.
+ *
+ * ISS-13401's 2026-10-29 runtime decision still evaluates the complete
+ * start-to-PR wall time separately through `fullWallMs` and `targetMet`.
+ */
+export function modelBudgetDeadline(setupCompletedAt: number): number {
+  return setupCompletedAt + TARGET_WALL_MS;
+}
+
 /** Run balanced Claude samples on one isolated seeded stack and always tear it down. */
 export async function runClaudeBatch(input: ClaudeBatchInputs): Promise<ClaudeBatchResult> {
   const batchStarted = Date.now();
-  const deadline = batchStarted + TARGET_WALL_MS;
+  let deadline: number | null = null;
   const abort = new AbortController();
   const onSignal = () => abort.abort();
   process.once("SIGINT", onSignal);
@@ -106,6 +116,7 @@ export async function runClaudeBatch(input: ClaudeBatchInputs): Promise<ClaudeBa
       if (details.costCardRows < 1 || details.seedStages < 1) throw new Error("benchmark-seed-incomplete");
       const key = JSON.parse(readFileSync(details.apiKeyFile, "utf8")) as { apiBearer?: string };
       if (!key.apiBearer) throw new Error("benchmark-seed-key-missing");
+      deadline = modelBudgetDeadline(Date.now());
     },
     async run(index, shape) {
       const runDir = join(runRoot, `run-${String(index + 1).padStart(2, "0")}-${shape}`);
@@ -120,6 +131,7 @@ export async function runClaudeBatch(input: ClaudeBatchInputs): Promise<ClaudeBa
       const childScript = realpathSync(fileURLToPath(new URL("./single-run.ts", import.meta.url)));
       let childFailure: unknown = null;
       try {
+        if (deadline === null) throw new Error("benchmark-model-budget-not-started");
         const child = await runOwnedProcess(process.execPath,
           ["--experimental-strip-types", childScript, inputFile], {
             cwd: runDir, deadline, signal: abort.signal, maxBuffer: 8 * 1024 * 1024,

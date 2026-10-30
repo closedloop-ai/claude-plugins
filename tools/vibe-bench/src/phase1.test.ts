@@ -148,6 +148,17 @@ test("real transcript supplies effort and identity but never contributes output"
   assert.ok(invalid.invalidReasons.includes("benchmark-effort-missing"));
 });
 
+test("transcript attributionSkill records slash-command skill invocations", () => {
+  const transcript = realTranscript.trim().split("\n").map((line) => {
+    const event = JSON.parse(line) as Record<string, unknown>;
+    if (event.type === "assistant") event.attributionSkill = "vibe:vibe";
+    return JSON.stringify(event);
+  }).join("\n");
+  const result = collectClaude({ stream: realStream, transcripts: [{ jsonl: transcript }],
+    identity: identity(), agentModels: { "vibe-adversarial-reviewer": "opus" }, env: {} });
+  assert.ok(result.calls.every((call) => call.skill === "vibe:vibe"));
+});
+
 test("truncation, dropped records and conflicting totals fail closed", () => {
   assert.throws(() => collect(realStream.slice(0, -25)), /truncated-line/);
   assert.throws(() => collect(realStream.split("\n").filter((line) => !line.includes('"request_id":"req-c"')).join("\n")), /transcript-total-mismatch/);
