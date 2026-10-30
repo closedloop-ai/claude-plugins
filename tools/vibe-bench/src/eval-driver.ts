@@ -115,7 +115,7 @@ export function runLocalEvals(options: LocalEvalOptions,
   const claudeJson = join(claudeOutput, "result.json");
   const claudeArgs = ["plugin", "eval", snapshot.vibeDir, "--json", claudeJson,
     "--output-dir", claudeOutput, "--ablation", "none", "--model", "sonnet",
-    "--runs", "1", "--threshold", "1", "--concurrency", "2", "--scaffold",
+    "--runs", "1", "--threshold", "1", "--concurrency", "1", "--scaffold",
     "--trust-plugin", "--no-publish"];
   for (const id of selected) claudeArgs.push("--case", id);
   const claudeProcess = commands.run(options.claudeExecutable, claudeArgs, options.runRoot);
@@ -123,7 +123,7 @@ export function runLocalEvals(options: LocalEvalOptions,
 
   const codexArgs = [join(snapshot.vibeDir, "evals/codex/run.py"), "--plugin", snapshot.vibeDir,
     "--source-sha", options.pluginSha, "--output", codexOutput, "--codex-bin",
-    options.codexExecutable, "--concurrency", "2", "--max-seconds", "1800"];
+    options.codexExecutable, "--concurrency", "1", "--max-seconds", "1800"];
   if (options.deterministicOnly) codexArgs.push("--deterministic-only");
   for (const id of selected) codexArgs.push("--case", codexCaseId(id));
   const codexProcess = commands.run(options.pythonExecutable, codexArgs, options.runRoot);

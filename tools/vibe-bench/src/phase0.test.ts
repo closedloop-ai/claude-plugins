@@ -71,7 +71,7 @@ test("pinned launch reaches local MCP boundary and rejects remote changes", () =
     const fixture = prepareFixture(paths.source, paths.sandbox);
     const launch = prepareClaudeLaunch(fixture, paths.source);
     assert.equal(launch.command, "claude");
-    assert.ok(launch.args.includes("--safe-mode"));
+    assert.equal(launch.args.includes("--safe-mode"), false);
     assert.equal(launch.args[launch.args.indexOf("--setting-sources") + 1], "");
     assert.equal(launch.args[launch.args.indexOf("--settings") + 1], launch.settingsFile);
     assert.deepEqual(JSON.parse(readFileSync(launch.settingsFile, "utf8")).env, {
@@ -81,6 +81,9 @@ test("pinned launch reaches local MCP boundary and rejects remote changes", () =
     });
     assert.equal(launch.args[launch.args.indexOf("--model") + 1], BENCHMARK_MODEL);
     assert.equal(launch.args[launch.args.indexOf("--effort") + 1], BENCHMARK_EFFORT);
+    assert.equal(launch.args[launch.args.indexOf("--plugin-dir") + 1], paths.source);
+    assert.ok(launch.args.includes("--strict-mcp-config"));
+    assert.equal(launch.args[launch.args.indexOf("--permission-prompts") + 1], "none");
     assert.equal(JSON.parse(readFileSync(launch.mcpConfigFile, "utf8")).mcpServers.closedloop.url, "http://127.0.0.1:3010/mcp");
     assert.equal(launch.cwd, fixture.agentCheckout);
     git(fixture.agentCheckout, "remote", "set-url", "--push", "origin", "https://github.com/closedloop-ai/symphony-alpha.git");

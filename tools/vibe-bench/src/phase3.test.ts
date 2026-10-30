@@ -159,6 +159,9 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     assert.match(output.result.resultHash, /^[a-f0-9]{64}$/);
     assert.doesNotMatch(readFileSync(output.reportFile, "utf8"), /\/Users\/|\/private\/tmp|laptop/);
     assert.ok(commands.calls.every((call) => !call.args.some((arg) => arg.includes(".codex/plugins/cache"))));
+    const modelCalls = commands.calls.filter((call) => !call.args.includes("--version"));
+    assert.equal(modelCalls.length, 2);
+    assert.ok(modelCalls.every((call) => call.args[call.args.indexOf("--concurrency") + 1] === "1"));
     assert.throws(() => runLocalEvals({ repo, pluginSha: sha, runRoot: join(root, "run"),
       outputDir: join(root, "results"), claudeExecutable: "fixture-claude",
       codexExecutable: "fixture-codex", pythonExecutable: "fixture-python" }, commands),

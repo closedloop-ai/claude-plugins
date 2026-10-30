@@ -106,8 +106,11 @@ export function claudeArgs(pluginDir: string, mcpConfigFile: string, settingsFil
     throw new Error("benchmark-claude-argument-missing");
   }
   requirePinnedClaude({ model: BENCHMARK_MODEL, effort: BENCHMARK_EFFORT });
+  // Empty setting sources exclude installed marketplace plugins while the
+  // explicit plugin directory remains active. Safe mode cannot be used here:
+  // Claude disables snapshot skills and agents even when it reports the plugin.
   return [
-    "--print", "--output-format", "stream-json", "--verbose", "--safe-mode",
+    "--print", "--output-format", "stream-json", "--verbose",
     "--setting-sources", "", "--settings", settingsFile,
     "--model", BENCHMARK_MODEL, "--effort", BENCHMARK_EFFORT,
     "--plugin-dir", pluginDir, "--mcp-config", mcpConfigFile,
