@@ -99,7 +99,8 @@ test path>"] }` entries, not a `codeTestsFor` object or a list of basenames.
 When the graph cannot establish tests, a `code_tests_for` row may use
 `tests: null` only with the repository's `related` selection for that file.
 `targetedInventory` has `actor: "read-only"`,
-`source: "final-committed-diff"`, the full final `commit`, and the complete
+`source: "working-tree"`, the actual tested HEAD as `commit`, top-level
+`source` from `tested-head.mjs source`, and the complete
 `qaImpactRequest` inputs. Recompute that request and copy its `laneKey` to
 `impactKey`; never trust a stored classifier result. It also has a `laneReport`
 with `command: "pnpm test:lanes"` and `matches` named by that report, and
@@ -107,12 +108,14 @@ with `command: "pnpm test:lanes"` and `matches` named by that report, and
 `command`. A lane result in `testRuns` uses `status: "passed"` with its
 exact command, provenance commit and matching `laneKey`, not `"pass"`; a selected test result also names
 its exact path, cases and command. Always write `rerunCycles: []` when no
-failure was rerun. After writing the private JSON, run
+failure was rerun. Clean historical evidence may retain `source: "final-committed-diff"`.
+After writing the private JSON, run
 `node ../skills/handoff/scripts/pr-evidence-schema.mjs --file
 "<gitdir>/vibe-pr-evidence.json"` and fix every reported shape problem before
 returning. The handoff inventory still checks the actual selections and runs.
 
-In `pre-pr` mode, read the final committed diff, never the plan, and write
+In `pre-pr` mode, read the final uncommitted change identified by HEAD plus
+diff/tree hashes, never the plan, and write
 `targetedInventory` in that file as a read-only actor. Run `pnpm test:lanes`
 for the repository-owned lane names and commands. Inventory exact commands,
 files and cases for every selected Vitest package, importing test, changed or
@@ -189,8 +192,14 @@ For targeted E2E, record the repository's capability probe and choose:
    Do not run host-browser visual-regression specs against Linux baselines;
    list them as `not run locally, covered by CI`.
 3. Tier C: otherwise use the operator's configured remote runner and its
-   tested-head lock with `--head <the pushed sha>`, building fresh after a
+   tested-source lock with `--head <HEAD> --source-hash <treeSha256>`, building fresh after a
    worktree switch (`image-head.mjs` refuses stale images).
+
+Record dirty E2E through `e2e-lock.mjs`; retain its `<gitdir>/vibe-e2e-results`
+receipt, not the HEAD-only prepush ledger. An external `e2e-slot.sh` invocation
+also needs `--head <HEAD> --source-hash <treeSha256>`. Verify that machine's
+wrapper supports the contract; if unavailable or incompatible, report that
+boundary and use the owned lock, never infer its internals or push early.
 
 `git config --bool vibe.noNativeE2e` is the machine-local operator override;
 when true, skip Tier B and use C or report no tier. If no tier is available,

@@ -3,6 +3,7 @@
 // files), assertion and export changes, new apps/api refusals, ticket asks and
 // the evidence lanes, plus the body and evidence gates. No CLI of its own.
 
+import { withStableSource, validSourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -286,35 +287,50 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
     if (git(root, ["rev-parse", "HEAD"]) !== sha) throw new Error("HEAD moved before the capability probe");
     return probeE2eCapability({ worktree: root, commit: sha });
   } }) {
-  const files = readDiff(worktree, base).filter((file) => include.has(file.path));
-  const changed = files.map((file) => file.path);
-  const { contracts, refusals } = contractChanges(files);
-  const facts = {
-    serverOnly: !changed.some((file) => UI.some((prefix) => file.startsWith(prefix))),
-    requiredLanes: requiredLanes(changed),
-    assertionChanges: assertionChanges(files),
-    contractChanges: contracts,
-    refusals,
-    asks: ticketText ? [...new Set([...ticketText.matchAll(ASK)].map(([ask]) => ask.replace(/\s+/g, " ").trim()))] : [],
-    overlap: prs ? computeOverlap({ worktree, changed, prs, ownBranch }) : null,
-    overlapUnavailable: prs ? prs.filter((pr) => pr.headRefName !== ownBranch && pr.unavailableReason)
-      .map(({ number, title, unavailableReason: reason }) => ({ number, title, reason })) : [],
-  };
-  return {
-    ...facts,
-    ...(body === undefined ? {} : { prBodyProblems: [
-      ...bodyProblems(body, facts, files, prBase, template ?? readTemplate(worktree, base)),
-      ...(runs === undefined ? [] : knownMainFailureProblems(body, runs)),
-    ] }),
-    ...(runs === undefined ? {} : { prEvidenceProblems: [
-      ...evidenceProblems(runs, changed, commit, worktree),
-      ...selectionProblems(runs, files, requiredTests, commit),
-      ...targetedEvidenceProblems(runs, commit, worktree),
-      ...capabilityProbeProblems(runs, worktree, commit, probeCapability),
-      ...ciCheckProblems(runs, changed, commit),
-      ...tierEvidenceProblems(runs.e2eCapability, (Array.isArray(runs.targetedInventory?.entries) ? runs.targetedInventory.entries : []).filter((entry) => entry?.kind === "e2e").map((entry) => entry.path)),
-    ] }),
-  };
+  return withStableSource(worktree, current => {
+    let testedCommit = commit;
+    const bindingProblems = [];
+    if (runs?.source !== undefined) {
+      const source = runs.source;
+      let ancestor = false;
+      if (validSourceIdentity(source)) {
+        try { git(worktree, ['merge-base', '--is-ancestor', source.head, current.head]); ancestor = true; } catch { /* Not proven. */ }
+      }
+      if (!validSourceIdentity(source) || source.treeSha256 !== current.treeSha256 || commit !== current.head || !ancestor) {
+        bindingProblems.push('tested source identity does not match current content and its proven commit ancestry');
+      } else testedCommit = source.head;
+    }
+    const files = readDiff(worktree, base).filter((file) => include.has(file.path));
+    const changed = files.map((file) => file.path);
+    const { contracts, refusals } = contractChanges(files);
+    const facts = {
+      serverOnly: !changed.some((file) => UI.some((prefix) => file.startsWith(prefix))),
+      requiredLanes: requiredLanes(changed),
+      assertionChanges: assertionChanges(files),
+      contractChanges: contracts,
+      refusals,
+      asks: ticketText ? [...new Set([...ticketText.matchAll(ASK)].map(([ask]) => ask.replace(/\s+/g, " ").trim()))] : [],
+      overlap: prs ? computeOverlap({ worktree, changed, prs, ownBranch }) : null,
+      overlapUnavailable: prs ? prs.filter((pr) => pr.headRefName !== ownBranch && pr.unavailableReason)
+        .map(({ number, title, unavailableReason: reason }) => ({ number, title, reason })) : [],
+    };
+    return {
+      ...facts,
+      ...(body === undefined ? {} : { prBodyProblems: [
+        ...bodyProblems(body, facts, files, prBase, template ?? readTemplate(worktree, base)),
+        ...(runs === undefined ? [] : knownMainFailureProblems(body, runs)),
+      ] }),
+      ...(runs === undefined ? {} : { prEvidenceProblems: [
+        ...bindingProblems,
+        ...evidenceProblems(runs, changed, testedCommit, worktree),
+        ...selectionProblems(runs, files, requiredTests, testedCommit),
+        ...targetedEvidenceProblems(runs, testedCommit, worktree),
+        ...capabilityProbeProblems(runs, worktree, testedCommit, probeCapability, commit),
+        ...ciCheckProblems(runs, changed, testedCommit),
+        ...tierEvidenceProblems(runs.e2eCapability, (Array.isArray(runs.targetedInventory?.entries) ? runs.targetedInventory.entries : []).filter((entry) => entry?.kind === "e2e").map((entry) => entry.path)),
+      ] }),
+    };
+  });
 }
 
 /**
@@ -322,16 +338,16 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
  * runtime probe. A fabricated "no Docker" report cannot waive E2E merely by
  * selecting no tier; a changed prerequisite requires fresh evidence.
  */
-export function capabilityProbeProblems(evidence, worktree, commit, probeCapability) {
+export function capabilityProbeProblems(evidence, worktree, commit, probeCapability, currentCommit = commit) {
   const carried = (Array.isArray(evidence?.testRuns) ? evidence.testRuns : [])
     .filter((run) => run?.status === "not-run" && typeof run.path === "string" && isE2ePath(run.path));
   if (carried.length === 0) return [];
   const recorded = evidence?.e2eCapability;
   if (!commit || recorded?.probedCommit !== commit) return ["E2E capability probe is not bound to the final committed HEAD"];
   let current;
-  try { current = probeCapability({ worktree, commit }); }
+  try { current = probeCapability({ worktree, commit: currentCommit }); }
   catch { return ["current E2E capability probe could not be verified; do not carry specs to CI"]; }
-  if (!current?.container || !current.desktopHarness || current.probedCommit !== commit) {
+  if (!current?.container || !current.desktopHarness || current.probedCommit !== currentCommit) {
     return ["current E2E capability probe is incomplete; do not carry specs to CI"];
   }
   const named = recorded.container;
@@ -483,7 +499,7 @@ export function targetedEvidenceProblems(runsFile, commit, worktree) {
   if (recomputed?.problem) problems.push(recomputed.problem);
   const impactKey = recomputed?.impact?.laneKey;
   if (inventory.actor !== "read-only") problems.push("targeted inventory must come from a read-only subagent");
-  if (inventory.source !== "final-committed-diff") problems.push("targeted inventory must read the final committed diff, not the plan");
+  if (inventory.source !== "final-committed-diff" && !(inventory.source === "working-tree" && validSourceIdentity(runsFile?.source) && inventory.commit === runsFile.source.head)) problems.push("targeted inventory must read the final committed diff, not the plan");
   if (impactKey && inventory.impactKey !== impactKey) {
     problems.push("targeted inventory does not name recomputed qa-impact.mjs changed-file scope");
   }

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { runDiffRules } from "./diff-rules.mjs";
 import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenInputs, frozenRenders, frozenStoryFiles, frozenStoryIds, prepareBase, rebuildStatic, runOwnedFrozenComparison, storyFileChanges } from "./frozen-render.mjs";
 import { CROP_MAX_WIDTH, decodePng, encodePng } from "./png-diff.mjs";
-import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
+import { git, makeHome, mutateSourceRead } from "../../vibe/scripts/test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "frozen-render.mjs");
 const BASE = "http://storybook-base";
@@ -501,6 +501,20 @@ function repairedCheckout(root, home, { story } = {}) {
 const VIEW = "composites-v1-0-sessions-contracts--view-and-creation";
 const BULK = "composites-v1-0-sessions-contracts--bulk-selection";
 
+test('frozen receipts reject mutation during story selection before attribution', async t => {
+  const { root, home, out } = sandbox(t);
+  const { checkout, base, STORY, repaired } = repairedCheckout(root, home);
+  const mutation = mutateSourceRead({ file: path.join(checkout, STORY), caller: 'storyFileChanges', text: `${repaired}\n// concurrent edit\n` });
+  t.after(mutation.restore);
+  const side = { [VIEW]: passes(shot(GREY)), [BULK]: passes(shot(BLUE)) };
+  const result = await frozenStoryFiles({ repo: checkout, base, storyFiles: [STORY], baseUrl: BASE, headUrl: HEAD, out,
+    browser: fakeBrowser({ [BASE]: side, [HEAD]: side }) });
+  assert.equal(mutation.mutated(), true);
+  assert.equal(result.ok, false);
+  assert.equal(result.changeLogLine, undefined);
+  assert.match(result.lines.join('\n'), /SOURCE-MOVED/);
+});
+
 test("a compile-only repaired story runs the head's story file against both app codes and clears (ISS-13317)", async (t) => {
   const { root, home, out } = sandbox(t);
   const { checkout, base, STORY, repaired } = repairedCheckout(root, home);
@@ -604,6 +618,8 @@ test("a recorded line survives unrelated commits and clears only proven unchange
   assert.doesNotMatch(summary.changeLogLine, /; head [0-9a-f]{40};/);
   assert.match(summary.changeLogLine, new RegExp(`; states ${id}; inputs [0-9a-f]{16}; `));
   assert.match(summary.changeLogLine, /; inputs [0-9a-f]{16}; /);
+  assert.equal(summary.source.head, base);
+  assert.match(summary.source.diffSha256, /^[a-f0-9]{64}$/);
   const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], home);
   writeFileSync(path.join(gitDir, "vibe-changes.md"), `${summary.changeLogLine}\n`);
   const isFrozenStory = (text) => / v1\.0\//.test(text);

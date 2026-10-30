@@ -7,7 +7,7 @@
 // stack to be free, runs the command, and releases the lock when the command
 // ends. A lock left by a process that no longer exists is taken over.
 //
-// Usage: e2e-lock.mjs run --head <sha> [--owner <writer>] [--ticket <slug>] [--wait-seconds <n>] [--lock-dir <dir>] [--foreign-compose <project>]... <command> [args...]
+// Usage: e2e-lock.mjs run --head <sha> [--source-hash <treeSha256>] [--owner <writer>] [--ticket <slug>] [--wait-seconds <n>] [--lock-dir <dir>] [--foreign-compose <project>]... <command> [args...]
 //        e2e-lock.mjs status [--lock-dir <dir>]
 //
 // The lock's own options come first; the first other word starts the command,
@@ -27,10 +27,10 @@
 // this lock: while `docker compose ls` shows it running, the stack counts as
 // busy. Without Docker, or when the listing fails, nothing is checked.
 //
-// `run` starts only when the worktree's HEAD is `--head` with no modified
-// tracked file (tested-head.mjs), prints `e2e-lock: testing <sha>` and fails
-// (exit 1) when HEAD moved during the run: runs once went on at an old commit
+// `run` checks HEAD against `--head`, fingerprints uncommitted inputs
+// (tested-head.mjs), prints both identities and fails (exit 1) when either moves: runs once went on at an old commit
 // after every checkout failed, and passes were reported for a commit never tested.
+// Accepted runs retain HEAD plus diff/tree hashes under <gitdir>/vibe-e2e-results.
 // A `--no-build` run also needs its compose project's images recorded as built
 // from that HEAD in that worktree (image-head.mjs, beside the lock folder), and a
 // passing build records them.
@@ -52,7 +52,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { imageProblem, recordImages } from "./image-head.mjs";
 import { readProcessIdentity } from "../../../shared/process-identity.mjs";
-import { testedHead } from "./tested-head.mjs";
+import { testedHead, sourceIdentity, sameSource, withStableSource } from "./tested-head.mjs";
 
 export const BUSY_EXIT = 75;
 export const DUPLICATE_EXIT = 76;
@@ -180,7 +180,7 @@ function isAlive(pid) {
   }
 }
 
-const OWN_OPTIONS = new Set(["--head", "--owner", "--ticket", "--wait-seconds", "--lock-dir", "--foreign-compose"]);
+const OWN_OPTIONS = new Set(["--source-hash", "--head", "--owner", "--ticket", "--wait-seconds", "--lock-dir", "--foreign-compose"]);
 const REPEATED_OPTIONS = new Set(["--foreign-compose"]);
 
 /** The first of `projects` that `docker compose ls` lists as running, or null; no Docker means none. */
@@ -413,6 +413,15 @@ async function main(argv) {
     process.stdout.write(`${JSON.stringify({ status: "busy", holder: attempt.holder })}\n`);
     return BUSY_EXIT;
   }
+  // Fingerprint after waiting: queued edits must not be reported as the command's inputs.
+  let source;
+  try {
+    source = sourceIdentity(worktree, tested);
+    if (values['source-hash'] !== undefined && values['source-hash'] !== source.treeSha256) {
+      throw new Error('SOURCE-HASH-MISMATCH --source-hash must identify the current working tree');
+    }
+  }
+  catch (error) { release(lockDir, owner); throw error; }
   const composeProject = composeProjectFor(process.env, owner.token);
   const generatedProject = !process.env.COMPOSE_PROJECT_NAME;
   const dockerReady = generatedProject && spawnSync(process.env.VIBE_E2E_DOCKER || "docker", ["version"],
@@ -430,23 +439,29 @@ async function main(argv) {
     }
     writeFileSync(cleanupFile, JSON.stringify({ project: composeProject, owner }), { mode: 0o600 });
   }
-  process.stderr.write(`e2e-lock: compose project ${composeProject}\ne2e-lock: testing ${tested}\n`);
-  const images = { project: composeProject, worktree: owner.worktree, head: tested, command: [command, ...args].join(" "),
+  process.stderr.write(`e2e-lock: compose project ${composeProject}\ne2e-lock: testing ${tested}\ne2e-lock: source ${JSON.stringify(source)}\n`);
+  const images = { project: composeProject, worktree: owner.worktree, head: tested, source, command: [command, ...args].join(" "),
     records: path.join(path.dirname(lockDir), "e2e-images") };
+  let outcome;
   try {
-    const stale = imageProblem(images);
-    if (stale) {
-      process.stderr.write(`${stale}\n`);
-      return 1;
-    }
-    const code = await runCommand(command, args, { ...process.env, COMPOSE_PROJECT_NAME: composeProject });
-    const after = execFileSync("git", ["-C", worktreeOf(process.cwd()), "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-    if (after === tested) {
-      if (code === 0) recordImagesOrSay(images);
-      return code;
-    }
-    process.stderr.write(`HEAD-MOVED from ${tested.slice(0, 12)} to ${after.slice(0, 12)} during the run; its result is not for ${tested.slice(0, 12)}\n`);
-    return code || 1;
+    outcome = await withStableSource(worktree, async current => {
+      if (!sameSource(source, current)) throw new Error('SOURCE-MOVED before E2E command startup');
+      const stale = imageProblem(images);
+      if (stale) {
+        process.stderr.write(`${stale}\n`);
+        return { exitCode: 1, executed: false };
+      }
+      return { exitCode: await runCommand(command, args, { ...process.env, COMPOSE_PROJECT_NAME: composeProject }), executed: true };
+    }, { head: tested });
+    if (outcome.executed && outcome.exitCode === 0) recordImagesOrSay(images);
+    return outcome.exitCode;
+  } catch (error) {
+    if (!error.message.startsWith('SOURCE-MOVED')) throw error;
+    outcome = { exitCode: 1, startedSource: source, error: error.message };
+    process.stderr.write(`${error.message} during the run\n`);
+    const after = execFileSync('git', ['-C', worktree, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    if (after !== tested) process.stderr.write(`HEAD-MOVED from ${tested.slice(0, 12)} to ${after.slice(0, 12)} during the run\n`);
+    return 1;
   } finally {
     try {
       if (dockerReady) {
@@ -454,6 +469,12 @@ async function main(argv) {
         writeFileSync(cleanupFile, JSON.stringify({ project: composeProject, owner, resources }), { mode: 0o600 });
         removeOwnedDockerResources(resources);
         rmSync(cleanupFile, { force: true });
+      }
+      if (outcome) {
+        const gitDir = execFileSync('git', ['-C', worktree, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim();
+        const receipts = path.join(gitDir, 'vibe-e2e-results');
+        mkdirSync(receipts, { recursive: true });
+        writeFileSync(path.join(receipts, `${owner.token}.json`), `${JSON.stringify({ command: owner.command, startedAt: owner.startedAt, ...outcome }, null, 2)}\n`, { mode: 0o600 });
       }
     } finally {
       release(lockDir, owner);

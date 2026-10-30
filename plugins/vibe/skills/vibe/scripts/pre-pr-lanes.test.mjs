@@ -114,8 +114,15 @@ test("a result names the commit it ran: a run refuses another HEAD or a modified
   git(worktree, ["checkout", "--quiet", intended], home);
   writeFileSync(path.join(worktree, "a.txt"), "leftover\n");
   const dirty = run("run", "--worktree", worktree, "--head", intended.slice(0, 10), "--command", pass, "--report", report);
-  assert.equal(dirty.status, 2);
-  assert.match(dirty.stderr, /^DIRTY-WORKTREE .*a\.txt/);
+  assert.equal(dirty.status, 0, dirty.stderr);
+  const evidence = JSON.parse(readFileSync(path.join(worktree, '.git/vibe-lane-results.json'), 'utf8')).find(row => row.command === pass);
+  assert.equal(evidence.head, intended);
+  assert.match(evidence.source.diffSha256, /^[a-f0-9]{64}$/);
+  assert.match(evidence.source.treeSha256, /^[a-f0-9]{64}$/);
+  const external = run('record', '--worktree', worktree, '--head', intended, '--command', pass, '--result', 'pass', '--report', report);
+  assert.equal(external.status, 2, 'remote results cannot infer dirty input identity from the local worktree');
+  assert.match(external.stderr, /--source/);
+  assert.equal(run('record', '--worktree', worktree, '--head', intended, '--source', JSON.stringify(evidence.source), '--command', pass, '--result', 'pass', '--report', report).status, 0);
   git(worktree, ["checkout", "--quiet", "--", "a.txt"], home);
   const clean = run("run", "--worktree", worktree, "--head", intended.slice(0, 10), "--command", pass, "--report", report);
   assert.equal(clean.status, 0, clean.stderr);
@@ -123,6 +130,27 @@ test("a result names the commit it ran: a run refuses another HEAD or a modified
   const moved = run("run", "--worktree", worktree, "--head", intended, "--command", movedCommand, "--report", report);
   assert.equal(moved.status, 1, "HEAD moving during the run fails it");
   assert.match(moved.stdout, /^HEAD-MOVED /m);
+});
+
+test('a lane detects uncommitted edits during a run and invalidates stale evidence at the same HEAD', (t) => {
+  const { root, home, cleanup } = makeHome('vibe-dirty-lane-');
+  t.after(cleanup);
+  const wt = path.join(root, 'wt');
+  git(root, ['init', '--quiet', wt], home);
+  writeFileSync(path.join(wt, 'a.txt'), 'base');
+  git(wt, ['add', '.'], home);
+  git(wt, ['commit', '--quiet', '-m', 'base'], home);
+  const head = git(wt, ['rev-parse', 'HEAD'], home).trim();
+  const pass = 'node -e "0"';
+  const mutation = `node -e "require('fs').writeFileSync('a.txt','changed')"`;
+  const report = path.join(root, 'lanes.txt');
+  writeFileSync(report, `    ${pass}\n    ${mutation}\n`);
+  const run = (action, ...args) => spawnSync(process.execPath, [SCRIPT, action, '--worktree', wt, '--report', report, ...args], { encoding: 'utf8', env: { ...process.env, HOME: home } });
+  assert.equal(run('run', '--head', head, '--command', pass).status, 0);
+  const changed = run('run', '--head', head, '--command', mutation);
+  assert.equal(changed.status, 1, changed.stdout);
+  assert.match(changed.stdout, /SOURCE-MOVED/);
+  assert.match(run('check').stdout, /MISSING-LANE node -e "0"/);
 });
 
 test("without the staging e2e identities the local web e2e lane is recorded not run and does not stop the PR (operator ruling, 2026-10-28, ISS-13291)", (t) => {
@@ -208,6 +236,8 @@ test("a lane that also fails on captured main is recorded main-preexisting and d
   assert.equal(recorded.status, 0, recorded.stdout + recorded.stderr);
   const [entry] = JSON.parse(readFileSync(records, "utf8"));
   assert.deepEqual([entry.result, entry.mainSha], ["main-preexisting", mainSha]);
+  assert.equal(entry.mainSource.head, mainSha);
+  assert.match(entry.mainSource.treeSha256, /^[a-f0-9]{64}$/);
   const checked = run("check", "--worktree", worktree, "--report", report);
   assert.equal(checked.status, 0, checked.stdout);
   assert.match(checked.stdout, /^MAIN-PREEXISTING-LANE node -e /m);
@@ -215,4 +245,8 @@ test("a lane that also fails on captured main is recorded main-preexisting and d
   const sessionCaused = run("run", "--worktree", worktree, "--head", head, "--command", sessionCommand, "--report", sessionReport, "--main-worktree", mainCheckout, "--main-sha", mainSha);
   assert.equal(sessionCaused.status, 1, "a lane that passes on main is the session's failure");
   assert.match(sessionCaused.stdout, /^recorded fail for node -e /m);
+  writeFileSync(path.join(mainCheckout, 'red.txt'), 'uncommitted baseline drift');
+  const dirtyMain = run('run', '--worktree', worktree, '--head', head, '--command', lane, '--report', report, '--main-worktree', mainCheckout, '--main-sha', mainSha);
+  assert.equal(dirtyMain.status, 2, 'a dirty baseline cannot establish a failure on captured main');
+  assert.match(dirtyMain.stderr, /captured main must be clean/);
 });

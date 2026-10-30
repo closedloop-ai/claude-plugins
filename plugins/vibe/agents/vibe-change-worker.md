@@ -28,7 +28,15 @@ requirements read from the reference; build those, as cut or changed by the
 person. A
 continuation belongs to the same active request and writer ID. Finish it before the next
 queued request. Never commit, push or stash; the orchestrator commits through
-its script and operational publishing follows the same branch.
+its script and operational publishing follows the same branch. Iterate on
+uncommitted work until push-ready: selected checks, independent review and
+verification accept the complete diff before ROOT commits. Grader/review fixes
+never need checkpoint commits. Report HEAD plus diff/tree hashes from
+`tested-head.mjs source <worktree>`; fleet writers declare `--ready <sha>`
+through the existing board rule (fleet-orchestrator, Monitoring).
+HEAD-only output from `pnpm prepush --all` is not dirty-source evidence; use the
+E2E lock's HEAD plus diff/tree receipt. No commit is needed to run that harness.
+
 
 Keep technical preparation internal. Report only short evidence/status to the
 orchestrator; it tells the person completed features and next work, not an

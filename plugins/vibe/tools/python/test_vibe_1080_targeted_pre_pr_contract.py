@@ -16,13 +16,13 @@ def test_handoff_requires_final_diff_inventory_before_pr_creation() -> None:
     handoff = read("skills/handoff/SKILL.md")
     verify = read("agents/vibe-verify-worker.md")
     environment = read("agents/vibe-environment-worker.md")
-    assert "`pre-pr` mode on final\nHEAD" in handoff
-    assert "read the final committed diff, never the plan" in verify
+    assert "`pre-pr` mode on the candidate\nHEAD plus diff/tree hashes" in handoff
+    assert "read the final uncommitted change identified by HEAD plus\ndiff/tree hashes, never the plan" in verify
     assert "Run `pnpm test:lanes`" in verify
     assert "post-merge-only lane" in verify
     assert "rerun only that failed case" in verify
     assert "pr-evidence-comment.mjs" in environment
-    assert "blocking.prEvidence" in environment
+    assert "either blocking gate false creates nothing" in environment
 
 
 def test_e2e_tiers_and_operator_override_are_owned_rules() -> None:

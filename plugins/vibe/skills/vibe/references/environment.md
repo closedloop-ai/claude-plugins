@@ -284,6 +284,13 @@ request, owned prototype share and final handoff, begin a fresh coherent transac
 Git push itself can trigger Vercel, so a stale interim push is forbidden even
 when no request workflow has started. The root keeps this sequence internal:
 
+For handoff, the source-producing steps below run before independent review as
+[handoff's final candidate](../../handoff/SKILL.md#final-main-sync-candidate) specifies.
+After its sole writer commit these APIs are admission-only: defer later main,
+permit no source fixes or commit/recheck loop, and block on changed inputs.
+Only handoff's proven zero-tree-delta operational ancestry exception applies.
+The source-repair loops below apply to other publication purposes.
+
 ROOT commits the checked deliverable LOCALLY through the existing commit
 script and normal hooks, still unpushed, BEFORE preparation. Private plans stay
 excluded; interfering protected localFix source is preserved and blocks parity,

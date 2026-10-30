@@ -6,7 +6,7 @@
 //
 // Usage:
 //   pre-pr-lanes.mjs run    --worktree <path> --head <sha> --command "<lane command>" (--report <initial lane report> | --impact <qa-impact JSON>) [--main-worktree <checkout of captured main> --main-sha <sha>]
-//   pre-pr-lanes.mjs record --worktree <path> --head <sha the run tested> --command "<lane command>" --result pass|fail (--report <initial lane report> | --impact <qa-impact JSON>)
+//   pre-pr-lanes.mjs record [--source <external source JSON; required for uncommitted inputs>] --worktree <path> --head <sha the run tested> --command "<lane command>" --result pass|fail (--report <initial lane report> | --impact <qa-impact JSON>)
 //   pre-pr-lanes.mjs check  --worktree <path> (--report <initial lane report> | --impact <qa-impact JSON>) [--skip <regex> --skip-ruling "<who, when, where>"]
 //
 // The report's lane commands are its 4-space-indented lines that start with a
@@ -48,8 +48,8 @@
 //
 // `run` runs a lane in the worktree and records its result; `record` takes a
 // result run elsewhere. Both refuse unless the worktree's HEAD is `--head`
-// with no modified tracked file (tested-head.mjs), and `run` records a failure
-// when HEAD moved while it ran, so every result names the commit it tested.
+// and record HEAD, diffSha256 and treeSha256 (tested-head.mjs). `run` fails
+// if HEAD or uncommitted inputs move. `check` refuses evidence for other content.
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -59,7 +59,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
 import { git } from "./session-record.mjs";
-import { testedHead } from "./tested-head.mjs";
+import { testedHead, sourceIdentity, sameSource, withStableSource } from "./tested-head.mjs";
 
 const LANE_LINE = /^ {4}((?:[A-Za-z_][A-Za-z0-9_]*=(?:'(?:[^']|'\\'')*'|\S+)\s+)*(?:pnpm|npm|npx|yarn|node)\s.*?)(?:\s+\(.*\))?\s*$/;
 const NOTHING = /nothing to cover|No paths changed/i;
@@ -115,7 +115,7 @@ export function hasStagingE2eIdentity(worktree, env = process.env) {
 }
 
 function sameSelection(record, selection) {
-  return record.laneKey === selection.laneKey;
+  return record.laneKey === selection.laneKey && (!selection.source || record.source?.treeSha256 === selection.source.treeSha256);
 }
 
 /** Lanes with no passing record for the selected changed-file scope; head is provenance only. */
@@ -162,67 +162,84 @@ function selectedScope(values, command) {
 function main(argv) {
   const [command, ...rest] = argv;
   const { values } = parseArgs({ args: rest, options: {
-    worktree: { type: "string" }, head: { type: "string" }, command: { type: "string" }, result: { type: "string" }, report: { type: "string" }, impact: { type: "string" }, skip: { type: "string" }, "skip-ruling": { type: "string" },
+    worktree: { type: "string" }, head: { type: "string" }, source: { type: "string" }, command: { type: "string" }, result: { type: "string" }, report: { type: "string" }, impact: { type: "string" }, skip: { type: "string" }, "skip-ruling": { type: "string" },
     "main-worktree": { type: "string" }, "main-sha": { type: "string" },
   } });
   if (!values.worktree) throw new Error("--worktree is required");
   if (command === "run" || command === "record") {
     if (!values.command?.trim() || (command === "record" && !["pass", "fail"].includes(values.result))) throw new Error(`${command} needs --head, --command${command === "record" ? " and --result pass|fail" : ""}`);
     const tested = testedHead(values.worktree, values.head);
-    const selected = selectedScope(values, values.command.trim());
+    const source = sourceIdentity(values.worktree, tested);
+    if (command === "record") {
+      if (!values.source && source.diffSha256 !== createHash('sha256').digest('hex')) {
+        throw new Error('record of uncommitted inputs needs --source <JSON identity captured by the external runner>');
+      }
+      if (values.source && !sameSource(JSON.parse(values.source), source)) throw new Error('record --source does not match the current inputs');
+    }
+    const selected = { ...selectedScope(values, values.command.trim()), source };
     if (Boolean(values["main-worktree"]) !== Boolean(values["main-sha"]) || (values["main-worktree"] && command !== "run")) {
       throw new Error("--main-worktree and --main-sha go together, on run only");
     }
     const mainTested = values["main-worktree"] ? testedHead(values["main-worktree"], values["main-sha"]) : null;
     let result = values.result;
     let mainSha;
+    const mainSource = mainTested ? sourceIdentity(values["main-worktree"], mainTested) : undefined;
+    if (mainSource && mainSource.diffSha256 !== createHash('sha256').digest('hex')) throw new Error('captured main must be clean to establish a main-preexisting failure');
     if (command === "run") {
-      const run = spawnSync(values.command, { cwd: values.worktree, shell: true, stdio: "inherit" });
-      const after = git(values.worktree, ["rev-parse", "HEAD"]);
-      result = run.status === 0 && after === tested ? "pass" : "fail";
-      if (after !== tested) process.stdout.write(`HEAD-MOVED from ${tested.slice(0, 12)} to ${after.slice(0, 12)} during the run\n`);
-      if (result === "fail" && after === tested && mainTested) {
-        const onMain = spawnSync(values.command, { cwd: values["main-worktree"], shell: true, stdio: "inherit" });
-        const mainAfter = git(values["main-worktree"], ["rev-parse", "HEAD"]);
-        if (onMain.status !== 0 && mainAfter === mainTested) {
-          result = "main-preexisting";
-          mainSha = mainTested;
-        }
+      const execute = (tree, expected) => withStableSource(tree, current => {
+        if (!sameSource(expected, current)) throw new Error('SOURCE-MOVED before lane startup');
+        return { status: spawnSync(values.command, { cwd: tree, shell: true, stdio: 'inherit' }).status };
+      }, { head: expected.head });
+      let unchanged = true;
+      try { result = execute(values.worktree, source).status === 0 ? 'pass' : 'fail'; }
+      catch (error) {
+        if (!error.message.startsWith('SOURCE-MOVED')) throw error;
+        unchanged = false;
+        result = 'fail';
+        process.stdout.write(`${error.message} during the run\n`);
+        const after = git(values.worktree, ['rev-parse', 'HEAD']);
+        if (after !== tested) process.stdout.write(`HEAD-MOVED from ${tested.slice(0, 12)} to ${after.slice(0, 12)} during the run\n`);
+      }
+      if (result === 'fail' && unchanged && mainTested && execute(values['main-worktree'], mainSource).status !== 0) {
+        result = 'main-preexisting';
+        mainSha = mainTested;
       }
     }
     const records = readRecords(values.worktree).filter((record) => !(record.command === values.command.trim() && sameSelection(record, selected)));
-    records.push({ command: values.command.trim(), head: tested, laneKey: selected.laneKey, result, ...(mainSha ? { mainSha } : {}), at: new Date().toISOString() });
+    records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey, result, ...(mainSha ? { mainSha, mainSource } : {}), at: new Date().toISOString() });
     writeFileSync(recordsFile(values.worktree), `${JSON.stringify(records, null, 2)}\n`);
-    process.stdout.write(`recorded ${result} for ${values.command.trim()} at ${tested}${mainSha ? ` (fails on captured main ${mainSha} too)` : ""}\n`);
+    process.stdout.write(`recorded ${result} for ${values.command.trim()} at ${JSON.stringify(source)}${mainSha ? ` (fails on captured main ${mainSha} too)` : ""}\n`);
     return result === "pass" || result === "main-preexisting" ? 0 : 1;
   }
-  const head = git(values.worktree, ["rev-parse", "HEAD"]);
   if (command === "check") {
-    if (values.skip && !values["skip-ruling"]?.trim()) throw new Error("--skip needs --skip-ruling naming the operator ruling that waives those lanes");
-    const selected = selectedScope(values);
-    const named = selected.lanes;
-    const impact = selected.impact;
-    if (impact && !["None", "Lanes only", "Visual QA"].includes(impact.outcome)) throw new Error("the impact file has no valid qa-impact outcome");
-    const skip = values.skip ? new RegExp(values.skip, "i") : null;
-    const records = readRecords(values.worktree);
-    const left = notRunLanes(named.filter((lane) => !skip?.test(lane)), records, selected,
-      { identity: hasStagingE2eIdentity(values.worktree), harness: hasDisplaylessElectronHarness() });
-    const notRun = left.map((item) => item.lane);
-    const lanes = named.filter((lane) => !skip?.test(lane) && !notRun.includes(lane));
-    for (const lane of named.filter((lane) => skip?.test(lane))) process.stdout.write(`SKIPPED-LANE ${lane} (${values["skip-ruling"].trim()})\n`);
-    if (notRun.length) {
-      const kept = records.filter((record) => !(notRun.includes(record.command) && sameSelection(record, selected)));
-      const at = new Date().toISOString();
-      writeFileSync(recordsFile(values.worktree), `${JSON.stringify([...kept, ...left.map(({ lane, reason }) => ({ command: lane, head, laneKey: selected.laneKey, result: "not-run", reason, at }))], null, 2)}\n`);
-      for (const { lane, reason } of left) process.stdout.write(`NOT-RUN-LANE ${lane} (${reason})\n`);
-    }
-    for (const record of records.filter((item) => lanes.includes(item.command) && sameSelection(item, selected) && item.result === "main-preexisting")) {
-      process.stdout.write(`MAIN-PREEXISTING-LANE ${record.command} (fails on captured main ${record.mainSha} too; list it under Known main failures)\n`);
-    }
-    const missing = missingLanes(lanes, records, selected);
-    for (const lane of missing) process.stdout.write(`MISSING-LANE ${lane}: run it with pre-pr-lanes.mjs run --head <HEAD> --command "${lane}" ${impact ? "--impact <qa-impact JSON>" : "--report <lane report>"}\n`);
-    process.stdout.write(`pre-pr lanes: ${lanes.length} lanes, ${missing.length} missing${notRun.length ? `, ${notRun.length} not run locally` : ""} for changed-file scope ${selected.laneKey ?? "none"}\n`);
-    return missing.length === 0 ? 0 : 1;
+    return withStableSource(values.worktree, source => {
+      const head = source.head;
+      if (values.skip && !values["skip-ruling"]?.trim()) throw new Error("--skip needs --skip-ruling naming the operator ruling that waives those lanes");
+      const selected = { ...selectedScope(values), source };
+      const named = selected.lanes;
+      const impact = selected.impact;
+      if (impact && !["None", "Lanes only", "Visual QA"].includes(impact.outcome)) throw new Error("the impact file has no valid qa-impact outcome");
+      const skip = values.skip ? new RegExp(values.skip, "i") : null;
+      const records = readRecords(values.worktree);
+      const left = notRunLanes(named.filter((lane) => !skip?.test(lane)), records, selected,
+        { identity: hasStagingE2eIdentity(values.worktree), harness: hasDisplaylessElectronHarness() });
+      const notRun = left.map((item) => item.lane);
+      const lanes = named.filter((lane) => !skip?.test(lane) && !notRun.includes(lane));
+      for (const lane of named.filter((lane) => skip?.test(lane))) process.stdout.write(`SKIPPED-LANE ${lane} (${values["skip-ruling"].trim()})\n`);
+      if (notRun.length) {
+        const kept = records.filter((record) => !(notRun.includes(record.command) && sameSelection(record, selected)));
+        const at = new Date().toISOString();
+        writeFileSync(recordsFile(values.worktree), `${JSON.stringify([...kept, ...left.map(({ lane, reason }) => ({ command: lane, head, source: selected.source, laneKey: selected.laneKey, result: "not-run", reason, at }))], null, 2)}\n`);
+        for (const { lane, reason } of left) process.stdout.write(`NOT-RUN-LANE ${lane} (${reason})\n`);
+      }
+      for (const record of records.filter((item) => lanes.includes(item.command) && sameSelection(item, selected) && item.result === "main-preexisting")) {
+        process.stdout.write(`MAIN-PREEXISTING-LANE ${record.command} (fails on captured main ${record.mainSha} too; list it under Known main failures)\n`);
+      }
+      const missing = missingLanes(lanes, records, selected);
+      for (const lane of missing) process.stdout.write(`MISSING-LANE ${lane}: run it with pre-pr-lanes.mjs run --head <HEAD> --command "${lane}" ${impact ? "--impact <qa-impact JSON>" : "--report <lane report>"}\n`);
+      process.stdout.write(`pre-pr lanes: ${lanes.length} lanes, ${missing.length} missing${notRun.length ? `, ${notRun.length} not run locally` : ""} for changed-file scope ${selected.laneKey ?? "none"}\n`);
+      return { exitCode: missing.length === 0 ? 0 : 1 };
+    }).exitCode;
   }
   throw new Error("Usage: pre-pr-lanes.mjs record|check ...");
 }

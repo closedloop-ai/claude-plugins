@@ -727,11 +727,12 @@ test('bug tickets land a failing test before the fix and extend the existing tes
   // Extends step 6 and Residual contract testability instead of duplicating them.
   assert.match(implementation, /6\. Add focused tests for changed behavior[\s\S]{0,260}On bug tickets, go red first/);
   assert.match(implementation, /Reproduce the bug twice, in two separate\s+runs with the same symptom, before trusting the repro/);
-  assert.match(implementation, /Commit the focused test that fails on the base first, with its recorded\s+failure, then commit the fix, so the history shows red then green/);
+  assert.match(implementation, /Keep the recorded failing run on the base as evidence while iterating\s+uncommitted through the fix, selected checks, independent review and\s+verification/);
+  assert.match(implementation, /Commit test and fix together only when push-ready/);
   assert.match(implementation, /This test is the Residual contract testability probe from[\s\S]{0,80}not a second one/);
-  assert.match(implementation, /do not bypass the hook/);
+  assert.match(implementation, /Never bypass a mandatory commit hook or make a red checkpoint commit/);
   assert.match(implementation, /When no cheap test path exists[\s\S]{0,160}record why and use the closest\s+runtime evidence as the red step instead/);
-  assert.match(gates, /Residual contract testability:[\s\S]{0,700}On bug tickets, name\s+which probe is the red-first test that implementation commits before the fix/);
+  assert.match(gates, /Residual contract testability:[\s\S]{0,700}On bug tickets, name\s+which probe records red-first evidence while implementation iterates uncommitted/);
   assert.match(gates, /why no cheap\s+test path exists and which runtime evidence stands in for it/);
   assert.match(analyze, /For a bug ticket, name the cheap test path that can fail on current main before the fix, or say why none exists/);
   assert.match(formats, /^Red-first evidence: <not_applicable - not a bug ticket \|/m);
@@ -948,7 +949,7 @@ test('bug fixes need a confirmed repro, a named root cause, and a red run that f
   assert.match(step6, /An inconclusive run or a run on a\s+different surface is not a pass/);
   // Extends the existing red-first bullets instead of duplicating them.
   assert.equal((step6.match(/Reproduce the bug twice/g) ?? []).length, 1);
-  assert.equal((step6.match(/Commit the focused test that fails on the base first/g) ?? []).length, 1);
+  assert.equal((step6.match(/Commit test and fix together only when push-ready/g) ?? []).length, 1);
   assert.match(formats, /^Red-first evidence: <[^\n]*failure output on the base and the assertion it failed on/m);
   assert.match(formats, /^Root cause: <not_applicable - not a bug ticket \| one-sentence cause, the runtime observation that confirmed it/m);
 });

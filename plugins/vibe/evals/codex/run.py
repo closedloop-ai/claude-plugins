@@ -27,6 +27,27 @@ PERSONAS = {"exec-": "executive-", "pm-": "product-manager-", "orch-": "orchestr
 SKILLS = ("fleet-orchestrator", "handoff", "vibe")
 
 
+def snapshot_metadata(output: Path) -> dict[str, Any]:
+    """Identify actual copied payloads through the shared Claude/Codex identity helper."""
+    script = output / "receipt-helper/tested-head.mjs"
+    if not script.is_file():
+        script = output / "market/plugins/vibe/skills/vibe/scripts/tested-head.mjs"
+    payloads = {
+        name: json.loads(subprocess.check_output(
+            ["node", str(script), "tree", str(output / "market/plugins" / name)], text=True
+        ))
+        for name in ("vibe", "closedloop-core")
+    }
+    suite = json.loads(subprocess.check_output(
+        ["node", str(script), "tree", str(output / "suite")], text=True
+    ))
+    helper = {
+        "sha256": hashlib.sha256(script.read_bytes()).hexdigest(),
+        "session_record_sha256": hashlib.sha256(script.with_name("session-record.mjs").read_bytes()).hexdigest(),
+    }
+    return {"payloads": payloads, "suite": suite, "identity_helper": helper}
+
+
 def document(path: Path) -> tuple[dict[str, Any], str]:
     """Read the same YAML frontmatter used by the Claude suite."""
     _, header, body = path.read_text().split("---", 2)
@@ -61,6 +82,17 @@ def cases(root: Path = EVALS) -> list[dict[str, Any]]:
     result = []
     for path in sorted(root.glob("*/prompt.md")):
         meta, prompt = document(path)
+        config = path.parent / "case.yaml"
+        if config.is_file():
+            case_config = yaml.safe_load(config.read_text()) or {}
+            scaffold = case_config.get("context", {}).get("scaffold_script")
+            if scaffold:
+                if not isinstance(scaffold, str):
+                    raise ValueError(f"unsafe scaffold_script in {config}")
+                scaffold_path = Path(scaffold)
+                if scaffold_path.is_absolute() or ".." in scaffold_path.parts:
+                    raise ValueError(f"unsafe scaffold_script in {config}")
+                meta["scaffold_script"] = scaffold
         name = path.parent.name
         for prefix, persona in PERSONAS.items():
             if name.startswith(prefix):
@@ -157,11 +189,10 @@ def install(
         source = plugin if name == "vibe" else plugin.parent / name
         target = market / "plugins" / name
         target.parent.mkdir(exist_ok=True)
-        # A snapshot makes concurrent worktree edits and later installs irrelevant.
-        shutil.copytree(
-            source,
-            target,
-            ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"),
+        # Both runtimes use the same Git-selected, symlink-confined copier.
+        subprocess.check_output(
+            ["node", str(PLUGIN / "skills/vibe/scripts/tested-head.mjs"), "copy", str(source), str(target)],
+            text=True, timeout=min(60, budget.remaining()),
         )
         entries.append(
             dict(
@@ -174,6 +205,16 @@ def install(
     (catalog / "marketplace.json").write_text(
         json.dumps({"name": "vibe-eval", "plugins": entries})
     )
+    subprocess.check_output(
+        ["node", str(PLUGIN / "skills/vibe/scripts/tested-head.mjs"), "copy", str(EVALS), str(output / "suite")],
+        text=True, timeout=min(60, budget.remaining()),
+    )
+    # Freeze the hashing runtime separately so older model payloads remain byte-for-byte unchanged.
+    subprocess.check_output(
+        ["node", str(PLUGIN / "skills/vibe/scripts/tested-head.mjs"), "copy", str(PLUGIN / "skills/vibe/scripts"), str(output / "receipt-helper")],
+        text=True, timeout=min(60, budget.remaining()),
+    )
+    (output / "snapshot.json").write_text(json.dumps(snapshot_metadata(output), indent=2))
     command(
         ["codex", "plugin", "marketplace", "add", str(market), "--json"],
         output,
@@ -494,9 +535,11 @@ def run_case(
     result: dict[str, Any] = dict(case=case["name"], checks=[], usage={}, seconds=0)
     try:
         visual = "visual-cues" in case["meta"].get("tags", [])
-        if visual:
+        scaffold_script = case["meta"].get("scaffold_script")
+        scaffolded = visual or bool(case["meta"].get("scaffold")) or bool(scaffold_script)
+        if scaffolded:
             command(
-                ["bash", str(case["source"] / "scaffold.sh")],
+                ["bash", str(case["source"] / (scaffold_script or "scaffold.sh"))],
                 work,
                 env,
                 budget,
@@ -529,7 +572,7 @@ def run_case(
             + prompt
         )
         (work / "input.txt").write_text(prompt)
-        args = exec_args(model, work, work / "reply.txt", visual)
+        args = exec_args(model, work, work / "reply.txt", scaffolded)
         for image in sorted((work / "images").glob("*.png")):
             args += ["--image", str(image)]
         command(
@@ -671,16 +714,26 @@ def main() -> int:
     print("Artifacts: " + str(output), flush=True)
     budget = Budget(args.max_seconds)
     try:
+        identity_script = PLUGIN / "skills/vibe/scripts/tested-head.mjs"
+        source = json.loads(subprocess.check_output(
+            ["node", str(identity_script), "source", str(args.plugin)], text=True
+        ))
         env = install(output, args.plugin.resolve(), dict(os.environ), budget)
+        snapshot = json.loads((output / "snapshot.json").read_text())
+        copied_plugin = output / "market/plugins/vibe"
+        selected_names = {case["name"] for case in selected}
+        selected = [case for case in cases(output / "suite") if case["name"] in selected_names]
+        if {case["name"] for case in selected} != selected_names:
+            raise RuntimeError("case selection changed while copying the eval suite")
         metadata: dict[str, Any] = dict(
-            source_sha=subprocess.check_output(
-                ["git", "-C", str(args.plugin), "rev-parse", "HEAD"], text=True
-            ).strip(),
+            source_sha=source["head"],
+            source=source,
+            **snapshot,
             skill_sha256=hashlib.sha256(
-                (args.plugin / "skills/vibe/SKILL.md").read_bytes()
+                (copied_plugin / "skills/vibe/SKILL.md").read_bytes()
             ).hexdigest(),
             plugin=str(args.plugin.resolve()),
-            version=plugin_version(args.plugin),
+            version=plugin_version(copied_plugin),
             model=args.model,
             grader_model=args.grader_model,
             concurrency=args.concurrency,
@@ -697,6 +750,7 @@ def main() -> int:
                 )
             )
         metadata["elapsed_seconds"] = round(args.max_seconds - budget.remaining(), 1)
+        metadata["snapshot_unchanged"] = snapshot_metadata(output) == snapshot
         metadata["usage"] = {
             key: sum(r["usage"].get(key, 0) for r in results)
             for key in {k for r in results for k in r["usage"]}
@@ -704,7 +758,7 @@ def main() -> int:
         (output / "results.json").write_text(
             json.dumps(dict(run=metadata, cases=results), indent=2)
         )
-        return 0 if all(r["passed"] for r in results) else 1
+        return 0 if metadata["snapshot_unchanged"] and all(r["passed"] for r in results) else 1
     finally:
         # Authentication is disposable even when installation or a run fails.
         (output / "home/auth.json").unlink(missing_ok=True)

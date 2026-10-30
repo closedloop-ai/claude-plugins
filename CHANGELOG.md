@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.21
+
+#### Added
+- Claude and Codex eval receipts fingerprint their copied payloads, and a nineteen-revision grader-loop regression rejects intermediate commits.
+
+#### Changed
+- Writers and fleet orchestration keep iteration uncommitted until review, verification, and checks make one commit push-ready. Required criteria, ruling, and rollout audits run before pull-request creation (ISS-13430).
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 2 words shorter than in 1.1.20.
+
+#### Fixed
+- Dirty-source checks, QA, image, E2E, and inventory evidence use the committed head plus a deterministic source fingerprint and reject inputs that change during a run. Fleet board and watcher output report undeclared writer commits while excluding commits imported from the base branch.
+
 ### vibe v1.1.20
 
 #### Added

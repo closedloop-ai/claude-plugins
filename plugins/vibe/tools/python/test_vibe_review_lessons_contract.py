@@ -282,9 +282,9 @@ def test_reuse_and_wording_checks_grep_shared_owners_first() -> None:
 def test_pr_body_files_are_named_per_ticket_and_read_back_before_gh() -> None:
     environment = section(agent("vibe-environment-worker"), "## Pull-request mode")
     assert_all(environment, (
-        "named for the live ticket (`pr-body-<live ticket slug>.md`), never a shared name such as `pr-body.md`",
-        "Read the file back right before the `gh` command",
-        "the file named and re-read as step 4 says",
+        "`<gitdir>/pr-body-<live ticket slug>.md`, never shared scratch",
+        "Keep `receipt.sha256` private",
+        "It rechecks inputs and sends the verified body buffer to `gh`; mismatches block.",
     ))
     cl_execute = flat(CL_EXECUTE_PR.read_text())
     assert "(`pr-body-<ticket slug>.md`, never a shared name such as `pr-body.md`)" in cl_execute

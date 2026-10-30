@@ -26,7 +26,7 @@ FIXED_ASSIGNEE = re.compile(r"\bassign(?:s|ed)?\b[^.\n]{0,40}?\bto [A-Z][a-z]+ [
 
 def test_final_publication_keeps_input_readiness_distinct_from_coverage() -> None:
     upload = section(HANDOFF_SKILL.read_text(), "## 7. Upload the last changes")
-    for required in ("main-sync-inputs", "mainSyncValidation", "same actor", "retained reports",
+    for required in ("main-sync-inputs", "mainSyncValidation", "same actor", "never retained PASS",
                      "requiredE2eComplete", "not test authority"):
         assert required in upload, required
 
@@ -51,7 +51,7 @@ def test_step_eight_routes_answers_and_blocks_finalizing_until_reruns_finish() -
 
     assert "`NEEDS_PERSON`" in step_eight
     assert "`NEEDS_CHANGE`" in step_eight
-    assert "route their answer as \"Answers from the person\" says" in step_eight
+    assert "Missing behavior criteria should have failed candidate preflight" in step_eight
     assert "Environment base commit from the current inventory" in step_eight
     assert "Never go on to step 9 while a behavior answer" in step_eight
 
@@ -331,7 +331,7 @@ def test_pull_request_body_and_evidence_are_gated_by_the_inventory() -> None:
     assert "`blocking.prBody` and `blocking.prEvidence`" in hand_over
     mode = section((PLUGIN_ROOT / "agents" / "vibe-environment-worker.md").read_text(), "## Pull-request mode")
     for required in ("--phase pull-request --overlap --ticket", "`assertionChanges`", "`refusals`",
-                     "false creates nothing (`NEEDS_CHANGE`)", "fresh PostHog evaluation"):
+                     "either blocking gate false creates nothing", "fresh PostHog evaluation"):
         assert required in mode, required
     assert "`serverOnly` true skips step 4" in section(HANDOFF_SKILL.read_text(), "## 1. Internal checklist")
 
@@ -349,4 +349,6 @@ def test_input_readiness_runs_once_after_the_committed_merge() -> None:
     assert "once, after this exact committed merge/fix result" in environment
     assert "no readiness pass precedes capture" in environment
     assert "fix that cause rather than rerunning into the same bound" in environment
-    assert "`main-sync-inputs` once, after the" in flat(HANDOFF_SKILL.read_text())
+    handoff = flat(HANDOFF_SKILL.read_text())
+    assert "`main-sync-inputs`" in handoff
+    assert "Here source fixes are forbidden" in handoff
