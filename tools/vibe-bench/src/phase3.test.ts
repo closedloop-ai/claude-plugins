@@ -23,7 +23,7 @@ import { codexEvalBudgetSeconds, codexEvalRunnerPath, confirmedNightlyRegression
   stageFocusedClaudeEvalCases } from "./eval-driver.ts";
 import { main as runEvalNightly, reportNightlyInfrastructureFailure } from "./eval-nightly.ts";
 import { formatNightlyInfrastructureMessage, formatNightlyRegressionMessage, nightlyChangesSince,
-  SLACK_DELIVERY_TEST_MESSAGE, SlackDeliveryError,
+  isRetrySafeSlackFailure, SLACK_DELIVERY_TEST_MESSAGE, SlackDeliveryError,
   SlackNightlyRegressionReporter } from "./eval-slack.ts";
 import type { NightlyRegressionNotice } from "./eval-slack.ts";
 import { formatNightlyTaskSummary, nightlyTaskSummary } from "./nightly-summary.ts";
@@ -32,6 +32,18 @@ import { runApprovedSlackTest } from "./slack-relay-test.ts";
 import { slackToolGateDecision } from "./slack-tool-gate.ts";
 
 const CASE = "pm-new-session-first-reply";
+const REPO_ROOT = realpathSync(join(import.meta.dirname, "../../.."));
+
+test("vibe-bench skill copies share the Slack MCP relay contract", () => {
+  const contract = "Nightly Slack delivery uses the authenticated Slack MCP relay through " +
+    "headless Claude Code; no Slack bot-token file or scheduler environment file is required.";
+  for (const path of [".claude/skills/vibe-bench/SKILL.md",
+    ".agents/skills/vibe-bench/SKILL.md"]) {
+    const skill = readFileSync(join(REPO_ROOT, path), "utf8");
+    assert.match(skill, new RegExp(contract.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.doesNotMatch(skill, /SLACK_BOT_TOKEN|SLACK_CHANNEL_ID/);
+  }
+});
 
 test("model evals are local-only and use two failure retries", () => {
   assert.equal(EVAL_POLICY.claudeModel, "claude-sonnet-5-5");
@@ -422,29 +434,45 @@ test("nightly regression Slack message names cases, runtimes, PR authors and res
   assert.match(expiryMessage, /claude: vibe-route, owner @vibe-maintainers, expired 2026-11-13/);
 
   const invocations: Array<{ command: string; args: string[]; input: string; timeout: number }> = [];
-  const transcript = (text: string, extras: object[] = []) => [
+  const transcript = (text: string, extras: object[] = [], isError = false) => [
     { type: "system", subtype: "init" },
     { type: "assistant", message: { content: [{ type: "tool_use", id: "tool-1",
       name: "mcp__plugin_slack_slack__slack_send_message",
       input: { channel_id: "C0CC9G7V01G", message: text } }] } },
     ...extras,
     { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tool-1",
-      is_error: false, content: JSON.stringify({
-        message_context: { channel_id: "C0CC9G7V01G", message_ts: "1793393000.000100" },
-        message_link: "https://closedloop.slack.com/archives/test",
-      }) }] } },
+      is_error: isError, content: isError ? "PreToolUse hook denied this tool call" :
+        JSON.stringify({ message_context: { channel_id: "C0CC9G7V01G",
+          message_ts: "1793393000.000100" },
+        message_link: "https://closedloop.slack.com/archives/test" }) }] } },
     { type: "result", subtype: "success", is_error: false },
   ].map((event) => JSON.stringify(event)).join("\n") + "\n";
   const pluginList = JSON.stringify([{ id: "slack@anthropic-plugin-directory", enabled: true,
     installPath: "/plugins/slack" }]);
+  const runConfiguredGate = (args: string[], options: { input: string },
+    toolInput?: { channel_id: string; message: string }) => {
+    const payload = JSON.parse(options.input.split("\n").at(-1)!) as {
+      channel_id: string; message: string;
+    };
+    const relaySettings = JSON.parse(args[args.indexOf("--settings") + 1]);
+    const gateCommand = relaySettings.hooks.PreToolUse[0].hooks[0].command as string;
+    return spawnSync("/bin/sh", ["-c", gateCommand], { encoding: "utf8", input: JSON.stringify({
+      tool_name: "mcp__plugin_slack_slack__slack_send_message", tool_input: toolInput ?? payload,
+    }) });
+  };
   const withPlugin = (delivery: (command: string, args: string[], options: {
     input: string; timeout: number;
   }) => { status: number | null; stdout: string; stderr: string; error?: Error }) =>
-    (command: string, args: string[], options: { input: string; timeout: number }) =>
-      args[0] === "plugin" ? { status: 0, stdout: pluginList, stderr: "" }
-        : args.includes("mcp") && args.includes("list")
-          ? { status: 0, stdout: "plugin:slack:slack - ✔ Connected\n", stderr: "" }
-        : delivery(command, args, options);
+    (command: string, args: string[], options: { input: string; timeout: number }) => {
+      if (args[0] === "plugin") return { status: 0, stdout: pluginList, stderr: "" };
+      if (args.includes("mcp") && args.includes("list")) {
+        return { status: 0, stdout: "plugin:slack:slack - ✔ Connected\n", stderr: "" };
+      }
+      const gated = runConfiguredGate(args, options);
+      assert.equal(gated.status, 0, gated.stderr);
+      assert.equal(JSON.parse(gated.stdout).hookSpecificOutput.permissionDecision, "allow");
+      return delivery(command, args, options);
+    };
   const run = (command: string, args: string[], options: { input: string; timeout: number }) => {
     invocations.push({ command, args, ...options });
     if (args[0] === "plugin") return { status: 0, stdout: pluginList, stderr: "" };
@@ -454,11 +482,7 @@ test("nightly regression Slack message names cases, runtimes, PR authors and res
     const payload = JSON.parse(options.input.split("\n").at(-1)!) as {
       channel_id: string; message: string;
     };
-    const relaySettings = JSON.parse(args[args.indexOf("--settings") + 1]);
-    const gateCommand = relaySettings.hooks.PreToolUse[0].hooks[0].command as string;
-    const gated = spawnSync("/bin/sh", ["-c", gateCommand], { encoding: "utf8", input: JSON.stringify({
-      tool_name: "mcp__plugin_slack_slack__slack_send_message", tool_input: payload,
-    }) });
+    const gated = runConfiguredGate(args, options, payload);
     assert.equal(gated.status, 0, gated.stderr);
     assert.equal(JSON.parse(gated.stdout).hookSpecificOutput.permissionDecision, "allow");
     return { status: 0, stdout: transcript(payload.message), stderr: "" };
@@ -490,6 +514,39 @@ test("nightly regression Slack message names cases, runtimes, PR authors and res
   assert.equal(delivery.timeout, 20_000);
   assert.deepEqual(JSON.parse(delivery.input.split("\n").at(-1)!),
     { channel_id: "C0CC9G7V01G", message });
+
+  let deniedFailure: unknown;
+  const deniedByGate = (command: string, args: string[], options: {
+    input: string; timeout: number;
+  }) => {
+    if (args[0] === "plugin") return { status: 0, stdout: pluginList, stderr: "" };
+    if (args.includes("mcp") && args.includes("list")) {
+      return { status: 0, stdout: "plugin:slack:slack - ✔ Connected\n", stderr: "" };
+    }
+    const payload = JSON.parse(options.input.split("\n").at(-1)!) as {
+      channel_id: string; message: string;
+    };
+    const gated = runConfiguredGate(args, options,
+      { ...payload, message: `${payload.message} altered` });
+    assert.equal(gated.status, 0, gated.stderr);
+    assert.equal(JSON.parse(gated.stdout).hookSpecificOutput.permissionDecision, "deny");
+    return { status: 0, stdout: transcript(payload.message, [], true), stderr: "" };
+  };
+  try {
+    await new SlackNightlyRegressionReporter("/claude", deniedByGate).report(notice);
+  } catch (error) { deniedFailure = error; }
+  assert.match(String(deniedFailure), /eval-slack-gate-denied/);
+  assert.equal(isRetrySafeSlackFailure(deniedFailure), true);
+
+  const withoutGate = (command: string, args: string[]) => {
+    if (args[0] === "plugin") return { status: 0, stdout: pluginList, stderr: "" };
+    if (args.includes("mcp") && args.includes("list")) {
+      return { status: 0, stdout: "plugin:slack:slack - ✔ Connected\n", stderr: "" };
+    }
+    return { status: 0, stdout: transcript(message), stderr: "" };
+  };
+  await assert.rejects(() => new SlackNightlyRegressionReporter("/claude",
+    withoutGate).report(notice), /eval-slack-gate-not-confirmed/);
 
   const altered = () => ({ status: 0, stdout: transcript(`${message} altered`), stderr: "" });
   await assert.rejects(() => new SlackNightlyRegressionReporter("/claude",

@@ -1,4 +1,4 @@
-import { closeSync, openSync, readFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const SLACK_POST_TOOL = "mcp__plugin_slack_slack__slack_send_message";
@@ -57,14 +57,22 @@ function main(args: string[]): void {
     process.stdout.write(`${JSON.stringify(deny("Vibe nightly Slack post already attempted"))}\n`);
     return;
   }
-  closeSync(attempt);
+  let decision: PreToolUseDecision;
   try {
     const input = JSON.parse(readFileSync(0, "utf8")) as PreToolUseInput;
     const expected = JSON.parse(readFileSync(expectedPath, "utf8")) as SlackPostInput;
-    process.stdout.write(`${JSON.stringify(slackToolGateDecision(input, expected))}\n`);
+    decision = slackToolGateDecision(input, expected);
   } catch {
-    process.stdout.write(`${JSON.stringify(deny("Vibe nightly Slack gate input invalid"))}\n`);
+    decision = deny("Vibe nightly Slack gate input invalid");
   }
+  try {
+    writeFileSync(attempt, `${JSON.stringify({
+      permissionDecision: decision.hookSpecificOutput.permissionDecision,
+    })}\n`);
+  } finally {
+    closeSync(attempt);
+  }
+  process.stdout.write(`${JSON.stringify(decision)}\n`);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

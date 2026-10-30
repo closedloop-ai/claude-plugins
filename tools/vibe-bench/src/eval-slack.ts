@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -352,6 +352,17 @@ function requireSlackMcpConnection(result: SlackClaudeResult): void {
   throw new SlackDeliveryError("eval-slack-mcp-unavailable", true);
 }
 
+function requireSlackGateOutcome(attemptPath: string): void {
+  let value: unknown;
+  try { value = JSON.parse(readFileSync(attemptPath, "utf8")); }
+  catch { throw new SlackDeliveryError("eval-slack-gate-not-confirmed", false); }
+  const decision = (value as { permissionDecision?: unknown } | null)?.permissionDecision;
+  if (decision === "deny") throw new SlackDeliveryError("eval-slack-gate-denied", true);
+  if (decision !== "allow") {
+    throw new SlackDeliveryError("eval-slack-gate-not-confirmed", false);
+  }
+}
+
 /** Post a pre-rendered notice through the authenticated Slack MCP connection. */
 export class SlackNightlyRegressionReporter implements NightlyRegressionReporter {
   private readonly claudeExecutable: string;
@@ -419,8 +430,12 @@ export class SlackNightlyRegressionReporter implements NightlyRegressionReporter
       const result = this.run(this.claudeExecutable, args, {
         input: deliveryPrompt(text), timeout: SLACK_POST_TIMEOUT_MS,
       });
-      try { return verifySlackTranscript(result.stdout, text); }
+      try {
+        requireSlackGateOutcome(attemptPath);
+        return verifySlackTranscript(result.stdout, text);
+      }
       catch (error) {
+        if (error instanceof SlackDeliveryError) throw error;
         if (result.error?.message.includes("ETIMEDOUT") ||
             result.error?.message.includes("timed out")) {
           throw new SlackDeliveryError("eval-slack-claude-timeout", false);
