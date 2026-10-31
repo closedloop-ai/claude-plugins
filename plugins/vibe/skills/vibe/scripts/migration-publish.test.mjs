@@ -60,3 +60,40 @@ test("the command reads only migrations added since the last push and the sessio
   const passed = runNode(SCRIPT, ["--worktree", checkout, "--since", since], home.home);
   assert.equal(passed.status, 0, JSON.stringify(passed.json));
 });
+
+test("a migration the branch got by merging main is main's, not the session's (ISS-13321)", (t) => {
+  const home = makeHome("vibe-migration-publish-main-");
+  t.after(home.cleanup);
+  const checkout = path.join(home.root, "wt");
+  const run = (args) => git(checkout, args, home.home);
+  git(home.root, ["init", "--quiet", "--initial-branch=main", checkout], home.home);
+  const put = (file, text) => {
+    mkdirSync(path.dirname(path.join(checkout, file)), { recursive: true });
+    writeFileSync(path.join(checkout, file), text);
+  };
+  put("README.md", "base\n");
+  run(["add", "-A"]);
+  run(["commit", "--quiet", "-m", "base"]);
+  const since = run(["rev-parse", "HEAD"]);
+  run(["checkout", "--quiet", "-b", "vibe/session"]);
+  put("apps/app/page.tsx", "export const page = 1;\n");
+  run(["add", "-A"]);
+  run(["commit", "--quiet", "-m", "session"]);
+  run(["checkout", "--quiet", "main"]);
+  const fromMain = "packages/database/prisma/migrations/20261028000000_from_main/migration.sql";
+  put(fromMain, "ALTER TABLE a ADD COLUMN c int;\n");
+  run(["add", "-A"]);
+  run(["commit", "--quiet", "-m", "ISS-13130: a migration on main"]);
+  run(["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  run(["checkout", "--quiet", "vibe/session"]);
+  run(["merge", "--quiet", "--no-edit", "main"]);
+  const merged = runNode(SCRIPT, ["--worktree", checkout, "--since", since], home.home);
+  assert.equal(merged.status, 0, JSON.stringify(merged.json));
+  assert.deepEqual(merged.json.migrations, []);
+  put(FOLDER, "CREATE TABLE p (q int);\n");
+  run(["add", "-A"]);
+  run(["commit", "--quiet", "-m", "session migration"]);
+  const own = runNode(SCRIPT, ["--worktree", checkout, "--since", since], home.home);
+  assert.equal(own.status, 1);
+  assert.deepEqual(own.json.migrations, [FOLDER], "the session's own migration still needs its test");
+});

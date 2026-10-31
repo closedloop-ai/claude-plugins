@@ -23,6 +23,21 @@ function nativeFinish(input: { worktree: string; workerId: string; requestId: st
 }
 
 describe("persistent writer ledger", () => {
+  it("reopens the request that just returned DONE for its follow-up step instead of refusing it (ISS-13321)", () => {
+    const value = registered();
+    const owner = { worktree: value.worktree, workerId: value.workerId };
+    changeWriter("enqueue", { ...owner, requestId: "inputs", input: "Run main-sync-inputs" });
+    const first = changeWriter("claim", { ...owner, requestId: "inputs" }).turn!;
+    nativeFinish({ ...owner, requestId: "inputs", lease: first.lease!, status: "DONE" });
+    const next = changeWriter("claim", { ...owner, requestId: "inputs", continuation: "Run main-sync-validate" }).turn!;
+    expect(next.id).toBe("inputs");
+    expect(next.continuation).toBe("Run main-sync-validate");
+    nativeFinish({ ...owner, requestId: "inputs", lease: next.lease!, status: "DONE" });
+    changeWriter("enqueue", { ...owner, requestId: "later", input: "Another request" });
+    const later = changeWriter("claim", { ...owner, requestId: "later" }).turn!;
+    nativeFinish({ ...owner, requestId: "later", lease: later.lease!, status: "DONE" });
+    expect(() => changeWriter("claim", { ...owner, requestId: "inputs", continuation: "Too late" })).toThrow(/oldest pending/);
+  });
   it("registers one native writer with canonical binding and no copied resources", () => {
     const value = registered();
     expect(registerWriter(value.registration).workerId).toBe(value.workerId);
@@ -30,6 +45,26 @@ describe("persistent writer ledger", () => {
     writeAgent(value.agentRoot, "vibe-change-worker", "Read, Write, Edit");
     expect(() => registerWriter(value.registration)).toThrow(/binding/);
     expect(statSync(join(value.metadata, "vibe-writer.json")).mode & 0o777).toBe(0o600);
+  });
+  // Codex spawn_agent returns only an agent path such as /root/setup, which the identifier schema once refused,
+  // so a session abandoned its native writer (2026-10-26).
+  it("registers a Codex writer by the agent path spawn_agent returns, and finishes its turn under it", () => {
+    const value = setup();
+    const workerId = "/root/vibe_writer";
+    const registration = { worktree: value.worktree, runtime: "codex", workerId, agentRoot: value.agentRoot,
+      agentName: "vibe-change-worker", capabilities: graph };
+    expect(registerWriter(registration).workerId).toBe(workerId);
+    const input = { worktree: value.worktree, workerId };
+    changeWriter("enqueue", { ...input, requestId: "first", input: "First private request" });
+    changeWriter("claim", { ...input, requestId: "first" });
+    const ledger = JSON.parse(readFileSync(join(value.metadata, "vibe-writer.json"), "utf8"));
+    nativeFinish({ ...input, requestId: "first", lease: ledger.active.lease, status: "DONE" });
+    expect(readWriterSummary(value.worktree)?.workerId).toBe(workerId);
+    for (const bad of ["/root/../setup", "/root//setup", "root/setup", "/root/setup/", "/"]) {
+      expect(() => registerWriter({ ...registration, worktree: setup().worktree, workerId: bad }), bad).toThrow();
+    }
+    expect(() => registerWriter({ ...registration, worktree: setup().worktree, runtime: "claude", workerId }))
+      .toThrow(/agent path/);
   });
   it("accepts canonical existing session records without a redundant worktree field", () => {
     const value = setup();

@@ -40,6 +40,7 @@
 
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, createWriteStream } from "node:fs";
+import { escalation, isSandboxRefusal } from "./sandbox-refusal.mjs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -99,9 +100,12 @@ ${behaviors.map((_, index) => `B${index + 1}: observed: <what happened>; screens
 `;
 }
 
-/** The headless Claude Code arguments for the look. */
+/**
+ * The headless Claude Code arguments for the look. It is never resumed and its report goes to a file, so it
+ * saves no session: a saved one is imported into the Codex app's sidebar as a stray chat (ISS-13279).
+ */
 export function claudeArgs() {
-  return ["-p", "--chrome", "--allowedTools", CLAUDE_TOOLS];
+  return ["-p", "--no-session-persistence", "--chrome", "--allowedTools", CLAUDE_TOOLS];
 }
 
 /**
@@ -270,11 +274,13 @@ async function main() {
   throw new Error("command must be prompt, run or check");
 }
 
+export const ESCALATION_JUSTIFICATION = "Save the comparison with the other app";
+
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
     process.stdout.write(`${JSON.stringify(await main())}\n`);
   } catch (error) {
-    process.stdout.write(`${JSON.stringify({ ok: false, error: error.message })}\n`);
+    process.stdout.write(`${JSON.stringify({ ok: false, ...(isSandboxRefusal(error) ? escalation(error, ESCALATION_JUSTIFICATION) : { error: error.message }) })}\n`);
     process.exitCode = 1;
   }
 }

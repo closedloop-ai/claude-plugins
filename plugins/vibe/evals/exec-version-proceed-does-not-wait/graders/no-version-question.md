@@ -1,7 +1,7 @@
 ---
 type: regex
-match: lacks
+match: not_contains
 flags: i
-pattern: 'keep going with this one, or update now\?'
+pattern: 'update it now, or keep going with this one\?'
 ---
 The version question is not asked.

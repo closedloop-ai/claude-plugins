@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from vibe_contract_text import flat
+from vibe_contract_text import flat, hook_guard_routed
 
 
 PLUGIN = Path(__file__).resolve().parents[2]
@@ -69,10 +69,7 @@ def test_the_shepherd_stops_on_review_threads() -> None:
 
 
 def test_claude_sessions_run_the_kill_guard_on_every_bash_command() -> None:
-    import json
-
-    hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())["hooks"]["PreToolUse"]
-    assert any(entry.get("matcher") == "Bash" and any("kill-guard.mjs" in hook["command"] for hook in entry["hooks"]) for entry in hooks)
+    assert hook_guard_routed(PLUGIN, "PreToolUse", "kill-guard", tool="Bash")
     assert "kill-guard.mjs own <pid>" in _text(VIBE / "references" / "guardrails.md")
 
 
@@ -84,7 +81,8 @@ def test_stale_prs_and_unanswered_questions_are_flagged_and_answered() -> None:
         assert wired in monitor, wired
     fleet = _text(FLEET / "SKILL.md")
     assert "On `STALE-PR`" in fleet and "ask the owning writer for an ETA, unblock it, or reassign it" in fleet
-    assert "every 45 minutes" in fleet and "never hold one for optional evidence" in fleet
+    assert "no push for 45 minutes" in fleet
+    assert "cadence never authorizes checkpoint commits" in fleet
     assert "A question never holds a pull request" in _text(VIBE / "SKILL.md")
     assert "board.mjs <orchDir> question" in _text(FLEET / "references" / "templates.md")
 
@@ -118,7 +116,7 @@ def test_the_requirements_worker_never_reads_public_help_material() -> None:
 
 def test_ready_heads_green_watch_claude_usage_and_status_sweep_are_wired() -> None:
     fleet = _text(FLEET / "SKILL.md")
-    for wired in ("push-check <writer> --head <sha>", "green-watch.mjs --repo", "claude -p \"/usage\"", "`status-sweep` duty", "`PLAN-OPEN`", "`ABSORBED-OPEN`"):
+    for wired in ("`push-check` must print `READY`", "`UNREADY-COMMIT`", "green-watch.mjs --repo", "claude -p \"/usage\"", "`status-sweep` duty", "`PLAN-OPEN`", "`ABSORBED-OPEN`"):
         assert wired in fleet, wired
     assert "the monitor cannot read Claude usage" not in fleet
     assert "claude-usage.mjs" in (MONITOR / "scripts" / "snapshot.sh").read_text()

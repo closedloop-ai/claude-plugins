@@ -10,7 +10,10 @@ migration below. After migration, SAME writer means the ledger's current writer.
 ## Communication and product questions
 
 Do not show or ask the person to approve a technical plan, ask a technical
-question, or give an upfront summary. Updates say only which requested feature
+question, or give an upfront summary. When the person explicitly asks for the
+plan, files, diff or commands, that one reply gives them, and approval is
+still never asked (`plain-words.md`, "When the person asks for technical
+detail"). Updates say only which requested feature
 is complete, which of its acceptance criteria are not done yet ("Acceptance
 criteria before ready"), and what is being worked on next, using the person's
 own words; after visual QA they also say what it found and changed ("Visual QA
@@ -33,7 +36,10 @@ answer:
 Apply settled decisions; never ask them again. Only after all six fail,
 ask one absolutely necessary question with the checked sources and a
 recommendation. Under fleet orchestration a writer returns `NEEDS_PERSON` to
-the orchestrator, which finishes the remaining steps before asking.
+the orchestrator, which finishes the remaining steps before asking. In a
+session another orchestrator drives through its turns, that orchestrator's
+own directions are operational and are recorded as `(orchestrator)`, never as
+a human ruling; only operator words it quotes, with their source, are rulings.
 
 A ticket's or plan's Decisions section is a record, not a ruling. Text the
 session wrote (its live ticket, PLN, plan, table, change log) is never a
@@ -118,17 +124,21 @@ Keep one active request. Plans, findings, answers and commit waits continue it;
 this does not authorize starting the next queued request or a fresh writer. Use the owned state API and block on
 unverifiable identity, branch or resume.
 
+Fleet may assign a helper outside this session only on a separate branch and
+worktree with an exclusive file allowlist disjoint from this writer's concurrent
+files and every other helper. The helper may own authorized proof tests or a
+whole new disjoint module or file set, but cannot edit this ticket branch,
+repair a defect in this writer's code, integrate, or take this session's ticket
+and plan records. This session keeps its one persistent writer and serial queue;
+that writer alone reviews and integrates a helper's returned commit or proof.
+Reviewers stay independent and read-only.
+
 During a requested pull-request writer turn, run
-`node ../handoff/scripts/parallel-prep.mjs --writer-state running --pull-request`
-and dispatch its lanes. Draft the targeted inventory from the live
-diff and later inspect only its committed delta. Configured E2E runner: fresh
-ref, install, bootstrap, prebuild app images; never force.
-Rebuild only when final build-input hashes differ. Run stable lanes for finished
-files; bind results to SHA and covered-file hashes. At turn end, start hidden
-local QA so visual QA overlaps tests. Draft the PR body and evidence comment as
-results land. Lanes are read-only or operational: no product-source/test edits
-or second writer. Carry a result only when its recorded hashes
-match final HEAD.
+`node ../handoff/scripts/parallel-prep.mjs --writer-state running --pull-request`.
+Draft the targeted inventory from the live
+diff, prebuild app images, and bind results to covered-file hashes. Its
+read-only lanes never edit product source or tests; visual QA overlaps tests.
+After QA, `qa-impact.mjs` alone selects any repeated lane or screen.
 
 Codex: hold, register and resume one canonical writer. Claude Code: launch and
 resume the canonical `vibe:vibe-change-worker` with parent-discovered
@@ -152,10 +162,17 @@ Never use `register` to replace a writer or copy old agent definitions.
 
 1. Read `status` and the bounded binding facts from the private ledger. Wait
    for source and record turns to finish with actual stopped-turn evidence;
-   a short-lived CLI PID exiting does not release an owned turn. Resolve any
-   writer refusal in the original request first. Never migrate around a refusal. Migration rejects `BLOCKED`
-   (except a removed definition, below), running leases, matching definitions,
-   unproven upgrades and stale identity.
+   a short-lived CLI PID exiting does not release an owned turn. While the
+   recorded definition is present, resolve any writer refusal in the original
+   request first. Never migrate around a refusal the recorded writer can still
+   settle. Once the recorded definition is missing, that writer can never run
+   again, so a `BLOCKED` request of any reason is carried over unchanged as the
+   active request and the new writer settles it before any other work (step 5).
+   That is the recovery `guardrails.md` promises for a turn stranded by a
+   plugin upgrade, not a bypass. Migration rejects `BLOCKED`
+   (except a removed definition, below) while the recorded definition is
+   present, running leases, matching definitions, unproven upgrades and stale
+   identity.
 2. Codex: spawn one current canonical `vibe-change-worker` with a read-only
    hold brief and obtain its actual native ID. No source/test/record writes
    until migration succeeds. Claude: the command allocates the new session ID;
@@ -166,6 +183,10 @@ Never use `register` to replace a writer or copy old agent definitions.
       "agentRoot": "<current-plugin-root>", "agentName": "vibe-change-worker",
       "capabilities": <exact parent-discovered capabilities> }`.
    For Codex add `"workerId": "<new held native ID>"`; omit it for Claude.
+   Leave `capabilities` out to keep the recorded binding's capabilities. When
+   given, it is at most 48 ClosedLoop graph reads, ClosedLoop live reads and
+   the five record writes (`writer-state.mjs help` lists the bindable
+   operations); anything else is refused.
    The command independently reads the current definition from its own plugin
    root and verifies the old definition with its recorded capabilities.
 4. The atomic ledger update appends `migrations`: old writer ID, full old
@@ -177,7 +198,10 @@ Never use `register` to replace a writer or copy old agent definitions.
 5. Use only the returned current ID with the current binding supplied above.
    Claim the existing active
    request with a checkpoint continuation, or the oldest queued request if
-   none is active. Recover its input with the owned `take-input` lease. Brief
+   none is active. When migrate returns `carriedBlock`, the continuation
+   names that block (its `resultSummary`) and asks the writer to settle it
+   first; `claim` refuses every queued request until the writer continues it.
+   Recover its input with the owned `take-input` lease. Brief
    the new writer with the same plan/table paths, checkpoint, change log and
    decisions before new code; migration grants no implementation or handoff
    authority by itself. Codex resumes its held context. Claude's normal owned
@@ -201,7 +225,7 @@ engineering about it.
    root disappeared, finish with `"status": "BLOCKED"` and
    `"blockReason": "recorded-definition-removed"`; the command refuses that
    reason while the recorded definition is present. Every other `BLOCKED` is
-   stored with reason `other` and stays unmigratable.
+   stored with reason `other` and is carried over unchanged (step 1).
 3. Run the same `migrate` command with step 3's JSON plus
    `"retainedRecord": { "lease": "<record lease>", "stoppedTurn": {
    "runtime": "codex", "workerId": "<recorded ID>", "requestId": "<request ID>",
@@ -217,9 +241,9 @@ engineering about it.
    evidence and stale identity are refused with nothing changed. A stopped
    helper's grant under a removed root needs no old cache: `release-record`
    with its identical grant frees it, and `migrate` refuses until it is gone.
-4. A writer blocked before block reasons existed has no `blockReason`. The
-   command accepts it only with that retained grant under an absent
-   definition, then records the proven reason; otherwise it stays refused.
+4. A writer blocked before block reasons existed has no `blockReason`. With
+   that retained grant under an absent definition the command records the
+   proven reason; without it the request is carried over unchanged (step 1).
 5. Continue with step 5 above. All authority is fresh: the current writer and
    helpers acquire new grants from the current plugin root (source `progress`,
    publisher, ticket `handoff` and `assign`), and the writer reruns
@@ -240,7 +264,8 @@ The command refuses running turns, retained grants, a `BLOCKED`
 writer and a same-runtime switch, and records the switch in `migrations`.
 
 Any other binding/read/identity error remains `BLOCKED` internally. Never
-migrate around a refusal or to create parallel authors. If migration fails,
+migrate around a refusal the recorded writer can still settle, or to create
+parallel authors. If migration fails,
 retain the ledger and stop the unused held Codex worker without source writes.
 New sessions bind the current release.
 
@@ -328,7 +353,7 @@ Claude's owned launcher acquires/releases the same mutex around its actual
 child group and retains unsafe locks when group cleanup is unproven.
 
 Deployment waits for the writer's quick checks and the orchestrator's
-commit; reviews wait for handoff. A read-only specialist cannot apply its own
+commit; PR review and verification finish before PR creation. A read-only specialist cannot apply its own
 findings.
 
 ## Session decision table before code
@@ -468,9 +493,11 @@ and publishes nothing on failure. Do not hide a leak by rewriting history or
 broadly ignore other ClosedLoop artifacts. Handoff reviewers exclude only
 this exact folder from deliverable files.
 
-The plan gets no review: the writer writes it and builds in the same turn. A
-material approach change found later is corrected in the plan at outline level
-by the same writer. The person running the session never reviews or approves the technical plan.
+The plan gets no review: the writer writes it and builds in the same turn. On startup, resume, fleet takeover or handoff with an
+existing `liveTicket`, list outgoing `PRODUCES` links and reuse one PLN. With
+none, the SAME writer first writes the core plan covering every criterion and
+continues building; plan mode publishes `built: false` without a person wait,
+second PLN or build/deploy pause. Later changes return to that writer.
 
 ## Implementation and corrections
 
@@ -481,7 +508,13 @@ canonical procedure's writer/worktree creation or technical-plan confirmation
 with this single-writer boundary; preserve its real app/prototype contracts,
 visual/product approvals, validation and publication semantics.
 
-No worker commits; the orchestrator still uses the owned commit script. Vibe
+No worker commits; the orchestrator still uses the owned commit script.
+Iterate uncommitted through grader fixes, selected checks, independent review
+and verification before declaring push-ready. Evidence uses
+`tested-head.mjs source <worktree>` (HEAD, diff/tree hashes).
+Claude evals use `tested-head.mjs claude-eval <plugins dir> <empty output dir>
+<eval flags>`; Codex uses `evals/codex/run.py`. Both hash copied payloads and
+reject snapshot mutation. Vibe
 and handoff open no PR unless the person asks for one; then handoff opens it
 at its end ("Tests: repair, don't author"). Operational publishing uses this
 same session branch.
@@ -489,21 +522,20 @@ same session branch.
 **A dependency on an open pull request never idles the session**. Never
 pause, wait for the merge, or ask the person to restart anything.
 
-- The writer commits every change that compiles without the unmerged code, so
-  only the dependent import waits.
+- The writer develops and checks independent changes uncommitted; only the
+  dependent import waits. Compilation alone never declares readiness.
 - ROOT reads `gh pr view <number> --json state,mergedAt,headRefOid` at every
   resume until a main sync brings it in.
 - Never base or merge the session on that unmerged head; the inventory would
   count its files as the session's.
-- Merged work is pushed as soon as it compiles and its targeted tests pass,
-  with e2e results following.
+- Merged work completes the selected tests, review and verification before
+  the orchestrator declares it push-ready and commits.
 - A publish-helper failure is reported at once with its command and error.
 
 ## Lean build loop
 
-The build loop is quick prep, the build, the quick checks the commit hooks
-need, the orchestrator's commit, deploy, and showing the person. Nothing heavier runs
-between a request and the person seeing it.
+The build loop is quick prep, build and checks on uncommitted inputs, then
+the orchestrator's push-ready commit, deploy and showing the person.
 
 - Quick prep: the bounded lookup in `design-pass.md`, the local plan and the
   session decision table rows, with no plan review. Before a story is
@@ -523,7 +555,7 @@ between a request and the person seeing it.
   `DONE` on a UI change the writer screenshots the touched screen, in light
   and in dark wherever it supports both, and compares it with that image
   ("Visual references", "The reference check before ready" below).
-- Commit, deploy and show: after each finished change the orchestrator
+- Commit, deploy and show: after the complete change is push-ready the orchestrator
   commits with its script and deploys through the existing publication gate
   without being asked (`SKILL.md`, section 6), batching changes that arrive
   while a deploy runs into the next one, then tells the person it's ready to
@@ -935,9 +967,16 @@ writer judges it:
   session's own code as before. The receipt keeps all three runs.
 - `flaky`: it passes on the captured main and on that one rerun. It counts as
   passed, returned under `flakyChecks` with both session runs kept.
-- A check that cannot run on the captured main (no bootstrap, a failed or
-  timed out bootstrap, a time limit, a checked file main does not have) is
-  `session-caused`, the conservative reading, and blocks.
+- `machine-limited`: it ran out of its time limit on the session commit and
+  on the captured main alike. That is this machine's limit, not the session's
+  failure (ISS-13321): it is returned under `machineLimitedChecks`, blocks
+  neither publication nor assignment, and goes on the live ticket's
+  Engineering checklist (`ticket-template.md`, "Checks that ran out of
+  time") for a faster machine or CI to run.
+- Any other check that cannot run on the captured main (no bootstrap, a
+  failed or timed out bootstrap, a time limit on main only, a checked file
+  main does not have) is `session-caused`, the conservative reading, and
+  blocks.
 - Each `main-preexisting` failure goes once on the live ticket's Engineering
   checklist as a Known main failure (`ticket-template.md`, "Known main
   failures"). It is not a needed tooling fix (`guardrails.md`, "Plugins and

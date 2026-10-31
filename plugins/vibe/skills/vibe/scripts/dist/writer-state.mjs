@@ -11511,6 +11511,13 @@ var capabilitiesSchema = external_exports.array(capabilitySchema).max(48).refine
   "Duplicate capability binding"
 );
 var identifierSchema = external_exports.string().min(1).max(160).regex(/^[A-Za-z0-9_.:-]+$/);
+var codexAgentPathSchema = external_exports.string().max(160).regex(/^(?:\/[A-Za-z0-9_.:-]+)+$/).refine((value) => value.split("/").slice(1).every((segment) => segment !== "." && segment !== ".."), "Invalid Codex agent path");
+var workerIdSchema = external_exports.union([identifierSchema, codexAgentPathSchema]);
+var pathIdOnlyForCodex = (value, ctx) => {
+  if (value.runtime !== "codex" && value.workerId?.startsWith("/")) {
+    ctx.addIssue({ code: external_exports.ZodIssueCode.custom, path: ["workerId"], message: "Only a Codex writer is named by its agent path" });
+  }
+};
 var statusSchema = external_exports.enum([
   "PLAN",
   "STORIES_READY",
@@ -11526,17 +11533,18 @@ var statusSchema = external_exports.enum([
   "BLOCKED",
   "FAILED"
 ]);
-var registerSchema = external_exports.object({
+var registerFields = external_exports.object({
   worktree: external_exports.string().min(1),
   runtime: external_exports.enum(["codex", "claude"]),
-  workerId: identifierSchema.optional(),
+  workerId: workerIdSchema.optional(),
   agentRoot: external_exports.string().min(1),
   agentName: identifierSchema,
   capabilities: capabilitiesSchema.default([])
 }).strict();
+var registerSchema = registerFields.superRefine(pathIdOnlyForCodex);
 var stoppedTurnSchema = external_exports.object({
   runtime: external_exports.literal("codex"),
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   requestId: identifierSchema,
   lease: external_exports.string().uuid(),
   state: external_exports.enum(["completed", "failed", "canceled"])
@@ -11544,7 +11552,7 @@ var stoppedTurnSchema = external_exports.object({
 var blockReasonSchema = external_exports.enum(["recorded-definition-removed", "other"]);
 var actionSchema = external_exports.object({
   worktree: external_exports.string().min(1),
-  workerId: identifierSchema.optional(),
+  workerId: workerIdSchema.optional(),
   requestId: identifierSchema.optional(),
   input: external_exports.string().min(1).max(64 * 1024).optional(),
   continuation: external_exports.string().min(1).max(64 * 1024).optional(),
@@ -11566,19 +11574,20 @@ var harnessSwitchSchema = external_exports.object({
   cause: external_exports.enum(["usage-limit", "runtime-unavailable"]),
   evidence: external_exports.string().min(1).max(1024)
 }).strict();
-var migrateSchema = registerSchema.extend({
-  previousWorkerId: identifierSchema,
+var migrateSchema = registerFields.extend({
+  capabilities: capabilitiesSchema.optional(),
+  previousWorkerId: workerIdSchema,
   previousDigest: external_exports.string().regex(/^[a-f0-9]{64}$/),
   retainedRecord: retainedRecordSchema.optional(),
   harnessSwitch: harnessSwitchSchema.optional()
-}).strict();
+}).strict().superRefine(pathIdOnlyForCodex);
 var requestSchema = external_exports.object({ id: identifierSchema, input: external_exports.string().min(1).max(64 * 1024) }).strict();
 var ledgerStateSchema = external_exports.object({
   version: external_exports.literal(1),
   worktree: external_exports.string(),
   branch: external_exports.string(),
   runtime: external_exports.enum(["codex", "claude"]),
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   binding: bindingSchema,
   started: external_exports.boolean(),
   pending: external_exports.array(requestSchema).max(32),
@@ -11599,7 +11608,7 @@ var migrationSchema = external_exports.object({
   reason: external_exports.enum(["definition-missing", "definition-upgraded", "harness-switch"]),
   observedDigest: external_exports.string().length(64).nullable(),
   previous: ledgerStateSchema,
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   binding: bindingSchema,
   releasedRecord: external_exports.object({
     requestId: identifierSchema,
@@ -11811,7 +11820,17 @@ function location(worktree) {
 function readWriterSummary(worktree) {
   const place = location(worktree);
   if (!existsSync3(place.file)) return void 0;
-  return summary(readLedger(place));
+  const ledger = readLedger(place);
+  return { ...summary(ledger), recordedDefinition: recordedDefinitionState(ledger) };
+}
+function recordedDefinitionState(ledger) {
+  try {
+    const observed = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
+    if (observed === null) return "removed";
+    return observed === ledger.binding.digest ? "present" : "changed";
+  } catch {
+    return "unreadable";
+  }
 }
 function recordedWriterRoot(worktree) {
   try {
@@ -11869,16 +11888,21 @@ function registerWriter(input) {
 }
 function migrateWriter(input, currentPluginRoot, verifyRetained) {
   const data = migrateSchema.parse(input);
-  const definition = readDefinition(currentPluginRoot, "vibe-change-worker", data.capabilities);
-  if (realpathSync4(data.agentRoot) !== definition.root || data.agentName !== "vibe-change-worker") {
-    throw new Error("Migration must use this command's current canonical plugin definition");
-  }
-  const currentVersion = definition.version;
-  if (!currentVersion) throw new Error("Current plugin release has no version");
+  const currentDefinition = (capabilities) => {
+    const found = readDefinition(currentPluginRoot, "vibe-change-worker", capabilities);
+    if (realpathSync4(data.agentRoot) !== found.root || data.agentName !== "vibe-change-worker") {
+      throw new Error("Migration must use this command's current canonical plugin definition");
+    }
+    const version = found.version;
+    if (!version) throw new Error("Current plugin release has no version");
+    return { definition: found, version };
+  };
+  if (data.capabilities) currentDefinition(data.capabilities);
   const place = location(data.worktree);
   return locked(place, () => {
     const ledger = readLedger(place);
     if (ledger.runtime !== data.runtime || ledger.workerId !== data.previousWorkerId || ledger.binding.digest !== data.previousDigest) throw new Error("Migration requires the exact recorded writer and digest");
+    const { definition, version: currentVersion } = currentDefinition(data.capabilities ?? ledger.binding.capabilities);
     const lock = join4(place.dir, "vibe-record-turn.lock");
     const retained = existsSync3(lock);
     if (ledger.active?.lease || retained && !(data.retainedRecord && verifyRetained)) {
@@ -11916,6 +11940,11 @@ function migrateWriter(input, currentPluginRoot, verifyRetained) {
     ledger.binding = definition.binding;
     ledger.started = false;
     if (block === "proven-legacy" && ledger.active) ledger.active.blockReason = "recorded-definition-removed";
+    const carriedBlock = block === "carried" && ledger.active ? {
+      requestId: ledger.active.id,
+      blockReason: ledger.active.blockReason,
+      resultSummary: ledger.active.resultSummary
+    } : void 0;
     if (!releasedRecord) save(place, ledger);
     else {
       const parked = `${lock}.${randomUUID()}.released`;
@@ -11928,7 +11957,7 @@ function migrateWriter(input, currentPluginRoot, verifyRetained) {
       }
       rmSync(parked, { recursive: true, force: true });
     }
-    return summary(ledger);
+    return { ...summary(ledger), ...carriedBlock ? { carriedBlock } : {} };
   });
 }
 function provenDefinitionChange(ledger, observedDigest, currentVersion) {
@@ -11944,7 +11973,8 @@ function migratableBlock(ledger, observedDigest, releasedRecord) {
   const active = ledger.active;
   if (active?.status !== "BLOCKED" || active.blockReason === "recorded-definition-removed") return "migratable";
   if (active.blockReason === void 0 && observedDigest === null && releasedRecord?.requestId === active.id) return "proven-legacy";
-  throw new Error("Migration cannot bypass a writer refusal; resolve the blocked request first");
+  if (observedDigest === null) return "carried";
+  throw new Error("Migration cannot bypass a writer refusal while the recorded writer can still run; resolve the blocked request first");
 }
 function isNewerRelease(current, previous) {
   if (!/^\d+\.\d+\.\d+$/.test(previous)) return false;
@@ -11985,7 +12015,10 @@ function changeWriter(action, input) {
         ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
         delete ledger.active;
       }
-      if (ledger.active) {
+      if (!ledger.active && data.continuation && ledger.completed.at(-1) === requestId) {
+        ledger.completed = ledger.completed.slice(0, -1);
+        ledger.active = { id: requestId, input: data.continuation, status: "PLAN", continuation: data.continuation };
+      } else if (ledger.active) {
         if (ledger.active.id !== requestId || !data.continuation) throw new Error("Continue the active request before the next queued request");
         ledger.active.continuation = data.continuation;
       } else {
@@ -12196,6 +12229,7 @@ var recordModes = {
     redeploy: ["create_document_version"],
     flags: ["create_document_version"],
     desktop: ["create_document_version"],
+    handover: ["create_document_version"],
     "pull-request": []
   },
   "vibe-prototype-worker": { share: ["create_document_version"] }
@@ -12212,6 +12246,7 @@ var recordActionSchema = external_exports.enum([
   "desktop",
   "share",
   "discard",
+  "handover",
   "pull-request"
 ]);
 var requestContinuationSchema = external_exports.object({
@@ -12309,13 +12344,13 @@ function discardLocation(input, stable) {
 // src/native-record.ts
 var grantSchema = recordContextSchema.extend({
   agentRoot: external_exports.string().min(1),
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   requestId: identifierSchema,
-  primaryOwner: external_exports.object({ workerId: identifierSchema, lease: external_exports.string().uuid() }).strict().optional()
+  primaryOwner: external_exports.object({ workerId: workerIdSchema, lease: external_exports.string().uuid() }).strict().optional()
 }).strict();
 var releaseSchema = grantSchema.extend({ lease: external_exports.string().uuid(), stoppedTurn: external_exports.object({
   runtime: external_exports.literal("codex"),
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   requestId: identifierSchema,
   lease: external_exports.string().uuid(),
   state: external_exports.enum(["completed", "failed", "canceled"])
@@ -12388,8 +12423,55 @@ function verifyStrandedRecordGrant(lock, ledger, retained) {
   return { requestId: grant.requestId, recordAction: grant.recordAction, state: stoppedTurn.state };
 }
 
+// src/usage.ts
+function asksForUsage(argv) {
+  return argv.length === 1 && ["help", "--help", "-h"].includes(argv[0]);
+}
+function capabilityUsage() {
+  const list = (values) => [...values].sort().join(", ");
+  return [
+    "Capabilities: a JSON array of at most 48 { name, service, access, operation } entries, one per MCP tool, no duplicates.",
+    "  name       the tool as the harness lists it: mcp__<server>__<operation> (underscores or hyphens)",
+    `  graph      service "graph", access "read": ${list(graphOperations)}`,
+    `  live read  service "closedloop", access "read": ${list(liveReadOperations)}`,
+    `  record     service "closedloop", access "write": ${list(recordOperations)}`,
+    "  Any other tool is refused as an unsupported capability binding."
+  ].join("\n");
+}
+function writerStateUsage() {
+  return [
+    "Usage: writer-state.mjs <action> < request.json",
+    "The action is the only argument; the request is one JSON object on stdin, never in argv.",
+    "",
+    "Actions:",
+    "  status          { worktree }  the writer's compact summary, or null",
+    "  register        { worktree, runtime, agentName, capabilities, workerId? (codex), agentRoot? }",
+    "  migrate         { worktree, runtime, agentRoot, agentName, previousWorkerId, previousDigest,",
+    "                    workerId? (codex), capabilities?, retainedRecord?, harnessSwitch? }",
+    "                  capabilities left out keeps the recorded binding's; agentRoot is this command's plugin root.",
+    "                  A BLOCKED request whose recorded definition is missing is carried over as the active",
+    "                  request and returned as carriedBlock; the new writer settles it first.",
+    "  enqueue         { worktree, workerId, requestId, input }",
+    "  claim           { worktree, workerId, requestId, continuation? }",
+    "  take-input      { worktree, workerId, requestId, lease }",
+    "  finish          { worktree, workerId, requestId, lease, status, resultSummary?, blockReason?, stoppedTurn? (codex) }",
+    "  acquire-record  native helper record grant",
+    "  release-record  native helper record release with stopped-turn evidence",
+    "  help            this text",
+    "",
+    capabilityUsage(),
+    "",
+    `The full procedure is the vibe skill's quality loop, "Recorded definition migration".`
+  ].join("\n");
+}
+
 // src/writer-state.ts
 async function main(argv) {
+  if (asksForUsage(argv)) {
+    process.stdout.write(`${writerStateUsage()}
+`);
+    return 0;
+  }
   const { positionals } = parseArgs({ args: argv, allowPositionals: true, options: {} });
   const action = external_exports.enum(["register", "migrate", "status", "enqueue", "claim", "take-input", "finish", "acquire-record", "release-record"]).parse(positionals[0]);
   if (positionals.length !== 1) throw new Error("Only the action belongs in argv; send private input on stdin");

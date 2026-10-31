@@ -11,7 +11,8 @@
 //   <fleetHome>/current                                                   the active program's slug
 //   <fleetHome>/programs/<slug>/                                          that program's state
 //
-// Usage: fleet-home.mjs start <slug> [--home <fleetHome>]
+// Usage: fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet [--home <fleetHome>]
+//        fleet-home.mjs shape no-writer|one-writer|fleet [--home <fleetHome>]
 //        fleet-home.mjs close [--home <fleetHome>]
 //        fleet-home.mjs resume [--home <fleetHome>]
 //        fleet-home.mjs check [--home <fleetHome or program dir>]
@@ -20,12 +21,22 @@
 // --home defaults to FLEET_HOME, else ~/fleet-orchestrator.
 // `start` creates programs/<slug>/ and makes it current; it refuses while
 // another program is current, so a new program never reads an older one's
-// state. `close` clears `current`.
+// state. `close` clears `current`. Every program records its shape in
+// program.json (SKILL.md, "Programs with one writer or none"): `no-writer`
+// (the orchestrator researches or designs with nobody writing code),
+// `one-writer` (one writer and one PR) or `fleet` (several writers). Two
+// audited sessions ran the skill as one person with no workers and as one
+// writer on one PR, with no guidance for either. `shape` changes it when the
+// program grows; board.mjs refuses a writer the shape does not allow.
 // `resume` prints what a new chat reads, in order: the reusable files, then
 // `ACTIVE <slug>` and the program's files, `RELAUNCH <writer> <prompt>` for
 // each Claude writer on the board (its newest prompts/<writer>-*.md) and
 // `WATCHER-LIVE <pid>` while another chat's watcher holds the lock; or
-// `NO-ACTIVE-PROGRAM`.
+// `NO-ACTIVE-PROGRAM`. After `ACTIVE` it prints `SHAPE <shape>: <what
+// applies>` (or `SHAPE-UNSET`) and the program's plugin version line from
+// plugin-version.json: `PLUGIN-VERSION-UNCHECKED` when the check never ran,
+// `PLUGIN-VERSION-UNANSWERED` while an outdated plugin has no recorded
+// choice, else the last result. Every new chat runs the check again.
 // `check` prints, and exits 1 on, state outside the home or the program:
 // `FLAT <name>` (program state at the home's top), `OUTSIDE <link> -> <target>`
 // (a symlink in the home resolving outside it), `CONFIG <key>` (a per-program
@@ -45,13 +56,20 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { PER_PROGRAM_KEYS, parseConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 
 export const REUSABLE = ["config.env", "standing-rulings.md", "lessons.md", "handover.md", "current", "programs"];
 const PROGRAM_DIRS = ["sessions", "prompts", "requests", "findings", "evidence"];
 const PROGRAM_FILES = ["resume-log.md", "rulings.md", "attention.md"];
+export const Shape = Object.freeze({ NoWriter: "no-writer", OneWriter: "one-writer", Fleet: "fleet" });
+const SHAPE_NOTES = Object.freeze({
+  [Shape.NoWriter]: "nobody writes code; the resume log, rulings, research and evidence rules apply, the board, watcher, slots, QA and merge sections do not",
+  [Shape.OneWriter]: "one writer, one PR; everything for that PR applies, the multi-writer board messaging, merge order, version-file and runtime-move rules do not",
+  [Shape.Fleet]: "several writers; every section applies",
+});
+const PLUGIN_VERSION_SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "vibe", "scripts", "plugin-version.mjs");
 
 /** The fleet home: --home, FLEET_HOME, else ~/fleet-orchestrator. */
 export function defaultHome(env = process.env) {
@@ -126,7 +144,7 @@ export function resumeLines(home) {
     resolved = resolveWorkDir(home);
   } catch {}
   if (!resolved.program) return [...lines, `NO-ACTIVE-PROGRAM: start one with fleet-home.mjs start <slug>; it reads no earlier program's state`];
-  lines.push(`ACTIVE ${resolved.program} ${resolved.dir}`);
+  lines.push(`ACTIVE ${resolved.program} ${resolved.dir}`, shapeLine(resolved.dir), pluginVersionLine(resolved.dir));
   for (const name of ["rulings.md", "attention.md", "resume-log.md", "board.md"]) {
     if (existsSync(path.join(resolved.dir, name))) lines.push(`READ ${path.join(resolved.dir, name)}`);
   }
@@ -167,9 +185,50 @@ function alive(pid) {
   }
 }
 
-/** Creates programs/<slug>/ and makes it current; refuses while another program is current. */
-export function startProgram(home, slug) {
+/** The shape a program dir recorded, or null for one started before shapes. */
+export function programShape(programDir) {
+  try {
+    const shape = JSON.parse(readFileSync(path.join(programDir, "program.json"), "utf8")).shape;
+    return Object.values(Shape).includes(shape) ? shape : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Records a program's shape. */
+export function setShape(programDir, shape) {
+  requireShape(shape);
+  writeFileSync(path.join(programDir, "program.json"), `${JSON.stringify({ shape }, null, 2)}\n`);
+}
+
+function requireShape(shape) {
+  if (!Object.values(Shape).includes(shape)) throw new Error(`--shape must be one of ${Object.values(Shape).join(", ")}: decide whether anyone writes code, one writer, or several`);
+}
+
+function shapeLine(programDir) {
+  const shape = programShape(programDir);
+  return shape ? `SHAPE ${shape}: ${SHAPE_NOTES[shape]}` : `SHAPE-UNSET: record it with fleet-home.mjs shape ${Object.values(Shape).join("|")}`;
+}
+
+function pluginVersionLine(programDir) {
+  const file = path.join(programDir, "plugin-version.json");
+  const check = `node ${PLUGIN_VERSION_SCRIPT} check --state ${file}`;
+  let record;
+  try {
+    record = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return `PLUGIN-VERSION-UNCHECKED: run \`${check}\` before starting any worker`;
+  }
+  if (record.status === "outdated" && !record.choice) {
+    return `PLUGIN-VERSION-UNANSWERED ${record.versions}: ask the operator to update now or proceed knowing an outdated plugin could give worse results, and record it with plugin-version.mjs choose --state ${file}`;
+  }
+  return `PLUGIN-VERSION ${record.status}${record.choice ? ` ${record.choice.choice}` : ""} at ${record.checkedAt}: run \`${check}\` in every chat; in the same chat it keeps the recorded answer`;
+}
+
+/** Creates programs/<slug>/ with its shape and makes it current; refuses while another program is current. */
+export function startProgram(home, slug, shape) {
   if (!/^[a-z0-9][a-z0-9._-]*$/i.test(slug)) throw new Error(`invalid program slug ${slug}`);
+  requireShape(shape);
   const current = readOr(path.join(home, "current"), "").trim();
   if (current && current !== slug && existsSync(path.join(home, "programs", current))) {
     throw new Error(`ACTIVE ${current}: close it with fleet-home.mjs close before starting ${slug}`);
@@ -177,6 +236,7 @@ export function startProgram(home, slug) {
   const dir = path.join(home, "programs", slug);
   for (const sub of PROGRAM_DIRS) mkdirSync(path.join(dir, sub), { recursive: true });
   for (const name of PROGRAM_FILES) if (!existsSync(path.join(dir, name))) writeFileSync(path.join(dir, name), "");
+  setShape(dir, shape);
   writeFileSync(path.join(home, "current"), `${slug}\n`);
   return dir;
 }
@@ -256,13 +316,20 @@ function movedLinks(dir, moves, depth) {
 function main(argv) {
   const [command, ...rest] = argv;
   const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: {
-    home: { type: "string" }, from: { type: "string" }, program: { type: "string" }, "dry-run": { type: "boolean" },
+    home: { type: "string" }, from: { type: "string" }, program: { type: "string" }, shape: { type: "string" }, "dry-run": { type: "boolean" },
   } });
   const home = values.home ? path.resolve(values.home) : defaultHome();
   const print = (lines) => process.stdout.write(lines.map((line) => `${line}\n`).join(""));
   if (command === "start") {
-    if (!positionals[0]) throw new Error("Usage: fleet-home.mjs start <slug> [--home <fleetHome>]");
-    print([`started ${startProgram(home, positionals[0])}`]);
+    if (!positionals[0]) throw new Error("Usage: fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet [--home <fleetHome>]");
+    const dir = startProgram(home, positionals[0], values.shape);
+    print([`started ${dir}`, shapeLine(dir)]);
+    return 0;
+  }
+  if (command === "shape") {
+    const dir = resolveWorkDir(home).dir;
+    setShape(dir, positionals[0]);
+    print([shapeLine(dir)]);
     return 0;
   }
   if (command === "close") {
@@ -285,7 +352,7 @@ function main(argv) {
     print(migrate(values.from, target, values.program, values["dry-run"]));
     return 0;
   }
-  throw new Error("Usage: fleet-home.mjs start|close|resume|check|migrate ...");
+  throw new Error("Usage: fleet-home.mjs start|shape|close|resume|check|migrate ...");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

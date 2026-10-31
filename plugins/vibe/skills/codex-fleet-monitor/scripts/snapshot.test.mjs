@@ -203,3 +203,31 @@ test('a PR another chat owns is never added or reported: prs-ignore.txt, or anot
   assert.doesNotMatch(mine, /^acme\/app 9149$/m, 'the other program owns it');
   assert.match(mine, /^acme\/app 9058$/m);
 });
+
+test('board lines are snapshot lines: a scope change the writer has not acknowledged wakes the watcher (2026-10-26)', TIMEOUT, () => {
+  const f = fixture();
+  assert.doesNotMatch(f.run('ok'), /^board /m, 'no board, no board lines');
+  const board = fileURLToPath(new URL('../../fleet-orchestrator/scripts/board.mjs', import.meta.url));
+  const tree = join(f.root, 'tree');
+  mkdirSync(tree);
+  const git = (...args) => {
+    const run = spawnSync('git', ['-C', tree, '-c', 'user.name=T', '-c', 'user.email=t@example.invalid', ...args], { encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr);
+    return run.stdout.trim();
+  };
+  git('init', '--quiet');
+  git('commit', '--quiet', '--allow-empty', '-m', 'base');
+  git('branch', 'pushed');
+  git('branch', '--set-upstream-to=pushed');
+  const boardRun = (...args) => spawnSync(process.execPath, [board, f.work, ...args], { encoding: 'utf8' });
+  assert.equal(boardRun('writer', 'w1', '--worktree', tree).status, 0);
+  assert.equal(boardRun('deliver', 'item-4', '--kind', 'scope', '--to', 'w1', '--text', 'match legacy Archived Projects').status, 0);
+  assert.equal(boardRun('told', 'item-4', 'w1', '--now', new Date(Date.now() - 20 * 60_000).toISOString()).status, 0);
+  assert.match(f.run('ok'), /^board UNACKED-SCOPE item-4 w1$/m);
+  assert.equal(boardRun('ack', 'w1', '--id', 'item-4').status, 0);
+  assert.doesNotMatch(f.run('ok'), /^board /m);
+  git('commit', '--quiet', '--allow-empty', '-m', 'undeclared grader tweak');
+  assert.match(f.run('ok'), /^board UNREADY-COMMIT w1 /m);
+  assert.equal(boardRun('writer', 'w1', '--ready', git('rev-parse', 'HEAD')).status, 0);
+  assert.doesNotMatch(f.run('ok'), /^board /m);
+});

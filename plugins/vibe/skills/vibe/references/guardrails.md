@@ -12,19 +12,50 @@ Codex and Claude Code, and this section is its one canonical statement:
 
 - Never install, update, reinstall, uninstall or repoint a plugin, change a
   plugin marketplace, or modify a plugin cache. The one exception is the
-  vibe update the person chooses when the startup version check finds a
-  newer release (`SKILL.md`, section 1, "Plugin version"): the orchestrator
-  runs exactly the update commands `plugin-version.mjs` printed, and nothing
-  else.
+  update the person chooses when the startup version check finds a newer
+  release (`SKILL.md`, section 1, "Plugin version"): the orchestrator runs
+  `plugin-version.mjs update`, which refuses unless that choice is recorded,
+  and nothing else.
 - Never clone or vendor the plugin's own repository (claude-plugins) to run a
   different version of its tooling.
-- When continuing needs a fix to the vibe tooling, stop. It is never a
-  question for the person.
-  1. Record the blocker: the request stays `BLOCKED` in the session ledger
-     with the reason, and a line in the live ticket's Progress names it.
-  2. Report it to engineering: tell the person in one plain line that this
-     needs engineering and to message engineering, naming this work by its
-     summary (`plain-words.md`).
+- A vibe tooling defect alone does not stop the person's work. Rerun a failed
+  check at most once. If it still fails, narrow that check or use an accepted
+  remote lane or CI path. Classify a failure already on captured main, fix
+  what is in the session's scope,
+  and keep building every independent part. Have the setup worker reuse or
+  file an issue for vibe's owners with the failing command, error, and
+  diagnosis, using its existing bug-ticket flow; this does not delay
+  independent work. Use the existing frozen-render and known-main paths where
+  they apply. For Desktop E2E, use the shipped `e2eLeftForCi` path and the
+  re-pinned CI reader when local tested-commit evidence is unavailable. Never
+  edit vibe's checker to force a pass, waive a check, or
+  claim evidence that was not obtained.
+- Only after both the worker and vibe root tried their safe paths and cannot
+  resolve the issue may the affected work stop. The remaining blocker must
+  genuinely need a human-only decision, access or credentials only a person
+  has, or an engineering change outside session authority. Use an engineering
+  referral only for that last category. A recoverable tooling defect follows
+  the path above, with no handover. The work never stays only on the person's
+  machine (ISS-13321).
+  1. Record the exact blocker and what both the worker and root tried in the session ledger and the
+     live ticket's Progress. Keep the request `BLOCKED` only for the part
+     that cannot proceed. Put the technical cause once on the Engineering
+     checklist as
+     `- [ ] Vibe tooling blocker: <what stopped, technically>; evidence: <the refusal's first line or the finding>`
+     (`ticket-template.md`, "Vibe tooling blockers"). Dispatch the ticket
+     worker before replying so the next owner has the latest facts.
+  2. Save the checked work through `commit-worktree.mjs`, then dispatch
+     `vibe-environment-worker` in handover mode. It pushes through the normal
+     pre-push checks, with no main sync and no new copy of the app. Record a
+     refused push on the same checklist item; never claim it was pushed.
+  3. In the reply, name the exact block and what each layer tried, and offer to
+     pass the saved work to someone now (`plain-words.md`), even when a human
+     must first decide or grant access. Never end with only a stop or wait.
+     When the person
+     names someone, use handoff step 8's lookup and the ticket worker's
+     assign mode. The ticket and plan go to that person, In Progress, and
+     the session is marked handed off. Otherwise the ticket stays assigned
+     to the person. Give no engineering repair task to the person.
 - A handoff check that also fails on the main the session captured is not a
   needed fix and never stops the handoff: it is a Known main failure recorded
   for engineering (`quality-loop.md`, "Failures already on main").
@@ -75,6 +106,15 @@ it ends on the session's branch: design reviews it, then an engineer opens
 the pull request and reviews it before it merges. When the person asks for
 one ("Tests"), handoff opens the pull request for them to take through review
 and merge.
+
+A fleet helper branch is outside this one-writer vibe session. Its explicit
+file allowlist contains only disjoint proof tests or a whole new module or file
+set; it never edits the ticket branch or a file another helper or the ticket
+writer concurrently owns. It never repairs defects in ticket-writer code or
+integrates. The ticket writer reviews and integrates returned commits or proof,
+and independent reviewers remain read-only. A helper authors proof tests only
+under existing test-authoring authority or an explicit user test request; the
+normal build and handoff test prohibition below remains in force.
 
 | Frontend (the sole persistent `vibe-change-worker`) | Never |
 |---|---|
@@ -165,8 +205,8 @@ outside the allowed table: the writer does not edit it in the loop either.
 A visible part of the request that needs such a path keeps its acceptance
 criterion `not met yet` with the reason that engineering must make it, and
 the ready message tells the person so in plain words, so they never accept a
-change the branch cannot keep. A fix to vibe's own tooling is
-different and still stops the session ("Plugins and tooling", above).
+change the branch cannot keep. A vibe tooling defect follows "Plugins and
+tooling" above; it does not stop the allowed work by itself.
 
 Vibe work is headed for `main`, so the target repo's flag rule decides which
 keys it may add ("Feature flags"). If the person chose Labs, the Labs pattern
@@ -266,7 +306,9 @@ rules are not copied here. The bare minimum:
     is never edited beyond a compile-only repair (prop renames, imports,
     types; no story, title, tag or visual change): its component's new
     states go in a new entry in the current root holding only them, its name
-    descriptive, permanent and without a version number.
+    descriptive, permanent and without a version number. Preserve its level
+    while dropping only the frozen version marker, so
+    `Composites v1.0/...` becomes `Composites/...`.
   - A compile-only repair rewords no comment, description, docs parameter or
     story text either: a renamed identifier inside prose is its only prose
     change.
@@ -404,6 +446,10 @@ reviewer, the ticket worker and the handoff skill point at it.
   writer and recorded on the Feature docs line instead, never kept as a
   draft.
 
+## Feature map lines
+
+Use the target repo's screen map and its writer policy. A feature branch never edits or regenerates a map reserved for a bot or refresh skill. When a screen's behavior or reach changes, write one `Feature map: <entry id or screen>: <what changed>` line per screen in the existing change log as the change is made. Use the discovered entry id; for a new screen without an entry, use its screen name. Write no line when nothing user visible changed. Handoff copies the lines verbatim to the ticket and a requested pull request.
+
 ## No new tech debt
 
 A change grows no tech debt without a cited reason. A new flag key, a
@@ -509,10 +555,9 @@ next to Missing tests so engineering sees them.
 
 ### Running and missing tests
 
-Handoff runs the existing affected tests: after any change, fix or main
-merge (a conflict resolution included), exactly the tests closedloop-graph
-`code_tests_for` returns for the files it touched, plus the inventory's
-`diffRules.requiredTests`, nothing broader by default. Files that map to no tests
+Handoff runs the existing affected tests: the feature-complete `code_tests_for` tests plus
+`diffRules.requiredTests`. Later, `qa-impact.mjs` selects lanes or screens;
+`None` runs nothing locally. Files that map to no tests
 (changelog, README, version text, Storybook Version History) run none; CI
 confirms them. When one fails, the SAME persistent
 `vibe-change-worker` fixes the session's own code, never what the test asserts
@@ -571,6 +616,36 @@ values, snapshots, tolerances, skips, timeouts, thresholds, `biome-ignore`,
 code. Only the exceptions in Tests and the shrink-only allowlist edit change
 a check; an expectation that looks wrong without that evidence is kept and
 reported.
+
+### Install-managed files changed by checks
+
+Before a session-owned install or a check that runs an install, capture the
+tracked and staged state of each install-managed file and its owning
+dependency manifest. Compare the state after the command with that snapshot
+and the owned command receipt. If the requested change intentionally edits
+`package.json` or another owning manifest and requires the resulting lockfile
+change, preserve that manifest and lockfile together, even when the session's
+install wrote the lockfile. Do not classify that pair as accidental drift.
+
+Restore a committed install-managed file only when an install ran as part of
+a check, the file was clean before that command, no intended dependency
+manifest change requires the result, and the receipt or a bounded
+reproduction establishes that the session's own check-run install changed
+it. A later person edit, an earlier change, or uncertain attribution is
+never session owned merely because the file is dirty now. A standalone
+install outside a check never authorizes automatic restoration.
+
+For a proven session-owned change, save the exact changed file in the
+session's private Git metadata before restoring the committed version. Verify
+the backup exists, the restored file matches the committed version, and no
+other tracked edit was changed. Continue the check or handoff without asking
+the person to approve undoing the session's own artifact. If the change
+predates the command or belongs to the person, preserve it and ask one plain
+question with a recommendation before any overwrite. If ownership remains
+unknown, preserve it and keep investigating without claiming a safe restore.
+
+When a check is narrowed or left for CI, name that check in the existing
+progress or handoff summary in plain words. Do not add a new summary template.
 
 ## Repo rules that bite most often
 

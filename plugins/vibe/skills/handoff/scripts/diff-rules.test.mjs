@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { parseUnifiedDiff, runDiffRules, transactionBodies } from "./diff-rules.mjs";
+import { frozenInputs } from "./frozen-render.mjs";
 import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
 
 const isFrozenStory = (text) => / v1\.0\//.test(text);
@@ -38,7 +39,7 @@ function run(t, { history = [], base = {}, head = {}, changeLog = "", commit = f
     git(checkout, ["add", "-A"], home);
     git(checkout, ["commit", "--quiet", "-m", "session"], home);
   }
-  writeFileSync(path.join(git(checkout, ["rev-parse", "--absolute-git-dir"], home), "vibe-changes.md"), changeLog);
+  writeFileSync(path.join(git(checkout, ["rev-parse", "--absolute-git-dir"], home), "vibe-changes.md"), typeof changeLog === "function" ? changeLog({ checkout, base: baseSha }) : changeLog);
   const result = runDiffRules({ worktree: checkout, base: baseSha, isFrozenStory });
   return { ...result, found: result.blocking.map((finding) => [finding.rule, finding.file]) };
 }
@@ -174,7 +175,7 @@ test("stories: a flipped assertion needs a release, a new entry beside a current
 
 test("a change anywhere in a frozen story's import closure blocks until its identical render is recorded", (t) => {
   const base = {
-    "apps/storybook/stories/row.stories.tsx": "import { Row } from \"@repo/design-system/components/row\";\nexport default { title: \"Composites v1.0/Row\" };\n",
+    "apps/storybook/stories/row.stories.tsx": "import { Row } from \"@repo/design-system/components/row\";\nexport default { title: \"Composites v1.0/Row\" };\nexport const Default = {};\n",
     "packages/design-system/components/row.tsx": "import { cell } from \"./cell\";\nexport const Row = cell;\n",
     "packages/design-system/components/cell.tsx": "export const cell = 1;\n",
     "packages/design-system/components/other.tsx": "export const other = 1;\n",
@@ -182,8 +183,61 @@ test("a change anywhere in a frozen story's import closure blocks until its iden
   const deep = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" } });
   assert.deepEqual(deep.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]]);
   assert.deepEqual(run(t, { base, head: { "packages/design-system/components/other.tsx": "export const other = 2;\n" } }).found, []);
-  const recorded = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: "Frozen render unchanged: all 1 stories: storybook test-runner on base and branch, identical\n" });
+  const recorded = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: ({ checkout, base: sha }) => `Frozen render unchanged: all 1 story files (1 stories): frozen-render.mjs --base ${sha} --story-file apps/storybook/stories/row.stories.tsx: 1 identical, 0 unstable on base, 0 same failure, 0 blocking; states composites-v1-0-row--default; inputs ${frozenInputs(checkout, sha, ["apps/storybook/stories/row.stories.tsx"])}; out/results.json\n` });
   assert.deepEqual(recorded.found, []);
+  const substringState = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: ({ checkout, base: sha }) => `Frozen render unchanged: all 1 story files (1 stories): frozen-render.mjs --base ${sha} --story-file apps/storybook/stories/row.stories.tsx: 1 identical, 0 unstable on base, 0 same failure, 0 blocking; states composites-v1-0-row--default-extra; inputs ${frozenInputs(checkout, sha, ["apps/storybook/stories/row.stories.tsx"])}; out/results.json\n` });
+  assert.deepEqual(substringState.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]], "story ids match as exact fields, not substrings");
+  // A hand-rolled capture's line no longer passes the gate (ISS-13291).
+  const handRolled = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: "Frozen render unchanged: all 1 stories: storybook test-runner on base and branch, identical\n" });
+  assert.deepEqual(handRolled.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]]);
+  assert.match(handRolled.blocking[0].fix, /frozen-render\.mjs/);
+});
+
+test("frozen story dependency closure includes imported styles and token JSON (ISS-13411 review)", (t) => {
+  const base = {
+    "apps/storybook/stories/row.stories.tsx": "import { Row } from \"@repo/design-system/components/row\";\nexport default { title: \"Composites v1.0/Row\" };\n",
+    "packages/design-system/components/row.tsx": "import \"./row.css\";\nimport tokens from \"./row.json\";\nexport const Row = tokens.row;\n",
+    "packages/design-system/components/row.css": ".row { color: red; }\n",
+    "packages/design-system/components/row.json": "{\"row\": 1}\n",
+  };
+  for (const file of ["packages/design-system/components/row.css", "packages/design-system/components/row.json"]) {
+    const result = run(t, { base, head: { [file]: file.endsWith(".css") ? ".row { color: blue; }\n" : "{\"row\": 2}\n" } });
+    assert.deepEqual(result.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]], file);
+  }
+});
+
+test("frozen story closure follows app aliases, images and fonts", (t) => {
+  const base = {
+    "apps/storybook/stories/row.stories.tsx": "import { Row } from \"@/components/row\";\nexport default { title: \"Composites v1.0/Row\" };\nexport const Default = {};\n",
+    "apps/storybook/src/components/row.tsx": "import logo from \"@/assets/logo.png\";\nimport \"./row.css\";\nexport const Row = () => logo;\n",
+    "apps/storybook/src/components/row.css": "@import \"../fonts/ui.woff2\";\n.row { color: red; }\n",
+    "apps/storybook/src/assets/logo.png": "old image\n",
+    "apps/storybook/src/fonts/ui.woff2": "old font\n",
+  };
+  for (const file of ["apps/storybook/src/assets/logo.png", "apps/storybook/src/fonts/ui.woff2"]) {
+    const result = run(t, { base, head: { [file]: `changed ${file}\n` } });
+    assert.deepEqual(result.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]], file);
+  }
+});
+
+test("frozen stories include global styles, tokens, Tailwind config and Storybook preview (ISS-13411 review)", (t) => {
+  const base = {
+    "apps/storybook/stories/row.stories.tsx": "import { Row } from \"@repo/design-system/components/row\";\nexport default { title: \"Composites v1.0/Row\" };\n",
+    "packages/design-system/components/row.tsx": "export const Row = 1;\n",
+    "apps/app/globals.css": "body { color: red; }\n",
+    "packages/design-system/tokens/colors.json": "{\"text\":\"red\"}\n",
+    "tailwind.config.ts": "export default { theme: {} };\n",
+    "apps/storybook/.storybook/preview.tsx": "export const decorators = [];\n",
+  };
+  for (const [file, text] of Object.entries({
+    "apps/app/globals.css": "body { color: blue; }\n",
+    "packages/design-system/tokens/colors.json": "{\"text\":\"blue\"}\n",
+    "tailwind.config.ts": "export default { theme: { extend: {} } };\n",
+    "apps/storybook/.storybook/preview.tsx": "export const decorators = [() => null];\n",
+  })) {
+    const result = run(t, { base, head: { [file]: text } });
+    assert.deepEqual(result.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]], file);
+  }
 });
 
 test("routes, GridTableV2 and story titles require the tests the graph does not map", (t) => {
@@ -236,6 +290,23 @@ test("a component or file a human removed is not brought back without a restore 
   assert.deepEqual(run(t, { history, head, changeLog }).found.filter(([rule]) => rule === "restored-removal"), []);
   const noSlug = "Restore authorization: ReadSourceBadge: operator ruling, 2026-10-21, session thread\n";
   assert.equal(run(t, { history, head, changeLog: noSlug }).found.some(([rule, file]) => rule === "restored-removal" && file === toolbar), true);
+});
+
+test("mounting a component a cleanup removed from another file, or a design-system primitive, is not a restore (ISS-13321)", (t) => {
+  const retired = "packages/app/plans/plans-nav.tsx";
+  const list = "packages/app/issues/issues-list.tsx";
+  const card = "packages/app/issues/issue-card.tsx";
+  const badgeImport = 'import { Badge } from "@repo/design-system/components/ui/badge";\n';
+  const history = [
+    { message: "Add plans nav", files: { [retired]: `${badgeImport}export const PlansNav = () => (\n  <Nav>\n    <Badge />\n    <PlanCount />\n  </Nav>\n);\n` } },
+    { message: "ISS-12983: Retire Desktop Plans nav", files: { [retired]: "export const PlansNav = () => null;\n" } },
+  ];
+  const base = { [list]: `${badgeImport}export const IssuesList = () => (\n  <List>\n  </List>\n);\n` };
+  const head = {
+    [list]: `${badgeImport}export const IssuesList = () => (\n  <List>\n    <Badge />\n    <PlanCount />\n  </List>\n);\n`,
+    [card]: `${badgeImport}export const IssueCard = () => (\n  <Card>\n    <Badge />\n    <PlanCount />\n  </Card>\n);\n`,
+  };
+  assert.deepEqual(run(t, { history, base, head }).found.filter(([rule]) => rule === "restored-removal"), []);
 });
 
 test("in a shallow clone the restored-removal check deepens the history to find the removal, and blocks only when that fails", (t) => {
@@ -335,6 +406,20 @@ test("a #8962-shaped prop that enables a control needs a source naming it on tha
   assert.deepEqual(run(t, { base, head, changeLog: cited }).found.filter(([rule]) => rule === "control-provenance"), []);
 });
 
+test("extracting an existing control into a shared parent is not a newly enabled control (ISS-13321)", (t) => {
+  const page = "packages/app/issues/issues-page.tsx";
+  const parent = "packages/app/shared/components/list-actions.tsx";
+  const base = { [page]: "export const IssuesPage = () => (\n  <Page>\n    <Button onClick={open}>Open</Button>\n  </Page>\n);\n" };
+  const head = {
+    [page]: 'import { ListActions } from "../shared/components/list-actions";\nexport const IssuesPage = () => (\n  <Page>\n    <ListActions onOpen={open} />\n  </Page>\n);\n',
+    [parent]: "export const ListActions = ({ onOpen }) => (\n  <Bar>\n    <Button onClick={onOpen}>Open</Button>\n  </Bar>\n);\n",
+  };
+  assert.deepEqual(run(t, { base, head }).found.filter(([rule]) => rule === "control-provenance"), []);
+  const added = { ...head, [parent]: head[parent].replace("  </Bar>", "    <FavoriteToggle />\n  </Bar>") };
+  assert.deepEqual(run(t, { base, head: added }).blocking.filter((finding) => finding.rule === "control-provenance").map((finding) => [finding.file, finding.problem]),
+    [[parent, "newly enables <FavoriteToggle> with no surface-specific ticket acceptance criterion or ruling"]], "a control the parent adds is still checked");
+});
+
 test("a #8922-shaped capability composed by sibling list adapters needs one shared owner", (t) => {
   const component = "packages/design-system/components/ui/filter-popover.tsx";
   const sessions = "packages/app/agents/components/sessions/sessions-list-toolbar-v2.tsx";
@@ -381,6 +466,23 @@ test("a #8922-shaped capability composed by sibling list adapters needs one shar
   );
 });
 
+test("one more item in a menu a page already composes, a type, or a leaf part needs no shared owner (ISS-13321)", (t) => {
+  const menu = "packages/design-system/components/ui/dropdown-menu.tsx";
+  const issues = "packages/app/issues/components/issues-list.tsx";
+  const sessions = "packages/app/agents/components/sessions/sessions-list.tsx";
+  const imports = (names) => `import { ${names} } from "@repo/design-system/components/ui/dropdown-menu";\n`;
+  const base = {
+    [menu]: "export const DropdownMenu = 1;\nexport const DropdownMenuItem = 1;\nexport type SortDirection = string;\n",
+    [issues]: `${imports("DropdownMenu, DropdownMenuItem")}export const IssuesList = () => (\n  <DropdownMenu>\n    <DropdownMenuItem>Open</DropdownMenuItem>\n  </DropdownMenu>\n);\n`,
+    [sessions]: `${imports("DropdownMenu, DropdownMenuItem, type SortDirection")}export const SessionsList = () => <DropdownMenu />;\n`,
+  };
+  const head = {
+    [issues]: `${imports("DropdownMenu, DropdownMenuItem, type SortDirection")}export const IssuesList = () => (\n  <DropdownMenu>\n    <DropdownMenuItem>Open</DropdownMenuItem>\n    <DropdownMenuItem>Duplicate</DropdownMenuItem>\n  </DropdownMenu>\n);\n`,
+  };
+  const changeLog = 'Copy: "Duplicate": ISS-1 AC1\n';
+  assert.deepEqual(run(t, { base, head, changeLog }).found.filter(([rule]) => rule === "shared-capability-owner"), []);
+});
+
 test("a changed screenshot baseline needs its counted element ledger before handoff", (t) => {
   const file = "e2e/__screenshots__/visual-regression.spec.ts/branches-desktop.png";
   assert.deepEqual(run(t, { base: { [file]: "old\n" }, head: { [file]: "new\n" } }).found, [["visual-baseline-ledger", file]]);
@@ -400,6 +502,21 @@ test("a lost story ID blocks unless recorded as a replacement, and every referen
     head: { "s/rows.stories.tsx": "export default { title: \"Composites/Rows\" };\nexport const Default = {};\n" },
   });
   assert.deepEqual(result.found, [["lost-story-id", "s/rows.stories.tsx"], ["lost-story-id", "apps/desktop/test/e2e/helpers/story-urls.ts"], ["lost-story-id", "e2e/rows.spec.ts"]]);
+});
+
+test("a lost story ID named in docs the session may not edit clears with an Engineering needed line (ISS-13321)", (t) => {
+  const ledger = "docs/branches-list-adapter-disposition-ledger.md";
+  const base = {
+    "s/rows.stories.tsx": "export default { title: \"Branches/Branches List\" };\nexport const Default = {};\nexport const HoverAndKeyboard = {};\n",
+    [ledger]: "See branches-branches-list--hover-and-keyboard.\n",
+  };
+  const head = { "s/rows.stories.tsx": "export default { title: \"Branches/Branches List\" };\nexport const Default = {};\nexport const KeyboardOnly = {};\n" };
+  const onLedger = (result) => result.blocking.filter((finding) => finding.rule === "lost-story-id" && finding.file === ledger);
+  const bare = onLedger(run(t, { base, head }));
+  assert.equal(bare.length, 1);
+  assert.match(bare[0].fix, /Engineering needed \(forbidden path\): docs\/branches-list-adapter-disposition-ledger\.md/);
+  const changeLog = `Engineering needed (forbidden path): ${ledger}; why: point it at the story's current ID\n`;
+  assert.deepEqual(onLedger(run(t, { base, head, changeLog })), []);
 });
 
 test("a changed route requires the web and Desktop specs that reach its endpoint only through a helper, never the helper (#8967)", (t) => {

@@ -2,7 +2,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { boundDefinition, capWorkerResult } from "./claude-worker.js";
+import { boundDefinition, capWorkerResult, workerSessionName } from "./claude-worker.js";
 import { readDefinition } from "./definition.js";
 import { changeWriter, readWriterSummary, registerWriter } from "./ledger.js";
 import { bundleDirectory, fixture, graph, liveReads, readProof, recordWrite, writeAgent } from "./test-fixtures.js";
@@ -33,7 +33,7 @@ describe("production Claude CLI adapter", () => {
       expect(prompt).toContain("Never start another implementation writer or commit.");
       expect(prompt).toContain("owned main-sync publication gate");
     }
-  }, 10000);
+  });
   it("retains the original no-push footer for source, readers and request-only flags/Desktop actions", () => {
     const value = setup();
     const cases = [
@@ -53,6 +53,45 @@ describe("production Claude CLI adapter", () => {
       expect(bound.agent.prompt).toContain("Never start another implementation writer, commit, or push.");
     }
   });
+  it("lets the verify reader write only owned private evidence in pre-pr and control modes", () => {
+    const value = setup();
+    writeAgent(value.agentRoot, "vibe-verify-worker", "Read, Grep, Glob, Bash, Skill");
+    writeAgent(value.agentRoot, "vibe-storybook-decomposer", "Read, Grep, Glob, Bash, Skill");
+    for (const mode of ["pre-pr", "control"]) {
+      const bound = boundDefinition(readDefinition(value.agentRoot, "vibe-verify-worker", graph),
+        { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-verify-worker",
+          requestId: `verify-${mode}`, input: mode, timeoutMs: 1000, capabilities: graph, mode: "request" });
+      expect(bound.reader).toBe(true);
+      expect(bound.agent.prompt).toContain("vibe-pr-evidence.json");
+      expect(bound.agent.prompt).toContain("vibe-lane-results.json");
+      expect(bound.agent.prompt).toContain("vibe-lane-report.txt");
+      expect(bound.agent.prompt).toContain(".control/");
+      expect(bound.agent.prompt).toContain("Never edit product source, tests, fixtures, snapshots, catalog or allowlists");
+      expect(bound.agent.prompt).not.toContain("never mutate files or records");
+    }
+    const advisor = boundDefinition(readDefinition(value.agentRoot, "vibe-guardrails-reviewer", graph),
+      { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-guardrails-reviewer",
+        requestId: "review", input: "review", timeoutMs: 1000, capabilities: graph, mode: "request" });
+    expect(advisor.agent.prompt).toContain("never mutate files or records");
+    const storybook = boundDefinition(readDefinition(value.agentRoot, "vibe-storybook-decomposer", graph),
+      { worktree: value.worktree, agentRoot: value.agentRoot, agentName: "vibe-storybook-decomposer",
+        requestId: "storybook", input: "frozen render", timeoutMs: 1000, capabilities: graph, mode: "request" });
+    expect(storybook.agent.prompt).toContain("verify-storybook-process.mjs");
+    expect(storybook.agent.prompt).toContain("never adopt an unrecorded process");
+    expect(storybook.agent.prompt).not.toContain("never mutate files or records");
+  });
+  it("admits the environment handover action with one normal push through the repo's checks (ISS-13321)", () => {
+    const value = setup();
+    const item = { agentName: "vibe-environment-worker", mode: "record" as const,
+      recordAction: "handover" as const, exclusiveRecordTurn: true as const };
+    const capabilities = [...graph, recordWrite];
+    const prompt = boundDefinition(readDefinition(value.agentRoot, item.agentName, capabilities),
+      { worktree: value.worktree, agentRoot: value.agentRoot, requestId: "tooling-stop", input: "hand the work over",
+        timeoutMs: 1000, capabilities, ...item }).agent.prompt;
+    expect(prompt).toContain("Push only the current commit to the session's branch, once, through the repository's normal pre-push checks");
+    expect(prompt).not.toContain("owned main-sync publication gate");
+    expect(prompt).not.toContain("Never start another implementation writer, commit, or push.");
+  });
   it("admits the environment pull-request action with no record writes and the no-push footer", () => {
     const value = setup();
     const item = { agentName: "vibe-environment-worker", mode: "record" as const,
@@ -63,6 +102,19 @@ describe("production Claude CLI adapter", () => {
         timeoutMs: 1000, capabilities, ...item });
     expect(launch(graph).agent.prompt).toContain("Never start another implementation writer, commit, or push.");
     expect(() => launch([...graph, recordWrite])).toThrow(/outside this canonical action/);
+  });
+  it("a record turn with malformed final formatting reports unverified outcome without replaying its write", () => {
+    const value = setup();
+    const result = run(value, { agentName: "vibe-ticket-worker", mode: "record", recordAction: "handoff",
+      exclusiveRecordTurn: true, capabilities: [...graph, ...liveReads, recordWrite], requestId: "ticket-handoff-format",
+      input: "STRUCTURED_RETRY_AFTER_WRITE" });
+    expect(result.status).toBe(1);
+    expect(existsSync(join(value.metadata, "fake-external-write"))).toBe(true);
+    const failure = JSON.parse(result.stdout);
+    expect(failure.code).toBe("RECORD_RESULT_UNVERIFIED");
+    expect(failure.summary).toContain("read-only reconciliation");
+    expect(failure.summary).toContain("Do not repeat the write");
+    expect(readProof(value.metadata)).toHaveLength(1);
   });
   it("grants the ticket worker artifact links and the session plan only in its create, plan and handoff actions", () => {
     const value = setup();
@@ -107,6 +159,9 @@ describe("production Claude CLI adapter", () => {
     expect(proof[0]?.definition["vibe:vibe-change-worker"]?.prompt).toContain("Canonical fixture prompt");
     expect(proof[0]?.args[proof[0].args.indexOf("--allowedTools") + 1]?.split(",")).toEqual(
       proof[0]?.definition["vibe:vibe-change-worker"]?.tools);
+    // ISS-13279: the Codex app imports a saved Claude session titled by its name, else by the JSON envelope.
+    expect(proof.map((item) => item.args[item.args.indexOf("--name") + 1]))
+      .toEqual(["vibe change worker · test · first", "vibe change worker · test · second"]);
     expect(proof[0]?.payload.input).toBe("SECRET_FIRST");
     expect(proof[1]?.payload.input).toBe("SECRET_SECOND");
     for (const item of proof) {
@@ -196,7 +251,7 @@ describe("production Claude CLI adapter", () => {
     const legacy = run(value, { requestId: "invalid-structured", continuation: "Legacy JSON without a structured field" });
     expect(legacy.status, legacy.stderr).toBe(0);
     expect(JSON.parse(legacy.stdout).sessionId).toBe(JSON.parse(structured.stdout).sessionId);
-  }, 20000);
+  });
   it("retains one phase-neutral primary definition while only a pull-request envelope grants test authority", () => {
     const value = setup();
     const first = run(value, { input: "PLAN_FIRST: user asks to write tests now", mode: "request" });
@@ -227,7 +282,7 @@ describe("production Claude CLI adapter", () => {
     expect(advice?.definition["vibe:vibe-guardrails-reviewer"]?.prompt).toContain("Never write or edit tests. ");
     expect(prompt).not.toContain("This is mode request");
     expect(prompt).not.toContain("Never write or edit tests. ");
-  }, 20000);
+  });
   it("grants test-repair authority only to the writer's request, fix, handoff and pull-request turns", () => {
     const value = setup();
     // PLAN_FIRST keeps the fixture's request active so each later turn continues it.
@@ -256,7 +311,7 @@ describe("production Claude CLI adapter", () => {
     expect(prompt).toContain("without changing what any test asserts; never add a test file");
     expect(prompt).toContain("Delete a test file or case only when it covers nothing but code the request retires");
     expect(proof[4]?.definition["vibe:vibe-guardrails-reviewer"]?.prompt).toContain("Never write or edit tests. ");
-  }, 20000);
+  });
   it("admits only pre-session requirements and setup with their existing serialized ticket actions", () => {
     const value = setup();
     rmSync(join(value.metadata, "vibe-session.json"));
@@ -283,7 +338,7 @@ describe("production Claude CLI adapter", () => {
     expect(busy.status).toBe(1);
     expect(readProof(value.metadata)).toHaveLength(3);
     expect(existsSync(join(value.metadata, "vibe-record-turn.lock"))).toBe(true);
-  }, 10000);
+  });
   it("requires parent-held discard evidence and a stable existing checkout for post-discard cancellation", () => {
     const value = setup();
     rmSync(join(value.metadata, "vibe-session.json"));
@@ -338,7 +393,7 @@ describe("production Claude CLI adapter", () => {
     expect(readProof(value.metadata)[0]?.payload.input).toBe("DISCARD_OWNED_FIXTURE");
     expect(JSON.parse(result.stdout).data.discardReceipt.cancelEvidence).toEqual({ discarded: true, branch,
       liveTicket: "ISS-2", operatorId: "fixture-owner", operatorEmail: "owner@example.invalid" });
-  }, 10000);
+  });
   it("uses the canonical historical ticket read from preview through confirmed discard and preserves ticket absence", () => {
     const value = setup();
     rmSync(join(value.metadata, "vibe-session.json"));
@@ -405,7 +460,12 @@ describe("production Claude CLI adapter", () => {
     expect(JSON.parse(changed.stdout).code).toBe("WRITER_BINDING_CHANGED");
     expect(run(value, { requestId: "third", input: "WRONG_ID" }).status).toBe(1);
     expect(JSON.parse(readFileSync(join(value.metadata, "vibe-writer.json"), "utf8")).active.status).toBe("FAILED");
-  }, 20000);
+  });
+  it("names a session by role, session slug and request, keeping a branch outside vibe/ whole", () => {
+    expect(workerSessionName("vibe-adversarial-reviewer", "vibe/prd818", "prd818-guardrails-05"))
+      .toBe("vibe adversarial reviewer · prd818 · prd818-guardrails-05");
+    expect(workerSessionName("vibe-ticket-worker", "main", "r1")).toBe("vibe ticket worker · main · r1");
+  });
   it("retains reader built-ins but excludes writes, record mutators and nested writer tools", () => {
     const value = setup();
     const reader = run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect" });
@@ -413,6 +473,8 @@ describe("production Claude CLI adapter", () => {
     const proof = readProof(value.metadata)[0];
     expect(proof?.args[proof.args.indexOf("--permission-mode") + 1]).toBe("default");
     expect(proof?.args[proof.args.indexOf("--disallowedTools") + 1]).toMatch(/Write,Edit/);
+    expect(proof?.args[proof.args.indexOf("--name") + 1]).toBe("vibe guardrails reviewer · test · first");
+    expect(proof?.args).not.toContain("--no-session-persistence");
     expect(proof?.definition["vibe:vibe-guardrails-reviewer"]?.tools).toEqual(["Read", "Grep", "Glob", "Bash", "Skill", "ToolSearch", "StructuredOutput", graph[0]?.name,
       "mcp__custom_graph__sync-status"]);
     expect(run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect", capabilities: [...graph, recordWrite] }).status).toBe(1);
@@ -478,7 +540,7 @@ describe("production Claude CLI adapter", () => {
     const next = run(value, { requestId: "after-cap", input: "A new request after the cap" });
     expect(next.status, next.stdout).toBe(0);
     expect(readWriterSummary(value.worktree)?.activeRequestId).toBeUndefined();
-  }, 20000);
+  }, 10000);
   it("caps an over-long result instead of rejecting it, so the request closes (ISS-13043)", () => {
     const value = setup();
     const long = run(value, { input: "LONG_SUMMARY" });
@@ -490,7 +552,7 @@ describe("production Claude CLI adapter", () => {
     expect(capped.data).toBeUndefined();
     expect(capped.summary).toMatch(/data dropped by the launcher/);
     expect(capWorkerResult({ status: "DONE", summary: "ok", data: { a: 1 } })).toEqual({ status: "DONE", summary: "ok", data: { a: 1 } });
-  }, 20000);
+  });
   it("serializes truly concurrent helper publication and native writer claims through the production CLIs", async () => {
     const value = setup();
     const registered = registerWriter({ worktree: value.worktree, runtime: "codex", workerId: "native-record-race",
@@ -526,5 +588,5 @@ describe("production Claude CLI adapter", () => {
     }
     expect(existsSync(join(value.metadata, "vibe-record-turn.lock"))).toBe(false);
     expect(readWriterSummary(value.worktree)?.workerId).toBe(registered.workerId);
-  }, 10000);
+  });
 });

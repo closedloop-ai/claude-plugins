@@ -34,6 +34,81 @@ test('a writer row whose head is behind the pushed head is stale until the write
   assert.match(page, /w1: head bbb, status QA ready/);
 });
 
+test('status and watcher report every local commit not declared push-ready, even when the board head is stale', (t) => {
+  const dir = tempDir(t);
+  const wt = path.join(dir, 'wt');
+  mkdirSync(wt);
+  const git = (...args) => {
+    const result = spawnSync('git', ['-C', wt, '-c', 'user.name=Test', '-c', 'user.email=test', ...args], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  git('init', '--quiet');
+  git('commit', '--quiet', '--allow-empty', '-m', 'pushed base');
+  const base = git('rev-parse', 'HEAD');
+  git('branch', 'pushed', base);
+  git('branch', '--set-upstream-to=pushed');
+  run([dir, 'writer', 'w', '--head', base, '--worktree', wt]);
+  git('commit', '--quiet', '--allow-empty', '-m', 'intermediate grader tweak');
+  const intermediate = git('rev-parse', 'HEAD');
+  git('commit', '--quiet', '--allow-empty', '-m', 'final');
+  const final = git('rev-parse', 'HEAD');
+  run([dir, 'writer', 'w', '--ready', final]);
+  const status = run([dir, 'status']);
+  assert.equal(status.status, 1, status.stdout);
+  assert.match(status.stdout, new RegExp(`UNREADY-COMMIT w ${intermediate}`));
+  assert.doesNotMatch(status.stdout, new RegExp(`UNREADY-COMMIT w ${final}`));
+  assert.match(run([dir, 'watch-lines']).stdout, /board UNREADY-COMMIT w/);
+  assert.equal(run([dir, 'push-check', 'w', '--head', final]).status, 1);
+  run([dir, 'writer', 'w', '--ready', intermediate]);
+  run([dir, 'writer', 'w', '--ready', final]);
+  assert.equal(run([dir, 'status']).status, 0);
+  assert.equal(run([dir, 'push-check', 'w', '--head', final]).status, 0);
+  const branch = git('branch', '--show-current');
+  git('checkout', '--quiet', '-b', 'incoming', base);
+  git('commit', '--quiet', '--allow-empty', '-m', 'main change by another author');
+  const incoming = git('rev-parse', 'HEAD');
+  git('update-ref', 'refs/remotes/origin/main', incoming);
+  git('checkout', '--quiet', branch);
+  git('merge', '--quiet', '--no-ff', 'incoming', '-m', 'sync main');
+  const merge = git('rev-parse', 'HEAD');
+  assert.match(run([dir, 'status']).stdout, new RegExp(`UNREADY-COMMIT w ${merge}`));
+  run([dir, 'writer', 'w', '--ready', merge]);
+  const synced = run([dir, 'status']);
+  assert.equal(synced.status, 0, synced.stdout);
+  assert.doesNotMatch(synced.stdout, new RegExp(`UNREADY-COMMIT w ${incoming}`), 'incoming main ancestry is not a writer checkpoint');
+  git('checkout', '--quiet', '-b', 'local-side', final);
+  git('commit', '--quiet', '--allow-empty', '-m', 'undeclared local side checkpoint');
+  const checkpoint = git('rev-parse', 'HEAD');
+  git('checkout', '--quiet', branch);
+  git('merge', '--quiet', '--no-ff', 'local-side', '-m', 'integrate local side');
+  const sideMerge = git('rev-parse', 'HEAD');
+  run([dir, 'writer', 'w', '--ready', sideMerge]);
+  const hidden = run([dir, 'status']);
+  assert.equal(hidden.status, 1, hidden.stdout);
+  assert.match(hidden.stdout, new RegExp(`UNREADY-COMMIT w ${checkpoint}`), 'a merge cannot launder an undeclared local checkpoint');
+  assert.equal(run([dir, 'push-check', 'w', '--head', sideMerge]).status, 1);
+  run([dir, 'writer', 'w', '--ready', checkpoint]);
+  run([dir, 'writer', 'w', '--ready', sideMerge]);
+  assert.equal(run([dir, 'status']).status, 0);
+});
+
+test('remote writers report NO-HEAD without blocking status or push-check', t => {
+  const dir = tempDir(t);
+  const head = 'a'.repeat(40);
+  const base = 'b'.repeat(40);
+  const recorded = run([dir, 'writer', 'remote-w', '--where', 'remote', '--worktree', '/srv/remote/worktree', '--head', head,
+    '--ready', head, '--base', base]);
+  assert.equal(recorded.status, 0, recorded.stderr);
+  const status = run([dir, 'status', '--pushed', `remote-w=${head}`]);
+  assert.equal(status.status, 0, status.stdout + status.stderr);
+  assert.match(status.stdout, /NO-HEAD remote-w/);
+  assert.doesNotMatch(status.stdout, /PUSH-READY-UNKNOWN/);
+  const push = run([dir, 'push-check', 'remote-w', '--head', head, '--pushed', `remote-w=${head}`]);
+  assert.equal(push.status, 0, push.stdout + push.stderr);
+  assert.match(push.stdout, /^READY remote-w /);
+});
+
 test('the pushed head is read from gh for a row with a PR and repo', (t) => {
   const dir = tempDir(t);
   const gh = path.join(dir, 'gh');
@@ -42,6 +117,52 @@ test('the pushed head is read from gh for a row with a PR and repo', (t) => {
   assert.equal(run([dir, 'writer', 'w1', '--pr', '7', '--repo', 'acme/app', '--head', 'old']).status, 0);
   const stale = run([dir, 'status'], { BOARD_GH: gh });
   assert.match(stale.stdout, /^STALE w1 board head old, pushed pushed-7$/m);
+});
+
+test('trusted stacked parent ancestry is excluded without declaring parent commits ready', t => {
+  const dir = tempDir(t);
+  const wt = gitRepo(t);
+  const git = (...args) => {
+    const result = spawnSync('git', ['-C', wt, '-c', 'user.name=Test', '-c', 'user.email=test', ...args], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  const published = git('rev-parse', 'HEAD');
+  git('checkout', '-qb', 'parent');
+  git('commit', '-q', '--allow-empty', '-m', 'unmerged parent feature');
+  const parent = git('rev-parse', 'HEAD');
+  git('update-ref', 'refs/remotes/origin/parent', parent);
+  git('checkout', '-qb', 'writer');
+  git('commit', '-q', '--allow-empty', '-m', 'writer ready change');
+  const head = git('rev-parse', 'HEAD');
+  run([dir, 'writer', 'w', '--worktree', wt, '--head', head, '--ready', head]);
+  const file = path.join(dir, 'board.json');
+  const board = JSON.parse(readFileSync(file, 'utf8'));
+  board.writers.w.trustedBase = { ref: 'refs/remotes/origin/parent', oid: parent };
+  writeFileSync(file, JSON.stringify(board));
+  const status = run([dir, 'status', '--pushed', `w=${published}`]);
+  assert.doesNotMatch(status.stdout, new RegExp(`UNREADY-COMMIT w ${parent}`));
+  assert.equal(run([dir, 'push-check', 'w', '--head', head, '--pushed', `w=${published}`]).status, 0);
+  assert.equal(run([dir, 'writer', 'w', '--base', 'origin/parent']).status, 0);
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).writers.w.trustedBase, { ref: 'origin/parent', oid: parent });
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).writers.w.readyHeads, [head]);
+  const inheritedReady = run([dir, 'writer', 'w', '--ready', parent]);
+  assert.equal(inheritedReady.status, 2, 'inherited parent commits cannot be declared writer-ready');
+  assert.match(inheritedReady.stderr, /trusted base.*push-ready/);
+  const gh = path.join(dir, 'gh');
+  writeFileSync(gh, `#!/bin/sh\ncase "$*" in\n *baseRefOid*) echo ${parent} ;;\n *) echo ${head} ;;\nesac\n`);
+  chmodSync(gh, 0o755);
+  board.writers.w.pr = '77'; board.writers.w.repo = 'acme/app';
+  board.writers.w.trustedBase = { ref: 'origin/main', oid: published };
+  writeFileSync(file, JSON.stringify(board));
+  assert.equal(run([dir, 'status'], { BOARD_GH: gh }).status, 0, 'GitHub actual base wins over a stale row pin');
+  git('update-ref', 'refs/remotes/origin/trunk', parent);
+  git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk');
+  git('update-ref', '-d', 'refs/remotes/origin/main');
+  assert.equal(run([dir, 'writer', 'default', '--worktree', wt, '--head', head, '--ready', head]).status, 0);
+  const fallback = run([dir, 'status'], { BOARD_GH: gh });
+  assert.equal(fallback.status, 0, fallback.stdout + fallback.stderr);
+  assert.doesNotMatch(fallback.stdout, /PUSH-READY-UNKNOWN default/, 'pre-PR fallback follows the repository default, not a hardcoded main');
 });
 
 test('a ruling and a ready checkpoint stay untold until each recipient is told directly', (t) => {
@@ -220,4 +341,78 @@ test('status fails on state outside the fleet home: a flat watched dir, and a se
   mkdirSync(path.join(dir, 'sessions'));
   writeFileSync(path.join(dir, 'sessions', 'prd723-vibe.remote.json'), '{}\n');
   assert.equal(run([home, 'status', ...now]).status, 0);
+});
+
+// 2026-10-26: a Claude pane writer committed items 1 to 3 and sat in long verification runs for over an
+// hour; the answer and two scope additions sent at 14:55 and 15:15 never reached it, and its worktree stayed clean
+// at that one commit. Every send reported success and nothing flagged it until the operator asked.
+const gitRepo = (t) => {
+  const repo = mkdtempSync(path.join(os.tmpdir(), 'fleet-board-wt-'));
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const git = (...args) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  git('init', '-q');
+  writeFileSync(path.join(repo, 'filters.ts'), 'export const quickFilters = true;\n');
+  git('add', '.');
+  git('-c', 'user.name=t', '-c', 'user.email=t', 'commit', '-qm', 'items 1 to 3');
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  return repo;
+};
+
+test('a scope change the writer never acknowledges is UNACKED-SCOPE, and a worktree still clean at the old head is SCOPE-NOT-STARTED (2026-10-26)', (t) => {
+  const dir = tempDir(t);
+  const worktree = gitRepo(t);
+  assert.equal(run([dir, 'writer', 'fix-13096', '--runtime', 'claude', '--worktree', worktree, '--now', '2026-10-26T14:49:00Z']).status, 0);
+  assert.equal(run([dir, 'deliver', 'item-5', '--kind', 'scope', '--to', 'fix-13096', '--text', 'restore legacy Project Detail row selection (AC-5)', '--now', '2026-10-26T15:15:00Z']).status, 0);
+  assert.equal(run([dir, 'told', 'item-5', 'fix-13096', '--now', '2026-10-26T15:15:30Z']).status, 0);
+  const at = (time) => run([dir, 'status', '--now', time]);
+  assert.equal(at('2026-10-26T15:29:00Z').status, 0, 'a told change has 15 minutes to be acknowledged');
+  const unacked = at('2026-10-26T15:31:00Z');
+  assert.equal(unacked.status, 1);
+  assert.match(unacked.stdout, /^UNACKED-SCOPE item-5 fix-13096 15m: the writer has not acknowledged this scope change/m);
+  assert.doesNotMatch(unacked.stdout, /SCOPE-NOT-STARTED/, 'thirty minutes pass before an unmoved head counts');
+  const incident = at('2026-10-26T16:52:00Z');
+  assert.match(incident.stdout, /^UNACKED-SCOPE item-5 fix-13096 96m/m);
+  assert.match(incident.stdout, /^SCOPE-NOT-STARTED item-5 fix-13096 96m: its worktree is clean at [0-9a-f]{10}, the head it had when the change was sent/m);
+  assert.match(incident.stdout, /1 scope unacked, 1 scope not started/);
+  assert.equal(
+    run([dir, 'watch-lines', '--now', '2026-10-26T16:52:00Z']).stdout,
+    'board UNACKED-SCOPE item-5 fix-13096\nboard SCOPE-NOT-STARTED item-5 fix-13096\n',
+    'watch lines carry no minutes, so the watcher wakes once when each appears',
+  );
+  assert.equal(run([dir, 'watch-lines', '--now', '2026-10-26T17:30:00Z']).stdout, run([dir, 'watch-lines', '--now', '2026-10-26T16:52:00Z']).stdout);
+
+  const pending = run([dir, 'pending', 'fix-13096']);
+  assert.equal(pending.status, 1, 'the writer reads its own pending list without waiting for the mailbox');
+  assert.match(pending.stdout, /^SCOPE item-5: restore legacy Project Detail row selection \(AC-5\)$/m);
+  assert.equal(run([dir, 'ack', 'fix-13096', '--id', 'item-5', '--now', '2026-10-26T16:53:00Z']).status, 0);
+  assert.equal(run([dir, 'pending', 'fix-13096']).status, 0);
+  const acked = at('2026-10-26T16:54:00Z');
+  assert.doesNotMatch(acked.stdout, /UNACKED-SCOPE/);
+  assert.match(acked.stdout, /^SCOPE-NOT-STARTED item-5 fix-13096/m, 'an acknowledgement alone does not start the work');
+  writeFileSync(path.join(worktree, 'selection.ts'), 'export const rowSelection = true;\n');
+  assert.equal(at('2026-10-26T16:55:00Z').status, 0, 'a change in the worktree is the work starting');
+});
+
+test('a scope change needs content and a writer whose worktree status can read; a pending answer carries its text', (t) => {
+  const dir = tempDir(t);
+  assert.equal(run([dir, 'writer', 'w1']).status, 0);
+  const noTree = run([dir, 'deliver', 'c1', '--kind', 'scope', '--to', 'w1', '--text', 'add item 4']);
+  assert.equal(noTree.status, 2);
+  assert.match(noTree.stderr, /board writer with a worktree/);
+  assert.equal(run([dir, 'writer', 'w1', '--worktree', gitRepo(t)]).status, 0);
+  const empty = run([dir, 'deliver', 'c1', '--kind', 'scope', '--to', 'w1']);
+  assert.equal(empty.status, 2);
+  assert.match(empty.stderr, /carries its content/);
+  assert.equal(run([dir, 'deliver', 'c1', '--kind', 'scope', '--to', 'w1', '--text', 'add item 4']).status, 0);
+  assert.match(readFileSync(path.join(dir, 'board.md'), 'utf8'), /^- c1 for w1: add item 4$/m);
+  assert.equal(run([dir, 'ack', 'w2', '--id', 'c1']).status, 2, 'only a recipient acknowledges a scope change');
+
+  assert.equal(run([dir, 'question', 'w1', '--id', 'hide-default', '--text', 'Hide completed ON by default? Default: OFF']).status, 0);
+  assert.equal(run([dir, 'answered', 'w1', '--id', 'hide-default', '--text', 'ON, with legacy persistence']).status, 0);
+  const pending = run([dir, 'pending', 'w1']);
+  assert.match(pending.stdout, /^SCOPE c1: add item 4$/m);
+  assert.match(pending.stdout, /^ANSWERED hide-default: ON, with legacy persistence$/m);
+  assert.equal(run([dir, 'ack', 'w1', '--id', 'hide-default']).status, 0);
+  assert.equal(run([dir, 'ack', 'w1', '--id', 'c1']).status, 0);
+  assert.equal(run([dir, 'pending', 'w1']).stdout, 'pending: none\n');
 });

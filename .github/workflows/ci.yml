@@ -89,7 +89,8 @@ jobs:
           cache-dependency-path: tools/plugin-manifests/package-lock.json
       - run: npm ci
       - run: npm run typecheck
-      # Fails when any plugin's .claude-plugin and .codex-plugin versions differ.
+      # Fails when any plugin's .claude-plugin and .codex-plugin versions differ,
+      # or when any plugin registers more than one hook command for an event.
       - run: npm test
 
   lint:
@@ -153,6 +154,34 @@ jobs:
           echo "Running ${#files[@]} test files:"
           printf '  %s\n' "${files[@]}"
           node --test --test-reporter=spec "${files[@]}"
+
+  vibe-eval-t0:
+    name: Vibe Eval T0
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen --group dev
+      - name: Install deterministic benchmark tooling
+        working-directory: tools/vibe-bench
+        run: npm ci
+      - name: Type-check benchmark contracts
+        working-directory: tools/vibe-bench
+        run: npm run typecheck
+      - name: Validate local plugin structure
+        working-directory: tools/vibe-bench
+        run: npm run validate:plugins
+      - name: Run deterministic benchmark contracts
+        working-directory: tools/vibe-bench
+        run: npm test
+      - name: Run deterministic Codex mirror contracts
+        run: uv run pytest plugins/vibe/evals/codex/test_run.py
 
   tools-ts:
     name: TypeScript (${{ matrix.tool }})

@@ -17,7 +17,7 @@ script you would have run.
 
 Session state:
 - The person just typed: "/vibe:vibe I want to add bulk labels to the task list". This is a new conversation; no session exists yet.
-- `node scripts/plugin-version.mjs --runtime claude` returned `{"status":"outdated","installed":"1.0.52","latest":"1.0.53","update":["claude plugin marketplace update closedloop-ai","claude plugin update vibe@closedloop-ai"]}`.
+- `node scripts/plugin-version.mjs check --runtime claude` returned `{"status":"outdated","outdated":[{"harness":"claude","plugin":"vibe","installed":"1.0.52","latest":"1.0.53"}],"versions":"vibe: you have 1.0.52, the latest is 1.0.53"}`.
 - Nothing else has run yet.
 
 Answer in exactly this form, and nothing else:

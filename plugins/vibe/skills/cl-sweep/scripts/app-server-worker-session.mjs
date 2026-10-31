@@ -29,11 +29,13 @@ import {
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { workerThreadName } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
 import {
   assertNoRawSecrets,
   createTurnCollector,
   deliverDurableDelivery,
   enqueueDurableDelivery,
+  endDurableThread,
   ensureDurableThread,
   inspectThread,
   probe as probeGenericAppServer,
@@ -853,10 +855,13 @@ function lifecycleView(session) {
     activeTurnId: session.activeTurnId,
     pendingOperation: session.appServerPendingOperation,
     operationHistory: session.appServerOperationHistory,
+    ...(session.ended ? { ended: session.ended } : {}),
+    ...(session.archivedAt ? { archivedAt: session.archivedAt } : {}),
     options: {
       approvalPolicy: 'never',
       sandbox: 'danger-full-access',
       serviceName: 'cl_sweep',
+      threadName: workerThreadName('cl-sweep', session.ticket),
       model: session.requestedModel,
       effort: session.requestedReasoningEffort,
     },
@@ -870,6 +875,10 @@ function syncLifecycle(path, session, lifecycle) {
   if (lifecycle.pendingOperation) session.appServerPendingOperation = lifecycle.pendingOperation;
   else delete session.appServerPendingOperation;
   if (lifecycle.operationHistory) session.appServerOperationHistory = lifecycle.operationHistory;
+  for (const key of ['ended', 'archivedAt']) {
+    if (lifecycle[key]) session[key] = lifecycle[key];
+    else delete session[key];
+  }
   session.updatedAt = new Date().toISOString();
   writeJsonPrivate(path, session);
 }
@@ -1596,6 +1605,21 @@ function launchDetached(args) {
   return runner;
 }
 
+/** Records the ticket worker stopped or merged, then archives its App Server thread (ISS-13279). */
+async function endSession(args, dependencies = {}) {
+  const { path, session } = loadSession(required(args, 'session-file'));
+  validateBinding(session);
+  const lifecycle = lifecycleView(session);
+  const client = dependencies.client || createClient(args);
+  try {
+    await initializeClient(client);
+    const result = await endDurableThread(client, lifecycle, required(args, 'reason'), () => syncLifecycle(path, session, lifecycle));
+    return { schema: SESSION_SCHEMA, ticket: session.ticket, generation: session.generation, ...result };
+  } finally {
+    if (!dependencies.client) client.close();
+  }
+}
+
 async function statusSession(args, dependencies = {}) {
   const { session } = loadSession(required(args, 'session-file'));
   let bindingValid = true;
@@ -2315,6 +2339,7 @@ function usage() {
     '  supervise             Reconnect to one stored active turn',
     '  launch                Run or supervise through a detached runner receipt',
     '  status                Read durable and authoritative live state',
+    '  end                   Record the worker stopped or merged, then archive its thread: --reason stopped|merged',
     '  report-activity       Record/repair one exact active turn activity',
     '  reconcile-continuations Replay completed automatic goal continuation callbacks',
     '  repair-accepted-callback-delivery Restore an accepted callback after delivery-only failure',
@@ -2347,6 +2372,7 @@ async function main() {
   else if (args.command === 'supervise') result = await superviseTurn(args);
   else if (args.command === 'launch') result = launchDetached(args);
   else if (args.command === 'status') result = await statusSession(args);
+  else if (args.command === 'end') result = await endSession(args);
   else if (args.command === 'report-activity') result = await reportActivity(args);
   else if (args.command === 'reconcile-continuations') result = await reconcileAutomaticContinuations(args);
   else if (args.command === 'repair-accepted-callback-delivery') result = await repairAcceptedCallbackDelivery(args);
@@ -2364,6 +2390,7 @@ async function main() {
 
 export {
   createTurnCollector,
+  endSession,
   resultRootForSession,
   parseCallback,
   probeAppServer,

@@ -164,4 +164,8 @@ When modifying agents, skills, hooks, commands, or any file under `plugins/{plug
 
 3. **Update `CHANGELOG.md`** in the affected plugin directory (required by pre-push hook)
 
-4. After merging, users must run `/plugin marketplace update closedloop && /exit` to reload
+   For a `plugins/vibe` change (vibe, fleet-orchestrator and the other vibe skills), the release step below is also required.
+
+4. **vibe release smoke (optional).** An author may run `node tools/vibe-release-smoke/smoke.mjs` on a Mac with the ChatGPT app installed and signed in when a startup, setup, sign-in, or sandbox change warrants a real Codex check. It installs the committed vibe and closedloop-core into a throwaway Codex home and runs `$vibe` under the app's default approval policy and sandbox. CI does not run it because its runners cannot sign in to ChatGPT. Its result is not required in the PR description and a failure does not block release. Unit tests and evals cannot observe the real Codex sandbox (ISS-13315; optional policy: ISS-13321, Daniel's 2026-10-28 ruling).
+
+5. After merging, users must run `/plugin marketplace update closedloop && /exit` to reload

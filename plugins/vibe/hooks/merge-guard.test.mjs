@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { mergeCalls, mergeProblem } from "./merge-guard.mjs";
+import { mergeCalls, mergeGuard, mergeProblem } from "./merge-guard.mjs";
+import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const GUARD = path.join(HERE, "merge-guard.mjs");
+const GUARD = path.join(path.dirname(fileURLToPath(import.meta.url)), "pre-tool-use.mjs");
 
 /** A gh stand-in: the signed-in login, and each PR number's author and branch. */
 const fakeGh = (me, prs) => (args) => {
@@ -31,6 +31,7 @@ test("merging, enqueueing or arming auto-merge on another author's pull request 
 test("the repo and the target are read past value flags", () => {
   assert.deepEqual(mergeCalls("gh pr merge -t 'title' --repo=acme/app 12 --auto"), [{ target: "12", repo: "acme/app", allowed: null }]);
   assert.deepEqual(mergeCalls("gh pr merge --body-file b.md -R acme/app https://github.com/acme/app/pull/12"), [{ target: "https://github.com/acme/app/pull/12", repo: "acme/app", allowed: null }]);
+  assert.deepEqual(mergeCalls("ssh host 'bash -lc \"gh pr merge 12 --auto\"'"), [], "remote merges are not judged with local GitHub identity");
 });
 
 test("the hook denies through the PreToolUse contract and stays silent when gh cannot answer", (t) => {
@@ -44,5 +45,5 @@ test("the hook denies through the PreToolUse contract and stays silent when gh c
   const broken = run("gh pr merge 9169 --auto", path.join(dir, "missing-gh"));
   assert.equal(broken.stdout, "");
   assert.match(broken.stderr, /^merge-guard: /);
-  assert.ok(readFileSync(path.join(HERE, "hooks.json"), "utf8").includes("hooks/merge-guard.mjs"), "the hook is registered");
+  assert.ok(PRE_TOOL_USE_ROUTES.Bash.some((guard) => guard.run === mergeGuard), "the Bash guard is routed");
 });

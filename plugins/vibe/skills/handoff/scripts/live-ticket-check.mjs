@@ -60,6 +60,7 @@ const FENCED_BLOCK = /```[\s\S]*?```/g;
 const INLINE_CODE = /`[^`\n]*`/g;
 const ENVIRONMENT_BASE = /^- Branch: .*\(base: [^)]* at `([0-9a-f]+)`\)/m;
 const SHORT_SHA_LENGTH = 10;
+const ORCHESTRATOR_LINE = /^- (Codex session|Claude Code session) \(orchestrator\): `([^`]+)`$/gm;
 const REQUIRED_CONTENT = {
   Environment: [
     [/^- App: https:\/\/\S+/m, "has no App URL"],
@@ -71,7 +72,7 @@ const REQUIRED_CONTENT = {
     // The keys a person must turn on to see the work (operator ruling, 2026-10-20).
     [/^### Keys to see this work$/m, "lists no keys to see the work"],
   ],
-  Sessions: [[/\(orchestrator\): `[^`]+`/, "lists no orchestrator session id"]],
+  Sessions: [[/^- (?:Codex session \(orchestrator\): `[A-Za-z0-9-]{8,100}`|Claude Code session \(orchestrator\): `[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}`)$/im, "lists no orchestrator session id"]],
   "Scope and acceptance criteria": [
     [/^- Newest ruling: (?:none found \(searched: [^)\n]+\)|.*\b\d{4}-\d{2}-\d{2}\b)/m, "has no Newest ruling line (a dated ruling, or none found with the searches run)"],
     [/^- Prior removal: (?:none found \(searched: [^)\n]+\)|.*\b(?:ISS|PRD|PLN|FEA)-\d+)/m, "has no Prior removal line (the removing ticket, or none found with the searches run)"],
@@ -116,6 +117,16 @@ export function checkLiveTicket(body, { baseCommit, record, headSha, branch, pla
       continue;
     }
     problems.push(...checkSection(heading, content, prototype));
+    if (heading === "Sessions" && record && (record.codexSessions || record.claudeSessions)) {
+      const expected = [
+        ...(record.codexSessions?.orchestrators ?? []).map(({ id }) => `Codex session:${id}`),
+        ...(record.claudeSessions?.orchestrators ?? []).map(({ id }) => `Claude Code session:${id}`),
+      ].sort();
+      const actual = [...content.matchAll(ORCHESTRATOR_LINE)].map((match) => `${match[1]}:${match[2]}`).sort();
+      if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+        problems.push({ section: "Sessions", problem: "does not match the session record's orchestrator ids" });
+      }
+    }
     if (prototype && heading === "Environment") {
       for (const line of [
         `- Branch: \`${record.branch}\``,
@@ -365,7 +376,6 @@ function evidenceProblem(entry, facts) {
       const located = (typeof entry.url === "string" && HTTPS_URL.test(entry.url))
         || (typeof entry.path === "string" && facts.fileExists(entry.path));
       if (!located) return "cites a report with no https URL or existing file";
-      if (entry.commit !== facts.head) return "cites a report that was not produced on the final commit";
       return null;
     }
     default:

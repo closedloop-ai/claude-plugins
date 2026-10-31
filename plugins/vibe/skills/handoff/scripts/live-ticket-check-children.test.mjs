@@ -41,6 +41,7 @@ test("a delivered child moves only when every item is met with verifiable eviden
     { kind: "tracked", path: "docs/ledger.md" },
     { kind: "merged-pr", url: PULL, commit: base },
     { kind: "report", url: "https://example.invalid/design", commit: facts.head },
+    { kind: "report", url: "https://example.invalid/design", commit: base },
   ];
   for (const evidence of passes) assert.equal(delivered(evidence).ok, true, JSON.stringify(evidence));
   const fails = [
@@ -48,7 +49,6 @@ test("a delivered child moves only when every item is met with verifiable eviden
     { kind: "diff", path: "README.md", line: 1 },
     { kind: "tracked", path: "ledger.local.md" },
     { kind: "merged-pr", url: PULL, commit: "a".repeat(40) },
-    { kind: "report", url: "https://example.invalid/design", commit: base },
     { kind: "report", url: "https://example.invalid/run", commit: facts.head, status: "running" },
   ];
   for (const evidence of fails) assert.equal(delivered(evidence).ok, false, JSON.stringify(evidence));

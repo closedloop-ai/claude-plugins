@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
+import { git, makeCheckout, makeHome, mutationPreload, runNode } from "../../vibe/scripts/test-fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const INVENTORY = path.join(HERE, "handoff-inventory.mjs");
@@ -50,12 +51,24 @@ function write(worktree, file, content) {
   writeFileSync(absolute, content);
 }
 
+test('inventory rejects a mutation between source reads and receipt attribution', t => {
+  const { root, home, worktree } = setup(t, 'inventory-read-race');
+  write(worktree, ALLOWLIST, allowlist([FOCUS_RING]));
+  write(worktree, 'apps/app/page.tsx', 'export const page = 2;\n');
+  const preload = mutationPreload(root, { file: path.join(worktree, ALLOWLIST), caller: 'isShrinkOnlyEdit', text: allowlist([FOCUS_RING, HEX]) });
+  const run = spawnSync(process.execPath, ['--import', preload, INVENTORY, '--worktree', worktree], { encoding: 'utf8', env: { ...process.env, HOME: home } });
+  assert.match(run.stderr, /SOURCE-MOVED/);
+  assert.doesNotMatch(run.stdout, /"source"/);
+});
+
 test("worktree-local plans are not deliverables and neighboring artifacts fail closed", (t) => {
   const { home, worktree } = setup(t, "private-plan");
   write(worktree, ".closedloop-ai/vibe-plans/request-1.md", "private plan\n");
   write(worktree, ".closedloop-ai/vibe-plans-other.md", "not a local plan\n");
   write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
   const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.match(result.json.source.diffSha256, /^[a-f0-9]{64}$/);
+  assert.match(result.json.source.treeSha256, /^[a-f0-9]{64}$/);
   assert.equal(result.status, 1, JSON.stringify(result.json));
   assert.equal(result.json.blocking.forbiddenPaths, false);
   assert.deepEqual(result.json.localPlans, [{ path: ".closedloop-ai/vibe-plans/request-1.md", status: "A" }]);
@@ -655,4 +668,37 @@ test("diff rule findings block the inventory and its required tests are reported
   assert.equal(blocked.status, 1);
   assert.equal(blocked.json.blocking.diffRulesClear, false);
   assert.deepEqual(blocked.json.diffRules.blocking.map((finding) => [finding.rule, finding.file]), [["artifact-link-delete", "apps/api/app/links/service.ts"]]);
+});
+
+// vibe SKILL.md section 5 runs heavy validation only at handoff; a build-phase
+// frozen-render gate held a writer's first commit for hours (2026-10-26).
+test("a frozen render is settled at handoff: the build phase reports it without blocking, handoff and pull-request phases block", (t) => {
+  const row = "apps/storybook/stories/row.stories.tsx";
+  const { home, worktree } = setup(t, "frozen-render-phase", {
+    [row]: "import { Row } from \"@repo/design-system/components/row\";\nexport default { title: \"Composites/Row\", tags: [\"v1.0\"] };\nexport const Default = {};\n",
+    "packages/design-system/components/row.tsx": "export const Row = 1;\n",
+  });
+  write(worktree, "packages/design-system/components/row.tsx", "export const Row = 2;\n");
+  const build = runNode(INVENTORY, ["--worktree", worktree, "--phase", "build"], home);
+  assert.equal(build.json.blocking.diffRulesClear, true, JSON.stringify(build.json.diffRules));
+  assert.deepEqual(build.json.diffRules.blocking, []);
+  assert.deepEqual(build.json.diffRules.deferredToHandoff.map((finding) => [finding.rule, finding.file]), [["frozen-render", row]]);
+  for (const phase of ["handoff", "pull-request"]) {
+    const later = runNode(INVENTORY, ["--worktree", worktree, "--phase", phase], home);
+    assert.equal(later.json.blocking.diffRulesClear, false, phase);
+    assert.deepEqual(later.json.diffRules.blocking.map((finding) => finding.rule), ["frozen-render"], phase);
+    assert.deepEqual(later.json.diffRules.deferredToHandoff, [], phase);
+  }
+});
+
+test("a new comparator outside the pull-request phase clears with its tie test listed as missing (ISS-13321)", (t) => {
+  const { home, worktree } = setup(t, "comparator-tie", { "apps/app/rank.ts": "export const rank = (rows) => rows;\n" });
+  write(worktree, "apps/app/rank.ts", "export const rank = (rows) => rows.sort((a, b) => a.n - b.n || a.id.localeCompare(b.id));\n");
+  const gitDir = git(worktree, ["rev-parse", "--absolute-git-dir"], home).trim();
+  const ties = (phase) => runNode(INVENTORY, ["--worktree", worktree, "--phase", phase], home).json.diffRules.blocking.filter((finding) => finding.rule === "comparator-tie");
+  assert.match(ties("handoff")[0].fix, /list the tie test under Missing tests, and record `Comparator: <file>: missing test listed`/);
+  writeFileSync(path.join(gitDir, "vibe-changes.md"), "Comparator: apps/app/rank.ts: missing test listed\n");
+  assert.deepEqual(ties("build"), []);
+  assert.deepEqual(ties("handoff"), []);
+  assert.equal(ties("pull-request").length, 1, "the pull-request turn writes the tie test");
 });

@@ -51,7 +51,7 @@ def test_step_eight_routes_answers_and_blocks_finalizing_until_reruns_finish() -
 
     assert "`NEEDS_PERSON`" in step_eight
     assert "`NEEDS_CHANGE`" in step_eight
-    assert "route their answer as \"Answers from the person\" says" in step_eight
+    assert "Missing behavior criteria should have failed candidate preflight" in step_eight
     assert "Environment base commit from the current inventory" in step_eight
     assert "Never go on to step 9 while a behavior answer" in step_eight
 
@@ -349,4 +349,7 @@ def test_input_readiness_runs_once_after_the_committed_merge() -> None:
     assert "once, after this exact committed merge/fix result" in environment
     assert "no readiness pass precedes capture" in environment
     assert "fix that cause rather than rerunning into the same bound" in environment
-    assert "`main-sync-inputs` once, after the" in flat(HANDOFF_SKILL.read_text())
+    handoff = flat(HANDOFF_SKILL.read_text())
+    assert "`main-sync-inputs`" in handoff
+    assert "`commit-worktree.mjs --worktree \"<wt>\" --amend`" in handoff
+    assert "still-unpushed commit" in handoff

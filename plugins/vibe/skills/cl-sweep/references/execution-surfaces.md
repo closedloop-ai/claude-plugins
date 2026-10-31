@@ -76,6 +76,16 @@ native surface with `model` on `thread/start`, `thread/resume`, and
 Use `scripts/app-server-worker-session.mjs` to create, run, steer, inspect, and
 reconcile cwd-bound ticket threads through the managed daemon. Validate the
 returned/read thread id and canonical cwd on every lifecycle transition.
+A new ticket thread starts with `threadSource: "chatgpt_hidden"` (the Codex
+app's hidden-thread marker; today it does not keep workers out of the app,
+because `thread/list` does not return it, and the CLI ignores it), is named
+`cl-sweep · <ticket>`, and is moved into the app's "Fleet workers" sidebar
+section right after `thread/start`. Once the
+ticket's PR is verified merged, or its owner is stopped or replaced, run
+`app-server-worker-session.mjs end --session-file <file> --reason merged|stopped`:
+it refuses a thread with a running turn, records the end on the session, then
+archives the thread. Never end a live worker; an archived thread cannot be
+resumed until it is unarchived, which a later turn does first (ISS-13279).
 Every new `run`/`launch` turn requires `--activity-phase planning|coding|reviewing`.
 `reviewing` additionally requires `--review-kind plan|code`. The session runtime
 records this after turn acceptance and returns it as `currentActivity` from

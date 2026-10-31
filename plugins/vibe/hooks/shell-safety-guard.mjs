@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // PreToolUse guard for Bash: workers may not invent credential routes to fetch
 // evidence or force-push any remote. Both mistakes can escape a written rule,
 // especially through an ssh command aimed at another machine.
@@ -8,11 +7,15 @@
 // never fired, because zsh (this tool's shell on macOS) does not word-split an
 // unquoted parameter; and e2e-slot.sh reruns tested an old commit when they
 // started before the push landed, because the slot captured whatever HEAD was.
+// And `echo ====` (2026-10-22): zsh expands an unquoted word starting with `=`
+// to a command path, fails on `===`, and aborts the whole list, so the reads
+// after it never ran and their absence was reported as a complete answer.
 
-import { readFileSync } from "node:fs";
+// Runs from pre-tool-use.mjs.
+
 import path from "node:path";
-import { pathToFileURL } from "node:url";
-import { commandSegments } from "./command-segments.mjs";
+import { commandPrefix, commandSegments } from "./command-segments.mjs";
+import { deny } from "./hook-dispatch.mjs";
 
 const TOKEN = /(?:\b(?:gh_token|github_token|[a-z][a-z0-9_]*token)\b|\$\{?[a-z][a-z0-9_]*token\}?|--password(?:-stdin)?\b|(?:^|\s)-p(?:\s|$)|["']?auth["']?\s*:)/i;
 const CREDENTIAL_ROUTE = /(?:\bDOCKER_CONFIG\b|\bdocker\s+login\b|["']?auths["']?\s*:)/i;
@@ -21,6 +24,10 @@ const BACKGROUND_AMPERSAND = /&/;
 const REDIRECT_AMPERSAND = /\d*>&\d*|&>>?/g;
 const ZSH_SPLIT = /(?:^|[\s;&|(])set\s+--\s+\$\{?[A-Za-z_][A-Za-z0-9_]*\}?(?=[\s;&|)]|$)/m;
 const SHA = /^[0-9a-f]{7,40}$/i;
+const HEREDOC = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n[\s\S]*?\n\s*\2(?=\n|$)/g;
+const WORD_BREAK = new Set([" ", "\t", "\n", ";", "|", "&", "(", ")"]);
+const COMMAND_BREAK = new Set(["\n", ";", "|", "&", "("]);
+const ASSIGN_EQUALS = /^[A-Za-z_][A-Za-z0-9_]*==/;
 const FORCE_PUSH = /\bgit\b(?:(?![;&|\n]).)*?\bpush\b(?:(?![;&|\n]).)*(?:\s-f(?:\s|$)|--force(?:-with-lease)?\b|(?:^|\s)\+[^\s]+)/i;
 
 /** The credential-safety refusal for a shell command, or null. */
@@ -50,38 +57,107 @@ export function wordSplitProblem(command) {
   return "set -- $var does not word-split in zsh, so $1 holds the whole string: use read -r first second <<< \"$var\"";
 }
 
-/** The refusal for an e2e-slot.sh run that does not name the commit it must test, or null. */
+/** The refusal for an unquoted word starting with `=` outside `[[ ]]`, which aborts a zsh command list, or null. */
+export function equalsWordProblem(command) {
+  for (const { word, commandPosition, testDepth } of unquotedWords(command.replace(HEREDOC, " "))) {
+    if (testDepth === 0 && ((word.length > 1 && word.startsWith("=")) || (commandPosition && ASSIGN_EQUALS.test(word)))) {
+      return `zsh reads the unquoted ${word} as an =command lookup, which fails and aborts the rest of the command list: quote it ('${word}') or use printf '%s\\n' '${word}'`;
+    }
+  }
+  return null;
+}
+
+/** Each word's unquoted text, with whether it starts a command and the `[[ ]]` depth it sits in. */
+function unquotedWords(command) {
+  const words = [];
+  let word = null;
+  let quote = null;
+  let commandPosition = true;
+  let testDepth = 0;
+  const finish = () => {
+    if (word === null) return;
+    if (word.quoted === false && word.text === "[[") testDepth += 1;
+    else if (word.quoted === false && word.text === "]]") testDepth = Math.max(0, testDepth - 1);
+    else if (word.quoted === false) words.push({ word: word.text, commandPosition: word.commandPosition, testDepth });
+    commandPosition = word.commandPosition && /^[A-Za-z_][A-Za-z0-9_]*=/.test(word.text);
+    word = null;
+  };
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index];
+    if (quote) {
+      if (char === quote) quote = null;
+      else if (char === "\\" && quote === '"') index += 1;
+      continue;
+    }
+    if (WORD_BREAK.has(char)) {
+      finish();
+      if (COMMAND_BREAK.has(char)) commandPosition = true;
+      continue;
+    }
+    word ??= { text: "", quoted: false, commandPosition };
+    if (char === "'" || char === '"') {
+      word.quoted = true;
+      quote = char;
+    } else if (char === "\\") {
+      word.quoted = true;
+      index += 1;
+    } else if (!word.quoted) {
+      word.text += char;
+    }
+  }
+  finish();
+  return words;
+}
+
+// Resolve leading shells (including combined -lic/-c options) and ssh's remote
+// command, without treating quoted printf/cat arguments as executable commands.
+function invocationIndex(words) {
+  let index = 0;
+  for (;;) {
+    index = commandPrefix(words, index).index;
+    if (path.basename(words[index] ?? '') === 'ssh') {
+      index += 1;
+      while (words[index]?.startsWith('-')) {
+        const flag = words[index++];
+        if (['-p', '-i', '-o', '-J', '-F', '-l', '-S', '-W', '-L', '-R', '-D', '-b'].includes(flag)) index += 1;
+      }
+      index += 1; // remote host
+    } else if (SHELLS.has(path.basename(words[index] ?? ''))) {
+      index += 1;
+      while (/^[-+]/.test(words[index] ?? '')) {
+        const option = words[index++];
+        if (['-o', '+o', '-O', '+O', '--rcfile', '--init-file'].includes(option)) index += 1;
+      }
+    } else {
+      return index;
+    }
+  }
+}
+
+/** Require the deployed remote wrapper's real `--head <sha> <owner> <command>` interface. */
 export function e2eSlotProblem(command) {
-  for (const { words } of commandSegments(command)) {
-    const start = words.findIndex((word, index) => path.basename(word) === "e2e-slot.sh" && (index === 0 || SHELLS.has(path.basename(words[index - 1]))));
-    if (start < 0) continue;
-    const head = words.indexOf("--head", start);
-    if (head < 0 || !SHA.test(words[head + 1] ?? "")) {
-      return "e2e-slot.sh needs --head <sha> before the owner label, the pushed commit to test: without it a rerun started before the push tests the old HEAD";
+  for (const { words } of commandSegments(command, { expandShellPayloads: true })) {
+    const start = invocationIndex(words);
+    if (path.basename(words[start] ?? "") !== "e2e-slot.sh") continue;
+    if (words[start + 1] !== '--head' || !SHA.test(words[start + 2] ?? '')) {
+      return 'e2e-slot.sh needs --head <sha> before the owner label, the committed HEAD underlying the tested source';
+    }
+    if (words[start + 3] === '--source-hash') {
+      return 'e2e-slot.sh does not accept --source-hash; it would treat that flag as the owner label and execute the hash as a command';
     }
   }
   return null;
 }
 
 function invokes(words, script) {
-  const name = path.basename(words[0]);
-  return name === script || (SHELLS.has(name) && path.basename(words[1] ?? "") === script);
+  return path.basename(words[invocationIndex(words)] ?? '') === script;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try {
-    const event = JSON.parse(readFileSync(0, "utf8") || "{}");
-    const command = event?.tool_input?.command;
-    if (event?.tool_name === "Bash" && typeof command === "string") {
-      const problem = credentialProblem(command) ?? forcePushProblem(command) ?? watcherLaunchProblem(event.tool_input)
-        ?? wordSplitProblem(command) ?? e2eSlotProblem(command);
-      if (problem) {
-        process.stdout.write(`${JSON.stringify({ hookSpecificOutput: {
-          hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: problem,
-        } })}\n`);
-      }
-    }
-  } catch (error) {
-    process.stderr.write(`shell-safety-guard: ${error instanceof Error ? error.message : String(error)}\n`);
-  }
+/** The PreToolUse result for a Bash call: a deny for the first unsafe shape it finds, or null. */
+export function shellSafetyGuard(event) {
+  const command = event?.tool_input?.command;
+  if (typeof command !== "string") return null;
+  const problem = credentialProblem(command) ?? forcePushProblem(command) ?? watcherLaunchProblem(event.tool_input)
+    ?? wordSplitProblem(command) ?? equalsWordProblem(command) ?? e2eSlotProblem(command);
+  return problem ? deny(problem) : null;
 }

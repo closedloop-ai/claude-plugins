@@ -6,12 +6,15 @@
 // accepted more than --idle-minutes ago and that is not recorded as stopped.
 //
 // Usage: helpers.mjs <orchDir> start <name> [--brief <file>] [--stack <stack>]
+//        [--owner <writer> --ticket <slug> --repo <owner/repo> --pr <n> --ending pr-terminal]
 //        helpers.mjs <orchDir> pid <name> <pid...> [--group]
+//        helpers.mjs <orchDir> resources <name> [--project <compose>] [--container <id>]...
+//        [--volume <id>]... [--network <id>]...
 //        helpers.mjs <orchDir> accepted <name>
 //        helpers.mjs <orchDir> stopped <name> [--grace-seconds <n, default 10>]
 //        helpers.mjs <orchDir> hand <stack> --to <guide>
 //        helpers.mjs <orchDir> unhand <stack>
-//        helpers.mjs <orchDir> status [--idle-minutes <n, default 5>] [--now <iso>]
+//        helpers.mjs <orchDir> status [--idle-minutes <n, default 5>] [--now <iso>] [--e2e-lock-dir <dir>]
 //
 // `pid` records processes a helper started (dev servers, app stacks); the
 // helper records its own. Pass `--group` only for a process the helper spawned
@@ -35,22 +38,26 @@
 // a human QA guide; `start --stack` on a handed stack exits 1, so a rerun that
 // toggles flags or moves data launches its own stack.
 //
-// `status` prints `STOP <name> accepted <n>m ago` and `ORPHAN <name> <pids> still running`
+// `status` reconciles terminal PR helpers from their records, then prints
+// `STOP`, `ORPHAN`, `LEFTOVER` or `UNKNOWN` with owner and ticket where recorded.
 // lines, then `helpers: <active> active, <stop> to stop, <orphans> orphaned`,
 // and exits 1 when any helper should be stopped or left processes running.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
+import { captureOwnedDockerResources, defaultLockDir, readHolder, removeOwnedDockerResources } from "../../vibe/scripts/e2e-lock.mjs";
+import { readProcessIdentity } from "../../../shared/process-identity.mjs";
 
 const LEDGER = "helpers.json";
 const STACKS = "#stacks";
 const DEFAULT_IDLE_MINUTES = 5;
 const DEFAULT_GRACE_SECONDS = 10;
 const POLL_MS = 200;
+const ENDINGS = new Set(["pr-terminal"]);
 
 /** Helpers to stop: accepted more than `idleMinutes` before `now` and never recorded stopped. */
 export function stopCandidates(ledger, now, idleMinutes = DEFAULT_IDLE_MINUTES) {
@@ -60,11 +67,49 @@ export function stopCandidates(ledger, now, idleMinutes = DEFAULT_IDLE_MINUTES) 
 }
 
 /** Stopped helpers whose recorded processes still run. Stopped QA agents once left dev servers running for 13 to 16 hours on a loaded machine. */
-export function orphans(ledger, alive = isAlive) {
+export function orphans(ledger, alive = isAlive, identityOf = readIdentity) {
   return helperEntries(ledger)
     .filter(([, helper]) => helper.stoppedAt)
-    .map(([name, helper]) => ({ name, pids: (helper.pids ?? []).filter(alive) }))
+    .map(([name, helper]) => ({ name, pids: (helper.pids ?? []).filter((pid) =>
+      alive(pid) && helper.identities?.[pid] && identityOf(pid) === helper.identities[pid]) }))
     .filter((helper) => helper.pids.length > 0);
+}
+
+/** Live recorded identity still pending; a reused PID is foreign, while an unreadable one refuses cleanup. */
+function pendingRecordedProcess(target, alive = isAlive, identityOf = readIdentity) {
+  if (!alive(target.pid)) return false;
+  if (!target.identity) return true;
+  const current = identityOf(target.pid);
+  return !current || current === target.identity;
+}
+
+/** Pending private e2e cleanup records remain visible until their owned resource reconciliation succeeds. */
+export function pendingE2eCleanups(lockDir = defaultLockDir(),
+  { alive = isAlive, identityOf = readIdentity, holderOf = readHolder } = {}) {
+  const dir = path.dirname(lockDir);
+  let names;
+  try { names = readdirSync(dir).filter((name) => /^e2e-cleanup-[a-zA-Z0-9_-]+\.json$/.test(name)); }
+  catch (error) { if (error?.code === "ENOENT") return []; throw error; }
+  return names.map((name) => {
+    let record;
+    try {
+      const file = path.join(dir, name);
+      const stat = lstatSync(file);
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("not a regular record");
+      record = JSON.parse(readFileSync(file, "utf8"));
+    } catch { record = {}; }
+    const owner = record.owner ?? {};
+    const holder = holderOf(lockDir);
+    const isCurrentRun = Number.isSafeInteger(owner.pid) && typeof owner.token === "string"
+      && typeof owner.identity === "string" && owner.identity !== ""
+      && name === `e2e-cleanup-${owner.token}.json`
+      && alive(owner.pid) && identityOf(owner.pid) === owner.identity
+      && holder?.pid === owner.pid && holder?.token === owner.token && holder?.identity === owner.identity;
+    if (isCurrentRun) return null;
+    const ownerName = owner.name ?? owner.writer ?? (path.basename(owner.worktree ?? "") || "unknown");
+    const ticket = owner.ticket ?? /iss[-_](\d+)/i.exec(owner.worktree ?? "")?.[0]?.toUpperCase().replace("_", "-") ?? "unknown";
+    return `LEFTOVER ${name} owner ${ownerName} ticket ${ticket}: pending e2e cleanup for ${record.project ?? "unknown project"}`;
+  }).filter(Boolean);
 }
 
 /** Whether endProcesses may signal a pid: kill(-1) reaches every process the user owns and kill(0) the caller's own group. */
@@ -96,12 +141,8 @@ export function isAlive(pid) {
   return probe(pid) !== "gone";
 }
 
-/** A process's start time and command (`ps -o lstart=,command=`), or null when it cannot be read. */
-export function readIdentity(pid) {
-  const result = spawnSync("ps", ["-o", "lstart=,command=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } });
-  const identity = result.stdout?.trim();
-  return result.status === 0 && identity ? identity : null;
-}
+/** The shared process-birth fingerprint, preserved under the helper module's existing API name. */
+export const readIdentity = readProcessIdentity;
 
 /** The process group id of `pid`, or null when it cannot be read. */
 export function readGroupId(pid) {
@@ -155,6 +196,52 @@ function helperEntries(ledger) {
   return Object.entries(ledger).filter(([name]) => name !== STACKS);
 }
 
+function currentPrState(repo, pr) {
+  const result = spawnSync("gh", ["pr", "view", String(pr), "--repo", repo, "--json", "state,mergedAt"],
+    { encoding: "utf8", timeout: 30_000 });
+  if (result.error || result.status !== 0) throw new Error("PR state could not be read; owned stack retained.");
+  const value = JSON.parse(result.stdout);
+  return value.mergedAt || ["CLOSED", "MERGED"].includes(value.state) ? "terminal" : "open";
+}
+
+/** Reconcile only terminal PR helpers recorded with a matching owner and resource witness. */
+export async function reconcileTerminalHelpers(ledger, { prState = currentPrState, end = endProcesses,
+  cleanup = removeOwnedDockerResources, alive = isAlive, identityOf = readIdentity } = {}) {
+  const findings = [];
+  let changed = false;
+  for (const [name, helper] of helperEntries(ledger)) {
+    if (helper.stoppedAt || helper.ending !== "pr-terminal") continue;
+    const label = `${name} owner ${helper.owner ?? "unknown"} ticket ${helper.ticket ?? "unknown"}`;
+    if (!helper.owner || !helper.ticket || !helper.repo || !helper.pr) {
+      findings.push(`LEFTOVER ${label}: missing ending or ownership record`);
+      continue;
+    }
+    let state;
+    try { state = await prState(helper.repo, helper.pr); }
+    catch { findings.push(`UNKNOWN ${label}: PR state unavailable`); continue; }
+    if (state !== "terminal") continue;
+    changed = true;
+    const groups = new Set(helper.groups ?? []);
+    const targets = (helper.pids ?? []).map((pid) => ({ pid, group: groups.has(pid), identity: helper.identities?.[pid] }));
+    try {
+      if (helper.project && helper.dockerResources?.project !== helper.project) {
+        throw new Error("Compose resources and creation witnesses were not recorded.");
+      }
+      const survivors = await end(targets);
+      if (survivors.length || targets.some((target) => pendingRecordedProcess(target, alive, identityOf))) {
+        throw new Error("recorded process remains or changed identity");
+      }
+      if (helper.dockerResources) cleanup(helper.dockerResources);
+      helper.stoppedAt = new Date().toISOString();
+      helper.cleanupError = undefined;
+    } catch (error) {
+      helper.cleanupError = error instanceof Error ? error.message : String(error);
+      findings.push(`LEFTOVER ${label}: ${helper.cleanupError}`);
+    }
+  }
+  return { ledger, findings, changed };
+}
+
 function read(orchDir) {
   const file = path.join(orchDir, LEDGER);
   return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
@@ -196,27 +283,38 @@ async function main(argv) {
       "grace-seconds": { type: "string" },
       group: { type: "boolean" },
       now: { type: "string" },
+      owner: { type: "string" }, ticket: { type: "string" }, repo: { type: "string" }, pr: { type: "string" },
+      ending: { type: "string" }, project: { type: "string" },
+      "e2e-lock-dir": { type: "string" },
+      container: { type: "string", multiple: true }, volume: { type: "string", multiple: true }, network: { type: "string", multiple: true },
     },
   });
-  if (!workDir || !["start", "pid", "accepted", "stopped", "hand", "unhand", "status"].includes(action)) {
-    throw new Error("Usage: helpers.mjs <orchDir> start|pid|accepted|stopped|hand|unhand <name> | status [--idle-minutes <n>]");
+  if (!workDir || !["start", "pid", "resources", "accepted", "stopped", "hand", "unhand", "status"].includes(action)) {
+    throw new Error("Usage: helpers.mjs <orchDir> start|pid|resources|accepted|stopped|hand|unhand <name> | status [--idle-minutes <n>]");
   }
   const orchDir = resolveWorkDir(workDir).dir;
   const ledger = read(orchDir);
   const now = values.now ? Date.parse(values.now) : Date.now();
   const at = new Date(now).toISOString();
   if (action === "status") {
+    const reconciled = await reconcileTerminalHelpers(ledger);
+    if (reconciled.changed) write(orchDir, ledger);
+    for (const finding of reconciled.findings) process.stdout.write(`${finding}\n`);
     const stop = stopCandidates(ledger, now, values["idle-minutes"] === undefined ? DEFAULT_IDLE_MINUTES : Number(values["idle-minutes"]));
     for (const helper of stop) {
-      process.stdout.write(`STOP ${helper.name} accepted ${helper.minutes}m ago${helper.brief ? `; relaunch from ${helper.brief}` : ""}\n`);
+      const meta = ledger[helper.name];
+      process.stdout.write(`STOP ${helper.name} accepted ${helper.minutes}m ago${meta.owner ? `; owner ${meta.owner} ticket ${meta.ticket ?? "unknown"}` : ""}${helper.brief ? `; relaunch from ${helper.brief}` : ""}\n`);
     }
     const left = orphans(ledger);
     for (const helper of left) {
-      process.stdout.write(`ORPHAN ${helper.name} ${helper.pids.join(" ")} still running\n`);
+      const meta = ledger[helper.name];
+      process.stdout.write(`ORPHAN ${helper.name} ${helper.pids.join(" ")} still running${meta.owner ? `; owner ${meta.owner} ticket ${meta.ticket ?? "unknown"}` : ""}\n`);
     }
     const active = helperEntries(ledger).filter(([, helper]) => !helper.stoppedAt).length;
+    const pending = pendingE2eCleanups(values["e2e-lock-dir"] ?? defaultLockDir());
+    for (const finding of pending) process.stdout.write(`${finding}\n`);
     process.stdout.write(`helpers: ${active} active, ${stop.length} to stop, ${left.length} orphaned\n`);
-    return stop.length + left.length === 0 ? 0 : 1;
+    return stop.length + left.length + reconciled.findings.length + pending.length === 0 ? 0 : 1;
   }
   const name = requireName(action, positionals[0]);
   const stacks = ledger[STACKS] ?? {};
@@ -239,7 +337,42 @@ async function main(argv) {
       process.stderr.write(`stack ${values.stack} is handed to ${stacks[values.stack].guide}; launch this helper on its own stack\n`);
       return 1;
     }
-    ledger[name] = { startedAt: at, ...(values.brief ? { brief: values.brief } : {}), ...(values.stack ? { stack: values.stack } : {}) };
+    if (values.ending && !ENDINGS.has(values.ending)) throw new Error("Unknown --ending; use pr-terminal.");
+    if (values.ending === "pr-terminal" && (!values.owner || !values.ticket || !values.repo || !values.pr)) {
+      throw new Error("A PR terminal helper needs owner, ticket, repository and PR.");
+    }
+    if (values.project) {
+      if (helperEntries(ledger).some(([other, helper]) => other !== name && helper.project === values.project && !helper.stoppedAt)) {
+        throw new Error("The Docker project is already reserved by another helper.");
+      }
+      const existing = captureOwnedDockerResources({ project: values.project });
+      if (existing.containers.length || existing.volumes.length || existing.networks.length) {
+        throw new Error("The requested Docker project has existing resources; it is not this helper's.");
+      }
+    }
+    ledger[name] = { startedAt: at, ...(values.brief ? { brief: values.brief } : {}), ...(values.stack ? { stack: values.stack } : {}),
+      ...(values.owner ? { owner: values.owner } : {}), ...(values.ticket ? { ticket: values.ticket } : {}),
+      ...(values.repo ? { repo: values.repo } : {}), ...(values.pr ? { pr: values.pr } : {}),
+      ...(values.ending ? { ending: values.ending } : {}), ...(values.project ? { project: values.project } : {}) };
+  } else if (action === "resources") {
+    const entry = ledger[name];
+    if (!entry?.startedAt || entry.stoppedAt || !entry.owner || !entry.ticket) {
+      throw new Error("Record Docker resources only for an active helper with owner and ticket.");
+    }
+    if (values.project && values.project !== entry.project) throw new Error("Docker project differs from the helper's start record.");
+    const captured = captureOwnedDockerResources({ project: entry.project ?? null,
+      ...(values.container ? { containers: values.container } : {}),
+      ...(values.volume ? { volumes: values.volume } : {}),
+      ...(values.network ? { networks: values.network } : {}) });
+    if (!Number.isFinite(Date.parse(entry.startedAt))) throw new Error("Helper start has no parseable creation witness.");
+    for (const kind of ["containers", "volumes", "networks"]) {
+      for (const witness of captured[kind]) {
+        if (!Number.isFinite(Date.parse(witness.created)) || Date.parse(witness.created) < Date.parse(entry.startedAt)) {
+          throw new Error("Docker resource predates this helper; it was not started here.");
+        }
+      }
+    }
+    entry.dockerResources = captured;
   } else if (action === "pid") {
     const pids = parsePids(positionals.slice(1));
     const identities = Object.fromEntries(pids.map((pid) => [pid, readIdentity(pid)]));
@@ -258,6 +391,10 @@ async function main(argv) {
   } else if (action === "accepted") {
     ledger[name] = { ...(ledger[name] ?? {}), acceptedAt: at };
   } else {
+    const entry = ledger[name] ?? {};
+    if (entry.project && entry.dockerResources?.project !== entry.project) {
+      throw new Error("Compose resources and creation witnesses were not recorded.");
+    }
     const owned = ownedDuties(orchDir, name);
     if (owned.length > 0) {
       for (const duty of owned) {
@@ -266,13 +403,15 @@ async function main(argv) {
       return 1;
     }
     const grace = values["grace-seconds"] === undefined ? DEFAULT_GRACE_SECONDS : Number(values["grace-seconds"]);
-    const entry = ledger[name] ?? {};
     const groups = new Set(entry.groups ?? []);
-    const survivors = await endProcesses((entry.pids ?? []).map((pid) => ({ pid, group: groups.has(pid), identity: entry.identities?.[pid] })), grace);
-    if (survivors.length > 0) {
-      process.stdout.write(`ALIVE ${name} ${survivors.join(" ")}\n`);
+    const targets = (entry.pids ?? []).map((pid) => ({ pid, group: groups.has(pid), identity: entry.identities?.[pid] }));
+    const survivors = await endProcesses(targets, grace);
+    const remaining = targets.filter((target) => pendingRecordedProcess(target)).map((target) => target.pid);
+    if (survivors.length > 0 || remaining.length > 0) {
+      process.stdout.write(`ALIVE ${name} ${[...new Set([...survivors, ...remaining])].join(" ")}\n`);
       return 1;
     }
+    if (entry.dockerResources) removeOwnedDockerResources(entry.dockerResources);
     ledger[name] = { ...(ledger[name] ?? {}), stoppedAt: at };
   }
   write(orchDir, ledger);

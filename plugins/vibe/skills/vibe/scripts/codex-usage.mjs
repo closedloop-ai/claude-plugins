@@ -29,7 +29,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { classifyUsage, readRateLimits, UsageState, UsageTransport } from "../../codex-fleet-monitor/scripts/ratelimit.mjs";
-import { findCodex } from "./plugin-version.mjs";
+import { BUNDLED_CODEX, findCli, Harness } from "./plugin-version.mjs";
 
 export const UsageStatus = Object.freeze({
   Ok: "ok",
@@ -65,7 +65,7 @@ export function decideUsage(result, { allowCredits = false } = {}) {
 
 /** Reads the limits and decides; an unreadable answer is `unknown`, never a guessed `ok` or `stop`. */
 export async function checkUsage({ codex, timeoutMs, allowCredits = false } = {}) {
-  const outcome = await readRateLimits({ transport: UsageTransport.Stdio, codex: codex ?? findCodex(), timeoutMs: timeoutMs ?? DEFAULT_TIMEOUT_MS });
+  const outcome = await readRateLimits({ transport: UsageTransport.Stdio, codex: codex ?? findCli(Harness.Codex) ?? BUNDLED_CODEX, timeoutMs: timeoutMs ?? DEFAULT_TIMEOUT_MS });
   if (outcome.error) {
     return { status: UsageStatus.Unknown, reason: outcome.error };
   }

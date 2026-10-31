@@ -1,10 +1,9 @@
 """Contract coverage for the vibe 1.0.78 release."""
 
-import json
 import re
 from pathlib import Path
 
-from vibe_contract_text import flat
+from vibe_contract_text import flat, hook_guard_routed
 
 
 PLUGIN = Path(__file__).resolve().parents[2]
@@ -57,12 +56,10 @@ def test_the_2026_10_22_open_lessons_are_wired() -> None:
     assert "--single-review-ruling" in flat((PLUGIN / "skills" / "handoff" / "SKILL.md").read_text())
     assert "only while an operator's single-review ruling is in force" in flat((PLUGIN / "skills" / "vibe" / "SKILL.md").read_text())
     assert "`prs-ignore.txt` or another program's `prs.txt`" in flat((MONITOR / "SKILL.md").read_text())
-    hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text())
-    commands = [hook["command"] for entry in hooks["hooks"]["PreToolUse"] for hook in entry["hooks"]]
-    assert any("hooks/merge-guard.mjs" in command for command in commands)
+    assert hook_guard_routed(PLUGIN, "PreToolUse", "merge-guard", tool="Bash")
 
 
-def test_green_watch_fixes_pass_vibe_gates_and_results_name_their_commit() -> None:
+def test_green_watch_fixes_bind_clean_and_dirty_e2e_evidence_to_real_inputs() -> None:
     skill = flat((FLEET / "SKILL.md").read_text())
     assert "a vibe writer (Claude `vibe:vibe`, Codex `$vibe`) briefed by `GREEN_WATCH_AGENT`" in skill
     assert "`gh pr view <n> --json author,headRefName`, never a worker's word" in skill
@@ -72,8 +69,16 @@ def test_green_watch_fixes_pass_vibe_gates_and_results_name_their_commit() -> No
     reviewer = flat((PLUGIN / "agents" / "vibe-guardrails-reviewer.md").read_text())
     assert "whose old value `rg` still finds anywhere in the repo" in reviewer
     scripts = PLUGIN / "skills" / "vibe" / "scripts"
-    for name in ("pre-pr-lanes.mjs", "e2e-lock.mjs"):
-        assert "testedHead" in (scripts / name).read_text(), name
+    lanes = (scripts / "pre-pr-lanes.mjs").read_text()
+    lock = (scripts / "e2e-lock.mjs").read_text()
+    identity = (scripts / "tested-head.mjs").read_text()
+    verifier = flat((PLUGIN / "agents" / "vibe-verify-worker.md").read_text())
+    assert "testedSource" in lock, "local E2E must bind HEAD plus dirty-tree identity"
+    assert "sameSource(enteredSource, source)" in lock, "queued edits must invalidate E2E evidence"
+    assert "testedSource" in lanes and "testedHead" in lanes, "dirty candidate and clean captured-main boundaries stay distinct"
+    assert "DIRTY-WORKTREE" in identity and "export function testedHead" in identity
+    assert "external `e2e-slot.sh --head <HEAD> <owner> <command...>`" in verifier
+    assert "imported `testedHead` enforces that boundary" in verifier
 
 
 def test_new_controls_and_visual_baselines_need_surface_specific_sources() -> None:

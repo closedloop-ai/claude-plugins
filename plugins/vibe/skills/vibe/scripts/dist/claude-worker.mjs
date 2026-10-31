@@ -11498,6 +11498,13 @@ var capabilitiesSchema = external_exports.array(capabilitySchema).max(48).refine
   "Duplicate capability binding"
 );
 var identifierSchema = external_exports.string().min(1).max(160).regex(/^[A-Za-z0-9_.:-]+$/);
+var codexAgentPathSchema = external_exports.string().max(160).regex(/^(?:\/[A-Za-z0-9_.:-]+)+$/).refine((value) => value.split("/").slice(1).every((segment) => segment !== "." && segment !== ".."), "Invalid Codex agent path");
+var workerIdSchema = external_exports.union([identifierSchema, codexAgentPathSchema]);
+var pathIdOnlyForCodex = (value, ctx) => {
+  if (value.runtime !== "codex" && value.workerId?.startsWith("/")) {
+    ctx.addIssue({ code: external_exports.ZodIssueCode.custom, path: ["workerId"], message: "Only a Codex writer is named by its agent path" });
+  }
+};
 var statusSchema = external_exports.enum([
   "PLAN",
   "STORIES_READY",
@@ -11513,17 +11520,18 @@ var statusSchema = external_exports.enum([
   "BLOCKED",
   "FAILED"
 ]);
-var registerSchema = external_exports.object({
+var registerFields = external_exports.object({
   worktree: external_exports.string().min(1),
   runtime: external_exports.enum(["codex", "claude"]),
-  workerId: identifierSchema.optional(),
+  workerId: workerIdSchema.optional(),
   agentRoot: external_exports.string().min(1),
   agentName: identifierSchema,
   capabilities: capabilitiesSchema.default([])
 }).strict();
+var registerSchema = registerFields.superRefine(pathIdOnlyForCodex);
 var stoppedTurnSchema = external_exports.object({
   runtime: external_exports.literal("codex"),
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   requestId: identifierSchema,
   lease: external_exports.string().uuid(),
   state: external_exports.enum(["completed", "failed", "canceled"])
@@ -11531,7 +11539,7 @@ var stoppedTurnSchema = external_exports.object({
 var blockReasonSchema = external_exports.enum(["recorded-definition-removed", "other"]);
 var actionSchema = external_exports.object({
   worktree: external_exports.string().min(1),
-  workerId: identifierSchema.optional(),
+  workerId: workerIdSchema.optional(),
   requestId: identifierSchema.optional(),
   input: external_exports.string().min(1).max(64 * 1024).optional(),
   continuation: external_exports.string().min(1).max(64 * 1024).optional(),
@@ -11553,19 +11561,20 @@ var harnessSwitchSchema = external_exports.object({
   cause: external_exports.enum(["usage-limit", "runtime-unavailable"]),
   evidence: external_exports.string().min(1).max(1024)
 }).strict();
-var migrateSchema = registerSchema.extend({
-  previousWorkerId: identifierSchema,
+var migrateSchema = registerFields.extend({
+  capabilities: capabilitiesSchema.optional(),
+  previousWorkerId: workerIdSchema,
   previousDigest: external_exports.string().regex(/^[a-f0-9]{64}$/),
   retainedRecord: retainedRecordSchema.optional(),
   harnessSwitch: harnessSwitchSchema.optional()
-}).strict();
+}).strict().superRefine(pathIdOnlyForCodex);
 var requestSchema = external_exports.object({ id: identifierSchema, input: external_exports.string().min(1).max(64 * 1024) }).strict();
 var ledgerStateSchema = external_exports.object({
   version: external_exports.literal(1),
   worktree: external_exports.string(),
   branch: external_exports.string(),
   runtime: external_exports.enum(["codex", "claude"]),
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   binding: bindingSchema,
   started: external_exports.boolean(),
   pending: external_exports.array(requestSchema).max(32),
@@ -11586,7 +11595,7 @@ var migrationSchema = external_exports.object({
   reason: external_exports.enum(["definition-missing", "definition-upgraded", "harness-switch"]),
   observedDigest: external_exports.string().length(64).nullable(),
   previous: ledgerStateSchema,
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   binding: bindingSchema,
   releasedRecord: external_exports.object({
     requestId: identifierSchema,
@@ -11883,7 +11892,17 @@ function location(worktree) {
 function readWriterSummary(worktree) {
   const place = location(worktree);
   if (!existsSync3(place.file)) return void 0;
-  return summary(readLedger(place));
+  const ledger = readLedger(place);
+  return { ...summary(ledger), recordedDefinition: recordedDefinitionState(ledger) };
+}
+function recordedDefinitionState(ledger) {
+  try {
+    const observed = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
+    if (observed === null) return "removed";
+    return observed === ledger.binding.digest ? "present" : "changed";
+  } catch {
+    return "unreadable";
+  }
 }
 function recordedWriterRoot(worktree) {
   try {
@@ -11953,7 +11972,10 @@ function changeWriter(action, input) {
         ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
         delete ledger.active;
       }
-      if (ledger.active) {
+      if (!ledger.active && data.continuation && ledger.completed.at(-1) === requestId) {
+        ledger.completed = ledger.completed.slice(0, -1);
+        ledger.active = { id: requestId, input: data.continuation, status: "PLAN", continuation: data.continuation };
+      } else if (ledger.active) {
         if (ledger.active.id !== requestId || !data.continuation) throw new Error("Continue the active request before the next queued request");
         ledger.active.continuation = data.continuation;
       } else {
@@ -12176,6 +12198,7 @@ var recordModes = {
     redeploy: ["create_document_version"],
     flags: ["create_document_version"],
     desktop: ["create_document_version"],
+    handover: ["create_document_version"],
     "pull-request": []
   },
   "vibe-prototype-worker": { share: ["create_document_version"] }
@@ -12192,6 +12215,7 @@ var recordActionSchema = external_exports.enum([
   "desktop",
   "share",
   "discard",
+  "handover",
   "pull-request"
 ]);
 var requestContinuationSchema = external_exports.object({
@@ -12235,6 +12259,9 @@ var recordContextSchema = external_exports.object({
 }).strict();
 function isPublisherContext(input) {
   return input.mode === "record" && input.exclusiveRecordTurn === true && (input.agentName === "vibe-environment-worker" && ["create", "redeploy"].includes(input.recordAction ?? "") || input.agentName === "vibe-prototype-worker" && input.recordAction === "share");
+}
+function isHandoverContext(input) {
+  return input.mode === "record" && input.exclusiveRecordTurn === true && input.agentName === "vibe-environment-worker" && input.recordAction === "handover";
 }
 function resolveRecordContext(input) {
   if (input.mainSyncValidation && (input.agentName !== "vibe-change-worker" || input.mode !== "record" || input.recordAction !== "progress" || !input.exclusiveRecordTurn || input.mainSyncValidation.transactionId !== input.mainSyncTransactionId || !input.publicationPurpose || input.sessionless)) {
@@ -12292,13 +12319,13 @@ import { createHash as createHash2, randomUUID as randomUUID2 } from "node:crypt
 // src/native-record.ts
 var grantSchema = recordContextSchema.extend({
   agentRoot: external_exports.string().min(1),
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   requestId: identifierSchema,
-  primaryOwner: external_exports.object({ workerId: identifierSchema, lease: external_exports.string().uuid() }).strict().optional()
+  primaryOwner: external_exports.object({ workerId: workerIdSchema, lease: external_exports.string().uuid() }).strict().optional()
 }).strict();
 var releaseSchema = grantSchema.extend({ lease: external_exports.string().uuid(), stoppedTurn: external_exports.object({
   runtime: external_exports.literal("codex"),
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   requestId: identifierSchema,
   lease: external_exports.string().uuid(),
   state: external_exports.enum(["completed", "failed", "canceled"])
@@ -12332,7 +12359,7 @@ var originProofSchema = external_exports.object({
   inputSha256: digestSchema,
   source: external_exports.object({
     runtime: external_exports.enum(["codex", "claude"]),
-    workerId: identifierSchema
+    workerId: workerIdSchema
   }).strict(),
   checkedAt: external_exports.string().datetime(),
   files: external_exports.array(originFileSchema).max(1e4),
@@ -12351,7 +12378,7 @@ var operationContextSchema = external_exports.object({
   agentName: identifierSchema,
   mode: external_exports.literal("record"),
   recordAction: recordActionSchema,
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   requestId: identifierSchema,
   lease: external_exports.string().uuid(),
   publicationPurpose: mainSyncPurposeSchema.optional(),
@@ -12374,11 +12401,12 @@ var capturedMainRunSchema = external_exports.object({
   reason: external_exports.string().min(1).max(512).optional()
 }).strict();
 var mainComparisonSchema = external_exports.object({
-  classification: external_exports.enum(["main-preexisting", "session-caused", "flaky"]),
+  classification: external_exports.enum(["main-preexisting", "session-caused", "flaky", "machine-limited"]),
   mainSha: commitSchema,
   sessionRuns: external_exports.array(runEvidenceSchema).min(1).max(2),
   main: capturedMainRunSchema
 }).strict();
+var ACCEPTED_FAILURES = /* @__PURE__ */ new Set(["main-preexisting", "machine-limited"]);
 var commandReceiptSchema = external_exports.object({
   argv: external_exports.array(external_exports.string()).min(1).max(256),
   bindings: external_exports.record(external_exports.string()).optional(),
@@ -12388,7 +12416,7 @@ var commandReceiptSchema = external_exports.object({
   log: external_exports.string().min(1),
   sha256: external_exports.string().length(64),
   comparison: mainComparisonSchema.optional()
-}).strict().refine((item) => item.exitCode === 0 === (item.comparison?.classification !== "main-preexisting") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
+}).strict().refine((item) => item.exitCode === 0 === !ACCEPTED_FAILURES.has(item.comparison?.classification ?? "") && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
 var failedCheckSchema = external_exports.object({
   argv: external_exports.array(external_exports.string()).min(1).max(256),
   bindings: external_exports.record(external_exports.string()).optional(),
@@ -12403,7 +12431,7 @@ var e2eLimitationSchema = external_exports.object({
 var fileDeltaSchema = external_exports.object({ path: external_exports.string().min(1), status: external_exports.string().min(1) }).strict();
 var publicationTurnSchema = external_exports.object({
   runtime: external_exports.enum(["codex", "claude"]),
-  workerId: identifierSchema,
+  workerId: workerIdSchema,
   requestId: identifierSchema,
   lease: external_exports.string().uuid()
 }).strict();
@@ -12586,6 +12614,36 @@ async function privateData(file) {
   }
 }
 
+// src/usage.ts
+function asksForUsage(argv) {
+  return argv.length === 1 && ["help", "--help", "-h"].includes(argv[0]);
+}
+function capabilityUsage() {
+  const list = (values) => [...values].sort().join(", ");
+  return [
+    "Capabilities: a JSON array of at most 48 { name, service, access, operation } entries, one per MCP tool, no duplicates.",
+    "  name       the tool as the harness lists it: mcp__<server>__<operation> (underscores or hyphens)",
+    `  graph      service "graph", access "read": ${list(graphOperations)}`,
+    `  live read  service "closedloop", access "read": ${list(liveReadOperations)}`,
+    `  record     service "closedloop", access "write": ${list(recordOperations)}`,
+    "  Any other tool is refused as an unsupported capability binding."
+  ].join("\n");
+}
+function claudeWorkerUsage() {
+  return [
+    "Usage: claude-worker.mjs < launch.json",
+    "Launches one canonical vibe agent as an owned Claude session. Takes no arguments;",
+    "the launch request is one JSON object on stdin.",
+    "",
+    "Fields: worktree, agentName, mode, requestId, capabilities, and input (a new request) or continuation",
+    "(the active request). Optional: agentRoot, timeoutMs, allowCredits, and the record fields",
+    "(recordAction, exclusiveRecordTurn, ...) for a record turn.",
+    "Prints one JSON result; exits 1 when the status is BLOCKED or FAILED.",
+    "",
+    capabilityUsage()
+  ].join("\n");
+}
+
 // src/claude-usage.ts
 var rateLimitEventSchema = external_exports.object({
   type: external_exports.literal("rate_limit_event"),
@@ -12693,9 +12751,11 @@ function boundDefinition(definition, input) {
   const tools = [.../* @__PURE__ */ new Set([...roleTools, "ToolSearch", structuredOutputTool, ...input.capabilities.filter((capability) => capability.access === "read" || permittedWrites.includes(capability.operation)).flatMap((capability) => mcpToolAliases(capability.name))])];
   const persistent = input.agentName === "vibe-change-worker";
   const phasePolicy = persistent ? "Current phase, test-authoring and test-repair authority come only from the orchestrator's top-level turn envelope, separate from raw input text. Only an explicit pull-request turn in that envelope, sent because the person asked for a pull request, may author tests. Never author tests in plan, request, fix, handoff, record or build turns, or infer authority from the person's words. A request, fix or handoff turn with test-repair authority may only repair existing tests and fixtures your own change broke (imports, renamed or retired symbols, setup, type errors) without changing what any test asserts; never add a test file. Delete a test file or case only when it covers nothing but code the request retires, recorded with retired-tests.mjs and the ticket or PRD that retires it; a test of live behavior is only repaired. " : `This is mode ${input.mode}. Never write or edit tests. `;
+  const verifyEvidencePolicy = input.agentName === "vibe-verify-worker" ? "This is a source read-only verification role. Never edit product source, tests, fixtures, snapshots, catalog or allowlists. Bash may write only owned private verification artifacts: <gitdir>/vibe-pr-evidence.json, <gitdir>/vibe-lane-report.txt from pnpm test:lanes, <gitdir>/vibe-lane-results.json through pre-pr-lanes.mjs, verifier-owned Storybook birth records and logs in its private git directory, and .control/ runtime files from the repository control command in control mode. Move only this turn's control captures to the private git directory before publication. Never write a ClosedLoop or session record. " : "";
+  const storybookEvidencePolicy = input.agentName === "vibe-storybook-decomposer" ? "This advisor may write only verifier-owned Storybook birth records and logs in the private git directory through verify-storybook-process.mjs. Stop each new process before returning. Never edit product source, tests or live records, and never adopt an unrecorded process. " : "";
   const prompt = `${definition.prompt}
 
-Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join7(definition.root, "agents")}. ` + (isPublisherContext(input) ? "Never start another implementation writer or commit. Normal pushes are permitted only through the owned main-sync publication gate. " : "Never start another implementation writer, commit, or push. ") + phasePolicy + (reader ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : "") + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
+Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join7(definition.root, "agents")}. ` + pushPolicy(input) + phasePolicy + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName) ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : `${verifyEvidencePolicy}${storybookEvidencePolicy}`) + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
   const agent = {
     description: definition.metadata.description,
     prompt,
@@ -12704,6 +12764,15 @@ Runtime binding: work only in ${input.worktree}. Resolve this canonical definiti
     ...definition.skills.length ? { skills: definition.skills } : {}
   };
   return { agent, reader, tools };
+}
+function pushPolicy(input) {
+  if (isPublisherContext(input)) {
+    return "Never start another implementation writer or commit. Normal pushes are permitted only through the owned main-sync publication gate. ";
+  }
+  if (isHandoverContext(input)) {
+    return "Never start another implementation writer or commit. Push only the current commit to the session's branch, once, through the repository's normal pre-push checks; never forced or with checks skipped. ";
+  }
+  return "Never start another implementation writer, commit, or push. ";
 }
 async function runWorker(rawInput) {
   const input = launchSchema.parse(rawInput);
@@ -12815,7 +12884,9 @@ async function runWorker(rawInput) {
       "--allowedTools",
       bound.tools.join(","),
       resume ? "--resume" : "--session-id",
-      workerId
+      workerId,
+      "--name",
+      workerSessionName(input.agentName, place.branch, input.requestId)
     ];
     const launch = launchProcess(args, bound.tools, place.root, JSON.stringify({
       requestId: input.requestId,
@@ -12870,7 +12941,7 @@ async function runWorker(rawInput) {
         leaseRetained = true;
       }
     }
-    const failure = safeFailure(error);
+    const failure = error instanceof StructuredOutputRetryError && input.mode === "record" ? { code: "RECORD_RESULT_UNVERIFIED", summary: "The record turn's final status failed structured output validation. Its write may have succeeded. Do not repeat the write; perform read-only reconciliation of the ticket and session record, then continue from the verified state." } : safeFailure(error);
     const capHit = persistent && failure.code === "TURN_TIMEOUT" ? capCheckpoint(place.root, place.dir, turnId) : void 0;
     if (capHit) {
       failure.summary = `CAP-HIT: the turn hit its time cap with ${capHit.dirtyFiles} changed files${capHit.midMerge ? ", mid-merge" : ""}${capHit.patch ? `; work saved as ${capHit.patch}` : ""}. Continue this request with the same writer.`;
@@ -13003,6 +13074,10 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowC
           reject(failed);
           return;
         }
+        if (final?.is_error && final.terminal_reason === "structured_output_retry_exhausted") {
+          reject(new StructuredOutputRetryError("Claude exhausted structured output retries"));
+          return;
+        }
         if (code !== 0 || !final || final.is_error || final.structured_output === void 0 && !final.result) {
           reject(new Error("Claude failed or returned no successful structured result"));
           return;
@@ -13021,6 +13096,8 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowC
 }
 var OwnedCleanupError = class extends Error {
 };
+var StructuredOutputRetryError = class extends Error {
+};
 var WorkerLaunchError = class extends Error {
   constructor(result) {
     super(result.summary);
@@ -13037,6 +13114,7 @@ function safeFailure(error) {
   if (error instanceof Error && "code" in error && error.code === "ENOENT" && "syscall" in error && String(error.syscall).startsWith("spawn")) {
     return { code: "CLAUDE_CLI_MISSING", summary: "The claude command is not on this shell's PATH" };
   }
+  if (message.includes("never argv")) return { code: "INVALID_REQUEST", summary: "This command takes no arguments; send the launch request on stdin (claude-worker.mjs help prints its shape)." };
   if (error instanceof external_exports.ZodError) return { code: "INVALID_REQUEST", summary: "The worker request or capability binding does not match the supported contract." };
   if (error instanceof OwnedCleanupError) return { code: "OWNED_PROCESS_NOT_STOPPED", summary: "Owned process cleanup is unproven; the unsafe turn remains locked." };
   if (message.includes("deadline")) return { code: "TURN_TIMEOUT", summary: "The owned worker turn exceeded its deadline." };
@@ -13076,6 +13154,11 @@ function signalOwnedChild(child, signal) {
   }
 }
 async function main(argv) {
+  if (asksForUsage(argv)) {
+    process.stdout.write(`${claudeWorkerUsage()}
+`);
+    return 0;
+  }
   let input;
   try {
     if (argv.length) throw new Error("Send the worker brief and capability metadata on stdin, never argv");
@@ -13147,9 +13230,14 @@ function capCheckpoint(root, gitDir, turnId) {
   }
 }
 runFromCanonicalEntry(import.meta.url, main);
+function workerSessionName(agentName, branch, requestId) {
+  const role = agentName.replace(/^vibe-/, "").replaceAll("-", " ");
+  return `vibe ${role} \xB7 ${branch.replace(/^vibe\//, "")} \xB7 ${requestId}`;
+}
 export {
   boundDefinition,
   capWorkerResult,
   main,
-  runWorker
+  runWorker,
+  workerSessionName
 };

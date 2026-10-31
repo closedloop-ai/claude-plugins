@@ -236,6 +236,27 @@ test("new records the person running the session and refuses to start without th
   assert.deepEqual(nameless.json.session.operator, { id: "user-second", email: "second+08252026@example.com", name: null });
 });
 
+test("new refuses while this conversation's plugin check is outdated and unanswered, and records the answer once given", (t) => {
+  const { home, checkout } = setup(t);
+  rememberRepo(home, checkout);
+  const env = { CLAUDE_CODE_SESSION_ID: "conversation-version", CODEX_THREAD_ID: "" };
+  const startup = path.join(home, ".codex", "vibe", "plugin-version", "conversation-version.json");
+  const outdated = { status: "outdated", versions: "vibe: you have 1.0.84, the latest is 1.0.85", outdated: [{ harness: "codex", plugin: "vibe", installed: "1.0.84", latest: "1.0.85" }] };
+  writeJson(startup, outdated);
+  const args = ["new", "--slug", "version-gate", "--summary", "x", "--mode", "blank", ...OPERATOR_ARGS];
+  const refused = runNode(SCRIPT, args, home, env);
+  assert.equal(refused.status, 1);
+  assert.match(refused.json.error, /plugins are outdated \(vibe: you have 1\.0\.84, the latest is 1\.0\.85\) and the person has not chosen to update or to proceed/);
+  assert.equal(git(checkout, ["branch", "--list", "vibe/version-gate"], home), "", "a refused start creates nothing");
+
+  writeJson(startup, { ...outdated, choice: { choice: "proceed", by: "person", acceptedWorseResults: true } });
+  const created = runNode(SCRIPT, args, home, env);
+  assert.equal(created.status, 0, created.stderr);
+  const record = JSON.parse(readFileSync(recordFile(created.json.session.worktree, home), "utf8"));
+  assert.equal(record.pluginVersion.choice.choice, "proceed");
+  assert.equal(record.pluginVersion.choice.acceptedWorseResults, true);
+});
+
 test("touch records final-merge mode for the publication main-sync and refuses other values", (t) => {
   const { home, worktree } = newSession(t, "final-merge");
   assert.equal(runNode(SCRIPT, ["show", "--worktree", worktree], home).json.session.mainMerge, undefined);
@@ -503,6 +524,27 @@ test("codex-sessions records this thread and every subagent it spawned, nested o
   const missing = runNode(SCRIPT, ["codex-sessions", "--worktree", worktree], home, { CODEX_HOME: codexHome, CODEX_THREAD_ID: "" });
   assert.equal(missing.status, 1);
   assert.match(missing.json.error, /CODEX_THREAD_ID/);
+});
+
+test("a Claude orchestrator records its actual transcript identity without inventing a Codex thread", (t) => {
+  const { home, worktree } = newSession(t, "claude-orchestrator");
+  const id = "36ee02c3-2de3-45a8-8c33-ae3e5302f554";
+  const transcriptDir = path.join(home, ".claude", "projects", "-tmp-vibe-orchestrator");
+  mkdirSync(transcriptDir, { recursive: true });
+  const transcript = path.join(transcriptDir, `${id}.jsonl`);
+  writeFileSync(transcript, `${JSON.stringify({ type: "user", sessionId: id, message: "start" })}\n`);
+  const saved = runNode(SCRIPT, ["claude-sessions", "--worktree", worktree, "--transcript", transcript], home);
+  assert.equal(saved.status, 0, saved.stderr);
+  assert.deepEqual(saved.json.session.claudeSessions.orchestrators.map((entry) => entry.id), [id]);
+  assert.deepEqual(saved.json.session.codexSessions.orchestrators, []);
+  const rendered = runNode(SCRIPT, ["ticket-sections", "--worktree", worktree], home);
+  assert.ok(rendered.json.markdown.includes(`Claude Code session (orchestrator): ` + "`" + id + "`"));
+
+  const wrong = path.join(transcriptDir, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jsonl");
+  writeFileSync(wrong, `${JSON.stringify({ type: "user", sessionId: id })}\n`);
+  const rejected = runNode(SCRIPT, ["claude-sessions", "--worktree", worktree, "--transcript", wrong], home);
+  assert.equal(rejected.status, 1);
+  assert.deepEqual(runNode(SCRIPT, ["show", "--worktree", worktree], home).json.session.claudeSessions.orchestrators.map((entry) => entry.id), [id]);
 });
 
 test("ticket-sections renders the record's sections and marks what is still pending", (t) => {
@@ -932,4 +974,44 @@ test("sessions carry no scope, and a record written with the retired draft scope
   const listed = runNode(SCRIPT, ["list"], home);
   assert.equal("scope" in listed.json.sessions[0], false);
   assert.equal("scope" in runNode(SCRIPT, ["show", "--worktree", worktree], home).json.session, false);
+});
+
+test("link builds the person's story and page links from the session record, and says when none exists yet", (t) => {
+  const { root, home, worktree } = newSession(t, "deploys");
+  const link = (...args) => runNode(SCRIPT, ["link", "--worktree", worktree, ...args], home);
+  const story = "composites-guided-tour--mid-run";
+
+  const nothing = link("--story", story);
+  assert.equal(nothing.status, 0, nothing.stderr);
+  assert.deepEqual([nothing.json.url, nothing.json.missing], [null, "storybook"]);
+  assert.deepEqual([link("--page", "/acme-co/sessions").json.url, link("--page", "/acme-co/sessions").json.missing], [null, "app"]);
+
+  runNode(SCRIPT, ["touch", "--worktree", worktree, "--stack", JSON.stringify({ storybookUrl: "http://localhost:6123", storybookPid: process.pid })], home);
+  assert.deepEqual(
+    [link("--story", story).json.url, link("--story", story).json.source],
+    [`http://localhost:6123/?path=/story/${story}`, "local"]
+  );
+
+  const file = path.join(root, "vibe-environment-result.json");
+  writeJson(file, environmentResult(worktree, home));
+  assert.equal(runNode(SCRIPT, ["environment-result", "--worktree", worktree, "--file", file, "--request-id", "req-12345678"], home).status, 0);
+  const deployed = link("--story", story);
+  assert.deepEqual([deployed.json.url, deployed.json.source], [
+    `https://prototypes-git-vibe-deploys.preview.closedloop-stage.ai/storybook/?path=/story/${story}`,
+    "deployed",
+  ]);
+  assert.equal(link("--story", story, "--local").json.url, `http://localhost:6123/?path=/story/${story}`);
+  assert.equal(link("--page", "/acme-co/sessions").json.url, "https://app-stage-git-vibe-deploys.preview.closedloop-stage.ai/acme-co/sessions");
+
+  for (const [args, message] of [
+    [[], /exactly one of --story/],
+    [["--story", story, "--page", "/x"], /exactly one of --story/],
+    [["--page", "/x", "--local"], /--local applies to --story only/],
+    [["--story", "guided-tour-mid-run"], /Not a Storybook story id/],
+    [["--page", "/[orgSlug]/sessions"], /route pattern/],
+  ]) {
+    const refused = link(...args);
+    assert.equal(refused.status, 1, JSON.stringify(args));
+    assert.match(refused.json.error, message);
+  }
 });

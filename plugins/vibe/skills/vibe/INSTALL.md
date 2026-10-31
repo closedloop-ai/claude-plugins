@@ -1,6 +1,6 @@
 # Installing vibe on a new Mac
 
-For setting up a vibe user's laptop (for example a non-engineer's). About ten minutes of
+For setting up a vibe user's laptop. About ten minutes of
 hands-on time; the `vibe` skill installs everything else on its first run.
 
 ## Before you start
@@ -39,9 +39,10 @@ with their own account. Codex stores an OAuth sign-in, not an API key.
 
 closedloop-graph (ticket and code intelligence) is required: every vibe and
 handoff worker that locates, changes, or reviews code calls it for each
-change. Make sure it is connected in Codex (`"$CODEX" mcp list` shows it). If
-it ever stops answering, the vibe skill has its setup worker restore the
-connection.
+change. `"$CODEX" mcp list` must show a `closedloop-graph` row with Status
+`enabled`; if there is none, get its connection from engineering before the
+first run. If a connection ever stops answering, the vibe skill has its setup
+worker restore it (`references/preflight.md`, "Restoring a connection").
 
 Check:
 
@@ -53,7 +54,7 @@ Check:
 
 ## 2. Turn on the Codex plugins vibe uses
 
-In Codex Desktop, open Plugins and make sure these are added and enabled:
+In Codex Desktop, click Plugins in the sidebar and make sure these are added and enabled:
 
 - **Browser**: the in-app browser the work happens in. Vibe never uses
   Computer Use; a dialog that needs a click is yours.
@@ -63,7 +64,7 @@ connector.
 
 ## 3. First run
 
-Start a new Codex thread and type `$vibe`. On the first run it:
+Click New chat in the sidebar and type `$vibe`. On the first run it:
 
 - finds an existing symphony-alpha checkout anywhere in the home folder (by
   its GitHub remote, so the folder can have any name, including spaces) and
@@ -90,11 +91,18 @@ bash ~/.codex/plugins/cache/closedloop-ai/vibe/*/skills/vibe/scripts/vibe-prefli
 ## Updating
 
 `$vibe` checks this itself at the start of every session
-(`scripts/plugin-version.mjs`): when the vibe on claude-plugins `main` is
-newer than the installed one, it asks the vibe user whether to keep going or
-update now, and on update runs the commands below for the marketplace vibe
-came from, then asks them to quit and reopen the ChatGPT app. When the check
-cannot reach GitHub, the session carries on and says so.
+(`scripts/plugin-version.mjs`): it compares every ClosedLoop plugin installed
+in Codex, and in Claude Code when that is installed too, with claude-plugins
+`main`. When one is older, it asks the vibe user whether to update now or keep
+going, saying that an older version could give worse results, and records the
+answer. On update it runs the commands below for the marketplace each plugin
+came from, in each app that has an outdated plugin, checks the new version is
+installed, then asks them to quit and reopen the ChatGPT app. In the app's
+default "Ask for approval" mode the check needs one "Allow once" (it reads
+GitHub and saves its result outside the workspace, which the sandbox blocks).
+When the check still cannot reach GitHub, the session carries on and says so.
+The first reply's setup check lists the installed closedloop-core and vibe
+versions either way.
 
 To update by hand, check which version is installed and where the `closedloop-ai` marketplace
 comes from:
@@ -154,3 +162,12 @@ claude-plugins `main`.
 | `$vibe` | Start something new, or pick up where they left off |
 | "redeploy" (in a vibe session) | Put the latest changes on their Vercel copy of the app |
 | `$handoff` | Check and finish the work's ticket and hand it to whoever they name to pick it up next (usually design, then engineering) |
+
+## Worker chats in the Codex app sidebar
+
+Vibe's Claude workers save their sessions, and the Codex app's Import from
+Claude turns each saved Claude session into a chat in the sidebar; with Keep
+imports in sync on, it imports new ones every 12 hours. Each worker chat is
+titled `vibe <role> · <session> · <request>`. To keep them out of the sidebar,
+leave recent chats out of a Claude import and turn Keep imports in sync off.
+Vibe never changes the app's settings.

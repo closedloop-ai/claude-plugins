@@ -26,6 +26,9 @@ import {
   sendInput,
 } from './core-client-process.mjs';
 import { LEGACY_UNVERSIONED_MODEL, MECHANICAL_SUPPORT_MODEL, TICKET_OWNER_MODEL } from './model-policy.mjs';
+import {
+  archiveEndedWorker, assertWorkerNotLive, END_REASONS, endRecord, labelWorkerThread, WORKER_THREAD_SOURCE,
+} from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
 
 export const SESSION_SCHEMA = 'APP_SERVER_ORCHESTRATOR_SESSION v1';
 export const EVENT_SCHEMA = 'APP_SERVER_ORCHESTRATOR_EVENT v1';
@@ -232,6 +235,14 @@ function validateNewSessionModel(value) {
   return model;
 }
 
+function validateThreadName(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string' || !value.trim() || value.length > 200 || /[\r\n]/.test(value)) {
+    fail('thread name must be one non-empty line of at most 200 characters');
+  }
+  return value;
+}
+
 function validateEffortOption(value) {
   if (value === null || value === undefined) return null;
   if (typeof value !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,31}$/.test(value)) {
@@ -274,6 +285,7 @@ export function initializeSession(options) {
       approvalPolicy: options.approvalPolicy || null,
       sandbox: options.sandbox || null,
       serviceName: options.serviceName || null,
+      threadName: validateThreadName(options.threadName),
       model: validateNewSessionModel(options.model),
       effort: validateEffortOption(options.effort),
     },
@@ -533,6 +545,7 @@ export async function ensureDurableThread(client, session, persist, dependencies
     const result = await client.request('thread/start', {
       cwd: session.cwd,
       ...threadOptions(session),
+      threadSource: WORKER_THREAD_SOURCE,
     });
     const threadId = result?.thread?.id;
     if (!threadId) fail('App Server did not return a worker thread id');
@@ -543,10 +556,20 @@ export async function ensureDurableThread(client, session, persist, dependencies
     session.pendingOperation.threadId = threadId;
     session.pendingOperation.phase = 'thread_created';
     persist();
-    return { mode: 'awaiting_first_turn', thread: result.thread, materialized: false };
+    // ISS-13279: a readable name and the "Fleet workers" section instead of a prompt-titled sidebar chat.
+    const labelWarnings = session.options?.threadName
+      ? await labelWorkerThread(client, threadId, session.options.threadName) : [];
+    return { mode: 'awaiting_first_turn', thread: result.thread, materialized: false, labelWarnings };
   }
   if (session.threadMaterialized !== true) {
     return { mode: 'awaiting_first_turn', thread: { id: session.threadId, cwd: session.cwd }, materialized: false };
+  }
+  if (session.archivedAt) {
+    // An ended worker's thread was archived, and the App Server refuses to resume an archived thread.
+    await client.request('thread/unarchive', { threadId: session.threadId });
+    delete session.ended;
+    delete session.archivedAt;
+    persist();
   }
   const result = await client.request('thread/resume', {
     threadId: session.threadId,
@@ -559,6 +582,39 @@ export async function ensureDurableThread(client, session, persist, dependencies
 
 async function ensureThread(client, session, persist = () => {}, dependencies = {}) {
   return ensureDurableThread(client, session, persist, dependencies);
+}
+
+/**
+ * Records the worker stopped or merged, then archives its thread so it leaves the Codex app's chat list. A
+ * session with a running turn is refused before either. `persist` writes `session`; the record is saved first.
+ */
+export async function endDurableThread(client, session, reason, persist) {
+  if (!END_REASONS.includes(reason)) fail(`reason must be one of: ${END_REASONS.join(', ')}`);
+  if (!session.threadId) fail('Session has no thread to end');
+  if (!session.ended) {
+    if (session.activeTurnId || session.pendingOperation) fail('A worker with an active or pending turn is never ended');
+    await assertWorkerNotLive(client, session.threadId);
+    session.ended = endRecord(reason);
+    persist();
+  }
+  if (!session.archivedAt) {
+    await archiveEndedWorker(client, session.threadId, session.ended);
+    session.archivedAt = now();
+    persist();
+  }
+  return { threadId: session.threadId, ended: session.ended, archivedAt: session.archivedAt };
+}
+
+export async function endSession(options, dependencies = {}) {
+  const { path, session } = loadSession(options.stateFile);
+  validateSessionBinding(session);
+  const connection = await connectedClient(session, options, dependencies);
+  try {
+    const result = await endDurableThread(connection.client, session, options.reason, () => persistSession(path, session));
+    return { sessionId: session.sessionId, ...result };
+  } finally {
+    if (connection.owned) connection.client.close();
+  }
 }
 
 /** Start or exactly resume the session's cwd-bound thread. */
@@ -580,6 +636,7 @@ export async function startThread(options, dependencies = {}) {
       parent: session.parent ? { ...session.parent, generation: session.parent.generation || 1 } : null,
       mode: result.mode,
       state: session.state,
+      ...(result.labelWarnings?.length ? { labelWarnings: result.labelWarnings } : {}),
     };
   } finally {
     if (connection.owned) connection.client.close();
@@ -1539,9 +1596,10 @@ function usage() {
     '  rebind-parent Move an idle session callback binding to a new parent generation',
     '  reconcile    Reconnect and recover an in-progress or completed turn',
     '  deliver      Retry pending event delivery to the parent thread',
+    '  end          Record the worker stopped or merged, then archive its thread: --reason stopped|merged',
     '',
     'Connection options: --codex PATH --socket PATH --transport proxy|direct|desktop',
-    'Session policy options (init): --approval-policy VALUE --sandbox VALUE --service-name VALUE --model VALUE --effort VALUE',
+    'Session policy options (init): --approval-policy VALUE --sandbox VALUE --service-name VALUE --thread-name NAME --model VALUE --effort VALUE',
   ].join('\n');
 }
 
@@ -1567,6 +1625,7 @@ async function main() {
     approvalPolicy: args['approval-policy'],
     sandbox: args.sandbox,
     serviceName: args['service-name'],
+    threadName: args['thread-name'],
     model: args.model,
     effort: args.effort,
   });
@@ -1613,6 +1672,7 @@ async function main() {
     });
     else if (args.command === 'reconcile') result = await reconcileSession(options);
     else if (args.command === 'deliver') result = await deliverPendingEvents(options);
+    else if (args.command === 'end') result = await endSession({ ...options, reason: required(args, 'reason') });
     else fail(`Unknown command: ${args.command}\n\n${usage()}`);
   }
   process.stdout.write(`${JSON.stringify(result)}\n`);

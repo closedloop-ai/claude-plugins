@@ -4,16 +4,20 @@
 // a QA guide never heard that its checkpoint was ready, and a UX ruling
 // reached one writer as text while another PR rendered the same behavior.
 //
-// Usage: board.mjs <orchDir> writer <name> [--pr <n>] [--repo <owner/repo>] [--head <sha>] [--ready <sha>] [--status <text>] [--deps <a,b>] [--runtime codex|claude]
+// Usage: board.mjs <orchDir> writer <name> [--pr <n>] [--repo <owner/repo>] [--head <sha>] [--ready <sha>] [--base <trusted remote ref or OID>] [--status <text>] [--deps <a,b>] [--runtime codex|claude] [--where local|remote] [--worktree <path>]
 //        board.mjs <orchDir> push-check <writer> --head <sha>
-//        board.mjs <orchDir> deliver <item> --to <a,b> [--kind ruling|checkpoint|note] [--reference <file>] [--head <sha>]
+//        board.mjs <orchDir> deliver <item> --to <a,b> [--kind ruling|checkpoint|note|scope] [--reference <file>] [--text <change>] [--head <sha>]
 //        board.mjs <orchDir> told <item> <recipient>
 //        board.mjs <orchDir> duty <duty> --owner <writer or helper>
-//        board.mjs <orchDir> question|answered|ack <writer> --id <question id> [--text <the question and its default>]
+//        board.mjs <orchDir> question|answered|ack <writer> --id <question or scope id> [--text <the question and its default, or the answer>]
+//        board.mjs <orchDir> pending <writer>
 //        board.mjs <orchDir> status [--pushed <name>=<sha>]... [--threads <name>=<n>]...
+//        board.mjs <orchDir> watch-lines
 //
 // `writer` adds or updates a writer's row (owner, PR, head, status,
-// dependencies). `deliver` records something each recipient must be told
+// dependencies). It refuses a new row in a program whose recorded shape
+// (fleet-home.mjs) is `no-writer`, and a second writer in a `one-writer` one,
+// until the shape is changed. `deliver` records something each recipient must be told
 // directly (a ruling saved once as a reference file, a QA checkpoint that is
 // ready); `told` marks one recipient told. Every write re-renders
 // <orchDir>/board.md, the page every writer reads, with a log line.
@@ -50,6 +54,19 @@
 // asking the operator to press Esc in that pane. A writer once held its PR six
 // hours on an unanswered question, and answers to writers in long turns had to
 // be sent three times.
+// A mid-run scope change or answer to a writer is a `scope` delivery (`--text`
+// or `--reference`) to board writers with a `--worktree`; it records each
+// worktree's head. The writer reads `pending <writer>` (its scope changes and
+// answers not yet acknowledged, exit 1 when any) before each commit and each
+// verification phase, and acknowledges each by id (`ack`). `status` prints
+// `UNACKED-SCOPE <item> <writer> <m>m` once a told change waited 15 minutes
+// unacknowledged, and `SCOPE-NOT-STARTED <item> <writer> <m>m` once, 30 minutes
+// after it was told, the worktree still sits clean at the recorded head.
+// `watch-lines` prints those and the late-question lines without minutes, for
+// codex-fleet-monitor's snapshot, so the watcher wakes on each. A Claude pane
+// writer ran one turn for over two hours (2026-10-26) and never
+// received an answer and two scope additions; it committed and verified the old
+// scope while every send reported success.
 // <orchDir> is a fleet home or a program dir (work-dir.mjs). `status` also prints
 // fleet-home.mjs check's lines for a home, or for a flat dir that watches sessions or PRs.
 // All of these count toward the exit status, as does `WATCHER-MISSING(<why>)` when the
@@ -64,16 +81,17 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { watcherState } from "../../codex-fleet-monitor/scripts/watcher.mjs";
 import { readConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
-import { homeProblems } from "./fleet-home.mjs";
+import { homeProblems, programShape, Shape } from "./fleet-home.mjs";
 import { readThreads } from "../../vibe/scripts/pr-threads.mjs";
 
 const STATE = "board.json";
 const PAGE = "board.md";
-const KINDS = new Set(["ruling", "checkpoint", "note"]);
+const KINDS = new Set(["ruling", "checkpoint", "note", "scope"]);
 const LOG_LINES = 50;
 const RUNTIMES = new Set(["codex", "claude"]);
 const SLOW_MINUTES = 30;
 const QUESTION_MINUTES = 15;
+const SCOPE_START_MINUTES = 30;
 const BOTS = new RegExp(process.env.BOT_LOGIN_REGEX || "vercel|codex|github-actions|copilot|bot", "i");
 
 /** Rows whose recorded head differs from the pushed head; a row with no known pushed head is not judged. */
@@ -112,6 +130,56 @@ export function lateQuestions(board, now) {
   };
 }
 
+/** A worktree's HEAD and whether it has no changes (untracked files count), or null when git cannot read it. */
+export function worktreeState(worktree) {
+  try {
+    const git = (args) => execFileSync("git", ["-C", worktree, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 10_000 });
+    return { head: git(["rev-parse", "HEAD"]).trim(), clean: git(["status", "--porcelain"]).trim() === "" };
+  } catch {
+    return null;
+  }
+}
+
+/** Told scope changes unacknowledged for QUESTION_MINUTES, and those whose writer's worktree sat clean at the recorded head for SCOPE_START_MINUTES. */
+export function scopeProblems(board, now, readState = worktreeState) {
+  const unacked = [];
+  const notStarted = [];
+  for (const [item, delivery] of Object.entries(board.deliveries)) {
+    if (delivery.kind !== "scope") continue;
+    for (const writer of delivery.to) {
+      const toldAt = delivery.told[writer];
+      if (!toldAt) continue;
+      const minutes = Math.floor((now - Date.parse(toldAt)) / 60_000);
+      if (!delivery.acked?.[writer] && minutes >= QUESTION_MINUTES) unacked.push({ item, writer, minutes });
+      const base = delivery.base?.[writer];
+      const worktree = board.writers[writer]?.worktree;
+      if (!base || !worktree || minutes < SCOPE_START_MINUTES) continue;
+      const current = readState(worktree);
+      if (current?.clean && current.head === base) notStarted.push({ item, writer, minutes, head: base });
+    }
+  }
+  return { unacked, notStarted };
+}
+
+/** The scope changes and answers a writer has not acknowledged yet. */
+export function pendingFor(board, writer) {
+  const changes = Object.entries(board.deliveries)
+    .filter(([, delivery]) => delivery.kind === "scope" && delivery.to.includes(writer) && !delivery.acked?.[writer])
+    .map(([item, delivery]) => ({ kind: "SCOPE", id: item, text: delivery.text ?? delivery.reference }));
+  const answers = Object.values(board.questions)
+    .filter((entry) => entry.writer === writer && entry.answeredAt)
+    .map((entry) => ({ kind: "ANSWERED", id: entry.id, text: entry.answer ?? `see the message answering: ${entry.text}` }));
+  return [...changes, ...answers];
+}
+
+/** Why a program of `shape` with `writers` cannot take another writer, or null. */
+export function writerShapeProblem(shape, writers) {
+  if (shape === Shape.NoWriter || (shape === Shape.OneWriter && writers.length > 0)) {
+    return `this program is recorded as ${shape}${writers.length > 0 ? ` (writer ${writers.join(", ")})` : ""}; record its new shape with fleet-home.mjs shape ${shape === Shape.NoWriter ? "one-writer|fleet" : "fleet"} before adding a writer, so the sections that shape needs apply`;
+  }
+  return null;
+}
+
 /** Required duties with no owner recorded. */
 export function missingDuties(board, required) {
   return required.filter((duty) => !board.duties[duty]);
@@ -136,6 +204,8 @@ export function render(board) {
   const open = untold(board).map(({ item, recipient, delivery }) =>
     `- ${item} (${delivery.kind}) for ${recipient}${delivery.reference ? `: ${delivery.reference}` : ""}${delivery.head ? ` at ${delivery.head}` : ""}`);
   const duties = Object.entries(board.duties).map(([duty, { owner, at }]) => `- ${duty}: ${owner} (since ${at})`);
+  const scope = Object.keys(board.writers).flatMap((writer) => pendingFor(board, writer).filter((entry) => entry.kind === "SCOPE")
+    .map((entry) => `- ${entry.id} for ${writer}: ${entry.text}`));
   return [
     "# Fleet board",
     "",
@@ -150,6 +220,10 @@ export function render(board) {
     "## Not yet told",
     "",
     ...(open.length > 0 ? open : ["- nothing"]),
+    "",
+    "## Scope changes not acknowledged",
+    "",
+    ...(scope.length > 0 ? scope : ["- none"]),
     "",
     "## Log",
     "",
@@ -178,13 +252,40 @@ function list(text) {
   return (text ?? "").split(",").map((part) => part.trim()).filter(Boolean);
 }
 
-function ghHead(row) {
+function ghOid(row, field) {
   try {
-    return execFileSync(process.env.BOARD_GH || "gh", ["pr", "view", String(row.pr), "-R", row.repo, "--json", "headRefOid", "-q", ".headRefOid"],
+    return execFileSync(process.env.BOARD_GH || "gh", ["pr", "view", String(row.pr), "-R", row.repo, "--json", field, "-q", `.${field}`],
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30_000 }).trim() || null;
   } catch {
     return null;
   }
+}
+
+function ghHead(row) { return ghOid(row, 'headRefOid'); }
+
+/** Read Git from an exact recorded worktree; callers never rely on the coordinator cwd. */
+function repositoryGit(worktree, args) {
+  return execFileSync('git', ['-C', worktree, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 }).trim();
+}
+
+/** Use the live PR target, an orchestrator-pinned base, or the repository default before PR creation. */
+function trustedBaseOid(row, git, published) {
+  if (row.pr && row.repo) {
+    const oid = ghOid(row, 'baseRefOid');
+    if (!/^[a-f0-9]{40}$/i.test(oid ?? '')) throw new Error('Cannot establish the live PR base');
+    return git('rev-parse', '--verify', '--end-of-options', `${oid}^{commit}`);
+  }
+  if (row.trustedBase) {
+    if (!/^[a-f0-9]{40}$/i.test(row.trustedBase.oid ?? '')) throw new Error('Recorded trusted base is invalid');
+    return git('rev-parse', '--verify', '--end-of-options', `${row.trustedBase.oid}^{commit}`);
+  }
+  let ref;
+  try { ref = git('symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'); }
+  catch {
+    try { return git('rev-parse', '--verify', 'refs/remotes/origin/main^{commit}'); }
+    catch { return published; }
+  }
+  return git('rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`);
 }
 
 /** Unresolved review threads a human opened, or null when gh cannot answer. */
@@ -230,6 +331,61 @@ function pushedHeads(board, texts) {
   return pushed;
 }
 
+/** Inspect every ahead commit; exempt only ancestry reachable from the actual trusted target base. */
+export function unreadyCommits(board, pushed = {}) {
+  const problems = [];
+  for (const [name, row] of Object.entries(board.writers)) {
+    if (!row.worktree || row.where === 'remote') continue;
+    const git = (...args) => repositoryGit(row.worktree, args);
+    try {
+      let base = pushed[name];
+      if (!base) {
+        try { base = git('rev-parse', '@{upstream}'); }
+        catch { base = null; }
+      }
+      const declared = new Set([...(row.readyHeads ?? []), row.ready].filter(Boolean).flatMap(sha => {
+        try { return [git('rev-parse', '--verify', `${sha}^{commit}`)]; }
+        catch { return []; }
+      }));
+      const trusted = trustedBaseOid(row, git, base);
+      if (!trusted) throw new Error('Cannot establish the repository default or a recorded trusted base');
+      if (!base) base = git('merge-base', 'HEAD', trusted);
+      for (const sha of git('rev-list', `${base}..HEAD`, '--not', trusted).split('\n').filter(Boolean)) {
+        if (!declared.has(sha)) problems.push(`UNREADY-COMMIT ${name} ${sha}: local commit ahead of ${base} was not declared push-ready`);
+      }
+    } catch {
+      problems.push(`PUSH-READY-UNKNOWN ${name}: cannot inspect local history or resolve its pushed base; restore the worktree/base before pushing`);
+    }
+  }
+  return problems;
+}
+
+function noHeadRows(board) {
+  return Object.entries(board.writers).filter(([, row]) => row.where === 'remote')
+    .map(([name]) => `NO-HEAD ${name}: remote worktree history is checked on its owning machine`);
+}
+
+const ACTIONS = ["writer", "deliver", "told", "duty", "question", "answered", "ack", "pending", "push-check", "status", "watch-lines"];
+
+/** A scope delivery's acknowledgements and each recipient's worktree head when it was sent; refuses a recipient status cannot watch. */
+function scopeBase(board, to, values, previous) {
+  if (!values.text?.trim() && !values.reference && !previous?.text && !previous?.reference) {
+    throw new Error("a scope change carries its content: pass --text <the change> or --reference <file>, so the writer's pending list shows it.");
+  }
+  const base = { ...previous?.base };
+  for (const writer of to) {
+    const worktree = board.writers[writer]?.worktree;
+    if (!worktree) {
+      throw new Error(`a scope change goes to a board writer with a worktree (board.mjs <orchDir> writer ${writer} --worktree <path>), so status can see whether it started.`);
+    }
+    if (base[writer]) continue;
+    const state = worktreeState(worktree);
+    if (state) base[writer] = state.head;
+    else process.stdout.write(`NO-HEAD ${writer}: git cannot read ${worktree}; only the acknowledgement is checked\n`);
+  }
+  return { base, acked: previous?.acked ?? {} };
+}
+
 function main(argv) {
   const [workDir, action, ...rest] = argv;
   const { values, positionals } = parseArgs({
@@ -240,17 +396,33 @@ function main(argv) {
       to: { type: "string" }, kind: { type: "string" }, reference: { type: "string" },
       pushed: { type: "string", multiple: true }, threads: { type: "string", multiple: true }, now: { type: "string" },
       runtime: { type: "string" }, owner: { type: "string" }, text: { type: "string" }, ready: { type: "string" }, id: { type: "string" },
+      worktree: { type: "string" }, base: { type: "string" }, where: { type: "string" },
     },
   });
-  if (!workDir || !["writer", "deliver", "told", "duty", "question", "answered", "ack", "push-check", "status"].includes(action)) {
-    throw new Error("Usage: board.mjs <orchDir> writer|deliver|told|duty|question|answered|ack|push-check|status ...");
+  if (!workDir || !ACTIONS.includes(action)) {
+    throw new Error(`Usage: board.mjs <orchDir> ${ACTIONS.join("|")} ...`);
   }
   const orchDir = resolveWorkDir(workDir).dir;
   const board = read(orchDir);
   const now = values.now ? Date.parse(values.now) : Date.now();
   const at = new Date(now).toISOString();
+  if (action === "watch-lines") {
+    for (const line of unreadyCommits(board, pushedHeads(board, values.pushed ?? []))) process.stdout.write(`board ${line}\n`);
+    for (const line of noHeadRows(board)) process.stdout.write(`board ${line}\n`);
+    const { unanswered, unacked } = lateQuestions(board, now);
+    const scope = scopeProblems(board, now);
+    for (const entry of unanswered) process.stdout.write(`board QUESTION-UNANSWERED ${entry.writer} ${entry.id}\n`);
+    for (const entry of unacked) process.stdout.write(`board UNACKED ${entry.writer} ${entry.id}\n`);
+    for (const entry of scope.unacked) process.stdout.write(`board UNACKED-SCOPE ${entry.item} ${entry.writer}\n`);
+    for (const entry of scope.notStarted) process.stdout.write(`board SCOPE-NOT-STARTED ${entry.item} ${entry.writer}\n`);
+    return 0;
+  }
   if (action === "status") {
-    const stale = staleRows(board, pushedHeads(board, values.pushed ?? []));
+    const pushed = pushedHeads(board, values.pushed ?? []);
+    const stale = staleRows(board, pushed);
+    const commits = unreadyCommits(board, pushed);
+    for (const line of commits) process.stdout.write(`${line}\n`);
+    for (const line of noHeadRows(board)) process.stdout.write(`${line}\n`);
     for (const row of stale) process.stdout.write(`STALE ${row.name} board head ${row.head}, pushed ${row.pushed}\n`);
     const open = untold(board);
     for (const entry of open) process.stdout.write(`UNTOLD ${entry.item} ${entry.recipient}\n`);
@@ -265,20 +437,32 @@ function main(argv) {
     const { unanswered, unacked } = lateQuestions(board, now);
     for (const entry of unanswered) process.stdout.write(`QUESTION-UNANSWERED ${entry.writer} ${entry.id} ${entry.minutes}m: ${entry.text.slice(0, 160)}\n`);
     for (const entry of unacked) process.stdout.write(`UNACKED ${entry.writer} ${entry.id} ${entry.minutes}m: the writer has not acknowledged your answer; it is likely in a long turn, so escalate\n`);
-    const asked = [...unanswered, ...unacked];
+    const scope = scopeProblems(board, now);
+    for (const entry of scope.unacked) {
+      process.stdout.write(`UNACKED-SCOPE ${entry.item} ${entry.writer} ${entry.minutes}m: the writer has not acknowledged this scope change; it is likely in one long turn and has not read it, so interrupt it or stop and relaunch it with the change in its prompt\n`);
+    }
+    for (const entry of scope.notStarted) {
+      process.stdout.write(`SCOPE-NOT-STARTED ${entry.item} ${entry.writer} ${entry.minutes}m: its worktree is clean at ${entry.head.slice(0, 10)}, the head it had when the change was sent; ask what it is doing this minute, or stop and relaunch it\n`);
+    }
+    const asked = [...unanswered, ...unacked, ...scope.unacked, ...scope.notStarted];
     const watched = ["sessions.txt", "prs.txt"].some((file) => existsSync(path.join(orchDir, file)));
     const watcher = watched ? watcherState(orchDir, now) : { ok: true };
     if (!watcher.ok) process.stdout.write(`WATCHER-MISSING ${watcher.line.replace("watcher MISSING", "")}: re-arm watch.sh now (run_in_background)\n`);
     const home = watched || resolveWorkDir(workDir).home ? homeProblems(orchDir) : [];
     for (const line of home) process.stdout.write(`${line}\n`);
-    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${unanswered.length} unanswered, ${unacked.length} unacked${watcher.ok ? "" : ", watcher missing"}${home.length > 0 ? `, ${home.length} outside the fleet home` : ""}\n`);
-    return stale.length + open.length + slow.length + duties.length + missing.length + asked.length + home.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
+    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${unanswered.length} unanswered, ${unacked.length} unacked, ${scope.unacked.length} scope unacked, ${scope.notStarted.length} scope not started${watcher.ok ? "" : ", watcher missing"}${home.length > 0 ? `, ${home.length} outside the fleet home` : ""}\n`);
+    return commits.length + stale.length + open.length + slow.length + duties.length + missing.length + asked.length + home.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
   }
   const [name, recipient] = positionals;
   if (!name) {
     throw new Error(`${action} needs a name.`);
   }
   if (action === "push-check") {
+    const commits = unreadyCommits({ ...board, writers: { [name]: board.writers[name] ?? {} } }, pushedHeads(board, values.pushed ?? []));
+    if (commits.length) {
+      for (const line of commits) process.stdout.write(`${line}\n`);
+      return 1;
+    }
     const ready = board.writers[name]?.ready;
     if (!values.head) {
       throw new Error("push-check needs --head <the sha you would push>.");
@@ -290,18 +474,30 @@ function main(argv) {
     process.stdout.write(`READY ${name} ${values.head}\n`);
     return 0;
   }
+  if (action === "pending") {
+    const pending = pendingFor(board, name);
+    for (const entry of pending) process.stdout.write(`${entry.kind} ${entry.id}: ${entry.text}\n`);
+    process.stdout.write(pending.length > 0
+      ? `pending: ${pending.length}; apply each, then acknowledge it with board.mjs <orchDir> ack ${name} --id <id> and say in your next status what you applied\n`
+      : "pending: none\n");
+    return pending.length > 0 ? 1 : 0;
+  }
   if (["question", "answered", "ack"].includes(action)) {
     if (!/^[\w.:-]{1,40}$/.test(values.id ?? "")) {
       throw new Error(`${action} needs --id <question id>; the answer echoes it and the writer acknowledges it.`);
     }
     const key = `${name}/${values.id}`;
+    const change = board.deliveries[values.id];
     if (action === "question") {
       if (!values.text?.trim()) throw new Error("question needs --text <the question and the default you proceed on>.");
       board.questions[key] = { writer: name, id: values.id, text: values.text.trim(), at };
+    } else if (action === "ack" && !board.questions[key] && change?.kind === "scope" && change.to.includes(name)) {
+      change.acked = { ...change.acked, [name]: at };
     } else if (!board.questions[key]) {
-      throw new Error(`no question ${values.id} from ${name} is recorded.`);
+      throw new Error(`no question or scope change ${values.id} for ${name} is recorded.`);
     } else if (action === "answered") {
       board.questions[key].answeredAt = at;
+      if (values.text?.trim()) board.questions[key].answer = values.text.trim();
     } else {
       delete board.questions[key];
     }
@@ -320,9 +516,44 @@ function main(argv) {
     if (values.runtime !== undefined && !RUNTIMES.has(values.runtime)) {
       throw new Error("--runtime must be codex or claude.");
     }
+    if (values.where !== undefined && !['local', 'remote'].includes(values.where)) {
+      throw new Error('--where must be local or remote.');
+    }
+    const shapeProblem = board.writers[name] ? null : writerShapeProblem(programShape(orchDir), Object.keys(board.writers));
+    if (shapeProblem) throw new Error(shapeProblem);
     const row = board.writers[name] ?? {};
-    const update = Object.fromEntries(Object.entries({ pr: values.pr, repo: values.repo, head: values.head, ready: values.ready, status: values.status, runtime: values.runtime })
+    const worktree = values.worktree === undefined ? undefined : path.resolve(values.worktree);
+    const update = Object.fromEntries(Object.entries({ pr: values.pr, repo: values.repo, head: values.head, ready: values.ready, status: values.status, runtime: values.runtime, worktree, where: values.where })
       .filter(([, value]) => value !== undefined));
+    if (values.base !== undefined) {
+      const root = worktree ?? row.worktree;
+      if (!root || !/^(?:[a-f0-9]{40}|(?:refs\/remotes\/)?[^/\s]+\/.+)$/i.test(values.base)) {
+        throw new Error('--base needs an orchestrator-verified remote ref or full base OID and a worktree');
+      }
+      update.trustedBase = (values.where ?? row.where) === 'remote'
+        ? { ref: values.base, oid: /^[a-f0-9]{40}$/i.test(values.base) ? values.base : null }
+        : { ref: values.base, oid: repositoryGit(root, ['rev-parse', '--verify', '--end-of-options', `${values.base}^{commit}`]) };
+      if (!update.trustedBase.oid) throw new Error('a remote writer needs --base <full OID>');
+    }
+    if (values.ready && (values.where ?? row.where) === 'remote') {
+      if (!/^[a-f0-9]{7,40}$/i.test(values.ready) || !(update.trustedBase ?? row.trustedBase)) {
+        throw new Error('a remote push-ready declaration needs a SHA and recorded full base OID');
+      }
+    } else if (values.ready && (worktree ?? row.worktree)) {
+      const root = worktree ?? row.worktree;
+      const git = (...args) => repositoryGit(root, args);
+      const ready = git('rev-parse', '--verify', '--end-of-options', `${values.ready}^{commit}`);
+      let published;
+      try { published = git('rev-parse', '@{upstream}'); } catch { published = null; }
+      const inherited = trustedBaseOid({ ...row, ...update }, git, published);
+      if (!inherited) throw new Error('Record a trusted base before declaring push-ready source');
+      let parent = false;
+      try { git('merge-base', '--is-ancestor', ready, inherited); parent = true; } catch { /* Not inherited. */ }
+      if (parent) {
+        throw new Error('trusted base commits are inherited, never writer push-ready declarations');
+      }
+    }
+    if (values.ready) update.readyHeads = [...new Set([...(row.readyHeads ?? []), row.ready, values.ready].filter(Boolean))];
     const moved = values.head !== undefined && values.head !== row.head;
     board.writers[name] = { ...row, ...update, ...(values.deps === undefined ? {} : { deps: list(values.deps) }), ...(moved ? { headAt: at } : {}), updatedAt: at };
     write(orchDir, board, `${name}: ${Object.entries(update).map(([key, value]) => `${key} ${value}`).join(", ") || "touched"}`, at);
@@ -338,12 +569,15 @@ function main(argv) {
       throw new Error("a ruling is saved once as a reference file (its screenshots beside it); pass --reference <file>.");
     }
     const previous = board.deliveries[name];
+    const scope = kind === "scope" ? scopeBase(board, to, values, previous) : {};
     board.deliveries[name] = {
       kind,
       to: [...new Set([...(previous?.to ?? []), ...to])],
       told: previous?.told ?? {},
       ...(values.reference ? { reference: values.reference } : {}),
+      ...(values.text?.trim() ? { text: values.text.trim() } : {}),
       ...(values.head ? { head: values.head } : {}),
+      ...scope,
       at,
     };
     write(orchDir, board, `${name} (${kind}) for ${to.join(", ")}`, at);

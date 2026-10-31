@@ -139,10 +139,22 @@ main_checkout_of() {
   dirname "$common"
 }
 
+# Remembering the checkout is optional (the search finds it again), so a refused
+# write never fails the setup check. It is never silent either: Codex's sandbox
+# refuses writes under ~/.codex, and the line asks for an escalated rerun
+# (ISS-13321).
 remember_repo() {
-  mkdir -p "$CONFIG_DIR"
-  printf '{\n  "repo": "%s"\n}\n' "$(json_escape "$1")" >"$CONFIG_FILE.tmp" &&
-    mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+  local error
+  if error="$({ mkdir -p "$CONFIG_DIR" &&
+    printf '{\n  "repo": "%s"\n}\n' "$(json_escape "$1")" >"$CONFIG_FILE.tmp" &&
+    mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"; } 2>&1)"; then
+    return 0
+  fi
+  if [[ "${CODEX_SANDBOX_NETWORK_DISABLED:-}" == "1" ]]; then
+    printf '{"escalate":true,"justification":"Remember where your copy of the code is","error":"%s"}\n' "$(json_escape "$error")"
+  else
+    printf '{"check":"repo-remembered","ok":true,"detail":"%s","fix":""}\n' "$(json_escape "could not save $CONFIG_FILE: $error")"
+  fi
 }
 
 # Every symphony-alpha checkout under the home folder, one per line. Folders

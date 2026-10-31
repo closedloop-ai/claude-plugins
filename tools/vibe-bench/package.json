@@ -1,0 +1,19 @@
+{
+  "name": "@closedloop/vibe-bench",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test src/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "validate:plugins": "claude plugin validate ../../plugins/vibe && claude plugin validate ../../plugins/closedloop-core",
+    "bench": "node --experimental-strip-types src/cli.ts"
+  },
+  "devDependencies": {
+    "@anthropic-ai/claude-code": "2.1.311",
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}

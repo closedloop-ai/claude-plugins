@@ -49,7 +49,8 @@ first: `fts_search` for an unfamiliar error to find known setup problems and
 open tickets, and `blast_radius_tickets` on a file you suspect.
 Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
 off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
-a needed vibe tooling fix returns `BLOCKED`.
+report a tooling defect and keep using the supported paths there; return
+`BLOCKED` only for a verified engineering-only blocker after those paths.
 
 macOS has no `timeout` or `gtimeout`; bound a slow command with your tool's
 own timeout setting or `node ../skills/vibe/scripts/run-bounded.mjs <seconds> <command>` (exit 124 on time out). Never start an interactive `claude`
@@ -76,20 +77,28 @@ The checkout is the one the preflight remembered
   access, stop and return `NEEDS_PERSON` for that human-only action.
   Multiple checkouts are resolved internally from the active workspace or
   recorded session; if still ambiguous, return `BLOCKED`, not a technical question.
-- closedloop-graph unreachable (preflight's `sync_status` failed, or a
-  worker's Graph block said `unreachable`): this is a setup problem, not a
-  normal state. Check that the harness lists the server and that it answers:
-  in Codex, `mcp list` on the Codex CLI that `../skills/vibe/INSTALL.md` uses;
-  in Claude Code, `claude mcp get <server>` run from the home folder, whose
-  `Status:` line says whether it is connected. A launch the Claude worker
-  launcher refused with `MCP_TOOLS_MISSING` names the connection that did not
-  load. When it is listed
-  but not answering, reconnect it the way `preflight.md` reconnects the
-  ClosedLoop connector (the person opens Settings and completes any sign-in,
-  never Computer Use), or have the person quit and reopen the ChatGPT app, returned
-  as `NEEDS_PERSON` in one plain line. When it is not configured at all,
-  return `BLOCKED` saying the closedloop-graph connector is missing, for
-  engineering.
+- A command the Codex sandbox refuses (no network, or a write outside the
+  workspace such as `codex mcp add`): run it again with an escalation
+  request as `preflight.md`, "Commands the sandbox blocks", says; never hand
+  it to the person or send them to the Terminal app. GitHub sign-in follows
+  `preflight.md`, "Signing in to GitHub".
+- ClosedLoop or closedloop-graph unreachable: ClosedLoop's `get-me` failed,
+  or closedloop-graph's `sync_status` failed or a worker's Graph block said
+  `unreachable`. This is a setup problem, not a normal state. Follow
+  `preflight.md`, "Restoring a connection", exactly: you run every command,
+  and the person only signs in in the browser, returned as `NEEDS_PERSON`
+  with that section's exact words; whether a new chat is needed is the
+  orchestrator's step 5, never yours. A launch the
+  Claude worker launcher refused with `MCP_TOOLS_MISSING` names the
+  connection that did not load. Never send the person into the app's
+  Settings and never use Computer Use.
+- Real Clerk sign-in stack (for example `just dev`) needed and `local.env` has
+  no Clerk keys (`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` or `CLERK_SECRET_KEY`
+  blank or absent): never fetch or type the secrets yourself. Tell the person
+  to run `! just clerk-keys` in the repository (after
+  `aws sso login --profile <their stage profile>` if needed), returned as
+  `NEEDS_PERSON` in one plain line, then continue. Agent verification stacks
+  run Clerk-free and never need this.
 - Bootstrap: run `./.closedloop-ai/loops-setup.sh` in the worktree; on failure
   read its output and fix the cause if it is a missing prerequisite.
 - Local Storybook: start it detached in the worktree on a free port from 6100
@@ -117,6 +126,11 @@ The checkout is the one the preflight remembered
     launcher predates the tab is recorded with no URL and keeps running as a
     window). Return `DONE` once it is recorded; the orchestrator reads the URL
     with `desktop-tab`, so never put the URL or its token in your result.
+  - Stopping everything the session runs (it was kept, discarded or handed
+    off) is `vibe-sessions.mjs stop --worktree "<wt>"`, never a signal by
+    hand: it stops the recorded Storybook and Desktop only after proving each
+    is still the session's own process, and leaves a stale or reused pid
+    alone (ISS-13321). A confirmed `discard` runs it first.
   - Stop Desktop only (before a step that merges main or swaps the
     worktree's commit, per "Never swap the worktree under a running Desktop"
     in `environment.md`): stop the recorded Desktop launch as `environment.md`
@@ -187,5 +201,5 @@ Repo defects return diagnosis and ticket evidence without an applied-fix claim. 
 `NEEDS_PERSON` with one plain instruction for the person in the words of
 `../skills/vibe/references/plain-words.md` (for example "Your Mac is asking
 for your password to finish installing Node; type it in the prompt"). Or
-`BLOCKED` with the error in one or two lines and "message engineering, naming
-this work by its summary".
+`BLOCKED` with the exact error, paths tried and supported handover after the
+alternatives in the guardrail are exhausted. Give the person no repair task.

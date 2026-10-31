@@ -204,7 +204,7 @@ test('ticket workers own support delegation and visual QA carries the preflight'
   assert.doesNotMatch(protocol, /Ticket sessions never delegate/i);
 });
 
-test('UI work requires one pre-PR visual-QA pass without a later current-head refresh gate', () => {
+test('UI work keeps one pre-PR visual pass and adds no later pass (ISS-13411 operator ruling, 2026-10-29)', () => {
   const execute = readExecuteContract();
   const implementation = read('cl-execute/references/implementation-review-pr.md');
   const skill = read('cl-execute/SKILL.md');
@@ -220,12 +220,13 @@ test('UI work requires one pre-PR visual-QA pass without a later current-head re
   assert.match(gate, /exactly one dedicated visual-QA pass[\s\S]{0,420}before first push\/open PR/i);
   assert.match(gate, /Never silently open a PR and defer\s+visual QA to post-PR/);
   assert.match(gate, /do not invent a current-head\s+refresh gate/);
-  assert.match(gate, /later PR comments, test fixes, rebases, conflict repairs, source head\s+changes, and CI remediation do not require another visual-QA pass unless the operator\s+explicitly asks/);
+  // ISS-13411 operator ruling, 2026-10-29: the ruling reduces automated QA; it never adds a pass to this workflow.
+  assert.match(gate, /Later changes:[\s\S]{0,220}do not add\s+another visual-QA pass unless the operator asks/);
+  assert.doesNotMatch(gate, /qa-impact\.mjs/);
   assert.match(gate, /Storybook, a11y, screenshots attached to tests, and\s+displayless E2E are supporting evidence/);
   assert.match(gate, /when no stack may run[\s\S]{0,260}may review\s+captured before\/after screenshots/);
   assert.match(gate, /UI visual QA: passed \(screenshots only, no\s+live stack\)/);
-  const copies = execute.match(/do not require another\s+visual-QA pass unless the operator\s+explicitly asks/gi) ?? [];
-  assert.equal(copies.length, 1, 'the head-change rule is stated once in cl-execute');
+  assert.match(execute, /do not add\s+another visual-QA pass unless the operator asks/i);
   for (const source of [skill, monitoring, formats]) {
     assert.match(source, /Design Visual-QA Gate\]\((?:references\/)?implementation-review-pr\.md#design-visual-qa-gate\)/);
   }
@@ -233,7 +234,8 @@ test('UI work requires one pre-PR visual-QA pass without a later current-head re
   // The sweep keeps only its parent acceptance checks and points workers at the gate.
   for (const source of [sweep, lifecycle]) {
     assert.match(source, /one dedicated\s+pre-PR design visual-QA pass/i);
-    assert.match(source, /do not require another\s+visual-QA\s+pass unless the operator\s+explicitly asks/i);
+    assert.match(source, /do not add another\s+visual-QA pass unless the operator explicitly asks/i);
+    assert.doesNotMatch(source, /qa-impact\.mjs/);
   }
   assert.match(lifecycle, /satisfy the Design Visual-QA Gate in \.\.\/\.\.\/cl-execute\/references\/implementation-review-pr\.md/);
 
@@ -725,11 +727,12 @@ test('bug tickets land a failing test before the fix and extend the existing tes
   // Extends step 6 and Residual contract testability instead of duplicating them.
   assert.match(implementation, /6\. Add focused tests for changed behavior[\s\S]{0,260}On bug tickets, go red first/);
   assert.match(implementation, /Reproduce the bug twice, in two separate\s+runs with the same symptom, before trusting the repro/);
-  assert.match(implementation, /Commit the focused test that fails on the base first, with its recorded\s+failure, then commit the fix, so the history shows red then green/);
+  assert.match(implementation, /Keep the recorded failing run on the base as evidence while iterating\s+uncommitted through the fix, selected checks, independent review and\s+verification/);
+  assert.match(implementation, /Commit test and fix together only when push-ready/);
   assert.match(implementation, /This test is the Residual contract testability probe from[\s\S]{0,80}not a second one/);
-  assert.match(implementation, /do not bypass the hook/);
+  assert.match(implementation, /Never bypass a mandatory commit hook or make a red checkpoint commit/);
   assert.match(implementation, /When no cheap test path exists[\s\S]{0,160}record why and use the closest\s+runtime evidence as the red step instead/);
-  assert.match(gates, /Residual contract testability:[\s\S]{0,700}On bug tickets, name\s+which probe is the red-first test that implementation commits before the fix/);
+  assert.match(gates, /Residual contract testability:[\s\S]{0,700}On bug tickets, name\s+which probe records red-first evidence while implementation iterates uncommitted/);
   assert.match(gates, /why no cheap\s+test path exists and which runtime evidence stands in for it/);
   assert.match(analyze, /For a bug ticket, name the cheap test path that can fail on current main before the fix, or say why none exists/);
   assert.match(formats, /^Red-first evidence: <not_applicable - not a bug ticket \|/m);
@@ -868,7 +871,7 @@ test('a private append-only decision log replaces milestone narration', () => {
   assert.match(formats, /^Attention: <none \| up to five items the operator should check first/m);
 });
 
-test('head changes compare the stable patch-id before per-scenario carry-forward', () => {
+test('manual QA still compares stable patch-id before scenario carry-forward (ISS-13411 operator ruling, 2026-10-29)', () => {
   const manualQa = read('cl-execute/references/feature-manual-qa.md');
   const implementation = read('cl-execute/references/implementation-review-pr.md');
   const formats = read('cl-execute/references/result-formats.md');
@@ -879,10 +882,12 @@ test('head changes compare the stable patch-id before per-scenario carry-forward
   assert.doesNotMatch(manualQa, /Patch-id unchanged:|Patch-id changed:/);
   assert.match(manualQa, /never substitutes for the patch-id comparison/);
   assert.match(manualQa, /Update the owned comment in place with the new\s+head, both patch-ids, invalidated scenarios, carry-forward justifications/);
-  assert.match(implementation, /Bind `Repo verification evidence` and `Safety fact` to a head/);
+  // The 2026-10-29 ruling retires commit identity for automated QA, not responsible-human manual QA evidence.
+  assert.match(implementation, /Manual QA keeps its own human-evidence rule/);
+  assert.match(manualQa, /same binding governs\s+only this responsible-human scenario evidence/);
   assert.match(formats, /^Manual QA head coverage: <current PR head, tested head, merge base and stable patch-id at each/m);
-  assert.match(formats, /^Safety fact: <[^\n]*head and patch-id it ran at/m);
-  assert.match(formats, /^Repo verification evidence: <[^\n]*head and patch-id captured at/m);
+  assert.match(formats, /^Safety fact: <[^\n]*source provenance/m);
+  assert.match(formats, /^Repo verification evidence: <[^\n]*source provenance/m);
 });
 
 test('manual-QA verdict changes are logged in the decision log', () => {
@@ -944,7 +949,7 @@ test('bug fixes need a confirmed repro, a named root cause, and a red run that f
   assert.match(step6, /An inconclusive run or a run on a\s+different surface is not a pass/);
   // Extends the existing red-first bullets instead of duplicating them.
   assert.equal((step6.match(/Reproduce the bug twice/g) ?? []).length, 1);
-  assert.equal((step6.match(/Commit the focused test that fails on the base first/g) ?? []).length, 1);
+  assert.equal((step6.match(/Commit test and fix together only when push-ready/g) ?? []).length, 1);
   assert.match(formats, /^Red-first evidence: <[^\n]*failure output on the base and the assertion it failed on/m);
   assert.match(formats, /^Root cause: <not_applicable - not a bug ticket \| one-sentence cause, the runtime observation that confirmed it/m);
 });

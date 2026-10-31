@@ -26,8 +26,9 @@ def test_frozen_stories_compare_dependency_closure_and_stable_output() -> None:
     decomposer = flat(agent("vibe-storybook-decomposer"))
     reviewer = flat(agent("vibe-guardrails-reviewer"))
     assert "rendered dependency closure" in rules
-    assert "fixed args, globals and viewport" in rules
-    assert "fixed args, globals and viewport" in decomposer
+    # ISS-13317: the remedy names the shipped command instead of describing a manual capture.
+    assert "frozen-render.mjs" in rules and "never a capture of your own" in rules
+    assert "clock, animations, viewport, fonts, theme, args and globals pinned" in decomposer
     assert "`frozen-render`" in decomposer and "`frozen-render`" in reviewer
     assert "even when its file is byte-identical" in reviewer
 
@@ -36,11 +37,14 @@ def test_storybook_train_is_rechecked_against_pinned_base_before_pr() -> None:
     handoff = flat((HANDOFF / "SKILL.md").read_text())
     verify = flat(agent("vibe-verify-worker"))
     ticket = flat(agent("vibe-ticket-worker"))
-    for text in (handoff, verify, ticket):
+    for text in (verify, ticket):
         assert "pinned" in text
         assert "release history" in text
         assert "component and story counts" in text
         assert "in-flight" in text
+    for required in ("Pinned-base Storybook train", "pinned base", "release-history",
+                     "component/story counts", "every open pull request"):
+        assert required in handoff, required
 
 
 def test_inventory_fails_closed_for_every_outside_path() -> None:
@@ -112,13 +116,15 @@ def test_source_prd_children_are_scope_units_claimed_and_closed_with_evidence() 
         assert phrase in ticket, phrase
 
 
-def test_outdated_version_does_not_stop_resume_or_explicit_proceed() -> None:
-    version = section((VIBE / "SKILL.md").read_text(), "### Plugin version")
-    assert "ask only on a fresh start" in version
-    assert "On a resumed session" in version
-    assert "opening message already says to proceed" in version
-    assert "continue in the same turn" in version
-    assert "Do not ask the version question or stop orchestration" in version
+def test_outdated_version_does_not_stop_an_explicit_proceed() -> None:
+    # Operator ruling 2026-10-27: a resumed session is asked too; only an
+    # opening instruction to proceed carries on without the question.
+    version = flat(section((VIBE / "SKILL.md").read_text(), "### Plugin version"))
+    assert "`outdated`, new or resumed, unless the opening message already says to proceed" in version
+    assert "run `choose --choice proceed --by opening-message`" in version
+    assert "continue in the same turn, without asking" in version
+    assert "ask only on a fresh start" not in version
+    assert "On a resumed session" not in version
 
 
 def test_existing_children_are_never_agent_superseded() -> None:

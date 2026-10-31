@@ -43,9 +43,14 @@ export function findingProblems(findings, exists = existsSync) {
   });
 }
 
-/** Touched-surface findings that have neither a fixing commit nor a follow-up ticket. */
+/**
+ * Touched-surface findings that have neither a fixing commit nor a follow-up
+ * ticket. A QA pass that found nothing has nothing to dispose of and passes
+ * rather than needing an invented finding; only a findings file that is not
+ * a list is refused.
+ */
 export function dispositionProblems(findings) {
-  if (!Array.isArray(findings) || findings.length === 0) return ["no findings"];
+  if (!Array.isArray(findings)) return ["findings must be a list, [] when QA found nothing"];
   return findings.flatMap((finding, index) => {
     const name = finding?.id ?? `finding ${index + 1}`;
     if (typeof finding?.touchedSurface !== "boolean") return [`${name}: touchedSurface must say true or false`];

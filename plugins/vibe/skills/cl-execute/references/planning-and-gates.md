@@ -85,7 +85,7 @@ Before planning or execution, classify the ticket:
   would fail on current main or on a representative pre-fix fixture. When the
   repository declares an evidence-capture verification protocol, plan a pre-fix
   reproduction captured with it for user-visible behavior. On bug tickets, name
-  which probe is the red-first test that implementation commits before the fix
+  which probe records red-first evidence while implementation iterates uncommitted
   (Execution step 6 in
   [implementation-review-pr.md](implementation-review-pr.md)), or why no cheap
   test path exists and which runtime evidence stands in for it.

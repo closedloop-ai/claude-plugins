@@ -7,8 +7,10 @@ import { digest, type syncContext } from "./main-sync-state.js";
 
 const REPOSITORY = "closedloop-ai/symphony-alpha";
 const WORKFLOW = ".github/workflows/e2e-test.yml";
-// Exact reviewed Run Electron e2e body at loaded-main 02a7ae03 and e5fc4f7, including both verdict guards.
+// Exact reviewed Run Electron e2e body at loaded-main 02a7ae03, e5fc4f7 and 51f4d122ba, including both verdict guards.
 const REVIEWED_ELECTRON_RUN_SHA256 = "d42acd228f3da95e0d05b419b0c8f38f36c2233fbf49c3113de6aae1e4697912";
+// The desktop-e2e checkout ref at loaded-main 51f4d122ba: a dispatch on main tests the `ref` input it names.
+export const REVIEWED_CHECKOUT_REF = "${{ github.event.merge_group.head_sha || github.event.pull_request.head.sha || github.event.inputs.ref || (github.event_name == 'schedule' && github.sha) || github.ref }}";
 const SAFE_ID = z.number().int().positive().safe();
 const identitySchema = z.object({ full_name: z.literal(REPOSITORY) }).passthrough();
 const workflowSchema = z.object({ id: SAFE_ID, path: z.literal(WORKFLOW) }).passthrough();
@@ -21,7 +23,8 @@ const jobSchema = z.object({ id: SAFE_ID, run_id: SAFE_ID, run_attempt: SAFE_ID,
 const jobsSchema = z.object({ total_count: z.number().int().nonnegative().max(100), jobs: z.array(jobSchema).max(100) }).passthrough();
 const contentsSchema = z.object({ encoding: z.literal("base64"), content: z.string().min(1) }).passthrough();
 const producerStepSchema = z.object({ name: z.string().optional(), id: z.string().optional(),
-  uses: z.string().optional(), run: z.string().optional(), env: z.record(z.unknown()).optional() }).passthrough();
+  uses: z.string().optional(), run: z.string().optional(), env: z.record(z.unknown()).optional(),
+  with: z.record(z.unknown()).optional() }).passthrough();
 const producerSchema = z.object({ jobs: z.object({ "desktop-e2e": z.object({ steps: z.array(producerStepSchema) }).passthrough() }).passthrough() }).passthrough();
 
 /** Reads canonical live GitHub evidence for the actual grant's locator; it cannot dispatch or accept an attestation. */
@@ -35,22 +38,12 @@ export function verifyExternalCi(value: ReturnType<typeof syncContext>, input: {
     throw new MainSyncError("CI run/workflow/attempt differs from the actual source grant");
   }
   const contents = contentsSchema.parse(apiJson(root, `repos/${REPOSITORY}/contents/${WORKFLOW}?ref=${run.head_sha}`));
-  const definition = producerSchema.parse(parse(Buffer.from(contents.content, "base64").toString("utf8")));
-  const steps = definition.jobs["desktop-e2e"].steps;
-  const checkout = only(steps.filter((step) => step.name === "Checkout repository"));
-  const resolve = only(steps.filter((step) => step.id === "target-ref"));
-  const test = only(steps.filter((step) => step.name === "Run Electron e2e"));
-  if (!checkout.uses?.startsWith("actions/checkout@") || !resolve.run?.includes('echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"')
-    || test.env?.DD_GIT_COMMIT_SHA !== "${{ steps.target-ref.outputs.sha }}" || !test.run
-    || digest(test.run) !== REVIEWED_ELECTRON_RUN_SHA256) {
-    throw new MainSyncError("Pinned loaded-main CI producer has no recognized trusted source/verdict interface");
-  }
+  const test = reviewedProducer(Buffer.from(contents.content, "base64").toString("utf8"));
   const jobs = jobsSchema.parse(apiJson(root, `repos/${REPOSITORY}/actions/runs/${run.id}/attempts/${locator.attempt}/jobs?per_page=100`));
   if (jobs.jobs.length !== jobs.total_count) throw new MainSyncError("Required CI job set is incomplete");
   const desktop = only(jobs.jobs.filter((job) => job.name === "desktop-e2e"));
   requireJob(desktop, run.id, locator.attempt);
   const checkoutStep = requiredStep(desktop.steps, "Checkout repository");
-  requiredStep(desktop.steps, "Resolve target ref");
   const testStep = requiredStep(desktop.steps, "Run Electron e2e");
   const log = apiText(root, `repos/${REPOSITORY}/actions/jobs/${desktop.id}/logs`, true);
   const checkoutSha = checkedSourceFromJobLog(log, checkoutStep, testStep, test.run.trimStart().split("\n")[0]!.trim());
@@ -63,6 +56,21 @@ export function verifyExternalCi(value: ReturnType<typeof syncContext>, input: {
     definitionSha: run.head_sha, checkoutSha, treeSha: input.treeSha, inputSha256: input.inputSha256,
     verifiedAt: new Date().toISOString(), jobs: [{ jobId: desktop.id, name: desktop.name,
       conclusion: "success", logSha256: digest(log) }] });
+}
+
+/**
+ * The loaded-main desktop-e2e producer's trusted interface: one checkout of the reviewed ref expression and one
+ * reviewed Run Electron e2e body. Its checkout action's log names the tested source. Returns the test step.
+ */
+export function reviewedProducer(workflowText: string) {
+  const steps = producerSchema.parse(parse(workflowText)).jobs["desktop-e2e"].steps;
+  const checkout = only(steps.filter((step) => step.name === "Checkout repository"));
+  const test = only(steps.filter((step) => step.name === "Run Electron e2e"));
+  if (!checkout.uses?.startsWith("actions/checkout@") || checkout.with?.ref !== REVIEWED_CHECKOUT_REF
+    || !test.run || digest(test.run) !== REVIEWED_ELECTRON_RUN_SHA256) {
+    throw new MainSyncError("Pinned loaded-main CI producer has no recognized trusted source/verdict interface");
+  }
+  return { ...test, run: test.run };
 }
 
 function requiredStep(steps: CiStep[], name: string) {

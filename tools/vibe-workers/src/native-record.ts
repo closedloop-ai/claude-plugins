@@ -2,16 +2,16 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { identifierSchema, type Ledger, type RetainedRecord } from "./contracts.js";
+import { identifierSchema, workerIdSchema, type Ledger, type RetainedRecord } from "./contracts.js";
 import { observeDefinitionDigest, readDefinition } from "./definition.js";
 import { acquireRecordTurnAt, checkoutLocation, location, readWriterSummary, releaseRecordTurnAt } from "./ledger.js";
 import { recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
 
-const grantSchema = recordContextSchema.extend({ agentRoot: z.string().min(1), workerId: identifierSchema,
-  requestId: identifierSchema, primaryOwner: z.object({ workerId: identifierSchema, lease: z.string().uuid() }).strict().optional(),
+const grantSchema = recordContextSchema.extend({ agentRoot: z.string().min(1), workerId: workerIdSchema,
+  requestId: identifierSchema, primaryOwner: z.object({ workerId: workerIdSchema, lease: z.string().uuid() }).strict().optional(),
 }).strict();
 const releaseSchema = grantSchema.extend({ lease: z.string().uuid(), stoppedTurn: z.object({ runtime: z.literal("codex"),
-  workerId: identifierSchema, requestId: identifierSchema, lease: z.string().uuid(),
+  workerId: workerIdSchema, requestId: identifierSchema, lease: z.string().uuid(),
   state: z.enum(["completed", "failed", "canceled"]) }).strict() }).strict();
 export const nativeRecordOwnerSchema = z.object({ grant: grantSchema, lease: z.string().uuid(), branch: z.string(), targetDir: z.string().optional() }).strict();
 const ownerFile = "native-owner.json";

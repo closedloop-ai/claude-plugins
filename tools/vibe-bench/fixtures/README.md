@@ -1,0 +1,9 @@
+# Phase 1 collector fixtures
+
+`phase0-claude-anonymized.jsonl` keeps the real Claude Code stream's event order, duplicate message blocks, request token input/cache fields, final `result.modelUsage`, and final dollar cost from the owned Phase 0 run on 2026-10-29. Session and request IDs were replaced; prompts, tool inputs, file paths, and assistant text were removed. The assistant-line output values sum to 254, while Claude's final output total is 892; the collector must use the final total.
+
+`phase0-transcript-anonymized.jsonl` keeps the same run's distinct request and message IDs after anonymization, transcript usage fields, and the observed `high` effort. Its assistant output values are retained as evidence of the source shape but are deliberately ignored by the collector.
+
+Phase 0 did not enable OTEL. `phase0-otel-overlay.synthetic.jsonl` is a deliberately synthetic request-level overlay with the real input/cache values and an output allocation summing to Claude's final 892 tokens. It exercises OTEL reconciliation, effort, and attribution rules; it is not presented as captured telemetry. An owned run against symphony-alpha `9bb55fb42e8e8557cef29f542edb6de8713249be` enabled `CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_LOGS_EXPORTER=console`, and `OTEL_METRICS_EXPORTER=none`. Its Claude stdout contained zero `api_request` records and its stderr was empty, so no real OTEL request fixture was available to anonymize. The collector accepts absent OTEL and requires reconciliation if it is supplied.
+
+Claude Code's [monitoring reference](https://code.claude.com/docs/en/monitoring-usage) documents the `claude_code.api_request` event's request ID, model, effort, input, output, cache, duration, and attribution fields. The collector uses those documented fields and reconciles them to the final result.

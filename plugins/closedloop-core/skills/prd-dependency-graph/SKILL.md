@@ -33,6 +33,7 @@ Your job is to pick the scope and options, run them, name the columns, and check
 - **Tickets outside the scope** are drawn dashed, and the legend reads "outside <scope>":
   - tickets that in-scope tickets block are shown one layer deep;
   - tickets that block the scope are followed upstream `outside_blockers_depth` layers (default 1; `"all"` follows the chain to its roots).
+- **Links between tickets on the graph:** once the tickets above are chosen, every BLOCKS link between two of them is drawn, wherever they sit. A ticket that the scope blocks and that also blocks another such ticket gets that arrow, and it is part of both tickets' hover and pinned chains. These links never add a ticket to the graph.
 
 ## Steps
 

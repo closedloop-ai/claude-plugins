@@ -18,7 +18,7 @@ const tempRoot = (t) => {
 test('a new program reads none of an earlier program; resume names the active one and its Claude writers to relaunch', (t) => {
   const home = path.join(tempRoot(t), 'fleet');
   assert.match(run(['resume', '--home', home]).stdout, /^NO-ACTIVE-PROGRAM/m);
-  assert.equal(run(['start', 'iss-1', '--home', home]).status, 0);
+  assert.equal(run(['start', 'iss-1', '--shape', 'fleet', '--home', home]).status, 0);
   const first = path.join(home, 'programs', 'iss-1');
   writeFileSync(path.join(first, 'resume-log.md'), '## old program\n');
   writeFileSync(path.join(first, 'board.json'), JSON.stringify({ writers: { 'green-keeper': { runtime: 'claude' }, w1: { runtime: 'codex' } } }));
@@ -31,11 +31,11 @@ test('a new program reads none of an earlier program; resume names the active on
   assert.match(resumed, new RegExp(`^RELAUNCH green-keeper ${path.join(first, 'prompts', 'green-keeper-02-resume.md')}$`, 'm'));
   assert.doesNotMatch(resumed, /RELAUNCH w1/, 'Codex writers resume through fleet.sh, not a relaunch');
 
-  const refused = run(['start', 'iss-2', '--home', home]);
+  const refused = run(['start', 'iss-2', '--shape', 'fleet', '--home', home]);
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /^ACTIVE iss-1: close it/m);
   assert.equal(run(['close', '--home', home]).status, 0);
-  assert.equal(run(['start', 'iss-2', '--home', home]).status, 0);
+  assert.equal(run(['start', 'iss-2', '--shape', 'fleet', '--home', home]).status, 0);
   const second = run(['resume', '--home', home]).stdout;
   assert.match(second, /^ACTIVE iss-2 /m);
   assert.doesNotMatch(second, /iss-1/, 'the new program is shown nothing of the earlier one');
@@ -45,7 +45,7 @@ test('a new program reads none of an earlier program; resume names the active on
 test('check reports state written outside the home or the program, and passes once it is inside', (t) => {
   const root = tempRoot(t);
   const home = path.join(root, 'fleet');
-  run(['start', 'iss-1', '--home', home]);
+  run(['start', 'iss-1', '--shape', 'fleet', '--home', home]);
   const program = path.join(home, 'programs', 'iss-1');
   assert.equal(run(['check', '--home', home]).status, 0);
   writeFileSync(path.join(root, 'resume-log.md'), 'outside\n');
@@ -79,7 +79,7 @@ test('check reports state written outside the home or the program, and passes on
 
 test('every script resolves the home to the active program, with per-program state dirs derived', (t) => {
   const home = path.join(tempRoot(t), 'fleet');
-  run(['start', 'iss-1', '--home', home]);
+  run(['start', 'iss-1', '--shape', 'fleet', '--home', home]);
   writeFileSync(path.join(home, 'config.env'), 'CODEX_MODEL=m1\nREMOTE_FLEET_HOME=/srv/fleet\n');
   writeFileSync(path.join(home, 'programs', 'iss-1', 'config.env'), 'CODEX_MODEL=m2\n');
   const shell = (dir) => spawnSync('bash', ['-c', `lines=$(node ${JSON.stringify(path.join(MONITOR, 'work-dir.mjs'))} sh "$1") || exit 2; eval "$lines"; echo "$W|$CODEX_MODEL|$LOCAL_STATE_DIR|$REMOTE_STATE_DIR"`, 'x', dir], { encoding: 'utf8' });
@@ -94,7 +94,7 @@ test('every script resolves the home to the active program, with per-program sta
 test('fleet.sh in a home keeps local sessions and remote session markers in the program dir', (t) => {
   const root = tempRoot(t);
   const home = path.join(root, 'fleet');
-  run(['start', 'iss-1', '--home', home]);
+  run(['start', 'iss-1', '--shape', 'fleet', '--home', home]);
   const bin = path.join(root, 'bin');
   mkdirSync(bin);
   writeFileSync(path.join(bin, 'node'), `#!/usr/bin/env bash\ncase "$1" in *work-dir.mjs) exec ${JSON.stringify(process.execPath)} "$@";; esac\nprintf "arg:%s\\n" "$@"\n`, { mode: 0o755 });
@@ -150,4 +150,42 @@ test('migrate turns a flat work dir into a home in place and repoints links besi
   assert.match(check.stdout, /^UNMANAGED remote prd723-vibe/m, 'a remote session started without fleet.sh stays reported');
   assert.doesNotMatch(check.stdout, /^UNMANAGED local w1/m, 'the moved state dir is the program sessions dir');
   assert.doesNotMatch(check.stdout, /^(FLAT|CONFIG|OUTSIDE)/m);
+});
+
+test('a program records its shape at start, resume says what applies, and the board refuses a writer the shape does not allow', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  const missing = run(['start', 'solo', '--home', home]);
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /--shape must be one of no-writer, one-writer, fleet/);
+  const started = run(['start', 'solo', '--shape', 'no-writer', '--home', home]);
+  assert.equal(started.status, 0, started.stderr);
+  const program = path.join(home, 'programs', 'solo');
+  assert.deepEqual(JSON.parse(readFileSync(path.join(program, 'program.json'), 'utf8')), { shape: 'no-writer' });
+  assert.match(run(['resume', '--home', home]).stdout, /^SHAPE no-writer: nobody writes code; the resume log, rulings, research and evidence rules apply/m);
+
+  const board = (...args) => spawnSync(process.execPath, [path.join(HERE, 'board.mjs'), home, ...args], { encoding: 'utf8' });
+  const refused = board('writer', 'w1', '--runtime', 'claude');
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /recorded as no-writer; record its new shape with fleet-home\.mjs shape one-writer\|fleet before adding a writer/);
+  assert.equal(run(['shape', 'one-writer', '--home', home]).status, 0);
+  assert.equal(board('writer', 'w1', '--runtime', 'claude').status, 0);
+  assert.equal(board('writer', 'w1', '--status', 'building').status, 0, 'the one writer keeps updating its row');
+  const second = board('writer', 'w2', '--runtime', 'codex');
+  assert.equal(second.status, 2);
+  assert.match(second.stderr, /recorded as one-writer \(writer w1\); record its new shape with fleet-home\.mjs shape fleet/);
+  assert.equal(run(['shape', 'fleet', '--home', home]).status, 0);
+  assert.equal(board('writer', 'w2', '--runtime', 'codex').status, 0);
+  assert.equal(run(['shape', 'several', '--home', home]).status, 2);
+});
+
+test('resume tells a new chat to run the plugin version check, and flags an outdated plugin nobody answered', (t) => {
+  const home = path.join(tempRoot(t), 'fleet');
+  run(['start', 'p1', '--shape', 'one-writer', '--home', home]);
+  const program = path.join(home, 'programs', 'p1');
+  assert.match(run(['resume', '--home', home]).stdout, new RegExp(`^PLUGIN-VERSION-UNCHECKED: run \`node \\S+/vibe/scripts/plugin-version\\.mjs check --state ${program}/plugin-version\\.json\``, 'm'));
+  writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'outdated', versions: 'vibe: you have 1.0.84, the latest is 1.0.85', checkedAt: 'then' }));
+  assert.match(run(['resume', '--home', home]).stdout, /^PLUGIN-VERSION-UNANSWERED vibe: you have 1\.0\.84, the latest is 1\.0\.85: ask the operator to update now or proceed knowing an outdated plugin could give worse results/m);
+  writeFileSync(path.join(program, 'plugin-version.json'), JSON.stringify({ status: 'outdated', versions: 'v', checkedAt: 'then', choice: { choice: 'proceed' } }));
+  assert.match(run(['resume', '--home', home]).stdout, /^PLUGIN-VERSION outdated proceed at then: run `.+` in every chat; in the same chat it keeps the recorded answer$/m);
+  assert.equal(run(['check', '--home', home]).status, 0, 'program.json and plugin-version.json are program state, not strays');
 });

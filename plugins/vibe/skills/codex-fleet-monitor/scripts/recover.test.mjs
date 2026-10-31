@@ -273,6 +273,27 @@ test('a resume keeps the cwd, model, effort and sandbox a state file records', a
   }
 });
 
+test('a session fleet-orchestrator ended is never read or resumed (its thread is archived)', async () => {
+  const threads = { T1: { status: { type: 'idle' }, turns: [failedTurn('t-1')] } };
+  const h = await harness(threads, { RECOVERY_BACKOFF_SECONDS: '0' });
+  try {
+    writeFileSync(join(h.dir, 'w1.json'), JSON.stringify({ threadId: 'T1', cwd: '/wt', turns: [], ended: { reason: 'merged', at: 't' }, archivedAt: 't' }));
+    const config = readConfig({ RECOVERY_BACKOFF_SECONDS: '0' });
+    const connect = async () => {
+      const client = connectDirect(join(h.dir, 's.sock'));
+      await client.initialize();
+      return client;
+    };
+    assert.deepEqual(await recoverPass({ stateDir: h.dir, specs: ['w1'], config, connect, restart: h.fake.restart, now: 0 }), []);
+    assert.equal(h.fake.calls.some((call) => call.method === 'thread/resume' || call.method === 'thread/read'), false);
+    writeFileSync(join(h.dir, 'w1.json'), JSON.stringify({ threadId: 'T1', cwd: '/wt', turns: [] }));
+    await recoverPass({ stateDir: h.dir, specs: ['w1'], config, connect, restart: h.fake.restart, now: 0 });
+    assert.equal(turnStarts(h.fake.calls).length, 1, 'the same session before it ended is resumed');
+  } finally {
+    h.close();
+  }
+});
+
 test('readConfig reads the backoff list and refuses a bad one', () => {
   assert.deepEqual(readConfig({}).backoffMs, [120_000, 300_000, 600_000]);
   assert.deepEqual(readConfig({ RECOVERY_BACKOFF_SECONDS: '60,90 120' }).backoffMs, [60_000, 90_000, 120_000]);

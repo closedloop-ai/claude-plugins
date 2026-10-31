@@ -5,8 +5,9 @@ model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
-You summarize a vibe session for its author, who is not an engineer, and for
-the live ticket's Handoff section. You never edit files.
+You summarize a vibe session for its author, the person running the session,
+in plain words (`../skills/vibe/references/plain-words.md`), and for the live
+ticket's Handoff section. You never edit files.
 
 ## Inputs
 
@@ -76,3 +77,9 @@ No invented copy or technical approval request to the Vibe coder; no source edit
 Every Storybook link opens the full Storybook UI,
 `<storybook-base>/?path=/story/<story-id>`, never the bare `iframe.html`
 canvas (`../skills/vibe/references/environment.md`, "Storybook links").
+A story or page named for the person to look at carries a link that opens it,
+never a bare story ID, path or route pattern: give its story ID or the page's
+real path for the example data, and the link comes from
+`../skills/vibe/scripts/vibe-sessions.mjs link`
+(`../skills/vibe/references/plain-words.md`, "Links to what the person should
+look at").

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
-import { actionSchema, ledgerSchema, migrateSchema, registerSchema, type Ledger, type RetainedRecord } from "./contracts.js";
+import { actionSchema, ledgerSchema, migrateSchema, registerSchema, type Capability, type Ledger, type RetainedRecord } from "./contracts.js";
 import { observeDefinitionDigest, readDefinition } from "./definition.js";
 import { readReferenceImages } from "./reference-images.js";
 
@@ -34,7 +34,21 @@ export function location(worktree: string) {
 export function readWriterSummary(worktree: string) {
   const place = location(worktree);
   if (!existsSync(place.file)) return undefined;
-  return summary(readLedger(place));
+  const ledger = readLedger(place);
+  return { ...summary(ledger), recordedDefinition: recordedDefinitionState(ledger) };
+}
+
+/**
+ * Whether the writer's recorded definition can still run: `removed` (a plugin update deleted its root) and
+ * `changed` need the recorded migration before the writer is launched or resumed, not after a failed launch
+ * (ISS-13321: a launch failed after three minutes and a setup worker migrated four minutes later).
+ */
+function recordedDefinitionState(ledger: Ledger): "present" | "removed" | "changed" | "unreadable" {
+  try {
+    const observed = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
+    if (observed === null) return "removed";
+    return observed === ledger.binding.digest ? "present" : "changed";
+  } catch { return "unreadable"; }
 }
 
 /** The persistent writer's recorded definition root, so a resumed writer keeps its binding; undefined without one. */
@@ -108,17 +122,22 @@ export type StrandedRecordVerifier = (lock: string, ledger: Ledger, retained: Re
  */
 export function migrateWriter(input: unknown, currentPluginRoot: string, verifyRetained?: StrandedRecordVerifier) {
   const data = migrateSchema.parse(input);
-  const definition = readDefinition(currentPluginRoot, "vibe-change-worker", data.capabilities);
-  if (realpathSync(data.agentRoot) !== definition.root || data.agentName !== "vibe-change-worker") {
-    throw new Error("Migration must use this command's current canonical plugin definition");
-  }
-  const currentVersion = definition.version;
-  if (!currentVersion) throw new Error("Current plugin release has no version");
+  const currentDefinition = (capabilities: Capability[]) => {
+    const found = readDefinition(currentPluginRoot, "vibe-change-worker", capabilities);
+    if (realpathSync(data.agentRoot) !== found.root || data.agentName !== "vibe-change-worker") {
+      throw new Error("Migration must use this command's current canonical plugin definition");
+    }
+    const version = found.version;
+    if (!version) throw new Error("Current plugin release has no version");
+    return { definition: found, version };
+  };
+  if (data.capabilities) currentDefinition(data.capabilities);
   const place = location(data.worktree);
   return locked(place, () => {
     const ledger = readLedger(place);
     if (ledger.runtime !== data.runtime || ledger.workerId !== data.previousWorkerId
       || ledger.binding.digest !== data.previousDigest) throw new Error("Migration requires the exact recorded writer and digest");
+    const { definition, version: currentVersion } = currentDefinition(data.capabilities ?? ledger.binding.capabilities);
     const lock = join(place.dir, "vibe-record-turn.lock");
     const retained = existsSync(lock);
     if (ledger.active?.lease || (retained && !(data.retainedRecord && verifyRetained))) {
@@ -149,6 +168,9 @@ export function migrateWriter(input: unknown, currentPluginRoot: string, verifyR
     ledger.binding = definition.binding;
     ledger.started = false;
     if (block === "proven-legacy" && ledger.active) ledger.active.blockReason = "recorded-definition-removed";
+    // The new writer starts with no memory of the old turn, so ROOT's continuation needs the block it settles.
+    const carriedBlock = block === "carried" && ledger.active ? { requestId: ledger.active.id,
+      blockReason: ledger.active.blockReason, resultSummary: ledger.active.resultSummary } : undefined;
     if (!releasedRecord) save(place, ledger);
     else {
       // Park the grant first so a failed ledger write restores it; the record mutex never vanishes without migration.
@@ -157,7 +179,7 @@ export function migrateWriter(input: unknown, currentPluginRoot: string, verifyR
       try { save(place, ledger); } catch (error) { renameSync(parked, lock); throw error; }
       rmSync(parked, { recursive: true, force: true });
     }
-    return summary(ledger);
+    return { ...summary(ledger), ...(carriedBlock ? { carriedBlock } : {}) };
   });
 }
 
@@ -174,16 +196,20 @@ function provenDefinitionChange(ledger: Ledger, observedDigest: string | null, c
 }
 
 /**
- * A BLOCKED request migrates only when its recorded cause is the removed definition. A ledger written before
- * block reasons existed carries none; there the writer's own unreleasable grant for that request, under an
- * absent definition, is the mechanical proof of that cause.
+ * A BLOCKED request whose recorded cause is the removed definition migrates. A ledger written before block
+ * reasons existed carries none; there the writer's own unreleasable grant for that request, under an absent
+ * definition, is the mechanical proof of that cause.
+ * Any other BLOCKED request migrates only when the recorded definition is absent: the old writer can never run
+ * again to settle it, so it moves unchanged, still the active request, to the new writer, and `claim` lets that
+ * writer take nothing else until it continues it (ISS-13291). While the old writer can still run, the refusal stays.
  */
 function migratableBlock(ledger: Ledger, observedDigest: string | null,
   releasedRecord: ReturnType<StrandedRecordVerifier> | undefined) {
   const active = ledger.active;
   if (active?.status !== "BLOCKED" || active.blockReason === "recorded-definition-removed") return "migratable";
   if (active.blockReason === undefined && observedDigest === null && releasedRecord?.requestId === active.id) return "proven-legacy";
-  throw new Error("Migration cannot bypass a writer refusal; resolve the blocked request first");
+  if (observedDigest === null) return "carried";
+  throw new Error("Migration cannot bypass a writer refusal while the recorded writer can still run; resolve the blocked request first");
 }
 
 /** Compare numeric release tuples; unknown release provenance fails closed. */
@@ -230,7 +256,12 @@ export function changeWriter(action: "enqueue" | "claim" | "finish", input: unkn
         ledger.completed = [...ledger.completed.slice(-63), ledger.active.id];
         delete ledger.active;
       }
-      if (ledger.active) {
+      if (!ledger.active && data.continuation && ledger.completed.at(-1) === requestId) {
+        // The writer's last request returned DONE and its follow-up step (the main-sync validation after the
+        // input step) continues it: reopen that request rather than fail the continuation (ISS-13321).
+        ledger.completed = ledger.completed.slice(0, -1);
+        ledger.active = { id: requestId, input: data.continuation, status: "PLAN", continuation: data.continuation };
+      } else if (ledger.active) {
         if (ledger.active.id !== requestId || !data.continuation) throw new Error("Continue the active request before the next queued request");
         ledger.active.continuation = data.continuation;
       } else {

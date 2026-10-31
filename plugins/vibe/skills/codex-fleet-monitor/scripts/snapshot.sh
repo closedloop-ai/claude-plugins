@@ -53,6 +53,10 @@ if [ -n "${REMOTE_HOST:-}" ]; then out=$(remote_node ratelimit.mjs remote); echo
 if [ -n "${REQUESTS_DIR:-}" ]; then requests local ls -t $REQUESTS_DIR; fi
 if [ -n "${REMOTE_REQUESTS_DIR:-}" ]; then requests remote ssh -o ConnectTimeout=10 ${REMOTE_HOST:?set REMOTE_HOST} "ls -t $REMOTE_REQUESTS_DIR"; fi
 zsh $K/classify.sh $W/item-history.txt $STALL_SECONDS ${QUESTION_SECONDS:-900} < $W/live.txt
+# Late questions, unacknowledged answers and scope changes, and a writer whose worktree has not moved since a scope
+# change (fleet-orchestrator's board.mjs) are lines too: a pane writer once missed an answer and two scope additions
+# for two hours while nothing woke its orchestrator (2026-10-26).
+[ -f $W/board.json ] && node $K/../../fleet-orchestrator/scripts/board.mjs $W watch-lines 2>/dev/null
 # The watch set is prs.txt plus every open PR in WATCH_NEW_PR_REPOS that PR_SEARCH lists or that
 # WATCH_PR_AUTHOR (default the gh account) opened, whatever its branch prefix: a hand-kept prs.txt once held
 # only merged PRs while a writer sat silent for 1h40m on two live ones, so STALE-PR never ran on them.

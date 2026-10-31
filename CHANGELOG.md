@@ -7,10 +7,339 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### closedloop-core v1.6.0
 
 #### Added
-- New `closedloop-core:agent-qa` skill for selected web/mobile tests, saved-run evidence review and memidex knowledge provenance. Preserves recorded verdicts, matches the requested target and build, and separates historical knowledge use from current status.
+- New `closedloop-core:agent-qa` skill (`/closedloop-core:agent-qa` in Claude Code, `$agent-qa` in Codex) for selected web/mobile tests, saved-run evidence review and memidex knowledge provenance. Preserves recorded verdicts, matches the requested target and build, and separates historical knowledge use from current status. Its instructions ship under Apache-2.0; the separately licensed agent-qa runtime is not bundled.
+
+### vibe v1.1.22
+
+#### Added
+- A local Claude Code start-to-PR benchmark runs six balanced vibe and fleet-orchestrator samples against one seeded web stack, records per-component attribution, closes its proof pull requests, and removes its proof refs.
+- The repo-local `vibe-bench` skill runs the on-demand benchmark and documents the scheduled dual-runtime nightly, while the read-only `vibe-pr-reviewer` agent checks pull requests against current vibe policy.
+- A private launchd contract runs change-day nightlies from a dedicated clean main checkout through the heavy slot and reports confirmed regressions to `#vibe` through the existing team Slack bot.
 
 #### Changed
-- The dependency-graph launcher test derives its replacement version from the current plugin manifest, preserving its cache-update and fallback assertions across version bumps.
+- The Codex eval runner accepts an explicit executable and source commit, records its CLI version and deterministic mode, and can skip only the paid wording grader while retaining every deterministic check and recording each skip.
+- Model-calling evals run only in the scheduled local nightly, once per case on both runtimes with failure-only retries. CI keeps deterministic T0 checks, and pull requests require no paid eval or benchmark evidence.
+- The shared behavior classifier skips nightlies for README, changelog, unreferenced docs, eval, test, and benchmark-only changes while failing closed for unknown plugin paths.
+- The accepted eval baseline advances only through a nightly on main. On-demand benchmark baselines must match the latest accepted nightly rather than a plugin version or release event.
+- Claude nightlies pin the agent to Sonnet 5.5 and the judge to Opus 5.5, split agent and judge cost in the result, and start a comparison-free lineage without Slack delivery whenever any model pin changes.
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 256 words longer than in 1.1.21.
+
+#### Fixed
+- Benchmark measurement keeps seeded setup outside the model execution budget while retaining setup and teardown in full wall time, validates root and subagent model pins, records final digests, and attributes slash-command skills, workers, phases, and components.
+- Confirmed nightly regressions name the affected cases, runtimes, merged pull requests and authors, quarantine owner, and durable result artifact in one Slack message; clean and skipped nights send nothing.
+- Focused Claude eval reruns stage the exact selected cases in the run-owned plugin snapshot instead of relying on an unsupported multi-case glob.
+
+### vibe v1.1.21
+
+#### Added
+- Claude and Codex eval receipts fingerprint their copied payloads, and a nineteen-revision grader-loop regression rejects intermediate commits.
+
+#### Changed
+- Writers and fleet orchestration keep iteration uncommitted until review, verification, and checks make one commit push-ready. Required criteria, ruling, and rollout audits run before pull-request creation (ISS-13430).
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 206 words longer than in 1.1.20.
+
+#### Fixed
+- Dirty-source checks, QA, image, local E2E, and inventory evidence use the committed head plus a deterministic source fingerprint and reject inputs that change during a run. Fleet board and watcher output report undeclared local writer commits while treating remote history as informational and excluding commits imported from the base branch.
+- Shallow-CI release checks are self-contained; the remote E2E guard matches its deployed clean-worktree interface; dirty precommit evidence cannot bind even when HEAD is unchanged; remote shell payloads are inspected only by the E2E identity guard; remote ancestry blocks unsafe amends; pre-push repairs amend only an unpushed commit; main sync may add one ordinary merge commit; and post-publication fixes use new commits.
+
+### vibe v1.1.20
+
+#### Added
+- Vibe handoff carries the writer's `Feature map:` lines into the requested pull request and uses repository-owned screen maps to identify overlapping work (ISS-13415).
+- The fleet starts independent integration, unit, typecheck, and lint work on allowed machines while e2e is queued or running elsewhere. Disjoint proof tests or new modules may be assigned to helpers with exclusive branches and file allowlists; the ticket writer alone integrates their work (ISS-13418).
+
+#### Fixed
+- Frozen-render comparisons resolve base refs, wait for one of the configured fleet heavy slots outside the 600-second build budget, rebuild into staging, preserve prior static output until success, and close both Storybook servers. Docker cleanup captures full network IDs, recognizes exact Docker 29 absence replies, shares one backward-compatible PID birth reader, hides only a live lock owner's pending record, verifies ownership, and leaves unrecorded resources untouched. The static-server guard behaviorally checks prohibited instructions even when they begin with `Never` (ISS-13420).
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 2,929 words longer than in 1.1.18.
+
+### vibe v1.1.18
+
+#### Added
+- `handoff/scripts/qa-impact.mjs` classifies changes since automated QA as `None`, `Lanes only`, or visual QA for named FEATURE_MAP screens. It combines changed files, transitive code importers, repository-selected lanes, and screen/state/flag-arm evidence. Resume, startup adoption, fleet takeover, and handoff also reconcile an existing ticket's outgoing plan link, publishing a missing criterion-complete session plan or updating its one linked PLN without pausing source work (ISS-13411).
+
+#### Changed
+- Automated QA evidence is no longer invalidated by a new commit identity. Comment-only JavaScript and TypeScript edits are proven by a pinned compiler bundled from a typechecked source entry; behavior directives never count as comment-only, and Tailwind class tokens in comments are visual impact inside configured content roots. Documentation, release, CI-only, and non-rendering backend changes preserve local evidence only when both blobs can be read and their structure is unchanged. Unreadable, binary, deleted, renamed, mode-changed and otherwise unproven files classify upward. Selected test changes rerun only their changed-file lanes; every lane-requiring file must have a selection, and older lane evidence is accepted only against a recomputed impact request. Rendered changes invalidate only affected screens and states. Frozen-render evidence names exact story states and follows aliased styles, tokens, images, fonts and rendered dependencies rather than the branch head and unrelated files. The generated compiler bundle is excluded from prose-only name scanning. CI remains per push (ISS-13411).
+- Vibe's Markdown instructions are about 71 words shorter than in 1.1.17.
+
+### vibe v1.1.17
+
+#### Fixed
+- Vibe and handoff now try supported validation and recovery paths before treating a tooling problem as an engineering-only blocker. Both the worker and vibe root must exhaust safe paths before a pushed handover for a genuine human-only decision, access need, or engineering change outside session authority. Vibe and direct handoff replies always offer to pass the saved work rather than only stopping or waiting (ISS-13400).
+- Existing contract checks require both sets of attempts and preserve the real-blocker handover. The real-blocker eval checks worker, root, and human-only blocker content separately from their line order; reply checks verify the pushed work and pass-on offer. The Codex eval parity check includes all 104 cases.
+- The tooling alternative-path eval starts from a recorded `BLOCKED` referral. The person-is-engineer eval covers rerun, narrower check, and automatic check paths, including a reply about running only the relevant part and following an automatic result without assigning a repair to the person. Its record grader accepts a pending check only when both stop and referral are marked premature. The tooling contract pins one rerun at most, and a narrowed or CI-deferred check is named in the existing progress or handoff summary.
+- A lockfile or other install-managed file changed by the session's own check is backed up privately and restored from the committed version only when the drift is accidental. A requested dependency manifest edit keeps its matching lockfile; preexisting or person-owned edits remain protected in the fourth eval, whose reply grader accepts plain continued progress.
+- The referral contract now scans every vibe Markdown file, including evals, with context-validated exceptions for historical quotes, negative graders, test repair, and verified human-only blockers.
+
+### vibe v1.1.16
+
+Gates a vibe session could never clear now either clear with what the session can do or hand the work to engineering (ISS-13321). Findings are numbered as in the ISS-13321 audit.
+
+#### Fixed
+- Desktop e2e at handoff (1): `main-sync-validate` returns the Desktop Electron lane under `e2eLeftForCi`, covered by symphony-alpha's post-merge `desktop-e2e/validated` run, and it no longer holds `requiredE2eComplete` or returns `NEEDS_REVIEW`. The CI reader is re-pinned to the current `desktop-e2e` producer (the checkout step's reviewed `ref` expression; the removed `target-ref` step and `DD_GIT_COMMIT_SHA` are no longer required, and a header that still binds the variable must match the checkout). A snapshot of that job is a fixture, and `main-sync-ci-producer.test.ts` also reads symphony-alpha main live wherever `gh` can.
+- Requested pull request (2, 11): `pre-pr-lanes.mjs check` records the Desktop e2e lane `not-run` (`NOT-RUN-LANE`) on a machine without the displayless Linux harness, and `pr-facts.mjs` accepts that record; a passing run recorded from a remote runner still counts. The `e2e` evidence lane is not required when no tier can run it and every changed spec is listed unavailable with its CI coverage.
+- Failures already on main in a pull request (7): `pre-pr-lanes.mjs run --main-worktree <checkout> --main-sha <sha>` reruns a failing lane on captured main and records `main-preexisting` when it fails there too; `check` accepts it and prints `MAIN-PREEXISTING-LANE`. `pr-facts.mjs` accepts `main-preexisting` runs with their `mainSha` in every evidence gate, and `blocking.prBody` requires each listed under Known main failures.
+- Diff rules (3, 4, 12, 13, 15): a restored removal needs a removal from the same file and never counts a design-system primitive; a shared capability owner fires only for a page that newly composes the name, never for a type or an `*Item`, `*Content` or `*Trigger` part; mounts the diff moved and components it defines are not newly enabled controls; outside the pull-request phase a comparator clears with `Comparator: <file>: missing test listed`; a lost story ID named in docs or agent files clears with `Engineering needed (forbidden path): <file>`.
+- Clean QA (6): `finding-brief.mjs --require-disposition` passes `{"findings":[]}`.
+- Tooling stop (8): the stop pushes the committed work through the repo's normal pre-push checks (new `vibe-environment-worker` handover mode and `handover` record action, no main sync), puts the blocker on the Engineering checklist and offers "pass it to someone now"; a requested pull request that cannot open offers the same.
+- Remedies (9): `plain-words.md` "What the person is asked to do": the person is only asked for a click, a sign-in, a choice between endings or a product answer; diff-rule fixes are for the writer. The shallow-clone fetch remedy no longer says "yourself".
+- Timeouts (14): a check that runs out of time on the session commit and on captured main alike is `machine-limited`, returned under `machineLimitedChecks` for the Engineering checklist, not `session-caused`.
+- Criteria on other work (16): on the pass-it-on ending a criterion may be `not met yet: waits on <ticket>`, carried on the Engineering checklist.
+- Storybook releases on main (5): at pull request creation a version another open pull request reserves, or main moving on after the pin, no longer blocks; the next free version is taken and named in the packet. New `storybook-version-merge.mjs` settles a main sync that conflicts only on the Storybook version file and Version History (main's version bumped by the session's level, both entries kept, the session's on top). The handoff typecheck covers the session's own diff against the captured main (`...[<mainSha>]`) instead of everything since the last deploy, so a main merge no longer widens it (Daniel Ochoa's ruling, 2026-10-28). Checks still run on fresh transactions: no owner supplies a complete input identity for safe reuse, and a dry Turbo task hash alone does not bind installed toolchain bytes. The broader unchanged-check requirement remains open.
+- Sandbox writes (17): `vibe-preflight.sh`, `session-questions.mjs`, `precedent-check.mjs`, `e2e-lock.mjs` and `image-head.mjs` print `"escalate":true` with a plain justification when Codex's sandbox refuses their `~/.codex/vibe` write (shared `sandbox-refusal.mjs`), as `plugin-version.mjs` does; the remembered checkout and the e2e image record are optional and never fail a run, and neither is silent any more. `preflight.md` names them. The release smoke now runs all five through the Codex app server's `command/exec` in the turn's workspace-write sandbox and then with full access, and fails unless each asks for an escalated rerun with its justification in the sandbox and does its job escalated; it fails on main's scripts and passes here.
+- Remedies (9), further: a deferred frozen-render finding and the Storybook decomposer's frozen-render findings are never relayed to the person as a step.
+- Writer migration (18): `writer-state.mjs status` returns `recordedDefinition` (`present`, `removed`, `changed`), and resume runs the recorded-definition migration before launching the writer instead of after a failed launch.
+- Stale generated inputs (19): a stale Desktop prebuild output left from an earlier merge (`build-info.ts`, `docs-bundle-manifest.ts`, the migrations manifest, the auth handoff assets) is rewritten by the repository's own producer during `main-sync-inputs` instead of refused. Other generated inputs (Prisma clients, Next route types, Husky) still refuse a difference.
+- Continuations (21): a continuation of the request that just returned DONE reopens it instead of failing.
+- Migrations from main (22): `migration-publish.mjs` leaves out migrations already on the main the branch merged (`--main`, default the merge-base with origin/main).
+- Frozen render line (20): `frozen-render.mjs` prints the exact rendered head SHA and a digest of the session's changed files in the `Frozen render unchanged` line. It withholds the line when either changes during rendering; the diff rules accept it only while both still match.
+- Stopping a session's processes (24): `vibe-sessions.mjs stop` checks the exact session branch and worktree before signalling. It matches each recorded Storybook or Desktop PID to its birth, command and worktree, leaves a stale or reused PID alone, and stops the same verified processes before confirmed discard. Older records use the existing kill ledger's birth witness when available. The vibe and handoff skills and the setup worker use this command instead of a hand signal.
+- Release smoke (25): the vibe release smoke is optional, never a release or PR requirement. The real Codex smoke tool remains available for an author who chooses to run it.
+- Owner refusal (23): main-sync's owner refusal names each differing context field (never its value), and `environment.md` says to pass the launch envelope's `operationContext` verbatim.
+- Claude Code handoff (one-time Part B follow-up): `vibe-sessions.mjs claude-sessions` records a real orchestrator ID only from its matching Claude transcript, and the live ticket accepts that identity only when it matches the private session record. The verifier may write its private PR and lane evidence and owned control runtime files while product source, tests and live records remain read-only. The environment worker uses its current ClosedLoop grant after sign-in instead of a stale displayed connection state. Owned control captures move to the private git directory before publication checks.
+- Pull request evidence (one-time Part B follow-up): the verifier now writes the canonical exact-path selection and final-commit inventory schema, and the PR facts and comment gates reject the earlier path-only object with explicit errors. An edited web or Desktop E2E spec may be recorded as not run only with exact commit, reason, selector and authoritative CI owner evidence under the existing no-harness ruling. The writer is told where the private change log lives. A ticket worker's malformed final structured result after a record turn requests read-only reconciliation instead of a blind write retry. Verifier-started Storybook uses a private process birth witness and stops only its own server. Large open PR overlap reads the complete file list through the GitHub file API; its documented cap requires an explicit unavailable statement, never a no-overlap claim.
+- E2E capability (one-time Part B follow-up): the verifier's read-only probe records actual Docker availability and required identity-key presence without values. Tier A may be present while a specific authenticated web spec lacks required keys or a Desktop spec lacks a displayless harness. Only an exact, head-bound, spec-level limitation with its CI owner can carry that spec to CI; a runnable spec still requires its real test result. `LIVEBLOCKS_SECRET` remains optional in the container contract.
+
+#### Changed
+- `ticket-template.md`: Engineering checklist entries for checks that ran out of time, e2e left for CI, criteria waiting on other work and vibe tooling blockers.
+- The README's runtime line says 1.1.16.
+
+### vibe v1.1.15
+
+A product manager asked her session for the first thing to look at and was told to open a story by its id, which designers and executives cannot open (ISS-13320). Whenever vibe points the person at something to look at, it now gives a link that opens that exact thing, built from the session record.
+
+#### Added
+- `vibe-sessions.mjs link --worktree <wt> --story <story id> [--local]` and `--page <path>` (`person-links.mjs`): a story link is the full Storybook UI on the verified deployed Storybook, otherwise on the local Storybook the session started while its process runs (`--local` for a story built since the last redeploy); a page link is the verified app URL plus the page's real path. It prints `url: null` with `missing: storybook|app` when nothing is deployed or running, and refuses an argument that is not a story id or a route pattern such as `[id]` or `:id`.
+- Evals `pm-look-first-gets-clickable-links` and `pm-first-thing-to-do-is-a-story-link` (the reported exchange): asked what to look at or do first, the reply gives a clickable story or page link named as the person sees it (link text checked by regex), and no bare story id, path or route pattern. `pm-nothing-running-offers-to-start` (the real run's miss): with nothing running or deployed, the reply says so and offers to start it, with no link and no steps to follow in an app that is not there.
+
+#### Changed
+- `plain-words.md` "Links to what the person should look at" is the rule's one statement: link text is the plain name the person sees, an id or path appears only beside a working link, the app's front page with directions from there is not a link to the exact thing (an unknown page path is looked up, or the change's gallery story is linked), and with no URL yet the session says so and offers to start it. The word table sends ids and paths there; the vibe and handoff skills, `environment.md` "Storybook links" and the change, verify, prototype, Storybook decomposer, primitive and handoff summarizer workers point at it.
+- `SKILL.md` carries the rule's operative lines where the orchestrator writes its replies (a component state is its gallery story, a page is its real path, the story first when the page path is unknown, never the front page with directions, and with `url: null` an offer to start and no place to look), because an orchestrator that never opens `plain-words.md` gave the front page with directions in 2 of 5 runs.
+- The new-components notice builds each story link with `link --local` and names each story by its gallery name; the writer's `STORIES_READY` carries that name. The ready message after a deploy links each changed page or component, and handoff's closing message gives each item as a link.
+
+### vibe v1.1.14
+
+The handoff `frozen-render` gate could never clear when main's own render of a frozen story varied between runs (ISS-13317): a product manager's session saw the guided tour story render eight different ways in eight base captures, and `frozen-render.mjs` accepted only byte-identical renders or identical failures. Its printed line also counted stories while the gate counted story files, so on any story file with more than one story the line never matched.
+
+#### Fixed
+- `handoff/scripts/frozen-render.mjs` renders every story twice on the base and once on the branch. A story whose two base renders differ is `unstable-on-base`: it does not block, is not compared with the branch by pixels, and gets a cropped diff of the two base renders; the branch's play outcome must still match a base one. A story that fails on the base and fails the same way on the branch (same verdict and error text) is `same-failure` and does not block. A changed stable render, a play that passes on the base and fails on the branch, a changed failure, or a play outcome the base never had is `blocking`, with a cropped diff when the pixels differ.
+- Every render pins its inputs: Chromium rasterizes in software on one thread with sRGB color, no LCD text and no font hinting (the ISS-13164 capture's settings); each render gets a fresh browser context with a fixed viewport, scale 1, en-US, UTC, the light color scheme and reduced motion; the page clock is fixed (default `2026-01-01T12:00:00.000Z`, settable with the `now` option); fonts finish loading before the screenshot, and the screenshot disables animations and transitions and hides the caret.
+- Screenshots are compared by decoded pixels with no threshold (new `handoff/scripts/png-diff.mjs`, node built-ins only). Cropped diffs are at most 800 pixels wide; the full screenshots stay in the output folder.
+- A frozen story file the session repaired without changing its title, tags or story names (the inventory's compile-only repair test, now `keepsStoryIdentity` in `storybook-taxonomy.mjs` for both) is compared with the head's story file on both sides: new `frozen-render.mjs prepare-base` makes the base worktree at the base commit with only those repaired story files taken from the session, so the base Storybook runs the corrected play, setup and fixtures against the base app code. The run names those stories and files in its lines and in the change-log line. A frozen story file changed in any other way (or deleted) is not compared and its stories block. Before, a repaired play that failed on the base always differed (ISS-13120: the Sessions view and creation play failed 14 of 14 on the base and passed 14 of 14 repaired).
+- A story whose first comparison blocks is rendered twice more on the base and judged again over all four base renders before it is reported, so a base that matched itself twice by chance is `unstable-on-base` instead (ISS-13167's run of 984 stories: Prd Detail Historical Version and the Sessions View And Creation Contracts story were blocking but vary on main). Its line says the confirmation renders found it.
+- `storyExportNames` (story IDs for every handoff rule and this command) reads only code: text inside strings, template literals, regular expressions and comments is ignored. ISS-13167's run listed `branch-files-changed-panel--truthful`, which came from `export const truthful` inside a diff fixture string. Over the 580 story files on symphony-alpha main the only names dropped are four inside strings (that one, two `SessionTable` code samples and a markdown `Example`).
+- The command prints one line per story, a summary line with the count per class, and, when nothing blocks, `Frozen render unchanged: all <N> story files (<M> stories): frozen-render.mjs ...: <identical>, <unstable on base>, <same failure>, 0 blocking; <results>`. The `frozen-render` rule in `diff-rules.mjs` now counts story files the same way, so it accepts that line; the 1.1.11 line is no longer accepted.
+
+#### Changed
+- The `frozen-render` remedy, handoff's step 1, `vibe-change-worker` and `vibe-storybook-decomposer` point at the command and never describe a manual capture; the line is recorded only as printed.
+- `ticket-template.md`: an `unstable-on-base` story goes on the live ticket as a Known main failure with its cropped diff, beside the `same-failure` ones.
+- The README's runtime line says 1.1.14.
+
+#### Coverage
+- `frozen-render.test.mjs` covers each class (identical, unstable on base, same failure, changed on the branch, newly failing on the branch, unstable base with a changed play), the pinned context, clock and screenshot options, and that its line passes `diff-rules.mjs` while the 1.1.11 line does not, including through `frozenStoryFiles` (what the CLI runs) on two story files holding four story IDs. Three cases cover a compile-only repaired story (its base play fails and the repaired play passes; with the head's story file on both sides it clears, and an app-code render change on top still blocks) and a story file changed beyond a repair (renamed story, or deleted) that blocks without rendering; one case keeps a multi-line play failure on one line. A confirmation case: two stories whose confirmation renders vary (pixels, play outcome) become `unstable-on-base`, a real change stays blocking after 5 renders, and an identical story gets no extra renders. `storybook-taxonomy.test.mjs` (new, failed before the fix) pins story names against exports inside strings, templates, nested template substitutions, regular expressions and comments. `png-diff.test.mjs` covers RGB and RGBA decoding through every PNG row filter, exact diffs and the crop size. `test_vibe_iss_13317_contract.py` pins the instruction text; `test_vibe_1057_lessons_contract.py`, `test_vibe_iss_13291_contract.py` and `test_vibe_v1_compile_only_repair_contract.py` follow the new wording and the moved `keepsStoryIdentity`.
+- Real run on symphony-alpha main 51f4d122ba with real static Storybooks: a branch adding a comment to the dashboard tour reaches 2 frozen story files (12 stories). Two runs each gave 11 identical, 1 unstable on base (`surfaces-v1-0-dashboard--guided-tour-mid-run`, whose two base renders differ in the spotlight and page position), 0 same failure, 0 blocking, and the printed line cleared the gate. With the tour's Next arrow enlarged on top, 5 stable stories blocked, each named with a cropped diff of the arrow, the line was not printed and the gate stayed blocked.
+- Real run of a repaired play, same base: the Sessions view and creation play (Composites v1.0/Sessions/Sessions List Surface V2 Contracts) fails on main because it queries the canvas while the Views menu is still closing. A branch repairing that play (wait for the menu to close and for the Options menu to open) and touching a component it renders reaches 2 frozen story files, 22 stories. With the base Storybook built from the plain base commit the story blocked. With the base worktree from `prepare-base`, three runs gave 21 identical, 0 unstable on base, 1 same failure (Bulk Selection, which fails on main), 0 blocking, naming the repaired file, and the printed line cleared the `frozen-render` gate.
+- After the confirmation step, the tour run with the enlarged Next arrow still gave the same 5 blocking stories, each after 2 confirmation renders.
+
+### vibe v1.1.13
+
+The startup version check and setup check work in the Codex app's default "Ask for approval" mode. This version introduced a real Codex release smoke tool (ISS-13315); its mandatory release policy was superseded in vibe v1.1.16 (ISS-13321).
+
+#### Fixed
+- `plugin-version.mjs check` stopped by Codex's sandbox (`CODEX_SANDBOX_NETWORK_DISABLED=1` and main unreachable or the record refused) no longer reports that as an answer: it returns `"escalate":true` with the justification "Check whether vibe is up to date", and SKILL.md runs the check escalated from the first try in Codex (one "Allow once"), rerunning once escalated when a run still says `escalate`. Codex sets that variable for escalated commands too, so it never decides alone. Before, the sandboxed check returned `unknown`, the person was told "I couldn't check whether vibe is up to date", and the record write failed silently.
+- The setup check block always lists the installed closedloop-core and vibe versions for each installed harness, each marked `latest`, `<version> available` or `couldn't check for a newer version`. With no check of this conversation, `status` reads the installed versions locally instead of printing "the version check has not run in this conversation".
+- A startup record that cannot be saved (the sandbox refusing `~/.codex/vibe/plugin-version`) is reported as `recordError` by `check` and by `status`; `status` no longer exits 1 on it and still prints the block. A sandboxed check never marks the block shown, so the escalated rerun shows it.
+
+#### Changed
+- Startup is one command: `get-me` and `sync_status` first, then `plugin-version.mjs check --closedloop <state> --graph <state>` prints the setup check block in the same run; the block is sent before any other file is read or worker started. `status` stays for a check that could not run. fleet-orchestrator's Setup follows the same order.
+- `references/preflight.md` ("Commands the sandbox blocks") and `INSTALL.md` ("Updating") name the version check's one "Allow once".
+- Evals: `exec-setup-check-block-first-reply` and `exec-version-unreachable-carries-on` follow the one-command startup; new `exec-version-sandboxed-runs-escalated`.
+
+#### Added
+- `tools/vibe-release-smoke/smoke.mjs`: installs `plugins/vibe` and `plugins/closedloop-core` as committed at `--ref` into a throwaway Codex home, drives a real session through the ChatGPT app's bundled Codex app server with approval policy `on-request` and the `workspace-write` sandbox, sends `$vibe pick up where I left off`, and fails unless the first reply's setup check shows the installed versions with a completed latest-version comparison, no "has not run" or "couldn't check" line, a saved record, and arrives within 90 seconds. It fails on vibe 1.1.12 and passes on 1.1.13.
+- Release policy at 1.1.13: contributor guidance treated the smoke as a release step. Vibe v1.1.16 superseded that policy: the smoke is optional and no PR result is required. CI does not run it because its runners cannot sign in to ChatGPT. There is no Claude Code smoke yet: Claude Code reads its sign-in from the real config's keychain entry, so an isolated headless run is not signed in.
+- The README's runtime line says 1.1.13.
+
+### vibe v1.1.12
+
+Sessions the vibe and fleet scripts start no longer fill a desktop app's chat list with "Imported session" and raw JSON titles (ISS-13279).
+
+#### Added
+- `codex-fleet-monitor/scripts/thread-sidebar.mjs`: names a just-started Codex thread, moves it into one "Fleet workers" sidebar section (creating it when missing, the oldest when several share the name), and archives a worker only after its end is recorded. A step an older App Server lacks is a warning, not a failed start.
+- `codex-session.mjs end <stateDir> <name> --reason stopped|merged` (also `fleet.sh ... session end`): refuses a thread with a running turn, records the end in the session's state file, then archives the thread. A later `turn` unarchives it first, `steer` refuses an ended session, and the recovery supervisor (`recover.mjs`) skips ended sessions.
+- cl-sweep: `native-app-server-orchestrator.mjs init --thread-name` and an `end --reason stopped|merged` command on both `native-app-server-orchestrator.mjs` and `app-server-worker-session.mjs`, with the same order (refuse a live turn, record, archive) and an unarchive before a later resume.
+- Every worker thread `codex-session.mjs` and cl-sweep start sends `threadSource: "chatgpt_hidden"` on `thread/start` (never on resume or turns, never for the orchestrator's own thread). The Codex app keeps such threads out of its sidebar, but `thread/list` (0.163 to 0.165) does not return the field, so today the marker does not keep workers out of the app (after an app restart a marked worker is listed); workers drop out once a server returns it. The Codex CLI picker, `codex exec resume <id>` and `thread/list` still list and resume marked workers. An older App Server ignores the field.
+- A guard test (`thread-sidebar.test.mjs`) fails when any plugin or `tools/*/src` script calls `thread/start` without `labelWorkerThread` or without `threadSource: WORKER_THREAD_SOURCE`, or runs headless `claude -p`/`--print` without `--name` or `--no-session-persistence`.
+
+#### Changed
+- `codex-session.mjs turn` takes an optional `--ticket <slug>` for a new session; its thread is named `<name> · <ticket>`, or `<name>` without one, and moved into "Fleet workers" right after `thread/start`. A resumed session is never renamed or moved.
+- cl-sweep ticket worker threads are named `cl-sweep · <ticket>` and moved into "Fleet workers" right after `thread/start`.
+- `claude-worker.mjs` passes `--name "vibe <role> · <session slug> · <request id>"` to every Claude worker run; sessions are still saved.
+- `claude-usage.mjs` runs `claude -p --no-session-persistence /usage`, and `precedent-check.mjs` adds `--no-session-persistence` to its headless `claude -p --chrome` look.
+- fleet-orchestrator's QA-guide launch adds `--name "QA guide · PR <n>"`.
+- vibe `INSTALL.md` and fleet-orchestrator `references/setup.md` explain that the Codex app's Import from Claude and Keep imports in sync turn saved Claude sessions into sidebar chats, and how to keep them out; cl-sweep `execution-surfaces.md` says when to run `end`.
+- The README's runtime line says 1.1.12, and its `fleet-orchestrator` section says `fleet.sh` also ends threads and names and groups new ones.
+- `fleet.sh` ships `thread-sidebar.mjs` for remote sessions, and a test walks `codex-session.mjs`'s imports so an unshipped module fails.
+- The 1.1.6 release pin in `test_vibe_connection_restore_contract.py` is retired (the manifests now say 1.1.7; the Plugin Manifest Versions job keeps the two equal).
+
+### vibe v1.1.11
+
+A product manager could not get a pull request out of vibe (ISS-13291). After the plugin update, the session's saved writer could neither resume (its release was removed) nor migrate (its last turn had ended `BLOCKED`), main sync refused the person's own ignored agent config, the handoff frozen-render gate had no shipped way to pass, and local web e2e stopped on the staging sign-in a PM's machine does not have. Operator rulings (2026-10-28): fix all five bugs in one change, deadlock first; on a machine without the staging e2e identities, skip local web e2e and rely on the containerized or CI run.
+
+#### Fixed
+- `writer-state.mjs migrate` carries a `BLOCKED` request of any reason over to the new writer once the recorded definition is missing: it stays the active request, `claim` refuses every queued request until the new writer continues it, and the result carries `carriedBlock` (request, reason, summary) for the continuation. While the recorded definition is present the refusal stays. `quality-loop.md` "Recorded definition migration" now matches `guardrails.md`, and `vibe-change-worker` settles a carried block first.
+- `plugin-version.mjs update`, when vibe is outdated, names each vibe session in the remembered checkout whose writer is bound to an older vibe release (`sessions`), and migrates each Claude writer with the updated release's own `writer-state.mjs`; a Codex writer, a running turn or a still-installed release is `on-resume`.
+- `migrate` keeps the recorded binding's capabilities when `capabilities` is left out, so a guessed tool list is never needed.
+- Main sync treats ignored files under `.codex/`, `.claude/`, `.agents/`, `.vscode/` and `.idea/` as the person's own config and never refuses them; the same files untracked but not ignored still block.
+- New `handoff/scripts/frozen-render.mjs` renders each frozen story on a base and a branch Storybook with fixed args, globals and viewport, waits for the play to finish and judges it with `story-play-verdict.mjs`. A story that fails the same way on the base is a known main failure that does not block and goes on the live ticket's Known main failures. The `frozen-render` rule now accepts only the line this script prints. `story-play-verdict.mjs`'s recorder also keeps each failure event's message.
+- `pre-pr-lanes.mjs check`, on a machine without the staging e2e identities (the e2e sign-in password in neither the environment nor `apps/app/.env.local`), records the local web e2e lane `not-run` and prints `NOT-RUN-LANE` instead of requiring it; the Desktop e2e lane stays required.
+- fleet-orchestrator's first run asks nothing when the operator runs vibe or the program has one writer or none: it writes the defaults and reports them in one plain line.
+- `writer-state.mjs help` and `claude-worker.mjs help` print their usage and the bindable capability set; `claude-worker.mjs` given an argument answers `INVALID_REQUEST`, not `WORKER_TURN_FAILED`.
+- A tooling stop is recorded on the live ticket's Progress before the reply, and the reply is one plain line that quotes no rule and names no plugin file.
+
+#### Coverage
+- Failing on 1.1.6 (main 3a466ee6) and passing here: 15 vitest cases (`writer-migration.test.ts`, `usage.test.ts`, `main-sync.test.ts`), the new `plugin-version.test.mjs` stranded-sessions case, `frozen-render.test.mjs`, `pre-pr-lanes.test.mjs`, the `diff-rules.test.mjs` frozen-render case, `test_vibe_iss_13291_contract.py` (8 cases) and 3 updated cases in `test_vibe_stranded_writer_recovery_contract.py`. New eval `pm-fleet-defaults-not-asked`: 3 of 3 here, 0 of 3 on 1.1.6; the Codex runner now has 96 cases.
+- `test_vibe_storybook_links_contract.py` allows `frozen-render.mjs`, which loads the Storybook canvas in a headless browser and gives no link to anyone.
+
+### vibe v1.1.9
+
+vibe's text no longer assumes the person running a session is not an engineer: it is for executives, designers, product managers and engineers (ISS-13292, operator ruling, 2026-10-28). Plain words stay the default for everyone, and one new rule lets the person get technical detail when they ask for it. This is not an engineer mode.
+
+#### Added
+- `skills/vibe/references/plain-words.md`, "When the person asks for technical detail": when the person explicitly asks for the plan, the files changed, the diff or the commands that ran, that one reply gives what they asked for as the writer returned it, with paths, names and terms unchanged and the plain-words table set aside. The next message goes back to plain words, an update the person did not ask for never carries technical detail, showing the plan never asks for approval, and the plan's safety rules still apply. `SKILL.md` and `references/quality-loop.md` carry the same exception where they say technical plans are never shown.
+- Two eval cases, tag `technical-detail`. `pm-asked-for-plan-and-files` (the person asks for the plan and the files): Claude (sonnet) 3 of 3 here and 0 of 3 on 1.1.6; Codex 3 of 3 here and 0 of 3 on 1.1.6. On 1.1.6 Claude refused the file paths and translated the plan into plain words in all 3 runs; Codex translated the plan in all 3 and refused the file paths in 1. `pm-unprompted-update-stays-plain` (an update after an earlier request for files): 3 of 3 in both harnesses, here and on 1.1.6.
+- `test_vibe_role_neutral_contract.py`: no skill, agent, eval grader or Codex manifest text says the person is a non-engineer or does not use git, both descriptions name all four roles, and the new rule and its pointers are present. All 4 cases fail on 1.1.6.
+
+#### Changed
+- Role-neutral wording in the `vibe` skill description and opening, the Codex `longDescription`, `plain-words.md`, `INSTALL.md`, `vibe-handoff-summarizer`, `vibe-guardrails-reviewer` and `vibe-backend-worker`.
+- The 15 `plain-language` eval graders describe the reader as the person running the session, who gets plain words by default, instead of a person who is not an engineer. Their pass criteria are unchanged.
+- The suite counts move from 93 to 95 cases in `plugins/vibe/README.md`, `evals/codex/README.md` and the pinned count in `evals/codex/test_run.py`.
+- `test_vibe_connection_restore_contract.py` drops its 1.1.6 release-number pin; the `Plugin Manifest Versions` job still checks that both manifests agree.
+
+### vibe v1.1.6
+
+A vibe user on Codex could not follow the setup step "connect the ClosedLoop connector in Codex Settings: open Settings and click Connect", which named no section or label (ISS-13258). Restoring a connection, signing in to GitHub and running a command the Codex sandbox refuses are now steps the agent runs; the person only signs in in the browser, clicks Allow once when Codex asks, and starts a new chat only when the connection still fails in the current one.
+
+#### Added
+- `plugin-version.mjs status --closedloop connected|not-connected --graph connected|not-connected` prints the setup check block once per conversation: the installed closedloop-core and vibe versions for each installed harness (from that conversation's `check`) and whether each connection answered that conversation's own `get-me` and `sync_status` call. A later call in the same conversation, after a compaction included, prints `{"print":false}`. vibe (`SKILL.md`, "Setup check") and fleet-orchestrator (Setup, and a new chat's steps) run it right after the version check; a `not connected` line starts the restore at once.
+
+#### Changed
+- The README opening also says what `fleet-orchestrator` does (ISS-13281): Claude Code and Codex writers side by side with work moved between them on usage, a Claude writer taking over a dead Codex writer's worktree, and this machine plus one more over ssh, with capped heavy-check slots per machine, a load limit that sends a run to the other machine, and one shared e2e run at a time per machine.
+
+#### Fixed
+- `preflight.md`, "Restoring a connection", covers `closedloop` (`get-me` failed) and `closedloop-graph` (`sync_status` failed). On Codex, `vibe-setup-worker` reads `codex mcp list` and runs `codex mcp add closedloop --url https://mcp.closedloop.ai/mcp` when there is no row (it opens the sign-in itself) or `codex mcp login <name>` when its `Auth` is `Not logged in` (or `OAuth` for `closedloop`), in the background so the sign-in page stays open, and the person gets one line to sign in with their own ClosedLoop account.
+- After a sign-in the orchestrator calls `get-me` again in the same chat and carries on when it answers; it asks for a new chat ("click New chat in the sidebar and type $vibe") only when it still fails or the connection was just added. Checked against the ChatGPT app's own Codex app server with a local OAuth server: a connection that failed when the chat started reconnects at the person's next message, a sign-in that ran out while the chat was open stays broken in that chat, and a connection added with `codex mcp add` never reaches the open chat.
+- On Claude Code, a conversation that started without the sign-in lists the connection's own `authenticate` tool; the orchestrator calls it and sends the sign-in link, and the connection then works in the same conversation. `claude mcp login` needs a terminal, so no worker runs it; a connection added mid-conversation needs `/exit` and then `claude --continue`, which keeps the conversation.
+- `preflight.md`, "Commands the sandbox blocks": in Codex's default "Ask for approval" mode, `codex mcp add`, `codex mcp login`, `gh auth login` and installers fail in the sandbox. The worker runs the same command again with the shell tool's escalation request and a plain justification, and the person clicks Allow once on "Allow ChatGPT to run this command?". The orchestrator sends one heads-up line before dispatching a sign-in, and a worker's sandbox refusal is retried that way instead of being handed to the person or the Terminal app.
+- `preflight.md`, "Signing in to GitHub": the worker runs `gh auth login --hostname github.com --git-protocol https --web` in the background, which opens no browser without a terminal, opens `https://github.com/login/device` itself, gives the person the one-time code, then checks `gh auth status` and runs `gh auth setup-git`. The `gh-auth-login` preflight row points there.
+- The vibe orchestrator dispatches the setup worker when either connection does not answer, instead of telling the person to open Settings. The setup worker no longer asks the person to quit and reopen the ChatGPT app for closedloop-graph.
+- The folder access step names the macOS labels: System Settings, Privacy & Security, Files & Folders, under ChatGPT. `INSTALL.md` says to click Plugins and New chat in the sidebar, and says what `codex mcp list` must show for closedloop-graph.
+- Coverage: `test_vibe_connection_restore_contract.py` (13 cases, 10 fail on 1.1.4) pins the procedures, refuses any vibe or fleet-orchestrator instruction naming the app's Settings or "click Connect", and refuses a person line that sends the person to the Terminal app for anything but the Claude sign-in. Two new `plugin-version.test.mjs` cases cover the setup check block. New evals `exec-closedloop-sign-in-ran-out-mid-chat-new-chat`, `exec-closedloop-signed-in-again-keeps-chat`, `exec-sandbox-blocked-sign-in-asks-allow-once`, `exec-github-sign-in-run-for-the-person` and `exec-setup-check-block-first-reply` join `exec-closedloop-connection-lost-no-settings`; the Codex runner now has 93 cases.
+### vibe v1.1.4
+
+The plugin README now says what vibe is, who it is for (executives, designers, product managers and engineers) and what a session looks like before the reference material (ISS-13281). No skill or agent behavior changes.
+
+#### Changed
+- `plugins/vibe/README.md` opens with what vibe does and how each of its users works with it, walks through a session end to end (a designer's reference or look changes, and the pull request an engineer or anyone else takes through review), then lists the guarantees behind the result, the other skills, and the reference sections (installation, invocation names, agents, evals, runtime files). The scattered ruling dates are gone, apart from the Storybook `Start Here/` ruling a contract test pins.
+- The agents table no longer credits `vibe-requirements-worker` with "help-center precedent research": precedent is live Asana observed in the operator's signed-in browser, and reference mode is listed separately. The README's notice text no longer says reference mode reads a product's public documentation.
+- The main-sync validation proof rules that only the README stated (the `.biome-noscan.jsonc` byte match, package proof digests, report admission and the 4,096 context ceiling, and what never counts as coverage proof) moved to `skills/vibe/references/environment.md`, "What the validation proof accepts".
+- `test_vibe_storybook_fixtures_names_contract.py` drops its 1.1.1 release-number pin.
+
+### vibe v1.1.1
+
+Two Storybook mistakes the first Storybook handoff review found (ISS-13167) are now raised at placement, before the writer builds the stories, instead of only at handoff (ISS-13182).
+
+#### Added
+- `vibe-storybook-decomposer` placement reports the setup the new stories need that an existing story file for the same component, page or folder already declares (route fixtures, stored-view clearing, query-cache seeding, fixture components and data), in a new `Fixtures` line naming the non-story fixture module to import it from, or the move into one the writer makes first. A new story file never re-types it.
+- A new `Names` line lists, for each planned story name, the play assertion (or the args, for a story with no play) behind every claim in the name: each kind, level or state it lists, a word such as every or all, a painted label or status. A claim with nothing behind it is narrowed or its play completed before the story is written.
+- The writer's design-pass prep records both lines, and the handoff `Names` and `Fixtures` checks compare the result against them.
+- Placement decides a new entry's lifecycle tag from its flags (operator ruling, 2026-10-27): each flag that gates the surface or that the planned stories turn on is read in the session's production flag snapshot, and a surface reachable only behind a flag that is off or missing there is tagged `preview` wherever it sits in the tree, never `stable`, and its story file names the flag (`// Preview: <flag key> is off in production`, which symphony-alpha's `check:story-rules` requires outside Labs). With no snapshot the tag is a Conflict for engineering. The Stories line carries each flag and its snapshot value, and the handoff lifecycle check uses the same rule.
+- Coverage: a contract test file (`test_vibe_storybook_fixtures_names_contract.py`, 5 of its 8 cases fail on 1.1.0's decomposer) and a `claude plugin eval` case (`pm-storybook-names-claim-what-plays-assert`) rehearsing the ISS-13167 names at placement. The eval passes 3 of 3 here and also 3 of 3 on 1.0.85 (the decomposer text 1.1.0 ships unchanged), whose decomposer already gives the naming advice, so it guards against a regression; the contract test is the evidence for this change. A second eval, `pm-storybook-flag-off-is-preview`, tags a Composite behind an off flag `preview`: 3 of 3 here, 1 of 3 on 1.0.85 (same decomposer text as 1.1.0).
+### vibe v1.1.0
+
+fleet-orchestrator now runs a program with one writer or with none, every vibe and fleet-orchestrator start checks every installed ClosedLoop plugin in Claude Code and Codex against `main`, and eight bugs from two audited fleet sessions (vibe 1.0.72 and 1.0.85) are fixed (operator rulings, 2026-10-27). Skill instruction text is about 827 words longer than 1.0.85, 367 of them from the audit fixes; the new eval prompts add about 2,850 more, which no session loads.
+
+#### Added
+- `fleet-orchestrator` covers one writer on one pull request and sessions with no writer (design, research, analysis), not only several writers. Its description says so, and a new "Programs with one writer or none" section has a table saying what each section asks of a `no-writer` and a `one-writer` program.
+- `fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet` records the program's shape in `program.json`, and `fleet-home.mjs shape` changes it. `resume` prints `SHAPE` and the program's plugin version line, and `board.mjs writer` refuses a writer the shape does not allow.
+- `plugin-version.mjs` checks every closedloop-ai plugin installed in Claude Code and in Codex. A harness counts only when its CLI is found and lists one of them. Each plugin is compared with its manifest on `main`, located through `main`'s own marketplace file, over HTTPS with no clone. New commands: `choose --choice update|proceed [--by person|opening-message]` records the answer, `update` updates each outdated plugin in each harness that has one, lists them again to verify and names the harnesses to restart, and `adopt` copies the result onto a vibe session. The result lives in the conversation's record, on the session record (`pluginVersion`) or in a fleet program's `plugin-version.json`. Offline, a refused or slow answer, or a CLI that cannot list its plugins makes the result `unknown`, and the session carries on.
+- `hooks/plugin-version-guard.mjs`, routed from `pre-tool-use.mjs` (Skill, Agent, Bash) and `user-prompt-submit.mjs`. Starting `vibe:vibe` or `vibe:fleet-orchestrator` marks the conversation pending. Until the check has run, and while it found an outdated plugin with no answer, an Agent call, `claude-worker.mjs` and `fleet.sh ... session turn` are refused.
+- A `SessionStart` hook (`compact`, `session-start.mjs`) puts `fleet-home.mjs resume`'s reading list and the newest resume-log entry into context after a compaction in a fleet session. A `program-change` UserPromptSubmit reminder asks for the ruling and the program change to be recorded before acting on them.
+- `hooks/question-guard.mjs` on AskUserQuestion and Codex's `request_user_input`: a vibe question needs a prior `session-questions.mjs ask`, and an orchestrator question needs `checked in code: <file>:<line>`. The startup plugin version question passes both.
+- `commit-worktree.mjs --exclude <path>` leaves an untracked file the session does not own out of the commit, and refuses a path that names no untracked file.
+- Eleven eval cases: three fleet single-use cases, three version-check cases (`pm-version-resume-asks` replaces `pm-version-resume-does-not-wait`, since a resumed session is now asked), and five orchestrator and vibe cases for the audit bugs. The Codex runner maps `orch-` cases and `$fleet-orchestrator`.
+
+#### Changed
+- The vibe version question is now "Do you want me to update it now, or keep going with this one? Keeping going with an older version could give worse results." It is asked on resumed sessions too. Only an opening message that says to proceed carries on, and that is recorded as `--by opening-message`. `vibe-sessions.mjs new` refuses to start a session while an outdated result has no answer. Fleet writers' preamble and resume prompt carry the operator's answer instead of "keep the current version".
+- `handoff-inventory.mjs` in the build phase lists `frozen-render` under `diffRules.deferredToHandoff` and does not block. Handoff and pull-request phases still block on it.
+- `codex-session.mjs` marks every turn and steer it sends as the orchestrator's own direction. The worker preamble, resume prompt and quality loop say such directions are recorded as `(orchestrator)`, never as a human ruling.
+- `shell-safety-guard.mjs` refuses an unquoted word starting with `=` (zsh expands it as a command path). Fleet "Reporting to the operator" requires a count or "only" claim to come from a command that exited 0 with no truncation.
+- `writer-state.mjs` accepts a Codex agent path (such as `/root/setup`) as a native worker ID, and refuses one for the Claude runtime.
+- The Codex harness notes say Codex loads `hooks/hooks.json` once it is trusted in `/hooks`, and `pre-tool-use.test.mjs` pins that the Codex manifest declares no hooks override.
+
+#### Fixed
+- Review findings on PR #350: a session counts as a vibe or fleet-orchestrator session only on a real skill load (Claude Code's skill base line, a Skill tool call, Codex's injected skill block), never because its transcript mentions `skills/vibe/SKILL.md`, and the skill loaded last decides `question-guard.mjs`'s rule. `plugin-version.mjs update` leaves a local folder marketplace alone, and fails naming it, unless it is on its default branch with nothing uncommitted, and it ignores disabled plugins. The version guard refuses only writer launches, so research subagents still run. A partial update still asks for the restarts it needs. `findCodex` is gone; `codex-usage.mjs` uses `findCli`. `test-budget.test.ts` also counts the options-object timeout form and refuses `vi.setConfig({ testTimeout })`.
+- `exec-version-proceed-does-not-wait` used a grader setting the eval runner rejects (`match: lacks`), so it never loaded.
+- The `tools/vibe-workers` suite no longer times out under load. Vitest ran one file per core but one, 17 at once on an 18-core Mac, and tests that start git, the bundled CLIs and fake claude processes ran 3 to 5 times longer than alone, past their timeouts. `vitest.config.ts` caps it at three workers, which ran the suite in the same wall time. 44 per-test timeouts in the five measured files drop to three times each test's measured time (12 back to vitest's default), and `src/test-budget.test.ts` keeps the cap and fails when a per-test timeout is added or raised.
+
+### closedloop-core v1.5.3
+
+#### Fixed
+- `prd-dependency-graph` draws every BLOCKS link between two tickets the graph shows, not only links that touch an in-scope ticket or lead into an outside blocker. A ticket the scope blocks that also blocks another such ticket now gets that arrow, so hovering or pinning a ticket shows all of its drawn blockers. With one layer of outside blockers, links between those blockers and from them to downstream tickets are drawn too. New pages, `--once`, the refresh button and the outside-blockers option all build links the same way. The links of each drawn ticket not already read during the walk are read once, and no ticket is added to the graph.
+
+### vibe v1.0.85
+
+#### Added
+- `vibe-setup-worker` now handles a missing Clerk sign-in key: when the real Clerk stack is needed and `local.env` has no Clerk keys, it does not fetch or type secrets and tells the person to run `! just clerk-keys` (after `aws sso login` if needed), then continues.
+
+### vibe v1.0.84
+
+A mid-run scope change or answer sent to a Claude writer is now acknowledged by id and watched, so a writer stuck in one long turn is caught within the hour instead of when the operator asks (ISS-13096).
+
+#### Added
+- `board.mjs deliver --kind scope` records a mid-run change to what a writer builds, with its text and the head of the writer's worktree (`writer --worktree`). `status` prints `UNACKED-SCOPE` once a told change waits 15 minutes unacknowledged, and `SCOPE-NOT-STARTED` when, 30 minutes after it was told, the worktree is still clean at that head.
+- `board.mjs pending <writer>` lists the writer's unacknowledged scope changes and answered questions (`answered --text` stores the answer), exiting 1 while any remain; `ack` acknowledges a scope change by its id as it does an answer.
+- `board.mjs watch-lines`, read by the watcher's snapshot, makes those flags and late questions watcher events, so an armed watcher wakes the orchestrator on each.
+
+#### Changed
+- The worker preamble says messages arrive only when the turn ends, forbids `sleep` polls as well as long foreground waits, and has the writer read its pending list before each commit and each verification phase. It replaces the "check the worker inbox" line, which named no action.
+- The fleet skill sends every mid-run scope change through the board and interrupts or relaunches a writer on `UNACKED-SCOPE` or `SCOPE-NOT-STARTED`, since a resend does not reach a writer mid-turn.
+- Instruction text is about 2 words shorter than in 1.0.81.
+
+### platform v1.1.6
+
+#### Changed
+- `upload_artifact.py` adds an `operationReceipt` field to its JSON output for every document it creates or versions, carrying the `clop_` operation id the server returned. The field sits ahead of `response`, and is omitted when the server returns no receipt, so the existing output keys are unchanged.
+- The `upload-artifact` skill reports the operation id when the script output has one.
+
+### vibe v1.0.83
+
+#### Changed
+- `cl-policy`'s direct-API fallback prints the `clop_` operation id from each write response's `operationReceipt` on stderr in the same shell call, reading it from `data` or the body root. Stdout keeps the response or the caller's usual filter, and a response without a receipt prints nothing extra.
+
+### code v2.0.2
+
+PreToolUse and SubagentStop each run one registered script, which runs that event's handler scripts and merges their results.
+
+#### Changed
+- `hooks.json` registers `hooks/pre-tool-use.sh` for PreToolUse and `hooks/subagent-stop.sh` for SubagentStop, in place of two commands each. `pre-tool-use.sh` runs `pretooluse-hook.sh` for Read, Bash, Write and Edit (its old matcher) and `pre-tool-use-hook.sh` for every tool; `subagent-stop.sh` runs `loop-stop-hook.sh` and then `subagent-stop-hook.sh`.
+- The new `hooks/dispatch.sh` passes a single handler's output through unchanged. Several JSON outputs merge: the strongest permission decision (deny, defer, ask, allow) or a block wins with every reason joined, and every context and system message is kept. Plain text is printed when no handler produced JSON. A handler exiting 2 still blocks; one exiting with another code contributes nothing, and its exit code is kept when no other handler produced output.
+- Each handler reads the hook input from a pipe `dispatch.sh` writes, not from the stdin Claude Code opened for the event.
+- SubagentStop handlers now run in sequence, `loop-stop-hook.sh` first, so it always reads the `.agent-types` record before `subagent-stop-hook.sh` removes it. They previously ran in parallel.
+
+### vibe v1.0.82
+
+Each hook event now runs one vibe script, which routes to every guard in a single process.
+
+#### Changed
+- `hooks.json` registers one PreToolUse command, `hooks/pre-tool-use.mjs` (matcher `Bash|Agent|SendMessage`), and one UserPromptSubmit command, `hooks/user-prompt-submit.mjs`, in place of seven per-guard commands. The guards are modules the two scripts route to by tool name.
+- Several guard results for one call merge into one output: the strongest decision wins (deny, then defer, ask, allow), carrying every reason given for it in guard order, and every guard's context is kept. A single guard's output is unchanged byte for byte.
+- A guard that throws is still reported on stderr under its own name and contributes nothing, so the other guards still decide; unreadable hook input fails open. The scripts always exit 0, as each guard did.
+- `kill-guard.mjs` remains the `own <pid>` recorder; run without `own` it now prints its usage and exits 1.
+
+#### Added
+- A repository check in `tools/plugin-manifests` fails CI when any plugin's hook configuration (each `hooks.json` in the plugin tree or a `hooks` field in either manifest) registers more than one handler for an event. It has no exceptions.
 
 ### vibe v1.0.81
 

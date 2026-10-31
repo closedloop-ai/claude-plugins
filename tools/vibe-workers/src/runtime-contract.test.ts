@@ -117,4 +117,23 @@ describe("vibe worker cross-runtime tool contract", () => {
     expect(templateText).toContain("A Codex writer's prompt starts with `$vibe");
     expect(templateText).toContain("Invoke vibe:vibe first:");
   });
+  it("uses current ClosedLoop grants after sign-in and relocates owned control captures", () => {
+    const environment = readFileSync(join(pluginRoot, "agents", "vibe-environment-worker.md"), "utf8");
+    const verify = readFileSync(join(pluginRoot, "agents", "vibe-verify-worker.md"), "utf8");
+    expect(environment).toContain("statusShown.closedloop");
+    expect(environment).toContain("currently loaded ClosedLoop tool");
+    expect(verify).toContain("vibe-control-runs/");
+    expect(verify).toMatch(/Leave any other session's\s+captures alone/);
+    expect(verify).toMatch(/`testSelection` is an\s+array/);
+    expect(verify).toContain("pr-evidence-schema.mjs --file");
+    expect(verify).toContain("status: \"passed\"");
+    expect(verify).toContain("e2e-capability-probe.mjs --worktree");
+    expect(verify).toContain("Never set `dockerPresent: false`");
+  });
+  it("tells the sole writer where diff rules read the private change log", () => {
+    const writer = readFileSync(join(pluginRoot, "agents", "vibe-change-worker.md"), "utf8");
+    expect(writer).toContain("rev-parse --absolute-git-dir");
+    expect(writer).toContain("vibe-changes.md");
+    expect(writer).toContain("diff-rules.mjs");
+  });
 });

@@ -1,0 +1,449 @@
+# desktop-e2e job of closedloop-ai/symphony-alpha .github/workflows/e2e-test.yml at 51f4d122ba9687b3bcd84e3eaa8b4e0653ad3f16 (ISS-13321).
+# Refresh it from symphony-alpha main when the producer changes; main-sync-ci-producer.test.ts checks it.
+jobs:
+  desktop-e2e:
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' && (!cancelled() && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || needs.changes.outputs.desktop_e2e != 'false' || needs.changes.result != 'success')) }}
+    runs-on: linux_4_core
+    timeout-minutes: 50
+    permissions:
+      contents: read
+      checks: read
+      id-token: write
+    env:
+      DESKTOP_E2E_SMOKE_TAG: ${{ ((github.event_name == 'merge_group' && needs.changes.result == 'success') || (github.event_name == 'pull_request' && (needs.changes.outputs.desktop_e2e_specs == 'false' || needs.changes.outputs.desktop_e2e_changed_specs != ''))) && '@smoke' || '' }}
+      DESKTOP_E2E_CHANGED_SPECS: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.desktop_e2e_changed_specs || '' }}
+    steps:
+      - name: Guard manual dispatch ref
+        id: dispatch_ref_guard
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+            exit 0
+          fi
+
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::Manual dispatch must run from main; refusing '${REF}'."
+            exit 1
+          fi
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.merge_group.head_sha || github.event.pull_request.head.sha || github.event.inputs.ref || (github.event_name == 'schedule' && github.sha) || github.ref }}
+      - name: Set up Turbo remote cache
+        uses: closedloop-ai/symphony-alpha/.github/actions/setup-turbo-remote-cache@0f9eebb3f4bbff06d13d958f9e4d1e2aa7a07d53
+        with:
+          team: ${{ vars.TURBO_TEAM }}
+          policy: pol_eafbaffa-6db0-481f-8857-b4109938c10a
+      - name: Report and reclaim runner disk
+        shell: bash
+        env:
+          DISK_FLOOR_MB: "40000"
+        run: |
+          set -euo pipefail
+          # Every `df` read and every summary write tolerates its own failure:
+          # this step is diagnostics plus a reclaim, and neither is worth
+          # reddening a required check. The `tee` guards are not theoretical —
+          # under `pipefail` an unwritable step summary is itself most likely
+          # when the volume is full, which is precisely when this step runs.
+          report() {
+            df -Pm / | awk -v phase="$1" 'NR==2 { printf "%s: %d MB free of %d MB on /\n", phase, $4, $2 }' || true
+          }
+          {
+            echo '### Runner disk — desktop-e2e'
+            echo ""
+            report "at job start"
+          } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}" || true
+
+          free_mb="$(df -Pm / | awk 'NR==2 { print $4; exit }' || true)"
+          case "$free_mb" in
+            '' | *[!0-9]*)
+              echo "::warning::could not read free disk on /; skipping reclaim"
+              exit 0
+              ;;
+          esac
+          if [ "$free_mb" -ge "$DISK_FLOOR_MB" ]; then
+            echo "${free_mb} MB free is at or above the ${DISK_FLOOR_MB} MB floor; nothing reclaimed."
+            exit 0
+          fi
+          for dir in /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/.ghcup; do
+            if [ -d "$dir" ]; then
+              sudo rm -rf "$dir" || true
+            fi
+          done
+          sudo apt-get clean || true
+          docker system prune -af --volumes || true
+          report "after reclaim" | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}" || true
+      - name: Check resource profiler availability
+        id: profiler
+        shell: bash
+        run: |
+          if [ -f .github/actions/profile-resources/action.yml ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::profile-resources action not present in this checkout (PR predates it); skipping resource profiling."
+          fi
+      - name: Start resource profiler
+        if: steps.profiler.outputs.available == 'true'
+        uses: ./.github/actions/profile-resources
+        with:
+          mode: start
+          label: desktop-e2e
+      - name: Validate + summarize E2E quarantine
+        shell: bash
+        env:
+          E2E_REQUIRED_SURFACES: web,desktop
+        run: node --experimental-strip-types scripts/deploy/e2e-quarantine-list.ts
+      - name: Pin the pnpm store directory
+        run: echo "pnpm_config_store_dir=${HOME}/setup-pnpm/node_modules/.bin/store" >> "$GITHUB_ENV"
+      - name: Setup pnpm
+        timeout-minutes: 3
+        uses: ./.github/actions/setup-pnpm
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Restore pnpm store (restore-only; main is sole writer — FEA-3662)
+        uses: ./.github/actions/pnpm-restore-cache
+        with:
+          lockfile-hash: ${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Install dependencies
+        run: |
+          pnpm config set fetch-retries 5
+          pnpm config set fetch-retry-mintimeout 20000
+          pnpm config set fetch-retry-maxtimeout 120000
+          pnpm config set fetch-timeout 600000
+          pnpm install --frozen-lockfile
+        env:
+          DATABASE_URL: postgresql://localhost:5432/placeholder
+      - name: Setup Playwright browser
+        uses: ./.github/actions/setup-playwright
+        with:
+          install-system-deps: "false"
+      - name: Install Electron runtime, display and keyring dependencies
+        shell: bash
+        run: |
+          dry_run_status=0
+          dry_run_output="$(pnpm exec playwright install-deps --dry-run chromium 2>&1)" || dry_run_status=$?
+          printf '%s\n' "$dry_run_output"
+
+          playwright_deps=()
+          runtime_deps=()
+          if [ "$dry_run_status" != "0" ]; then
+            expected_count="$(printf '%s\n' "$dry_run_output" | sed -n 's/^Missing system dependencies (\([0-9][0-9]*\)):$/\1/p')"
+            if [ -z "$expected_count" ]; then
+              echo "::error::playwright install-deps --dry-run failed without a missing-dependencies result"
+              exit "$dry_run_status"
+            fi
+            while IFS= read -r package; do
+              playwright_deps+=("$package")
+            done < <(
+              printf '%s\n' "$dry_run_output" |
+                sed -n '/^Missing system dependencies ([0-9][0-9]*):$/,$ s/^  \([a-z0-9][a-z0-9+.-]*\)$/\1/p'
+            )
+            if [ "${#playwright_deps[@]}" != "$expected_count" ]; then
+              echo "::error::playwright dry-run declared ${expected_count} missing dependencies but yielded ${#playwright_deps[@]} safe package names"
+              exit 1
+            fi
+            for package in "${playwright_deps[@]}"; do
+              case "$package" in
+                fonts-freefont-ttf|fonts-ipafont-gothic|fonts-tlwg-loma-otf|fonts-unifont|fonts-wqy-zenhei|xfonts-cyrillic|xfonts-encodings|xfonts-scalable|xfonts-utils)
+                  ;;
+                *)
+                  runtime_deps+=("$package")
+                  ;;
+              esac
+            done
+          fi
+
+          sudo timeout -k 30 600 apt-get \
+            -o DPkg::Lock::Timeout=600 \
+            -o Acquire::Retries=3 \
+            install -y --no-install-recommends \
+            "${runtime_deps[@]}" \
+            xvfb gnome-keyring libsecret-1-0
+      - name: Verify Electron binary install
+        run: pnpm -C apps/desktop verify:electron-binary
+      - name: Build desktop
+        run: pnpm --filter desktop run build
+      - name: Fail fast on an already-doomed merge group
+        id: doomed-group-gate
+        shell: bash
+        env:
+          BASE_REF: ${{ github.event.merge_group.base_ref }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GROUP_SHA: ${{ github.event.merge_group.head_sha }}
+          SELF_CONTEXT: desktop-e2e
+        run: |
+          set -uo pipefail
+
+          if [ "${GITHUB_EVENT_NAME:-}" != "merge_group" ] || [ -z "${GROUP_SHA}" ]; then
+            echo "Not a merge group — nothing can have doomed it. Running the suite."
+            exit 0
+          fi
+
+          # The QUEUE TARGET, read from the payload rather than hardcoded.
+          # `merge_group.base_ref` is `refs/heads/<branch>` and the rules
+          # endpoint takes the bare name. A hardcoded branch returns the wrong
+          # branch's ruleset, whose contexts cannot intersect this group's
+          # failures, so the gate stops refusing without erroring — the silent
+          # direction no consumer can see (@mikeangstadt, review of this PR).
+          queue_target="${BASE_REF:-}"
+          queue_target="${queue_target#refs/heads/}"
+          if [ -z "${queue_target}" ]; then
+            echo "::warning::This merge group names no base_ref, so its queue target is unknown — running the suite."
+            exit 0
+          fi
+
+          # `timeout` bounds the READ. `gh api` takes no timeout flag, so a hung
+          # connection would otherwise spend this job's whole `timeout-minutes`
+          # and conclude `cancelled` — the opposite of failing fast, and the
+          # reason the sibling e2e-gate status POST wraps its own call. A killed
+          # `gh` writes nothing, which lands on the fail-open branch below.
+          #
+          # `--paginate`, because more than one ruleset applies to this branch
+          # and the endpoint pages: an unpaginated read can miss a later page's
+          # `required_status_checks` rule and silently ignore its contexts, which
+          # is the silent-no-op direction. The same endpoint is walked page by
+          # page for the same reason in
+          # scripts/lint/check-merge-group-required-contexts.ts.
+          # Split for the reason the check-runs read below is split: a lookup
+          # that COMPLETED and found nothing is not a lookup that failed, and
+          # reporting the first as the second sends an operator to the API when
+          # the ruleset is what changed.
+          #
+          # A required rule is `{context, integration_id}` and NOT a name.
+          # `requiredKey()` (packages/github/required-context-attempts.ts) is the
+          # canonical spelling and states why: "Anyone can post a check run
+          # called `test`; only the one from the integration the ruleset names is
+          # the required check." Keeping only `.context` here let a red `lint`
+          # from a DIFFERENT app stand in for the required `lint` that passed and
+          # doom a healthy group — the same correction @wongk made to the queue
+          # board in #7458, raised again on this gate. Both sides of the match
+          # below are therefore `context<TAB>integration_id`; `*` is a rule that
+          # names no integration, which constrains nothing but the name.
+          if ! required="$(timeout -k 5 30 gh api --paginate "repos/${GITHUB_REPOSITORY:-}/rules/branches/${queue_target}" \
+            --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[] | [.context, ((.integration_id // "*") | tostring)] | @tsv' \
+            2>/dev/null)"; then
+            echo "::warning::Could not read the required contexts for queue target ${queue_target} — running the suite."
+            exit 0
+          fi
+          if [ -z "${required}" ]; then
+            echo "::warning::Queue target ${queue_target} declares no required status checks — nothing can doom a group. Running the suite."
+            exit 0
+          fi
+
+          # THE CURRENT STATE OF EACH RULE, never "did anything ever fail".
+          # `filter=latest` is latest per check SUITE, not per context, so a
+          # re-run that passed arrives ALONGSIDE the attempt it replaced: a
+          # failure-first read keeps refusing a group the re-run already made
+          # mergeable. That is exactly the collapse `liveAttempts()` exists for
+          # (packages/github/required-context-attempts.ts) — "Collapses re-run
+          # attempts to the live one per context BEFORE failure is tested" — and
+          # the trap merge-queue-rearm guards for on the same data. So this read
+          # emits EVERY attempt and the fold picks the live one per rule, then
+          # tests that one's conclusion.
+          #
+          # `filter=latest` is kept: the newest attempt for a name is always the
+          # newest attempt within its own suite, so it is in this set and the
+          # payload stays small. The fold is what makes the answer per RULE.
+          #
+          # `completed_at // started_at` is `beats()`'s ordering key spelled for
+          # REST. GraphQL's `CheckRun` carries no `createdAt`, which is why the
+          # canonical module falls back to the suite's; the REST payload's
+          # `check_suite` carries only an id, and `started_at` is populated when
+          # the run is created. A missing timestamp sorts oldest, matching that
+          # module's `NEGATIVE_INFINITY`.
+          #
+          # The five conclusions below are the ones that both fail a required
+          # context and are a VERDICT on this SHA. `cancelled` is deliberately
+          # absent: a cancelled run is usually a superseded one, so reading it as
+          # doom would refuse a group nothing has judged. `skipped` and `neutral`
+          # SATISFY a required context and are not failures at all. A live
+          # attempt with NO conclusion is still running and cannot doom anything,
+          # which falls straight out of testing the set rather than its inverse.
+          #
+          # This set is NOT `TERMINAL_CHECK_CONCLUSIONS`
+          # (packages/github/merge-queue-failure-classification.ts), and the one
+          # difference is deliberate. That module answers "did the queue EJECT
+          # this PR", and excludes `action_required` only to keep parity with the
+          # ejection emitter — its own comment calls that "a known gap rather
+          # than a decision" and names it "a completed, blocking conclusion".
+          # This gate asks the narrower question "can this group still merge",
+          # and a required context waiting on a human cannot go green on its own,
+          # so it doomed the group. `stale` is shared with that module for the
+          # same reason it is terminal there.
+          # An UNREADABLE listing must not be reported as an empty one. Both are
+          # fail-open, but only one of them knows anything: collapsing them let
+          # the step print "No required context has failed on <sha>" — a verdict
+          # — after a read that returned nothing because it was killed.
+          #
+          # `sort` because awk's `for (key in array)` order is unspecified, and
+          # which two rules get NAMED below must not depend on it. `LC_ALL=C` so
+          # it cannot depend on the runner's locale either. It is not a dedupe:
+          # the fold is keyed, so one rule cannot reach it twice.
+          # KNOWN CEILING, the one merge-queue-thrash-policy.ts and
+          # required-context-streak.ts both write into their own headers: this
+          # reads CHECK RUNS, so a required context satisfied by a commit
+          # STATUS appears nowhere in this payload and can never enter the
+          # intersection — for that context the gate would stop refusing, and
+          # silently. Nothing live is affected: all 16 live required contexts
+          # are Actions jobs, and all 16 appear as check runs on a real
+          # merge-group SHA. @thadeusb, review of this PR, verified on
+          # 8e5bb64c that the 20 required contexts of that SHA all appeared
+          # as check runs there. Re-verified on merge-group run 37512955063
+          # (ecae5252): `dockerized-images` is a successful check run there
+          # too, ISS-10094. `pr-metadata-gates`, which replaced five of them
+          # (ISS-12315), is one of today's 16 on merge-group run 38027636162
+          # (91340c46b5).
+          # The three `Vercel – *-stage` contexts were exactly that
+          # shape until ISS-9109 retired them, so the next external context
+          # reintroduces it. Closing it means reconciling
+          # `commits/{sha}/statuses`, the upgrade path both siblings name.
+          if ! failed="$(timeout -k 5 30 gh api --paginate \
+            "repos/${GITHUB_REPOSITORY:-}/commits/${GROUP_SHA}/check-runs?filter=latest&per_page=100" \
+            --jq '.check_runs[] | [(.completed_at // .started_at // ""), (.conclusion // ""), .name, ((.app.id // "*") | tostring)] | @tsv' \
+            2>/dev/null | awk -F '\t' '
+              { key = $3 "\t" $4 }
+              !(key in seen) || $1 >= at[key] { seen[key] = 1; at[key] = $1; verdict[key] = $2 }
+              END {
+                for (key in verdict) {
+                  if (verdict[key] == "failure" || verdict[key] == "timed_out" || verdict[key] == "startup_failure" || verdict[key] == "stale" || verdict[key] == "action_required") {
+                    print key
+                  }
+                }
+              }
+            ' | LC_ALL=C sort)"; then
+            echo "::warning::Could not read the check runs for ${GROUP_SHA} — running the suite."
+            exit 0
+          fi
+
+          # NAMED_LIMIT bounds what reaches the `e2e-gate` commit status in the
+          # BROWSER lane, whose `description` GitHub caps at 140 characters and
+          # REJECTS (422) rather than truncating. That rejection is non-retryable,
+          # so an over-long list would cost the gate its published status in
+          # exactly the many-failures case it is for. Two of the longest context
+          # names plus the surrounding sentence stay inside the cap. `desktop-e2e`
+          # publishes no status, so there the bound only keeps the annotation
+          # short — the copies are byte-identical, and the job log carries the
+          # full set either way.
+          named_limit=2
+          doomed_count=0
+          doomed_by=""
+          while IFS= read -r rule; do
+            # The NAME half of the key. It is what an operator is told to go fix,
+            # and it is what `SELF_CONTEXT` is compared against: the exclusion is
+            # by name on purpose, because the only integration that could publish
+            # this job's own context is the one already publishing it.
+            check="${rule%%$'\t'*}"
+            if [ -z "${check}" ] || [ "${check}" = "${SELF_CONTEXT}" ]; then
+              continue
+            fi
+            # A HERESTRING, never a pipe. `grep -q` exits on its first match,
+            # which leaves `printf` with bytes still queued; it dies of SIGPIPE
+            # and `pipefail` makes the pipeline 141, so a REAL match reads as no
+            # match and the gate silently stops refusing. Measured at 20k
+            # contexts; the live set is 22, so this is a ceiling, not a bug fix.
+            #
+            # Two arms because a required rule may name no integration. The first
+            # is the exact `{context, integration_id}` identity; the second is the
+            # `*` rule, which matches the context name whoever published it —
+            # `matchedCheckRunRule`'s "A rule with no `integration_id` provides no
+            # identity beyond the name".
+            if grep -Fxq -- "${rule}" <<<"${required}" || grep -Fxq -- "${check}"$'\t*' <<<"${required}"; then
+              doomed_count=$((doomed_count + 1))
+              if [ "${doomed_count}" -le "${named_limit}" ]; then
+                doomed_by="${doomed_by:+${doomed_by}, }${check}"
+              fi
+            fi
+          done < <(printf '%s\n' "${failed}")
+
+          if [ "${doomed_count}" -eq 0 ]; then
+            echo "No required context has failed on ${GROUP_SHA} — running the suite."
+            exit 0
+          fi
+
+          if [ "${doomed_count}" -gt "${named_limit}" ]; then
+            doomed_by="${doomed_by} (+$((doomed_count - named_limit)) more)"
+          fi
+
+          # RESOLVED by ISS-10821 — DOWNSTREAM, and by nothing in this script.
+          # A refusal is self-describing only to a HUMAN reading the `e2e-gate`
+          # commit status, whose description and `no_evidence` tag this output
+          # feeds, and NEITHER consumer reads that description: both bucket on
+          # the context NAME alone, so both misreported BOTH lanes and not just
+          # `desktop-e2e` (@thadeusb, review of the ISS-4641 PR).
+          #   - scripts/ci/required-context-streak.ts pages on a context red for
+          #     over an hour across distinct PRs. `allWatchedContexts()` is
+          #     derived from every `ActionsJob` manifest entry that is not
+          #     `pending-apply`, and `e2e-gate` is one of them
+          #     (merge-group-required-contexts-manifest.ts), so it is watched
+          #     beside `desktop-e2e`.
+          #   - merge-queue-thrash-guard.yml's ETA step renders the failing
+          #     required contexts as backticked names in its dequeue comment.
+          # So one cause reported under three names — the real one, `e2e-gate`
+          # and `desktop-e2e` — and two of them pointed at suites that never ran.
+          # Both consumers now read a `Mark doomed-group refusal` step
+          # (`DOOMED_REFUSAL_STEP_NAME`, scripts/ci/required-context-streak-jobs.ts)
+          # carried by each REQUIRED context's own job: `desktop-e2e`'s, and
+          # `e2e-gate`'s, which republishes this `e2e` job's result. The gate is
+          # unchanged — it still FAILS rather than skips, which is ISS-4641's
+          # whole safety argument, and ISS-10821 is entirely downstream of it.
+          echo "doomed_by=${doomed_by}" >> "${GITHUB_OUTPUT:-/dev/null}"
+          echo "::error::Merge group ${GROUP_SHA} cannot merge under any outcome — required context(s) ${doomed_by} already failed. Refusing to spend this suite on it (ISS-4641). This job reports failure rather than skipping, so the queue still has a conclusion to act on."
+          exit 1
+      - name: Mark doomed-group refusal
+        if: ${{ steps.dispatch_ref_guard.outcome == 'success' && !cancelled() && steps.doomed-group-gate.outputs.doomed_by != '' }}
+        shell: bash
+        env:
+          DOOMED_BY: ${{ steps.doomed-group-gate.outputs.doomed_by }}
+        run: |
+          echo "This lane refused an already-doomed merge group (ISS-4641); required context(s) ${DOOMED_BY} had already failed. No suite ran, so this job's red is not a verdict on it."
+      - name: Run Electron e2e
+        working-directory: apps/desktop
+        env:
+          LIVEBLOCKS_SECRET: ${{ secrets.STAGING_LIVEBLOCKS_SECRET }}
+        run: |
+          set -o pipefail
+          status=0
+          dbus-run-session -- bash -c '
+            echo -n "" | gnome-keyring-daemon --unlock --components=secrets >/dev/null 2>&1
+            xvfb-run -a --server-args="-screen 0 1920x1080x24" pnpm test:e2e
+          ' || status=$?
+          # Both guards are raised EXPLICITLY rather than leaning on the runner's
+          # default `bash -e`: an implicit abort is the same kind of unstated
+          # assumption that lost the exit code in the first place, and it is not
+          # in force when this script is executed by its guard test.
+          assert_status=0
+          node scripts/assert-e2e-results.mjs || assert_status=$?
+          if [ "$assert_status" = "78" ]; then
+            # ISS-5804. Green, with a tolerated worker teardown error — the one
+            # case where Playwright's exit 1 does not describe the suite.
+            if [ "$status" = "1" ]; then
+              status=0
+            fi
+          elif [ "$assert_status" != "0" ]; then
+            status=1
+          fi
+          exit "$status"
+      - name: Stop resource profiler
+        if: steps.dispatch_ref_guard.outcome == 'success' && always() && steps.profiler.outputs.available == 'true'
+        uses: ./.github/actions/profile-resources
+        with:
+          mode: stop
+          label: desktop-e2e
+      - name: Upload Electron e2e failure artifacts
+        if: steps.dispatch_ref_guard.outcome == 'success' && failure() && steps.doomed-group-gate.outcome != 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-e2e-failure-${{ github.run_id }}
+          path: |
+            apps/desktop/playwright-report-e2e/
+            apps/desktop/test-results-e2e/
+          retention-days: 14

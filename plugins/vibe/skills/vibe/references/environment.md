@@ -84,7 +84,9 @@ session's stack. Never give the bare canvas,
 `<storybook-base>/iframe.html?id=<story-id>&viewMode=story`, which shows the
 story without the sidebar or controls. This section is the rule's one
 canonical statement; the skills, the ticket template and the workers point at
-it.
+it. `scripts/vibe-sessions.mjs link --story <story-id>` builds the link from
+the session record, and a link given to the person also follows
+`plain-words.md`, "Links to what the person should look at".
 
 ## The production flag snapshot
 
@@ -113,8 +115,10 @@ orchestrator makes one commit of everything changed since the last redeploy, nev
 `scripts/commit-worktree.mjs` (the repository's commit hook runs there; no
 worker ever commits). Then the worker pushes, requests the environment again
 with the same mode, reads the deployed commit from that run, and tells the
-orchestrator when the app and Storybook show it. Each redeploy is its own
-commit; nothing is squashed or amended later.
+orchestrator when the app and Storybook show it. A failed pre-push check may be
+fixed and amended while that commit is still local. After push, each redeploy
+is immutable; every required correction is a new commit, never an amend or
+force push.
 
 ## What runs on this Mac
 
@@ -308,11 +312,20 @@ not silently included or discarded. A clean result needs no extra local commit.
    source continuation. The SAME registered writer extends its existing
    session table/local canonical plan before source fixes and checks frozen
    earlier behavior/interactions against the merged result. All conflicts,
-   generated source and fixes stay with that writer; no new tests are written
+   generated source and fixes stay with that writer. A merge that conflicts
+   only on the Storybook version file and Version History (main ships a
+   Storybook release several times a day) is settled with
+   `node <plugin-root>/skills/vibe/scripts/storybook-version-merge.mjs --worktree "<wt>"`:
+   main's version bumped by the session's own level, both entries kept, the
+   session's on top; the writer then updates its entry's counts to the
+   merged tree (ISS-13321). Any other conflict, or its refusal, the writer
+   resolves as before. No new tests are written
    unless the person asked for a pull request, and the writer only repairs
    existing tests the merge broke (`guardrails.md`, "Tests").
 3. Only the root commits the staged merge/fixes through the existing commit
-   script and normal hooks. Then resume that SAME writer for its exact
+   script and normal hooks. This ordinary main-sync merge is the one extra
+   commit allowed after the reviewed feature commit; it brings in main and is
+   not iteration. Then resume that SAME writer for its exact
    source-owned record continuation (`progress`) with the captured
    `mainSyncTransactionId` and root-controlled `publicationPurpose`.
    Run `node <plugin-root>/skills/vibe/scripts/vibe-sessions.mjs main-sync-inputs --worktree "<wt>"`
@@ -362,7 +375,10 @@ not silently included or discarded. A clean result needs no extra local commit.
    text, borrow another role's lease, print a lease or clear a lock because a
    short CLI PID ended. Input is `{ "context": <operationContext> }` on
    stdin, optionally with the matching `transactionId`; no caller command
-   list or `passed: true` is accepted.
+   list or `passed: true` is accepted. Copy the envelope's `operationContext`
+   verbatim, never a context rebuilt field by field: any field that differs
+   from the launcher's record is refused, and the refusal names each one
+   (ISS-13321).
    A publication attempt/no-op consumes proof for this exact publisher
    runtime/worker/request/lease. Same-turn retries retain it; a later
    publishing turn must prepare fresh, not recycle an old transaction.
@@ -421,7 +437,51 @@ runner env SHA against unchanged owned HEAD/tree/input. It never dispatches,
 accepts caller PASS, trusts run.head_sha as tested source, stores raw secret
 logs or treats later spoofed stdout as proof. Missing evidence leaves
 `requiredE2eComplete: false`; final handoff remains incomplete. Do not re-fetch
-main repeatedly while CI waits. Changed source/new preparation invalidates proof.
+main repeatedly while CI waits. CI is per push; `qa-impact.mjs` decides local QA.
+The Desktop Electron lane is the exception (ISS-13321): no vibe machine runs
+it, and since symphony-alpha's desktop-e2e job skips pull requests no run
+exists for a branch before merge. The executor returns it under
+`e2eLeftForCi`, covered by the post-merge desktop-e2e-validation run that
+publishes `desktop-e2e/validated`, and it does not hold
+`requiredE2eComplete`. The ticket's Engineering checklist carries it
+(`ticket-template.md`, "E2E left for CI"). An operator-dispatched run bound
+through `mainSyncCiRun` still verifies as above and replaces that entry.
+
+### What the validation proof accepts
+
+The shared main-sync executor (`scripts/dist/main-sync.mjs`) enforces these;
+none of them is a step a worker takes by hand.
+
+- Imported main changes stay distinct from feature scope, while original
+  feature test history remains available for phase verification even after
+  main absorbs identical bytes.
+- The existing ignored root `.biome-noscan.jsonc` is recognized only when its
+  bytes match the reviewed canonical pure producer applied to the complete
+  committed config. Modified, stale or deceptive derivatives and unrelated
+  executable overlays still block; the gate never invokes the writing hook.
+- Ignored files under a `.codex/`, `.claude/`, `.agents/`, `.vscode/` or
+  `.idea/` folder are the person's own agent and editor config, never a
+  validation input, and never block main sync. The same files untracked but
+  not ignored still block as uncommitted executables.
+- Source-owned input readiness preserves canonical unconsumed private
+  diagnostics and retained reports without accepting their contents as
+  coverage. Known generated dependencies need complete pure or pristine owner
+  verification before execution; unknown extras, edited bodies, producer drift
+  and aliases remain blocked.
+- Selected package proofs use bounded deduplicated names and full
+  byte/mode/set digests in the existing private receipt.
+- Report admission follows actual selected entries, tasks, configs and
+  producer inputs. Selected module coverage follows the finite committed tree;
+  the existing 4,096 ceiling bounds distinct cwd/argv contexts rather than
+  source file count. Data imports use the same path predicate as the shared
+  code/config parser; retained-report references and global private planning
+  protection remain enforced.
+- An unrelated capable reader is not selected consumption. Ordinary bootstrap
+  health cannot mint validation proof. Meaningful retained report data,
+  default verdicts and replay still block, while proven same-call test
+  fixtures remain nonretained inputs and never stand in for required coverage.
+- Workflow main SHA, generic log matches and caller PASS are not coverage
+  proof.
 
 ## When it fails
 
@@ -441,6 +501,7 @@ main repeatedly while CI waits. Changed source/new preparation invalidates proof
   Existing exclusion and restore rules still apply: no redeploy or handoff
   commits these files. Setup retries only after the writer supplies the fix;
   the permanent correction remains with the bug's ticket owner.
-- Anything else: tell the person the environment did not start, show the error
-  in one or two lines, and suggest they message engineering with the session
-  slug.
+- Anything else: return the exact failure and paths tried to the orchestrator.
+  Use the recovery or supported handover in `guardrails.md`, "Plugins and
+  tooling"; do not turn an unclassified failure into an engineering task for
+  the person.

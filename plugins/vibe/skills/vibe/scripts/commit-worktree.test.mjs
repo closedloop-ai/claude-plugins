@@ -12,8 +12,8 @@ function setup(t) {
   const fixture = makeHome("commit-worktree-");
   t.after(fixture.cleanup);
   const checkout = path.join(fixture.root, "symphony-alpha");
-  makeCheckout({ root: fixture.root, home: fixture.home, checkout, files: { "apps/app/page.tsx": "one\n" } });
-  return { ...fixture, checkout };
+  const { origin } = makeCheckout({ root: fixture.root, home: fixture.home, checkout, files: { "apps/app/page.tsx": "one\n" } });
+  return { ...fixture, checkout, origin };
 }
 
 function write(checkout, file, content) {
@@ -58,8 +58,7 @@ test("commits the session's changes but never its local fixes or files that neve
   assert.equal(git(checkout, ["log", "-1", "--format=%s"], home), "ISS-7: Add the new panel");
   assert.equal(git(checkout, ["log", "-1", "--format=%b"], home), "Screens: projects");
   assert.equal(result.json.commit, git(checkout, ["rev-parse", "HEAD"], home));
-  assert.equal(result.json.pushDue, false, "a commit made just now is not due, and excluded files left behind do not age it");
-  assert.equal(typeof result.json.unpushedMinutes, "number");
+  assert.equal(result.json.amended, false);
   const leftOver = git(checkout, ["status", "--porcelain", "--untracked-files=all"], home).split("\n").map((line) => line.slice(3));
   assert.deepEqual(leftOver.sort(), [".control/run.json", ".env.local", "apps/app/.env", "scripts/fix.sh", "tools/patched/a.ts"]);
 });
@@ -76,6 +75,91 @@ test("reports nothing to commit without creating a commit", (t) => {
   assert.equal(result.json.committed, false);
   assert.deepEqual(result.json.excluded, ["scripts/fix.sh"]);
   assert.equal(commitCount(checkout, home), before);
+});
+
+test('amends one unpushed commit after a pre-push repair and refuses a published head', t => {
+  const { home, checkout } = setup(t);
+  write(checkout, 'apps/app/page.tsx', 'candidate\n');
+  const first = runNode(SCRIPT, ['--worktree', checkout, '--subject', 'ISS-7: Prepare the candidate'], home);
+  assert.equal(first.status, 0, JSON.stringify(first.json));
+  const count = commitCount(checkout, home);
+  const firstHead = git(checkout, ['rev-parse', 'HEAD'], home);
+  write(checkout, 'apps/app/page.tsx', 'pre-push repair\n');
+  const amended = runNode(SCRIPT, ['--worktree', checkout, '--amend'], home);
+  assert.equal(amended.status, 0, JSON.stringify(amended.json));
+  assert.equal(amended.json.amended, true);
+  assert.equal(commitCount(checkout, home), count, 'repair keeps one local commit');
+  assert.notEqual(git(checkout, ['rev-parse', 'HEAD'], home), firstHead);
+  git(checkout, ['push', '--quiet', 'origin', 'HEAD:refs/heads/published'], home);
+  write(checkout, 'apps/app/page.tsx', 'too late\n');
+  const refused = runNode(SCRIPT, ['--worktree', checkout, '--amend'], home);
+  assert.equal(refused.status, 1);
+  assert.match(refused.json.error, /published|remote/i);
+});
+
+test('amend fetches its upstream and refuses a head published from elsewhere', t => {
+  const { home, checkout } = setup(t);
+  write(checkout, 'apps/app/page.tsx', 'first local commit\n');
+  assert.equal(runNode(SCRIPT, ['--worktree', checkout, '--subject', 'ISS-7: First'], home).status, 0);
+  git(checkout, ['push', '--quiet', '-u', 'origin', 'HEAD:published'], home);
+  write(checkout, 'apps/app/page.tsx', 'second local commit\n');
+  assert.equal(runNode(SCRIPT, ['--worktree', checkout, '--subject', 'ISS-7: Second'], home).status, 0);
+  const current = git(checkout, ['rev-parse', 'HEAD'], home);
+  const staleTracking = git(checkout, ['rev-parse', 'refs/remotes/origin/published'], home);
+  assert.notEqual(staleTracking, current);
+  const origin = git(checkout, ['remote', 'get-url', 'origin'], home);
+  git(checkout, ['push', '--quiet', 'origin', `${current}:refs/heads/external-transfer`], home);
+  git(origin, ['update-ref', 'refs/heads/published', current], home);
+  git(origin, ['update-ref', '-d', 'refs/heads/external-transfer'], home);
+  git(checkout, ['update-ref', '-d', 'refs/remotes/origin/external-transfer'], home);
+  write(checkout, 'apps/app/page.tsx', 'repair after external push\n');
+  const refused = runNode(SCRIPT, ['--worktree', checkout, '--amend'], home);
+  assert.equal(refused.status, 1);
+  assert.match(refused.json.error, /published|remote/i);
+  assert.equal(git(checkout, ['rev-parse', 'HEAD'], home), current);
+});
+
+test('amend without an upstream refuses a head retained by a local remote-tracking ref', t => {
+  const { home, checkout, origin } = setup(t);
+  write(checkout, 'apps/app/page.tsx', 'published without upstream\n');
+  assert.equal(runNode(SCRIPT, ['--worktree', checkout, '--subject', 'ISS-7: Publish'], home).status, 0);
+  const published = git(checkout, ['rev-parse', 'HEAD'], home);
+  git(checkout, ['branch', '--unset-upstream'], home);
+  git(checkout, ['push', '--quiet', 'origin', 'HEAD:refs/heads/published'], home);
+  assert.equal(git(checkout, ['rev-parse', 'refs/remotes/origin/published'], home), published);
+  git(origin, ['update-ref', '-d', 'refs/heads/published'], home);
+  write(checkout, 'apps/app/page.tsx', 'unsafe rewrite\n');
+
+  const refused = runNode(SCRIPT, ['--worktree', checkout, '--amend'], home);
+
+  assert.equal(refused.status, 1);
+  assert.match(refused.json.error, /published|remote/i);
+  assert.equal(git(checkout, ['rev-parse', 'HEAD'], home), published);
+});
+
+test('amend without an upstream fetches remote descendants before allowing a rewrite', t => {
+  const { root, home, checkout, origin } = setup(t);
+  write(checkout, 'apps/app/page.tsx', 'published ancestor\n');
+  assert.equal(runNode(SCRIPT, ['--worktree', checkout, '--subject', 'ISS-7: Publish'], home).status, 0);
+  const published = git(checkout, ['rev-parse', 'HEAD'], home);
+  git(checkout, ['branch', '--unset-upstream'], home);
+  git(checkout, ['push', '--quiet', 'origin', 'HEAD:refs/heads/published'], home);
+
+  const other = path.join(root, 'other');
+  git(root, ['clone', '--quiet', origin, other], home);
+  git(other, ['checkout', '--quiet', '-b', 'published', 'origin/published'], home);
+  write(other, 'apps/app/page.tsx', 'remote descendant\n');
+  git(other, ['add', '-A'], home);
+  git(other, ['commit', '--quiet', '-m', 'remote descendant'], home);
+  git(other, ['push', '--quiet', 'origin', 'HEAD:refs/heads/published'], home);
+  git(checkout, ['update-ref', '-d', 'refs/remotes/origin/published'], home);
+  write(checkout, 'apps/app/page.tsx', 'unsafe ancestor rewrite\n');
+
+  const refused = runNode(SCRIPT, ['--worktree', checkout, '--amend'], home);
+
+  assert.equal(refused.status, 1);
+  assert.match(refused.json.error, /published|remote/i);
+  assert.equal(git(checkout, ['rev-parse', 'HEAD'], home), published);
 });
 
 test("local plans stay in the worktree even when staged, without excluding other artifacts", (t) => {
@@ -206,4 +290,34 @@ test("concludes an origin/main merge staged by the no-grant fallback", (t) => {
   assert.equal(result.json.committed, true);
   assert.equal(result.json.merge, true);
   assert.equal(git(checkout, ["rev-list", "--parents", "-n", "1", "HEAD"], home).split(" ").length, 3);
+});
+
+// A person's own untracked files (17 `.agents` skill files) once held a
+// session's commit for 1 h 37 min, because the script staged everything and
+// had no way to leave them out (2026-10-26).
+test("--exclude leaves a person's own untracked files out of the commit and in the worktree", (t) => {
+  const { home, checkout } = setup(t);
+  write(checkout, "apps/app/page.tsx", "two\n");
+  write(checkout, ".agents/skills/mine/SKILL.md", "theirs\n");
+  write(checkout, ".agents/skills/other/SKILL.md", "theirs\n");
+  write(checkout, "notes.md", "theirs\n");
+  const result = runNode(SCRIPT, ["--worktree", checkout, "--subject", "ISS-7: Change the page", "--exclude", ".agents/skills", "--exclude", "notes.md"], home);
+  assert.equal(result.status, 0, JSON.stringify(result.json));
+  assert.deepEqual(result.json.files, ["apps/app/page.tsx"]);
+  assert.deepEqual([...result.json.excluded].sort(), [".agents/skills/mine/SKILL.md", ".agents/skills/other/SKILL.md", "notes.md"]);
+  const leftOver = git(checkout, ["status", "--porcelain", "--untracked-files=all"], home).split("\n").map((line) => line.slice(3)).sort();
+  assert.deepEqual(leftOver, [".agents/skills/mine/SKILL.md", ".agents/skills/other/SKILL.md", "notes.md"]);
+});
+
+test("--exclude never drops the session's tracked changes and refuses a path that names no untracked file", (t) => {
+  const { home, checkout } = setup(t);
+  write(checkout, "apps/app/page.tsx", "two\n");
+  for (const exclude of ["apps/app/page.tsx", "missing/dir"]) {
+    const before = commitCount(checkout, home);
+    const result = runNode(SCRIPT, ["--worktree", checkout, "--subject", "ISS-7: Change the page", "--exclude", exclude], home);
+    assert.equal(result.status, 1, exclude);
+    assert.match(result.json.error, /--exclude .* names no untracked file/, exclude);
+    assert.equal(commitCount(checkout, home), before, exclude);
+    assert.equal(git(checkout, ["diff", "--cached", "--name-only"], home), "", `${exclude}: nothing is left staged`);
+  }
 });

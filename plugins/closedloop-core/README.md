@@ -72,13 +72,12 @@ worktrees. Findings do not authorize source changes or external writes.
 
 ### `agent-qa`
 
-Guides selected web/mobile tests and saved-run review with
-[agent-qa](https://github.com/vostride/agent-qa) from vostride: natural-language
-tests, advanced memidex memory and self-improvement. Matches recorded evidence
-to the requested target/build, preserves verdicts, and distinguishes historical
-memory use from current status and provenance. Uses the project's configured
-external CLI; the runtime is not bundled. Test evidence does not replace a
-requested human QA session.
+Runs selected web and mobile regressions with [agent-qa](https://vostride.com),
+reviews recorded run evidence, and traces advanced memidex memory and
+self-improvement through knowledge provenance. Requires a configured project
+and keeps execution, read-only review, and knowledge changes within the
+authorized scope. Automated evidence does not replace a requested human QA
+session. The separately licensed runtime is not bundled.
 
 ### `measurement-discipline`
 

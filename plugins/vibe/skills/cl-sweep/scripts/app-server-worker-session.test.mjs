@@ -34,6 +34,7 @@ import {
   createResultArtifact,
   createTurnCollector,
   attachIdleHistoricalThread,
+  endSession,
   initializeSession,
   notifyParent,
   parseCallback,
@@ -125,6 +126,9 @@ class FakeClient {
       return { data: [{ id: this.listedTurnId, status: 'inProgress' }] };
     }
     if (method === 'turn/steer') return { turnId: params.expectedTurnId };
+    if (['thread/name/set', 'thread/section/move', 'thread/archive', 'thread/unarchive'].includes(method)) return {};
+    if (method === 'threadSection/list') return { data: [], nextCursor: null };
+    if (method === 'threadSection/create') return { section: { id: 'fleet-section', name: 'Fleet workers' } };
     if (method === 'turn/start' && params.threadId === 'parent-thread') {
       return { turn: { id: 'parent-turn', status: 'inProgress' } };
     }
@@ -334,6 +338,15 @@ test('new ticket sessions default to gpt-6-sol at high effort and capture a sync
   assert.match(readFileSync(fixture.eventsFile, 'utf8'), new RegExp(event.event_id));
   const threadStart = client.requests.find(({ method }) => method === 'thread/start');
   assert.equal(threadStart.params.model, REQUIRED_WORKER_MODEL);
+  // ISS-13279: named and grouped right after thread/start, before the first turn.
+  const methods = client.requests.map(({ method }) => method);
+  assert.deepEqual(methods.slice(methods.indexOf('thread/start'), methods.indexOf('thread/start') + 5),
+    ['thread/start', 'thread/name/set', 'threadSection/list', 'threadSection/create', 'thread/section/move']);
+  assert.deepEqual(client.requests.find(({ method }) => method === 'thread/name/set').params, { threadId: 'worker-thread', name: 'cl-sweep · ISS-1' });
+  // The worker thread carries the hidden marker; nothing sent to the parent (orchestrator) thread does.
+  assert.equal(threadStart.params.threadSource, 'chatgpt_hidden');
+  assert.ok(client.requests.filter(({ method }) => method === 'thread/start').length === 1);
+  assert.ok(client.requests.every(({ method, params }) => method === 'thread/start' || params?.threadSource === undefined));
   const start = client.requests.find(({ method, params }) => method === 'turn/start' && params.threadId === 'worker-thread');
   assert.equal(start.params.model, REQUIRED_WORKER_MODEL);
   assert.equal(start.params.effort, 'high');
@@ -1826,3 +1839,28 @@ function waitingCheckpointEvent(worktree) {
     payload: {},
   };
 }
+
+test('end refuses a worker whose turn is running, then records the merge before it archives the thread', async () => {
+  const fixture = initializeFixture();
+  const event = { ...baseEvent(fixture), status: 'WAITING' };
+  await runTurn({ 'session-file': fixture.sessionFile, 'prompt-file': fixture.promptFile, 'events-file': fixture.eventsFile },
+    { client: new FakeClient({ worktree: fixture.worktree, event }) });
+  const running = new FakeClient({ worktree: fixture.worktree, materialized: true });
+  await assert.rejects(endSession({ 'session-file': fixture.sessionFile, reason: 'merged' }, { client: running }), /never archived/);
+  assert.equal(running.requests.some(({ method }) => method === 'thread/archive'), false);
+  assert.equal(JSON.parse(readFileSync(fixture.sessionFile, 'utf8')).ended, undefined);
+  const idle = new FakeClient({ worktree: fixture.worktree, materialized: true });
+  let recorded;
+  const answer = idle.request.bind(idle);
+  idle.request = async (method, params) => {
+    if (method === 'thread/turns/list') return { data: [{ id: 'worker-turn', status: 'completed' }] };
+    if (method === 'thread/archive') recorded = JSON.parse(readFileSync(fixture.sessionFile, 'utf8')).ended;
+    return answer(method, params);
+  };
+  const result = await endSession({ 'session-file': fixture.sessionFile, reason: 'merged' }, { client: idle });
+  assert.equal(recorded?.reason, 'merged');
+  assert.equal(result.ended.reason, 'merged');
+  const stored = JSON.parse(readFileSync(fixture.sessionFile, 'utf8'));
+  assert.equal(stored.ended.reason, 'merged');
+  assert.ok(stored.archivedAt);
+});

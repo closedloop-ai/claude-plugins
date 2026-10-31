@@ -28,7 +28,18 @@ requirements read from the reference; build those, as cut or changed by the
 person. A
 continuation belongs to the same active request and writer ID. Finish it before the next
 queued request. Never commit, push or stash; the orchestrator commits through
-its script and operational publishing follows the same branch.
+its script and operational publishing follows the same branch. Iterate on
+uncommitted work until push-ready: selected checks, independent review and
+verification accept the complete diff before ROOT commits. Grader/review fixes
+never need checkpoint commits. Report HEAD plus diff/tree hashes from
+`tested-head.mjs source <worktree>`; fleet writers declare `--ready <sha>`
+through the existing board rule (fleet-orchestrator, Monitoring), where the
+operator's push-ready ruling is cited once.
+HEAD-only output from `pnpm prepush --all` is not dirty-source evidence; use the
+owned E2E lock's HEAD plus diff/tree receipt. No commit is needed for that local
+harness. The external remote wrapper is the verifier's documented clean-commit
+exception and accepts only `--head`, owner and command.
+
 
 Keep technical preparation internal. Report only short evidence/status to the
 orchestrator; it tells the person completed features and next work, not an
@@ -48,7 +59,8 @@ Read the root and nearest owning AGENTS.md before editing. Existing
 setup worker to patch code. Preserve other people's existing work.
 Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
 off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
-a needed vibe tooling fix returns `BLOCKED`.
+report a tooling defect and keep using the supported paths there; return
+`BLOCKED` only for a verified engineering-only blocker after those paths.
 
 ## Plan before code
 
@@ -132,12 +144,24 @@ On an existing session, keep the ledger's current worker ID and exact binding.
 Only ROOT can use quality-loop's recorded definition migration for a missing
 or provably upgraded definition. After migration read the same local plan,
 decision table, checkpoint, change log and decisions before continuing the same
-request. Never migrate yourself, re-register, copy definitions or bypass a
+request. When ROOT's continuation says the migrated request ended `BLOCKED`,
+settle that block first: do the blocked step again or return its real cause.
+Never migrate yourself, re-register, copy definitions or bypass a
 refusal. If your definition or plugin root disappears during a turn (a plugin
 install removed it), stop and return `BLOCKED` saying the recorded definition
 was removed; ROOT records that reason and recovers you through migration. It
 is never an engineering escalation or a question for the person. Any other
 unverifiable binding remains BLOCKED internally.
+
+The canonical change log is
+`$(git -C "<wt>" rev-parse --absolute-git-dir)/vibe-changes.md`.
+Keep required `Control:`, `Comparator:`, `Engineering needed`, `Feature map:`,
+compile-only repair, and other exact guardrail lines there as you make the decision.
+`diff-rules.mjs` and handoff inventory read that private file. A line only
+in the decision table, plan, ticket or chat does not clear the guardrail.
+The decision table records behavior and provenance; this log records the
+specific machine-checked disposition. For frozen renders, copy only the
+renderer line for the named story states and inputs.
 
 Research any product uncertainty through graph and live prior decisions first.
 Apply a settled ruling, never ask it again; settled means traced to a human
@@ -195,7 +219,12 @@ change log and keep building every allowed part. It is never `BLOCKED` or
 
 Before `DONE`, run the handoff inventory in build phase and require its
 `forbiddenPaths` and `diffRulesClear` gates to be true; a `diffRules` finding
-is fixed, or cleared by the change log line it names with a reason that holds. Any `forbidden` or `outsideAllowed` entry is
+is fixed, or cleared by the change log line it names with a reason that holds.
+A frozen render listed under `diffRules.deferredToHandoff` never holds
+`DONE`: rendering frozen stories is handoff's heavy validation, done only by
+handoff's `scripts/frozen-render.mjs`. Never capture frozen stories yourself
+and never write a `Frozen render unchanged` line by hand; record only the
+line that command printed. Any `forbidden` or `outsideAllowed` entry is
 removed and routed through the rule above, including repo-root scripts, skill
 tests and any `AGENTS.md`. The only exception is a file the inventory lists in
 `shrinkOnlyAllowlists` after proving the source-gate edit only deletes entries
@@ -252,7 +281,8 @@ Read the repo's `apps/storybook/TAXONOMY.md` and follow it:
 
 When the plan needs NEW Storybook components, build those components
 and their stories first, run the Storybook checks on them, then return
-`STORIES_READY` with each new story's ID. The orchestrator points the person to
+`STORIES_READY` with each new story's ID and the name the gallery shows for
+it (its title's last part and the story's name). The orchestrator points the person to
 them and resumes you at once; build the feature with them in that same
 request. The person may interrupt to change a component; that message
 continues the same request. A request that only reuses existing components
@@ -343,10 +373,13 @@ Throughout:
   exact published HEAD/tree, not caller PASS, workflow main SHA or later
   test-printed SHA text.
 - Resume this SAME actor/transaction after CI; do not repeatedly merge/fetch
-  main, reset binding or author tests in a record turn. Changed source
-  invalidates proof.
+  main, reset binding or author tests in a record turn. CI remains per push;
+  `qa-impact.mjs` alone selects repeated local evidence.
 - `requiredE2eComplete: false` blocks final coverage/alignment/assignment,
-  not safe preview publication with its explicit preparation evidence.
+  not safe preview publication with its explicit preparation evidence. The
+  Desktop Electron lane never runs on a vibe machine: the executor returns it
+  under `e2eLeftForCi`, covered by the post-merge `desktop-e2e/validated`
+  run, and it does not hold `requiredE2eComplete` (ISS-13321).
 
 Compare actual source and behavior against the same session decision table's
 affected and interacting prior row IDs after implementation and every fix.
@@ -442,6 +475,8 @@ to the existing private change log. Keep the live ticket's scope, progress and
 backend facts truthful under `ticket-template.md`, without technical-plan
 uploads. Obtain the serial record turn before any shared session/ticket update;
 operational helpers do not write the same records concurrently.
+Name any check narrowed or left for CI in the existing progress or handoff
+summary in plain words (`../skills/vibe/references/guardrails.md`, "Checks").
 
 ## Tests: repair, don't author
 
@@ -584,3 +619,9 @@ carries a measurement of the named element, not its container, at the named
 viewport: rendered width and line count. `BLOCKED` gives
 evidence without a technical question or silent downscope. Every non-trivial
 result ends with the required Graph block.
+A story or page named for the person to look at carries a link that opens it,
+never a bare story ID, path or route pattern: give its story ID or the page's
+real path for the example data, and the link comes from
+`../skills/vibe/scripts/vibe-sessions.mjs link`
+(`../skills/vibe/references/plain-words.md`, "Links to what the person should
+look at").

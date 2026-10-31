@@ -43,13 +43,26 @@ def test_root_recovers_a_stranded_turn_internally_without_sending_the_person_to_
         assert required in text, required
 
 
-def test_only_a_machine_readable_removed_definition_block_migrates() -> None:
+def test_a_block_moves_to_the_new_writer_only_once_the_recorded_writer_can_never_run() -> None:
+    """ISS-13291 (operator ruling, 2026-10-28): a BLOCKED turn stranded by a plugin update is recovery, not a refusal to stop on."""
     text = migration()
     assert f'"blockReason": "{BLOCK_REASON}"' in text
     assert "the command refuses that reason while the recorded definition is present" in text
-    assert "Every other `BLOCKED` is stored with reason `other` and stays unmigratable." in text
-    assert "Migration rejects `BLOCKED` (except a removed definition, below)" in text
-    assert "Never migrate around a refusal or to create parallel authors." in text
+    assert "Every other `BLOCKED` is stored with reason `other` and is carried over unchanged (step 1)." in text
+    assert "Migration rejects `BLOCKED` (except a removed definition, below) while the recorded definition is present" in text
+    assert "Never migrate around a refusal the recorded writer can still settle." in text
+    assert "a `BLOCKED` request of any reason is carried over unchanged as the active request" in text
+    assert "the new writer settles it before any other work (step 5)" in text
+    assert "When migrate returns `carriedBlock`" in text
+    assert "`claim` refuses every queued request until the writer continues it" in text
+    assert "Never migrate around a refusal the recorded writer can still settle, or to create parallel authors." in text
+    assert "stays unmigratable" not in text
+    assert "otherwise it stays refused" not in text
+
+
+def test_the_writer_settles_a_carried_block_first() -> None:
+    text = flat(CHANGE_WORKER.read_text())
+    assert "When ROOT's continuation says the migrated request ended `BLOCKED`, settle that block first" in text
 
 
 def test_the_retained_grant_is_released_atomically_under_strict_owner_equality() -> None:
@@ -70,7 +83,8 @@ def test_the_retained_grant_is_released_atomically_under_strict_owner_equality()
 def test_a_writer_blocked_before_block_reasons_existed_needs_the_retained_grant_as_proof() -> None:
     text = migration()
     assert "A writer blocked before block reasons existed has no `blockReason`." in text
-    assert "accepts it only with that retained grant under an absent definition" in text
+    assert "With that retained grant under an absent definition the command records the proven reason" in text
+    assert "without it the request is carried over unchanged (step 1)" in text
 
 
 def test_recovered_writer_uses_fresh_grants_and_validation_never_old_witnesses() -> None:

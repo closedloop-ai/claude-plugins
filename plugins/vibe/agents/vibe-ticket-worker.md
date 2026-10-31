@@ -98,6 +98,9 @@ before it writes, so a resumed session or a repeated run never creates a
 second PLN or a duplicate link. `<gitdir>` is
 `$(git -C "<wt>" rev-parse --absolute-git-dir)`.
 
+On startup, resume or takeover, step C reuses one linked PLN or publishes the
+criterion-complete local plan without pausing source work.
+
 A. Source link. The source is the record's `ticket`, the ClosedLoop document
    the session was started from (a PRD, an ISS or another document); skip
    this step when it is null or is the live ticket itself.
@@ -166,8 +169,12 @@ F. Status. The PLN's status follows the work:
    `Self-approved` line `session-plan.mjs` renders (version an older text
    in D first). Before setting it, save the PLN's
    `get-document` JSON and its latest text and run
-   `node ../skills/handoff/scripts/rulings-check.mjs --plan <json> --plan-body <text>`;
-   each exclusion it names (out of scope, deferred, not covered, a GAP line)
+   `node ../skills/handoff/scripts/rulings-check.mjs --plan <json> --plan-body <text>`.
+   Every nonempty `session-plan.mjs` render starts with that `Self-approved`
+   line, so a current published render already meets that prerequisite. Run
+   `rulings-check.mjs` yourself; do not block because its result was not
+   supplied in advance.
+   Each exclusion it names (out of scope, deferred, not covered, a GAP line)
    goes back to the writer as `NEEDS_CHANGE`: cite the ticket AC, PRD or
    operator ruling behind it, or bring the work back into scope.
 
@@ -178,7 +185,8 @@ F. Status. The PLN's status follows the work:
    date-range name covering today. If no weekly project covers today, select
    the latest weekly project by its ending date and continue. Note that
    fallback and the selected project under What this is; never stop or ask the
-   person because the current week is absent.
+   person because the current week is absent. Continue normal ticket creation
+   without adding a status label to the fallback note.
 2. Before creating, run closedloop-graph `query_collisions` and
    `search_nodes` with the summary; mention overlapping open tickets under
    What this is. When the source is a PRD, fetch every child and its comments,
@@ -239,7 +247,10 @@ passes (return the ones it refuses). Change nothing else.
 ## Handoff mode
 
 Read the required session decision table and row IDs with actual whole-table
-source/test/review evidence. Require `Final Alignment Status: Aligned`; required
+source/test/review evidence. Require `Final Alignment Status: Aligned`, or,
+only when the person chose passing it on, `Aligned except criteria waiting on
+<tickets>` with each such criterion marked `not met yet: waits on <ticket>`
+(handoff SKILL.md step 6; ISS-13321); required
 coverage gaps return NEEDS_CHANGE to the same writer rather than a completed
 ticket claim, except a missing test that is on the writer's missing tests list,
 which goes under Missing tests as engineering's scope of work. The table covers
@@ -288,7 +299,7 @@ commit and protection/access verification; requested scope/screens/host states;
 added/changed/removed component/story inventory with IDs/direct links,
 controls/Docs/plays and intentional ID/category moves/sidebar folds; actual
 compiled footprint/canonical catalog evidence and unresolved advisories;
-design/visual-QA reports/screenshots with inspected commits/viewports/hosts/states
+design/visual-QA reports/screenshots with screens/viewports/hosts/states/flag arms
 versus source-only/unverified; known gaps and remaining design decisions.
 For owned prototypes preserve canonical publication and source-backed N/A
 surfaces. Never fabricate links, counts, protection or inspection, assert looks
@@ -354,6 +365,7 @@ historical inspections accurately. Preserve the existing grading block.
      to update and never claims the branch edited one. A docs page in the diff
      (`git -C "<wt>" diff --stat <inventory baseCommit> apps/web/content/docs docs`)
      returns `NEEDS_CHANGE`, because nothing agent-written goes into public docs.
+   - Feature map line: copies each `Feature map:` line from the writer's change log verbatim into Handoff, or records "None: no screen behavior or reach changed".
    - Missing tests lists every entry of the writer's missing tests list, each
      with its behavior, row ID and files to cover.
    - Retired tests deleted lists every `retiredTests` entry the inventory
@@ -388,6 +400,13 @@ historical inspections accurately. Preserve the existing grading block.
      never blocks assignment or the check below. The item's shape:
 
      `- [ ] Known main failure: <check>; fails on captured main <mainSha>; evidence: <first error line of the main run's log>; exit <main exit code> on captured main, <session exit code> on the session commit`
+   - Place each `machineLimitedChecks`, `e2eLeftForCi` and waiting-criterion
+     entry, and each vibe tooling blocker, once, as an unchecked item at the
+     end of the Engineering checklist in the template's shape
+     (`../skills/vibe/references/ticket-template.md`, "Checks that ran out of
+     time", "E2E left for CI", "Criteria waiting on other work" and "Vibe
+     tooling blockers"). None of them blocks assignment or the check below,
+     and none goes to the person (ISS-13321).
    - Fill Grading with the template's Grading section copied unchanged,
      adding the section after Handoff when the ticket has none.
    - Include the handoff's same-Storybook-version check: the version, every
@@ -395,8 +414,10 @@ historical inspections accurately. Preserve the existing grading block.
      pull request does. For a requested pull request, require a fresh check
      against its pinned base immediately before creation: release history,
      package version, component and story counts, plus every in-flight train
-     reservation. A stale comparison, duplicate version or conflicting count
-     returns `NEEDS_CHANGE`.
+     reservation. A wrong bump relative to that base or a conflicting count
+     returns `NEEDS_CHANGE`; main moving on after the pin and a version
+     another open pull request reserves do not (handoff SKILL.md, "the next
+     free version"; ISS-13321).
 7. Run "Source link and session plan" A to F. The handoff's code is
    written and checked, so step F leaves the PLN `APPROVED` (an `EXECUTED`
    one stays). The ticket is not complete until the source link (when the
@@ -462,6 +483,13 @@ The person threw the session away and its branch is deleted.
    IN_PROGRESS`. Confirm with `get-document`.
 
 ## Return (under 100 words)
+
+After the final read-back, call the native `StructuredOutput` tool with only
+an object such as `{ "status": "DONE", "summary": "ISS-123 handoff verified." }`.
+Do not put tool tags, XML parameter markup or the ticket body in either field.
+If the output tool fails after a write, do not repeat that write: the
+orchestrator performs a read-only reconciliation of the live ticket and
+session record before dispatching any further record action.
 
 `DONE` with the ticket slug and URL (create, assign, cancel; create also confirms the
 slug is recorded on the session and names the source link or that there is no

@@ -46,10 +46,13 @@ def test_helpers_record_and_end_their_processes_and_the_watcher_is_checked() -> 
 
 
 def test_push_cadence_and_shepherding_are_wired() -> None:
-    assert "pushDue" in (VIBE / "scripts" / "commit-worktree.mjs").read_text()
-    assert "`pushDue: true`" in _text(VIBE / "SKILL.md")
+    cadence = (VIBE / "scripts" / "push-cadence.mjs").read_text()
+    assert "attention signal" in cadence
+    assert "never permission to" in cadence
     assert "shepherd.mjs --pr <n> --repo <owner/repo>" in _text(HANDOFF / "SKILL.md")
-    assert "every 45 minutes" in _text(FLEET / "SKILL.md"), "operator ruling 2026-10-22 moved the cadence from 90 to 45 minutes"
+    fleet = _text(FLEET / "SKILL.md")
+    assert "cadence never authorizes checkpoint commits" in fleet
+    assert "no push for 45 minutes" in fleet
 
 
 def test_migration_order_compose_projects_precedent_and_path_gates_are_wired() -> None:
@@ -66,7 +69,8 @@ def test_criteria_audit_and_rulings_check_gate_the_handoff() -> None:
     for script in ("criteria-audit.mjs", "rulings-check.mjs"):
         assert (HANDOFF / "scripts" / script).exists()
         assert f"scripts/{script}" in handoff, script
-    assert "fresh-context reviewer given only the ticket's criteria and the diff" in handoff
+    assert "audit the uncommitted candidate" in handoff
+    assert "after independent review" in handoff
     assert '- Ruling <date> (<who>): "' in (VIBE / "references" / "ticket-template.md").read_text()
 
 
@@ -138,7 +142,7 @@ def test_long_commands_do_not_hide_orchestrator_messages() -> None:
     templates = _text(FLEET / "references" / "templates.md")
     skill = _text(FLEET / "SKILL.md")
     assert "more than a few minutes run in the background" in templates
-    assert "Check the worker inbox between steps" in templates
+    assert "board.mjs <orchDir> pending <you>" in templates
     assert "interrupt after the second unanswered delivery" in skill
 
 

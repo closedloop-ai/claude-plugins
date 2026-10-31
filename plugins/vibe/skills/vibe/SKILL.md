@@ -1,12 +1,14 @@
 ---
 name: vibe
-description: Start or resume a vibe-coding session in symphony-alpha for a non-engineer (such as an executive or a product manager) working in the Codex Desktop in-app browser. For a pure mockup or fake-data exploration, invokes the repository's canonical prototype skill itself in an owned prototype session, always shares on Vercel, and returns the immutable preview URL, full deployed commit SHA, and slug; handoff preserves the same live ticket and next-owner assignment, opening a PR only when the person asks for one. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
+description: Start or resume a vibe-coding session in symphony-alpha for anyone (an executive, designer, product manager or engineer) working in the Codex Desktop in-app browser. For a pure mockup or fake-data exploration, invokes the repository's canonical prototype skill itself in an owned prototype session, always shares on Vercel, and returns the immutable preview URL, full deployed commit SHA, and slug; handoff preserves the same live ticket and next-owner assignment, opening a PR only when the person asks for one. Use when someone says "vibe", "let's build", "start a vibe session", "pick up where I left off", or wants to change the product UI without touching git or the backend. Hand the finished work off with the handoff skill.
 ---
 
 # Vibe
 
-You orchestrate a session for a person who does not use git. Workers make and
-deploy each requested change; design and engineering review every result.
+You orchestrate a session for the person running it, who may be an executive,
+a designer, a product manager or an engineer; nobody has to use git. Workers
+make and deploy each requested change; design and engineering review every
+result.
 
 ## Your role: orchestrate, never do the work
 
@@ -16,47 +18,110 @@ Keep your context for the conversation and session state; NEVER do the work:
   create files, read tickets in full, or run builds, tests, linters,
   installers, git, or `gh`.
 - You commit; no worker ever does, because a commit runs the repository's
-  commit hooks. You commit only through `scripts/commit-worktree.mjs`, which
-  returns short JSON.
+  commit hooks. You commit only through `scripts/commit-worktree.mjs`, after the complete
+  change is push-ready: iterate uncommitted through all selected checks,
+  independent review and verification before the first PR commit. Each result
+  names HEAD plus the diff/tree hashes (`scripts/tested-head.mjs`). This extends
+  the fleet-orchestrator push-ready ruling, whose human source is cited once there.
 - You may talk to the person; run this skill's scripts
   (`scripts/vibe-preflight.sh`, `scripts/vibe-sessions.mjs`,
   `scripts/commit-worktree.mjs`, `scripts/local-plans.mjs`,
   `scripts/session-questions.mjs`, `scripts/run-bounded.mjs`,
   `scripts/dist/writer-state.mjs`, `scripts/dist/claude-worker.mjs`,
-  `scripts/plugin-version.mjs`, `scripts/precedent-check.mjs`); run the update
-  commands `plugin-version.mjs` prints, only when the person chose to update;
+  `scripts/plugin-version.mjs`, `scripts/precedent-check.mjs`); run
+  `plugin-version.mjs update` only when the person chose to update;
   call ClosedLoop `get-me`
-  and closedloop-graph `sync_status`; inspect the in-app browser for live-Asana
+  and closedloop-graph `sync_status` (and, in Claude Code, a connection's own
+  `authenticate` tool as `references/preflight.md`, "Restoring a connection",
+  says); inspect the in-app browser for live-Asana
   precedent or accepted visual QA (`references/quality-loop.md`); and dispatch.
 - You and every worker leave plugins, plugin marketplaces and plugin caches
   alone, apart from the update the person chooses at startup (section 1,
   "Plugin version"), and never clone the plugin's repository to run other
-  tooling (`references/guardrails.md`, "Plugins and tooling"); a needed
-  tooling fix stops the session as that section says.
+  tooling (`references/guardrails.md`, "Plugins and tooling").
 - Everything else goes to a worker, including one-line changes. Never open a
   source file yourself.
 - Give workers only the worktree, session summary and mode, ticket, request,
   and an annotation's text, element and route. Ask for short results, not files.
 - Every worker brief says: after the first authentication failure, use CI logs
   or the API for the same fact, or stop and ask; never write, export or route
-  around credentials. Never force-push; this covers every remote. Proof and
+  around credentials. On a machine without the staging e2e identities the
+  local web e2e lane is never run, so its sign-in failure never happens: it is
+  recorded not run and the containerized or CI run covers it
+  (`scripts/pre-pr-lanes.mjs`; operator ruling, 2026-10-28). Never force-push; this covers every remote. Proof and
   scratch commits use a fresh `proof/<sha>-<n>` ref.
 
+Before any reply, including handoff or relayed worker text, check for a safe
+next step the session can take and take it. Do not tell the person they need
+an engineer or assign them an engineering repair unless the worker and vibe
+root have each tried their safe paths, all available paths are exhausted,
+and the remaining block requires a human-only decision or access, or an
+engineering change outside session authority. Say "needs an engineer" only
+for that engineering change. For a real block, finish the supported checked
+push and ticket record where possible, then always say what the worker and
+root tried, what exactly remains blocked, and offer to pass the saved work
+to someone now. A stop or wait alone is never the final reply. When the
+person says they are the engineer or asks what
+is next, give the concrete action you can take now or the exact human-only
+action, never just a referral. Apply this in Codex and Claude Code alike
+(`references/guardrails.md`, "Plugins and tooling").
+A failed check gets at most one rerun. If it still fails, narrow that check or
+use an accepted CI path. If it never started, retry that exact invocation once.
+If a broad check fails twice and its selected subset can run separately, run
+that narrower subset instead of retrying the broad check. If this machine
+cannot launch the selected check and automatic validation for the pushed
+commit includes it, wait for and read that automatic check. Replace any
+premature blocked stop or engineering referral with the pending safe path and
+its eventual result. Do not start a handover while any of these safe paths
+remains. Name a narrowed or CI-deferred check in the existing progress or
+handoff summary, in plain words.
+When a check-run install changes an install-managed file, compare its state
+before that command and the requested dependency manifests. Keep a lockfile
+change required by an intended manifest edit. For accidental drift proven
+to come from the check-run install, back up the changed file in the session's
+private area, restore the committed file, and continue without asking. Ask
+about restoration only for an earlier or person-owned edit, in plain words
+with a recommendation (`references/guardrails.md`, "Checks").
+
 Every word the person sees follows `references/plain-words.md`, including
-worker text you relay.
+worker text you relay. Anything you point the person at to look at or open
+is a link that opens that exact thing in one click, named as the person sees
+it (`references/plain-words.md`, "Links to what the person should look at",
+has the details):
+
+- A component in a given state, such as a step partway through a tour, is
+  its story in the component gallery:
+  `node scripts/vibe-sessions.mjs link --worktree "<wt>" --story <story id>`.
+  A page is its real path: `link --page <path>`. When the writer named a
+  story for the change and you do not know the page's real path, link the
+  story first.
+- Never the app's front page with directions from there ("open the app, go
+  to the dashboard, step to step 2"), and never a story id, file path or
+  route pattern on its own.
+- When `link` prints `url: null`, nothing is running or deployed to open:
+  say so in plain words and offer to start it, and name no place to go
+  look in the meantime.
 Follow `references/quality-loop.md` for the persistent writer, queue, review
-and communication. Never show technical plans or questions. Updates name the
+and communication. Never show technical plans or questions, except when the
+person explicitly asks for the plan, files, diff or commands: that one reply
+gives what they asked for as the writer returned it, with paths, names and
+terms unchanged, and the next message is plain again
+(`references/plain-words.md`, "When the person asks for technical detail").
+Updates name the
 completed feature, unmet criteria and current work. Other messages are only:
 
 - section 5's non-waiting notices, including the endings line in a new
   session's first reply;
 - the startup version check (section 1, "Plugin version");
+- the setup check block, once per conversation (section 1, "Setup check");
 - the visual QA offer and its results (section 6, step 5).
 
 Research product questions in the single order in `references/quality-loop.md`.
-Interrupt only for one necessary unresolved question with full context. Never
-re-ask a settled decision; a decision is settled only when it traces to a human
-statement (`references/quality-loop.md`, "Communication and product questions").
+When the first five sources do not settle the question, the next action is live
+Asana; do not stop at the product owner's recorded direction. Interrupt only
+for one necessary unresolved question with full context. Never re-ask a settled
+decision; a decision is settled only when it traces to a human statement
+(`references/quality-loop.md`, "Communication and product questions").
 
 This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 
@@ -84,8 +149,9 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   the handoff summary) run on `gpt-5.6-terra`, every writer, reviewer and
   verifier on `gpt-6-sol`, all at `high`. Never pass `xhigh` unless the person
   asked for it. Spawn `vibe-change-worker` only ONCE per
-  session with a read-only hold brief, record its returned actual native ID,
-  register/claim its queued request, then follow up/resume that same context.
+  session with a read-only hold brief, record its returned actual native ID
+  (the agent path `spawn_agent` returns, such as `/root/vibe_writer`, is that
+  ID), register/claim its queued request, then follow up/resume that same context.
   Never make a new source writer per request/unit. Repo agents live in `<repo>/.claude/agents/`.
   A new native helper also starts with a read-only hold brief; obtain its real
   ID, acquire the grant, then resume that SAME helper for the operation.
@@ -101,6 +167,14 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   quality-loop.md's turn stranded by a plugin upgrade: `migrate` with
   `retainedRecord`, internally, never a question or a message to engineering.
   Startup and confirmed discard use the same bounded stable contexts below.
+- Codex loads this plugin's `hooks/hooks.json` (the shell, kill and merge
+  guards, the away checklist and the compaction resume) but runs it only once
+  it is reviewed and trusted in Codex's `/hooks`, and again after it changes.
+  So after any context compaction in Codex, before the next action, run
+  fleet-orchestrator's `scripts/fleet-home.mjs resume` when you orchestrate a
+  fleet and read each `READ` file it prints, then reread the session record
+  (`vibe-sessions.mjs show`) and `session-questions.mjs list`; never continue from
+  the summary alone.
 - Usage limits (both harnesses). In Codex, run
   `node scripts/codex-usage.mjs check` before spawning a worker or
   forwarding a request to the writer, and again when a worker turn stalls
@@ -120,6 +194,12 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   `USAGE_LIMIT_REACHED`. Then start no new worker turn and tell the person
   the same way. Pass `"allowCredits": true` in the launcher input only after
   the person explicitly allowed paid extra usage.
+  A recorded Codex writer whose active turn actually stopped on that limit is
+  different from a pre-launch usage check: when Claude is available, finish
+  the dead turn as `FAILED`, then run `writer-state.mjs migrate` with the
+  recorded writer input and `harnessSwitch` from
+  `references/quality-loop.md`. Never start a side writer outside the session
+  record.
 - Plugin root: the folder two levels above this file (in Codex,
   `~/.codex/plugins/cache/closedloop-ai/vibe/<version>/`; take it from where
   this skill was loaded, never a hardcoded version). Resolve it to an absolute
@@ -255,45 +335,91 @@ no PR itself, and never offers to send the person the branch to merge. Never ask
 person about tests or any other engineering choice: those rules decide it, or
 it goes to engineering. Before relaying `NEEDS_PERSON`, enforce the product
 research and necessity gate in `references/quality-loop.md`; technical choices
-stay with the workers.
+stay with the workers. A `NEEDS_PERSON` or `BLOCKED` result, a check's
+suggested fix and a stop's reason never reach the person as something to do
+unless only a human can do it (a click, a sign-in, a choice between endings,
+a product answer); any other remedy is the writer's, or engineering's on the
+live ticket's Engineering checklist (`references/plain-words.md`, "What the
+person is asked to do").
 
 ## 1. Preflight
 
 ### Plugin version
 
-Every `$vibe` start, new or resume, first checks whether this plugin is the
-latest release: run
-`node scripts/plugin-version.mjs --runtime codex` in Codex, or
-`--runtime claude` in Claude Code. It runs once per conversation, so its
-question is never repeated and does not go through `session-questions.mjs`.
+Every `$vibe` start, new or resume, first checks whether the ClosedLoop
+plugins installed on this machine, in Claude Code and in Codex, are the latest
+release, and shows the setup check, in one command. Call ClosedLoop `get-me`
+and closedloop-graph `sync_status` yourself first, then run
+`node scripts/plugin-version.mjs check --runtime codex --closedloop <state> --graph <state>`
+in Codex, or `--runtime claude` in Claude Code, where each `<state>` is
+`connected` only when that call answered in this conversation, otherwise
+`not-connected`; never assume either. In Codex, run it with escalated
+permissions from the first try (`sandbox_permissions: "require_escalated"`,
+justification "Check whether vibe is up to date"): it reads the latest
+release from GitHub and saves this conversation's result outside the
+workspace, and Codex's sandbox blocks both (`references/preflight.md`,
+"Commands the sandbox blocks"). An output with `"escalate":true` from a run
+without escalation was stopped by the sandbox: run the same command again
+escalated before you reply, and use the first output only if the person
+declines. An escalated run's output is final. It runs once per conversation, so
+its question is never repeated and does not go through
+`session-questions.mjs`.
 
 - `current`: say nothing about it and continue.
-- `unknown`, or the command could not run at all (no Node yet on a first
-  run): the check never blocks. Tell the person in one line, as part of your
-  first reply, "I couldn't check whether vibe is up to date, so I'm carrying
-  on with the version you have." and continue.
-- `outdated`: ask only on a fresh start whose opening message does not already
-  say to proceed. Ask exactly: "A newer version of vibe is available (you have
-  <installed>, the latest is <latest>). Do you want to keep going with this
-  one, or update now?" That question is the whole first reply: the endings line
-  of a new session (section 5, "Notices that never wait") waits for its answer.
-  On "keep going", continue with this version. On a resumed session, or when
-  the opening message already says to proceed, report "A newer version of vibe
-  is available (you have <installed>, the latest is <latest>). I'm carrying on
-  with this version as requested." and continue in the same turn. Do not ask
-  the version question or stop orchestration in either case.
-  That applies only after the fresh-start question. The next reply is then the
-  new session's first reply, endings line included. On "update", run each
-  command in its `update` list in order
-  yourself; this is the one plugin change you make, and only on the person's
-  choice (`references/guardrails.md`, "Plugins and tooling"). When they all
-  succeed, tell the person, in Codex: "vibe is updated. Quit the ChatGPT app
-  completely (press Cmd and Q), open it again, start a new chat and type
-  $vibe." In Claude Code: "vibe is updated. Close this Claude Code session,
-  start a new one and type /vibe:vibe." Then stop: the update is used only
-  from a new session. When a command fails, tell them in one plain line that
-  the update could not finish, so you are carrying on with the version they
-  have and they can message engineering about it; never retry it another way.
+- `unknown` from the escalated run, or after the person declined it, or the
+  command could not run at all (no Node yet on a first run): the check never
+  blocks. Tell the person in one line, as part of your first reply, "I
+  couldn't check whether vibe is up to date, so I'm carrying on with the
+  version you have." and continue. An `unknown` with `"escalate":true` from a
+  run without escalation is not this case.
+- `outdated`, new or resumed, unless the opening message already says to
+  proceed: ask exactly "A newer version of vibe is available (<versions>). Do
+  you want me to update it now, or keep going with this one? Keeping going
+  with an older version could give worse results.", where `<versions>` is the
+  result's `versions`. That question is the whole first reply: the endings
+  line of a new session (section 5, "Notices that never wait") waits for its
+  answer. The next reply is then the new session's
+  first reply, endings line included.
+- On "keep going", run `node scripts/plugin-version.mjs choose --choice
+  proceed` and continue with this version.
+- When the opening message already says to proceed (a fleet orchestrator's
+  brief, for example), run `choose --choice proceed --by opening-message`,
+  report "A newer version of vibe is available (<versions>). I'm carrying on
+  with this version as requested, though an older version could give worse
+  results." and continue in the same turn, without asking.
+- On "update", run `choose --choice update`, then `node
+  scripts/plugin-version.mjs update`; this is the one plugin change you make,
+  and only on the person's choice (`references/guardrails.md`, "Plugins and
+  tooling"). It updates every outdated ClosedLoop plugin in Claude Code and
+  in Codex, whichever has one, and checks each reached the latest version.
+  Its `sessions` names each vibe session whose writer was bound to the
+  release it replaced: `migrated` needs nothing more, and `on-resume` is
+  migrated when that session resumes (`references/quality-loop.md`,
+  "Recorded definition migration"). Neither is news for the person.
+  Whatever its status, tell the person, for each harness in its `restart`,
+  in Codex: "vibe is updated. Quit the ChatGPT app completely (press Cmd and
+  Q), open it again, start a new chat and type $vibe." In Claude Code: "vibe
+  is updated. Close this Claude Code session, start a new one and type
+  /vibe:vibe." When `"status":"failed"`, also tell them in one plain line
+  that the update could not finish and state the exact restart action, if
+  available; never retry it another way. Then stop when the harness you run
+  in is in
+  `restart`: the update is used only from a new session. Otherwise carry on
+  with the version they have.
+
+### Setup check
+
+When the check prints `"print":true` (the escalated run's output, when there
+was one), its `block` (the installed closedloop-core and vibe versions for
+each installed harness, each marked latest, newer available or not checked,
+and both connections) opens your first reply word for word, before the
+version question or the endings line. Send that reply as soon as you have the
+block, before you read any other file, run the preflight or dispatch a
+worker. `"print":false` means this conversation already showed it (a
+compaction or a later turn): show nothing. If the check could not run at all,
+`node scripts/plugin-version.mjs status --closedloop <state> --graph <state>`
+prints the same block from the versions installed here. A `not connected`
+line starts "Restoring a connection" at once (section "Prerequisites").
 
 ### Prerequisites
 
@@ -314,8 +440,11 @@ the validated remembered checkout using the startup context above, or the exact
 owned session once it exists. Serialize any existing bug-ticket creation/progress
 through that setup action's exclusive record turn; setup never patches code. The
 only things the person ever does are type their Mac password into an
-installer prompt, finish a browser sign-in, allow Codex into a folder when
-macOS asks, and sign in to Claude again with the one Terminal step the
+installer prompt, click Allow once when Codex asks to run a setup command
+(`references/preflight.md`, "Commands the sandbox blocks"), finish a browser
+sign-in (then start a new chat only when "Restoring a connection" step 5 says
+so), allow Codex into a folder when macOS asks, and sign in
+to Claude again with the one Terminal step the
 `claude-login` fix gives; the worker reports those actions as `NEEDS_PERSON`. Checkout and
 runtime choices are resolved internally from current evidence, never as a
 technical question for the person. You and the
@@ -338,10 +467,18 @@ As soon as Node, Git and the exact checkout validate, use the owned launcher for
 every normal call. No other launcher failure permits this native bootstrap.
 
 Also confirm the two connectors answer: ClosedLoop (`get-me`) and
-closedloop-graph (`sync_status`). closedloop-graph is required. If it does
-not answer, dispatch `vibe-setup-worker` to restore the connection; never ask
-the person to set anything up beyond what that worker reports as
-`NEEDS_PERSON`.
+closedloop-graph (`sync_status`). closedloop-graph is required. If either
+does not answer, dispatch `vibe-setup-worker` to restore that connection
+(`references/preflight.md`, "Restoring a connection"); never ask the person
+to set anything up beyond what that worker reports as `NEEDS_PERSON`. On
+Codex, send the one heads-up line from `references/preflight.md`, "Commands
+the sandbox blocks", before you dispatch it for a sign-in (ClosedLoop or
+GitHub), and when a worker says the sandbox refused a sign-in command,
+dispatch it again to rerun that command with an escalation request, never
+handing the command to the person. When it
+returns `DONE`, do that section's step 5 yourself: call the tool again in
+this chat and carry on when it answers. Ask for a new chat only when it still
+fails or the connection was just added, never as a precaution.
 
 ## 2. Start or resume
 
@@ -397,6 +534,9 @@ Only after the person chose resume, run `node scripts/vibe-sessions.mjs list`
     becomes a criterion on the pull request's one follow-up ticket
     (`scripts/review-followup.mjs`), and the thread gets that ticket's link
     (or why it is invalid) and is resolved, so it never blocks the merge.
+  When recording this sequence, name `vibe-guardrails-reviewer`, the pull
+  request body, and the fixing commit explicitly rather than paraphrasing those
+  required steps away.
 
 Before offering anything, for each `handed-off` session whose
 `livePlanStatus` is `APPROVED`, dispatch `vibe-ticket-worker` in plan mode
@@ -404,16 +544,19 @@ with `mergeCheck: true` (its own record turn): when the session's pull
 request has merged it moves the PLN to `EXECUTED`. This is internal; never
 mention it to the person.
 
-Then follow "Resuming" below.
+Once the person picks a session, record this conversation's version check
+and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
+"<wt>"`. Before its first request or fleet takeover, apply
+`references/quality-loop.md`, "Local plan". Then follow "Resuming" below.
 
 ### Starting new
 
 1. Your first reply to the new session carries the endings line (section 5,
    "Notices that never wait"), after the plugin version check (section 1,
    "Plugin version"): when the version is current or unknown it goes in the
-   very first reply; when it is outdated and the fresh start did not already
-   say to proceed, the version question comes first on its own and the endings
-   line goes in the first reply after the person answers it. A resume or an
+   very first reply; when it is outdated and the opening message did not
+   already say to proceed, the version question comes first on its own and the
+   endings line goes in the first reply after the person answers it. An
    opening instruction to proceed reports the version and continues, so it
    does not delay this line or the work. Use the work the person already described.
    Only when they have not supplied it, ask what they want to work on: a ClosedLoop ticket (ISS-, PRD-, or a pasted
@@ -455,10 +598,13 @@ Then follow "Resuming" below.
    `origin/main`. The live ticket is assigned to that person. If it refuses
    because the slug is taken, derive a different slug and run it again;
    never search previous sessions to resolve it.
-5. Record this conversation as the session's orchestrator:
+5. Record this conversation as the session's orchestrator. In Codex run
    `node scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"` (it reads
-   `CODEX_THREAD_ID`; outside Codex, pass `--thread <id>` if you have one, or
-   skip it).
+   `CODEX_THREAD_ID`). In Claude Code run `node scripts/vibe-sessions.mjs
+   claude-sessions --worktree "<wt>" --transcript "<this Claude session's
+   actual transcript path>"`. The command verifies the transcript's own
+   session ID. Never invent an ID or record the implementation writer as the
+   orchestrator.
 6. Dispatch `vibe-setup-worker` to bootstrap the new worktree, then
    `vibe-ticket-worker` in create mode with the worktree, the
    requirements worker's brief, the originating ticket if any, and the mode.
@@ -498,8 +644,10 @@ Never create a new worktree/branch for these requests or an arbitrary
 unrecorded prototype. Next-owner assignment and canonical metadata transitions
 remain in the handoff flow.
 
-Resuming: use the session's `worktree`, and run `codex-sessions` again so a
-new conversation is recorded too. A resumed session gets no endings line. Starting new or resuming stops any other
+Resuming: use the session's `worktree`, and run the matching `codex-sessions`
+or `claude-sessions` command again so a
+new conversation is recorded too. Existing tickets use quality-loop's plan
+rule. A resumed session gets no endings line. Starting new or resuming stops any other
 session's local Storybook or Desktop (dispatch `vibe-setup-worker` to stop
 what that session's `stack` lists) but never touches its files. You commit
 only through `scripts/commit-worktree.mjs` and never push, stash, or rebase;
@@ -542,8 +690,9 @@ id the worker mapped to their answer with
 and dispatch it again. If it returns `NEEDS_PERSON` saying they are not an
 admin of any of their organizations, pass that on as written and wait for
 their answer. If it returns `BLOCKED`, tell the person in one or two
-plain lines what failed and suggest they message engineering, naming this
-work by its summary. Never open or give the person a URL after `BLOCKED`: any
+plain lines what failed and which supported recovery or handover you are
+taking (`references/guardrails.md`, "Plugins and tooling"). Never open or
+give the person a URL after `BLOCKED`: any
 preview address without its own deployment shows the stage production app.
 
 When it returns `DONE`:
@@ -627,7 +776,12 @@ prep, build, the quick checks the commit hooks need, the orchestrator's
 commit, deploy, and showing the person; each finished change deploys without
 being asked (section 6). Browser E2E, logical QA, product-contract QA, the
 guardrails and adversarial reviews and other heavy validation run only at
-handoff, never here. Visual QA runs at handoff too, and during the session
+handoff, never here. A frozen-render finding never holds a build-loop commit
+or preview: the build-phase inventory lists it under
+`diffRules.deferredToHandoff` and handoff settles it. A deferred finding and
+its remedy (render the frozen stories, pause an animation) are never relayed
+to the person, not even when they ask what to do next
+(`references/plain-words.md`, "What the person is asked to do"; ISS-13321). Visual QA runs at handoff too, and during the session
 only when the person accepts the offer or asks for polish: between requests,
 after a deploy (section 6, step 5), never inside a request's build.
 
@@ -640,6 +794,13 @@ uses `scripts/dist/claude-worker.mjs` with the scoped canonical role; its
 recorded underlying session ID is resumed, never a fresh context with the same
 name. Use the parent-discovered exact capabilities, not a configured-prefix
 guess or blanket MCP inheritance. All private input is JSON on stdin.
+
+Before launching or resuming the recorded writer, read
+`writer-state.mjs status`: when its `recordedDefinition` is `removed` (a
+plugin update deleted the recorded release), or `changed` with the installed
+release newer than the recorded one, run
+`references/quality-loop.md`'s "Recorded definition migration" first, never a
+launch that fails on the missing definition (ISS-13321).
 
 Use the owned state helper's status/enqueue/claim/take-input/finish actions.
 Queue incoming requests while one is active. For native Codex, claim its exact
@@ -742,7 +903,8 @@ evidence, never by replacing the writer.
    request and deploy it under section 6 without being asked (requests that
    waited through a running deploy go out together after the last of them);
    when the deploy is done, tell the person only the completed feature, that it's ready to
-   look at, and the next work, in their own terms, plus, plainly, each
+   look at with a link to each changed page (`vibe-sessions.mjs link --page`;
+   `references/plain-words.md`, "Links to what the person should look at"), and the next work, in their own terms, plus, plainly, each
    criterion the writer reported `not met yet` as not done yet; never claim it. The next queued
    request goes to the SAME ID/context. Update the session summary through
    the existing session script in a serial record turn.
@@ -781,13 +943,17 @@ what it already built, like any other request about it.
   `references/guardrails.md`, "Copy".
 - New Storybook components. When the plan needs NEW Storybook
   components, the writer builds those components and their stories before the
-  feature and returns `STORIES_READY` with each new story's ID. Take the local
-  `storybookUrl` from the session's stack (`vibe-sessions.mjs show`); if none
-  is running, dispatch `vibe-setup-worker` to start it. Send one plain message
-  pointing the person to `<storybookUrl>/?path=/story/<id>` for each new
-  story (never the bare `iframe.html` canvas; `references/environment.md`,
-  "Storybook links"), in words like "I built the new pieces first; you can
-  look at each one in the component gallery: <link>", with no mention of a
+  feature and returns `STORIES_READY` with each new story's ID and the name
+  the gallery shows for it. Build each link with
+  `node scripts/vibe-sessions.mjs link --worktree "<wt>" --story <id> --local`
+  (new stories are only on the local Storybook until the next redeploy); it
+  prints `<storybookUrl>/?path=/story/<id>` from the session's stack. If it
+  prints `url: null`, no local Storybook is running: dispatch
+  `vibe-setup-worker` to start it, then run `link` again. Send one plain
+  message linking each new story by its gallery name (never the bare `iframe.html` canvas; `references/environment.md`, "Storybook links")
+  and never a bare id (`references/plain-words.md`, "Links to what the
+  person should look at"), in words like "I built the new pieces first; you can
+  look at each one in the component gallery: [<gallery name>](<link>)", with no mention of a
   server, a story or Storybook, then resume the SAME writer to build the feature with them. A change
   that only reuses existing components skips this step.
 - Endings. In the first reply to a NEW session, include this one line as it
@@ -795,11 +961,8 @@ what it already built, like any other request about it.
   either open a pull request for you, or pass it to design or engineering to
   finish." It is a notice, not a question: it rides along with whatever that
   first reply says or asks, and nothing waits on it. The one thing that
-  comes before it is an outdated plugin's version question when a fresh start
-  did not already say to proceed (section 1, "Plugin version"), which is asked
-  alone; the endings line then rides in the first reply after that answer. An
-  opening instruction to proceed reports the outdated version and includes
-  this line while continuing. Never add it when resuming a session, and
+  comes before it is an outdated plugin's version question, asked alone
+  (section 1, "Plugin version"). Never add it when resuming a session, and
   never repeat it later in the session.
 
 Pure mockups still use canonical `$prototype` guidance through this writer;
@@ -855,7 +1018,7 @@ in the writer's queue until it finishes; then the writer builds every request
 that waited, and one deploy after the last of them carries them all. A
 "redeploy" said during a running deploy joins that next deploy.
 
-1. Run `node scripts/vibe-sessions.mjs codex-sessions --worktree "<wt>"` so
+1. Run the matching `codex-sessions` or `claude-sessions` command from step 5 so
    the ticket lists every subagent so far.
 2. Keep deployment progress internal; report completion, not technical steps.
    After the writer's quick checks, ROOT commits the checked deliverable
@@ -868,19 +1031,19 @@ that waited, and one deploy after the last of them carries them all. A
    `node scripts/commit-worktree.mjs --worktree "<wt>" --subject "<live ticket slug>: <plain imperative summary of the changes since the last redeploy>" --body "<the screens changed, one per line>"`.
    The subject stays under 72 characters and never mentions AI tools. The
    script leaves out the session's `localFixes` and files that never belong
-   in a commit, and the repository's commit hook runs. `committed: false`
-   means nothing changed; continue. A commit reporting `pushDue: true`
-   (`scripts/push-cadence.mjs`) has work that waited 45 minutes unpushed:
-   publish this tested checkpoint now, send later review findings as
-   follow-up commits, add no new scope to an unpushed checkpoint, and never
-   hold a push for optional evidence (screenshots, extra e2e, full lanes). `"ok":false` means the hook refused:
+   in a commit, and the repository's commit hook runs. Add `--exclude <path>`
+   for each untracked file the inventory lists as `forbidden` or
+   `outsideAllowed` that the session did not write (a person's own files);
+   the commit goes ahead without them and without asking anyone to move them. `committed: false`
+   means nothing changed; continue. `"ok":false` means the hook refused:
    resume the SAME persistent writer in fix mode with the error, then commit
    again. An existing test or fixture the change broke is repaired there
    (`references/guardrails.md`, "Repair, don't author"). When the writer
-   returns `BLOCKED` because only engineering can settle it (a test of live
-   behavior whose assertions would have to change), tell the person in one plain line that this
-   part needs engineering and suggest they message engineering, naming this
-   work by its summary, as section 3 does; never ask them to decide it.
+   returns `BLOCKED` because a test of live behavior would need changed
+   assertions, first check the alternative paths in `references/guardrails.md`,
+   "Plugins and tooling". If the block remains, record the exact cause and
+   tried paths, then offer the supported pushed handover. Never ask the person
+   to repair the test.
 4. Dispatch `vibe-environment-worker` in redeploy mode with the worktree, the
    live ticket slug, the session summary, and the session's `localFixes`
    paths. First resume that SAME writer's source-owned `progress` continuation
@@ -890,8 +1053,9 @@ that waited, and one deploy after the last of them carries them all. A
    deployed, and updates the ticket. The quick checks have run in the
    loop; no tests are authored.
 5. On `DONE`, reload the app tab (and the Desktop and Storybook tabs if
-   open), look at it yourself, and tell them it's ready to look at,
-   naming plainly any acceptance criterion still `not met yet` (section 5,
+   open), look at it yourself, and tell them it's ready to look at, with a
+   link to each changed page or component (`references/plain-words.md`,
+   "Links to what the person should look at"), naming plainly any acceptance criterion still `not met yet` (section 5,
    step 7). When the session has a reference image, look at each touched
    screen beside it first: a visible difference is not ready, so resume the
    SAME writer with it and redeploy before saying ready. Never say it
@@ -960,8 +1124,9 @@ were going to code it"), explain the two endings plainly in a line or two and
 ask the same question; never jump straight to asking for a name. Never offer
 to send them the branch to merge.
 
-On "keep it", dispatch `vibe-setup-worker` to stop local Storybook or Desktop
-if either runs. Their work stays in the worktree and on the branch until they
+On "keep it", stop local Storybook and Desktop with
+`node scripts/vibe-sessions.mjs stop --worktree "<wt>"`, which signals only a
+recorded process it proves is still the session's own (ISS-13321). Their work stays in the worktree and on the branch until they
 come back and say they are done; remind them that is how it gets a pull
 request or reaches design and engineering. On "throw it away", follow section 9.
 

@@ -1,15 +1,21 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { historyOrigin } from './history-origin.mjs';
-import { endProcesses, isAlive, orphans, parsePids, stopCandidates } from './helpers.mjs';
+import { removeOwnedDockerResources } from '../../vibe/scripts/e2e-lock.mjs';
+import { endProcesses, isAlive, orphans, parsePids, pendingE2eCleanups, readIdentity, reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const run = (args) => spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), ...args], { encoding: 'utf8' });
+const run = (args) => {
+  const [dir, action] = args;
+  const isolated = action === 'status' && !args.includes('--e2e-lock-dir')
+    ? [...args, '--e2e-lock-dir', path.join(dir, 'test-e2e-stack')] : args;
+  return spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), ...isolated], { encoding: 'utf8' });
+};
 const tempDir = (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-helpers-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -93,6 +99,144 @@ const fakeTable = (processes) => {
 /** A target as `stopped` builds it from the ledger, with the identity recorded at `pid` time. */
 const recorded = (pid, group, identity = `id-${pid}`) => ({ pid, group, identity });
 const FAKE = 2_147_480_000;
+
+test('a terminal PR reconciles only its recorded helper and reports a refused cleanup with owner and ticket', async () => {
+  const record = { owner: 'writer-a', ticket: 'ticket-one', repo: 'acme/repo', pr: '42', ending: 'pr-terminal',
+    startedAt: '2026-10-29T00:00:00Z', pids: [FAKE + 101], identities: { [FAKE + 101]: 'started-a' },
+    dockerResources: { project: 'qa-owned', containers: [], volumes: [], networks: [] } };
+  const other = { owner: 'writer-b', ticket: 'ISS-OTHER', repo: 'acme/repo', pr: '43', ending: 'pr-terminal',
+    startedAt: '2026-10-29T00:00:00Z', pids: [FAKE + 102], identities: { [FAKE + 102]: 'started-b' } };
+  const ledger = { 'qa-a': record, 'qa-b': other };
+  const ended = [];
+  const cleaned = [];
+  const result = await reconcileTerminalHelpers(ledger, {
+    prState: async (_repo, pr) => pr === '42' ? 'terminal' : 'open',
+    end: async (targets) => { ended.push(targets); return []; },
+    cleanup: (resources) => { cleaned.push(resources.project); },
+    alive: () => false,
+  });
+  assert.equal(result.findings.length, 0);
+  assert.equal(result.changed, true);
+  assert.match(record.stoppedAt, /^\d{4}-/);
+  assert.equal(other.stoppedAt, undefined);
+  assert.deepEqual(ended.map((targets) => targets[0].pid), [FAKE + 101]);
+  assert.deepEqual(cleaned, ['qa-owned']);
+  record.stoppedAt = undefined;
+  const refused = await reconcileTerminalHelpers(ledger, {
+    prState: async () => 'terminal', end: async () => [], alive: () => false,
+    cleanup: () => { throw new Error('Docker witness changed'); },
+  });
+  assert.match(refused.findings[0], /LEFTOVER qa-a owner writer-a ticket ticket-one: Docker witness changed/);
+  assert.equal(record.stoppedAt, undefined);
+});
+
+test('an unverified or still live process is never marked stopped after PR closure', async () => {
+  const ledger = { qa: { owner: 'writer-a', ticket: 'ticket-one', repo: 'acme/repo', pr: '42', ending: 'pr-terminal',
+    pids: [FAKE + 103], identities: {} } };
+  let signals = 0;
+  const result = await reconcileTerminalHelpers(ledger, { prState: async () => 'terminal',
+    end: async () => { signals += 1; return []; }, alive: () => true });
+  assert.equal(signals, 1);
+  assert.match(result.findings[0], /LEFTOVER qa owner writer-a ticket ticket-one/);
+  assert.equal(ledger.qa.stoppedAt, undefined);
+});
+
+test('a reused live PID is foreign and does not block owned Docker reconciliation', async () => {
+  const pid = FAKE + 104;
+  const ledger = { qa: { owner: 'writer-a', ticket: 'ticket-one', repo: 'acme/repo', pr: '42', ending: 'pr-terminal',
+    pids: [pid], identities: { [pid]: 'old process birth' },
+    dockerResources: { project: 'qa-owned', containers: [], volumes: [], networks: [] } } };
+  let cleaned = 0;
+  const result = await reconcileTerminalHelpers(ledger, { prState: async () => 'terminal',
+    end: async () => [], alive: () => true, identityOf: () => 'new foreign process birth',
+    cleanup: () => { cleaned += 1; } });
+  assert.deepEqual(result.findings, []);
+  assert.equal(cleaned, 1);
+  assert.ok(ledger.qa.stoppedAt);
+  assert.deepEqual(orphans({ qa: { stoppedAt: 'now', pids: [pid], identities: { [pid]: 'old process birth' } } },
+    () => true, () => 'new foreign process birth'), []);
+});
+
+test('a Docker inspect read error reports a leftover and keeps the terminal helper active', async () => {
+  const id = 'a'.repeat(64);
+  const ledger = { qa: { owner: 'writer-a', ticket: 'ticket-one', repo: 'acme/repo', pr: '42', ending: 'pr-terminal',
+    dockerResources: { project: null, containers: [{ id, created: '2026-10-29T00:00:00Z', project: 'qa-owned' }],
+      volumes: [], networks: [] } } };
+  const result = await reconcileTerminalHelpers(ledger, { prState: async () => 'terminal', end: async () => [], alive: () => false,
+    cleanup: (resources) => removeOwnedDockerResources(resources, { run: ([, action]) => action === 'inspect'
+      ? { status: 1, stderr: 'daemon read failed' } : { status: 0, stdout: '' } }) });
+  assert.match(result.findings[0], /LEFTOVER qa owner writer-a ticket ticket-one: Docker container inspect failed/);
+  assert.equal(ledger.qa.stoppedAt, undefined);
+  assert.ok(ledger.qa.dockerResources);
+});
+
+test('unknown endings and an uncaptured Compose project cannot reach stopped', (t) => {
+  const dir = tempDir(t);
+  const unknown = run([dir, 'start', 'qa', '--ending', 'whenever']);
+  assert.equal(unknown.status, 2);
+  assert.match(unknown.stderr, /ending/);
+  writeFileSync(path.join(dir, 'helpers.json'), JSON.stringify({ qa: { startedAt: '2026-10-29T00:00:00Z',
+    owner: 'writer-a', ticket: 'ticket-one', project: 'qa-owned', ending: 'pr-terminal' } }));
+  const stopped = run([dir, 'stopped', 'qa']);
+  assert.equal(stopped.status, 2);
+  assert.match(stopped.stderr, /resources|witness/i);
+  assert.equal(JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8')).qa.stoppedAt, undefined);
+});
+
+test('terminal reconciliation refuses a Compose project without captured resources', async () => {
+  const ledger = { qa: { startedAt: '2026-10-29T00:00:00Z', owner: 'writer-a', ticket: 'ticket-one',
+    repo: 'acme/repo', pr: '42', project: 'qa-owned', ending: 'pr-terminal' } };
+  const result = await reconcileTerminalHelpers(ledger, { prState: async () => 'terminal', end: async () => [], alive: () => false });
+  assert.match(result.findings[0], /LEFTOVER qa owner writer-a ticket ticket-one:.*resources|witness/i);
+  assert.equal(ledger.qa.stoppedAt, undefined);
+});
+
+test('fleet status lists private pending e2e cleanup with owner and ticket', (t) => {
+  const dir = tempDir(t);
+  const lockDir = path.join(dir, 'locks', 'e2e-stack');
+  const pending = path.join(path.dirname(lockDir), 'e2e-cleanup-token.json');
+  mkdirSync(path.dirname(lockDir), { recursive: true });
+  writeFileSync(pending, JSON.stringify({ project: 'qa-owned', owner: { worktree: 'writer-a', ticket: 'ticket-one' },
+    resources: { project: 'qa-owned', containers: [], volumes: [], networks: [] } }));
+  const status = run([dir, 'status', '--e2e-lock-dir', lockDir]);
+  assert.equal(status.status, 1);
+  assert.match(status.stdout, /LEFTOVER .*owner writer-a ticket ticket-one.*pending e2e cleanup/i);
+  rmSync(pending);
+  assert.equal(run([dir, 'status', '--e2e-lock-dir', lockDir]).status, 0);
+});
+
+test('fleet status hides only the cleanup record for the same live lock owner birth', (t) => {
+  const dir = tempDir(t);
+  const lockDir = path.join(dir, 'locks', 'e2e-stack');
+  const pending = path.join(path.dirname(lockDir), 'e2e-cleanup-current-token.json');
+  const owner = { pid: 4242, token: 'current-token', identity: 'birth-a', worktree: 'writer-a', ticket: 'ticket-one' };
+  mkdirSync(lockDir, { recursive: true });
+  writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify(owner));
+  writeFileSync(pending, JSON.stringify({ project: 'qa-owned', owner }));
+  const current = { alive: () => true, identityOf: () => 'birth-a' };
+  assert.deepEqual(pendingE2eCleanups(lockDir, current), [], 'the current run is not a leftover');
+  assert.equal(pendingE2eCleanups(lockDir, { alive: () => true, identityOf: () => 'birth-b' }).length, 1, 'pid reuse fails closed');
+  assert.equal(pendingE2eCleanups(lockDir, { alive: () => false, identityOf: () => null }).length, 1, 'dead owner stays visible');
+  writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({ ...owner, pid: 4343, token: 'other-token' }));
+  assert.equal(pendingE2eCleanups(lockDir, current).length, 1, 'a different live lock stays visible');
+  writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify(owner));
+  writeFileSync(pending, JSON.stringify({ project: 'qa-owned', owner: { ...owner, identity: undefined } }));
+  assert.equal(pendingE2eCleanups(lockDir, current).length, 1, 'missing birth identity fails closed');
+  writeFileSync(pending, JSON.stringify({ project: 'qa-owned', owner }));
+  rmSync(lockDir, { recursive: true, force: true });
+  assert.equal(pendingE2eCleanups(lockDir, current).length, 1, 'missing lock stays visible');
+});
+
+test('fleet lifecycle status names the owner and ticket when cleanup proof is incomplete', (t) => {
+  const dir = tempDir(t);
+  writeFileSync(path.join(dir, 'helpers.json'), JSON.stringify({ qa: {
+    startedAt: '2026-10-29T00:00:00Z', owner: 'writer-a', ticket: 'ticket-one',
+    ending: 'pr-terminal', pr: '42',
+  } }));
+  const result = run([dir, 'status']);
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /LEFTOVER qa owner writer-a ticket ticket-one: missing ending or ownership record/);
+});
 const waitUntil = async (predicate) => {
   for (let i = 0; i < 100 && !predicate(); i += 1) await new Promise((resolve) => setTimeout(resolve, 50));
   return predicate();
@@ -140,7 +284,8 @@ test('stopping a helper ends the processes it recorded, and a stopped helper wit
   assert.equal(run([dir, 'status']).status, 0);
 
   const left = child(t, 'sleep', ['60']);
-  assert.deepEqual(orphans({ 'qa-b': { stoppedAt: 'x', pids: [left] }, 'qa-c': { pids: [left] } }), [{ name: 'qa-b', pids: [left] }]);
+  assert.deepEqual(orphans({ 'qa-b': { stoppedAt: 'x', pids: [left], identities: { [left]: 'owned' } }, 'qa-c': { pids: [left] } },
+    () => true, () => 'owned'), [{ name: 'qa-b', pids: [left] }]);
   assert.deepEqual(orphans({ '#stacks': { s: { guide: 'g' } } }), []);
 });
 
@@ -156,7 +301,8 @@ test('a process that ignores SIGTERM is killed after the grace; a survivor keeps
 
   const ledger = path.join(dir, 'helpers.json');
   const left = child(t, 'sleep', ['60']);
-  writeFileSync(ledger, JSON.stringify({ 'qa-e': { startedAt: 'x', pids: [left] }, 'qa-f': { stoppedAt: 'x', pids: [left] } }));
+  writeFileSync(ledger, JSON.stringify({ 'qa-e': { startedAt: 'x', pids: [left] },
+    'qa-f': { stoppedAt: 'x', pids: [left], identities: { [left]: readIdentity(left) } } }));
   const status = run([dir, 'status']);
   assert.equal(status.status, 1);
   assert.match(status.stdout, new RegExp(`^ORPHAN qa-f ${left} still running$`, 'm'));
@@ -245,15 +391,29 @@ test('identity is read again before every signal: a pid reused during the grace 
   assert.equal(fake.state(FAKE + 14), 'alive', 'the app now holding the pid is not killed');
 });
 
-test('pid records each process with its start time and command, and refuses one it cannot read', (t) => {
+test('pid preserves the raw start time and command identity format and refuses one it cannot read', (t) => {
   const dir = tempDir(t);
   const server = child(t, 'sleep', ['60']);
   assert.equal(run([dir, 'pid', 'qa-i', String(server)]).status, 0);
   const identity = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'))['qa-i'].identities[server];
   assert.match(identity, /sleep 60/);
+  assert.equal(identity, readIdentity(server));
   const refused = run([dir, 'pid', 'qa-j', String(FAKE + 15)]);
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /cannot read the start time and command/);
+});
+
+test('a pre-upgrade raw process identity still matches through the default stopped path', (t) => {
+  const dir = tempDir(t);
+  const server = child(t, 'sleep', ['60']);
+  const identity = readIdentity(server);
+  assert.match(identity, /sleep 60/);
+  writeFileSync(path.join(dir, 'helpers.json'), JSON.stringify({ qa: {
+    startedAt: '2026-10-29T00:00:00Z', pids: [server], identities: { [server]: identity },
+  } }));
+  const stopped = run([dir, 'stopped', 'qa', '--grace-seconds', '2']);
+  assert.equal(stopped.status, 0, stopped.stdout + stopped.stderr);
+  assert.ok(JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8')).qa.stoppedAt);
 });
 
 test('stopping a helper recorded with --group ends its whole process group', { timeout: 30_000 }, async (t) => {

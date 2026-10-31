@@ -238,5 +238,7 @@ def test_a_visible_change_needing_an_outside_path_is_never_silently_reverted() -
     ))
     assert_all(flat(GUARDRAILS.read_text()), (
         "The same holds for a path outside the allowed table: the writer does not edit it in the loop either.",
-        "so they never accept a change the branch cannot keep. A fix to vibe's own tooling is different",
+        "so they never accept a change the branch cannot keep.",
+        'A vibe tooling defect follows "Plugins and tooling" above; it does not stop the allowed work by itself.',
+        "Only after both the worker and vibe root tried their safe paths",
     ))

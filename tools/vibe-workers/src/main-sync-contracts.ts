@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { identifierSchema } from "./contracts.js";
+import { identifierSchema, workerIdSchema } from "./contracts.js";
 import { ciRunLocatorSchema, recordActionSchema, requestContinuationSchema } from "./record-context.js";
 import { validationCommitSchema, validationWitnessSchema, storedValidationRecipeSchema } from "./main-sync-validation-contracts.js";
 
@@ -20,7 +20,7 @@ export const packageOwnerSchema = z.object({ path: canonicalRelativeSchema, name
 export type PackageOwner = z.infer<typeof packageOwnerSchema>;
 export const originProofSchema = z.object({ headSha: commitSchema, treeSha: commitSchema,
   trackedInputSha256: digestSchema, inputSha256: digestSchema, source: z.object({ runtime: z.enum(["codex", "claude"]),
-    workerId: identifierSchema }).strict(), checkedAt: z.string().datetime(),
+    workerId: workerIdSchema }).strict(), checkedAt: z.string().datetime(),
   files: z.array(originFileSchema).max(10000),
   packages: z.array(packageOwnerSchema).max(16).default([]),
   producers: z.array(z.object({ id: z.string().min(1).max(128), ownerPath: canonicalRelativeSchema.optional(),
@@ -29,7 +29,7 @@ export const originProofSchema = z.object({ headSha: commitSchema, treeSha: comm
 export type OriginProof = z.infer<typeof originProofSchema>;
 export const operationContextSchema = z.object({
   runtime: z.enum(["codex", "claude"]), worktree: z.string().min(1), agentName: identifierSchema,
-  mode: z.literal("record"), recordAction: recordActionSchema, workerId: identifierSchema,
+  mode: z.literal("record"), recordAction: recordActionSchema, workerId: workerIdSchema,
   requestId: identifierSchema, lease: z.string().uuid(), publicationPurpose: mainSyncPurposeSchema.optional(),
   mainSyncTransactionId: z.string().uuid().optional(),
   mainSyncRequestContinuations: z.array(requestContinuationSchema).min(1).max(2).optional(),
@@ -44,23 +44,24 @@ const runEvidenceSchema = z.object({ exitCode: z.number().int(), log: z.string()
 export const capturedMainRunSchema = z.object({ outcome: z.enum(["failed", "passed", "unrunnable"]),
   argv: z.array(z.string()).min(1).max(256).optional(), exitCode: z.number().int().optional(),
   log: z.string().min(1).optional(), sha256: z.string().length(64).optional(), reason: z.string().min(1).max(512).optional() }).strict();
-export const mainComparisonSchema = z.object({ classification: z.enum(["main-preexisting", "session-caused", "flaky"]),
+export const mainComparisonSchema = z.object({ classification: z.enum(["main-preexisting", "session-caused", "flaky", "machine-limited"]),
   mainSha: commitSchema, sessionRuns: z.array(runEvidenceSchema).min(1).max(2), main: capturedMainRunSchema }).strict();
 export type MainComparison = z.infer<typeof mainComparisonSchema>;
+const ACCEPTED_FAILURES = new Set(["main-preexisting", "machine-limited"]);
 export const commandReceiptSchema = z.object({ argv: z.array(z.string()).min(1).max(256),
   bindings: z.record(z.string()).optional(), cwd: z.string().optional(),
   timeoutMs: z.number().int().min(1000).max(2 ** 31 - 1).optional(),
   exitCode: z.number().int(), log: z.string().min(1), sha256: z.string().length(64),
   comparison: mainComparisonSchema.optional() }).strict()
-  // Only a check that also fails on the captured main may stand in a receipt with a failing exit.
-  .refine((item) => (item.exitCode === 0) === (item.comparison?.classification !== "main-preexisting")
+  // Only a check that also fails on the captured main, or runs out of time there too, may stand in a receipt with a failing exit.
+  .refine((item) => (item.exitCode === 0) === !ACCEPTED_FAILURES.has(item.comparison?.classification ?? "")
     && item.comparison?.classification !== "session-caused", "Failing check without main-preexisting evidence");
 const failedCheckSchema = z.object({ argv: z.array(z.string()).min(1).max(256), bindings: z.record(z.string()).optional(),
   cwd: z.string().optional(), comparison: mainComparisonSchema }).strict();
 export const e2eLimitationSchema = z.object({ argv: z.array(z.string()).min(1).max(256),
   bindings: z.record(z.string()).optional(), reason: z.string().min(1).max(4096) }).strict();
 const fileDeltaSchema = z.object({ path: z.string().min(1), status: z.string().min(1) }).strict();
-const publicationTurnSchema = z.object({ runtime: z.enum(["codex", "claude"]), workerId: identifierSchema,
+const publicationTurnSchema = z.object({ runtime: z.enum(["codex", "claude"]), workerId: workerIdSchema,
   requestId: identifierSchema, lease: z.string().uuid() }).strict();
 export const ciEvidenceSchema = z.object({ runId: z.number().int().positive().safe(), attempt: z.number().int().positive().safe(),
   workflowId: z.number().int().positive().safe(), definitionSha: commitSchema, checkoutSha: commitSchema,

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.closedloop.vibe-eval-t2</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>NIGHTLY_WRAPPER_SCRIPT</string>
+    <string>PRIVATE_ENV_FILE</string>
+    <string>HEAVY_SLOT_EXECUTABLE</string>
+    <string>NODE_EXECUTABLE</string>
+    <string>VIBE_EVAL_NIGHTLY_SCRIPT</string>
+    <string>CLEAN_MAIN_CHECKOUT</string>
+    <string>RUN_ROOT_PARENT</string>
+    <string>RESULTS_STORE</string>
+    <string>CLAUDE_EXECUTABLE</string>
+    <string>CODEX_EXECUTABLE</string>
+    <string>UV_EXECUTABLE</string>
+    <string>GH_EXECUTABLE</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>EXECUTABLE_PATH</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>2</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>STANDARD_OUT_LOG</string>
+  <key>StandardErrorPath</key>
+  <string>STANDARD_ERROR_LOG</string>
+</dict>
+</plist>

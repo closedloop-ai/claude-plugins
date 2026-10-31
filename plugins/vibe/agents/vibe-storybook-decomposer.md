@@ -86,6 +86,15 @@ Do this first, in both modes.
    wrapper, its own copy); and every existing story that exercises it, with
    its title, story names, lifecycle tag and file, minus those an open pull
    request removes: never place an entry on a fallback a sibling retires.
+   Also report the setup the new stories need that a story file already
+   declares: in every existing story file for the same component, page or
+   folder, its top-level route fixtures, stored-view or storage clearing,
+   query-cache seeding, fixture components and fixture data. The new stories
+   import that setup from a non-story fixture module (one beside them, such
+   as `*-story-fixtures.ts`); when the setup lives only in a story file, the
+   writer first moves it into such a module and imports it in both files.
+   Never re-type it in a new story file: a copy drifts from the original on
+   the next fix, and the repo's Storybook checks may fail it.
 4. Decide in this order.
    - First: a change to an existing component (new states or variants, an
      extra column action, a new footer) never retitles, re-tags or moves its
@@ -121,6 +130,18 @@ Do this first, in both modes.
      lifecycle: the root, lifecycle tag and tree position always come from
      `apps/storybook/TAXONOMY.md`, and a precedent in a v1.0 root never puts
      new work in v1.0.
+   - The lifecycle tag of a new entry also follows its flags (operator ruling,
+     2026-10-27): list each PostHog flag that gates the surface where it is
+     mounted and each flag the planned stories turn on
+     (`parameters.appCore.enabledFlags`, a desktop page's `flags` prop), and
+     read each one's value in the session's production flag snapshot (the
+     file at `flagSnapshot.file` in `vibe-sessions.mjs show`). A surface
+     reachable only behind a flag that is off or missing there gets the
+     `preview` tag wherever it sits in the tree, never `stable`, and its story
+     file names that flag the way the repo's `apps/storybook/TAXONOMY.md`
+     says (a `// Preview: <flag key> is off in production` comment). With no
+     snapshot on the session the tag cannot be decided: report it as a
+     Conflict for `engineering`.
    - Either way, stories document the components consumers actually render,
      one story per state, never internal render pieces: a shared capability's
      generic mechanics stay in the shared component's existing stories, and
@@ -150,7 +171,9 @@ Placement:
 - Capability: <named without the entity>
 - Precedents: <each: entity, providing component path, how hosts consume it, each story title, story names, lifecycle tag and file>, or none found
 - Owner: <path to build or extend>, per <doc section> or mirroring <precedent path>
-- Stories: <each story to add or extend: title, lifecycle tag, file>, root and tag per <TAXONOMY.md section>, structure per <doc section> or mirroring <precedent>; an existing file's title and tag unchanged, a v1.0 file not edited beyond a compile-only repair (step 4)
+- Stories: <each story to add or extend: title, lifecycle tag, file, and each flag that gates its surface or that it turns on with that flag's value in the production flag snapshot (one off or missing makes the tag `preview`)>, root and tag per <TAXONOMY.md section>, structure per <doc section> or mirroring <precedent>; an existing file's title and tag unchanged, a v1.0 file not edited beyond a compile-only repair (step 4)
+- Fixtures: <each piece of setup the new stories need that a story file already declares: its story file and line, and the non-story fixture module to import it from, or the move into one the writer makes first>, or none
+- Names: <each planned story name, and for every thing the name claims (each kind, level or state it lists, a word such as every or all, a painted label or status), the play assertion that will check it, or the args that render it when the story has no play>; a claim with no assertion is a name to narrow or a play to complete before the story is written
 - Conflict: <each disagreement: audience `design` or `engineering`, both sides quoted with paths, and how it was decided>, or none
 ```
 
@@ -195,7 +218,12 @@ Placement:
 
 ## Verify
 
-As an advisor, run no writing commands. Inspect the current result and report
+As an advisor, run no product source, test or session-record writes. For a
+handoff frozen render, use the central `frozen-render.mjs` command with its
+prepared base worktree. The renderer owns both servers through the verifier
+run wrapper and stops each on success or failure; supply no server URL. For
+other Storybook checks, use `verify-storybook-process.mjs run`. Do not adopt a
+server already running or start an ad hoc static server. Inspect the current result and report
 what the sole writer should check: `pnpm exec biome check` and
 `pnpm --filter storybook exec vitest run <changed story files>` for the
 changed stories only, never the whole Storybook suite. Report: files
@@ -207,22 +235,57 @@ advice was applied.
 In handoff mode also run these checks and report each result with its
 evidence:
 
-- Frozen renders: for each inventory `frozen-render` finding, render its
-  story IDs on the base and branch with fixed args, globals and viewport and
-  run their plays; a difference is a finding, a match is what its change log
-  line cites.
+- Frozen renders: run `../skills/handoff/scripts/frozen-render.mjs --repo
+  <worktree> --base <base> --base-dir <prepared base worktree> --story-file
+  <file> ... --out <dir>` once with every story file the inventory's
+  `frozen-render` finding lists, never a capture of your own. The base URL
+  is the repo's Storybook served from a disposable worktree made by
+  `../skills/handoff/scripts/frozen-render.mjs prepare-base --repo <worktree>
+  --base <base> --story-file <file> ... --dir <dir>` with the same story
+  files, bootstrapped with `.closedloop-ai/loops-setup.sh` and removed
+  afterwards (`git worktree remove`); never copy or edit a file in it
+  yourself. It is the base commit with each compile-only repaired story file
+  (same title, tags and story names) taken from the session, so a repaired
+  play runs on both sides and only the app code differs. The renderer starts
+  the head and base servers itself with the owned run wrapper, derives the URLs,
+  and stops both before the base worktree is removed. It is heavy
+  validation and runs under the same load and slot rules as every other
+  handoff heavy run. It renders each story twice on the base and once on the
+  branch with its clock, animations, viewport, fonts, theme, args and globals
+  pinned, waits for each play to finish and judges it with
+  `story-play-verdict.mjs`. It prints one line per story and a summary; read
+  those and, for a `blocking` story, only its cropped diff, never the full
+  screenshots. Each `blocking` story is a finding. A `same-failure` story
+  fails the same way on the base and an `unstable-on-base` story renders
+  differently on two base renders: neither is a finding, and each goes on the
+  live ticket as a Known main failure. A story the run marks `head story
+  file on both sides` was compared with the session's repaired story file;
+  a story file changed beyond a compile-only repair is not compared and
+  its stories block. When nothing blocks, report the
+  `Frozen render unchanged` line it prints for the writer to record
+  unchanged; never write or edit that line yourself. Each finding and its
+  remedy (make a story deterministic, pause an animation) is for the writer,
+  or for engineering on the ticket when the session may not make it; never
+  phrase it as something the person running the session does
+  (`../skills/vibe/references/plain-words.md`, "What the person is asked to
+  do"; ISS-13321).
 - Flag-on states: every surface the session claims has its flag-on state on
   that surface's existing story entry.
 - States: for each state the ticket, PRD or acceptance criteria name, the
   story on the consumed component that shows it, or the missing state.
 - Names: each new or changed story whose name claims more than its args and
-  play function show and assert, quoting the name and the story body.
+  play function show and assert, quoting the name and the story body, checked
+  against the Placement block's Names line.
 - Fixtures: each windowed or paged story fixture not built with the repo's
   paging helper, each typed entity whose slug prefix does not match its type,
   and each value-dependent column tested only with all-default values that let
-  it collapse.
+  it collapse; and each top-level helper in a new or changed story file that
+  repeats setup another story file declares, instead of importing it from the
+  non-story fixture module the Placement block's Fixtures line names.
 - Emitters and lifecycle: a story state no production path emits, and a
-  `stable` tag on a surface only reachable behind a default-off flag.
+  `stable` tag on a story whose surface is reachable only behind a flag that
+  is off or missing in the session's production flag snapshot; it is
+  `preview` wherever it sits in the tree.
 - Sidebar folds: every new `!dev` marker and the person's explicit request for
   sidebar reduction that authorizes it. Without that request it is a finding.
 - Version History: the session's new entries in `Start Here/Version History`
@@ -241,3 +304,9 @@ evidence paths for the same writer/ticket helper; never author or fix source.
 Every Storybook link opens the full Storybook UI,
 `<storybook-base>/?path=/story/<story-id>`, never the bare `iframe.html`
 canvas (`../skills/vibe/references/environment.md`, "Storybook links").
+A story or page named for the person to look at carries a link that opens it,
+never a bare story ID, path or route pattern: give its story ID or the page's
+real path for the example data, and the link comes from
+`../skills/vibe/scripts/vibe-sessions.mjs link`
+(`../skills/vibe/references/plain-words.md`, "Links to what the person should
+look at").

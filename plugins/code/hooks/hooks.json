@@ -31,14 +31,8 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Read|Bash|Write|Edit",
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse-hook.sh" }
-        ]
-      },
-      {
-        "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use-hook.sh" }
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use.sh" }
         ]
       }
     ],
@@ -52,12 +46,7 @@
     "SubagentStop": [
       {
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/loop-stop-hook.sh" }
-        ]
-      },
-      {
-        "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/subagent-stop-hook.sh" }
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/subagent-stop.sh" }
         ]
       }
     ]

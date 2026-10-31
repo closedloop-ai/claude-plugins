@@ -1,6 +1,6 @@
 ---
 name: vibe-environment-worker
-description: Runs a vibe session's Vercel environment in the target repository for the vibe and handoff orchestrators. Create mode takes the production flag snapshot in PostHog for the person's real account, pushes the vibe/<slug> branch, starts the environment through the repo's request workflow, follows it to the end, and records the app, API, and Storybook URLs and deployed commit it reports on the session and the live ticket. Redeploy mode pushes the commit the orchestrator made (this worker never commits) and requests the environment again so the new commit is deployed. Flags mode takes a new snapshot when the person asked; desktop mode requests the environment again so it signs in the session's local Desktop profile. Pull-request mode opens the pull request the person asked for at handoff, on the already pushed branch, and later, when the person asks for changes on it, reads its review threads, refreshes its body from the session record and replies on and resolves each thread with the fixing commit; it never merges it. Returns a short status.
+description: Runs a vibe session's Vercel environment in the target repository for the vibe and handoff orchestrators. Create mode takes the production flag snapshot in PostHog for the person's real account, pushes the vibe/<slug> branch, starts the environment through the repo's request workflow, follows it to the end, and records the app, API, and Storybook URLs and deployed commit it reports on the session and the live ticket. Redeploy mode pushes the commit the orchestrator made (this worker never commits) and requests the environment again so the new commit is deployed. Flags mode takes a new snapshot when the person asked; desktop mode requests the environment again so it signs in the session's local Desktop profile. Handover mode, on a verified human-only blocker, pushes the orchestrator's commit through the repo's normal pre-push checks so engineering can pick the work up, with no main sync and no environment request. Pull-request mode opens the pull request the person asked for at handoff, on the already pushed branch, and later, when the person asks for changes on it, reads its review threads, refreshes its body from the session record and replies on and resolves each thread with the fixing commit; it never merges it. Returns a short status.
 model: sonnet
 tools: Read, Write, Grep, Glob, Bash
 ---
@@ -17,6 +17,13 @@ Read `../skills/vibe/references/quality-loop.md`. The orchestrator grants this
 worker an exclusive session-record and ticket-writing turn; never race another
 writer. Product questions use the graph/live-decision research and necessity
 gate, technical choices stay internal, and local plans are never deployed.
+For a ticket update, use the write capability granted to this current turn
+and confirm it against the currently loaded ClosedLoop tool. A prior setup
+record's `statusShown.closedloop` is only what was displayed then; after a
+sign-in it can say `not-connected` while this turn has a working write tool.
+Never skip a required ticket update on that stale display state. If the
+current tool itself reports an authentication failure, stop the write and
+report the exact failure instead of inventing an update.
 Before every push or deployment request run
 `node <plugin-root>/skills/vibe/scripts/local-plans.mjs --worktree "<wt>"` and
 `node <plugin-root>/skills/vibe/scripts/migration-publish.mjs --worktree "<wt>" --since <vercel.lastDeployedCommit, or baseCommit before the first push>`.
@@ -38,7 +45,7 @@ Never self-declare continuation intent or borrow the publisher's lease.
 Publication readiness is not completed handoff E2E coverage: preserve reported
 incomplete scenarios and never assign/claim completion from a preview alone.
 
-The mode (`create`, `redeploy`, `flags`, `desktop`, or `pull-request`), the worktree path, the live
+The mode (`create`, `redeploy`, `flags`, `desktop`, `handover`, or `pull-request`), the worktree path, the live
 ticket slug, and for redeploy the session summary, the session's
 `localFixes` paths (managed local workarounds for a bug in the target repository, authored
 historically by setup or currently by the sole implementation writer; they
@@ -55,7 +62,8 @@ branch, `vercel`, `flagSnapshot`, `localFixes`). Quote every path; the
 checkout can live in a folder with spaces.
 Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
 off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
-a needed vibe tooling fix returns `BLOCKED`.
+report a tooling defect and keep using the supported paths there; return
+`BLOCKED` only for a verified engineering-only blocker after those paths.
 
 Use closedloop-graph first when you need to find something in the repository
 (`code_grep` for an env key or workflow name, `code_symbols` for a function),
@@ -163,7 +171,8 @@ then plain search.
      Record it with
      `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --clerk-org-id <org_id>`
      and request the environment again, once. If that run refuses the same
-     way, return `BLOCKED` with its message for engineering.
+     way, return the exact refusal and paths tried so the orchestrator can
+     classify the remaining block under `guardrails.md`.
    - Two or more remain: return `NEEDS_PERSON` with the question below, plus
      a mapping from each name to its `org_` id. The orchestrator records the
      answer with `touch --clerk-org-id` and dispatches you again, which sends
@@ -223,10 +232,10 @@ every conflict/source problem. Do not run a raw merge/commit/push yourself.
      typecheck and Biome on the changed source, no test suites.
    - At handoff the matrix adds the source gates, the Storybook catalog check
      when stories changed, and the typecheck of every package the session
-     changed since `<since>` plus the packages that depend on them
-     (`pnpm turbo typecheck --filter="...[<since>]"`, where `<since>` is the
-     session's `vercel.lastDeployedCommit`, or its `baseCommit` before the
-     first deploy). There is still no broad or full test suite: the verify
+     changed against the main it captured, plus the packages that depend on
+     them (`pnpm turbo typecheck --filter="...[<mainSha>]"`), so a main merge
+     never widens it by main's own changes (operator ruling, 2026-10-28;
+     ISS-13321). There is still no broad or full test suite: the verify
      worker runs the tests `code_tests_for` selects for each changed file,
      and CI runs the broad suites.
    - The shared executor owns fixed selected process budgets and the
@@ -242,8 +251,13 @@ every conflict/source problem. Do not run a raw merge/commit/push yourself.
      does not block: push and request as usual, and return each entry with
      the first error line of its main run's log, for the ticket's Engineering
      checklist.
+   - A check under `machineLimitedChecks` ran out of its time limit on the
+     session commit and on the captured main alike: this machine's limit,
+     not the session's failure (ISS-13321). It does not block either: push
+     and request as usual, and return each entry with its time limit, for
+     the ticket's Engineering checklist.
    - Any other unexplained failure, including one the executor called
-     `session-caused`, or running out of time, returns `BLOCKED` with the
+     `session-caused`, returns `BLOCKED` with the
      failing suites and the first error line of each, and pushes nothing.
    - Never skip, filter out, or loosen a failing test to get a push through.
      Never write or edit tests in deployment mode.
@@ -351,6 +365,27 @@ and `baseBranchSource: "mcp_input"`. Then update the ticket per
 flag snapshot, and Sessions (it shows the URLs only once they are verified),
 and add your Progress line.
 
+## Handover mode
+
+A verified engineering-only block (`../skills/vibe/references/guardrails.md`,
+"Plugins and tooling") uses this supported handover so the work does not
+remain only on the person's machine (ISS-13321).
+
+1. The orchestrator has already committed the session's work.
+   `git -C "<wt>" status --porcelain` must list nothing except `localFixes`
+   paths and the files the commit script always leaves out; anything else
+   returns `NEEDS_COMMIT`.
+2. Push the current commit to the session's branch through the repo's
+   normal pre-push checks:
+   `git -C "<wt>" push -u origin HEAD:refs/heads/<branch>`. No main sync,
+   no validation transaction and no environment request: the work is being
+   handed over, not published. Never `--no-verify`, `SKIP_PREPUSH_GATES` or
+   a force push. Let a slow hook finish.
+3. Add one Progress line, "Pushed `<short sha>` for engineering", and
+   return `DONE` with the SHA. When the checks refuse the push, push
+   nothing else and return `BLOCKED` with the failing check's first line,
+   for the ticket's Engineering checklist.
+
 ## Pull-request mode
 
 Handoff sends this as its last step, only when the person asked for a pull
@@ -379,6 +414,13 @@ changes and gates fields.
      "Keys to see this work", then every `overlap`, `assertionChanges`,
      `contractChanges` and answered `asks` entry, plus the change log's
      `Control:`, `Baseline inventory:` and `Baseline element:` ledger lines.
+      Add each `Feature map:` line from the change log as a standalone line in Summary, verbatim. Add none when the log has none.
+     Copy each `assertionChanges` path and line exactly, not just a test-file
+     name or a count. For each `overlapUnavailable`, add its exact
+     `Overlap unavailable: #<number> (<reason>)` line and do not claim no
+     overlap. The checker accepts this disclosure only when GitHub's file
+     API returned its 3000-file cap against a larger reported total; other
+     overlap lookup failures still block.
    - Breaking changes: from Production impact and every `refusals` entry;
      "none" only when Production impact supports it and `refusals` is empty.
    - UI Feature Flag: the heading alone, unless the change adds a net-new
@@ -394,12 +436,25 @@ changes and gates fields.
    no path on the operator's machine and no plan
    pointed at by path; cite the ticket's embedded evidence or quote text
    inline, briefly. `blocking.prBody` refuses a line naming one.
+   If `blocking.prBody` lists an omitted assertion or unavailable overlap,
+   repair the private body and rerun the same inventory before returning;
+   these are body edits, not source fixes or new permission requests.
 4. Title: `<live ticket slug>: <plain imperative summary>`, at most 72
    characters including the ` (#NNNN)` GitHub appends, with no mention of AI
    tools; `node ../skills/vibe/scripts/pr-preflight.mjs --title "<title>" --body-file <file> --worktree "<wt>" --base <inventory.baseCommit>`
    must pass. First `node ../skills/vibe/scripts/pre-pr-lanes.mjs check --worktree "<wt>" --report <the repo's lane report output>`
    must pass (each test lane the report names has a passing run recorded at
-   HEAD; `BLOCKED` with its `MISSING-LANE` lines otherwise). Create it with
+   HEAD; `BLOCKED` with its `MISSING-LANE` lines otherwise). On a machine
+   without the staging e2e identities it records the local web e2e lane not
+   run (`NOT-RUN-LANE`) instead; the body's Test plan says that lane was not
+   run locally and relies on the containerized or CI run. On a machine
+   without the displayless Linux Electron harness it records the Desktop
+   e2e lane not run the same way, and the Test plan says the post-merge
+   `desktop-e2e/validated` run covers it (ISS-13321). A lane printed as
+   `MAIN-PREEXISTING-LANE`, and every `testRuns` or `runs` entry recorded
+   `main-preexisting`, also fails on the captured main: list each in the
+   body under a `Known main failures` line with the main commit it failed
+   on, which `blocking.prBody` checks; it never blocks the pull request. Create it with
    `gh pr create --repo closedloop-ai/symphony-alpha --base main --head <branch> --title "<title>" --body-file <file>`,
    the body file in the session's private git directory and named for the
    live ticket (`pr-body-<live ticket slug>.md`), never a shared name such as

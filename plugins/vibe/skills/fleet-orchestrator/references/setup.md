@@ -42,6 +42,15 @@ Session, request and remote state dirs are derived per program. `fleet.sh` uses 
 
 Ask once, in one question set, only for keys `config.env` lacks; offer the default first.
 
+Ask nothing when the operator runs vibe (the work is their vibe session or
+ticket, not a fleet they run) or the program is `one-writer` or `no-writer`:
+the defaults already fit one writer, so the answers would change nothing.
+Write every default below and report
+them in one plain line, such as "I set this up with the defaults: this
+machine, Claude writers, no outside product for UX precedent." Ask about
+machines only when the operator already named another machine, never about
+writers, models, effort, budget or the move threshold.
+
 | Question | Default | Writes |
 |---|---|---|
 | Machines: this one only, or more (the ssh host of each)? | this one only | `REMOTE_HOST`, `REMOTE_FLEET_HOME`, `REMOTE_SHELL` |
@@ -53,9 +62,13 @@ Then set the slot counts from this machine's core count, write the file, and run
 
 ## Checklist
 
-1. Run `scripts/fleet-home.mjs start <slug>` ([layout](./state.md)) and write `<fleetHome>/config.env`.
+1. Run `scripts/fleet-home.mjs start <slug> --shape no-writer|one-writer|fleet` ([layout](./state.md)) and write `<fleetHome>/config.env`.
 2. Fill `sessions.txt` and `prs.txt` as codex-fleet-monitor describes; a session started through `fleet.sh` is listed as `local|remote <name>`.
 3. For each other machine: create its fleet home the same way, then check ssh and its login shell with `ssh <host> "<REMOTE_SHELL> 'command -v node codex gh'"`, which must print three paths. Install this plugin there in a persistent path.
 4. Get a branch to another machine's clone without going through the code host: `git push <host>:<path to its clone> <branch>:<branch>`, then on that machine `git worktree add <worktree path> <branch>` and run the bootstrap the target repo's docs name. Push to a branch that is not checked out there.
 5. On each machine, check closedloop-graph answers (its `sync_status` tool) from Claude Code and from Codex.
 6. Check the transport with `fleet.sh <orchDir> local|remote session last <name>` on an existing session.
+
+## Desktop app sidebars
+
+In the Codex app every Codex thread the fleet starts is an ordinary chat, so `fleet.sh ... session turn` names each new thread `<writer> · <ticket>` (the writer alone without `--ticket`) and moves it into one "Fleet workers" sidebar section, and `session end` archives it once the writer is merged or stopped. Each worker thread also starts with `threadSource: "chatgpt_hidden"`, the app's marker for threads it keeps out of the sidebar. Today it does not keep workers out of the app, because `thread/list` does not return it (after an app restart a marked worker is listed); workers drop out once a server returns it. The orchestrator's own thread never gets it, and the Codex CLI (`codex resume`, its picker) and `thread/list` ignore it. Most of the rest of the clutter is Claude Code sessions, which the Codex app pulls in through Import from Claude and, when Keep imports in sync is on, every 12 hours: each Claude worker, QA guide and teammate session becomes a chat. Workers carry readable names, and the usage probe and the precedent look save no session. To keep them out of the sidebar, leave recent chats out of a Claude import and turn Keep imports in sync off. The fleet never changes the app's settings. The Claude desktop app lists only the sessions started in it.
