@@ -104,7 +104,7 @@ describe("production Claude CLI adapter", () => {
       }
     }
     expect(proof[1]?.args).toContain("--resume");
-  }, 10_000);
+  });
 
   it("stops before writer registration when Claude cannot honor failure-blocking hooks", () => {
     const value = setup();

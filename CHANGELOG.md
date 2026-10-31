@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### vibe v1.1.24
 
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 168 words longer than in 1.1.23.
+
 #### Fixed
 - Headless Claude writers use a writer-only inline hook to edit the worktree's `.claude/skills/` and `.claude/commands/` files while refusing other protected targets and shell write workarounds. Unsupported Claude Code versions stop before writer registration with a clear internal setup route.
 - Generated worker bundles keep stable module labels across package-manager layouts, avoiding unrelated bundle changes during a rebuild.
