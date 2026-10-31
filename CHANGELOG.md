@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.6.0
+
+#### Added
+- New `closedloop-core:agent-qa` skill (`/closedloop-core:agent-qa` in Claude Code, `$agent-qa` in Codex) for selected web/mobile tests, saved-run evidence review and memidex knowledge provenance. Preserves recorded verdicts, matches the requested target and build, and separates historical knowledge use from current status. Its instructions ship under Apache-2.0; the separately licensed agent-qa runtime is not bundled.
+
 ### vibe v1.1.22
 
 #### Added

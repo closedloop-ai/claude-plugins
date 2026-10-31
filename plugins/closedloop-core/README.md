@@ -70,6 +70,15 @@ observations separately, and presents only checkpoints that need human judgment
 one at a time. Keeps the QA record and its evidence outside disposable
 worktrees. Findings do not authorize source changes or external writes.
 
+### `agent-qa`
+
+Runs selected web and mobile regressions with [agent-qa](https://vostride.com),
+reviews recorded run evidence, and traces advanced memidex memory and
+self-improvement through knowledge provenance. Requires a configured project
+and keeps execution, read-only review, and knowledge changes within the
+authorized scope. Automated evidence does not replace a requested human QA
+session. The separately licensed runtime is not bundled.
+
 ### `measurement-discipline`
 
 Guides performance diagnosis and experiments with repeated baselines, measured
