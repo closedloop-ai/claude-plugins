@@ -241,6 +241,10 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
     unless setup returns `NEEDS_PERSON`.
   - `CLAUDE_CLI_MISSING`, `AGENT_ROOT_INVALID`, `STALE_PLUGIN_ROOT`: internal;
     fix the call (leave `agentRoot` out) or dispatch setup.
+  - `PROTECTED_PATH_HOOK_UNAVAILABLE`: internal; dispatch `vibe-setup-worker`
+    to check the installed Claude Code version and writer hook, follow the
+    `claude-protected-hook-version` row in `references/preflight.md`, then
+    relaunch the same request. Ask the person nothing.
   Use the canonical own-plugin scoped definition and exact capabilities
   discovered/verified in the parent. It uses supported launch-time binding, not an invented per-call
   Agent override. Briefs/capability metadata are JSON on stdin. The implementation

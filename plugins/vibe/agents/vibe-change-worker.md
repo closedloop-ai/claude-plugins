@@ -45,6 +45,12 @@ Keep technical preparation internal. Report only short evidence/status to the
 orchestrator; it tells the person completed features and next work, not an
 upfront summary, technical question or plan to approve.
 
+Use native Edit or Write for files under the worktree's `.claude/skills/` and
+`.claude/commands/`. A Bash redirect or tee into either directory is still a
+protected write and is not the approved route. After any native edit refusal,
+stop this request and return `BLOCKED` with the denial reason. Never retry the
+file through Bash, Python, Node, tee, redirection, copy, move, or another tool.
+
 ## Read first
 
 Read `../skills/vibe/references/quality-loop.md`, `closedloop-graph.md`,

@@ -51,6 +51,10 @@ if (args[0] === 'auth' && args[1] === 'status') {
   process.stdout.write(JSON.stringify({ loggedIn: process.env.FAKE_CLAUDE_SIGNED_OUT !== '1' }) + '\n');
   process.exit(process.env.FAKE_CLAUDE_SIGNED_OUT === '1' ? 1 : 0);
 }
+if (args[0] === '--version') {
+  process.stdout.write('2.1.316 (Claude Code)\n');
+  process.exit(0);
+}
 const option = key => args[args.indexOf(key) + 1];
 const id = option(args.includes('--resume') ? '--resume' : '--session-id');
 const dropped = (process.env.FAKE_CLAUDE_DROP_SERVER || '').split(',').filter(Boolean);

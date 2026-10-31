@@ -4,7 +4,7 @@ import { closeSync, existsSync, openSync, readFileSync, realpathSync, rmSync, wr
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod";
-import { checkClaudeSignIn, checkRoleCapabilities, isAuthFailure, LaunchPrecheckError, missingMcpTools, missingServers,
+import { checkClaudeSignIn, checkClaudeSignInAsync, checkProtectedWriteSupportAsync, checkRoleCapabilities, isAuthFailure, LaunchPrecheckError, missingMcpTools, missingServers,
   SIGN_IN_PERSON_ACTION } from "./claude-preflight.js";
 import { runFromCanonicalEntry } from "./cli.js";
 import { capabilitiesSchema, identifierSchema, mcpToolAliases, mcpToolIdentity, readInput, statusSchema, type WorkerStatus } from "./contracts.js";
@@ -53,8 +53,24 @@ const readerRoles = new Set([
 ]);
 const receiptRoles = new Set(["vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-storybook-decomposer", "vibe-verify-worker"]);
 const previewActions = new Set(["create", "redeploy", "flags", "desktop"]);
+const PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS = 15;
 type PreviewProbeRunner = (command: string, args: string[], options: { encoding: "utf8" }) =>
   { status: number | null; stdout?: string | null; stderr?: string | null };
+
+/** The persistent Claude writer's inline policy, never installed in plugin-wide hooks. */
+export function protectedWriteSettings(hookPath: string, worktree: string): string {
+  const handler = { type: "command", command: process.execPath, args: [hookPath, worktree],
+    timeout: PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS, onFailure: "block", statusMessage: "Protected write guard" };
+  return JSON.stringify({ hooks: {
+    PermissionRequest: [{ matcher: "Edit|Write", hooks: [handler] }],
+    PreToolUse: [{ matcher: "Edit|Write|Bash", hooks: [handler] }],
+  } });
+}
+
+/** Keep the writer's permission policy and unattended prompt target inseparable. */
+export function protectedWriteLaunchArgs(hookPath: string, worktree: string): string[] {
+  return ["--settings", protectedWriteSettings(hookPath, worktree), "--permission-prompts", "none"];
+}
 
 /** The exact installed definition root and referenced scripts bound to one Claude dispatch. */
 export function dispatchFreshnessProblem(agentRoot: string, installedRoot: string, worktree: string, text: string): string | null {
@@ -193,10 +209,19 @@ export async function runWorker(rawInput: unknown) {
   const definition = readDefinition(agentRoot, input.agentName, input.capabilities);
   const bound = boundDefinition(definition, input);
   checkRoleCapabilities(input.agentName, input.capabilities);
-  checkClaudeSignIn();
+  const persistent = input.agentName === "vibe-change-worker";
+  if (!persistent) checkClaudeSignIn();
   const { place, target: discardPlace } = resolveRecordContext(input);
   const reviewSource = receiptRoles.has(input.agentName) ? reviewSourceIdentity(definition.root, place.root) : undefined;
-  const persistent = input.agentName === "vibe-change-worker";
+  let protectedArgs: string[] = [];
+  if (persistent) {
+    const [signIn, support] = await Promise.allSettled([
+      checkClaudeSignInAsync(), checkProtectedWriteSupportAsync(installedRoot),
+    ] as const);
+    if (signIn.status === "rejected") throw signIn.reason;
+    if (support.status === "rejected") throw support.reason;
+    protectedArgs = protectedWriteLaunchArgs(support.value, place.root);
+  }
   let workerId: string = randomUUID();
   let lease: string | undefined;
   let resume = false;
@@ -258,6 +283,7 @@ export async function runWorker(rawInput: unknown) {
           : "Agent,Task,EnterWorktree,ExitWorktree,NotebookEdit",
       "--permission-mode", "default",
       "--allowedTools", bound.tools.join(","),
+      ...protectedArgs,
       resume ? "--resume" : "--session-id", workerId,
       "--name", workerSessionName(input.agentName, place.branch, input.requestId)];
     const launch = launchProcess(args, bound.tools, place.root, JSON.stringify({ requestId: input.requestId,
