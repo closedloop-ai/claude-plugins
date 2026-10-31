@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { capabilitiesSchema, type Capability } from "./contracts.js";
@@ -95,6 +95,7 @@ describe("vibe worker cross-runtime tool contract", () => {
   it("loads a canonical definition from either runtime manifest", () => {
     const value = fixture();
     try {
+      rmSync(join(value.agentRoot, ".codex-plugin"), { recursive: true });
       renameSync(join(value.agentRoot, ".claude-plugin"), join(value.agentRoot, ".codex-plugin"));
       expect(readDefinition(value.agentRoot, "vibe-change-worker", capabilitiesFor("vibe-change-worker", "codex")).name)
         .toBe("vibe:vibe-change-worker");

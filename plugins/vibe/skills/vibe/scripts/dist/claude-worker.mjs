@@ -117,17 +117,17 @@ var require_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    function visit_(key, node, visitor, path) {
-      const ctrl = callVisitor(key, node, visitor, path);
+    function visit_(key, node, visitor, path2) {
+      const ctrl = callVisitor(key, node, visitor, path2);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path, ctrl);
-        return visit_(key, ctrl, visitor, path);
+        replaceNode(key, path2, ctrl);
+        return visit_(key, ctrl, visitor, path2);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path = Object.freeze(path.concat(node));
+          path2 = Object.freeze(path2.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = visit_(i, node.items[i], visitor, path);
+            const ci = visit_(i, node.items[i], visitor, path2);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -138,13 +138,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path = Object.freeze(path.concat(node));
-          const ck = visit_("key", node.key, visitor, path);
+          path2 = Object.freeze(path2.concat(node));
+          const ck = visit_("key", node.key, visitor, path2);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = visit_("value", node.value, visitor, path);
+          const cv = visit_("value", node.value, visitor, path2);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -165,17 +165,17 @@ var require_visit = __commonJS({
     visitAsync.BREAK = BREAK;
     visitAsync.SKIP = SKIP;
     visitAsync.REMOVE = REMOVE;
-    async function visitAsync_(key, node, visitor, path) {
-      const ctrl = await callVisitor(key, node, visitor, path);
+    async function visitAsync_(key, node, visitor, path2) {
+      const ctrl = await callVisitor(key, node, visitor, path2);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path, ctrl);
-        return visitAsync_(key, ctrl, visitor, path);
+        replaceNode(key, path2, ctrl);
+        return visitAsync_(key, ctrl, visitor, path2);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node)) {
-          path = Object.freeze(path.concat(node));
+          path2 = Object.freeze(path2.concat(node));
           for (let i = 0; i < node.items.length; ++i) {
-            const ci = await visitAsync_(i, node.items[i], visitor, path);
+            const ci = await visitAsync_(i, node.items[i], visitor, path2);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -186,13 +186,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node)) {
-          path = Object.freeze(path.concat(node));
-          const ck = await visitAsync_("key", node.key, visitor, path);
+          path2 = Object.freeze(path2.concat(node));
+          const ck = await visitAsync_("key", node.key, visitor, path2);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node.key = null;
-          const cv = await visitAsync_("value", node.value, visitor, path);
+          const cv = await visitAsync_("value", node.value, visitor, path2);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -219,23 +219,23 @@ var require_visit = __commonJS({
       }
       return visitor;
     }
-    function callVisitor(key, node, visitor, path) {
+    function callVisitor(key, node, visitor, path2) {
       if (typeof visitor === "function")
-        return visitor(key, node, path);
+        return visitor(key, node, path2);
       if (identity.isMap(node))
-        return visitor.Map?.(key, node, path);
+        return visitor.Map?.(key, node, path2);
       if (identity.isSeq(node))
-        return visitor.Seq?.(key, node, path);
+        return visitor.Seq?.(key, node, path2);
       if (identity.isPair(node))
-        return visitor.Pair?.(key, node, path);
+        return visitor.Pair?.(key, node, path2);
       if (identity.isScalar(node))
-        return visitor.Scalar?.(key, node, path);
+        return visitor.Scalar?.(key, node, path2);
       if (identity.isAlias(node))
-        return visitor.Alias?.(key, node, path);
+        return visitor.Alias?.(key, node, path2);
       return void 0;
     }
-    function replaceNode(key, path, node) {
-      const parent = path[path.length - 1];
+    function replaceNode(key, path2, node) {
+      const parent = path2[path2.length - 1];
       if (identity.isCollection(parent)) {
         parent.items[key] = node;
       } else if (identity.isPair(parent)) {
@@ -847,10 +847,10 @@ var require_Collection = __commonJS({
     var createNode = require_createNode();
     var identity = require_identity();
     var Node = require_Node();
-    function collectionFromPath(schema, path, value) {
+    function collectionFromPath(schema, path2, value) {
       let v = value;
-      for (let i = path.length - 1; i >= 0; --i) {
-        const k = path[i];
+      for (let i = path2.length - 1; i >= 0; --i) {
+        const k = path2[i];
         if (typeof k === "number" && Number.isInteger(k) && k >= 0) {
           const a = [];
           a[k] = v;
@@ -869,7 +869,7 @@ var require_Collection = __commonJS({
         sourceObjects: /* @__PURE__ */ new Map()
       });
     }
-    var isEmptyPath = (path) => path == null || typeof path === "object" && !!path[Symbol.iterator]().next().done;
+    var isEmptyPath = (path2) => path2 == null || typeof path2 === "object" && !!path2[Symbol.iterator]().next().done;
     var Collection = class extends Node.NodeBase {
       constructor(type, schema) {
         super(type);
@@ -899,11 +899,11 @@ var require_Collection = __commonJS({
        * be a Pair instance or a `{ key, value }` object, which may not have a key
        * that already exists in the map.
        */
-      addIn(path, value) {
-        if (isEmptyPath(path))
+      addIn(path2, value) {
+        if (isEmptyPath(path2))
           this.add(value);
         else {
-          const [key, ...rest] = path;
+          const [key, ...rest] = path2;
           const node = this.get(key, true);
           if (identity.isCollection(node))
             node.addIn(rest, value);
@@ -917,8 +917,8 @@ var require_Collection = __commonJS({
        * Removes a value from the collection.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path) {
-        const [key, ...rest] = path;
+      deleteIn(path2) {
+        const [key, ...rest] = path2;
         if (rest.length === 0)
           return this.delete(key);
         const node = this.get(key, true);
@@ -932,8 +932,8 @@ var require_Collection = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path, keepScalar) {
-        const [key, ...rest] = path;
+      getIn(path2, keepScalar) {
+        const [key, ...rest] = path2;
         const node = this.get(key, true);
         if (rest.length === 0)
           return !keepScalar && identity.isScalar(node) ? node.value : node;
@@ -951,8 +951,8 @@ var require_Collection = __commonJS({
       /**
        * Checks if the collection includes a value with the key `key`.
        */
-      hasIn(path) {
-        const [key, ...rest] = path;
+      hasIn(path2) {
+        const [key, ...rest] = path2;
         if (rest.length === 0)
           return this.has(key);
         const node = this.get(key, true);
@@ -962,8 +962,8 @@ var require_Collection = __commonJS({
        * Sets a value in this collection. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path, value) {
-        const [key, ...rest] = path;
+      setIn(path2, value) {
+        const [key, ...rest] = path2;
         if (rest.length === 0) {
           this.set(key, value);
         } else {
@@ -3478,9 +3478,9 @@ var require_Document = __commonJS({
           this.contents.add(value);
       }
       /** Adds a value to the document. */
-      addIn(path, value) {
+      addIn(path2, value) {
         if (assertCollection(this.contents))
-          this.contents.addIn(path, value);
+          this.contents.addIn(path2, value);
       }
       /**
        * Create a new `Alias` node, ensuring that the target `node` has the required anchor.
@@ -3555,14 +3555,14 @@ var require_Document = __commonJS({
        * Removes a value from the document.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path) {
-        if (Collection.isEmptyPath(path)) {
+      deleteIn(path2) {
+        if (Collection.isEmptyPath(path2)) {
           if (this.contents == null)
             return false;
           this.contents = null;
           return true;
         }
-        return assertCollection(this.contents) ? this.contents.deleteIn(path) : false;
+        return assertCollection(this.contents) ? this.contents.deleteIn(path2) : false;
       }
       /**
        * Returns item at `key`, or `undefined` if not found. By default unwraps
@@ -3577,10 +3577,10 @@ var require_Document = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path, keepScalar) {
-        if (Collection.isEmptyPath(path))
+      getIn(path2, keepScalar) {
+        if (Collection.isEmptyPath(path2))
           return !keepScalar && identity.isScalar(this.contents) ? this.contents.value : this.contents;
-        return identity.isCollection(this.contents) ? this.contents.getIn(path, keepScalar) : void 0;
+        return identity.isCollection(this.contents) ? this.contents.getIn(path2, keepScalar) : void 0;
       }
       /**
        * Checks if the document includes a value with the key `key`.
@@ -3591,10 +3591,10 @@ var require_Document = __commonJS({
       /**
        * Checks if the document includes a value at `path`.
        */
-      hasIn(path) {
-        if (Collection.isEmptyPath(path))
+      hasIn(path2) {
+        if (Collection.isEmptyPath(path2))
           return this.contents !== void 0;
-        return identity.isCollection(this.contents) ? this.contents.hasIn(path) : false;
+        return identity.isCollection(this.contents) ? this.contents.hasIn(path2) : false;
       }
       /**
        * Sets a value in this document. For `!!set`, `value` needs to be a
@@ -3611,13 +3611,13 @@ var require_Document = __commonJS({
        * Sets a value in this document. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path, value) {
-        if (Collection.isEmptyPath(path)) {
+      setIn(path2, value) {
+        if (Collection.isEmptyPath(path2)) {
           this.contents = value;
         } else if (this.contents == null) {
-          this.contents = Collection.collectionFromPath(this.schema, Array.from(path), value);
+          this.contents = Collection.collectionFromPath(this.schema, Array.from(path2), value);
         } else if (assertCollection(this.contents)) {
-          this.contents.setIn(path, value);
+          this.contents.setIn(path2, value);
         }
       }
       /**
@@ -5578,9 +5578,9 @@ var require_cst_visit = __commonJS({
     visit.BREAK = BREAK;
     visit.SKIP = SKIP;
     visit.REMOVE = REMOVE;
-    visit.itemAtPath = (cst, path) => {
+    visit.itemAtPath = (cst, path2) => {
       let item = cst;
-      for (const [field, index] of path) {
+      for (const [field, index] of path2) {
         const tok = item?.[field];
         if (tok && "items" in tok) {
           item = tok.items[index];
@@ -5589,23 +5589,23 @@ var require_cst_visit = __commonJS({
       }
       return item;
     };
-    visit.parentCollection = (cst, path) => {
-      const parent = visit.itemAtPath(cst, path.slice(0, -1));
-      const field = path[path.length - 1][0];
+    visit.parentCollection = (cst, path2) => {
+      const parent = visit.itemAtPath(cst, path2.slice(0, -1));
+      const field = path2[path2.length - 1][0];
       const coll = parent?.[field];
       if (coll && "items" in coll)
         return coll;
       throw new Error("Parent collection not found");
     };
-    function _visit(path, item, visitor) {
-      let ctrl = visitor(item, path);
+    function _visit(path2, item, visitor) {
+      let ctrl = visitor(item, path2);
       if (typeof ctrl === "symbol")
         return ctrl;
       for (const field of ["key", "value"]) {
         const token = item[field];
         if (token && "items" in token) {
           for (let i = 0; i < token.items.length; ++i) {
-            const ci = _visit(Object.freeze(path.concat([[field, i]])), token.items[i], visitor);
+            const ci = _visit(Object.freeze(path2.concat([[field, i]])), token.items[i], visitor);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -5616,10 +5616,10 @@ var require_cst_visit = __commonJS({
             }
           }
           if (typeof ctrl === "function" && field === "key")
-            ctrl = ctrl(item, path);
+            ctrl = ctrl(item, path2);
         }
       }
-      return typeof ctrl === "function" ? ctrl(item, path) : ctrl;
+      return typeof ctrl === "function" ? ctrl(item, path2) : ctrl;
     }
     exports.visit = visit;
   }
@@ -7371,9 +7371,9 @@ var require_dist = __commonJS({
 });
 
 // src/claude-worker.ts
-import { execFileSync as execFileSync2, spawn } from "node:child_process";
+import { execFileSync as execFileSync2, spawn, spawnSync as spawnSync2 } from "node:child_process";
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { closeSync, existsSync as existsSync5, openSync, rmSync as rmSync2, writeFileSync as writeFileSync2, writeSync } from "node:fs";
+import { closeSync, existsSync as existsSync6, openSync, realpathSync as realpathSync7, rmSync as rmSync2, writeFileSync as writeFileSync2, writeSync } from "node:fs";
 import { join as join7 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
@@ -7855,8 +7855,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path, errorMaps, issueData } = params;
-  const fullPath = [...path, ...issueData.path || []];
+  const { data, path: path2, errorMaps, issueData } = params;
+  const fullPath = [...path2, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -7972,11 +7972,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path, key) {
+  constructor(parent, value, path2, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path;
+    this._path = path2;
     this._key = key;
   }
   get path() {
@@ -11731,7 +11731,15 @@ function readPluginManifest(root) {
   throw Object.assign(new Error("No vibe plugin manifest exists"), { code: "ENOENT" });
 }
 function installedPluginRoot(metaUrl) {
-  return realpathSync2(resolve(dirname(fileURLToPath2(metaUrl)), "../../../.."));
+  const entry = dirname(fileURLToPath2(metaUrl));
+  for (const candidate of [resolve(entry, "../../../.."), resolve(entry, "../../../plugins/vibe")]) {
+    try {
+      const root = realpathSync2(candidate);
+      if (isPluginRoot(root)) return root;
+    } catch {
+    }
+  }
+  throw new AgentRootError("AGENT_ROOT_INVALID", "The Claude worker entry is not inside the installed vibe plugin or its owning source tree");
 }
 function resolveAgentRoot(supplied, installed, recorded) {
   const fallback = recorded && existsSync(recorded) ? recorded : installed;
@@ -11864,9 +11872,9 @@ function readReferenceImages(metadataDir) {
   for (const raw of record.data.referenceImages ?? []) {
     const entry = referenceSchema.safeParse(raw);
     if (!entry.success) continue;
-    const path = resolve2(entry.data.path);
-    if (dirname2(path) !== owned || !existsSync2(path) || !statSync(path).isFile()) continue;
-    images.push({ path, mediaType: entry.data.mediaType, ...entry.data.requestId ? { requestId: entry.data.requestId } : {} });
+    const path2 = resolve2(entry.data.path);
+    if (dirname2(path2) !== owned || !existsSync2(path2) || !statSync(path2).isFile()) continue;
+    images.push({ path: path2, mediaType: entry.data.mediaType, ...entry.data.requestId ? { requestId: entry.data.requestId } : {} });
   }
   return images;
 }
@@ -12136,8 +12144,90 @@ function proveGroupStopped(processGroupId) {
   throw new Error("Owned process group is still running; retain the lease");
 }
 
+// ../../plugins/vibe/skills/vibe/scripts/plugin-script-references.mjs
+import { existsSync as existsSync4, lstatSync, readFileSync as readFileSync5, realpathSync as realpathSync5, statSync as statSync2 } from "node:fs";
+import path from "node:path";
+var TOKEN = /[^\s'"`()<>=]+/g;
+var SCRIPT_PATH = /^(.*?)(?:^|\/)(?:(skills)\/)?([a-z0-9][a-z0-9-]*)\/scripts\/([a-z0-9_./-]+\.(?:mjs|js|cjs|ts|py|sh))$/i;
+var TRAILING = /(?::\d+){1,2}$|[),:.;\]]+$/;
+function readJson(file) {
+  try {
+    return JSON.parse(readFileSync5(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function isDirectory(dir) {
+  try {
+    return statSync2(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+function installedPluginVersion(pluginRoot) {
+  for (const relative of [".codex-plugin/plugin.json", ".claude-plugin/plugin.json"]) {
+    const version = readJson(path.join(pluginRoot, relative))?.version;
+    if (typeof version === "string") return version;
+  }
+  return null;
+}
+function isVibePluginRoot(dir) {
+  return [".codex-plugin/plugin.json", ".claude-plugin/plugin.json"].some((relative) => readJson(path.join(dir, relative))?.name === "vibe");
+}
+function trimToken(token) {
+  let value = token;
+  for (let previous = ""; previous !== value; ) {
+    previous = value;
+    value = value.replace(TRAILING, "");
+  }
+  return value;
+}
+function relativeOnly(prefix) {
+  return prefix === "" || prefix.split("/").every((segment) => segment === "." || segment === "..");
+}
+function pluginScriptReferences(text, pluginRoot, worktree = null) {
+  const refs = [];
+  for (const [token] of String(text ?? "").matchAll(TOKEN)) {
+    const match = SCRIPT_PATH.exec(trimToken(token));
+    if (!match) continue;
+    const [candidate, prefix, explicit, skill, rest] = match;
+    if (!isDirectory(path.join(pluginRoot, "skills", skill))) continue;
+    if (relativeOnly(prefix)) {
+      if (worktree && existsSync4(path.resolve(worktree, candidate))) continue;
+    } else {
+      const base = path.resolve(worktree ?? "/", prefix);
+      if (!explicit || !isVibePluginRoot(base)) continue;
+    }
+    const relative = `skills/${skill}/scripts/${rest}`;
+    if (!refs.includes(relative)) refs.push(relative);
+  }
+  return refs;
+}
+function pluginScriptProblems(text, pluginRoot, worktree = null) {
+  const root = realpathSync5(pluginRoot);
+  const problems = [];
+  for (const relative of pluginScriptReferences(text, root, worktree)) {
+    if (relative.split("/").includes("..")) {
+      problems.push(`${relative}: plugin script path escapes its installed root`);
+      continue;
+    }
+    const candidate = path.resolve(root, relative);
+    if (candidate === root || !candidate.startsWith(`${root}${path.sep}`) || !existsSync4(candidate)) {
+      problems.push(`${relative}: plugin script does not exist in installed vibe ${installedPluginVersion(root) ?? "unknown"}`);
+      continue;
+    }
+    try {
+      const canonical = realpathSync5(candidate);
+      if (!canonical.startsWith(`${root}${path.sep}`) || !lstatSync(canonical).isFile()) problems.push(`${relative}: plugin script is not a contained regular file`);
+    } catch {
+      problems.push(`${relative}: plugin script cannot be verified`);
+    }
+  }
+  return problems;
+}
+
 // src/record-context.ts
-import { existsSync as existsSync4, readFileSync as readFileSync5, realpathSync as realpathSync5 } from "node:fs";
+import { existsSync as existsSync5, readFileSync as readFileSync6, realpathSync as realpathSync6 } from "node:fs";
 import { join as join5, sep } from "node:path";
 
 // ../../plugins/vibe/skills/vibe/scripts/session-record.mjs
@@ -12287,7 +12377,7 @@ function resolveRecordContext(input) {
     const cancel = input.sessionless.kind === "discarded" && input.agentName === "vibe-ticket-worker" && input.mode === "record" && input.recordAction === "cancel" && input.exclusiveRecordTurn;
     if (!startup && !cancel) throw new Error("This role/action has no sessionless operation");
     place = checkoutLocation(input.worktree);
-    if (existsSync4(join5(place.dir, "vibe-session.json"))) throw new Error("A private session exists; use its strict owned operation");
+    if (existsSync5(join5(place.dir, "vibe-session.json"))) throw new Error("A private session exists; use its strict owned operation");
   } else place = location(input.worktree);
   return { place, target: discardLocation(input, place) };
 }
@@ -12302,12 +12392,12 @@ function discardLocation(input, stable) {
     handoffTicket: external_exports.string().nullable().optional(),
     operator: external_exports.object({ id: external_exports.string().min(1), email: external_exports.string().email() }).passthrough()
   }).passthrough().parse(
-    JSON.parse(readFileSync5(join5(target.dir, "vibe-session.json"), "utf8"))
+    JSON.parse(readFileSync6(join5(target.dir, "vibe-session.json"), "utf8"))
   );
-  if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`) || !existsSync4(join5(target.dir, "commondir"))) throw new Error("Discard must retain its execution checkout");
-  const common = readFileSync5(join5(target.dir, "commondir"), "utf8").trim();
-  const stableCommon = existsSync4(join5(stable.dir, "commondir")) ? realpathSync5(join5(stable.dir, readFileSync5(join5(stable.dir, "commondir"), "utf8").trim())) : realpathSync5(stable.dir);
-  if (realpathSync5(join5(target.dir, common)) !== stableCommon || record.branch !== evidence.branch || record.operator.id !== evidence.operatorId || record.operator.email !== evidence.operatorEmail || (sessionLiveTicket(record) ?? void 0) !== evidence.liveTicket) {
+  if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`) || !existsSync5(join5(target.dir, "commondir"))) throw new Error("Discard must retain its execution checkout");
+  const common = readFileSync6(join5(target.dir, "commondir"), "utf8").trim();
+  const stableCommon = existsSync5(join5(stable.dir, "commondir")) ? realpathSync6(join5(stable.dir, readFileSync6(join5(stable.dir, "commondir"), "utf8").trim())) : realpathSync6(stable.dir);
+  if (realpathSync6(join5(target.dir, common)) !== stableCommon || record.branch !== evidence.branch || record.operator.id !== evidence.operatorId || record.operator.email !== evidence.operatorEmail || (sessionLiveTicket(record) ?? void 0) !== evidence.liveTicket) {
     throw new Error("Discard target does not match the parent's owned session evidence");
   }
   return target;
@@ -12337,13 +12427,13 @@ var mainSyncPurposeSchema = external_exports.enum(["build", "handoff"]);
 var commitSchema = validationCommitSchema;
 var digestSchema = external_exports.string().regex(/^[a-f0-9]{64}$/);
 var originFileSchema = external_exports.object({
-  path: external_exports.string().min(1).max(2048).refine((path) => !path.startsWith("/") && !path.includes("\\") && !path.includes("\0") && !path.split("/").includes("..")),
+  path: external_exports.string().min(1).max(2048).refine((path2) => !path2.startsWith("/") && !path2.includes("\\") && !path2.includes("\0") && !path2.split("/").includes("..")),
   bytes: external_exports.number().int().nonnegative().max(128 * 1024 * 1024),
   sha256: digestSchema,
   mode: external_exports.literal("100644")
 }).strict();
 var producerInputSchema = originFileSchema.extend({ mode: external_exports.enum(["100644", "100755"]) });
-var canonicalRelativeSchema = external_exports.string().min(1).max(2048).refine((path) => !path.startsWith("/") && !path.includes("\\") && !path.includes("\0") && !path.split("/").some((part) => !part || part === "." || part === ".."));
+var canonicalRelativeSchema = external_exports.string().min(1).max(2048).refine((path2) => !path2.startsWith("/") && !path2.includes("\\") && !path2.includes("\0") && !path2.split("/").some((part) => !part || part === "." || part === ".."));
 var packageOwnerSchema = external_exports.object({
   path: canonicalRelativeSchema,
   name: external_exports.string().min(1).max(128),
@@ -12681,7 +12771,9 @@ var launchSchema = recordContextSchema.extend({
   capabilities: capabilitiesSchema,
   timeoutMs: external_exports.number().int().min(1e3).max(30 * 60 * 1e3).default(15 * 60 * 1e3),
   /** Set only when the person explicitly allowed paid extra usage; otherwise a reached limit or overage stops the turn. */
-  allowCredits: external_exports.boolean().optional()
+  allowCredits: external_exports.boolean().optional(),
+  previewRequirements: external_exports.array(external_exports.enum(["app-preview", "feature-flags", "collaboration"])).min(1).optional(),
+  previewProducer: external_exports.literal("runtime-provider").optional()
 }).strict().refine((data) => !(data.input && data.continuation), "Supply input or continuation, not both");
 var resultSchema = external_exports.object({
   type: external_exports.literal("result"),
@@ -12720,6 +12812,45 @@ var readerRoles = /* @__PURE__ */ new Set([
   "vibe-storybook-decomposer",
   "vibe-verify-worker"
 ]);
+var receiptRoles = /* @__PURE__ */ new Set(["vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-storybook-decomposer", "vibe-verify-worker"]);
+var previewActions = /* @__PURE__ */ new Set(["create", "redeploy", "flags", "desktop"]);
+function dispatchFreshnessProblem(agentRoot, installedRoot, worktree, text) {
+  const root = realpathSync7(agentRoot);
+  const installed = realpathSync7(installedRoot);
+  const version = (dir) => readPluginManifest(dir).version;
+  if (version(root) !== version(installed)) return "Claude dispatch definition is from a stale installed plugin release; reload or migrate before launch";
+  return pluginScriptProblems(text, root, worktree)[0] ?? null;
+}
+function checkPreviewResult(input, output, pluginRoot, worktree, run = spawnSync2) {
+  if (input.agentName !== "vibe-environment-worker" || input.mode !== "record" || !previewActions.has(input.recordAction ?? "") || output.status !== "DONE") return;
+  if (!input.previewProducer && !input.previewRequirements) return;
+  if (input.previewProducer !== "runtime-provider") throw new Error("Preview requirements need an authoritative provider producer declaration");
+  if (!input.previewRequirements?.includes("app-preview")) throw new Error("Environment DONE needs explicit preview requirements including app-preview");
+  const receipt = output.data?.previewReceipt;
+  const environmentId = output.data?.environmentId;
+  if (typeof receipt !== "string" || typeof environmentId !== "string") throw new Error("Environment DONE needs provider preview receipt and environment identity");
+  const args = [
+    realpathSync7(join7(pluginRoot, "skills/vibe/scripts/preview-capabilities.mjs")),
+    "--file",
+    receipt,
+    "--worktree",
+    worktree,
+    "--request-id",
+    input.requestId,
+    "--environment-id",
+    environmentId,
+    ...input.previewRequirements.flatMap((capability) => ["--required", capability])
+  ];
+  const checked = run(process.execPath, args, { encoding: "utf8" });
+  if (checked.status !== 0) throw new Error(`Environment preview is not ready: ${checked.stdout || checked.stderr}`);
+}
+function reviewSourceIdentity(pluginRoot, worktree) {
+  return JSON.parse(execFileSync2(
+    process.execPath,
+    [realpathSync7(join7(pluginRoot, "skills/vibe/scripts/tested-head.mjs")), "source", worktree],
+    { encoding: "utf8" }
+  ));
+}
 function boundDefinition(definition, input) {
   if (!readerRoles.has(input.agentName) && !Object.hasOwn(recordModes, input.agentName)) {
     throw new Error("This role is outside the vibe and handoff owned launcher");
@@ -12755,7 +12886,7 @@ function boundDefinition(definition, input) {
   const storybookEvidencePolicy = input.agentName === "vibe-storybook-decomposer" ? "This advisor may write only verifier-owned Storybook birth records and logs in the private git directory through verify-storybook-process.mjs. Stop each new process before returning. Never edit product source, tests or live records, and never adopt an unrecorded process. " : "";
   const prompt = `${definition.prompt}
 
-Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join7(definition.root, "agents")}. ` + pushPolicy(input) + phasePolicy + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName) ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : `${verifyEvidencePolicy}${storybookEvidencePolicy}`) + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
+Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join7(definition.root, "agents")}. ` + pushPolicy(input) + phasePolicy + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "") + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName) ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : `${verifyEvidencePolicy}${storybookEvidencePolicy}`) + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
   const agent = {
     description: definition.metadata.description,
     prompt,
@@ -12781,12 +12912,16 @@ async function runWorker(rawInput) {
   }
   if (process.platform === "win32") throw new Error("Owned descendant cleanup requires a supported POSIX process-group harness");
   const recorded = input.agentName === "vibe-change-worker" && !input.sessionless ? recordedWriterRoot(input.worktree) : void 0;
-  const agentRoot = resolveAgentRoot(input.agentRoot, installedPluginRoot(import.meta.url), recorded);
+  const installedRoot = installedPluginRoot(import.meta.url);
+  const agentRoot = resolveAgentRoot(input.agentRoot, installedRoot, recorded);
+  const dispatchProblem = dispatchFreshnessProblem(agentRoot, installedRoot, input.worktree, input.input ?? input.continuation ?? "");
+  if (dispatchProblem) throw new Error(dispatchProblem);
   const definition = readDefinition(agentRoot, input.agentName, input.capabilities);
   const bound = boundDefinition(definition, input);
   checkRoleCapabilities(input.agentName, input.capabilities);
   checkClaudeSignIn();
   const { place, target: discardPlace } = resolveRecordContext(input);
+  const reviewSource = receiptRoles.has(input.agentName) ? reviewSourceIdentity(definition.root, place.root) : void 0;
   const persistent = input.agentName === "vibe-change-worker";
   let workerId = randomUUID3();
   let lease;
@@ -12908,6 +13043,10 @@ async function runWorker(rawInput) {
     process.removeListener("SIGINT", cancelBeforeLaunch);
     const output = await launch;
     if (output.sessionId !== workerId) throw new Error("Claude returned a different session identity; no fresh fallback is permitted");
+    if (reviewSource && JSON.stringify(reviewSourceIdentity(definition.root, place.root)) !== JSON.stringify(reviewSource)) {
+      throw new Error("Reviewer source changed during its read-only turn; rerun on the settled source");
+    }
+    checkPreviewResult(input, output, definition.root, place.root);
     if (persistent && lease) changeWriter("finish", {
       worktree: input.worktree,
       workerId,
@@ -12918,6 +13057,11 @@ async function runWorker(rawInput) {
     });
     return {
       ...output,
+      runtime: "claude",
+      agentName: input.agentName,
+      ...reviewSource ? { source: reviewSource } : {},
+      graphToolIdentities: input.capabilities.filter((capability) => capability.service === "graph" && capability.access === "read").map((capability) => mcpToolIdentity(capability.name)),
+      graphToolAliases: [...new Set(input.capabilities.filter((capability) => capability.service === "graph" && capability.access === "read").flatMap((capability) => mcpToolAliases(capability.name)))],
       workerId,
       requestId: input.requestId,
       tracePath,
@@ -13219,7 +13363,7 @@ function capCheckpoint(root, gitDir, turnId) {
       stdio: ["ignore", "pipe", "ignore"]
     });
     const dirtyFiles = run(["status", "--porcelain"]).split("\n").filter(Boolean).length;
-    const midMerge = existsSync5(join7(gitDir, "MERGE_HEAD"));
+    const midMerge = existsSync6(join7(gitDir, "MERGE_HEAD"));
     const diff = run(["diff", "--binary", "HEAD"]);
     if (!diff) return { dirtyFiles, midMerge };
     const patch = join7(gitDir, `vibe-cap-${turnId}.patch`);
@@ -13237,6 +13381,8 @@ function workerSessionName(agentName, branch, requestId) {
 export {
   boundDefinition,
   capWorkerResult,
+  checkPreviewResult,
+  dispatchFreshnessProblem,
   main,
   runWorker,
   workerSessionName

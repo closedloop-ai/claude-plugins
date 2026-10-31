@@ -45,6 +45,18 @@ Never self-declare continuation intent or borrow the publisher's lease.
 Publication readiness is not completed handoff E2E coverage: preserve reported
 incomplete scenarios and never assign/claim completion from a preview alone.
 
+When an enabled provider explicitly supplies `previewProducer: runtime-provider`
+and `previewRequirements` for this request, obtain its capability receipt for
+the exact environment request and deployed source. Return the private path as
+`data.previewReceipt` and environment identity as `data.environmentId`;
+the launcher verifies both at the result boundary. Requirements include
+`app-preview`, plus `feature-flags` or `collaboration` when needed. Missing,
+stale, unsupported or unproven declared capabilities block `DONE`. With no
+provider producer/support declaration, use the repository's generic preview
+path and do not claim those extra capabilities. Never substitute a console snippet, cloud
+administration sign-in or shell command for the person. Repository-specific
+probes and provisioning belong to the optional provider.
+
 The mode (`create`, `redeploy`, `flags`, `desktop`, `handover`, or `pull-request`), the worktree path, the live
 ticket slug, and for redeploy the session summary, the session's
 `localFixes` paths (managed local workarounds for a bug in the target repository, authored
@@ -454,7 +466,16 @@ changes and gates fields.
    `MAIN-PREEXISTING-LANE`, and every `testRuns` or `runs` entry recorded
    `main-preexisting`, also fails on the captured main: list each in the
    body under a `Known main failures` line with the main commit it failed
-   on, which `blocking.prBody` checks; it never blocks the pull request. Create it with
+   on, which `blocking.prBody` checks; it never blocks the pull request. Fetch
+   the current PR base and run `node ../skills/handoff/scripts/handoff-gate.mjs
+   --worktree "<wt>" --base "<fetched base ref>" --body <file> --runs
+   <verifier evidence file> --receipt <guardrails receipt> --receipt
+   <adversarial receipt> --receipt <Storybook receipt> --receipt
+   <verifier receipt> --ticket
+   <ticket body file> --audit <criteria audit file> --matrix <coverage matrix
+   file>` immediately before creation. Use the paths step 9 of handoff passed;
+   when there is no ticket, omit the ticket/audit/matrix arguments. A failed
+   gate is `BLOCKED`, not a reason to bypass the hook. Create it with
    `gh pr create --repo closedloop-ai/symphony-alpha --base main --head <branch> --title "<title>" --body-file <file>`,
    the body file in the session's private git directory and named for the
    live ticket (`pr-body-<live ticket slug>.md`), never a shared name such as

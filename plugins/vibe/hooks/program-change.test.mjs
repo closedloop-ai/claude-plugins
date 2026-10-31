@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { PROGRAM_CHANGE_REMINDER, programChange } from "./program-change.mjs";
 import { USER_PROMPT_SUBMIT_GUARDS } from "./user-prompt-submit.mjs";
+import { recordHookSkill } from "./hook-session-scope.mjs";
 
 const USER_PROMPT_SUBMIT = path.join(path.dirname(fileURLToPath(import.meta.url)), "user-prompt-submit.mjs");
 
@@ -46,4 +47,12 @@ test("outside an orchestrator session it says nothing, and the UserPromptSubmit 
   const result = spawnSync(process.execPath, [USER_PROMPT_SUBMIT], { encoding: "utf8",
     input: JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: "I want to start from scratch", transcript_path: file }) });
   assert.equal(JSON.parse(result.stdout).hookSpecificOutput.additionalContext, PROGRAM_CHANGE_REMINDER);
+});
+
+test("a recorded fleet skill preserves the program-change reminder without a transcript", (t) => {
+  const home = mkdtempSync(path.join(tmpdir(), "program-change-marker-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  recordHookSkill("fleet-session", "vibe:fleet-orchestrator", home);
+  assert.equal(programChange({ session_id: "fleet-session", prompt: "start from scratch", transcript_path: null }, home)?.context, PROGRAM_CHANGE_REMINDER);
+  assert.equal(programChange({ session_id: "other-session", prompt: "start from scratch", transcript_path: null }, home), null);
 });

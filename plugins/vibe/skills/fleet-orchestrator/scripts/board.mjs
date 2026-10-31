@@ -79,6 +79,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { promptProblems } from "./skill-freshness.mjs";
 import { watcherState } from "../../codex-fleet-monitor/scripts/watcher.mjs";
 import { readConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { homeProblems, programShape, Shape } from "./fleet-home.mjs";
@@ -568,6 +569,15 @@ function main(argv) {
     if (kind === "ruling" && !values.reference) {
       throw new Error("a ruling is saved once as a reference file (its screenshots beside it); pass --reference <file>.");
     }
+    const versionRecord = existsSync(path.join(orchDir, "plugin-version.json"))
+      ? JSON.parse(readFileSync(path.join(orchDir, "plugin-version.json"), "utf8")) : null;
+    let brief = values.text ?? "";
+    if (values.reference && /\.(?:md|txt)$/i.test(values.reference)) {
+      const reference = path.isAbsolute(values.reference) ? values.reference : path.resolve(orchDir, values.reference);
+      if (existsSync(reference)) brief += `\n${readFileSync(reference, "utf8")}`;
+    }
+    const promptIssues = promptProblems(versionRecord, brief);
+    if (promptIssues.length) throw new Error(promptIssues.join("; "));
     const previous = board.deliveries[name];
     const scope = kind === "scope" ? scopeBase(board, to, values, previous) : {};
     board.deliveries[name] = {

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,7 +26,10 @@ export function fixture() {
   const agentRoot = join(base, "vibe");
   mkdirSync(join(agentRoot, "agents"), { recursive: true });
   mkdirSync(join(agentRoot, ".claude-plugin"));
-  writeFileSync(join(agentRoot, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe" }));
+  mkdirSync(join(agentRoot, ".codex-plugin"));
+  const version = JSON.parse(readFileSync(resolve(bundleDirectory, "../../../..", ".codex-plugin/plugin.json"), "utf8")).version;
+  writeFileSync(join(agentRoot, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version }));
+  writeFileSync(join(agentRoot, ".codex-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version }));
   writeAgent(agentRoot, "vibe-change-worker", "Read, Write, Edit, Grep, Glob, Bash, Skill, SendMessage, Agent");
   writeAgent(agentRoot, "vibe-guardrails-reviewer", "Read, Grep, Glob, Bash, Skill");
   writeAgent(agentRoot, "vibe-prototype-worker", "Read, Write, Grep, Glob, Bash, Skill");
@@ -34,6 +37,10 @@ export function fixture() {
   writeAgent(agentRoot, "vibe-setup-worker", "Read, Write, Edit, Grep, Glob, Bash");
   writeAgent(agentRoot, "vibe-ticket-worker", "Read, Write, Edit, Grep, Glob, Bash");
   writeAgent(agentRoot, "vibe-environment-worker", "Read, Write, Edit, Grep, Glob, Bash");
+  mkdirSync(join(agentRoot, "skills/vibe/scripts"), { recursive: true });
+  for (const script of ["tested-head.mjs", "preview-capabilities.mjs"]) {
+    symlinkSync(resolve(bundleDirectory, "..", script), join(agentRoot, "skills/vibe/scripts", script));
+  }
   const bin = join(base, "bin");
   mkdirSync(bin);
   writeFileSync(join(bin, "claude"), String.raw`#!/usr/bin/env node
@@ -119,6 +126,20 @@ process.stdin.on('end', () => {
   }
   const reportedId = payload.input.includes('WRONG_ID') ? '11111111-1111-4111-8111-111111111111' : id;
   const compact = { status, summary: 'fixture result', data: { inputSeen: true } };
+  if (option('--agent') === 'vibe:vibe-environment-worker' && status === 'DONE') {
+    const cp = require('node:child_process');
+    const crypto = require('node:crypto');
+    const proofPath = path.join(process.cwd(), '.git', 'preview-probe.txt');
+    fs.writeFileSync(proofPath, 'provider measured app preview');
+    const evidence = { path: proofPath, sha256: crypto.createHash('sha256').update(fs.readFileSync(proofPath)).digest('hex') };
+    const source = JSON.parse(cp.execFileSync(process.execPath,
+      [${JSON.stringify(resolve(bundleDirectory, "..", "tested-head.mjs"))}, 'source', process.cwd()], { encoding: 'utf8' }));
+    const receiptPath = path.join(process.cwd(), '.git', 'preview-receipt.json');
+    fs.writeFileSync(receiptPath, JSON.stringify({ schema: 1, producer: 'runtime-provider', environmentId: 'fixture-preview',
+      requestId: payload.requestId, source, probes: { 'app-preview': { status: 'available', producer: 'runtime-provider', evidence } } }));
+    compact.data.previewReceipt = receiptPath;
+    compact.data.environmentId = 'fixture-preview';
+  }
   if (payload.input.includes('LONG_SUMMARY')) compact.summary = 'x'.repeat(5000);
   if (mainSyncResult) compact.data.mainSyncResult = mainSyncResult;
   if (discardReceipt) compact.data.discardReceipt = discardReceipt;

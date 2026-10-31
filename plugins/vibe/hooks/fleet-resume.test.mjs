@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { fleetResume } from "./fleet-resume.mjs";
 import { SESSION_START_GUARDS } from "./session-start.mjs";
+import { recordHookSkill } from "./hook-session-scope.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SESSION_START = path.join(HERE, "session-start.mjs");
@@ -35,6 +36,12 @@ test("after a compaction an orchestrator gets the resume reading list and the la
   assert.ok(context.includes(`READ ${path.join(program, "rulings.md")}`), context);
   assert.match(context, /## 2026-10-22 18:55\n- Ruling \(operator\): "I don't want to build anything yet"\n- Program: PRD-800 design from scratch/);
   assert.doesNotMatch(context, /Pending: operator ruling on how to proceed/, "only the last entry is quoted");
+});
+
+test("a recorded fleet skill still supplies resume context when the transcript is absent", (t) => {
+  const { home } = fleetHome(t);
+  recordHookSkill("fleet-session", "vibe:fleet-orchestrator", home);
+  assert.match(fleetResume({ source: "compact", session_id: "fleet-session", transcript_path: null }, { FLEET_HOME: home, HOME: home })?.context ?? "", /resume-log/);
 });
 
 test("it stays silent outside a compaction, outside an orchestrator session and without an active program", (t) => {

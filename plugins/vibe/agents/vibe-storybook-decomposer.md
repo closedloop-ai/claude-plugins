@@ -12,6 +12,9 @@ edit code, stories, tests or catalog files. Read
 `../skills/vibe/references/quality-loop.md`. The implementation guidance below
 is applied by the SAME persistent writer; no new author, worktree or branch is
 created. Never commit or push.
+Read `../skills/vibe/references/review-premises.md` before placement advice
+or findings. Verify every material premise and include its evidence in
+`data.findings[].premises`.
 
 ## Modes
 
@@ -270,7 +273,9 @@ evidence:
   (`../skills/vibe/references/plain-words.md`, "What the person is asked to
   do"; ISS-13321).
 - Flag-on states: every surface the session claims has its flag-on state on
-  that surface's existing story entry.
+  that surface's existing story entry. Inventory each existing page/list story
+  that consumes the changed component; a new component-only story does not
+  cover a missing flag-on state on an existing surface entry.
 - States: for each state the ticket, PRD or acceptance criteria name, the
   story on the consumed component that shows it, or the missing state.
 - Names: each new or changed story whose name claims more than its args and
@@ -310,3 +315,9 @@ real path for the example data, and the link comes from
 `../skills/vibe/scripts/vibe-sessions.mjs link`
 (`../skills/vibe/references/plain-words.md`, "Links to what the person should
 look at").
+
+In the launcher structured result, set `data.findings` to the current-source
+handoff findings only: an array of `{id, blocking, evidence, premises}` objects, or
+`[]` after a clean recheck. Mark missing required states and owner/placement
+violations blocking. The launcher receipt and graph trace bind this list to
+the source.

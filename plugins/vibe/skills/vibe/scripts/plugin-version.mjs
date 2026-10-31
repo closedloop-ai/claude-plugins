@@ -11,6 +11,7 @@
 //                               [--closedloop connected|not-connected --graph connected|not-connected]
 //   plugin-version.mjs choose   --choice update|proceed [--by person|opening-message] [state]
 //   plugin-version.mjs update   [state] [--claude <CLI>] [--codex <CLI>]
+//   plugin-version.mjs loaded   --runtime codex|claude [state]
 //   plugin-version.mjs pending  --conversation <id>     (written by the vibe hooks when a session starts)
 //   plugin-version.mjs adopt    --worktree <path>       (vibe-sessions.mjs new does this itself)
 //   plugin-version.mjs status   --closedloop connected|not-connected --graph connected|not-connected [state]
@@ -31,6 +32,12 @@
 //
 // A check run again in the same conversation with the same outdated versions
 // keeps the answer already recorded; a new conversation asks again.
+// `loaded` records the installed vibe release whose current skill file this
+// conversation has read, as the Skill or UserPromptSubmit hook observed it.
+// Later checks preserve it, so fleet wake and prompt gates can refuse stale
+// remembered steps after an in-place plugin update. Where no hook has recorded
+// the conversation (Codex before its hooks are trusted) it records that the
+// gate is not enforced instead of failing.
 // `choose` records the person's answer. `proceed` records that they accepted
 // that an outdated plugin could give worse results. `update` refuses unless
 // the recorded choice is `update`; it refreshes the marketplace and updates
@@ -85,7 +92,7 @@ const VIBE_BRANCH = "vibe/";
 const MANIFEST = Object.freeze({ claude: ".claude-plugin/plugin.json", codex: ".codex-plugin/plugin.json" });
 const CATALOG = Object.freeze({ claude: ".claude-plugin/marketplace.json", codex: ".agents/plugins/marketplace.json" });
 const CHOOSERS = Object.freeze(["person", "opening-message"]);
-const COMMANDS = Object.freeze(["check", "choose", "update", "pending", "adopt", "status", "show"]);
+const COMMANDS = Object.freeze(["check", "choose", "update", "loaded", "pending", "adopt", "status", "show"]);
 const HARNESS_LABEL = Object.freeze({ claude: "Claude Code", codex: "Codex" });
 const STATUS_PLUGINS = Object.freeze(["closedloop-core", "vibe"]);
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -111,6 +118,38 @@ export function compareVersions(left, right) {
     }
   }
   return 0;
+}
+
+/** The installed vibe version reported for `runtime`, or null. */
+export function installedVibeVersion(record, runtime) {
+  const entry = (record?.harnesses ?? []).find((item) => item?.harness === runtime);
+  return entry?.plugins?.find((plugin) => plugin?.name === "vibe")?.version ?? null;
+}
+
+/**
+ * The skill release this conversation loaded. On the first check after an
+ * upgrade, an old record has no explicit field, so its prior installed vibe
+ * version is the only durable evidence of what the conversation had loaded.
+ */
+export function loadedSkillForCheck(previous, current, conversation, runtime, now = new Date()) {
+  const recorded = previous?.loadedSkill;
+  if ((recorded?.actorId === conversation || recorded?.conversation === conversation)
+    && recorded?.runtime === runtime && VERSION.test(recorded.version ?? "")) return recorded;
+  if (previous?.conversation === conversation) {
+    const priorVersion = installedVibeVersion(previous, runtime);
+    if (VERSION.test(priorVersion ?? "")) return { conversation, runtime, version: priorVersion, at: previous.checkedAt ?? now.toISOString(), inferred: true };
+  }
+  return null;
+}
+
+/** Why this conversation must reload the current skill before another brief. */
+export function loadedSkillProblem(record) {
+  const loaded = record?.loadedSkill?.version;
+  const installed = installedVibeVersion(record, record?.loadedSkill?.runtime ?? record?.runtime);
+  const order = compareVersions(loaded, installed);
+  return order !== null && order < 0
+    ? `the conversation loaded vibe ${loaded}, but ${installed} is installed; reload the current vibe/fleet skill before sending another brief`
+    : null;
 }
 
 /** The CLI for `harness` that exists on this machine, or null: PATH first, then its usual install places. */
@@ -304,6 +343,13 @@ export function conversationId(env = process.env) {
   return [env.CLAUDE_CODE_SESSION_ID, env.CODEX_THREAD_ID].find((value) => typeof value === "string" && CONVERSATION.test(value)) ?? "default";
 }
 
+/** Active harness for a conversation, or null outside Claude/Codex. */
+export function conversationRuntime(env = process.env) {
+  if (typeof env.CLAUDE_CODE_SESSION_ID === "string" && CONVERSATION.test(env.CLAUDE_CODE_SESSION_ID)) return Harness.Claude;
+  if (typeof env.CODEX_THREAD_ID === "string" && CONVERSATION.test(env.CODEX_THREAD_ID)) return Harness.Codex;
+  return null;
+}
+
 /** Reads a startup record, or null. */
 export function readStartupRecord(conversation, home = os.homedir()) {
   return readJson(startupFile(conversation, home));
@@ -328,7 +374,10 @@ export function blockingProblem(record) {
   if (record?.status === VersionStatus.Outdated && !record.choice) {
     return `plugins are outdated (${record.versions}) and the person has not chosen to update or to proceed`;
   }
-  return null;
+  if (record?.loadedSkillRequired === true && !record.loadedSkill?.actorId) {
+    return "this conversation's hooks recorded no load of the current vibe/fleet skill; load it with the Skill tool or its start prompt before continuing";
+  }
+  return loadedSkillProblem(record);
 }
 
 /** Moves this conversation's startup record onto a vibe session record; refuses one that blocks. Returns the adopted record or null. */
@@ -546,6 +595,19 @@ function startupDir(home) {
   return path.join(home, ".codex", "vibe", "plugin-version");
 }
 
+function hookRecord(conversation, home) {
+  const record = readJson(path.join(home, ".vibe-hook-scope", `${conversation}.json`));
+  return record?.sessionId === conversation ? record : null;
+}
+
+function hookRecordExists(conversation, home) {
+  return hookRecord(conversation, home) !== null;
+}
+
+function observedLoadedSkill(conversation, home) {
+  return hookRecord(conversation, home)?.loadedSkill ?? null;
+}
+
 function readJson(file) {
   try {
     return JSON.parse(readFileSync(file, "utf8"));
@@ -641,6 +703,7 @@ async function main(argv, env, home) {
     },
   });
   const command = positionals[0] ?? "check";
+  const runtime = values.runtime ?? conversationRuntime(env);
   const clis = Object.fromEntries([[Harness.Claude, values.claude], [Harness.Codex, values.codex]].filter(([, cli]) => cli));
   const now = new Date();
   if (command === "pending") {
@@ -658,6 +721,29 @@ async function main(argv, env, home) {
   if ((command === "status" || withConnections) && !Object.values(connections).every((value) => Object.values(Connection).includes(value))) {
     throw new Error("--closedloop and --graph must each be connected or not-connected, from this conversation's own get-me and sync_status calls");
   }
+  if (command === "loaded") {
+    if (!Object.values(Harness).includes(runtime)) throw new Error("loaded needs --runtime codex or claude");
+    const conversation = values.conversation ?? conversationId(env);
+    const harnesses = localInstalled({ clis, env, home });
+    const previous = store.read() ?? {};
+    if (!hookRecordExists(conversation, home)) {
+      // No hook has run in this conversation (Codex hooks run only once the person trusts them),
+      // so nothing can observe a load: keep the earlier behavior rather than block every session.
+      const record = { ...previous, conversation, runtime, harnesses, loadedSkillRequired: false };
+      delete record.loadedSkill;
+      delete record.reloadRequired;
+      store.write(record);
+      return { code: 0, output: { ok: true, loadedSkill: null, enforced: false, reason: "no hook has recorded this conversation, so loaded-skill evidence is not enforced", state: store.where } };
+    }
+    const loadedSkill = observedLoadedSkill(conversation, home);
+    if (!loadedSkill || loadedSkill.actorId !== conversation || loadedSkill.runtime !== runtime) {
+      throw new Error("the current Skill/UserPrompt hook has not observed this actor loading vibe or fleet");
+    }
+    const record = { ...previous, conversation, runtime, harnesses, loadedSkill, loadedSkillRequired: true };
+    delete record.reloadRequired;
+    store.write(record);
+    return { code: 0, output: { ok: true, loadedSkill, enforced: true, state: store.where } };
+  }
   if (command === "check") {
     const timeoutMs = Number(values["timeout-ms"]);
     const result = await checkVersions({
@@ -668,10 +754,18 @@ async function main(argv, env, home) {
       home,
     });
     const conversation = values.conversation ?? conversationId(env);
-    const record = { ...result, conversation, checkedAt: now.toISOString(), ...(values.runtime ? { runtime: values.runtime } : {}) };
+    const previous = store.read();
+    const record = { ...result, conversation, checkedAt: now.toISOString(), ...(runtime ? { runtime } : {}) };
+    // Load evidence is enforced only where a hook has recorded this conversation; without one
+    // (Codex hooks not trusted yet) the check behaves as it did before loaded-skill evidence.
+    if (runtime && hookRecordExists(conversation, home)) {
+      record.loadedSkillRequired = true;
+      record.loadedSkill = observedLoadedSkill(conversation, home) ?? loadedSkillForCheck(previous, record, conversation, runtime, now);
+      const problem = loadedSkillProblem(record);
+      if (problem) record.reloadRequired = { loaded: record.loadedSkill.version, installed: installedVibeVersion(record, runtime), problem };
+    }
     // Checking again in the same conversation (after a compaction, say) keeps the
     // answer the person already gave for the same versions, so it is never asked twice.
-    const previous = store.read();
     if (record.status === VersionStatus.Outdated && previous?.choice && previous.conversation === conversation && previous.versions === record.versions) {
       record.choice = previous.choice;
     }

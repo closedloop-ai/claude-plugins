@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,9 +7,14 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { historyOrigin } from './history-origin.mjs';
 import { removeOwnedDockerResources } from '../../vibe/scripts/e2e-lock.mjs';
-import { endProcesses, isAlive, orphans, parsePids, pendingE2eCleanups, readIdentity, reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
+import { sourceIdentity } from '../../vibe/scripts/tested-head.mjs';
+import { evidenceFingerprint } from '../../handoff/scripts/handoff-evidence.mjs';
+import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+import { endProcesses, finalMarker, isAlive, orphans, parsePids, pendingE2eCleanups, readIdentity, reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const PLUGIN_ROOT = path.resolve(HERE, '..', '..', '..');
+const actorLoad = (actor = 'test') => loadedSkillEvidence(actor, 'claude', PLUGIN_ROOT, 'fleet-orchestrator', LoadBasis.HookObserved);
 const run = (args) => {
   const [dir, action] = args;
   const isolated = action === 'status' && !args.includes('--e2e-lock-dir')
@@ -19,6 +24,7 @@ const run = (args) => {
 const tempDir = (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-helpers-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(path.join(dir, 'plugin-version.json'), JSON.stringify({ status: 'current', runtime: 'claude', checkedAt: 'now', loadedSkill: actorLoad(), harnesses: [] }));
   return dir;
 };
 /** A pid this test started; anything else (empty output parses as 0) fails the test before any signal. */
@@ -99,6 +105,81 @@ const fakeTable = (processes) => {
 /** A target as `stopped` builds it from the ledger, with the identity recorded at `pid` time. */
 const recorded = (pid, group, identity = `id-${pid}`) => ({ pid, group, identity });
 const FAKE = 2_147_480_000;
+
+test('idle notice cannot accept or stop a reviewer without its source-bound FINAL deliverable', (t) => {
+  const dir = tempDir(t);
+  const help = run([dir]);
+  assert.equal(help.status, 2);
+  assert.match(help.stderr, /--kind reviewer\|verifier\|critic.*--agent-definition.*--capabilities/);
+  const worktree = path.join(dir, 'source');
+  mkdirSync(worktree);
+  execFileSync('git', ['init', '-q', '-b', 'review', worktree]);
+  writeFileSync(path.join(worktree, 'app.txt'), 'source\n');
+  execFileSync('git', ['-C', worktree, 'add', '.']);
+  execFileSync('git', ['-C', worktree, '-c', 'user.email=fixture.invalid', '-c', 'user.name=Test', 'commit', '-qm', 'base']);
+  const capabilities = path.join(dir, 'capabilities.json');
+  writeFileSync(capabilities, '[]\n');
+  const definition = path.join(dir, 'reviewer.md');
+  writeFileSync(definition, '---\nname: reviewer\n---\n');
+  const brief = path.join(dir, 'review.md');
+  writeFileSync(brief, 'Review the current diff.\n');
+  assert.notEqual(run([dir, 'start', 'missing', '--kind', 'reviewer', '--worktree', worktree]).status, 0, 'reviewer needs a brief');
+  writeFileSync(brief, 'Run handoff/scripts/qa-merge-order.mjs.\n');
+  assert.notEqual(run([dir, 'start', 'missing-script', '--kind', 'reviewer', '--brief', brief, '--worktree', worktree,
+    '--worker-id', 'native-reviewer-missing', '--role', 'reviewer', '--agent-definition', definition, '--capabilities', capabilities]).status, 0,
+  'Claude helper launch refuses a deleted installed plugin script');
+  writeFileSync(brief, 'Review the current diff.\n');
+  assert.equal(run([dir, 'start', 'reviewer', '--kind', 'reviewer', '--brief', brief, '--worktree', worktree,
+    '--worker-id', 'native-reviewer-1', '--role', 'reviewer', '--agent-definition', definition, '--capabilities', capabilities]).status, 0);
+  assert.notEqual(run([dir, 'accepted', 'reviewer']).status, 0, 'idle is not a final report');
+  assert.notEqual(run([dir, 'stopped', 'reviewer']).status, 0, 'a working reviewer cannot be stopped');
+  const helper = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8')).reviewer;
+  // PR #371 review: spawn-time evidence is labeled as such and names the helper's real runtime.
+  assert.deepEqual([helper.loadedSkill.runtime, helper.loadedSkill.basis], ['claude', 'installed-at-spawn']);
+  assert.equal(run([dir, 'start', 'codex-reviewer', '--kind', 'reviewer', '--runtime', 'codex', '--brief', brief, '--worktree', worktree,
+    '--worker-id', 'codex-thread-1', '--role', 'reviewer', '--agent-definition', definition, '--capabilities', capabilities]).status, 0);
+  assert.equal(JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'))['codex-reviewer'].loadedSkill.runtime, 'codex');
+  assert.notEqual(run([dir, 'start', 'bad-runtime', '--kind', 'reviewer', '--runtime', 'gemini', '--brief', brief, '--worktree', worktree,
+    '--worker-id', 'other-thread', '--role', 'reviewer', '--agent-definition', definition, '--capabilities', capabilities]).status, 0);
+  const token = helper.finalToken;
+  const deliverable = path.join(dir, 'review-final.md');
+  writeFileSync(deliverable, 'verified findings\n');
+  const report = path.join(dir, 'review-report.json');
+  const final = { helper: 'reviewer', token, status: 'FINAL', workerId: 'native-reviewer-1', source: sourceIdentity(worktree),
+    completion: { sessionId: 'session-1', turnId: 'turn-1' }, deliverable: evidenceFingerprint(deliverable) };
+  writeFileSync(report, JSON.stringify(final));
+  assert.notEqual(run([dir, 'accepted', 'reviewer', '--report', report]).status, 0, 'hand-written FINAL wrapper around partial work is refused');
+  writeFileSync(report, JSON.stringify({ ...final, status: 'IDLE' }));
+  assert.notEqual(run([dir, 'accepted', 'reviewer', '--report', report]).status, 0, 'turn end is not final');
+  const finalReport = path.join(dir, 'helper-produced-final.json');
+  assert.notEqual(run([dir, 'final', 'reviewer', '--deliverable', deliverable, '--session-id', 'session-1', '--turn-id', 'turn-1', '--out', finalReport]).status, 0, 'partial deliverable has no FINAL marker');
+  writeFileSync(deliverable, `verified findings\n${finalMarker(helper, final.completion)}\n`);
+  final.deliverable = evidenceFingerprint(deliverable);
+  assert.notEqual(run([dir, 'final', 'reviewer', '--deliverable', deliverable, '--session-id', 'invented', '--turn-id', 'turn-1', '--out', finalReport]).status, 0, 'invented completion identity cannot match helper marker');
+  writeFileSync(path.join(worktree, 'app.txt'), 'changed source\n');
+  assert.notEqual(run([dir, 'final', 'reviewer', '--deliverable', deliverable, '--session-id', 'session-1', '--turn-id', 'turn-1', '--out', finalReport]).status, 0, 'changed start source blocks completion');
+  writeFileSync(path.join(worktree, 'app.txt'), 'source\n');
+  const completionEvent = path.join(dir, 'thread-read.json');
+  const event = (status) => ({ thread: { id: 'session-1', turns: [{ id: 'turn-1', status }] } });
+  writeFileSync(completionEvent, JSON.stringify(event('inProgress')));
+  assert.notEqual(run([dir, 'final', 'reviewer', '--deliverable', deliverable, '--session-id', 'session-1', '--turn-id', 'turn-1', '--completion-event', completionEvent, '--out', finalReport]).status, 0, 'runtime still working cannot finalize');
+  writeFileSync(completionEvent, JSON.stringify(event('completed')));
+  final.completionEvidence = evidenceFingerprint(completionEvent);
+  assert.equal(run([dir, 'final', 'reviewer', '--deliverable', deliverable, '--session-id', 'session-1', '--turn-id', 'turn-1', '--completion-event', completionEvent, '--out', finalReport]).status, 0);
+  assert.notEqual(run([dir, 'final', 'reviewer', '--deliverable', deliverable, '--session-id', 'session-1', '--turn-id', 'turn-1', '--out', path.join(dir, 'second-final.json')]).status, 0, 'the FINAL token is consumed once');
+  assert.deepEqual(JSON.parse(readFileSync(finalReport, 'utf8')), final);
+  assert.equal(run([dir, 'accepted', 'reviewer', '--report', finalReport]).status, 0);
+  writeFileSync(definition, '---\nname: reviewer\n---\nchanged definition\n');
+  assert.notEqual(run([dir, 'stopped', 'reviewer']).status, 0, 'changed canonical role definition invalidates final proof');
+  writeFileSync(definition, '---\nname: reviewer\n---\n');
+  writeFileSync(deliverable, 'changed after acceptance\n');
+  assert.notEqual(run([dir, 'stopped', 'reviewer']).status, 0, 'stale final report cannot justify stop');
+  writeFileSync(deliverable, `verified findings\n${finalMarker(helper, final.completion)}\n`);
+  writeFileSync(completionEvent, JSON.stringify(event('inProgress')));
+  assert.notEqual(run([dir, 'stopped', 'reviewer']).status, 0, 'runtime completion evidence is rechecked');
+  writeFileSync(completionEvent, JSON.stringify(event('completed')));
+  assert.equal(run([dir, 'stopped', 'reviewer']).status, 0);
+});
 
 test('a terminal PR reconciles only its recorded helper and reports a refused cleanup with owner and ticket', async () => {
   const record = { owner: 'writer-a', ticket: 'ticket-one', repo: 'acme/repo', pr: '42', ending: 'pr-terminal',
@@ -243,11 +324,30 @@ const waitUntil = async (predicate) => {
 };
 
 test('a helper whose result was accepted and that still runs is a stop candidate', (t) => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-helpers-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  assert.equal(run([dir, 'start', 'review-a', '--brief', 'prompts/review-a-01.md', '--now', '2026-10-21T10:00:00Z']).status, 0);
+  const dir = tempDir(t);
+  const source = path.join(dir, 'source');
+  mkdirSync(source);
+  execFileSync('git', ['init', '-q', '-b', 'review', source]);
+  writeFileSync(path.join(source, 'app.txt'), 'source\n');
+  execFileSync('git', ['-C', source, 'add', '.']);
+  execFileSync('git', ['-C', source, '-c', 'user.email=fixture.invalid', '-c', 'user.name=Test', 'commit', '-qm', 'base']);
+  const capabilities = path.join(dir, 'capabilities.json');
+  writeFileSync(capabilities, '[]\n');
+  const definition = path.join(dir, 'review-a.md');
+  writeFileSync(definition, '---\nname: review-a\n---\n');
+  const brief = path.join(dir, 'prompts', 'review-a-01.md');
+  mkdirSync(path.dirname(brief));
+  writeFileSync(brief, 'Review.\n');
+  assert.equal(run([dir, 'start', 'review-a', '--kind', 'reviewer', '--brief', 'prompts/review-a-01.md', '--worktree', source,
+    '--worker-id', 'native-reviewer-a', '--role', 'review-a', '--agent-definition', definition,
+    '--capabilities', capabilities, '--now', '2026-10-21T10:00:00Z']).status, 0);
   assert.equal(run([dir, 'start', 'review-b', '--now', '2026-10-21T10:00:00Z']).status, 0);
-  assert.equal(run([dir, 'accepted', 'review-a', '--now', '2026-10-21T10:10:00Z']).status, 0);
+  const helper = JSON.parse(readFileSync(path.join(dir, 'helpers.json'), 'utf8'))['review-a'];
+  const deliverable = path.join(dir, 'final.md');
+  writeFileSync(deliverable, `final review\n${finalMarker(helper, { sessionId: 's-1', turnId: 't-1' })}\n`);
+  const report = path.join(dir, 'final.json');
+  assert.equal(run([dir, 'final', 'review-a', '--deliverable', deliverable, '--session-id', 's-1', '--turn-id', 't-1', '--out', report]).status, 0);
+  assert.equal(run([dir, 'accepted', 'review-a', '--report', report, '--now', '2026-10-21T10:10:00Z']).status, 0);
   const busy = run([dir, 'status', '--now', '2026-10-21T10:20:00Z']);
   assert.equal(busy.status, 1);
   assert.match(busy.stdout, /^STOP review-a accepted 10m ago; relaunch from prompts\/review-a-01\.md$/m);

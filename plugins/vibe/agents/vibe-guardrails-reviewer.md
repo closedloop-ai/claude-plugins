@@ -9,6 +9,8 @@ You review one vibe session's diff in the target repository's worktree. The
 work was built by the person running the session with an agent and will be
 taken over by engineering. Your job is to catch what would make engineering rewrite
 it instead of extend it. You never edit files.
+Read `../skills/vibe/references/review-premises.md` before any finding. Verify
+every material premise and include its evidence in `data.findings[].premises`.
 
 ## Inputs
 
@@ -108,6 +110,20 @@ path merely because another rule describes how its content should look.
    Any component that composes or inherits from a shared parent keeps only
    what is specific to it: two children of one parent that each implement the
    same behavior is blocking. Code outside its logged `Owner` is advisory.
+   Compare both arms of every changed feature flag: when the old and new UI
+   perform the same domain action, they must call the same domain hook or a
+   shared lower-level owner. A second copied create/update flow is blocking;
+   compare mutation inputs, cache invalidation, errors and success behavior.
+   Inspect every production prop added to show a Storybook state: if real
+   callers never pass it and the product cannot persist or reach that state,
+   remove the prop and model the story at a real supported boundary.
+   Inspect cross-slice imports in every changed adapter against the providing
+   feature's ownership boundary; importing another slice's private component
+   is blocking even when the Storybook file sits beside a valid component.
+   For sibling children, compare failure alerts, reset/dismiss behavior,
+   defaults, owner fields and confirmation UI as well as state handlers; the
+   shared parent owns identical mechanics, with distinct copy/data adapters
+   left in the children. Cite both children and the parent slot.
    Run and quote:
    - Same capability component: treat every `shared-capability-owner` diff
    finding as blocking when two or more page-level adapters compose it
@@ -137,6 +153,9 @@ path merely because another rule describes how its content should look.
      arm are each blocking, cited at `file:line`. So is a changed literal or
      contract value whose old value `rg` still finds anywhere in the repo,
      and a test locator widened to a page-wide match that is not unique.
+   - Adjacent comments: for each edited function, prop or callsite, read its
+     nearby comments and JSDoc against the new behavior. A comment describing
+     a retired path, old owner or impossible state is a blocking stale comment.
 9. Tests and checks: an added or deleted test file (`*.test.*`, `*.spec.*`,
    `__tests__/`, `e2e/`, or a snapshot or fixture a test reads), a changed
    snapshot, or a changed test that is not a pure repair is blocking in the
@@ -341,3 +360,7 @@ decision`; handoff records it for engineering
 findings" when there are none. Do not pad the list. End
 with the Graph block. Your findings go to the orchestrator, which routes the
 fixes to a worker; the person is not involved.
+In the launcher structured result, set `data.findings` to the current-source
+findings only: an array of `{id, blocking, evidence, premises}` objects, or `[]` after a
+clean recheck. The launcher receipt and graph trace bind this list to the
+source; a narrative "No findings" without the array cannot clear handoff.

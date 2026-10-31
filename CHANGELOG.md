@@ -4,6 +4,28 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.23
+
+#### Added
+- Source-bound reviewer-premise, helper-final, handoff, and preview-capability receipts give Claude and Codex one evidence contract before pull-request publication.
+- Actor-bound skill freshness and installed-script preflight gates cover fleet wake, local and remote Codex turns, Claude workers and messages, helper briefs, and board deliveries.
+
+#### Changed
+- Guardrails, adversarial, Storybook, and verification results must cite verified premises and complete through their runtime-owned evidence path before handoff can accept them.
+- Storybook releases are prepared before the pull request so story checks pass, while one enqueue-time conflict settlement keeps concurrent version reservations from causing repeated main merges.
+- Instruction-weight accounting covers all plugin Markdown, including eval prompts and graders; it is about 2,530 words longer than in 1.1.22.
+- Fleet setup lists `jq` and `codex` on every host that runs `fleet.sh` sessions, and `helpers.mjs start` takes `--runtime claude|codex` for review helpers.
+
+#### Fixed
+- Fleet first-turn and resume handling, native reviewer capability evidence, helper completion, and pull-request creation now fail closed on missing, stale, forged, or incomplete session evidence.
+- Version questions and code citations use recorded startup state and real repository lines; preview readiness no longer turns missing capabilities into shell, console, or cloud-administration tasks for the person.
+- App Server review evidence reads bounded turn and item pages instead of full thread history, and stale loaded skill instructions cannot name scripts removed from the installed release.
+- Installed-script checks run only for writer launches and inside vibe or fleet conversations, and count a path only when it names a vibe skill, so a repository's own `skills/<name>/scripts/` files are not refused.
+- A `checked in code` citation is resolved in the cited file's own repository, so an orchestrator outside a repository can cite a writer worktree.
+- Loaded-skill evidence is enforced only where a hook has recorded the conversation; hook records read the runtime from the hook input, `$fleet-orchestrator` prompts record scope, and Codex prompts no longer mark the version check pending, so Codex sessions start before hooks are trusted.
+- A session-less `gh pr create` from a vibe or fleet conversation is refused only from a worktree on a `vibe/` branch or outside a repository; other worktrees' session records no longer decide. Spawn-time load evidence is labeled `installed-at-spawn`.
+- A fleet writer thread saved before 1.1.23, which has no load evidence, keeps taking turns and steers with its loaded skill unchecked and a log line saying so; its prompt's plugin script paths are still checked.
+
 ### vibe v1.1.22
 
 #### Added
