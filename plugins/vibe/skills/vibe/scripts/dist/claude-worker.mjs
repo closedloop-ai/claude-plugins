@@ -7373,8 +7373,8 @@ var require_dist = __commonJS({
 // src/claude-worker.ts
 import { execFileSync as execFileSync2, spawn, spawnSync as spawnSync2 } from "node:child_process";
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { closeSync, existsSync as existsSync6, openSync, realpathSync as realpathSync7, rmSync as rmSync2, writeFileSync as writeFileSync2, writeSync } from "node:fs";
-import { join as join7 } from "node:path";
+import { closeSync, existsSync as existsSync6, openSync, realpathSync as realpathSync8, rmSync as rmSync2, writeFileSync as writeFileSync2, writeSync } from "node:fs";
+import { join as join8 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
 // node_modules/zod/v3/external.js
@@ -11419,8 +11419,10 @@ var coerce = {
 var NEVER = INVALID;
 
 // src/claude-preflight.ts
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
+import { lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 
 // src/contracts.ts
 var graphOperations = /* @__PURE__ */ new Set([
@@ -11627,6 +11629,54 @@ var LaunchPrecheckError = class extends Error {
   code;
   personAction;
 };
+var MINIMUM_PROTECTED_HOOK_VERSION = [2, 1, 295];
+function protectedHookPath(pluginRoot) {
+  const unavailable = (reason) => new LaunchPrecheckError(
+    "PROTECTED_PATH_HOOK_UNAVAILABLE",
+    `The headless Claude writer's protected-path hook is unavailable: ${reason}`
+  );
+  const hookPath = join(pluginRoot, "hooks", "protected-write-guard.mjs");
+  try {
+    if (!lstatSync(hookPath).isFile() || realpathSync(hookPath) !== hookPath) {
+      throw unavailable("the installed guard must be a regular file");
+    }
+  } catch (error) {
+    if (error instanceof LaunchPrecheckError) throw error;
+    throw unavailable("the installed guard is missing or unreadable");
+  }
+  return hookPath;
+}
+function checkProtectedVersion(stdout, failed) {
+  const unavailable = (reason) => new LaunchPrecheckError(
+    "PROTECTED_PATH_HOOK_UNAVAILABLE",
+    `The headless Claude writer's protected-path hook is unavailable: ${reason}`
+  );
+  const match = /^\s*(\d+)\.(\d+)\.(\d+)(?=[+\-\s]|$)/.exec(stdout);
+  if (failed || !match) throw unavailable("the installed Claude Code version could not be checked");
+  const actual = match.slice(1).map(Number);
+  for (let index = 0; index < MINIMUM_PROTECTED_HOOK_VERSION.length; index += 1) {
+    const actualPart = actual[index] ?? 0;
+    const requiredPart = MINIMUM_PROTECTED_HOOK_VERSION[index] ?? 0;
+    if (actualPart < requiredPart) throw unavailable("Claude Code 2.1.295 or newer is required");
+    if (actualPart > requiredPart) break;
+  }
+}
+function cliProbe(command, args, timeout) {
+  return new Promise((resolve3) => {
+    execFile(
+      command,
+      args,
+      { cwd: homedir(), encoding: "utf8", timeout, maxBuffer: 1024 * 1024 },
+      (error, stdout) => resolve3({ error, stdout })
+    );
+  });
+}
+async function checkProtectedWriteSupportAsync(pluginRoot, command = "claude") {
+  const hookPath = protectedHookPath(pluginRoot);
+  const version = await cliProbe(command, ["--version"], 1e4);
+  checkProtectedVersion(version.stdout, version.error !== null);
+  return hookPath;
+}
 var SIGN_IN_PERSON_ACTION = "Your Claude sign-in on this Mac has run out, so I can't start the helpers that build your change. Open the Terminal app (press Cmd and Space, type Terminal, press Return), type claude auth login and press Return, then finish signing in in the browser window that opens. Tell me when you're done.";
 var AUTH_FAILURE = /oauth (?:session|token)[^\n]*expired|failed to authenticate|please run \/login|invalid api key|not logged in|authentication_error/i;
 function isAuthFailure(text) {
@@ -11639,18 +11689,25 @@ function checkClaudeSignIn(command = "claude") {
     timeout: 2e4,
     stdio: ["ignore", "pipe", "pipe"]
   });
-  if (status.error && "code" in status.error && status.error.code === "ENOENT") {
+  checkClaudeSignInResult(status.stdout ?? "", status.error ?? null);
+}
+function checkClaudeSignInResult(stdout, error) {
+  if (error && "code" in error && error.code === "ENOENT") {
     throw new LaunchPrecheckError("CLAUDE_CLI_MISSING", "The claude command is not on this shell's PATH");
   }
   let parsed;
   try {
-    parsed = JSON.parse(status.stdout ?? "");
+    parsed = JSON.parse(stdout);
   } catch {
     return;
   }
   if (parsed && typeof parsed === "object" && parsed.loggedIn === false) {
     throw new LaunchPrecheckError("CLAUDE_SIGN_IN_NEEDED", "The standalone Claude CLI is signed out", SIGN_IN_PERSON_ACTION);
   }
+}
+async function checkClaudeSignInAsync(command = "claude") {
+  const status = await cliProbe(command, ["auth", "status", "--json"], 2e4);
+  checkClaudeSignInResult(status.stdout, status.error);
 }
 var requiredLiveReads = {
   "vibe-requirements-worker": ["get_document"],
@@ -11677,7 +11734,7 @@ function missingServers(missing) {
 }
 
 // src/cli.ts
-import { realpathSync } from "node:fs";
+import { realpathSync as realpathSync2 } from "node:fs";
 import { fileURLToPath, pathToFileURL as pathToFileURL2 } from "node:url";
 
 // ../shared/cli.ts
@@ -11698,19 +11755,19 @@ function runWhenMain(metaUrl, main2) {
 // src/cli.ts
 function runFromCanonicalEntry(metaUrl, main2) {
   const entry = process.argv[1];
-  if (!entry || realpathSync(fileURLToPath(metaUrl)) !== realpathSync(entry)) return;
+  if (!entry || realpathSync2(fileURLToPath(metaUrl)) !== realpathSync2(entry)) return;
   runWhenMain(pathToFileURL2(entry).href, main2);
 }
 
 // src/definition.ts
 var import_yaml = __toESM(require_dist(), 1);
 import { createHash } from "node:crypto";
-import { readFileSync as readFileSync2, realpathSync as realpathSync3 } from "node:fs";
-import { join as join2 } from "node:path";
+import { readFileSync as readFileSync2, realpathSync as realpathSync4 } from "node:fs";
+import { join as join3 } from "node:path";
 
 // src/plugin-root.ts
-import { existsSync, readFileSync, realpathSync as realpathSync2 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync as realpathSync3 } from "node:fs";
+import { basename, dirname, join as join2, resolve } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 var AgentRootError = class extends Error {
   constructor(code, message) {
@@ -11723,7 +11780,7 @@ var manifestPaths = [".claude-plugin/plugin.json", ".codex-plugin/plugin.json"];
 function readPluginManifest(root) {
   for (const relative of manifestPaths) {
     try {
-      return JSON.parse(readFileSync(join(root, relative), "utf8"));
+      return JSON.parse(readFileSync(join2(root, relative), "utf8"));
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
@@ -11734,7 +11791,7 @@ function installedPluginRoot(metaUrl) {
   const entry = dirname(fileURLToPath2(metaUrl));
   for (const candidate of [resolve(entry, "../../../.."), resolve(entry, "../../../plugins/vibe")]) {
     try {
-      const root = realpathSync2(candidate);
+      const root = realpathSync3(candidate);
       if (isPluginRoot(root)) return root;
     } catch {
     }
@@ -11746,7 +11803,7 @@ function resolveAgentRoot(supplied, installed, recorded) {
   if (supplied === void 0) return fallback;
   let root;
   try {
-    root = realpathSync2(supplied);
+    root = realpathSync3(supplied);
   } catch {
     throw new AgentRootError("AGENT_ROOT_INVALID", "The supplied agent root does not exist; omit agentRoot to use the installed plugin");
   }
@@ -11766,7 +11823,7 @@ function resolveAgentRoot(supplied, installed, recorded) {
   return root;
 }
 function isPluginRoot(root) {
-  if (!existsSync(join(root, "agents"))) return false;
+  if (!existsSync(join2(root, "agents"))) return false;
   try {
     return readPluginManifest(root).name === "vibe";
   } catch {
@@ -11807,9 +11864,9 @@ var builtins = /* @__PURE__ */ new Set([
 ]);
 function readDefinition(agentRoot, agentName, capabilityInput) {
   if (!/^vibe-[a-z0-9-]+$/.test(agentName)) throw new Error("Only own-plugin vibe agents are supported");
-  const root = realpathSync3(agentRoot);
-  const file = realpathSync3(join2(root, "agents", `${agentName}.md`));
-  if (file !== join2(root, "agents", `${agentName}.md`)) throw new Error("Agent escapes its owning plugin");
+  const root = realpathSync4(agentRoot);
+  const file = realpathSync4(join3(root, "agents", `${agentName}.md`));
+  if (file !== join3(root, "agents", `${agentName}.md`)) throw new Error("Agent escapes its owning plugin");
   const manifest = external_exports.object({ name: external_exports.literal("vibe"), version: external_exports.string().regex(/^\d+\.\d+\.\d+$/).optional() }).passthrough().parse(
     readPluginManifest(root)
   );
@@ -11849,12 +11906,12 @@ function observeDefinitionDigest(agentRoot, agentName, capabilities) {
 // src/ledger.ts
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync4, realpathSync as realpathSync4, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename as basename2, dirname as dirname3, isAbsolute, join as join4 } from "node:path";
+import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync4, realpathSync as realpathSync5, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename as basename2, dirname as dirname3, isAbsolute, join as join5 } from "node:path";
 
 // src/reference-images.ts
 import { existsSync as existsSync2, readFileSync as readFileSync3, statSync } from "node:fs";
-import { dirname as dirname2, join as join3, resolve as resolve2 } from "node:path";
+import { dirname as dirname2, join as join4, resolve as resolve2 } from "node:path";
 var REFERENCE_DIR = "vibe-reference-images";
 var referenceSchema = external_exports.object({
   path: external_exports.string().min(1),
@@ -11863,11 +11920,11 @@ var referenceSchema = external_exports.object({
 }).passthrough();
 var recordSchema = external_exports.object({ referenceImages: external_exports.array(external_exports.unknown()).optional() }).passthrough();
 function readReferenceImages(metadataDir) {
-  const file = join3(metadataDir, "vibe-session.json");
+  const file = join4(metadataDir, "vibe-session.json");
   if (!existsSync2(file)) return [];
   const record = recordSchema.safeParse(JSON.parse(readFileSync3(file, "utf8")));
   if (!record.success) return [];
-  const owned = join3(metadataDir, REFERENCE_DIR);
+  const owned = join4(metadataDir, REFERENCE_DIR);
   const images = [];
   for (const raw of record.data.referenceImages ?? []) {
     const entry = referenceSchema.safeParse(raw);
@@ -11881,20 +11938,20 @@ function readReferenceImages(metadataDir) {
 
 // src/ledger.ts
 function checkoutLocation(worktree) {
-  const root = realpathSync4(git(worktree, ["rev-parse", "--show-toplevel"]));
-  if (realpathSync4(worktree) !== root) throw new Error("Use the session's exact worktree root");
+  const root = realpathSync5(git(worktree, ["rev-parse", "--show-toplevel"]));
+  if (realpathSync5(worktree) !== root) throw new Error("Use the session's exact worktree root");
   const metadata = git(root, ["rev-parse", "--absolute-git-dir", "--abbrev-ref", "HEAD"]);
   const separator = metadata.lastIndexOf("\n");
   if (separator < 0) throw new Error("Missing native checkout metadata boundary");
   const [dir, branch] = external_exports.tuple([external_exports.string().min(1).refine(isAbsolute), external_exports.string().min(1)]).parse([metadata.slice(0, separator).trim(), metadata.slice(separator + 1).trim()]);
-  return { root, dir, branch, file: join4(dir, "vibe-writer.json"), lock: join4(dir, "vibe-writer.lock") };
+  return { root, dir, branch, file: join5(dir, "vibe-writer.json"), lock: join5(dir, "vibe-writer.lock") };
 }
 function location(worktree) {
   const place = checkoutLocation(worktree);
   const record = external_exports.object({ worktree: external_exports.string().optional(), branch: external_exports.string() }).passthrough().parse(
-    JSON.parse(readFileSync4(join4(place.dir, "vibe-session.json"), "utf8"))
+    JSON.parse(readFileSync4(join5(place.dir, "vibe-session.json"), "utf8"))
   );
-  if (record.worktree && realpathSync4(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Session worktree or branch changed");
+  if (record.worktree && realpathSync5(record.worktree) !== place.root || record.branch !== place.branch) throw new Error("Session worktree or branch changed");
   return place;
 }
 function readWriterSummary(worktree) {
@@ -11905,9 +11962,12 @@ function readWriterSummary(worktree) {
 }
 function recordedDefinitionState(ledger) {
   try {
-    const observed = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
-    if (observed === null) return "removed";
-    return observed === ledger.binding.digest ? "present" : "changed";
+    const evidence = definitionUpgradeEvidence(ledger, installedPluginRoot(import.meta.url));
+    if (evidence.observedDigest === null) return "removed";
+    if (evidence.observedDigest !== evidence.recordedDigest) return "changed";
+    if (evidence.sameRelease) return "present";
+    if (evidence.provenNewer) return evidence.installedDigest === evidence.recordedDigest ? "present" : "changed";
+    return "unreadable";
   } catch {
     return "unreadable";
   }
@@ -11927,7 +11987,7 @@ function definitionUpgradeEvidence(ledger, installedRoot) {
   const recordedVersion = observedDigest === null ? void 0 : readPluginManifest(agentRoot).version;
   const cacheVersion = basename2(dirname3(agentRoot)) === "vibe" ? basename2(agentRoot) : void 0;
   const provenNewer = typeof recordedVersion === "string" && cacheVersion === recordedVersion && Boolean(installed.version && isNewerRelease(installed.version, cacheVersion));
-  const sameRelease = typeof recordedVersion === "string" && recordedVersion === installed.version;
+  const sameRelease = typeof recordedVersion === "string" && recordedVersion === installed.version && (!cacheVersion || cacheVersion === recordedVersion);
   return {
     recordedRoot: agentRoot,
     recordedDigest: digest2,
@@ -11995,7 +12055,7 @@ function changeWriter(action, input) {
       if (ledger.pending.length >= 32) throw new Error("Pending queue is full; keep the new input with the parent");
       ledger.pending.push({ id: requestId, input: data.input });
     } else if (action === "claim") {
-      if (existsSync3(join4(place.dir, "vibe-record-turn.lock"))) throw new Error("A record turn is already running; retain the queued writer request");
+      if (existsSync3(join5(place.dir, "vibe-record-turn.lock"))) throw new Error("A record turn is already running; retain the queued writer request");
       if (ledger.active?.lease && ledger.runtime === "claude" && staleClaudeLease(ledger.active)) {
         ledger.active.status = "FAILED";
         ledger.active.resultSummary = "The launcher that owned this turn stopped; the turn was closed.";
@@ -12058,7 +12118,7 @@ function changeWriter(action, input) {
 }
 function acquireRecordTurnAt(place, owner) {
   return locked(place, () => {
-    const file = join4(place.dir, "vibe-record-turn.lock");
+    const file = join5(place.dir, "vibe-record-turn.lock");
     if (existsSync3(place.file)) {
       const ledger = readLedger(place);
       if (owner && !ledger.active?.lease) {
@@ -12174,7 +12234,7 @@ function proveGroupStopped(processGroupId) {
 }
 
 // ../../plugins/vibe/skills/vibe/scripts/plugin-script-references.mjs
-import { existsSync as existsSync4, lstatSync, readFileSync as readFileSync5, realpathSync as realpathSync5, statSync as statSync2 } from "node:fs";
+import { existsSync as existsSync4, lstatSync as lstatSync2, readFileSync as readFileSync5, realpathSync as realpathSync6, statSync as statSync2 } from "node:fs";
 import path from "node:path";
 var TOKEN = /[^\s'"`()<>=]+/g;
 var SCRIPT_PATH = /^(.*?)(?:^|\/)(?:(skills)\/)?([a-z0-9][a-z0-9-]*)\/scripts\/([a-z0-9_./-]+\.(?:mjs|js|cjs|ts|py|sh))$/i;
@@ -12233,7 +12293,7 @@ function pluginScriptReferences(text, pluginRoot, worktree = null) {
   return refs;
 }
 function pluginScriptProblems(text, pluginRoot, worktree = null) {
-  const root = realpathSync5(pluginRoot);
+  const root = realpathSync6(pluginRoot);
   const problems = [];
   for (const relative of pluginScriptReferences(text, root, worktree)) {
     if (relative.split("/").includes("..")) {
@@ -12246,8 +12306,8 @@ function pluginScriptProblems(text, pluginRoot, worktree = null) {
       continue;
     }
     try {
-      const canonical = realpathSync5(candidate);
-      if (!canonical.startsWith(`${root}${path.sep}`) || !lstatSync(canonical).isFile()) problems.push(`${relative}: plugin script is not a contained regular file`);
+      const canonical = realpathSync6(candidate);
+      if (!canonical.startsWith(`${root}${path.sep}`) || !lstatSync2(canonical).isFile()) problems.push(`${relative}: plugin script is not a contained regular file`);
     } catch {
       problems.push(`${relative}: plugin script cannot be verified`);
     }
@@ -12256,8 +12316,8 @@ function pluginScriptProblems(text, pluginRoot, worktree = null) {
 }
 
 // src/record-context.ts
-import { existsSync as existsSync5, readFileSync as readFileSync6, realpathSync as realpathSync6 } from "node:fs";
-import { join as join5, sep } from "node:path";
+import { existsSync as existsSync5, readFileSync as readFileSync6, realpathSync as realpathSync7 } from "node:fs";
+import { join as join6, sep } from "node:path";
 
 // ../../plugins/vibe/skills/vibe/scripts/session-record.mjs
 function sessionLiveTicket(record) {
@@ -12406,7 +12466,7 @@ function resolveRecordContext(input) {
     const cancel = input.sessionless.kind === "discarded" && input.agentName === "vibe-ticket-worker" && input.mode === "record" && input.recordAction === "cancel" && input.exclusiveRecordTurn;
     if (!startup && !cancel) throw new Error("This role/action has no sessionless operation");
     place = checkoutLocation(input.worktree);
-    if (existsSync5(join5(place.dir, "vibe-session.json"))) throw new Error("A private session exists; use its strict owned operation");
+    if (existsSync5(join6(place.dir, "vibe-session.json"))) throw new Error("A private session exists; use its strict owned operation");
   } else place = location(input.worktree);
   return { place, target: discardLocation(input, place) };
 }
@@ -12421,12 +12481,12 @@ function discardLocation(input, stable) {
     handoffTicket: external_exports.string().nullable().optional(),
     operator: external_exports.object({ id: external_exports.string().min(1), email: external_exports.string().email() }).passthrough()
   }).passthrough().parse(
-    JSON.parse(readFileSync6(join5(target.dir, "vibe-session.json"), "utf8"))
+    JSON.parse(readFileSync6(join6(target.dir, "vibe-session.json"), "utf8"))
   );
-  if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`) || !existsSync5(join5(target.dir, "commondir"))) throw new Error("Discard must retain its execution checkout");
-  const common = readFileSync6(join5(target.dir, "commondir"), "utf8").trim();
-  const stableCommon = existsSync5(join5(stable.dir, "commondir")) ? realpathSync6(join5(stable.dir, readFileSync6(join5(stable.dir, "commondir"), "utf8").trim())) : realpathSync6(stable.dir);
-  if (realpathSync6(join5(target.dir, common)) !== stableCommon || record.branch !== evidence.branch || record.operator.id !== evidence.operatorId || record.operator.email !== evidence.operatorEmail || (sessionLiveTicket(record) ?? void 0) !== evidence.liveTicket) {
+  if (target.root === stable.root || stable.root.startsWith(`${target.root}${sep}`) || !existsSync5(join6(target.dir, "commondir"))) throw new Error("Discard must retain its execution checkout");
+  const common = readFileSync6(join6(target.dir, "commondir"), "utf8").trim();
+  const stableCommon = existsSync5(join6(stable.dir, "commondir")) ? realpathSync7(join6(stable.dir, readFileSync6(join6(stable.dir, "commondir"), "utf8").trim())) : realpathSync7(stable.dir);
+  if (realpathSync7(join6(target.dir, common)) !== stableCommon || record.branch !== evidence.branch || record.operator.id !== evidence.operatorId || record.operator.email !== evidence.operatorEmail || (sessionLiveTicket(record) ?? void 0) !== evidence.liveTicket) {
     throw new Error("Discard target does not match the parent's owned session evidence");
   }
   return target;
@@ -12658,7 +12718,7 @@ function digest(text) {
 // src/main-sync-validation-envelope.ts
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
-import { join as join6 } from "node:path";
+import { join as join7 } from "node:path";
 
 // src/main-sync-validation-recipe.ts
 var MAIN_BOOTSTRAP_MS = 15 * 60 * 1e3;
@@ -12711,9 +12771,9 @@ async function deriveValidationEnvelope(context, dir, branch, canceled) {
   if (!witness || context.agentName !== "vibe-change-worker" || context.recordAction !== "progress") {
     throw new MainSyncError("Root canonical source validation witness is required");
   }
-  const state = mainSyncStateSchema.parse(await privateData(join6(dir, "vibe-main-sync.json")));
+  const state = mainSyncStateSchema.parse(await privateData(join7(dir, "vibe-main-sync.json")));
   if (canceled()) throw new Error("Owned worker turn canceled before Claude spawn");
-  const session = sessionSchema.parse(await privateData(join6(dir, "vibe-session.json")));
+  const session = sessionSchema.parse(await privateData(join7(dir, "vibe-session.json")));
   const receipt = state.phase === "input-readiness" ? state.previous : state;
   if (!receipt?.recipe || receipt.worktree !== context.worktree || receipt.branch !== branch || session.branch !== branch || receipt.operator.id !== session.operator.id || receipt.operator.email !== session.operator.email || receipt.originalBase !== session.baseCommit || receipt.purpose !== context.publicationPurpose || receipt.transactionId !== context.mainSyncTransactionId || !state.inputs || state.inputs.source.runtime !== context.runtime || state.inputs.source.workerId !== context.workerId || state.inputs.headSha !== witness.headSha || state.inputs.treeSha !== witness.treeSha || state.inputs.inputSha256 !== witness.inputSha256) {
     throw new MainSyncError("Stored canonical readiness is missing, stale or outside the actual Root source operation", "NEEDS_CHANGE");
@@ -12843,9 +12903,27 @@ var readerRoles = /* @__PURE__ */ new Set([
 ]);
 var receiptRoles = /* @__PURE__ */ new Set(["vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-storybook-decomposer", "vibe-verify-worker"]);
 var previewActions = /* @__PURE__ */ new Set(["create", "redeploy", "flags", "desktop"]);
+var PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS = 15;
+function protectedWriteSettings(hookPath, worktree) {
+  const handler = {
+    type: "command",
+    command: process.execPath,
+    args: [hookPath, worktree],
+    timeout: PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS,
+    onFailure: "block",
+    statusMessage: "Protected write guard"
+  };
+  return JSON.stringify({ hooks: {
+    PermissionRequest: [{ matcher: "Edit|Write", hooks: [handler] }],
+    PreToolUse: [{ matcher: "Edit|Write|Bash", hooks: [handler] }]
+  } });
+}
+function protectedWriteLaunchArgs(hookPath, worktree) {
+  return ["--settings", protectedWriteSettings(hookPath, worktree), "--permission-prompts", "none"];
+}
 function dispatchFreshnessProblem(agentRoot, installedRoot, worktree, text) {
-  const root = realpathSync7(agentRoot);
-  const installed = realpathSync7(installedRoot);
+  const root = realpathSync8(agentRoot);
+  const installed = realpathSync8(installedRoot);
   const version = (dir) => readPluginManifest(dir).version;
   if (version(root) !== version(installed)) return "Claude dispatch definition is from a stale installed plugin release; reload or migrate before launch";
   return pluginScriptProblems(text, root, worktree)[0] ?? null;
@@ -12859,7 +12937,7 @@ function checkPreviewResult(input, output, pluginRoot, worktree, run = spawnSync
   const environmentId = output.data?.environmentId;
   if (typeof receipt !== "string" || typeof environmentId !== "string") throw new Error("Environment DONE needs provider preview receipt and environment identity");
   const args = [
-    realpathSync7(join7(pluginRoot, "skills/vibe/scripts/preview-capabilities.mjs")),
+    realpathSync8(join8(pluginRoot, "skills/vibe/scripts/preview-capabilities.mjs")),
     "--file",
     receipt,
     "--worktree",
@@ -12876,7 +12954,7 @@ function checkPreviewResult(input, output, pluginRoot, worktree, run = spawnSync
 function reviewSourceIdentity(pluginRoot, worktree) {
   return JSON.parse(execFileSync2(
     process.execPath,
-    [realpathSync7(join7(pluginRoot, "skills/vibe/scripts/tested-head.mjs")), "source", worktree],
+    [realpathSync8(join8(pluginRoot, "skills/vibe/scripts/tested-head.mjs")), "source", worktree],
     { encoding: "utf8" }
   ));
 }
@@ -12915,7 +12993,7 @@ function boundDefinition(definition, input) {
   const storybookEvidencePolicy = input.agentName === "vibe-storybook-decomposer" ? "This advisor may write only verifier-owned Storybook birth records and logs in the private git directory through verify-storybook-process.mjs. Stop each new process before returning. Never edit product source, tests or live records, and never adopt an unrecorded process. " : "";
   const prompt = `${definition.prompt}
 
-Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join7(definition.root, "agents")}. ` + pushPolicy(input) + phasePolicy + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "") + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName) ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : `${verifyEvidencePolicy}${storybookEvidencePolicy}`) + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
+Runtime binding: work only in ${input.worktree}. Resolve this canonical definition's relative resource references against ${join8(definition.root, "agents")}. ` + pushPolicy(input) + phasePolicy + (reader ? "Before any finding, verify each material premise about source, tool, runtime, CLI, platform or version against current code, a bounded read-only command result or current official documentation. Give each finding a premises array with claim and evidence; label unverified premises UNVERIFIED and never make them blocking. The orchestrator separately rechecks premises before relay. " : "") + (reader && !["vibe-verify-worker", "vibe-storybook-decomposer"].includes(input.agentName) ? "This session is read-only. Bash and Skill may inspect existing sources, never mutate files or records. " : `${verifyEvidencePolicy}${storybookEvidencePolicy}`) + (input.agentName === "vibe-prototype-worker" ? `Use canonical ${prototypeAdvice ? "advice" : "share"} mode; operational publication never authors source. ` : "") + "Return one JSON object with status, summary (at most 4096 characters), and optional data. Finish by calling the native StructuredOutput tool exactly once with that compact object. Return compact facts, paths and status, never source bodies, raw tool responses, credentials or transcript text. Use status PLAN, STORIES_READY, NEEDS_REVIEW, NEEDS_PERSON, NEEDS_COMMIT, NEEDS_CHANGE, NEEDS_PRIMITIVE, NEEDS_BACKEND, NEEDS_STORYBOOK, NEEDS_DESKTOP_STOP, DONE, BLOCKED, or FAILED. DONE means the whole current request is complete; intermediate units keep the request active.";
   const agent = {
     description: definition.metadata.description,
     prompt,
@@ -12947,7 +13025,7 @@ async function runWorker(rawInput) {
   const unchangedUpgrade = upgrade?.provenNewer && upgrade.installedDigest === upgrade.recordedDigest;
   const compatible = upgrade && upgrade.observedDigest === upgrade.recordedDigest && (upgrade.sameRelease || unchangedUpgrade);
   if (upgrade && !compatible) {
-    const command = `node ${join7(installedRoot, "skills/vibe/scripts/dist/writer-state.mjs")} migrate`;
+    const command = `node ${join8(installedRoot, "skills/vibe/scripts/dist/writer-state.mjs")} migrate`;
     const message = upgrade.provenNewer || upgrade.observedDigest === null ? `Claude dispatch definition is from a stale installed plugin release; run ${command} with the recorded migration JSON on stdin` : "Writer definition mismatch has no proven installed release upgrade; retain the original writer";
     throw new AgentRootError("STALE_PLUGIN_ROOT", message);
   }
@@ -12962,10 +13040,20 @@ async function runWorker(rawInput) {
   const definition = readDefinition(agentRoot, input.agentName, input.capabilities);
   const bound = boundDefinition(definition, input);
   checkRoleCapabilities(input.agentName, input.capabilities);
-  checkClaudeSignIn();
+  const persistent = input.agentName === "vibe-change-worker";
+  if (!persistent) checkClaudeSignIn();
   const { place, target: discardPlace } = resolveRecordContext(input);
   const reviewSource = receiptRoles.has(input.agentName) ? reviewSourceIdentity(definition.root, place.root) : void 0;
-  const persistent = input.agentName === "vibe-change-worker";
+  let protectedArgs = [];
+  if (persistent) {
+    const [signIn, support] = await Promise.allSettled([
+      checkClaudeSignInAsync(),
+      checkProtectedWriteSupportAsync(installedRoot)
+    ]);
+    if (signIn.status === "rejected") throw signIn.reason;
+    if (support.status === "rejected") throw support.reason;
+    protectedArgs = protectedWriteLaunchArgs(support.value, place.root);
+  }
   let workerId = randomUUID3();
   let lease;
   let resume = false;
@@ -12991,8 +13079,8 @@ async function runWorker(rawInput) {
     turnInput = claim.turn?.continuation ?? claim.turn?.input ?? "";
   } else if (!input.input || input.continuation) throw new Error("Advisors require a fresh read-only input");
   const turnId = randomUUID3();
-  const definitionFile = join7(place.dir, `vibe-agent-${turnId}.json`);
-  const tracePath = join7(place.dir, `vibe-worker-${turnId}.jsonl`);
+  const definitionFile = join8(place.dir, `vibe-agent-${turnId}.json`);
+  const tracePath = join8(place.dir, `vibe-worker-${turnId}.jsonl`);
   let trace;
   let recordLock = false;
   let discardLock = false;
@@ -13028,7 +13116,7 @@ async function runWorker(rawInput) {
         };
         if (input.mainSyncCiRun) operationContext.mainSyncCiRun = input.mainSyncCiRun;
         if (input.mainSyncValidation) operationContext.mainSyncValidation = input.mainSyncValidation;
-        writeFileSync2(join7(place.dir, "vibe-record-turn.lock", CLAUDE_OPERATION_OWNER), JSON.stringify({
+        writeFileSync2(join8(place.dir, "vibe-record-turn.lock", CLAUDE_OPERATION_OWNER), JSON.stringify({
           context: operationContext,
           branch: place.branch,
           ...persistent && lease ? { primaryOwner: { workerId, lease } } : {}
@@ -13061,6 +13149,7 @@ async function runWorker(rawInput) {
       "default",
       "--allowedTools",
       bound.tools.join(","),
+      ...protectedArgs,
       resume ? "--resume" : "--session-id",
       workerId,
       "--name",
@@ -13149,8 +13238,8 @@ async function runWorker(rawInput) {
     process.removeListener("SIGINT", cancelBeforeLaunch);
     if (trace !== void 0) closeSync(trace);
     rmSync2(definitionFile, { force: true });
-    if (recordLock && !cleanupBlocked) rmSync2(join7(place.dir, "vibe-record-turn.lock"), { recursive: true });
-    if (discardLock && !cleanupBlocked && discardPlace) rmSync2(join7(discardPlace.dir, "vibe-record-turn.lock"), { recursive: true, force: true });
+    if (recordLock && !cleanupBlocked) rmSync2(join8(place.dir, "vibe-record-turn.lock"), { recursive: true });
+    if (discardLock && !cleanupBlocked && discardPlace) rmSync2(join8(discardPlace.dir, "vibe-record-turn.lock"), { recursive: true, force: true });
   }
 }
 async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowCredits, attach) {
@@ -13406,10 +13495,10 @@ function capCheckpoint(root, gitDir, turnId) {
       stdio: ["ignore", "pipe", "ignore"]
     });
     const dirtyFiles = run(["status", "--porcelain"]).split("\n").filter(Boolean).length;
-    const midMerge = existsSync6(join7(gitDir, "MERGE_HEAD"));
+    const midMerge = existsSync6(join8(gitDir, "MERGE_HEAD"));
     const diff = run(["diff", "--binary", "HEAD"]);
     if (!diff) return { dirtyFiles, midMerge };
-    const patch = join7(gitDir, `vibe-cap-${turnId}.patch`);
+    const patch = join8(gitDir, `vibe-cap-${turnId}.patch`);
     writeFileSync2(patch, diff, { mode: 384, flag: "wx" });
     return { dirtyFiles, midMerge, patch };
   } catch {
@@ -13427,6 +13516,8 @@ export {
   checkPreviewResult,
   dispatchFreshnessProblem,
   main,
+  protectedWriteLaunchArgs,
+  protectedWriteSettings,
   runWorker,
   workerSessionName
 };

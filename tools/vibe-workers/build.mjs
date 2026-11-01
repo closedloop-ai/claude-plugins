@@ -30,6 +30,11 @@ console.log(`built the bundled QA-impact parser to ${outdir}`);
 for (const name of readdirSync(outdir).filter((file) => file.endsWith(".mjs"))) {
   const path = resolve(outdir, name);
   const source = readFileSync(path, "utf8");
-  const notice = source.lastIndexOf("/*! Bundled license information:");
-  if (notice >= 0) writeFileSync(path, source.slice(0, notice) + source.slice(notice).split("\n").map((line) => line.trimEnd()).join("\n"));
+  // Package-manager layout must not change generated module labels or bundle diffs.
+  const normalized = source.replace(/node_modules\/\.pnpm\/[^/]+\/node_modules\//g, "node_modules/");
+  const notice = normalized.lastIndexOf("/*! Bundled license information:");
+  const output = notice >= 0
+    ? normalized.slice(0, notice) + normalized.slice(notice).split("\n").map((line) => line.trimEnd()).join("\n")
+    : normalized;
+  if (output !== source) writeFileSync(path, output);
 }

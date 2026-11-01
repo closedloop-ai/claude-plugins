@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { actionSchema, ledgerSchema, migrateSchema, registerSchema, type Capability, type Ledger, type RetainedRecord } from "./contracts.js";
 import { observeDefinitionDigest, readDefinition } from "./definition.js";
-import { readPluginManifest } from "./plugin-root.js";
+import { installedPluginRoot, readPluginManifest } from "./plugin-root.js";
 import { readReferenceImages } from "./reference-images.js";
 
 /** Resolves an exact existing checkout for pre-session operations or a parent-authorized cancellation. */
@@ -40,15 +40,18 @@ export function readWriterSummary(worktree: string) {
 }
 
 /**
- * Whether the writer's recorded definition can still run: `removed` (a plugin update deleted its root) and
- * `changed` need the recorded migration before the writer is launched or resumed, not after a failed launch
+ * Whether the writer can run under this installed release: `removed` (a plugin update deleted its root) and
+ * `changed` (the recorded or proven newer installed definition differs) need migration before launch
  * (ISS-13321: a launch failed after three minutes and a setup worker migrated four minutes later).
  */
 function recordedDefinitionState(ledger: Ledger): "present" | "removed" | "changed" | "unreadable" {
   try {
-    const observed = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
-    if (observed === null) return "removed";
-    return observed === ledger.binding.digest ? "present" : "changed";
+    const evidence = definitionUpgradeEvidence(ledger, installedPluginRoot(import.meta.url));
+    if (evidence.observedDigest === null) return "removed";
+    if (evidence.observedDigest !== evidence.recordedDigest) return "changed";
+    if (evidence.sameRelease) return "present";
+    if (evidence.provenNewer) return evidence.installedDigest === evidence.recordedDigest ? "present" : "changed";
+    return "unreadable";
   } catch { return "unreadable"; }
 }
 
@@ -69,7 +72,9 @@ function definitionUpgradeEvidence(ledger: Ledger, installedRoot: string) {
   const cacheVersion = basename(dirname(agentRoot)) === "vibe" ? basename(agentRoot) : undefined;
   const provenNewer = typeof recordedVersion === "string" && cacheVersion === recordedVersion
     && Boolean(installed.version && isNewerRelease(installed.version, cacheVersion));
-  const sameRelease = typeof recordedVersion === "string" && recordedVersion === installed.version;
+  // A versioned cache root whose manifest disagrees with its directory has no trusted release provenance.
+  const sameRelease = typeof recordedVersion === "string" && recordedVersion === installed.version
+    && (!cacheVersion || cacheVersion === recordedVersion);
   return { recordedRoot: agentRoot, recordedDigest: digest, observedDigest, installedDigest: installed.binding.digest,
     sameRelease, provenNewer };
 }

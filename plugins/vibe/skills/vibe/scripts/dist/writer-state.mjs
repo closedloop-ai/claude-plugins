@@ -11833,9 +11833,12 @@ function readWriterSummary(worktree) {
 }
 function recordedDefinitionState(ledger) {
   try {
-    const observed = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
-    if (observed === null) return "removed";
-    return observed === ledger.binding.digest ? "present" : "changed";
+    const evidence = definitionUpgradeEvidence(ledger, installedPluginRoot(import.meta.url));
+    if (evidence.observedDigest === null) return "removed";
+    if (evidence.observedDigest !== evidence.recordedDigest) return "changed";
+    if (evidence.sameRelease) return "present";
+    if (evidence.provenNewer) return evidence.installedDigest === evidence.recordedDigest ? "present" : "changed";
+    return "unreadable";
   } catch {
     return "unreadable";
   }
@@ -11855,7 +11858,7 @@ function definitionUpgradeEvidence(ledger, installedRoot) {
   const recordedVersion = observedDigest === null ? void 0 : readPluginManifest(agentRoot).version;
   const cacheVersion = basename2(dirname3(agentRoot)) === "vibe" ? basename2(agentRoot) : void 0;
   const provenNewer = typeof recordedVersion === "string" && cacheVersion === recordedVersion && Boolean(installed.version && isNewerRelease(installed.version, cacheVersion));
-  const sameRelease = typeof recordedVersion === "string" && recordedVersion === installed.version;
+  const sameRelease = typeof recordedVersion === "string" && recordedVersion === installed.version && (!cacheVersion || cacheVersion === recordedVersion);
   return {
     recordedRoot: agentRoot,
     recordedDigest: digest,
