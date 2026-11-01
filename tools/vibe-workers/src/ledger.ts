@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { actionSchema, ledgerSchema, migrateSchema, registerSchema, type Capability, type Ledger, type RetainedRecord } from "./contracts.js";
 import { observeDefinitionDigest, readDefinition } from "./definition.js";
+import { readPluginManifest } from "./plugin-root.js";
 import { readReferenceImages } from "./reference-images.js";
 
 /** Resolves an exact existing checkout for pre-session operations or a parent-authorized cancellation. */
@@ -57,6 +58,25 @@ export function recordedWriterRoot(worktree: string): string | undefined {
     const place = location(worktree);
     return existsSync(place.file) ? readLedger(place).binding.agentRoot : undefined;
   } catch { return undefined; }
+}
+
+/** Compare both roots with the persisted binding, using its capabilities rather than caller-supplied ones. */
+function definitionUpgradeEvidence(ledger: Ledger, installedRoot: string) {
+  const { agentRoot, agentName, capabilities, digest } = ledger.binding;
+  const observedDigest = observeDefinitionDigest(agentRoot, agentName, capabilities);
+  const installed = readDefinition(installedRoot, agentName, capabilities);
+  const recordedVersion = observedDigest === null ? undefined : readPluginManifest(agentRoot).version;
+  const cacheVersion = basename(dirname(agentRoot)) === "vibe" ? basename(agentRoot) : undefined;
+  const provenNewer = typeof recordedVersion === "string" && cacheVersion === recordedVersion
+    && Boolean(installed.version && isNewerRelease(installed.version, cacheVersion));
+  const sameRelease = typeof recordedVersion === "string" && recordedVersion === installed.version;
+  return { recordedRoot: agentRoot, recordedDigest: digest, observedDigest, installedDigest: installed.binding.digest,
+    sameRelease, provenNewer };
+}
+
+/** Read-only upgrade decision for the installed Claude launcher; migration uses the same evidence under the ledger lock. */
+export function readWriterUpgradeEvidence(worktree: string, installedRoot: string) {
+  return definitionUpgradeEvidence(readLedger(location(worktree)), installedRoot);
 }
 
 /** Checks the existing active source lease atomically without returning private request text. */
@@ -129,7 +149,7 @@ export function migrateWriter(input: unknown, currentPluginRoot: string, verifyR
     }
     const version = found.version;
     if (!version) throw new Error("Current plugin release has no version");
-    return { definition: found, version };
+    return found;
   };
   if (data.capabilities) currentDefinition(data.capabilities);
   const place = location(data.worktree);
@@ -137,7 +157,7 @@ export function migrateWriter(input: unknown, currentPluginRoot: string, verifyR
     const ledger = readLedger(place);
     if (ledger.runtime !== data.runtime || ledger.workerId !== data.previousWorkerId
       || ledger.binding.digest !== data.previousDigest) throw new Error("Migration requires the exact recorded writer and digest");
-    const { definition, version: currentVersion } = currentDefinition(data.capabilities ?? ledger.binding.capabilities);
+    const definition = currentDefinition(data.capabilities ?? ledger.binding.capabilities);
     const lock = join(place.dir, "vibe-record-turn.lock");
     const retained = existsSync(lock);
     if (ledger.active?.lease || (retained && !(data.retainedRecord && verifyRetained))) {
@@ -148,8 +168,9 @@ export function migrateWriter(input: unknown, currentPluginRoot: string, verifyR
     if (harnessSwitch && (harnessSwitch.to === ledger.runtime || data.retainedRecord)) {
       throw new Error("A harness switch moves a stopped writer to the other runtime and releases no record grant");
     }
-    const observedDigest = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
-    const reason = harnessSwitch ? "harness-switch" as const : provenDefinitionChange(ledger, observedDigest, currentVersion);
+    const evidence = definitionUpgradeEvidence(ledger, currentPluginRoot);
+    const observedDigest = evidence.observedDigest;
+    const reason = harnessSwitch ? "harness-switch" as const : provenDefinitionChange(evidence);
     const releasedRecord = retained && data.retainedRecord && verifyRetained
       ? verifyRetained(lock, ledger, data.retainedRecord) : undefined;
     const block = migratableBlock(ledger, observedDigest, releasedRecord);
@@ -183,13 +204,13 @@ export function migrateWriter(input: unknown, currentPluginRoot: string, verifyR
   });
 }
 
-/** Only a missing definition or a proven newer release replaces the recorded writer. */
-function provenDefinitionChange(ledger: Ledger, observedDigest: string | null, currentVersion: string) {
-  if (observedDigest === ledger.binding.digest) throw new Error("Recorded definition is present and matching; resume the existing writer");
-  if (observedDigest === null) return "definition-missing" as const;
-  // A recorded vibe/<semver> cache root supplies the original release, even after an in-place upgrade.
-  const oldVersion = basename(dirname(ledger.binding.agentRoot)) === "vibe" ? basename(ledger.binding.agentRoot) : undefined;
-  if (!oldVersion || !isNewerRelease(currentVersion, oldVersion)) {
+/** Only an absent recorded definition or a proven newer installed definition replaces the writer. */
+function provenDefinitionChange(evidence: ReturnType<typeof definitionUpgradeEvidence>) {
+  if (evidence.observedDigest === null) return "definition-missing" as const;
+  if (evidence.observedDigest === evidence.recordedDigest && evidence.installedDigest === evidence.recordedDigest) {
+    throw new Error("Recorded and installed definitions are present and matching; resume the existing writer");
+  }
+  if (!evidence.provenNewer) {
     throw new Error("Digest mismatch has no proven plugin version upgrade; retain the original writer");
   }
   return "definition-upgraded" as const;

@@ -10,7 +10,7 @@ import { runFromCanonicalEntry } from "./cli.js";
 import { capabilitiesSchema, identifierSchema, mcpToolAliases, mcpToolIdentity, readInput, statusSchema, type WorkerStatus } from "./contracts.js";
 import { readDefinition } from "./definition.js";
 import { acquireRecordTurnAt, attachClaudeProcess, changeWriter, markClaudeStarted, readWriterSummary, recordedWriterRoot,
-  registerWriter } from "./ledger.js";
+  readWriterUpgradeEvidence, registerWriter } from "./ledger.js";
 import { AgentRootError, installedPluginRoot, readPluginManifest, resolveAgentRoot } from "./plugin-root.js";
 import { pluginScriptProblems } from "../../../plugins/vibe/skills/vibe/scripts/plugin-script-references.mjs";
 import { isHandoverContext, isPublisherContext, recordContextSchema, recordModes, resolveRecordContext } from "./record-context.js";
@@ -187,8 +187,21 @@ export async function runWorker(rawInput: unknown) {
   if (process.platform === "win32") throw new Error("Owned descendant cleanup requires a supported POSIX process-group harness");
   const recorded = input.agentName === "vibe-change-worker" && !input.sessionless ? recordedWriterRoot(input.worktree) : undefined;
   const installedRoot = installedPluginRoot(import.meta.url);
-  const agentRoot = resolveAgentRoot(input.agentRoot, installedRoot, recorded);
-  const dispatchProblem = dispatchFreshnessProblem(agentRoot, installedRoot, input.worktree, input.input ?? input.continuation ?? "");
+  const resolvedRoot = resolveAgentRoot(input.agentRoot, installedRoot, recorded);
+  const upgrade = recorded ? readWriterUpgradeEvidence(input.worktree, installedRoot) : undefined;
+  const unchangedUpgrade = upgrade?.provenNewer && upgrade.installedDigest === upgrade.recordedDigest;
+  const compatible = upgrade && upgrade.observedDigest === upgrade.recordedDigest
+    && (upgrade.sameRelease || unchangedUpgrade);
+  if (upgrade && !compatible) {
+    const command = `node ${join(installedRoot, "skills/vibe/scripts/dist/writer-state.mjs")} migrate`;
+    const message = upgrade.provenNewer || upgrade.observedDigest === null
+      ? `Claude dispatch definition is from a stale installed plugin release; run ${command} with the recorded migration JSON on stdin`
+      : "Writer definition mismatch has no proven installed release upgrade; retain the original writer";
+    throw new AgentRootError("STALE_PLUGIN_ROOT", message);
+  }
+  const agentRoot = unchangedUpgrade && resolvedRoot === installedRoot ? recorded! : resolvedRoot;
+  const dispatchProblem = dispatchFreshnessProblem(unchangedUpgrade ? installedRoot : agentRoot,
+    installedRoot, input.worktree, input.input ?? input.continuation ?? "");
   if (dispatchProblem) throw new Error(dispatchProblem);
   const definition = readDefinition(agentRoot, input.agentName, input.capabilities);
   const bound = boundDefinition(definition, input);

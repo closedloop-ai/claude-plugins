@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -29,6 +29,102 @@ function setup(runtime: "codex" | "claude" = "codex") {
   const read = () => JSON.parse(readFileSync(ledgerFile, "utf8"));
   return { ...value, oldRoot, currentRoot, registered, input, ledgerFile, read };
 }
+
+/** Keeps release N on disk while the real bundled CLI and launcher supply installed release N+1. */
+function setupInstalledUpgrade(changed: boolean, runtime: "claude" | "codex" = "claude") {
+  const value = fixture();
+  fixtures.push(value);
+  const installedRoot = resolve(bundleDirectory, "../../../..");
+  const installedVersion = JSON.parse(readFileSync(join(installedRoot, ".claude-plugin", "plugin.json"), "utf8")).version as string;
+  const [major, minor, patch] = installedVersion.split(".").map(Number);
+  if (patch === undefined || patch < 1) throw new Error("Upgrade fixture needs a preceding patch release");
+  const priorVersion = `${major}.${minor}.${patch - 1}`;
+  const oldRoot = join(value.base, "cache", "vibe", priorVersion);
+  cpSync(value.agentRoot, oldRoot, { recursive: true });
+  writeFileSync(join(oldRoot, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version: priorVersion }));
+  const installedAgent = readFileSync(join(installedRoot, "agents", "vibe-change-worker.md"), "utf8");
+  writeFileSync(join(oldRoot, "agents", "vibe-change-worker.md"),
+    changed ? `${installedAgent}\nLegacy release writer procedure applies to this prompt.\n` : installedAgent);
+  const registered = registerWriter({ worktree: value.worktree, runtime, agentRoot: oldRoot,
+    agentName: "vibe-change-worker", capabilities: graph, ...(runtime === "codex" ? { workerId: "old-native" } : {}) });
+  const migrationInput = { worktree: value.worktree, runtime, agentRoot: installedRoot,
+    agentName: "vibe-change-worker", capabilities: graph, previousWorkerId: registered.workerId,
+    previousDigest: registered.definitionDigest, ...(runtime === "codex" ? { workerId: "new-native" } : {}) };
+  const launch = { worktree: value.worktree, agentName: "vibe-change-worker", capabilities: graph,
+    mode: "plan" as const, requestId: "upgrade-request", input: "PLAN_FIRST" };
+  const ledgerFile = join(value.metadata, "vibe-writer.json");
+  return { ...value, oldRoot, installedRoot, registered, migrationInput, launch, ledgerFile };
+}
+
+describe("ISS-13506 installed release upgrade", () => {
+  it("AC1 and AC4 resume the same Claude writer when the installed definition is unchanged and N remains", async () => {
+    const value = setupInstalledUpgrade(false);
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${value.bin}:${previousPath}`;
+    try {
+      const first = await runWorker({ ...value.launch, agentRoot: value.installedRoot });
+      const resumed = await runWorker({ ...value.launch, input: undefined, continuation: "Continue under installed release" });
+      expect(first.workerId).toBe(value.registered.workerId);
+      expect(resumed.workerId).toBe(value.registered.workerId);
+      const proof = readProof(value.metadata);
+      expect(proof).toHaveLength(2);
+      expect(proof[0]!.args).toContain("--session-id");
+      expect(proof[1]!.args).toContain("--resume");
+      expect(proof[1]!.args).toContain(value.registered.workerId);
+      expect(existsSync(value.oldRoot)).toBe(true);
+      expect(JSON.parse(readFileSync(value.ledgerFile, "utf8")).migrations).toHaveLength(0);
+    } finally { process.env.PATH = previousPath; }
+  });
+
+  it("AC2 and AC4 migrate a changed installed definition through the bundled command while N remains", async () => {
+    const value = setupInstalledUpgrade(true);
+    const output = execFileSync(process.execPath, [join(bundleDirectory, "writer-state.mjs"), "migrate"], {
+      input: JSON.stringify(value.migrationInput), encoding: "utf8" });
+    const migrated = JSON.parse(output);
+    expect(migrated.lastMigration?.reason).toBe("definition-upgraded");
+    expect(existsSync(value.oldRoot)).toBe(true);
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${value.bin}:${previousPath}`;
+    try {
+      expect((await runWorker(value.launch)).workerId).toBe(migrated.workerId);
+      expect((await runWorker({ ...value.launch, input: undefined, continuation: "Continue migrated writer" })).workerId)
+        .toBe(migrated.workerId);
+      const proof = readProof(value.metadata);
+      expect(proof[1]!.args).toContain("--resume");
+      expect(proof[1]!.args).toContain(migrated.workerId);
+    } finally { process.env.PATH = previousPath; }
+  });
+
+  it("AC2 preserves the Codex writer migration path with N still installed", () => {
+    const value = setupInstalledUpgrade(true, "codex");
+    const output = execFileSync(process.execPath, [join(bundleDirectory, "writer-state.mjs"), "migrate"], {
+      input: JSON.stringify(value.migrationInput), encoding: "utf8" });
+    const migrated = JSON.parse(output);
+    expect(migrated.workerId).toBe("new-native");
+    expect(migrated.lastMigration?.reason).toBe("definition-upgraded");
+    expect(existsSync(value.oldRoot)).toBe(true);
+    changeWriter("enqueue", { worktree: value.worktree, workerId: migrated.workerId,
+      requestId: "upgrade-request", input: "Continue under installed release" });
+    expect(changeWriter("claim", { worktree: value.worktree, workerId: migrated.workerId,
+      requestId: "upgrade-request" }).turn?.input).toBe("Continue under installed release");
+  });
+
+  it("AC3 refuses a changed unmigrated dispatch before spawn and names only the documented migrate command", () => {
+    const value = setupInstalledUpgrade(true);
+    const before = readFileSync(value.ledgerFile, "utf8");
+    const result = spawnSync(process.execPath, [join(bundleDirectory, "claude-worker.mjs")], {
+      input: JSON.stringify(value.launch), encoding: "utf8", timeout: 10000,
+      env: { ...process.env, PATH: `${value.bin}:${process.env.PATH}` },
+    });
+    const outcome = JSON.parse(result.stdout || "{}");
+    expect(result.status).toBe(1);
+    expect(outcome.status).toBe("BLOCKED");
+    expect(outcome.summary).toContain(`node ${join(value.installedRoot, "skills/vibe/scripts/dist/writer-state.mjs")} migrate`);
+    expect(outcome.summary.match(/writer-state\.mjs migrate/g)).toHaveLength(1);
+    expect(readFileSync(value.ledgerFile, "utf8")).toBe(before);
+    expect(existsSync(join(value.metadata, "fake-proof.jsonl"))).toBe(false);
+  });
+});
 
 describe("recorded writer migration", () => {
   it("status says the recorded definition was removed, so the migration runs before any launch (ISS-13321)", () => {
