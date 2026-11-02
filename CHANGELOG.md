@@ -4,6 +4,19 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.30
+
+#### Added
+- Six focused reviewer eval cases and remedy-bound graders cover unresolved flag swaps, paged refetches, inert Clear actions, pending Owner values, incomplete discard guards, and duplicate helpers.
+- A reproducible original-head replay fixture records the bounded source and pull request checks for PRs 9366 and 9448.
+
+#### Changed
+- Handoff source checks require Issue breadcrumb parity for changed inputs, recognize present untracked parity tests, detect duplicate function declarations against the diff and base, and check new picker search labels for copy provenance.
+- Pull request body checks reject unsupported E2E CI coverage claims, require citations for universal Summary bullets, and leave unrelated CI test families alone.
+- The handoff gate fetches current main, checks immutable main and parent commits for a stacked pull request, and refuses a witness when either ref moves.
+- Adversarial review traces flag readiness, paged refetch cost, nullable Clear callbacks, and every editable field protected by a discard guard.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 987 words longer than in 1.1.29. Most added text is the six reviewer eval cases required by ISS-13532 AC2.
+
 ### vibe v1.1.29
 
 #### Added

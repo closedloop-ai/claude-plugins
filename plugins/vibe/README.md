@@ -301,7 +301,7 @@ reasoning effort `high`.
 
 ### Evals
 
-`evals/` holds 115 one-turn rehearsals plus two deterministic stateful
+`evals/` holds 121 one-turn rehearsals plus two deterministic stateful
 upgrade-resume cases. Each one-turn case carries the session state in its
 prompt, so it needs no symphony-alpha checkout. The stateful cases run only in
 the local nightly and drive real Claude and Codex root sessions across an

@@ -98,10 +98,10 @@ function withJudgeModel(artifact: EvalBaselineArtifact, judge: string): EvalBase
 test("case skills come from actual invocations", () => {
   const vibeDir = join(import.meta.dirname, "../../../plugins/vibe");
   const catalog = evalCaseCatalog(vibeDir);
-  assert.equal(catalog.length, 117);
+  assert.equal(catalog.length, 123);
   assert.deepEqual(Object.fromEntries(["vibe", "handoff", "fleet-orchestrator", "pr-takeover"].map((skill) =>
     [skill, catalog.filter((item) => item.skill === skill).length])),
-  { vibe: 76, handoff: 24, "fleet-orchestrator": 11, "pr-takeover": 6 });
+  { vibe: 76, handoff: 30, "fleet-orchestrator": 11, "pr-takeover": 6 });
   assert.throws(() => skillFromPrompt("no invocation"), /skill-invocation-invalid/);
 });
 
