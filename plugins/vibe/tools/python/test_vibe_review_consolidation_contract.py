@@ -94,7 +94,7 @@ def test_consolidated_reviewer_reads_the_two_reviewers_checklists_instead_of_cop
 
 
 ADVERSARIAL = ROOT / "agents" / "vibe-adversarial-reviewer.md"
-ADVERSARIAL_BASELINE_BYTES = 10638  # vibe 1.1.26 on main (773eea0), before ISS-13353; 9884 on 1.1.16
+ADVERSARIAL_BASELINE_BYTES = 11513  # local all-buckets build: main 1.1.30 is 11562 (its added attacks), less the ISS-13353 trim; was 10638 on 1.1.26
 # One distinctive phrase per genuinely adversarial attack that must survive the trim.
 RETAINED_ATTACKS = {
     "shared components": "every consumer",
