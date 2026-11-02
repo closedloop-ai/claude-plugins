@@ -12,6 +12,9 @@ edit code, stories, tests or catalog files. Read
 `../skills/vibe/references/quality-loop.md`. The implementation guidance below
 is applied by the SAME persistent writer; no new author, worktree or branch is
 created. Never commit or push.
+Read `../skills/vibe/references/review-premises.md` before placement advice
+or findings. Verify every material premise and include its evidence in
+`data.findings[].premises`.
 
 ## Modes
 
@@ -219,12 +222,11 @@ Placement:
 ## Verify
 
 As an advisor, run no product source, test or session-record writes. For a
-handoff frozen render that needs a dev server, use only
-`../skills/vibe/scripts/verify-storybook-process.mjs start` and `stop` with
-each server's own worktree and port. The helper records a new process's birth
-in private git storage and stops only that same process at turn end, including
-after an error. Do not adopt a server that was already running, start one with
-raw `nohup`, or kill by port or pattern. Inspect the current result and report
+handoff frozen render, use the central `frozen-render.mjs` command with its
+prepared base worktree. The renderer owns both servers through the verifier
+run wrapper and stops each on success or failure; supply no server URL. For
+other Storybook checks, use `verify-storybook-process.mjs run`. Do not adopt a
+server already running or start an ad hoc static server. Inspect the current result and report
 what the sole writer should check: `pnpm exec biome check` and
 `pnpm --filter storybook exec vitest run <changed story files>` for the
 changed stories only, never the whole Storybook suite. Report: files
@@ -237,7 +239,7 @@ In handoff mode also run these checks and report each result with its
 evidence:
 
 - Frozen renders: run `../skills/handoff/scripts/frozen-render.mjs --repo
-  <worktree> --base <base> --base-url <url> --head-url <url> --story-file
+  <worktree> --base <base> --base-dir <prepared base worktree> --story-file
   <file> ... --out <dir>` once with every story file the inventory's
   `frozen-render` finding lists, never a capture of your own. The base URL
   is the repo's Storybook served from a disposable worktree made by
@@ -247,9 +249,9 @@ evidence:
   afterwards (`git worktree remove`); never copy or edit a file in it
   yourself. It is the base commit with each compile-only repaired story file
   (same title, tags and story names) taken from the session, so a repaired
-  play runs on both sides and only the app code differs. The head URL is the
-  session's own Storybook. Start any head or base Storybook with the owned
-  process helper above and stop it before removing the base worktree. It is heavy
+  play runs on both sides and only the app code differs. The renderer starts
+  the head and base servers itself with the owned run wrapper, derives the URLs,
+  and stops both before the base worktree is removed. It is heavy
   validation and runs under the same load and slot rules as every other
   handoff heavy run. It renders each story twice on the base and once on the
   branch with its clock, animations, viewport, fonts, theme, args and globals
@@ -271,7 +273,9 @@ evidence:
   (`../skills/vibe/references/plain-words.md`, "What the person is asked to
   do"; ISS-13321).
 - Flag-on states: every surface the session claims has its flag-on state on
-  that surface's existing story entry.
+  that surface's existing story entry. Inventory each existing page/list story
+  that consumes the changed component; a new component-only story does not
+  cover a missing flag-on state on an existing surface entry.
 - States: for each state the ticket, PRD or acceptance criteria name, the
   story on the consumed component that shows it, or the missing state.
 - Names: each new or changed story whose name claims more than its args and
@@ -311,3 +315,9 @@ real path for the example data, and the link comes from
 `../skills/vibe/scripts/vibe-sessions.mjs link`
 (`../skills/vibe/references/plain-words.md`, "Links to what the person should
 look at").
+
+In the launcher structured result, set `data.findings` to the current-source
+handoff findings only: an array of `{id, blocking, evidence, premises}` objects, or
+`[]` after a clean recheck. Mark missing required states and owner/placement
+violations blocking. The launcher receipt and graph trace bind this list to
+the source.

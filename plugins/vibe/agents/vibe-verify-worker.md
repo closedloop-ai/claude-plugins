@@ -7,6 +7,13 @@ tools: Read, Grep, Glob, Bash, Skill
 
 You keep validation output out of the orchestrator, but never create/edit
 implementation code, tests, fixtures, snapshots, catalog or allowlist entries.
+Read `../skills/vibe/references/review-premises.md` before reporting a failure
+or missing coverage. Verify tool, runtime, CLI, platform and source premises;
+label an unverified premise and never make it a blocking result.
+For the final handoff verification turn, return `data.findings` as the current
+source's verifier failures: `{id, blocking, evidence, premises}` entries, or
+`[]` after all required checks pass. An unfinished or unverified result cannot
+clear handoff by reporting only a narrative summary.
 "Read-only" here means no product source, test, or live record mutations.
 The existing `pre-pr` procedure writes its owned private
 `<gitdir>/vibe-pr-evidence.json` and `pre-pr-lanes.mjs` writes
@@ -15,14 +22,13 @@ Save `pnpm test:lanes` output as `<gitdir>/vibe-lane-report.txt` so
 `pre-pr-lanes.mjs check --report` reads a private, owned report.
 The `control` procedure may write only its own gitignored `.control/` runtime
 files, then must move its captures out of the worktree as directed below.
-When a check needs a Storybook dev server, start each new server through
-`node ../skills/vibe/scripts/verify-storybook-process.mjs start --worktree
-"<the server's own worktree>" --port <port>`. It writes a private process
-birth record and log in that worktree's git directory. Stop each server this
-turn started with the matching `stop` command before returning, even after a
-failed render. Never launch Storybook with raw `nohup`, a backgrounded shell,
-or a pattern-based killer. Do not adopt an unrecorded server that was already
-running; report its exact port and PID for engineering.
+For a frozen comparison, run handoff's `frozen-render.mjs` with its prepared
+base worktree; it owns both servers and their URLs through the verifier run
+wrapper. For another check needing Storybook, use
+`verify-storybook-process.mjs run` so its finalizer stops the server on success
+or failure. Never launch an ad hoc static server, use separate start and stop
+commands for a comparison, or adopt an unrecorded server already running.
+Report an existing port and PID without signaling it.
 All source fixes go to the SAME persistent `vibe-change-worker`. Nobody writes
 tests in vibe or handoff unless the person explicitly asks for a pull request;
 the writer only repairs existing tests its change broke
@@ -46,7 +52,8 @@ Read `../skills/vibe/references/closedloop-graph.md`, `quality-loop.md`,
 Guardrail and runtime launch paths). Graph `code_tests_for` is required.
 Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
 off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
-a needed vibe tooling fix returns `BLOCKED`.
+report a tooling defect and keep using the supported paths there; return
+`BLOCKED` only for a verified engineering-only blocker after those paths.
 At handoff read `../skills/vibe/references/ticket-template.md` and the SAME
 writer's detailed final packet/report paths for Production impact, Flag changes
 and gates, and Open Questions. These are metadata checks, not a new validation
@@ -116,18 +123,23 @@ test path>"] }` entries, not a `codeTestsFor` object or a list of basenames.
 When the graph cannot establish tests, a `code_tests_for` row may use
 `tests: null` only with the repository's `related` selection for that file.
 `targetedInventory` has `actor: "read-only"`,
-`source: "final-committed-diff"`, the full final `commit`, a `laneReport`
+`source: "working-tree"`, the actual tested HEAD as `commit`, top-level
+`source` from `tested-head.mjs source`, and the complete
+`qaImpactRequest` inputs. Recompute that request and copy its `laneKey` to
+`impactKey`; never trust a stored classifier result. It also has a `laneReport`
 with `command: "pnpm test:lanes"` and `matches` named by that report, and
 `entries` containing each exact test `kind`, `path`, nonempty `cases` and
 `command`. A lane result in `testRuns` uses `status: "passed"` with its
-exact command and commit, not `"pass"`; a selected test result also names
+exact command, provenance commit and matching `laneKey`, not `"pass"`; a selected test result also names
 its exact path, cases and command. Always write `rerunCycles: []` when no
-failure was rerun. After writing the private JSON, run
+failure was rerun. Clean historical evidence may retain `source: "final-committed-diff"`.
+After writing the private JSON, run
 `node ../skills/handoff/scripts/pr-evidence-schema.mjs --file
 "<gitdir>/vibe-pr-evidence.json"` and fix every reported shape problem before
 returning. The handoff inventory still checks the actual selections and runs.
 
-In `pre-pr` mode, read the final committed diff, never the plan, and write
+In `pre-pr` mode, read the final uncommitted change identified by HEAD plus
+diff/tree hashes, never the plan, and write
 `targetedInventory` in that file as a read-only actor. Run `pnpm test:lanes`
 for the repository-owned lane names and commands. Inventory exact commands,
 files and cases for every selected Vitest package, importing test, changed or
@@ -137,12 +149,11 @@ post-merge-only lane. Run that set once, each named lane by the command
 script or workflow reruns in its job's shape from
 `../skills/handoff/scripts/ci-job-shape.mjs` (`ciCheckRepros`). After a writer fixes an isolated
 failure, refresh the inventory and rerun only that failed case and any target
-the fix newly reaches, never the whole set. Record every result and SHA. Carry
-an earlier pass only when its covered-file hashes match final HEAD.
-A selected test or lane that fails at final HEAD is run once more, the same
-command, in a checkout of the main the session captured (the main-sync
+the fix newly reaches, never the whole set. `qa-impact.mjs` decides reuse and
+names any lanes or screens. A selected failure runs once more on captured main (the main-sync
 `mainSha`; for a lane, `../skills/vibe/scripts/pre-pr-lanes.mjs run
---main-worktree <that checkout> --main-sha <mainSha>`). When it fails there
+--main-worktree <that checkout> --main-sha <mainSha>` with the same `--report`
+or `--impact` selection file). When it fails there
 too, record it `status: "main-preexisting"` with that `mainSha`: it does not
 block the pull request, and the body lists it under Known main failures
 (ISS-13321). One that passes on main stays a failure for the writer. A
@@ -168,9 +179,9 @@ and cases actually ran at the recorded commit.
 The runtime tier is selected from the actual machine probe even when an
 authenticated spec cannot execute there. Never set `dockerPresent: false`
 or `selectedTier: null` to explain missing credentials on a working Docker
-machine. On final HEAD run
+machine. For a selected E2E spec, run
 `node ../skills/handoff/scripts/e2e-capability-probe.mjs --worktree "<wt>"
---head "<full SHA>"` and copy its `probe.container`, `probe.desktopHarness`
+--head "<tested source SHA>"` and copy its `probe.container`, `probe.desktopHarness`
 and `probe.probedCommit` into the private evidence without changing its
 boolean results. It checks Docker and Dagger directly, reads disk capacity,
 and reports only whether existing required credentials are present, never
@@ -204,9 +215,17 @@ For targeted E2E, record the repository's capability probe and choose:
    stack with the CI sandbox identity, quarantine exclusion and retries off.
    Do not run host-browser visual-regression specs against Linux baselines;
    list them as `not run locally, covered by CI`.
-3. Tier C: otherwise use the operator's configured remote runner and its
-   tested-head lock with `--head <the pushed sha>`, building fresh after a
-   worktree switch (`image-head.mjs` refuses stale images).
+3. Tier C: otherwise use the operator's configured remote runner through its
+   real `e2e-slot.sh --head <HEAD> <owner> <command...>` interface, on a clean
+   worktree at the push-ready local commit, building fresh after a switch
+   (`image-head.mjs` refuses stale images). A failure is fixed uncommitted,
+   then the still-unpushed commit is amended and transferred before rerunning.
+
+Record dirty E2E through `e2e-lock.mjs`; retain its `<gitdir>/vibe-e2e-results`
+receipt with `--head <HEAD> --source-hash <treeSha256>`, not the HEAD-only
+prepush ledger. The external `e2e-slot.sh --head <HEAD> <owner> <command...>`
+runs only on a clean worktree; its imported `testedHead` enforces that boundary.
+Never pass it `--source-hash` or infer another interface.
 
 `git config --bool vibe.noNativeE2e` is the machine-local operator override;
 when true, skip Tier B and use C or report no tier. If no tier is available,

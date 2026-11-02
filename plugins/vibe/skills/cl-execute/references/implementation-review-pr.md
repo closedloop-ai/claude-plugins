@@ -54,9 +54,9 @@ on leaving implementation using the [display reporter](../../cl-sweep/references
      hypothesis, revert the edits it motivated before trying the next. A guard
      that silences the symptom (a null check, a catch, a default, a retry) is
      not a fix unless the root cause is that the value is legitimately absent.
-   - Commit the focused test that fails on the base first, with its recorded
-     failure, then commit the fix, so the history shows red then green. Push
-     them together. This test is the Residual contract testability probe from
+   - Keep the recorded failing run on the base as evidence while iterating
+     uncommitted through the fix, selected checks, independent review and
+     verification. Commit test and fix together only when push-ready. This test is the Residual contract testability probe from
      [planning-and-gates.md](planning-and-gates.md), not a second one. The red
      run must fail for the bug's reason: an assertion on the wrong behavior or
      the reported error. A failure from a missing export, an import or type
@@ -66,9 +66,8 @@ on leaving implementation using the [display reporter](../../cl-sweep/references
      say which signal it locks. The check-integrity boundary in
      [SKILL.md](../SKILL.md) still applies: never loosen an existing assertion
      to make the fix pass.
-   - If a mandatory commit hook runs the new test and rejects the red commit,
-     do not bypass the hook. Keep the recorded failing run on the base as the
-     red evidence and commit test and fix together.
+   - Never bypass a mandatory commit hook or make a red checkpoint commit;
+     preserve the failing command and assertion in the final evidence.
    - When no cheap test path exists (it would need broad harness setup,
      production-only state, or mostly mocks), record why and use the closest
      runtime evidence as the red step instead, such as the pre-fix
@@ -195,13 +194,10 @@ on leaving implementation using the [display reporter](../../cl-sweep/references
    code cannot prove it, treat that like any failed validation: fix the gap or
    return `MANUAL_INTERVENTION_REQUIRED` with the exact blocker before opening
    the PR.
-   Bind `Repo verification evidence` and `Safety fact` to a head the same way
-   manual QA is bound: record the head, merge base, and stable patch-id they
-   were captured at, and apply the patch-id rule in
-   [feature-manual-qa.md](feature-manual-qa.md) "Keep evidence bound to the
-   final change" after every head change. Evidence stays valid while the
-   patch-id is unchanged and main's changed files do not reach the captured
-   surface; otherwise recapture the affected surface.
+   Record `Repo verification evidence` and `Safety fact` with source
+   provenance. Later commits do not recapture them merely because the head
+   changed; focused validation and per-push CI prove later source fixes.
+   Manual QA keeps its own human-evidence rule.
 4. Enforce automated E2E display boundaries and record `Automated E2E display
    mode`.
 5. For performance tickets, enforce the Performance Measurement Contract in
@@ -245,10 +241,9 @@ in cl-execute points here.
 5. Already-open PR without pre-PR evidence: do not invent a current-head
    refresh gate. Produce the existing pre-PR evidence, obtain the operator's explicit
    exception for that already-open PR, or return the exact blocker.
-6. Head changes: after the one pre-PR pass or the operator's explicit exception
-   exists, later PR comments, test fixes, rebases, conflict repairs, source head
-   changes, and CI remediation do not require another visual-QA pass unless the operator
-   explicitly asks.
+6. Later changes: after the one pre-PR pass or explicit exception, do not add
+   another visual-QA pass unless the operator asks. This workflow never gains
+   classifier-driven QA that it did not run before.
 7. Substitutes: green CI, Storybook, a11y, screenshots attached to tests, and
    displayless E2E are supporting evidence, not substitutes for the pre-PR pass.
    One exception: when no stack may run (the user has stopped test

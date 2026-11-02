@@ -46,7 +46,7 @@ EXTERNAL_IDENTIFIERS = re.compile(
 )
 
 # Vendored third-party bundles are not plugin prose.
-VENDORED = ("mermaid-11.16.0.min.js",)
+VENDORED = ("mermaid-11.16.0.min.js", "qa-impact-parser.mjs")
 
 
 def name_digest(word: str, any_case: bool = True) -> str:

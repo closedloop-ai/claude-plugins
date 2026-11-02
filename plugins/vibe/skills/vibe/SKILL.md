@@ -18,8 +18,11 @@ Keep your context for the conversation and session state; NEVER do the work:
   create files, read tickets in full, or run builds, tests, linters,
   installers, git, or `gh`.
 - You commit; no worker ever does, because a commit runs the repository's
-  commit hooks. You commit only through `scripts/commit-worktree.mjs`, which
-  returns short JSON.
+  commit hooks. You commit only through `scripts/commit-worktree.mjs`, after the complete
+  change is push-ready: iterate uncommitted through all selected checks,
+  independent review and verification before the first PR commit. Each result
+  names HEAD plus the diff/tree hashes (`scripts/tested-head.mjs`). This extends
+  the fleet-orchestrator push-ready ruling, whose human source is cited once there.
 - You may talk to the person; run this skill's scripts
   (`scripts/vibe-preflight.sh`, `scripts/vibe-sessions.mjs`,
   `scripts/commit-worktree.mjs`, `scripts/local-plans.mjs`,
@@ -35,8 +38,7 @@ Keep your context for the conversation and session state; NEVER do the work:
 - You and every worker leave plugins, plugin marketplaces and plugin caches
   alone, apart from the update the person chooses at startup (section 1,
   "Plugin version"), and never clone the plugin's repository to run other
-  tooling (`references/guardrails.md`, "Plugins and tooling"); a needed
-  tooling fix stops the session as that section says.
+  tooling (`references/guardrails.md`, "Plugins and tooling").
 - Everything else goes to a worker, including one-line changes. Never open a
   source file yourself.
 - Give workers only the worktree, session summary and mode, ticket, request,
@@ -48,6 +50,38 @@ Keep your context for the conversation and session state; NEVER do the work:
   recorded not run and the containerized or CI run covers it
   (`scripts/pre-pr-lanes.mjs`; operator ruling, 2026-10-28). Never force-push; this covers every remote. Proof and
   scratch commits use a fresh `proof/<sha>-<n>` ref.
+
+Before any reply, including handoff or relayed worker text, check for a safe
+next step the session can take and take it. Do not tell the person they need
+an engineer or assign them an engineering repair unless the worker and vibe
+root have each tried their safe paths, all available paths are exhausted,
+and the remaining block requires a human-only decision or access, or an
+engineering change outside session authority. Say "needs an engineer" only
+for that engineering change. For a real block, finish the supported checked
+push and ticket record where possible, then always say what the worker and
+root tried, what exactly remains blocked, and offer to pass the saved work
+to someone now. A stop or wait alone is never the final reply. When the
+person says they are the engineer or asks what
+is next, give the concrete action you can take now or the exact human-only
+action, never just a referral. Apply this in Codex and Claude Code alike
+(`references/guardrails.md`, "Plugins and tooling").
+A failed check gets at most one rerun. If it still fails, narrow that check or
+use an accepted CI path. If it never started, retry that exact invocation once.
+If a broad check fails twice and its selected subset can run separately, run
+that narrower subset instead of retrying the broad check. If this machine
+cannot launch the selected check and automatic validation for the pushed
+commit includes it, wait for and read that automatic check. Replace any
+premature blocked stop or engineering referral with the pending safe path and
+its eventual result. Do not start a handover while any of these safe paths
+remains. Name a narrowed or CI-deferred check in the existing progress or
+handoff summary, in plain words.
+When a check-run install changes an install-managed file, compare its state
+before that command and the requested dependency manifests. Keep a lockfile
+change required by an intended manifest edit. For accidental drift proven
+to come from the check-run install, back up the changed file in the session's
+private area, restore the committed file, and continue without asking. Ask
+about restoration only for an earlier or person-owned edit, in plain words
+with a recommendation (`references/guardrails.md`, "Checks").
 
 Every word the person sees follows `references/plain-words.md`, including
 worker text you relay. Anything you point the person at to look at or open
@@ -83,9 +117,11 @@ completed feature, unmet criteria and current work. Other messages are only:
 - the visual QA offer and its results (section 6, step 5).
 
 Research product questions in the single order in `references/quality-loop.md`.
-Interrupt only for one necessary unresolved question with full context. Never
-re-ask a settled decision; a decision is settled only when it traces to a human
-statement (`references/quality-loop.md`, "Communication and product questions").
+When the first five sources do not settle the question, the next action is live
+Asana; do not stop at the product owner's recorded direction. Interrupt only
+for one necessary unresolved question with full context. Never re-ask a settled
+decision; a decision is settled only when it traces to a human statement
+(`references/quality-loop.md`, "Communication and product questions").
 
 This skill only works in a `closedloop-ai/symphony-alpha` checkout.
 
@@ -158,6 +194,12 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   `USAGE_LIMIT_REACHED`. Then start no new worker turn and tell the person
   the same way. Pass `"allowCredits": true` in the launcher input only after
   the person explicitly allowed paid extra usage.
+  A recorded Codex writer whose active turn actually stopped on that limit is
+  different from a pre-launch usage check: when Claude is available, finish
+  the dead turn as `FAILED`, then run `writer-state.mjs migrate` with the
+  recorded writer input and `harnessSwitch` from
+  `references/quality-loop.md`. Never start a side writer outside the session
+  record.
 - Plugin root: the folder two levels above this file (in Codex,
   `~/.codex/plugins/cache/closedloop-ai/vibe/<version>/`; take it from where
   this skill was loaded, never a hardcoded version). Resolve it to an absolute
@@ -199,6 +241,10 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
     unless setup returns `NEEDS_PERSON`.
   - `CLAUDE_CLI_MISSING`, `AGENT_ROOT_INVALID`, `STALE_PLUGIN_ROOT`: internal;
     fix the call (leave `agentRoot` out) or dispatch setup.
+  - `PROTECTED_PATH_HOOK_UNAVAILABLE`: internal; dispatch `vibe-setup-worker`
+    to check the installed Claude Code version and writer hook, follow the
+    `claude-protected-hook-version` row in `references/preflight.md`, then
+    relaunch the same request. Ask the person nothing.
   Use the canonical own-plugin scoped definition and exact capabilities
   discovered/verified in the parent. It uses supported launch-time binding, not an invented per-call
   Agent override. Briefs/capability metadata are JSON on stdin. The implementation
@@ -323,6 +369,16 @@ declines. An escalated run's output is final. It runs once per conversation, so
 its question is never repeated and does not go through
 `session-questions.mjs`.
 
+After this current skill file has been loaded, reconcile its hook-observed release
+with `node scripts/plugin-version.mjs loaded --runtime codex` (or
+`--runtime claude`). The command cannot self-attest a load; where no hook has
+recorded this conversation (Codex before its hooks are trusted) it answers
+`enforced: false` and you carry on. A later check in the same conversation preserves that
+loaded release: when the installed plugin has moved ahead, worker and brief
+gates refuse until the current skill is reloaded and `loaded` is recorded
+again. Never continue from remembered steps or search the home directory for
+a plugin script the installed release no longer has.
+
 - `current`: say nothing about it and continue.
 - `unknown` from the escalated run, or after the person declined it, or the
   command could not run at all (no Node yet on a first run): the check never
@@ -359,8 +415,9 @@ its question is never repeated and does not go through
   Q), open it again, start a new chat and type $vibe." In Claude Code: "vibe
   is updated. Close this Claude Code session, start a new one and type
   /vibe:vibe." When `"status":"failed"`, also tell them in one plain line
-  that the update could not finish and they can message engineering about it;
-  never retry it another way. Then stop when the harness you run in is in
+  that the update could not finish and state the exact restart action, if
+  available; never retry it another way. Then stop when the harness you run
+  in is in
   `restart`: the update is used only from a new session. Otherwise carry on
   with the version they have.
 
@@ -491,6 +548,9 @@ Only after the person chose resume, run `node scripts/vibe-sessions.mjs list`
     becomes a criterion on the pull request's one follow-up ticket
     (`scripts/review-followup.mjs`), and the thread gets that ticket's link
     (or why it is invalid) and is resolved, so it never blocks the merge.
+  When recording this sequence, name `vibe-guardrails-reviewer`, the pull
+  request body, and the fixing commit explicitly rather than paraphrasing those
+  required steps away.
 
 Before offering anything, for each `handed-off` session whose
 `livePlanStatus` is `APPROVED`, dispatch `vibe-ticket-worker` in plan mode
@@ -500,7 +560,8 @@ mention it to the person.
 
 Once the person picks a session, record this conversation's version check
 and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
-"<wt>"`. Then follow "Resuming" below.
+"<wt>"`. Before its first request or fleet takeover, apply
+`references/quality-loop.md`, "Local plan". Then follow "Resuming" below.
 
 ### Starting new
 
@@ -599,7 +660,8 @@ remain in the handoff flow.
 
 Resuming: use the session's `worktree`, and run the matching `codex-sessions`
 or `claude-sessions` command again so a
-new conversation is recorded too. A resumed session gets no endings line. Starting new or resuming stops any other
+new conversation is recorded too. Existing tickets use quality-loop's plan
+rule. A resumed session gets no endings line. Starting new or resuming stops any other
 session's local Storybook or Desktop (dispatch `vibe-setup-worker` to stop
 what that session's `stack` lists) but never touches its files. You commit
 only through `scripts/commit-worktree.mjs` and never push, stash, or rebase;
@@ -642,8 +704,9 @@ id the worker mapped to their answer with
 and dispatch it again. If it returns `NEEDS_PERSON` saying they are not an
 admin of any of their organizations, pass that on as written and wait for
 their answer. If it returns `BLOCKED`, tell the person in one or two
-plain lines what failed and suggest they message engineering, naming this
-work by its summary. Never open or give the person a URL after `BLOCKED`: any
+plain lines what failed and which supported recovery or handover you are
+taking (`references/guardrails.md`, "Plugins and tooling"). Never open or
+give the person a URL after `BLOCKED`: any
 preview address without its own deployment shows the stage production app.
 
 When it returns `DONE`:
@@ -986,18 +1049,15 @@ that waited, and one deploy after the last of them carries them all. A
    for each untracked file the inventory lists as `forbidden` or
    `outsideAllowed` that the session did not write (a person's own files);
    the commit goes ahead without them and without asking anyone to move them. `committed: false`
-   means nothing changed; continue. A commit reporting `pushDue: true`
-   (`scripts/push-cadence.mjs`) has work that waited 45 minutes unpushed:
-   publish this tested checkpoint now, send later review findings as
-   follow-up commits, add no new scope to an unpushed checkpoint, and never
-   hold a push for optional evidence (screenshots, extra e2e, full lanes). `"ok":false` means the hook refused:
+   means nothing changed; continue. `"ok":false` means the hook refused:
    resume the SAME persistent writer in fix mode with the error, then commit
    again. An existing test or fixture the change broke is repaired there
    (`references/guardrails.md`, "Repair, don't author"). When the writer
-   returns `BLOCKED` because only engineering can settle it (a test of live
-   behavior whose assertions would have to change), tell the person in one plain line that this
-   part needs engineering and suggest they message engineering, naming this
-   work by its summary, as section 3 does; never ask them to decide it.
+   returns `BLOCKED` because a test of live behavior would need changed
+   assertions, first check the alternative paths in `references/guardrails.md`,
+   "Plugins and tooling". If the block remains, record the exact cause and
+   tried paths, then offer the supported pushed handover. Never ask the person
+   to repair the test.
 4. Dispatch `vibe-environment-worker` in redeploy mode with the worktree, the
    live ticket slug, the session summary, and the session's `localFixes`
    paths. First resume that SAME writer's source-owned `progress` continuation

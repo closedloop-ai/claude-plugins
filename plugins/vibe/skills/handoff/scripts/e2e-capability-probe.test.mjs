@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { makeHome } from "../../vibe/scripts/test-fixtures.mjs";
+import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
 import { probeE2eCapability } from "./e2e-capability-probe.mjs";
 import { selectE2eTier, specExecutionLimitation } from "./e2e-tier.mjs";
 
@@ -12,7 +12,11 @@ test("the capability producer reports working Docker and only boolean prerequisi
   const worktree = path.join(fixture.root, "checkout");
   mkdirSync(path.join(worktree, "apps", "api"), { recursive: true });
   writeFileSync(path.join(worktree, "apps", "api", ".env.local"), "DEVOPS_CLOSEDLOOP_APP_PWD=fixture-password\n");
-  const commit = "f".repeat(40);
+  git(worktree, ['init', '--quiet'], fixture.home);
+  git(worktree, ['add', '.'], fixture.home);
+  git(worktree, ['commit', '--quiet', '-m', 'base'], fixture.home);
+  const commit = git(worktree, ['rev-parse', 'HEAD'], fixture.home);
+  writeFileSync(path.join(worktree, 'uncommitted.md'), 'dirty probe input');
   const run = (name, args) => {
     if (name === "docker" && args[0] === "--version") return { status: 0, stdout: "Docker version 29.9.1" };
     if (name === "docker" && args[0] === "info") return { status: 0, stdout: String(25157324800) };
@@ -28,6 +32,8 @@ test("the capability producer reports working Docker and only boolean prerequisi
     CLERK_SECRET_KEY: false, NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: false, DEVOPS_CLOSEDLOOP_APP_PWD: true,
   });
   assert.equal(observed.probedCommit, commit);
+  assert.equal(observed.source.head, commit);
+  assert.match(observed.source.diffSha256, /^[a-f0-9]{64}$/);
   assert.equal(observed.desktopHarness.available, false);
   assert.doesNotMatch(JSON.stringify(observed), /fixture-password/);
   const capability = { ...observed, selectedTier: "A", native: { available: false }, remote: { available: false } };

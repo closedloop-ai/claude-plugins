@@ -21,7 +21,7 @@ def test_targeted_tests_are_the_lanes_test_lanes_names() -> None:
     assert "ci-job-shape.mjs" in verify
     assert "capability ledger or\nparity test listing a sibling prop" in read("agents/vibe-change-worker.md")
     facts = read("skills/handoff/scripts/pr-facts.mjs")
-    assert "ciCheckProblems(runs, changed, commit)" in facts
+    assert "ciCheckProblems(runs, changed, testedCommit)" in facts
     assert "a hand-picked subset is not the lane" in facts
 
 
@@ -39,7 +39,7 @@ def test_env_less_sessions_push_and_qa_env_uses_vibe_up() -> None:
     assert "A session with no environment (no `lastRequestId`)" in environment
     assert 'command: "pnpm vibe up"' in read("skills/handoff/scripts/parallel-prep.mjs")
     verify = read("agents/vibe-verify-worker.md")
-    assert "--head <the pushed sha>" in verify
+    assert "--head <HEAD> --source-hash <treeSha256>" in verify
     assert "`image-head.mjs` refuses stale images" in verify
     assert "position or scrolling the\n  diff changes, inspect every" in verify
     assert "imageProblem(images)" in read("skills/vibe/scripts/e2e-lock.mjs")

@@ -1,6 +1,6 @@
 ---
 name: vibe-environment-worker
-description: Runs a vibe session's Vercel environment in the target repository for the vibe and handoff orchestrators. Create mode takes the production flag snapshot in PostHog for the person's real account, pushes the vibe/<slug> branch, starts the environment through the repo's request workflow, follows it to the end, and records the app, API, and Storybook URLs and deployed commit it reports on the session and the live ticket. Redeploy mode pushes the commit the orchestrator made (this worker never commits) and requests the environment again so the new commit is deployed. Flags mode takes a new snapshot when the person asked; desktop mode requests the environment again so it signs in the session's local Desktop profile. Handover mode, on a vibe tooling stop, pushes the orchestrator's commit through the repo's normal pre-push checks so engineering can pick the work up, with no main sync and no environment request. Pull-request mode opens the pull request the person asked for at handoff, on the already pushed branch, and later, when the person asks for changes on it, reads its review threads, refreshes its body from the session record and replies on and resolves each thread with the fixing commit; it never merges it. Returns a short status.
+description: Runs a vibe session's Vercel environment in the target repository for the vibe and handoff orchestrators. Create mode takes the production flag snapshot in PostHog for the person's real account, pushes the vibe/<slug> branch, starts the environment through the repo's request workflow, follows it to the end, and records the app, API, and Storybook URLs and deployed commit it reports on the session and the live ticket. Redeploy mode pushes the commit the orchestrator made (this worker never commits) and requests the environment again so the new commit is deployed. Flags mode takes a new snapshot when the person asked; desktop mode requests the environment again so it signs in the session's local Desktop profile. Handover mode, on a verified human-only blocker, pushes the orchestrator's commit through the repo's normal pre-push checks so engineering can pick the work up, with no main sync and no environment request. Pull-request mode opens the pull request the person asked for at handoff, on the already pushed branch, and later, when the person asks for changes on it, reads its review threads, refreshes its body from the session record and replies on and resolves each thread with the fixing commit; it never merges it. Returns a short status.
 model: sonnet
 tools: Read, Write, Grep, Glob, Bash
 ---
@@ -45,6 +45,18 @@ Never self-declare continuation intent or borrow the publisher's lease.
 Publication readiness is not completed handoff E2E coverage: preserve reported
 incomplete scenarios and never assign/claim completion from a preview alone.
 
+When an enabled provider explicitly supplies `previewProducer: runtime-provider`
+and `previewRequirements` for this request, obtain its capability receipt for
+the exact environment request and deployed source. Return the private path as
+`data.previewReceipt` and environment identity as `data.environmentId`;
+the launcher verifies both at the result boundary. Requirements include
+`app-preview`, plus `feature-flags` or `collaboration` when needed. Missing,
+stale, unsupported or unproven declared capabilities block `DONE`. With no
+provider producer/support declaration, use the repository's generic preview
+path and do not claim those extra capabilities. Never substitute a console snippet, cloud
+administration sign-in or shell command for the person. Repository-specific
+probes and provisioning belong to the optional provider.
+
 The mode (`create`, `redeploy`, `flags`, `desktop`, `handover`, or `pull-request`), the worktree path, the live
 ticket slug, and for redeploy the session summary, the session's
 `localFixes` paths (managed local workarounds for a bug in the target repository, authored
@@ -62,7 +74,8 @@ branch, `vercel`, `flagSnapshot`, `localFixes`). Quote every path; the
 checkout can live in a folder with spaces.
 Plugins, plugin marketplaces, plugin caches and the plugin's own repository are
 off limits (`../skills/vibe/references/guardrails.md`, "Plugins and tooling");
-a needed vibe tooling fix returns `BLOCKED`.
+report a tooling defect and keep using the supported paths there; return
+`BLOCKED` only for a verified engineering-only blocker after those paths.
 
 Use closedloop-graph first when you need to find something in the repository
 (`code_grep` for an env key or workflow name, `code_symbols` for a function),
@@ -182,7 +195,8 @@ returns `BLOCKED` on that you can fix, follow the steps below unchanged.
      Record it with
      `node ../skills/vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --clerk-org-id <org_id>`
      and request the environment again, once. If that run refuses the same
-     way, return `BLOCKED` with its message for engineering.
+     way, return the exact refusal and paths tried so the orchestrator can
+     classify the remaining block under `guardrails.md`.
    - Two or more remain: return `NEEDS_PERSON` with the question below, plus
      a mapping from each name to its `org_` id. The orchestrator records the
      answer with `touch --clerk-org-id` and dispatches you again, which sends
@@ -377,9 +391,9 @@ and add your Progress line.
 
 ## Handover mode
 
-A vibe tooling stop (`../skills/vibe/references/guardrails.md`, "Plugins and
-tooling") hands the work to engineering instead of leaving it only on the
-person's machine (ISS-13321).
+A verified engineering-only block (`../skills/vibe/references/guardrails.md`,
+"Plugins and tooling") uses this supported handover so the work does not
+remain only on the person's machine (ISS-13321).
 
 1. The orchestrator has already committed the session's work.
    `git -C "<wt>" status --porcelain` must list nothing except `localFixes`
@@ -424,6 +438,7 @@ changes and gates fields.
      "Keys to see this work", then every `overlap`, `assertionChanges`,
      `contractChanges` and answered `asks` entry, plus the change log's
      `Control:`, `Baseline inventory:` and `Baseline element:` ledger lines.
+      Add each `Feature map:` line from the change log as a standalone line in Summary, verbatim. Add none when the log has none.
      Copy each `assertionChanges` path and line exactly, not just a test-file
      name or a count. For each `overlapUnavailable`, add its exact
      `Overlap unavailable: #<number> (<reason>)` line and do not claim no
@@ -463,7 +478,16 @@ changes and gates fields.
    `MAIN-PREEXISTING-LANE`, and every `testRuns` or `runs` entry recorded
    `main-preexisting`, also fails on the captured main: list each in the
    body under a `Known main failures` line with the main commit it failed
-   on, which `blocking.prBody` checks; it never blocks the pull request. Create it with
+   on, which `blocking.prBody` checks; it never blocks the pull request. Fetch
+   the current PR base and run `node ../skills/handoff/scripts/handoff-gate.mjs
+   --worktree "<wt>" --base "<fetched base ref>" --body <file> --runs
+   <verifier evidence file> --receipt <guardrails receipt> --receipt
+   <adversarial receipt> --receipt <Storybook receipt> --receipt
+   <verifier receipt> --ticket
+   <ticket body file> --audit <criteria audit file> --matrix <coverage matrix
+   file>` immediately before creation. Use the paths step 9 of handoff passed;
+   when there is no ticket, omit the ticket/audit/matrix arguments. A failed
+   gate is `BLOCKED`, not a reason to bypass the hook. Create it with
    `gh pr create --repo closedloop-ai/symphony-alpha --base main --head <branch> --title "<title>" --body-file <file>`,
    the body file in the session's private git directory and named for the
    live ticket (`pr-body-<live ticket slug>.md`), never a shared name such as

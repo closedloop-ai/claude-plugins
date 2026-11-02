@@ -37,11 +37,14 @@ def test_storybook_train_is_rechecked_against_pinned_base_before_pr() -> None:
     handoff = flat((HANDOFF / "SKILL.md").read_text())
     verify = flat(agent("vibe-verify-worker"))
     ticket = flat(agent("vibe-ticket-worker"))
-    for text in (handoff, verify, ticket):
+    for text in (verify, ticket):
         assert "pinned" in text
         assert "release history" in text
         assert "component and story counts" in text
         assert "in-flight" in text
+    for required in ("Pinned-base Storybook train", "pinned base", "release-history",
+                     "component/story counts", "every open pull request"):
+        assert required in handoff, required
 
 
 def test_inventory_fails_closed_for_every_outside_path() -> None:

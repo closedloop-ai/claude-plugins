@@ -45,7 +45,7 @@ test("nothing unpushed is never due", (t) => {
   assert.deepEqual(unpushedAge(work, { now: minutes(500) }), { minutes: 0, due: false, since: null, reason: "nothing unpushed" });
 });
 
-test("the oldest unpushed commit sets the age, and 45 minutes makes the push due", (t) => {
+test("the oldest unpushed commit sets the age, and 45 minutes makes attention due", (t) => {
   const { work, commit } = repos(t);
   commit("b.txt", minutes(10));
   commit("c.txt", minutes(30));
@@ -81,7 +81,7 @@ test("with no upstream, commits missing from origin/<branch> or every remote ref
   assert.equal(unpushedAge(work, { now: minutes(30) }).minutes, 10, "b.txt is on no remote ref either");
 });
 
-test("the command prints the age and exits 1 when the push is due", (t) => {
+test("the command prints the age and exits 1 when attention is due", (t) => {
   const { work, commit } = repos(t);
   commit("b.txt", minutes(0));
   const run = (now) => spawnSync(process.execPath, [SCRIPT, "--worktree", work, "--now", new Date(now).toISOString()], { encoding: "utf8" });

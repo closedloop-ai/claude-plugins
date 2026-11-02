@@ -59,11 +59,19 @@ never relayed to the person as a step, even in plain words (ISS-13321: a
 person who asked "what should I do first" was told to pause an animation in
 a component, which only engineering could do).
 
-When the person asks what to do while the session is stopped, the answer is
-nothing yet: "This needs an engineer. Message engineering with: <summary>",
-plus the offer to pass it to someone now (`guardrails.md`, "Plugins and
-tooling"). While the session can still continue, the answer is that you are
-working on it, and the next thing they will see.
+Never ask the person to run a browser console snippet, cloud administration
+sign-in, or shell command to make a feature state visible. The setup or
+environment worker supplies a preview that can show the requested state;
+when it cannot, report that the preview is not ready and route the limitation
+to engineering. A normal product sign-in to view a working preview remains a
+human action.
+
+When the person asks what to do next, including when they say they are the
+engineer, name the next supported action the session can take and take it.
+If only a human can act, name that exact action. For a verified engineering-only
+block, use the reply rule in `SKILL.md` and the supported handover in
+`guardrails.md`, "Plugins and tooling". Do not relay a worker's technical
+repair suggestion as the person's task.
 
 ## Links to what the person should look at
 

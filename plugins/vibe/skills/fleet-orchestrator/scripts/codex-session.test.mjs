@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import {
-  lastMessages, loadState, nextState, ORCHESTRATOR_PROVENANCE, parseCli, run, saveState,
+  assertVibeSession, lastMessages, loadState, nextState, ORCHESTRATOR_PROVENANCE, parseCli, requireResumeSession, run, saveState,
 } from './codex-session.mjs';
 import { FLEET_SECTION_NAME, WORKER_THREAD_SOURCE } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
 
@@ -40,6 +41,38 @@ function workDir() {
   writeFileSync(promptFile, '$vibe resume the session for the ticket.\n');
   return { dir, promptFile };
 }
+
+test('fleet writer requires a matching active vibe session record in its worktree', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-session-record-'));
+  execFileSync('git', ['init', '-q', '-b', 'vibe/example', dir]);
+  const gitDir = execFileSync('git', ['-C', dir, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim();
+  const record = join(gitDir, 'vibe-session.json');
+  assert.throws(() => assertVibeSession(dir), /no vibe session record/);
+  const valid = { status: 'active', branch: 'vibe/example', slug: 'example', summary: 'Example', operator: { id: 'operator' },
+    baseCommit: 'a'.repeat(40), createdAt: '2026-10-30T12:00:00Z' };
+  writeFileSync(record, JSON.stringify({ ...valid, branch: 'vibe/other' }));
+  assert.throws(() => assertVibeSession(dir), /does not match/);
+  writeFileSync(record, JSON.stringify({ ...valid, status: 'stopped' }));
+  assert.throws(() => assertVibeSession(dir), /no active vibe session/);
+  writeFileSync(record, JSON.stringify({ status: 'active', branch: 'vibe/example' }));
+  assert.throws(() => assertVibeSession(dir), /no active vibe session/, 'a hand-written stub is not a session');
+  writeFileSync(record, JSON.stringify(valid));
+  assert.equal(assertVibeSession(dir).branch, 'vibe/example');
+  assert.equal(requireResumeSession(null, dir), null, 'the first $vibe turn creates its own record');
+  assert.equal(requireResumeSession({ cwd: dir }, dir).branch, 'vibe/example');
+});
+
+test('the fleet CLI refuses a sessionless saved thread before connecting to App Server', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-session-cli-'));
+  execFileSync('git', ['init', '-q', '-b', 'vibe/example', dir]);
+  const prompt = join(dir, 'prompt.md');
+  writeFileSync(prompt, '$vibe build this request\n');
+  saveState(join(dir, 'state'), 'writer', { threadId: 'thread-1', cwd: dir, turns: [] });
+  const result = spawnSync(process.execPath, [new URL('./codex-session.mjs', import.meta.url).pathname,
+    'turn', join(dir, 'state'), 'writer', '--prompt-file', prompt], { encoding: 'utf8' });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /no vibe session record/);
+});
 
 test('parseCli reads each command and its options', () => {
   assert.deepEqual(parseCli(['turn', 'state', 'w1', '--prompt-file', 'p.md', '--cwd', 'wt', '--ticket', 'ISS-1', '--model', 'm', '--effort', 'high', '--sandbox', 'workspace-write']), {
@@ -124,7 +157,13 @@ test('turn on a new session starts a thread, names it, moves it into Fleet worke
       },
     },
   ]);
-  assert.deepEqual(JSON.parse(readFileSync(join(dir, 'w1.json'), 'utf8')), {
+  const saved = JSON.parse(readFileSync(join(dir, 'w1.json'), 'utf8'));
+  assert.equal(saved.loadedSkill.actorId, 'T1');
+  assert.equal(saved.loadedSkill.skill, 'vibe');
+  // PR #371 review: spawn-time evidence is the installed definition, never claimed as an observed read.
+  assert.deepEqual([saved.loadedSkill.runtime, saved.loadedSkill.basis], ['codex', 'installed-at-spawn']);
+  delete saved.loadedSkill;
+  assert.deepEqual(saved, {
     threadId: 'T1', cwd: '/wt', model: 'm', effort: 'high', turns: [{ turnId: 'U1', kind: 'turn', promptFile }], ticket: 'ISS-1',
   });
 });

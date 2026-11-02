@@ -7,6 +7,7 @@ import { existsSync, readFileSync, statfsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { withStableSource } from "../../vibe/scripts/tested-head.mjs";
 import { git } from "../../vibe/scripts/session-record.mjs";
 import { NO_DISPLAYLESS_ELECTRON, REQUIRED_CONTAINER_IDENTITY } from "./e2e-tier.mjs";
 
@@ -36,38 +37,40 @@ function present(worktree, key, env) {
 
 /** Observe Docker, disk, existing identity-key presence and displayless harness without exposing values. */
 export function probeE2eCapability({ worktree, commit, run = command, diskGiB, platform = process.platform, env = process.env }) {
-  const version = run("docker", ["--version"]);
-  const info = run("docker", ["info", "--format", "{{.MemTotal}}"]);
-  const dagger = run("dagger", ["version"]);
-  // A failed version command can still be an installed CLI. Only ENOENT
-  // proves the executable is absent; daemon reachability is a separate fact.
-  const dockerPresent = version.errorCode !== "ENOENT";
-  const memoryBytes = Number(info.stdout.trim());
-  const dockerReachable = dockerPresent && info.status === 0 && Number.isFinite(memoryBytes) && memoryBytes > 0;
-  const memoryGiB = dockerReachable ? Number((memoryBytes / GIB).toFixed(1)) : 0;
-  const freeDiskGiB = diskGiB ?? (() => {
-    const stat = statfsSync(worktree);
-    return Number(((Number(stat.bavail) * Number(stat.bsize)) / GIB).toFixed(1));
-  })();
-  const secretsSet = Object.fromEntries(REQUIRED_CONTAINER_IDENTITY.map((key) => [key, present(worktree, key, env)]));
-  const missing = REQUIRED_CONTAINER_IDENTITY.filter((key) => !secretsSet[key]);
-  const ready = dockerReachable && memoryGiB >= MIN_MEMORY_GIB && freeDiskGiB >= MIN_DISK_GIB;
-  const harnessTools = Object.fromEntries(HARNESS_TOOLS.map((tool) => [tool, run("sh", ["-c", `command -v ${tool}`]).status === 0]));
-  const displayless = platform === "linux" && Object.values(harnessTools).every(Boolean);
-  return {
-    probedCommit: commit,
-    container: {
-      dockerPresent, dockerReachable, memoryGiB, diskGiB: freeDiskGiB,
-      minimumMemoryGiB: MIN_MEMORY_GIB, minimumDiskGiB: MIN_DISK_GIB,
-      command: "docker --version; docker info --format {{.MemTotal}}; dagger version; statfs",
-      ...(dagger.status === 0 ? { daggerCli: dagger.stdout.trim() } : {}),
-      secretsSet, runnable: ready && missing.length === 0,
-      ...(ready && missing.length ? { notRunnableReason: `${missing.join(", ")} unset` } : {}),
-    },
-    desktopHarness: { available: displayless,
-      ...(!displayless ? { reason: NO_DISPLAYLESS_ELECTRON } : {}),
-      probe: `${platform}; ${HARNESS_TOOLS.map((tool) => `${tool}=${harnessTools[tool]}`).join(", ")}` },
-  };
+  return withStableSource(worktree, () => {
+    const version = run("docker", ["--version"]);
+    const info = run("docker", ["info", "--format", "{{.MemTotal}}"]);
+    const dagger = run("dagger", ["version"]);
+    // A failed version command can still be an installed CLI. Only ENOENT
+    // proves the executable is absent; daemon reachability is a separate fact.
+    const dockerPresent = version.errorCode !== "ENOENT";
+    const memoryBytes = Number(info.stdout.trim());
+    const dockerReachable = dockerPresent && info.status === 0 && Number.isFinite(memoryBytes) && memoryBytes > 0;
+    const memoryGiB = dockerReachable ? Number((memoryBytes / GIB).toFixed(1)) : 0;
+    const freeDiskGiB = diskGiB ?? (() => {
+      const stat = statfsSync(worktree);
+      return Number(((Number(stat.bavail) * Number(stat.bsize)) / GIB).toFixed(1));
+    })();
+    const secretsSet = Object.fromEntries(REQUIRED_CONTAINER_IDENTITY.map((key) => [key, present(worktree, key, env)]));
+    const missing = REQUIRED_CONTAINER_IDENTITY.filter((key) => !secretsSet[key]);
+    const ready = dockerReachable && memoryGiB >= MIN_MEMORY_GIB && freeDiskGiB >= MIN_DISK_GIB;
+    const harnessTools = Object.fromEntries(HARNESS_TOOLS.map((tool) => [tool, run("sh", ["-c", `command -v ${tool}`]).status === 0]));
+    const displayless = platform === "linux" && Object.values(harnessTools).every(Boolean);
+    return {
+      probedCommit: commit,
+      container: {
+        dockerPresent, dockerReachable, memoryGiB, diskGiB: freeDiskGiB,
+        minimumMemoryGiB: MIN_MEMORY_GIB, minimumDiskGiB: MIN_DISK_GIB,
+        command: "docker --version; docker info --format {{.MemTotal}}; dagger version; statfs",
+        ...(dagger.status === 0 ? { daggerCli: dagger.stdout.trim() } : {}),
+        secretsSet, runnable: ready && missing.length === 0,
+        ...(ready && missing.length ? { notRunnableReason: `${missing.join(", ")} unset` } : {}),
+      },
+      desktopHarness: { available: displayless,
+        ...(!displayless ? { reason: NO_DISPLAYLESS_ELECTRON } : {}),
+        probe: `${platform}; ${HARNESS_TOOLS.map((tool) => `${tool}=${harnessTools[tool]}`).join(", ")}` },
+    };
+  }, { head: commit });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

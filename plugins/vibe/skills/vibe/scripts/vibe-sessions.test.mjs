@@ -5,8 +5,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { git, mainSyncAdmission, mainSyncRecipeFiles, makeCheckout, makeHome, runNode } from "./test-fixtures.mjs";
+import { LoadBasis, loadedSkillEvidence } from "./loaded-skill.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "vibe-sessions.mjs");
+const PLUGIN_ROOT = path.resolve(path.dirname(SCRIPT), "..", "..", "..");
 const FLAG_KEYS = path.join(path.dirname(fileURLToPath(import.meta.url)), "flag-keys.mjs");
 const SPACED_CHECKOUT = ["Documents", "Closedloop.ai - Active Work", "symphony-alpha"];
 const OPERATOR_ARGS = ["--operator-id", "user-operator", "--operator-email", "operator@example.com", "--operator-name", "Sample Operator"];
@@ -249,7 +251,8 @@ test("new refuses while this conversation's plugin check is outdated and unanswe
   assert.match(refused.json.error, /plugins are outdated \(vibe: you have 1\.0\.84, the latest is 1\.0\.85\) and the person has not chosen to update or to proceed/);
   assert.equal(git(checkout, ["branch", "--list", "vibe/version-gate"], home), "", "a refused start creates nothing");
 
-  writeJson(startup, { ...outdated, choice: { choice: "proceed", by: "person", acceptedWorseResults: true } });
+  writeJson(startup, { ...outdated, loadedSkill: loadedSkillEvidence("conversation-version", "claude", PLUGIN_ROOT, "vibe", LoadBasis.HookObserved),
+    choice: { choice: "proceed", by: "person", acceptedWorseResults: true } });
   const created = runNode(SCRIPT, args, home, env);
   assert.equal(created.status, 0, created.stderr);
   const record = JSON.parse(readFileSync(recordFile(created.json.session.worktree, home), "utf8"));

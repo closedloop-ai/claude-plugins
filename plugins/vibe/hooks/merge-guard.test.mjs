@@ -31,6 +31,7 @@ test("merging, enqueueing or arming auto-merge on another author's pull request 
 test("the repo and the target are read past value flags", () => {
   assert.deepEqual(mergeCalls("gh pr merge -t 'title' --repo=acme/app 12 --auto"), [{ target: "12", repo: "acme/app", allowed: null }]);
   assert.deepEqual(mergeCalls("gh pr merge --body-file b.md -R acme/app https://github.com/acme/app/pull/12"), [{ target: "https://github.com/acme/app/pull/12", repo: "acme/app", allowed: null }]);
+  assert.deepEqual(mergeCalls("ssh host 'bash -lc \"gh pr merge 12 --auto\"'"), [], "remote merges are not judged with local GitHub identity");
 });
 
 test("the hook denies through the PreToolUse contract and stays silent when gh cannot answer", (t) => {

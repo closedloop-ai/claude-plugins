@@ -16,11 +16,19 @@
 // Runs from pre-tool-use.mjs.
 
 import { deny } from "./hook-dispatch.mjs";
+import os from "node:os";
+import { execFileSync } from "node:child_process";
+import { realpathSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
+import { eventCwd } from "./hook-dispatch.mjs";
+import { readStartupRecord } from "../skills/vibe/scripts/plugin-version.mjs";
 import { latestSkill, readTranscript } from "./skill-transcript.mjs";
 
 export const QUESTION_TOOLS = Object.freeze(["AskUserQuestion", "request_user_input", "request_user_input_async"]);
-const VERSION_QUESTION = /\bnewer version of (?:vibe|the plugins) is available\b/i;
-const CODE_CITATION = /checked in code:\s*\S+:\d+/i;
+const VERSION_SUBJECT = /\b(?:vibe|plugin(?:s)?)\b/i;
+const VERSION_CHANGE = /\b(?:version|update|upgrade|outdated)\b/i;
+const VERSION_CHOICE = /\b(?:proceed|continue|keep going|update now|upgrade now|install now)\b/i;
+const CODE_CITATION = /checked in code:\s*(\S+):(\d+)/i;
 const RECORD_MARKER = "sessionquestionsmjsask";
 const RECORD_WINDOW = 400;
 
@@ -30,21 +38,62 @@ export function questionTexts(input) {
   return listed.filter((text) => typeof text === "string" && text.trim() !== "");
 }
 
+/** Startup plugin-version choices vary in wording but must name the subject, change and decision. */
+export function isVersionQuestion(question) {
+  return VERSION_SUBJECT.test(question) && VERSION_CHANGE.test(question) && VERSION_CHOICE.test(question);
+}
+
+/**
+ * A cited code line must exist in a regular file inside a git repository, including through
+ * symlinks. An absolute path is checked against its own repository or worktree, so an
+ * orchestrator outside any repository can cite a writer's worktree (PR #371 review); a relative
+ * path resolves against the hook cwd's repository, or the cwd itself outside one.
+ */
+export function codeCitationProblem(question, cwd) {
+  const match = CODE_CITATION.exec(question);
+  if (!match) return "checked in code: <file>:<line> is missing";
+  const [, raw, number] = match;
+  if (raw.split(/[\\/]/).includes("..")) return "checked in code path may not traverse out of the repository";
+  let file;
+  try {
+    file = realpathSync(path.isAbsolute(raw) ? raw : path.join(repositoryRoot(cwd) ?? cwd, raw));
+  } catch { return "checked in code file cannot be read; cite an absolute path or one relative to the repository"; }
+  const repo = repositoryRoot(path.dirname(file));
+  try {
+    if (!repo || !file.startsWith(`${repo}${path.sep}`) || !statSync(file).isFile()) return "checked in code path is not a regular file inside a git repository";
+    const content = readFileSync(file, "utf8");
+    const lines = content === "" ? 0 : content.split("\n").length - (content.endsWith("\n") ? 1 : 0);
+    if (Number(number) < 1 || Number(number) > lines) return "checked in code line is outside the file";
+    return null;
+  } catch { return "checked in code file cannot be read inside its repository"; }
+}
+
+function repositoryRoot(dir) {
+  try {
+    return realpathSync(execFileSync("git", ["-C", dir, "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+  } catch { return null; }
+}
+
 /** The PreToolUse result for a question tool call: a deny for a question off its skill's path, or null. */
-export function questionGuard(event) {
+export function questionGuard(event, home = os.homedir()) {
   const questions = questionTexts(event?.tool_input);
   const text = readTranscript(event?.transcript_path);
   if (questions.length === 0 || text === null) return null;
   // The skill loaded last decides, so an orchestrator that read vibe's files, or a vibe
   // session started after a fleet chat, gets its own rule (PR #350 review).
   const skill = latestSkill(text, ["vibe", "fleet-orchestrator"]);
+  let startup = null;
+  try { if (typeof event?.session_id === "string") startup = readStartupRecord(event.session_id, home); }
+  catch { /* An invalid session id never grants the startup exception. */ }
+  const startupChoice = startup?.conversation === event?.session_id && startup?.status === "outdated" && !startup?.choice;
+  const versionChoice = (question) => startupChoice && isVersionQuestion(question);
   if (skill === "vibe") {
-    const missing = questions.filter((question) => !VERSION_QUESTION.test(question) && !recorded(text, question));
+    const missing = questions.filter((question) => !versionChoice(question) && !recorded(text, question));
     return missing.length === 0 ? null : deny(`record each question with \`node <plugin root>/skills/vibe/scripts/session-questions.mjs ask --key <topic> --question "<exact words>" --default "<what you do without an answer>" --deadline-minutes <n>\` first and ask only when it returns "ask": true (vibe SKILL.md, "Questions are asked once"); not recorded: ${missing.join(" | ")}`);
   }
   if (skill === "fleet-orchestrator") {
-    const missing = questions.filter((question) => !VERSION_QUESTION.test(question) && !CODE_CITATION.test(question));
-    return missing.length === 0 ? null : deny(`a question to the operator names where you checked the code first, as \`checked in code: <file>:<line>\` (fleet-orchestrator SKILL.md, principle 1); drop it if the code already answers it. Missing in: ${missing.join(" | ")}`);
+    const missing = questions.filter((question) => !versionChoice(question)).map(question => ({ question, problem: codeCitationProblem(question, eventCwd(event)) })).filter(item => item.problem);
+    return missing.length === 0 ? null : deny(`a question to the operator needs a real code citation before asking (fleet-orchestrator SKILL.md, principle 1); ${missing.map(item => `${item.problem}: ${item.question}`).join(" | ")}`);
   }
   return null;
 }

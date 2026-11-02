@@ -12,8 +12,6 @@ const TICKET = `## Scope and acceptance criteria
 ## Environment
 - [ ] not a criterion
 `;
-const HEAD = "0123456789abcdef0123456789abcdef01234567";
-
 test("criteria are the ticket's acceptance checklist, numbered in order", () => {
   assert.deepEqual(ticketCriteria(TICKET), [
     { id: "AC-1", text: "A row can be dragged with the pointer" },
@@ -21,13 +19,12 @@ test("criteria are the ticket's acceptance checklist, numbered in order", () => 
   ]);
 });
 
-test("the audit must cover every criterion as MET on the current head", () => {
+test("the audit must cover every criterion as MET without commit identity", () => {
   const criteria = ticketCriteria(TICKET);
-  const audit = (head, verdict2) => `Head: ${head}\n| Criterion | Verdict | Evidence |\n|---|---|---|\n| AC-1 | MET | spec drag.spec.ts |\n${verdict2 ? `| AC-2 | ${verdict2} | shows a toast |\n` : ""}`;
-  assert.deepEqual(auditProblems(audit(HEAD.slice(0, 10), "MET"), criteria, HEAD), []);
-  assert.deepEqual(auditProblems(audit(HEAD, "PARTIAL"), criteria, HEAD), ["AC-2: PARTIAL (shows a toast)"]);
-  assert.deepEqual(auditProblems(audit(HEAD, null), criteria, HEAD), ["AC-2: not audited"]);
-  assert.match(auditProblems(audit("fedcba9876", "MET"), criteria, HEAD)[0], /rerun it on the final head/);
+  const audit = (verdict2) => `| Criterion | Verdict | Evidence |\n|---|---|---|\n| AC-1 | MET | spec drag.spec.ts |\n${verdict2 ? `| AC-2 | ${verdict2} | shows a toast |\n` : ""}`;
+  assert.deepEqual(auditProblems(audit("MET"), criteria), []);
+  assert.deepEqual(auditProblems(audit("PARTIAL"), criteria), ["AC-2: PARTIAL (shows a toast)"]);
+  assert.deepEqual(auditProblems(audit(null), criteria), ["AC-2: not audited"]);
 });
 
 test("every criterion x surface x input x flag cell needs evidence, and flag-off cells need parity proof or a ruling", () => {

@@ -111,8 +111,9 @@ def test_handoff_freezes_the_accepted_rows_in_the_attached_session_table() -> No
                      "attachment on the live ticket is what travels", "`cl-execute`",
                      "tests in its pull request", "explicit OK of the person who ran the session"):
         assert required in frozen, required
+    candidate = section(HANDOFF_SKILL.read_text(), "### Candidate audits and pre-PR verification")
+    assert "`## Frozen Behavior` section" in candidate
     step = section(HANDOFF_SKILL.read_text(), "## 8. Choose who picks it up, then check the ticket")
-    assert step.index("`## Frozen Behavior` section") < step.index("Then dispatch `vibe-ticket-worker` in handoff mode")
     assert "Frozen Behavior row IDs" in step
     ticket = section(agent("vibe-ticket-worker"), "## Handoff mode")
     assert "must carry its `## Frozen Behavior` section before you attach it" in ticket

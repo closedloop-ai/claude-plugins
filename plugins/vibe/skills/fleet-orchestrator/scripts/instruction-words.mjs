@@ -5,7 +5,7 @@
 // head, and with --changelog it fails when the version's entry states a number
 // that differs from the measured one.
 //
-// Usage: instruction-words.mjs --base <ref of the release to compare against> [--head <ref, default HEAD>]
+// Usage: instruction-words.mjs --base <ref of the release to compare against> [--head <ref, default current uncommitted tree>]
 //          [--path <dir, default plugins/vibe>] [--changelog <CHANGELOG.md> --version <x.y.z>] [--repo <dir, default .>]
 //
 // Counts whitespace-separated words on added and removed Markdown lines under
@@ -14,6 +14,8 @@
 // "about <N> words longer" with N within 2% (at least 10 words) of the net;
 // exits 1 otherwise.
 
+import path from "node:path";
+import { withStableSource } from "../../vibe/scripts/tested-head.mjs";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -53,12 +55,23 @@ function main(argv) {
   if (!values.base || (values.changelog && !values.version)) {
     throw new Error("Usage: instruction-words.mjs --base <ref> [--head <ref>] [--path <dir>] [--changelog <file> --version <x.y.z>]");
   }
-  const diff = execFileSync("git", ["-C", values.repo ?? ".", "diff", "-U0", values.base, values.head ?? "HEAD", "--", `${values.path ?? "plugins/vibe"}/**/*.md`],
-    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-  const { added, removed, net } = countWords(diff);
+  const measure = () => {
+    const diff = execFileSync("git", ["-C", values.repo ?? ".", "diff", "-U0", values.base, ...(values.head ? [values.head] : []), "--", `${values.path ?? "plugins/vibe"}/**/*.md`],
+      { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    let untrackedDiff = "";
+    if (!values.head) {
+      const files = execFileSync('git', ['-C', values.repo ?? '.', 'ls-files', '--others', '--exclude-standard', '-z', '--', `${values.path ?? 'plugins/vibe'}/**/*.md`], { encoding: 'utf8' }).split('\0').filter(Boolean);
+      untrackedDiff = files.map(file => readFileSync(path.resolve(values.repo ?? '.', file), 'utf8').split('\n').map(line => `+${line}`).join('\n')).join('\n');
+    }
+    const counts = countWords(`${diff}\n${untrackedDiff}`);
+    return { ...counts, problems: values.changelog ? changelogProblems(readFileSync(values.changelog, 'utf8'), values.version, counts.net) : [] };
+  };
+  const counts = values.head ? measure() : withStableSource(values.repo ?? '.', measure);
+  const { added, removed, net } = counts;
+  if (counts.source) process.stdout.write(`source ${JSON.stringify(counts.source)}\n`);
   process.stdout.write(`added ${added} removed ${removed} net ${net}\n`);
   if (!values.changelog) return 0;
-  const problems = changelogProblems(readFileSync(values.changelog, "utf8"), values.version, net);
+  const problems = counts.problems;
   for (const problem of problems) process.stdout.write(`${problem}\n`);
   return problems.length === 0 ? 0 : 1;
 }

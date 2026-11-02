@@ -12,8 +12,10 @@
 // writers found a half-fixed thread, six broken tests and a 10 s per insert trigger behind "done" claims.
 // `last` prints the thread's status line and its last <n> agent messages (default 1).
 // The state file is the one codex-fleet-monitor reads for a `local|remote <name>` session line.
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import path, { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import {
   connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint, summarize,
@@ -22,6 +24,10 @@ import {
   archiveEndedWorker, assertWorkerNotLive, END_REASONS, endRecord, labelWorkerThread, WORKER_THREAD_SOURCE,
   workerThreadName,
 } from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
+import { readSessionRecord } from '../../vibe/scripts/session-record.mjs';
+import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+
+const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 const COMMANDS = new Set(['turn', 'steer', 'last', 'end']);
 const SANDBOXES = new Set(['read-only', 'workspace-write', 'danger-full-access']);
@@ -49,6 +55,7 @@ export function parseCli(argv) {
       effort: { type: 'string' },
       sandbox: { type: 'string' },
       count: { type: 'string' },
+      'plugin-root': { type: 'string' },
     },
   });
   const [command, stateDir, name, ...extra] = positionals;
@@ -61,7 +68,7 @@ export function parseCli(argv) {
   if (command === 'end' && !END_REASONS.includes(values.reason)) throw new Error(`end needs --reason ${END_REASONS.join('|')}`);
   if (command !== 'end' && values.reason !== undefined) throw new Error('--reason applies to end only');
   if (command !== 'turn') {
-    for (const key of ['cwd', 'ticket', 'model', 'effort', 'sandbox']) {
+    for (const key of ['cwd', 'ticket', 'model', 'effort', 'sandbox', 'plugin-root']) {
       if (values[key] !== undefined) throw new Error(`--${key} applies to turn only`);
     }
   }
@@ -82,11 +89,39 @@ export function parseCli(argv) {
     effort: values.effort,
     sandbox: values.sandbox,
     count,
+    ...(values['plugin-root'] === undefined ? {} : { pluginRoot: resolve(values['plugin-root']) }),
   };
 }
 
 export function statePath(stateDir, name) {
   return `${stateDir}/${name}.json`;
+}
+
+/** Refuses a fleet writer whose exact worktree has no active vibe session record. */
+export function assertVibeSession(worktree) {
+  if (!worktree) throw new Error('a vibe writer needs a session worktree');
+  let record;
+  try {
+    record = readSessionRecord(worktree);
+  } catch {
+    throw new Error(`vibe session record cannot be read in ${worktree}`);
+  }
+  if (!record) throw new Error(`no vibe session record in ${worktree}; the first $vibe turn must create it before any resume`);
+  if (record.status !== 'active' || typeof record.branch !== 'string' || !record.branch
+    || typeof record.slug !== 'string' || !record.slug || typeof record.summary !== 'string' || !record.summary
+    || typeof record.operator !== 'object' || !record.operator || !/^[a-f0-9]{40}$/.test(record.baseCommit ?? '')
+    || !Number.isFinite(Date.parse(record.createdAt ?? ''))) {
+    throw new Error(`no active vibe session record in ${worktree}`);
+  }
+  const branch = execFileSync('git', ['-C', worktree, 'branch', '--show-current'], { encoding: 'utf8' }).trim();
+  if (branch !== record.branch) throw new Error(`vibe session branch ${record.branch} does not match ${branch}`);
+  return record;
+}
+
+/** A new `$vibe` turn creates its record; every saved thread must resume that exact session. */
+export function requireResumeSession(saved, requestedCwd) {
+  if (!saved) return null;
+  return assertVibeSession(saved.cwd ?? requestedCwd);
 }
 
 /** Returns the saved state, or null when the session has none yet. */
@@ -139,6 +174,7 @@ export function nextState(saved, options) {
     ...((saved?.ticket ?? options.ticket) ? { ticket: saved?.ticket ?? options.ticket } : {}),
     ...(saved?.ended ? { ended: saved.ended } : {}),
     ...(saved?.archivedAt ? { archivedAt: saved.archivedAt } : {}),
+    ...(saved?.loadedSkill ? { loadedSkill: saved.loadedSkill } : {}),
   };
 }
 
@@ -256,6 +292,9 @@ export async function run(client, options, { warn = (text) => console.error(`cod
     if (!saved) throw new Error(`no session ${options.name} in ${options.stateDir}`);
     state = await steerTurn(client, saved, prompt, promptFile);
   }
+  // A fresh thread reads the installed skill on its first $vibe turn; this records that definition
+  // at spawn, which is not an observation of the read.
+  if (!saved) state.loadedSkill = loadedSkillEvidence(state.threadId, 'codex', options.pluginRoot ?? PLUGIN_ROOT, 'vibe', LoadBasis.InstalledAtSpawn);
   saveState(options.stateDir, options.name, state);
   const { turnId, kind } = state.turns.at(-1);
   return `${options.name} ${kind} ${state.threadId} ${turnId}`;
@@ -266,6 +305,10 @@ async function main() {
   let options;
   try {
     options = parseCli(process.argv.slice(2));
+    if (options.command === 'turn') {
+      const saved = loadState(options.stateDir, options.name);
+      requireResumeSession(saved, options.cwd);
+    }
   } catch (error) {
     console.error(`codex-session: ${error.message}`);
     process.exit(2);

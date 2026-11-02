@@ -51,6 +51,7 @@ test("pattern kills, group kills and unrecorded pids are refused; kill of a reco
     "echo kill",
   ];
   for (const command of allowed) assert.deepEqual(killProblems(command, isOwn), [], command);
+  assert.deepEqual(killProblems("ssh host 'bash -lc \"kill 777\"'", isOwn), [], "a remote pid is not judged against the local ledger");
 });
 
 test("a recorded pid is own only from its directory and while the same process runs", () => {

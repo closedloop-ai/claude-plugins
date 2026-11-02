@@ -376,7 +376,6 @@ function evidenceProblem(entry, facts) {
       const located = (typeof entry.url === "string" && HTTPS_URL.test(entry.url))
         || (typeof entry.path === "string" && facts.fileExists(entry.path));
       if (!located) return "cites a report with no https URL or existing file";
-      if (entry.commit !== facts.head) return "cites a report that was not produced on the final commit";
       return null;
     }
     default:

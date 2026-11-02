@@ -2,23 +2,181 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { boundDefinition, capWorkerResult, workerSessionName } from "./claude-worker.js";
+import { boundDefinition, capWorkerResult, checkPreviewResult, dispatchFreshnessProblem, protectedWriteLaunchArgs, protectedWriteSettings, workerSessionName } from "./claude-worker.js";
+import { checkProtectedWriteSupportAsync } from "./claude-preflight.js";
 import { readDefinition } from "./definition.js";
 import { changeWriter, readWriterSummary, registerWriter } from "./ledger.js";
 import { bundleDirectory, fixture, graph, liveReads, readProof, recordWrite, writeAgent } from "./test-fixtures.js";
 
 const fixtures: ReturnType<typeof fixture>[] = [];
+
+it("Claude dispatch binds the exact installed definition root and script references", () => {
+  const value = setup();
+  expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, "continue")).toBeNull();
+  mkdirSync(join(value.worktree, ".codex-plugin"), { recursive: true });
+  writeFileSync(join(value.worktree, ".codex-plugin", "plugin.json"), JSON.stringify({ version: "0.0.1" }));
+  expect(dispatchFreshnessProblem(value.worktree, value.agentRoot, value.worktree, "continue")).toMatch(/stale installed plugin release/);
+  expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, "run skills/vibe/scripts/missing.mjs")).toMatch(/does not exist in installed vibe/);
+  // PR #371 review: a repository's own skill scripts are not vibe plugin scripts.
+  expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, "read .claude/skills/control/scripts/app.mjs")).toBeNull();
+  expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, "read skills/control/scripts/app.mjs")).toBeNull();
+  mkdirSync(join(value.worktree, "skills", "vibe", "scripts"), { recursive: true });
+  writeFileSync(join(value.worktree, "skills", "vibe", "scripts", "repo-only.mjs"), "export {};\n");
+  expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, "run skills/vibe/scripts/repo-only.mjs")).toBeNull();
+  mkdirSync(join(value.worktree, "handoff", "scripts"), { recursive: true });
+  writeFileSync(join(value.worktree, "handoff", "scripts", "repo-tool.mjs"), "export {};\n");
+  expect(dispatchFreshnessProblem(value.agentRoot, value.agentRoot, value.worktree, "run handoff/scripts/repo-tool.mjs")).toBeNull();
+});
+
+it("protected path support requires a regular installed hook, not a missing or symlinked script", async () => {
+  const value = setup();
+  await expect(checkProtectedWriteSupportAsync(value.agentRoot, join(value.bin, "claude"))).rejects.toThrow(/missing or unreadable/);
+  mkdirSync(join(value.agentRoot, "hooks"));
+  symlinkSync(join(bundleDirectory, "../../../..", "hooks/protected-write-guard.mjs"),
+    join(value.agentRoot, "hooks/protected-write-guard.mjs"));
+  await expect(checkProtectedWriteSupportAsync(value.agentRoot, join(value.bin, "claude"))).rejects.toThrow(/regular file/);
+});
+
+it("accepts a supported suffixed Claude version and still refuses one below the floor", async () => {
+  const value = setup();
+  const pluginRoot = join(bundleDirectory, "../../../..");
+  for (const [version, accepted] of [["2.1.400-beta", true], ["2.1.294-beta", false]] as const) {
+    const bin = join(value.base, version);
+    mkdirSync(bin);
+    writeFileSync(join(bin, "claude"), readFileSync(join(value.bin, "claude"), "utf8")
+      .replace("2.1.316 (Claude Code)", `${version} (Claude Code)`), { mode: 0o700 });
+    const checked = checkProtectedWriteSupportAsync(pluginRoot, join(bin, "claude"));
+    if (accepted) await expect(checked).resolves.toMatch(/protected-write-guard\.mjs$/);
+    else await expect(checked).rejects.toThrow(/2\.1\.295 or newer/);
+  }
+});
+
+it("environment DONE is bounded by a provider receipt for the exact request", () => {
+  const pluginRoot = join(bundleDirectory, "../../../..");
+  const input = { agentName: "vibe-environment-worker", mode: "record" as const, recordAction: "create" as const,
+    requestId: "request-1", previewProducer: "runtime-provider" as const, previewRequirements: ["app-preview" as const] };
+  const output = { status: "DONE", data: { previewReceipt: "/private/probe.json", environmentId: "preview-1" } };
+  expect(() => checkPreviewResult({ ...input, previewProducer: undefined, previewRequirements: undefined }, { status: "DONE" }, pluginRoot, "/worktree")).not.toThrow();
+  expect(() => checkPreviewResult({ ...input, previewProducer: undefined }, output, pluginRoot, "/worktree")).toThrow(/producer declaration/);
+  expect(() => checkPreviewResult({ ...input, previewRequirements: undefined }, output, pluginRoot, "/worktree")).toThrow(/explicit preview requirements/);
+  expect(() => checkPreviewResult(input, { status: "DONE" }, pluginRoot, "/worktree")).toThrow(/provider preview receipt/);
+  expect(() => checkPreviewResult(input, output, pluginRoot, "/worktree", () => ({ status: 1, stdout: "stale request" }))).toThrow(/stale request/);
+  const calls: string[][] = [];
+  checkPreviewResult(input, output, pluginRoot, "/worktree", (_, args) => { calls.push(args); return { status: 0, stdout: "ok" }; });
+  expect(calls[0]).toContain("request-1");
+  expect(calls[0]).toContain("preview-1");
+  expect(calls[0]).toContain("/private/probe.json");
+  expect(() => checkPreviewResult(input, { status: "BLOCKED" }, pluginRoot, "/worktree")).not.toThrow();
+});
 afterEach(() => { for (const value of fixtures.splice(0)) value.cleanup(); });
 function setup() { const value = fixture(); fixtures.push(value); return value; }
-function run(value: ReturnType<typeof fixture>, input: Record<string, unknown>, entry = join(bundleDirectory, "claude-worker.mjs")) {
+function run(value: ReturnType<typeof fixture>, input: Record<string, unknown>, entry = join(bundleDirectory, "claude-worker.mjs"),
+  extraEnv: Record<string, string> = {}) {
   return spawnSync(process.execPath, [entry], {
     input: JSON.stringify({ worktree: value.worktree, agentRoot: value.agentRoot,
-      agentName: "vibe-change-worker", capabilities: graph, mode: "request", requestId: "first", ...input }),
-    encoding: "utf8", env: { ...process.env, PATH: `${value.bin}:${process.env.PATH}` }, timeout: 10000,
+      agentName: "vibe-change-worker", capabilities: graph, mode: "request", requestId: "first",
+      ...input }),
+    encoding: "utf8", env: { ...process.env, PATH: `${value.bin}:${process.env.PATH}`, ...extraEnv }, timeout: 10000,
   });
 }
 
 describe("production Claude CLI adapter", () => {
+  it("binds the persistent writer-only protected path hooks on first launch and resume", () => {
+    const value = setup();
+    expect(run(value, { input: "WRITE_ALLOWED" }).status).toBe(0);
+    expect(run(value, { continuation: "Continue the same writer" }).status).toBe(0);
+    const proof = readProof(value.metadata);
+    expect(proof).toHaveLength(2);
+    for (const item of proof) {
+      const settings = JSON.parse(item.args[item.args.indexOf("--settings") + 1] ?? "");
+      expect(item.args[item.args.indexOf("--permission-prompts") + 1]).toBe("none");
+      expect(item.args[item.args.indexOf("--permission-mode") + 1]).toBe("default");
+      expect(item.args).not.toContain("--dangerously-skip-permissions");
+      expect(settings.hooks.PermissionRequest[0].matcher).toBe("Edit|Write");
+      expect(settings.hooks.PreToolUse[0].matcher).toBe("Edit|Write|Bash");
+      for (const event of ["PermissionRequest", "PreToolUse"]) {
+        const handler = settings.hooks[event][0].hooks[0];
+        expect(handler.onFailure).toBe("block");
+        expect(handler.timeout).toBe(15);
+        expect(handler.command).toBe(process.execPath);
+        expect(handler.args[0]).toMatch(/protected-write-guard\.mjs$/);
+        expect(handler.args[1]).toBe(value.worktree);
+      }
+    }
+    expect(proof[1]?.args).toContain("--resume");
+  });
+
+  it("stops before writer registration when Claude cannot honor failure-blocking hooks", () => {
+    const value = setup();
+    const oldBin = join(value.base, "old-bin");
+    mkdirSync(oldBin);
+    writeFileSync(join(oldBin, "claude"), readFileSync(join(value.bin, "claude"), "utf8")
+      .replace("2.1.316 (Claude Code)", "2.1.294 (Claude Code)"), { mode: 0o700 });
+    const result = run(value, { input: "WRITE_ALLOWED" }, join(bundleDirectory, "claude-worker.mjs"),
+      { PATH: `${oldBin}:${process.env.PATH}` });
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout).code).toBe("PROTECTED_PATH_HOOK_UNAVAILABLE");
+    expect(JSON.parse(result.stdout).summary).toMatch(/2\.1\.295/);
+    expect(existsSync(join(value.metadata, "vibe-writer.json"))).toBe(false);
+    expect(existsSync(join(value.metadata, "fake-proof.jsonl"))).toBe(false);
+  });
+
+  it("keeps the sign-in diagnostic when both independent preflights refuse", () => {
+    const value = setup();
+    const oldBin = join(value.base, "old-bin");
+    mkdirSync(oldBin);
+    writeFileSync(join(oldBin, "claude"), readFileSync(join(value.bin, "claude"), "utf8")
+      .replace("2.1.316 (Claude Code)", "2.1.294 (Claude Code)"), { mode: 0o700 });
+    const result = run(value, { input: "WRITE_ALLOWED" }, join(bundleDirectory, "claude-worker.mjs"),
+      { PATH: `${oldBin}:${process.env.PATH}`, FAKE_CLAUDE_SIGNED_OUT: "1" });
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout).code).toBe("CLAUDE_SIGN_IN_NEEDED");
+    expect(existsSync(join(value.metadata, "vibe-writer.json"))).toBe(false);
+  });
+
+  it("keeps protected path settings off reader launches", () => {
+    const value = setup();
+    const result = run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect" });
+    expect(result.status).toBe(0);
+    const proof = readProof(value.metadata)[0];
+    expect(proof?.args).not.toContain("--settings");
+    expect(proof?.args).not.toContain("--permission-prompts");
+  });
+
+  it("constructs exact inline hook matchers without a settings file", () => {
+    const args = protectedWriteLaunchArgs("/plugin/hooks/protected-write-guard.mjs", "/repo");
+    expect(args[args.indexOf("--permission-prompts") + 1]).toBe("none");
+    expect(args[args.indexOf("--settings") + 1]).toMatch(/^\{"hooks":/);
+    const settings = JSON.parse(protectedWriteSettings("/plugin/hooks/protected-write-guard.mjs", "/repo"));
+    expect(Object.keys(settings)).toEqual(["hooks"]);
+    expect(settings.hooks.PermissionRequest[0].matcher).toBe("Edit|Write");
+    expect(settings.hooks.PreToolUse[0].matcher).toBe("Edit|Write|Bash");
+    for (const event of ["PermissionRequest", "PreToolUse"]) {
+      const handler = settings.hooks[event][0].hooks[0];
+      expect(handler.args).toEqual(["/plugin/hooks/protected-write-guard.mjs", "/repo"]);
+      expect(handler.command).toBe(process.execPath);
+      expect(handler.onFailure).toBe("block");
+      expect(handler.timeout).toBe(15);
+    }
+    expect(new RegExp(settings.hooks.PreToolUse[0].matcher).test("Bash")).toBe(true);
+  });
+
+  it("routes a protected Python write through the writer-only Bash matcher", () => {
+    const value = setup();
+    const hook = join(bundleDirectory, "../../../..", "hooks/protected-write-guard.mjs");
+    const settings = JSON.parse(protectedWriteSettings(hook, value.worktree));
+    const route = settings.hooks.PreToolUse[0];
+    expect(new RegExp(route.matcher).test("Bash")).toBe(true);
+    const handler = route.hooks[0];
+    const result = spawnSync(handler.command, handler.args, {
+      input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", cwd: value.worktree,
+        tool_input: { command: "python -c \"open('.claude/settings.json', 'w').write('x')\"" } }),
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).hookSpecificOutput.permissionDecision).toBe("deny");
+  });
+
   it("admits only canonical existing publisher tuples through the production role footer", () => {
     const value = setup();
     for (const [agentName, recordAction] of [
@@ -27,7 +185,7 @@ describe("production Claude CLI adapter", () => {
     ]) {
       const result = run(value, { agentName, recordAction, input: "PUBLISHER_FOOTER_CONTROL",
         mode: "record", exclusiveRecordTurn: true, capabilities: [...graph, recordWrite] });
-      expect(result.status, result.stdout).toBe(0);
+      expect(result.status, result.stdout + result.stderr).toBe(0);
       const prompt = readProof(value.metadata).at(-1)?.definition[`vibe:${agentName}`]?.prompt;
       expect(prompt).not.toContain("Never start another implementation writer, commit, or push.");
       expect(prompt).toContain("Never start another implementation writer or commit.");
@@ -166,10 +324,13 @@ describe("production Claude CLI adapter", () => {
     expect(proof[1]?.payload.input).toBe("SECRET_SECOND");
     for (const item of proof) {
       expect(JSON.stringify(item.args)).not.toMatch(/SECRET_|"service"|"access"|"operation"/);
-      expect(item.args).not.toContain("--settings");
+      expect(item.args[item.args.indexOf("--settings") + 1]).toMatch(/^\{"hooks":/);
+      expect(item.args[item.args.indexOf("--permission-prompts") + 1]).toBe("none");
       expect(item.args).not.toContain("--dangerously-skip-permissions");
       expect(existsSync(item.args[item.args.indexOf("--agents") + 1] ?? "")).toBe(false);
     }
+    expect(proof[0]?.args[proof[0].args.indexOf("--settings") + 1])
+      .toBe(proof[1]?.args[proof[1].args.indexOf("--settings") + 1]);
   });
   it("keeps the current request active until DONE and resumes rather than starting queued work", () => {
     const value = setup();
@@ -228,9 +389,15 @@ describe("production Claude CLI adapter", () => {
     const tools = readProof(value.metadata)[0]?.definition["vibe:vibe-requirements-worker"]?.tools;
     expect(tools).toEqual(expect.arrayContaining(["WebSearch", "WebFetch"]));
     expect(tools).not.toContain("Write");
+    const sourceRead = spawnSync(process.execPath, [join(value.agentRoot, "skills/vibe/scripts/tested-head.mjs"), "source", value.worktree], { encoding: "utf8" });
+    expect(sourceRead.status, sourceRead.stderr).toBe(0);
     const reviewer = readProof(value.metadata).length;
-    expect(run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect" }).status).toBe(0);
+    const reviewerRun = run(value, { agentName: "vibe-guardrails-reviewer", input: "inspect" });
+    expect(reviewerRun.status, reviewerRun.stdout + reviewerRun.stderr).toBe(0);
+    expect(JSON.parse(reviewerRun.stdout).graphToolIdentities).toContain("mcp__custom_graph__sync_status");
+    expect(JSON.parse(reviewerRun.stdout).graphToolAliases).toContain("mcp__custom_graph__sync-status");
     expect(readProof(value.metadata)[reviewer]?.definition["vibe:vibe-guardrails-reviewer"]?.tools).not.toContain("WebSearch");
+    expect(readProof(value.metadata)[reviewer]?.definition["vibe:vibe-guardrails-reviewer"]?.prompt).toContain("verify each material premise");
     writeAgent(value.agentRoot, "vibe-requirements-worker", "Read, Grep, Glob, Bash, Task");
     expect(() => readDefinition(value.agentRoot, "vibe-requirements-worker", graph)).toThrow(/Unrecognized canonical built-in tool/);
   });

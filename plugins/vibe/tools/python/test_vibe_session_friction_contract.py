@@ -178,5 +178,6 @@ def test_a_dependency_on_an_open_pull_request_never_idles_the_session() -> None:
     rule = flat((VIBE / "references" / "quality-loop.md").read_text())
     assert "**A dependency on an open pull request never idles the session**" in rule
     assert "Never pause, wait for the merge, or ask the person to restart anything" in rule
-    assert "commits every change that compiles without the unmerged code, so only the dependent import waits" in rule
+    assert "develops and checks independent changes uncommitted; only the dependent import waits" in rule
+    assert "Compilation alone never declares readiness" in rule
     assert "`gh pr view <number> --json state,mergedAt,headRefOid` at every resume" in rule
