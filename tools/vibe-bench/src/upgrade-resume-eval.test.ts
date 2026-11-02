@@ -6,8 +6,9 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import test from "node:test";
+import test, { before } from "node:test";
 import type { EvalSuiteResult } from "./eval-collector.ts";
+import { ensureGitCommits } from "../../shared/git-commit-fixture.mjs";
 import { upgradeResumeCaseIds } from "./cli.ts";
 import { archivePluginRelease } from "./plugin-snapshot.ts";
 import { evalCaseCatalog } from "./eval-selection.ts";
@@ -23,6 +24,15 @@ import { CLAUDE_WRITER_TIMEOUT_MS, CODEX_STATEFUL_ROOT_TIMEOUT_MS, mergeEvalSuit
   validateCodexInstalledPlugin, statefulInfrastructureInvalidReason } from "./upgrade-resume-eval.ts";
 
 const REPO = realpathSync(join(import.meta.dirname, "../../.."));
+const RELEASE_REFS = [
+  "b8df21893c6322a0176b16df9fe123cc6f9296c2",
+  "5e7eafa03690055da034874fbe2b56129555b453",
+  "802afdc075b4ca8442a5644975ef3571f98c38d2",
+  "f8517d50715dd8569ceee44f5a9452cbf8fc18f5",
+  "f45882fb9118cca457221e48e7cef850557f8246",
+] as const;
+
+before(() => ensureGitCommits(REPO, RELEASE_REFS));
 
 function suite(runtime: "claude" | "codex", ids: string[]): EvalSuiteResult {
   const cases = ids.map((id) => ({ id, passed: true, failedGraders: [], skippedGraders: [] }));
