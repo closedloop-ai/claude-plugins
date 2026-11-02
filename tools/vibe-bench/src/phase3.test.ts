@@ -98,11 +98,17 @@ function withJudgeModel(artifact: EvalBaselineArtifact, judge: string): EvalBase
 test("case skills come from actual invocations", () => {
   const vibeDir = join(import.meta.dirname, "../../../plugins/vibe");
   const catalog = evalCaseCatalog(vibeDir);
-  assert.equal(catalog.length, 111);
-  assert.deepEqual(Object.fromEntries(["vibe", "handoff", "fleet-orchestrator"].map((skill) =>
+  assert.equal(catalog.length, 117);
+  assert.deepEqual(Object.fromEntries(["vibe", "handoff", "fleet-orchestrator", "pr-takeover"].map((skill) =>
     [skill, catalog.filter((item) => item.skill === skill).length])),
-  { vibe: 76, handoff: 24, "fleet-orchestrator": 11 });
+  { vibe: 76, handoff: 24, "fleet-orchestrator": 11, "pr-takeover": 6 });
   assert.throws(() => skillFromPrompt("no invocation"), /skill-invocation-invalid/);
+});
+
+test("takeover evals derive their own skill from the shared invocation", () => {
+  assert.equal(skillFromPrompt("Load (`vibe:pr-takeover`) with the PR URL"), "pr-takeover");
+  assert.throws(() => skillFromPrompt("Load `vibe:vibe` and `vibe:pr-takeover`"),
+    /skill-invocation-invalid/);
 });
 
 test("AC7 promptless deterministic cases join both discovery surfaces", () => {

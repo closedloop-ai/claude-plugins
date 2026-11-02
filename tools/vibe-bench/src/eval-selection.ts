@@ -50,7 +50,7 @@ export function evalCaseContentHash(caseDir: string): string {
 
 /** Derive the canonical skill tag from the actual invocation in a case prompt. */
 export function skillFromPrompt(prompt: string): EvalSkill {
-  const found = [...prompt.matchAll(/vibe:(vibe|handoff|fleet-orchestrator)/g)]
+  const found = [...prompt.matchAll(/vibe:(vibe|handoff|fleet-orchestrator|pr-takeover)/g)]
     .map((match) => match[1] as EvalSkill);
   const unique = [...new Set(found)];
   if (unique.length !== 1) throw new Error("eval-case-skill-invocation-invalid");

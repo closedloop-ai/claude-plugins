@@ -2,7 +2,7 @@
 export type EvalRuntime = "claude" | "codex";
 
 /** Skill tags derived from the `vibe:<skill>` invocation in each case prompt. */
-export type EvalSkill = "vibe" | "handoff" | "fleet-orchestrator";
+export type EvalSkill = "vibe" | "handoff" | "fleet-orchestrator" | "pr-takeover";
 
 /**
  * One reviewed policy for local nightly evaluation.
