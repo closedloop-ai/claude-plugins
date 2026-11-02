@@ -72,6 +72,7 @@ const REQUIRED_CONTENT = {
     // The keys a person must turn on to see the work (operator ruling, 2026-10-20).
     [/^### Keys to see this work$/m, "lists no keys to see the work"],
   ],
+  Handoff: [[/^- Assumptions: \S/m, "has no Assumptions line (generated from the Spec Card by spec-card.mjs assumptions, or \"None: no Spec Card\")"]],
   Sessions: [[/^- (?:Codex session \(orchestrator\): `[A-Za-z0-9-]{8,100}`|Claude Code session \(orchestrator\): `[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}`)$/im, "lists no orchestrator session id"]],
   "Scope and acceptance criteria": [
     [/^- Newest ruling: (?:none found \(searched: [^)\n]+\)|.*\b\d{4}-\d{2}-\d{2}\b)/m, "has no Newest ruling line (a dated ruling, or none found with the searches run)"],

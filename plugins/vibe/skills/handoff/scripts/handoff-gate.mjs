@@ -12,7 +12,7 @@ import { evidenceFingerprint } from "./handoff-evidence.mjs";
 import { reviewReceiptProblems } from "./review-receipts.mjs";
 
 const GATE_FILE = "vibe-handoff-gate.json";
-const EVIDENCE_KEYS = Object.freeze(["body", "runs", "ticket", "audit", "matrix"]);
+const EVIDENCE_KEYS = Object.freeze(["body", "runs", "ticket", "audit", "matrix", "evidence"]);
 
 function readReviewReceipts(files) {
   if (!Array.isArray(files) || files.length === 0) return [];
@@ -121,7 +121,7 @@ export function reviewFindingProblems(report, source) {
 }
 
 /** Run the canonical inventory with PR body and verifier evidence before recording readiness. */
-export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts, audit, matrix }, { runScript = spawnSync } = {}) {
+export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts, audit, matrix, evidence: evidenceFile }, { runScript = spawnSync } = {}) {
   const witness = gatePath(worktree);
   if (existsSync(witness)) unlinkSync(witness);
   fetchCurrentMain(worktree);
@@ -132,10 +132,10 @@ export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts
   const verified = reviewReceiptProblems(readReviewReceipts(receipts), source);
   const reviewProblems = [...verified.problems, ...reviewFindingProblems({ source, findings: verified.findings }, source)];
   if (reviewProblems.length) throw new Error(reviewProblems.join("; "));
-  if (ticket && (!audit || !matrix)) throw new Error("criteria audit and matrix are required with a ticket");
+  if (ticket && (!audit || !matrix || !evidenceFile)) throw new Error("criteria audit, matrix and evidence matrix are required with a ticket");
   if (ticket) {
     const criteria = runScript(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), "criteria-audit.mjs"),
-      "--ticket", ticket, "--audit", audit, "--matrix", matrix], { encoding: "utf8" });
+      "--worktree", worktree, "--ticket", ticket, "--audit", audit, "--matrix", matrix, "--evidence", evidenceFile], { encoding: "utf8" });
     if (criteria.status !== 0) throw new Error(`acceptance criteria audit failed: ${criteria.stdout || criteria.stderr}`);
   }
   const args = [path.join(path.dirname(fileURLToPath(import.meta.url)), "handoff-inventory.mjs"),
@@ -150,7 +150,7 @@ export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts
   }
   const branch = execFileSync("git", ["-C", worktree, "branch", "--show-current"], { encoding: "utf8" }).trim();
   if (!sameSource(source, sourceIdentity(worktree))) throw new Error("source changed while the handoff gate ran");
-  const evidenceInputs = { body, runs, ticket, audit, matrix };
+  const evidenceInputs = { body, runs, ticket, audit, matrix, evidence: evidenceFile };
   const evidence = Object.fromEntries(EVIDENCE_KEYS.filter(key => evidenceInputs[key]).map(key => [key, evidenceFingerprint(evidenceInputs[key])]));
   const boundReceipts = receipts.map(evidenceFingerprint);
   const finalMergeProblem = checkedMergeProblem(worktree, targets);
@@ -163,8 +163,8 @@ export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { values } = parseArgs({ options: { worktree: { type: "string" }, body: { type: "string" }, runs: { type: "string" }, ticket: { type: "string" }, base: { type: "string" }, receipt: { type: "string", multiple: true }, audit: { type: "string" }, matrix: { type: "string" } } });
-  if (!values.worktree || !values.body || !values.runs || !values.base || !values.receipt?.length) throw new Error("Usage: handoff-gate.mjs --worktree <wt> --base <current base ref> --body <file> --runs <file> --receipt <reviewer.json> (repeat for each role) [--ticket <file> --audit <file> --matrix <file>]");
+  const { values } = parseArgs({ options: { worktree: { type: "string" }, body: { type: "string" }, runs: { type: "string" }, ticket: { type: "string" }, base: { type: "string" }, receipt: { type: "string", multiple: true }, audit: { type: "string" }, matrix: { type: "string" }, evidence: { type: "string" } } });
+  if (!values.worktree || !values.body || !values.runs || !values.base || !values.receipt?.length) throw new Error("Usage: handoff-gate.mjs --worktree <wt> --base <current base ref> --body <file> --runs <file> --receipt <reviewer.json> (repeat for each role) [--ticket <file> --audit <file> --matrix <file> --evidence <file>]");
   values.receipts = values.receipt;
   process.stdout.write(`${JSON.stringify(recordHandoffGate(values))}\n`);
 }
