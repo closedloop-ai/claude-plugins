@@ -79,14 +79,13 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    (not the real cache's `onMutate` echo) or opted into by a `void` handler.
    For an infinite query, count the cached pages and requests a small edit
    refetches; a capped visible summary does not cap the query cache.
-5. Tests: no test is authored here (`guardrails.md`, "Tests"; check 9 of
-   the guardrails reviewer owns which edits are allowed): a repair that changes what a test asserts, a
-   deleted test that still covered live behavior and any weakened assertion
-   are findings. Needed new-test coverage recorded in the local plan during
-   building is not an instruction to author tests early; check the missing
-   tests list covers every behavior that lacks an existing test, report
-   failures of existing live contracts, and review a requested pull
-   request's tests for production-path coverage.
+5. Tests: no test is authored here; the edit rules (repairs, deletions,
+   weakened assertions) are check 9 of the guardrails reviewer, not repeated.
+   Needed new-test coverage recorded in the local plan during building is not
+   an instruction to author tests early; check the missing tests list covers
+   every behavior that lacks an existing test, report failures of existing
+   live contracts, and review a requested pull request's tests for
+   production-path coverage.
 6. Accessibility and interaction: keyboard traps, focus lost after an action,
    controls that do nothing, including a Clear row whose nullable selection
    callback ignores `null`; trace the actual callback or show that Clear is
