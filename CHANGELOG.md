@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - Fleet orchestration routes engineer takeover of an open vibe pull request through the new skill while keeping dead-writer recovery separate.
 - The Codex eval runner recognizes `pr-takeover` as a skill under test.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 2,898 words longer than in 1.1.26.
 
 ### vibe v1.1.26
 
