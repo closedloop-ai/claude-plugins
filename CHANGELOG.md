@@ -4,6 +4,78 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.31
+
+#### Changed
+- Local all-buckets build, not a released version: origin/main 1.1.30 (176516b) merged with the WS2 Spec Card, WS1 triage (to f977c42), WS3 scripts and WS4 review branches. WS0 measurement is omitted and nothing here depends on it. Every default-off switch stays off. `handoff-gate.mjs` now takes and passes `--evidence` to `criteria-audit.mjs` (adapting WS2's evidence matrix to main's gate). Their per-branch notes follow.
+
+#### From WS2 Spec Card: vibe v1.1.16
+
+The Spec Card: one structured statement of the criteria, assumptions, open questions and smallest-change plan, with script-enforced checks for the files a change touches, the freshness of any claim about main, the handoff assumptions and the requirement-to-evidence matrix (PRD-823, ISS-13336, ISS-13337, ISS-13338, ISS-13339, ISS-13340, ISS-13342). The session decision table stays mandatory.
+
+##### Added
+- `references/spec-card.md` and `scripts/spec-card.mjs` (`check`, `save`, `path`, `budget`, `assumptions`, `evidence-skeleton`): the requirements worker returns a `draft` card (criteria with intended evidence type, assumptions tagged `grounded` or `unverified` with what would falsify each, open questions with 2 to 3 options and a recommendation); the writer locks it with the smallest-change plan (owner files, files deliberately not touched) before code and seeds the decision table's acceptance criteria from it. A locked card changes only through a `superseded` entry that names a source.
+- Fork checkpoint, off by default: `spec-card.mjs check` lists unanswered product-impacting questions as `wouldBlock` and changes nothing; `--checkpoint` or `VIBE_FORK_CHECKPOINT=1` turns them into `blocking`. Whether the pre-code question blocks by default is the owner's open decision.
+- File justification check: `spec-card.mjs budget` reports every changed file outside the plan as cited (a card criterion or a sourced requirement) or uncited. There is no size cap and it never blocks or removes a file; uncited files go to the writer and into the handoff.
+- `scripts/freshness.mjs`: prints the checkout path, HEAD and the freshly fetched `origin/main` SHA with ahead/behind counts before any claim about current code; a failed fetch leaves the SHA null and exits 1.
+- Handoff Assumptions line, generated from the card by `spec-card.mjs assumptions` and required by `live-ticket-check.mjs`.
+
+##### Changed
+- `criteria-audit.mjs` requires `--evidence`: each acceptance criterion needs a `MET` row of type `test`, `script`, `screenshot` or `api-read` with a ref; a missing, unfilled, `PARTIAL` or `MISSED` row blocks done, and a test ref must name a file that exists at HEAD.
+- No strict result vocabulary was added (ISS-13341 not built).
+
+#### From WS1 triage (up to f977c42; triage recommendations stay off by default, the apply-by-default commit f1fa2e0 is excluded): vibe v1.1.15
+
+A vibe session can now be classified by a deterministic triage script, and the manifest it writes can recommend creating the environment on first need and leaving Desktop out. Today's flow does not change: the recommendations take effect only when `VIBE_TRIAGE_APPLY_RECOMMENDATIONS=1` is set, and it is off by default (PRD-823 WS1: ISS-13332, ISS-13335; ISS-13333 and ISS-13334 await the owner's ruling).
+
+##### Added
+- `skills/vibe/scripts/vibe-triage.mjs` (`classify`, `check`): classifies a request into `trivial-ui`, `ui-feature`, `backend`, `docs-config`, `data-metric`, `mockup` or `unknown` from touched paths or request text, and writes a manifest with the class, reason, evidence, the policy steps and the review scope. Evidence that does not decide stays `unknown`. Only `environment` (defer) and `desktop` (skip) carry a recommendation, every one is logged in `skipped[]` with its reason and evidence, and a class that rests on request text alone recommends nothing to leave out.
+- Four class pipeline skills: `vibe-pipeline-trivial-ui`, `vibe-pipeline-ui-feature`, `vibe-pipeline-backend`, `vibe-pipeline-docs-config`. Each cites the shared rules PC-1 to PC-5 in `skills/vibe/references/pipeline-core.md` and restates none; `tools/python/test_vibe_triage_contract.py` pins that each rule lives in exactly one file and every class cites it.
+- `skills/vibe/references/triage.md`: the classes, the manifest and the switch.
+
+##### Changed
+- The vibe skill's "Starting new" step 7 classifies the work and loads the class's pipeline skill; section 3 (environment) and its Desktop bullet run as before unless the manifest's `effective` is `defer` or `skip`, which only happens while the switch is on. With the switch off every `effective` is `run`.
+- Lanes and end-to-end specs still come from `pnpm test:lanes` and the repository's e2e path filter, never from the class. Mid-run class upgrades are not part of this release.
+
+#### From WS3 scripts: vibe v1.1.27
+
+Deterministic scripts for the mechanical steps of the vibe workers (PRD-823, WS3, ISS-13343 to ISS-13351). Each script wraps the scripts and the target repository's gates that already exist, is optional for the worker that uses it (every worker prompt keeps its manual steps and says so), and reports a skipped, absent, cached or not-run step as exactly that, never as a pass. No measured time or token saving is claimed: the plan's percentages are byte-share estimates of prompt text.
+
+##### Added
+- `setup-ctl.mjs` (ISS-13343): preflight fixes that need no person (`install-pnpm`, `brew-install-jq`, `brew-install-gh`, only with `--apply`), bootstrap, local Storybook, Desktop profile and launch, stop and confirmed discard, over `vibe-preflight.sh`, `loops-setup.sh`, `run-bounded.mjs` and the `vibe-sessions.mjs` subcommands. A needs-person exit carries only the sentence `preflight.md` writes, or `message: null` with the section to read; it never runs a fix that needs the Mac password or a sign-in, and never runs `plugin add`.
+- `env-ctl.mjs` (ISS-13344): flag snapshot, the publish checks and exact-SHA push, the environment request, run polling by request id with failed-job log extraction, result recording and the pull request open or update, over `vibe-sessions.mjs`, `posthog-key.mjs`, `local-plans.mjs`, `migration-publish.mjs` and `pr-preflight.mjs`. It has no credential source of its own; an org or identity refusal returns as `NEEDS_AGENT` evidence for the worker.
+- `graph-pack.mjs` (ISS-13345): one worktree context pack per request (owner, importing hosts, tests, stories, CODEOWNERS and FEATURE_MAP ids, term precedents). It is the unreachable-graph fallback search in one pass and says so; the closedloop-graph calls stay owed under `graphCallsStillOwed`.
+- `guardrails-gate.mjs` (ISS-13346): the mechanical guardrails checks as one findings JSON (`vibe.guardrails-findings/1`, documented in `references/guardrails-findings.md`), wrapping Biome, `pnpm check:source-gates` and `diff-rules.mjs`, plus added-line scans for tokens, conventions, changed assertions in repaired tests and duplicate owners. A check that did not run is in `checks_skipped` with its reason.
+- `verify-run.mjs` (ISS-13347): runs the repository's own Biome, source gates, affected typecheck, the lanes `pnpm test:lanes` names and the worker-supplied test commands at an exact head through `run-bounded.mjs` and `pre-pr-lanes.mjs`, and writes one evidence JSON that keeps `passed`, `failed`, `blocked`, `cached`, `main-preexisting`, `no-op`, `skipped` and `not-run` apart. E2E specs, story plays, touch flows and the control sweep are listed as left to the verify worker.
+- `req-gather.mjs` (ISS-13348): bundles the requirements worker's saved query results with what it reads from the worktree and lists every required ClosedLoop or closedloop-graph query with no result as missing. It cannot make those queries.
+- `inventory-bundle.mjs` (ISS-13349): `handoff-inventory.mjs` adds an additive `bundle` in the handoff and pull-request phases (backend paths by kind, guard predicates and flag reads, flag keys, Storybook links, a worktree blast bundle per changed source file); it reads `{ unavailable }` instead of failing the inventory.
+- `prototype-share.mjs` (ISS-13350): the prototype share sequence with no model (plan check, share admission, exact-SHA push, read-only wait for that SHA's `prototypes` deployment, `prototype-result` recording); only the deployment's own `environment_url` with `/p/<slug>` is accepted.
+- `ticket-ctl.mjs` (ISS-13351, partial): the offline templating only (Engineering checklist lines in the template's formats, the Grading section copied unchanged, owned-section replacement, `ticket-sections` pasting). The ClosedLoop REST client is not built: it is blocked on the owner's ruling about long-lived static credentials, so the script reads and writes no ticket and holds no credential source.
+
+##### Fixed (found by a read-only shadow diff against symphony-alpha PR 9366)
+- `guardrails-gate.mjs` (ISS-13346): `test-repair` compares whole assertion statements of the base and head text, so a reversed expectation inside a call split across lines is reported with word-level evidence; a file it cannot read puts the check under `checks_skipped` as `partial:` and out of `checks_run`. An `as` in a string or a multi-line import list is no longer a cast, and `export const X = y as T` is reported.
+- `inventory-bundle.mjs` (ISS-13349): flag reads through a constant (including calls split across lines) resolve through the changed files and the repository's flag key modules; import lines and comments are no longer guard predicates.
+- `guardrails-gate.mjs` and `verify-run.mjs` (ISS-13346, ISS-13347): a wrapped gate whose tool did not run (no `node_modules`, a missing command, a runner reporting `DID NOT RUN`) is `checks_skipped` / `blocked` with the reason, never `checks_run`, `passed` or `cached`; `owner-duplicates` and `conventions` that could not read a file are listed as `partial:` skips.
+- `verify-run.mjs` (ISS-13347): a 100% turbo cache replay is `cached` with provenance, not `passed`; the lane report's covered-by-no-lane paths are surfaced as `coveredByNoLane` (report only).
+
+##### Changed
+- The setup, environment, verify, guardrails, requirements, prototype, ticket and handoff-summarizer agents each point at their script with the manual steps kept; `closedloop-graph.md` names the context pack.
+- `test_vibe_ws3_scripts_contract.py` pins the contracts above. The README's runtime line says 1.1.27.
+- `CHANGELOG.md` and `README.md` were edited by hand in the file's format because the repository's `/update-documentation` workflow was not available in the session that built this change.
+
+#### From WS4 review: vibe v1.1.28
+
+Review consolidation, a lane-evidence cache and a trimmed adversarial reviewer (PRD-823, ISS-13352, ISS-13353, ISS-13354, ISS-13355). Every new path is off by default; today's reviewers and fleet review chain run unchanged.
+
+##### Added
+- `vibe-consolidated-reviewer` and `handoff/scripts/review-scope.mjs` (ISS-13352): with `VIBE_CONSOLIDATED_REVIEW=1` and a findings file in the `vibe.guardrails-findings/1` shape, the script chooses one consolidated read of the final diff or the full fleet by diff size, backend change or shared-component change. A missing, invalid, stale or partly skipped findings file is "not checked" and keeps the existing reviewers. The escalation numbers are unruled defaults in `REVIEW_SCOPE_DEFAULTS`. Depends on the guardrails gate (D4, WS3) to produce the file.
+- `vibe/scripts/lane-cache.mjs` (ISS-13354): a SHA-256 key over a lane's command, tree, base, config and changed-file scope. `pre-pr-lanes.mjs` stores it with each fresh result and, only under `check --reuse-cache`, records an earlier fresh pass as `cached` (printed `CACHED-LANE`), never as a pass. A changed tree, base, config or scope, a failed run or an unresolvable base invalidates it.
+- `fleet-orchestrator/scripts/review-chain.mjs` (ISS-13355): with `FLEET_REVIEW_HANDOFF_ONLY=1` the orchestrator verifies fixes instead of running its own independent review, only when the writer's handoff review covered the pull request's exact head. Off by default; whether the chain is intentionally separate from handoff review is an open owner decision, so nothing was removed.
+
+##### Changed
+- `vibe-adversarial-reviewer` (ISS-13353) points its test-edit rules at check 9 of the guardrails reviewer and starts its shared-component and gate attacks from the inventory's `diffRules.requiredTests` (consumer pack and gate table). The other eleven attacks are unchanged. Measured size 9884 to 9835 bytes (-0.5%); the plan's estimate of about 30% was not reached. Two existing contract assertions that pinned the removed wording now pin the pointer.
+- No strict result vocabulary was added (ISS-13341 not built).
+
 ### vibe v1.1.30
 
 #### Added
