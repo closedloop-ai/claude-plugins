@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.25
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 0 words longer than in 1.1.24.
+
+#### Fixed
+- A persistent Claude writer recorded under an older vibe release resumes through the installed launcher when both releases have the same agent definition, even while the older release remains on disk.
+- The writer status and documented migration command compare the installed definition with the recorded binding, so a changed installed definition is detected and can migrate while the older release remains on disk. An unmigrated Claude launch refuses before starting a worker and names that command.
+
 ### vibe v1.1.24
 
 #### Changed

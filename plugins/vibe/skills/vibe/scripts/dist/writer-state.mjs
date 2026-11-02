@@ -11833,9 +11833,12 @@ function readWriterSummary(worktree) {
 }
 function recordedDefinitionState(ledger) {
   try {
-    const observed = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
-    if (observed === null) return "removed";
-    return observed === ledger.binding.digest ? "present" : "changed";
+    const evidence = definitionUpgradeEvidence(ledger, installedPluginRoot(import.meta.url));
+    if (evidence.observedDigest === null) return "removed";
+    if (evidence.observedDigest !== evidence.recordedDigest) return "changed";
+    if (evidence.sameRelease) return "present";
+    if (evidence.provenNewer) return evidence.installedDigest === evidence.recordedDigest ? "present" : "changed";
+    return "unreadable";
   } catch {
     return "unreadable";
   }
@@ -11847,6 +11850,23 @@ function recordedWriterRoot(worktree) {
   } catch {
     return void 0;
   }
+}
+function definitionUpgradeEvidence(ledger, installedRoot) {
+  const { agentRoot, agentName, capabilities, digest } = ledger.binding;
+  const observedDigest = observeDefinitionDigest(agentRoot, agentName, capabilities);
+  const installed = readDefinition(installedRoot, agentName, capabilities);
+  const recordedVersion = observedDigest === null ? void 0 : readPluginManifest(agentRoot).version;
+  const cacheVersion = basename2(dirname3(agentRoot)) === "vibe" ? basename2(agentRoot) : void 0;
+  const provenNewer = typeof recordedVersion === "string" && cacheVersion === recordedVersion && Boolean(installed.version && isNewerRelease(installed.version, cacheVersion));
+  const sameRelease = typeof recordedVersion === "string" && recordedVersion === installed.version && (!cacheVersion || cacheVersion === recordedVersion);
+  return {
+    recordedRoot: agentRoot,
+    recordedDigest: digest,
+    observedDigest,
+    installedDigest: installed.binding.digest,
+    sameRelease,
+    provenNewer
+  };
 }
 function takeWriterInput(input) {
   const data = actionSchema.parse(input);
@@ -11903,14 +11923,14 @@ function migrateWriter(input, currentPluginRoot, verifyRetained) {
     }
     const version = found.version;
     if (!version) throw new Error("Current plugin release has no version");
-    return { definition: found, version };
+    return found;
   };
   if (data.capabilities) currentDefinition(data.capabilities);
   const place = location(data.worktree);
   return locked(place, () => {
     const ledger = readLedger(place);
     if (ledger.runtime !== data.runtime || ledger.workerId !== data.previousWorkerId || ledger.binding.digest !== data.previousDigest) throw new Error("Migration requires the exact recorded writer and digest");
-    const { definition, version: currentVersion } = currentDefinition(data.capabilities ?? ledger.binding.capabilities);
+    const definition = currentDefinition(data.capabilities ?? ledger.binding.capabilities);
     const lock = join4(place.dir, "vibe-record-turn.lock");
     const retained = existsSync3(lock);
     if (ledger.active?.lease || retained && !(data.retainedRecord && verifyRetained)) {
@@ -11921,8 +11941,9 @@ function migrateWriter(input, currentPluginRoot, verifyRetained) {
     if (harnessSwitch && (harnessSwitch.to === ledger.runtime || data.retainedRecord)) {
       throw new Error("A harness switch moves a stopped writer to the other runtime and releases no record grant");
     }
-    const observedDigest = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
-    const reason = harnessSwitch ? "harness-switch" : provenDefinitionChange(ledger, observedDigest, currentVersion);
+    const evidence = definitionUpgradeEvidence(ledger, currentPluginRoot);
+    const observedDigest = evidence.observedDigest;
+    const reason = harnessSwitch ? "harness-switch" : provenDefinitionChange(evidence);
     const releasedRecord = retained && data.retainedRecord && verifyRetained ? verifyRetained(lock, ledger, data.retainedRecord) : void 0;
     const block = migratableBlock(ledger, observedDigest, releasedRecord);
     const runtime = harnessSwitch?.to ?? data.runtime;
@@ -11968,11 +11989,12 @@ function migrateWriter(input, currentPluginRoot, verifyRetained) {
     return { ...summary(ledger), ...carriedBlock ? { carriedBlock } : {} };
   });
 }
-function provenDefinitionChange(ledger, observedDigest, currentVersion) {
-  if (observedDigest === ledger.binding.digest) throw new Error("Recorded definition is present and matching; resume the existing writer");
-  if (observedDigest === null) return "definition-missing";
-  const oldVersion = basename2(dirname3(ledger.binding.agentRoot)) === "vibe" ? basename2(ledger.binding.agentRoot) : void 0;
-  if (!oldVersion || !isNewerRelease(currentVersion, oldVersion)) {
+function provenDefinitionChange(evidence) {
+  if (evidence.observedDigest === null) return "definition-missing";
+  if (evidence.observedDigest === evidence.recordedDigest && evidence.installedDigest === evidence.recordedDigest) {
+    throw new Error("Recorded and installed definitions are present and matching; resume the existing writer");
+  }
+  if (!evidence.provenNewer) {
     throw new Error("Digest mismatch has no proven plugin version upgrade; retain the original writer");
   }
   return "definition-upgraded";

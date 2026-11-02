@@ -11962,9 +11962,12 @@ function readWriterSummary(worktree) {
 }
 function recordedDefinitionState(ledger) {
   try {
-    const observed = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
-    if (observed === null) return "removed";
-    return observed === ledger.binding.digest ? "present" : "changed";
+    const evidence = definitionUpgradeEvidence(ledger, installedPluginRoot(import.meta.url));
+    if (evidence.observedDigest === null) return "removed";
+    if (evidence.observedDigest !== evidence.recordedDigest) return "changed";
+    if (evidence.sameRelease) return "present";
+    if (evidence.provenNewer) return evidence.installedDigest === evidence.recordedDigest ? "present" : "changed";
+    return "unreadable";
   } catch {
     return "unreadable";
   }
@@ -11976,6 +11979,26 @@ function recordedWriterRoot(worktree) {
   } catch {
     return void 0;
   }
+}
+function definitionUpgradeEvidence(ledger, installedRoot) {
+  const { agentRoot, agentName, capabilities, digest: digest2 } = ledger.binding;
+  const observedDigest = observeDefinitionDigest(agentRoot, agentName, capabilities);
+  const installed = readDefinition(installedRoot, agentName, capabilities);
+  const recordedVersion = observedDigest === null ? void 0 : readPluginManifest(agentRoot).version;
+  const cacheVersion = basename2(dirname3(agentRoot)) === "vibe" ? basename2(agentRoot) : void 0;
+  const provenNewer = typeof recordedVersion === "string" && cacheVersion === recordedVersion && Boolean(installed.version && isNewerRelease(installed.version, cacheVersion));
+  const sameRelease = typeof recordedVersion === "string" && recordedVersion === installed.version && (!cacheVersion || cacheVersion === recordedVersion);
+  return {
+    recordedRoot: agentRoot,
+    recordedDigest: digest2,
+    observedDigest,
+    installedDigest: installed.binding.digest,
+    sameRelease,
+    provenNewer
+  };
+}
+function readWriterUpgradeEvidence(worktree, installedRoot) {
+  return definitionUpgradeEvidence(readLedger(location(worktree)), installedRoot);
 }
 function registerWriter(input) {
   const data = registerSchema.parse(input);
@@ -12006,6 +12029,15 @@ function registerWriter(input) {
     save(place, ledger);
     return summary(ledger);
   });
+}
+function isNewerRelease(current, previous) {
+  if (!/^\d+\.\d+\.\d+$/.test(previous)) return false;
+  const left = current.split(".").map(Number);
+  const right = previous.split(".").map(Number);
+  for (let index = 0; index < 3; index++) {
+    if (left[index] !== right[index]) return left[index] > right[index];
+  }
+  return false;
 }
 function changeWriter(action, input) {
   const data = actionSchema.parse(input);
@@ -12988,8 +13020,22 @@ async function runWorker(rawInput) {
   if (process.platform === "win32") throw new Error("Owned descendant cleanup requires a supported POSIX process-group harness");
   const recorded = input.agentName === "vibe-change-worker" && !input.sessionless ? recordedWriterRoot(input.worktree) : void 0;
   const installedRoot = installedPluginRoot(import.meta.url);
-  const agentRoot = resolveAgentRoot(input.agentRoot, installedRoot, recorded);
-  const dispatchProblem = dispatchFreshnessProblem(agentRoot, installedRoot, input.worktree, input.input ?? input.continuation ?? "");
+  const resolvedRoot = resolveAgentRoot(input.agentRoot, installedRoot, recorded);
+  const upgrade = recorded ? readWriterUpgradeEvidence(input.worktree, installedRoot) : void 0;
+  const unchangedUpgrade = upgrade?.provenNewer && upgrade.installedDigest === upgrade.recordedDigest;
+  const compatible = upgrade && upgrade.observedDigest === upgrade.recordedDigest && (upgrade.sameRelease || unchangedUpgrade);
+  if (upgrade && !compatible) {
+    const command = `node ${join8(installedRoot, "skills/vibe/scripts/dist/writer-state.mjs")} migrate`;
+    const message = upgrade.provenNewer || upgrade.observedDigest === null ? `Claude dispatch definition is from a stale installed plugin release; run ${command} with the recorded migration JSON on stdin` : "Writer definition mismatch has no proven installed release upgrade; retain the original writer";
+    throw new AgentRootError("STALE_PLUGIN_ROOT", message);
+  }
+  const agentRoot = unchangedUpgrade && resolvedRoot === installedRoot ? recorded : resolvedRoot;
+  const dispatchProblem = dispatchFreshnessProblem(
+    unchangedUpgrade ? installedRoot : agentRoot,
+    installedRoot,
+    input.worktree,
+    input.input ?? input.continuation ?? ""
+  );
   if (dispatchProblem) throw new Error(dispatchProblem);
   const definition = readDefinition(agentRoot, input.agentName, input.capabilities);
   const bound = boundDefinition(definition, input);
