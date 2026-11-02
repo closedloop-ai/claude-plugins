@@ -357,7 +357,7 @@ or production Python tools under `tools/python/`; that directory contains the
 skill-contract test modules and `vibe_contract_text.py`, the text helpers they
 share. Runtime helpers and tests live alongside their owning skills, or under
 `shared/` when reused across skills. They include shared process identity
-validation, vibe session and prototype records, local-plan publication guards, bundled
+validation, vibe session and prototype records, the triage classifier and its manifest (recommendations off by default), local-plan publication guards, bundled
 persistent writer state, Claude launch/resume and shared main-sync publication
 helpers, handoff checks, sweep ownership and worker recovery, and the
 work-report renderer. Shared PR-monitor notification delivery and manual-QA
