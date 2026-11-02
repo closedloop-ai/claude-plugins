@@ -1249,7 +1249,8 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     assert.equal(claudeCall.args[2].endsWith("/plugin-snapshot/plugins"), true);
     assert.equal(claudeCall.args[2], realpathSync(claudeCall.args[2]));
     assert.equal(claudeCall.args[claudeCall.args.indexOf("--eval-dir") + 1], "vibe/evals-focused");
-    assert.equal(claudeCall.args[claudeCall.args.indexOf("--allow-tools") + 1], "Bash");
+    assert.deepEqual(claudeCall.args.slice(claudeCall.args.indexOf("--allow-tools") + 1,
+      claudeCall.args.indexOf("--trust-plugin")), ["Bash", "Write", "Edit"]);
     assert.equal(claudeCall.args.includes("--case"), false);
     const codexCall = modelCalls.find((call) => call.command.includes("uv"))!;
     assert.deepEqual(codexCall.args.slice(0, 6),

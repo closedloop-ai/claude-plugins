@@ -269,7 +269,8 @@ export async function runLocalEvals(options: LocalEvalOptions,
     "--output-dir", claudeOutput, "--ablation", "none", "--model", EVAL_POLICY.claudeModel,
     "--judge-model", EVAL_POLICY.claudeJudgeModel,
     "--runs", "1", "--threshold", "1", "--concurrency", String(concurrency), "--scaffold",
-    "--allow-tools", "Bash", "--trust-plugin", "--no-publish"];
+    // The operator grant only unlocks gated tools that each case also declares.
+    "--allow-tools", "Bash", "Write", "Edit", "--trust-plugin", "--no-publish"];
   // The native runner documents these isolated Python dependencies. Provision
   // them through uv instead of relying on the developer's system Python.
   const codexArgs = ["run", "--with", "Pillow==12.3.0", "--with", "PyYAML", "python",
