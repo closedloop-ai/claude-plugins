@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.29
+
+#### Added
+- New `pr-takeover` skill coordinates independent review, verified PR repairs, recurrence prevention, and required web and Desktop E2E from one pull request URL in Claude Code or Codex.
+- Focused skill contract checks and shared Claude and Codex eval cases cover URL-only entry, review premises, prevention ticket reuse, stacked PRs, delivery, and E2E evidence.
+
+#### Changed
+- Fleet orchestration routes engineer takeover of an open vibe pull request through the new skill while keeping dead-writer recovery separate.
+- The Codex eval runner recognizes `pr-takeover` as a skill under test.
+
 ### vibe v1.1.26
 
 #### Added
