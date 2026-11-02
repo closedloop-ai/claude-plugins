@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "kind": "upgrade-resume",
+  "skill": "vibe",
+  "deterministic": true,
+  "definition": "unchanged",
+  "nightlyPrior": {
+    "version": "1.1.24",
+    "ref": "f8517d50715dd8569ceee44f5a9452cbf8fc18f5"
+  },
+  "transitions": [
+    {
+      "target": {
+        "version": "1.1.23",
+        "ref": "802afdc075b4ca8442a5644975ef3571f98c38d2"
+      },
+      "prior": {
+        "version": "1.1.22",
+        "ref": "5e7eafa03690055da034874fbe2b56129555b453"
+      }
+    },
+    {
+      "target": {
+        "version": "1.1.25",
+        "ref": "f45882fb9118cca457221e48e7cef850557f8246"
+      },
+      "prior": {
+        "version": "1.1.24",
+        "ref": "f8517d50715dd8569ceee44f5a9452cbf8fc18f5"
+      }
+    }
+  ]
+}

@@ -31,6 +31,11 @@ export interface EvalBaselineCase {
   id: string;
   skill: EvalSkill;
   contentHash: string;
+  deterministic?: true;
+  kind?: "upgrade-resume";
+  definition?: "unchanged" | "changed";
+  nightlyPrior?: EvalCaseDefinition["nightlyPrior"];
+  transitions?: EvalCaseDefinition["transitions"];
   outcomes: Partial<Record<EvalRuntime, EvalBaselineOutcome>>;
 }
 
@@ -227,7 +232,9 @@ export function verifyEvalBaseline(result: EvalBaselineArtifact): void {
         outcome.recentNightlyOutcomes.length < 1 || outcome.recentNightlyOutcomes.length > 5 ||
         outcome.recentNightlyOutcomes.some((item) => !Number.isInteger(item.passes) ||
           !Number.isInteger(item.runs) || ![1, 3].includes(item.runs) ||
-          item.passes < 0 || item.passes > item.runs)))) {
+          item.passes < 0 || item.passes > item.runs)) ||
+        (item.deterministic !== undefined && item.deterministic !== true) ||
+        (item.kind !== undefined && item.kind !== "upgrade-resume"))) {
     throw new Error("eval-baseline-hash-mismatch");
   }
 }

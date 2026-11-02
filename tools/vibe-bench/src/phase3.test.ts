@@ -18,7 +18,9 @@ import type { EvalRuntime } from "./eval-policy.ts";
 import { evalCaseCatalog, skillFromPrompt } from "./eval-selection.ts";
 import type { EvalCommands } from "./eval-driver.ts";
 import { codexEvalBudgetSeconds, codexEvalRunnerPath, confirmedNightlyRegressions,
-  deliverPendingRegressionReports, evalModelProcessEnv, recoverPendingNightlyPublications,
+  deterministicNightlyFailures, evalCaseIds,
+  deliverPendingRegressionReports, evalModelProcessEnv, failedCases,
+  recoverPendingNightlyPublications,
   runLocalEvals, runT2Evals,
   stageFocusedClaudeEvalCases } from "./eval-driver.ts";
 import { main as runEvalNightly, reportNightlyInfrastructureFailure } from "./eval-nightly.ts";
@@ -30,6 +32,9 @@ import { formatNightlyTaskSummary, nightlyTaskSummary } from "./nightly-summary.
 import { requireLatestNightlyBenchmarkBaseline } from "./phase2-driver.ts";
 import { runApprovedSlackTest } from "./slack-relay-test.ts";
 import { slackToolGateDecision } from "./slack-tool-gate.ts";
+import { statefulSuite } from "./upgrade-resume-eval.ts";
+import type { UpgradeCaseEvidence, UpgradeFailureCode, UpgradeResumeRunInput,
+  UpgradeResumeRunner } from "./upgrade-resume-eval.ts";
 
 const CASE = "pm-new-session-first-reply";
 const REPO_ROOT = realpathSync(join(import.meta.dirname, "../../.."));
@@ -93,11 +98,54 @@ function withJudgeModel(artifact: EvalBaselineArtifact, judge: string): EvalBase
 test("case skills come from actual invocations", () => {
   const vibeDir = join(import.meta.dirname, "../../../plugins/vibe");
   const catalog = evalCaseCatalog(vibeDir);
-  assert.equal(catalog.length, 109);
+  assert.equal(catalog.length, 111);
   assert.deepEqual(Object.fromEntries(["vibe", "handoff", "fleet-orchestrator"].map((skill) =>
     [skill, catalog.filter((item) => item.skill === skill).length])),
-  { vibe: 74, handoff: 24, "fleet-orchestrator": 11 });
+  { vibe: 76, handoff: 24, "fleet-orchestrator": 11 });
   assert.throws(() => skillFromPrompt("no invocation"), /skill-invocation-invalid/);
+});
+
+test("AC7 promptless deterministic cases join both discovery surfaces", () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-stateful-catalog-"));
+  try {
+    const evals = join(root, "evals");
+    const ordinary = join(evals, "pm-ordinary");
+    const stateful = join(evals, "upgrade-resume-unchanged-definition");
+    mkdirSync(ordinary, { recursive: true });
+    mkdirSync(stateful, { recursive: true });
+    writeFileSync(join(ordinary, "prompt.md"), "/vibe:vibe\nordinary\n");
+    writeFileSync(join(stateful, "case.yaml"), JSON.stringify({
+      schemaVersion: 1, kind: "upgrade-resume", skill: "vibe", deterministic: true,
+      definition: "unchanged",
+      nightlyPrior: { version: "1.1.24", ref: "b".repeat(40) },
+      transitions: [
+        { target: { version: "1.1.23", ref: "c".repeat(40) },
+          prior: { version: "1.1.22", ref: "d".repeat(40) } },
+        { target: { version: "1.1.25", ref: "a".repeat(40) },
+          prior: { version: "1.1.24", ref: "b".repeat(40) } },
+      ],
+    }));
+    const catalog = evalCaseCatalog(root);
+    assert.deepEqual(catalog.map((item) => ({ id: item.id, deterministic: item.deterministic,
+      kind: item.kind })), [
+      { id: "pm-ordinary", deterministic: undefined, kind: undefined },
+      { id: "upgrade-resume-unchanged-definition", deterministic: true, kind: "upgrade-resume" },
+    ]);
+    assert.deepEqual(evalCaseIds(root), catalog.map((item) => item.id));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("AC7 deterministic cases alert on their first final failing night", () => {
+  const id = "upgrade-resume-unchanged-definition";
+  const artifact = buildEvalBaseline({
+    results: [comparisonEval("a".repeat(40), { [id]: false })],
+    catalog: [{ id, skill: "vibe", contentHash: "b".repeat(64), deterministic: true,
+      kind: "upgrade-resume" }],
+    pluginVersion: "1.1.25",
+  });
+  assert.deepEqual(deterministicNightlyFailures(artifact), [
+    { runtime: "claude", case: id }, { runtime: "codex", case: id },
+  ]);
 });
 
 test("nightly scheduler fast-forwards main and dispatches one unique T2 run", async () => {
@@ -280,6 +328,32 @@ test("a journaled nightly publication resumes without repeating model work", asy
     assert.equal(posts, 0);
     assert.equal(existsSync(journal), false);
     assert.equal(resolveLatestEvalBaseline(store).artifact.resultHash, artifact.resultHash);
+  } finally { rmSync(store, { recursive: true, force: true }); }
+});
+
+test("AC7 null-last-green deterministic publication uses the existing reporter once", async () => {
+  const store = mkdtempSync(join(tmpdir(), "vibe-eval-first-night-"));
+  try {
+    const id = "upgrade-resume-unchanged-definition";
+    const artifact = buildEvalBaseline({
+      results: [comparisonEval("a".repeat(40), { [id]: false })],
+      catalog: [{ id, skill: "vibe", contentHash: "a".repeat(64), deterministic: true,
+        kind: "upgrade-resume" }], pluginVersion: "1.1.25",
+    });
+    const journal = join(store, `eval-t2-publication-${"a".repeat(12)}.json`);
+    writeFileSync(journal, `${JSON.stringify({ schemaVersion: 1, artifact,
+      resetLineage: false, lastGreenSha: null,
+      regressions: [{ runtime: "claude", case: id }] }, null, 2)}\n`);
+    const notices: NightlyRegressionNotice[] = [];
+    await recoverPendingNightlyPublications({ store, repo: "/unused", ghExecutable: "/unused" },
+      { report: async (notice) => { notices.push(notice); } });
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0]?.baselineSha, artifact.pluginSha);
+    assert.equal(notices[0]?.currentSha, artifact.pluginSha);
+    assert.deepEqual(notices[0]?.mergedPullRequests, []);
+    assert.deepEqual(notices[0]?.directCommits, []);
+    await deliverPendingRegressionReports(store, { report: async (notice) => { notices.push(notice); } });
+    assert.equal(notices.length, 1);
   } finally { rmSync(store, { recursive: true, force: true }); }
 });
 
@@ -958,6 +1032,107 @@ class FakeCommands implements EvalCommands {
   }
 }
 
+class FakeStatefulRunner implements UpgradeResumeRunner {
+  calls: UpgradeResumeRunInput[] = [];
+  private readonly failFirstClaude: boolean;
+  constructor(failFirstClaude = false) { this.failFirstClaude = failFirstClaude; }
+  async run(input: UpgradeResumeRunInput): Promise<Partial<Record<EvalRuntime, EvalSuiteResult>>> {
+    this.calls.push(input);
+    return Object.fromEntries(input.runtimes.map((runtime) => {
+      const passed = !(this.failFirstClaude && this.calls.length === 1 && runtime === "claude");
+      const evidence: UpgradeCaseEvidence[] = input.cases.map((item) => ({
+        caseId: item.id, runtime, passed, failureCode: passed ? null : "ORACLE_MISMATCH", wallMs: 5,
+        agentCostUsd: runtime === "claude" ? 0 : null,
+        tokens: runtime === "codex" ? { input_tokens: 2 } : null,
+        cliVersion: runtime === "claude" ? "2.1.311" : "codex-cli 0.163.0",
+        target: { version: "1.2.3", ref: input.pluginSha },
+        prior: item.nightlyPrior!, oldArchiveRetained: true,
+        proofLines: ["turn-one", "turn-two"], rootSessionId: "root-1",
+        previousWriterId: "writer-1", finalWriterId: "writer-2", migrationCount: 1, trace: [],
+      }));
+      return [runtime, statefulSuite(runtime, evidence)];
+    }));
+  }
+}
+
+class InfrastructureStatefulRunner implements UpgradeResumeRunner {
+  calls: UpgradeResumeRunInput[] = [];
+  private readonly code: UpgradeFailureCode;
+  constructor(code: UpgradeFailureCode) { this.code = code; }
+  async run(input: UpgradeResumeRunInput): Promise<Partial<Record<EvalRuntime, EvalSuiteResult>>> {
+    this.calls.push(input);
+    return Object.fromEntries(input.runtimes.map((runtime) => {
+      const evidence: UpgradeCaseEvidence[] = input.cases.map((item, index) => ({
+        caseId: item.id, runtime, passed: runtime !== "claude" || index !== 0,
+        failureCode: runtime === "claude" && index === 0 ? this.code : null, wallMs: 5,
+        agentCostUsd: runtime === "claude" ? 0 : null,
+        tokens: runtime === "codex" ? { input_tokens: 2 } : null,
+        cliVersion: runtime === "claude" ? "2.1.311" : "codex-cli 0.163.0",
+        target: { version: "1.1.26", ref: input.pluginSha }, prior: item.nightlyPrior!,
+        oldArchiveRetained: true, proofLines: index === 0 ? ["turn-one"] : ["turn-one", "turn-two"],
+        rootSessionId: `root-${runtime}`, previousWriterId: "writer-1",
+        finalWriterId: index === 0 ? "writer-1" : "writer-2", migrationCount: index === 0 ? 0 : 1,
+        trace: [],
+      }));
+      return [runtime, statefulSuite(runtime, evidence)];
+    }));
+  }
+}
+
+for (const code of ["AUTH_UNAVAILABLE", "INSTALL_INVALID", "TIMEOUT",
+  "SANDBOX_REFUSAL"] as const) {
+  test(`B1 ${code} uses the real local-runtime infrastructure boundary`, async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), `vibe-stateful-infra-${code.toLowerCase()}-`)));
+    try {
+      const sha = execFileSync("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"],
+        { encoding: "utf8" }).trim();
+      const runner = new InfrastructureStatefulRunner(code);
+      const selectedCases = ["upgrade-resume-changed-definition",
+        "upgrade-resume-unchanged-definition"];
+      const output = await runLocalEvals({ repo: REPO_ROOT, pluginSha: sha,
+        runRoot: join(root, "run"), outputDir: join(root, "results"),
+        claudeExecutable: "fixture-claude", codexExecutable: "fixture-codex",
+        uvExecutable: "fixture-uv", snapshotMode: "worktree", selectedCases,
+        runtimes: ["claude", "codex"], statefulRunner: runner }, new FakeCommands());
+      const claude = output.result.runtimes.find((item) => item.runtime === "claude")!;
+      assert.equal(claude.result, null);
+      assert.equal(claude.invalidReason,
+        `eval-stateful-infrastructure:${code}:upgrade-resume-changed-definition`);
+      assert.deepEqual(failedCases(output.result, "claude"), []);
+      assert.equal(runner.calls.length, 1, "infrastructure does not enter a paid retry wave");
+      const catalog = evalCaseCatalog(join(REPO_ROOT, "plugins/vibe"))
+        .filter((item) => selectedCases.includes(item.id));
+      assert.throws(() => buildEvalBaseline({ results: [output.result], catalog,
+        pluginVersion: "1.1.26" }), /eval-baseline-runtime-incomplete/);
+      assert.equal(readdirSync(join(root, "results")).some((name) =>
+        /eval-t2-(?:publication|regression)-/.test(name)), false);
+      const logs: string[] = [];
+      let infrastructureReports = 0;
+      await reportNightlyInfrastructureFailure(claude.invalidReason!,
+        { reportInfrastructure: async () => { infrastructureReports += 1; } },
+        (line) => logs.push(line));
+      assert.equal(infrastructureReports, 1);
+      assert.match(logs.join(""), new RegExp(`VIBE_NIGHTLY_INFRA_FAILURE.*${code}`));
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+}
+
+test("B1 vibe case regressions remain selected for failure-only reruns", () => {
+  for (const code of ["STALE_PLUGIN_ROOT", "MODEL_BLOCK", "WRONG_SESSION", "ORACLE_MISMATCH"] as const) {
+    const suite = statefulSuite("claude", [{ caseId: "upgrade-resume-changed-definition",
+      runtime: "claude", passed: false, failureCode: code, wallMs: 1, agentCostUsd: 0,
+      tokens: null, cliVersion: "2.1.311", target: { version: "1.1.26", ref: "a".repeat(40) },
+      prior: { version: "1.1.23", ref: "b".repeat(40) }, oldArchiveRetained: true,
+      proofLines: ["turn-one"], rootSessionId: "root", previousWriterId: "writer-1",
+      finalWriterId: "writer-1", migrationCount: 0, trace: [] }]);
+    const result = finalizeLocalEval({ pluginSha: "a".repeat(40),
+      createdAt: "2026-11-02T00:00:00Z", wallMs: 1, deterministicOnly: false,
+      selectedCases: ["upgrade-resume-changed-definition"], runtimes: [{ runtime: "claude",
+        exitCode: 1, result: suite, invalidReason: null }] });
+    assert.deepEqual(failedCases(result, "claude"), ["upgrade-resume-changed-definition"], code);
+  }
+});
+
 class FailingSiblingCommands extends FakeCommands {
   siblingAborted = false;
   override async run(command: string, args: string[], _cwd?: string,
@@ -1004,6 +1179,7 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     mkdirSync(join(repo, "plugins/vibe/skills/vibe"), { recursive: true });
     mkdirSync(join(repo, "plugins/vibe/skills/vibe/scripts"), { recursive: true });
     mkdirSync(join(repo, `plugins/vibe/evals/${CASE}`), { recursive: true });
+    mkdirSync(join(repo, "plugins/vibe/evals/upgrade-resume-unchanged-definition"), { recursive: true });
     mkdirSync(join(repo, "plugins/vibe/evals/codex"), { recursive: true });
     mkdirSync(join(repo, "plugins/closedloop-core/.claude-plugin"), { recursive: true });
     writeFileSync(join(repo, "plugins/vibe/.claude-plugin/plugin.json"), JSON.stringify({
@@ -1024,6 +1200,15 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     }
     writeFileSync(join(repo, `plugins/vibe/evals/${CASE}/prompt.md`),
       "---\ntags: []\n---\n/vibe:vibe\nfixture\n");
+    writeFileSync(join(repo, "plugins/vibe/evals/upgrade-resume-unchanged-definition/case.yaml"),
+      JSON.stringify({ schemaVersion: 1, kind: "upgrade-resume", skill: "vibe", deterministic: true,
+        definition: "unchanged", nightlyPrior: { version: "1.1.24", ref: "b".repeat(40) },
+        transitions: [
+          { target: { version: "1.1.23", ref: "c".repeat(40) },
+            prior: { version: "1.1.22", ref: "d".repeat(40) } },
+          { target: { version: "1.1.25", ref: "a".repeat(40) },
+            prior: { version: "1.1.24", ref: "b".repeat(40) } },
+        ] }));
     writeFileSync(join(repo, "plugins/vibe/evals/codex/run.py"), "# fixture\n");
     execFileSync("git", ["init", "-b", "main", repo], { stdio: "ignore" });
     execFileSync("git", ["-C", repo, "add", "."]);
@@ -1032,10 +1217,11 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     const sha = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
     execFileSync("git", ["-C", repo, "update-ref", "refs/remotes/origin/main", sha]);
     const commands = new FakeCommands();
+    const statefulRunner = new FakeStatefulRunner();
     const output = await runLocalEvals({ repo, pluginSha: sha, runRoot: join(root, "run"),
       outputDir: join(root, "results"), claudeExecutable: "fixture-claude",
       codexExecutable: "fixture-codex", uvExecutable: "fixture-uv",
-      deterministicOnly: true }, commands);
+      deterministicOnly: true, statefulRunner }, commands);
     assert.equal(output.result.success, true);
     assert.deepEqual(output.result.runtimes.map((item) => item.runtime), ["claude", "codex"]);
     assert.match(output.result.resultHash, /^[a-f0-9]{64}$/);
@@ -1043,6 +1229,10 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     assert.ok(commands.calls.every((call) => !call.args.some((arg) => arg.includes(".codex/plugins/cache"))));
     const modelCalls = commands.calls.filter((call) => !call.args.includes("--version"));
     assert.equal(modelCalls.length, 2);
+    assert.equal(statefulRunner.calls.length, 1);
+    assert.deepEqual(output.result.selectedCases,
+      [CASE, "upgrade-resume-unchanged-definition"].sort());
+    assert.ok(output.result.runtimes.every((item) => item.result?.cases.length === 2));
     assert.equal(modelCalls.find((call) => call.command.includes("claude"))!.args[
       modelCalls.find((call) => call.command.includes("claude"))!.args.indexOf("--concurrency") + 1], "3");
     assert.equal(modelCalls.find((call) => call.command.includes("uv"))!.args[
@@ -1050,7 +1240,7 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     const claudeCall = modelCalls.find((call) => call.command.includes("claude"))!;
     assert.equal(claudeCall.args[2].endsWith("/plugin-snapshot/plugins"), true);
     assert.equal(claudeCall.args[2], realpathSync(claudeCall.args[2]));
-    assert.equal(claudeCall.args[claudeCall.args.indexOf("--eval-dir") + 1], "vibe/evals");
+    assert.equal(claudeCall.args[claudeCall.args.indexOf("--eval-dir") + 1], "vibe/evals-focused");
     assert.equal(claudeCall.args.includes("--case"), false);
     const codexCall = modelCalls.find((call) => call.command.includes("uv"))!;
     assert.deepEqual(codexCall.args.slice(0, 6),
@@ -1081,13 +1271,27 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     const nightly = await runT2Evals({ repo, pluginSha: sha, runRoot: join(root, "t2-nightly"),
       outputDir: store, claudeExecutable: "fixture-claude",
       codexExecutable: "fixture-codex", uvExecutable: "fixture-uv",
-      ghExecutable: "fixture-gh" }, t2Commands);
+      ghExecutable: "fixture-gh", statefulRunner: new FakeStatefulRunner() }, t2Commands);
     assert.equal(nightly.skipped, false);
     assert.equal(t2Commands.calls.filter((call) => call.args.includes("--eval-dir")).length, 1);
     assert.equal(t2Commands.calls.filter((call) => call.command.includes("fixture-uv")).length, 1);
     const acceptedHash = resolveLatestEvalBaseline(store).artifact.resultHash;
     assert.equal(nightly.result.costs?.claude?.agentUsd, 0.1);
     assert.equal(nightly.result.costs?.claude?.judgeUsd, 0.02);
+    const flakyStateful = new FakeStatefulRunner(true);
+    const retryCommands = new FakeCommands();
+    const retryNightly = await runT2Evals({ repo, pluginSha: sha,
+      runRoot: join(root, "t2-stateful-retry"), outputDir: join(root, "t2-retry-store"),
+      claudeExecutable: "fixture-claude", codexExecutable: "fixture-codex",
+      uvExecutable: "fixture-uv", ghExecutable: "fixture-gh",
+      statefulRunner: flakyStateful }, retryCommands);
+    assert.equal(retryNightly.result.cases.find((item) =>
+      item.id === "upgrade-resume-unchanged-definition")?.outcomes.claude?.passes, 1);
+    assert.equal(flakyStateful.calls.length, 2);
+    assert.deepEqual(flakyStateful.calls[1]?.runtimes, ["claude"]);
+    assert.deepEqual(flakyStateful.calls[1]?.cases.map((item) => item.id),
+      ["upgrade-resume-unchanged-definition"]);
+    assert.equal(retryCommands.calls.filter((call) => call.args.includes("--eval-dir")).length, 1);
 
     const legacyStore = join(root, "t2-legacy-store");
     mkdirSync(legacyStore);
@@ -1097,7 +1301,8 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     const lineage = await runT2Evals({ repo, pluginSha: sha,
       runRoot: join(root, "t2-new-judge-lineage"), outputDir: legacyStore,
       claudeExecutable: "fixture-claude", codexExecutable: "fixture-codex",
-      uvExecutable: "fixture-uv", ghExecutable: "fixture-gh" }, lineageCommands,
+      uvExecutable: "fixture-uv", ghExecutable: "fixture-gh",
+      statefulRunner: new FakeStatefulRunner() }, lineageCommands,
     { report: async (notice) => { notices.push(notice); } });
     assert.equal(lineage.skipped, false);
     assert.equal(lineage.lineageReset, true);
@@ -1136,7 +1341,8 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     await assert.rejects(() => runT2Evals({ repo, pluginSha: sha,
       runRoot: join(root, "t2-drift"), outputDir: driftStore,
       claudeExecutable: "fixture-claude", codexExecutable: "fixture-codex",
-      uvExecutable: "fixture-uv", ghExecutable: "fixture-gh" }, new DriftingCommands(repo)),
+      uvExecutable: "fixture-uv", ghExecutable: "fixture-gh",
+      statefulRunner: new FakeStatefulRunner() }, new DriftingCommands(repo)),
     /benchmark-plugin-checkout-dirty|eval-t2-main-snapshot-invalid/);
     assert.equal(existsSync(join(driftStore, "eval-t2-latest.json")), false);
   } finally { rmSync(root, { recursive: true, force: true }); }

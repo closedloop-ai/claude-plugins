@@ -4,6 +4,21 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.26
+
+#### Added
+- Deterministic stateful eval cases exercise Claude and Codex vibe sessions before and after an installed plugin upgrade, including unchanged and changed writer definitions.
+
+#### Changed
+- Nightly eval selection discovers promptless stateful cases, merges them with native prompt-suite results, and preserves failure-only reruns in the existing hashed baseline.
+- Stateful Claude roots use the Claude CLI's default effort while persistent writers keep their released model and effort behavior. Reported Claude cost covers root processes only because writer subprocess cost is not exposed.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 44 words longer than in 1.1.25.
+
+#### Fixed
+- Final deterministic failures enter the existing nightly Slack publication path on their first failing night, including when no last-green baseline exists.
+- Stateful authentication, install, timeout, and sandbox infrastructure failures invalidate the runtime without paid failure retries or regression publication, then use the existing nightly infrastructure report.
+- Catchable termination removes only the stateful evaluator's exact Claude startup and hook-scope records while preserving unrelated records.
+
 ### vibe v1.1.25
 
 #### Changed
