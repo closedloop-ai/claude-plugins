@@ -6,7 +6,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "node --experimental-strip-types --test src/*.test.ts",
+    "test": "node --experimental-strip-types --test src/*.test.ts ../shared/*.test.mjs ../vibe-release-smoke/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "validate:plugins": "claude plugin validate ../../plugins/vibe && claude plugin validate ../../plugins/closedloop-core",
     "bench": "node --experimental-strip-types src/cli.ts"

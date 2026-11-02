@@ -15,10 +15,15 @@ and self-identification becomes a role; the scenario and routing intent stay
 the same. The expired Claude sign-in scenarios still describe a failed Claude
 child, even though Codex is the subject answering that scenario.
 
+Promptless `upgrade-resume-*` manifests belong to the stateful vibe-bench
+coordinator, not this one-turn runner. The nightly installs exact old and target
+releases in one private home, resumes the same root thread, and merges those
+case outcomes into the same hashed runtime result.
+
 Each invocation installs snapshots of this worktree's `plugins/vibe` and its
 sibling `plugins/closedloop-core` into a private local marketplace and
 `CODEX_HOME`. The user's plugin installs and config stay untouched. Existing
-`CODEX_HOME` authentication is copied privately for the run and removed on exit.
+`CODEX_HOME` authentication is linked into the private home and the link is removed on exit.
 No service connection config is copied. Login shells are disabled so screenshot
 commands use the runner's Python environment, which must have Pillow.
 

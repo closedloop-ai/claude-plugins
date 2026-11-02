@@ -7,6 +7,10 @@ import { acquireRecordTurn, changeWriter, markClaudeStarted, migrateWriter, read
 import { runWorker } from "./claude-worker.js";
 import { acquireNativeRecord, releaseNativeRecord, verifyStrandedRecordGrant } from "./native-record.js";
 import { bundleDirectory, fixture, graph, readProof, writeAgent } from "./test-fixtures.js";
+import { archiveGitFixture } from "../../shared/git-commit-fixture.mjs";
+
+const REPO_ROOT = resolve(bundleDirectory, "../../../../../..");
+const VIBE_1_1_25_SHA = "f45882fb9118cca457221e48e7cef850557f8246";
 
 const fixtures: ReturnType<typeof fixture>[] = [];
 afterEach(() => { for (const item of fixtures.splice(0)) item.cleanup(); });
@@ -66,43 +70,98 @@ function bundledStatus(worktree: string) {
 function setupLiveUpgrade(track = true) {
   const value = fixture();
   if (track) fixtures.push(value);
-  const installedRoot = resolve(bundleDirectory, "../../../..");
-  const manifest = JSON.parse(readFileSync(join(installedRoot, ".claude-plugin", "plugin.json"), "utf8"));
-  if (manifest.version !== "1.1.25") throw new Error("The live upgrade case belongs to the 1.1.25 release");
-  const added = `Use native Edit or Write for files under the worktree's \`.claude/skills/\` and
+  try {
+    const releaseArchive = join(value.base, "released-1.1.25");
+    mkdirSync(releaseArchive);
+    archiveGitFixture(REPO_ROOT, VIBE_1_1_25_SHA, ["plugins/vibe"], releaseArchive);
+    const installedRoot = join(releaseArchive, "plugins/vibe");
+    const manifest = JSON.parse(readFileSync(join(installedRoot, ".claude-plugin", "plugin.json"), "utf8"));
+    if (manifest.version !== "1.1.25") throw new Error("The live upgrade target is not released vibe 1.1.25");
+    const added = `Use native Edit or Write for files under the worktree's \`.claude/skills/\` and
 \`.claude/commands/\`. A Bash redirect or tee into either directory is still a
 protected write and is not the approved route. After any native edit refusal,
 stop this request and return \`BLOCKED\` with the denial reason. Never retry the
 file through Bash, Python, Node, tee, redirection, copy, move, or another tool.
 
 `;
-  const installedAgent = readFileSync(join(installedRoot, "agents", "vibe-change-worker.md"), "utf8");
-  if (!installedAgent.includes(added)) throw new Error("The merged protected-write definition is missing");
-  const oldAgent = installedAgent.replace(added, "");
-  if (createHash("sha256").update(oldAgent).digest("hex")
-    !== "616389b7f933ee492990e807ae7b45a55fbdabafb1dd4e50742334ac6d4de34a") {
-    throw new Error("The reconstructed 1.1.23 definition differs from the shipped agent");
+    const installedAgent = readFileSync(join(installedRoot, "agents", "vibe-change-worker.md"), "utf8");
+    if (!installedAgent.includes(added)) throw new Error("The merged protected-write definition is missing");
+    const oldAgent = installedAgent.replace(added, "");
+    if (createHash("sha256").update(oldAgent).digest("hex")
+      !== "616389b7f933ee492990e807ae7b45a55fbdabafb1dd4e50742334ac6d4de34a") {
+      throw new Error("The reconstructed 1.1.23 definition differs from the shipped agent");
+    }
+    const oldRoot = join(value.base, "cache", "vibe", "1.1.23");
+    mkdirSync(join(oldRoot, "agents"), { recursive: true });
+    mkdirSync(join(oldRoot, ".claude-plugin"));
+    mkdirSync(join(oldRoot, ".codex-plugin"));
+    writeFileSync(join(oldRoot, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version: "1.1.23" }));
+    writeFileSync(join(oldRoot, ".codex-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version: "1.1.23" }));
+    writeFileSync(join(oldRoot, "agents", "vibe-change-worker.md"), oldAgent);
+    const registered = registerWriter({ worktree: value.worktree, runtime: "claude", agentRoot: oldRoot,
+      agentName: "vibe-change-worker", capabilities: graph });
+    const requestId = "live-upgrade-request";
+    const owner = { worktree: value.worktree, workerId: registered.workerId, requestId };
+    changeWriter("enqueue", { ...owner, input: "Request started under vibe 1.1.23" });
+    const previous = changeWriter("claim", owner).turn!;
+    markClaudeStarted(value.worktree, owner.workerId, previous.lease!);
+    changeWriter("finish", { ...owner, lease: previous.lease, status: "NEEDS_REVIEW" });
+    return { ...value, oldRoot, installedRoot, registered, requestId,
+      migrationInput: { worktree: value.worktree, runtime: "claude", agentRoot: installedRoot,
+        agentName: "vibe-change-worker", capabilities: graph, previousWorkerId: registered.workerId,
+        previousDigest: registered.definitionDigest },
+      ledgerFile: join(value.metadata, "vibe-writer.json") };
+  } catch (error) {
+    if (!track) rethrowAfterSetupCleanup(value, error);
+    throw error;
   }
-  const oldRoot = join(value.base, "cache", "vibe", "1.1.23");
-  cpSync(value.agentRoot, oldRoot, { recursive: true });
-  writeFileSync(join(oldRoot, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "vibe", version: "1.1.23" }));
-  writeFileSync(join(oldRoot, "agents", "vibe-change-worker.md"), oldAgent);
-  const registered = registerWriter({ worktree: value.worktree, runtime: "claude", agentRoot: oldRoot,
-    agentName: "vibe-change-worker", capabilities: graph });
-  const requestId = "live-upgrade-request";
-  const owner = { worktree: value.worktree, workerId: registered.workerId, requestId };
-  changeWriter("enqueue", { ...owner, input: "Request started under vibe 1.1.23" });
-  const previous = changeWriter("claim", owner).turn!;
-  markClaudeStarted(value.worktree, owner.workerId, previous.lease!);
-  changeWriter("finish", { ...owner, lease: previous.lease, status: "NEEDS_REVIEW" });
-  return { ...value, oldRoot, installedRoot, registered, requestId,
-    migrationInput: { worktree: value.worktree, runtime: "claude", agentRoot: installedRoot,
-      agentName: "vibe-change-worker", capabilities: graph, previousWorkerId: registered.workerId,
-      previousDigest: registered.definitionDigest },
-    ledgerFile: join(value.metadata, "vibe-writer.json") };
+}
+
+function releasedStatus(installedRoot: string, worktree: string) {
+  return JSON.parse(execFileSync(process.execPath,
+    [join(installedRoot, "skills/vibe/scripts/dist/writer-state.mjs"), "status"], {
+      input: JSON.stringify({ worktree }), encoding: "utf8",
+    }));
+}
+
+function runReleasedWorker(installedRoot: string, bin: string, input: Record<string, unknown>) {
+  const result = spawnSync(process.execPath,
+    [join(installedRoot, "skills/vibe/scripts/dist/claude-worker.mjs")], {
+      input: JSON.stringify(input), encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    });
+  const output = JSON.parse(result.stdout || "{}");
+  if (result.status !== 0) throw new Error(output.summary || result.stderr || "released worker failed");
+  return output;
+}
+
+function cleanupFixture(value: { cleanup(): void } | undefined) {
+  value?.cleanup();
+}
+
+function rethrowAfterSetupCleanup(value: { cleanup(): void }, primary: unknown): never {
+  try { value.cleanup(); } catch { /* Cleanup must never replace the primary setup failure. */ }
+  throw primary;
 }
 
 describe("ISS-13506 installed release upgrade", () => {
+  it("preserves the primary setup failure when the live fixture was never initialized", () => {
+    expect(() => cleanupFixture(undefined)).not.toThrow();
+  });
+  it("preserves the primary setup failure when cleanup also fails", () => {
+    const primary = new Error("primary release fixture failure");
+    let cleaned = false;
+    let received: unknown;
+    try {
+      rethrowAfterSetupCleanup({ cleanup: () => {
+        cleaned = true;
+        throw new Error("secondary cleanup failure");
+      } }, primary);
+    } catch (error) {
+      received = error;
+    }
+    expect(cleaned).toBe(true);
+    expect(received).toBe(primary);
+  });
   it("status detects a changed installed definition before launching a retained writer", () => {
     const value = setupInstalledUpgrade(true);
     const before = readFileSync(value.ledgerFile, "utf8");
@@ -134,7 +193,7 @@ describe("ISS-13506 installed release upgrade", () => {
       markClaudeStarted(value.worktree, owner.workerId, previous.lease!);
       changeWriter("finish", { ...owner, lease: previous.lease, status: "NEEDS_REVIEW" });
     });
-    afterAll(() => value.cleanup());
+    afterAll(() => cleanupFixture(value));
     it("AC1 and AC4 resume the same Claude writer when the installed definition is unchanged and N remains", async () => {
       const previousPath = process.env.PATH;
       process.env.PATH = `${value.bin}:${previousPath}`;
@@ -173,16 +232,22 @@ describe("ISS-13506 installed release upgrade", () => {
     let value: ReturnType<typeof setupLiveUpgrade>;
     let migratedId: string;
     beforeAll(() => { value = setupLiveUpgrade(false); });
-    afterAll(() => value.cleanup());
+    afterAll(() => cleanupFixture(value));
     it("AC3 status detects the changed definition and AC2 migrates the same active request", async () => {
       const before = readFileSync(value.ledgerFile, "utf8");
-      expect(bundledStatus(value.worktree).recordedDefinition).toBe("changed");
-      await expect(runWorker({ worktree: value.worktree, agentName: "vibe-change-worker", capabilities: graph,
-        mode: "plan", requestId: value.requestId, continuation: "Continue after the upgrade" }))
-        .rejects.toThrow(/writer-state\.mjs migrate/);
+      expect(JSON.parse(readFileSync(join(value.oldRoot, ".codex-plugin/plugin.json"), "utf8")).version)
+        .toBe("1.1.23");
+      expect(JSON.parse(readFileSync(join(value.installedRoot, ".codex-plugin/plugin.json"), "utf8")).version)
+        .toBe("1.1.25");
+      expect(releasedStatus(value.installedRoot, value.worktree).recordedDefinition).toBe("changed");
+      expect(() => runReleasedWorker(value.installedRoot, value.bin, { worktree: value.worktree,
+        agentName: "vibe-change-worker", capabilities: graph, mode: "plan",
+        requestId: value.requestId, continuation: "Continue after the upgrade" }))
+        .toThrow(/writer-state\.mjs migrate/);
       expect(readFileSync(value.ledgerFile, "utf8")).toBe(before);
       expect(existsSync(join(value.metadata, "fake-proof.jsonl"))).toBe(false);
-      const output = execFileSync(process.execPath, [join(bundleDirectory, "writer-state.mjs"), "migrate"], {
+      const output = execFileSync(process.execPath,
+        [join(value.installedRoot, "skills/vibe/scripts/dist/writer-state.mjs"), "migrate"], {
         input: JSON.stringify(value.migrationInput), encoding: "utf8" });
       const migrated = JSON.parse(output);
       migratedId = migrated.workerId;
@@ -194,14 +259,15 @@ describe("ISS-13506 installed release upgrade", () => {
       expect(ledger.migrations[0]).toMatchObject({ reason: "definition-upgraded",
         observedDigest: value.registered.definitionDigest,
         previous: { workerId: value.registered.workerId, active: { id: value.requestId } } });
-      expect(bundledStatus(value.worktree).recordedDefinition).toBe("present");
+      expect(releasedStatus(value.installedRoot, value.worktree).recordedDefinition).toBe("present");
       expect(existsSync(value.oldRoot)).toBe(true);
     });
     it("AC2 launcher continues the migrated writer's active request", async () => {
       const previousPath = process.env.PATH;
       process.env.PATH = `${value.bin}:${previousPath}`;
       try {
-        const continued = await runWorker({ worktree: value.worktree, agentName: "vibe-change-worker",
+        const continued = runReleasedWorker(value.installedRoot, value.bin, {
+          worktree: value.worktree, agentName: "vibe-change-worker",
           capabilities: graph, mode: "plan", requestId: value.requestId, continuation: "Continue after migration" });
         expect(continued.workerId).toBe(migratedId);
         expect(continued.sessionId).toBe(migratedId);
