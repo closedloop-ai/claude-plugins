@@ -150,11 +150,10 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
 
 ## Output
 
-For each finding: `severity` (high, medium, low), `file:line`, what breaks
-and for whom, the concrete input or state that triggers it, the evidence, and
-the smallest fix. Then list what you checked and found clean, in one line per
-area. Return "No proven findings" when that is the result. End with the
-Graph block.
+Per finding: `severity` (high, medium, low), `file:line`, what breaks and for
+whom, the triggering input or state, the evidence and the smallest fix. Then
+one line per area checked and found clean, or "No proven findings". End with
+the Graph block.
 In the launcher structured result, set `data.findings` to the current-source
 findings only: an array of `{id, blocking, evidence, premises}` objects, or `[]` after a
 clean recheck. Mark every finding that must be fixed before PR as blocking.
