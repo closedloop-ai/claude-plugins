@@ -19,6 +19,13 @@
 // no local lane merely because another commit exists. Records live in the session's
 // git dir (`vibe-lane-results.json`). Changes nothing else.
 //
+// `check --reuse-cache [--base <sha>] [--config <text>]...` (off by default,
+// ISS-13354) also accepts a lane with no passing record for the scope when an
+// earlier FRESH pass has the same cache key (lane-cache.mjs: command, tree,
+// base, config and changed-file scope). It records the lane `cached` and prints
+// `CACHED-LANE <command> (reused from <sha>: not a fresh run)`; a cached record
+// is never a `pass`, and without the flag it counts as missing.
+//
 // Every lane the report names is required, e2e lanes included: a pull request
 // once merged with two Desktop E2E reds because this check skipped e2e lanes
 // by default and could not read a lane line that starts with the step's
@@ -58,6 +65,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { qaImpactRequest } from "../../handoff/scripts/qa-impact.mjs";
+import { CACHED_RESULT, cachedRecord, findReusable, laneKeyFor, Provenance } from "./lane-cache.mjs";
 import { git } from "./session-record.mjs";
 import { testedHead, testedSource, sourceIdentity, sameSource, withStableSource } from "./tested-head.mjs";
 
@@ -143,6 +151,31 @@ function readRecords(worktree) {
   return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : [];
 }
 
+/** The lanes a cached result covers for the selection, with the head each was reused from; a new match is recorded and a cached record whose key no longer matches is replaced or dropped. */
+function reuseCachedLanes(values, lanes, records, selected) {
+  const covered = [];
+  const written = [];
+  const head = selected.source.head;
+  for (const lane of missingLanes(lanes, records, selected)) {
+    const key = laneKeyFor(values.worktree, { command: lane, base: values.base, config: values.config });
+    const existing = records.find((record) => record.command === lane && sameSelection(record, selected) && record.result === CACHED_RESULT);
+    const earlier = findReusable(records, key);
+    if (existing && key && existing.cacheKey === key) {
+      covered.push({ lane, from: existing.reusedFrom.head });
+    } else if (earlier) {
+      written.push({ ...cachedRecord({ command: lane, head, key, source: earlier }), source: selected.source, laneKey: selected.laneKey });
+      covered.push({ lane, from: earlier.head });
+    }
+  }
+  const isCached = (record) => record.result === CACHED_RESULT && lanes.includes(record.command) && sameSelection(record, selected);
+  const stale = (record) => isCached(record) && !covered.some((item) => item.lane === record.command && item.from === record.reusedFrom?.head);
+  if (written.length || records.some(stale)) {
+    const kept = records.filter((record) => !stale(record));
+    writeFileSync(recordsFile(values.worktree), `${JSON.stringify([...kept, ...written], null, 2)}\n`);
+  }
+  return covered;
+}
+
 function selectedScope(values, command) {
   if (Boolean(values.report) === Boolean(values.impact)) throw new Error("exactly one of --report or --impact is required");
   if (values.impact) {
@@ -164,6 +197,7 @@ function main(argv) {
   const { values } = parseArgs({ args: rest, options: {
     worktree: { type: "string" }, head: { type: "string" }, source: { type: "string" }, command: { type: "string" }, result: { type: "string" }, report: { type: "string" }, impact: { type: "string" }, skip: { type: "string" }, "skip-ruling": { type: "string" },
     "main-worktree": { type: "string" }, "main-sha": { type: "string" },
+    "reuse-cache": { type: "boolean" }, base: { type: "string" }, config: { type: "string", multiple: true },
   } });
   if (!values.worktree) throw new Error("--worktree is required");
   if (command === "run" || command === "record") {
@@ -211,7 +245,8 @@ function main(argv) {
       }
     }
     const records = readRecords(values.worktree).filter((record) => !(record.command === values.command.trim() && sameSelection(record, selected)));
-    records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey, result, ...(mainSha ? { mainSha, mainSource } : {}), at: new Date().toISOString() });
+    const cacheKey = source.diffSha256 === createHash("sha256").digest("hex") ? laneKeyFor(values.worktree, { command: values.command, base: values.base, config: values.config }) : null;
+    records.push({ command: values.command.trim(), head: tested, source, laneKey: selected.laneKey, result, provenance: Provenance.Fresh, ...(cacheKey ? { cacheKey } : {}), ...(mainSha ? { mainSha, mainSource } : {}), at: new Date().toISOString() });
     writeFileSync(recordsFile(values.worktree), `${JSON.stringify(records, null, 2)}\n`);
     process.stdout.write(`recorded ${result} for ${values.command.trim()} at ${JSON.stringify(source)}${mainSha ? ` (fails on captured main ${mainSha} too)` : ""}\n`);
     return result === "pass" || result === "main-preexisting" ? 0 : 1;
@@ -240,9 +275,11 @@ function main(argv) {
       for (const record of records.filter((item) => lanes.includes(item.command) && sameSelection(item, selected) && item.result === "main-preexisting")) {
         process.stdout.write(`MAIN-PREEXISTING-LANE ${record.command} (fails on captured main ${record.mainSha} too; list it under Known main failures)\n`);
       }
-      const missing = missingLanes(lanes, records, selected);
+      const covered = values["reuse-cache"] ? reuseCachedLanes(values, lanes, records, selected) : [];
+      for (const { lane, from } of covered) process.stdout.write(`CACHED-LANE ${lane} (reused from ${from.slice(0, 12)}: same tree, base, config and scope; not a fresh run)\n`);
+      const missing = missingLanes(lanes, records, selected).filter((lane) => !covered.some((item) => item.lane === lane));
       for (const lane of missing) process.stdout.write(`MISSING-LANE ${lane}: run it with pre-pr-lanes.mjs run --head <HEAD> --command "${lane}" ${impact ? "--impact <qa-impact JSON>" : "--report <lane report>"}\n`);
-      process.stdout.write(`pre-pr lanes: ${lanes.length} lanes, ${missing.length} missing${notRun.length ? `, ${notRun.length} not run locally` : ""} for changed-file scope ${selected.laneKey ?? "none"}\n`);
+      process.stdout.write(`pre-pr lanes: ${lanes.length} lanes, ${missing.length} missing${notRun.length ? `, ${notRun.length} not run locally` : ""}${values["reuse-cache"] ? `, ${covered.length} cached` : ""} for changed-file scope ${selected.laneKey ?? "none"}\n`);
       return { exitCode: missing.length === 0 ? 0 : 1 };
     }).exitCode;
   }
