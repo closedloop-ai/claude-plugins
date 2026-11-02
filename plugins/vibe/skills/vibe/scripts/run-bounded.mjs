@@ -6,6 +6,13 @@
 //
 // Usage: run-bounded.mjs <seconds> <command> [args...]
 //
+// A CPU-heavy command (a test, typecheck, lint or build run, vitest, turbo, playwright
+// and the like; `isHeavyCommand` in heavy-budget.mjs) first takes a worker budget:
+// what is left of the machine after the heavy runs already on it (ISS-13584). The
+// command gets that concurrency through TURBO_TEST_CONCURRENCY and VITEST_MAX_WORKERS,
+// never above what the caller already set, and a lease for its lifetime. Any other
+// command is untouched, and VIBE_HEAVY_BUDGET=off restores the previous behavior.
+//
 // Output streams through unchanged. On time out it stops the command and
 // everything it started, then exits 124, the code GNU `timeout` uses, and
 // prints one line to stderr. Otherwise it exits with the command's own code.
@@ -14,17 +21,18 @@ import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { budgetDisabled, createBudget, isHeavyCommand } from "./heavy-budget.mjs";
 
 export const TIMED_OUT_EXIT = 124;
 const GRACE_MS = 2_000;
 
 /** Runs `command` in its own process group and resolves its exit code, or 124 after `seconds`. */
-export function runBounded(command, args, { seconds, stdio = "inherit" }) {
+export function runBounded(command, args, { seconds, stdio = "inherit", env }) {
   if (!Number.isFinite(seconds) || seconds <= 0) {
     return Promise.reject(new Error("The time limit must be a positive number of seconds."));
   }
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio, detached: true });
+    const child = spawn(command, args, { stdio, detached: true, ...(env ? { env: { ...process.env, ...env } } : {}) });
     let timedOut = false;
     let killTimer;
     const signalGroup = (signal) => {
@@ -61,13 +69,25 @@ export function runBounded(command, args, { seconds, stdio = "inherit" }) {
   });
 }
 
+/** Runs a command with a worker budget when it is CPU-heavy; any other command, or a disabled budget, runs as `runBounded` does. */
+export async function runBudgeted(command, args, { seconds, budget = createBudget(), env = process.env, log = () => {} }) {
+  if (budgetDisabled(env) || !isHeavyCommand(command, args)) return runBounded(command, args, { seconds });
+  const taken = budget.acquire({ command, args });
+  log(`run-bounded: heavy run takes ${taken.workers} workers (available ${taken.budget.available} of ${taken.budget.capacity}, ${taken.budget.leases} other leased runs, ${taken.budget.unleasedCores.toFixed(1)} cores used by unleased heavy processes)\n`);
+  try {
+    return await runBounded(command, args, { seconds, env: taken.env });
+  } finally {
+    taken.release();
+  }
+}
+
 async function main(argv) {
   const [limit, command, ...args] = argv;
   if (!command) {
     throw new Error("Usage: run-bounded.mjs <seconds> <command> [args...]");
   }
   const seconds = Number(limit);
-  const code = await runBounded(command, args, { seconds });
+  const code = await runBudgeted(command, args, { seconds, log: (line) => process.stderr.write(line) });
   if (code === TIMED_OUT_EXIT) {
     process.stderr.write(`run-bounded: stopped after ${seconds}s: ${command}\n`);
   }
