@@ -287,3 +287,26 @@ test("regression: with no node_modules, or a runner that did not run, a required
   const failed = harness({ files, extra: [["run-bounded.mjs 600 pnpm check:source-gates", fail("rule x failed at apps/app/a.tsx:3")]] }).controller.verify({ worktree: "/wt", head: HEAD, useCache: false });
   assert.equal(find(failed, "source-gates").status, Status.Failed);
 });
+
+test("a retried or waited heavy run keeps its provenance in the evidence, and a retry's pass is a real pass of the retry (ISS-13585)", () => {
+  const line = `run-bounded-result: ${JSON.stringify({ attempts: [{ attempt: 1, workers: 8, exitCode: 137, signature: "sigkill-exit-137" }, { attempt: 2, workers: 4, exitCode: 0, signature: null }], retried: true, firstFailureSignature: "sigkill-exit-137", loadAtStart: { load1: 200, cores: 10, perCore: 20, belowMinimum: true }, waitedMs: 12_000, admission: "waited" })}\n`;
+  const { controller } = harness({ files: { "/wt/package.json": PACKAGE, "/wt/apps/app/a.tsx": "x" }, extra: [["run-bounded.mjs 600 pnpm check:source-gates", { status: 0, stdout: "", stderr: line }]] });
+  const gates = find(controller.verify({ worktree: "/wt", head: HEAD, useCache: false }), "source-gates");
+  assert.equal(gates.status, Status.Passed);
+  assert.equal(gates.load.retried, true);
+  assert.equal(gates.load.firstFailureSignature, "sigkill-exit-137");
+  assert.equal(gates.load.attempts.length, 2);
+  assert.equal(gates.load.loadAtStart.perCore, 20);
+});
+
+test("a run that was neither retried nor waited carries no load block, and a failure stays a failure with its provenance (ISS-13585)", () => {
+  const quiet = `run-bounded-result: ${JSON.stringify({ attempts: [{ attempt: 1, workers: 8, exitCode: 0 }], retried: false, admission: "immediate" })}\n`;
+  const failed = `boom\nrun-bounded-result: ${JSON.stringify({ attempts: [{ attempt: 1, exitCode: 137 }, { attempt: 2, exitCode: 137 }], retried: true, firstFailureSignature: "sigkill-exit-137", admission: "waited" })}\n`;
+  const { controller } = harness({ files: { "/wt/package.json": PACKAGE, "/wt/apps/app/a.tsx": "x" }, extra: [["run-bounded.mjs 600 pnpm check:source-gates", { status: 0, stdout: "", stderr: quiet }], ["run-bounded.mjs 900 pnpm typecheck:affected", { status: 137, stdout: "", stderr: failed }]] });
+  const evidence = controller.verify({ worktree: "/wt", head: HEAD, useCache: false });
+  assert.equal(find(evidence, "source-gates").load, undefined);
+  const typecheck = find(evidence, "typecheck");
+  assert.equal(typecheck.status, Status.Failed);
+  assert.equal(typecheck.load.retried, true);
+  assert.equal(evidence.ok, false);
+});

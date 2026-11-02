@@ -39,6 +39,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { RESULT_PREFIX } from "./run-bounded.mjs";
 import { reportLanes } from "./pre-pr-lanes.mjs";
 import { execCommand, parseJson, tailLines, toolDidNotRun } from "./ws3-exec.mjs";
 
@@ -64,6 +65,14 @@ const BOUNDED = path.join(here, "run-bounded.mjs");
 const PRE_PR_LANES = path.join(here, "pre-pr-lanes.mjs");
 
 const required = (name, command, status, extra = {}) => ({ name, command, status, required: true, ...extra });
+
+/** The load provenance run-bounded.mjs printed for a heavy run (attempts, first-failure signature, load at start), or null when it ran once with no wait. */
+export function loadProvenance(stderr) {
+  const line = String(stderr).split("\n").reverse().find((text) => text.startsWith(RESULT_PREFIX));
+  const parsed = line ? parseJson(line.slice(RESULT_PREFIX.length), null) : null;
+  if (!parsed || (!parsed.retried && parsed.admission === "immediate")) return null;
+  return { attempts: parsed.attempts, retried: parsed.retried, firstFailureSignature: parsed.firstFailureSignature, loadAtStart: parsed.loadAtStart, waitedMs: parsed.waitedMs, admission: parsed.admission };
+}
 
 /** The lane report's lines this script acts on, from `pre-pr-lanes.mjs check`'s output. */
 export function parseLaneCheck(output) {
@@ -120,7 +129,8 @@ export function createVerifyRun({
   function bounded(seconds, command, args, cwd) {
     const started = now();
     const result = run(process.execPath, [BOUNDED, String(seconds), command, ...args], { cwd, timeoutMs: (seconds + 30) * 1000 });
-    return { ...result, durationMs: now() - started };
+    const load = loadProvenance(result.stderr);
+    return { ...result, durationMs: now() - started, ...(load ? { load } : {}) };
   }
 
   function outcome(result, seconds) {
@@ -157,7 +167,7 @@ export function createVerifyRun({
       return required(name, full, Status.Cached, { exitCode: result.status, durationMs: result.durationMs, cachedFrom: { kind: "turbo-cache", detail: replay, head }, reason: "turbo replayed every task from its cache, so the code did not run in this invocation" });
     }
     if (done.status === Status.Passed) cache[`${head}\u0000${full}`] = { head, at: new Date(now()).toISOString() };
-    return required(name, full, done.status, { exitCode: result.status, durationMs: result.durationMs, ...(done.reason ? { reason: done.reason } : {}), ...(done.evidenceTail ? { evidenceTail: done.evidenceTail } : {}) });
+    return required(name, full, done.status, { exitCode: result.status, durationMs: result.durationMs, ...(done.reason ? { reason: done.reason } : {}), ...(done.evidenceTail ? { evidenceTail: done.evidenceTail } : {}), ...(result.load ? { load: result.load } : {}) });
   }
 
   function biomeCheck({ files, worktree, head, cache, useCache }) {
@@ -196,7 +206,7 @@ export function createVerifyRun({
       const result = bounded(TIME_LIMITS.lane, process.execPath, [PRE_PR_LANES, "run", "--worktree", worktree, "--head", head, "--command", lane, "--report", reportFile], worktree);
       const done = outcome(result, TIME_LIMITS.lane);
       if (done.status === Status.Passed) cache[key] = { head, at: new Date(now()).toISOString() };
-      return required(name, lane, done.status, { exitCode: result.status, durationMs: result.durationMs, ...(done.reason ? { reason: done.reason } : {}), ...(done.evidenceTail ? { evidenceTail: done.evidenceTail } : {}) });
+      return required(name, lane, done.status, { exitCode: result.status, durationMs: result.durationMs, ...(done.reason ? { reason: done.reason } : {}), ...(done.evidenceTail ? { evidenceTail: done.evidenceTail } : {}), ...(result.load ? { load: result.load } : {}) });
     });
   }
 
@@ -220,7 +230,7 @@ export function createVerifyRun({
       const [command, ...args] = group.command.split(/\s+/);
       const result = bounded(TIME_LIMITS.tests, command, args, worktree);
       const done = outcome(result, TIME_LIMITS.tests);
-      return { ...base, command: group.command, status: done.status, exitCode: result.status, durationMs: result.durationMs, ...(done.reason ? { reason: done.reason } : {}), ...(done.evidenceTail ? { evidenceTail: done.evidenceTail } : {}) };
+      return { ...base, command: group.command, status: done.status, exitCode: result.status, durationMs: result.durationMs, ...(done.reason ? { reason: done.reason } : {}), ...(done.evidenceTail ? { evidenceTail: done.evidenceTail } : {}), ...(result.load ? { load: result.load } : {}) };
     });
   }
 

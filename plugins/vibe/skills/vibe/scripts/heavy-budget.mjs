@@ -36,6 +36,14 @@ export const DEFAULTS = Object.freeze({
   minWorkers: 2,
   // The ambient turbo test fan-out of the target repository (scripts/test-affected.sh uses 2); never raised above the caller's own value.
   turboTestConcurrency: 2,
+  // W2 (ISS-13585): wait for capacity, then retry a load failure once at half the workers.
+  maxWaitSeconds: 600,
+  pollSeconds: 5,
+  pollBackoffFactor: 1.5,
+  maxPollSeconds: 60,
+  retries: 1,
+  retryWorkerDivisor: 2,
+  highLoadPerCore: 1.5,
 });
 
 export const ENV = Object.freeze({
@@ -44,6 +52,11 @@ export const ENV = Object.freeze({
   targetUtilisation: "VIBE_HEAVY_TARGET",
   minWorkers: "VIBE_HEAVY_MIN_WORKERS",
   leaseDir: "VIBE_HEAVY_LEASE_DIR",
+  wait: "VIBE_HEAVY_WAIT",
+  maxWaitSeconds: "VIBE_HEAVY_MAX_WAIT_SECONDS",
+  retry: "VIBE_HEAVY_RETRY",
+  retries: "VIBE_HEAVY_RETRIES",
+  highLoadPerCore: "VIBE_HEAVY_HIGH_LOAD_PER_CORE",
 });
 
 const OFF_VALUES = new Set(["off", "0", "false", "no"]);
@@ -66,7 +79,15 @@ export function resolveSettings(env = process.env) {
     ...DEFAULTS,
     targetUtilisation: numberSetting(env, ENV.targetUtilisation, DEFAULTS.targetUtilisation, { min: 0.05, max: 1 }),
     minWorkers: Math.floor(numberSetting(env, ENV.minWorkers, DEFAULTS.minWorkers, { min: 1 })),
+    maxWaitSeconds: numberSetting(env, ENV.maxWaitSeconds, DEFAULTS.maxWaitSeconds, { min: 0 }),
+    retries: Math.floor(numberSetting(env, ENV.retries, DEFAULTS.retries, { min: 0, max: 3 })),
+    highLoadPerCore: numberSetting(env, ENV.highLoadPerCore, DEFAULTS.highLoadPerCore, { min: 0.1 }),
   });
+}
+
+/** Whether waiting for capacity (`VIBE_HEAVY_WAIT=off`) or the load-failure retry (`VIBE_HEAVY_RETRY=off`) is switched off. */
+export function featureDisabled(env, name) {
+  return OFF_VALUES.has(String(env[name] ?? "").trim().toLowerCase());
 }
 
 /** Whether the budget is switched off (`VIBE_HEAVY_BUDGET=off`). */
