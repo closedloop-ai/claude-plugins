@@ -34,6 +34,10 @@ export const REVIEW_SCOPE_SCHEMA = "vibe.review-scope/1";
 export const SEVERITIES = ["high", "medium", "low"];
 export const ReviewMode = { Consolidated: "consolidated", FullFleet: "full-fleet" };
 export const FINDINGS_NOT_CHECKED = "findings-not-checked";
+// The guardrails gate lists a check that evaluated only some files under `checks_skipped` with a
+// reason starting `partial:` and keeps its findings. Those findings are real evidence: they stay in
+// `findings.items` for whoever reviews next, even though the check counts as not checked.
+export const PARTIAL_REASON_PREFIX = "partial:";
 
 // The one place the escalation numbers live. NO human has specified them
 // (WS4 R1 names "diff size, backend change or shared-component change" and no
@@ -80,6 +84,12 @@ export function validateFindings(value, { head } = {}) {
   return skipped.length > 0
     ? { ...result, status: "not-checked", reason: `checks skipped: ${skipped.map((entry) => entry.name).join(", ")}` }
     : result;
+}
+
+/** Findings under a check the gate only partly evaluated; never discarded when the file otherwise falls back to the full review. */
+export function partialFindings(checked) {
+  const partial = new Set(checked.checksSkipped.filter((entry) => entry.reason.startsWith(PARTIAL_REASON_PREFIX)).map((entry) => entry.name));
+  return checked.findings.filter((finding) => partial.has(finding.check));
 }
 
 function validFinding(finding) {
@@ -151,6 +161,7 @@ function main(argv) {
   const decision = decideReview({ enabled, thresholds, diff, findings });
   process.stdout.write(`${JSON.stringify({ schema: REVIEW_SCOPE_SCHEMA, ...decision, thresholds, diff, findings: {
     status: findings.status, reason: findings.reason, count: findings.findings.length, checksRun: findings.checksRun, checksSkipped: findings.checksSkipped,
+    partial: partialFindings(findings), items: findings.findings,
   } }, null, 2)}\n`);
   return 0;
 }

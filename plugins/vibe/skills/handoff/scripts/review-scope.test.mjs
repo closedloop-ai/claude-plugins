@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { decideReview, FINDINGS_SCHEMA, loadFindings, REVIEW_SCOPE_DEFAULTS, resolveThresholds, ReviewMode, validateFindings } from "./review-scope.mjs";
+import { decideReview, FINDINGS_SCHEMA, loadFindings, partialFindings, REVIEW_SCOPE_DEFAULTS, resolveThresholds, ReviewMode, validateFindings } from "./review-scope.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(DIR, "review-scope.mjs");
@@ -130,4 +130,24 @@ test("the CLI consolidates a small non-shared diff over findings for HEAD, and a
   const disabled = run([...args, "--inventory", inventory]);
   assert.deepEqual(disabled.json.reasons, ["consolidated-review-disabled"]);
   assert.equal(run([]).code, 2);
+});
+
+test("a partial: skip is not checked, escalates, and keeps its findings for the full review", (t) => {
+  const partialFile = path.join(DIR, "fixtures", "guardrails-findings.partial.json");
+  const checked = loadFindings(partialFile);
+  assert.equal(checked.status, "not-checked");
+  assert.match(checked.reason, /checks skipped: tokens, copy-provenance/);
+  assert.equal(checked.findings.length, 2, "no finding is dropped");
+  assert.deepEqual(partialFindings(checked).map((finding) => finding.check), ["tokens"]);
+  const decision = decideReview({ enabled: true, thresholds: REVIEW_SCOPE_DEFAULTS, diff: small, findings: checked });
+  assert.equal(decision.mode, ReviewMode.FullFleet);
+  const { dir, side, base, head } = repo(t);
+  const findings = path.join(side, "findings.json");
+  writeFileSync(findings, JSON.stringify({ ...JSON.parse(readFileSync(partialFile, "utf8")), head, base }));
+  const inventory = path.join(side, "inventory.json");
+  writeFileSync(inventory, JSON.stringify({ backendChanged: false }));
+  const out = run(["--worktree", dir, "--base", base, "--findings", findings, "--inventory", inventory, "--enable"]).json;
+  assert.equal(out.mode, ReviewMode.FullFleet);
+  assert.equal(out.findings.items.length, 2);
+  assert.deepEqual(out.findings.partial.map((finding) => finding.check), ["tokens"]);
 });

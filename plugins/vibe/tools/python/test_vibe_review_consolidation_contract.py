@@ -94,7 +94,7 @@ def test_consolidated_reviewer_reads_the_two_reviewers_checklists_instead_of_cop
 
 
 ADVERSARIAL = ROOT / "agents" / "vibe-adversarial-reviewer.md"
-ADVERSARIAL_BASELINE_BYTES = 9884  # vibe 1.1.16 on main, before ISS-13353
+ADVERSARIAL_BASELINE_BYTES = 10638  # vibe 1.1.26 on main (773eea0), before ISS-13353; 9884 on 1.1.16
 # One distinctive phrase per genuinely adversarial attack that must survive the trim.
 RETAINED_ATTACKS = {
     "shared components": "every consumer",
@@ -141,7 +141,7 @@ def test_adversarial_reviewer_is_fed_the_consumer_pack_and_gate_table_from_the_i
 
 
 def test_adversarial_prompt_does_not_grow_past_its_pre_trim_size() -> None:
-    # Measured 9832 bytes against 9884 before (-0.5%): the plan's ~30% is not reachable without
+    # Measured against main 1.1.26 (10638 bytes) after the merge; the plan's ~30% is not reachable without
     # dropping wording that ten existing contract tests pin, so this only stops regrowth.
     assert len(read(ADVERSARIAL).encode()) <= ADVERSARIAL_BASELINE_BYTES
 
@@ -175,7 +175,7 @@ def test_fleet_review_chain_removal_is_off_by_default_and_keeps_the_existing_cha
     assert "`FLEET_REVIEW_HANDOFF_ONLY=1`" in skill
     assert "Off by default and an open owner decision" in skill
     # the full chain sentence and its first step are untouched
-    assert "independent review → writer fixes → verification of the fixes" in skill
+    assert "independent review, fixes, verification" in skill
     assert "keeps the full chain above" in skill
 
 
@@ -192,3 +192,18 @@ def test_review_chain_replaces_the_chain_only_for_the_head_the_handoff_review_co
     assert mode("--pr-head", head, "--handoff-reviewed-head", head) == "verify-fixes-only"
     assert mode("--pr-head", head, "--handoff-reviewed-head", "b" * 40) == "full-chain"
     assert mode("--pr-head", head) == "full-chain"
+
+
+@needs_node
+def test_partial_skip_fixture_is_not_checked_but_keeps_every_finding(tmp_path: Path) -> None:
+    partial = SCRIPTS / "fixtures" / "guardrails-findings.partial.json"
+    doc = json.loads(read(partial))
+    assert any(entry["reason"].startswith("partial:") for entry in doc["checks_skipped"])
+    probe = tmp_path / "probe.mjs"
+    probe.write_text(
+        f'import {{ loadFindings, partialFindings }} from "{(SCRIPTS / "review-scope.mjs").as_uri()}";\n'
+        f'const checked = loadFindings("{partial}");\n'
+        "console.log(JSON.stringify([checked.status, checked.findings.length, partialFindings(checked).map((f) => f.check)]));\n"
+    )
+    result = subprocess.run(["node", str(probe)], capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == ["not-checked", len(doc["findings"]), ["tokens"]]
