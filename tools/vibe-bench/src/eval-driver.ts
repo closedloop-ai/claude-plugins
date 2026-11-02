@@ -175,13 +175,17 @@ export function codexEvalBudgetSeconds(caseCount: number): number {
  *
  * Claude Code accepts only one case glob and does not expand brace unions, so
  * a copied suite is the only exact multi-case selection that also preserves
- * each case's relative sibling-plugin paths.
+ * each case's relative sibling-plugin paths and shared fixture directory.
  */
 export function stageFocusedClaudeEvalCases(vibeDir: string, selectedCases: string[]): string {
   if (selectedCases.length === 0) return "vibe/evals";
   const focused = join(vibeDir, "evals-focused");
   if (existsSync(focused)) throw new Error("eval-focused-suite-exists");
   mkdirSync(focused);
+  const shared = join(vibeDir, "evals", "shared");
+  if (existsSync(shared)) {
+    cpSync(shared, join(focused, "shared"), { recursive: true, errorOnExist: true, force: false });
+  }
   for (const id of [...selectedCases].sort()) {
     const source = join(vibeDir, "evals", id);
     if (!existsSync(join(source, "prompt.md"))) throw new Error("eval-focused-case-missing");
@@ -265,7 +269,7 @@ export async function runLocalEvals(options: LocalEvalOptions,
     "--output-dir", claudeOutput, "--ablation", "none", "--model", EVAL_POLICY.claudeModel,
     "--judge-model", EVAL_POLICY.claudeJudgeModel,
     "--runs", "1", "--threshold", "1", "--concurrency", String(concurrency), "--scaffold",
-    "--trust-plugin", "--no-publish"];
+    "--allow-tools", "Bash", "--trust-plugin", "--no-publish"];
   // The native runner documents these isolated Python dependencies. Provision
   // them through uv instead of relying on the developer's system Python.
   const codexArgs = ["run", "--with", "Pillow==12.3.0", "--with", "PyYAML", "python",

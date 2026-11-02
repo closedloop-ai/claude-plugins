@@ -880,7 +880,7 @@ test("Codex eval budget scales with the full corpus", () => {
   assert.equal(codexEvalBudgetSeconds(105), 9450);
 });
 
-test("focused Claude evals stage only the selected cases under the plugin root", () => {
+test("focused Claude evals stage selected cases with their shared fixtures", () => {
   const root = mkdtempSync(join(tmpdir(), "vibe-eval-focused-"));
   try {
     const vibeDir = join(root, "plugins/vibe");
@@ -889,9 +889,17 @@ test("focused Claude evals stage only the selected cases under the plugin root",
       mkdirSync(caseDir, { recursive: true });
       writeFileSync(join(caseDir, "prompt.md"), "fixture\n");
     }
+    const shared = join(vibeDir, "evals/shared");
+    mkdirSync(shared, { recursive: true });
+    writeFileSync(join(shared, "stand-in-repo.sh"), "#!/bin/bash\n");
+    writeFileSync(join(vibeDir, "evals/case-a/scaffold.sh"),
+      'source "$HERE/../shared/stand-in-repo.sh"\n');
     assert.equal(stageFocusedClaudeEvalCases(vibeDir, ["case-b", "case-a"]),
       "vibe/evals-focused");
-    assert.deepEqual(readdirSync(join(vibeDir, "evals-focused")).sort(), ["case-a", "case-b"]);
+    assert.deepEqual(readdirSync(join(vibeDir, "evals-focused")).sort(),
+      ["case-a", "case-b", "shared"]);
+    assert.equal(existsSync(join(vibeDir,
+      "evals-focused/case-a/../shared/stand-in-repo.sh")), true);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -1241,6 +1249,7 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
     assert.equal(claudeCall.args[2].endsWith("/plugin-snapshot/plugins"), true);
     assert.equal(claudeCall.args[2], realpathSync(claudeCall.args[2]));
     assert.equal(claudeCall.args[claudeCall.args.indexOf("--eval-dir") + 1], "vibe/evals-focused");
+    assert.equal(claudeCall.args[claudeCall.args.indexOf("--allow-tools") + 1], "Bash");
     assert.equal(claudeCall.args.includes("--case"), false);
     const codexCall = modelCalls.find((call) => call.command.includes("uv"))!;
     assert.deepEqual(codexCall.args.slice(0, 6),
