@@ -69,6 +69,18 @@ with granted context on stdin before canonical readiness checks. No raw
 canonical push bypasses the executable gate. An exact already-published
 result at handoff is a true no-op, not a synthetic new deployment.
 
+When `../skills/vibe/scripts/prototype-share.mjs` exists, run
+`node ../skills/vibe/scripts/prototype-share.mjs --worktree "<wt>"` (the granted
+main-sync context on stdin) for the plan check, the share admission, the push,
+the wait for the exact SHA's `prototypes` deployment and the recording below: it
+wraps `local-plans.mjs` and `vibe-sessions.mjs` (`main-sync-share`,
+`main-sync-push`, `prototype-result`), reads GitHub deployments read-only, takes
+only the deployment's own `environment_url` with `/p/<slug>` and stops on a
+failed or expired deployment. `DONE` carries the URL, full SHA and slug; any
+other status is the evidence to return. The ticket refresh and every
+statement for the person stay yours. Without the script, follow the
+paragraphs below unchanged.
+
 Follow only the canonical share-on-Vercel procedure on this exact branch and
 current commit. It owns exact-SHA readiness polling, failure handling and
 immutable URL selection. If it requires generation, registry or metadata edits,

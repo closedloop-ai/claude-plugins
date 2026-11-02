@@ -360,5 +360,5 @@ share. Runtime helpers and tests live alongside their owning skills, or under
 validation, vibe session and prototype records, the triage classifier and its manifest (recommendations off by default), local-plan publication guards, bundled
 persistent writer state, Claude launch/resume and shared main-sync publication
 helpers, handoff checks, sweep ownership and worker recovery, and the
-work-report renderer. Shared PR-monitor notification delivery and manual-QA
+work-report renderer, and the WS3 control scripts (`setup-ctl`, `env-ctl`, `graph-pack`, `guardrails-gate`, `verify-run`, `req-gather`, `prototype-share`, `ticket-ctl` and the handoff inventory's `bundle`) that run a worker's mechanical steps with no model, each optional for the worker that uses it. Shared PR-monitor notification delivery and manual-QA
 browser helpers live in `closedloop-core`.
