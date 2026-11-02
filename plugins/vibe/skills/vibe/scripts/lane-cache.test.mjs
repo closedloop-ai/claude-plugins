@@ -55,64 +55,60 @@ function session(t) {
   writeFileSync(path.join(worktree, "b.txt"), "change\n");
   git(worktree, ["add", "b.txt"], home);
   git(worktree, ["commit", "--quiet", "-m", "change"], home);
-  const report = path.join(root, "lanes.txt");
-  writeFileSync(report, "    pnpm test:lane\n");
+  // Two reports naming the same lane with different detail text: main's own selection (the report's laneKey) differs, the cache key does not.
+  const reportA = path.join(root, "lanes-a.txt");
+  const reportB = path.join(root, "lanes-b.txt");
+  writeFileSync(reportA, "    pnpm test:lane (1 changed path(s))\n");
+  writeFileSync(reportB, "    pnpm test:lane (2 changed path(s))\n");
   const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, HOME: home } });
   const head = () => git(worktree, ["rev-parse", "HEAD"], home).trim();
   const records = () => JSON.parse(readFileSync(path.join(worktree, ".git", "vibe-lane-results.json"), "utf8"));
-  const check = (...extra) => run("check", "--worktree", worktree, "--report", report, "--base", base, ...extra);
-  const fresh = (...extra) => run("record", "--worktree", worktree, "--head", head(), "--command", "pnpm test:lane", "--result", "pass", "--base", base, ...extra);
-  return { worktree, home, base, run, head, records, check, fresh };
+  const check = (report, ...extra) => run("check", "--worktree", worktree, "--report", report, "--base", base, ...extra);
+  const fresh = (...extra) => run("record", "--worktree", worktree, "--head", head(), "--command", "pnpm test:lane", "--result", "pass", "--report", reportA, "--base", base, ...extra);
+  return { worktree, home, base, run, head, records, check, fresh, reportA, reportB };
 }
 
-test("a same-tree head reuses a fresh pass only with --reuse-cache, recorded and printed as cached", (t) => {
+test("a fresh pass records its provenance and key, and --reuse-cache covers a lane main's own selection misses, recorded and printed as cached", (t) => {
   const s = session(t);
   const first = s.head();
   assert.equal(s.fresh().status, 0);
   assert.equal(s.records()[0].provenance, "fresh");
   assert.match(s.records()[0].cacheKey, /^[0-9a-f]{64}$/);
-  git(s.worktree, ["commit", "--quiet", "--allow-empty", "-m", "same tree, new commit"], s.home);
-  assert.notEqual(s.head(), first);
-  const plain = s.check();
-  assert.equal(plain.status, 1, "without the flag a new head needs the lane run again");
+  const plain = s.check(s.reportB);
+  assert.equal(plain.status, 1, "another report's selection has no pass");
   assert.match(plain.stdout, /^MISSING-LANE pnpm test:lane:/m);
-  const reused = s.check("--reuse-cache");
+  const reused = s.check(s.reportB, "--reuse-cache");
   assert.equal(reused.status, 0, reused.stdout + reused.stderr);
   assert.match(reused.stdout, new RegExp(`^CACHED-LANE pnpm test:lane \\(reused from ${first.slice(0, 12)}: .*not a fresh run\\)$`, "m"));
   assert.match(reused.stdout, /1 lanes, 0 missing, 1 cached/);
-  const stored = s.records().find((record) => record.head === s.head());
-  assert.equal(stored.result, "cached");
+  const stored = s.records().find((record) => record.result === "cached");
   assert.equal(stored.provenance, "cached");
   assert.equal(stored.reusedFrom.head, first);
-  assert.equal(s.check().status, 1, "a cached record is not a pass for a check that did not opt in");
+  assert.equal(s.check(s.reportB).status, 1, "a cached record is not a pass for a check that did not opt in");
 });
 
 test("a changed tree, base, config or scope invalidates the cached result", (t) => {
   const s = session(t);
   assert.equal(s.fresh("--config", "node 24").status, 0);
-  const cached = (...extra) => s.check("--reuse-cache", "--config", "node 24", ...extra);
-  git(s.worktree, ["commit", "--quiet", "--allow-empty", "-m", "same tree"], s.home);
+  const cached = (...extra) => s.check(s.reportB, "--reuse-cache", "--config", "node 24", ...extra);
   assert.equal(cached().status, 0);
-  assert.equal(s.check("--reuse-cache", "--config", "node 22").status, 1, "config changed");
-  assert.equal(s.check("--reuse-cache").status, 1, "config dropped");
+  assert.equal(s.check(s.reportB, "--reuse-cache", "--config", "node 22").status, 1, "config changed");
+  assert.equal(s.check(s.reportB, "--reuse-cache").status, 1, "config dropped");
   const otherBase = git(s.worktree, ["rev-parse", "HEAD"], s.home).trim();
   assert.equal(cached("--base", otherBase).status, 1, "base changed");
   writeFileSync(path.join(s.worktree, "b.txt"), "edited\n");
   git(s.worktree, ["commit", "--quiet", "-am", "content change"], s.home);
   assert.equal(cached().status, 1, "tree and scope changed");
-  assert.equal(existsSync(path.join(s.worktree, ".git", "vibe-lane-results.json")), true);
 });
 
 test("a failed run or a run with no resolvable base is never reused", (t) => {
   const s = session(t);
-  assert.equal(s.run("record", "--worktree", s.worktree, "--head", s.head(), "--command", "pnpm test:lane", "--result", "fail", "--base", s.base).status, 1);
-  git(s.worktree, ["commit", "--quiet", "--allow-empty", "-m", "same tree"], s.home);
-  assert.equal(s.check("--reuse-cache").status, 1);
-  const noBase = s.run("record", "--worktree", s.worktree, "--head", s.head(), "--command", "pnpm test:lane", "--result", "pass");
+  assert.equal(s.run("record", "--worktree", s.worktree, "--head", s.head(), "--command", "pnpm test:lane", "--result", "fail", "--report", s.reportA, "--base", s.base).status, 1);
+  assert.equal(s.check(s.reportB, "--reuse-cache").status, 1);
+  const noBase = s.run("record", "--worktree", s.worktree, "--head", s.head(), "--command", "pnpm test:lane", "--result", "pass", "--report", s.reportA);
   assert.equal(noBase.status, 0);
   assert.equal(s.records().at(-1).cacheKey, undefined, "no origin/main and no --base: no key is stored");
-  git(s.worktree, ["commit", "--quiet", "--allow-empty", "-m", "again"], s.home);
-  assert.equal(s.check("--reuse-cache").status, 1);
+  assert.equal(s.check(s.reportB, "--reuse-cache").status, 1);
 });
 
 test("scopeHash is stable for the same changes and differs when a changed blob differs", (t) => {
