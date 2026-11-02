@@ -34,7 +34,7 @@ function harness({ extra = [], files = { "package.json": PACKAGE, "apps/app/a.ts
     ["run-bounded.mjs 600 pnpm check:source-gates", ok()],
     ["run-bounded.mjs 900 pnpm typecheck:affected", ok()],
     ["run-bounded.mjs 300 pnpm test:lanes", ok(REPORT)],
-    ["pre-pr-lanes.mjs check", ok(`MISSING-LANE ${LANE}: run it, with pre-pr-lanes.mjs run --head <HEAD> --command "${LANE}"\n`)],
+    ["pre-pr-lanes.mjs check", ok(`MISSING-LANE ${LANE}: run it with pre-pr-lanes.mjs run --head <HEAD> --command "${LANE}"\n`)],
     ["pre-pr-lanes.mjs run", ok("recorded pass")],
   ];
   const controller = createVerifyRun({
@@ -158,6 +158,15 @@ test("lanes: a lane this machine cannot run is not-run with its reason, a main f
   assert.equal(evidence.ok, false);
 });
 
+test("a lane run names the lane report it was selected from, as pre-pr-lanes.mjs run now requires, and the old comma form still parses", () => {
+  const files = { "/wt/package.json": PACKAGE, "/wt/apps/app/a.tsx": "x" };
+  const calls = [];
+  harness({ files, calls }).controller.verify({ worktree: "/wt", head: HEAD, useCache: false });
+  const laneRun = calls.find((call) => call.line.includes("pre-pr-lanes.mjs run")).line;
+  assert.match(laneRun, /--report \/gd\/vibe-verify-lane-report\.txt/);
+  assert.deepEqual(parseLaneCheck("MISSING-LANE pnpm a: run it, with pre-pr-lanes.mjs run").missing, ["pnpm a"]);
+});
+
 test("a failing lane run is failed and the lane report that does not run or read is blocked", () => {
   const files = { "/wt/package.json": PACKAGE, "/wt/apps/app/a.tsx": "x" };
   const failing = harness({ files, extra: [["pre-pr-lanes.mjs run", fail("lane red")]] }).controller.verify({ worktree: "/wt", head: HEAD, useCache: false });
@@ -202,7 +211,7 @@ test("summary counts every status separately and ok needs a required check", () 
 
 test("the lane check output is read back into missing, not-run, main-preexisting and skipped", () => {
   const parsed = parseLaneCheck([
-    "MISSING-LANE pnpm a: run it, with pre-pr-lanes.mjs run --head <HEAD> --command \"pnpm a\"",
+    "MISSING-LANE pnpm a: run it with pre-pr-lanes.mjs run --head <HEAD> --command \"pnpm a\"",
     "NOT-RUN-LANE pnpm b (reason b)",
     "MAIN-PREEXISTING-LANE pnpm c (fails on captured main x too)",
     "SKIPPED-LANE pnpm d (ruling)",

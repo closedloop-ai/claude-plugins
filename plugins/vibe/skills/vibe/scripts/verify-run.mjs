@@ -69,7 +69,7 @@ const required = (name, command, status, extra = {}) => ({ name, command, status
 export function parseLaneCheck(output) {
   const grab = (prefix, pattern) => output.split("\n").filter((line) => line.startsWith(prefix)).map((line) => pattern.exec(line)).filter(Boolean);
   return {
-    missing: grab("MISSING-LANE ", /^MISSING-LANE (.*?): run it, with/).map((match) => match[1]),
+    missing: grab("MISSING-LANE ", /^MISSING-LANE (.*?): run it,? with/).map((match) => match[1]),
     notRun: grab("NOT-RUN-LANE ", /^NOT-RUN-LANE (.*) \((.*)\)$/).map((match) => ({ lane: match[1], reason: match[2] })),
     mainPreexisting: grab("MAIN-PREEXISTING-LANE ", /^MAIN-PREEXISTING-LANE (.*?) \(/).map((match) => match[1]),
     skipped: grab("SKIPPED-LANE ", /^SKIPPED-LANE (.*) \((.*)\)$/).map((match) => ({ lane: match[1], reason: match[2] })),
@@ -188,7 +188,7 @@ export function createVerifyRun({
       if (!checked.missing.includes(lane)) return required(name, lane, Status.Cached, { reason: "a passing record at this head exists from an earlier run" });
       const key = `${head}\u0000${lane}`;
       if (useCache && cache[key]) return required(name, lane, Status.Cached, { cachedFrom: { head: cache[key].head, ranAt: cache[key].at } });
-      const result = bounded(TIME_LIMITS.lane, process.execPath, [PRE_PR_LANES, "run", "--worktree", worktree, "--head", head, "--command", lane], worktree);
+      const result = bounded(TIME_LIMITS.lane, process.execPath, [PRE_PR_LANES, "run", "--worktree", worktree, "--head", head, "--command", lane, "--report", reportFile], worktree);
       const done = outcome(result, TIME_LIMITS.lane);
       if (done.status === Status.Passed) cache[key] = { head, at: new Date(now()).toISOString() };
       return required(name, lane, done.status, { exitCode: result.status, durationMs: result.durationMs, ...(done.reason ? { reason: done.reason } : {}), ...(done.evidenceTail ? { evidenceTail: done.evidenceTail } : {}) });
