@@ -38,6 +38,12 @@
 // back in lane-report order whatever finished first. `scheduling` in the evidence is additive.
 // VIBE_VERIFY_POOL=serial (or VIBE_HEAVY_BUDGET=off) restores the previous strictly serial path.
 //
+// Background (ISS-13586, verify-background.mjs): `--background` starts the same run detached and prints a
+// run id at once; `--status <id>` and `--wait <id>` (both need --worktree) read its record under
+// `<gitdir>/vibe-verify-runs/`. A run whose process is gone without a result is `orphaned`, a run
+// whose result is for another head than the worktree's (or `--head`) is `head-moved`; only `passed`
+// exits 0 (failed 1, unknown 2, orphaned 3, running 4, head-moved 5). Without these flags nothing changes.
+//
 // Exits 0 only when `ok`. Prints the evidence; with --out writes it too (by
 // default `<gitdir>/vibe-verify-evidence.json`).
 
@@ -49,6 +55,7 @@ import { RESULT_PREFIX } from "./run-bounded.mjs";
 import { reportLanes } from "./pre-pr-lanes.mjs";
 import { budgetDisabled, createBudget, resolveSettings } from "./heavy-budget.mjs";
 import { classifyLane, LaneKind, poolSizeFor, runScheduled } from "./lane-pool.mjs";
+import { readRun, RunExit, startBackground, waitForRun, writeRecord } from "./verify-background.mjs";
 import { execCommand, execCommandAsync, parseJson, tailLines, toolDidNotRun } from "./ws3-exec.mjs";
 
 export const SCHEMA = "vibe.verify-evidence/1";
@@ -136,6 +143,7 @@ export function createVerifyRun({
   runAsync = execCommandAsync,
   budget = null,
   env = process.env,
+  onProgress = () => {},
 } = {}) {
   /** One bounded command through run-bounded.mjs: its exit code, a time out as 124, and the output tail on failure. */
   function bounded(seconds, command, args, cwd) {
@@ -247,7 +255,9 @@ export function createVerifyRun({
     return plan.entries.map((entry) => {
       if (entry.record) return entry.record;
       const [command, args] = laneCommand(entry, { locked: false });
-      return laneRecord(entry, bounded(TIME_LIMITS.lane, command, args, entry.worktree), context.cache);
+      const record = laneRecord(entry, bounded(TIME_LIMITS.lane, command, args, entry.worktree), context.cache);
+      onProgress({ stage: "lane", name: entry.name, status: record.status });
+      return record;
     });
   }
 
@@ -264,7 +274,10 @@ export function createVerifyRun({
       size,
       run: ({ entry }) => {
         const [command, args] = laneCommand(entry, { locked: true });
-        return boundedAsync(TIME_LIMITS.lane, command, args, entry.worktree);
+        return boundedAsync(TIME_LIMITS.lane, command, args, entry.worktree).then((result) => {
+          onProgress({ stage: "lane", name: entry.name, exitCode: result.status });
+          return result;
+        });
       },
     });
     const byEntry = new Map(toRun.map((entry, index) => [entry, results[index]]));
@@ -325,6 +338,7 @@ export function createVerifyRun({
       repoCheck({ name: "source-gates", scriptName: "check:source-gates", command: "pnpm", args: ["check:source-gates"], seconds: TIME_LIMITS.sourceGates, ...common }),
       repoCheck({ name: "typecheck", scriptName: "typecheck:affected", command: "pnpm", args: ["typecheck:affected"], seconds: TIME_LIMITS.typecheck, ...common }),
     );
+    onProgress({ stage: "checks", names: evidence.checks.map((check) => `${check.name}: ${check.status}`) });
     return { evidence, common, state, cache, cacheFile, useCache };
   }
 
@@ -371,22 +385,69 @@ export function strictlySerial(env = process.env) {
   return String(env.VIBE_VERIFY_POOL ?? "").trim().toLowerCase() === "serial" || budgetDisabled(env);
 }
 
+const OPTIONS = {
+  worktree: { type: "string" }, head: { type: "string" }, base: { type: "string" }, "tests-file": { type: "string" },
+  out: { type: "string" }, "no-cache": { type: "boolean", default: false }, "no-lanes": { type: "boolean", default: false },
+  background: { type: "boolean", default: false }, status: { type: "string" }, wait: { type: "string" }, "wait-seconds": { type: "string" }, "run-id": { type: "string" },
+};
+
+function gitDirOf(worktree) {
+  return execCommand("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"]).stdout.trim();
+}
+
+/** `--status <id>` and `--wait <id>`: print the run's state and exit 0 only for a pass. */
+async function joinRun(values) {
+  const gitDir = gitDirOf(values.worktree);
+  const id = values.status ?? values.wait;
+  const read = () => readRun({ gitDir, id, currentHead: execCommand("git", ["-C", values.worktree, "rev-parse", "HEAD"]).stdout.trim(), expectedHead: values.head });
+  const run = values.wait ? await waitForRun({ read, waitSeconds: Number(values["wait-seconds"] ?? 7200) }) : read();
+  process.stdout.write(`${JSON.stringify(run, null, 2)}\n`);
+  return RunExit[run.state] ?? 1;
+}
+
+function startRun(values) {
+  const passArgs = [];
+  for (const name of ["base", "tests-file"]) if (values[name]) passArgs.push(`--${name}`, values[name]);
+  for (const name of ["no-cache", "no-lanes"]) if (values[name]) passArgs.push(`--${name}`);
+  const started = startBackground({ gitDir: gitDirOf(values.worktree), worktree: values.worktree, head: values.head, scriptPath: fileURLToPath(import.meta.url), passArgs });
+  process.stdout.write(`${JSON.stringify(started, null, 2)}\n`);
+  return 0;
+}
+
 async function main(argv) {
-  const { values } = parseArgs({ args: argv, options: {
-    worktree: { type: "string" }, head: { type: "string" }, base: { type: "string" }, "tests-file": { type: "string" },
-    out: { type: "string" }, "no-cache": { type: "boolean", default: false }, "no-lanes": { type: "boolean", default: false },
-  } });
+  const { values } = parseArgs({ args: argv, options: OPTIONS });
+  if (values.status || values.wait) {
+    if (!values.worktree) throw new Error("--worktree is required with --status and --wait.");
+    return joinRun(values);
+  }
   if (!values.worktree || !values.head) throw new Error("--worktree and --head are required.");
-  const controller = createVerifyRun();
+  if (values.background) return startRun(values);
+  const gitDir = gitDirOf(values.worktree);
+  const runId = values["run-id"];
+  const progress = [];
+  const record = (patch) => { if (runId) writeRecord(gitDir, runId, patch); };
+  const controller = createVerifyRun({
+    onProgress: (event) => {
+      progress.push({ ...event, at: new Date().toISOString() });
+      record({ progress, heartbeatAt: new Date().toISOString() });
+    },
+  });
   const options = {
     worktree: values.worktree, head: values.head, base: values.base, testsFile: values["tests-file"],
     useCache: !values["no-cache"], runLanes: !values["no-lanes"],
   };
-  const evidence = strictlySerial() ? controller.verify(options) : await controller.verifyPooled(options);
-  const gitDir = execCommand("git", ["-C", values.worktree, "rev-parse", "--absolute-git-dir"]).stdout.trim();
+  record({ state: "running", pid: process.pid });
+  let evidence;
+  try {
+    evidence = strictlySerial() ? controller.verify(options) : await controller.verifyPooled(options);
+  } catch (error) {
+    record({ state: "error", error: error instanceof Error ? error.message : String(error), finishedAt: new Date().toISOString() });
+    throw error;
+  }
   const out = values.out ?? path.join(gitDir, "vibe-verify-evidence.json");
   mkdirSync(path.dirname(out), { recursive: true });
   writeFileSync(out, `${JSON.stringify(evidence, null, 2)}\n`);
+  record({ state: "finished", ok: evidence.ok, summary: evidence.summary, evidenceHead: evidence.head, evidenceFile: out, finishedAt: new Date().toISOString() });
   process.stdout.write(`${JSON.stringify({ ...evidence, evidenceFile: out }, null, 2)}\n`);
   return evidence.ok ? 0 : 1;
 }

@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-// Cross-run worker budget (PRD-823, WS6 load-aware execution, W1, ISS-13584; this is
-// not the optimization plan's prompt-diet "WS6"). Every vitest or turbo run sizes
+// Cross-run worker budget (PRD-823, WS8 load-aware execution, W1, ISS-13584). Every vitest or turbo run sizes
 // its workers to the core count without knowing about other runs, so concurrent runs
 // multiply each other. Before a heavy command starts, this counts what is already
 // running on the machine and leaves the command what is left of
@@ -172,7 +171,7 @@ export function createBudget({
   pid = process.pid,
   processes = scanProcesses,
   isAlive = (candidate) => { try { process.kill(candidate, 0); return true; } catch (error) { return error?.code === "EPERM"; } },
-  leaseDir = env[ENV.leaseDir] || path.join(os.tmpdir(), "vibe-heavy-budget"),
+  leaseDir = env[ENV.leaseDir] || path.join(os.homedir(), ".codex", "vibe", "locks", "heavy-budget"),
   fs = { mkdir: (dir) => mkdirSync(dir, { recursive: true }), list: (dir) => (existsSync(dir) ? readdirSync(dir) : []), read: (file) => readFileSync(file, "utf8"), write: (file, text) => writeFileSync(file, text), remove: (file) => { try { unlinkSync(file); } catch { /* already gone */ } } },
 } = {}) {
   const settings = resolveSettings(env);

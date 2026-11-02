@@ -4,6 +4,19 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.29
+
+Load-aware execution for vibe's CPU-heavy checks (PRD-823, "WS8 load-aware execution" in the optimization plan, ISS-13584 to ISS-13587). Stacked on WS3 (1.1.27); WS4 is 1.1.28. Every new default is in `DEFAULTS` in `heavy-budget.mjs` and has an environment override and a switch that restores the previous behavior.
+
+#### Added
+- `heavy-budget.mjs` (ISS-13584): before a heavy command runs through `run-bounded.mjs`, counts the leases of other heavy runs (one machine-wide directory, stale pids removed) and the vitest, turbo, playwright and jest processes that hold no lease (by CPU share), gives the command what is left of cores times target utilisation as `TURBO_TEST_CONCURRENCY` and `VITEST_MAX_WORKERS` (never above what the caller set) and holds a lease for its lifetime. `VIBE_HEAVY_BUDGET=off` restores the old behavior.
+- `load-admission.mjs` (ISS-13585): waits with backoff when the budget is below the minimum and proceeds at the minimum after the maximum wait; retries a failure with a load signature (exit 137, out of memory, a timeout or dropped connection under load) once at half the workers. A failing assertion or a failure with no signature is final. `run-bounded.mjs` prints `run-bounded-result: {json}` and `verify-run.mjs` keeps it as `load` on the check. `VIBE_HEAVY_WAIT=off`, `VIBE_HEAVY_RETRY=off`.
+- `lane-pool.mjs` (ISS-13587): `verify-run.mjs` runs poolable lanes (a named list of pure script-suite lanes) at once, up to a size taken from the budget (2 by default); every other lane, any lane not on the list and every e2e lane (under `e2e-lock.mjs`) stays serial. Records keep lane-report order and the evidence contract; `scheduling` is added. `VIBE_VERIFY_POOL=serial` restores the strictly serial path.
+- `verify-background.mjs` (ISS-13586): `verify-run.mjs --background` returns a run id at once; `--status <id>` and `--wait <id>` read the run record, and only `passed` at the head under review exits 0 (`orphaned` and `head-moved` never do). The handoff skill starts the run before the reviews and joins it before Final Alignment, PLN approval and ready.
+
+#### Changed
+- `run-bounded.mjs` returns through `runBudgeted`; a non-heavy command is untouched. `ws3-exec.mjs` gains `execCommandAsync`. `test_vibe_ws8_load_contract.py` pins the contracts above. The README's runtime line says 1.1.29. Hand-edited in this file's format.
+
 ### vibe v1.1.27
 
 Deterministic scripts for the mechanical steps of the vibe workers (PRD-823, WS3, ISS-13343 to ISS-13351). Each script wraps the scripts and the target repository's gates that already exist, is optional for the worker that uses it (every worker prompt keeps its manual steps and says so), and reports a skipped, absent, cached or not-run step as exactly that, never as a pass. No measured time or token saving is claimed: the plan's percentages are byte-share estimates of prompt text.

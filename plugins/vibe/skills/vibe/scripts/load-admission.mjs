@@ -1,4 +1,4 @@
-// Wait instead of fail (PRD-823, WS6 load-aware execution, W2, ISS-13585).
+// Wait instead of fail (PRD-823, WS8 load-aware execution, W2, ISS-13585).
 //
 // 1. Admission: when heavy-budget.mjs says the machine has fewer than `minWorkers`
 //    cores to spare, a heavy run waits (polling with backoff, never a busy loop) up to
