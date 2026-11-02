@@ -16,6 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultHome, resumeLines } from "../skills/fleet-orchestrator/scripts/fleet-home.mjs";
 import { loadsSkill, readTranscript } from "./skill-transcript.mjs";
+import { readHookSkill } from "./hook-session-scope.mjs";
 
 const FLEET_HOME_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "skills", "fleet-orchestrator", "scripts", "fleet-home.mjs");
 const ENTRY_HEADING = /^## /m;
@@ -23,7 +24,8 @@ const MAX_ENTRY_CHARS = 3000;
 
 /** The SessionStart result after a compaction in an orchestrator session: its reading list as context, or null. */
 export function fleetResume(event, env = process.env) {
-  if (event?.source !== "compact" || !loadsSkill(readTranscript(event.transcript_path), "fleet-orchestrator")) return null;
+  if (event?.source !== "compact" || !(loadsSkill(readTranscript(event.transcript_path), "fleet-orchestrator")
+    || readHookSkill(event?.session_id, env.HOME) === "fleet-orchestrator")) return null;
   const home = defaultHome(env);
   if (!existsSync(path.join(home, "programs"))) return null;
   const lines = resumeLines(home);

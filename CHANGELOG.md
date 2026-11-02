@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.18
+### vibe v1.1.28
 
 Review consolidation, a lane-evidence cache and a trimmed adversarial reviewer (PRD-823, ISS-13352, ISS-13353, ISS-13354, ISS-13355). Every new path is off by default; today's reviewers and fleet review chain run unchanged.
 
@@ -16,6 +16,124 @@ Review consolidation, a lane-evidence cache and a trimmed adversarial reviewer (
 #### Changed
 - `vibe-adversarial-reviewer` (ISS-13353) points its test-edit rules at check 9 of the guardrails reviewer and starts its shared-component and gate attacks from the inventory's `diffRules.requiredTests` (consumer pack and gate table). The other eleven attacks are unchanged. Measured size 9884 to 9835 bytes (-0.5%); the plan's estimate of about 30% was not reached. Two existing contract assertions that pinned the removed wording now pin the pointer.
 - No strict result vocabulary was added (ISS-13341 not built).
+
+### vibe v1.1.26
+
+#### Added
+- Deterministic stateful eval cases exercise Claude and Codex vibe sessions before and after an installed plugin upgrade, including unchanged and changed writer definitions.
+
+#### Changed
+- Nightly eval selection discovers promptless stateful cases, merges them with native prompt-suite results, and preserves failure-only reruns in the existing hashed baseline.
+- Stateful Claude roots use the Claude CLI's default effort while persistent writers keep their released model and effort behavior. Reported Claude cost covers root processes only because writer subprocess cost is not exposed.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 44 words longer than in 1.1.25.
+
+#### Fixed
+- Final deterministic failures enter the existing nightly Slack publication path on their first failing night, including when no last-green baseline exists.
+- Stateful authentication, install, timeout, and sandbox infrastructure failures invalidate the runtime without paid failure retries or regression publication, then use the existing nightly infrastructure report.
+- Catchable termination removes only the stateful evaluator's exact Claude startup and hook-scope records while preserving unrelated records.
+
+### vibe v1.1.25
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 0 words longer than in 1.1.24.
+
+#### Fixed
+- A persistent Claude writer recorded under an older vibe release resumes through the installed launcher when both releases have the same agent definition, even while the older release remains on disk.
+- The writer status and documented migration command compare the installed definition with the recorded binding, so a changed installed definition is detected and can migrate while the older release remains on disk. An unmigrated Claude launch refuses before starting a worker and names that command.
+
+### vibe v1.1.24
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 168 words longer than in 1.1.23.
+
+#### Fixed
+- Headless Claude writers use a writer-only inline hook to edit the worktree's `.claude/skills/` and `.claude/commands/` files while refusing other protected targets and shell write workarounds. Unsupported Claude Code versions stop before writer registration with a clear internal setup route.
+- Generated worker bundles keep stable module labels across package-manager layouts, avoiding unrelated bundle changes during a rebuild.
+
+### vibe v1.1.23
+
+#### Added
+- Source-bound reviewer-premise, helper-final, handoff, and preview-capability receipts give Claude and Codex one evidence contract before pull-request publication.
+- Actor-bound skill freshness and installed-script preflight gates cover fleet wake, local and remote Codex turns, Claude workers and messages, helper briefs, and board deliveries.
+
+#### Changed
+- Guardrails, adversarial, Storybook, and verification results must cite verified premises and complete through their runtime-owned evidence path before handoff can accept them.
+- Storybook releases are prepared before the pull request so story checks pass, while one enqueue-time conflict settlement keeps concurrent version reservations from causing repeated main merges.
+- Instruction-weight accounting covers all plugin Markdown, including eval prompts and graders; it is about 2,530 words longer than in 1.1.22.
+- Fleet setup lists `jq` and `codex` on every host that runs `fleet.sh` sessions, and `helpers.mjs start` takes `--runtime claude|codex` for review helpers.
+
+#### Fixed
+- Fleet first-turn and resume handling, native reviewer capability evidence, helper completion, and pull-request creation now fail closed on missing, stale, forged, or incomplete session evidence.
+- Version questions and code citations use recorded startup state and real repository lines; preview readiness no longer turns missing capabilities into shell, console, or cloud-administration tasks for the person.
+- App Server review evidence reads bounded turn and item pages instead of full thread history, and stale loaded skill instructions cannot name scripts removed from the installed release.
+- Installed-script checks run only for writer launches and inside vibe or fleet conversations, and count a path only when it names a vibe skill, so a repository's own `skills/<name>/scripts/` files are not refused.
+- A `checked in code` citation is resolved in the cited file's own repository, so an orchestrator outside a repository can cite a writer worktree.
+- Loaded-skill evidence is enforced only where a hook has recorded the conversation; hook records read the runtime from the hook input, `$fleet-orchestrator` prompts record scope, and Codex prompts no longer mark the version check pending, so Codex sessions start before hooks are trusted.
+- A session-less `gh pr create` from a vibe or fleet conversation is refused only from a worktree on a `vibe/` branch or outside a repository; other worktrees' session records no longer decide. Spawn-time load evidence is labeled `installed-at-spawn`.
+- A fleet writer thread saved before 1.1.23, which has no load evidence, keeps taking turns and steers with its loaded skill unchecked and a log line saying so; its prompt's plugin script paths are still checked.
+
+### vibe v1.1.22
+
+#### Added
+- A local Claude Code start-to-PR benchmark runs six balanced vibe and fleet-orchestrator samples against one seeded web stack, records per-component attribution, closes its proof pull requests, and removes its proof refs.
+- The repo-local `vibe-bench` skill runs the on-demand benchmark and documents the scheduled dual-runtime nightly, while the read-only `vibe-pr-reviewer` agent checks pull requests against current vibe policy.
+- A private launchd contract runs change-day nightlies from a dedicated clean main checkout through the heavy slot and reports confirmed regressions to `#vibe` through the existing team Slack bot.
+
+#### Changed
+- The Codex eval runner accepts an explicit executable and source commit, records its CLI version and deterministic mode, and can skip only the paid wording grader while retaining every deterministic check and recording each skip.
+- Model-calling evals run only in the scheduled local nightly, once per case on both runtimes with failure-only retries. CI keeps deterministic T0 checks, and pull requests require no paid eval or benchmark evidence.
+- The shared behavior classifier skips nightlies for README, changelog, unreferenced docs, eval, test, and benchmark-only changes while failing closed for unknown plugin paths.
+- The accepted eval baseline advances only through a nightly on main. On-demand benchmark baselines must match the latest accepted nightly rather than a plugin version or release event.
+- Claude nightlies pin the agent to Sonnet 5.5 and the judge to Opus 5.5, split agent and judge cost in the result, and start a comparison-free lineage without Slack delivery whenever any model pin changes.
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 256 words longer than in 1.1.21.
+
+#### Fixed
+- Benchmark measurement keeps seeded setup outside the model execution budget while retaining setup and teardown in full wall time, validates root and subagent model pins, records final digests, and attributes slash-command skills, workers, phases, and components.
+- Confirmed nightly regressions name the affected cases, runtimes, merged pull requests and authors, quarantine owner, and durable result artifact in one Slack message; clean and skipped nights send nothing.
+- Focused Claude eval reruns stage the exact selected cases in the run-owned plugin snapshot instead of relying on an unsupported multi-case glob.
+
+### vibe v1.1.21
+
+#### Added
+- Claude and Codex eval receipts fingerprint their copied payloads, and a nineteen-revision grader-loop regression rejects intermediate commits.
+
+#### Changed
+- Writers and fleet orchestration keep iteration uncommitted until review, verification, and checks make one commit push-ready. Required criteria, ruling, and rollout audits run before pull-request creation (ISS-13430).
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 206 words longer than in 1.1.20.
+
+#### Fixed
+- Dirty-source checks, QA, image, local E2E, and inventory evidence use the committed head plus a deterministic source fingerprint and reject inputs that change during a run. Fleet board and watcher output report undeclared local writer commits while treating remote history as informational and excluding commits imported from the base branch.
+- Shallow-CI release checks are self-contained; the remote E2E guard matches its deployed clean-worktree interface; dirty precommit evidence cannot bind even when HEAD is unchanged; remote shell payloads are inspected only by the E2E identity guard; remote ancestry blocks unsafe amends; pre-push repairs amend only an unpushed commit; main sync may add one ordinary merge commit; and post-publication fixes use new commits.
+
+### vibe v1.1.20
+
+#### Added
+- Vibe handoff carries the writer's `Feature map:` lines into the requested pull request and uses repository-owned screen maps to identify overlapping work (ISS-13415).
+- The fleet starts independent integration, unit, typecheck, and lint work on allowed machines while e2e is queued or running elsewhere. Disjoint proof tests or new modules may be assigned to helpers with exclusive branches and file allowlists; the ticket writer alone integrates their work (ISS-13418).
+
+#### Fixed
+- Frozen-render comparisons resolve base refs, wait for one of the configured fleet heavy slots outside the 600-second build budget, rebuild into staging, preserve prior static output until success, and close both Storybook servers. Docker cleanup captures full network IDs, recognizes exact Docker 29 absence replies, shares one backward-compatible PID birth reader, hides only a live lock owner's pending record, verifies ownership, and leaves unrecorded resources untouched. The static-server guard behaviorally checks prohibited instructions even when they begin with `Never` (ISS-13420).
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 2,929 words longer than in 1.1.18.
+
+### vibe v1.1.18
+
+#### Added
+- `handoff/scripts/qa-impact.mjs` classifies changes since automated QA as `None`, `Lanes only`, or visual QA for named FEATURE_MAP screens. It combines changed files, transitive code importers, repository-selected lanes, and screen/state/flag-arm evidence. Resume, startup adoption, fleet takeover, and handoff also reconcile an existing ticket's outgoing plan link, publishing a missing criterion-complete session plan or updating its one linked PLN without pausing source work (ISS-13411).
+
+#### Changed
+- Automated QA evidence is no longer invalidated by a new commit identity. Comment-only JavaScript and TypeScript edits are proven by a pinned compiler bundled from a typechecked source entry; behavior directives never count as comment-only, and Tailwind class tokens in comments are visual impact inside configured content roots. Documentation, release, CI-only, and non-rendering backend changes preserve local evidence only when both blobs can be read and their structure is unchanged. Unreadable, binary, deleted, renamed, mode-changed and otherwise unproven files classify upward. Selected test changes rerun only their changed-file lanes; every lane-requiring file must have a selection, and older lane evidence is accepted only against a recomputed impact request. Rendered changes invalidate only affected screens and states. Frozen-render evidence names exact story states and follows aliased styles, tokens, images, fonts and rendered dependencies rather than the branch head and unrelated files. The generated compiler bundle is excluded from prose-only name scanning. CI remains per push (ISS-13411).
+- Vibe's Markdown instructions are about 71 words shorter than in 1.1.17.
+
+### vibe v1.1.17
+
+#### Fixed
+- Vibe and handoff now try supported validation and recovery paths before treating a tooling problem as an engineering-only blocker. Both the worker and vibe root must exhaust safe paths before a pushed handover for a genuine human-only decision, access need, or engineering change outside session authority. Vibe and direct handoff replies always offer to pass the saved work rather than only stopping or waiting (ISS-13400).
+- Existing contract checks require both sets of attempts and preserve the real-blocker handover. The real-blocker eval checks worker, root, and human-only blocker content separately from their line order; reply checks verify the pushed work and pass-on offer. The Codex eval parity check includes all 104 cases.
+- The tooling alternative-path eval starts from a recorded `BLOCKED` referral. The person-is-engineer eval covers rerun, narrower check, and automatic check paths, including a reply about running only the relevant part and following an automatic result without assigning a repair to the person. Its record grader accepts a pending check only when both stop and referral are marked premature. The tooling contract pins one rerun at most, and a narrowed or CI-deferred check is named in the existing progress or handoff summary.
+- A lockfile or other install-managed file changed by the session's own check is backed up privately and restored from the committed version only when the drift is accidental. A requested dependency manifest edit keeps its matching lockfile; preexisting or person-owned edits remain protected in the fourth eval, whose reply grader accepts plain continued progress.
+- The referral contract now scans every vibe Markdown file, including evals, with context-validated exceptions for historical quotes, negative graders, test repair, and verified human-only blockers.
 
 ### vibe v1.1.16
 

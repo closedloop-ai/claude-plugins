@@ -59,6 +59,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { PER_PROGRAM_KEYS, parseConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
+import { skillFreshnessProblem } from "./skill-freshness.mjs";
 
 export const REUSABLE = ["config.env", "standing-rulings.md", "lessons.md", "handover.md", "current", "programs"];
 const PROGRAM_DIRS = ["sessions", "prompts", "requests", "findings", "evidence"];
@@ -222,6 +223,8 @@ function pluginVersionLine(programDir) {
   if (record.status === "outdated" && !record.choice) {
     return `PLUGIN-VERSION-UNANSWERED ${record.versions}: ask the operator to update now or proceed knowing an outdated plugin could give worse results, and record it with plugin-version.mjs choose --state ${file}`;
   }
+  const freshness = skillFreshnessProblem(record);
+  if (freshness) return `PLUGIN-RELOAD-REQUIRED: ${freshness}`;
   return `PLUGIN-VERSION ${record.status}${record.choice ? ` ${record.choice.choice}` : ""} at ${record.checkedAt}: run \`${check}\` in every chat; in the same chat it keeps the recorded answer`;
 }
 

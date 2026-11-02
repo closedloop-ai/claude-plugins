@@ -115,8 +115,10 @@ orchestrator makes one commit of everything changed since the last redeploy, nev
 `scripts/commit-worktree.mjs` (the repository's commit hook runs there; no
 worker ever commits). Then the worker pushes, requests the environment again
 with the same mode, reads the deployed commit from that run, and tells the
-orchestrator when the app and Storybook show it. Each redeploy is its own
-commit; nothing is squashed or amended later.
+orchestrator when the app and Storybook show it. A failed pre-push check may be
+fixed and amended while that commit is still local. After push, each redeploy
+is immutable; every required correction is a new commit, never an amend or
+force push.
 
 ## What runs on this Mac
 
@@ -321,7 +323,9 @@ not silently included or discarded. A clean result needs no extra local commit.
    unless the person asked for a pull request, and the writer only repairs
    existing tests the merge broke (`guardrails.md`, "Tests").
 3. Only the root commits the staged merge/fixes through the existing commit
-   script and normal hooks. Then resume that SAME writer for its exact
+   script and normal hooks. This ordinary main-sync merge is the one extra
+   commit allowed after the reviewed feature commit; it brings in main and is
+   not iteration. Then resume that SAME writer for its exact
    source-owned record continuation (`progress`) with the captured
    `mainSyncTransactionId` and root-controlled `publicationPurpose`.
    Run `node <plugin-root>/skills/vibe/scripts/vibe-sessions.mjs main-sync-inputs --worktree "<wt>"`
@@ -433,7 +437,7 @@ runner env SHA against unchanged owned HEAD/tree/input. It never dispatches,
 accepts caller PASS, trusts run.head_sha as tested source, stores raw secret
 logs or treats later spoofed stdout as proof. Missing evidence leaves
 `requiredE2eComplete: false`; final handoff remains incomplete. Do not re-fetch
-main repeatedly while CI waits. Changed source/new preparation invalidates proof.
+main repeatedly while CI waits. CI is per push; `qa-impact.mjs` decides local QA.
 The Desktop Electron lane is the exception (ISS-13321): no vibe machine runs
 it, and since symphony-alpha's desktop-e2e job skips pull requests no run
 exists for a branch before merge. The executor returns it under
@@ -497,6 +501,7 @@ none of them is a step a worker takes by hand.
   Existing exclusion and restore rules still apply: no redeploy or handoff
   commits these files. Setup retries only after the writer supplies the fix;
   the permanent correction remains with the bug's ticket owner.
-- Anything else: tell the person the environment did not start, show the error
-  in one or two lines, and suggest they message engineering with the session
-  slug.
+- Anything else: return the exact failure and paths tried to the orchestrator.
+  Use the recovery or supported handover in `guardrails.md`, "Plugins and
+  tooling"; do not turn an unclassified failure into an engineering task for
+  the person.

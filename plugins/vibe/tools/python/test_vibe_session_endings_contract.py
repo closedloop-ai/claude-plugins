@@ -136,7 +136,8 @@ def test_handoff_opens_the_requested_pull_request_as_its_last_step() -> None:
     assert "Handoff opens the pull request as its last step" in requested
     assert "the ticket stays with the person" in requested
     final = section(handoff, "## 9. Hand it over")
-    assert "On a requested pull request, skip assign mode" in final
+    candidate = section(handoff, "### Candidate audits and pre-PR verification")
+    assert "On a requested pull request, skip assign mode" in candidate
     assert "`vibe-environment-worker` in `pull-request` mode" in final
     assert "it never enqueues or merges it" in final
     for retired in ("Handoff itself still opens none", "It ends at the branch; no pull request is opened"):

@@ -7,8 +7,8 @@
    building the allowed parts. It never blocks the session or reaches the person.
 2. The ticket worker places each logged need once, as an unchecked item at the
    end of the live ticket's Engineering checklist.
-3. A needed fix to vibe's own tooling still stops the session; the two rules
-   stay distinct.
+3. A vibe tooling defect uses available recovery paths and does not stop the
+   allowed work by itself; the two rules stay distinct.
 4. All of `apps/storybook/**` is allowed, explicitly including the `.storybook/`
    config, `TAXONOMY.md` and `apps/storybook/scripts/`, while the Never
    column's `scripts/**` stays the repo-root folder.
@@ -51,12 +51,12 @@ def test_the_guardrails_route_a_forbidden_path_need_to_engineering_without_stopp
         assert required in rule, required
 
 
-def test_the_tooling_fix_rule_stays_a_stop_and_stays_distinct() -> None:
+def test_the_tooling_defect_rule_keeps_allowed_work_moving() -> None:
     rule = routing_rule()
-    assert "A fix to vibe's own tooling is different and still stops the session (\"Plugins and tooling\", above)." in rule
-    tooling = section(GUARDRAILS.read_text(), "## Plugins and tooling")
-    assert "When continuing needs a fix to the vibe tooling, stop." in tooling
-    assert "Engineering needed" not in tooling
+    assert "A vibe tooling defect follows \"Plugins and tooling\" above; it does not stop the allowed work by itself." in flat(rule)
+    tooling = flat(section(GUARDRAILS.read_text(), "## Plugins and tooling"))
+    assert "A vibe tooling defect alone does not stop the person's work." in tooling
+    assert "Never edit vibe's checker to force a pass, waive a check" in tooling
 
 
 def test_the_writer_logs_the_need_builds_the_rest_and_never_blocks() -> None:

@@ -9,6 +9,8 @@
 // user-prompt-submit.mjs.
 
 import { loadsSkill, readTranscript } from "./skill-transcript.mjs";
+import { readHookSkill } from "./hook-session-scope.mjs";
+import os from "node:os";
 
 const PROGRAM_CHANGE = [
   /\b(?:don'?t|do not) want to (?:build|look at|work on|do|ship)\b/i,
@@ -24,8 +26,9 @@ export const PROGRAM_CHANGE_REMINDER = [
 ].join("\n");
 
 /** The UserPromptSubmit result for a prompt: the reminder as context when it reads as a program change, or null. */
-export function programChange(event) {
+export function programChange(event, home = os.homedir()) {
   const prompt = String(event?.prompt ?? "");
   if (!PROGRAM_CHANGE.some((pattern) => pattern.test(prompt))) return null;
-  return loadsSkill(readTranscript(event?.transcript_path), "fleet-orchestrator") ? { context: PROGRAM_CHANGE_REMINDER } : null;
+  return loadsSkill(readTranscript(event?.transcript_path), "fleet-orchestrator")
+    || readHookSkill(event?.session_id, home) === "fleet-orchestrator" ? { context: PROGRAM_CHANGE_REMINDER } : null;
 }

@@ -145,7 +145,7 @@ def test_handoff_verify_renders_a_static_page_it_cannot_drive() -> None:
     ))
 
 
-def test_changes_on_a_vibe_pull_request_resume_the_session_through_one_path() -> None:
+def test_changes_on_a_vibe_pull_request_use_impact_scoped_rechecks_under_iss_13411_operator_ruling() -> None:
     path = remediation()
     assert_all(path, (
         "Review fixes made outside this path leave the pull request body stale and skip the guardrails",
@@ -153,9 +153,9 @@ def test_changes_on_a_vibe_pull_request_resume_the_session_through_one_path() ->
         "--status active",
         "`reviewThreads: read`",
         "Resume the SAME writer by its recorded ID in its `pull-request` turn",
-        "step 3's guardrails review (the `vibe-guardrails-reviewer` reruns on the whole new diff)",
-        "step 5's checks",
-        "`review-soul` required on the tests",
+        "Run step 5's checks only for its named lanes or screens",
+        "Run step 3's guardrails review on the files the fix changed",
+        "`review-soul` required on changed tests",
         "pushes the validated commit to the SAME branch through the normal pre-push hook. Never a force push",
         "refreshes the body from the session record so it matches the diff",
         "through the REST review-comment reply endpoint",
@@ -165,8 +165,8 @@ def test_changes_on_a_vibe_pull_request_resume_the_session_through_one_path() ->
     order = [
         "`reviewThreads: read`",
         "Resume the SAME writer",
-        "guardrails review",
         "step 5's checks",
+        "guardrails review",
         "in redeploy mode pushes",
         "refreshes the body",
         "replies on every thread",

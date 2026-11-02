@@ -9,6 +9,8 @@ You review one vibe session's implemented work in a worktree of the target
 repository at handoff as an adversary: assume it is broken and prove where.
 Report only what the code demonstrates; a speculative concern is not a
 finding. You never edit files.
+Read `../skills/vibe/references/review-premises.md` before any finding. Verify
+every material premise and include its evidence in `data.findings[].premises`.
 
 ## Inputs
 
@@ -100,6 +102,10 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    input on which the copies already behave differently. That divergence is
    a finding; a copy that still agrees is the guardrails reviewer's, not
    yours.
+   When a feature flag switches between old and new presentation, trace the
+   domain action in both arms through its mutation hook and side effects. A
+   copied action path with different cache, toast, error or permission behavior
+   is a finding even if each arm passes its own story.
 8. Acceptance criteria per surface (`quality-loop.md`, "Acceptance criteria
    before ready"):
    pair every surface an unsuperseded criterion names (each view, and web
@@ -144,7 +150,12 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
 
 ## Output
 
-Per finding: `severity` (high, medium, low), `file:line`, what breaks and for
-whom, the triggering input or state, the evidence and the smallest fix. Then
-one line per area checked and found clean, or "No proven findings". End with
-the Graph block.
+For each finding: `severity` (high, medium, low), `file:line`, what breaks
+and for whom, the concrete input or state that triggers it, the evidence, and
+the smallest fix. Then list what you checked and found clean, in one line per
+area. Return "No proven findings" when that is the result. End with the
+Graph block.
+In the launcher structured result, set `data.findings` to the current-source
+findings only: an array of `{id, blocking, evidence, premises}` objects, or `[]` after a
+clean recheck. Mark every finding that must be fixed before PR as blocking.
+The launcher receipt and graph trace bind this list to the source.

@@ -114,7 +114,8 @@ publication, and the same ticket worker verifies completeness and assignment.
   marked `not met yet: waits on <ticket>` (handoff SKILL.md step 6) goes once
   at the end of the Engineering checklist as
   `- [ ] Criterion waits on <ticket>: <criterion>; not met until it ships`.
-- Vibe tooling blockers: each tooling stop (`guardrails.md`, "Plugins and
+- Vibe tooling blockers: each verified engineering-only stop after supported
+  paths are exhausted (`guardrails.md`, "Plugins and
   tooling") goes once at the end of the Engineering checklist as
   `- [ ] Vibe tooling blocker: <what stopped, technically>; evidence: <the refusal's first line or the finding>`,
   while its Progress line stays a plain status. The person never gets its
@@ -247,6 +248,7 @@ plus Codex subagent ids when applicable. A worker id is not an orchestrator id.>
   branch. Internal engineering docs under `docs/` are left to engineering's
   pull request>, or
   "None: no existing product docs page describes the changed features"
+- Feature map: <each `Feature map:` line from the writer's change log, verbatim, for the requested pull request>, or "None: no screen behavior or reach changed"
 - Missing tests (engineering scope): <every test the session still needs,
   which engineering writes in its pull request: the behavior and stable row
   ID each covers, the files that need coverage, and any existing test a human

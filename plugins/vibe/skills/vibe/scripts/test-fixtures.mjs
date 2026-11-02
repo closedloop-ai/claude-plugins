@@ -3,6 +3,9 @@
 // origin, so the scripts run end to end without the network.
 
 import { execFileSync, spawnSync } from "node:child_process";
+import childProcess from 'node:child_process';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,6 +13,38 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const SYMPHONY_REMOTE = "git@github.com:closedloop-ai/symphony-alpha.git";
+
+/** Mutate a fixture immediately after a named source read, without patching the consumer under test. */
+export function mutateSourceRead({ file, caller, text, gitDiff = false, writeTo = file, excludeCaller }) {
+  const read = fs.readFileSync;
+  const exec = childProcess.execFileSync;
+  let mutated = false;
+  const mutate = () => { if (!mutated) { mutated = true; writeFileSync(writeTo, text); } };
+  if (gitDiff) childProcess.execFileSync = function(command, args, ...options) {
+    const result = exec(command, args, ...options);
+    if (command === 'git' && args.includes('-U0')) mutate();
+    return result;
+  };
+  else fs.readFileSync = function(input, ...args) {
+    const result = read(input, ...args);
+    const stack = new Error().stack ?? '';
+    if (String(input) === file && stack.includes(caller) && (!excludeCaller || !stack.includes(excludeCaller))) mutate();
+    return result;
+  };
+  syncBuiltinESMExports();
+  return { mutated: () => mutated, restore: () => {
+    fs.readFileSync = read;
+    childProcess.execFileSync = exec;
+    syncBuiltinESMExports();
+  } };
+}
+
+/** Preload the same deterministic read mutation into a CLI child process. */
+export function mutationPreload(root, options) {
+  const preload = path.join(root, 'source-mutation.mjs');
+  writeFileSync(preload, `import { mutateSourceRead } from ${JSON.stringify(import.meta.url)};\nmutateSourceRead(${JSON.stringify(options)});\n`);
+  return preload;
+}
 
 export function makeHome(prefix) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), prefix)));

@@ -1,17 +1,182 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { runDiffRules } from "./diff-rules.mjs";
-import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenInputs, frozenRenders, frozenStoryFiles, frozenStoryIds, prepareBase, storyFileChanges } from "./frozen-render.mjs";
+import { CONFIRM_RENDERS, DEFAULT_NOW, FrozenOutcome, PINNED_CONTEXT, StoryFileChange, classifyStory, frozenInputs, frozenRenders, frozenStoryFiles, frozenStoryIds, prepareBase, rebuildStatic, runOwnedFrozenComparison, storyFileChanges } from "./frozen-render.mjs";
 import { CROP_MAX_WIDTH, decodePng, encodePng } from "./png-diff.mjs";
-import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
+import { git, makeHome, mutateSourceRead } from "../../vibe/scripts/test-fixtures.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "frozen-render.mjs");
 const BASE = "http://storybook-base";
 const HEAD = "http://storybook-head";
+
+test("the central comparison owns both servers and closes them after success or render failure", async () => {
+  const events = [];
+  const withServer = async (dir, port, action) => {
+    events.push(`start ${dir} ${port}`);
+    try { return await action(`http://${dir}:${port}`); }
+    finally { events.push(`stop ${dir} ${port}`); }
+  };
+  const launch = async () => ({ close: async () => { events.push("browser closed"); } });
+  const args = { repo: "head", baseDir: "base", base: "abc", storyFiles: ["story"], out: "out" };
+  const dependencies = { withServer, nextPort: async (other) => other ? 6122 : 6121, launch };
+  const result = await runOwnedFrozenComparison(args, { ...dependencies,
+    compare: async ({ baseUrl, headUrl }) => ({ baseUrl, headUrl }) });
+  assert.deepEqual(result, { baseUrl: "http://base:6121", headUrl: "http://head:6122" });
+  assert.deepEqual(events, ["start base 6121", "start head 6122", "browser closed", "stop head 6122", "stop base 6121"]);
+  events.length = 0;
+  await assert.rejects(runOwnedFrozenComparison(args, { ...dependencies, compare: async () => { throw new Error("render failed"); } }), /render failed/);
+  assert.deepEqual(events, ["start base 6121", "start head 6122", "browser closed", "stop head 6122", "stop base 6121"]);
+});
+
+test("a second server startup failure still closes the first", async () => {
+  const events = [];
+  const withServer = async (dir, port, action) => {
+    events.push(`start ${dir}`);
+    if (dir === "head") throw new Error("head failed");
+    try { return await action(`http://${dir}:${port}`); }
+    finally { events.push(`stop ${dir}`); }
+  };
+  await assert.rejects(runOwnedFrozenComparison({ repo: "head", baseDir: "base", base: "abc", storyFiles: [], out: "out" },
+    { withServer, nextPort: async (other) => other ? 6122 : 6121, launch: async () => { throw new Error("browser not needed"); } }), /head failed/);
+  assert.deepEqual(events, ["start base", "start head", "stop base"]);
+});
+
+test("static comparison rebuilds both outputs for the named current heads before serving", async (t) => {
+  const fixture = makeHome("vibe-frozen-build-");
+  t.after(fixture.cleanup);
+  const baseDir = path.join(fixture.root, "base");
+  const repo = path.join(fixture.root, "head");
+  for (const dir of [baseDir, repo]) {
+    mkdirSync(path.join(dir, "apps", "storybook", "storybook-static"), { recursive: true });
+    writeFileSync(path.join(dir, "apps", "storybook", "storybook-static", "index.html"), "stale");
+  }
+  const events = [];
+  const withServer = async (dir, _port, action) => { events.push(`serve ${dir}`); return action(`http://${dir}`); };
+  await runOwnedFrozenComparison({ repo, baseDir, base: "main~1", storyFiles: [], out: fixture.root }, {
+    withServer, nextPort: async (other) => other ? 6122 : 6121,
+    resolveCommit: (dir, ref) => { events.push(`resolve ${dir} ${ref}`); return "base-commit-full"; },
+    headOf: (dir) => dir === repo ? "head-commit" : "base-commit-full",
+    buildStatic: async (dir, head) => { events.push(`build ${dir} ${head}`); },
+    launch: async () => ({ close: async () => {} }), compare: async () => ({}),
+  });
+  assert.deepEqual(events, [
+    `resolve ${repo} main~1`, `build ${baseDir} base-commit-full`, `build ${repo} head-commit`, `serve ${baseDir}`, `serve ${repo}`,
+  ]);
+});
+
+test("static rebuild waits in the fleet heavy slot and preserves the old build until the new build starts", async (t) => {
+  const fixture = makeHome("vibe-frozen-heavy-slot-");
+  t.after(fixture.cleanup);
+  const baseDir = path.join(fixture.root, "base");
+  const repo = path.join(fixture.root, "head");
+  const bin = path.join(fixture.root, "bin");
+  const locks = path.join(fixture.root, "locks");
+  mkdirSync(bin, { recursive: true });
+  for (const dir of [baseDir, repo]) {
+    mkdirSync(path.join(dir, "apps", "storybook", "storybook-static"), { recursive: true });
+    writeFileSync(path.join(dir, "apps", "storybook", "storybook-static", "index.html"), "old");
+  }
+  const fakePnpm = path.join(bin, "pnpm");
+  writeFileSync(fakePnpm, `#!/bin/sh
+out=
+for arg in "$@"; do out="$arg"; done
+test -f storybook-static/index.html || { echo old-build-removed-too-early >&2; exit 41; }
+test -f "$SLOT_LOCK_DIR/heavy-1.lock/owner" || { echo heavy-slot-not-held >&2; exit 42; }
+mkdir -p "$out"
+printf fresh >"$out/index.html"
+`);
+  chmodSync(fakePnpm, 0o700);
+  const before = { PATH: process.env.PATH, SLOT_LOCK_DIR: process.env.SLOT_LOCK_DIR, SLOT_LOCK_POLL_SECONDS: process.env.SLOT_LOCK_POLL_SECONDS };
+  process.env.PATH = `${bin}:${process.env.PATH}`;
+  process.env.SLOT_LOCK_DIR = locks;
+  process.env.SLOT_LOCK_POLL_SECONDS = "0.01";
+  t.after(() => {
+    for (const [key, value] of Object.entries(before)) value === undefined ? delete process.env[key] : process.env[key] = value;
+  });
+  await runOwnedFrozenComparison({ repo, baseDir, base: "base-ref", storyFiles: [], out: fixture.root }, {
+    withServer: async (dir, _port, action) => action(`http://${dir}`), nextPort: async (other) => other ? 6122 : 6121,
+    resolveCommit: () => "base-full", headOf: (dir) => dir === repo ? "head-full" : "base-full",
+    launch: async () => ({ close: async () => {} }), compare: async () => ({}),
+  });
+  for (const dir of [baseDir, repo]) {
+    assert.equal(readFileSync(path.join(dir, "apps", "storybook", "storybook-static", "index.html"), "utf8"), "fresh");
+  }
+});
+
+test("a failed locked static rebuild preserves the prior output and removes its staging directory", async (t) => {
+  const fixture = makeHome("vibe-frozen-heavy-failure-");
+  t.after(fixture.cleanup);
+  const baseDir = path.join(fixture.root, "base");
+  const repo = path.join(fixture.root, "head");
+  const bin = path.join(fixture.root, "bin");
+  const locks = path.join(fixture.root, "locks");
+  mkdirSync(bin, { recursive: true });
+  for (const dir of [baseDir, repo]) {
+    mkdirSync(path.join(dir, "apps", "storybook", "storybook-static"), { recursive: true });
+    writeFileSync(path.join(dir, "apps", "storybook", "storybook-static", "index.html"), `old-${path.basename(dir)}`);
+  }
+  const fakePnpm = path.join(bin, "pnpm");
+  writeFileSync(fakePnpm, `#!/bin/sh
+out=
+for arg in "$@"; do out="$arg"; done
+test -f storybook-static/index.html || { echo old-build-removed-too-early >&2; exit 41; }
+test -f "$SLOT_LOCK_DIR/heavy-1.lock/owner" || { echo heavy-slot-not-held >&2; exit 42; }
+mkdir -p "$out"
+printf partial >"$out/index.html"
+exit 43
+`);
+  chmodSync(fakePnpm, 0o700);
+  const before = { PATH: process.env.PATH, SLOT_LOCK_DIR: process.env.SLOT_LOCK_DIR, SLOT_LOCK_POLL_SECONDS: process.env.SLOT_LOCK_POLL_SECONDS };
+  process.env.PATH = `${bin}:${process.env.PATH}`;
+  process.env.SLOT_LOCK_DIR = locks;
+  process.env.SLOT_LOCK_POLL_SECONDS = "0.01";
+  t.after(() => {
+    for (const [key, value] of Object.entries(before)) value === undefined ? delete process.env[key] : process.env[key] = value;
+  });
+  await assert.rejects(runOwnedFrozenComparison({ repo, baseDir, base: "base-ref", storyFiles: [], out: fixture.root }, {
+    withServer: async () => { throw new Error("servers must not start"); }, nextPort: async (other) => other ? 6122 : 6121,
+    resolveCommit: () => "base-full", headOf: (dir) => dir === repo ? "head-full" : "base-full",
+    launch: async () => ({ close: async () => {} }), compare: async () => ({}),
+  }), /Storybook static build failed/);
+  assert.equal(readFileSync(path.join(baseDir, "apps", "storybook", "storybook-static", "index.html"), "utf8"), "old-base");
+  assert.equal(readFileSync(path.join(repo, "apps", "storybook", "storybook-static", "index.html"), "utf8"), "old-head");
+  for (const dir of [baseDir, repo]) {
+    const storybook = path.join(dir, "apps", "storybook");
+    assert.deepEqual(readdirSync(storybook).filter((name) => name.startsWith("storybook-static.vibe-")), []);
+  }
+});
+
+test("the configured heavy slot wait wraps the bounded Storybook build", (t) => {
+  const fixture = makeHome("vibe-frozen-slot-shape-");
+  t.after(fixture.cleanup);
+  const worktree = path.join(fixture.root, "head");
+  const output = path.join(worktree, "apps", "storybook", "storybook-static");
+  mkdirSync(output, { recursive: true });
+  writeFileSync(path.join(output, "index.html"), "old");
+  const calls = [];
+  const run = (command, args, options) => {
+    calls.push({ command, args, options });
+    assert.equal(readFileSync(path.join(output, "index.html"), "utf8"), "old", "slot acquisition precedes output changes");
+    assert.equal(options.timeout, undefined, "heavy-slot waiting has no build timeout");
+    const slot = args.findIndex((arg) => path.basename(arg) === "slot-lock.sh");
+    const bounded = args.findIndex((arg) => path.basename(arg) === "run-bounded.mjs");
+    const pnpm = args.indexOf("pnpm");
+    assert.ok(slot >= 0 && bounded > slot && pnpm > bounded, JSON.stringify(args));
+    assert.deepEqual(args.slice(slot + 1, slot + 5), ["--slots", "3", "heavy", `frozen-render ${path.basename(worktree)}`]);
+    assert.deepEqual(args.slice(bounded + 1, bounded + 3), ["600", "pnpm"]);
+    const staging = args.at(-1);
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(path.join(staging, "index.html"), "fresh");
+    return { status: 0, stdout: "", stderr: "" };
+  };
+  rebuildStatic(worktree, { run, env: { HEAVY_SLOTS: "3" } });
+  assert.equal(calls.length, 1);
+  assert.equal(readFileSync(path.join(output, "index.html"), "utf8"), "fresh");
+});
 
 /** A small solid screenshot, with one pixel of `dot` color when given. */
 function shot(color, dot) {
@@ -149,7 +314,7 @@ test("only unstable-on-base and same-failure stories clear: the line names both 
   const summary = await frozenRenders({ ids: ["tour--opening", "shell--populated", "row--x"], fileCount: 2, baseUrl: BASE, headUrl: HEAD, browser, out,
     command: "frozen-render.mjs --base abc --story-file s/a.stories.tsx --story-file s/b.stories.tsx" });
   assert.equal(summary.ok, true);
-  assert.equal(summary.changeLogLine, `Frozen render unchanged: all 2 story files (3 stories): frozen-render.mjs --base abc --story-file s/a.stories.tsx --story-file s/b.stories.tsx: 1 identical, 1 unstable on base (tour--opening), 1 same failure (shell--populated), 0 blocking; ${path.join(out, "results.json")}`);
+  assert.equal(summary.changeLogLine, `Frozen render unchanged: all 2 story files (3 stories): frozen-render.mjs --base abc --story-file s/a.stories.tsx --story-file s/b.stories.tsx: 1 identical, 1 unstable on base (tour--opening), 1 same failure (shell--populated), 0 blocking; states tour--opening,shell--populated,row--x; ${path.join(out, "results.json")}`);
 });
 
 test("a blocking story is rendered twice more on the base and becomes unstable on base when the base varies (ISS-13317)", async (t) => {
@@ -255,7 +420,7 @@ test("the line it prints passes handoff's frozen-render rule, which counts story
   const ids = frozenStoryIds(checkout, base, storyFiles);
   const summary = await frozenRenders({ ids, fileCount: storyFiles.length, baseUrl: BASE, headUrl: HEAD, out, command: `frozen-render.mjs --base ${base} --story-file ${storyFiles[0]}`,
     head: git(checkout, ["rev-parse", "HEAD"], home),
-    inputs: frozenInputs(checkout, base),
+    inputs: frozenInputs(checkout, base, storyFiles),
     browser: fakeBrowser({ [BASE]: { [ids[0]]: throws("no fixture"), [ids[1]]: [passes(shot(GREY)), passes(shot(BLUE))] }, [HEAD]: { [ids[0]]: throws("no fixture"), [ids[1]]: passes(shot(GREY)) } }) });
   assert.match(summary.changeLogLine, /^Frozen render unchanged: all 1 story files \(2 stories\): frozen-render\.mjs /);
   const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], home);
@@ -300,7 +465,7 @@ test("the line the command prints is the line the gate accepts when story files 
   // A story file named twice is still one file.
   const summary = await frozenStoryFiles({ repo: checkout, base, storyFiles: [...storyFiles, storyFiles[0]], baseUrl: BASE, headUrl: HEAD, out,
     browser: fakeBrowser({ [BASE]: side, [HEAD]: side }) });
-  assert.equal(summary.changeLogLine, `Frozen render unchanged: all 2 story files (4 stories): frozen-render.mjs --base ${base} --story-file ${storyFiles[0]} --story-file ${storyFiles[1]}: 4 identical, 0 unstable on base, 0 same failure, 0 blocking; head ${base}; inputs ${frozenInputs(checkout, base)}; ${path.join(out, "results.json")}`);
+  assert.equal(summary.changeLogLine, `Frozen render unchanged: all 2 story files (4 stories): frozen-render.mjs --base ${base} --story-file ${storyFiles[0]} --story-file ${storyFiles[1]}: 4 identical, 0 unstable on base, 0 same failure, 0 blocking; states ${ids.join(",")}; inputs ${frozenInputs(checkout, base, storyFiles)}; ${path.join(out, "results.json")}`);
   writeFileSync(path.join(gitDir, "vibe-changes.md"), `${summary.changeLogLine}\n`);
   assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, []);
   // A line counting the 4 stories as story files, as 1.1.11 did, is refused.
@@ -335,6 +500,20 @@ function repairedCheckout(root, home, { story } = {}) {
 
 const VIEW = "composites-v1-0-sessions-contracts--view-and-creation";
 const BULK = "composites-v1-0-sessions-contracts--bulk-selection";
+
+test('frozen receipts reject mutation during story selection before attribution', async t => {
+  const { root, home, out } = sandbox(t);
+  const { checkout, base, STORY, repaired } = repairedCheckout(root, home);
+  const mutation = mutateSourceRead({ file: path.join(checkout, STORY), caller: 'storyFileChanges', text: `${repaired}\n// concurrent edit\n` });
+  t.after(mutation.restore);
+  const side = { [VIEW]: passes(shot(GREY)), [BULK]: passes(shot(BLUE)) };
+  const result = await frozenStoryFiles({ repo: checkout, base, storyFiles: [STORY], baseUrl: BASE, headUrl: HEAD, out,
+    browser: fakeBrowser({ [BASE]: side, [HEAD]: side }) });
+  assert.equal(mutation.mutated(), true);
+  assert.equal(result.ok, false);
+  assert.equal(result.changeLogLine, undefined);
+  assert.match(result.lines.join('\n'), /SOURCE-MOVED/);
+});
 
 test("a compile-only repaired story runs the head's story file against both app codes and clears (ISS-13317)", async (t) => {
   const { root, home, out } = sandbox(t);
@@ -407,7 +586,7 @@ test("the CLI names a missing argument, a bad --now or a repo without Playwright
   writeFileSync(path.join(repo, "s.stories.tsx"), "export default { title: \"A\" };\nexport const B = {};\n");
   spawnSync("git", ["-C", repo, "add", "-A"]);
   spawnSync("git", ["-C", repo, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "--quiet", "-m", "story"]);
-  const args = [SCRIPT, "--repo", repo, "--base", "HEAD", "--base-url", BASE, "--head-url", HEAD, "--story-file", "s.stories.tsx", "--out", path.join(root, "out")];
+  const args = [SCRIPT, "--repo", repo, "--base", "HEAD", "--base-dir", repo, "--story-file", "s.stories.tsx", "--out", path.join(root, "out")];
   const badNow = spawnSync(process.execPath, [...args, "--now", "yesterday"], { encoding: "utf8" });
   assert.equal(badNow.status, 2);
   assert.match(badNow.stdout, /^error: --now must be an ISO time/);
@@ -419,7 +598,7 @@ test("the CLI names a missing argument, a bad --now or a repo without Playwright
   assert.match(missing.stdout, /^error: Playwright is not installed/);
 });
 
-test("a recorded line clears only the exact head and files it rendered (ISS-13321)", async (t) => {
+test("a recorded line survives unrelated commits and clears only proven unchanged story inputs (ISS-13411)", async (t) => {
   const { root, home, out } = sandbox(t);
   const checkout = path.join(root, "wt");
   git(root, ["init", "--quiet", "--initial-branch=main", checkout], home);
@@ -436,22 +615,25 @@ test("a recorded line clears only the exact head and files it rendered (ISS-1332
   const [id] = frozenStoryIds(checkout, base, [story]);
   const summary = await frozenStoryFiles({ repo: checkout, base, storyFiles: [story], baseUrl: BASE, headUrl: HEAD, out,
     browser: fakeBrowser({ [BASE]: { [id]: passes(shot(GREY)) }, [HEAD]: { [id]: passes(shot(GREY)) } }) });
-  assert.match(summary.changeLogLine, new RegExp(`; head ${base}; inputs [0-9a-f]{16}; `));
+  assert.doesNotMatch(summary.changeLogLine, /; head [0-9a-f]{40};/);
+  assert.match(summary.changeLogLine, new RegExp(`; states ${id}; inputs [0-9a-f]{16}; `));
   assert.match(summary.changeLogLine, /; inputs [0-9a-f]{16}; /);
+  assert.equal(summary.source.head, base);
+  assert.match(summary.source.diffSha256, /^[a-f0-9]{64}$/);
   const gitDir = git(checkout, ["rev-parse", "--absolute-git-dir"], home);
   writeFileSync(path.join(gitDir, "vibe-changes.md"), `${summary.changeLogLine}\n`);
   const isFrozenStory = (text) => / v1\.0\//.test(text);
   assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, []);
   git(checkout, ["commit", "--quiet", "-am", "the rendered change"], home);
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((finding) => finding.rule), ["frozen-render"],
-    "the same bytes on a different head require a new render proof");
-  const committedHead = git(checkout, ["rev-parse", "HEAD"], home);
-  const current = await frozenStoryFiles({ repo: checkout, base, storyFiles: [story], baseUrl: BASE, headUrl: HEAD, out,
-    browser: fakeBrowser({ [BASE]: { [id]: passes(shot(GREY)) }, [HEAD]: { [id]: passes(shot(GREY)) } }) });
-  assert.match(current.changeLogLine, new RegExp(`; head ${committedHead}; inputs [0-9a-f]{16}; `));
-  writeFileSync(path.join(gitDir, "vibe-changes.md"), `${current.changeLogLine}\n`);
-  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, []);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, [], "a commit boundary alone changes no evidence");
+  writeFileSync(path.join(checkout, "notes.md"), "unrelated docs\n");
+  git(checkout, ["add", "notes.md"], home);
+  git(checkout, ["commit", "--quiet", "-m", "docs"], home);
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, [], "unrelated docs preserve the render evidence");
+  writeFileSync(path.join(checkout, row), "// explanation\nexport const Row = 2;\n");
+  assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking, [],
+    "the bundled parser proves a comment in the rendered closure cannot change the render");
   writeFileSync(path.join(checkout, row), "export const Row = 3;\n");
   assert.deepEqual(runDiffRules({ worktree: checkout, base, isFrozenStory }).blocking.map((finding) => finding.rule), ["frozen-render"],
-    "the line from the earlier head no longer clears the new change");
+    "a rendered dependency change invalidates the recorded states");
 });

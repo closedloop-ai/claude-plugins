@@ -219892,7 +219892,7 @@ import { spawnSync as spawnSync9 } from "node:child_process";
 import { randomUUID as randomUUID3 } from "node:crypto";
 import { existsSync as existsSync12, lstatSync as lstatSync8, readFileSync as readFileSync18, realpathSync as realpathSync12 } from "node:fs";
 import { join as join19 } from "node:path";
-import { fileURLToPath as fileURLToPath4 } from "node:url";
+import { fileURLToPath as fileURLToPath5 } from "node:url";
 
 // node_modules/zod/v3/external.js
 var external_exports = {};
@@ -224207,6 +224207,14 @@ import { join as join2 } from "node:path";
 // src/plugin-root.ts
 import { existsSync as existsSync2, readFileSync as readFileSync2, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+var AgentRootError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+  code;
+};
 var manifestPaths = [".claude-plugin/plugin.json", ".codex-plugin/plugin.json"];
 function readPluginManifest(root) {
   for (const relative9 of manifestPaths) {
@@ -224217,6 +224225,25 @@ function readPluginManifest(root) {
     }
   }
   throw Object.assign(new Error("No vibe plugin manifest exists"), { code: "ENOENT" });
+}
+function installedPluginRoot(metaUrl) {
+  const entry = dirname(fileURLToPath(metaUrl));
+  for (const candidate of [resolve(entry, "../../../.."), resolve(entry, "../../../plugins/vibe")]) {
+    try {
+      const root = realpathSync(candidate);
+      if (isPluginRoot(root)) return root;
+    } catch {
+    }
+  }
+  throw new AgentRootError("AGENT_ROOT_INVALID", "The Claude worker entry is not inside the installed vibe plugin or its owning source tree");
+}
+function isPluginRoot(root) {
+  if (!existsSync2(join(root, "agents"))) return false;
+  try {
+    return readPluginManifest(root).name === "vibe";
+  } catch {
+    return false;
+  }
 }
 
 // src/definition.ts
@@ -224317,12 +224344,32 @@ function readWriterSummary(worktree) {
 }
 function recordedDefinitionState(ledger) {
   try {
-    const observed = observeDefinitionDigest(ledger.binding.agentRoot, ledger.binding.agentName, ledger.binding.capabilities);
-    if (observed === null) return "removed";
-    return observed === ledger.binding.digest ? "present" : "changed";
+    const evidence = definitionUpgradeEvidence(ledger, installedPluginRoot(import.meta.url));
+    if (evidence.observedDigest === null) return "removed";
+    if (evidence.observedDigest !== evidence.recordedDigest) return "changed";
+    if (evidence.sameRelease) return "present";
+    if (evidence.provenNewer) return evidence.installedDigest === evidence.recordedDigest ? "present" : "changed";
+    return "unreadable";
   } catch {
     return "unreadable";
   }
+}
+function definitionUpgradeEvidence(ledger, installedRoot) {
+  const { agentRoot, agentName, capabilities, digest: digest2 } = ledger.binding;
+  const observedDigest = observeDefinitionDigest(agentRoot, agentName, capabilities);
+  const installed = readDefinition(installedRoot, agentName, capabilities);
+  const recordedVersion = observedDigest === null ? void 0 : readPluginManifest(agentRoot).version;
+  const cacheVersion = basename2(dirname2(agentRoot)) === "vibe" ? basename2(agentRoot) : void 0;
+  const provenNewer = typeof recordedVersion === "string" && cacheVersion === recordedVersion && Boolean(installed.version && isNewerRelease(installed.version, cacheVersion));
+  const sameRelease = typeof recordedVersion === "string" && recordedVersion === installed.version && (!cacheVersion || cacheVersion === recordedVersion);
+  return {
+    recordedRoot: agentRoot,
+    recordedDigest: digest2,
+    observedDigest,
+    installedDigest: installed.binding.digest,
+    sameRelease,
+    provenNewer
+  };
 }
 function verifySourceTurn(worktree, workerId, requestId, lease) {
   const place = location(worktree);
@@ -224333,6 +224380,15 @@ function verifySourceTurn(worktree, workerId, requestId, lease) {
     }
     return ledger.runtime;
   });
+}
+function isNewerRelease(current, previous) {
+  if (!/^\d+\.\d+\.\d+$/.test(previous)) return false;
+  const left = current.split(".").map(Number);
+  const right = previous.split(".").map(Number);
+  for (let index = 0; index < 3; index++) {
+    if (left[index] !== right[index]) return left[index] > right[index];
+  }
+  return false;
 }
 function git2(cwd, args) {
   return execFileSync2("git", args, {
@@ -225041,11 +225097,11 @@ var import_typescript = __toESM(require_typescript(), 1);
 var import_picomatch = __toESM(require_picomatch2(), 1);
 import { existsSync as existsSync5, readFileSync as readFileSync7 } from "node:fs";
 import { dirname as dirname4, isAbsolute as isAbsolute2, join as join6, normalize, relative, resolve as resolve3 } from "node:path";
-import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
+import { fileURLToPath as fileURLToPath3, pathToFileURL } from "node:url";
 
 // ../../plugins/vibe/skills/vibe/scripts/local-plans.mjs
 import { realpathSync as realpathSync5 } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { parseArgs } from "node:util";
 var LOCAL_PLAN_PREFIX = ".closedloop-ai/vibe-plans/";
 function isLocalPlanPath(filePath) {
@@ -225054,7 +225110,7 @@ function isLocalPlanPath(filePath) {
 function committedLocalPlans(runGit) {
   return runGit(["ls-tree", "-r", "-z", "--name-only", "HEAD", "--", LOCAL_PLAN_PREFIX.slice(0, -1)]).split("\0").filter((file) => file && isLocalPlanPath(file));
 }
-if (process.argv[1] && realpathSync5(fileURLToPath(import.meta.url)) === realpathSync5(process.argv[1])) {
+if (process.argv[1] && realpathSync5(fileURLToPath2(import.meta.url)) === realpathSync5(process.argv[1])) {
   try {
     const { values } = parseArgs({ options: { worktree: { type: "string" } } });
     if (!values.worktree) throw new Error("--worktree is required.");
@@ -225517,7 +225573,7 @@ function fsTarget(value) {
     unknownPrefix = true;
   }
   try {
-    return { path: fileURLToPath2(projected), possible, unknownPrefix };
+    return { path: fileURLToPath3(projected), possible, unknownPrefix };
   } catch {
     return possible ? { path: UNKNOWN, possible: true, unknownPrefix } : void 0;
   }
@@ -227160,7 +227216,7 @@ import { spawnSync as spawnSync4 } from "node:child_process";
 import { existsSync as existsSync8, mkdtempSync, realpathSync as realpathSync9, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as join12 } from "node:path";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
 
 // src/main-sync-validation-recipe.ts
 var MAIN_BOOTSTRAP_MS = 15 * 60 * 1e3;
@@ -227355,7 +227411,7 @@ var TIMED_OUT_MARKER = "run-bounded: stopped after";
 var WRAPPER_FAILED_EXIT = 2;
 var SPAWN_FAILURE = /^spawn \S+ E[A-Z]+\s*$/m;
 function runBoundedScript() {
-  const script = fileURLToPath3(new URL("../run-bounded.mjs", import.meta.url));
+  const script = fileURLToPath4(new URL("../run-bounded.mjs", import.meta.url));
   if (!existsSync8(script)) throw new MainSyncError("The plugin's run-bounded.mjs is missing; no comparison was run");
   return script;
 }
@@ -228207,7 +228263,7 @@ function prepareMainSync(raw) {
   if (previous && (previous.worktree !== root || previous.branch !== value.place.branch || previous.originalBase !== value.place.session.baseCommit || previous.operator.id !== value.place.session.operator.id || previous.operator.email !== value.place.session.operator.email)) {
     throw new MainSyncError("Previous main-sync provenance belongs to another session; preserve it and inspect the owned evidence");
   }
-  const desktopScript = fileURLToPath4(new URL("../vibe-sessions.mjs", import.meta.url));
+  const desktopScript = fileURLToPath5(new URL("../vibe-sessions.mjs", import.meta.url));
   const desktop = spawnSync9(process.execPath, [desktopScript, "desktop-tab", "--worktree", root], {
     encoding: "utf8",
     timeout: 3e4,

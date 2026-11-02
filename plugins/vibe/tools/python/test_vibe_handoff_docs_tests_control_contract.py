@@ -165,20 +165,19 @@ def test_the_launcher_grants_test_authority_only_to_a_pull_request_turn() -> Non
 
 def test_handoff_verifies_running_apps_with_the_control_skill() -> None:
     step = section(HANDOFF_SKILL.read_text(), CONTROL)
-    for required in ("`vibe-verify-worker` in control mode", "`<repo-root>/.claude/skills/control/SKILL.md`",
-                     "`pnpm control` CLI", "for each touched screen", "follows that skill's own rules",
-                     "never `--headed`", "never a visible window on the person's Mac",
-                     "Desktop runs displayless", "never `--allow-write`", "`pnpm control down`",
-                     "API reads and Desktop IPC reads", "before and after when a baseline exists",
+    for required in ("`vibe-verify-worker` control mode", "`<repo-root>/.claude/skills/control/SKILL.md`",
+                     "`pnpm control`", "every locally served uncommitted candidate screen",
+                     "hidden browser", "displayless Desktop", "never `--headed`", "`--allow-write`",
+                     "`pnpm control down`", "network/API/IPC evidence", "baseline comparisons",
                      "exact control command and the reason, never as verified",
                      "Design Review's Visual evidence", "Running app checks line",
                      "separated from source-only claims", "The build loop has no control step",
                      "Owned prototype sessions skip this check"):
         assert required in step, required
     skill = HANDOFF_SKILL.read_text()
-    step_eight = section(skill, "## 8. Choose who picks it up, then check the ticket")
-    assert step_eight.index(CONTROL[4:]) < step_eight.index("Design Review evidence at handoff")
-    assert "step 8's running app verification" in section(skill, "## Answers from the person")
+    step_six = section(skill, "## 6. Independent integrated review")
+    assert step_six.index(CONTROL[4:]) < step_six.index("Candidate audits and pre-PR verification")
+    assert "step 6's reviews and running-app verification" in section(skill, "## Answers from the person")
     assert "`vibe-verify-worker` (control mode)" in section(skill, "## Workers")
 
 

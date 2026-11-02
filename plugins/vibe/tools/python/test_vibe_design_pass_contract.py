@@ -214,7 +214,7 @@ def test_no_worker_commits_and_the_orchestrators_do() -> None:
     assert redeploy.index("commit-worktree.mjs") < redeploy.index("`vibe-environment-worker` in redeploy mode")
     upload = section(HANDOFF_SKILL.read_text(), "## 7. Upload the last changes")
     assert "`node ../vibe/scripts/commit-worktree.mjs --worktree" in upload
-    assert upload.index("commit-worktree.mjs") < upload.index("`vibe-environment-worker` in redeploy mode")
+    assert upload.index("commit-worktree.mjs") < upload.index("Dispatch `vibe-environment-worker`")
     assert "commit-worktree.mjs" in flat(SEED_SKILL.read_text())
 
 
@@ -364,7 +364,7 @@ def test_one_persistent_writer_keeps_a_serial_queue_and_serial_record_owners() -
     assert "Researchers and independent reviewers may run in parallel, read-only" in queue
     assert "Never dispatch another source or test writer" in queue
     assert "Serialize session JSON, ticket and change-log mutations" in queue
-    assert "Deployment waits for the writer's quick checks and the orchestrator's commit; reviews wait for handoff" in queue
+    assert "Deployment waits for the writer's quick checks and the orchestrator's commit; PR review and verification finish before PR creation" in queue
     assert "explicit serial record continuation" in section(VIBE_SKILL.read_text(), "## 5. Build loop")
     for name in ("vibe-backend-worker", "vibe-primitive-worker", "vibe-storybook-decomposer", "vibe-verify-worker"):
         frontmatter = yaml.safe_load(agent(name).split("---", 2)[1])
