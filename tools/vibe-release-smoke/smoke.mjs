@@ -26,15 +26,15 @@
 // Only Codex's sign-in (auth.json) and the two ClosedLoop connection blocks of config.toml
 // are copied in; nothing is printed from them, and the home is deleted afterwards.
 
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { assessFirstReply, findSetupBlock } from "./first-reply.mjs";
 import { assessSandboxWriters, sandboxWriters } from "./sandbox-writers.mjs";
+import { startCodexAppServer } from "../shared/codex-app-server-client.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..", "..");
@@ -157,29 +157,12 @@ async function runSandboxWriters({ env, scripts }) {
   git("commit", "--quiet", "-m", "smoke");
   git("remote", "add", "origin", "git@github.com:closedloop-ai/symphony-alpha.git");
   const head = git("rev-parse", "HEAD");
-  const child = spawn(values.codex, ["app-server"], { env, stdio: ["pipe", "pipe", "pipe"] });
-  child.stderr.resume();
-  const pending = new Map();
-  let nextId = 1;
-  readline.createInterface({ input: child.stdout }).on("line", (line) => {
-    let message;
-    try { message = JSON.parse(line); } catch { return; }
-    if (message.id === undefined || message.method) return;
-    const waiter = pending.get(message.id);
-    pending.delete(message.id);
-    if (message.error) waiter?.reject(new Error(JSON.stringify(message.error)));
-    else waiter?.resolve(message.result);
-  });
-  const request = (method, params) => new Promise((resolve, reject) => {
-    const id = nextId++;
-    pending.set(id, { resolve, reject });
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
-  });
-  const exec = (writer, sandboxPolicy) => request("command/exec", { command: writer.argv, cwd: writer.cwd, sandboxPolicy, timeoutMs: 120_000 })
+  const client = await startCodexAppServer({ codex: values.codex, env,
+    clientName: "vibe_release_smoke_writers" });
+  const exec = (writer, sandboxPolicy) => client.request("command/exec",
+    { command: writer.argv, cwd: writer.cwd, sandboxPolicy, timeoutMs: 120_000 })
     .catch((error) => ({ exitCode: null, stdout: "", stderr: error.message }));
   try {
-    await request("initialize", { clientInfo: { name: "vibe_release_smoke", title: null, version: "1" }, capabilities: null });
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "initialized" })}\n`);
     const results = [];
     for (const writer of sandboxWriters({ scripts, repo, head, node: process.execPath })) {
       const sandboxed = await exec(writer, { type: "workspaceWrite", writableRoots: [workspace], networkAccess: false });
@@ -188,7 +171,7 @@ async function runSandboxWriters({ env, scripts }) {
     }
     return results;
   } finally {
-    child.kill();
+    await client.close();
   }
 }
 
@@ -213,26 +196,16 @@ function isolatedEnv(envNames) {
 }
 
 async function driveTurn({ env, skill, startupScript }) {
-  const child = spawn(values.codex, ["app-server"], { env, stdio: ["pipe", "pipe", "pipe"] });
-  child.stderr.resume();
   const started = Date.now();
   const seconds = () => Number(((Date.now() - started) / 1000).toFixed(1));
-  const pending = new Map();
   const messages = [];
   const commands = new Map();
   const approvals = [];
-  let nextId = 1;
   let status = "running";
   let settle;
   let resolveDone;
   const done = new Promise((resolve) => {
     resolveDone = resolve;
-  });
-  const send = (message) => child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
-  const request = (method, params) => new Promise((resolve, reject) => {
-    const id = nextId++;
-    pending.set(id, { resolve, reject });
-    send({ id, method, params });
   });
   const answer = (message) => {
     const params = message.params ?? {};
@@ -241,35 +214,20 @@ async function driveTurn({ env, skill, startupScript }) {
       approvals.push({ t: seconds(), command: params.command, reason: params.reason ?? null, decision: allow ? "accept" : "decline" });
       const entry = commands.get(params.itemId);
       if (entry) entry.approval = allow ? "accept" : "decline";
-      send({ id: message.id, result: { decision: allow ? "accept" : "decline" } });
+      return { decision: allow ? "accept" : "decline" };
     } else if (message.method === "mcpServer/elicitation/request") {
       const tool = `${params.serverName}/${params._meta?.tool_name ?? toolFromMessage(params.message)}`;
       const allow = READ_ONLY_TOOLS.has(tool);
       approvals.push({ t: seconds(), tool, decision: allow ? "accept" : "decline" });
-      send({ id: message.id, result: { action: allow ? "accept" : "decline", content: allow ? {} : null, _meta: null } });
+      return { action: allow ? "accept" : "decline", content: allow ? {} : null, _meta: null };
     } else {
       approvals.push({ t: seconds(), method: message.method, decision: "decline" });
-      send({ id: message.id, result: { decision: "decline" } });
+      return { decision: "decline" };
     }
   };
-  readline.createInterface({ input: child.stdout }).on("line", (line) => {
-    let message;
-    try {
-      message = JSON.parse(line);
-    } catch {
-      return;
-    }
-    if (message.id !== undefined && !message.method) {
-      const waiter = pending.get(message.id);
-      pending.delete(message.id);
-      if (message.error) waiter?.reject(new Error(JSON.stringify(message.error)));
-      else waiter?.resolve(message.result);
-      return;
-    }
-    if (message.id !== undefined) {
-      answer(message);
-      return;
-    }
+  const client = await startCodexAppServer({ codex: values.codex, env,
+    clientName: "vibe_release_smoke", onRequest: answer });
+  client.onNotification((message) => {
     const item = message.params?.item ?? {};
     if (item.type === "commandExecution") {
       const entry = commands.get(item.id) ?? { t: seconds(), command: item.command };
@@ -287,11 +245,10 @@ async function driveTurn({ env, skill, startupScript }) {
       resolveDone();
     }
   });
-  await request("initialize", { clientInfo: { name: "vibe_release_smoke", title: null, version: "1" }, capabilities: null });
-  send({ method: "initialized" });
-  const thread = await request("thread/start", { cwd: workspace, approvalPolicy: "on-request", sandbox: "workspace-write" });
+  const thread = await client.request("thread/start",
+    { cwd: workspace, approvalPolicy: "on-request", sandbox: "workspace-write" });
   const threadId = thread.thread.id;
-  const turn = await request("turn/start", {
+  const turn = await client.request("turn/start", {
     threadId,
     input: [{ type: "text", text: `$vibe ${values.request}`, text_elements: [] }, { type: "skill", name: "vibe:vibe", path: skill }],
   });
@@ -304,9 +261,10 @@ async function driveTurn({ env, skill, startupScript }) {
   clearTimeout(settle);
   if (status === "running") {
     status = "stopped-after-setup-check";
-    await Promise.race([request("turn/interrupt", { threadId, turnId: turn.turn.id }).catch(() => {}), delay(5_000)]);
+    await Promise.race([client.request("turn/interrupt", { threadId, turnId: turn.turn.id })
+      .catch(() => {}), delay(5_000)]);
   }
-  child.kill();
+  await client.close();
   return { messages, commands: [...commands.values()], approvals, status };
 }
 

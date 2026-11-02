@@ -73,6 +73,8 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    query data kept outside the result (a `WeakMap`), a precondition fetched
    inside the `mutationFn`, a settle contract proven only with rows as props
    (not the real cache's `onMutate` echo) or opted into by a `void` handler.
+   For an infinite query, count the cached pages and requests a small edit
+   refetches; a capped visible summary does not cap the query cache.
 5. Tests: no test is authored here (`guardrails.md`, "Tests"; check 9 of
    the guardrails reviewer owns which edits are allowed): a repair that changes what a test asserts, a
    deleted test that still covered live behavior and any weakened assertion
@@ -82,7 +84,14 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    failures of existing live contracts, and review a requested pull
    request's tests for production-path coverage.
 6. Accessibility and interaction: keyboard traps, focus lost after an action,
-   controls that do nothing, `focus()` from a promise without an ownership
+   controls that do nothing, including a Clear row whose nullable selection
+   callback ignores `null`; trace the actual callback or show that Clear is
+   absent when the field cannot be cleared. For a dialog's discard guard,
+   change each editable field alone and trace whether that change prompts
+   before close. For a confirmed omission, the fix column must say to compute
+   `dirty` across every editable field against its starting values, so one
+   property edit prompts and untouched defaults do not. Also check `focus()`
+   from a promise without an ownership
    check, a disclosure or expand control that also selects its row, and a new
    layout mode whose selection is color only (WCAG 1.4.1) or whose targets
    are under 24px (2.5.8) instead of reusing the wide mode's. Card or narrow
@@ -100,6 +109,10 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    a finding; a copy that still agrees is the guardrails reviewer's, not
    yours.
    When a feature flag switches between old and new presentation, trace the
+   unresolved flag state as well as on and off: if it selects different mounted
+   dialogs or canvases, confirm the old tree and its typed state cannot be
+   replaced while the flag resolves. A ready gate or stable pending branch
+   must precede the presentation choice. Then trace the
    domain action in both arms through its mutation hook and side effects. A
    copied action path with different cache, toast, error or permission behavior
    is a finding even if each arm passes its own story.

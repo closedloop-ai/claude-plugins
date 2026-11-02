@@ -21,6 +21,10 @@ test("vibe PR creation requires a current handoff witness", () => {
   execFileSync("git", ["-C", worktree, "update-ref", "refs/remotes/origin/main", "HEAD"]);
   execFileSync("git", ["-C", worktree, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
   const gitDir = execFileSync("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"], { encoding: "utf8" }).trim();
+  const origin = path.join(gitDir, "origin.git");
+  execFileSync("git", ["init", "--bare", "-q", origin]);
+  execFileSync("git", ["-C", worktree, "remote", "add", "origin", origin]);
+  execFileSync("git", ["-C", worktree, "push", "-q", "origin", "HEAD:refs/heads/main"]);
   writeFileSync(path.join(gitDir, "vibe-session.json"), "{}\n");
   const transcript = path.join(gitDir, "transcript.jsonl");
   writeFileSync(transcript, `${JSON.stringify({ type: "user", message: { content: "Base directory for this skill: /cache/vibe/skills/vibe" } })}\n`);

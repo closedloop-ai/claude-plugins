@@ -291,10 +291,16 @@ reasoning effort `high`.
 
 ### Evals
 
-`evals/` holds a `claude plugin eval` suite of 109 one-turn rehearsals. Each
-case carries the session state in its prompt, so it needs no symphony-alpha
-checkout. Cases are named by persona: `exec-` for someone who describes the
-work and passes it on, `pm-` for someone who iterates from reference
+`evals/` holds 115 one-turn rehearsals plus two deterministic stateful
+upgrade-resume cases. Each one-turn case carries the session state in its
+prompt, so it needs no symphony-alpha checkout. The stateful cases run only in
+the local nightly and drive real Claude and Codex root sessions across an
+installed plugin upgrade. Claude tests the root's own resume or migration
+decision. Codex tests its real install, cache and thread-resume boundaries plus
+the released writer-state contracts with a harness-directed migration payload;
+it does not test the Codex skill's independent migration decision. Cases are
+named by persona: `exec-` for someone who describes the work and passes it on,
+`pm-` for someone who iterates from reference
 screenshots and may take it to a pull request themselves, and `orch-` for a
 fleet orchestrator. Tags select a group, for example:
 
@@ -334,7 +340,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.24` contains 12 skills, 16 agents, and one hook manifest
+Version `1.1.26` contains 12 skills, 16 agents, and one hook manifest
 (`hooks/hooks.json`). It has no standalone commands, root-level shell scripts,
 or production Python tools under `tools/python/`; that directory contains the
 skill-contract test modules and `vibe_contract_text.py`, the text helpers they

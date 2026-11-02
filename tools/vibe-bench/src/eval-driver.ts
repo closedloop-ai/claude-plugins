@@ -16,11 +16,15 @@ import { buildEvalBaseline, evalBaselineFileName, evalBaselineModelsMatchPolicy,
   resolveLatestEvalBaseline } from "./eval-baseline.ts";
 import type { EvalBaselineArtifact, EvalQuarantineEntry } from "./eval-baseline.ts";
 import { evalCaseCatalog } from "./eval-selection.ts";
+import type { EvalCaseDefinition } from "./eval-selection.ts";
 import { classifyVibeChangeScopeBetween } from "./vibe-change-scope.ts";
 import { isRetrySafeSlackFailure, nightlyChangesSince,
   SlackNightlyRegressionReporter } from "./eval-slack.ts";
 import type { NightlyRegressionCase, NightlyRegressionReporter } from "./eval-slack.ts";
 import { runOwnedProcess } from "./owned-process.ts";
+import { mergeEvalSuiteResults, statefulInfrastructureInvalidReason,
+  SystemUpgradeResumeRunner } from "./upgrade-resume-eval.ts";
+import type { UpgradeResumeRunner } from "./upgrade-resume-eval.ts";
 
 /** Explicit inputs for a local-only dual-runtime model eval. */
 export interface LocalEvalOptions {
@@ -38,6 +42,8 @@ export interface LocalEvalOptions {
   concurrency?: number;
   deadline?: number;
   signal?: AbortSignal;
+  statefulRunner?: UpgradeResumeRunner;
+  statefulTargetRef?: string;
 }
 
 /** Process boundary injected by tests so no model command is launched there. */
@@ -121,14 +127,27 @@ export function requireCleanT2Snapshot(repo: string, pluginSha: string): void {
   }
 }
 
-/** Discover the native Claude case manifests once from the immutable snapshot. */
+/** Discover every ordinary and stateful case once from the immutable snapshot. */
 export function evalCaseIds(vibeDir: string): string[] {
-  const evals = join(vibeDir, "evals");
-  const ids = readdirSync(evals, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && existsSync(join(evals, entry.name, "prompt.md")))
-    .map((entry) => entry.name).sort();
+  const ids = evalCaseCatalog(vibeDir).map((item) => item.id);
   if (ids.length === 0 || new Set(ids).size !== ids.length) throw new Error("eval-case-manifest-invalid");
   return ids;
+}
+
+/** Keep prompt-backed native suites and stateful upgrade cases on their owning runners. */
+export function partitionEvalCases(catalog: EvalCaseDefinition[], selected: string[]): {
+  ordinary: string[];
+  stateful: EvalCaseDefinition[];
+} {
+  const byId = new Map(catalog.map((item) => [item.id, item]));
+  if (new Set(selected).size !== selected.length || selected.some((id) => !byId.has(id))) {
+    throw new Error("eval-case-selection-invalid");
+  }
+  const stateful = selected.flatMap((id) => {
+    const item = byId.get(id)!;
+    return item.kind === "upgrade-resume" ? [item] : [];
+  });
+  return { ordinary: selected.filter((id) => byId.get(id)?.kind !== "upgrade-resume"), stateful };
 }
 
 function wordingCaseIds(vibeDir: string, selected: string[]): string[] {
@@ -156,13 +175,17 @@ export function codexEvalBudgetSeconds(caseCount: number): number {
  *
  * Claude Code accepts only one case glob and does not expand brace unions, so
  * a copied suite is the only exact multi-case selection that also preserves
- * each case's relative sibling-plugin paths.
+ * each case's relative sibling-plugin paths and shared fixture directory.
  */
 export function stageFocusedClaudeEvalCases(vibeDir: string, selectedCases: string[]): string {
   if (selectedCases.length === 0) return "vibe/evals";
   const focused = join(vibeDir, "evals-focused");
   if (existsSync(focused)) throw new Error("eval-focused-suite-exists");
   mkdirSync(focused);
+  const shared = join(vibeDir, "evals", "shared");
+  if (existsSync(shared)) {
+    cpSync(shared, join(focused, "shared"), { recursive: true, errorOnExist: true, force: false });
+  }
   for (const id of [...selectedCases].sort()) {
     const source = join(vibeDir, "evals", id);
     if (!existsSync(join(source, "prompt.md"))) throw new Error("eval-focused-case-missing");
@@ -211,11 +234,13 @@ export async function runLocalEvals(options: LocalEvalOptions,
   const snapshot = options.snapshotMode === "worktree"
     ? snapshotPluginsAtWorktree(options.repo, options.pluginSha, options.runRoot)
     : snapshotPluginsAtHead(options.repo, options.pluginSha, options.runRoot);
-  const available = evalCaseIds(snapshot.vibeDir);
+  const catalog = evalCaseCatalog(snapshot.vibeDir);
+  const available = catalog.map((item) => item.id);
   const selected = options.selectedCases?.length ? [...options.selectedCases].sort() : available;
   if (new Set(selected).size !== selected.length || selected.some((id) => !available.includes(id))) {
     throw new Error("eval-case-selection-invalid");
   }
+  const partition = partitionEvalCases(catalog, selected);
   const runtimes = options.runtimes ?? ["claude", "codex"];
   if (!runtimes.length || new Set(runtimes).size !== runtimes.length ||
       runtimes.some((runtime) => runtime !== "claude" && runtime !== "codex")) {
@@ -229,10 +254,10 @@ export async function runLocalEvals(options: LocalEvalOptions,
     ? await version(commands, options.codexExecutable, options.runRoot, "codex", deadline, options.signal) : null;
   const claudeOutput = join(options.runRoot, "claude");
   const codexOutput = join(options.runRoot, "codex");
-  if (runtimes.includes("claude")) mkdirSync(claudeOutput);
+  if (runtimes.includes("claude") && partition.ordinary.length) mkdirSync(claudeOutput);
   const claudeJson = join(claudeOutput, "result.json");
-  const claudeEvalDir = runtimes.includes("claude") ? stageFocusedClaudeEvalCases(snapshot.vibeDir,
-    options.selectedCases?.length ? selected : []) : null;
+  const claudeEvalDir = runtimes.includes("claude") && partition.ordinary.length
+    ? stageFocusedClaudeEvalCases(snapshot.vibeDir, partition.ordinary) : null;
   // The case manifests load vibe and its sibling closedloop-core snapshot. Use
   // their shared parent as the containment root while selecting vibe's suite.
   const concurrency = options.concurrency ?? EVAL_POLICY.concurrency;
@@ -244,17 +269,18 @@ export async function runLocalEvals(options: LocalEvalOptions,
     "--output-dir", claudeOutput, "--ablation", "none", "--model", EVAL_POLICY.claudeModel,
     "--judge-model", EVAL_POLICY.claudeJudgeModel,
     "--runs", "1", "--threshold", "1", "--concurrency", String(concurrency), "--scaffold",
-    "--trust-plugin", "--no-publish"];
+    // The operator grant only unlocks gated tools that each case also declares.
+    "--allow-tools", "Bash", "Write", "Edit", "--trust-plugin", "--no-publish"];
   // The native runner documents these isolated Python dependencies. Provision
   // them through uv instead of relying on the developer's system Python.
   const codexArgs = ["run", "--with", "Pillow==12.3.0", "--with", "PyYAML", "python",
     codexEvalRunnerPath(), "--plugin", snapshot.vibeDir,
     "--source-sha", options.pluginSha, "--output", codexOutput, "--codex-bin",
     options.codexExecutable, "--concurrency", String(EVAL_POLICY.codexConcurrency), "--max-seconds",
-    String(codexEvalBudgetSeconds(selected.length)), "--model", EVAL_POLICY.codexModel,
+    String(codexEvalBudgetSeconds(Math.max(1, partition.ordinary.length))), "--model", EVAL_POLICY.codexModel,
     "--grader-model", EVAL_POLICY.codexJudgeModel];
   if (options.deterministicOnly) codexArgs.push("--deterministic-only");
-  for (const id of selected) codexArgs.push("--case", codexCaseId(id));
+  for (const id of partition.ordinary) codexArgs.push("--case", codexCaseId(id));
   let claudeProcess: { status: number; stdout: string; stderr: string } | null = null;
   let codexProcess: { status: number; stdout: string; stderr: string } | null = null;
   const siblings = new AbortController();
@@ -263,10 +289,10 @@ export async function runLocalEvals(options: LocalEvalOptions,
   if (options.signal?.aborted) siblings.abort();
   try {
     const launches = [
-      runtimes.includes("claude")
+      runtimes.includes("claude") && partition.ordinary.length
         ? commands.run(options.claudeExecutable, claudeArgs, options.runRoot,
           { deadline, signal: siblings.signal }) : Promise.resolve(null),
-      runtimes.includes("codex")
+      runtimes.includes("codex") && partition.ordinary.length
         ? commands.run(options.uvExecutable, codexArgs, options.runRoot,
           { deadline, signal: siblings.signal }) : Promise.resolve(null),
     ].map((launch) => launch.catch((error: unknown) => {
@@ -289,22 +315,40 @@ export async function runLocalEvals(options: LocalEvalOptions,
 
   const vibeVersion = manifestVersion(snapshot.vibeDir);
   const coreVersion = manifestVersion(snapshot.coreDir);
-  const wordingCases = wordingCaseIds(snapshot.vibeDir, selected);
+  const wordingCases = wordingCaseIds(snapshot.vibeDir, partition.ordinary);
   const skillSha = createHash("sha256").update(
     readFileSync(join(snapshot.vibeDir, "skills/vibe/SKILL.md"))).digest("hex");
-  const records: EvalRuntimeRecord[] = [];
-  if (claudeProcess && claudeVersion) records.push(
-    record("claude", claudeProcess.status, () => collectClaudeEval(json(claudeJson), selected, {
+  const ordinaryRecords: EvalRuntimeRecord[] = [];
+  if (claudeProcess && claudeVersion) ordinaryRecords.push(
+    record("claude", claudeProcess.status, () => collectClaudeEval(json(claudeJson), partition.ordinary, {
       version: vibeVersion, coreVersion, cliVersion: claudeVersion,
       vibePath: snapshot.vibeDir, corePath: snapshot.coreDir,
       model: EVAL_POLICY.claudeModel, runs: 1,
     })));
-  if (codexProcess && codexVersion) records.push(record("codex", codexProcess.status, () => collectCodexEval(
-      json(join(codexOutput, "results.json")), selected, {
+  if (codexProcess && codexVersion) ordinaryRecords.push(record("codex", codexProcess.status, () => collectCodexEval(
+      json(join(codexOutput, "results.json")), partition.ordinary, {
         sourceSha: options.pluginSha, skillSha, version: vibeVersion, cliVersion: codexVersion,
         vibePath: snapshot.vibeDir, deterministicOnly: options.deterministicOnly ?? false,
         model: EVAL_POLICY.codexModel, graderModel: EVAL_POLICY.codexJudgeModel, wordingCases,
       })));
+  const statefulSuites = partition.stateful.length ? await (options.statefulRunner ??
+    new SystemUpgradeResumeRunner()).run({ repo: options.repo, pluginSha: options.pluginSha,
+      runRoot: join(options.runRoot, "stateful"), claudeExecutable: options.claudeExecutable,
+      codexExecutable: options.codexExecutable, cases: partition.stateful, runtimes,
+      targetRef: options.statefulTargetRef, signal: options.signal }) : {};
+  const records: EvalRuntimeRecord[] = runtimes.map((runtime): EvalRuntimeRecord => {
+    const ordinary = ordinaryRecords.find((item) => item.runtime === runtime);
+    if (ordinary?.invalidReason) return ordinary;
+    const stateful = statefulSuites[runtime] ?? null;
+    if (stateful) {
+      const invalidReason = statefulInfrastructureInvalidReason(stateful);
+      if (invalidReason) return { runtime, exitCode: 1, result: null, invalidReason };
+    }
+    const merged = mergeEvalSuiteResults(ordinary?.result ?? null, stateful, selected);
+    if (!merged) return { runtime, exitCode: 1, result: null,
+      invalidReason: "eval-runtime-artifact-missing" };
+    return { runtime, exitCode: merged.failed ? 1 : 0, result: merged, invalidReason: null };
+  });
   const result = finalizeLocalEval({ pluginSha: options.pluginSha,
     createdAt: new Date().toISOString(), wallMs: Date.now() - started,
     deterministicOnly: options.deterministicOnly ?? false, selectedCases: selected, runtimes: records });
@@ -317,8 +361,10 @@ export async function runLocalEvals(options: LocalEvalOptions,
   return { result, jsonFile, reportFile };
 }
 
-function failedCases(result: LocalEvalResult, runtime: EvalRuntime): string[] {
+/** Select retryable case failures while excluding invalid infrastructure runtimes. */
+export function failedCases(result: LocalEvalResult, runtime: EvalRuntime): string[] {
   const record = result.runtimes.find((item) => item.runtime === runtime);
+  if (record?.invalidReason) return [];
   return [...new Set(record?.result?.cases.filter((item) => !item.passed).map((item) => item.id) ??
     result.selectedCases)].sort();
 }
@@ -343,6 +389,20 @@ export function confirmedNightlyRegressions(lastGreen: EvalBaselineArtifact,
       return [{ runtime, case: previous.id }];
     });
   }).sort((left, right) => `${left.runtime}:${left.case}`.localeCompare(`${right.runtime}:${right.case}`));
+}
+
+/** Alert deterministic cases from their first final failing night, after retries settle. */
+export function deterministicNightlyFailures(current: EvalBaselineArtifact): NightlyRegressionCase[] {
+  const quarantined = new Set(current.quarantine
+    .filter((entry) => evalQuarantineEntryIsActive(entry, current.createdAt))
+    .map((entry) => `${entry.runtime}:${entry.case}`));
+  return current.cases.flatMap((item) => item.deterministic === true
+    ? (["claude", "codex"] as const).flatMap((runtime): NightlyRegressionCase[] => {
+      const last = item.outcomes[runtime]?.recentNightlyOutcomes.at(-1);
+      return last && last.passes < last.runs && !quarantined.has(`${runtime}:${item.id}`)
+        ? [{ runtime, case: item.id }] : [];
+    }) : []).sort((left, right) => `${left.runtime}:${left.case}`
+    .localeCompare(`${right.runtime}:${right.case}`));
 }
 
 interface RegressionDeliveryRecord {
@@ -401,7 +461,7 @@ export async function recoverPendingNightlyPublications(input: {
     const expectedResultFile = evalBaselineFileName(record.artifact);
     let regressionFile: string | null = null;
     const expiredQuarantine = record.expiredQuarantine ?? [];
-    if ((record.lastGreenSha && record.regressions.length) || expiredQuarantine.length) {
+    if (record.regressions.length || expiredQuarantine.length) {
       const changes = record.lastGreenSha && record.regressions.length
         ? nightlyChangesSince({ repo: input.repo, ghExecutable: input.ghExecutable,
           baselineSha: record.lastGreenSha, currentSha: record.artifact.pluginSha })
@@ -520,6 +580,15 @@ reporter?: NightlyRegressionReporter): Promise<{
   catch (error) { logSlackFailure(error); }
   const existing = existsSync(join(input.outputDir, "eval-t2-latest.json"))
     ? resolveLatestEvalBaseline(input.outputDir) : null;
+  const metadataSnapshot = snapshotPluginsAtHead(input.repo, input.pluginSha,
+    join(input.runRoot, "metadata"));
+  const catalog = evalCaseCatalog(metadataSnapshot.vibeDir);
+  const catalogChanged = existing ? catalog.length !== existing.artifact.cases.length ||
+    catalog.some((item) => {
+      const prior = existing.artifact.cases.find((candidate) => candidate.id === item.id);
+      return !prior || prior.contentHash !== item.contentHash ||
+        prior.deterministic !== item.deterministic || prior.kind !== item.kind;
+    }) : true;
   const quarantineStatus = evalQuarantineStatus();
   const currentQuarantine = quarantineStatus.entries;
   const currentModels = !existing || evalBaselineModelsMatchPolicy(existing.artifact);
@@ -531,7 +600,7 @@ reporter?: NightlyRegressionReporter): Promise<{
     try {
       scope = classifyVibeChangeScopeBetween(input.repo, existing.artifact.pluginSha, input.pluginSha);
     } catch { throw new Error("eval-t2-change-detection-failed"); }
-    if (scope.behaviorFiles.length === 0 && currentModels) {
+    if (scope.behaviorFiles.length === 0 && currentModels && !catalogChanged) {
       const reconciled = reconcileEvalBaselineQuarantine(existing.artifact, currentQuarantine);
       const jsonFile = reconciled === existing.artifact
         ? existing.file : publishEvalBaseline(input.outputDir, reconciled);
@@ -551,9 +620,6 @@ reporter?: NightlyRegressionReporter): Promise<{
         regressionReportFile: null, lineageReset: false, lineageReason: null };
     }
   }
-  const metadataSnapshot = snapshotPluginsAtHead(input.repo, input.pluginSha,
-    join(input.runRoot, "metadata"));
-  const catalog = evalCaseCatalog(metadataSnapshot.vibeDir);
   const pluginVersion = manifestVersion(metadataSnapshot.vibeDir);
   const pluginTreeSha = spawnSync("git", ["-C", input.repo, "rev-parse", `${input.pluginSha}^{tree}`],
     { encoding: "utf8" }).stdout.trim();
@@ -584,7 +650,11 @@ reporter?: NightlyRegressionReporter): Promise<{
   requireCleanT2Snapshot(input.repo, input.pluginSha);
   const result = buildEvalBaseline({ results, catalog, pluginVersion, pluginTreeSha, previous });
   const lastGreen = existing && currentModels ? resolveLastGreenEvalBaseline(input.outputDir) : null;
-  const regressions = lastGreen ? confirmedNightlyRegressions(lastGreen, result) : [];
+  const regressions = [...new Map([
+    ...(lastGreen ? confirmedNightlyRegressions(lastGreen, result) : []),
+    ...deterministicNightlyFailures(result),
+  ].map((item) => [`${item.runtime}:${item.case}`, item])).values()]
+    .sort((left, right) => `${left.runtime}:${left.case}`.localeCompare(`${right.runtime}:${right.case}`));
   const publicationFile = join(input.outputDir,
     `eval-t2-publication-${input.pluginSha.slice(0, 12)}.json`);
   const publication: NightlyPublicationRecord = { schemaVersion: 1, artifact: result,

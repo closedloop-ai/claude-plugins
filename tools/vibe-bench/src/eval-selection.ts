@@ -8,6 +8,23 @@ export interface EvalCaseDefinition {
   id: string;
   skill: EvalSkill;
   contentHash: string;
+  deterministic?: true;
+  kind?: "upgrade-resume";
+  definition?: "unchanged" | "changed";
+  nightlyPrior?: ReleaseReference;
+  transitions?: UpgradeTransition[];
+}
+
+/** One immutable vibe release selected by exact commit and manifest version. */
+export interface ReleaseReference {
+  version: string;
+  ref: string;
+}
+
+/** Fixed historical proof transition for one writer-definition relation. */
+export interface UpgradeTransition {
+  target: ReleaseReference;
+  prior: ReleaseReference;
 }
 
 function filesBelow(root: string): string[] {
@@ -40,15 +57,66 @@ export function skillFromPrompt(prompt: string): EvalSkill {
   return unique[0];
 }
 
+function releaseReference(value: unknown, field: string): ReleaseReference {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`eval-stateful-${field}-invalid`);
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).sort().join(",") !== "ref,version" ||
+      typeof record.version !== "string" || !/^\d+\.\d+\.\d+$/.test(record.version) ||
+      typeof record.ref !== "string" || !/^[a-f0-9]{40}$/.test(record.ref)) {
+    throw new Error(`eval-stateful-${field}-invalid`);
+  }
+  return { version: record.version, ref: record.ref };
+}
+
+/** Parse the dependency-free JSON subset of YAML used by stateful case manifests. */
+export function statefulCaseDefinition(caseDir: string, id: string): EvalCaseDefinition | null {
+  const manifest = join(caseDir, "case.yaml");
+  if (!existsSync(manifest)) return null;
+  let raw: unknown;
+  try { raw = JSON.parse(readFileSync(manifest, "utf8")) as unknown; }
+  catch { throw new Error("eval-stateful-manifest-malformed"); }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("eval-stateful-manifest-invalid");
+  }
+  const value = raw as Record<string, unknown>;
+  const keys = Object.keys(value).sort().join(",");
+  if (keys !== "definition,deterministic,kind,nightlyPrior,schemaVersion,skill,transitions" ||
+      value.schemaVersion !== 1 || value.kind !== "upgrade-resume" || value.skill !== "vibe" ||
+      value.deterministic !== true || (value.definition !== "unchanged" && value.definition !== "changed") ||
+      !Array.isArray(value.transitions) || value.transitions.length < 2) {
+    throw new Error("eval-stateful-manifest-invalid");
+  }
+  const transitions = value.transitions.map((item, index): UpgradeTransition => {
+    if (!item || typeof item !== "object" || Array.isArray(item) ||
+        Object.keys(item as Record<string, unknown>).sort().join(",") !== "prior,target") {
+      throw new Error(`eval-stateful-transition-${index}-invalid`);
+    }
+    const record = item as Record<string, unknown>;
+    return { target: releaseReference(record.target, `target-${index}`),
+      prior: releaseReference(record.prior, `prior-${index}`) };
+  });
+  if (new Set(transitions.map((item) => item.target.ref)).size !== transitions.length ||
+      transitions.some((item) => item.target.ref === item.prior.ref)) {
+    throw new Error("eval-stateful-transitions-invalid");
+  }
+  return { id, skill: "vibe", contentHash: evalCaseContentHash(caseDir), deterministic: true,
+    kind: "upgrade-resume", definition: value.definition, nightlyPrior:
+      releaseReference(value.nightlyPrior, "nightly-prior"), transitions };
+}
+
 /** Discover the complete case catalog and its derived `skill:<name>` ownership. */
 export function evalCaseCatalog(vibeDir: string): EvalCaseDefinition[] {
   const evals = join(vibeDir, "evals");
   const catalog = readdirSync(evals, { withFileTypes: true }).flatMap((entry) => {
     const caseDir = join(evals, entry.name);
     const prompt = join(caseDir, "prompt.md");
-    if (!entry.isDirectory() || !existsSync(prompt)) return [];
-    return [{ id: entry.name, skill: skillFromPrompt(readFileSync(prompt, "utf8")),
-      contentHash: evalCaseContentHash(caseDir) }];
+    if (!entry.isDirectory()) return [];
+    if (existsSync(prompt)) return [{ id: entry.name,
+      skill: skillFromPrompt(readFileSync(prompt, "utf8")), contentHash: evalCaseContentHash(caseDir) }];
+    const stateful = statefulCaseDefinition(caseDir, entry.name);
+    return stateful ? [stateful] : [];
   }).sort((left, right) => left.id.localeCompare(right.id));
   if (!catalog.length || new Set(catalog.map((item) => item.id)).size !== catalog.length) {
     throw new Error("eval-case-catalog-invalid");

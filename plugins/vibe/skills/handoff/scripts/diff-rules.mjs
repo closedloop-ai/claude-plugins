@@ -12,7 +12,7 @@ import { migrationId, migrationProblems } from "../../vibe/scripts/migration-pub
 import { git } from "../../vibe/scripts/session-record.mjs";
 import { E2E_ROOT_PATHSPECS, isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { pathGateTests } from "./path-gates.mjs";
-import { checkComparators, checkUnusedExports } from "./review-gap-rules.mjs";
+import { checkComparators, checkDuplicateHelpers, checkUnusedExports } from "./review-gap-rules.mjs";
 import { sharedComponentTests } from "./shared-consumers.mjs";
 import { checkSpecChanges } from "./spec-rules.mjs";
 import { routeSpecs } from "./route-specs.mjs";
@@ -48,6 +48,12 @@ const GRID_TABLE = /grid-table-v2/;
 const GRID_SYMBOL = /\bGridTableV2\b/;
 const GRID_PARITY_TEST = "apps/app/__tests__/grid-table-v2-surface-capability-parity.test.ts";
 const HOST_PARITY_TEST = /^apps\/app\/__tests__\/[^/]+-host-capability-parity\.test\.ts$/;
+const ISSUE_DETAIL_PARITY_TEST = "apps/app/__tests__/issues-detail-host-capability-parity.test.ts";
+const ISSUE_BREADCRUMB_PATH = /^(?:packages\/app\/documents\/components\/document-detail-header\.tsx|apps\/desktop\/src\/renderer\/navigation\/breadcrumb-model\.ts|packages\/app\/issues\/lib\/issues-v2-navigation\.ts)$/;
+const BREADCRUMB_SIGNAL = /breadcrumb|crumb|ancestor/i;
+const BREADCRUMB_BUILDER = /^(?:export\s+)?(?:function|const|let)\s+\w*(?:breadcrumb|crumb|ancestor)\w*\b/i;
+const HEADER_BREADCRUMB_INPUT = /^\s*(?:const|let)\s+buildOrgPath\s*=/;
+const HEADER_BREADCRUMB_USE = /\bbuildDocumentBreadcrumbs\s*\([^)]*\bbuildOrgPath\b/;
 const STORY_FILE = /\.stories\.tsx?$/;
 const SIDEBAR_ORDER_FILES = new Set(["apps/storybook/story-group-order.ts", "apps/storybook/.storybook/preview.tsx", "apps/storybook/.storybook/manager.ts"]);
 const SIDEBAR_ORDER_TESTS = ["apps/storybook/__tests__/preview-story-sort-order.test.ts", "apps/storybook/__tests__/story-group-order.test.ts"];
@@ -68,6 +74,7 @@ const EXPECT_CALL = /\bexpect\(/;
 const WINDOW = 25;
 const COPY_FILE = /\.[jt]sx$/;
 const COPY_LITERALS = [
+  /\bsearchLabel\s*[=:]\s*\{?\s*(["'\x60])((?:(?!\1)[^\\]|\\.)*)\1/g,
   /\btoast(?:\.\w+)?\(\s*(["'`])((?:(?!\1)[^\\]|\\.)*)\1/g,
   /(?:\baria-label|\baria-description|\blabel|\btitle|\bplaceholder|\bdescription|\btooltip)\s*[=:]\s*\{?\s*(["'`])((?:(?!\1)[^\\]|\\.)*)\1/g,
   /()(?<=[\w"'}/])>([^<>{}=&|();]*[A-Za-z]{2,}[^<>{}=&|();]*)</g,
@@ -186,8 +193,9 @@ export function evaluateDiff(files, changeLog, repo, phase = "pull-request") {
   checkRestoredRemovalsDeepening(live, files, repo, changeLog, add);
   checkComparators(live, repo, logged, add, changeLog, phase);
   checkUnusedExports(live, repo, logged, add);
+  checkDuplicateHelpers(live, repo, add);
   checkStorybookRules(files, repo, logged, add);
-  requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo), ...sidebarOrderTests(files, repo), ...pathGateTests(live, (file) => repo.head(file)), ...storybookRuleTests(files, (file) => repo.head(file)), ...sharedComponentTests(live, repo, logged, add));
+  requiredTests.push(...routeSpecs(live, repo), ...gridParityTests(files, repo, add), ...sidebarOrderTests(files, repo), ...pathGateTests(live, (file) => repo.head(file)), ...storybookRuleTests(files, (file) => repo.head(file)), ...sharedComponentTests(live, repo, logged, add));
   return { ok: blocking.length === 0, blocking, requiredTests, requiredChecks };
 }
 
@@ -590,15 +598,49 @@ function checkLostStoryIds(files, repo, logged, add) {
   }
 }
 
-/** GridTableV2 parity tests read other files' source, so the graph never maps them. */
-export function gridParityTests(files, repo) {
+/** Changed lines inside a breadcrumb builder matter even when they only alter a target href. */
+function changedBreadcrumbBuilder(file, repo) {
+  const inBuilder = (source, changes) => {
+    if (!source || !changes.length) return false;
+    const ranges = [];
+    let start = null;
+    for (const [index, line] of source.split("\n").entries()) {
+      if (start === null && BREADCRUMB_BUILDER.test(line)) start = index + 1;
+      if (start !== null && /^}\s*;?\s*$/.test(line)) {
+        ranges.push([start, index + 1]);
+        start = null;
+      }
+    }
+    return changes.some((entry) => ranges.some(([first, last]) => entry.line >= first && entry.line <= last));
+  };
+  return inBuilder(repo.head(file.path), file.added) || inBuilder(repo.base(file.oldPath ?? file.path), file.removed);
+}
+
+/** GridTableV2 and Issue breadcrumb parity tests read other files' source, so the graph never maps them. */
+export function gridParityTests(files, repo, add = () => {}) {
   const touched = files.some((file) => GRID_TABLE.test(file.path) || [...file.added, ...file.removed].some((entry) => GRID_SYMBOL.test(entry.text)));
-  if (!touched) {
-    return [];
+  const breadcrumbFiles = files.filter((file) => ISSUE_BREADCRUMB_PATH.test(file.path)
+    && ([...file.added, ...file.removed].some((entry) => BREADCRUMB_SIGNAL.test(entry.text))
+      || (file.path === "packages/app/documents/components/document-detail-header.tsx"
+        && [...file.added, ...file.removed].some((entry) => HEADER_BREADCRUMB_INPUT.test(entry.text))
+        && [repo.head(file.path), repo.base(file.oldPath ?? file.path)].some((source) => HEADER_BREADCRUMB_USE.test(source ?? "")))
+      || changedBreadcrumbBuilder(file, repo)));
+  const addedFiles = files.filter((file) => file.status !== "D").map((file) => file.path);
+  const present = (file) => (repo.headFiles.includes(file) || addedFiles.includes(file)) && repo.head(file) != null;
+  if (breadcrumbFiles.length && !present(ISSUE_DETAIL_PARITY_TEST)) {
+    for (const file of breadcrumbFiles) {
+      add("host-parity-missing", file.path, file.added[0]?.line ?? 1,
+        "changes the Issue breadcrumb model without a shared web and Desktop host parity test",
+        `add ${ISSUE_DETAIL_PARITY_TEST} with one fixture checking both host trails and navigation targets`);
+    }
   }
-  return [GRID_PARITY_TEST, ...repo.headFiles.filter((file) => HOST_PARITY_TEST.test(file))]
-    .filter((file) => repo.headFiles.includes(file))
-    .map((file) => ({ path: file, reason: "a GridTableV2 type, adapter or mount changed; this parity test is not mapped by code_tests_for" }));
+  const selected = [...(touched ? [GRID_PARITY_TEST, ...[...repo.headFiles, ...addedFiles].filter((file) => HOST_PARITY_TEST.test(file))] : []),
+    ...(breadcrumbFiles.length ? [ISSUE_DETAIL_PARITY_TEST] : [])];
+  return [...new Set(selected)]
+    .filter(present)
+    .map((file) => ({ path: file, reason: breadcrumbFiles.length && file === ISSUE_DETAIL_PARITY_TEST
+      ? "an Issue breadcrumb model changed; this web and Desktop parity test is not mapped by code_tests_for"
+      : "a GridTableV2 type, adapter or mount changed; this parity test is not mapped by code_tests_for" }));
 }
 
 /**

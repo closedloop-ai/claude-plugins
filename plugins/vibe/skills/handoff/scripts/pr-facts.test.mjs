@@ -210,6 +210,54 @@ test("the body gate refuses missing facts, uncited lines and a stacked base with
   assert.ok(local.every((problem) => !problem.includes("/Users/x") && !problem.includes("~/foo")), "never echoes the path");
 });
 
+test("AC-005 DT-08 DT-09: PR facts reject false CI coverage and uncited universal Summary claims", (t) => {
+  const s = session(t);
+  const runs = { testRuns: [
+    { lane: "web-e2e", command: "pnpm test:e2e", status: "not-run" },
+    { lane: "desktop-e2e", command: "pnpm --dir apps/desktop test:e2e", status: "not-run" },
+  ] };
+  const falseBody = `## Summary\n- Every picker has a search box.\n\n${COMPLETE_BODY}\nThe web e2e flag-on test and Desktop e2e have not run locally; CI covers them.`;
+  const problems = facts(s, { body: falseBody, runs }).prBodyProblems.join("\n");
+  assert.match(problems, /CI.*(?:not.run|coverage)/i);
+  assert.match(problems, /Every picker.*(?:citation|file.*line)/i);
+  const truthful = `## Summary\n- Every picker has a search box (${ROUTE}:2).\n\n${COMPLETE_BODY}\nNeither touches a path in this PR.\nWeb and Desktop E2E have not run. No CI runs these lanes before merge.`;
+  assert.deepEqual(facts(s, { body: truthful, runs }).prBodyProblems, []);
+});
+
+test("AC-005 DT-08: PR facts bind a CI claim to later lane prose and distinguish each host clause", (t) => {
+  const s = session(t);
+  const runs = { testRuns: [
+    { lane: "web-e2e", command: "pnpm test:e2e", status: "not-run" },
+    { lane: "desktop-e2e", command: "pnpm --dir apps/desktop test:e2e", status: "not-run" },
+  ] };
+  const truthful = "Web and Desktop E2E have not run. No CI runs these lanes before merge.";
+  const laterLane = `${COMPLETE_BODY}\n${truthful}\nCI covers them. Web and Desktop E2E have not run.`;
+  assert.match(facts(s, { body: laterLane, runs }).prBodyProblems.join("\n"), /CI coverage claim for not-run web and Desktop E2E lane/);
+  const otherHostNegation = `${COMPLETE_BODY}\n${truthful}\nWeb E2E CI covers; no CI runs Desktop E2E before merge.`;
+  assert.match(facts(s, { body: otherHostNegation, runs }).prBodyProblems.join("\n"), /CI coverage claim for not-run web E2E lane/);
+  assert.deepEqual(facts(s, { body: `${COMPLETE_BODY}\n${truthful}\nNeither touches a path in this PR.`, runs }).prBodyProblems, []);
+});
+
+test("R6 DT-08: explicit Unit test CI claim does not borrow Web E2E lane scope", (t) => {
+  const s = session(t);
+  const runs = { testRuns: [{ lane: "web-e2e", command: "pnpm test:e2e", status: "not-run" }] };
+  const truthful = "Web E2E has not run. No CI runs it before merge.";
+  const explicitUnit = `${COMPLETE_BODY}\n${truthful}\nUnit tests are covered by CI. Web E2E has not run.`;
+  assert.deepEqual(facts(s, { body: explicitUnit, runs }).prBodyProblems, []);
+  const pronoun = `${COMPLETE_BODY}\n${truthful}\nWeb E2E has not run; CI covers it.`;
+  assert.match(facts(s, { body: pronoun, runs }).prBodyProblems.join("\n"), /CI coverage claim for not-run web E2E lane/);
+});
+
+test("S3 DT-08: lint CI claim is unrelated to the pending E2E lane", (t) => {
+  const s = session(t);
+  const runs = { testRuns: [{ lane: "web-e2e", command: "pnpm test:e2e", status: "not-run" }] };
+  const truthful = "Web E2E has not run. No CI runs it before merge.";
+  const lintClaim = `${COMPLETE_BODY}\n${truthful}\nCI runs lint on every push. Web E2E has not run.`;
+  assert.deepEqual(facts(s, { body: lintClaim, runs }).prBodyProblems, []);
+  const pronoun = `${COMPLETE_BODY}\n${truthful}\nWeb E2E has not run; CI covers it.`;
+  assert.match(facts(s, { body: pronoun, runs }).prBodyProblems.join("\n"), /CI coverage claim for not-run web E2E lane/);
+});
+
 test("evidence: lanes follow the diff, and unfinished, missing or stale runs block", () => {
   const changed = ["packages/app/list.tsx", "packages/app/list.stories.tsx"];
   assert.deepEqual(requiredLanes([ROUTE]), []);

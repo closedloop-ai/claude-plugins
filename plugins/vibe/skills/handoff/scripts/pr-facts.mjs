@@ -14,6 +14,7 @@ import { isDesktopE2eLane, NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } fro
 import { isE2ePath, isTestFile, TEST_SPEC_PATTERN } from "../../vibe/scripts/test-files.mjs";
 import { REQUIRED_CONTAINER_IDENTITY, specExecutionLimitation, tierEvidenceProblems } from "./e2e-tier.mjs";
 import { probeE2eCapability } from "./e2e-capability-probe.mjs";
+import { prBodyClaimProblems } from "./pr-body-claims.mjs";
 import { prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS } from "./pr-evidence-schema.mjs";
 import { qaImpactRequest } from "./qa-impact.mjs";
 
@@ -238,7 +239,7 @@ export function evidenceProblems(runsFile, changed, commit, worktree) {
 }
 
 /** What a drafted body gets wrong against the facts. */
-export function bodyProblems(body, facts, files, prBase, template = "") {
+export function bodyProblems(body, facts, files, prBase, template = "", runsFile = null) {
   const flat = body.replace(/\s+/g, " ");
   const byPath = new Map(files.map((file) => [file.path, file]));
   const changedLine = (file, line) => file.hunks.some((hunk) => hunk.added.some((entry) => entry.line === line)
@@ -259,6 +260,7 @@ export function bodyProblems(body, facts, files, prBase, template = "") {
     ...facts.asks.filter((ask) => !flat.includes(ask)).map((ask) => `ticket ask not quoted and answered: ${ask}`),
     ...(prBase !== "main" && !flat.includes(STACKED_BASE_STATEMENT) ? [`base is ${prBase}; add verbatim: ${STACKED_BASE_STATEMENT}`] : []),
     ...pointerProblems(body).map(({ line, kind }) => `body line ${line}: ${kind}`),
+    ...prBodyClaimProblems(body, runsFile),
     ...templateHeadingProblems(body, template),
   ];
 }
@@ -320,7 +322,7 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
     return {
       ...facts,
       ...(body === undefined ? {} : { prBodyProblems: [
-        ...bodyProblems(body, facts, files, prBase, template ?? readTemplate(worktree, base)),
+        ...bodyProblems(body, facts, files, prBase, template ?? readTemplate(worktree, base), runs),
         ...(runs === undefined ? [] : knownMainFailureProblems(body, runs)),
       ] }),
       ...(runs === undefined ? {} : { prEvidenceProblems: [

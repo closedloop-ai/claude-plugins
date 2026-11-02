@@ -178,7 +178,7 @@ def test_claude_eval_uses_an_identified_uncommitted_snapshot(tmp_path: Path) -> 
 
 def test_one_case_per_claude_prompt_and_role_names() -> None:
     found = runner.cases()
-    assert len(found) == 109
+    assert len(found) == 115
     assert len({c["name"] for c in found}) == len(found)
     assert all(c["name"].startswith(("executive-", "product-manager-", "orchestrator-")) for c in found)
     for case in found:
