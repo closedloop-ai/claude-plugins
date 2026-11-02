@@ -40,10 +40,12 @@ export const DEFAULTS = Object.freeze({
   maxWaitSeconds: 600,
   pollSeconds: 5,
   pollBackoffFactor: 1.5,
-  maxPollSeconds: 60,
+  maxPollSeconds: 30,
   retries: 1,
   retryWorkerDivisor: 2,
   highLoadPerCore: 1.5,
+  // W4 (ISS-13587): independent verify lanes run in a pool this large at most, fewer when the budget has less to spare.
+  poolSize: 2,
 });
 
 export const ENV = Object.freeze({
@@ -57,6 +59,9 @@ export const ENV = Object.freeze({
   retry: "VIBE_HEAVY_RETRY",
   retries: "VIBE_HEAVY_RETRIES",
   highLoadPerCore: "VIBE_HEAVY_HIGH_LOAD_PER_CORE",
+  pool: "VIBE_VERIFY_POOL",
+  poolSize: "VIBE_VERIFY_POOL_SIZE",
+  poolable: "VIBE_VERIFY_POOLABLE",
 });
 
 const OFF_VALUES = new Set(["off", "0", "false", "no"]);
@@ -82,6 +87,7 @@ export function resolveSettings(env = process.env) {
     maxWaitSeconds: numberSetting(env, ENV.maxWaitSeconds, DEFAULTS.maxWaitSeconds, { min: 0 }),
     retries: Math.floor(numberSetting(env, ENV.retries, DEFAULTS.retries, { min: 0, max: 3 })),
     highLoadPerCore: numberSetting(env, ENV.highLoadPerCore, DEFAULTS.highLoadPerCore, { min: 0.1 }),
+    poolSize: Math.floor(numberSetting(env, ENV.poolSize, DEFAULTS.poolSize, { min: 1, max: 8 })),
   });
 }
 

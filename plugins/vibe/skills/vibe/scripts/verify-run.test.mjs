@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createVerifyRun, evidenceOk, parseLaneCheck, Status, summarize, TIME_LIMITS, turboReplay, uncoveredPaths } from "./verify-run.mjs";
+import { createVerifyRun, strictlySerial, evidenceOk, parseLaneCheck, Status, summarize, TIME_LIMITS, turboReplay, uncoveredPaths } from "./verify-run.mjs";
 
 const HEAD = "a".repeat(40);
 const ok = (stdout = "") => ({ status: 0, stdout, stderr: "" });
@@ -21,7 +21,7 @@ const LANE = "pnpm --filter app test";
 const REPORT = `Lanes:\n    ${LANE}\n`;
 const PACKAGE = JSON.stringify({ scripts: { "check:source-gates": "x", "typecheck:affected": "y", "test:lanes": "z" } });
 
-function harness({ installed = true, extra = [], files = { "package.json": PACKAGE, "apps/app/a.tsx": "x" }, calls = [] } = {}) {
+function harness({ installed = true, extra = [], files = { "package.json": PACKAGE, "apps/app/a.tsx": "x" }, calls = [], controllerOptions = {} } = {}) {
   const written = {};
   const routes = [
     ...extra,
@@ -43,6 +43,7 @@ function harness({ installed = true, extra = [], files = { "package.json": PACKA
     write: (file, text) => { written[file] = text; },
     exists: (file) => (installed && file.endsWith("node_modules")) || file in files || file.endsWith("apps/app/a.tsx") || file === "/gd/vibe-verify-cache.json" && "/gd/vibe-verify-cache.json" in files,
     now: () => 1_000,
+    ...controllerOptions,
   });
   return { controller, written, calls };
 }
@@ -308,5 +309,81 @@ test("a run that was neither retried nor waited carries no load block, and a fai
   const typecheck = find(evidence, "typecheck");
   assert.equal(typecheck.status, Status.Failed);
   assert.equal(typecheck.load.retried, true);
+  assert.equal(evidence.ok, false);
+});
+
+// ISS-13587: independent lanes run in a bounded pool; the evidence contract is unchanged.
+const POOL_LANES = ["pnpm test:lint", "pnpm --filter app test", "pnpm test:ci", "pnpm test:e2e"];
+const POOL_REPORT = `Lanes:\n${POOL_LANES.map((lane) => `    ${lane}`).join("\n")}\n`;
+const POOL_CHECK = POOL_LANES.map((lane) => `MISSING-LANE ${lane}: run it with pre-pr-lanes.mjs run --head <HEAD> --command "${lane}"\n`).join("");
+const POOL_FILES = { "/wt/package.json": PACKAGE, "/wt/apps/app/a.tsx": "x" };
+
+function pooledHarness({ results = {}, delays = {}, env = {} } = {}) {
+  const asyncCalls = [];
+  let active = 0;
+  let maxActive = 0;
+  const runAsync = async (command, args) => {
+    const line = [command, ...args].map((part) => String(part).replace(/^.*\/scripts\//, "")).join(" ");
+    asyncCalls.push(line);
+    active += 1; maxActive = Math.max(maxActive, active);
+    const lane = POOL_LANES.find((candidate) => line.includes(`--command ${candidate} `) || line.endsWith(`--command ${candidate}`) || line.includes(`--command ${candidate} --report`));
+    await new Promise((resolve) => setTimeout(resolve, delays[lane] ?? 1));
+    active -= 1;
+    return results[lane] ?? ok("recorded pass");
+  };
+  const harnessed = harness({ files: POOL_FILES, extra: [["run-bounded.mjs 300 pnpm test:lanes", ok(POOL_REPORT)], ["pre-pr-lanes.mjs check", ok(POOL_CHECK)]],
+    controllerOptions: { runAsync, env, budget: { snapshot: () => ({ available: 8 }) } } });
+  return { ...harnessed, asyncCalls, maxActive: () => maxActive };
+}
+
+test("pooled lanes: the records come back in lane-report order whatever finished first, with the e2e lane under the lock", async () => {
+  const { controller, asyncCalls, maxActive } = pooledHarness({ delays: { "pnpm test:lint": 40, "pnpm test:ci": 1, "pnpm --filter app test": 10, "pnpm test:e2e": 5 } });
+  const evidence = await controller.verifyPooled({ worktree: "/wt", head: HEAD, useCache: false });
+  assert.deepEqual(evidence.checks.filter((check) => check.name.startsWith("lane:")).map((check) => check.name), POOL_LANES.map((lane) => `lane: ${lane}`));
+  assert.ok(evidence.checks.filter((check) => check.name.startsWith("lane:")).every((check) => check.status === Status.Passed));
+  assert.ok(maxActive() <= 2);
+  assert.equal(evidence.scheduling.mode, "pooled");
+  assert.equal(evidence.scheduling.pooled, 2);
+  assert.equal(evidence.scheduling.serial, 2);
+  assert.equal(find(evidence, "pnpm test:lint").scheduled, "pool");
+  assert.equal(find(evidence, "pnpm --filter app test").scheduled, "serial");
+  const locked = asyncCalls.filter((line) => line.includes("e2e-lock.mjs run --head"));
+  assert.equal(locked.length, 1, "only the e2e lane goes through the lock");
+  assert.match(locked[0], /--command pnpm test:e2e/);
+});
+
+test("pooled and serial give the same checks and the same ok when the same lanes fail, and a failed lane makes ok false", async () => {
+  const failing = { "pnpm test:ci": fail("1 failed", 1) };
+  const pooled = await pooledHarness({ results: failing }).controller.verifyPooled({ worktree: "/wt", head: HEAD, useCache: false });
+  const calls = [];
+  const serial = harness({ files: POOL_FILES, calls, extra: [["run-bounded.mjs 300 pnpm test:lanes", ok(POOL_REPORT)], ["pre-pr-lanes.mjs check", ok(POOL_CHECK)], ["--command pnpm test:ci", fail("1 failed", 1)]] }).controller.verify({ worktree: "/wt", head: HEAD, useCache: false });
+  const shape = (evidence) => evidence.checks.map((check) => [check.name, check.status, check.required]);
+  assert.deepEqual(shape(pooled), shape(serial));
+  assert.equal(find(pooled, "pnpm test:ci").status, Status.Failed);
+  assert.equal(pooled.ok, false);
+  assert.equal(serial.ok, false);
+  assert.deepEqual(pooled.summary, serial.summary);
+  assert.equal(serial.scheduling, undefined);
+});
+
+test("a timed out or unstartable pooled lane is blocked, never passed; skipped and not-run lanes are never counted as passed", async () => {
+  const { controller } = pooledHarness({ results: { "pnpm test:lint": fail("", 124), "pnpm --filter app test": { status: 127, stdout: "", stderr: "spawn pnpm ENOENT" } } });
+  const evidence = await controller.verifyPooled({ worktree: "/wt", head: HEAD, useCache: false });
+  assert.equal(find(evidence, "pnpm test:lint").status, Status.Blocked);
+  assert.equal(find(evidence, "pnpm --filter app test").status, Status.Blocked);
+  assert.equal(evidence.ok, false);
+  assert.equal(find(evidence, "selected-tests").status, Status.NotRun);
+});
+
+test("VIBE_VERIFY_POOL=serial and a switched-off budget select the strictly serial path", () => {
+  assert.equal(strictlySerial({ VIBE_VERIFY_POOL: "serial" }), true);
+  assert.equal(strictlySerial({ VIBE_HEAVY_BUDGET: "off" }), true);
+  assert.equal(strictlySerial({}), false);
+});
+
+test("an unreadable lane report is blocked on the pooled path just as on the serial one", async () => {
+  const harnessed = harness({ files: POOL_FILES, extra: [["run-bounded.mjs 300 pnpm test:lanes", fail("no report", 1)]], controllerOptions: { env: {}, budget: { snapshot: () => ({ available: 8 }) } } });
+  const evidence = await harnessed.controller.verifyPooled({ worktree: "/wt", head: HEAD, useCache: false });
+  assert.equal(find(evidence, "lanes").status, Status.Blocked);
   assert.equal(evidence.ok, false);
 });

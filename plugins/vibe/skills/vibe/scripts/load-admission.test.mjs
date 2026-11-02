@@ -63,17 +63,46 @@ test("past the maximum wait it proceeds at the minimum worker count instead of f
   assert.equal(result.loadAtStart.belowMinimum, true);
 });
 
-test("three concurrent runs under a fake load wait for each other instead of failing, and each is admitted", async () => {
-  // One shared machine: each run holds a lease while it runs (a fake 20 s), so the second and third see no capacity until it ends.
-  const m = machine();
-  const events = [];
-  const run = (name) => runAdmitted("pnpm", ["test"], { seconds: 60, budget: m.budget, settings, sleep: m.sleep, now: m.now, loadAverage: () => 12,
-    run: async () => { events.push(`start ${name} at ${m.clock.t}`); await m.sleep(20_000); events.push(`end ${name}`); return ok; } });
-  // Serialized by the fake clock: a run only polls after the one ahead released.
-  const results = [];
-  for (const name of ["a", "b", "c"]) results.push(await run(name));
+/** A fake clock for concurrent runs: sleeps queue up and the clock jumps to the earliest wake-up whenever every run is waiting. */
+function fakeTime() {
+  let t = 0;
+  const queue = [];
+  return {
+    now: () => t,
+    sleep: (ms) => new Promise((resolve) => queue.push({ at: t + ms, resolve })),
+    async drive(promises) {
+      let done = false;
+      const all = Promise.all(promises).then((value) => { done = true; return value; });
+      while (!done) {
+        await new Promise((resolve) => setImmediate(resolve));
+        if (!done && queue.length) {
+          queue.sort((a, b) => a.at - b.at);
+          const next = queue.shift();
+          t = Math.max(t, next.at);
+          next.resolve();
+        }
+      }
+      return all;
+    },
+  };
+}
+
+test("three concurrent runs under a fake load wait for capacity and each is admitted; none fails, retries or runs beside another", async () => {
+  // Another tool's vitest run uses 9 of 10 cores for the first 60 fake seconds. Each of our runs then holds all 8 budgeted workers for 20 fake seconds.
+  const time = fakeTime();
+  const m = machine({ busy: () => (time.now() < 60_000 ? 9 : 0) });
+  let running = 0;
+  let maxRunning = 0;
+  const starts = [];
+  const run = (name) => runAdmitted("pnpm", ["test"], { seconds: 60, budget: m.budget, settings, sleep: time.sleep, now: time.now, loadAverage: () => 12,
+    run: async () => { running += 1; maxRunning = Math.max(maxRunning, running); starts.push([name, time.now()]); await time.sleep(20_000); running -= 1; return ok; } });
+  const results = await time.drive([run("a"), run("b"), run("c")]);
   assert.deepEqual(results.map((r) => r.exitCode), [0, 0, 0]);
   assert.deepEqual(results.map((r) => r.retried), [false, false, false]);
+  assert.ok(results.every((r) => r.waitedMs > 0), "every run waited");
+  assert.equal(results.filter((r) => r.admission === "waited-timed-out").length, 0);
+  assert.equal(maxRunning, 1, "each run waited until the one ahead released its 8 workers");
+  assert.ok(starts.every(([, at]) => at >= 60_000), "none started while the other tool held the machine");
   assert.equal(m.files.size, 0, "every lease is released");
 });
 
