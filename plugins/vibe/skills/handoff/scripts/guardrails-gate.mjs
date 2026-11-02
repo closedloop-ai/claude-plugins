@@ -35,7 +35,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { execCommand, tailLines } from "../../vibe/scripts/ws3-exec.mjs";
+import { execCommand, tailLines, toolDidNotRun } from "../../vibe/scripts/ws3-exec.mjs";
 import { isTestFile } from "../../vibe/scripts/test-files.mjs";
 import { parseUnifiedDiff, runDiffRules } from "./diff-rules.mjs";
 
@@ -143,10 +143,12 @@ export function renameLines(text) {
 }
 
 /** Findings from added lines in source files: enum, `as` casts, client `console`, raw internal anchors, inline imports. */
-export function scanConventions(files, readHead = () => undefined) {
+export function scanConventions(files, readHead = () => undefined, unread = []) {
   const found = [];
   for (const file of files.filter((entry) => entry.status !== "D" && SOURCE.test(entry.path) && !/\.(?:mjs|cjs)$/.test(entry.path))) {
-    const renames = TS_FILE.test(file.path) ? renameLines(readHead(file.path) ?? "") : new Set();
+    const head = TS_FILE.test(file.path) ? readHead(file.path) : "";
+    if (typeof head !== "string") unread.push(file.path);
+    const renames = renameLines(head ?? "");
     for (const { line, text } of file.added) {
       if (COMMENT.test(text)) continue;
       const code = codeOnly(text);
@@ -271,14 +273,16 @@ export function createGuardrailsGate({
 
   function wrappedGate({ name, script, args, worktree, changed, scripts, report }) {
     if (script && !(script in scripts)) return report.skip(name, `the repository defines no "${script}" script`);
+    if (!exists(path.join(worktree, "node_modules"))) return report.skip(name, "dependencies are not installed in the worktree (no node_modules), so the repository's gate cannot run");
     const result = run("pnpm", args, { cwd: worktree, timeoutMs: 600_000 });
-    if (result.status === 127) return report.skip(name, `could not run pnpm: ${tailLines(result.stderr, 1)}`);
     if (result.status === 124) return report.skip(name, "stopped after 600s on this machine");
+    const missing = toolDidNotRun(result);
+    if (missing) return report.skip(name, missing);
     report.ran(name);
     if (result.status !== 0) report.add(fromGateOutput(name, `${result.stdout}\n${result.stderr}`, changed));
   }
 
-  function ownerDuplicates({ files, worktree, changedPaths }) {
+  function ownerDuplicates({ files, worktree, changedPaths, failed }) {
     const names = new Map();
     for (const file of files.filter((entry) => entry.status !== "D" && SOURCE.test(entry.path) && !isTestFile(entry.path))) {
       for (const { line, text } of file.added) {
@@ -290,6 +294,7 @@ export function createGuardrailsGate({
     for (const [name, origin] of [...names].slice(0, MAX_OWNER_LOOKUPS)) {
       const pattern = String.raw`^\s*export\s+(declare\s+)?(default\s+)?(async\s+)?(const|let|function\*?|class|type|interface|enum)\s+${name}\b`;
       const grepped = git(worktree, ["grep", "-nE", pattern, "--", "*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs"]);
+      if (grepped.status > 1) { failed.push(name); continue; }
       const other = grepped.stdout.split("\n").filter(Boolean).map((hit) => /^([^:]+):(\d+):/.exec(hit)).filter(Boolean)
         .find((hit) => !changedPaths.has(hit[1]) && !isTestFile(hit[1]));
       if (other) found.push(finding(Check.OwnerDuplicates, origin.file, origin.line, Severity.Medium, `\`${name}\` is already exported by ${other[1]}:${other[2]}; reuse that owner`, origin.text));
@@ -350,13 +355,17 @@ export function createGuardrailsGate({
       const shown = git(worktree, ["show", `${baseSha}:${file}`]);
       return shown.status === 0 ? shown.stdout : undefined;
     };
-    handle.add([...scanConventions(files, readHead), ...overCeiling({ files, worktree })]);
+    const unreadConventions = [];
+    handle.add([...scanConventions(files, readHead, unreadConventions), ...overCeiling({ files, worktree })]);
+    if (unreadConventions.length > 0) { report.checks_run.splice(report.checks_run.indexOf(Check.Conventions), 1); handle.skip(Check.Conventions, `partial: could not read the head text of ${unreadConventions.join(", ")}`); }
     const repairs = scanTestRepairs(files, readBase, readHead);
     handle.add(repairs.findings);
     if (repairs.unevaluated.length > 0) handle.skip(Check.TestRepair, `partial: findings cover only the files it could read; could not read the base or head text of ${repairs.unevaluated.join(", ")}`);
     else handle.ran(Check.TestRepair);
-    handle.ran(Check.OwnerDuplicates);
-    handle.add(ownerDuplicates({ files, worktree, changedPaths }));
+    const failedLookups = [];
+    handle.add(ownerDuplicates({ files, worktree, changedPaths, failed: failedLookups }));
+    if (failedLookups.length > 0) handle.skip(Check.OwnerDuplicates, `partial: git grep failed for ${failedLookups.join(", ")}`);
+    else handle.ran(Check.OwnerDuplicates);
     for (const entry of REVIEWER_CHECKS) handle.skip(entry.name, entry.reason);
     return report;
   }
@@ -377,6 +386,11 @@ function main(argv) {
   writeFileSync(out, text);
   process.stdout.write(text);
   process.stderr.write(`guardrails-gate: ${report.findings.length} findings, ${report.checks_run.length} checks run, ${report.checks_skipped.length} skipped; written to ${out}\n`);
+  return exitCodeFor(report);
+}
+
+/** 1 when there is a finding; 3 when none but a scriptable check was skipped; else 0 (the reviewer's judgment checks never change it). */
+export function exitCodeFor(report) {
   if (report.findings.length > 0) return 1;
   return report.checks_skipped.some((entry) => !REVIEWER_CHECK_NAMES.has(entry.name)) ? 3 : 0;
 }

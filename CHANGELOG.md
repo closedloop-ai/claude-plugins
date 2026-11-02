@@ -22,6 +22,7 @@ Deterministic scripts for the mechanical steps of the vibe workers (PRD-823, WS3
 #### Fixed (found by a read-only shadow diff against symphony-alpha PR 9366)
 - `guardrails-gate.mjs` (ISS-13346): `test-repair` compares whole assertion statements of the base and head text, so a reversed expectation inside a call split across lines is reported with word-level evidence; a file it cannot read puts the check under `checks_skipped` as `partial:` and out of `checks_run`. An `as` in a string or a multi-line import list is no longer a cast, and `export const X = y as T` is reported.
 - `inventory-bundle.mjs` (ISS-13349): flag reads through a constant (including calls split across lines) resolve through the changed files and the repository's flag key modules; import lines and comments are no longer guard predicates.
+- `guardrails-gate.mjs` and `verify-run.mjs` (ISS-13346, ISS-13347): a wrapped gate whose tool did not run (no `node_modules`, a missing command, a runner reporting `DID NOT RUN`) is `checks_skipped` / `blocked` with the reason, never `checks_run`, `passed` or `cached`; `owner-duplicates` and `conventions` that could not read a file are listed as `partial:` skips.
 - `verify-run.mjs` (ISS-13347): a 100% turbo cache replay is `cached` with provenance, not `passed`; the lane report's covered-by-no-lane paths are surfaced as `coveredByNoLane` (report only).
 
 #### Changed

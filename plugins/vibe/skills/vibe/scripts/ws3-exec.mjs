@@ -34,3 +34,23 @@ export function parseJson(text, fallback = null) {
 export function tailLines(text, count = 12) {
   return text.split("\n").filter((line) => line.trim() !== "").slice(-count).join("\n");
 }
+
+// Output that says the tool itself never ran (missing install, missing binary, a runner that reports it did not run),
+// as opposed to a tool that ran and failed. Such a result is never a finding and never a pass.
+const DID_NOT_RUN = [
+  [/DID NOT RUN/i, "the runner reported that it did not run"],
+  [/command not found|: not found\b/i, "a required command is not installed"],
+  [/Command "?[\w@./-]+"? not found/i, "a required command is not installed in the workspace"],
+  [/node_modules (?:is )?missing|node_modules.*not (?:found|installed)|dependencies? (?:are )?not installed|run ["'`]?pnpm install/i, "dependencies are not installed (no node_modules)"],
+  [/ERR_PNPM_(?:NO_IMPORTER_MANIFEST|RECURSIVE_EXEC_FIRST_FAIL|FETCH|OUTDATED_LOCKFILE)|ERR_MODULE_NOT_FOUND|Cannot find (?:module|package) /i, "the toolchain is not installed or is incomplete"],
+  [/\bspawn \S+ ENOENT\b|\bENOENT\b.*\bspawn\b/i, "the command could not be started"],
+];
+
+/** The reason a wrapped command's result means it never ran (`status` 127 included), or null when it ran, passed or failed. */
+export function toolDidNotRun(result) {
+  if (result.status === 0) return null;
+  if (result.status === 127) return `could not run: ${tailLines(result.stderr, 1) || "command missing"}`;
+  const text = `${result.stdout}\n${result.stderr}`;
+  const hit = DID_NOT_RUN.find(([pattern]) => pattern.test(text));
+  return hit ? `${hit[1]}: ${tailLines(text, 1)}` : null;
+}

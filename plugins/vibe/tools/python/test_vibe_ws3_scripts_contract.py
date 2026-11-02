@@ -305,3 +305,14 @@ def test_ws3_adds_no_new_hook_registration_and_changes_no_default_path() -> None
         text = agent(name)
         # The original steps are all still there: the script is an addition before them.
         assert "## Do" in text or "## Create mode" in text or "## Existing checks" in text or "## Check, for added or changed lines only" in text, name
+
+
+def test_a_wrapped_gate_that_did_not_run_is_skipped_or_blocked_never_run_or_passed() -> None:
+    exec_code = source("ws3-exec.mjs")
+    assert "export function toolDidNotRun(result)" in exec_code
+    assert "DID NOT RUN" in exec_code
+    gate = source("guardrails-gate.mjs")
+    assert "toolDidNotRun(result)" in gate and "no node_modules" in gate
+    assert gate.index("toolDidNotRun(result)") < gate.index("report.ran(name);")
+    verify = source("verify-run.mjs")
+    assert "toolDidNotRun(result)" in verify and "no node_modules" in verify

@@ -40,7 +40,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { reportLanes } from "./pre-pr-lanes.mjs";
-import { execCommand, parseJson, tailLines } from "./ws3-exec.mjs";
+import { execCommand, parseJson, tailLines, toolDidNotRun } from "./ws3-exec.mjs";
 
 export const SCHEMA = "vibe.verify-evidence/1";
 export const Status = Object.freeze({
@@ -126,6 +126,8 @@ export function createVerifyRun({
   function outcome(result, seconds) {
     if (result.status === 0) return { status: Status.Passed };
     if (result.status === TIMED_OUT) return { status: Status.Blocked, reason: `stopped after ${seconds}s on this machine; not a pass and not a failure of the session` };
+    const missing = toolDidNotRun(result);
+    if (missing) return { status: Status.Blocked, reason: `${missing}; the check did not run, so it is neither a pass nor a failure of the session` };
     return { status: Status.Failed, evidenceTail: tailLines(`${result.stdout}\n${result.stderr}`) };
   }
 
@@ -142,6 +144,9 @@ export function createVerifyRun({
     const full = `${command} ${args.join(" ")}`;
     if (scriptName && !(scriptName in scripts(worktree))) {
       return required(name, full, Status.Skipped, { reason: `the repository defines no "${scriptName}" script` });
+    }
+    if (!exists(path.join(worktree, "node_modules"))) {
+      return required(name, full, Status.Blocked, { reason: "dependencies are not installed in the worktree (no node_modules), so the check did not run" });
     }
     const hit = useCache ? cache[`${head}\u0000${full}`] : null;
     if (hit) return required(name, full, Status.Cached, { cachedFrom: { head: hit.head, ranAt: hit.at } });

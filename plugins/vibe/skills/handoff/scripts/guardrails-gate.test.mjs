@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  Check, createGuardrailsGate, findingId, findingsProblems, FINDINGS_SCHEMA, fromDiffRule, fromGateOutput, REVIEWER_CHECKS, scanConventions,
+  Check, createGuardrailsGate, exitCodeFor, findingId, findingsProblems, FINDINGS_SCHEMA, fromDiffRule, fromGateOutput, REVIEWER_CHECKS, scanConventions,
   scanTestRepairs, scanTokens, Severity,
 } from "./guardrails-gate.mjs";
 import { parseUnifiedDiff } from "./diff-rules.mjs";
@@ -19,7 +19,7 @@ function files(...parts) {
   return parseUnifiedDiff(parts.join(""));
 }
 
-function gateFor({ diffText = "", routes = [], diffRulesFn = () => ({ blocking: [] }), packageScripts = { "check:source-gates": "x" }, sources = {} } = {}) {
+function gateFor({ readable = true, installed = true, diffText = "", routes = [], diffRulesFn = () => ({ blocking: [] }), packageScripts = { "check:source-gates": "x" }, sources = {} } = {}) {
   const calls = [];
   const run = (command, args, options) => {
     const line = [command, ...args].join(" ");
@@ -32,8 +32,8 @@ function gateFor({ diffText = "", routes = [], diffRulesFn = () => ({ blocking: 
   };
   const gate = createGuardrailsGate({
     run, diffRulesFn,
-    exists: (file) => file.endsWith("package.json") || file in sources,
-    read: (file) => (file.endsWith("package.json") ? JSON.stringify({ scripts: packageScripts }) : sources[file]),
+    exists: (file) => file.endsWith("package.json") || (installed && file.endsWith("node_modules")) || file in sources || (readable && /\.tsx?$/.test(file)),
+    read: (file) => (file.endsWith("package.json") ? JSON.stringify({ scripts: packageScripts }) : (sources[file] ?? "")),
   });
   return { gate, calls };
 }
@@ -233,7 +233,7 @@ test("a gate that cannot run is skipped with its reason and never in checks_run"
   assert.deepEqual(noScript.checks_skipped.find((entry) => entry.name === Check.SourceGates), { name: Check.SourceGates, reason: "the repository defines no \"check:source-gates\" script" });
   const noPnpm = gateFor({ diffText: diff("apps/app/a.tsx", ["const a = 1;"]), routes: [["pnpm", { status: 127, stdout: "", stderr: "pnpm: not found" }]] }).gate.gate({ worktree: "/wt" });
   assert.ok(!noPnpm.checks_run.includes(Check.Biome));
-  assert.match(noPnpm.checks_skipped.find((entry) => entry.name === Check.Biome).reason, /could not run pnpm/);
+  assert.match(noPnpm.checks_skipped.find((entry) => entry.name === Check.Biome).reason, /could not run: pnpm: not found/);
   assert.equal(noPnpm.findings.length, 0);
   const timedOut = gateFor({ diffText: diff("apps/app/a.tsx", ["const a = 1;"]), routes: [["biome", { status: 124, stdout: "", stderr: "" }]] }).gate.gate({ worktree: "/wt" });
   assert.match(timedOut.checks_skipped.find((entry) => entry.name === Check.Biome).reason, /stopped after 600s/);
@@ -280,4 +280,52 @@ test("the shape check rejects extra keys, a bad severity, a finding whose check 
   assert.match(findingsProblems({ ...good, findings: [{ ...item, severity: "blocking" }], checks_run: ["tokens"] }).join(), /severity/);
   assert.match(findingsProblems({ ...good, findings: [{ ...item, line: 1.5 }], checks_run: ["tokens"] }).join(), /integer or null/);
   assert.match(findingsProblems({ ...good, checks_skipped: [{ name: "biome", reason: "" }] }).join(), /checks_skipped/);
+});
+
+const TOOLCHAIN_GONE = [
+  ["no node_modules in the worktree", { installed: false, routes: [] }, /no node_modules/],
+  ["a runner that reports it did not run", { routes: [["pnpm", { status: 1, stdout: "commit gates DID NOT RUN\n", stderr: "" }]] }, /did not run/],
+  ["pnpm says the command is not installed", { routes: [["pnpm", { status: 254, stdout: "", stderr: "ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command \"biome\" not found\n" }]] }, /not installed/],
+  ["a missing module in the gate script", { routes: [["pnpm", { status: 1, stdout: "", stderr: "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'tsx'\n" }]] }, /toolchain is not installed/],
+  ["node_modules missing from the workspace", { routes: [["pnpm", { status: 1, stdout: "", stderr: " WARN  Local package.json exists, but node_modules missing, did you mean to install?\n" }]] }, /no node_modules/],
+];
+
+for (const [label, options, reason] of TOOLCHAIN_GONE) {
+  test(`regression: ${label} puts biome and source-gates under checks_skipped with the reason, never in checks_run, and the exit code is 3`, () => {
+    const report = gateFor({ diffText: diff("apps/app/a.tsx", ["const a = 1;"]), ...options }).gate.gate({ worktree: "/wt" });
+    for (const name of [Check.Biome, Check.SourceGates]) {
+      assert.ok(!report.checks_run.includes(name), `${name} listed as run`);
+      assert.match(report.checks_skipped.find((entry) => entry.name === name).reason, reason);
+    }
+    assert.equal(report.findings.filter((item) => item.check === Check.Biome || item.check === Check.SourceGates).length, 0);
+    assert.deepEqual(findingsProblems(report), []);
+    assert.equal(exitCodeFor(report), 3);
+  });
+}
+
+test("a gate that ran and failed is still a finding and a run; only a tool that did not run is skipped", () => {
+  const report = gateFor({ diffText: diff("apps/app/a.tsx", ["const a = 1;"]), routes: [["biome", { status: 1, stdout: "", stderr: "apps/app/a.tsx:1:1 lint/style/x\nChecked 1 file" }]] }).gate.gate({ worktree: "/wt" });
+  assert.ok(report.checks_run.includes(Check.Biome));
+  assert.equal(report.findings.filter((item) => item.check === Check.Biome).length, 1);
+  assert.equal(exitCodeFor(report), 1);
+});
+
+test("exit code: 0 only when every scriptable check ran and nothing was found; the reviewer's judgment checks do not change it", () => {
+  const clean = gateFor({ diffText: diff("apps/app/a.tsx", ["const a = 1;"]) }).gate.gate({ worktree: "/wt" });
+  assert.equal(clean.findings.length, 0);
+  assert.equal(exitCodeFor(clean), 0);
+  assert.ok(clean.checks_skipped.length > 0);
+});
+
+test("owner-duplicates: a git grep that fails is skipped as partial, never listed as run", () => {
+  const report = gateFor({ diffText: diff("apps/app/new.ts", ["export const formatDate = 1;"], [], { status: "A" }), routes: [["grep -nE", { status: 2, stdout: "", stderr: "fatal" }]] }).gate.gate({ worktree: "/wt" });
+  assert.ok(!report.checks_run.includes(Check.OwnerDuplicates));
+  assert.match(report.checks_skipped.find((entry) => entry.name === Check.OwnerDuplicates).reason, /^partial: git grep failed for formatDate/);
+  assert.deepEqual(findingsProblems(report), []);
+});
+
+test("conventions: a TypeScript file whose head text cannot be read makes the check partial, not run", () => {
+  const report = gateFor({ diffText: diff("apps/app/a.tsx", ["const a = 1;"]), readable: false }).gate.gate({ worktree: "/wt" });
+  assert.ok(!report.checks_run.includes(Check.Conventions));
+  assert.match(report.checks_skipped.find((entry) => entry.name === Check.Conventions).reason, /^partial: .*apps\/app\/a\.tsx/);
 });

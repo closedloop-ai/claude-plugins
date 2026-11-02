@@ -21,7 +21,7 @@ const LANE = "pnpm --filter app test";
 const REPORT = `Lanes:\n    ${LANE}\n`;
 const PACKAGE = JSON.stringify({ scripts: { "check:source-gates": "x", "typecheck:affected": "y", "test:lanes": "z" } });
 
-function harness({ extra = [], files = { "package.json": PACKAGE, "apps/app/a.tsx": "x" }, calls = [] } = {}) {
+function harness({ installed = true, extra = [], files = { "package.json": PACKAGE, "apps/app/a.tsx": "x" }, calls = [] } = {}) {
   const written = {};
   const routes = [
     ...extra,
@@ -41,7 +41,7 @@ function harness({ extra = [], files = { "package.json": PACKAGE, "apps/app/a.ts
     run: router(routes, calls),
     read: (file) => { if (file in files) return files[file]; throw new Error(`no file ${file}`); },
     write: (file, text) => { written[file] = text; },
-    exists: (file) => file in files || file.endsWith("apps/app/a.tsx") || file === "/gd/vibe-verify-cache.json" && "/gd/vibe-verify-cache.json" in files,
+    exists: (file) => (installed && file.endsWith("node_modules")) || file in files || file.endsWith("apps/app/a.tsx") || file === "/gd/vibe-verify-cache.json" && "/gd/vibe-verify-cache.json" in files,
     now: () => 1_000,
   });
   return { controller, written, calls };
@@ -261,4 +261,29 @@ test("the lane report's covered-by-no-lane paths are surfaced in the evidence an
   assert.deepEqual(without.coveredByNoLane, []);
   const notRead = harness({ files }).controller.verify({ worktree: "/wt", head: HEAD, useCache: false, runLanes: false });
   assert.equal(notRead.coveredByNoLane, null);
+});
+
+test("regression: with no node_modules, or a runner that did not run, a required check is blocked with the reason, never passed or cached", () => {
+  const files = { "/wt/package.json": PACKAGE, "/wt/apps/app/a.tsx": "x" };
+  const bare = harness({ files, installed: false }).controller.verify({ worktree: "/wt", head: HEAD, useCache: false });
+  for (const name of ["biome", "source-gates", "typecheck"]) {
+    assert.equal(find(bare, name).status, Status.Blocked, name);
+    assert.match(find(bare, name).reason, /no node_modules/);
+  }
+  assert.equal(bare.ok, false);
+  const signatures = [
+    fail("commit gates DID NOT RUN\n", 1),
+    fail("ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command \"biome\" not found", 254),
+    fail("Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'tsx'", 1),
+  ];
+  for (const result of signatures) {
+    const evidence = harness({ files, extra: [["run-bounded.mjs 600 pnpm check:source-gates", result], ["run-bounded.mjs 900 pnpm typecheck:affected", result]] }).controller.verify({ worktree: "/wt", head: HEAD, useCache: false });
+    for (const name of ["source-gates", "typecheck"]) {
+      assert.equal(find(evidence, name).status, Status.Blocked, name);
+      assert.match(find(evidence, name).reason, /did not run/);
+    }
+    assert.equal(evidence.ok, false);
+  }
+  const failed = harness({ files, extra: [["run-bounded.mjs 600 pnpm check:source-gates", fail("rule x failed at apps/app/a.tsx:3")]] }).controller.verify({ worktree: "/wt", head: HEAD, useCache: false });
+  assert.equal(find(failed, "source-gates").status, Status.Failed);
 });
