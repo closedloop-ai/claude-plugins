@@ -15,7 +15,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pull request body checks reject unsupported E2E CI coverage claims, require citations for universal Summary bullets, and leave unrelated CI test families alone.
 - The handoff gate fetches current main, checks immutable main and parent commits for a stacked pull request, and refuses a witness when either ref moves.
 - Adversarial review traces flag readiness, paged refetch cost, nullable Clear callbacks, and every editable field protected by a discard guard.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 987 words longer than in 1.1.26. Most added text is the six reviewer eval cases required by ISS-13532 AC2.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 987 words longer than in 1.1.29. Most added text is the six reviewer eval cases required by ISS-13532 AC2.
+
+### vibe v1.1.29
+
+#### Added
+- New `pr-takeover` skill coordinates independent review, verified PR repairs, recurrence prevention, and required web and Desktop E2E from one pull request URL in Claude Code or Codex.
+- Focused skill contract checks and shared Claude and Codex eval cases cover URL-only entry, review premises, prevention ticket reuse, stacked PRs, delivery, and E2E evidence.
+
+#### Changed
+- Fleet orchestration routes engineer takeover of an open vibe pull request through the new skill while keeping dead-writer recovery separate.
+- The Codex eval runner recognizes `pr-takeover` as a skill under test.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 2,898 words longer than in 1.1.26.
 
 ### vibe v1.1.26
 

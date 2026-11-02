@@ -178,7 +178,7 @@ def test_claude_eval_uses_an_identified_uncommitted_snapshot(tmp_path: Path) -> 
 
 def test_one_case_per_claude_prompt_and_role_names() -> None:
     found = runner.cases()
-    assert len(found) == 115
+    assert len(found) == 121
     assert len({c["name"] for c in found}) == len(found)
     assert all(c["name"].startswith(("executive-", "product-manager-", "orchestrator-")) for c in found)
     for case in found:
@@ -190,6 +190,17 @@ def test_one_case_per_claude_prompt_and_role_names() -> None:
     assert "my name is the product manager" in next(
         c["prompt"] for c in found if "real-exchange" in c["name"]
     )
+
+
+def test_takeover_prompts_rewrite_the_installed_codex_skill() -> None:
+    prompts = sorted(runner.EVALS.glob("orch-pr-takeover-*/prompt.md"))
+    assert len(prompts) == 6
+    for path in prompts:
+        original = path.read_text()
+        assert "(`vibe:pr-takeover`)" in original, path
+        converted = runner.rewrite_skill_invocations(original)
+        assert "(`$pr-takeover`)" in converted, path
+        assert "(`vibe:pr-takeover`)" not in converted, path
 
 
 def test_run_source_identity_comes_from_the_copied_vibe_payload() -> None:
