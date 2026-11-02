@@ -57,3 +57,22 @@ test("a missing limit or command is refused instead of running unbounded", () =>
   assert.equal(noCommand.status, 2);
   assert.match(noCommand.stderr, /Usage/);
 });
+
+test("a heavy command takes a worker budget and a lease and its environment is capped; a non-heavy command is untouched (ISS-13584)", async () => {
+  const { runBudgeted } = await import("./run-bounded.mjs");
+  const taken = [];
+  const snapshot = { cores: 8, capacity: 8, available: 4, belowMinimum: false, workers: 4, leases: 0, unleasedCores: 0 };
+  const fakeBudget = { snapshot: () => snapshot, acquire: (request) => { taken.push(request); return { workers: 4, env: { TURBO_TEST_CONCURRENCY: "2", VITEST_MAX_WORKERS: "2" }, budget: { available: 4, capacity: 8, leases: 0, unleasedCores: 0 }, release: () => taken.push("released") }; } };
+  const printEnv = ["-e", "process.exit(process.env.VITEST_MAX_WORKERS === '2' ? 0 : 9)"];
+  // Not heavy: no lease, and the child does not see the cap.
+  assert.equal((await runBudgeted(process.execPath, printEnv, { seconds: 20, budget: fakeBudget, env: {} })).exitCode, 9);
+  assert.deepEqual(taken, []);
+  // Heavy (names vitest): leased, capped, released after the child ends.
+  assert.equal((await runBudgeted(process.execPath, [...printEnv, "vitest"], { seconds: 20, budget: fakeBudget, env: {}, loadAverage: () => 0 })).exitCode, 0);
+  assert.equal(taken.length, 2);
+  assert.equal(taken[1], "released");
+  // Switched off: previous behavior, no lease.
+  taken.length = 0;
+  assert.equal((await runBudgeted(process.execPath, [...printEnv, "vitest"], { seconds: 20, budget: fakeBudget, env: { VIBE_HEAVY_BUDGET: "off" } })).exitCode, 9);
+  assert.deepEqual(taken, []);
+});

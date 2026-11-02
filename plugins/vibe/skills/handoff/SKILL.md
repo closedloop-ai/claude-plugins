@@ -310,6 +310,18 @@ Keep the remaining checklist internal; never show the person a technical
 task list, upfront summary or plan to approve. Preserve
 the lighter versus backend validation and review weights below.
 
+### Start the lane run in the background
+
+When `../vibe/scripts/verify-run.mjs` exists and the worktree is clean at its
+head (it refuses a dirty one), start the CPU-bound checks now, before steps 2
+to 6, and keep working while they run:
+`node ../vibe/scripts/verify-run.mjs --background --worktree "<wt>" --head "<full SHA>"`
+prints a run id at once. Record it. The summary, the guardrail and adversarial
+reviews, the Storybook work and the ticket worker's and PLN work that does not
+need the lane result all proceed while it runs; the lanes are scheduled, never
+skipped. With uncommitted work, or without the script, start nothing and
+run the steps below unchanged. A new head after a fix needs a new run.
+
 ## 2. Summarize internally
 
 The inventory from step 1 covers the session's redeploy commits and anything
@@ -512,6 +524,17 @@ test can fail when the behavior it names breaks and that no test name claims
 more than its assertions pin. Its confirmed findings resume the SAME writer
 in its `pull-request` turn, and the pull request does not open, or take a new
 push, until its rerun on the corrected tests is clean.
+
+### Join the background lane run
+
+Before `Final Alignment Status: Aligned`, before the PLN is left Approved and
+before anything is called ready, join the run from step 1:
+`node ../vibe/scripts/verify-run.mjs --wait <run id> --worktree "<wt>" --head "<the head under review>"`.
+Only `state: passed` (exit 0) joins. `running` (4) means keep waiting;
+`failed` (1) goes to the SAME writer; `orphaned` (3) and `head-moved` (5) mean
+start a new run at the current head. None of these is a pass, and the result's
+head must be the head under review. Nothing here is counted as aligned, approved or ready
+while the lanes are pending, running or failed.
 
 ### Browser E2E and the repository's QA passes
 

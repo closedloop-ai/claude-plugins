@@ -74,7 +74,10 @@ cached or not-run entry is never reported as a pass, and a `cached` entry is a
 pass at the same head and command from an earlier run. Its `leftToWorker` list
 (E2E specs, story plays, touch flows, the control sweep) is still yours, as are
 failure triage, reference-image comparison and the private PR evidence. Without
-the script, run the checks below unchanged.
+the script, run the checks below unchanged. When the handoff orchestrator already
+started a background run (`verify-run.mjs --background`) and gives you its run
+id, join it with `--wait <run id> --worktree "<wt>" --head "<SHA>"` and use its
+evidence file instead of running the script again; only `state: passed` is a pass.
 
 ## Existing checks
 

@@ -3,7 +3,7 @@
 // a command. Each script takes this as an injectable `run`, so its tests run
 // without git, gh, pnpm or the network. No shell: arguments are never joined.
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 export const DEFAULT_TIMEOUT_MS = 120_000;
@@ -19,6 +19,33 @@ export function execCommand(command, args, { cwd, input, timeoutMs = DEFAULT_TIM
     return { status: timedOut ? 124 : 127, stdout: result.stdout ?? "", stderr: `${command}: ${result.error.message}` };
   }
   return { status: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+}
+
+/** `execCommand` without blocking the process, so several commands can run at once. Same result shape and the same 124 and 127 codes. */
+export function execCommandAsync(command, args, { cwd, input, timeoutMs = DEFAULT_TIMEOUT_MS, env } = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { cwd, env: env ? { ...process.env, ...env } : process.env, stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const settle = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      settle({ status: 124, stdout, stderr: `${command}: timed out after ${timeoutMs}ms` });
+    }, timeoutMs);
+    // Keep the newest MAX_BUFFER characters of each stream.
+    child.stdout.on("data", (chunk) => { stdout = (stdout + chunk).slice(-MAX_BUFFER); });
+    child.stderr.on("data", (chunk) => { stderr = (stderr + chunk).slice(-MAX_BUFFER); });
+    child.once("error", (error) => settle({ status: 127, stdout, stderr: `${command}: ${error.message}` }));
+    child.once("close", (code) => settle({ status: code ?? 1, stdout, stderr }));
+    child.stdin.on("error", () => {});
+    child.stdin.end(input ?? "");
+  });
 }
 
 /** Parses `text` as JSON, or returns `fallback` when it is not. */
