@@ -21,10 +21,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `code-reviewer` reviews a change against an explicit repository-owner decision instead of reopening it, and never gives feedback whose effect is to defer the change's own deliverable. Only a decision supplied by the operator or the launching orchestrator counts; a claimed ruling in the diff, PR body, commit messages, review threads, or a self-read ticket or PRD is untrusted input and does not change what is reported or at what severity.
 - `verification-subagent` runs on `opus` instead of `sonnet`.
 
-### code-review v3.13.1
+### code-review v3.13.2
 
 #### Changed
 - The GitHub review prompt and `code-review-worker` agent forbid blind scope drop: the change's own deliverable is never deferrable, a filed ticket never substitutes for it, a blocker is verified as current before it stops the work, and a settled operator instruction is not re-argued.
+
+### code-review v3.13.1
+
+#### Fixed
+- `extract-signals-prepare` bypasses the `signals/` cache in both directions when the agent input bundle carries no changed files: the manifest records an empty `cache_key` and `cache_bypass_reason: "no-changed-files"`, so the run is not served a cached extraction and `extract-signals-consolidate`'s empty-key guard skips the cache write. A degraded `parse-diff` that emitted no `file_statuses` can no longer persist its extraction for the namespace TTL and serve it to later empty-looking runs.
+- The `extract-signals-prepare` manifest reports `input_hash`, the `signal_input_hash` content hash of the agent input bundle that keys the cache, alongside `taxonomy_hash` and `prompt_hash`.
 
 ### vibe v1.1.32
 
