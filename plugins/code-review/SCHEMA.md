@@ -397,7 +397,8 @@ ignored at spawn time.
     "from_required": 4,
     "from_best_effort": 0,
     "required_coverage_gaps": 0       // count of coverage_gaps.json findings emitted
-  }
+  },
+  "folded_partitions": {"from": 7, "to": 5}  // only when partitions were folded to the BHA cap
 }
 ```
 
@@ -439,13 +440,18 @@ partitioner `--max-bha-agents` from the same computation
 over the same full `diff_data.json`.
 With a cache dir active the partitioner reads `uncached_diff_data.json`,
 whose LOC is at most the full diff's, and still force-merges down to the
-route's value, so a normal run never emits more partitions than the
-budget reserves. If a
-`partitions.json` does (one not produced by that partitioner run), the
-first `cap` partitions spawn and the rest land in `skipped[]` with
-`reason: "budget_capped"`, a required coverage gap in both
-`derive-spawn-spec` and `derive-static-spec`. A cap of 0 suppresses all BHA spawns
-regardless of partition count. When arbitrate-budget set the cap to 0
+route's value, so the partition count is usually within the budget.
+Docs-only is the intentional exception: arbitrate-budget reserves 0 while
+route still asks for at least 1. When `partitions.json` holds more
+partitions than a positive cap (a missing route value, a stale or replayed
+file, a changed budget), `derive-spawn-spec` and `derive-static-spec` fold
+them: the partitioner's force-merge runs again down to the cap,
+`partitions.json` (with `folded_from`) and the `patches_p<N>.txt` files
+are rewritten, the spec records `folded_partitions`, and the cap's agents
+cover every file. Only when the diff scope is unknown, so the patches
+cannot be rebuilt, do the first `cap` partitions spawn and the rest land
+in `skipped[]` with `reason: "budget_capped"`, a required coverage gap. A
+cap of 0 suppresses all BHA spawns regardless of partition count. When arbitrate-budget set the cap to 0
 because the diff is docs-only (`coverage_plan.budget.docs_only: true`),
 the single skipped entry carries `reason: "docs_only"`; a cap of 0
 without that marker keeps `reason: "budget_capped"`.
@@ -453,8 +459,10 @@ without that marker keeps `reason: "budget_capped"`.
 **Required coverage-gap invariant:** every entry in `skipped[]`
 with `bucket == "required"` and a non-benign reason
 (everything except `deferred_pln723`, `no_partitions`, `docs_only`,
-`gated_by_verify`) produces a coverage-gap finding appended to
-`coverage_gaps.json`. `cmd_finalize_result` reads that file into the
+`gated_by_verify`) produces a coverage-gap finding in
+`coverage_gaps.json`. `setup` starts each run with an empty file; the
+spawn-spec stages replace their own earlier `spawn_*` findings, so a
+resumed walk neither duplicates nor keeps one. `cmd_finalize_result` reads that file into the
 envelope's coverage-gap bucket where it contributes to the canonical
 verdict. The runtime symmetric pair to this derive-time check is
 `stage_20b_verify_spawn` (see §6c).
