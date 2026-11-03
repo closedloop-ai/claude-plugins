@@ -56,9 +56,38 @@ test("the shape rules: tags, falsifiers, 2 to 3 options, a recommendation among 
 
 test("an unverified product-impacting assumption needs a question; a non-product one never does", () => {
   const noQuestion = card({ openQuestions: [] });
-  assert.deepEqual(cardProblems(noQuestion).problems, ["A-2: an unverified product-impacting assumption needs an open question with options and a recommendation"]);
+  const unquestioned = cardProblems(noQuestion);
+  assert.deepEqual(unquestioned.problems, []);
+  assert.deepEqual(unquestioned.wouldBlock, ["A-2"]);
   const wrongTarget = card({ openQuestions: [{ ...card().openQuestions[0], assumption: "A-3" }] });
   assert.ok(cardProblems(wrongTarget).problems.some((problem) => problem.includes("only an unverified product-impacting assumption is a question")));
+});
+
+test("a card with no criteria is valid at draft and locked: nothing is invented to fill the list", () => {
+  assert.deepEqual(cardProblems(card({ criteria: [] }), "draft").problems, []);
+  assert.deepEqual(cardProblems(card({ criteria: [] }), "locked").problems, []);
+  assert.deepEqual(cardProblems({ version: 1 }, "draft").problems, []);
+});
+
+test("save accepts an empty criteria list and an unquestioned product-impacting assumption with the checkpoint off", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "spec-card-empty-"));
+  try {
+    execFileSync("git", ["init", "-q", dir]);
+    const file = path.join(dir, "card.json");
+    writeFileSync(file, JSON.stringify(card({ criteria: [], openQuestions: [] })));
+    const env = { ...process.env };
+    delete env.VIBE_FORK_CHECKPOINT;
+    const saved = spawnSync("node", [SCRIPT, "save", "--worktree", dir, "--stage", "draft", file], { encoding: "utf8", env });
+    assert.equal(saved.status, 0, saved.stdout + saved.stderr);
+    const checked = spawnSync("node", [SCRIPT, "check", file], { encoding: "utf8", env });
+    assert.equal(checked.status, 0, checked.stdout);
+    assert.deepEqual(JSON.parse(checked.stdout).wouldBlock, ["A-2"]);
+    const on = spawnSync("node", [SCRIPT, "check", file, "--checkpoint"], { encoding: "utf8", env });
+    assert.equal(on.status, 1);
+    assert.deepEqual(JSON.parse(on.stdout).blocking, ["A-2"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("the fork checkpoint is off unless the flag or the environment switch turns it on", () => {
@@ -123,8 +152,21 @@ test("the handoff assumptions text is generated from the card and lists uncited 
   assert.match(assumptionsText(card()), /Answered before code:\n- None/);
 });
 
+test("the handoff text lists unanswered product questions, including a product fork with no assumption behind it", () => {
+  const fork = { id: "Q-2", kind: "product-fork", question: "inline or modal?", options: OPTIONS, recommendation: "B" };
+  const text = assumptionsText(card({ openQuestions: [card().openQuestions[0], fork, { ...fork, id: "Q-3", kind: "technical-fork" }] }));
+  assert.match(text, /Not answered before code:\n- Q-1: refuse or move\?; recommended: A\n- Q-2: inline or modal\?; recommended: B\n/);
+  assert.ok(!text.includes("Q-3"));
+  assert.match(assumptionsText(card({ openQuestions: [] })), /Not answered before code:\n- None/);
+});
+
 test("the evidence skeleton has one row per criterion with unknown values left null", () => {
-  assert.deepEqual(evidenceSkeleton(card()), { rows: [{ criterion: "AC-1", type: "test", ref: null, verdict: null }, { criterion: "AC-2", type: "screenshot", ref: null, verdict: null }] });
+  assert.deepEqual(evidenceSkeleton(card()), { rows: [{ criterion: "AC-1", cardId: "AC-1", type: "test", ref: null, verdict: null }, { criterion: "AC-2", cardId: "AC-2", type: "screenshot", ref: null, verdict: null }] });
+});
+
+test("after a superseded criterion leaves the card, the skeleton rows follow the audit's positional numbering and keep the card id", () => {
+  const gapped = card({ criteria: [card().criteria[0], { id: "AC-3", text: "a third thing", source: "ISS-1", evidence: "api-read" }], superseded: [{ id: "AC-2", source: "Dana, in chat" }] });
+  assert.deepEqual(evidenceSkeleton(gapped).rows.map((row) => [row.criterion, row.cardId]), [["AC-1", "AC-1"], ["AC-2", "AC-3"]]);
 });
 
 test("a locked card changes only through a superseded entry that names a source", () => {

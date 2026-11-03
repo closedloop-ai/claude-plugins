@@ -9,7 +9,7 @@
 //   spec-card.mjs assumptions <card.json> [--worktree <path> --base <sha>]
 //   spec-card.mjs evidence-skeleton <card.json>
 //
-// check prints {ok, problems, wouldBlock, blocking, checkpoint, engineeringDecisions}; exits 1 on a problem,
+// check prints {ok, problems, wouldBlock (unanswered questions and unquestioned product-impacting assumptions), blocking, checkpoint, engineeringDecisions}; exits 1 on a problem,
 //   and on an unanswered blocking question only when the fork checkpoint is switched on.
 // budget prints the justification report and always exits 0 on a readable card: it never blocks.
 
@@ -43,7 +43,6 @@ export function cardProblems(card, stage = "draft") {
   const engineeringDecisions = [];
   if (card?.version !== 1) problems.push("version must be 1");
   const criteria = list(card?.criteria);
-  if (criteria.length === 0) problems.push("the card has no criteria");
   const criterionIds = new Set();
   for (const criterion of criteria) {
     if (!CRITERION_ID.test(String(criterion?.id))) problems.push(`criterion ${JSON.stringify(criterion?.id)}: id must look like AC-1`);
@@ -66,7 +65,7 @@ export function cardProblems(card, stage = "draft") {
   }
   for (const [id, assumption] of assumptions) {
     if (assumption?.tag === "unverified" && assumption.productImpacting === true && !questionedAssumptions.has(id)) {
-      problems.push(`${id}: an unverified product-impacting assumption needs an open question with options and a recommendation`);
+      wouldBlock.push(id);
     }
   }
   if (stage === "locked") problems.push(...planProblems(card?.plan, criterionIds));
@@ -178,6 +177,10 @@ export function assumptionsText(card, report = null) {
   lines.push("Answered before code:");
   if (answered.length === 0) lines.push("- None");
   for (const question of answered) lines.push(`- ${question.id}: ${question.question} -> ${question.answer.text} (${question.answer.source})`);
+  const unanswered = list(card?.openQuestions).filter((question) => question?.kind !== "technical-fork" && !isAnswered(question));
+  lines.push("Not answered before code:");
+  if (unanswered.length === 0) lines.push("- None");
+  for (const question of unanswered) lines.push(`- ${question.id}: ${question.question}; recommended: ${question.recommendation}`);
   lines.push("Deliberately not changed:");
   const notTouched = list(card?.plan?.notTouched);
   if (notTouched.length === 0) lines.push("- None");
@@ -193,9 +196,15 @@ export function assumptionsText(card, report = null) {
   return `${lines.join("\n")}\n`;
 }
 
-/** One evidence row per criterion for the reviewer to fill in; unknown values are null, never guessed. */
+/**
+ * One evidence row per criterion for the reviewer to fill in; unknown values are null, never guessed. The audit
+ * numbers the ticket's checklist by position (criteria-audit.mjs), so `criterion` is the position in card order
+ * and `cardId` the card's own id; they differ once a locked criterion was removed through `superseded`.
+ */
 export function evidenceSkeleton(card) {
-  return { rows: list(card?.criteria).map((criterion) => ({ criterion: criterion.id, type: criterion.evidence ?? null, ref: null, verdict: null })) };
+  return {
+    rows: list(card?.criteria).map((criterion, index) => ({ criterion: `AC-${index + 1}`, cardId: criterion.id, type: criterion.evidence ?? null, ref: null, verdict: null })),
+  };
 }
 
 /** A locked card's criteria and assumptions change only through a `superseded` entry that names a source. */
