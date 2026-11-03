@@ -1,0 +1,4 @@
+interface:
+  display_name: "ClosedLoop Work Report"
+  short_description: "Group assigned project work and blockers"
+  default_prompt: "Use $cl-work-report to create an HTML report of my assigned ClosedLoop work, grouped into complete page or capability features with verified dependencies and minimal ownership recommendations."

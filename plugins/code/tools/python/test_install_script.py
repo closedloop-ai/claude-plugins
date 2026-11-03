@@ -7,7 +7,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 INSTALL_SCRIPT = REPO_ROOT / "install.sh"
-PLUGINS = ["code", "code-review", "judges", "platform", "self-learning"]
+PLUGINS = ["code", "code-review", "platform", "self-learning"]
 
 
 def write_executable(path: Path, content: str) -> None:
@@ -172,7 +172,7 @@ def write_fake_claude(bin_dir: Path) -> None:
             state = load_state()
             state["list_calls"] = state.get("list_calls", 0) + 1
             save_state(state)
-            if scenario == "final-list-fails" and state["list_calls"] >= 13:
+            if scenario == "final-list-fails" and state["list_calls"] >= 11:
                 raise SystemExit(1)
             print(json.dumps(state["list"]))
             raise SystemExit(0)

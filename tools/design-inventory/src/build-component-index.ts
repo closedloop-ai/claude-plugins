@@ -18,7 +18,7 @@ import { dirname, join, posix, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { execFileSync } from "node:child_process";
 
-import { runWhenMain } from "./cli.js";
+import { runWhenMain } from "../../shared/cli.js";
 import { walkFiles } from "./fs-walk.js";
 
 // ---------------------------------------------------------------------------

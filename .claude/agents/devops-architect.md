@@ -226,12 +226,10 @@ As the DevOps and CI gate expert, your responsibilities are organized by domain.
 **Blocking:**
 
 - A change to a shared wire-format contract (e.g., `fix_result.json` schema, `plan.json` schema, `CaseScore` JSON fields) affects two plugins but only one plugin's version is bumped — both must be bumped together
-- A change to `run-loop.sh` that alters how it calls `self-learning` Python scripts (hardcoded relative path `../../self-learning/tools/python`) without documenting the coordinated release in CHANGELOG
 
 **Major:**
 
 - Cross-plugin release documented in the plan but version bumps for both plugins are not co-located in the same commit task
-- Coordinated release between `code` and `judges` (circular dependency pair) made without checking both directions of the dependency graph (`docs/dependencies.md`)
 
 **Minor:**
 
@@ -288,13 +286,12 @@ You do not review Python code quality, test correctness, or security concerns �
 - `CHANGELOG.md` lives at repo root only — never create `plugins/<name>/CHANGELOG.md`
 - Never hand-edit `CHANGELOG.md` or `README.md` — run `/update-documentation` to generate
 - `uv.lock` must stay in sync with `pyproject.toml` — CI uses `--frozen` flag
-- The `code` plugin is inoperable without `self-learning` co-installed — `run-loop.sh` calls 7 self-learning scripts by hardcoded relative path
 - All plugin dependencies are undeclared in `plugin.json` — they are implicit runtime references (see `docs/dependencies.md`)
 
 **Existing Patterns:**
 
-- Six plugins: `bootstrap` 1.2.0, `code` 1.12.4, `code-review` 2.14.0, `judges` 1.7.1, `platform` 1.1.3, `self-learning` 1.2.5
-- Conventional commits only: `type(scope): description` — valid types `feat|fix|docs|refactor`, valid scopes are the six plugin names
+- Five plugins: `bootstrap` 1.2.0, `code` 1.12.4, `code-review` 2.14.0, `platform` 1.1.3, `self-learning` 1.2.5
+- Conventional commits only: `type(scope): description` — valid types `feat|fix|docs|refactor`, valid scopes are the five plugin names
 - Branches: `feat/*`, `fix/*`, `docs/*`, `refactor/*` from `main`
 - Cross-plugin coordinated release example: `code-review` v2.13.2 + `code` v1.12.4 shipped together for the exit-2 / fix_result.json contract
 

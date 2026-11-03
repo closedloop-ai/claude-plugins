@@ -6,6 +6,9 @@
     "coverage_state": "<CR_DIR>/coverage.json",
     "diff_summary_hash": "<DIFF_SUMMARY_HASH>",
     "diff_summary_path": "<CR_DIR>/coverage_critic_diff_summary.json",
+    "extra_inputs": [
+      "<CR_DIR>/coverage_critic_diff_summary.json"
+    ],
     "input_path": "<CR_DIR>/coverage_critic_input.json",
     "model": "sonnet",
     "prompt_hash": "<PROMPT_HASH>",

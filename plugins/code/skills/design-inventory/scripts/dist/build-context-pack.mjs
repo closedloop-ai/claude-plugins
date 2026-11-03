@@ -5,7 +5,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseArgs } from "node:util";
 
-// src/cli.ts
+// ../shared/cli.ts
 import { pathToFileURL } from "node:url";
 function runWhenMain(metaUrl, main2) {
   const entry = process.argv[1];

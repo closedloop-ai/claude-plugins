@@ -452,7 +452,7 @@ if [[ -n "$AGENT_ID" ]] && [[ -n "$CLOSEDLOOP_WORKDIR" ]] && [[ -f "$AGENT_TYPES
         PERF_PARENT_SESSION=$(echo "$INPUT" | jq -r '.parent_session_id // empty' 2>/dev/null || echo "")
 
         # Read command from env var, defaulting to "interactive" to match the
-        # default used by record_phase.sh and run-loop.sh's emit_perf_event helper.
+        # default used by record_phase.sh.
         # Without this fallback, agent rows could carry command="" while phase /
         # iteration / pipeline_step rows carry command="interactive", breaking
         # joins by command in Datadog (PRD-254 attribution discipline).

@@ -265,8 +265,6 @@
         "{cr_dir}",
         "--diff-data",
         "{cr_dir}/diff_data.json",
-        "--diff-tip",
-        "<DIFF_TIP>",
         "--intent",
         "{cr_dir}/intent.json",
         "--cache-dir",
@@ -387,8 +385,6 @@
         "{cr_dir}/available_reviewers.json",
         "--extract-signals",
         "{cr_dir}/extract_signals.json",
-        "--diff-tip",
-        "<DIFF_TIP>",
         "--cache-dir",
         "<CACHE_DIR>"
       ],
@@ -669,7 +665,9 @@
         "--findings",
         "{cr_dir}/findings.json",
         "--diff-data",
-        "{cr_dir}/diff_data.json"
+        "{cr_dir}/diff_data.json",
+        "--cr-dir",
+        "{cr_dir}"
       ],
       "stdout": "{cr_dir}/findings_validated.json",
       "expected_outputs": [

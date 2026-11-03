@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 This repository is a plugin monorepo under `plugins/`.
 
-- `plugins/code`, `plugins/code-review`, `plugins/judges`, `plugins/bootstrap`, `plugins/platform`, `plugins/self-learning`
+- `plugins/code`, `plugins/code-review`, `plugins/bootstrap`, `plugins/platform`, `plugins/self-learning`
 - Each plugin typically contains `.claude-plugin/` (manifest), `agents/`, `commands/`, `skills/`, `tools/`, `prompts/`, `scripts/`, `schemas/`, and plugin-specific docs or resources.
 - Shared docs are in `docs/` (glossary, dependency map), and repository-wide guidance is in `README.md`, `CONTRIBUTING.md`, and `CHANGELOG.md`.
 - Plugin Python code/tests live under plugin subdirectories, e.g. `plugins/code/tools/python/` and `plugins/code-review/tools/python/`.
@@ -31,6 +31,7 @@ This repository is a plugin monorepo under `plugins/`.
 - Test files use `test_<name>.py`; functions use `snake_case`.
 - Plugin artifacts are explicit and frontmatter-driven (`agents`, `commands`, `skills` definitions in Markdown).
 - Use existing conventions in each plugin; avoid changing naming style in adjacent files (for example, slash command names and agent IDs remain kebab-case, e.g. `code-review`).
+- A plugin registers one hook script per event, routing to its guards inside that script; `tools/plugin-manifests/src/hook-registrations.ts` fails CI on a second command for any event in any plugin's hook config.
 
 ## Testing Guidelines
 - Framework: `pytest`.
@@ -47,6 +48,7 @@ This repository is a plugin monorepo under `plugins/`.
 - Recommended branches: `feat/*`, `fix/*`, `docs/*`, `refactor/*`.
 - PR workflow: fork, create topic branch from `main`, rebase onto upstream, then open PR from your fork.
 - PR description should include purpose, affected plugins/files, and exact commands run.
+- The vibe release smoke is optional. An author may run `node tools/vibe-release-smoke/smoke.mjs` on a Mac signed in to ChatGPT when a startup, setup, sign-in, or sandbox change warrants a real Codex check (ISS-13315). It is not a release step, PR requirement, or CI gate, and no PR description needs its result (ISS-13321, Daniel's 2026-10-28 ruling).
 - Do not manually edit `CHANGELOG.md` or `README.md` for plugin changes; after code changes are final, run the repo's `/update-documentation` workflow so generated documentation satisfies the changelog requirement enforced by `.githooks/pre-push`.
 
 ## Security & Configuration Tips

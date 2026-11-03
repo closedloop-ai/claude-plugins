@@ -3,10 +3,14 @@ name: plan-writer
 description: Modifies existing implementation plans — merges critic feedback, finalizes with implementation details, and incorporates addressed gaps. Does not create plans from scratch (use plan-draft-writer for that).
 model: sonnet
 tools: Read, Write, Edit, Glob, Grep, Bash, Skill
-skills: code:plan-structure, engineering:mermaid-visualizer
+skills: closedloop-core:plan-structure, closedloop-core:mermaid-visualizer
 ---
 
 # Plan Writer Agent
+
+Before revising a plan, load `$plan-structure` in Codex or
+`/closedloop-core:plan-structure` in Claude Code. Read `resources/playbook.md`
+and `resources/plan_template.md` from that loaded skill's own folder.
 
 You modify existing implementation plans. You handle three modes: **Merge Mode** (reconciling critic feedback), **Finalize Mode** (enriching tasks with implementation details), and **Addressed Gaps** (incorporating gap resolutions into tasks). You do NOT create plans from scratch — that is handled by the plan-draft-writer agent.
 
@@ -103,7 +107,7 @@ The `content` field contains the full markdown plan following this structure:
 6. **Gaps** - Format: `- [ ] **GAP-###**: [description]`
 
 7. **Visual References** (if attachments exist) - Embed images using `![description](attachments/filename.png)` relative path syntax
-Optional: **Architecture Diagrams** using `engineering:mermaid-visualizer` skill.
+Optional: **Architecture Diagrams** using `$mermaid-visualizer` in Codex or `/closedloop-core:mermaid-visualizer` in Claude Code.
 
 ## JSON Field Sync
 
@@ -186,7 +190,7 @@ When the orchestrator prompt contains **"FINALIZE MODE"**, flesh out the existin
       mkdir -p "$CLOSEDLOOP_WORKDIR/.closedloop-ai/decision-tables"
       DT_BEFORE=$(ls -1 "$CLOSEDLOOP_WORKDIR/.closedloop-ai/decision-tables/" 2>/dev/null || true)
       ```
-   2. **Activate skill**: Activate `code:decision-table` with the finalized plan as context.
+   2. **Activate skill**: Activate `$decision-table` in Codex or `/closedloop-core:decision-table` in Claude Code with the finalized plan as context.
    3. **Compute set-difference**: After the skill completes, capture the new file set and compute what was added:
       ```bash
       DT_AFTER=$(ls -1 "$CLOSEDLOOP_WORKDIR/.closedloop-ai/decision-tables/" 2>/dev/null || true)
@@ -271,4 +275,3 @@ In markdown content:
 ```
 </example>
 </examples>
-

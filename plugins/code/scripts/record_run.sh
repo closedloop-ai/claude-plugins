@@ -1,16 +1,16 @@
 #!/bin/bash
-# record_run.sh - Append a run event to perf.jsonl once per Loop.
+# record_run.sh - Append a run event to perf.jsonl once per run.
 #
 # Emits exactly one `run` event containing command, repo, branch, and start
 # time so every perf.jsonl record can be attributed to the slash-command that
-# launched the Loop. Fails open (exits 0) on any error so the caller loop is
+# launched the run. Fails open (exits 0) on any error so the caller is
 # unaffected.
 #
 # Usage:
 #   bash record_run.sh [WORKDIR]
 # WORKDIR defaults to $CLOSEDLOOP_WORKDIR.
 
-# Fail open: any unexpected error exits 0 so the caller loop is unaffected.
+# Fail open: any unexpected error exits 0 so the caller is unaffected.
 trap 'exit 0' ERR
 
 WORKDIR="${1:-${CLOSEDLOOP_WORKDIR:-}}"

@@ -57,7 +57,7 @@ EOF
 
 # Get Codex's review using stdin to avoid shell escaping issues
 log "Calling codex exec..."
-REVIEW=$(codex exec --full-auto -m "gpt-5.3-codex-spark" < "$TMPFILE" 2>/dev/null)
+REVIEW=$(codex exec -c sandbox_mode=read-only -c approval_policy=never -m "gpt-5.3-codex-spark" < "$TMPFILE" 2>>"$LOG_FILE")
 
 # If codex failed, exit silently
 if [ -z "$REVIEW" ]; then

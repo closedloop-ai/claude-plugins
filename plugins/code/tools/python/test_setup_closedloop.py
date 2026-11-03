@@ -385,7 +385,7 @@ def test_add_dir_ignores_ancestor_of_workdir(tmp_path: Path) -> None:
 def test_add_dir_dot_from_repo_root_with_nested_workdir_empty_canonical(
     tmp_path: Path,
 ) -> None:
-    """run-loop style: workdir at repo/.closedloop-ai/work, `--add-dir .` from repo root.
+    """Nested workdir: workdir at repo/.closedloop-ai/work, `--add-dir .` from repo root.
 
     Canonical secondary repos must be empty: repo root is filtered as ancestor of workdir.
     """
@@ -464,3 +464,71 @@ def test_reconstructs_split_add_dir_path_with_spaces(
     assert result.returncode == 0, result.stderr
     config = _config_env(tmp_workdir)
     assert _config_value(config, "CLOSEDLOOP_ADD_DIRS") == str(extra_repo.resolve())
+
+
+
+EARLIER_START_SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
+def _git_commit_in(workdir: Path) -> str:
+    """Make workdir a git repo with one empty commit and return its HEAD SHA."""
+    git = ["git", "-C", str(workdir), "-c", "user.name=test", "-c", "user.email=test@example.test"]
+    subprocess.run([*git, "init", "-q"], check=True, capture_output=True)
+    subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "base"], check=True, capture_output=True)
+    return subprocess.run(
+        [*git, "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _seed_earlier_run(workdir: Path, state_json: str | None) -> None:
+    """Leave an earlier run's start SHA in config.env and, optionally, its state.json."""
+    config_path = workdir / CLOSEDLOOP_STATE_DIR / "config.env"
+    config_path.parent.mkdir(exist_ok=True)
+    config_path.write_text(f"CLOSEDLOOP_START_SHA={EARLIER_START_SHA}\n")
+    if state_json is not None:
+        (workdir / "state.json").write_text(state_json)
+
+
+@pytest.mark.parametrize("status", ["IN_PROGRESS", "AWAITING_USER"])
+def test_start_sha_kept_while_run_unfinished(tmp_workdir: Path, status: str) -> None:
+    """A resumed run keeps the start SHA already in config.env, not the newer HEAD."""
+    _git_commit_in(tmp_workdir)
+    _seed_earlier_run(tmp_workdir, f'{{"phase": "Phase 3: Implementation", "status": "{status}"}}')
+
+    result = _run_setup_in_workdir(tmp_workdir)
+
+    assert result.returncode == 0, result.stderr
+    config = _config_env(tmp_workdir)
+    assert _config_value(config, "CLOSEDLOOP_START_SHA") == EARLIER_START_SHA
+    assert config.count("CLOSEDLOOP_START_SHA=") == 1
+
+
+@pytest.mark.parametrize(
+    "state_json",
+    [
+        pytest.param('{"phase": "Phase 7", "status": "COMPLETED"}', id="completed"),
+        pytest.param(None, id="state-absent"),
+        pytest.param('{"status": "IN_PROGRESS"', id="malformed"),
+        pytest.param('{"status": "IN_PROGRESS"}\n{"status": "IN_PROGRESS"}', id="two-objects"),
+        pytest.param('["IN_PROGRESS"]', id="not-an-object"),
+    ],
+)
+def test_start_sha_written_fresh_for_new_run(tmp_workdir: Path, state_json: str | None) -> None:
+    """A completed, absent, or unreadable state.json starts a new run at the current HEAD."""
+    head = _git_commit_in(tmp_workdir)
+    _seed_earlier_run(tmp_workdir, state_json)
+
+    result = _run_setup_in_workdir(tmp_workdir)
+
+    assert result.returncode == 0, result.stderr
+    config = _config_env(tmp_workdir)
+    assert _config_value(config, "CLOSEDLOOP_START_SHA") == head
+    assert config.count("CLOSEDLOOP_START_SHA=") == 1
+
+
+def test_start_sha_omitted_outside_git(tmp_workdir: Path) -> None:
+    """Outside git a new run writes no start SHA."""
+    result = _run_setup_in_workdir(tmp_workdir)
+
+    assert result.returncode == 0, result.stderr
+    assert "CLOSEDLOOP_START_SHA=" not in _config_env(tmp_workdir)
