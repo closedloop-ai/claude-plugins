@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.6.0
+
+#### Added
+- New `erd-diagram` skill that builds or updates an interactive, offline HTML entity relationship diagram for a Postgres repository from its schema code alone: a Prisma schema or folder, a SQL schema dump, a folder of SQL migrations replayed in path order, or a model JSON written from other ORM code. It never connects to a database. Two styles: `canvas-sidebar` (every table on one canvas with a domain-grouped table list) and `schema-explorer` (overview, focused table view, per-domain diagrams). Passing an existing diagram updates it in place and reports new and removed tables; a missing path stops with no changes.
+- `scripts/dist/erd.mjs` (detect, extract, validate-model, draft-domains, inspect, export-domains, build, update) and `scripts/dist/verify.mjs` (a headless render check) are bundled from `tools/erd-diagram/`, with elkjs inlined for layout, so the skill needs only Node 18.
+
 ### code-review v3.13.1
 
 #### Fixed
