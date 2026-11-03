@@ -17211,6 +17211,17 @@ class TestCoverageCriticPrepareCLI:
         # written_at metadata stripped from canonical output
         assert "written_at" not in final
 
+    def test_manifest_reports_the_diff_summary_hash_it_keyed_on(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import cmd_coverage_critic_prepare, signal_input_hash
+        inputs = _write_coverage_critic_inputs(tmp_path, signals={"signals": []})
+        args = self._args(tmp_path, inputs)
+        assert cmd_coverage_critic_prepare(args) == 0
+        manifest = _read_coverage_section(inputs["cr_dir"], "critic")
+        delivered = json.loads(Path(manifest["diff_summary_path"]).read_text())
+        assert manifest["diff_summary_hash"] == signal_input_hash(delivered)
+
     def test_changed_diff_misses_a_prior_runs_cache_entry(self, tmp_path: Path) -> None:
         """Regression: the key used the diff tip, the literal ``HEAD`` on a
         branch review, so a later review with the same plan, signals and
