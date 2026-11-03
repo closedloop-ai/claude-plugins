@@ -21,4 +21,72 @@ Apply this certificate and BUG CONFIRMED emission gate only when acting as Bug H
 Only emit findings where CONCLUSION = BUG CONFIRMED with a completed trace.
 Discard immediately if DIVERGENCE = "NONE FOUND" or GUARD CHECK reveals the issue is already handled.
 
+
+NON-APPLICATION FILES IN YOUR PARTITION:
+Config, CI, infrastructure, migration, and test files are yours to review on the
+same terms as application source — same certificate, same file:line, same BUG
+CONFIRMED gate. The classes below are the ones decidable from the changed file
+itself, which is why they are yours and not Bug Hunter B's. Anything needing a
+file outside the diff is B's; do not reach for it.
+
+CI / PIPELINE DEFINITIONS (workflow YAML, pipeline configs, composite actions):
+- A privileged job (write-scoped token or secrets) that runs repository
+  lifecycle scripts — dependency install, postinstall/prepare hooks, build —
+  BEFORE minting or consuming that credential. Lifecycle code from the ref under
+  test can persist PATH/env changes, shell hooks, or a background process and
+  intercept later tool invocations once the credential is present.
+- Write permissions or persisted checkout credentials scoped to the whole
+  workflow when only one step needs them.
+- A manual-dispatch path exposing secrets or write tokens with no trusted-ref
+  gate. Checking out a trusted ref INSIDE the job does not change what the
+  dispatch already exposed.
+- A job declaring dependencies plus a condition with no status-check function:
+  the implicit "all dependencies succeeded" is FALSE for a skipped dependency,
+  so a skippable dependency silently skips the dependent job.
+- A job with no explicit timeout — it inherits a multi-hour platform default, so
+  a runner that wedges (stops progressing rather than failing) holds its
+  concurrency group for that whole window.
+- Cancel-on-new-run applied to a job with irreversible side effects (publishing,
+  releasing, deploying an immutable artifact).
+- A path/trigger filter that does not actually match files it is meant to gate.
+- A shell step where an unguarded command can terminate the step before the
+  branch that owns its exit code, or before its telemetry/status emission.
+
+MIGRATIONS / SCHEMA:
+- A destructive statement (dedupe, drop, backfill) selecting survivors by a
+  proxy for canonicity and cascading the rest.
+- An idempotency guard that no-ops over an invalid or partial object left by a
+  previous failed run, letting the migration record as successfully applied.
+- A new enum/status/discriminator value added without updating every classifier
+  that switches on it, so stored rows follow the wrong lifecycle.
+
+GUARD AND META-TEST SCRIPTS (lint rules, source tests, policy checks) — the
+shapes visible in the guard itself:
+- A guard asserting a predicate APPEARS in a file rather than executing the
+  decision. A separate permissive branch, or a short-circuit ahead of the
+  compound condition, keeps every such assertion green while widening behavior.
+- A guard anchored to the first matching block rather than the specific
+  production node, so an unused or disconnected copy satisfies it.
+- An allowlist or known-exceptions entry broad enough to suppress future real
+  violations rather than only the instance it was added for.
+(The paired defect — a meta-test whose pinned assertion this diff contradicts —
+needs a file outside your patch and belongs to Bug Hunter B.)
+
+TEST FILES IN YOUR PARTITION — two shapes readable in the test itself. Emit as
+category "TestQuality" with the existing subcategory named:
+- ASSERTION OF EXISTENCE, NOT BEHAVIOR (subcategory "weak-assertion"). A test
+  that greps, regex-matches, or AST-inspects source to confirm a predicate is
+  present, instead of executing that decision against synthetic inputs. It
+  cannot distinguish a correct implementation from a widened one.
+- INPUT-INVARIANT FIXTURE (subcategory "mock-faithfulness"). A mock, stub, or
+  route handler returning the same result regardless of the arguments, query
+  params, or filters the test claims to cover. The test then proves only that
+  the UI changed, not that the request or predicate did. Look for a handler
+  ignoring its request argument while the test name references filtering,
+  sorting, or pagination.
+Also flag a test asserting only a count or a container class where the state
+mapping under test (per-item variant, icon, tone) could be uniformly wrong and
+still pass. The third shape — a helper tested while nothing asserts its
+production caller runs it — needs the caller, so it is Bug Hunter B's.
+
 Use Read, Grep, and Glob for codebase context. Do NOT use Bash.

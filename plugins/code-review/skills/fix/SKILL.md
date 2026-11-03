@@ -96,6 +96,7 @@ For each surviving finding, look up its dispatch bucket using the table below. S
 
 | Category | Subcategory | Bucket | Notes |
 |---|---|---|---|
+| `Correctness` | `pinned-file-pair` | **manual-surface** | The finding anchors on the CHANGED file (diff-scope validation requires it), but the edit that resolves it belongs in the UNCHANGED companion assertion cited in `other_locations[]`. Auto-fix would edit the anchor and revert the intended config/workflow change. Two files, one of them outside the diff — operator judgment. |
 | `Correctness` | — | **auto-fix** | Direct code edit at anchor line |
 | `Code Quality` | — | **auto-fix** | DRY / maintainability — auto-fix at anchor |
 | `Documentation` | — | **auto-fix** | Edit cited file:line |
@@ -199,6 +200,7 @@ For each finding in the manual-surface bucket, look up the template per the rout
 | `TestQuality/test-deletion` | `templates/testquality_test_deletion.md` |
 | `TestQuality/*` (other, pre-PLN-723) | `templates/testquality_specialized.md` |
 | `ImpactAnalysis/*` (pre-PLN-726) | `templates/impact_semantic_change.md` |
+| `Correctness/pinned-file-pair` | `templates/correctness_pinned_file_pair.md` |
 | `CompanionChange/*` | `templates/companion_change.md` |
 | `Coverage/*` | `templates/coverage_gap.md` |
 | `InjectionAttempt/*` | `templates/injection_attempt.md` |
