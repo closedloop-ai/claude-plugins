@@ -214,6 +214,16 @@ path merely because another rule describes how its content should look.
      test or a sibling production helper) instead of a literal or the spec's
      words is blocking, because it agrees with the code it should check
      (`vibe-change-worker.md`, "Tests: repair, don't author"), in a repair too.
+   - Recompute the inventory's responsive, absence and layout candidates. A
+     narrow/mobile test without a desktop-width failure, an absence test whose
+     owner is mocked or which asserts before a positive mounted signal, or a
+     metric/summary/card test with only a count assertion is blocking. Match
+     each one to its exact `testIntegrityProofs` entry and confirm the recorded
+     mutation failed, the restored case passed, and the proof covers the
+     current tested source.
+   - Layout coverage names the established grid or official prototype story
+     and asserts containment or geometry. `toHaveCount(1)` or `toHaveLength(1)`
+     may preserve cardinality but can never establish card width or placement.
    - Deleting a replaced (not removed) component's tests ports each case its
      successor still enforces or cites the retiring ruling.
    - Open what each change log line that cleared an

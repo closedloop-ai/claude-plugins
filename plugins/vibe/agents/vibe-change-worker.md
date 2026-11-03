@@ -566,6 +566,18 @@ suppression for green. Two more rules bind every test you write there:
   the behavior it names breaks. A test named for "the shadow token" that only
   checks a page-local custom property exists claims a token it never checks;
   rename it to what it pins or make it pin what it names.
+- Every narrow or mobile test and every absence or "does not render" test gets
+  a failing precondition mutation before it is complete. Run a responsive case
+  at desktop width; restore the absent control; and mount the production owner,
+  never a mock that cannot render the control. An absence assertion runs only
+  after a positive signal proves that owner mounted. Record the exact mutation,
+  command, observed failure and restored pass for handoff's
+  `testIntegrityProofs` evidence.
+- A metric, summary, or card layout test must assert the established container
+  relationship or geometry against the owning grid or official prototype
+  story. Element count is additional cardinality coverage, never layout
+  coverage. Move the card outside that container and prove the layout assertion
+  fails, then restore it and record the proof.
 - Prefer assertions on tokens, structure and behavior (the `var(--token)` a
   rule uses, the element and its accessible name, what a click or a theme
   change does) over raw CSS or style-string pins such as a copied

@@ -43,6 +43,10 @@ When nothing in the catalog fits:
 4. Run the Storybook tests for the new or changed story files only
    (`pnpm --filter storybook exec vitest run <story files>`), never the whole
    `pnpm --filter storybook test` suite, and confirm the new stories pass.
+   A story or play that requests a viewport uses a MINIMAL_VIEWPORTS name
+   (`mobile1`, `mobile2`, `tablet`, or `desktop`) or a name actually registered
+   in `parameters.viewport.options`. Handoff's Storybook diff rule blocks an
+   unregistered name before the play can be counted as responsive evidence.
 5. A new component is built with its stories before the feature that uses it.
    The orchestrator points the person to its stories on local Storybook in one
    plain message and does not wait (`SKILL.md`, section 5, "Notices that never

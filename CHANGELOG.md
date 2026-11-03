@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.33
+### vibe v1.1.34
 
 #### Added
 - Prompt split (`references/handoff-ui.md`, `handoff-pr.md`, `vibe-harness-codex.md`, `vibe-harness-claude.md`, `vibe-mockup.md`, `quality-loop-recovery.md`, `quality-loop-visual-qa.md`, `guardrails-ui.md`, and the fleet-orchestrator `fleet-qa-gate.md`, `fleet-recovery.md`, `fleet-codex-sessions.md`). Each block is the original text moved unchanged, replaced in its skill or reference by one stub line that names the file, the block and the condition (the inventory's `serverOnly`, the triage class, the runtime, a requested pull request). `scripts/skill-split.mjs` and `tools/python/skill_split.py` read a file with its stubs put back for the contract tests.
@@ -15,9 +15,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - `status-audit.mjs` takes `--at assignment|merge|report`; with `FLEET_TRIM_STATUS_AUDIT=1` a `report` run is skipped.
 - The handoff skill description no longer lists what the workers do; its trigger phrases are unchanged.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 720 words longer than in 1.1.32 (b55c5f3).
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 720 words longer than in 1.1.33 (71568a6).
 
-### vibe v1.1.32
+### vibe v1.1.33
 
 #### Added
 - Spec Card (`references/spec-card.md`, `scripts/spec-card.mjs` with `check`, `save`, `path`, `budget`, `assumptions` and `audit-skeleton`) and `scripts/freshness.mjs`. The requirements worker returns a `draft` card of criteria, assumptions and open questions; the writer locks it with its plan before code and it seeds the session decision table once. A locked card is not edited afterwards: criteria change in the decision table. The fork checkpoint is off by default (`--checkpoint` or `VIBE_FORK_CHECKPOINT=1` turns it on). `budget` reports files outside the plan as cited or uncited and never blocks. `freshness.mjs` falls back to the recorded session base when the fetch cannot run. The handoff Assumptions line is generated from the card and required by `live-ticket-check.mjs`.
@@ -29,7 +29,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - `criteria-audit.mjs` reads the verdict, evidence type and ref from one audit row, `| AC-n | MET | <type> | <ref> |`, so there is no separate evidence file and no `--evidence` argument on it, on `handoff-gate.mjs` or in the handoff skill. A criterion needs a `MET` row of type `test`, `script`, `screenshot` or `api-read` with a ref; a missing, `PARTIAL` or `MISSED` row blocks done, and a test ref must name a file that exists at HEAD.
 - The brief returns `likelyFiles` for triage paths, and handoff reads the triage manifest's review output.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 6,816 words longer than in 1.1.31 (origin/main 985b3a6).
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 6,816 words longer than in 1.1.32 (origin/main fccc4da).
+
+### code-review v3.13.1
+
+#### Fixed
+- `extract-signals-prepare` bypasses the `signals/` cache in both directions when the agent input bundle carries no changed files: the manifest records an empty `cache_key` and `cache_bypass_reason: "no-changed-files"`, so the run is not served a cached extraction and `extract-signals-consolidate`'s empty-key guard skips the cache write. A degraded `parse-diff` that emitted no `file_statuses` can no longer persist its extraction for the namespace TTL and serve it to later empty-looking runs.
+- The `extract-signals-prepare` manifest reports `input_hash`, the `signal_input_hash` content hash of the agent input bundle that keys the cache, alongside `taxonomy_hash` and `prompt_hash`.
+
+### vibe v1.1.32
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 530 words longer than in 1.1.31.
+
+#### Fixed
+- Storybook diff rules reject changed stories whose requested viewport name is absent from `MINIMAL_VIEWPORTS` and `parameters.viewport.options`.
+- Pull request evidence recomputes responsive, absence, and card-layout test candidates from the final diff and requires a current intentional-failure proof for each one, including production-owner and mounted-state evidence for absence assertions and grid or prototype baselines for layout assertions.
+- Writer, guardrails, verifier, handoff, and visual QA guidance treat element counts as cardinality only and require layout checks against the established grid or official prototype story.
 
 ### vibe v1.1.31
 
