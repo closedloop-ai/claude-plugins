@@ -9651,8 +9651,9 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
     main_input, diff_summary = _build_coverage_critic_input(
         plan_initial, extract_signals, diff_data, available_reviewers,
     )
+    diff_summary_hash = signal_input_hash(diff_summary)
     key = coverage_critic_cache_key(
-        plan_initial_hash, signals_hash, _stable_json_hash(diff_summary),
+        plan_initial_hash, signals_hash, diff_summary_hash,
         prompt_hash, available_reviewers_hash,
     )
 
@@ -9688,6 +9689,7 @@ def cmd_coverage_critic_prepare(args: argparse.Namespace) -> int:
         "cache_key": key,
         "coverage_plan_initial_hash": plan_initial_hash,
         "signals_hash": signals_hash,
+        "diff_summary_hash": diff_summary_hash,
         "prompt_hash": prompt_hash,
         "available_reviewers_hash": available_reviewers_hash,
         "input_path": str(input_path),
