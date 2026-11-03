@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - `code-reviewer` and `code-review-guidelines` prohibit agent-originated product behavior: every rule that decides what a user sees (shown, withheld, refused, defaulted, thresholded, ranked, or reworded) must trace to a ticket's acceptance criteria, a PRD, or an explicit operator instruction, and a user-visible decision with no human source is reported at High.
 
-### code-review v3.13.3
+### code-review v3.13.4
 
 #### Changed
 - The Unified Auditor, in both the standard fleet and the fast-path pass, checks every user-visible product decision in the diff for human provenance and reports one with no human source at High. A provenance finding cites the decision in the diff in place of CLAUDE.md rule text.
