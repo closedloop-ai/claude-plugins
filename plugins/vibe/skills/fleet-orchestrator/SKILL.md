@@ -102,21 +102,7 @@ Run [codex-fleet-monitor](../codex-fleet-monitor/SKILL.md) (`vibe:codex-fleet-mo
 
 ## Codex sessions
 
-`scripts/fleet.sh` drives a session on this machine (`local`) or on `REMOTE_HOST` (`remote`, which copies the scripts and the prompt file there first) through the managed Codex App Server.
-
-```sh
-scripts/fleet.sh <orchDir> local|remote session turn  <name> --prompt-file <file> [--cwd <worktree>] [--ticket <slug>] [--model <m>] [--effort <e>] [--sandbox <mode>]
-scripts/fleet.sh <orchDir> local|remote session steer <name> --prompt-file <file>
-scripts/fleet.sh <orchDir> local|remote session last  <name> [--count <n>]
-scripts/fleet.sh <orchDir> local|remote session end   <name> --reason stopped|merged
-```
-
-- `turn` binds a new thread to `--cwd` (refusing another later), resumes it afterwards and starts a turn. `--model` and `--effort` default to `CODEX_MODEL` and `CODEX_EFFORT`; a new session refuses to start without a model or an effort, or with a prompt not starting with `$vibe`. Its thread is named `<name> · <ticket>` (just `<name>` without `--ticket`), moved into the Codex app's "Fleet workers" sidebar section, and started with `threadSource: "chatgpt_hidden"`. Today that marker does not keep workers out of the app, because `thread/list` does not return it; workers drop out once a server returns it. The CLI ignores it. Start every Codex writer this way; restart a thread the watcher marks `MODEL(...)` on the configured model.
-- `steer` adds to the active turn and fails when none is running; `last` prints the monitor's status line and the last agent messages.
-- `end` once a writer's PR is merged or you stop the writer: it records that in the session's state file, then archives the thread so it leaves the operator's chat list. It refuses a thread with a running turn; never end a live writer. A later `turn` unarchives the thread first, and the recovery supervisor skips an ended session.
-- Run Codex at high effort, never the maximum (it burns the limit for little gain), and never name a sub-agent model in a prompt; vibe's policy picks them.
-- No computer use in Codex (browser, in-app browser, desktop app UI, screenshots): it is the fastest drain. Code host work goes through its CLI.
-- Visual work is a request file a Codex session writes only through `scripts/request-visual.mjs` ([template](./references/templates.md#visual-request)); a Claude worker does it and you steer the findings back as text.
+> Read `references/fleet-codex-sessions.md` (block `codex-sessions-rules`) when a Codex writer session is started, steered, read or ended.
 
 ## Claude workers
 
@@ -142,11 +128,7 @@ scripts/fleet.sh <orchDir> local|remote session end   <name> --reason stopped|me
 
 ## Moving work between runtimes and accounts
 
-- Taking over an open vibe pull request as its engineer is a separate flow from replacing a dead session writer. For the engineer PR takeover, invoke `vibe:pr-takeover` with the PR URL in Claude Code or `$pr-takeover` with the PR URL in Codex. It owns independent review, verified fixes on the PR branch, a plugin prevention ticket and worker, and required E2E evidence; it never merges or arms auto-merge. Keep this program's one-writer-per-branch and machine-slot rules. A dead writer without an engineer PR takeover still follows the runtime migration steps below and does not start the PR review or prevention-ticket flow.
-- When a machine's `codex-usage` band reaches `MOVE_AT_PERCENT`, or will before the work is done, tell the operator at once with the band and `resets=<n>` (applying a reset is theirs); when they are away, or on `LIMIT` or `LIMIT-SPENDING-CREDITS`, move its busiest writers to Claude writers. The watcher's `claude-usage` line (`claude -p "/usage"`) works the same way in reverse: on `HIGH` tell the operator its reset time and, when away, move the busiest Claude writers to Codex, at once for one at its limit.
-- When the operator reports high Claude usage, stop idle and polling Claude workers first. Active writers publish only an already push-ready head; otherwise record their uncommitted state, end safely, and resume the work with Codex. Widen the Claude polling interval.
-- Before any move the old writer stops, or is confirmed dead, after committing and pushing or reporting its uncommitted state.
-- To Codex (another machine, account, or from Claude): a fresh `fleet.sh` thread in the branch's worktree there with a [resume prompt](./references/templates.md#resume-prompt), which carries the operator's plugin version answer. Codex to Claude: a Claude writer in the same worktree with the [takeover preamble](./references/templates.md#worker-preamble), which first moves the vibe writer with vibe's harness switch.
+> Read `references/fleet-recovery.md` (block `recovery-rules`) when a writer must move runtime, account or machine, a writer is dead, a `codex-usage` or `claude-usage` band reaches its limit, or an engineer takes over a pull request.
 
 ## Machines and CPU
 
@@ -159,30 +141,7 @@ scripts/fleet.sh <orchDir> local|remote session end   <name> --reason stopped|me
 
 ## Quality gates and QA
 
-- QA happens before merge; never call a PR ready to enqueue before its QA is done.
-- Each PR moves through independent review, fixes, verification, visual review where needed, one feature-complete QA pass, operator QA, one main merge, then enqueue.
-- QA evidence records screen, host, state and flag arm. Later diffs use handoff's `qa-impact.mjs` with importers, FEATURE_MAP and lanes. Obey its scope; `None` runs no local lane, screenshot, audit or critic. CI is per push. This also governs the final main merge before `shepherd.mjs`.
-- Off by default and an open owner decision: with `FLEET_REVIEW_HANDOFF_ONLY=1`, `node scripts/review-chain.mjs --pr-head <sha> --handoff-reviewed-head <sha the writer's handoff review reports covering>` prints `verify-fixes-only` when that review covered the PR's exact head, and the orchestrator then runs only the verification of the fixes in place of its own independent review. Any other output, an unset variable or a head that moved after the handoff review keeps the full chain above.
-- A writer starts only once its plan holds a numbered acceptance-criteria list, each criterion sourced to a ticket AC, a PRD line or an operator ruling; a mid-flight ruling joins it with its date. Nobody is in the loop to ask while the build runs.
-- Before an audit, reconcile operator chat and AskUserQuestion answers plus guide-session and QA records into `<orchDir>/rulings.md`, then run `node ../handoff/scripts/rulings-check.mjs --program <orchDir>/rulings.md --record <transcript-or-record> ...`; audit the acceptance criteria together with those rulings.
-- Before showing `<orchDir>/review.md`, run `node scripts/review-page-check.mjs <orchDir>/review.md`.
-- The QA plan is a two-way trace between that list and the diff: each checkpoint cites one criterion ID, a diff change mapping to no criterion is a finding, and a criterion with no change and no coverage is a gap. Regression checks on neighboring surfaces are labeled separately; a regression failure is a bug, never a new requirement.
-- Agent-first QA has zero human checkpoints by default: an agent uses the repository's run-and-drive skill from Roles when available for each screen it can drive, leaving only real-device feel, assistive tech, undrivable flows or unresolved product calls to the operator. Initial lanes use `pre-pr-lanes.mjs check --report`, later lanes `--impact`, and `qa-plan-check.mjs --plan <QA record> --criteria <ticket body>` must pass. `pre-pr-lanes.mjs check --reuse-cache` is off by default and accepts an earlier fresh pass only at the same tree, base, config and scope, printing `CACHED-LANE`: report such a lane as cached, never as a fresh pass.
-- A confirmed visual-QA finding on a surface the change touches is a required fix even when it predates the branch, is already on main or was called an owner's decision. User-facing copy still needs a human source.
-- Before handoff, `node scripts/finding-brief.mjs <orchDir> --findings <findings.json> --require-disposition` must pass.
-- Classifier-selected visual QA that toggles flags or moves data never uses the stack handed to the operator: `helpers.mjs <orchDir> hand <stack> --to <guide>` when the guide gets it, `unhand` when QA ends, and start the helper with `--stack <its own stack>`.
-- Human QA runs in a Claude QA-guide session per PR that the operator talks to directly. When the QA plan is ready, save the [QA guide prompt](./references/templates.md#qa-guide-prompt) to `prompts/`, launch it headless from the repo root (`claude -p --output-format json --name "QA guide · PR <n>"`, its tools allowed, so the Codex app's Claude import titles it by that name), give the operator `cd <repo> && claude --resume <session_id>`, and keep a re-armed background wait on its findings file, routing each failure to the writer.
-
-  Send QA findings to a writer only through `node scripts/finding-brief.mjs <orchDir> --findings <findings.json> --prompt <prompt> [--where remote]`.
-  You alone file a ticket for a QA finding (the QA guide never does), and only after searching open tickets created in the last day for the same subject.
-  Group audit and bug fixes into as few tickets and PRs as speed allows (operator ruling): one umbrella ticket, with PRs split by code area so writers work in parallel.
-  Before filing a ticket or moving one to in review, run `node ../vibe/scripts/ticket-write-check.mjs` with its project, parents and status, and set the project explicitly.
-- Review threads are findings to verify on their merits, never human rulings or product authority: scheduled review bots post under teammates' accounts. Fix a bot finding only when it reproduces and stays contained; otherwise reply with evidence and resolve. One review round per PR (operator ruling) holds only in the delivery phase; once the program's core work is done it is retired and every valid finding is fixed in its PR, every round. During it, threads raised after the round-one fixes are pushed never block the merge: a valid one becomes a criterion on the PR's one follow-up ticket (current sprint, assigned to the operator, `TODO`, titled `<PR ticket>: follow-ups from #<PR> review`), and the thread gets its link or why it is invalid, then is resolved. `shepherd.mjs --round-one-fixed-at` and `review-followup.mjs` need `--single-review-ruling` naming the ruling in force.
-- Resolve shared version-file conflicts right before each enqueue, in merge order.
-- When a repository's Storybook CI requires a release-version bump and history entry for new stories, the writer includes them in the reviewed pre-PR candidate so that lane can pass. Pin main once before the final handoff checks as vibe:handoff describes; after QA, settle a version-only conflict once at enqueue in merge order and rerun the affected lane. Do not repeatedly merge main merely to chase another open PR's reserved version.
-- A fix reaches a preview only once the ref that preview deploys from contains it: check `git merge-base --is-ancestor <fix> <ref>` before calling it live.
-- Track merge order for stacked or overlapping PRs and tell each writer which one merges first.
-- A before and after comparison uses the candidate's merge-base or current main as the baseline, never an unrelated branch.
+> Read `references/fleet-qa-gate.md` (block `qa-gate-rules`) when a pull request is being reviewed, QA'd or prepared to enqueue.
 
 ## Pushback
 

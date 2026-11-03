@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import skill_split
 from vibe_contract_text import agent, flat, section
 
 
@@ -110,8 +111,8 @@ def test_handoff_blocks_on_the_inventory_check() -> None:
 
 def test_the_rule_is_stated_once() -> None:
     canonical = "New stories go in the current roots, titled under the plain level"
-    holders = [path.name for path in sorted(PLUGIN_ROOT.rglob("*.md")) if canonical in flat(path.read_text())]
-    assert holders == ["guardrails.md"]
+    holders = [path.name for path in sorted(PLUGIN_ROOT.rglob("*.md")) if canonical in flat(skill_split.raw(path))]
+    assert holders == ["guardrails-ui.md"]
 
 
 def test_every_role_judges_a_session_by_the_scheme_its_base_uses() -> None:
