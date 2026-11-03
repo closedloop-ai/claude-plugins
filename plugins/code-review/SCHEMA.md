@@ -433,10 +433,15 @@ does not duplicate it. Presenters use `gated_by_verify` to surface
 
 **BHA budget cap invariant:** the BHA descriptor count is bounded by
 `coverage_plan.budget.bha_partitions` (the post-arbitrate cap), not
-by the count of partitions in `partitions.json`. When the partitioner
-emitted more partitions than the budget reserved, the first `cap`
-partitions spawn and the rest land in `skipped[]` with
-`reason: "budget_capped"`. A cap of 0 suppresses all BHA spawns
+by the count of partitions in `partitions.json`. `route` hands the
+partitioner `--max-bha-agents` from the same computation
+(`ceil(total_loc / 1200)`, at least 1, at most `DEFAULT_MAX_BHA_AGENTS`
+and the route's fleet-slot cap) over the same `diff_data.json`, so a
+normal run never emits more partitions than the budget reserves. If a
+`partitions.json` does (one not produced by that partitioner run), the
+first `cap` partitions spawn and the rest land in `skipped[]` with
+`reason: "budget_capped"`, a required coverage gap in both
+`derive-spawn-spec` and `derive-static-spec`. A cap of 0 suppresses all BHA spawns
 regardless of partition count. When arbitrate-budget set the cap to 0
 because the diff is docs-only (`coverage_plan.budget.docs_only: true`),
 the single skipped entry carries `reason: "docs_only"`; a cap of 0

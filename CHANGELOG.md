@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.13.1
+
+#### Fixed
+- `route` now derives `max_bha_agents` from `_max_bha_partitions_by_loc`, the same LOC-based count `arbitrate-budget` reserves as `budget.bha_partitions`, instead of `9 - 2 - <domain critics>`. The partitioner can no longer emit more Bug Hunter A partitions than there are agents, so no partition's files are dropped as `budget_capped`.
+- `derive-static-spec` records a required coverage gap for a `budget_capped` Bug Hunter A partition, matching `derive-spawn-spec`.
+
 ### vibe v1.1.31
 
 #### Fixed

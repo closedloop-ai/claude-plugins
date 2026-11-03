@@ -48,6 +48,7 @@ from code_review_helpers import (
     _load_manifest_v2,
     _load_review_state,
     _manifest_lock,
+    _max_bha_partitions_by_loc,
     _migrate_v1_entry_to_v2,
     _normalize_severity,
     _parse_name_status,
@@ -58,6 +59,7 @@ from code_review_helpers import (
     _severity_for_hygiene_file,
     _write_manifest,
     _write_review_state,
+    BHA_UNIFIED_THRESHOLD_LOC,
     CACHE_GC_MAX_PER_FILE_DEFAULT,
     CACHE_GC_TTL_DAYS_DEFAULT,
     CACHE_LOCK_FILENAME,
@@ -822,11 +824,22 @@ class TestRoute:
         result = self._run_route(data)
         assert result["models"]["bug_hunter_a"]["test_only"] == "sonnet"
 
-    def test_max_bha_agents_no_domain_critic(self) -> None:
+    @pytest.mark.parametrize(
+        ("total_loc", "expected"),
+        [(100, 1), (2400, 2), (5500, 5), (20000, DEFAULT_MAX_BHA_AGENTS)],
+    )
+    def test_max_bha_agents_no_domain_critic(
+        self, total_loc: int, expected: int,
+    ) -> None:
+        """The route hands the partitioner the same BHA agent count
+        arbitrate-budget reserves: ceil(LOC / 1200), capped at
+        DEFAULT_MAX_BHA_AGENTS, which is below the 7 fleet slots
+        (9 - BHB - Auditor) left with no domain critic."""
         data = _make_diff_data(files=["a.ts"])
-        data["total_loc"] = 100
+        data["total_loc"] = total_loc
         result = self._run_route(data)
-        assert result["max_bha_agents"] == 7  # 9 - BHB - Auditor
+        assert result["max_bha_agents"] == expected
+        assert result["max_bha_agents"] == _max_bha_partitions_by_loc(data)
 
     def test_max_bha_agents_with_domain_critic(self, tmp_path: Path) -> None:
         gates = {
@@ -844,7 +857,17 @@ class TestRoute:
         data["total_loc"] = 10
         result = self._run_route(data, str(gates_path))
         assert len(result["domain_critics"]) == 1
-        assert result["max_bha_agents"] == 6  # 9 - BHB - Auditor - 1 domain
+        assert result["max_bha_agents"] == 1  # ceil(10 / 1200)
+
+    def test_bha_cap_honors_fleet_slot_cap(self) -> None:
+        """A fleet-slot cap below the LOC-derived count wins (9 - BHB -
+        Auditor - critics; unreachable with today's constants, pinned so a
+        smaller fleet can never be handed more partitions than slots)."""
+        data = {"total_loc": 20000}
+        assert _max_bha_partitions_by_loc(data) == DEFAULT_MAX_BHA_AGENTS
+        assert _max_bha_partitions_by_loc(data, slot_cap=3) == 3
+        assert _max_bha_partitions_by_loc(data, slot_cap=0) == DEFAULT_MAX_BHA_AGENTS
+        assert _max_bha_partitions_by_loc({"total_loc": 0}) == 1
 
     def test_fast_path_small_diff(self) -> None:
         files = ["a.ts", "b.ts", "c.ts"]
@@ -20049,6 +20072,201 @@ class TestPLN725Phase8DeriveSpawnSpecBudgetCap:
         assert len(bha_agents) == 3
         capped = [s for s in spec["skipped"] if s["reason"] == "budget_capped"]
         assert capped == []
+
+
+class TestBhaPartitionsWithinAgentBudget:
+    """The partitioner never emits more BHA partitions than arbitrate-budget
+    reserves BHA agents for, so ``budget_capped`` never drops a partition that
+    holds files. Each case drives the production chain: ``route`` ->
+    ``arbitrate-budget`` -> ``partition`` with run-prefix's Gate B augmentation
+    (``--loc-budget 500 --max-files 25 --max-bha-agents <route>``) -> the spawn
+    spec. Before the fix the route passed ``9 - 2 - critics`` (7 with no domain
+    critic) to the partitioner while arbitrate-budget reserved
+    ``min(ceil(LOC / 1200), 5)`` agents, and the excess partitions were dropped.
+    """
+
+    _CORE_PLAN: dict[str, Any] = {
+        "required": [
+            {"reviewer": r, "source": "core"}
+            for r in ("bug_hunter_a", "bug_hunter_b", "unified_auditor")
+        ],
+        "best_effort": [],
+    }
+
+    @staticmethod
+    def _diff(loc_by_file: dict[str, int]) -> dict[str, Any]:
+        return _make_diff_data(
+            files=list(loc_by_file),
+            loc={f: {"added": n, "removed": 0} for f, n in loc_by_file.items()},
+            ranges={f: {"added": [[1, n]], "removed": []} for f, n in loc_by_file.items()},
+        )
+
+    @staticmethod
+    def _domain_critic_gates(tmp_path: Path) -> str:
+        gates_path = tmp_path / "critic-gates.json"
+        gates_path.write_text(json.dumps({
+            "defaults": {"reviewBudget": 2},
+            "moduleCritics": [{"patterns": [".ts"], "critics": ["ts-reviewer"]}],
+        }))
+        return str(gates_path)
+
+    def _route_and_partition(
+        self,
+        tmp_path: Path,
+        diff_data: dict[str, Any],
+        *,
+        critic_gates: str | None = None,
+        unified_threshold: int = BHA_UNIFIED_THRESHOLD_LOC,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        from golden_fixture_harness import run_with_stdout_capture
+
+        root = tmp_path / "review_root_repo"
+        resolved = _make_review_root(root, {f: "x\n" for f in diff_data["files_to_review"]})
+        (tmp_path / "scope.json").write_text(json.dumps({
+            "review_root": resolved,
+            "review_root_sha": git_fixture(root, "rev-parse", "HEAD").strip(),
+        }))
+        dd_path = tmp_path / "diff_data.json"
+        dd_path.write_text(json.dumps(diff_data))
+        route = json.loads(run_with_stdout_capture(cmd_route, argparse.Namespace(
+            diff_data=str(dd_path), critic_gates=critic_gates,
+            intent="mixed", cr_dir=None,
+        )))
+        partitions = json.loads(run_with_stdout_capture(cmd_partition, argparse.Namespace(
+            diff_data=str(dd_path), loc_budget=500, max_files=25,
+            max_bha_agents=route["max_bha_agents"],
+            bha_unified_threshold_loc=unified_threshold,
+            diff_scope=None, cr_dir=None, workdir=None,
+        )))
+        return route, partitions
+
+    def _standard_pipeline(
+        self, tmp_path: Path, diff_data: dict[str, Any], **kwargs: Any,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        route, partitions = self._route_and_partition(tmp_path, diff_data, **kwargs)
+        _, final, _ = _run_arbitrate_budget(tmp_path, self._CORE_PLAN, diff_data)
+        _, spec = _run_derive_spawn_spec(tmp_path, final, partitions, route)
+        return final, partitions, spec
+
+    @staticmethod
+    def _assert_every_file_has_an_agent(
+        diff_data: dict[str, Any],
+        partitions: dict[str, Any],
+        spec: dict[str, Any],
+        bha_cap: int,
+    ) -> None:
+        parts = partitions["partitions"]
+        assert len(parts) <= bha_cap, (
+            f"partitioner emitted {len(parts)} partitions for {bha_cap} BHA agents"
+        )
+        capped = [s for s in spec["skipped"] if s.get("reason") == "budget_capped"]
+        assert capped == []
+        spawned = {
+            a["partition_id"] for a in spec["agents"] if a["reviewer"] == "bug_hunter_a"
+        }
+        assert spawned == {p["id"] for p in parts}
+        covered = {f["file"] for p in parts for f in p["files"]}
+        assert covered == set(diff_data["files_to_review"])
+
+    def test_large_diff_without_domain_critic_spawns_every_partition(
+        self, tmp_path: Path,
+    ) -> None:
+        # 24 x 300 LOC = 7,200 LOC: arbitrate reserves min(ceil(7200/1200), 5) = 5.
+        diff_data = self._diff({f"src/f{i:02d}.ts": 300 for i in range(24)})
+        final, partitions, spec = self._standard_pipeline(tmp_path, diff_data)
+        assert final["budget"]["bha_partitions"] == DEFAULT_MAX_BHA_AGENTS
+        self._assert_every_file_has_an_agent(
+            diff_data, partitions, spec, final["budget"]["bha_partitions"],
+        )
+
+    @pytest.mark.parametrize("with_domain_critic", [False, True])
+    def test_mixed_impl_test_split_near_unified_boundary(
+        self, tmp_path: Path, with_domain_critic: bool,
+    ) -> None:
+        # 10 x 300 impl + 10 x 250 test = 5,500 LOC, just above the unified
+        # threshold. Impl and test partitions cannot merge with each other in
+        # the budget-respecting pass, so the count stays above ceil(5500/1200).
+        loc = {f"src/f{i}.ts": 300 for i in range(10)}
+        loc.update({f"tests/f{i}.test.ts": 250 for i in range(10)})
+        diff_data = self._diff(loc)
+        gates = self._domain_critic_gates(tmp_path) if with_domain_critic else None
+        final, partitions, spec = self._standard_pipeline(
+            tmp_path, diff_data, critic_gates=gates,
+        )
+        assert partitions["partition_mode"] == "partitioned"
+        assert final["budget"]["bha_partitions"] == 5
+        self._assert_every_file_has_an_agent(
+            diff_data, partitions, spec, final["budget"]["bha_partitions"],
+        )
+
+    def test_unified_mode_disabled_small_diff_spawns_every_partition(
+        self, tmp_path: Path,
+    ) -> None:
+        # bha_unified_threshold_loc = 0 always partitions: 8 x 300 LOC reserves
+        # ceil(2400/1200) = 2 BHA agents.
+        diff_data = self._diff({f"src/f{i}.ts": 300 for i in range(8)})
+        final, partitions, spec = self._standard_pipeline(
+            tmp_path, diff_data, unified_threshold=0,
+        )
+        assert final["budget"]["bha_partitions"] == 2
+        self._assert_every_file_has_an_agent(
+            diff_data, partitions, spec, final["budget"]["bha_partitions"],
+        )
+
+    def test_unified_mode_still_one_partition(self, tmp_path: Path) -> None:
+        diff_data = self._diff({f"src/f{i:02d}.ts": 300 for i in range(16)})
+        final, partitions, spec = self._standard_pipeline(tmp_path, diff_data)
+        assert partitions["partition_mode"] == "unified"
+        assert len(partitions["partitions"]) == 1
+        self._assert_every_file_has_an_agent(
+            diff_data, partitions, spec, final["budget"]["bha_partitions"],
+        )
+
+    def test_shallow_static_spec_spawns_every_partition(self, tmp_path: Path) -> None:
+        from code_review_helpers import _write_spawn_section, cmd_derive_static_spec
+        from golden_fixture_harness import run_with_stdout_capture
+
+        diff_data = self._diff({f"src/f{i:02d}.ts": 300 for i in range(24)})
+        route, partitions = self._route_and_partition(tmp_path, diff_data)
+        p_path = tmp_path / "partitions.json"
+        p_path.write_text(json.dumps(partitions))
+        _write_spawn_section(tmp_path, "route", route)
+        run_with_stdout_capture(cmd_derive_static_spec, argparse.Namespace(
+            cr_dir=str(tmp_path), partitions=str(p_path),
+        ))
+        spec = json.loads((tmp_path / "spawn.json").read_text())["spec"]
+        self._assert_every_file_has_an_agent(
+            diff_data, partitions, spec, DEFAULT_MAX_BHA_AGENTS,
+        )
+
+    def test_shallow_static_spec_reports_a_capped_partition_as_a_gap(
+        self, tmp_path: Path,
+    ) -> None:
+        """A partitions.json with more partitions than the static cap (not
+        produced by the route-capped partitioner) records a required
+        coverage gap rather than dropping files silently."""
+        from code_review_helpers import _write_spawn_section, cmd_derive_static_spec
+        from golden_fixture_harness import run_with_stdout_capture
+
+        count = DEFAULT_MAX_BHA_AGENTS + 1
+        p_path = tmp_path / "partitions.json"
+        p_path.write_text(json.dumps({"partitions": [
+            {"id": i, "files": [{"file": f"src/{i}.ts"}], "is_test_only": False}
+            for i in range(count)
+        ]}))
+        _write_spawn_section(tmp_path, "route", {"fast_path": False})
+        _seed_scope_review_root(tmp_path, tmp_path / "review_root_repo")
+        run_with_stdout_capture(cmd_derive_static_spec, argparse.Namespace(
+            cr_dir=str(tmp_path), partitions=str(p_path),
+        ))
+        spec = json.loads((tmp_path / "spawn.json").read_text())["spec"]
+        capped = [s for s in spec["skipped"] if s.get("reason") == "budget_capped"]
+        assert [s["partition_id"] for s in capped] == [count - 1]
+        gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())["findings"]
+        assert len(gaps) == 1
+        assert gaps[0]["required"] is True
+        assert gaps[0]["category"] == "Coverage"
+        assert spec["stats"]["required_coverage_gaps"] == 1
 
 
 class TestISS10869DocsOnlyBhaSkip:

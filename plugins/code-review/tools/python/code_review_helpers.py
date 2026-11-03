@@ -2269,7 +2269,9 @@ def cmd_route(args: argparse.Namespace) -> int:
 
     selected_domain_critics = sorted(set(selected_domain_critics))[:max_domain_critics]
 
-    max_bha_agents = 9 - 2 - len(selected_domain_critics)  # 2 = BHB + Auditor
+    max_bha_agents = _max_bha_partitions_by_loc(
+        diff_data, slot_cap=9 - 2 - len(selected_domain_critics),  # 2 = BHB + Auditor
+    )
 
     fast_path = total_loc <= FAST_PATH_MAX_LOC
 
@@ -12710,13 +12712,26 @@ def _is_docs_only(diff_data: dict[str, Any]) -> bool:
     return all(_is_skip_ext(f) for f in files)
 
 
-def _max_bha_partitions_by_loc(diff_data: dict[str, Any]) -> int:
-    """Cap BHA partitions by changed-LOC budget (mirrors partition heuristics)."""
+def _max_bha_partitions_by_loc(
+    diff_data: dict[str, Any], slot_cap: int | None = None,
+) -> int:
+    """The number of Bug Hunter A agents a review gets: one per
+    ``REBALANCE_LOC_BUDGET`` changed lines, at least 1, at most
+    ``DEFAULT_MAX_BHA_AGENTS`` and, when given, at most ``slot_cap``.
+
+    The single source for that number. ``route`` passes it to ``partition``
+    as ``--max-bha-agents`` (with its fleet-slot cap as ``slot_cap``) and
+    ``arbitrate-budget`` reserves it as ``budget.bha_partitions``. Both read
+    the same ``diff_data.json``, so the partitioner never emits more
+    partitions than there are agents and ``budget_capped`` cannot drop a
+    partition's files.
+    """
     total_loc = int(diff_data.get("total_loc") or 0)
-    if total_loc <= 0:
-        return 1
     by_budget = max(1, (total_loc + REBALANCE_LOC_BUDGET - 1) // REBALANCE_LOC_BUDGET)
-    return min(by_budget, DEFAULT_MAX_BHA_AGENTS)
+    cap = min(by_budget, DEFAULT_MAX_BHA_AGENTS)
+    if slot_cap is not None and slot_cap > 0:
+        cap = min(cap, slot_cap)
+    return cap
 
 
 def _make_coverage_gap_finding(
@@ -13350,12 +13365,14 @@ def _derive_spawn_agents_from_plan(
     anything else lands in ``skipped[]`` with reason ``unknown_reviewer``
     so the orchestrator surfaces the gap.
 
-    ``bha_partitions_cap`` honors the post-arbitrate budget. When the
-    partitioner produced N partitions but arbitrate-budget reserved
-    only K < N slots for BHA (the route-level ``max_bha_agents`` cap
-    and the post-arbitrate cap are computed at different times and
-    can diverge), the first K partitions are spawned and the rest
-    land in ``skipped[]`` with ``reason: "budget_capped"``. A cap of 0
+    ``bha_partitions_cap`` honors the post-arbitrate budget. The route
+    derives the partitioner's ``max_bha_agents`` from the same
+    ``_max_bha_partitions_by_loc`` arbitrate-budget uses, so N partitions
+    never exceed K reserved slots in a normal run. If they do (a
+    partitions.json produced another way), the first K partitions are
+    spawned and the rest land in ``skipped[]`` with
+    ``reason: "budget_capped"``, which the callers report as a required
+    coverage gap. A cap of 0
     suppresses all BHA spawns: with ``docs_only`` (arbitrate-budget
     waived the BHA floor) the one skipped entry carries
     ``reason: "docs_only"``; without it the zero is a cap and keeps
@@ -13398,11 +13415,10 @@ def _derive_spawn_agents_from_plan(
                         "reason": "no_partitions",
                     })
                     return
-                # Budget cap: arbitrate-budget computes a final
-                # ``bha_partitions`` count that may be < the number of
-                # partitions on disk (the route-level
-                # ``max_bha_agents`` and the post-arbitrate cap are
-                # computed at different times and can diverge). When
+                # Budget cap: arbitrate-budget's ``bha_partitions`` bounds
+                # the BHA fleet. It is never below the partition count when
+                # the partitioner ran with the route's ``max_bha_agents``
+                # (both come from ``_max_bha_partitions_by_loc``). When
                 # the cap is 0, no BHA agents spawn at all. When the cap is positive
                 # but < len(partitions), the first cap partitions
                 # spawn (partitions are bin-packed by the partitioner
@@ -13736,11 +13752,11 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
                         "source": str(entry.get("source", "") or ""),
                     })
 
-    # Budget cap on BHA (#fix-1). arbitrate-budget computes a final
-    # ``bha_partitions`` that honors the LOC cap + total reviewer cap;
-    # the partitioner runs separately and may emit more partitions.
-    # Pass the cap into the resolver so the spawn-spec never exceeds
-    # the post-arbitrate fleet size.
+    # Budget cap on BHA (#fix-1). ``budget.bha_partitions`` and the
+    # partitioner's ``--max-bha-agents`` both come from
+    # ``_max_bha_partitions_by_loc``, so the cap normally equals or exceeds
+    # the partition count; passing it keeps the spawn-spec within the
+    # post-arbitrate fleet size if a partitions.json from elsewhere does not.
     bha_cap_raw = budget.get("bha_partitions")
     bha_cap: int | None = int(bha_cap_raw) if isinstance(bha_cap_raw, int) else None
 
@@ -13902,6 +13918,14 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
         static_plan, partitions, models,
         bha_partitions_cap=DEFAULT_MAX_BHA_AGENTS,
     )
+    # A partition dropped as ``budget_capped`` holds files no reviewer will
+    # bug-hunt. The route's cap keeps that from happening; if it does, record
+    # the gap the same way derive-spawn-spec does instead of dropping it silently.
+    spawn_gap_findings = _build_spawn_required_gap_findings(
+        skipped, {"no_partitions"}, emitted_at=now_iso,
+    )
+    if spawn_gap_findings:
+        _append_to_coverage_gaps(cr_dir / "coverage_gaps.json", spawn_gap_findings)
 
     bha_count = sum(1 for a in agents if a["reviewer"] == "bug_hunter_a")
     spec = {
@@ -13917,7 +13941,7 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
             "domain_critic_count": 0,
             "from_required": len(agents),
             "from_best_effort": 0,
-            "required_coverage_gaps": 0,
+            "required_coverage_gaps": len(spawn_gap_findings),
         },
         "generated_at": now_iso,
     }
@@ -13979,7 +14003,8 @@ def _append_to_coverage_gaps(
 
     Three producers write this file. ``arbitrate-budget`` is the
     original (writing the ``budget_exceeded`` findings); ``derive-spawn-spec``
-    is the second (writing the ``spawn_*`` reason findings); both run before
+    (or ``derive-static-spec`` on shallow) is the second (writing the
+    ``spawn_*`` reason findings); both run before
     ``stage_21_collect_findings`` which globs ``agent_*.json``.
     ``verify-consolidate`` (``stage_24a``, FEA-3154) is the third, appending a
     single ``coverage:verifier-missing-output`` finding in github mode when a
