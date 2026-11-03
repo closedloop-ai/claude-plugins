@@ -49,7 +49,7 @@ const realFs = {
 /** Whether the process that owns a run is still that run: alive, and its command line names verify-run and the run id. */
 export function runProcessAlive(pid, id, exec = execCommand) {
   if (!Number.isInteger(pid) || pid <= 1) return false;
-  const result = exec("ps", ["-p", String(pid), "-o", "command="]);
+  const result = exec("ps", ["-ww", "-p", String(pid), "-o", "command="]);
   return result.status === 0 && result.stdout.includes("verify-run.mjs") && result.stdout.includes(id);
 }
 
