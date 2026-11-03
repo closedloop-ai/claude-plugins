@@ -17,6 +17,7 @@ import { probeE2eCapability } from "./e2e-capability-probe.mjs";
 import { prBodyClaimProblems } from "./pr-body-claims.mjs";
 import { prEvidenceShapeProblems, readTestSelection, TEST_SELECTORS } from "./pr-evidence-schema.mjs";
 import { qaImpactRequest } from "./qa-impact.mjs";
+import { testIntegrityProblems } from "./test-integrity.mjs";
 
 const REPO = "closedloop-ai/symphony-alpha";
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -329,6 +330,15 @@ export function pullRequestFacts({ worktree, base, include, prs, ownBranch, tick
         ...bindingProblems,
         ...evidenceProblems(runs, changed, testedCommit, worktree),
         ...selectionProblems(runs, files, requiredTests, testedCommit),
+        ...testIntegrityProblems(
+          runs,
+          files,
+          file => {
+            try { return readFileSync(path.join(worktree, file), "utf8"); }
+            catch { return null; }
+          },
+          testedCommit
+        ),
         ...targetedEvidenceProblems(runs, testedCommit, worktree),
         ...capabilityProbeProblems(runs, worktree, testedCommit, probeCapability, commit),
         ...ciCheckProblems(runs, changed, testedCommit),

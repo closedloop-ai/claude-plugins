@@ -856,6 +856,10 @@ and `$design` route production review through.
   that page's approved prototype route, flags every control present in the
   prototype but missing in production, and inventories rendered controls for
   any with no requirement naming that control on that surface.
+- On a metric, summary, or card surface, it compares the card's owning
+  container, width, order and responsive placement with the established grid
+  or the page's official prototype story. A matching element count alone is
+  not a layout result.
 - When neither has any, it falls back to the design pack's best-practice
   review, against `.claude/design/soul.md`, as the skill does when there is
   no spec.

@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.32
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 530 words longer than in 1.1.31.
+
+#### Fixed
+- Storybook diff rules reject changed stories whose requested viewport name is absent from `MINIMAL_VIEWPORTS` and `parameters.viewport.options`.
+- Pull request evidence recomputes responsive, absence, and card-layout test candidates from the final diff and requires a current intentional-failure proof for each one, including production-owner and mounted-state evidence for absence assertions and grid or prototype baselines for layout assertions.
+- Writer, guardrails, verifier, handoff, and visual QA guidance treat element counts as cardinality only and require layout checks against the established grid or official prototype story.
+
 ### vibe v1.1.31
 
 #### Fixed

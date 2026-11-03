@@ -12,12 +12,15 @@ test("the PR comment lists the final SHA, exact cases, command, tier and result 
     testRuns: [{ path: "src/list.test.ts", cases: ["search"], command, status: "passed", commit },
       { lane: "Browser E2E", command: "pnpm test:browser-e2e", status: "passed", commit }],
     testSelection: [{ file: "src/list.ts", selector: "code_tests_for", tests: ["src/list.test.ts"] }],
+    testIntegrityProofs: [{ candidate: "absence:src/list.test.ts:4", path: "src/list.test.ts", case: "does not render stale rows",
+      class: "absence", mutation: "restore the stale row", command, observedFailure: "the absence assertion failed",
+      restoredPass: true, commit, ownerBoundary: "production", mountedSignal: "the list heading is visible" }],
     rerunCycles: [],
     e2eCapability: { selectedTier: "A", container: { dockerPresent: true, dockerReachable: true, memoryGiB: 24, diskGiB: 80,
       minimumMemoryGiB: 20, minimumDiskGiB: 64, command: "repo probe" }, native: { available: true, forbidden: false }, remote: { available: false } },
   };
   const comment = renderEvidenceComment(evidence);
-  for (const value of [commit, "src/list.test.ts", "search", command, "E2E tier: A", `passed at \`${commit}\``, "Browser E2E", "pnpm test:browser-e2e"]) assert.ok(comment.includes(value), value);
+  for (const value of [commit, "src/list.test.ts", "search", command, "E2E tier: A", `passed at \`${commit}\``, "Browser E2E", "pnpm test:browser-e2e", "Test integrity mutations", "restore the stale row"]) assert.ok(comment.includes(value), value);
   assert.throws(() => renderEvidenceComment({}), /targeted inventory/);
   assert.throws(() => renderEvidenceComment({
     ...evidence,

@@ -498,7 +498,11 @@ On a requested pull request, lighter and backend alike, the repo's
 `pull-request` turn, not optional: give it
 those test files and the code they cover. It checks above all that each
 test can fail when the behavior it names breaks and that no test name claims
-more than its assertions pin. Its confirmed findings resume the SAME writer
+more than its assertions pin. For narrow/mobile, absence, and
+metric/summary/card layout tests, require the mechanical
+`testIntegrityProofs` mutation evidence checked by the handoff inventory; a
+normal green run or a count-only assertion cannot substitute for it. Its
+confirmed findings resume the SAME writer
 in its `pull-request` turn, and the pull request does not open, or take a new
 push, until its rerun on the corrected tests is clean.
 
@@ -532,8 +536,11 @@ sourced requirement. For shared scope it compares each consumer page against
 that page's approved prototype route and flags every control present in the
 prototype but missing in production. Run logical QA (`/logical-qa`, `$logical-qa`) for a data or metric
 surface, then product-contract QA (`/metal-andrew`, `$metal-andrew`) once that
-evidence is visible. Each skill dispatches its own read-only agents. Confirmed
-findings resume the SAME writer in fix mode for every touched surface, even when
+evidence is visible. Each skill dispatches its own read-only agents. For every
+touched metric, summary, or card surface, visual QA compares the card's
+container, width, order and responsive placement with the established grid or
+that page's official prototype story. Counting cards is never layout evidence.
+Confirmed findings resume the SAME writer in fix mode for every touched surface, even when
 they predate the branch, already exist on main or were called the component
 owner's decision; approved copy is reused and unsourced wording is escalated. Then
 steps 3 to 6 run again on the result. Before handoff, the findings file must pass
