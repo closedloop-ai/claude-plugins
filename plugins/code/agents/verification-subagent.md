@@ -1,7 +1,7 @@
 ---
 name: verification-subagent
 description: Verifies if a task from the implementation plan has been completed by checking source files.
-model: sonnet
+model: opus
 tools: Read, Glob, Grep, SendMessage
 ---
 
