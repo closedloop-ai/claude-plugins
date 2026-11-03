@@ -389,8 +389,10 @@ def _augment_partition_args(resolved: list[str], ctx: PrefixContext) -> list[str
 
     The walker, for the standard (non-fast-path) flow, passes
     ``--loc-budget 500 --max-files 25 --max-bha-agents <N>`` on top of the
-    plan args and — when a cache dir is active — swaps ``--diff-data`` to
-    ``uncached_diff_data.json`` so partitions only contain uncached files.
+    plan args (``<N>`` from production's ``_partition_bha_cap``: the
+    arbitrated ``budget.bha_partitions``, else the LOC count) and — when a
+    cache dir is active — swaps ``--diff-data`` to ``uncached_diff_data.json``
+    so partitions only contain uncached files.
     """
     out = list(resolved)
     cache_dir = _resolve_token("<CACHE_DIR>", ctx)
@@ -401,8 +403,10 @@ def _augment_partition_args(resolved: list[str], ctx: PrefixContext) -> list[str
             for a in out
         ]
     out += ["--loc-budget", "500", "--max-files", "25"]
-    if ctx.max_bha_agents is not None:
-        out += ["--max-bha-agents", str(ctx.max_bha_agents)]
+    out += [
+        "--max-bha-agents",
+        str(code_review_helpers._partition_bha_cap(ctx.cr_dir)),
+    ]
     return out
 
 

@@ -12917,7 +12917,7 @@ class TestVerifyConsolidate:
         self, tmp_path: Path,
     ) -> None:
         """FEA-3154: the aggregate gap's id continues past any pre-existing
-        coverage gaps (e.g. stage_20b's coverage-verifier_f0), so no id collides."""
+        coverage gaps (e.g. arbitrate-budget's coverage-verifier_f0), so no id collides."""
         cr_dir = tmp_path / "cr"
         cr_dir.mkdir(parents=True, exist_ok=True)
         # Simulate a stage_20b dropped-reviewer gap already on disk.
@@ -20132,10 +20132,11 @@ class TestPLN725Phase8DeriveSpawnSpecBudgetCap:
 class TestBhaPartitionsWithinAgentBudget:
     """The partitioner never emits more BHA partitions than arbitrate-budget
     reserves BHA agents for, so ``budget_capped`` never drops a partition that
-    holds files. Each case drives the production chain: ``route`` ->
-    ``arbitrate-budget`` -> ``partition`` with run-prefix's Gate B augmentation
-    (``--loc-budget 500 --max-files 25 --max-bha-agents <route>``) -> the spawn
-    spec. Before the fix the route passed ``9 - 2 - critics`` (7 with no domain
+    holds files. Each case drives the production chain in stage order:
+    ``route`` -> ``arbitrate-budget`` -> ``partition`` with run-prefix's Gate B
+    augmentation (``--loc-budget 500 --max-files 25 --max-bha-agents <N>``,
+    ``<N>`` the arbitrated ``budget.bha_partitions``) -> the spawn spec.
+    Before the fix the route passed ``9 - 2 - critics`` (7 with no domain
     critic) to the partitioner while arbitrate-budget reserved
     ``min(ceil(LOC / 1200), 5)`` agents, and the excess partitions were dropped.
     """
@@ -20156,13 +20157,9 @@ class TestBhaPartitionsWithinAgentBudget:
             ranges={f: {"added": [[1, n]], "removed": []} for f, n in loc_by_file.items()},
         )
 
-    def _route_and_partition(
-        self,
-        tmp_path: Path,
-        diff_data: dict[str, Any],
-        *,
-        unified_threshold: int = BHA_UNIFIED_THRESHOLD_LOC,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    @staticmethod
+    def _route(tmp_path: Path, diff_data: dict[str, Any]) -> dict[str, Any]:
+        """Seed the review root and diff_data.json, then run Gate B ``route``."""
         from golden_fixture_harness import run_with_stdout_capture
 
         root = tmp_path / "review_root_repo"
@@ -20173,24 +20170,38 @@ class TestBhaPartitionsWithinAgentBudget:
         }))
         dd_path = tmp_path / "diff_data.json"
         dd_path.write_text(json.dumps(diff_data))
-        route = json.loads(run_with_stdout_capture(cmd_route, argparse.Namespace(
+        return json.loads(run_with_stdout_capture(cmd_route, argparse.Namespace(
             diff_data=str(dd_path), critic_gates=None,
             intent="mixed", cr_dir=None,
         )))
-        partitions = json.loads(run_with_stdout_capture(cmd_partition, argparse.Namespace(
-            diff_data=str(dd_path), loc_budget=500, max_files=25,
-            max_bha_agents=route["max_bha_agents"],
-            bha_unified_threshold_loc=unified_threshold,
-            diff_scope=None, cr_dir=None, workdir=None,
-        )))
-        return route, partitions
+
+    @staticmethod
+    def _partition(
+        tmp_path: Path,
+        route: dict[str, Any],
+        *,
+        unified_threshold: int = BHA_UNIFIED_THRESHOLD_LOC,
+    ) -> tuple[list[str], dict[str, Any]]:
+        """Run ``stage_17_partition`` with run-prefix's Gate B augmentation;
+        return the augmented args and the parsed partitions.json."""
+        from code_review_helpers import _rp_augment_partition_args, _rp_build_parser
+        from golden_fixture_harness import run_with_stdout_capture
+
+        args = _rp_augment_partition_args(
+            ["--diff-data", str(tmp_path / "diff_data.json")],
+            _rp_ctx(tmp_path, max_bha_agents=route["max_bha_agents"]),
+        )
+        ns = _rp_build_parser().parse_args(["partition", *args])
+        ns.bha_unified_threshold_loc = unified_threshold
+        return args, json.loads(run_with_stdout_capture(ns.func, ns))
 
     def _standard_pipeline(
         self, tmp_path: Path, diff_data: dict[str, Any], **kwargs: Any,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-        route, partitions = self._route_and_partition(tmp_path, diff_data, **kwargs)
+        route = self._route(tmp_path, diff_data)
         _, final, _ = _run_arbitrate_budget(tmp_path, self._CORE_PLAN, diff_data)
-        _, spec = _run_derive_spawn_spec(tmp_path, final, partitions, route)
+        _, partitions = self._partition(tmp_path, route, **kwargs)
+        _, spec = _run_derive_spawn_spec(tmp_path, None, partitions, route)
         return final, partitions, spec
 
     @staticmethod
@@ -20223,6 +20234,28 @@ class TestBhaPartitionsWithinAgentBudget:
         self._assert_every_file_has_an_agent(
             diff_data, partitions, spec, final["budget"]["bha_partitions"],
         )
+
+    def test_arbitrated_cap_below_loc_count_bounds_the_partitioner(
+        self, tmp_path: Path,
+    ) -> None:
+        """The partitioner takes arbitrate-budget's ``bha_partitions``, not the
+        LOC count route reports. A budget of 2 on a 7,200 LOC diff (LOC count
+        5) yields at most 2 partitions, every file in one of them."""
+        from code_review_helpers import _write_coverage_section
+
+        diff_data = self._diff({f"src/f{i:02d}.ts": 300 for i in range(24)})
+        route = self._route(tmp_path, diff_data)
+        _, final, _ = _run_arbitrate_budget(tmp_path, self._CORE_PLAN, diff_data)
+        final["budget"]["bha_partitions"] = 2
+        _write_coverage_section(tmp_path, "final", final)
+        assert route["max_bha_agents"] == DEFAULT_MAX_BHA_AGENTS
+
+        args, partitions = self._partition(tmp_path, route)
+        assert args[args.index("--max-bha-agents") + 1] == "2"
+        _, spec = _run_derive_spawn_spec(tmp_path, None, partitions, route)
+        self._assert_every_file_has_an_agent(diff_data, partitions, spec, 2)
+        gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())["findings"]
+        assert gaps == []
 
     def test_mixed_impl_test_split_near_unified_boundary(
         self, tmp_path: Path,
@@ -20283,12 +20316,20 @@ class TestBhaPartitionsWithinAgentBudget:
             diff_data, partitions, spec, final["budget"]["bha_partitions"],
         )
 
-    def test_shallow_static_spec_spawns_every_partition(self, tmp_path: Path) -> None:
+    def test_shallow_partitions_by_loc_count_without_arbitrate(
+        self, tmp_path: Path,
+    ) -> None:
+        """Shallow runs no arbitrate-budget: the partitioner falls back to the
+        LOC count over the full diff, and the static spec spawns every
+        partition."""
         from code_review_helpers import _write_spawn_section, cmd_derive_static_spec
         from golden_fixture_harness import run_with_stdout_capture
 
         diff_data = self._diff({f"src/f{i:02d}.ts": 300 for i in range(24)})
-        route, partitions = self._route_and_partition(tmp_path, diff_data)
+        route = self._route(tmp_path, diff_data)
+        assert not (tmp_path / "coverage.json").exists()
+        args, partitions = self._partition(tmp_path, route)
+        assert args[args.index("--max-bha-agents") + 1] == str(DEFAULT_MAX_BHA_AGENTS)
         p_path = tmp_path / "partitions.json"
         p_path.write_text(json.dumps(partitions))
         _write_spawn_section(tmp_path, "route", route)
@@ -20304,78 +20345,22 @@ class TestBhaPartitionsWithinAgentBudget:
         self, tmp_path: Path,
     ) -> None:
         """With a cache dir active, run-prefix points the partitioner at
-        uncached_diff_data.json; route and arbitrate-budget read the full
-        diff, and every uncached file still lands in a spawned partition."""
-        from code_review_helpers import _rp_augment_partition_args, _rp_build_parser
-        from golden_fixture_harness import run_with_stdout_capture
-
+        uncached_diff_data.json; arbitrate-budget reads the full diff, and
+        every uncached file still lands in a spawned partition."""
         diff_data = self._diff({f"src/f{i:02d}.ts": 300 for i in range(24)})
         uncached = self._diff({f"src/f{i:02d}.ts": 300 for i in range(4, 24)})
-        route, _ = self._route_and_partition(tmp_path, diff_data)
+        route = self._route(tmp_path, diff_data)
+        _, final, _ = _run_arbitrate_budget(tmp_path, self._CORE_PLAN, diff_data)
         (tmp_path / "cache_config.json").write_text(
             json.dumps({"cache_dir": str(tmp_path / "cache")}),
         )
         (tmp_path / "uncached_diff_data.json").write_text(json.dumps(uncached))
-        args = _rp_augment_partition_args(
-            ["--diff-data", str(tmp_path / "diff_data.json")],
-            _rp_ctx(tmp_path, max_bha_agents=route["max_bha_agents"]),
-        )
+        args, partitions = self._partition(tmp_path, route)
         assert str(tmp_path / "uncached_diff_data.json") in args
-        ns = _rp_build_parser().parse_args(["partition", *args])
-        partitions = json.loads(run_with_stdout_capture(ns.func, ns))
-        _, final, _ = _run_arbitrate_budget(tmp_path, self._CORE_PLAN, diff_data)
-        _, spec = _run_derive_spawn_spec(tmp_path, final, partitions, route)
+        _, spec = _run_derive_spawn_spec(tmp_path, None, partitions, route)
         self._assert_every_file_has_an_agent(
             uncached, partitions, spec, final["budget"]["bha_partitions"],
         )
-
-    def test_excess_partitions_fold_into_the_budget(self, tmp_path: Path) -> None:
-        """A partitions.json with more partitions than arbitrate reserved (a
-        missing route value or a stale file: here the old 7 for 5 agents) is
-        folded to the cap. partitions.json and the patch files are rewritten,
-        and the cap's agents cover every file."""
-        from code_review_helpers import _render_fleet_notes
-        from golden_fixture_harness import run_with_stdout_capture
-
-        diff_data = self._diff({f"src/f{i:02d}.ts": 300 for i in range(24)})
-        self._route_and_partition(tmp_path, diff_data)
-        scope = json.loads((tmp_path / "scope.json").read_text())
-        scope["diff_scope"] = "main...HEAD"
-        (tmp_path / "scope.json").write_text(json.dumps(scope))
-        partitions = json.loads(run_with_stdout_capture(cmd_partition, argparse.Namespace(
-            diff_data=str(tmp_path / "diff_data.json"), loc_budget=500, max_files=25,
-            max_bha_agents=7, bha_unified_threshold_loc=BHA_UNIFIED_THRESHOLD_LOC,
-            diff_scope=None, cr_dir=None, workdir=None,
-        )))
-        assert len(partitions["partitions"]) == 7
-        for i in range(7):
-            (tmp_path / f"patches_p{i}.txt").write_text("stale")
-        _, final, _ = _run_arbitrate_budget(tmp_path, self._CORE_PLAN, diff_data)
-
-        real_run = subprocess.run
-
-        def fake_git(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
-            if cmd[:2] != ["git", "diff"]:
-                return real_run(cmd, **kwargs)
-            kwargs["stdout"].write("\n".join(cmd[cmd.index("--") + 1:]))
-            return subprocess.CompletedProcess(args=cmd, returncode=0)
-
-        with patch("code_review_helpers.subprocess.run", side_effect=fake_git):
-            _, spec = _run_derive_spawn_spec(tmp_path, final, partitions, None)
-
-        assert spec["folded_partitions"] == {"from": 7, "to": 5}
-        on_disk = json.loads((tmp_path / "partitions.json").read_text())
-        assert on_disk["folded_from"] == 7
-        assert on_disk["partition_count"] == 5
-        self._assert_every_file_has_an_agent(diff_data, on_disk, spec, 5)
-        for part in on_disk["partitions"]:
-            patch_text = (tmp_path / f"patches_p{part['id']}.txt").read_text()
-            assert set(patch_text.split("\n")) == {f["file"] for f in part["files"]}
-        assert not (tmp_path / "patches_p5.txt").exists()
-        assert not (tmp_path / "patches_p6.txt").exists()
-        gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())["findings"]
-        assert gaps == []
-        assert any("BHA partitions folded" in n for n in _render_fleet_notes(spec, None))
 
     @staticmethod
     def _run_static_spec(tmp_path: Path, partition_count: int) -> dict[str, Any]:
@@ -20883,6 +20868,50 @@ class TestPLN725Phase8VerifySpawn:
             "unified_auditor" in (f.get("issue") or "")
             for f in gaps["findings"]
         )
+
+    def test_rerun_replaces_its_own_gaps_and_keeps_other_producers(
+        self, tmp_path: Path,
+    ) -> None:
+        """A walk resumed after stage_20 re-runs verify-spawn: its gap is
+        replaced, not duplicated, matched on ``gap_producer`` rather than
+        prose, and the spawn-spec and arbitrate-budget gaps already on disk
+        survive with ids that do not collide."""
+        from code_review_helpers import (
+            _GAP_PRODUCER_SPAWN_SPEC,
+            _GAP_PRODUCER_VERIFY_SPAWN,
+            _make_coverage_gap_finding,
+        )
+
+        arbitrate_gap = _make_coverage_gap_finding(
+            {"reviewer": "dropped-critic"}, reason="budget_exceeded",
+            index=0, emitted_at="",
+        )
+        spawn_spec_gap = _make_coverage_gap_finding(
+            {"reviewer": "mystery"}, reason="spawn_unknown_reviewer",
+            index=0, emitted_at="", producer=_GAP_PRODUCER_SPAWN_SPEC,
+        )
+        gaps_path = tmp_path / "coverage_gaps.json"
+        gaps_path.write_text(json.dumps({"findings": [arbitrate_gap, spawn_spec_gap]}))
+        spec = self._spec([
+            {"agent_id": "bhb", "reviewer": "bug_hunter_b",
+             "bucket": "required", "source": "core"},
+            {"agent_id": "auditor", "reviewer": "unified_auditor",
+             "bucket": "required", "source": "core"},
+        ])
+        (tmp_path / "spawn.json").write_text(json.dumps({"spec": spec}))
+
+        self._run(tmp_path)
+        self._run(tmp_path)
+        findings = json.loads(gaps_path.read_text())["findings"]
+        producers = [f.get("gap_producer") for f in findings]
+        assert producers == [None, _GAP_PRODUCER_SPAWN_SPEC] + [_GAP_PRODUCER_VERIFY_SPAWN] * 2
+        ids = [f["id"] for f in findings]
+        assert len(set(ids)) == len(ids)
+
+        (tmp_path / "agent_bhb.json").write_text("{}")
+        (tmp_path / "agent_auditor.json").write_text("{}")
+        self._run(tmp_path)
+        assert json.loads(gaps_path.read_text())["findings"] == [arbitrate_gap, spawn_spec_gap]
 
     def test_missing_best_effort_no_gap(self, tmp_path: Path) -> None:
         """A best-effort agent missing from disk is a budget-driven
@@ -26498,27 +26527,45 @@ class TestRunPrefixRoutePartition:
     """Gate B route + partition folding (PLN-1229 Phase 2)."""
 
     def test_augment_partition_args_adds_budget_flags(self, tmp_path: Path) -> None:
-        from code_review_helpers import _rp_augment_partition_args
+        from code_review_helpers import _rp_augment_partition_args, _write_coverage_section
 
+        # The arbitrated budget wins over both the route value and the LOC count.
+        _write_coverage_section(tmp_path, "final", {"budget": {"bha_partitions": 3}})
+        (tmp_path / "diff_data.json").write_text(json.dumps({"total_loc": 9000}))
         ctx = _rp_ctx(tmp_path, max_bha_agents=7)
         out = _rp_augment_partition_args(["--diff-data", "x/diff_data.json"], ctx)
         assert "--loc-budget" in out and "500" in out
         assert "--max-files" in out and "25" in out
-        # max_bha_agents from the route decision is threaded through.
-        assert out[out.index("--max-bha-agents") + 1] == "7"
+        assert out[out.index("--max-bha-agents") + 1] == "3"
 
-    def test_augment_partition_without_route_value_uses_loc_count(
+    def test_augment_partition_without_arbitrated_budget_uses_loc_count(
         self, tmp_path: Path,
     ) -> None:
         from code_review_helpers import _rp_augment_partition_args
 
-        # No route value: the count arbitrate-budget reserves for the full
-        # diff, not the partitioner's DEFAULT_MAX_BHA_AGENTS.
+        # Shallow (no arbitrate-budget): the LOC count over the full diff, not
+        # the route value or the partitioner's DEFAULT_MAX_BHA_AGENTS.
         (tmp_path / "diff_data.json").write_text(json.dumps({"total_loc": 2400}))
+        out = _rp_augment_partition_args(
+            ["--diff-data", str(tmp_path / "diff_data.json")],
+            _rp_ctx(tmp_path, max_bha_agents=7),
+        )
+        assert out[out.index("--max-bha-agents") + 1] == "2"
+
+    def test_augment_partition_docs_only_budget_still_partitions(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import _rp_augment_partition_args, _write_coverage_section
+
+        # A docs-only budget of 0 is floored at 1; derive-spawn-spec's
+        # docs_only skip is what keeps BHA from spawning.
+        _write_coverage_section(
+            tmp_path, "final", {"budget": {"bha_partitions": 0, "docs_only": True}},
+        )
         out = _rp_augment_partition_args(
             ["--diff-data", str(tmp_path / "diff_data.json")], _rp_ctx(tmp_path),
         )
-        assert out[out.index("--max-bha-agents") + 1] == "2"
+        assert out[out.index("--max-bha-agents") + 1] == "1"
 
     def test_augment_partition_swaps_to_uncached_when_cached(
         self, tmp_path: Path,
