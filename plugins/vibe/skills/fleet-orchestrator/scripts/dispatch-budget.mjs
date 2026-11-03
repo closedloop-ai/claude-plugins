@@ -2,7 +2,7 @@
 // How many heavy runs the orchestrator may have going on this machine right now, read from the
 // shared worker budget (vibe/scripts/heavy-budget.mjs: leases plus a scan for vitest, turbo and
 // playwright runs that hold none, so runs started by other tools or agents count) instead of a
-// fixed heavy-slot count (PRD-823 WS7 F4). Changes nothing: `fleet.sh ... slot heavy` still
+// fixed heavy-slot count. Changes nothing: `fleet.sh ... slot heavy` still
 // enforces HEAVY_SLOTS (REMOTE_HEAVY_SLOTS on a remote machine) and MAX_LOAD_PER_CORE as the
 // backstop, whatever this prints.
 //

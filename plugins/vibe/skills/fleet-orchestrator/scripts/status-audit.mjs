@@ -6,7 +6,7 @@
 //
 // Usage: status-audit.mjs --snapshot <snapshot.json> [--at assignment|merge|report]
 //
-// `--at report` with FLEET_TRIM_STATUS_AUDIT=1 (off by default, PRD-823 C5) prints
+// `--at report` with FLEET_TRIM_STATUS_AUDIT=1 (off by default) prints
 // `status audit: skipped at report` and exits 0 without reading the snapshot, so the
 // audit runs at assignments and merges only. Without the variable, or at any other
 // point, it audits as before.

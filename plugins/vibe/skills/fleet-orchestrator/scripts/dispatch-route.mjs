@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Which runtime a ticket's writer starts on, and whether its pull request gets a QA-guide
 // session, read from the vibe triage manifest's class and the usage lines the watcher
-// already prints (PRD-823 WS7 F1 and F3). Changes nothing; names a runtime, never a model.
+// already prints. Changes nothing; names a runtime, never a model.
 //
 // Usage: dispatch-route.mjs --manifest <triage manifest> [--codex-usage "<codex-usage line>"] [--claude-usage "<claude-usage line>"] [--enable]
 // Prints one JSON object { schema, routed, class, runtime, qaGuide, reason }; exit 0 whenever it

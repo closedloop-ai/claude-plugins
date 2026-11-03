@@ -4,6 +4,19 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.33
+
+#### Added
+- Prompt split (`references/handoff-ui.md`, `handoff-pr.md`, `vibe-harness-codex.md`, `vibe-harness-claude.md`, `vibe-mockup.md`, `quality-loop-recovery.md`, `quality-loop-visual-qa.md`, `guardrails-ui.md`, and the fleet-orchestrator `fleet-qa-gate.md`, `fleet-recovery.md`, `fleet-codex-sessions.md`). Each block is the original text moved unchanged, replaced in its skill or reference by one stub line that names the file, the block and the condition (the inventory's `serverOnly`, the triage class, the runtime, a requested pull request). `scripts/skill-split.mjs` and `tools/python/skill_split.py` read a file with its stubs put back for the contract tests.
+- `fleet-orchestrator/scripts/dispatch-route.mjs` (`FLEET_CLASS_ROUTING=1`) names a writer runtime from the triage class and the `codex-usage` and `claude-usage` lines and says whether a pull request gets a QA-guide session; `dispatch-budget.mjs` (`FLEET_BUDGET_GUIDANCE=1`) reads how many heavy runs the shared worker budget has room for. Both are off by default.
+- `pre-pr-lanes.mjs check --reuse-unaffected <qa-impact request JSON>` accepts a lane whose earlier fresh pass at the request's boundary commit nothing changed since touches, recorded as `cached`. Off by default.
+- `env-ctl.mjs redeploy` skips the environment request when no UI or backend path changed since the last deployed commit, with `VIBE_REDEPLOY_UI_ONLY=1`. Off by default.
+
+#### Changed
+- `status-audit.mjs` takes `--at assignment|merge|report`; with `FLEET_TRIM_STATUS_AUDIT=1` a `report` run is skipped.
+- The handoff skill description no longer lists what the workers do; its trigger phrases are unchanged.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 720 words longer than in 1.1.32 (b55c5f3).
+
 ### vibe v1.1.32
 
 #### Added
