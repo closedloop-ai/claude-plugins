@@ -136,6 +136,14 @@ with `command: "pnpm test:lanes"` and `matches` named by that report, and
 exact command, provenance commit and matching `laneKey`, not `"pass"`; a selected test result also names
 its exact path, cases and command. Always write `rerunCycles: []` when no
 failure was rerun. Clean historical evidence may retain `source: "final-committed-diff"`.
+Also write `testIntegrityProofs: []`, populated for every candidate recomputed
+by the final handoff inventory. Each entry carries its exact `candidate`,
+`path`, `case`, `class`, intentional `mutation`, exact `command`,
+`observedFailure`, `restoredPass: true`, and tested `commit`. Responsive proof
+adds `viewportSource: "registered"` and `desktopWidthMutation`; absence proof
+adds `ownerBoundary: "production"` and a positive `mountedSignal`; layout proof
+adds the official grid or prototype `baseline` and the `layoutAssertion` that
+failed when the card moved. Never infer these fields from a green normal run.
 After writing the private JSON, run
 `node ../skills/handoff/scripts/pr-evidence-schema.mjs --file
 "<gitdir>/vibe-pr-evidence.json"` and fix every reported shape problem before
@@ -257,6 +265,14 @@ Three more rules:
   for a play that threw), and record the verdicts as `playVerdicts` on the
   `storybook-plays` run. Report the command, story IDs, browser and result, plus axe
   `color-contrast` on every new or changed story state; a failing node blocks.
+- For every responsive, absence, and card-layout candidate reported by the
+  handoff inventory, run its intentional failing mutation and then its restored
+  case. An absence test uses the production owner and waits for a positive
+  mounted signal before asserting absence. A responsive test runs once with
+  its registered viewport and once with desktop width. A metric, summary, or
+  card test checks its grid or official prototype layout; a count-only check is
+  not evidence. Record all results in `testIntegrityProofs` so the PR evidence
+  comment exposes them.
 - When cards or a narrow layout have any interaction, run the relevant flow
   with real touch through Playwright's WebKit iPhone descriptor and Chromium
   Pixel descriptor. Keyboard input and Chromium with `hasTouch` alone do not

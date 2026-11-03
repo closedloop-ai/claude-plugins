@@ -6,6 +6,7 @@ import { validSourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { testIntegrityProofShapeProblems } from "./test-integrity.mjs";
 
 export const TEST_SELECTORS = Object.freeze(["code_tests_for", "related", "e2e-reference"]);
 
@@ -46,7 +47,10 @@ export function readTestSelection(evidence) {
  * cases, commands, lane report and full test paths needed for safe conversion.
  */
 export function prEvidenceShapeProblems(evidence) {
-  const problems = [...readTestSelection(evidence).problems];
+  const problems = [
+    ...readTestSelection(evidence).problems,
+    ...testIntegrityProofShapeProblems(evidence),
+  ];
   const inventory = evidence?.targetedInventory;
   if (evidence?.source !== undefined && !validSourceIdentity(evidence.source)) problems.push('source identity needs HEAD plus full diff/tree hashes');
   if (inventory?.source === 'working-tree' && (!validSourceIdentity(evidence?.source) || inventory.commit !== evidence.source.head)) {
