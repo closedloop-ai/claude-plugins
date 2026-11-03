@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.5.4
+
+#### Fixed
+- `prd-dependency-graph` reads the BLOCKS links of the scope document itself, not only those of its PRODUCES children. A ticket the root document blocks is drawn with an arrow from the root, and a ticket that blocks the root is followed upstream like any other outside blocker, honouring `outside_blockers_depth`. Previously a link that touched only the root, such as a PRD blocking a ticket outside the scope, was never drawn.
+
 ### code-review v3.13.1
 
 #### Fixed

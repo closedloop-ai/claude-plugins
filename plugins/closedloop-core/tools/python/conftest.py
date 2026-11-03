@@ -46,6 +46,8 @@ class FakeClosedLoop:
         self.keys: list[str] = []
 
     def end(self, slug):
+        if slug not in self.tickets:  # a scope document, such as a PRD whose own links are read
+            return {"slug": slug, "name": f"{slug} title", "status": "DRAFT", "type": "DOCUMENT", "subtype": "PRD"}
         name, owner, status = self.tickets[slug]
         return {"slug": slug, "name": name, "status": status, "assignee": {"firstName": owner},
                 "type": "DOCUMENT", "subtype": "FEATURE"}
