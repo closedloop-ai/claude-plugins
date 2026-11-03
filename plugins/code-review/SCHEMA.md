@@ -435,8 +435,8 @@ does not duplicate it. Presenters use `gated_by_verify` to surface
 `coverage_plan.budget.bha_partitions` (the post-arbitrate cap), not
 by the count of partitions in `partitions.json`. `route` hands the
 partitioner `--max-bha-agents` from the same computation
-(`ceil(total_loc / 1200)`, at least 1, at most `DEFAULT_MAX_BHA_AGENTS`
-and the route's fleet-slot cap) over the same full `diff_data.json`.
+(`ceil(total_loc / 1200)`, at least 1, at most `DEFAULT_MAX_BHA_AGENTS`)
+over the same full `diff_data.json`.
 With a cache dir active the partitioner reads `uncached_diff_data.json`,
 whose LOC is at most the full diff's, and still force-merges down to the
 route's value, so a normal run never emits more partitions than the

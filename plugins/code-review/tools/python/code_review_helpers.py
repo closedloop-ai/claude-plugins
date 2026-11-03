@@ -2280,7 +2280,9 @@ def cmd_route(args: argparse.Namespace) -> int:
 
     # Domain critics
     file_context = " ".join(files_to_review).lower()
-    max_domain_critics = min(review_budget, 1)
+    # Clamped at 0: a negative budget would turn the slice below into a
+    # tail-drop that keeps all but the last |budget| critics.
+    max_domain_critics = max(0, min(review_budget, 1))
     selected_domain_critics: list[str] = []
 
     for module in module_critics:
@@ -2293,9 +2295,7 @@ def cmd_route(args: argparse.Namespace) -> int:
 
     selected_domain_critics = sorted(set(selected_domain_critics))[:max_domain_critics]
 
-    max_bha_agents = _max_bha_partitions_by_loc(
-        diff_data, slot_cap=9 - 2 - len(selected_domain_critics),  # 2 = BHB + Auditor
-    )
+    max_bha_agents = _max_bha_partitions_by_loc(diff_data)
 
     fast_path = total_loc <= FAST_PATH_MAX_LOC
 
@@ -12736,28 +12736,25 @@ def _is_docs_only(diff_data: dict[str, Any]) -> bool:
     return all(_is_skip_ext(f) for f in files)
 
 
-def _max_bha_partitions_by_loc(
-    diff_data: dict[str, Any], slot_cap: int | None = None,
-) -> int:
+def _max_bha_partitions_by_loc(diff_data: dict[str, Any]) -> int:
     """The number of Bug Hunter A agents a review gets: one per
     ``REBALANCE_LOC_BUDGET`` changed lines, at least 1, at most
-    ``DEFAULT_MAX_BHA_AGENTS`` and, when given, at most ``slot_cap``.
+    ``DEFAULT_MAX_BHA_AGENTS``.
 
     The single source for that number. ``route`` passes it to ``partition``
-    as ``--max-bha-agents`` (with its fleet-slot cap as ``slot_cap``) and
-    ``arbitrate-budget`` reserves it as ``budget.bha_partitions``. Both read
+    as ``--max-bha-agents`` and ``arbitrate-budget`` reserves it as
+    ``budget.bha_partitions``. Both read
     the full ``diff_data.json``. When a cache dir is active the partitioner
     reads ``uncached_diff_data.json`` instead, a subset whose LOC is at most
     the full diff's, and it still force-merges down to the route's value, so
     the partition count never exceeds the agents reserved and
-    ``budget_capped`` cannot drop a partition's files.
+    ``budget_capped`` cannot drop a partition's files. With route's at most
+    one domain critic, BHB + Auditor + critic + 5 BHA = 8 stays within the
+    9-agent route fleet.
     """
     total_loc = int(diff_data.get("total_loc") or 0)
     by_budget = max(1, (total_loc + REBALANCE_LOC_BUDGET - 1) // REBALANCE_LOC_BUDGET)
-    cap = min(by_budget, DEFAULT_MAX_BHA_AGENTS)
-    if slot_cap is not None and slot_cap > 0:
-        cap = min(cap, slot_cap)
-    return cap
+    return min(by_budget, DEFAULT_MAX_BHA_AGENTS)
 
 
 def _make_coverage_gap_finding(

@@ -832,9 +832,8 @@ class TestRoute:
         self, total_loc: int, expected: int,
     ) -> None:
         """The route hands the partitioner the same BHA agent count
-        arbitrate-budget reserves: ceil(LOC / 1200), capped at
-        DEFAULT_MAX_BHA_AGENTS, which is below the 7 fleet slots
-        (9 - BHB - Auditor) left with no domain critic."""
+        arbitrate-budget reserves: ceil(LOC / 1200), at least 1, capped at
+        DEFAULT_MAX_BHA_AGENTS."""
         data = _make_diff_data(files=["a.ts"])
         data["total_loc"] = total_loc
         result = self._run_route(data)
@@ -859,15 +858,26 @@ class TestRoute:
         assert len(result["domain_critics"]) == 1
         assert result["max_bha_agents"] == 1  # ceil(10 / 1200)
 
-    def test_bha_cap_honors_fleet_slot_cap(self) -> None:
-        """A fleet-slot cap below the LOC-derived count wins (9 - BHB -
-        Auditor - critics; unreachable with today's constants, pinned so a
-        smaller fleet can never be handed more partitions than slots)."""
-        data = {"total_loc": 20000}
-        assert _max_bha_partitions_by_loc(data) == DEFAULT_MAX_BHA_AGENTS
-        assert _max_bha_partitions_by_loc(data, slot_cap=3) == 3
-        assert _max_bha_partitions_by_loc(data, slot_cap=0) == DEFAULT_MAX_BHA_AGENTS
-        assert _max_bha_partitions_by_loc({"total_loc": 0}) == 1
+    @pytest.mark.parametrize("review_budget", [-1, -4])
+    def test_negative_review_budget_selects_no_domain_critic(
+        self, tmp_path: Path, review_budget: int,
+    ) -> None:
+        """A negative ``reviewBudget`` used to make ``[:budget]`` a tail-drop
+        slice (-1 kept 6 of 7 matching critics); it now selects none, and
+        the BHA count stays the LOC-based one arbitrate-budget reserves."""
+        gates_path = tmp_path / "critic-gates.json"
+        gates_path.write_text(json.dumps({
+            "defaults": {"reviewBudget": review_budget},
+            "moduleCritics": [
+                {"patterns": [".ts"], "critics": [f"critic-{i}" for i in range(7)]},
+            ],
+        }))
+        data = _make_diff_data(files=["a.ts"])
+        data["total_loc"] = 7200
+        result = self._run_route(data, str(gates_path))
+        assert result["domain_critics"] == []
+        assert result["max_bha_agents"] == _max_bha_partitions_by_loc(data)
+        assert result["max_bha_agents"] == DEFAULT_MAX_BHA_AGENTS
 
     def test_fast_path_small_diff(self) -> None:
         files = ["a.ts", "b.ts", "c.ts"]
