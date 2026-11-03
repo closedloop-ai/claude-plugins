@@ -4,14 +4,21 @@
 //
 // Usage: freshness.mjs --worktree <path> [--remote origin] [--branch main] [--expect-path <path>] [--no-fetch]
 //
-// Prints {"path","head","branch","remote","remoteRef","originMain","fetched","aheadOfMain","behindMain","problems","ok"}
-// and exits 1 on any problem. A value it could not establish is null, never guessed: when the fetch fails,
-// originMain is null and the problem says so, because a cached origin/main is not evidence of the remote's state.
+// Prints {"path","head","branch","remote","remoteRef","originMain","fetched","fetchSkipped","sessionBase","aheadOfMain","behindMain","problems","ok"}
+// and exits 1 on any problem. A value it could not establish is null, never guessed: originMain is only ever a
+// freshly fetched SHA, because a cached origin/main is not evidence of the remote's state.
+// When the fetch fails or is skipped (Codex's default sandbox has no network) and the session recorded the commit it
+// branched from, the counts are taken against that sessionBase, fetchSkipped is true and it is not a problem: a claim
+// is then about the session's base, not current main. Without a recorded base the missing fetch is a problem. In the
+// Codex sandbox a failed fetch also prints {"escalate":true,"justification"}: run the same command escalated for the
+// current main (the same convention as plugin-version.mjs).
 
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { escalation } from "./sandbox-refusal.mjs";
+import { readSessionRecord } from "./session-record.mjs";
 
 const FETCH_TIMEOUT_MS = 60_000;
 
@@ -41,22 +48,41 @@ export function freshness({ worktree, remote = "origin", branch = "main", expect
     if (expected !== checkoutPath) problems.push(`the checkout is ${checkoutPath}, not the expected ${expectPath}`);
   }
   let fetched = false;
+  let fetchProblem = null;
+  let escalate = null;
   if (fetch && checkoutPath !== null) {
     try {
       git(worktree, ["fetch", "--quiet", remote, branch], { timeout: FETCH_TIMEOUT_MS });
       fetched = true;
     } catch (error) {
-      problems.push(`could not fetch ${remote} ${branch}: ${String(error.stderr ?? error.message).trim().split("\n")[0]}`);
+      fetchProblem = `could not fetch ${remote} ${branch}: ${String(error.stderr ?? error.message).trim().split("\n")[0]}`;
+      if (process.env.CODEX_SANDBOX_NETWORK_DISABLED === "1") escalate = escalation(error, "Check the current state of main");
     }
   } else if (!fetch) {
-    problems.push("the fetch was skipped; origin/main is a cached ref, not the remote's current state");
+    fetchProblem = "the fetch was skipped; origin/main is a cached ref, not the remote's current state";
   }
+  const sessionBase = fetched || checkoutPath === null ? null : recordedBase(worktree);
+  if (fetchProblem !== null && sessionBase === null) problems.push(fetchProblem);
   const remoteRef = `${remote}/${branch}`;
   const originMain = fetched ? tryGit(worktree, ["rev-parse", "--verify", "--quiet", `FETCH_HEAD^{commit}`]) : null;
   if (fetched && originMain === null) problems.push(`${remoteRef} could not be resolved after the fetch`);
-  const counts = originMain === null || head === null ? null : tryGit(worktree, ["rev-list", "--left-right", "--count", `${originMain}...${head}`]);
+  const compareTo = originMain ?? sessionBase;
+  const counts = compareTo === null || head === null ? null : tryGit(worktree, ["rev-list", "--left-right", "--count", `${compareTo}...${head}`]);
   const [behindMain, aheadOfMain] = counts === null ? [null, null] : counts.split(/\s+/).map(Number);
-  return { path: checkoutPath, head, branch: currentBranch, remote, remoteRef, originMain, fetched, aheadOfMain, behindMain, problems, ok: problems.length === 0 };
+  return {
+    path: checkoutPath, head, branch: currentBranch, remote, remoteRef, originMain, fetched, fetchSkipped: fetchProblem !== null && sessionBase !== null, sessionBase,
+    aheadOfMain, behindMain, problems, ok: problems.length === 0, ...(escalate ?? {}),
+  };
+}
+
+/** The commit the session branched from, when the session recorded one that this checkout still has. */
+function recordedBase(worktree) {
+  try {
+    const base = readSessionRecord(worktree)?.baseCommit;
+    return typeof base === "string" && base !== "" ? tryGit(worktree, ["rev-parse", "--verify", "--quiet", `${base}^{commit}`]) : null;
+  } catch {
+    return null;
+  }
 }
 
 function main(argv) {

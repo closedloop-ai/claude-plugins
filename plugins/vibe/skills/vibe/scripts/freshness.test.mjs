@@ -80,3 +80,33 @@ test("the wrong checkout is a problem, and --no-fetch is reported as not fresh",
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a failed or skipped fetch falls back to the recorded session base and is not a failure; without a base it still fails", () => {
+  const { root, clone, remote, git } = fixture();
+  try {
+    const base = git(clone, "rev-parse", "HEAD");
+    writeFileSync(path.join(clone, "b.txt"), "2");
+    git(clone, "add", ".");
+    git(clone, "commit", "-qm", "two");
+    writeFileSync(path.join(clone, ".git", "vibe-session.json"), JSON.stringify({ baseCommit: base }));
+    rmSync(remote, { recursive: true, force: true });
+    const report = freshness({ worktree: clone });
+    assert.equal(report.ok, true, report.problems.join());
+    assert.equal(report.fetched, false);
+    assert.equal(report.fetchSkipped, true);
+    assert.equal(report.originMain, null);
+    assert.equal(report.sessionBase, base);
+    assert.equal(report.aheadOfMain, 1);
+    assert.equal(report.behindMain, 0);
+    assert.equal(freshness({ worktree: clone, fetch: false }).fetchSkipped, true);
+    const sandboxed = spawnSync("node", [SCRIPT, "--worktree", clone], { encoding: "utf8", env: { ...process.env, CODEX_SANDBOX_NETWORK_DISABLED: "1" } });
+    assert.equal(sandboxed.status, 0, sandboxed.stderr);
+    assert.equal(JSON.parse(sandboxed.stdout).escalate, true);
+    const plain = spawnSync("node", [SCRIPT, "--worktree", clone], { encoding: "utf8", env: { ...process.env, CODEX_SANDBOX_NETWORK_DISABLED: "" } });
+    assert.equal(JSON.parse(plain.stdout).escalate, undefined);
+    writeFileSync(path.join(clone, ".git", "vibe-session.json"), JSON.stringify({}));
+    assert.equal(freshness({ worktree: clone }).ok, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
