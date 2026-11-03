@@ -27,9 +27,9 @@ function readResults(path: string, shape: BenchmarkShape): ClaudeBenchmarkResult
   return selected;
 }
 
-/** Select only exact stateful case ids whose fixed matrix contains the target ref. */
+/** Select only exact stateful cases for a fixed proof target or the current subject. */
 export function upgradeResumeCaseIds(vibeDir: string, targetRef: string,
-  requestedCase?: string): string[] {
+  requestedCase?: string, currentRef?: string): string[] {
   if (!/^[a-f0-9]{40}$/.test(targetRef)) throw new Error("eval-upgrade-resume-target-invalid");
   const allowed = new Set(["upgrade-resume-changed-definition",
     "upgrade-resume-unchanged-definition"]);
@@ -38,7 +38,8 @@ export function upgradeResumeCaseIds(vibeDir: string, targetRef: string,
   }
   const selected = evalCaseCatalog(vibeDir)
     .filter((item) => item.kind === "upgrade-resume" &&
-      item.transitions?.some((transition) => transition.target.ref === targetRef) &&
+      (targetRef === currentRef || item.transitions?.some((transition) =>
+        transition.target.ref === targetRef)) &&
       (requestedCase === undefined || item.id === requestedCase)).map((item) => item.id);
   if (selected.length < 1 || (requestedCase !== undefined && selected[0] !== requestedCase)) {
     throw new Error("eval-upgrade-resume-case-invalid");
@@ -112,7 +113,7 @@ export async function main(args: string[]): Promise<string> {
   }
   if (command === "eval-upgrade-resume" && (rest.length >= 7 && rest.length <= 9)) {
     const vibeDir = join(rest[0], "plugins/vibe");
-    const selectedCases = upgradeResumeCaseIds(vibeDir, rest[6], rest[8]);
+    const selectedCases = upgradeResumeCaseIds(vibeDir, rest[6], rest[8], rest[1]);
     const runtime = rest[7] ?? "both";
     if (!["claude", "codex", "both"].includes(runtime)) throw new Error("eval-upgrade-resume-runtime-invalid");
     const runtimes = runtime === "both" ? ["claude", "codex"] as const
@@ -120,7 +121,7 @@ export async function main(args: string[]): Promise<string> {
     const output = await runLocalEvals({ repo: rest[0], pluginSha: rest[1], runRoot: rest[2],
       outputDir: rest[3], claudeExecutable: rest[4], codexExecutable: rest[5],
       uvExecutable: "uv", snapshotMode: "worktree", selectedCases,
-      statefulTargetRef: rest[6], runtimes: [...runtimes] });
+      statefulTargetRef: rest[6] === rest[1] ? undefined : rest[6], runtimes: [...runtimes] });
     return `${output.jsonFile}\n${output.reportFile}`;
   }
   throw new Error("usage: cli.ts collect <phase0-result> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | run-local <symphony-checkout> <sandbox> <plugin-dir> <claude> [otel-jsonl] [transcript-manifest] | compare <baseline-results-or-batch-json> <candidate-results-or-batch-json> <base-words> <candidate-words> <output-dir> <vibe-or-fleet-one-writer> [explanations-json] | baseline <symphony-checkout> <claude-plugins-repo> <pinned-plugin-sha> <empty-run-root> <output-dir> <claude> <gh> <nightly-results-store> | eval-scope <claude-plugins-repo> <base-ref> | eval-local <claude-plugins-repo> <full-branch-sha> <empty-run-root> <output-dir> <claude> <codex> <uv> <full-or-deterministic> [case ...] | eval-t2 <clean-main-repo> <sha> <empty-run-root> <results-store> <claude> <codex> <uv> <gh> | eval-upgrade-resume <claude-plugins-checkout> <worktree-head-sha> <empty-run-root> <output-dir> <claude> <codex> <target-ref> [claude|codex|both] [upgrade-resume-changed-definition|upgrade-resume-unchanged-definition]");

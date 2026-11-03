@@ -12871,7 +12871,12 @@ var resultSchema = external_exports.object({
   result: external_exports.string().max(256 * 1024).optional(),
   structured_output: external_exports.unknown().optional()
 }).passthrough();
-var initSchema = external_exports.object({ type: external_exports.literal("system"), subtype: external_exports.literal("init"), tools: external_exports.array(external_exports.string()) }).passthrough();
+var initSchema = external_exports.object({
+  type: external_exports.literal("system"),
+  subtype: external_exports.literal("init"),
+  tools: external_exports.array(external_exports.string()),
+  mcp_servers: external_exports.array(external_exports.object({ name: external_exports.string(), status: external_exports.string() }).passthrough()).optional()
+}).passthrough();
 var workerResultSchema = external_exports.object({
   status: statusSchema,
   summary: external_exports.string().max(4096),
@@ -12904,6 +12909,29 @@ var readerRoles = /* @__PURE__ */ new Set([
 var receiptRoles = /* @__PURE__ */ new Set(["vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-storybook-decomposer", "vibe-verify-worker"]);
 var previewActions = /* @__PURE__ */ new Set(["create", "redeploy", "flags", "desktop"]);
 var PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS = 15;
+var MCP_READINESS_WINDOW_MS = 15e3;
+var MAX_MCP_STARTUP_ATTEMPTS = 3;
+var MCP_STARTUP_RETRY_DELAY_MS = 500;
+function remainingWorkerTurnBudget(input) {
+  const turnTimeoutMs = Math.max(0, input.turnDeadline - input.now);
+  return {
+    turnTimeoutMs,
+    startupTimeoutMs: Math.min(turnTimeoutMs, Math.max(0, input.readinessDeadline - input.now))
+  };
+}
+function canStartWorkerAttempt(budget) {
+  return budget.turnTimeoutMs > 0 && budget.startupTimeoutMs > 0;
+}
+function armMcpInitWatchdog(startupTimeoutMs, onTimeout) {
+  return startupTimeoutMs === null ? void 0 : setTimeout(onTimeout, startupTimeoutMs);
+}
+var PendingMcpError = class extends Error {
+  constructor(servers) {
+    super(`Granted MCP connections pending: ${servers.join(", ")}`);
+    this.servers = servers;
+  }
+  servers;
+};
 function protectedWriteSettings(hookPath, worktree) {
   const handler = {
     type: "command",
@@ -13242,7 +13270,7 @@ async function runWorker(rawInput) {
     if (discardLock && !cleanupBlocked && discardPlace) rmSync2(join8(discardPlace.dir, "vibe-record-turn.lock"), { recursive: true, force: true });
   }
 }
-async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowCredits, attach) {
+async function launchProcessOnce(args, granted, cwd, input, timeoutMs, startupTimeoutMs, trace, allowCredits, attach) {
   return await new Promise((resolve3, reject) => {
     const child = spawn("claude", args, {
       cwd,
@@ -13266,17 +13294,28 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowC
     const checkInit = (event) => {
       const init = initSchema.safeParse(event);
       if (!init.success) return;
+      if (initTimer) clearTimeout(initTimer);
       const missing = missingMcpTools(init.data.tools, granted);
       if (missing.length) {
-        stop(new LaunchPrecheckError(
-          "MCP_TOOLS_MISSING",
-          `The worker started without its granted connections: ${missingServers(missing).join(", ")}`
-        ));
+        const servers = missingServers(missing);
+        const statuses = new Map(init.data.mcp_servers?.map((server) => [server.name, server.status]));
+        if (servers.every((server) => statuses.get(server) === "pending")) {
+          stop(new PendingMcpError(servers));
+        } else {
+          stop(new LaunchPrecheckError(
+            "MCP_TOOLS_MISSING",
+            `The worker started without its granted connections: ${servers.join(", ")}`
+          ));
+        }
       }
     };
     process.once("SIGTERM", onSignal);
     process.once("SIGINT", onSignal);
     const deadline = setTimeout(() => stop(new Error("Owned worker turn exceeded its deadline")), timeoutMs);
+    const initTimer = armMcpInitWatchdog(startupTimeoutMs, () => stop(new LaunchPrecheckError(
+      "MCP_TOOLS_MISSING",
+      "The worker did not report its granted tools during bounded startup"
+    )));
     child.once("spawn", () => {
       try {
         if (child.pid) attach(child.pid);
@@ -13338,6 +13377,7 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowC
     });
     child.on("close", (code) => {
       clearTimeout(deadline);
+      if (initTimer) clearTimeout(initTimer);
       if (killTimer) clearTimeout(killTimer);
       process.removeListener("SIGTERM", onSignal);
       process.removeListener("SIGINT", onSignal);
@@ -13369,6 +13409,72 @@ async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowC
     child.stdin.end(`${input}
 `);
   });
+}
+async function launchProcess(args, granted, cwd, input, timeoutMs, trace, allowCredits, attach) {
+  const started = Date.now();
+  const turnDeadline = started + timeoutMs;
+  let readinessDeadline = null;
+  let attemptArgs = args;
+  let lastPending;
+  for (let attempt = 1; attempt <= MAX_MCP_STARTUP_ATTEMPTS; attempt += 1) {
+    const budget = remainingWorkerTurnBudget({
+      turnDeadline,
+      readinessDeadline: readinessDeadline ?? turnDeadline,
+      now: Date.now()
+    });
+    if (!canStartWorkerAttempt(budget)) break;
+    try {
+      return await launchProcessOnce(
+        attemptArgs,
+        granted,
+        cwd,
+        input,
+        budget.turnTimeoutMs,
+        readinessDeadline === null ? null : budget.startupTimeoutMs,
+        trace,
+        allowCredits,
+        attach
+      );
+    } catch (error) {
+      if (!(error instanceof PendingMcpError)) throw error;
+      lastPending = error;
+      readinessDeadline ??= Math.min(turnDeadline, Date.now() + MCP_READINESS_WINDOW_MS);
+      writeSync(trace, `${JSON.stringify({
+        type: "mcp_startup_pending",
+        attempt,
+        servers: error.servers
+      })}
+`);
+      if (attempt === MAX_MCP_STARTUP_ATTEMPTS || readinessDeadline - Date.now() <= MCP_STARTUP_RETRY_DELAY_MS) break;
+      const sessionFlag = attemptArgs.indexOf("--session-id");
+      if (sessionFlag >= 0) {
+        attemptArgs = [...attemptArgs];
+        attemptArgs[sessionFlag] = "--resume";
+      }
+      await new Promise((resolve3, reject) => {
+        const cancel = () => {
+          clearTimeout(timer);
+          cleanup();
+          reject(new Error("Owned worker turn canceled"));
+        };
+        const cleanup = () => {
+          process.removeListener("SIGINT", cancel);
+          process.removeListener("SIGTERM", cancel);
+        };
+        const timer = setTimeout(() => {
+          cleanup();
+          resolve3();
+        }, MCP_STARTUP_RETRY_DELAY_MS);
+        process.once("SIGINT", cancel);
+        process.once("SIGTERM", cancel);
+      });
+    }
+  }
+  if (!lastPending) throw new Error("Owned worker turn exceeded its deadline");
+  throw new LaunchPrecheckError(
+    "MCP_TOOLS_MISSING",
+    `The worker's granted connections stayed pending during bounded startup: ${lastPending?.servers.join(", ") ?? "unknown"}`
+  );
 }
 var OwnedCleanupError = class extends Error {
 };
@@ -13511,13 +13617,16 @@ function workerSessionName(agentName, branch, requestId) {
   return `vibe ${role} \xB7 ${branch.replace(/^vibe\//, "")} \xB7 ${requestId}`;
 }
 export {
+  armMcpInitWatchdog,
   boundDefinition,
+  canStartWorkerAttempt,
   capWorkerResult,
   checkPreviewResult,
   dispatchFreshnessProblem,
   main,
   protectedWriteLaunchArgs,
   protectedWriteSettings,
+  remainingWorkerTurnBudget,
   runWorker,
   workerSessionName
 };

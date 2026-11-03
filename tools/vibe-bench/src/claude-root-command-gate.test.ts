@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import * as upgradeEval from "./upgrade-resume-eval.ts";
 import { claudeRootCommandDecision } from "./claude-root-command-gate.ts";
 
 test("Claude root gate allows exact JSON-on-stdin writer commands and denies unrelated Bash", () => {
@@ -36,5 +37,37 @@ test("Claude root gate allows exact JSON-on-stdin writer commands and denies unr
       `node '${worker}'`,
     ]) assert.equal(claudeRootCommandDecision({ tool_name: "Bash", tool_input: { command } },
       config).hookSpecificOutput.permissionDecision, "deny");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("ISS-13563 AC3 incomplete Claude migration is denied before a canonical correction", () => {
+  const root = mkdtempSync(join(tmpdir(), "vibe-claude-migrate-gate-"));
+  try {
+    const worktree = join(root, "worktree");
+    const agentRoot = join(root, "release");
+    const scripts = join(agentRoot, "skills/vibe/scripts/dist");
+    mkdirSync(worktree);
+    mkdirSync(scripts, { recursive: true });
+    const state = join(scripts, "writer-state.mjs");
+    writeFileSync(state, "fixture\n");
+    const config = { worktree: realpathSync(worktree), scripts: [state] };
+    const incomplete = `printf '%s\\n' '${JSON.stringify({ worktree: config.worktree,
+      runtime: "claude", agentName: "vibe-change-worker" })}' | node '${state}' migrate`;
+    assert.equal(claudeRootCommandDecision({ tool_name: "Bash", tool_input: {
+      command: incomplete,
+    } }, config).hookSpecificOutput.permissionDecision, "deny");
+    const command = (upgradeEval as unknown as { claudeMigrationCommand?: (input: {
+      worktree: string; agentRoot: string; previousWorkerId: string;
+      previousDigest: string;
+    }) => string }).claudeMigrationCommand;
+    assert.equal(typeof command, "function");
+    const corrected = command!({ worktree: config.worktree, agentRoot,
+      previousWorkerId: "existing-writer", previousDigest: "a".repeat(64) });
+    assert.equal(claudeRootCommandDecision({ tool_name: "Bash", tool_input: {
+      command: corrected,
+    } }, config).hookSpecificOutput.permissionDecision, "allow");
+    assert.equal(claudeRootCommandDecision({ tool_name: "Bash", tool_input: {
+      command: `R=${root}\n${corrected}`,
+    } }, config).hookSpecificOutput.permissionDecision, "deny");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
   readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,7 +12,9 @@ import type { EvalSuiteResult } from "./eval-collector.ts";
 import { ensureGitCommits } from "../../shared/git-commit-fixture.mjs";
 import { upgradeResumeCaseIds } from "./cli.ts";
 import { archivePluginRelease } from "./plugin-snapshot.ts";
+import * as pluginSnapshots from "./plugin-snapshot.ts";
 import { evalCaseCatalog } from "./eval-selection.ts";
+import * as upgradeEval from "./upgrade-resume-eval.ts";
 import { CLAUDE_WRITER_TIMEOUT_MS, CODEX_STATEFUL_ROOT_TIMEOUT_MS, mergeEvalSuiteResults,
   appServerTokenUsage, claudeStaleRecoveryEligible, claudeStaleRecoveryPrompt,
   claudeUpgradeRootArgs, cleanupClaudeVersionRecords,
@@ -53,6 +56,71 @@ test("AC1 released archive builds Claude cache roots and retains exact release b
     assert.equal(release.version, "1.1.23");
     assert.equal(release.claudeVibeRoot.endsWith("/vibe/1.1.23"), true);
     assert.equal(release.claudeCoreRoot.includes("/closedloop-core/"), true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("ISS-13563 AC3 current target uses candidate snapshot bytes while history keeps Git bytes", () => {
+  const api = pluginSnapshots as unknown as { archiveSnapshotTarget?: (repo: string,
+    ref: string, root: string, snapshot: unknown, version: string) => {
+      vibeDir: string; claudeVibeRoot: string; version: string;
+    } };
+  assert.equal(typeof api.archiveSnapshotTarget, "function");
+  const root = mkdtempSync(join(tmpdir(), "vibe-current-snapshot-"));
+  try {
+    const ref = execFileSync("git", ["-C", REPO, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    const version = JSON.parse(readFileSync(join(REPO, "plugins/vibe/.claude-plugin/plugin.json"),
+      "utf8")).version as string;
+    const historicalVersion = JSON.parse(execFileSync("git", ["-C", REPO, "show",
+      `${ref}:plugins/vibe/.claude-plugin/plugin.json`], { encoding: "utf8" })).version as string;
+    const snapshotRoot = join(root, "snapshot");
+    mkdirSync(join(snapshotRoot, "plugins"), { recursive: true });
+    const vibeDir = join(snapshotRoot, "plugins/vibe");
+    const coreDir = join(snapshotRoot, "plugins/closedloop-core");
+    cpSync(join(REPO, "plugins/vibe"), vibeDir, { recursive: true });
+    cpSync(join(REPO, "plugins/closedloop-core"), coreDir, { recursive: true });
+    const relative = "skills/vibe/scripts/dist/claude-worker.mjs";
+    const source = join(vibeDir, relative);
+    const marker = "candidate snapshot marker";
+    writeFileSync(source, `${readFileSync(source, "utf8")}\n// ${marker}\n`);
+    const snapshot = { sha: ref, vibeDir, coreDir, agentModels: {} };
+    const current = api.archiveSnapshotTarget!(REPO, ref, join(root, "current"), snapshot, version);
+    const historical = archivePluginRelease(REPO, ref, join(root, "historical"), historicalVersion);
+    assert.match(readFileSync(join(current.vibeDir, relative), "utf8"), /candidate snapshot marker/);
+    assert.match(readFileSync(join(current.claudeVibeRoot, relative), "utf8"), /candidate snapshot marker/);
+    assert.doesNotMatch(readFileSync(join(historical.vibeDir, relative), "utf8"),
+      /candidate snapshot marker/);
+    const [major, minor, patch] = version.split(".").map(Number);
+    const bumpedVersion = `${major}.${minor}.${patch! + 1}`;
+    for (const manifest of [".claude-plugin/plugin.json", ".codex-plugin/plugin.json"]) {
+      const path = join(vibeDir, manifest);
+      const value = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+      writeFileSync(path, JSON.stringify({ ...value, version: bumpedVersion }));
+    }
+    const bumped = api.archiveSnapshotTarget!(REPO, ref, join(root, "bumped"), snapshot,
+      bumpedVersion);
+    assert.equal(bumped.version, bumpedVersion);
+    assert.equal(bumped.claudeVibeRoot.endsWith(`/vibe/${bumpedVersion}`), true);
+    assert.equal(historical.version, historicalVersion, "historical archive keeps its Git version");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("ISS-13563 AC3 current subject reads an uncommitted snapshot version", () => {
+  const api = upgradeEval as unknown as { upgradeSubject?: (input: {
+    repo: string; targetRef: string; pluginSha: string;
+    currentSnapshot: { sha: string; vibeDir: string; coreDir: string; agentModels: Record<string, string> };
+  }) => { ref: string; version: string } };
+  assert.equal(typeof api.upgradeSubject, "function");
+  const root = mkdtempSync(join(tmpdir(), "vibe-current-version-"));
+  try {
+    const ref = execFileSync("git", ["-C", REPO, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    const vibeDir = join(root, "vibe");
+    mkdirSync(join(vibeDir, ".claude-plugin"), { recursive: true });
+    mkdirSync(join(vibeDir, ".codex-plugin"), { recursive: true });
+    writeFileSync(join(vibeDir, ".claude-plugin/plugin.json"), JSON.stringify({ version: "9.9.9" }));
+    writeFileSync(join(vibeDir, ".codex-plugin/plugin.json"), JSON.stringify({ version: "9.9.9" }));
+    const subject = api.upgradeSubject!({ repo: REPO, targetRef: ref, pluginSha: ref,
+      currentSnapshot: { sha: ref, vibeDir, coreDir: root, agentModels: {} } });
+    assert.deepEqual(subject, { ref, version: "9.9.9" });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -113,7 +181,7 @@ function failedStatefulSuite(code: string, mixed = false): EvalSuiteResult {
   return result;
 }
 
-for (const code of ["AUTH_UNAVAILABLE", "INSTALL_INVALID", "TIMEOUT",
+for (const code of ["AUTH_UNAVAILABLE", "INSTALL_INVALID", "MODEL_UNAVAILABLE", "TIMEOUT",
   "SANDBOX_REFUSAL"] as const) {
   test(`B1 ${code} stateful boundary invalidates the runtime`, () => {
     assert.equal(statefulInfrastructureInvalidReason(failedStatefulSuite(code)),
@@ -237,6 +305,29 @@ test("S10 exact stale state permits one same-root root-decided recovery", () => 
   "a second stale terminal remains failure");
 });
 
+test("ISS-13563 AC3 structured stale refusal permits bounded recovery after a verbose root answer", () => {
+  const api = upgradeEval as unknown as { claudeStaleToolResult?: (stdout: string,
+    requestId: string) => boolean };
+  assert.equal(typeof api.claudeStaleToolResult, "function");
+  const requestId = "upgrade-resume-changed-definition-two";
+  const line = JSON.stringify({ status: "BLOCKED", code: "STALE_PLUGIN_ROOT", requestId,
+    leaseRetained: false });
+  const stdout = `${JSON.stringify({ type: "user", message: { content: [{ type: "tool_result",
+    content: `1\t${line}\n2\t[exited with code 1]` }] } })}\n`;
+  assert.equal(api.claudeStaleToolResult!(stdout, requestId), true);
+  assert.equal(api.claudeStaleToolResult!(stdout, "wrong-request"), false);
+  const eligible = { exitCode: 0, terminalText: "Request two is not done: STALE_PLUGIN_ROOT; command shape was rejected.",
+    requestId, oldWriterId: "writer-1", proofLines: ["turn-one"], oldArchiveRetained: true,
+    staleToolResult: api.claudeStaleToolResult!(stdout, requestId),
+    ledger: { runtime: "claude", workerId: "writer-1", migrations: [], completed: ["request-one"],
+      active: undefined, pending: [{ id: requestId, input: "append turn two" }] } };
+  assert.equal(claudeStaleRecoveryEligible(eligible), true);
+  assert.equal(claudeStaleRecoveryEligible({ ...eligible, terminalText:
+    "STALE_PLUGIN_ROOT requires human action" }), false);
+  assert.match(claudeStaleRecoveryPrompt({ requestId,
+    sessionSlug: "upgrade-resume-changed-definition" }), /single literal .*pipeline/i);
+});
+
 test("S10 stale continuation resumes the exact target root with default effort", () => {
   const root = mkdtempSync(join(tmpdir(), "vibe-claude-stale-recovery-"));
   try {
@@ -345,6 +436,168 @@ test("Codex completed turn evidence finalizes the exact active lease before targ
   assert.doesNotThrow(() => requireIdleCodexLedger({ runtime: "codex", workerId, active: undefined }));
 });
 
+test("ISS-13563 AC3 Codex request two is finalized before its oracle", async () => {
+  const api = upgradeEval as unknown as { finalizeCodexObservedRequest?: (input: {
+    trace: string[]; ledger: Record<string, unknown>; requestId: string; worktree: string;
+    resultSummary: string;
+    finish: (payload: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  }) => Promise<Record<string, unknown>> };
+  assert.equal(typeof api.finalizeCodexObservedRequest, "function");
+  const workerId = "/root/vibe_change_worker_migrated";
+  const child = "01a19a97-07be-77a2-a5b5-1c6232017907";
+  const trace = [
+    JSON.stringify({ method: "item/started", params: { threadId: "root",
+      item: { type: "subAgentActivity", agentPath: workerId, agentThreadId: child } } }),
+    JSON.stringify({ method: "turn/completed", params: { threadId: child,
+      turn: { status: "completed" } } }),
+  ];
+  const active = { runtime: "codex", workerId, active: { id: "case-two", lease: "lease-two" },
+    completed: ["case-one"], pending: [] };
+  const payloads: Record<string, unknown>[] = [];
+  const complete = async (payload: Record<string, unknown>) => {
+    payloads.push(payload);
+    return { ...active, active: undefined, completed: ["case-one", "case-two"] };
+  };
+  const after = await api.finalizeCodexObservedRequest!({ trace, ledger: active,
+    requestId: "case-two", worktree: "/fixture", resultSummary: "Upgrade eval turn two completed",
+    finish: complete });
+  assert.deepEqual(payloads[0], { worktree: "/fixture", workerId, requestId: "case-two",
+    lease: "lease-two", status: "DONE", resultSummary: "Upgrade eval turn two completed",
+    stoppedTurn: { runtime: "codex", workerId, requestId: "case-two",
+      lease: "lease-two", state: "completed" } });
+  assert.deepEqual(after.completed, ["case-one", "case-two"]);
+  await assert.rejects(() => api.finalizeCodexObservedRequest!({ trace, ledger: active,
+    requestId: "wrong-request", worktree: "/fixture",
+    resultSummary: "Upgrade eval turn two completed", finish: complete }), /request/);
+  assert.equal(payloads.length, 1, "wrong request must not finish a lease");
+});
+
+test("ISS-13563 AC3 historical expected failures stay separate from current pass gate", () => {
+  const api = upgradeEval as unknown as { scoreUpgradeTransitions?: (items: Array<{
+    role: "historical" | "current"; expected: "pass" | "fail";
+    evidence: { target: { version: string; ref: string }; passed: boolean;
+      failureCode: string | null; proofLines: string[]; previousWriterId: string | null;
+      migrationCount: number };
+  }>) => { passed: boolean; transitions: Array<{ matched: boolean; expected: string;
+    observed: string }> } };
+  assert.equal(typeof api.scoreUpgradeTransitions, "function");
+  const historical = { role: "historical" as const, expected: "fail" as const,
+    evidence: { target: { version: "1.1.23", ref: "a".repeat(40) }, passed: false,
+      failureCode: "MODEL_BLOCK", proofLines: ["turn-one"], previousWriterId: "writer-1",
+      migrationCount: 0 } };
+  const current = { role: "current" as const, expected: "pass" as const,
+    evidence: { target: { version: "1.1.26", ref: "b".repeat(40) }, passed: true,
+      failureCode: null, proofLines: ["turn-one", "turn-two"], previousWriterId: "writer-1",
+      migrationCount: 1 } };
+  const good = api.scoreUpgradeTransitions!([historical, current]);
+  assert.equal(good.passed, true);
+  assert.deepEqual(good.transitions.map((item) => [item.expected, item.observed, item.matched]),
+    [["fail", "fail", true], ["pass", "pass", true]]);
+  assert.equal(api.scoreUpgradeTransitions!([historical, { ...current,
+    evidence: { ...current.evidence, passed: false, failureCode: "ORACLE_MISMATCH" } }]).passed,
+  false, "historical expected failure cannot mask a current failure");
+  assert.equal(api.scoreUpgradeTransitions!([{ ...historical,
+    evidence: { ...historical.evidence, passed: true, failureCode: null } }, current]).passed,
+  false, "an unexpected historical pass must be recorded as mismatch");
+  assert.equal(api.scoreUpgradeTransitions!([{ ...historical,
+    evidence: { ...historical.evidence, failureCode: "AUTH_UNAVAILABLE" } }, current]).passed,
+  false, "infrastructure failures cannot count as expected product failures");
+  assert.equal(api.scoreUpgradeTransitions!([{ ...historical,
+    evidence: { ...historical.evidence, proofLines: [], previousWriterId: null } }, current]).passed,
+  false, "a first-turn failure is not the expected second-turn failure");
+  assert.equal(api.scoreUpgradeTransitions!([{ ...historical,
+    evidence: { ...historical.evidence, failureCode: "WRONG_SESSION" } }, current]).passed,
+  false, "an unrelated wrong session is not an expected historical failure");
+  assert.equal(api.scoreUpgradeTransitions!([{ ...historical,
+    evidence: { ...historical.evidence, failureCode: "ORACLE_MISMATCH" } }, current]).passed,
+  false, "a generic oracle failure is not an expected historical failure");
+});
+
+test("ISS-13563 AC3 Claude terminal transcript is retained beyond the init prefix", () => {
+  const api = upgradeEval as unknown as { recordClaudeTurnOutput?: (root: string,
+    label: string, result: { exitCode: number; stdout: string; stderr: string }) => string };
+  assert.equal(typeof api.recordClaudeTurnOutput, "function");
+  const root = mkdtempSync(join(tmpdir(), "vibe-claude-terminal-"));
+  try {
+    const result = { exitCode: 0, stdout: `${"i".repeat(5000)}\n{"type":"result","result":"Bash denied: Write unavailable"}\n`,
+      stderr: "permission diagnostic\n" };
+    const path = api.recordClaudeTurnOutput!(root, "turn-one", result);
+    assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), result);
+    assert.ok(readFileSync(path, "utf8").includes("Write unavailable"));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("ISS-13563 AC3 Claude root gives the released launcher its CLI on PATH", () => {
+  const api = upgradeEval as unknown as { claudeRootEnvironment?: (executable: string,
+    base: NodeJS.ProcessEnv) => NodeJS.ProcessEnv };
+  assert.equal(typeof api.claudeRootEnvironment, "function");
+  const env = api.claudeRootEnvironment!("/fixture/cli-bin/claude",
+    { PATH: "/usr/bin", CLAUDE_CONFIG_DIR: "/unrelated/config" });
+  assert.equal(env.PATH, "/fixture/cli-bin:/usr/bin");
+  assert.equal(env.CLAUDE_CONFIG_DIR, undefined);
+});
+
+test("ISS-13563 AC3 Claude first-turn terminal reason classifies missing graph as infrastructure", () => {
+  const api = upgradeEval as unknown as { claudeTurnFailureText?: (result: {
+    exitCode: number; stdout: string; stderr: string }) => string };
+  assert.equal(typeof api.claudeTurnFailureText, "function");
+  const result = { exitCode: 0,
+    stdout: `${JSON.stringify({ type: "system", subtype: "init", padding: "i".repeat(5000) })}\n` +
+      `${JSON.stringify({ type: "result", result: "BLOCKED MCP_TOOLS_MISSING: closedloop-graph" })}\n`,
+    stderr: "" };
+  const reason = api.claudeTurnFailureText!(result);
+  assert.match(reason, /MCP_TOOLS_MISSING: closedloop-graph/);
+  assert.equal(classifyUpgradeFailure(reason), "INSTALL_INVALID");
+});
+
+test("ISS-13563 AC3 Codex model capacity is infrastructure, not a historical oracle failure", () => {
+  const api = upgradeEval as unknown as { codexServerFailure?: (trace: string[]) =>
+    string | null };
+  assert.equal(typeof api.codexServerFailure, "function");
+  const overloaded = JSON.stringify({ method: "error", params: { error: {
+    message: "Selected model is at capacity. Please try a different model.",
+    codexErrorInfo: "serverOverloaded" }, willRetry: false } });
+  const failedTurn = JSON.stringify({ method: "turn/completed", params: { turn: {
+    status: "failed", error: { codexErrorInfo: "serverOverloaded" } } } });
+  assert.equal(api.codexServerFailure!([overloaded, failedTurn]), "MODEL_UNAVAILABLE");
+  assert.equal(api.codexServerFailure!([overloaded, failedTurn,
+    JSON.stringify({ method: "turn/completed", params: { turn: { status: "completed" } } })]),
+  null, "a recovered capacity error cannot mask a later oracle failure");
+  assert.equal(classifyUpgradeFailure("Selected model is at capacity. Please try a different model."),
+    "MODEL_UNAVAILABLE");
+  assert.equal(classifyUpgradeFailure("ORACLE_MISMATCH first turn created no writer ledger"),
+    "ORACLE_MISMATCH");
+});
+
+test("ISS-13563 AC3 Claude migration refusal is not an installer failure", () => {
+  const terminal = "The recorded definition is changed, and the installed 1.1.25 release is newer. " +
+    "The session rules say to migrate before launching. " +
+    "The first migrate attempt failed validation because agentRoot, previousWorkerId and previousDigest " +
+    "were omitted. The hook blocked the second migrate attempt with Upgrade eval allows only one " +
+    "bounded writer command. The edit was not made.";
+  assert.equal(classifyUpgradeFailure(terminal), "MODEL_BLOCK");
+  assert.equal(classifyUpgradeFailure("eval-stateful-codex-install-invalid"), "INSTALL_INVALID");
+  assert.equal(classifyUpgradeFailure("eval-stateful-codex-cache-file-drift"), "INSTALL_INVALID");
+  assert.equal(classifyUpgradeFailure("WRONG_SESSION Codex resumed another root"), "WRONG_SESSION");
+});
+
+test("ISS-13563 AC3 Claude changed continuation supplies the complete migrate command", () => {
+  const api = upgradeEval as unknown as { rootPrompt?: (input: {
+    fixture: { worktree: string; sessionSlug: string }; requestId: string; marker: string;
+    continuation: boolean; vibeRoot: string; runtime: "claude";
+    migration: { previousWorkerId: string; previousDigest: string };
+  }) => string };
+  assert.equal(typeof api.rootPrompt, "function");
+  const prompt = api.rootPrompt!({ fixture: { worktree: "/fixture/worktree",
+    sessionSlug: "upgrade-resume-changed-definition" }, requestId: "case-two",
+    marker: "turn-two", continuation: true, vibeRoot: "/fixture/target", runtime: "claude",
+    migration: { previousWorkerId: "prior-writer", previousDigest: "b".repeat(64) } });
+  assert.match(prompt, /"agentRoot":"\/fixture\/target"/);
+  assert.match(prompt, /"previousWorkerId":"prior-writer"/);
+  assert.match(prompt, /"previousDigest":"b{64}"/);
+  assert.match(prompt, /writer-state\.mjs' migrate/);
+});
+
 test("Codex target migration requires the exact new HOLD child identity", () => {
   const trace = (path: string, child: string) => [
     JSON.stringify({ method: "item/started", params: { threadId: "root-1",
@@ -358,6 +611,28 @@ test("Codex target migration requires the exact new HOLD child identity", () => 
     "/root/vibe_change_worker"), null);
   assert.equal(targetMigrationChild([...trace("/root/vibe_migrated_writer", "new-child"),
     ...trace("/root/vibe_another", "other-child")], "/root/vibe_change_worker"), null);
+});
+
+test("ISS-13563 AC3 Codex accepts an observed migrated child that completed without HOLD", () => {
+  const oldWriter = "/root/vibe_writer";
+  const newWriter = "/root/vibe_writer_migrated";
+  const child = "01a19a97-07be-77a2-a5b5-1c6232017907";
+  const trace = [
+    JSON.stringify({ method: "item/started", params: { threadId: "root",
+      item: { type: "subAgentActivity", agentPath: newWriter, agentThreadId: child } } }),
+    JSON.stringify({ method: "turn/completed", params: { threadId: child,
+      turn: { status: "completed" } } }),
+    JSON.stringify({ method: "item/completed", params: { threadId: "root",
+      item: { type: "subAgentActivity", agentPath: newWriter,
+        agentThreadId: child, kind: "completed" } } }),
+  ];
+  const select = targetMigrationChild as unknown as (trace: string[], previous: string,
+    migrated?: string) => string | null;
+  assert.equal(select(trace, oldWriter, newWriter), newWriter);
+  assert.equal(select(trace, oldWriter, "/root/other"), null);
+  assert.equal(select(trace.slice(0, 1), oldWriter, newWriter), null);
+  assert.equal(select([...trace, trace[0].replace(newWriter, "/root/vibe_another")], oldWriter,
+    newWriter), null);
 });
 
 test("Claude version cleanup covers success, failure, signals, parallel cases and unrelated files", async () => {
@@ -530,4 +805,39 @@ test("focused proof case selector accepts only exact ids supported by the target
   assert.throws(() => upgradeResumeCaseIds(vibeDir, target124,
     "upgrade-resume-unchanged-definition"), /case-invalid/);
   assert.throws(() => upgradeResumeCaseIds(vibeDir, target125, "upgrade-resume-*"), /case-invalid/);
+});
+
+test("ISS-13563 AC3 focused current target selects both upgrade cases", () => {
+  const vibeDir = join(REPO, "plugins/vibe");
+  const currentRef = "773eea077abb4481d5f3e9654966b48294ac466f";
+  const select = upgradeResumeCaseIds as unknown as (vibeDir: string, targetRef: string,
+    requestedCase?: string, currentRef?: string) => string[];
+  assert.deepEqual(select(vibeDir, currentRef, undefined, currentRef),
+    ["upgrade-resume-changed-definition", "upgrade-resume-unchanged-definition"]);
+});
+
+test("ISS-13563 AC3 fixed historical expectations and current pass gate are explicit", () => {
+  const cases = evalCaseCatalog(join(REPO, "plugins/vibe"))
+    .filter((item) => item.kind === "upgrade-resume");
+  const changed = cases.find((item) => item.definition === "changed")!;
+  const unchanged = cases.find((item) => item.definition === "unchanged")!;
+  assert.equal(changed.transitions?.find((item) => item.target.version === "1.1.23")
+    ?.expected?.claude, "fail");
+  assert.equal(changed.transitions?.find((item) => item.target.version === "1.1.24")
+    ?.expected?.claude, "fail");
+  assert.equal(unchanged.transitions?.find((item) => item.target.version === "1.1.23")
+    ?.expected?.claude, "fail");
+  assert.equal(changed.transitions?.find((item) => item.target.version === "1.1.25")
+    ?.expected?.codex, "pass");
+  const plan = (upgradeEval as unknown as { upgradeTransitionPlan?: (item: typeof changed,
+    runtime: "claude" | "codex", subject: { version: string; ref: string },
+    targetRef?: string) => Array<{ role: string; expected: string;
+      transition: { target: { version: string } } }> }).upgradeTransitionPlan;
+  assert.equal(typeof plan, "function");
+  const current = { version: "1.1.26", ref: "773eea077abb4481d5f3e9654966b48294ac466f" };
+  assert.deepEqual(plan!(changed, "claude", current).map((item) =>
+    [item.role, item.transition.target.version, item.expected]), [
+    ["historical", "1.1.23", "fail"], ["historical", "1.1.24", "fail"],
+    ["historical", "1.1.25", "pass"], ["current", "1.1.26", "pass"],
+  ]);
 });

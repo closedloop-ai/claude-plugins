@@ -149,8 +149,8 @@ def test_the_flags_the_skill_uses_exist_in_verify_run_and_the_worker_can_join() 
 
 def test_versions_and_notes_say_1_1_29() -> None:
     for manifest in (".claude-plugin", ".codex-plugin"):
-        assert json.loads((PLUGIN_ROOT / manifest / "plugin.json").read_text())["version"] == "1.1.31", manifest
-    assert "Version `1.1.31`" in (PLUGIN_ROOT / "README.md").read_text()
+        assert json.loads((PLUGIN_ROOT / manifest / "plugin.json").read_text())["version"] == "1.1.32", manifest
+    assert "Version `1.1.32`" in (PLUGIN_ROOT / "README.md").read_text()
     changelog = (PLUGIN_ROOT.parents[1] / "CHANGELOG.md").read_text()
-    assert "### vibe v1.1.31" in changelog
+    assert "### vibe v1.1.32" in changelog
     assert "WS8 load-aware execution" in changelog

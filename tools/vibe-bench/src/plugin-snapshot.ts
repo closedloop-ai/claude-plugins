@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { agentModels } from "./agent-models.ts";
 
@@ -65,6 +65,41 @@ export function archivePluginRelease(repo: string, ref: string, runRoot: string,
   }
   return { sha, version, archiveRoot: realpathSync(runRoot), vibeDir, coreDir,
     claudeVibeRoot: realpathSync(claudeVibeRoot), claudeCoreRoot: realpathSync(claudeCoreRoot) };
+}
+
+/** Use the sealed candidate plugin bytes only for the current transition target. */
+export function archiveSnapshotTarget(repo: string, ref: string, runRoot: string,
+  snapshot: PluginSnapshot, expectedVersion: string): PluginReleaseArchive {
+  if (snapshot.sha !== ref || snapshotPluginVersion(snapshot) !== expectedVersion) {
+    throw new Error("eval-current-snapshot-identity-invalid");
+  }
+  const release = archivePluginRelease(repo, ref, runRoot);
+  const coreVersion = manifestVersion(join(snapshot.coreDir, ".claude-plugin/plugin.json"));
+  const oldCoreVersion = manifestVersion(join(release.coreDir, ".claude-plugin/plugin.json"));
+  const claudeVibeRoot = join(runRoot, "claude-cache/vibe", expectedVersion);
+  const claudeCoreRoot = join(runRoot, "claude-cache/closedloop-core", coreVersion);
+  for (const [source, archive, cache] of [
+    [snapshot.vibeDir, release.vibeDir, claudeVibeRoot],
+    [snapshot.coreDir, release.coreDir, claudeCoreRoot],
+  ]) {
+    rmSync(archive, { recursive: true });
+    if (existsSync(cache)) rmSync(cache, { recursive: true });
+    cpSync(source, archive, { recursive: true, errorOnExist: true, force: false });
+    cpSync(source, cache, { recursive: true, errorOnExist: true, force: false });
+  }
+  if (release.version !== expectedVersion) rmSync(release.claudeVibeRoot, { recursive: true });
+  if (oldCoreVersion !== coreVersion) rmSync(release.claudeCoreRoot, { recursive: true });
+  return { ...release, version: expectedVersion, claudeVibeRoot: realpathSync(claudeVibeRoot),
+    claudeCoreRoot: realpathSync(claudeCoreRoot) };
+}
+
+/** Read the candidate version from its sealed plugin snapshot, not the older HEAD manifest. */
+export function snapshotPluginVersion(snapshot: PluginSnapshot): string {
+  const version = manifestVersion(join(snapshot.vibeDir, ".claude-plugin/plugin.json"));
+  if (manifestVersion(join(snapshot.vibeDir, ".codex-plugin/plugin.json")) !== version) {
+    throw new Error("eval-current-snapshot-version-mismatch");
+  }
+  return version;
 }
 
 function archivePlugins(repo: string, expectedSha: string, runRoot: string): PluginSnapshot {
