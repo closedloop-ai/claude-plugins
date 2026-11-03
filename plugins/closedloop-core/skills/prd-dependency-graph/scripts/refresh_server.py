@@ -241,7 +241,9 @@ def outside_depth(source):
 def fetch_graph(cfg, api):
     """In-scope tickets, their BLOCKS links, tickets outside the scope, and the scope root.
 
-    A document scope is drawn as a root node with a PRODUCES link to each in-scope ticket.
+    A document scope is drawn as a root node with a PRODUCES link to each in-scope ticket. The root's
+    own BLOCKS links count as the scope's: what it blocks is shown, and what blocks it is followed
+    upstream like any other outside blocker.
 
     Outside tickets that an in-scope ticket blocks are shown one layer deep.
     Outside blockers are followed upstream `outside_blockers_depth` layers
@@ -256,8 +258,14 @@ def fetch_graph(cfg, api):
     tickets = scope_tickets(api, source, app_base)
     limit = outside_depth(source)
     nodes = dict(tickets)
+    produces = set()
+    root = scope_root(api, source, app_base, tickets)
+    if root:
+        nodes[root["id"]] = root
+        produces = {(root["id"], t) for t in tickets}
+    scope = set(nodes)  # the tickets and, for a document scope, the root
     edges = set()
-    frontier = list(tickets)  # level 0 is the scope; level n is n outside blockers up
+    frontier = sorted(scope)  # level 0 is the scope; level n is n outside blockers up
     level = 0
     links_of: dict[str, list] = {}  # every BLOCKS list read, reused by the closing pass
 
@@ -272,14 +280,14 @@ def fetch_graph(cfg, api):
             read_links(frontier)
             found = set()
             for queried in frontier:
-                in_scope = queried in tickets
+                in_scope = queried in scope
                 for link in links_of[queried]:
                     s, d = endpoints(link)
                     if not s or not d:
                         continue
                     if not in_scope and d != queried:
                         continue  # from an outside ticket, only follow what blocks it
-                    if s not in tickets and s not in nodes and limit == 0:
+                    if s not in nodes and limit == 0:
                         continue  # outside blockers turned off
                     for end, slug in ((link.get("source") or {}, s), (link.get("target") or {}, d)):
                         if slug not in nodes:
@@ -287,19 +295,13 @@ def fetch_graph(cfg, api):
                             node["external"] = True
                             nodes[slug] = node
                     edges.add((s, d))
-                    if s not in tickets and s not in links_of:
+                    if s not in scope and s not in links_of:
                         found.add(s)
             level += 1
             if limit is not None and level >= limit:
                 break
             frontier = sorted(found)
-        produces = set()
-        root = scope_root(api, source, app_base, tickets)
-        if root and root["id"] not in nodes:
-            nodes[root["id"]] = root
-            produces = {(root["id"], t) for t in tickets}
-        # A link touching the root is also in the list of the ticket at its other end.
-        read_links(sorted(slug for slug in nodes if slug not in links_of and not nodes[slug].get("root")))
+        read_links(sorted(slug for slug in nodes if slug not in links_of))
     for link_list in links_of.values():
         for link in link_list:
             s, d = endpoints(link)

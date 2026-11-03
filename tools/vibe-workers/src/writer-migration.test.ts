@@ -8,9 +8,7 @@ import { runWorker } from "./claude-worker.js";
 import { acquireNativeRecord, releaseNativeRecord, verifyStrandedRecordGrant } from "./native-record.js";
 import { bundleDirectory, fixture, graph, readProof, writeAgent } from "./test-fixtures.js";
 import { archiveGitFixture } from "../../shared/git-commit-fixture.mjs";
-
-const REPO_ROOT = resolve(bundleDirectory, "../../../../../..");
-const VIBE_1_1_25_SHA = "f45882fb9118cca457221e48e7cef850557f8246";
+import { REPO_ROOT, VIBE_1_1_25_SHA } from "./pinned-releases.js";
 
 const fixtures: ReturnType<typeof fixture>[] = [];
 afterEach(() => { for (const item of fixtures.splice(0)) item.cleanup(); });
