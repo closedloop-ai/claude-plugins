@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { auditStatuses, childFinding, sweepFindings } from './status-audit.mjs';
+import { auditStatuses, childFinding, skipsAudit, sweepFindings } from './status-audit.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./status-audit.mjs', import.meta.url));
 const merged = { url: 'https://example.test/pull/1', state: 'MERGED' };
@@ -98,4 +98,20 @@ test('the status sweep flags plans left open behind DONE tickets and absorbed ch
     ['ISS-4', 'UNCHECKED'],
   ]);
   assert.deepEqual(sweepFindings({ status: 'IN_PROGRESS', plans: [{ slug: 'PLN-1', status: 'DRAFT' }] }), [], 'a plan may stay open while its ticket is');
+});
+
+test('FLEET_TRIM_STATUS_AUDIT=1 skips only a report run; every other run audits as before', () => {
+  assert.equal(skipsAudit('report', { FLEET_TRIM_STATUS_AUDIT: '1' }), true);
+  for (const at of ['assignment', 'merge', undefined]) assert.equal(skipsAudit(at, { FLEET_TRIM_STATUS_AUDIT: '1' }), false, String(at));
+  assert.equal(skipsAudit('report', {}), false, 'off by default');
+  assert.throws(() => skipsAudit('weekly', {}), /--at must be/);
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'audit-at-'));
+  const file = path.join(dir, 'snapshot.json');
+  writeFileSync(file, JSON.stringify({ prds: [{ slug: 'P', children: [{ slug: 'c', status: 'BACKLOG', writer: 'w', pullRequests: [] }] }] }));
+  const run = (at, env) => spawnSync(process.execPath, [SCRIPT, '--snapshot', file, '--at', at], { encoding: 'utf8', env: { ...process.env, FLEET_TRIM_STATUS_AUDIT: '', ...env } });
+  const skipped = run('report', { FLEET_TRIM_STATUS_AUDIT: '1' });
+  assert.deepEqual([skipped.status, skipped.stdout], [0, 'status audit: skipped at report\n']);
+  assert.equal(run('merge', { FLEET_TRIM_STATUS_AUDIT: '1' }).status, 1, 'a merge still audits and still fails on a mismatch');
+  assert.equal(run('report', {}).status, 1, 'a report audits when the switch is off');
+  rmSync(dir, { recursive: true });
 });

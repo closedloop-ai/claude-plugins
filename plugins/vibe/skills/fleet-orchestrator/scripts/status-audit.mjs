@@ -4,7 +4,12 @@
 // and open children had no writer; the operator noticed each one first.
 // Run it at every merge and every writer assignment.
 //
-// Usage: status-audit.mjs --snapshot <snapshot.json>
+// Usage: status-audit.mjs --snapshot <snapshot.json> [--at assignment|merge|report]
+//
+// `--at report` with FLEET_TRIM_STATUS_AUDIT=1 (off by default, PRD-823 C5) prints
+// `status audit: skipped at report` and exits 0 without reading the snapshot, so the
+// audit runs at assignments and merges only. Without the variable, or at any other
+// point, it audits as before.
 //
 // snapshot.json, gathered from the ticket tool and the code host:
 //   {"prds": [{"slug", "children": [{"slug", "status", "writer": <name or null>,
@@ -44,6 +49,15 @@ const FINISHED = new Set(["DONE", "CANCELED"]);
 const PLAN_CLOSED = new Set(["EXECUTED", "OBSOLETE"]);
 
 /** Plan and absorption drift for one child: its plans behind a DONE ticket, or an absorbed child left open. */
+export const TRIM_ENV = "FLEET_TRIM_STATUS_AUDIT";
+export const AuditPoint = Object.freeze({ Assignment: "assignment", Merge: "merge", Report: "report" });
+
+/** Whether this run is skipped: only a `report` run, and only with the trim switch on. */
+export function skipsAudit(at, env = process.env) {
+  if (at !== undefined && !Object.values(AuditPoint).includes(at)) throw new Error("--at must be assignment, merge or report");
+  return at === AuditPoint.Report && env[TRIM_ENV] === "1";
+}
+
 export function sweepFindings(child) {
   const findings = [];
   if (child?.status === "DONE") {
@@ -110,9 +124,13 @@ export function auditStatuses(snapshot) {
 }
 
 function main(argv) {
-  const { values } = parseArgs({ args: argv, options: { snapshot: { type: "string" } } });
+  const { values } = parseArgs({ args: argv, options: { snapshot: { type: "string" }, at: { type: "string" } } });
   if (!values.snapshot) {
-    throw new Error("Usage: status-audit.mjs --snapshot <snapshot.json>");
+    throw new Error("Usage: status-audit.mjs --snapshot <snapshot.json> [--at assignment|merge|report]");
+  }
+  if (skipsAudit(values.at)) {
+    process.stdout.write("status audit: skipped at report\n");
+    return 0;
   }
   const { children, findings, outOfScope } = auditStatuses(JSON.parse(readFileSync(values.snapshot, "utf8")));
   const lines = {
