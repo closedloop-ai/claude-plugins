@@ -15017,6 +15017,94 @@ class TestPooledWorktreeSignalCacheIsolation:
 
         assert keys[0] != keys[1]
 
+    def _prepare_lane(
+        self, tmp_path: Path, cache_dir: Path, lane: str, diff_data: dict[str, Any],
+    ) -> tuple[dict[str, Any], str]:
+        from code_review_helpers import cmd_extract_signals_prepare
+        lane_dir = tmp_path / lane
+        lane_dir.mkdir()
+        diff_path = lane_dir / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+        assert cmd_extract_signals_prepare(
+            self._lane_args(lane_dir, cache_dir, diff_path),
+        ) == 0
+        manifest = json.loads((lane_dir / "extract_signals_manifest.json").read_text())
+        return manifest, (lane_dir / "extract_signals_input.json").read_text()
+
+    def test_a_26th_file_outside_the_excerpt_window_changes_the_key(
+        self, tmp_path: Path,
+    ) -> None:
+        """Only the top SIGNAL_EXCERPT_MAX_FILES files get excerpts, but every
+        file is listed in ``files``, so a change past the excerpt window still
+        reaches the agent and must move the key."""
+        from code_review_helpers import SIGNAL_EXCERPT_MAX_FILES
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+
+        def diff_with(extra: str) -> dict[str, Any]:
+            statuses = {f"src/f{i:02d}.ts": "M" for i in range(SIGNAL_EXCERPT_MAX_FILES)}
+            patch = {
+                path: {"added_lines": {str(n): "x" for n in range(1, 4)}, "removed_lines": {}}
+                for path in statuses
+            }
+            statuses[extra] = "A"
+            patch[extra] = {"added_lines": {"1": "y"}, "removed_lines": {}}
+            return {"file_statuses": statuses, "file_loc": {}, "patch_lines": patch}
+
+        first, first_input = self._prepare_lane(tmp_path, cache_dir, "a", diff_with("src/z1.ts"))
+        second, _ = self._prepare_lane(tmp_path, cache_dir, "b", diff_with("src/z2.ts"))
+        assert "src/z1.ts" not in [e["path"] for e in json.loads(first_input)["sample_diff_excerpts"]]
+        assert first["cache_key"] != second["cache_key"]
+
+    def test_a_21st_added_line_changes_the_key(self, tmp_path: Path) -> None:
+        """Lines past SIGNAL_EXCERPT_LINES_PER_FILE are not excerpted, but the
+        per-file counts and overflow tally the agent reads still move."""
+        from code_review_helpers import SIGNAL_EXCERPT_LINES_PER_FILE
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+
+        def diff_with(line_count: int) -> dict[str, Any]:
+            added = {str(n): f"line {n}" for n in range(1, line_count + 1)}
+            return {
+                "file_statuses": {"src/a.ts": "M"},
+                "file_loc": {},
+                "patch_lines": {"src/a.ts": {"added_lines": added, "removed_lines": {}}},
+            }
+
+        first, _ = self._prepare_lane(
+            tmp_path, cache_dir, "a", diff_with(SIGNAL_EXCERPT_LINES_PER_FILE),
+        )
+        second, _ = self._prepare_lane(
+            tmp_path, cache_dir, "b", diff_with(SIGNAL_EXCERPT_LINES_PER_FILE + 1),
+        )
+        assert first["cache_key"] != second["cache_key"]
+
+    def test_an_edit_the_agent_cannot_see_reuses_the_key_by_design(
+        self, tmp_path: Path,
+    ) -> None:
+        """Rewording a line past the excerpt cap leaves the agent's input
+        byte-identical, so a fresh extraction would read exactly what the
+        cached one read. The key tracks what the agent is given, not the
+        whole diff; this pins that the two bundles really are identical."""
+        from code_review_helpers import SIGNAL_EXCERPT_LINES_PER_FILE
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        last = SIGNAL_EXCERPT_LINES_PER_FILE + 1
+
+        def diff_with(last_line: str) -> dict[str, Any]:
+            added = {str(n): f"line {n}" for n in range(1, last)}
+            added[str(last)] = last_line
+            return {
+                "file_statuses": {"src/a.ts": "M"},
+                "file_loc": {},
+                "patch_lines": {"src/a.ts": {"added_lines": added, "removed_lines": {}}},
+            }
+
+        first, first_input = self._prepare_lane(tmp_path, cache_dir, "a", diff_with("old"))
+        second, second_input = self._prepare_lane(tmp_path, cache_dir, "b", diff_with("new"))
+        assert first_input == second_input
+        assert first["cache_key"] == second["cache_key"]
+
     def test_unkeyable_input_bypasses_the_cache_in_both_directions(
         self, tmp_path: Path,
     ) -> None:
