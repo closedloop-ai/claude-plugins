@@ -81,9 +81,8 @@
           "flags": [
             "--max-bha-agents"
           ],
-          "default": "$$DEFAULT_MAX_BHA_AGENTS",
           "type": "int",
-          "help": "Max BHA agent partitions (cap enforcement)"
+          "help": "Max BHA agent partitions (cap enforcement); when omitted, derived from --cr-dir (arbitrated budget.bha_partitions, else the LOC count)"
         },
         {
           "flags": [

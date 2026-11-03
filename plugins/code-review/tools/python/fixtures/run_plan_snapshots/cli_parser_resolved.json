@@ -85,7 +85,7 @@
             "--max-bha-agents"
           ],
           "dest": "max_bha_agents",
-          "default": 5,
+          "default": null,
           "type": "int"
         },
         {

@@ -74,7 +74,7 @@ Mark "Spawn reviewer agents in parallel" `in_progress`.
 | **Unified Auditor**| 1 total          | Sonnet                               | No           | CLAUDE.md rules + architectural conventions                            |
 | **Domain Critic**  | 0-1              | Sonnet                               | No           | From `critic-gates.json` (capped at 1)                                 |
 
-`partition`'s `--max-bha-agents` flag enforces the cap; the orchestrator spawns one BHA agent per partition entry.
+`partition` enforces the cap (arbitrate-budget's `budget.bha_partitions`, or a LOC-based count on shallow, which it reads via `--cr-dir`); the orchestrator spawns one BHA agent per partition entry.
 
 **Partition-to-agent mapping:**
 - Bug Hunter A: one instance per partition (partitioned).
