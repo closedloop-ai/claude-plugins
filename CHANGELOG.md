@@ -4,6 +4,16 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.33
+
+#### Changed
+- Fleet Codex and Claude usage probes atomically persist successful and failed readings with their read time and source. State stays bounded to the latest reading, latest good reading and 100 recent readings per runtime and machine. A shared status command reports the latest reading and age, with a configurable 30 minute stale threshold.
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 232 words longer than in 1.1.32.
+
+#### Fixed
+- Fleet routing requires a fresh usage reading before choosing a runtime or machine, board status flags stale usage, and a failed re-read keeps the last successful reading time visible.
+- Usage read times remain visible in reports without making the watcher emit an event when only the timestamp changes.
+
 ### closedloop-core v1.6.0
 
 #### Added

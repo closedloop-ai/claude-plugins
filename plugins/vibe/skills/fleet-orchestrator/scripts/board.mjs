@@ -81,6 +81,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { promptProblems } from "./skill-freshness.mjs";
 import { watcherState } from "../../codex-fleet-monitor/scripts/watcher.mjs";
+import { configuredStaleSeconds, readUsageReadings, usageProblems, usageStatuses } from "../../codex-fleet-monitor/scripts/usage-state.mjs";
 import { readConfig, resolveWorkDir } from "../../codex-fleet-monitor/scripts/work-dir.mjs";
 import { homeProblems, programShape, Shape } from "./fleet-home.mjs";
 import { readThreads } from "../../vibe/scripts/pr-threads.mjs";
@@ -445,14 +446,18 @@ function main(argv) {
     for (const entry of scope.notStarted) {
       process.stdout.write(`SCOPE-NOT-STARTED ${entry.item} ${entry.writer} ${entry.minutes}m: its worktree is clean at ${entry.head.slice(0, 10)}, the head it had when the change was sent; ask what it is doing this minute, or stop and relaunch it\n`);
     }
+    const usage = usageProblems(usageStatuses(readUsageReadings(orchDir), {
+      now, staleSeconds: configuredStaleSeconds(orchDir),
+    }));
+    for (const line of usage) process.stdout.write(`${line}\n`);
     const asked = [...unanswered, ...unacked, ...scope.unacked, ...scope.notStarted];
     const watched = ["sessions.txt", "prs.txt"].some((file) => existsSync(path.join(orchDir, file)));
     const watcher = watched ? watcherState(orchDir, now) : { ok: true };
     if (!watcher.ok) process.stdout.write(`WATCHER-MISSING ${watcher.line.replace("watcher MISSING", "")}: re-arm watch.sh now (run_in_background)\n`);
     const home = watched || resolveWorkDir(workDir).home ? homeProblems(orchDir) : [];
     for (const line of home) process.stdout.write(`${line}\n`);
-    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${unanswered.length} unanswered, ${unacked.length} unacked, ${scope.unacked.length} scope unacked, ${scope.notStarted.length} scope not started${watcher.ok ? "" : ", watcher missing"}${home.length > 0 ? `, ${home.length} outside the fleet home` : ""}\n`);
-    return commits.length + stale.length + open.length + slow.length + duties.length + missing.length + asked.length + home.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
+    process.stdout.write(`board: ${Object.keys(board.writers).length} writers, ${stale.length} stale, ${open.length} untold, ${slow.length} slow, ${duties.length + missing.length} unowned duties, ${unanswered.length} unanswered, ${unacked.length} unacked, ${scope.unacked.length} scope unacked, ${scope.notStarted.length} scope not started, ${usage.length} usage problems${watcher.ok ? "" : ", watcher missing"}${home.length > 0 ? `, ${home.length} outside the fleet home` : ""}\n`);
+    return commits.length + stale.length + open.length + slow.length + duties.length + missing.length + asked.length + usage.length + home.length + (watcher.ok ? 0 : 1) === 0 ? 0 : 1;
   }
   const [name, recipient] = positionals;
   if (!name) {
