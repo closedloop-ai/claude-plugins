@@ -97,6 +97,8 @@ Parse the JSON output and report to the user:
 - Document slug (e.g. `PLN-376`) and ID
 - Content length (characters)
 - Upload status
+- Operation id (`operationReceipt.operationId`, a `clop_` id), only when the
+  output has an `operationReceipt`; the server omits it when receipts are off
 - Verification results (if `--verify` was used)
 
 ---

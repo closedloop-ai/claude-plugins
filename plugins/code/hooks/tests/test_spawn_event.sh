@@ -179,7 +179,7 @@ echo "Test 3: planned_subagent_type is correctly extracted from tool_input.subag
     read -r tmpdir cwd workdir session_id <<< "$(setup_temp_env)"
 
     tool_use_id="tool-use-id-spawn-subagent-test"
-    subagent_type="judges:code-review"
+    subagent_type="code:code-reviewer"
     agent_id="agent-spawn-03"
     run_id="run-spawn-subagent"
     command="code-review"

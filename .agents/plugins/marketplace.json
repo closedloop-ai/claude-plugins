@@ -5,10 +5,34 @@
   },
   "plugins": [
     {
+      "name": "closedloop-core",
+      "source": {"source": "local", "path": "./plugins/closedloop-core"},
+      "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+      "category": "Development"
+    },
+    {
+      "name": "vibe",
+      "source": {"source": "local", "path": "./plugins/vibe"},
+      "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+      "category": "Development"
+    },
+    {
       "name": "code-review",
       "source": {
         "source": "local",
         "path": "./plugins/code-review"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Development"
+    },
+    {
+      "name": "code",
+      "source": {
+        "source": "local",
+        "path": "./plugins/code"
       },
       "policy": {
         "installation": "AVAILABLE",

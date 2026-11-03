@@ -322,7 +322,7 @@ class TestAgentEventMissingTranscript:
         """When the transcript file exists but isn't valid JSONL (jq fails), the hook
         must still exit 0 and emit an agent event with zero token fields. Regression
         guard for the fail-open contract: a transcript-parser bug must never break the
-        SubagentStop hook or the parent Loop."""
+        SubagentStop hook or the parent run."""
         cwd, workdir, session_id = session_env
 
         # Write garbage that is NOT valid JSONL
@@ -470,7 +470,7 @@ class TestAgentEventModelAndMetadata:
         self, session_env: tuple[Path, Path, str]
     ) -> None:
         """When CLOSEDLOOP_COMMAND is not set, command defaults to "interactive" —
-        matching record_phase.sh and run-loop.sh's emit_perf_event helper, so agent
+        matching record_phase.sh, so agent
         rows can be joined with phase/iteration rows by command in Datadog."""
         cwd, workdir, session_id = session_env
 

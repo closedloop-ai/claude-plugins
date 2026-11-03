@@ -50,7 +50,7 @@ import {
   type JsonObject,
 } from "./design-findings-schema.js";
 import { checkThemeIdUniqueness } from "./theme-id-guard.js";
-import { runWhenMain } from "./cli.js";
+import { runWhenMain } from "../../shared/cli.js";
 
 const ACCEPTED_STATES = new Set(["accepted", "edited"]);
 

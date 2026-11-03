@@ -28,7 +28,7 @@ import { join, dirname, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { parseArgs } from "node:util";
 import { unzipSync } from "fflate";
-import { runWhenMain } from "./cli.js";
+import { runWhenMain } from "../../shared/cli.js";
 
 export const MAX_TOTAL_UNCOMPRESSED = 500 * 1024 * 1024;
 export const DEFAULT_MAX_CHUNK_BYTES = 200_000;

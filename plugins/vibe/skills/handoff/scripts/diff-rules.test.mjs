@@ -1,0 +1,768 @@
+import assert from "node:assert/strict";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import { parseUnifiedDiff, runDiffRules, transactionBodies } from "./diff-rules.mjs";
+import { frozenInputs } from "./frozen-render.mjs";
+import { git, makeHome } from "../../vibe/scripts/test-fixtures.mjs";
+
+const isFrozenStory = (text) => / v1\.0\//.test(text);
+
+function put(root, files) {
+  for (const [file, content] of Object.entries(files)) {
+    if (content === null) {
+      rmSync(path.join(root, file));
+      continue;
+    }
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), content);
+  }
+}
+
+/** Findings as [rule, file] for a base commit of `base` files and an uncommitted (or committed) `head`. */
+function run(t, { history = [], base = {}, head = {}, changeLog = "", commit = false }) {
+  const { root, home, cleanup } = makeHome("vibe-diff-rules-");
+  t.after(cleanup);
+  const checkout = path.join(root, "wt");
+  git(root, ["init", "--quiet", "--initial-branch=main", checkout], home);
+  for (const step of history) {
+    put(checkout, step.files);
+    git(checkout, ["add", "-A"], home);
+    git(checkout, ["commit", "--quiet", "--allow-empty", "-m", step.message], home);
+  }
+  put(checkout, { "README.md": "seed\n", ...base });
+  git(checkout, ["add", "-A"], home);
+  git(checkout, ["commit", "--quiet", "-m", "base"], home);
+  const baseSha = git(checkout, ["rev-parse", "HEAD"], home);
+  put(checkout, head);
+  if (commit) {
+    git(checkout, ["add", "-A"], home);
+    git(checkout, ["commit", "--quiet", "-m", "session"], home);
+  }
+  writeFileSync(path.join(git(checkout, ["rev-parse", "--absolute-git-dir"], home), "vibe-changes.md"), typeof changeLog === "function" ? changeLog({ checkout, base: baseSha }) : changeLog);
+  const result = runDiffRules({ worktree: checkout, base: baseSha, isFrozenStory });
+  return { ...result, found: result.blocking.map((finding) => [finding.rule, finding.file]) };
+}
+
+test("the diff parser keeps line numbers, drops private plans, and finds transaction bodies", () => {
+  const files = parseUnifiedDiff([
+    "diff --git a/a.ts b/a.ts", "--- a/a.ts", "+++ b/a.ts", "@@ -3,1 +3,2 @@", "-old", "+new", "+more",
+    "diff --git a/.closedloop-ai/vibe-plans/p.md b/.closedloop-ai/vibe-plans/p.md", "new file mode 100644",
+    "--- /dev/null", "+++ b/.closedloop-ai/vibe-plans/p.md", "@@ -0,0 +1 @@", "+plan",
+  ].join("\n"));
+  assert.deepEqual(files.map((file) => [file.path, file.removed, file.added]), [["a.ts", [{ line: 3, text: "old" }], [{ line: 3, text: "new" }, { line: 4, text: "more" }]]]);
+  assert.deepEqual(transactionBodies("x\nwithDb.tx(async (tx) => {\n  a();\n});\n"), [[2, 4]]);
+});
+
+test("migrations: an existing table needs its recorded precedent, a full-table backfill blocks, and the repo gates run", (t) => {
+  const file = "packages/database/prisma/migrations/20261021000000_link_kind/migration.sql";
+  const sql = [
+    "CREATE TABLE \"fresh\" (id int);",
+    "CREATE INDEX \"fresh_i\" ON \"fresh\"(id);",
+    "CREATE INDEX \"artifact_links_kind_idx\" ON \"artifact_links\"(\"kind\");",
+    "UPDATE \"artifact_links\" SET \"kind\" = 'x';",
+    "ALTER TABLE \"y\" ADD CONSTRAINT \"y_fk\" FOREIGN KEY (\"a\") REFERENCES \"z\"(\"id\") ON UPDATE CASCADE;",
+  ].join("\n");
+  const bare = run(t, { head: { [file]: sql } });
+  assert.deepEqual(bare.found, [["migration-precedent", file], ["migration-precedent", file], ["migration-backfill", file], ["migration-test", file]]);
+  assert.deepEqual(bare.requiredChecks.map((check) => check.command), ["pnpm check:destructive-migrations", "pnpm check:migration-immutability"]);
+  const test = "packages/database/__tests__/link-kind.test.ts";
+  const logged = run(t, { head: { [file]: sql, [test]: "test();\n" }, changeLog: `Migration precedent: artifact_links: a, b, c\nMigration precedent: y: d, e, f\nMigration test: 20261021000000_link_kind: ${test}\n` });
+  assert.deepEqual(logged.found, []);
+});
+
+test("a new migration needs a recorded test before it is pushed, and a trigger a measured scale test (preview CI, 726-F1)", (t) => {
+  const file = "packages/database/prisma/migrations/20261022000000_projection/migration.sql";
+  const sql = "CREATE FUNCTION refresh_projection() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql;\nCREATE TRIGGER t AFTER INSERT ON \"fresh\" FOR EACH ROW EXECUTE FUNCTION refresh_projection();\nCREATE TABLE \"fresh\" (id int);\n";
+  const test = "packages/database/__tests__/projection.test.ts";
+  const tested = `Migration test: 20261022000000_projection: ${test}\n`;
+  const rules = (options) => run(t, options).blocking.filter((finding) => finding.rule === "migration-test").map((finding) => finding.problem);
+  assert.equal(rules({ head: { [file]: sql } }).length, 2, "no test and no scale test");
+  assert.match(rules({ head: { [file]: sql }, changeLog: tested }).join(), /recorded migration test .* is not a test file at HEAD/);
+  assert.match(rules({ head: { [file]: sql, [test]: "t\n" }, changeLog: tested }).join(), /no `Scale test/);
+  assert.match(rules({ head: { [file]: sql, [test]: "t\n" }, changeLog: `${tested}Scale test: 20261022000000_projection: ${test}: fast\n` }).join(), /needs a test file at HEAD and a measurement/);
+  assert.deepEqual(rules({ head: { [file]: sql, [test]: "t\n" }, changeLog: `${tested}Scale test: 20261022000000_projection: ${test}: 100,000 rows, 2.1 ms per insert\n` }), []);
+});
+
+test("backend writes: uncaptured artifact fields, errors after a transaction write, and unscoped link deletes block", (t) => {
+  const write = "await tx.artifact.updateMany({\n  where: { id: { in: ids } },\n  data: { projectId: target },\n});\n";
+  const partial = "export const run = () => withDb.tx(async (tx) => {\n  await tx.artifactLink.create({ data });\n  if (cycle) {\n    return Result.err(Status.Conflict);\n  }\n});\n";
+  const result = run(t, {
+    head: {
+      "apps/api/app/a/raw.ts": write,
+      "apps/api/app/a/captured.ts": `${write}captureBatchProjectChange({ tx });\n`,
+      "apps/api/app/a/logged.ts": write,
+      "apps/api/app/a/sort-key.ts": "await tx.artifact.updateMany({ where: {}, data: { sortKey: 1 } });\n",
+      "apps/api/app/a/partial.ts": partial,
+      "apps/api/app/a/validated.ts": partial.replace("  await tx.artifactLink.create({ data });\n", "").replace("});\n", "  await tx.artifactLink.create({ data });\n});\n"),
+      "apps/api/app/a/broad-delete.ts": "await tx.artifactLink.deleteMany({ where: { targetId: id, linkType: L } });\n",
+      "apps/api/app/a/exact-delete.ts": "await tx.artifactLink.deleteMany({ where: { sourceId: p, targetId: id, linkType: L } });\n",
+    },
+    changeLog: "Activity capture: apps/api/app/a/logged.ts: the caller's captureBatchProjectChange\n",
+  });
+  assert.deepEqual(result.found.sort(), [
+    ["activity-capture", "apps/api/app/a/raw.ts"],
+    ["artifact-link-delete", "apps/api/app/a/broad-delete.ts"],
+    ["tx-result-after-write", "apps/api/app/a/partial.ts"],
+  ]);
+});
+
+test("a new Desktop sync lane needs the shared give-up, the shared backoff, a Susan pass and the roster", (t) => {
+  const lane = "apps/desktop/src/main/agent-sync/placement-outbox.ts";
+  const table = {
+    "apps/desktop/prisma/migrations/20261021000000_placement/migration.sql": "CREATE TABLE \"placement_sync_outbox\" (id int);\n",
+    "apps/desktop/src/main/agent-sync/use-placement.js": "import { delay } from \"./placement-outbox\";\n",
+  };
+  const bare = run(t, { head: { [lane]: "export const delay = (attempt) => 1000 * 2 ** attempt;\n", ...table } });
+  assert.equal(bare.found.filter(([rule]) => rule === "desktop-sync-lane").length, 4);
+  const done = run(t, {
+    head: { [lane]: "import { LaneGiveUpStampDefect } from \"../../shared/lane-give-up.js\";\nexport const delay = (n) => exponentialBackoffMs(n + 1);\n", ...table, "apps/desktop/test/placement.test.ts": "test();\n" },
+    changeLog: "Synchronizing-susan: no findings\nEngineering needed (forbidden path): apps/desktop/src/main/sync/AGENTS.md; why: roster\nMigration test: 20261021000000_placement: apps/desktop/test/placement.test.ts\n",
+  });
+  assert.deepEqual(done.found, []);
+});
+
+test("a dropped ticketed comment blocks while its code survives; moved, reworded or deleted with its code it does not", (t) => {
+  const comment = (slug) => `// ${slug}: keep the id tiebreak so equal ranks stay stable\nexport const order${slug.slice(4)} = (a, b) => a.id.localeCompare(b.id);\n`;
+  const result = run(t, {
+    base: { "p/dropped.ts": comment("ISS-1"), "p/moved.ts": comment("ISS-2"), "p/reworded.ts": comment("ISS-3"), "p/deleted.ts": `${comment("ISS-4")}export const keep = 1;\n` },
+    head: {
+      "p/dropped.ts": comment("ISS-1").split("\n").slice(1).join("\n"),
+      "p/moved.ts": "export { order2 } from \"./sort\";\n",
+      "p/sort.ts": comment("ISS-2"),
+      "p/reworded.ts": comment("ISS-3").replace("keep the id tiebreak", "the id tiebreak keeps"),
+      "p/deleted.ts": "export const keep = 1;\n",
+    },
+    commit: true,
+  });
+  assert.deepEqual(result.found, [["ticketed-comment", "p/dropped.ts"]]);
+});
+
+test("a modified service that two files import needs a recorded parity line", (t) => {
+  const importing = (stem) => ({ [`apps/api/app/x-${stem}/service.ts`]: `import { f } from "../../lib/${stem}";\n`, [`apps/api/app/y-${stem}/service.ts`]: `import { f } from "@/lib/${stem}.js";\n` });
+  const result = run(t, {
+    base: { "apps/api/lib/shared.ts": "a\n", "apps/api/lib/ruled.ts": "a\n", "apps/api/lib/single.ts": "a\n", ...importing("shared"), ...importing("ruled"), "apps/api/app/z/service.ts": "import { f } from \"../../lib/single\";\n" },
+    head: { "apps/api/lib/shared.ts": "b\n", "apps/api/lib/ruled.ts": "b\n", "apps/api/lib/single.ts": "b\n" },
+    changeLog: "Shared path: apps/api/lib/ruled.ts: changed; ruling: ISS-1 operator comment\n",
+  });
+  assert.deepEqual(result.found, [["shared-path", "apps/api/lib/shared.ts"]]);
+});
+
+test("stories: a flipped assertion needs a release, a new entry beside a current one or for a harness blocks", (t) => {
+  const meta = (title, component = "Rows") => `export default { title: "${title}", component: ${component}, tags: ["stable"] };\n`;
+  const story = `${meta("Composites/Rows")}export const Refused = { play: async () => { await expect(alert).toBeVisible(); } };\n`;
+  const flipped = story.replace("toBeVisible()", "not.toBeInTheDocument()");
+  const result = run(t, {
+    base: { "s/rows.stories.tsx": story, "s/cards.stories.tsx": meta("Composites v1.0/Cards", "Cards") },
+    head: {
+      "s/rows.stories.tsx": flipped,
+      "s/rows-touch.stories.tsx": meta("Composites/Rows Touch"),
+      "s/cards-current.stories.tsx": meta("Composites/Cards", "Cards"),
+      "s/rows-harness.stories.tsx": meta("Composites/Rows Harness", "RowsHarness"),
+    },
+  });
+  assert.deepEqual(result.found.sort(), [
+    ["story-entry", "s/rows-harness.stories.tsx"],
+    ["story-entry", "s/rows-touch.stories.tsx"],
+    ["story-outcome", "s/rows.stories.tsx"],
+  ]);
+  const released = run(t, {
+    base: { "s/rows.stories.tsx": story, "apps/storybook/package.json": "{\n  \"version\": \"3.2.4\"\n}\n" },
+    head: { "s/rows.stories.tsx": flipped, "apps/storybook/package.json": "{\n  \"version\": \"3.3.0\"\n}\n" },
+  });
+  assert.deepEqual(released.found, []);
+});
+
+test("a change anywhere in a frozen story's import closure blocks until its identical render is recorded", (t) => {
+  const base = {
+    "apps/storybook/stories/row.stories.tsx": "import { Row } from \"@repo/design-system/components/row\";\nexport default { title: \"Composites v1.0/Row\" };\nexport const Default = {};\n",
+    "packages/design-system/components/row.tsx": "import { cell } from \"./cell\";\nexport const Row = cell;\n",
+    "packages/design-system/components/cell.tsx": "export const cell = 1;\n",
+    "packages/design-system/components/other.tsx": "export const other = 1;\n",
+  };
+  const deep = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" } });
+  assert.deepEqual(deep.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]]);
+  assert.deepEqual(run(t, { base, head: { "packages/design-system/components/other.tsx": "export const other = 2;\n" } }).found, []);
+  const recorded = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: ({ checkout, base: sha }) => `Frozen render unchanged: all 1 story files (1 stories): frozen-render.mjs --base ${sha} --story-file apps/storybook/stories/row.stories.tsx: 1 identical, 0 unstable on base, 0 same failure, 0 blocking; states composites-v1-0-row--default; inputs ${frozenInputs(checkout, sha, ["apps/storybook/stories/row.stories.tsx"])}; out/results.json\n` });
+  assert.deepEqual(recorded.found, []);
+  const substringState = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: ({ checkout, base: sha }) => `Frozen render unchanged: all 1 story files (1 stories): frozen-render.mjs --base ${sha} --story-file apps/storybook/stories/row.stories.tsx: 1 identical, 0 unstable on base, 0 same failure, 0 blocking; states composites-v1-0-row--default-extra; inputs ${frozenInputs(checkout, sha, ["apps/storybook/stories/row.stories.tsx"])}; out/results.json\n` });
+  assert.deepEqual(substringState.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]], "story ids match as exact fields, not substrings");
+  // A hand-rolled capture's line no longer passes the gate (ISS-13291).
+  const handRolled = run(t, { base, head: { "packages/design-system/components/cell.tsx": "export const cell = 2;\n" }, changeLog: "Frozen render unchanged: all 1 stories: storybook test-runner on base and branch, identical\n" });
+  assert.deepEqual(handRolled.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]]);
+  assert.match(handRolled.blocking[0].fix, /frozen-render\.mjs/);
+});
+
+test("frozen story dependency closure includes imported styles and token JSON (ISS-13411 review)", (t) => {
+  const base = {
+    "apps/storybook/stories/row.stories.tsx": "import { Row } from \"@repo/design-system/components/row\";\nexport default { title: \"Composites v1.0/Row\" };\n",
+    "packages/design-system/components/row.tsx": "import \"./row.css\";\nimport tokens from \"./row.json\";\nexport const Row = tokens.row;\n",
+    "packages/design-system/components/row.css": ".row { color: red; }\n",
+    "packages/design-system/components/row.json": "{\"row\": 1}\n",
+  };
+  for (const file of ["packages/design-system/components/row.css", "packages/design-system/components/row.json"]) {
+    const result = run(t, { base, head: { [file]: file.endsWith(".css") ? ".row { color: blue; }\n" : "{\"row\": 2}\n" } });
+    assert.deepEqual(result.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]], file);
+  }
+});
+
+test("frozen story closure follows app aliases, images and fonts", (t) => {
+  const base = {
+    "apps/storybook/stories/row.stories.tsx": "import { Row } from \"@/components/row\";\nexport default { title: \"Composites v1.0/Row\" };\nexport const Default = {};\n",
+    "apps/storybook/src/components/row.tsx": "import logo from \"@/assets/logo.png\";\nimport \"./row.css\";\nexport const Row = () => logo;\n",
+    "apps/storybook/src/components/row.css": "@import \"../fonts/ui.woff2\";\n.row { color: red; }\n",
+    "apps/storybook/src/assets/logo.png": "old image\n",
+    "apps/storybook/src/fonts/ui.woff2": "old font\n",
+  };
+  for (const file of ["apps/storybook/src/assets/logo.png", "apps/storybook/src/fonts/ui.woff2"]) {
+    const result = run(t, { base, head: { [file]: `changed ${file}\n` } });
+    assert.deepEqual(result.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]], file);
+  }
+});
+
+test("frozen stories include global styles, tokens, Tailwind config and Storybook preview (ISS-13411 review)", (t) => {
+  const base = {
+    "apps/storybook/stories/row.stories.tsx": "import { Row } from \"@repo/design-system/components/row\";\nexport default { title: \"Composites v1.0/Row\" };\n",
+    "packages/design-system/components/row.tsx": "export const Row = 1;\n",
+    "apps/app/globals.css": "body { color: red; }\n",
+    "packages/design-system/tokens/colors.json": "{\"text\":\"red\"}\n",
+    "tailwind.config.ts": "export default { theme: {} };\n",
+    "apps/storybook/.storybook/preview.tsx": "export const decorators = [];\n",
+  };
+  for (const [file, text] of Object.entries({
+    "apps/app/globals.css": "body { color: blue; }\n",
+    "packages/design-system/tokens/colors.json": "{\"text\":\"blue\"}\n",
+    "tailwind.config.ts": "export default { theme: { extend: {} } };\n",
+    "apps/storybook/.storybook/preview.tsx": "export const decorators = [() => null];\n",
+  })) {
+    const result = run(t, { base, head: { [file]: text } });
+    assert.deepEqual(result.found, [["frozen-render", "apps/storybook/stories/row.stories.tsx"]], file);
+  }
+});
+
+test("routes, GridTableV2 and story titles require the tests the graph does not map", (t) => {
+  const tests = ["apps/app/__tests__/grid-table-v2-surface-capability-parity.test.ts", "apps/app/__tests__/sessions-list-v2-host-capability-parity.test.ts", "apps/storybook/__tests__/preview-story-sort-order.test.ts", "apps/storybook/__tests__/story-group-order.test.ts"];
+  const result = run(t, {
+    base: {
+      ...Object.fromEntries(tests.map((file) => [file, "test\n"])),
+      "apps/api/app/documents/[id]/links/route.ts": "export const POST = 1;\n",
+      "e2e/links.spec.ts": "await request.post(`/documents/${id}/links`, { data: body });\n",
+      "e2e/other.spec.ts": "await request.post('/documents/abc/linksets');\n",
+      "packages/design-system/lib/grid-table-v2-types.ts": "export type A = 1;\n",
+      "s/rows.stories.tsx": "export default { title: \"Composites/Rows\" };\n",
+    },
+    head: {
+      "apps/api/app/documents/[id]/links/route.ts": "export const POST = 2;\n",
+      "packages/design-system/lib/grid-table-v2-types.ts": "export type A = 2;\n",
+      "s/rows.stories.tsx": "export default { title: \"Composites/Row List\" };\n",
+    },
+  });
+  assert.deepEqual(result.requiredTests.map((entry) => entry.path), ["e2e/links.spec.ts", ...tests]);
+});
+
+test("a diagnostic that dumps the whole environment blocks; reading named keys does not", (t) => {
+  const result = run(t, { head: {
+    "scripts/diag.mjs": "writeFileSync(report, JSON.stringify(process.env, null, 2));\nconst child = spawn(cmd, { env: { ...process.env, CI: \"1\" } });\nconsole.log(process.env.NODE_ENV);\n",
+    "scripts/diag.sh": "#!/bin/sh\nenv > /tmp/env.txt\necho \"$HOME\"\n",
+    "tools/diag.py": "import os\nprint(dict(os.environ))\nprint(os.environ.get(\"CI\"))\n",
+  } });
+  assert.deepEqual(result.blocking.filter((finding) => finding.rule === "env-dump").map((finding) => [finding.file, finding.line]),
+    [["scripts/diag.mjs", 1], ["scripts/diag.sh", 2], ["tools/diag.py", 2]]);
+});
+
+test("a component or file a human removed is not brought back without a restore authorization (#8957, ISS-6005)", (t) => {
+  const toolbar = "packages/app/sessions/sessions-toolbar.tsx";
+  const badge = "packages/app/sessions/read-source-badge.tsx";
+  const withPill = "export const Toolbar = () => (\n  <Bar>\n    <ReadSourceBadge source={source} />\n  </Bar>\n);\n";
+  const withoutPill = "export const Toolbar = () => (\n  <Bar>\n  </Bar>\n);\n";
+  const history = [
+    { message: "Add sessions toolbar", files: { [toolbar]: withPill, [badge]: "export const ReadSourceBadge = () => null;\n", "packages/app/sessions/legacy-row.tsx": "export const LegacyRow = 1;\n" } },
+    { message: "ISS-6005: remove the cloud pill on desktop and web", files: { [toolbar]: withoutPill, "packages/app/sessions/legacy-row.tsx": null } },
+  ];
+  const head = { [toolbar]: withPill.replace("<Bar>", "<Bar>\n    <NewFilter />"), "packages/app/sessions/legacy-row.tsx": "export const LegacyRow = 2;\n" };
+  const bare = run(t, { history, head });
+  const restored = bare.blocking.filter((finding) => finding.rule === "restored-removal");
+  assert.deepEqual(restored.map((finding) => [finding.file, finding.line]), [[toolbar, 4], ["packages/app/sessions/legacy-row.tsx", 1]]);
+  assert.match(restored[0].problem, /mounts ReadSourceBadge, removed by commit \w+ ISS-6005: remove the cloud pill/);
+  assert.match(restored[1].problem, /adds back a file deleted by commit \w+ ISS-6005/);
+  const changeLog = "Restore authorization: ReadSourceBadge: operator ruling, 2026-10-21, session thread; overrides ISS-6005\n"
+    + "Restore authorization: packages/app/sessions/legacy-row.tsx: Pat Example, 2026-10-21, ISS-12 comment; overrides ISS-6005\n";
+  assert.deepEqual(run(t, { history, head, changeLog }).found.filter(([rule]) => rule === "restored-removal"), []);
+  const noSlug = "Restore authorization: ReadSourceBadge: operator ruling, 2026-10-21, session thread\n";
+  assert.equal(run(t, { history, head, changeLog: noSlug }).found.some(([rule, file]) => rule === "restored-removal" && file === toolbar), true);
+});
+
+test("mounting a component a cleanup removed from another file, or a design-system primitive, is not a restore (ISS-13321)", (t) => {
+  const retired = "packages/app/plans/plans-nav.tsx";
+  const list = "packages/app/issues/issues-list.tsx";
+  const card = "packages/app/issues/issue-card.tsx";
+  const badgeImport = 'import { Badge } from "@repo/design-system/components/ui/badge";\n';
+  const history = [
+    { message: "Add plans nav", files: { [retired]: `${badgeImport}export const PlansNav = () => (\n  <Nav>\n    <Badge />\n    <PlanCount />\n  </Nav>\n);\n` } },
+    { message: "ISS-12983: Retire Desktop Plans nav", files: { [retired]: "export const PlansNav = () => null;\n" } },
+  ];
+  const base = { [list]: `${badgeImport}export const IssuesList = () => (\n  <List>\n  </List>\n);\n` };
+  const head = {
+    [list]: `${badgeImport}export const IssuesList = () => (\n  <List>\n    <Badge />\n    <PlanCount />\n  </List>\n);\n`,
+    [card]: `${badgeImport}export const IssueCard = () => (\n  <Card>\n    <Badge />\n    <PlanCount />\n  </Card>\n);\n`,
+  };
+  assert.deepEqual(run(t, { history, base, head }).found.filter(([rule]) => rule === "restored-removal"), []);
+});
+
+test("in a shallow clone the restored-removal check deepens the history to find the removal, and blocks only when that fails", (t) => {
+  const toolbar = "packages/app/sessions/sessions-toolbar.tsx";
+  const withPill = "export const Toolbar = () => (\n  <Bar>\n    <ReadSourceBadge source={source} />\n  </Bar>\n);\n";
+  const shallowSession = (reachable) => {
+    const { root, home, cleanup } = makeHome("vibe-diff-rules-shallow-");
+    t.after(cleanup);
+    const origin = path.join(root, "origin");
+    git(root, ["init", "--quiet", "--initial-branch=main", origin], home);
+    const commit = (files, message) => {
+      put(origin, files);
+      git(origin, ["add", "-A"], home);
+      git(origin, ["commit", "--quiet", "-m", message], home);
+    };
+    commit({ [toolbar]: withPill }, "Add sessions toolbar");
+    commit({ [toolbar]: "export const Toolbar = () => (\n  <Bar>\n  </Bar>\n);\n" }, "ISS-6005: remove the cloud pill");
+    commit({ "README.md": "base\n" }, "base");
+    const checkout = path.join(root, "wt");
+    git(root, ["clone", "--quiet", "--depth", "1", `file://${origin}`, checkout], home);
+    const base = git(checkout, ["rev-parse", "HEAD"], home);
+    if (!reachable) {
+      git(checkout, ["remote", "set-url", "origin", `file://${path.join(root, "gone")}`], home);
+    }
+    put(checkout, { [toolbar]: withPill });
+    const result = runDiffRules({ worktree: checkout, base, isFrozenStory, changeLog: path.join(root, "no-log.md") });
+    return { result, shallow: git(checkout, ["rev-parse", "--is-shallow-repository"], home) };
+  };
+  const deepened = shallowSession(true);
+  const restored = deepened.result.blocking.filter((finding) => finding.rule === "restored-removal");
+  assert.equal(restored.length, 1);
+  assert.match(restored[0].problem, /mounts ReadSourceBadge, removed by commit \w+ ISS-6005/);
+  assert.equal(deepened.shallow, "false");
+  const failed = shallowSession(false).result.blocking.filter((finding) => finding.rule === "restored-removal");
+  assert.equal(failed.length, 1);
+  assert.match(failed[0].problem, /deepening it failed \(git fetch --deepen=1000: /);
+});
+
+test("removing a mount or a user-visible string main ships needs a recorded human source; moved ones do not (#8947)", (t) => {
+  const menu = "packages/app/links/row-menu.tsx";
+  const base = { [menu]: [
+    "export const RowMenu = () => (",
+    "  <Menu>",
+    "    <MenuItem label=\"Open\" />",
+    "    <MenuItem label=\"View linked sessions\" />",
+    "    <LinkedBadge />",
+    "  </Menu>",
+    ");",
+    "",
+  ].join("\n"), "packages/app/links/other.tsx": "export const Other = () => <div />;\n" };
+  const head = { [menu]: "export const RowMenu = () => (\n  <Menu>\n    <MenuItem label=\"Open\" />\n  </Menu>\n);\n",
+    "packages/app/links/other.tsx": "export const Other = () => <div><LinkedBadge /></div>;\n" };
+  const removals = run(t, { base, head }).blocking.filter((finding) => finding.rule === "capability-removal");
+  assert.deepEqual(removals.map((finding) => finding.problem.match(/removes (.*?) that the base ships/)?.[1]), ["\"View linked sessions\""]);
+  const changeLog = "Removal: \"View linked sessions\": ISS-4259 comment by Pat Example, 2026-10-21\n";
+  assert.deepEqual(run(t, { base, head, changeLog }).found.filter(([rule]) => rule === "capability-removal"), []);
+  const unmounted = run(t, { base, head: { [menu]: base[menu].replace("    <LinkedBadge />\n", "") } }).blocking.filter((finding) => finding.rule === "capability-removal");
+  assert.match(unmounted[0].problem, /removes the LinkedBadge mount/);
+});
+
+test("copy provenance: a new toast, label or JSX string needs a cited source; existing and moved copy pass", (t) => {
+  const file = "packages/app/tags/remove-tags.tsx";
+  const base = { [file]: "export function A() {\n  return <Button aria-label=\"Close\">Save</Button>;\n}\n" };
+  const head = { "packages/app/tags/use-tags.js": "import { A, B } from \"./remove-tags\";\n", [file]: [
+    "export function A({ n }) {",
+    "  toast.success(`Removed ${tag} from ${n} items`);",
+    "  const ok = a > limit && b < 3;",
+    "  return <Button aria-label=\"Close\" title=\"Remove tag\" variant=\"ghost\">Save</Button>;",
+    "}",
+    "export const B = () => <p className=\"x\">Nothing matched your filters</p>;",
+    "",
+  ].join("\n") };
+  const bare = run(t, { base, head });
+  assert.deepEqual(bare.blocking.map((finding) => [finding.rule, finding.line]), [["copy-provenance", 2], ["copy-provenance", 4], ["copy-provenance", 6]]);
+  assert.match(bare.blocking[0].fix, /Copy: "Removed \$\{tag\} from \$\{n\} items": <ticket, PRD or person's words/);
+  const cited = "Copy: \"Removed ${tag} from ${n} items\": ISS-1 AC2\nCopy: \"Remove tag\": PRD-1 R3\nCopy: \"Nothing matched your filters\": ISS-1 AC4\n";
+  assert.deepEqual(run(t, { base, head, changeLog: cited }).found, []);
+  const elsewhere = { ...base, "apps/app/old-toast.tsx": "toast.success(`Removed ${label} from ${count} items`);\n" };
+  assert.deepEqual(run(t, { base: elsewhere, head }).blocking.map((finding) => finding.line), [4, 6]);
+  assert.deepEqual(run(t, { head: { "packages/app/tags/remove-tags.test.tsx": "toast(\"Brand new words\");\n" } }).found, []);
+  assert.deepEqual(run(t, { head: { "src/ui/banner.jsx": "export const B = () => <p>Brand new words</p>;\n", "src/ui/use-banner.js": "import { B } from \"./banner\";\n" } }).found, [["copy-provenance", "src/ui/banner.jsx"]]);
+});
+
+test("a #8962-shaped prop that enables a control needs a source naming it on that surface", (t) => {
+  const file = "packages/app/branches/components/branches-grid-v2.tsx";
+  const base = { [file]: "export const props = { columns };\n" };
+  const head = { [file]: "export const props = {\n  columns,\n  onSelectAll: selection?.onSelectAll,\n  showSelectAll: selection?.showSelectAll,\n};\n" };
+  const bare = run(t, { base, head }).blocking.filter((finding) => finding.rule === "control-provenance");
+  assert.deepEqual(bare.map((finding) => finding.problem), [
+    "newly enables onSelectAll with no surface-specific ticket acceptance criterion or ruling",
+    "newly enables showSelectAll with no surface-specific ticket acceptance criterion or ruling",
+  ]);
+  const cited = [
+    `Control: ${file}: onSelectAll: Branches header: ISS-100 AC-3`,
+    `Control: ${file}: showSelectAll: Branches header: ISS-100 AC-3`,
+  ].join("\n");
+  assert.deepEqual(run(t, { base, head, changeLog: cited }).found.filter(([rule]) => rule === "control-provenance"), []);
+});
+
+test("extracting an existing control into a shared parent is not a newly enabled control (ISS-13321)", (t) => {
+  const page = "packages/app/issues/issues-page.tsx";
+  const parent = "packages/app/shared/components/list-actions.tsx";
+  const base = { [page]: "export const IssuesPage = () => (\n  <Page>\n    <Button onClick={open}>Open</Button>\n  </Page>\n);\n" };
+  const head = {
+    [page]: 'import { ListActions } from "../shared/components/list-actions";\nexport const IssuesPage = () => (\n  <Page>\n    <ListActions onOpen={open} />\n  </Page>\n);\n',
+    [parent]: "export const ListActions = ({ onOpen }) => (\n  <Bar>\n    <Button onClick={onOpen}>Open</Button>\n  </Bar>\n);\n",
+  };
+  assert.deepEqual(run(t, { base, head }).found.filter(([rule]) => rule === "control-provenance"), []);
+  const added = { ...head, [parent]: head[parent].replace("  </Bar>", "    <FavoriteToggle />\n  </Bar>") };
+  assert.deepEqual(run(t, { base, head: added }).blocking.filter((finding) => finding.rule === "control-provenance").map((finding) => [finding.file, finding.problem]),
+    [[parent, "newly enables <FavoriteToggle> with no surface-specific ticket acceptance criterion or ruling"]], "a control the parent adds is still checked");
+});
+
+test("a #8922-shaped capability composed by sibling list adapters needs one shared owner", (t) => {
+  const component = "packages/design-system/components/ui/filter-popover.tsx";
+  const sessions = "packages/app/agents/components/sessions/sessions-list-toolbar-v2.tsx";
+  const artifacts = "packages/app/shared/components/generic-artifact-surface/artifact-list-shell-sections.tsx";
+  const projects = "packages/app/projects/components/project-list.tsx";
+  const base = {
+    [component]: "export function FilterPopover() { return null; }\n",
+    [artifacts]: 'import { FilterPopover } from "@repo/design-system/components/ui/filter-popover";\nexport const ArtifactToolbar = () => <FilterPopover />;\n',
+    [projects]: 'import { FilterPopover } from "@repo/design-system/components/ui/filter-popover";\nexport const ProjectList = () => <FilterPopover />;\n',
+  };
+  const head = {
+    [sessions]: 'import { FilterPopover } from "@repo/design-system/components/ui/filter-popover";\nexport const SessionsToolbar = () => <FilterPopover />;\n',
+  };
+
+  const result = run(t, { base, head });
+  assert.deepEqual(
+    result.blocking.filter((finding) => finding.rule === "shared-capability-owner").map((finding) => finding.file),
+    [sessions]
+  );
+  assert.deepEqual(
+    run(t, { base, head, changeLog: "Shared capability exception: FilterPopover: PRD-721 AC-1\n" })
+      .blocking.filter((finding) => finding.rule === "shared-capability-owner").map((finding) => finding.file),
+    [sessions],
+    "a broad acceptance criterion cannot authorize separate page compositions"
+  );
+  assert.deepEqual(
+    run(t, { base, head, changeLog: "Shared capability exception: FilterPopover: ISS-123 ruling for separate compositions\n" })
+      .blocking.filter((finding) => finding.rule === "shared-capability-owner"),
+    []
+  );
+
+  const owner = "packages/app/shared/components/generic-artifact-list-shell.tsx";
+  const inherited = {
+    [owner]: 'import { FilterPopover } from "@repo/design-system/components/ui/filter-popover";\nexport const GenericArtifactListShell = () => <FilterPopover />;\n',
+    [sessions]: 'import { GenericArtifactListShell } from "@repo/app/shared/components/generic-artifact-list-shell";\nexport const SessionsPage = GenericArtifactListShell;\n',
+    [artifacts]: 'import { GenericArtifactListShell } from "@repo/app/shared/components/generic-artifact-list-shell";\nexport const DocumentsPage = GenericArtifactListShell;\n',
+    [projects]: 'import { GenericArtifactListShell } from "@repo/app/shared/components/generic-artifact-list-shell";\nexport const ProjectsPage = GenericArtifactListShell;\n',
+  };
+  assert.deepEqual(
+    run(t, { base: { [component]: base[component] }, head: inherited })
+      .blocking.filter((finding) => finding.rule === "shared-capability-owner"),
+    [],
+    "one parent may own the control while every page inherits it"
+  );
+});
+
+test("one more item in a menu a page already composes, a type, or a leaf part needs no shared owner (ISS-13321)", (t) => {
+  const menu = "packages/design-system/components/ui/dropdown-menu.tsx";
+  const issues = "packages/app/issues/components/issues-list.tsx";
+  const sessions = "packages/app/agents/components/sessions/sessions-list.tsx";
+  const imports = (names) => `import { ${names} } from "@repo/design-system/components/ui/dropdown-menu";\n`;
+  const base = {
+    [menu]: "export const DropdownMenu = 1;\nexport const DropdownMenuItem = 1;\nexport type SortDirection = string;\n",
+    [issues]: `${imports("DropdownMenu, DropdownMenuItem")}export const IssuesList = () => (\n  <DropdownMenu>\n    <DropdownMenuItem>Open</DropdownMenuItem>\n  </DropdownMenu>\n);\n`,
+    [sessions]: `${imports("DropdownMenu, DropdownMenuItem, type SortDirection")}export const SessionsList = () => <DropdownMenu />;\n`,
+  };
+  const head = {
+    [issues]: `${imports("DropdownMenu, DropdownMenuItem, type SortDirection")}export const IssuesList = () => (\n  <DropdownMenu>\n    <DropdownMenuItem>Open</DropdownMenuItem>\n    <DropdownMenuItem>Duplicate</DropdownMenuItem>\n  </DropdownMenu>\n);\n`,
+  };
+  const changeLog = 'Copy: "Duplicate": ISS-1 AC1\n';
+  assert.deepEqual(run(t, { base, head, changeLog }).found.filter(([rule]) => rule === "shared-capability-owner"), []);
+});
+
+test("a changed screenshot baseline needs its counted element ledger before handoff", (t) => {
+  const file = "e2e/__screenshots__/visual-regression.spec.ts/branches-desktop.png";
+  assert.deepEqual(run(t, { base: { [file]: "old\n" }, head: { [file]: "new\n" } }).found, [["visual-baseline-ledger", file]]);
+  const ledger = `Baseline inventory: ${file}: Branches: 1 new element\nBaseline element: ${file}: Branches: star column: ISS-12918 AC-2\n`;
+  assert.deepEqual(run(t, { base: { [file]: "old\n" }, head: { [file]: "new\n" }, changeLog: ledger }).found, []);
+});
+
+test("a lost story ID blocks unless recorded as a replacement, and every reference to it blocks", (t) => {
+  const story = "export default { title: \"Composites/Rows\" };\nexport const Default = {};\nexport const WithLongText = {};\n";
+  const result = run(t, {
+    base: {
+      "s/rows.stories.tsx": story,
+      "e2e/rows.spec.ts": "goto('?path=/story/composites-rows--with-long-text');\n",
+      "e2e/other.spec.ts": "composites-rows--default\n",
+      "apps/desktop/test/e2e/helpers/story-urls.ts": "export const LONG = \"composites-rows--with-long-text\";\n",
+    },
+    head: { "s/rows.stories.tsx": "export default { title: \"Composites/Rows\" };\nexport const Default = {};\n" },
+  });
+  assert.deepEqual(result.found, [["lost-story-id", "s/rows.stories.tsx"], ["lost-story-id", "apps/desktop/test/e2e/helpers/story-urls.ts"], ["lost-story-id", "e2e/rows.spec.ts"]]);
+});
+
+test("a lost story ID named in docs the session may not edit clears with an Engineering needed line (ISS-13321)", (t) => {
+  const ledger = "docs/branches-list-adapter-disposition-ledger.md";
+  const base = {
+    "s/rows.stories.tsx": "export default { title: \"Branches/Branches List\" };\nexport const Default = {};\nexport const HoverAndKeyboard = {};\n",
+    [ledger]: "See branches-branches-list--hover-and-keyboard.\n",
+  };
+  const head = { "s/rows.stories.tsx": "export default { title: \"Branches/Branches List\" };\nexport const Default = {};\nexport const KeyboardOnly = {};\n" };
+  const onLedger = (result) => result.blocking.filter((finding) => finding.rule === "lost-story-id" && finding.file === ledger);
+  const bare = onLedger(run(t, { base, head }));
+  assert.equal(bare.length, 1);
+  assert.match(bare[0].fix, /Engineering needed \(forbidden path\): docs\/branches-list-adapter-disposition-ledger\.md/);
+  const changeLog = `Engineering needed (forbidden path): ${ledger}; why: point it at the story's current ID\n`;
+  assert.deepEqual(onLedger(run(t, { base, head, changeLog })), []);
+});
+
+test("a changed route requires the web and Desktop specs that reach its endpoint only through a helper, never the helper (#8967)", (t) => {
+  const route = "apps/api/app/artifact-links/batch-move/route.ts";
+  const webHelper = "e2e/helpers/sessions-list-fixtures.ts";
+  const desktopHelper = "apps/desktop/test/e2e/helpers/sessions-list-project-cloud.ts";
+  const result = run(t, {
+    base: {
+      [route]: "export const POST = 1;\n",
+      [webHelper]: "const BATCH_MOVE_PATH = \"/artifact-links/batch-move\";\nexport const mockMove = (page) => page.route(`**${BATCH_MOVE_PATH}**`, handler);\n",
+      "e2e/sessions-linked-entity-columns.spec.ts": "import {\n  mockMove,\n} from \"./helpers/sessions-list-fixtures\";\ntest(\"moves\", () => mockMove(page));\n",
+      [desktopHelper]: "export const isMove = (request, pathname) => request.method === \"POST\" && pathname === \"/artifact-links/batch-move\";\n",
+      "apps/desktop/test/e2e/sessions-list-project-edit.spec.ts": "import {\n  isMove,\n} from \"./helpers/sessions-list-project-cloud\";\ntest(\"edits\", () => isMove(request, path));\n",
+      "e2e/helpers/unrelated.ts": "export const other = \"/documents\";\n",
+      "e2e/unrelated.spec.ts": "import { other } from \"./helpers/unrelated\";\n",
+    },
+    head: { [route]: "export const POST = 2;\n" },
+  });
+  assert.deepEqual(result.requiredTests.map((entry) => entry.path).sort(), [
+    "apps/desktop/test/e2e/sessions-list-project-edit.spec.ts",
+    "e2e/sessions-linked-entity-columns.spec.ts",
+  ]);
+});
+
+test("route specs follow helper imports two hops and scan every e2e-named root", (t) => {
+  const route = "apps/api/app/artifact-links/batch-move/route.ts";
+  const result = run(t, {
+    base: {
+      [route]: "export const POST = 1;\n",
+      "e2e/helpers/paths.ts": "export const MOVE = \"/artifact-links/batch-move\";\n",
+      "e2e/helpers/move-flow.ts": "export { MOVE } from \"./paths\";\nimport { MOVE } from \"./paths.js\";\n",
+      "e2e/move-flow.spec.ts": "import { MOVE } from \"./helpers/move-flow\";\n",
+      "e2e-web-smoke/boot.spec.ts": "await request.post(\"/artifact-links/batch-move\");\n",
+      "packages/app/client.ts": "fetch(\"/artifact-links/batch-move\");\n",
+    },
+    head: { [route]: "export const POST = 2;\n" },
+  });
+  assert.deepEqual(result.requiredTests.map((entry) => entry.path).sort(), ["e2e-web-smoke/boot.spec.ts", "e2e/move-flow.spec.ts"]);
+  assert.match(result.requiredTests.find((entry) => entry.path === "e2e/move-flow.spec.ts").reason, /e2e\/helpers\/paths\.ts/);
+});
+
+test("route specs require only the specs importing a helper export that reaches the endpoint; unresolvable imports fall back with a reason", (t) => {
+  const route = "apps/api/app/artifact-links/batch-move/route.ts";
+  const helper = [
+    "// Mocks for /artifact-links/batch-move and the list.",
+    "const BATCH_MOVE_PATH = \"/artifact-links/batch-move\";",
+    "const BATCH_MOVE_URL_GLOB = `**${BATCH_MOVE_PATH}**`;",
+    "export function sessionListRow(id) {",
+    "  return { id, label: \"{ not a brace }\" };",
+    "}",
+    "export async function installProjectWriteMocks(",
+    "  page,",
+    "  moves",
+    ") {",
+    "  await page.route(BATCH_MOVE_URL_GLOB, (r) => moves.push(r));",
+    "}",
+    "const wrap = (page) => installProjectWriteMocks(page, []);",
+    "export { wrap as installWrapped };",
+    "",
+  ].join("\n");
+  const result = run(t, {
+    base: {
+      [route]: "export const POST = 1;\n",
+      "e2e/helpers/fixtures.ts": helper,
+      "e2e/rows.spec.ts": "import { sessionListRow } from \"./helpers/fixtures\";\n",
+      "e2e/rows-typed.spec.ts": "import type { installProjectWriteMocks } from \"./helpers/fixtures\";\nimport { sessionListRow } from \"./helpers/fixtures\";\n",
+      "e2e/move.spec.ts": "import {\n  installProjectWriteMocks,\n  sessionListRow,\n} from \"./helpers/fixtures\";\n",
+      "e2e/wrapped.spec.ts": "import { installWrapped as setup } from \"./helpers/fixtures\";\n",
+      "e2e/helpers/rows-only.ts": "import { sessionListRow } from \"./fixtures\";\nexport const rows = () => [sessionListRow(1)];\n",
+      "e2e/rows-deep.spec.ts": "import { rows } from \"./helpers/rows-only\";\n",
+      "e2e/helpers/move-reexport.ts": "export { installProjectWriteMocks as mockMoves } from \"./fixtures\";\n",
+      "e2e/move-deep.spec.ts": "import { mockMoves } from \"./helpers/move-reexport\";\n",
+      "e2e/namespace.spec.ts": "import * as fixtures from \"./helpers/fixtures\";\n",
+    },
+    head: { [route]: "export const POST = 2;\n" },
+  });
+  const required = new Map(result.requiredTests.map((entry) => [entry.path, entry.reason]));
+  assert.deepEqual([...required.keys()].sort(), ["e2e/move-deep.spec.ts", "e2e/move.spec.ts", "e2e/namespace.spec.ts", "e2e/wrapped.spec.ts"]);
+  assert.match(required.get("e2e/move.spec.ts"), /imports installProjectWriteMocks from e2e\/helpers\/fixtures\.ts/);
+  assert.match(required.get("e2e/namespace.spec.ts"), /file-level fallback: namespace import/);
+});
+
+test("a spec importing only the helper export that does not reach the changed endpoint is not required", (t) => {
+  const route = "apps/api/app/artifact-links/batch-move/route.ts";
+  const result = run(t, {
+    base: {
+      [route]: "export const POST = 1;\n",
+      "e2e/helpers/two-exports.ts": "export const mockMove = (page) => page.route(\"**/artifact-links/batch-move\", handler);\nexport const rowFixture = (id) => ({ id });\n",
+      "e2e/move.spec.ts": "import { mockMove } from \"./helpers/two-exports\";\n",
+      "e2e/rows.spec.ts": "import { rowFixture } from \"./helpers/two-exports\";\n",
+    },
+    head: { [route]: "export const POST = 2;\n" },
+  });
+  assert.deepEqual(result.requiredTests.map((entry) => entry.path), ["e2e/move.spec.ts"]);
+});
+
+test("a repo-declared path gate becomes a required run when the diff touches its paths", (t) => {
+  const gates = JSON.stringify({ gates: [{ name: "catalog-imports", paths: ["apps/prototypes/**"], command: "node apps/prototypes/scripts/check-catalog-imports.mjs" }] });
+  const touched = run(t, { base: { ".vibe/path-gates.json": gates }, head: { "apps/prototypes/src/page.tsx": "export const x = 1;\n" } });
+  assert.ok(touched.requiredTests.some((entry) => entry.path === "node apps/prototypes/scripts/check-catalog-imports.mjs"));
+  const elsewhere = run(t, { base: { ".vibe/path-gates.json": gates }, head: { "apps/app/page.tsx": "export const x = 1;\n" } });
+  assert.ok(!elsewhere.requiredTests.some((entry) => entry.path.includes("check-catalog-imports")));
+});
+
+test("the repo's Storybook rules block the session diff and require its Storybook checks (#8953, #8960)", (t) => {
+  const rules = JSON.stringify({
+    noOpHandler: { pattern: String.raw`\bonUpdate\w*:\s*\(\)\s*=>\s*undefined` },
+    checks: [{ name: "validate-catalog", command: "pnpm --filter storybook validate:catalog" }],
+  });
+  const file = "packages/app/documents/components/table/documents-view.stories.tsx";
+  const meta = "// No controls: fixture.\nconst meta = { title: \"Composites/Documents View\" };\nexport default meta;\n";
+  const result = run(t, {
+    base: { ".vibe/storybook-rules.json": rules, [file]: meta },
+    head: { [file]: `${meta}const editHandlers = { onUpdatePriority: () => undefined };\n` },
+  });
+  assert.deepEqual(result.found, [["story-no-op-handler", file]]);
+  assert.ok(result.requiredTests.some((entry) => entry.path === "pnpm --filter storybook validate:catalog"));
+  const undeclared = run(t, { base: { [file]: meta }, head: { [file]: `${meta}const editHandlers = { onUpdatePriority: () => undefined };\n` } });
+  assert.deepEqual(undeclared.found, []);
+});
+
+test("a new sort comparator needs a recorded tie test that exists", (t) => {
+  const head = { "p/rank.ts": "export const ranked = (rows) => rows.sort((a, b) => b.score - a.score);\n", "p/use-rank.ts": "import { ranked } from \"./rank\";\n" };
+  assert.deepEqual(run(t, { head }).found, [["comparator-tie", "p/rank.ts"]]);
+  assert.deepEqual(run(t, { head, changeLog: "Comparator: p/rank.ts: tie test p/rank.test.ts\n" }).found, [["comparator-tie", "p/rank.ts"]], "the cited test must exist");
+  const tested = { ...head, "p/rank.test.ts": "test('two rows tied on score keep id order', () => {});\n" };
+  assert.deepEqual(run(t, { head: tested, changeLog: "Comparator: p/rank.ts: tie test p/rank.test.ts\n" }).found, []);
+});
+
+test("a new export no other file uses blocks unless recorded; existing and framework exports do not", (t) => {
+  assert.deepEqual(run(t, { head: { "p/outbox.ts": "export function flushOutbox() {}\n" } }).found, [["unused-export", "p/outbox.ts"]]);
+  assert.deepEqual(run(t, { head: { "p/outbox.ts": "export function flushOutbox() {}\n" }, changeLog: "Export: flushOutbox: imported by the sync worker in ISS-1\n" }).found, []);
+  assert.deepEqual(run(t, { base: { "p/old.ts": "export const old = 1;\n" }, head: { "p/old.ts": "export const old = 2;\n" } }).found, []);
+  assert.deepEqual(run(t, { head: { "app/api/x/route.ts": "export async function GET() {}\n" } }).found, []);
+});
+
+test("a shared component's change requires every host's suites, in both flag states when it reads a flag", (t) => {
+  const base = {
+    "packages/ui/grid.tsx": "export const Grid = (props) => props.rows;\n",
+    "apps/a/sessions.tsx": "import { Grid } from \"@repo/ui/grid\";\nexport const Sessions = Grid;\n",
+    "apps/b/documents.tsx": "import { Grid } from \"@repo/ui/grid\";\nexport const Documents = Grid;\n",
+    "apps/a/sessions.test.tsx": "import { Sessions } from \"./sessions\";\n",
+    "apps/b/documents.stories.tsx": "import { Documents } from \"./documents\";\n",
+    "apps/c/one.tsx": "import { Only } from \"@repo/ui/only\";\nexport const One = Only;\n",
+    "packages/ui/only.tsx": "export const Only = 1;\n",
+  };
+  const suites = ["apps/a/sessions.test.tsx", "apps/b/documents.stories.tsx"];
+  const plain = run(t, { base, head: { "packages/ui/grid.tsx": "export const Grid = (props) => props.rows.slice();\n" }, commit: true });
+  assert.deepEqual(plain.requiredTests.filter((entry) => suites.includes(entry.path)).map((entry) => [entry.path, entry.flagStates]), suites.map((suite) => [suite, undefined]));
+  assert.deepEqual(plain.found, []);
+
+  const flagged = run(t, { base, head: { "packages/ui/grid.tsx": "export const Grid = (props) => (useFeatureFlag(props.k) ? props.rows : []);\n" }, commit: true });
+  assert.deepEqual(flagged.requiredTests.filter((entry) => suites.includes(entry.path)).map((entry) => entry.flagStates), [["on", "off"], ["on", "off"]]);
+  assert.deepEqual(flagged.found, [["shared-flag-branch", "packages/ui/grid.tsx"]]);
+  const keyed = run(t, { base, head: { "packages/ui/grid.tsx": "export const Grid = (props) => (useFeatureFlag(props.k) ? props.rows : []);\n" }, commit: true, changeLog: "Shared behavior: packages/ui/grid.tsx: keyed on hideSelectAll; hosts run: both\n" });
+  assert.deepEqual(keyed.found, []);
+  assert.equal(keyed.requiredTests.filter((entry) => suites.includes(entry.path)).length, 2, "keying it does not drop the hosts' runs");
+
+  const single = run(t, { base, head: { "packages/ui/only.tsx": "export const Only = 2;\n" }, commit: true });
+  assert.deepEqual(single.requiredTests, [], "a component one host imports is not shared");
+});
+
+test("AC-001 DT-06: an Issue breadcrumb change requires a web and Desktop parity test", (t) => {
+  const web = "packages/app/documents/components/document-detail-header.tsx";
+  const desktop = "apps/desktop/src/renderer/navigation/breadcrumb-model.ts";
+  const parity = "apps/app/__tests__/issues-detail-host-capability-parity.test.ts";
+  const base = { [web]: "export const crumbs = [root, page];\n", [desktop]: "export const crumbs = [root, page];\n" };
+  const changed = { [web]: "export const crumbs = [root, page]; // changed\n" };
+  const missing = run(t, { base, head: changed });
+  assert.deepEqual(missing.blocking.filter((finding) => finding.rule === "host-parity-missing").map((finding) => finding.file), [web]);
+  const present = run(t, { base: { ...base, [parity]: "test('same Issue trail on web and Desktop', () => {});\n" }, head: changed });
+  assert.deepEqual(present.blocking.filter((finding) => finding.rule === "host-parity-missing"), []);
+  assert.ok(present.requiredTests.some((entry) => entry.path === parity));
+  const untracked = run(t, { base, head: { ...changed, [parity]: "test('same Issue trail on web and Desktop', () => {});\n" } });
+  assert.deepEqual(untracked.blocking.filter((finding) => finding.rule === "host-parity-missing"), []);
+  assert.ok(untracked.requiredTests.some((entry) => entry.path === parity));
+  const desktopOnly = run(t, { base, head: { [desktop]: "export const crumbs = [root, page]; // changed\n" } });
+  assert.deepEqual(desktopOnly.blocking.filter((finding) => finding.rule === "host-parity-missing").map((finding) => finding.file), [desktop]);
+  const unrelated = run(t, { base, head: { "packages/app/documents/components/unrelated.tsx": "export const unrelated = 1;\n" } });
+  assert.deepEqual(unrelated.blocking.filter((finding) => finding.rule === "host-parity-missing"), []);
+  const unrelatedHeaderBase = { ...base, [web]: `${base[web]}export const action = 1;\n` };
+  const unrelatedHeader = run(t, { base: unrelatedHeaderBase, head: { [web]: `${base[web]}export const action = 2;\n` } });
+  assert.deepEqual(unrelatedHeader.blocking.filter((finding) => finding.rule === "host-parity-missing"), []);
+});
+
+test("R2 DT-06: a navigation target changed inside detailCrumbs needs host parity", (t) => {
+  const desktop = "apps/desktop/src/renderer/navigation/breadcrumb-model.ts";
+  const original = 'export function detailCrumbs() {\n  const href = "/old";\n  return [{ label: "Issue", href }];\n}\n';
+  const targetChanged = run(t, { base: { [desktop]: original }, head: { [desktop]: original.replace('/old', '/new') } });
+  assert.deepEqual(targetChanged.blocking.filter((finding) => finding.rule === "host-parity-missing").map((finding) => finding.file), [desktop]);
+  const otherBase = `${original}export function unrelated() { return 1; }\n`;
+  const otherChanged = run(t, { base: { [desktop]: otherBase }, head: { [desktop]: otherBase.replace('return 1', 'return 2') } });
+  assert.deepEqual(otherChanged.blocking.filter((finding) => finding.rule === "host-parity-missing"), []);
+});
+
+test("R7 DT-06: DocumentDetailHeader breadcrumb input changes require parity without catching unrelated actions", (t) => {
+  const file = "packages/app/documents/components/document-detail-header.tsx";
+  const base = [
+    "export function DocumentDetailHeader() {",
+    "  const buildOrgPath = useOrgPath();",
+    "  const breadcrumbs = buildDocumentBreadcrumbs(document, buildOrgPath);",
+    "  const action = 1;",
+    "  return <Header breadcrumbs={breadcrumbs} action={action} />;",
+    "}",
+    "",
+  ].join("\n");
+  const changedInput = run(t, { base: { [file]: base }, head: { [file]: base.replace("useOrgPath()", "useOtherOrgPath()") } });
+  assert.deepEqual(changedInput.blocking.filter((finding) => finding.rule === "host-parity-missing").map((finding) => finding.file), [file]);
+  const unrelatedAction = run(t, { base: { [file]: base }, head: { [file]: base.replace("const action = 1", "const action = 2") } });
+  assert.deepEqual(unrelatedAction.blocking.filter((finding) => finding.rule === "host-parity-missing"), []);
+  const actionUrl = base.replace("const action = 1", 'const action = buildOrgPath("/settings")');
+  const changedActionUrl = run(t, { base: { [file]: actionUrl }, head: { [file]: actionUrl.replace('/settings', '/billing') } });
+  assert.deepEqual(changedActionUrl.blocking.filter((finding) => finding.rule === "host-parity-missing"), []);
+});
+
+test("AC-001 DT-07: duplicate top-level helper bodies fail across the diff and base tree", (t) => {
+  const first = "packages/app/documents/components/first.tsx";
+  const second = "packages/app/issues/components/second.tsx";
+  const helper = 'function capitalize(value: string): string {\n  return `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}`;\n}\n';
+  const duplicated = run(t, { head: { [first]: helper, [second]: helper } });
+  assert.ok(duplicated.blocking.some((finding) => finding.rule === "duplicate-helper" && finding.file === second));
+  const copiedFromBase = run(t, { base: { [first]: helper }, head: { [second]: helper } });
+  assert.ok(copiedFromBase.blocking.some((finding) => finding.rule === "duplicate-helper" && finding.file === second));
+  const distinct = run(t, { base: { [first]: helper }, head: { [second]: helper.replace("value.slice(1)", "value.slice(2)") } });
+  assert.deepEqual(distinct.blocking.filter((finding) => finding.rule === "duplicate-helper"), []);
+});
+
+test("AC-001 DT-07: a new searchLabel needs a human source", (t) => {
+  const file = "packages/app/issues/components/issue-creation/issue-creation-fields.tsx";
+  const head = { [file]: 'export const field = { searchLabel: "Set team…" };\n' };
+  const missing = run(t, { head });
+  assert.ok(missing.blocking.some((finding) => finding.rule === "copy-provenance" && finding.problem.includes("Set team…")));
+  const sourced = run(t, { head, changeLog: 'Copy: "Set team…": ISS-1 AC2 requester wording\n' });
+  assert.deepEqual(sourced.blocking.filter((finding) => finding.rule === "copy-provenance"), []);
+});
+
+test("a change to a spec the base has needs a dated human source; a new spec or a test named .spec. does not (#8963)", (t) => {
+  const spec = "apps/prototypes/projects/project-hierarchy-spec.ts";
+  const base = { [spec]: "/**\n * Reject cycles and moves beyond four levels by withholding the drop target.\n */\nexport {};\n", "e2e/board.spec.ts": "test();\n" };
+  const head = { [spec]: base[spec].replace("Reject cycles and moves beyond four levels", "Reject cycles; four levels is display-only"), "e2e/board.spec.ts": "test(1);\n", "docs/prd/new-thing.md": "# New\n" };
+  const found = run(t, { base, head }).found.filter(([rule]) => rule === "spec-change");
+  assert.deepEqual(found, [["spec-change", spec]]);
+  const plan = `Spec change: ${spec}: the session plan PLN-1\n`;
+  assert.equal(run(t, { base, head, changeLog: plan }).found.filter(([rule]) => rule === "spec-change").length, 1, "a plan is not a human source");
+  const ruled = `Spec change: ${spec}: Pat Example, 2026-10-21, ISS-6560 comment\n`;
+  assert.deepEqual(run(t, { base, head, changeLog: ruled }).found.filter(([rule]) => rule === "spec-change"), []);
+  const prd = run(t, { base: { "docs/prds/board.md": "- Reject deep moves\n" }, head: { "docs/prds/board.md": null } }).found.filter(([rule]) => rule === "spec-change");
+  assert.deepEqual(prd, [["spec-change", "docs/prds/board.md"]], "deleting a spec is a change");
+});

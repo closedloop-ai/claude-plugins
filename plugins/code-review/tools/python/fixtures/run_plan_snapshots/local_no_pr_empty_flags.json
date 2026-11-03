@@ -261,8 +261,6 @@
       "/tmp/cr_dir",
       "--diff-data",
       "/tmp/cr_dir/diff_data.json",
-      "--diff-tip",
-      "<DIFF_TIP>",
       "--intent",
       "/tmp/cr_dir/intent.json",
       "--cache-dir",
@@ -383,8 +381,6 @@
       "/tmp/cr_dir/available_reviewers.json",
       "--extract-signals",
       "/tmp/cr_dir/extract_signals.json",
-      "--diff-tip",
-      "<DIFF_TIP>",
       "--cache-dir",
       "<CACHE_DIR>"
     ],
@@ -642,7 +638,9 @@
       "--findings",
       "/tmp/cr_dir/findings.json",
       "--diff-data",
-      "/tmp/cr_dir/diff_data.json"
+      "/tmp/cr_dir/diff_data.json",
+      "--cr-dir",
+      "/tmp/cr_dir"
     ],
     "stdout": "/tmp/cr_dir/findings_validated.json",
     "expected_outputs": [

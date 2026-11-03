@@ -5,6 +5,16 @@
   },
   "plugins": [
     {
+      "name": "closedloop-core",
+      "source": "./plugins/closedloop-core",
+      "description": "Shared ClosedLoop planning, intelligence, review, QA, measurement, and PR monitoring"
+    },
+    {
+      "name": "vibe",
+      "source": "./plugins/vibe",
+      "description": "Vibe sessions, handoff, seed refresh, and ClosedLoop ticket workflows"
+    },
+    {
       "name": "bootstrap",
       "source": "./plugins/bootstrap",
       "description": "Bootstrap plugin for ClosedLoop"
@@ -20,11 +30,6 @@
       "description": "Code review plugin"
     },
     {
-      "name": "judges",
-      "source": "./plugins/judges",
-      "description": "LLM Judges plugin"
-    },
-    {
       "name": "platform",
       "source": "./plugins/platform",
       "description": "ClosedLoop Platform plugin"
@@ -32,7 +37,7 @@
     {
       "name": "self-learning",
       "source": "./plugins/self-learning",
-      "description": "Self-learning plugin"
+      "description": "Deprecated, will be removed from the marketplace: Self-learning plugin"
     }
   ]
 }

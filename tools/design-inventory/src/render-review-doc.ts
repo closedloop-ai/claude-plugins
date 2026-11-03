@@ -28,7 +28,7 @@ import { parseArgs } from "node:util";
 import { validateFindings, type JsonObject } from "./design-findings-schema.js";
 import { checkThemeIdUniqueness } from "./theme-id-guard.js";
 import { normalizeShotPath } from "./shot-path.js";
-import { runWhenMain } from "./cli.js";
+import { runWhenMain } from "../../shared/cli.js";
 
 // ---------------------------------------------------------------------------
 // Loading helpers
