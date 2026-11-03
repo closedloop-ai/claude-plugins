@@ -25,10 +25,19 @@ export function ensureGitCommits(repo, shas, remote = "origin") {
   return shas.map((sha) => ensureGitCommit(repo, sha, remote));
 }
 
-/** Archive exact committed paths into a run-owned test directory. */
+/**
+ * Archive exact committed paths into a run-owned test directory.
+ *
+ * Never fetches: a fetch here would run inside the caller's test or hook timeout, so that
+ * timeout would depend on the network. Fetch with `ensureGitCommits` before tests start.
+ */
 export function archiveGitFixture(repo, sha, paths, destination) {
   if (!Array.isArray(paths) || paths.length === 0) throw new Error("test-release-paths-invalid");
-  ensureGitCommit(repo, sha);
+  if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error("test-release-ref-invalid");
+  if (!exactCommit(repo, sha)) {
+    throw new Error(`test-release-missing:${sha}: fetch it with ensureGitCommits before tests start, `
+      + "never inside a timed test or hook");
+  }
   const archive = execFileSync("git", ["-C", repo, "archive", "--format=tar", sha, ...paths], {
     maxBuffer: 80 * 1024 * 1024,
   });
