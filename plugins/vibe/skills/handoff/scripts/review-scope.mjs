@@ -4,8 +4,8 @@
 // reviewer fleet handoff runs today (ISS-13352, PRD-823). Changes nothing.
 //
 // Usage: review-scope.mjs --worktree <path> [--findings <file>] [--inventory <handoff-inventory.mjs output>]
-//          [--base <sha>] [--config <json file>] [--enable]
-// Prints one JSON object: { schema, mode, reasons, thresholds, diff, findings }.
+//          [--base <sha>] [--config <json file>] [--manifest <triage manifest>] [--enable]
+// Prints one JSON object: { schema, mode, reasons, thresholds, diff, findings, triage }.
 // `mode` is `consolidated` or `full-fleet`; exit 0 whenever a decision was
 // printed, 2 on a usage error. With no script, no file or any doubt, handoff
 // keeps running its existing step 3 and step 6 reviewers: this script only
@@ -28,6 +28,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { git } from "../../vibe/scripts/session-record.mjs";
+import { REVIEW_EFFECTIVE, validateManifest } from "../../vibe/scripts/vibe-triage.mjs";
 
 export const FINDINGS_SCHEMA = "vibe.guardrails-findings/1";
 export const REVIEW_SCOPE_SCHEMA = "vibe.review-scope/1";
@@ -142,10 +143,54 @@ function untracked(worktree) {
   return git(worktree, ["ls-files", "--others", "--exclude-standard"]).split("\n").filter(Boolean).map((file) => `1\t0\t${file}`);
 }
 
+export const TriageStatus = { Absent: "absent", Invalid: "invalid", Valid: "valid" };
+export const ADVERSARIAL_REVIEWER = "vibe-adversarial-reviewer";
+export const TRIAGE_SCOPE_ADDS_ADVERSARIAL = "consolidated-adversarial";
+// Gates the handoff knows how to run; a manifest naming any other is ignored, not run.
+export const TRIAGE_GATES = Object.freeze(["workflow-code-review", "logical-qa"]);
+
+/** The triage manifest, when its file exists and passes `vibe-triage.mjs check`; anything else is "no manifest", never an error. */
+export function loadTriageManifest(file) {
+  if (!file) return { status: TriageStatus.Absent, reason: "no manifest file given", manifest: null };
+  if (!existsSync(file)) return { status: TriageStatus.Absent, reason: "manifest file missing", manifest: null };
+  try {
+    return { status: TriageStatus.Valid, reason: null, manifest: validateManifest(JSON.parse(readFileSync(file, "utf8"))) };
+  } catch (error) {
+    return { status: TriageStatus.Invalid, reason: error instanceof Error ? error.message : String(error), manifest: null };
+  }
+}
+
+/**
+ * What the triage manifest adds to the diff-derived review `decision`. ITEM 2 = A (the owner's ruling, the
+ * operator's instruction in this task): the manifest may ADD review work (the adversarial reviewer beside the
+ * consolidated one, and its extra gates) and must NEVER remove a review review-scope.mjs already requires, so
+ * `decision` is returned untouched and only `addedReviews` and `extraGates` come from the manifest. It takes
+ * effect only when the manifest's own `effective` says the triage switch was on when it was classified (the
+ * same semantics as the environment and desktop recommendations); with the switch off it only records what
+ * would apply. A missing or invalid manifest is today's behavior.
+ */
+export function applyTriage({ decision, triage }) {
+  const none = { addedReviews: [], extraGates: [] };
+  if (triage.status !== TriageStatus.Valid) {
+    return { status: triage.status, reason: triage.reason, applied: false, ...none, wouldApply: none, ignoredGates: [] };
+  }
+  const { steps, class: cls } = triage.manifest;
+  const named = [...new Set(steps.extraGates.gates)];
+  const wouldApply = {
+    addedReviews: steps.review.scope === TRIAGE_SCOPE_ADDS_ADVERSARIAL && decision.mode === ReviewMode.Consolidated ? [ADVERSARIAL_REVIEWER] : [],
+    extraGates: named.filter((gate) => TRIAGE_GATES.includes(gate)),
+  };
+  const applied = steps.review.effective === REVIEW_EFFECTIVE.Apply && steps.extraGates.effective === REVIEW_EFFECTIVE.Apply;
+  return {
+    status: TriageStatus.Valid, reason: null, class: cls, scope: steps.review.scope, applied,
+    ...(applied ? wouldApply : none), wouldApply, ignoredGates: named.filter((gate) => !TRIAGE_GATES.includes(gate)),
+  };
+}
+
 function main(argv) {
   const { values } = parseArgs({ args: argv, options: {
     worktree: { type: "string" }, findings: { type: "string" }, inventory: { type: "string" }, base: { type: "string" },
-    config: { type: "string" }, enable: { type: "boolean" },
+    config: { type: "string" }, manifest: { type: "string" }, enable: { type: "boolean" },
   } });
   if (!values.worktree) throw new Error("--worktree is required");
   const thresholds = resolveThresholds({ config: values.config ? JSON.parse(readFileSync(values.config, "utf8")) : {} });
@@ -159,7 +204,8 @@ function main(argv) {
   const findings = loadFindings(values.findings, { head });
   const enabled = Boolean(values.enable) || process.env.VIBE_CONSOLIDATED_REVIEW === "1";
   const decision = decideReview({ enabled, thresholds, diff, findings });
-  process.stdout.write(`${JSON.stringify({ schema: REVIEW_SCOPE_SCHEMA, ...decision, thresholds, diff, findings: {
+  const triage = applyTriage({ decision, triage: loadTriageManifest(values.manifest) });
+  process.stdout.write(`${JSON.stringify({ schema: REVIEW_SCOPE_SCHEMA, ...decision, triage, thresholds, diff, findings: {
     status: findings.status, reason: findings.reason, count: findings.findings.length, checksRun: findings.checksRun, checksSkipped: findings.checksSkipped,
     partial: partialFindings(findings), items: findings.findings,
   } }, null, 2)}\n`);

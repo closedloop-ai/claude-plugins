@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { decideReview, FINDINGS_SCHEMA, loadFindings, partialFindings, REVIEW_SCOPE_DEFAULTS, resolveThresholds, ReviewMode, validateFindings } from "./review-scope.mjs";
+import { classify } from "../../vibe/scripts/vibe-triage.mjs";
+import { ADVERSARIAL_REVIEWER, applyTriage, decideReview, FINDINGS_SCHEMA, loadTriageManifest, TriageStatus, loadFindings, partialFindings, REVIEW_SCOPE_DEFAULTS, resolveThresholds, ReviewMode, validateFindings } from "./review-scope.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(DIR, "review-scope.mjs");
@@ -150,4 +151,95 @@ test("a partial: skip is not checked, escalates, and keeps its findings for the 
   assert.equal(out.mode, ReviewMode.FullFleet);
   assert.equal(out.findings.items.length, 2);
   assert.deepEqual(out.findings.partial.map((finding) => finding.check), ["tokens"]);
+});
+
+const UI_PATHS = ["apps/app/components/header.tsx", "apps/app/components/footer.tsx"];
+const BACKEND = ["apps/api/app/documents/route.ts"];
+const consolidatedDecision = { mode: ReviewMode.Consolidated, reasons: [] };
+const fleetDecision = { mode: ReviewMode.FullFleet, reasons: ["backend-change"] };
+const manifestFor = (paths, apply) => ({ status: TriageStatus.Valid, reason: null, manifest: classify({ paths, apply }) });
+
+test("triage switch off: the manifest's review output is recorded as wouldApply and nothing changes", () => {
+  const off = applyTriage({ decision: consolidatedDecision, triage: manifestFor(UI_PATHS, false) });
+  assert.equal(off.applied, false);
+  assert.deepEqual([off.addedReviews, off.extraGates], [[], []]);
+  assert.deepEqual(off.wouldApply.addedReviews, [ADVERSARIAL_REVIEWER]);
+  const backend = applyTriage({ decision: fleetDecision, triage: manifestFor(BACKEND, false) });
+  assert.deepEqual([backend.extraGates, backend.wouldApply.extraGates], [[], ["workflow-code-review"]]);
+});
+
+test("triage switch on: the scope adds the adversarial reviewer to a consolidated read and the extra gates are applied", () => {
+  const ui = applyTriage({ decision: consolidatedDecision, triage: manifestFor(UI_PATHS, true) });
+  assert.equal(ui.applied, true);
+  assert.deepEqual(ui.addedReviews, [ADVERSARIAL_REVIEWER]);
+  const metric = applyTriage({ decision: consolidatedDecision, triage: manifestFor(["packages/app/cost/cost-card.tsx"], true) });
+  assert.deepEqual(metric.extraGates, ["logical-qa"]);
+  const backend = applyTriage({ decision: fleetDecision, triage: manifestFor(BACKEND, true) });
+  assert.deepEqual([backend.addedReviews, backend.extraGates], [[], ["workflow-code-review"]]);
+  const light = applyTriage({ decision: consolidatedDecision, triage: manifestFor(["apps/app/components/header.tsx"], true) });
+  assert.deepEqual([light.addedReviews, light.extraGates], [[], []]);
+});
+
+test("a gate the handoff does not know is ignored, not run", () => {
+  const triage = manifestFor(BACKEND, true);
+  triage.manifest.steps.extraGates.gates.push("invented-gate");
+  const result = applyTriage({ decision: fleetDecision, triage });
+  assert.deepEqual(result.extraGates, ["workflow-code-review"]);
+  assert.deepEqual(result.ignoredGates, ["invented-gate"]);
+});
+
+test("the manifest never removes a review the diff required: the decision is untouched and no scope narrows it", () => {
+  for (const paths of [UI_PATHS, BACKEND, ["apps/app/components/header.tsx"], ["docs/guide.md"], ["apps/prototypes/a/page.tsx"], ["Dockerfile.unknown-area"]]) {
+    for (const apply of [true, false]) {
+      for (const decision of [consolidatedDecision, fleetDecision]) {
+        const before = structuredClone(decision);
+        const result = applyTriage({ decision, triage: manifestFor(paths, apply) });
+        assert.deepEqual(decision, before, "the decision object is not modified");
+        assert.ok(!("mode" in result) && !("reasons" in result), "the triage result carries no mode to replace the decision's");
+      }
+    }
+  }
+  const full = applyTriage({ decision: fleetDecision, triage: manifestFor(["apps/app/components/header.tsx"], true) });
+  assert.deepEqual([full.addedReviews, full.extraGates], [[], []]);
+});
+
+test("a missing, unreadable or invalid manifest is today's behavior, never an error", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "review-scope-triage-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const broken = path.join(dir, "broken.json");
+  writeFileSync(broken, "{nope");
+  const invalid = path.join(dir, "invalid.json");
+  const bad = classify({ paths: BACKEND, apply: true });
+  bad.steps.review.effective = "as-today";
+  writeFileSync(invalid, JSON.stringify(bad));
+  const cases = [[undefined, TriageStatus.Absent], [path.join(dir, "none.json"), TriageStatus.Absent], [broken, TriageStatus.Invalid], [invalid, TriageStatus.Invalid]];
+  for (const [file, status] of cases) {
+    const result = applyTriage({ decision: fleetDecision, triage: loadTriageManifest(file) });
+    assert.equal(result.status, status, String(file));
+    assert.equal(result.applied, false);
+    assert.deepEqual([result.addedReviews, result.extraGates], [[], []]);
+  }
+});
+
+test("the CLI reads --manifest: decision unchanged, triage applied only from a switch-on manifest", (t) => {
+  const { dir, side, base } = repo(t);
+  const write = (name, manifest) => {
+    const file = path.join(side, name);
+    writeFileSync(file, JSON.stringify(manifest));
+    return file;
+  };
+  const args = ["--worktree", dir, "--base", base];
+  const plain = run(args);
+  const off = run([...args, "--manifest", write("off.json", classify({ paths: BACKEND, apply: false }))]);
+  const on = run([...args, "--manifest", write("on.json", classify({ paths: BACKEND, apply: true }))]);
+  const missing = run([...args, "--manifest", path.join(side, "missing.json")]);
+  for (const result of [off, on, missing]) {
+    assert.equal(result.code, 0);
+    assert.equal(result.json.mode, plain.json.mode);
+    assert.deepEqual(result.json.reasons, plain.json.reasons);
+  }
+  assert.deepEqual([off.json.triage.applied, off.json.triage.extraGates, off.json.triage.wouldApply.extraGates], [false, [], ["workflow-code-review"]]);
+  assert.deepEqual([on.json.triage.applied, on.json.triage.extraGates], [true, ["workflow-code-review"]]);
+  assert.equal(missing.json.triage.status, TriageStatus.Absent);
+  assert.equal(plain.json.triage.status, TriageStatus.Absent);
 });

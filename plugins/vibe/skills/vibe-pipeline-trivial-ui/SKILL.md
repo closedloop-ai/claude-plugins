@@ -13,4 +13,4 @@ this skill cites them and restates none.
 
 - Review scope: `consolidated-light`.
 - Environment: recommended `defer` (create it on first view); Desktop: recommended `skip` only when the evidence names no Desktop-relevant surface. Both take effect only while the triage switch is on (PC-1).
-- The review scope and extra gates are recorded in the manifest for the consolidated reviewer; the handoff skill runs every review it runs today (PC-2).
+- The review scope and extra gates are read by the handoff's `review-scope.mjs --manifest`, which applies them only while the triage switch is on and only adds review work (`../vibe/references/triage.md`, "What the handoff does with the review steps"); the handoff skill runs every review it runs today (PC-2).

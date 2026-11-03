@@ -98,7 +98,12 @@ must not be written as if it had been made. Without the script, work as below.
    status and owner. Discovery alone is incomplete.
 3. Locate the relevant code: `.claude/skills/control/FEATURE_MAP.md`
    (`pnpm control feature list`, `feature show <id>`), confirmed with
-   closedloop-graph `code_symbols` on the screen's main component.
+   closedloop-graph `code_symbols` on the screen's main component. List the
+   `likelyFiles` from this research: the owner files and the hosts that import
+   them, as repo-relative paths, each with the source it came from (a graph
+   query such as `code_symbols` or `code_importers`, a FEATURE_MAP entry, or a
+   read of the worktree). Never list a file you only guess; with no such
+   evidence, return no `likelyFiles`.
 4. Note in-flight work on that code: run `blast_radius_tickets` on its route
    and main component files. List open GitHub pull requests and inspect their
    changed files, reporting every open pull request that touches any of those
@@ -190,8 +195,9 @@ on; the requirements as a short list quoted from their source (never
 invented), each named mechanism tagged `mechanism (proposal)` and each new
 data direction flagged `data direction (new)`; the Newest ruling and Prior removal lines; every
 acceptance criterion of the ticket and its PRD, quoted exactly with its source
-slug, or "none stated"; the route and FEATURE_MAP id where the relevant code lives, for
-change workers (not shown to the person); overlapping or in-flight tickets
+slug, or "none stated"; the route and FEATURE_MAP id where the relevant code lives and the
+`likelyFiles` (each `path` with its `source`, or none), for change workers (not
+shown to the person); overlapping or in-flight tickets
 (slug and title), open pull requests touching the same files, and each matched
 `EXECUTED` PRD with its `DONE` children and shipped rules; for a source PRD,
 every child with its scope classification, current status, owner and activity

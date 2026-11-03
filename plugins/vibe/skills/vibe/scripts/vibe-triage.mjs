@@ -6,14 +6,22 @@
 //
 // Usage:
 //   vibe-triage.mjs classify --request <text> [--ticket-file <file>]
-//                            [--paths <a,b,...> | --paths-file <file>] [--out <file>]
-//       Prints (and with --out writes) the manifest JSON.
+//                            [--paths <a,b,...> | --paths-file <file>] [--path-sources-file <file>] [--out <file>]
+//       Prints (and with --out writes) the manifest JSON. The paths are the
+//       likelyFiles of the requirements brief (ITEM 1 = B, the owner's ruling
+//       on the PR 362 review): files the worker found by research, not files the
+//       writer touched. The manifest records them as `evidence.likelyFiles`, each
+//       with its source, read from --path-sources-file (a JSON array of
+//       {path, source}). With no paths the class comes from the text alone.
 //   vibe-triage.mjs check --manifest <file>
 //       Prints {"ok":true,...} or exits 1 when the manifest breaks the schema.
 //
 // The manifest RECOMMENDS two things for some classes: create the environment
 // on first need (`environment`: defer) and leave Desktop out (`desktop`: skip).
 // Each recommendation is logged in `skipped` with its reason and evidence.
+// `steps.review` and `steps.extraGates` carry the same `effective` pair, read by
+// the handoff's review-scope.mjs (ITEM 2 = A): "apply" with the switch on,
+// "as-today" with it off.
 // Today's flow does not change: every step's `effective` is "run" unless the
 // switch VIBE_TRIAGE_APPLY_RECOMMENDATIONS is set to 1 when `classify` runs.
 // The switch is off by default and `classify` is its only reader. Whether
@@ -48,6 +56,10 @@ export const CLASSES = Object.freeze({
 export const ACTIONS = Object.freeze({ Run: "run", Defer: "defer", Skip: "skip", Unknown: "unknown" });
 
 export const POLICY = "required (policy)";
+
+// `effective` of the review steps: "apply" only when the switch was on at classify time.
+export const REVIEW_EFFECTIVE = Object.freeze({ Apply: "apply", AsToday: "as-today" });
+export const NO_SOURCE = "source not recorded";
 
 // Steps of today's flow. A class never removes one; only `environment` and
 // `desktop` carry a recommendation, and it takes effect only with the switch.
@@ -118,16 +130,16 @@ function classifyByPaths(paths) {
   const considered = products.length ? products : paths;
   const kinds = considered.map(pathKind);
   const has = (kind) => kinds.includes(kind);
-  if (has("other")) return { cls: CLASSES.Unknown, reason: ["a touched file is in no known area"] };
-  if (has("metric")) return { cls: CLASSES.DataMetric, reason: ["a touched file is a metric or cost surface"] };
-  if (kinds.every((kind) => kind === "prototype")) return { cls: CLASSES.Mockup, reason: ["every touched file is under apps/prototypes"] };
+  if (has("other")) return { cls: CLASSES.Unknown, reason: ["a likely file is in no known area"] };
+  if (has("metric")) return { cls: CLASSES.DataMetric, reason: ["a likely file is a metric or cost surface"] };
+  if (kinds.every((kind) => kind === "prototype")) return { cls: CLASSES.Mockup, reason: ["every likely file is under apps/prototypes"] };
   const ui = kinds.filter((kind) => kind === "ui" || kind === "prototype").length;
   if (ui > 0) {
     if (ui === 1 && !has("backend")) return { cls: CLASSES.TrivialUi, reason: ["one UI file and no backend file"] };
-    return { cls: CLASSES.UiFeature, reason: [has("backend") ? "UI and backend files are touched together" : "more than one UI file is touched"] };
+    return { cls: CLASSES.UiFeature, reason: [has("backend") ? "UI and backend files are likely together" : "more than one UI file is likely"] };
   }
-  if (has("backend")) return { cls: CLASSES.Backend, reason: ["only backend files are touched (no UI file)"] };
-  return { cls: CLASSES.DocsConfig, reason: ["only docs, scripts or config files are touched"] };
+  if (has("backend")) return { cls: CLASSES.Backend, reason: ["only backend files are likely (no UI file)"] };
+  return { cls: CLASSES.DocsConfig, reason: ["only docs, scripts or config files are likely"] };
 }
 
 function classifyByText(text) {
@@ -203,7 +215,7 @@ function effectiveFor(recommendation, applied) {
  * request and ticket text decide it before any path exists. `apply` is the
  * switch's state (see SWITCH_ENV).
  */
-export function classify({ request = "", ticketText = "", paths = [], apply = false }) {
+export function classify({ request = "", ticketText = "", paths = [], pathSources = [], apply = false }) {
   const text = `${request}\n${ticketText}`;
   const byPaths = paths.length ? classifyByPaths(paths) : null;
   const byText = classifyByText(text);
@@ -221,18 +233,24 @@ export function classify({ request = "", ticketText = "", paths = [], apply = fa
     }
   }
   const review = CLASS_REVIEW[chosen.cls];
-  steps.review = { state: "required", scope: review.scope };
-  steps.extraGates = { state: review.gates.length ? "required" : "none", gates: [...review.gates] };
+  const reviewEffective = apply ? REVIEW_EFFECTIVE.Apply : REVIEW_EFFECTIVE.AsToday;
+  steps.review = { state: "required", scope: review.scope, effective: reviewEffective };
+  steps.extraGates = { state: review.gates.length ? "required" : "none", gates: [...review.gates], effective: reviewEffective };
   steps.e2e = { state: "required", source: E2E_SOURCE };
   return {
     schemaVersion: SCHEMA_VERSION,
     class: chosen.cls,
     reason: chosen.reason,
-    evidence: { paths: [...paths], keywords: byText.keywords, sources, desktopRelevant: desktop.relevant },
+    evidence: { paths: [...paths], likelyFiles: likelyFilesOf(paths, pathSources), keywords: byText.keywords, sources, desktopRelevant: desktop.relevant },
     applyRecommendations: apply,
     steps,
     skipped,
   };
+}
+
+function likelyFilesOf(paths, pathSources) {
+  const sourceOf = new Map(pathSources.map((entry) => [entry.path, entry.source]));
+  return paths.map((file) => ({ path: file, source: sourceOf.get(file) || NO_SOURCE }));
 }
 
 /** Throws a message naming the first schema violation; returns the manifest otherwise. */
@@ -248,6 +266,7 @@ export function validateManifest(manifest) {
   if (!evidence || !Array.isArray(evidence.paths) || !Array.isArray(evidence.keywords) || !Array.isArray(evidence.sources)) {
     fail("evidence needs paths, keywords and sources arrays");
   }
+  validateLikelyFiles(evidence);
   if (typeof manifest.applyRecommendations !== "boolean") fail("applyRecommendations must be a boolean");
   const steps = manifest.steps;
   if (!steps || typeof steps !== "object") fail("steps missing");
@@ -274,6 +293,10 @@ export function validateManifest(manifest) {
   }
   if (typeof steps.review?.scope !== "string") fail("step review needs a scope");
   if (!Array.isArray(steps.extraGates?.gates)) fail("step extraGates needs a gates array");
+  const reviewWanted = manifest.applyRecommendations ? REVIEW_EFFECTIVE.Apply : REVIEW_EFFECTIVE.AsToday;
+  for (const id of ["review", "extraGates"]) {
+    if (steps[id].effective !== reviewWanted) fail(`step ${id} effective must be "${reviewWanted}" with applyRecommendations ${manifest.applyRecommendations}`);
+  }
   if (steps.e2e?.source !== E2E_SOURCE) fail("step e2e must take its source from test:lanes");
   if (!Array.isArray(manifest.skipped)) fail("skipped must be an array");
   const skippedIds = manifest.skipped.map((entry) => entry?.step).sort();
@@ -285,6 +308,17 @@ export function validateManifest(manifest) {
     if (entry.applied !== manifest.applyRecommendations) fail(`skipped entry ${entry.step} applied must match applyRecommendations`);
   }
   return manifest;
+}
+
+function validateLikelyFiles(evidence) {
+  const fail = (message) => {
+    throw new Error(`invalid manifest: ${message}`);
+  };
+  const files = evidence.likelyFiles;
+  if (!Array.isArray(files)) fail("evidence needs a likelyFiles array");
+  const valid = files.every((entry) => typeof entry?.path === "string" && entry.path && typeof entry.source === "string" && entry.source);
+  if (!valid) fail("every likelyFiles entry needs a path and a source");
+  if (JSON.stringify(files.map((entry) => entry.path)) !== JSON.stringify(evidence.paths)) fail("likelyFiles must list exactly evidence.paths");
 }
 
 function effectiveOf(recommendation) {
@@ -301,15 +335,22 @@ function readPaths(values) {
   return parsePathList(values.paths);
 }
 
+function readPathSources(file) {
+  if (!file) return [];
+  const value = JSON.parse(readFileSync(file, "utf8"));
+  if (!Array.isArray(value)) throw new Error("--path-sources-file must hold a JSON array of {path, source}");
+  return value.filter((entry) => typeof entry?.path === "string" && typeof entry?.source === "string");
+}
+
 function main(argv) {
   const [command, ...rest] = argv;
   const { values } = parseArgs({
     args: rest,
-    options: { request: { type: "string" }, "ticket-file": { type: "string" }, paths: { type: "string" }, "paths-file": { type: "string" }, manifest: { type: "string" }, out: { type: "string" } },
+    options: { request: { type: "string" }, "ticket-file": { type: "string" }, paths: { type: "string" }, "paths-file": { type: "string" }, "path-sources-file": { type: "string" }, manifest: { type: "string" }, out: { type: "string" } },
   });
   if (command === "classify") {
     const ticketText = values["ticket-file"] ? readFileSync(values["ticket-file"], "utf8") : "";
-    const manifest = classify({ request: values.request ?? "", ticketText, paths: readPaths(values), apply: switchOn() });
+    const manifest = classify({ request: values.request ?? "", ticketText, paths: readPaths(values), pathSources: readPathSources(values["path-sources-file"]), apply: switchOn() });
     const text = `${JSON.stringify(manifest, null, 2)}\n`;
     if (values.out) writeFileSync(values.out, text);
     process.stdout.write(text);

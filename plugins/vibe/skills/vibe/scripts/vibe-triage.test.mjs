@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { ACTIONS, CLASSES, E2E_SOURCE, POLICY, POLICY_STEPS, SWITCH_ENV, classify, parsePathList, pathKind, switchOn, validateManifest } from "./vibe-triage.mjs";
+import { ACTIONS, CLASSES, E2E_SOURCE, NO_SOURCE, POLICY, POLICY_STEPS, REVIEW_EFFECTIVE, SWITCH_ENV, classify, parsePathList, pathKind, switchOn, validateManifest } from "./vibe-triage.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "vibe-triage.mjs");
 const run = (args, env = {}) => spawnSync("node", [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, [SWITCH_ENV]: "", ...env } });
@@ -175,4 +175,52 @@ test("the same input gives the same manifest", () => {
   assert.deepEqual(classify({ paths: BACKEND_PATHS, request: "x" }), classify({ paths: BACKEND_PATHS, request: "x" }));
   assert.deepEqual(parsePathList("a.ts, ./b.ts\nc.ts\n"), ["a.ts", "b.ts", "c.ts"]);
   assert.equal(pathKind("apps/api/app/x.test.ts"), "test");
+});
+
+test("paths are recorded as the brief's likely files with their sources, and the class is still set once from them", () => {
+  const sources = [{ path: BACKEND_PATHS[0], source: "closedloop-graph code_symbols" }, { path: BACKEND_PATHS[2], source: "FEATURE_MAP entry documents" }];
+  const manifest = classify({ paths: BACKEND_PATHS, pathSources: sources });
+  assert.deepEqual(manifest.evidence.likelyFiles, [
+    { path: BACKEND_PATHS[0], source: "closedloop-graph code_symbols" },
+    { path: BACKEND_PATHS[1], source: NO_SOURCE },
+    { path: BACKEND_PATHS[2], source: "FEATURE_MAP entry documents" },
+  ]);
+  assert.deepEqual(manifest.evidence.paths, BACKEND_PATHS);
+  assert.equal(manifest.class, CLASSES.Backend);
+  validateManifest(manifest);
+  const bad = structuredClone(manifest);
+  bad.evidence.likelyFiles.pop();
+  assert.throws(() => validateManifest(bad), /likelyFiles must list exactly evidence.paths/);
+  const noSource = structuredClone(manifest);
+  noSource.evidence.likelyFiles[0].source = "";
+  assert.throws(() => validateManifest(noSource), /needs a path and a source/);
+});
+
+test("no likelyFiles means no paths: the class comes from the text alone and records no likely files", () => {
+  const manifest = classify({ request: "Add an audit entry to the write path of the documents API route" });
+  assert.deepEqual(manifest.evidence.paths, []);
+  assert.deepEqual(manifest.evidence.likelyFiles, []);
+  assert.deepEqual(manifest.evidence.sources, ["text"]);
+});
+
+test("the CLI takes --paths and --path-sources-file and records them as likely files", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "vibe-triage-sources-"));
+  const sources = path.join(dir, "sources.json");
+  writeFileSync(sources, JSON.stringify([{ path: WEB_UI_PATHS[0], source: "FEATURE_MAP entry header" }]));
+  const manifest = JSON.parse(run(["classify", "--paths", WEB_UI_PATHS.join(","), "--path-sources-file", sources]).stdout);
+  assert.deepEqual(manifest.evidence.likelyFiles.map((entry) => entry.source), ["FEATURE_MAP entry header", NO_SOURCE]);
+  const none = JSON.parse(run(["classify", "--request", "Rename the header on the settings page"]).stdout);
+  assert.deepEqual(none.evidence.likelyFiles, []);
+});
+
+test("the review steps carry effective: apply with the switch on and as-today with it off, and check enforces it", () => {
+  const off = classify({ paths: BACKEND_PATHS });
+  const on = classify({ paths: BACKEND_PATHS, apply: true });
+  for (const id of ["review", "extraGates"]) {
+    assert.equal(off.steps[id].effective, REVIEW_EFFECTIVE.AsToday, id);
+    assert.equal(on.steps[id].effective, REVIEW_EFFECTIVE.Apply, id);
+  }
+  const moved = structuredClone(off);
+  moved.steps.extraGates.effective = REVIEW_EFFECTIVE.Apply;
+  assert.throws(() => validateManifest(moved), /step extraGates effective must be "as-today"/);
 });

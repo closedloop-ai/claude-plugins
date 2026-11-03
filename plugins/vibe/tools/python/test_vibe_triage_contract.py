@@ -161,3 +161,53 @@ def test_ui_feature_skill_states_what_the_script_recommends_for_desktop() -> Non
     skill = flat((SKILLS / "vibe-pipeline-ui-feature" / "SKILL.md").read_text())
     assert "Neither is ever left out" not in skill
     assert "a web-only multi-file UI change leaves Desktop out" in skill
+
+
+def test_requirements_brief_returns_likely_files_with_sources_and_step_7_passes_exactly_them() -> None:
+    worker = flat((PLUGIN_ROOT / "agents" / "vibe-requirements-worker.md").read_text())
+    assert "`likelyFiles`" in worker
+    assert "each `path` with its `source`" in worker
+    assert "Never list a file you only guess" in worker
+    assert "owner files and the hosts that import them" in worker
+    skill = flat((VIBE / "SKILL.md").read_text())
+    assert "passing the brief's `likelyFiles` as `--paths`" in skill
+    assert "their sources as `--path-sources-file`" in skill
+    assert "no `--paths` when the brief has none" in skill
+    reference = flat(TRIAGE.read_text())
+    assert "`--paths` is exactly the `likelyFiles` of the requirements worker's brief" in reference
+    assert "pass no `--paths`: the class comes from the request and ticket text alone" in reference
+    assert "`evidence.paths` are the brief's likely files, not touched files" in reference
+    assert "<likely files from the brief>" not in reference
+
+
+def test_no_likely_files_means_no_paths_and_the_class_is_set_once() -> None:
+    manifest = classify("--request", "Add an audit entry to the write path of the documents API route")
+    assert manifest["evidence"]["paths"] == []
+    assert manifest["evidence"]["likelyFiles"] == []
+    assert manifest["evidence"]["sources"] == ["text"]
+    assert "The class is set once; it is not re-classified" in flat(TRIAGE.read_text())
+
+
+def test_handoff_reads_the_manifest_through_review_scope_and_only_adds_review_work() -> None:
+    handoff = flat((SKILLS / "handoff" / "SKILL.md").read_text())
+    assert "add `--manifest <file>` to that command" in handoff
+    assert "a missing or invalid one changes nothing" in handoff
+    assert "When its `triage.applied` is `true` (the triage switch was on at classify time)" in handoff
+    assert "each `triage.extraGates` entry (`workflow-code-review`, `logical-qa`) as an additional gate" in handoff
+    assert "The manifest only adds review work: `mode` and its reasons stay as the diff decided them, so it never removes a review." in handoff
+    assert "With `applied` `false`, run nothing extra." in handoff
+    reference = flat(section(TRIAGE.read_text(), "## What the handoff does with the review steps"))
+    assert "ITEM 2 = A" in reference
+    assert "never removes a review the diff-derived `mode` already requires" in reference
+    scope = (SKILLS / "handoff" / "scripts" / "review-scope.mjs").read_text()
+    assert "ITEM 2 = A" in scope and "must NEVER remove a review review-scope.mjs already requires" in scope
+    assert "VIBE_TRIAGE_APPLY_RECOMMENDATIONS" not in scope, "the reader reads the manifest's effective, never the switch"
+    assert "process.env.VIBE_TRIAGE" not in scope
+
+
+def test_class_skills_name_the_real_reader_of_the_review_steps() -> None:
+    for name in CLASS_SKILLS:
+        text = flat((SKILLS / name / "SKILL.md").read_text())
+        assert "recorded in the manifest for the consolidated reviewer" not in text, name
+        assert "read by the handoff's `review-scope.mjs --manifest`" in text, name
+        assert "only adds review work" in text, name

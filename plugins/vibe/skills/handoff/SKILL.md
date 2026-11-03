@@ -494,6 +494,21 @@ the backend passes still run. Any other output, a missing script or file, a
 skipped check or an error means the existing reviewers run unchanged. The
 escalation numbers are `REVIEW_SCOPE_DEFAULTS` in that script, unruled.
 
+Triage manifest (ITEM 2 = A, the owner's ruling): when the session has a
+triage manifest file (`../vibe/references/triage.md`), add
+`--manifest <file>` to that command, and run it for the manifest even when no
+findings file exists (the decision is then the existing full review). The script reads the manifest only when
+it passes `vibe-triage.mjs check`; a missing or invalid one changes nothing.
+When its `triage.applied` is `true` (the triage switch was on at classify
+time), also run each `triage.addedReviews` entry (`vibe-adversarial-reviewer`
+beside the consolidated reviewer, when the manifest scope asks for it) and each
+`triage.extraGates` entry (`workflow-code-review`, `logical-qa`) as an
+additional gate on the final diff, skipping one this handoff already ran for
+this head; their confirmed findings are handled like any handoff reviewer's.
+The manifest only adds review work: `mode` and its reasons stay as the diff
+decided them, so it never removes a review. With `applied` `false`, run
+nothing extra.
+
 Lighter: repo `review-soul` and `vibe-adversarial-reviewer`
 may review independently in parallel, read-only. Backend: named core
 `workflow-code-review` runs its two existing review passes

@@ -628,7 +628,9 @@ and its answer on it: `node scripts/plugin-version.mjs adopt --worktree
    Keep the ticket link in the session record for completion and handoff.
 7. Classify the work and stand up the environment (section 3). Run
    `scripts/vibe-triage.mjs classify` and keep its manifest
-   (`references/triage.md`); for the class it names, other than `unknown`
+   (`references/triage.md`), passing the brief's `likelyFiles` as `--paths` and
+   their sources as `--path-sources-file`, and no `--paths` when the brief has
+   none; for the class it names, other than `unknown`
    or `mockup`, also load that class's pipeline skill. Section 3 runs now unless
    the manifest's `environment` step has `effective: defer`, which happens only
    while the triage switch is on (off by default).
