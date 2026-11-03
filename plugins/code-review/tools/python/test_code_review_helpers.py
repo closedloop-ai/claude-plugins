@@ -1595,10 +1595,11 @@ class TestPartitionPostProcessing:
         assert len(result["partitions"]) == 5
         assert result["force_merged_count"] > 0
 
-    def test_cap_enforcement_cross_type_force_merge(self) -> None:
+    def test_cap_enforcement_force_merge_prefers_same_type(self) -> None:
         # 4 impl files + 4 test files at 700 LOC each -> 8 partitions.
         # 700+700=1400 > REBALANCE_LOC_BUDGET=1200, Phase 2a can't merge.
-        # Phase 2b force-merges cross-type until 4 partitions.
+        # Phase 2b force-merges within each type until 4 partitions, so the
+        # impl/test split and the test-only routing survive.
         impl_files = [f"src/f{i}.ts" for i in range(4)]
         test_files = [f"tests/test_f{i}.ts" for i in range(4)]
         files = impl_files + test_files
@@ -1607,6 +1608,20 @@ class TestPartitionPostProcessing:
         result = self._run_partition(data, loc_budget=1000, max_files=20, max_bha_agents=4)
         assert len(result["partitions"]) == 4
         assert result["force_merged_count"] > 0
+        for part in result["partitions"]:
+            assert len({f["is_test"] for f in part["files"]}) == 1
+        assert sum(p["is_test_only"] for p in result["partitions"]) == 2
+
+    def test_cap_enforcement_force_merge_falls_back_to_cross_type(self) -> None:
+        # One impl and one test partition, cap 1: no same-type pair exists,
+        # so Phase 2b merges across types rather than leave the cap exceeded.
+        files = ["src/f0.ts", "tests/test_f0.ts"]
+        loc = {f: {"added": 700, "removed": 0} for f in files}
+        data = _make_diff_data(files=files, loc=loc)
+        result = self._run_partition(data, loc_budget=1000, max_files=20, max_bha_agents=1)
+        assert len(result["partitions"]) == 1
+        assert {f["file"] for f in result["partitions"][0]["files"]} == set(files)
+        assert result["partitions"][0]["is_test_only"] is False
 
     def test_cap_enforcement_force_merge_ignores_max_files(self) -> None:
         # 6 files at 700 LOC, max_files=1 blocks all merges in Phase 2a.
@@ -20101,21 +20116,11 @@ class TestBhaPartitionsWithinAgentBudget:
             ranges={f: {"added": [[1, n]], "removed": []} for f, n in loc_by_file.items()},
         )
 
-    @staticmethod
-    def _domain_critic_gates(tmp_path: Path) -> str:
-        gates_path = tmp_path / "critic-gates.json"
-        gates_path.write_text(json.dumps({
-            "defaults": {"reviewBudget": 2},
-            "moduleCritics": [{"patterns": [".ts"], "critics": ["ts-reviewer"]}],
-        }))
-        return str(gates_path)
-
     def _route_and_partition(
         self,
         tmp_path: Path,
         diff_data: dict[str, Any],
         *,
-        critic_gates: str | None = None,
         unified_threshold: int = BHA_UNIFIED_THRESHOLD_LOC,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         from golden_fixture_harness import run_with_stdout_capture
@@ -20129,7 +20134,7 @@ class TestBhaPartitionsWithinAgentBudget:
         dd_path = tmp_path / "diff_data.json"
         dd_path.write_text(json.dumps(diff_data))
         route = json.loads(run_with_stdout_capture(cmd_route, argparse.Namespace(
-            diff_data=str(dd_path), critic_gates=critic_gates,
+            diff_data=str(dd_path), critic_gates=None,
             intent="mixed", cr_dir=None,
         )))
         partitions = json.loads(run_with_stdout_capture(cmd_partition, argparse.Namespace(
@@ -20179,22 +20184,40 @@ class TestBhaPartitionsWithinAgentBudget:
             diff_data, partitions, spec, final["budget"]["bha_partitions"],
         )
 
-    @pytest.mark.parametrize("with_domain_critic", [False, True])
     def test_mixed_impl_test_split_near_unified_boundary(
-        self, tmp_path: Path, with_domain_critic: bool,
+        self, tmp_path: Path,
     ) -> None:
         # 10 x 300 impl + 10 x 250 test = 5,500 LOC, just above the unified
-        # threshold. Impl and test partitions cannot merge with each other in
-        # the budget-respecting pass, so the count stays above ceil(5500/1200).
+        # threshold. The budget-respecting pass cannot merge impl with test
+        # partitions, so the partitioner force-merges down to the 5 agents
+        # arbitrate-budget reserves (ceil(5500/1200) = 5), covering every file.
         loc = {f"src/f{i}.ts": 300 for i in range(10)}
         loc.update({f"tests/f{i}.test.ts": 250 for i in range(10)})
         diff_data = self._diff(loc)
-        gates = self._domain_critic_gates(tmp_path) if with_domain_critic else None
-        final, partitions, spec = self._standard_pipeline(
-            tmp_path, diff_data, critic_gates=gates,
-        )
+        final, partitions, spec = self._standard_pipeline(tmp_path, diff_data)
         assert partitions["partition_mode"] == "partitioned"
         assert final["budget"]["bha_partitions"] == 5
+        self._assert_every_file_has_an_agent(
+            diff_data, partitions, spec, final["budget"]["bha_partitions"],
+        )
+
+    def test_force_merge_keeps_impl_and_test_partitions_apart(
+        self, tmp_path: Path,
+    ) -> None:
+        # 10 impl + 10 test files at 275 LOC = 5,500 LOC. The budget-respecting
+        # pass stops at 6 partitions, so the force-merge has to fold one more:
+        # it merges within a type, keeping a test-only partition (Sonnet).
+        loc = {f"src/f{i}.ts": 275 for i in range(10)}
+        loc.update({f"tests/f{i}.test.ts": 275 for i in range(10)})
+        diff_data = self._diff(loc)
+        final, partitions, spec = self._standard_pipeline(tmp_path, diff_data)
+        parts = partitions["partitions"]
+        assert len(parts) <= 5
+        assert partitions["force_merged_count"] > 0
+        assert any(p["is_test_only"] for p in parts)
+        for p in parts:
+            kinds = {f["is_test"] for f in p["files"]}
+            assert len(kinds) == 1, f"partition {p['id']} mixes impl and test files"
         self._assert_every_file_has_an_agent(
             diff_data, partitions, spec, final["budget"]["bha_partitions"],
         )
@@ -20239,27 +20262,32 @@ class TestBhaPartitionsWithinAgentBudget:
             diff_data, partitions, spec, DEFAULT_MAX_BHA_AGENTS,
         )
 
+    @staticmethod
+    def _run_static_spec(tmp_path: Path, partition_count: int) -> dict[str, Any]:
+        from code_review_helpers import _write_spawn_section, cmd_derive_static_spec
+        from golden_fixture_harness import run_with_stdout_capture
+
+        p_path = tmp_path / "partitions.json"
+        p_path.write_text(json.dumps({"partitions": [
+            {"id": i, "files": [{"file": f"src/{i}.ts"}], "is_test_only": False}
+            for i in range(partition_count)
+        ]}))
+        _write_spawn_section(tmp_path, "route", {"fast_path": False})
+        if not (tmp_path / "scope.json").exists():
+            _seed_scope_review_root(tmp_path, tmp_path / "review_root_repo")
+        run_with_stdout_capture(cmd_derive_static_spec, argparse.Namespace(
+            cr_dir=str(tmp_path), partitions=str(p_path),
+        ))
+        return json.loads((tmp_path / "spawn.json").read_text())["spec"]
+
     def test_shallow_static_spec_reports_a_capped_partition_as_a_gap(
         self, tmp_path: Path,
     ) -> None:
         """A partitions.json with more partitions than the static cap (not
         produced by the route-capped partitioner) records a required
         coverage gap rather than dropping files silently."""
-        from code_review_helpers import _write_spawn_section, cmd_derive_static_spec
-        from golden_fixture_harness import run_with_stdout_capture
-
         count = DEFAULT_MAX_BHA_AGENTS + 1
-        p_path = tmp_path / "partitions.json"
-        p_path.write_text(json.dumps({"partitions": [
-            {"id": i, "files": [{"file": f"src/{i}.ts"}], "is_test_only": False}
-            for i in range(count)
-        ]}))
-        _write_spawn_section(tmp_path, "route", {"fast_path": False})
-        _seed_scope_review_root(tmp_path, tmp_path / "review_root_repo")
-        run_with_stdout_capture(cmd_derive_static_spec, argparse.Namespace(
-            cr_dir=str(tmp_path), partitions=str(p_path),
-        ))
-        spec = json.loads((tmp_path / "spawn.json").read_text())["spec"]
+        spec = self._run_static_spec(tmp_path, count)
         capped = [s for s in spec["skipped"] if s.get("reason") == "budget_capped"]
         assert [s["partition_id"] for s in capped] == [count - 1]
         gaps = json.loads((tmp_path / "coverage_gaps.json").read_text())["findings"]
@@ -20267,6 +20295,19 @@ class TestBhaPartitionsWithinAgentBudget:
         assert gaps[0]["required"] is True
         assert gaps[0]["category"] == "Coverage"
         assert spec["stats"]["required_coverage_gaps"] == 1
+
+    def test_shallow_static_spec_rerun_does_not_duplicate_or_keep_a_gap(
+        self, tmp_path: Path,
+    ) -> None:
+        """Shallow has no arbitrate-budget to reset coverage_gaps.json, so a
+        resumed stage_19c must not append a second copy of its gap, and a
+        clean re-run must not leave the earlier one behind."""
+        gaps_path = tmp_path / "coverage_gaps.json"
+        self._run_static_spec(tmp_path, DEFAULT_MAX_BHA_AGENTS + 1)
+        self._run_static_spec(tmp_path, DEFAULT_MAX_BHA_AGENTS + 1)
+        assert len(json.loads(gaps_path.read_text())["findings"]) == 1
+        self._run_static_spec(tmp_path, DEFAULT_MAX_BHA_AGENTS)
+        assert json.loads(gaps_path.read_text())["findings"] == []
 
 
 class TestISS10869DocsOnlyBhaSkip:

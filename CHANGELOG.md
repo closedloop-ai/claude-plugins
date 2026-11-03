@@ -7,8 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### code-review v3.13.1
 
 #### Fixed
-- `route` now derives `max_bha_agents` from `_max_bha_partitions_by_loc`, the same LOC-based count `arbitrate-budget` reserves as `budget.bha_partitions`, instead of `9 - 2 - <domain critics>`. The partitioner can no longer emit more Bug Hunter A partitions than there are agents, so no partition's files are dropped as `budget_capped`.
-- `derive-static-spec` records a required coverage gap for a `budget_capped` Bug Hunter A partition, matching `derive-spawn-spec`.
+- `route` now derives `max_bha_agents` from `_max_bha_partitions_by_loc` over the full `diff_data.json`, the same LOC-based count `arbitrate-budget` reserves as `budget.bha_partitions`, instead of `9 - 2 - <domain critics>`. When a cache dir is active the partitioner reads `uncached_diff_data.json`, whose LOC is at most the full diff's, and still force-merges to that count. It can no longer emit more Bug Hunter A partitions than there are agents, so no partition's files are dropped as `budget_capped`.
+- The partitioner's force-merge pass merges the two smallest partitions of the same type (implementation or test) first, and merges across types only when no type has two partitions left, so test-only partitions keep their model routing.
+- `derive-static-spec` records a required coverage gap for a `budget_capped` Bug Hunter A partition, matching `derive-spawn-spec`, using the same set of benign skip reasons. It resets `coverage_gaps.json` first, so a re-run neither duplicates the gap nor keeps a stale one.
 
 ### vibe v1.1.31
 

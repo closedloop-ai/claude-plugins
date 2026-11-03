@@ -1797,6 +1797,27 @@ def _write_per_partition_patches(
     return written
 
 
+def _smallest_force_merge_pair(partitions: list[dict[str, Any]]) -> tuple[int, int]:
+    """Indices ``(a, b)``, ``a < b``, of the pair Pass 2b merges next.
+
+    ``partitions`` must be sorted by ``total_loc`` ascending. Picks the
+    smallest-combined-LOC pair of the same ``is_test_only`` type (the two
+    smallest of that type); falls back to the two smallest overall when no
+    type has two partitions.
+    """
+    best: tuple[int, int] | None = None
+    best_loc = 0
+    for is_test in (True, False):
+        same_type = [i for i, p in enumerate(partitions) if p["is_test_only"] == is_test]
+        if len(same_type) < 2:
+            continue
+        merged_loc = partitions[same_type[0]]["total_loc"] + partitions[same_type[1]]["total_loc"]
+        if best is None or merged_loc < best_loc:
+            best = (same_type[0], same_type[1])
+            best_loc = merged_loc
+    return best if best is not None else (0, 1)
+
+
 def cmd_partition(args: argparse.Namespace) -> int:
     """Execute partition subcommand.
 
@@ -2046,12 +2067,15 @@ def cmd_partition(args: argparse.Namespace) -> int:
 
     # Pass 2b -- Unconditional cap enforcement (force-merge fallback)
     # When Phase 2a cannot reduce further, ignore budget and max_files constraints.
-    # Sort by total_loc ascending, merge the two smallest partitions (any type).
+    # Merge the two smallest partitions of one type, so Pass 1's impl/test
+    # split and the test-only model routing survive; merge the two smallest
+    # of any type only when no type has two partitions left.
     force_merged_count = 0
     while len(partitions) > max_bha_agents:
         partitions.sort(key=lambda p: p["total_loc"])
-        part_a = partitions.pop(0)
-        part_b = partitions.pop(0)
+        idx_a, idx_b = _smallest_force_merge_pair(partitions)
+        part_b = partitions.pop(idx_b)
+        part_a = partitions.pop(idx_a)
         merged_files = part_a["files"] + part_b["files"]
         is_test_only = all(f.get("is_test", False) for f in merged_files)
         new_part = {
@@ -12722,9 +12746,11 @@ def _max_bha_partitions_by_loc(
     The single source for that number. ``route`` passes it to ``partition``
     as ``--max-bha-agents`` (with its fleet-slot cap as ``slot_cap``) and
     ``arbitrate-budget`` reserves it as ``budget.bha_partitions``. Both read
-    the same ``diff_data.json``, so the partitioner never emits more
-    partitions than there are agents and ``budget_capped`` cannot drop a
-    partition's files.
+    the full ``diff_data.json``. When a cache dir is active the partitioner
+    reads ``uncached_diff_data.json`` instead, a subset whose LOC is at most
+    the full diff's, and it still force-merges down to the route's value, so
+    the partition count never exceeds the agents reserved and
+    ``budget_capped`` cannot drop a partition's files.
     """
     total_loc = int(diff_data.get("total_loc") or 0)
     by_budget = max(1, (total_loc + REBALANCE_LOC_BUDGET - 1) // REBALANCE_LOC_BUDGET)
@@ -13349,6 +13375,17 @@ def _spawn_bha_model(
     return str(bha_models or "opus")
 
 
+# Required-bucket skip reasons that are intentional omissions, not coverage
+# gaps. Shared by derive-spawn-spec and derive-static-spec so the two tiers
+# report the same skips as gaps.
+_SPAWN_BENIGN_REQUIRED_SKIPS: frozenset[str] = frozenset({
+    "deferred_pln723",      # PLN-723 placeholder slot
+    "no_partitions",        # all files cached, or only deleted files left
+    "docs_only",            # arbitrate-budget waived the BHA floor
+    "gated_by_verify",      # BLOCKING sanitization
+})
+
+
 def _derive_spawn_agents_from_plan(
     coverage_plan: dict[str, Any],
     partitions: list[dict[str, Any]],
@@ -13776,12 +13813,6 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     # all-cached no_partitions, the docs_only BHA floor waiver,
     # gated_by_verify suppression) are explicitly excluded — those are intentional omissions, not
     # coverage gaps.
-    _SPAWN_BENIGN_REQUIRED_SKIPS = {
-        "deferred_pln723",      # PLN-723 placeholder slot
-        "no_partitions",        # all files cached, or only deleted files left
-        "docs_only",            # arbitrate-budget waived the BHA floor
-        "gated_by_verify",      # BLOCKING sanitization
-    }
     spawn_gap_findings = _build_spawn_required_gap_findings(
         skipped, _SPAWN_BENIGN_REQUIRED_SKIPS, emitted_at=now_iso,
     )
@@ -13857,6 +13888,15 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
     if review_root is None:
         return refusal_rc
 
+    # Shallow runs no arbitrate-budget, which is what resets
+    # coverage_gaps.json on standard; this stage is the file's first writer
+    # here, so reset it to keep a re-run from duplicating or keeping a gap.
+    gaps_path = cr_dir / "coverage_gaps.json"
+    try:
+        gaps_path.write_text(json.dumps({"findings": []}, indent=2))
+    except OSError as exc:
+        print(f"Warning: could not reset coverage gaps: {exc}", file=sys.stderr)
+
     route = _read_spawn_state(cr_dir).get("route", {}) or {}
     if not isinstance(route, dict):
         route = {}
@@ -13922,10 +13962,10 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
     # bug-hunt. The route's cap keeps that from happening; if it does, record
     # the gap the same way derive-spawn-spec does instead of dropping it silently.
     spawn_gap_findings = _build_spawn_required_gap_findings(
-        skipped, {"no_partitions"}, emitted_at=now_iso,
+        skipped, _SPAWN_BENIGN_REQUIRED_SKIPS, emitted_at=now_iso,
     )
     if spawn_gap_findings:
-        _append_to_coverage_gaps(cr_dir / "coverage_gaps.json", spawn_gap_findings)
+        _append_to_coverage_gaps(gaps_path, spawn_gap_findings)
 
     bha_count = sum(1 for a in agents if a["reviewer"] == "bug_hunter_a")
     spec = {
@@ -13950,7 +13990,7 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
 
 def _build_spawn_required_gap_findings(
     skipped: list[dict[str, Any]],
-    benign_reasons: set[str],
+    benign_reasons: frozenset[str],
     *,
     emitted_at: str,
 ) -> list[dict[str, Any]]:
