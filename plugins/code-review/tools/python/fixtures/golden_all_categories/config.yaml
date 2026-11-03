@@ -1,0 +1,13 @@
+# PLN-719 Section 10 fixture: representative subset of CATEGORIES values
+# (Correctness, Code Quality, Security, TestQuality) at MEDIUM/HIGH severity.
+# Exercises validate's category-enum gate (incl. Code Quality, added in
+# PR #103) and confirms by_category stats partition each emitted category.
+# Coverage of the remaining canonical categories (Hygiene, Repo Hygiene,
+# Premise, ImpactAnalysis, Coverage, InjectionAttempt, CompanionChange)
+# is owned by the deferred fixtures gated on plans 01/02/03/05/06.
+description: "Four findings spanning Correctness, Code Quality, Security, TestQuality from a single BHA agent."
+mode: local
+diff_tip: "abc1234"
+expected_verdict: NEEDS_ATTENTION
+expected_verified_count: 4
+expected_coverage_gap_count: 0

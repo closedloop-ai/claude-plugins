@@ -1,0 +1,101 @@
+{
+  "critic": {
+    "coverage_state": "<CR_DIR>/coverage.json",
+    "model": "sonnet",
+    "reason": "no-roster",
+    "status": "skipped"
+  },
+  "final": {
+    "best_effort": [],
+    "budget": {
+      "best_effort_count": 0,
+      "bha_partitions": 1,
+      "domain_critic_cap": 3,
+      "domain_critic_cap_fired": false,
+      "required_count": 4,
+      "total_cap": 20
+    },
+    "deferred_for_budget": [],
+    "deprecation_warnings": [],
+    "dropped_required": [],
+    "required": [
+      {
+        "reviewer": "bug_hunter_a",
+        "source": "core",
+        "trigger": {
+          "type": "always"
+        }
+      },
+      {
+        "reviewer": "bug_hunter_b",
+        "source": "core",
+        "trigger": {
+          "type": "always"
+        }
+      },
+      {
+        "reviewer": "unified_auditor",
+        "source": "core",
+        "trigger": {
+          "type": "always"
+        }
+      },
+      {
+        "reviewer": "test_quality",
+        "source": "core",
+        "trigger": {
+          "type": "always"
+        }
+      }
+    ]
+  },
+  "initial": {
+    "best_effort": [],
+    "generated_at": "<TS>",
+    "required": [
+      {
+        "reviewer": "bug_hunter_a",
+        "source": "core",
+        "trigger": {
+          "type": "always"
+        }
+      },
+      {
+        "reviewer": "bug_hunter_b",
+        "source": "core",
+        "trigger": {
+          "type": "always"
+        }
+      },
+      {
+        "reviewer": "unified_auditor",
+        "source": "core",
+        "trigger": {
+          "type": "always"
+        }
+      },
+      {
+        "reviewer": "test_quality",
+        "source": "core",
+        "trigger": {
+          "type": "always"
+        }
+      }
+    ],
+    "scope": "code-review",
+    "stats": {
+      "best_effort_count": 0,
+      "detected_change_classes": [],
+      "required_count": 4,
+      "rules_evaluated": 0,
+      "rules_matched": 0,
+      "signal_count": 1
+    },
+    "warnings": []
+  },
+  "verify": {
+    "checked_at": "<TS>",
+    "verdict": "PASS",
+    "violations": []
+  }
+}

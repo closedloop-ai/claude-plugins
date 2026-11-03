@@ -1,0 +1,311 @@
+"""Shared pytest fixtures and finding factories for code-review tests.
+
+Pytest auto-discovers this file; tests import the factory functions explicitly.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from code_review_schema import SCHEMA_VERSION, empty_telemetry
+
+# Pinned git identity for every test-side fixture repo. Fixed values →
+# deterministic commit SHAs, which matters for any artifact that embeds a
+# commit hash (context_key, PR-head SHAs) and for the golden fixtures that
+# assert on them byte-for-byte. Pair with a pinned GIT_AUTHOR_DATE /
+# GIT_COMMITTER_DATE (see git_fixture's *env*) wherever the SHA itself is
+# pinned; identity alone is not enough to fix a SHA.
+GIT_IDENTITY_ENV = {
+    "GIT_AUTHOR_NAME": "Fixture Author",
+    "GIT_AUTHOR_EMAIL": "fixture@example.com",
+    "GIT_COMMITTER_NAME": "Fixture Author",
+    "GIT_COMMITTER_EMAIL": "fixture@example.com",
+    # Fully isolate git config so the host's config can neither break commits
+    # (commit.gpgsign, hooks) nor make them host-dependent. GIT_CONFIG_NOSYSTEM
+    # blocks /etc/gitconfig, but the operator's ~/.gitconfig is *global*, not
+    # system — so it also needs GIT_CONFIG_GLOBAL. Pointing GLOBAL and SYSTEM at
+    # os.devnull is unambiguous and order-independent: a fixture repo may be
+    # built BEFORE a hermetic HOME redirect, so relying on HOME alone would
+    # leave those commits exposed to the real ~/.gitconfig.
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_SYSTEM": os.devnull,
+}
+
+
+def git_fixture(repo: Path, *args: str, env: dict[str, str] | None = None) -> str:
+    """Run a git command inside *repo* and return stdout (raises on failure).
+
+    The shared builder for every test-side git fixture repo: it pins commit
+    identity and neutralizes host git config via :data:`GIT_IDENTITY_ENV`, so
+    fixture history is byte-stable across runs and hosts. *env* overlays extra
+    variables (e.g. ``GIT_AUTHOR_DATE``) onto that base.
+    """
+    full_env = {**os.environ, **GIT_IDENTITY_ENV}
+    if env:
+        full_env.update(env)
+    result = subprocess.run(
+        ["git", *args],
+        cwd=str(repo),
+        env=full_env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register code-review-specific CLI options.
+
+    PLN-719 Phase 8 — ``--update-golden`` regenerates the
+    ``expected/`` artifacts for every golden fixture instead of asserting
+    on them. The new expected files are written through the same
+    normalization pipeline the assertion path uses, so a subsequent
+    pytest run without the flag will see byte-identical expected output.
+    """
+    parser.addoption(
+        "--update-golden",
+        action="store_true",
+        default=False,
+        help="Rewrite expected/ artifacts for every golden fixture instead of asserting.",
+    )
+
+
+@pytest.fixture
+def update_golden(request: pytest.FixtureRequest) -> bool:
+    """Whether the current test session was launched with ``--update-golden``."""
+    return bool(request.config.getoption("--update-golden"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_pending_learnings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PLN-773 Phase 6: pending-learnings writes use a module-level base
+    dir constant. Tests must not write to the real repo's
+    `.closedloop-ai/pending-learnings/` directory, so this autouse fixture
+    redirects the base to a per-test tmp_path. Tests that explicitly want
+    to inspect the jsonl can read from `tmp_path / "pending-learnings"`.
+    """
+    import code_review_helpers
+    monkeypatch.setattr(
+        code_review_helpers, "_PENDING_LEARNINGS_DIR",
+        tmp_path / "pending-learnings",
+    )
+
+
+def invoke_prepare_run(
+    cr_dir: Path,
+    *,
+    output: str | Path | None = None,
+    mode: str = "local",
+    hygiene_only: bool | str = False,
+    since_last_review: bool | str = False,
+    full_review: bool | str = False,
+    base_ref_override: str = "",
+    scope_args: str = "",
+    pr_number: int | None = None,
+    depth: str = "standard",
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Invoke ``cmd_prepare_run`` and return ``(summary, run_plan)``.
+
+    Centralizes the argparse Namespace construction + stdout suppression
+    pattern that previously lived inline in both
+    ``test_code_review_helpers.py::TestPrepareRun._run`` and
+    ``test_golden_fixtures.py::_invoke``. The run_plan is loaded from
+    ``output`` when provided, otherwise from the default location
+    ``cr_dir/run_plan.json``. Both callers and any future test that
+    needs to drive ``prepare-run`` should delegate here so the Namespace
+    shape stays in lock-step with the CLI parser (PLN-719 Section 6).
+    """
+    from code_review_helpers import cmd_prepare_run
+    from golden_fixture_harness import run_with_stdout_capture
+
+    ns = argparse.Namespace(
+        cr_dir=str(cr_dir),
+        mode=mode,
+        hygiene_only=hygiene_only,
+        since_last_review=since_last_review,
+        full_review=full_review,
+        base_ref_override=base_ref_override,
+        scope_args=scope_args,
+        pr_number=pr_number,
+        depth=depth,
+        output=str(output) if output is not None else None,
+    )
+    captured = run_with_stdout_capture(cmd_prepare_run, ns)
+    summary = json.loads(captured) if captured else {}
+
+    run_plan_path = Path(output) if output is not None else Path(cr_dir) / "run_plan.json"
+    run_plan = json.loads(run_plan_path.read_text())
+    return summary, run_plan
+
+
+def make_auto_incremental_args(
+    cache_dir: Path,
+    **overrides: Any,
+) -> argparse.Namespace:
+    """Factory for ``cmd_auto_incremental`` argparse.Namespace.
+
+    Shared between ``TestAutoIncremental`` and ``TestPLN807ReviewFixes``
+    so the Namespace shape stays in lock-step with the cmd's expected
+    fields. When ``cmd_auto_incremental`` gains a new arg, this one
+    factory is updated rather than two parallel ones drifting
+    independently.
+
+    Defaults match the legacy local-mode invocation; pass overrides
+    (e.g. ``depth="standard"``, ``mode="github"``,
+    ``original_scope="origin/main..HEAD"``) to exercise specific
+    branches.
+    """
+    defaults: dict[str, Any] = {
+        "cache_dir": str(cache_dir),
+        "key": "branch:main",
+        "diff_tip": "HEAD",
+        "original_scope": "main...HEAD",
+        "full_review": "false",
+        "since_last_review": "false",
+        "mode": "local",
+        "base_ref": "main",
+        "depth": None,
+    }
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+def minimal_diff_finding(**overrides: Any) -> dict[str, Any]:
+    """Return a canonical diff-scoped finding with sensible defaults.
+
+    Pass keyword overrides to customize fields for a given test case.
+    """
+    base: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "id": "bha_p0_f0",
+        "reviewer": "bha_p0",
+        "reviewer_trigger": {"type": "partition", "evidence": "p0"},
+        "source": "agent",
+        "emitted_at": "2026-01-01T00:00:00Z",
+        "finding_scope": "diff",
+        "file": "src/foo.py",
+        "line": 42,
+        "system_marker": None,
+        "category": "Correctness",
+        "severity": "HIGH",
+        "priority": 1,
+        "confidence": 0.9,
+        "issue": "Null pointer access",
+        "explanation": "Variable `x` may be None.",
+        "recommendation": "Add a None check before accessing `.bar`.",
+        "code_snippet": "x.bar",
+    }
+    base.update(overrides)
+    return base
+
+
+def minimal_system_finding(**overrides: Any) -> dict[str, Any]:
+    """Return a canonical system-scoped finding (e.g. coverage gap)."""
+    base = minimal_diff_finding(
+        id="coverage-verifier_f0",
+        reviewer="coverage-verifier",
+        source="coverage-verifier",
+        reviewer_trigger={"type": "always", "evidence": None},
+        finding_scope="system",
+        file=None,
+        line=None,
+        system_marker="budget-exceeded",
+        category="Coverage",
+        severity="MEDIUM",
+        priority=2,
+        confidence=1.0,
+        code_snippet="",
+    )
+    base.update(overrides)
+    return base
+
+
+def minimal_pr_metadata_finding(**overrides: Any) -> dict[str, Any]:
+    """Return a canonical pr_metadata-scoped finding (e.g. prompt injection)."""
+    base = minimal_diff_finding(
+        id="injection-detector_f0",
+        reviewer="injection-detector",
+        source="injection-detector",
+        reviewer_trigger={"type": "always", "evidence": None},
+        finding_scope="pr_metadata",
+        file=None,
+        line=None,
+        system_marker="pr_description",
+        category="Security",
+        code_snippet="<redacted>",
+    )
+    base.update(overrides)
+    return base
+
+
+def legacy_minimal_finding(**overrides: Any) -> dict[str, Any]:
+    """Return a pre-foundation finding shape (no id / schema_version / scope).
+
+    Used to exercise the legacy → canonical normalization path in
+    cmd_collect_findings and cmd_validate.
+    """
+    base: dict[str, Any] = {
+        "file": "src/foo.py",
+        "line": 42,
+        "severity": "HIGH",
+        "category": "Correctness",
+        "issue": "Bug",
+        "explanation": "It's bad.",
+        "recommendation": "Fix it.",
+        "priority": 1,
+        "confidence": 0.9,
+        "code_snippet": "bad()",
+    }
+    base.update(overrides)
+    return base
+
+
+def minimal_envelope(**overrides: Any) -> dict[str, Any]:
+    """Return a canonical ResultEnvelope with empty buckets."""
+    base: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "review_id": "00000000-0000-4000-8000-000000000000",
+        "pr_number": None,
+        "head_sha": None,
+        "diff_tip": "abc1234",
+        "review_branch": "main",
+        "base_ref": "main",
+        "diff_scope": "main..HEAD",
+        "mode": "local",
+        "intent": "mixed",
+        "verified": [],
+        "justified": [],
+        "rejected": [],
+        "coverage_plan": {
+            "required": [],
+            "best_effort": [],
+            "deferred_for_budget": [],
+            "budget": {
+                "total_cap": 20,
+                "required_count": 0,
+                "best_effort_count": 0,
+                "bha_partitions": 1,
+            },
+        },
+        "coverage_gaps": [],
+        "verdict": "APPROVED",
+        "verdict_reason": "no findings",
+        "stats": {},
+        # PLN-719 Phase 9: telemetry must conform to the canonical zero-valued
+        # schema. Use the factory so tests stay valid by construction; tests
+        # that exercise the validator can override with malformed values.
+        "telemetry": empty_telemetry(),
+    }
+    base.update(overrides)
+    return base

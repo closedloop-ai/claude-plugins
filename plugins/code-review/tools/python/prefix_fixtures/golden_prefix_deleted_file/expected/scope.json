@@ -1,0 +1,15 @@
+{
+  "base_ref": "main",
+  "diff_scope": "main...HEAD",
+  "diff_tip": "HEAD",
+  "head_ref": "feature",
+  "head_sha": "",
+  "path_filter": "",
+  "pr_auto_detected": false,
+  "pr_number": null,
+  "review_branch": "feature",
+  "review_root": "<REPO>",
+  "review_root_sha": "38dfc0d9ee88c8072769dec2c21652064cdb0426",
+  "scope_kind": "branch",
+  "worktree_path": ""
+}

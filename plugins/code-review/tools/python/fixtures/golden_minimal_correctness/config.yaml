@@ -1,0 +1,9 @@
+# PLN-719 Section 10 fixture: minimal happy path.
+# One BHA agent emits one HIGH Correctness finding; no hygiene,
+# no coverage gaps. Final verdict: NEEDS_ATTENTION.
+description: "Single HIGH Correctness finding from a BHA agent; no hygiene, no coverage gaps."
+mode: local
+diff_tip: "abc1234"
+expected_verdict: NEEDS_ATTENTION
+expected_verified_count: 1
+expected_coverage_gap_count: 0

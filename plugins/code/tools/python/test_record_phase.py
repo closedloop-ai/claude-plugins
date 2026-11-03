@@ -6,15 +6,10 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional
+
+from conftest import write_config_env, write_state
 
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "record_phase.sh"
-
-
-def _write_state(workdir: Path, phase: str = "plan", status: str = "in_progress") -> None:
-    """Write a minimal state.json so record_phase.sh has data to read."""
-    state = {"phase": phase, "status": status, "startSha": "abc123"}
-    (workdir / "state.json").write_text(json.dumps(state))
 
 
 def run_record_phase(
@@ -22,9 +17,15 @@ def run_record_phase(
     *,
     run_id: str = "test-run-001",
     command: str = "test-command",
-    extra_env: Optional[dict[str, str]] = None,
+    extra_env: dict[str, str] | None = None,
+    clear_closedloop_vars: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    """Invoke record_phase.sh with the given environment and workdir."""
+    """Invoke record_phase.sh with the given environment and workdir.
+
+    When ``clear_closedloop_vars`` is True, the CLOSEDLOOP_RUN_ID/ITERATION/
+    COMMAND vars are popped from the environment (CLOSEDLOOP_WORKDIR is kept) so
+    the script must fall back to config.env for that metadata.
+    """
     env = {
         **os.environ,
         "CLOSEDLOOP_RUN_ID": run_id,
@@ -34,6 +35,10 @@ def run_record_phase(
     }
     if extra_env:
         env.update(extra_env)
+    if clear_closedloop_vars:
+        env.pop("CLOSEDLOOP_RUN_ID", None)
+        env.pop("CLOSEDLOOP_ITERATION", None)
+        env.pop("CLOSEDLOOP_COMMAND", None)
     return subprocess.run(
         ["bash", str(SCRIPT_PATH), str(workdir)],
         capture_output=True,
@@ -48,7 +53,7 @@ class TestRecordPhaseCommandField:
 
     def test_command_field_present(self, tmp_path: Path) -> None:
         """`command:` field is included in every `phase` event."""
-        _write_state(tmp_path)
+        write_state(tmp_path)
         result = run_record_phase(tmp_path, command="feature")
         assert result.returncode == 0, f"Script failed: {result.stderr}"
         record = json.loads((tmp_path / "perf.jsonl").read_text().strip())
@@ -59,7 +64,7 @@ class TestRecordPhaseCommandField:
 
     def test_command_value_matches_env_var(self, tmp_path: Path) -> None:
         """command field value matches CLOSEDLOOP_COMMAND."""
-        _write_state(tmp_path)
+        write_state(tmp_path)
         run_record_phase(tmp_path, command="code-review")
         record = json.loads((tmp_path / "perf.jsonl").read_text().strip())
         assert record["command"] == "code-review", (
@@ -68,7 +73,7 @@ class TestRecordPhaseCommandField:
 
     def test_command_defaults_to_interactive_when_unset(self, tmp_path: Path) -> None:
         """command defaults to 'interactive' when CLOSEDLOOP_COMMAND is unset."""
-        _write_state(tmp_path)
+        write_state(tmp_path)
         env = {
             **os.environ,
             "CLOSEDLOOP_RUN_ID": "test-run-001",
@@ -89,13 +94,29 @@ class TestRecordPhaseCommandField:
             f"Expected command='interactive', got: '{record['command']}'"
         )
 
+    def test_run_metadata_falls_back_to_config_env(self, tmp_path: Path) -> None:
+        """Missing env metadata is recovered from .closedloop-ai/config.env."""
+        write_state(tmp_path)
+        write_config_env(
+            tmp_path, run_id="config-run-123", iteration=5, command="PLAN"
+        )
+
+        result = run_record_phase(tmp_path, clear_closedloop_vars=True)
+
+        assert result.returncode == 0, f"Script failed: {result.stderr}"
+        record = json.loads((tmp_path / "perf.jsonl").read_text().strip())
+        assert record["run_id"] == "config-run-123"
+        assert record["run_id"] != "unknown"
+        assert record["iteration"] == 5
+        assert record["command"] == "PLAN"
+
 
 class TestRecordPhaseOutput:
     """Tests that record_phase.sh produces correct JSON structure (T-4.3 / AC-002)."""
 
     def test_event_field_is_phase(self, tmp_path: Path) -> None:
         """The event field must equal 'phase'."""
-        _write_state(tmp_path, phase="implement")
+        write_state(tmp_path, phase="implement")
         run_record_phase(tmp_path)
         record = json.loads((tmp_path / "perf.jsonl").read_text().strip())
         assert record.get("event") == "phase", (
@@ -104,7 +125,7 @@ class TestRecordPhaseOutput:
 
     def test_phase_field_matches_state_json(self, tmp_path: Path) -> None:
         """The phase field in output matches the phase in state.json."""
-        _write_state(tmp_path, phase="implement")
+        write_state(tmp_path, phase="implement")
         run_record_phase(tmp_path)
         record = json.loads((tmp_path / "perf.jsonl").read_text().strip())
         assert record.get("phase") == "implement", (
@@ -132,10 +153,19 @@ class TestRecordPhaseOutput:
 
     def test_output_contains_all_required_fields_including_command(self, tmp_path: Path) -> None:
         """Phase event always carries every required field including `command`."""
-        _write_state(tmp_path)
+        write_state(tmp_path)
         run_record_phase(tmp_path)
         record = json.loads((tmp_path / "perf.jsonl").read_text().strip())
-        required = {"event", "run_id", "iteration", "phase", "status", "start_sha", "started_at", "command"}
+        required = {
+            "event",
+            "run_id",
+            "iteration",
+            "phase",
+            "status",
+            "start_sha",
+            "started_at",
+            "command",
+        }
         missing = required - set(record.keys())
         assert not missing, f"Missing required fields: {missing}"
 

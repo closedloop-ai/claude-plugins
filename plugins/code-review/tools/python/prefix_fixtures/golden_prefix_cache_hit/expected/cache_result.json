@@ -1,0 +1,16 @@
+{
+  "cached_files": [
+    "src/constants.py"
+  ],
+  "stats": {
+    "cached": 1,
+    "hit_rate_pct": 50.0,
+    "total_files": 2,
+    "uncached": 1
+  },
+  "status_kind": "hits",
+  "status_message": "BHA Cache: 1/2 files cached (50.0% hit rate) -- 1 files skip BHA review",
+  "uncached_files": [
+    "src/app.py"
+  ]
+}

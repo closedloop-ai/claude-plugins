@@ -1,0 +1,8 @@
+diff --git a/src/app.py b/src/app.py
+index d282150..4504fd7 100644
+--- a/src/app.py
++++ b/src/app.py
+@@ -1,2 +1,2 @@
+ def greet(name):
+-    return "Hello, " + name
++    return "Hello, " + name + "!"

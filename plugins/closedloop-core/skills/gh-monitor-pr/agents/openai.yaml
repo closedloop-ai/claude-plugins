@@ -1,0 +1,4 @@
+interface:
+  display_name: "Monitor GitHub PR"
+  short_description: "Wake a Desktop or CLI task for PR events"
+  default_prompt: "Use $gh-monitor-pr to monitor this pull request and wake this exact Codex Desktop or CLI task when its state needs attention."

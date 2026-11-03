@@ -148,14 +148,174 @@ If no threads are outdated, write with an empty array — the workflow step hand
 
 ### 6b: Write Validated Findings
 
-Read `$CR_DIR/validate_output.json`, extract the `validated` array.
+Read `$CR_DIR/review_result.json` when present (PLN-722), else fall back to `$CR_DIR/findings_validated.json`.
 
 Write `.closedloop-ai/code-review-findings.json`:
 ```json
 {"schema_version": 1, "pr_number": 123, "head_sha": "abc123...", "findings": [...]}
 ```
 
-The findings use the same format as the validate output. The workflow's `post-comments` step handles formatting, dedup against existing comments, and error handling.
+The `findings` array contains the envelope's `verified[]` only (NOT `rejected[]`, `justified[]`, or `pending_verification[]` — those have separate files; see 6c and 6d). When no envelope exists (verifier disabled / shadow mode), fall back to the legacy validate output. The workflow's `post-comments` step handles formatting, dedup against existing comments, and error handling.
+
+Write all verified findings verbatim — do NOT pre-filter out-of-hunk or out-of-diff ones, and keep their `out_of_diff` / `out_of_hunk_kept` / `line_out_of_range` tags and `evidence[]`. `post-comments` skips findings tagged `out_of_hunk_kept` or `line_out_of_range` (a line past the end of its file that the validator could not re-anchor), plus any line GitHub rejects with a 422 as out-of-diff, from inline posting and lets them surface in the summary instead. A finding tagged `out_of_diff` (its file is outside the PR diff) is posted inline at the first `evidence[]` location that lies in the PR diff, with a comment body that opens with the affected `file:line`; with no such location it is summary-only too. A finding on a file the PR deletes posts on the diff's LEFT side, because its line is numbered in the old file (`post-comments` reads the file statuses from the same PR-files lookup). Either way they must remain in the findings file for the summary's findings list.
+
+**Impact Analyzer findings (FEA-1401).** Findings with
+`category: "ImpactAnalysis"` carry a populated `external_impact[]`
+array (file/line/impact_type/description/callsite_snippet/
+discovery/confidence per entry) and a `grep_query_used`
+string. Both fields are part of the canonical finding shape and are
+preserved through validate verbatim. `cmd_post_comments`
+(`_format_comment_body`) renders `external_impact[]` as an
+`**Affected callsites** (N):` sub-bullet list inside the inline
+comment body (sorted by `(file, line)` ascending, capped at 10 with
+an overflow pointer to `review_result.json`) so GitHub reviewers see
+the callsite blast radius alongside the anchor finding — parity with
+the local presenter (`skills/present-local/SKILL.md`). No special
+handling is required from this prompt — the existing `findings[]`
+envelope is the single source of truth.
+
+### 6c: Write Dismissed and Pending Findings (PLN-722)
+
+Read `$CR_DIR/review_result.json` (the canonical envelope). If absent, skip this step entirely — the run pre-dates PLN-722 or `stage_24a_verify_consolidate` did not produce output, and the dismissed-findings UX is meaningless without verifier verdicts.
+
+Write `.closedloop-ai/code-review-dismissed.json` with the verifier-dismissed findings (the workflow posts these as a separate "ℹ️ N findings dismissed" PR comment with collapsible `<details>` blocks per finding):
+
+```json
+{
+  "schema_version": 1,
+  "pr_number": 123,
+  "head_sha": "abc123...",
+  "dismissed": [...envelope.rejected...],
+  "pending": [...envelope.pending_verification...],
+  "force_human_review": false
+}
+```
+
+Write `.closedloop-ai/code-review-dismissed-summary.md` with a human-readable rendering. Skip the entire file when both `dismissed` and `pending` are empty:
+
+```markdown
+## Verifier Dismissals
+
+ℹ️ {N} finding(s) emitted by reviewers were disproved by the verifier with cited evidence. They are NOT included in the inline comments above. If you disagree with a dismissal, see the full evidence chain in `review_result.json.rejected[]`.
+
+<details>
+<summary>{ORIGINAL_SEVERITY} dismissed: {FILE}:{LINE} — {ISSUE_HEAD}</summary>
+
+**Finding ID:** `{ID}`
+**Original reviewer:** {REVIEWER}
+**Verifier verdict:** REJECTED ({REJECTION_CLASS})
+**Verifier confidence:** {VERIFIER_CONFIDENCE}
+[If REJECTION_CLASS is `not_caused_by_diff`, add: **Why dismissed:** outside the diff, and the verifier found no change in this diff that caused it]
+
+**Original issue:** {ISSUE}
+
+**Verifier reasoning:** {VERIFIER_REASONING}
+
+**Evidence checks:**
+- ✓/✗ {claim} — {actual_read} ({source})
+
+</details>
+
+<!-- repeat per dismissed -->
+
+## Pending Verification
+
+⚠️ {M} finding(s) were eligible for verification but no verifier output landed on disk (agent timeout or budget overflow). Treat them as unverified.
+
+- `{FILE}:{LINE}` — {ISSUE_HEAD} (id: `{ID}`)
+```
+
+If `envelope.force_human_review == true`, prepend a banner to `code-review-dismissed-summary.md`:
+
+```markdown
+> 🚨 **Mandatory human review path touched.** One or more findings landed on a path configured in `verification-gates.json` → `mandatory_human_review_paths`. The verifier escalated them to TENTATIVE and the verdict is forced to `NEEDS_ATTENTION` regardless of severity.
+```
+
+### 6d: Write Justified Findings (PLN-721)
+
+Read `$CR_DIR/review_result.json` → `justified[]`. If absent or empty, skip this step — there are no justified findings to surface and the file is meaningless. Otherwise write `.closedloop-ai/code-review-justified.json` (the workflow posts these as a separate "ℹ️ N findings justified by author" PR comment with collapsible `<details>` blocks per finding):
+
+```json
+{
+  "schema_version": 1,
+  "pr_number": 123,
+  "head_sha": "abc123...",
+  "justified": [...envelope.justified...]
+}
+```
+
+Also write `.closedloop-ai/code-review-justified-summary.md` (skip when `justified[]` is empty):
+
+```markdown
+## Author-Justified Findings
+
+ℹ️ {N} finding(s) were emitted by reviewers but absorbed by author justification comments the verifier independently validated. They are NOT included in the inline comments above. If you disagree with a dismissal, see the full chain in `review_result.json.justified[]`.
+
+<details>
+<summary>{ORIGINAL_SEVERITY} justified: {FILE}:{LINE} — {ISSUE_HEAD}</summary>
+
+**Finding ID:** `{ID}`
+**Original reviewer:** {REVIEWER}
+**Verifier verdict:** JUSTIFIED-VALID
+**Verifier confidence:** {VERIFIER_CONFIDENCE}
+
+**Original concern:** {ISSUE}
+
+**Author's justification:**
+> {JUSTIFICATION_TEXT}
+>
+> — cited at `{JUSTIFICATION_SOURCE}` by `{CLAIMED_BY_REVIEWER}`
+
+**Verifier reasoning:** {VERIFIER_REASONING}
+
+</details>
+
+<!-- repeat per justified -->
+```
+
+Mark todo as `completed`.
+
+### 6e: Write Verifier Stats (PLN-773)
+
+Read `$CR_DIR/review_result.json` → `stats.verification`. If the block is not present (very old envelope), skip this step. Otherwise write `.closedloop-ai/code-review-verifier-stats.md` (the workflow posts this as a collapsible `<details>` block in a single comment so the metrics are visible to PR reviewers without polluting inline review comments):
+
+```markdown
+## Verifier Stats
+
+<details>
+<summary>{verified_count} verified · {rejected_count} dismissed · {justified_valid_count + justified_invalid_count} justified</summary>
+
+**Verifier outcomes**
+- CONFIRMED + DOWNGRADE: {verified_count - tentative_count - re_asserted - justified_invalid_count - skipped_count}
+- TENTATIVE: {tentative_count}
+- RE_ASSERTED: {sum over by_reviewer[].re_asserted}
+- Not verified (skipped): {skipped_count}
+- REJECTED: {rejected_count}
+
+**Justification (PLN-721)** — read from `stats.verification`
+- Justified emitted: {justified_valid_count + justified_invalid_count}
+- JUSTIFIED-VALID: {justified_valid_count}
+- JUSTIFIED-INVALID: {justified_invalid_count}
+
+**Per-reviewer FP rate** (rejected / audited)
+| Reviewer | Verified | Rejected | FP rate | Re-asserts |
+|---|---|---|---|---|
+| {reviewer} | {verified} | {rejected} | {fp_rate:.2f} | {re_asserted} {"⚠" if re_asserted > 0 else ""} |
+
+The Reviewer column keys off the `reviewer` field, which `cmd_collect_findings` derives from the agent filename (`agent_bha_p0.json` → `reviewer='bha_p0'`). Under partitioned mode the table shows one BHA row per partition (`bha_p0`, `bha_p1`, …); under unified mode it shows a single `bha_p0` row because only one partition exists.
+
+**Impact gateable count**: {stats.impact_cumulative_count} (gate threshold {impact_cumulative}) — read from `stats`. The envelope's sole operator-tunable verdict-gate count (the cumulative Impact gate; FEA-1401 / PLN-726 OQ#6).
+
+**Partition mode** ({verify_manifest.partition_mode}, {verify_manifest.partition_count} partitions) — read from `<CR_DIR>/verify_manifest.json`. Omit this line when the manifest file is absent (hygiene-only run or pre-PLN-774 cache).
+
+</details>
+```
+
+If the manifest carries `override_hits` or `override_invalidated`, append a one-liner inside the `<details>` block:
+
+```
+ℹ️ Operator overrides: {len(override_hits)} honored, {len(override_invalidated)} invalidated by file-content drift.
+```
 
 Mark todo as `completed`.
 
@@ -187,31 +347,38 @@ cat > .closedloop-ai/code-review-summary.md << 'SUMMARY_EOF'
 SUMMARY_EOF
 ```
 
+
 **Do NOT** post the summary to GitHub directly. Do NOT use `gh api` to create comments or `gh pr review` to submit a review. The workflow handles all GitHub posting after Claude exits.
 
 ### Summary Format
-
-Read `<CR_DIR>/route.json` before rendering. Extract `fast_path`, `models["fast_path_reviewer"]`, and `domain_critics`.
 
 ```markdown
 ## Code Review Summary
 
 **Status:** [Approved | Changes Requested | Needs Attention]
+
+**Reviewed commit:** [render-reviewed-commit output]
 ```
 
-**Reviewers line is conditional on `fast_path`:**
+**Reviewed commit line (ISS-9137).** Do NOT hand-author it. Run the renderer and embed its output verbatim, on its own line, immediately after the **Status** line:
 
-- **If `fast_path == true`:**
-```markdown
-**Reviewers:** Fast Path Reviewer (single-agent mode)
-**Model Routing:** Fast path — <MODEL> single reviewer
+```bash
+python <HELPERS> render-reviewed-commit --cr-dir <CR_DIR>
 ```
 
-- **If `fast_path == false`:**
-```markdown
-**Reviewers:** Bug Hunter A, Bug Hunter B, Unified Auditor, Premise Reviewer
-[+ domain specialist if triggered]
+It names the commit the review read, and also the PR head when the runner checked out a different commit (GitHub's merge ref). It never prints a filesystem path: the runner's path means nothing on a PR. If it reads `not recorded`, embed that line as-is.
+
+**Reviewer Fleet block (PLN-725 Phase 9 / v2.23.0).** Do NOT hand-author the Reviewers / Model Routing lines. Run the canonical renderer and embed its output verbatim immediately after the **Reviewed commit** line:
+
+```bash
+python <HELPERS> render-fleet-summary --cr-dir <CR_DIR>
 ```
+
+The renderer reads `<CR_DIR>/spawn.json` (sections: `spec` — intended fleet from stage_19b; `verification` — runtime tally from stage_20b; `route` — model assignments from Gate B) and emits the **Reviewers**, **Model Routing**, **Fleet** (`N intended | N ran | N required missing`), and a conditional **Notes** block. The notes surface non-default outcomes (BLOCKING sanitization, runtime missing required, BHA budget cap, PLN-723 deferral, malformed-plan required skips) — operators reading the summary comment see these without having to dig into `coverage_gaps.json` or `spawn.json.verification`.
+
+**Fallback:** if the renderer reports `spawn-spec unavailable` or `spawn-spec fell back`, embed its line as-is — the orchestrator walked the static fleet for this run and the static reviewer table in the `code-review:spawn-reviewers` skill is the source of truth for fleet composition.
+
+**Fast-path runs** are handled by the renderer — it emits the `Fast Path Reviewer (single-agent mode)` line + the resolved fast-path model. No branch needed in this presenter.
 
 Then continue with the remaining summary content:
 
@@ -234,10 +401,25 @@ Then continue with the remaining summary content:
 1. **[P2] [file:line]** Title
 2. **[P3] [file:line]** Title
 
+For a finding tagged `out_of_diff`, append ` — outside the diff — caused by this change` to its line in whichever section it lands when its `verifier_verdict` is `CONFIRMED`, `DOWNGRADE` or `RE_ASSERTED`, and ` — outside the diff — causation unconfirmed` otherwise.
+
 ### Validation Stats
 
-- **Agent failures:** N partitions skipped
-- **Cross-file grouped:** M findings consolidated
+Mirrors the local-mode Validation Summary so PR reviewers can see the same accuracy-audit signal (which reviewer discarded how many findings for what reason) without having to read local logs. Read `<CR_DIR>/findings_validated.json` for the discard-reason counts; an absent file means a pre-PLN-722 run — emit only the two lines marked **(always)** below and skip the rest.
+
+- **Total findings from agents:** X
+- **Validated (confirmed):** A
+- **Kept — outside the diff:** B *(reads `kept_out_of_diff`)*
+- **Discarded — out-of-hunk (low confidence):** C *(reads `discarded_out_of_hunk_low_confidence`)*
+- **Discarded — low confidence:** D
+- **Discarded — rejected by validation:** E
+- **Duplicates merged:** F
+- **Cross-file grouped:** G *(always — `other_locations` count)*
+- **Downgraded to MEDIUM:** I
+- **Hygiene findings:** H
+- **Agent failures:** N partitions skipped *(always — even when findings_validated.json absent)*
+
+(Placeholder `I` is intentional — `H` is reserved for "Hygiene findings." Reusing `H` would conflate two distinct counts.)
 
 **Recommendation:** [Approve | Address blocking/high issues | Consider medium items]
 ```

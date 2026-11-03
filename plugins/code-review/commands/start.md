@@ -1,6 +1,6 @@
 ---
 description: Run comprehensive code review — locally or on GitHub PRs with inline comments
-argument-hint: "[scope] [--github] [--hygiene-only] [--base <ref>] [--since-last-review] [--full-review]"
+argument-hint: "[scope] [--github] [--hygiene-only] [--base <ref>] [--since-last-review] [--full-review] [--depth shallow|standard|deep]"
 ---
 
 # Comprehensive Code Review
@@ -13,7 +13,7 @@ Run a multi-agent code review with partitioned deep review, deterministic hygien
 ## Usage
 
 ```
-/start                              # Review open PR diff for current branch, or main...HEAD if no PR
+/start                              # Review open PR diff for current branch, or the diff since the branch forked from the default branch if no PR
 /start staged                       # Review only staged changes
 /start file1 file2                  # Review specific files
 /start 123                          # Review PR #123 diff locally (no posting)
@@ -23,138 +23,65 @@ Run a multi-agent code review with partitioned deep review, deterministic hygien
 /start --base develop               # Diff against a specific base branch
 /start --since-last-review          # Review only changes since last successful review
 /start --full-review                # Force full diff (disable auto-incremental)
+/start --depth shallow              # Built-ins only (no critic-gates); see Depth Tiers below
+/start --depth deep                 # Standard + future heavy reviewers (Impact Analyzer slot)
 ```
+
+## Depth Tiers (PLN-807)
+
+The `--depth` flag selects which reviewer fleet runs. Default `standard`. Bare `/start` invocations preserve historical behavior.
+
+- **shallow** — hygiene + BHA (partitioned at >5000 LOC) + BHB + unified_auditor + verifier. Skips signal extraction, coverage planning/critic, and all `critic-gates.json` entries. Static spawn spec; no routing/critic decisions. Hygiene emits a `tier_mismatch_nudge` MEDIUM finding (category `Coverage`) when the PR's diff size, schema/migration paths, or public API surface suggest standard would catch more.
+- **standard** — current behavior. Full fleet with signal-driven routing, coverage critic, repo-specific critic activation via `critic-gates.json`. Budget arithmetic reserves BHA partitions FIRST (Phase 4) and caps total domain critics across both required and best-effort buckets at the tier-uniform `DOMAIN_CRITIC_CAP = 3` (standard and deep alike). Required critics dropped by the cap emit coverage-gap findings.
+- **deep** — standard plus two deep-only conditional core reviewers. The always-on **Design Critic** runs on every deep review (no trigger): a software-design craftsmanship reviewer covering module depth/information hiding, SOLID, dependency direction and layer boundaries, and project structure (drawing on *A Philosophy of Software Design*, SOLID, and *Clean Architecture*); it is `source: "core"` so it is exempt from `DOMAIN_CRITIC_CAP`, runs on Sonnet, is code-intelligence-aware (uses whichever indexing MCP server the operator's session provides for module layout and dependency direction, else grep), and emits `category: "Code Quality"` findings scoped to design flaws this change introduces or worsens. The signal-gated **Impact Analyzer** (FEA-1401), a cross-file blast-radius reviewer, runs when signal extraction detects `exported_symbol_change` or `symbol_deletion`, or when the diff deletes a file outright (`file_deletion`; at standard and shallow depth Bug Hunter B and the fast-path reviewer own deletions). The analyzer identifies changed exported symbols, finds external usages outside the diff (via whichever indexing MCP server the operator's session provides, else grep), and emits findings with `external_impact[]` listing every callsite that breaks under the new signature. Cost-capped at 30 symbols × 50 callsites with a 5-minute wall budget; deferred symbols surface in the Coverage Plan footer. Impact findings carry `category: "ImpactAnalysis"` and are verifier-audited per-entry (cited callsites read, snippet content-matched, grep replayed). ≥2 verified BLOCKING/HIGH Impact findings escalate the verdict to `NEEDS_ATTENTION` (Rule 6). Deep's extra breadth comes from these two reviewers rather than a wider domain-critic cap.
+
+Tier transitions are detected via `review_state.json`: a cached `shallow` review does not satisfy a subsequent `standard` invocation — the deeper run actually executes the previously skipped reviewers.
 
 ## GitHub Mode Constraints
 
-**If MODE=github**, read the GitHub-specific instructions:
+**If MODE=github**, read the GitHub-specific instructions (`<PLUGIN_ROOT>` is resolved in stage 0b):
 ```
-Read ${CLAUDE_PLUGIN_ROOT}/prompts/github-review.md
+Read <PLUGIN_ROOT>/prompts/github-review.md
 ```
-This file contains posting constraints, PR metadata resolution (Step 5b), and output steps (Steps 6+8).
-Local mode does not need this file.
+This file contains posting constraints, PR metadata resolution, and output steps. Local mode does not need this file.
 
 ---
 
-## Execution Workflow
+## Execution Model (PLN-719 Phase 4b)
 
-Follow these tasks **exactly in order**. Each task references a section below with full details. Do NOT skip tasks, reorder them, or improvise new steps. Use the exact Bash commands and output strings specified in each section — do NOT paraphrase or construct your own.
+The review pipeline is driven by a **declarative run plan** emitted by the `prepare-run` helper. The plan is the single source of truth for stage ordering, helper invocations, and on-failure semantics — this command's job is to walk it.
 
-When a task says "Run Bash:", execute the command in a single Bash tool call.
+The walk is hybrid:
+- **Deterministic helper stages** (most of the plan) — invoke the named `code_review_helpers.py` subcommand with the plan's args after token substitution. No prose decisions.
+- **Agent fleet stages** — spawn parallel sub-agent Tasks. `stage_20_spawn_reviewers` invokes the `code-review:spawn-reviewers` skill; `stage_23_verify_findings` invokes the `code-review:verify-findings` skill.
+- **Present stage** (`stage_29_present`) — invoke the `code-review:present-local` skill (MODE=local) or follow `github-review.md` (MODE=github).
 
-**CRITICAL — No shell variables in Bash commands.** Claude Code prompts for manual approval on every `$VAR` expansion in paths. To avoid prompts, substitute all resolved values directly into every Bash command. Do NOT use `$HELPERS`, `$CR_DIR`, `$CACHE_DIR`, or any other session variable — inline the actual paths.
+**Orchestrator model (cost).** The orchestrator runs on the **session model** — there is intentionally no `model:` frontmatter override. The walk is mechanical (run helper, read JSON, honor gates) with no Opus-grade reasoning, so it is safe on a cheaper model; the judgment lives in the **subagents**, which keep their own route-assigned models regardless (BHA Opus / Sonnet on test-only partitions, domain critics Sonnet, Impact Analyzer Opus, verifiers per the verify skill). The spine is ~65% of historical review cost (~180 turns/deep-review, cache-read dominated), so for the cheapest run invoke `/code-review` from a standard-context **Sonnet** session (`/model sonnet`) — the reviewers stay on their assigned models either way. A `model: sonnet` frontmatter override is **deliberately avoided**: a per-command model override inherits the session's context-window tier, so on a **1M-context** session it resolves to Sonnet-with-1M and bills as extra pay-as-you-go API usage outside a Pro/Max subscription (a known Claude Code limitation with no per-command opt-out) — which would invert the saving. **Effort is a separate axis** and, unlike `model`, has no per-Task override — a subagent inherits the session effort unless its own frontmatter pins one. So the two worker agent defs pin `effort: high`, fixing every reviewer's reasoning depth regardless of the session level. That lets you drop the session **model** *and* **effort** for the cheapest orchestrator without starving reviewer thinking (`high` is valid on both Opus and Sonnet, so it holds across the route-assigned reviewer models).
 
-Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (e.g., `<HELPERS>`, `<CR_DIR>`, `<CACHE_DIR>`, `<DIFF_SCOPE>`) to mark values you must replace with the resolved literal string before running the command. These are NOT shell variables — they are template tokens. The only real env var is `${CLAUDE_PLUGIN_ROOT}` (resolved once in session setup).
+**Turn & context discipline (cost).** Cache cost scales with carried context × turn count, so keep both small:
+- **Never read large artifacts into the orchestrator's context.** `diff_data.json`, `patches_*.txt`, and per-file diffs are passed to helpers and reviewers as **file-path arguments**, never `cat`/`Read` into the walk. Reviewers read patches themselves (see the spawn skill's anti-inline rule). The only large file the orchestrator reads is `review_result.json` at the present stage, once, with the per-section display caps the present skill already applies.
+- **Batch the deterministic prefix with `run-prefix`.** The entire deterministic prefix (stages 01→19b) runs in ONE process via the `run-prefix` helper — see the **Deterministic Prefix — `run-prefix` loop** section below — collapsing ~19 helper stages (and their ~4 serial model turns each) into a handful of orchestrator turns. This is the default and the single biggest turn-count saving. Only in the per-stage **fallback walk** (when `run-prefix` errored or is unavailable) may you additionally chain a run of consecutive `helper`-kind stages into one `Bash` call (`cmd1 && cmd2 && …`, each redirecting stdout per its `stdout` field) — but ONLY a run in which **every** stage declares `on_failure: abort`, **none** has a `GATES` entry firing after it, **none** is a branching-gate boundary (A/B/C/D) or an `agent_fleet`/`present`/singleton-dispatch stage, and no stage's args depend on a value an in-batch predecessor printed to stdout. Those constraints make recovery unambiguous: there is no gate to interleave, and no `continue` stage whose successors the `&&` short-circuit would wrongly skip. After the chain returns, confirm each chained stage's `expected_outputs`; if the chain exited non-zero, an `abort` stage failed, so **abort** (do not run any gate against the partial batch). Any stage with an associated gate, a non-`abort` `on_failure` (`continue` / `continue_with_coverage_gap`), or a stdout dependency runs solo under the normal one-stage-at-a-time walk. When in doubt, don't batch.
+- **Narrate sparingly.** Emit only the operator-essential lines the per-stage notes mark for printing (review-mode line, cache status, fast-path notice, verdict). Do not echo intermediate stage progress as prose.
 
-### Task 1: Parse flags and detect mode
-- Parse `$ARGUMENTS` for `--github`, `--hygiene-only`, `--base <ref>`, `--since-last-review`, `--full-review`
-- Check flag incompatibilities — exit with error if any
-- See: [Step 1 — Mode Detection + Flag Parsing](#step-1-create-todo-list--mode-detection--session-setup)
+Four runtime gates modify walker default behavior (they are runtime-driven and either replace the default walk or add a condition on top of a plan stage). **Gate A and Gate B fire inside the prefix — `run-prefix` performs them and surfaces the result to you (as `hygiene_exit` / `ready_for_reviewers`); you only execute their mechanics in the per-stage fallback walk. Gate C and Gate D fire in the walked tail (after `stage_20`), so you always apply them.**
+1. **Gate A** — after `stage_12_hygiene`, if `flags.hygiene_only` is true: present hygiene findings and **EXIT** (no further stages, no verdict, no footer).
+2. **Gate B** — after `stage_19_cache_check`, invoke `route` (model routing) to compute `fast_path` and `max_bha_agents`. `fast_path == true` skips `stage_17_partition` entirely and drives a single fast-path reviewer in `stage_20`.
+3. **Gate C** — before `stage_26_cache_update`, skip if `fast_path == true` OR `CACHE_DIR` is empty.
+4. **Gate D** — before `stage_27_review_state_write`, skip unless `MODE == "local"`, `CACHE_DIR` is set, AND all reviewer agents succeeded.
 
-### Task 2: Create TodoWrite + session setup
-- Create the TodoWrite task list (depends on MODE and HYGIENE_ONLY)
-- If MODE=github: Read `${CLAUDE_PLUGIN_ROOT}/prompts/github-review.md` for GitHub-specific constraints and steps
-- Resolve HELPERS path: `echo "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py"` — track the resolved path internally
-- Run setup with CR_DIR creation: `python3 <HELPERS> setup --mode <MODE> --cr-dir-prefix .closedloop-ai/code-review/cr-` -- read stdout JSON for `cr_dir`, `start_time`, `repo_name`, `current_branch`, `global_cache`. Then write the JSON to `<CR_DIR>/setup.json` for downstream helpers.
-- Initialize `CACHE_DIR=""` (final cache path is resolved after scope parsing)
-- Run prep-assets: `python3 <HELPERS> prep-assets --plugin-root <PLUGIN_ROOT> --cr-dir <CR_DIR>`
-- See: [Session Setup](#session-setup)
+Read this entire file before starting. Agent-fleet dispatch (stages 11/15/20/23) lives in dedicated skills invoked by stage id; the present format and remaining per-stage notes are referenced by stage id below.
 
-### Task 3: Parse scope and resolve diff
-- Mark todo "Parse scope and get diff data" as `in_progress`
-- Run Bash: `python3 <HELPERS> resolve-scope --mode <MODE> --setup-json <CR_DIR>/setup.json [--pr-number <N>] [--scope-args "<REMAINING_ARGS>"] [--base-ref-override <REF>] > <CR_DIR>/scope.json`
-- Read `<CR_DIR>/scope.json` for `DIFF_SCOPE`, `BASE_REF`, `HEAD_REF`, `REVIEW_BRANCH`, `DIFF_TIP`, `PR_NUMBER`, `PATH_FILTER`, `SCOPE_KIND`, `PR_AUTO_DETECTED`
-- Finalize `CACHE_DIR` now that scope/PR context is known (must happen before auto-incremental)
-- See: [Step 2 — Parse Arguments](#parse-arguments-remaining-after-flag-removal)
+**CRITICAL — No shell variables in Bash commands.** Claude Code prompts for manual approval on every `$VAR` expansion in paths. Substitute all resolved values directly into every Bash command. That includes the plugin root: it is not a Bash environment variable, so resolve `PLUGIN_ROOT` once in stage 0b and write its literal path into every command.
 
-### Task 4: Auto-incremental mode check (local only)
-- Evaluate auto-incremental eligibility using `REVIEW_BRANCH:BASE_REF` as the state key and `DIFF_TIP` as the ref
-- Set `REVIEW_MODE_LINE` to one of the **exact** prescribed strings — do NOT improvise
-- Print `<REVIEW_MODE_LINE>`
-- If `PR_AUTO_DETECTED` is true, print `"Auto-detected PR #<PR_NUMBER> for branch <REVIEW_BRANCH>."`
-- See: [Auto Incremental Mode](#auto-incremental-mode-phase-4--local-only)
-
-### Task 5: Get diff data + fetch intent (GitHub: also get PR metadata)
-- GitHub mode: follow PR Metadata section from `github-review.md`
-- Run Bash: `python3 <HELPERS> parse-diff --scope=<DIFF_SCOPE> > <CR_DIR>/diff_data.json`
-- Run Bash: `python3 <HELPERS> fetch-intent --scope-kind <SCOPE_KIND> --cr-dir <CR_DIR> [--pr-number <N>] [--base-ref <BASE_REF>] [--diff-tip <DIFF_TIP>]`
-- Run Bash: `python3 <HELPERS> classify-intent --intent-context <CR_DIR>/intent_context.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/intent.json`
-- Read `<CR_DIR>/intent.json` for `INTENT` value
-- Mark todo "Parse scope and get diff data" as `completed`
-- See: [Get Diff Data](#get-diff-data-both-modes), [GitHub Mode: Get PR Metadata](#github-mode-get-pr-metadata)
-
-### Task 6: Compute prompt hash + cache check (if CACHE_DIR set)
-- Prompt assets already copied in Task 2 (prep-assets)
-- Compute `PROMPT_HASH` and `CONTEXT_KEY` using `<DIFF_TIP>`
-- Run cache-check via `python3 <HELPERS> cache-check ... > /dev/null` (redirect stdout to suppress inline print)
-- Read `<CR_DIR>/cache_result.json` and store `status_message` as `CACHE_STATUS_MESSAGE`
-- Do NOT print cache status here — it is printed later in Task 7 (hygiene exit) or Task 8 (after routing)
-- If `CACHE_DIR` is empty, set `CACHE_STATUS_MESSAGE=""`
-- Skip if `CACHE_DIR` is empty
-- See: [Step 2.1](#step-21-compute-prompt-hash--context-key-when-caching-is-active), [Step 2.2](#step-22-bha-cache-check-when-caching-is-active)
-
-### Task 7: Hygiene checks
-- Mark todo "Run deterministic hygiene checks" as `in_progress`
-- Run Bash: `python3 <HELPERS> hygiene --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/hygiene.json`
-- Mark todo as `completed`
-- **If HYGIENE_ONLY**: if `CACHE_DIR` is set and `CACHE_STATUS_MESSAGE` is non-empty, print `CACHE_STATUS_MESSAGE`. Then present hygiene findings and EXIT — skip all remaining tasks
-- See: [Step 2.5](#step-25-deterministic-hygiene-checks)
-
-### Task 8: Route models + partition + extract patches
-- Mark todo "Assess scope and route models" as `in_progress`
-- Run Bash: `python3 <HELPERS> route --diff-data <CR_DIR>/diff_data.json --critic-gates .closedloop-ai/settings/critic-gates.json --intent <INTENT> > <CR_DIR>/route.json`
-- Read `<CR_DIR>/route.json` for `models`, `domain_critics`, `max_bha_agents`, `fast_path`
-- **If `fast_path` is false (standard flow):**
-  - Print `CACHE_STATUS_MESSAGE` if non-empty
-  - Run Bash: `python3 <HELPERS> partition --diff-data <CR_DIR>/diff_data.json --loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS> > <CR_DIR>/partitions.json` (use `uncached_diff_data.json` when caching is active)
-  - Run Bash: `python3 <HELPERS> extract-patches --partitions-file <CR_DIR>/partitions.json --diff-scope=<DIFF_SCOPE> --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>`
-- **If `fast_path` is true:**
-  - Print `"Fast path selected: 1 reviewer (<MODEL>)."` where `<MODEL>` = `route.json -> models.fast_path_reviewer`
-  - If `CACHE_DIR` is set, print `"BHA Cache: bypassed in fast-path mode."` and delete `<CR_DIR>/agent_cached_bha.json` if it exists
-  - Skip partition entirely (no `partitions.json` created)
-  - Run Bash: `python3 <HELPERS> extract-patches --diff-scope=<DIFF_SCOPE> --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>` (no `--partitions-file` -- only `patches_all.txt` is created)
-  - Update TodoWrite: replace "Spawn reviewer agents in parallel" with "Run fast-path review"
-- Mark todo as `completed`
-- See: [Step 3](#step-3-assess-scope-and-route-models), [Step 4A](#step-4a-spawn-reviewer-agents-fast_path--false), [Step 4B](#step-4b-fast-path-single-agent-review-fast_path--true)
-
-### Task 9: Spawn agents
-- Mark todo as `in_progress` (text depends on `fast_path` -- either "Spawn reviewer agents in parallel" or "Run fast-path review")
-- Prompt assets already in `<CR_DIR>` from Task 2 (prep-assets)
-- **If `fast_path == false`**: Spawn the standard reviewer fleet using `subagent_type: "code:code-review-worker"` with `run_in_background: true`. See [Step 4A](#step-4a-spawn-reviewer-agents-fast_path--false)
-- **If `fast_path == true`**: Spawn exactly one fast-path reviewer task using `subagent_type: "code:code-review-worker"` with `run_in_background: true`. See [Step 4B](#step-4b-fast-path-single-agent-review-fast_path--true)
-- Task 9 spawns background task(s) ONLY. Do NOT call `TaskOutput` here -- collection happens in Task 10
-
-### Task 10: Collect + validate findings
-- Mark todo "Collect, normalize, and validate findings" as `in_progress`
-- Collect the task(s) spawned by Task 9 via `TaskOutput` (block=true for each). Perform one initial parallel `TaskOutput` sweep. If any retry task is spawned (WRITE_DENIED fallback or failure recovery), perform an additional `TaskOutput` sweep for those retry tasks
-- Run Bash: `python3 <HELPERS> collect-findings --cr-dir <CR_DIR> --hygiene <CR_DIR>/hygiene.json`
-- Run Bash: `python3 <HELPERS> validate --findings <CR_DIR>/findings.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/validate_output.json`
-- Run `cache-update` only when `fast_path == false` AND `CACHE_DIR` is set (add `--exclude-test-partitions` flag)
-- Mark todo as `completed`
-- See: [Step 5](#step-5-collect-normalize-and-validate-findings), [Step 5.5 (fast_path == false AND CACHE_DIR set)](#step-55-bha-cache-update-fast_path--false-and-cache_dir-set)
-
-### Task 11: Present results
-- **GitHub mode**: follow Steps 6 and 8 in `github-review.md` — write findings JSON, threads JSON, and summary.md to `.closedloop-ai/`
-- **Local mode**: present findings by severity in terminal — see [Local Mode: Present Results](#local-mode-present-results)
-- Mark remaining todos as `completed`
-
-### Task 12: Review state + footer
-- Write review state if local mode and all agents succeeded — see [Review State Write](#review-state-write-end-of-pipeline--local-mode-only)
-- Compute elapsed time, collect token stats, print the review footer using the **exact** prescribed format
-- See: [Review Footer](#review-footer-final-output)
-
-### Task 13: PR verdict tag
-- Run Bash: `python3 <HELPERS> verdict --validate-output <CR_DIR>/validate_output.json > <CR_DIR>/verdict.json`
-- Read `<CR_DIR>/verdict.json` and print the `tag` value as the last line of output
-- See: [PR Verdict](#pr-verdict)
+Throughout this document, bash code blocks use `<ANGLE_BRACKET>` placeholders (`<HELPERS>`, `<CR_DIR>`, `<CACHE_DIR>`, `<DIFF_SCOPE>`, etc.) to mark values you must replace with the resolved literal string before running the command. These are template tokens, NOT shell variables.
 
 ---
 
-## Step 1: Create Todo List + Mode Detection + Session Setup
+## Stage 0 — Initialize Run Plan
 
-### Mode Detection + Flag Parsing
+Run before the walker. Three substeps:
 
-Parse all flags from `$ARGUMENTS` first, then remove them from the remaining args:
+**0a. Parse flags from `$ARGUMENTS`** and remove them from the remaining args:
 
 ```
 MODE = "local"
@@ -162,49 +89,90 @@ HYGIENE_ONLY = false
 BASE_REF_OVERRIDE = ""
 SINCE_LAST_REVIEW = false
 FULL_REVIEW = false
+DEPTH = "standard"
 
-If $ARGUMENTS contains "--github":
-  MODE = "github"
-  Remove "--github" from $ARGUMENTS
-
-If $ARGUMENTS contains "--hygiene-only":
-  HYGIENE_ONLY = true
-  Remove "--hygiene-only" from $ARGUMENTS
-
-If $ARGUMENTS contains "--base <ref>" (where <ref> is the next word after --base):
-  BASE_REF_OVERRIDE = <ref>
-  Remove "--base <ref>" from $ARGUMENTS
-
-If $ARGUMENTS contains "--since-last-review":
-  SINCE_LAST_REVIEW = true
-  Remove "--since-last-review" from $ARGUMENTS
-
-If $ARGUMENTS contains "--full-review":
-  FULL_REVIEW = true
-  Remove "--full-review" from $ARGUMENTS
+If "--github" present:           MODE = "github"; remove
+If "--hygiene-only" present:     HYGIENE_ONLY = true; remove
+If "--base <ref>" present:       BASE_REF_OVERRIDE = <ref>; remove both tokens
+If "--since-last-review" present: SINCE_LAST_REVIEW = true; remove
+If "--full-review" present:       FULL_REVIEW = true; remove
+If "--depth <tier>" present:     DEPTH = <tier>; remove both tokens
+                                  Valid <tier> values: shallow, standard, deep.
+                                  Reject any other value with an error.
 ```
 
-### Flag Incompatibility Checks
+Flag incompatibility checks (emit error and exit immediately):
+- `--base` with `staged` scope — staged has no base ref
+- `--since-last-review` with `staged` — requires branch scope
+- `--since-last-review` with `--github` — local-only flag
+- `--since-last-review` with `--full-review` — contradictory
+- `--depth <tier>` with any value outside `shallow|standard|deep` — invalid tier
 
-Check these BEFORE any work begins. Emit an error and exit immediately:
+**Important:** both tokens of `--depth <tier>` MUST be removed from `$ARGUMENTS` before computing `SCOPE_ARGS` below. Leaving `--depth` or its value in the trailing args would either pollute the scope (where they'd be interpreted as paths) or be passed verbatim into `--scope-args`, where `resolve-scope` would reject them.
 
+The remaining `$ARGUMENTS` (after flag removal) is `SCOPE_ARGS`. Detect `PR_NUMBER` if `SCOPE_ARGS` is a single integer.
+
+**0b. Resolve plugin paths and create the CR_DIR via prepare-run.** `PLUGIN_ROOT` is the absolute directory of the code-review plugin that was invoked. Claude Code fills in its plugin-root placeholder only in the text of the command or skill being invoked: the placeholder is NOT filled in a file opened with the Read tool, and it is NOT an environment variable in Bash (echoing it in Bash prints an empty line). Never resolve the plugin root through Bash expansion. Pick the first candidate that is a real absolute path:
+
+1. **Caller binding** — you reached this file through `/code-review:deep` or `/code-review:shallow` (or any command that tells you to follow this file and states a `PLUGIN_ROOT` value). Use the value that command stated.
+2. **This file's own text** — this file was invoked directly as `/code-review:start`, so Claude Code filled in this candidate: `${CLAUDE_PLUGIN_ROOT}`. If it reads as an absolute path, use it. If it still reads as a literal `${...}` token, this file was opened with Read and the candidate is unusable.
+
+Confirm the candidate with a literal-path check (substitute the resolved path; no `$VAR`):
+
+```bash
+test -f <PLUGIN_ROOT>/tools/python/code_review_helpers.py && echo ok
 ```
-If BASE_REF_OVERRIDE != "" AND remaining $ARGUMENTS == "staged":
-  ERROR: "--base and staged are incompatible (staged has no base ref)"
 
-If SINCE_LAST_REVIEW AND remaining $ARGUMENTS == "staged":
-  ERROR: "--since-last-review requires branch scope, not staged"
+**Four resolution outcomes — try in order:**
 
-If SINCE_LAST_REVIEW AND MODE == "github":
-  ERROR: "--since-last-review is local-only"
+1. **Normal case** — candidate 1 or 2 yielded an absolute path and the check prints `ok`. Track `PLUGIN_ROOT` as that path and `HELPERS = <PLUGIN_ROOT>/tools/python/code_review_helpers.py`.
 
-If SINCE_LAST_REVIEW AND FULL_REVIEW:
-  ERROR: "--since-last-review and --full-review are contradictory"
+2. **In-repo dogfood case** — neither candidate yielded a real path (no caller binding, the token stayed literal, or the check failed). Fall back to the in-repo tree IFF `plugins/code-review/.claude-plugin/plugin.json` exists at the current working directory:
+
+   ```bash
+   test -f plugins/code-review/tools/python/code_review_helpers.py && pwd
+   ```
+
+   If that succeeds, set `PLUGIN_ROOT = <pwd>/plugins/code-review` and `HELPERS = <PLUGIN_ROOT>/tools/python/code_review_helpers.py`. This branch deliberately runs the in-repo helpers against the in-repo branch (correct for dogfooding — the run exercises the helpers actually being reviewed, not the cached marketplace version).
+
+3. **Marketplace cache fallback** — no usable candidate AND outcome 2 did not apply (no in-repo tree at cwd) AND a populated marketplace cache exists at `~/.claude/plugins/cache/closedloop-ai/code-review/<version>/`. This version may differ from the plugin that was invoked, so use it only as a last resort. Resolve to the highest-semver cached version:
+
+   ```bash
+   ls -d "$HOME/.claude/plugins/cache/closedloop-ai/code-review/"*/ 2>/dev/null | sort -V | tail -1
+   ```
+
+   If the output is non-empty AND `<dir>/tools/python/code_review_helpers.py` exists, set `PLUGIN_ROOT = <dir>` (trim the trailing slash) and `HELPERS = <PLUGIN_ROOT>/tools/python/code_review_helpers.py`. Then echo a single-line stderr notice to the operator so the fallback is observable: `Notice: plugin root unresolved; using marketplace cache <PLUGIN_ROOT>`. If the cache directory exists but no version subdirectory contains `tools/python/code_review_helpers.py` (stale or partial install), fall through to outcome 4.
+
+4. **Misconfiguration** — no usable candidate AND no in-repo tree exists AND no usable marketplace cache exists. The plugin is not installed anywhere reachable. Hard-fail with: `Error: could not resolve the code-review plugin root (no caller binding, no substituted plugin root, no in-repo plugin tree at ./plugins/code-review/, and no marketplace cache at ~/.claude/plugins/cache/closedloop-ai/code-review/). Invoke the plugin's /code-review:start, /code-review:deep, or /code-review:shallow command, or cd to the claude-plugins monorepo root.` Do NOT attempt the run — every helper invocation would crash on a malformed path.
+
+Then create a session-scoped `CR_DIR` and emit the run plan.
+
+**Do NOT redirect `setup`'s stdout to a file with `>`.** `setup` creates the `cr_dir` directory as a side effect AND prints its result JSON to stdout. A shell-style redirect would try to open `<CR_DIR>/setup.json` for writing before `cr_dir` exists, racing on directory creation. Capture stdout in-memory instead:
+
+```bash
+python3 <HELPERS> setup --mode <MODE> --cr-dir-prefix .closedloop-ai/code-review/cr-
 ```
 
-### Todo List
+Read stdout JSON. Extract `cr_dir` → `CR_DIR`, `start_time` → `CR_START_TIME`, `repo_name` → `REPO_NAME`, `current_branch` → `CURRENT_BRANCH`, `global_cache` → `GLOBAL_CACHE`. **Then** (now that `CR_DIR` exists on disk because `setup` created it) write the captured JSON to `<CR_DIR>/setup.json` for downstream helpers — use the Write tool, not a shell redirect.
 
-**IMMEDIATELY use TodoWrite** — base todos depend on MODE and HYGIENE_ONLY:
+```bash
+python3 <HELPERS> prepare-run \
+  --cr-dir <CR_DIR> \
+  --mode <MODE> \
+  --hygiene-only <HYGIENE_ONLY> \
+  --since-last-review <SINCE_LAST_REVIEW> \
+  --full-review <FULL_REVIEW> \
+  --base-ref-override "<BASE_REF_OVERRIDE>" \
+  --scope-args "<SCOPE_ARGS>" \
+  --depth <DEPTH> \
+  [--pr-number <PR_NUMBER>]
+```
+
+`<DEPTH>` is `shallow`, `standard`, or `deep` — parsed from the `--depth` flag in this command's arguments (default `standard` when absent). Tier filtering happens here: `prepare-run` emits only the stages whose `min_depth`/`max_depth` band brackets the invocation tier. Standard runs see the full 37-stage pipeline; shallow swaps `stage_19b_derive_spawn_spec` for `stage_19c_derive_static_spec` and skips signal extraction (stages 11/11b), coverage planning (stages 14/14a/15/15b/15c), budget arbitrate (16), and spawn verify (20b).
+
+Reads `<CR_DIR>/setup.json` and writes `<CR_DIR>/run_plan.json` containing `review_id`, `flags`, `stages` (the tier-filtered pipeline — 37 stages for `standard` / `deep`, ~27 stages for `shallow`), and `validation_gates`. Read the run plan with the Read tool. Cache `STAGES`, `GATES`, `FLAGS` from the JSON.
+
+**0c. Create the TodoWrite list.** Depends on MODE and HYGIENE_ONLY:
 
 **If HYGIENE_ONLY is true** (either mode):
 ```
@@ -213,9 +181,7 @@ If SINCE_LAST_REVIEW AND FULL_REVIEW:
 { content: "Present hygiene findings", status: "pending", activeForm: "Presenting results" }
 ```
 
-**Otherwise**, base todos depend on MODE:
-
-**Shared todos (both modes):**
+**Otherwise** (shared base):
 ```
 { content: "Parse scope and get diff data", status: "pending", activeForm: "Parsing scope" }
 { content: "Run deterministic hygiene checks", status: "pending", activeForm: "Running hygiene checks" }
@@ -235,233 +201,255 @@ If SINCE_LAST_REVIEW AND FULL_REVIEW:
 { content: "Present findings by severity", status: "pending", activeForm: "Presenting results" }
 ```
 
-### Session Setup
+If MODE=github, also Read `<PLUGIN_ROOT>/prompts/github-review.md` now.
 
-Resolve the helpers path and create a session-scoped working directory.
+---
 
-**Step 1 -- Resolve HELPERS path.** Run this single Bash command to discover the plugin root:
+## Deterministic Prefix — `run-prefix` loop
+
+The deterministic prefix — every stage from `stage_01_setup` through Gate B (`route`), `stage_17_partition`, and `stage_19b_derive_spawn_spec` (or `stage_19c_derive_static_spec` in `--depth shallow`) — is run **in one process** by the `run-prefix` helper instead of one orchestrator turn per stage. This is the default path. Do **not** walk these stages one at a time (the per-stage **Walker Contract** below is the labeled fallback, used only when `run-prefix` returns `error` or is unavailable, e.g. an old marketplace cache with no `run-prefix` subcommand).
+
+`run-prefix` reads `run_plan.json` + `setup.json` from `<CR_DIR>` (both written in stage 0), resolves each stage's placeholder tokens from prior-stage artifacts, honors every stage's `on_failure` policy and validation gate exactly as the Walker Contract prescribes, and pauses only at genuine decision points — emitting a status JSON. See `SCHEMA.md` §7b for the full result contract.
+
+Invoke it, then dispatch on the result's `next_action` (authoritative — read the field, not the exit code, which is `0` for every well-formed result):
+
 ```bash
-echo "${CLAUDE_PLUGIN_ROOT}/tools/python/code_review_helpers.py"
+python3 <HELPERS> run-prefix --cr-dir <CR_DIR> --plugin-root <PLUGIN_ROOT>
 ```
-Read the output. This is the resolved HELPERS path. Track it internally -- **all subsequent Bash commands must inline this resolved path, NOT `$HELPERS`**. Also track `PLUGIN_ROOT` = resolved `${CLAUDE_PLUGIN_ROOT}`.
 
-**Step 2 -- Run setup subcommand (creates CR_DIR):**
+Read the status JSON from stdout and act:
+
+1. **`needs_singleton`** — a PLN-725 singleton needs an agent (`singleton` is `"extract_signals"` or `"coverage_critic"`). Invoke the `code-review:singleton-dispatch` skill for that stage — it reads the prepare manifest `run-prefix` just wrote and spawns one synchronous Task, writing `pln725_<singleton>.json`. Then **re-invoke** `run-prefix` with `--resume-from <resume_stage>` (the `resume_stage` from the result — the sibling consolidate stage) and dispatch on the new result. Both singletons fire on most runs, so expect up to two such pauses per review.
+
+2. **`hygiene_exit`** — **Gate A** (hygiene-only). Mark the pre-review todos `run-prefix` completed (`Parse scope and get diff data`, `Run deterministic hygiene checks`) `completed`. If `cache_status_message` is non-null, print it. Render `<CR_DIR>/hygiene.json` using the **Hygiene Findings Format (Gate A render target)** section below. If `MODE=github`, do the Gate A GitHub write (`.closedloop-ai/code-review-summary.md` + `.closedloop-ai/code-review-findings.json`). Then mark "Present hygiene findings" `completed` and **EXIT** — no route, partition, agents, validate, finalize, verdict, or footer.
+
+3. **`ready_for_reviewers`** — the whole deterministic prefix is done; `run-prefix` has already run Gate B `route`, partitioned (or skipped partition in fast-path), and derived the spawn spec. Mark the pre-review todos `run-prefix` completed (`Parse scope and get diff data`, `Run deterministic hygiene checks`, `Assess scope and route models`) `completed`. Cache `FAST_PATH` (`fast_path`) and `MAX_BHA_AGENTS` (`max_bha_agents`) from the result. **Read `CACHE_DIR` from `<CR_DIR>/cache_config.json` (`cache_dir`, empty when no cache)** — the run-prefix loop skipped the walk where the fallback would have cached it, and Gate C, Gate D, and the notices below all need it. If `cache_status_message` is non-null, print it. If `FAST_PATH` is true, read `<CR_DIR>/spawn.json` (`route.models.fast_path_reviewer`) and print `"Fast path selected: 1 reviewer (<fast_path_reviewer>)."` (matching the Gate B fallback notice) and — when `CACHE_DIR` is set — `"BHA Cache: bypassed in fast-path mode."`, and replace the "Spawn reviewer agents in parallel" todo with "Run fast-path review". Then continue with the **Walker Contract** below **starting at `stage_20_spawn_reviewers`** — the reviewer fleet and everything after it are still walked one stage at a time. (Any `<CACHE_DIR>` / `<REVIEW_ROOT>` / other tokens the tail stages need are resolved from the on-disk artifacts `run-prefix` wrote, per the token table.)
+
+4. **`error`** — a stage aborted or a validation gate failed (`failed_stage` names the stage; `message` carries the diagnostic). Partial artifacts on disk are preserved. **Fall back** to the per-stage **Walker Contract** below, resuming the walk from `failed_stage` (re-run only that stage forward). If a downstream stage keeps failing, surface `message` to the operator. **Exception: do NOT resume a stage that exited `3`** — that is a review-root refusal, the tree the agents would read is not the tree under review, and re-running it per-stage would route the same refusal into the static reviewer table. Stop and surface `message`.
+
+The routing/cache notices (Gate A cache line, Gate B fast-path + cache line) are the operator-essential output of this loop — emit them and nothing else; do not narrate the individual prefix stages `run-prefix` ran.
+
+---
+
+## Walker Contract
+
+**When this applies.** The Walker Contract governs the **reviewer/verify/present tail** — `stage_20_spawn_reviewers` onward — which is always walked one stage at a time. In the normal flow the `run-prefix` loop above has already run the deterministic prefix (stages 01→19b) and handed off at `stage_20_spawn_reviewers`, so **begin the walk there**. The Contract is ALSO the **per-stage fallback for the prefix**: if `run-prefix` returned `error` (or is unavailable), walk the prefix stages one at a time from `failed_stage`, applying the same steps 1-8 and the Branching Gates (A/B) below. Everything in this section — token resolution, `on_failure`, gates, singleton dispatch — is exactly what `run-prefix` reproduces internally; it is documented here as the canonical contract and the recovery path.
+
+**Reading `<CR_DIR>/*.json` artifacts.** The walker reads run-plan output JSON to resolve placeholder tokens (`<DIFF_SCOPE>`, `<CACHE_DIR>`, etc.). If your session has a hook that intercepts the `Read` tool on generated artifacts (e.g. a code-discovery gate that demands code-intelligence lookups), fall back to `cat` via `Bash` — these are pipeline artifacts, not source code.
+
+Walk `STAGES` in array order. For each stage:
+
+1. **Skip if disabled.** If `stage.enabled` is `false`, skip silently — these stages are gated on sibling plans (01/03/05/06).
+2. **Resolve depends_on.** If any stage in `depends_on` was disabled or aborted, skip this stage too.
+3. **Resolve placeholder tokens** in `stage.args`. The token table is:
+
+| Token              | Source                                                          |
+|--------------------|-----------------------------------------------------------------|
+| `<PLUGIN_ROOT>`    | `PLUGIN_ROOT` resolved in stage 0b                              |
+| `<DIFF_SCOPE>`     | `<CR_DIR>/scope.json` → `diff_scope`                            |
+| `<BASE_REF>`       | `<CR_DIR>/scope.json` → `base_ref`                              |
+| `<DIFF_TIP>`       | `<CR_DIR>/scope.json` → `diff_tip`                              |
+| `<SCOPE_KIND>`     | `<CR_DIR>/scope.json` → `scope_kind`                            |
+| `<REVIEW_ROOT>`    | `<CR_DIR>/scope.json` → `review_root` (absolute; never empty)   |
+| `<CACHE_DIR>`      | `<CR_DIR>/cache_config.json` → `cache_dir` (empty when no cache)|
+| `<GLOBAL_CACHE>`   | `<CR_DIR>/setup.json` → `global_cache` (string "0" or "1")      |
+| `<PROMPT_HASH>`    | `<CR_DIR>/hashes.json` → `prompt_hash`                          |
+| `<CONTEXT_KEY>`    | `<CR_DIR>/hashes.json` → `context_key`                          |
+| `<MODEL_ID>`       | `"opus"` (BHA's default; the orchestrator-chosen reviewer model)|
+| `<INTENT>`         | `<CR_DIR>/intent.json` → `intent` (one of feature/fix/refactor/mixed) |
+| `<START_TIME>`     | `CR_START_TIME` from stage 0                                    |
+| `<STATE_KEY>`      | `"<review_branch>:<base_ref>"` from `<CR_DIR>/scope.json`       |
+
+If a token's source file does not exist yet (a prior stage that produces it was skipped/disabled), pass an empty string. The helper subcommands accept empty values and degrade safely.
+
+4. **Dispatch by `stage.kind`.**
+   - **`helper`**: invoke `python3 <HELPERS> <stage.subcommand> <resolved args>`. If `stage.stdout` is set, redirect stdout to that file (`> <stage.stdout>`). If `stage.expected_outputs` is non-empty after the call, confirm at least one of those paths exists.
+   - **`agent_fleet`**: `stage_20` → invoke the `code-review:spawn-reviewers` skill; `stage_23` → invoke the `code-review:verify-findings` skill.
+   - **`present`**: invoke the `code-review:present-local` skill (MODE=local) or follow `github-review.md` Steps 6 and 8 (MODE=github). Gate A hygiene-only early-exit uses the "Hygiene Findings Format (Gate A render target)" section below (mode-agnostic), NOT the skill.
+
+5. **Honor `on_failure`** when the dispatched call fails or `expected_outputs` is missing:
+   - **Exit code `3` overrides `on_failure` — always stop the walk and surface the error, whatever the stage declares.** A helper exits `3` only when it could not prove the `review_root` holds the diff under review. Every degraded path a `continue` would take — the static reviewer table, "no verifier this run" — dispatches the same agents against the same wrong tree, and a fleet reading the wrong tree reports clean. There is no safe way to proceed.
+   - `abort` — stop the walk and surface the error.
+   - `continue` — log a warning and proceed to the next stage.
+   - `continue_with_coverage_gap` — emit a `system_marker: "agent-failure"` finding (shape: the canonical `agent-failure` row in SCHEMA.md §3) and proceed. For `stage_20`, per-agent failures are handled inside the `code-review:spawn-reviewers` skill (Agent Failure Recovery — retry/log/skip steps only); the machine-readable coverage artifact for any skipped *required* reviewer is then materialized deterministically by `stage_20b_verify_spawn` as a `spawn_missing_required_agent` coverage-gap finding in `coverage_gaps.json` — so missing reviewer coverage is never silently dropped even though the orchestrator does not hand-author the finding.
+
+6. **PLN-725 singleton agent dispatch.** When the stage just finished is `stage_11_extract_signals` or `stage_15_coverage_critic`, read the manifest it just wrote and run the protocol in the `code-review:singleton-dispatch` skill before proceeding to the next stage. The manifest's `status` field decides whether an agent spawn is needed — `cache_hit` / `skipped` skips, `needs_agent` spawns. The downstream sibling stage (`stage_11b` / `stage_15b`) walks normally as the next array entry; its `cmd` no-ops on `cache_hit` / `skipped` manifests so the walker doesn't need to branch.
+
+7. **Run gates.** After completing a stage, scan `GATES` for any entry whose `after_stage` matches the stage just finished. For each match, shell out to the canonical enforcer:
+
+   ```bash
+   python3 <HELPERS> evaluate-gate --cr-dir <CR_DIR> --after-stage <stage_id>
+   ```
+
+   The helper looks the gate up from the same canonical `_build_validation_gates` table that produced `run_plan.json` and checks:
+   - Every literal-path entry in `outputs` exists as a regular file (glob entries like `agent_*.json` are scoped to the `all_required_outputs_present` enforcer and are skipped here).
+   - For every file listed in `required_sections`, the file exists, parses as JSON, is a top-level JSON object, and every listed section key is present in that object AND its value is a JSON object (dict). The dict-value check catches the corrupt-atomic-write scenario where a section is written as `null` mid-replace — a downstream consumer expecting `state[key]` to be a dict would crash on attribute access.
+
+   Exit code `0` means the gate passed. Exit code `1` means it failed; the diagnostic is on stderr. Read the matching gate's `on_failure_action` from `run_plan.json` (`abort | continue | emit_coverage_gap`) and apply it. The enforcer is gate-policy-agnostic by design — the same helper serves all three actions without branching, so contract changes propagate uniformly.
+
+   `required_sections` distinguishes "the file exists on disk" from "the stage that owns this section actually populated it." `coverage.json` exists from `stage_14` onward (sections accumulate), so a bare file-existence check after `stage_16` would fire-true even if stages 15/15b/15c/16 all failed to populate their sections.
+
+8. **Branching gates** (see next section) fire at specific stage boundaries.
+
+---
+
+## Branching Gates
+
+Four runtime gates modify walker default behavior. Each is documented below with the exact stage boundary it fires at.
+
+**Gate A and Gate B fire inside the prefix, so `run-prefix` performs them for you.** In the normal flow you never execute the mechanics below — `run-prefix` runs Gate A's hygiene-only exit (surfaced as `next_action: "hygiene_exit"`) and Gate B's `route` + partition (surfaced as `next_action: "ready_for_reviewers"` with `fast_path` / `max_bha_agents`), and the **Deterministic Prefix — `run-prefix` loop** section tells you what to print and where to hand off. The Gate A/B detail below is the canonical spec and the recipe for the **per-stage fallback walk** (when `run-prefix` errored). **Gate C and Gate D fire after `stage_20`, in the walked tail, so you always apply them yourself** as described.
+
+### Gate A — After `stage_12_hygiene`: Hygiene-only early exit
+
+If `FLAGS.hygiene_only` is true (or the equivalent `--hygiene-only` was passed):
+
+1. If `CACHE_DIR` is set and `cache_result.json` produced a non-empty `status_message`, print it.
+2. Mark "Present hygiene findings" `in_progress`.
+3. Parse `<CR_DIR>/hygiene.json` and render using the "Hygiene Findings Format (Gate A render target)" section below.
+4. If MODE=github, write hygiene findings to `.closedloop-ai/code-review-summary.md` and `.closedloop-ai/code-review-findings.json`; the workflow handles posting.
+5. **EXIT.** Do not run any remaining stages — not route, partition, agents, validate, finalize, cache-update, review-state-write, verdict, or footer. Hygiene-only runs do not emit a `verdict.json` (there is no findings_validated.json or review_result.json for verdict to read; invoking it would crash the walker via `on_failure: abort`).
+
+### Gate B — After `stage_19_cache_check`: Route + fast_path decision
+
+`route` (model selection) is not a canonical PLN-719 stage but the orchestrator needs `fast_path` and `max_bha_agents` before `stage_17_partition` actually runs. The run plan's array order places `stage_17_partition` after `stage_19_cache_check` (the stage id is a stable label; the execution order follows array position). So this gate fires between the two adjacent stages — the walker simply pauses after cache-check, invokes `route`, then resumes with partition.
+
+Run `route`:
+
 ```bash
-python3 <HELPERS> setup --mode <MODE> --cr-dir-prefix .closedloop-ai/code-review/cr-
+python3 <HELPERS> route \
+  --diff-data <CR_DIR>/diff_data.json \
+  --critic-gates .closedloop-ai/settings/critic-gates.json \
+  --intent <INTENT> \
+  --cr-dir <CR_DIR>
 ```
-Read stdout JSON. It contains:
+
+The cmd writes the routing block directly into `<CR_DIR>/spawn.json.route` via atomic section update (no stdout redirect, no race against the helper's own write). Read `<CR_DIR>/spawn.json` and cache `FAST_PATH` (bool), `MAX_BHA_AGENTS`, `MODELS`, `DOMAIN_CRITICS`, `HIGH_RISK_FILES`, `SIZE_CATEGORY` from the `route` section.
+
+3. If `CACHE_DIR` is set, print `cache_result.json`'s `status_message` now (before `stage_17_partition` runs).
+4. If `FAST_PATH == false` (standard flow), proceed: walker continues to `stage_17_partition`, passing `--loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS>` in addition to the args declared in the run plan. When `CACHE_DIR` is set, swap `--diff-data` to `<CR_DIR>/uncached_diff_data.json` so partitions only contain uncached files.
+5. If `FAST_PATH == true`, skip `stage_17_partition` (no `partitions.json` or `patches_p<N>.txt`; the fast-path reviewer consumes `patches_all.txt` directly). Print:
+   - `"Fast path selected: 1 reviewer (<MODELS.fast_path_reviewer>)."`
+   - If `CACHE_DIR` is set: `"BHA Cache: bypassed in fast-path mode."` and delete `<CR_DIR>/agent_cached_bha.json` if it exists.
+   - Update the todo list: replace "Spawn reviewer agents in parallel" with "Run fast-path review".
+
+### Gate C — Between `stage_25_finalize_result` and `stage_26_cache_update`
+
+Skip `stage_26_cache_update` when `FAST_PATH == true` OR `CACHE_DIR` is empty. The cache update is only meaningful for the partitioned BHA flow.
+
+When the stage does run, the walker adds `--exclude-test-partitions` to its args (test-only partitions reviewed by Sonnet must not poison the Opus cache).
+
+### Gate D — Before `stage_27_review_state_write`: Runtime conditions
+
+Skip `stage_27_review_state_write` unless **all** of these hold:
+
+- `MODE == "local"` — review state is only meaningful for repeated local runs against the same branch; GitHub CI runs don't need it.
+- `CACHE_DIR` is non-empty — review state is stored in the cache directory.
+- Every reviewer agent succeeded (no failed/skipped partitions, no recovery retries that exhausted). On any agent failure, skip — the next `--since-last-review` run cannot rely on partial state.
+
+These conditions mirror the cache-update gate (Gate C) and the pre-Phase-4b "Review State Write" prose. The walker honors `on_failure: continue` for this stage, so a skipped run never aborts the pipeline.
+
+---
+
+## Operator Settings
+
+Two optional operator-authored config files live under `.closedloop-ai/settings/`. Both are absent by default; the pipeline uses built-in defaults until they exist.
+
+### `.closedloop-ai/settings/verdict-thresholds.json` (FEA-1401)
+
+Override the verdict-precedence thresholds without forking the plugin:
+
 ```json
-{ "start_time": 1700000000, "repo_name": "my-repo", "current_branch": "feature-x", "global_cache": "1", "cr_dir": ".closedloop-ai/code-review/cr-38291" }
+{
+  "impact_cumulative": 2
+}
 ```
 
-Assign from the JSON:
-- `CR_START_TIME` = `start_time`
-- `REPO_NAME` = `repo_name`
-- `GLOBAL_CACHE` = `global_cache`
-- `CR_DIR` = `cr_dir` (the setup helper creates this directory with a random suffix)
+| Key | Default | Effect |
+|-----|---------|--------|
+| `impact_cumulative` | `2` | Number of BLOCKING/HIGH `ImpactAnalysis` findings on a single PR that flip the verdict to `NEEDS_ATTENTION` (the cumulative Impact gate in `_compute_canonical_verdict`; FEA-1401 / PLN-726 OQ#6). Set higher to relax the gate; raise above any realistic finding count to disable. |
 
-Write the JSON to `<CR_DIR>/setup.json` so downstream helpers can read it.
+Unknown keys are ignored. Non-integer or `< 1` values fall back to the default — the file is operator-authored and should not crash the pipeline on a typo.
 
-**Step 3 -- Copy prompt assets to CR_DIR:**
-```bash
-python3 <HELPERS> prep-assets --plugin-root <PLUGIN_ROOT> --cr-dir <CR_DIR>
-```
-This copies `shared_prompt.txt` and `bha_suffix.txt` from the plugin to `<CR_DIR>`. Both cache and non-cache paths use these assets.
+### `.closedloop-ai/settings/verification-gates.json` (PLN-722)
 
-Initialize `CACHE_DIR=""` -- final cache path is resolved after scope parsing.
+Operator-authored glob lists for path-level verifier escalation. See **stage_24a_verify_consolidate** below for the rule definitions (`sensitive_paths`, `tentative_on_paths`, `mandatory_human_review_paths`).
+
+## Per-Stage Notes
+
+These notes annotate the run-plan stages with anything not obvious from the plan itself. Stages not listed here have no special handling beyond the walker contract.
+
+- **stage_01_setup**: already executed in stage 0b (which captured stdout and wrote `setup.json` itself). The walker treats this as a no-op; the run plan's `stdout` field is `None` for this stage because no shell redirect is correct here.
+- **stage_02_prep_assets**: copies `shared_prompt.txt` and `bha_suffix.txt` from `<PLUGIN_ROOT>/tools/prompts/` to `<CR_DIR>`. Both cache and non-cache paths use these assets.
+- **stage_03_resolve_scope**: writes `<CR_DIR>/scope.json` with `diff_scope`, `base_ref`, `head_ref`, `review_branch`, `diff_tip`, `pr_number`, `path_filter`, `scope_kind`, `pr_auto_detected`, `head_sha`, `pr_head_sha` (PR scope only; github mode records it while leaving `head_sha` empty), `review_root`, `review_root_sha`, `review_root_tree` (staged scope only), `worktree_path`. **Review root:** `review_root` is the absolute root of the checkout the diff was computed from — the PR-head worktree when one was created, otherwise the invoking checkout's `git rev-parse --show-toplevel` — and it is **always** populated; resolve-scope returns non-zero rather than emit an empty one. Spawned reviewer/verifier agents inherit the invoking SESSION's working directory, so on any worktree-based run "read the working tree" means a different checkout than the diff, and a clean report from there is indistinguishable from a real pass. Every dispatch stage (`derive-spawn-spec`, `derive-static-spec`, `verify-prepare`, `review-dismissed-prepare`) re-proves the root against `scope.json` and `diff_data.json` — including that no file the diff changes differs in the working tree from `review_root_sha` (a commit, reset, or edit after resolution); for `staged` scope, whose diff is index-vs-HEAD, the baseline is `review_root_tree` — the index tree `resolve-scope` records with `git write-tree` — so an unstaged edit to a staged file or a re-stage after resolution is caught, and a staged scope without a valid `review_root_tree` is refused — and exits `3` when it cannot. The walker aborts on exit `3` regardless of the stage's `on_failure`, because those stages are `on_failure: continue` and every path a continue degrades to — the static reviewer table, "no verifier this run" — dispatches the same agents against the same wrong tree. A positional scope argument that is a git ref or revision range (e.g. `origin/main...HEAD`) is also rejected here rather than folded into a pathspec that matches nothing. After this stage, run `finalize-cache` to populate `<CR_DIR>/cache_config.json`. The walker uses these for token resolution downstream. **PR-head worktree (local PR review):** for `MODE=local` PR reviews (`scope_kind == "pr"`, not hygiene-only) resolve-scope isolates source reads so reviewer/verifier agents read the PR head, not the operator's working tree. The diff is computed from the fetched remote refs (`origin/<base>...origin/<head>`); reading the working tree is safe **only** when it already IS the PR head with a clean tree. Otherwise resolve-scope materializes a detached git worktree at the PR head SHA under `<CR_DIR>/pr_head_worktree` and records its absolute path in `review_root`/`worktree_path`; reviewer prompts and verifier inputs then read **source** under `<REVIEW_ROOT>`. **Fail-closed:** if isolation is required but cannot be established (PR head unresolvable, or `git worktree add` fails), resolve-scope returns non-zero and the run aborts (`on_failure: abort`) rather than silently review the wrong branch — the operator is told to check out the PR branch or fix the git error. `worktree_path` is empty (no isolation needed) for the already-at-head-and-clean case, staged/file/branch scope, hygiene-only, and GitHub mode; `review_root` is still populated in all of those, from the invoking checkout. **GitHub mode verifies instead of isolating (ISS-8769):** for `MODE=github` PR reviews (`scope_kind == "pr"`, not hygiene-only) resolve-scope first requires the PR head to come from the PR's own metadata — when `gh pr view` fails, the only head left is a guess (the checked-out branch), and a tree matching a guess proves nothing, so it refuses — then checks that the checked-out tree actually holds that head: either HEAD is that commit, or HEAD is the PR's merge ref (`refs/pull/N/merge`, the default `actions/checkout` for a `pull_request` event), a merge with exactly two parents whose second parent is that commit and whose first parent is on the PR's base branch (an ancestor of `origin/<baseRefName>` from the PR metadata, not a `--base` override, which tolerates the base advancing after GitHub computed the merge) — with no uncommitted changes to tracked files. Anything else **refuses** with a non-zero exit before any scope is emitted, so a refused run prints nothing to stdout. `--github` is a supported invocation from a developer machine (it selects file-based handoff output; it does not declare "I am inside GitHub Actions"), and before this check such a run silently reviewed the operator's branch against the PR's diff. It refuses rather than isolating because a worktree would move the agent fleet to a different tree than `github-review.md`'s own steps read; the remedy is to check out the PR branch, or drop `--github` and use the local flow, which isolates for you. On an accepted run no worktree is created and `head_sha` stays empty (populating it would re-route `_file_content_hash` and the inline-comment `commit_id`); `review_root` is the invoking checkout's toplevel — the same tree the check just verified — and `review_root_sha` is that checkout's HEAD: the PR head for a head checkout, the merge commit for a merge-ref checkout, so the dispatch drift check compares against what is actually checked out. **Worktree lifecycle:** resolve-scope runs a startup GC (`_gc_stale_pr_head_worktrees`) that reclaims orphaned `cr-*/pr_head_worktree` checkouts from prior runs that aborted before teardown; `stage_30_footer` tears down the current run's worktree (validating the path equals the canonical `<CR_DIR>/pr_head_worktree` before the destructive removal). Because the walker can abort before the footer, the next run's startup GC is the backstop — a leaked worktree is never silently reused. Code intelligence stays on for branch, staged, and file-path review run from the primary checkout AND from a separate git worktree, for local PR review already at the head, and in GitHub mode; it is off (`CODE_INTEL_ALLOWED=false`) only for the per-run PR-head worktree (`worktree_path` set), which is created and torn down on every review, so any index for it would be cold. When `review_root` is not the git toplevel of the SESSION's primary working directory — the directory the Claude Code session was started in, not the directory a helper process happened to run in — or that cannot be determined, `CODE_INTEL_REQUIRE_ROOT_ARG=true` restricts reviewers to code-intelligence calls scoped to `review_root` through a root argument, because a tool called without one answers for the session's checkout.
+- **stage_07_auto_incremental**: runs **before** `stage_05_parse_diff` (its array position is between `stage_04_finalize_cache` and `stage_05_parse_diff`). This ordering matters: any `diff_scope` override must be applied to the cached `<DIFF_SCOPE>` token BEFORE parse-diff and extract-patches materialize `diff_data.json` and `patches_all.txt`, otherwise downstream stages see full-PR diff data alongside a narrowed token. The stage retains its `_07_` id as a stable label; execution order follows array position. Writes `<CR_DIR>/auto_incremental.json` with optional `diff_scope` (override) and `review_mode_line`. If `diff_scope` is non-null, update the cached `<DIFF_SCOPE>` token. Print `review_mode_line` (always) and, if `pr_auto_detected` was true in `scope.json`, print `"Auto-detected PR #<PR_NUMBER> for branch <REVIEW_BRANCH>."`.
+- **stage_08_fetch_intent**: the helper writes `intent_context.json` into `cr_dir` itself; its stdout is a small `{path, source}` summary that the walker discards. The run plan's `stdout` field is `None` here because redirecting stdout to `intent_context.json` would corrupt the file by overwriting the helper's structured payload with the summary.
+- **stage_09_detect_injection** (PLN-720): scores PR title/body/commits against the canonical 9-pattern catalogue and writes `<CR_DIR>/injection_report.json`. On severity ≥ Medium (score ≥ 30), rewrites `<CR_DIR>/intent_context.json` in place with `quarantine: true` and redacted fields. On severity ≥ High (score ≥ 70), also writes `<CR_DIR>/agent_injection-detector.json` containing a canonical `InjectionAttempt` finding — the `agent_*.json` naming makes `cmd_collect_findings` pick it up via the standard glob with no extra wiring. Always appends one JSONL entry to `.closedloop-ai/injection-log.jsonl` (90-day TTL, swept on read). `on_failure: continue` is intentional — a detector crash must never abort the pipeline.
+- **stage_11_extract_signals** (PLN-725 Phase 1, wired in Phase 4): runs `extract-signals-prepare`. Writes `<CR_DIR>/extract_signals_manifest.json` describing the cache outcome. On `status: "cache_hit"`, prepare wrote `<CR_DIR>/extract_signals.json` itself — no agent runs, downstream `stage_11b` no-ops. On `status: "needs_agent"`, the walker invokes the `code-review:singleton-dispatch` skill with the manifest's `input_path`, `prompt_path`, `extra_inputs`, and target `pln725_extract_signals.json`. `on_failure: continue_with_coverage_gap` — a signal-extraction failure degrades to the fail-closed default signal set (every taxonomy signal at 0.5 confidence); the required-floor of coverage is unaffected because required rules cannot key solely on LLM signals.
+- **stage_11b_extract_signals_consolidate** (PLN-725 Phase 4): runs `extract-signals-consolidate` against `<CR_DIR>/pln725_extract_signals.json`. Validates the agent output against the taxonomy contract and writes the canonical `<CR_DIR>/extract_signals.json`. No-ops when the prepare manifest's `status` is `"cache_hit"` so the walker can drive this unconditionally without inspecting prepare's status. Fail-closed on validation rejection — writes the default signal set + emits a `signal-extraction-failed` finding to `agent_signal-extraction-failed.json`.
+- **stage_14_resolve_coverage** (PLN-725): runs `resolve-coverage` against `coverage` rules + `extract_signals.json` + diff data. Writes the deterministic pre-critic plan into `<CR_DIR>/coverage.json` (`initial` section). `depends_on: ["stage_11b_extract_signals_consolidate"]` so the signals input is guaranteed to exist. `on_failure: continue_with_coverage_gap` — downstream stages read `coverage.json.initial` directly.
+- **stage_14a_load_available_reviewers** (PLN-725 Phase 5): runs `load-available-reviewers`. Scans `.claude/agents/*.md` (default `--agents-dir`), parses YAML frontmatter for each file's `name` field, writes a flat sorted+dedup JSON list to `<CR_DIR>/available_reviewers.json` — the AVAILABLE roster `stage_15_coverage_critic` enforces against. Independent of stage_14 (no shared data), but slotted between 14 and 15 so the data dependency is explicit on the wire. Empty `.claude/agents/` or missing dir produces an empty roster + exit 0 — stage_15 then falls through to its Phase 4 no-roster skipped semantics. Warnings (unreadable files, missing frontmatter, duplicate names) print to stderr per file but never abort the scan. `on_failure: continue_with_coverage_gap` — a write failure on the roster degrades safely.
+- **stage_15_coverage_critic** (PLN-725): runs `coverage-critic-prepare`. Writes the prep manifest into `<CR_DIR>/coverage.json` (`critic` section). On `status: "cache_hit"` (a prior run saw the same plan, signals, roster, and diff summary), prepare wrote the cached plan into `<CR_DIR>/coverage.json` (`final` section) and downstream `stage_15b` no-ops. On `status: "skipped"`, prepare also wrote the initial plan unchanged into `coverage.json.final` — the walker MUST NOT dispatch the singleton critic, no matter which of these skip reasons fired: `"no-critic"` (operator passed `--no-critic`), `"no-roster"` (loaded `available_reviewers.json` is empty — no project agents are configured), or `"no-candidates"` (roster is non-empty but every reviewer is already in the initial plan — nothing left for the critic to propose). Stage_15b is a no-op on any `"skipped"` manifest. On `status: "needs_agent"`, the walker invokes the `code-review:singleton-dispatch` skill with the manifest's paths and target `pln725_coverage_critic.json`. `on_failure: continue` — coverage-critic failure surfaces as `critic_status: "fail_closed"` on the final plan; the deterministic floor from stage_14 still routes reviewers correctly.
+- **stage_15b_coverage_critic_consolidate** (PLN-725): runs `coverage-critic-consolidate` against `<CR_DIR>/pln725_coverage_critic.json`. Validates the agent output against the AVAILABLE / additive-only / best-effort-only / evidence / dedup / 5-cap constraints and merges accepted additions into `<CR_DIR>/coverage.json` (`final` section). No-ops when the prepare manifest's `status` (from `coverage.json.critic`) is `"cache_hit"` or `"skipped"`. Fail-closed on all-rejected — writes the initial plan unchanged into `.final` + emits a `coverage-critic-failed` finding to `agent_coverage-critic-failed.json`.
+- **stage_15c_verify_coverage** (PLN-725): runs `verify-coverage`. Deterministic post-LLM verifier — reads `<CR_DIR>/coverage.json` (`final` section — post-consolidate; `initial` section — pre-critic) and `<CR_DIR>/available_reviewers.json` (roster), then checks the shape, additive-only, closed-vocabulary, best-effort-only-critic, evidence-required, 5-cap, and no-duplicates contracts. Writes the verdict into `coverage.json` (`verify` section) with `verdict: "PASS"` or `verdict: "BLOCKING"` and a `violations[]` list keyed by check name. On BLOCKING also emits a HIGH system-marker finding to `<CR_DIR>/agent_coverage-verify-blocking.json` (with `source: "coverage-verifier"`, the canonical value in `SOURCES`) so the run summary surfaces the failure. The verifier itself stays observational — exit 0 on both verdicts and `on_failure: continue`. A BLOCKING verdict gates `stage_16_arbitrate_budget`: arbitrate-budget reads this section and short-circuits — the input plan flows through unchanged with `budget.gated_by_verify: true`. The BLOCKING verdict also propagates into `stage_20_spawn_reviewers` via `stage_19b_derive_spawn_spec`: the spawn-spec carries the `gated_by_verify` flag so the orchestrator can surface in the present step that arbitration was bypassed. Spawn-spec derivation still runs against the (unbudgeted) input plan — review is not halted by the BLOCKING verdict, only annotated. Input semantics: missing or unreadable `coverage.json.final` / `coverage.json.initial` sections BLOCK with check `input` so an upstream abort is never confused with a real PASS. Roster semantics: missing or empty roster bypasses the closed-vocabulary check (no-roster skip path); present-but-malformed roster BLOCKs with check `roster` (distinct from absent so an operator config error is surfaced). The `closed_vocabulary` check scopes to `source: "critic"` entries only — core/rule reviewer labels are plugin-internal identifiers that the spawner translates at dispatch time. The `additive` check is bucket-aware: `initial.required ⊆ final.required` enforced separately from best-effort preservation, so a required→best_effort demotion BLOCKs as a silent-coverage-downgrade. The `shape` check validates each entry as a dict with a non-empty `reviewer` string; shape failures short-circuit downstream checks to avoid cascading misleading violations.
+- **stage_16_arbitrate_budget** (PLN-719 Section 5): runs `arbitrate-budget` against `<CR_DIR>/coverage.json` (`final` section — post-consolidate input) and writes the arbitrated plan back into the same `.final` section plus `<CR_DIR>/coverage_gaps.json` (multi-writer findings file). PASS verdict from `coverage.json.verify` → arbitration applies the total-reviewer cap (default `BUDGET_TOTAL_CAP_DEFAULT`), fails-closed on required-overflow (drops excess required reviewers + emits `budget-exceeded` system findings per drop), prunes lowest-priority best-effort, and computes the final `bha_partitions` count. BLOCKING verdict → arbitration is bypassed entirely; the input plan flows through unchanged with `budget.gated_by_verify: true` and `arbitrate_status: "blocked_by_verify"`. No new finding is emitted for the gate — the canonical BLOCKING finding already lives in `agent_coverage-verify-blocking.json` from stage_15c, and double-counting would inflate the run summary. Missing `coverage.json.verify` (verifier didn't run, upstream aborted) is treated as PASS so the arbitration path remains operable when verify telemetry is degraded. `on_failure: abort` — a real I/O or shape error here halts the pipeline; the BLOCKING short-circuit is exit 0, not a failure. **Note:** `stage_20_spawn_reviewers` consumes `spawn.json` (`spec` section, derived by `stage_19b_derive_spawn_spec` from this stage's output) and falls back to the static reviewer table in the `code-review:spawn-reviewers` skill only when the spec is missing or marks `arbitrate_status: "fallback"`.
+- **stage_12_hygiene**: writes `<CR_DIR>/hygiene.json` with hygiene findings. Triggers **Gate A** (hygiene-only exit) immediately after.
+- **stage_17_partition**: positioned in the run plan array after `stage_19_cache_check` so Gate B's `route` invocation runs first and supplies `--max-bha-agents`. The stage id retains its `_17_` prefix as a stable label (stage ids are not strict ordinals; execution order follows array position). Reads `partitions.json` afterward; entries shape `{id, files, total_loc, is_test_only}` with `files[].file` (NOT `path`), `files[].loc`, `files[].is_test`, optional `files[].line_range`. **PLN-774**: top-level keys also carry `partition_mode` (`"unified"` | `"partitioned"`), `partition_count`, `total_changed_loc`, and `unified_threshold_loc`. When total changed LOC ≤ `BHA_UNIFIED_THRESHOLD_LOC` (default 5000, settable via `.closedloop-ai/settings/code-review.json:bha_unified_threshold_loc`; `0` = always partition), the partitioner emits a single unified partition holding every file so cross-region invariants stay visible to one BHA reviewer's context. `cmd_verify_prepare` propagates `partition_mode` + `partition_count` into `verify_manifest.json` for the presenter footer. The `stats.verification.by_reviewer` block naturally labels BHA by partition via the filename-derived `reviewer` field (`agent_bha_p0.json` → `reviewer='bha_p0'`) — no extra split logic is needed; under unified mode only a single `bha_p0` bucket exists because there is only one partition.
+- **stage_19_cache_check**: writes `<CR_DIR>/cache_result.json` (stats), `<CR_DIR>/agent_cached_bha.json` (cached BHA findings, glob-compatible with `agent_*`), `<CR_DIR>/uncached_diff_data.json` (filtered diff_data for uncached files). Do NOT print the cache status here — it is printed in Gate A (hygiene exit) or Gate B (after route).
+- **stage_19b_derive_spawn_spec** (PLN-725): runs `derive-spawn-spec`. Reads `<CR_DIR>/coverage.json` (`final` section — post-arbitrate), `<CR_DIR>/partitions.json`, and `<CR_DIR>/spawn.json` (`route` section, written by Gate B's `cmd_route --cr-dir`) and writes `<CR_DIR>/spawn.json` (`spec` section) — a flat list of agent descriptors keyed by `agent_id` (e.g. `bha_p0`, `bhb`, `auditor`, `domain_0`, `fast`) carrying `reviewer`, `model`, `partitioned`, `patches_file`, `source`, `bucket`, and (for BHA) `partition_id` + `is_test_only`. The fast-path branch from Gate B is honored (`fast_path: true` → single `fast` agent, bucket walk skipped). BHA descriptors are capped at `coverage_plan.budget.bha_partitions` (the post-arbitrate cap, which may be < the partitioner's output count); the excess partitions land in `skipped[]` with `reason: "budget_capped"`. When the cap is 0 because the diff is docs-only (`coverage_plan.budget.docs_only: true`), BHA lands in `skipped[]` with `reason: "docs_only"` instead. A BLOCKING verify verdict (`budget.gated_by_verify: true`) drives **plan sanitization**: only `source: "core"` reviewers survive; every `rule` or `critic` entry is moved to `skipped[]` with `reason: "gated_by_verify"` (the canonical BLOCKING finding from stage_15c remains the operator-facing signal). Required-bucket skips with non-benign reasons (everything except `deferred_pln723`, `no_partitions`, `docs_only`, `gated_by_verify`) generate coverage-gap findings appended to `<CR_DIR>/coverage_gaps.json` so finalize-result picks them up — the spec-driven dispatch never silently drops a required reviewer. `on_failure: continue` — a derive failure writes a sentinel spec with `arbitrate_status: "fallback"` (`fallback_reason` ∈ {`coverage_plan_missing_or_malformed`, `partitions_missing_or_malformed`}), which the stage_20 orchestrator interprets as "ignore the spec, use the static reviewer table fallback in the `code-review:spawn-reviewers` skill." **Exit `3` is NOT that case** — it is a review-root refusal, and the static table would spawn the same agents against the same wrong tree, so it aborts the walk regardless of `on_failure`. Note: stage_19b depends only on `stage_16_arbitrate_budget`, NOT on `stage_17_partition`, so Gate B's fast-path branch (which skips stage_17) can still reach stage_20 with a fast descriptor.
+- **stage_20_spawn_reviewers**: agent_fleet stage. Invoke the `code-review:spawn-reviewers` skill. The skill reads `<CR_DIR>/spawn.json` (`spec` section) first and dispatches one Task per agent descriptor (using the `agent_id`, `reviewer`, `model`, and `patches_file` from the spec). If `spawn.json` is missing, its `spec` section is absent, or it marks `arbitrate_status: "fallback"`, the skill walks its static reviewer table fallback instead — a derive failure must never block review. In `MODE=github`, the walker must follow the skill's synchronous standard-flow branch: do not use `TaskOutput`, watcher files, sleep loops, polling loops, or turn-ending waits as replacements for synchronous reviewer completion. `stage_20` must complete every GitHub synchronous reviewer and retry, leaving no reviewer task still running, or fail before `stage_21_collect_findings`.
+- **stage_20b_verify_spawn** (PLN-725): runs `verify-spawn`. Reads `<CR_DIR>/spawn.json` (`spec` section) and globs `<CR_DIR>/agent_*.json`; for every descriptor with `bucket: "required"` that has no on-disk output, appends a coverage-gap finding to `<CR_DIR>/coverage_gaps.json` (reason `spawn_missing_required_agent`) and records the omission in `<CR_DIR>/spawn.json` (`verification` section). Missing best-effort descriptors are recorded for telemetry but emit no finding — best-effort omissions are budget-driven, not coverage gaps. No-ops cleanly when the spec is missing (`spec_missing`), marks fallback (`spec_fallback`), or contains no agents (`spec_empty`). `on_failure: continue` — a verification bug must never block review; worst case is missing telemetry, not a halted pipeline. Wired before `stage_21_collect_findings` so the gap findings land in `coverage_gaps.json` in time for `cmd_finalize_result` to merge them into the canonical envelope.
+- **stage_22_validate**: writes `<CR_DIR>/findings_validated.json` via `> <CR_DIR>/findings_validated.json` redirection. Validates finding scope and applies the out-of-hunk confidence gate. First, a diff-scope `line` past the end of its file (read under `scope.json`'s `review_root`; the old file from the patch for a deleted file) is re-anchored to the one line containing its `code_snippet` (`line_reanchored_from` keeps the original), or else kept and tagged `line_out_of_range`, which is never posted inline. P2+ findings whose `line` falls outside the file's changed range survive when `confidence > out_of_hunk_confidence_floor` (default `0.80`, operator-tunable via `.closedloop-ai/settings/code-review.json:out_of_hunk_confidence_floor`, range `[0.0, 1.0]`) — this admits legitimate companion-change findings (e.g. a signature change in the diff window leaving stale sibling call sites just outside it) while still filtering low-confidence noise. Survivors get tagged `out_of_hunk_kept: true` so presenters can label them as companion-change without re-deriving hunk membership; the validate-stats block exposes `kept_out_of_hunk` and `discarded_out_of_hunk_low_confidence`. The comparison is strict `>`, so setting the floor to `1.0` is a kill switch (nothing can clear); setting it to `0.0` lets every out-of-hunk P2+ through (lean on the PLN-722 verifier downstream). Per-finding verification (stage_23) still applies on top, so noise that surfaces here gets a second-pass CONFIRMED/REJECTED verdict. Findings on files outside the diff are kept too (ISS-12737): they are tagged `out_of_diff: true`, held only to the normal `0.5` confidence floor (no out-of-hunk floor, no line-range check), counted in `kept_out_of_diff`, and always verified — the verifier decides causation and rejects them with `rejection_class: "not_caused_by_diff"` when no change in the patch caused them.
+- **stage_22b_verify_prepare** (PLN-722): tier-selects findings for verification per the canonical table — BLOCKING/HIGH always; MEDIUM with confidence < 0.85 yes; MEDIUM with confidence ≥ 0.85 no; LOW (P3) no; `category: "Hygiene"` no; `source: "injection-detector"` no. Ranks the eligible set by `severity_weight × confidence`, caps at `VERIFY_MAX_VERIFICATIONS = 50`, and writes (a) `<CR_DIR>/verify_manifest.json` with `to_verify[]` + `skipped_no_verification[]` + `deferred_budget[]` + `cache_hits[]`, and (b) `<CR_DIR>/verifier_inputs/<finding_id>.json` per eligible finding. When `--cache-dir` is set, fresh verifier outputs from a prior run for the same `(finding_id, code_snippet_hash, model, prompt_hash)` tuple are pre-materialized at `agent_verifier_<finding_id>.json` and skipped from `to_verify[]` (logged under `cache_hits[]`). Findings tagged `out_of_diff` are the exception to all three rules: they are always verified whatever their tier, rank first and do not count against the cap (so the 50 still bounds in-diff verifications), are never served from the verification cache, and their verifier input carries `patches_path` (the full-diff `patches_all.txt`). `on_failure: continue` is intentional — verify-prepare failure degrades to "no verifier this run", not a pipeline abort. **Exit `3` is the exception** — a review-root refusal aborts the walk, because verifying against the wrong tree rejects every finding on the existence check and reads as a clean run.
+- **stage_23_verify_findings** (PLN-722): agent_fleet stage. Invoke the `code-review:verify-findings` skill. Each spawned agent reads its `verifier_inputs/<finding_id>.json` (containing the finding + the `verifier_prompt_path` + the canonical `output_path`) and emits one verdict file at `<CR_DIR>/agent_verifier_<finding_id>.json`. `on_failure: continue` so a single agent crash never aborts review. In `MODE=github`, the walker must follow the skill's synchronous verifier branch: do not use `TaskOutput`, watcher files, sleep loops, polling loops, or turn-ending waits as replacements for synchronous verifier completion. `stage_23` must complete every GitHub synchronous verifier, leaving no verifier task still running, or fail before `stage_24a_verify_consolidate`.
+- **stage_24a_verify_consolidate** (PLN-722, extended in PLN-721): merges all `agent_verifier_*.json` outputs back into the validated set, applies sensitive-path escalation from `.closedloop-ai/settings/verification-gates.json` (rules: REJECTED on `sensitive_paths` + BLOCKING/HIGH → TENTATIVE with severity capped at HIGH; any finding on `tentative_on_paths` → TENTATIVE; any finding on `mandatory_human_review_paths` → TENTATIVE + `force_human_review: true`), routes JUSTIFIED-VALID verdicts to a new `justified[]` bucket and JUSTIFIED-INVALID verdicts back into `verified[]` (the audited justification was refuted; the original concern stands), and writes `<CR_DIR>/findings_verified.json` with the bucket-split shape `{verified[], rejected[], pending_verification[], justified[], force_human_review}`. `tentative_on_paths` lifts JUSTIFIED-VALID/INVALID to TENTATIVE on the same operator-policy contract as the other verdicts. When `--cache-dir` is set, fresh verifier outputs are written back to the `verifications/` namespace (30-day TTL) for re-use on subsequent runs. Missing fleet outputs degrade to `pending_verification[]`; `on_failure: continue`.
+- **stage_25_finalize_result** (PLN-722 + PLN-721): writes `<CR_DIR>/review_result.json` (the canonical envelope) BEFORE running schema validation. PLN-722: prefers `<CR_DIR>/findings_verified.json` (verify-consolidate output) when present and honors its `force_human_review` flag in the verdict computation; falls back to `findings_validated.json` (everything to `verified[]`) when verify-consolidate didn't run. PLN-721: pipes the consolidate `justified[]` bucket into the envelope, and loads operator-overridable thresholds from `.closedloop-ai/settings/verdict-thresholds.json` (defaults to `impact_cumulative=2`; absent/malformed → built-in default) so `_compute_canonical_verdict`'s cumulative Impact gate (FEA-1401 / PLN-726 OQ#6) can fire (≥ 2 BLOCKING/HIGH `ImpactAnalysis` findings in `verified[]` → NEEDS_ATTENTION). A non-zero exit signals reviewer-emitted category/field drift (e.g. a category not in the canonical enum) but does not block the pipeline — `on_failure: continue` lets `stage_28_verdict` read the structurally complete envelope. Surface the stderr text in the present step so operators can correct prompts/schema; do not abort.
+- **stage_26_cache_update**: gated by **Gate C**.
+- **stage_27_review_state_write**: gated by **Gate D**.
+- **stage_29_present**: present stage. Invoke the `code-review:present-local` skill (MODE=local) or follow Steps 6 and 8 in `github-review.md` (MODE=github). The mode-agnostic Gate A hygiene-only early-exit fires before this stage and uses its own format section above.
 
 ---
 
-## Step 2: Parse Scope and Get Diff Data
+## Reviewer Fleet (stage_20_spawn_reviewers)
 
-Mark todo "Parse scope and get diff data" as `in_progress`.
+When the walker reaches `stage_20_spawn_reviewers`, invoke the `code-review:spawn-reviewers` skill. The skill owns the full reviewer-fleet dispatch: spawn-spec consumption (`spawn.json.spec`, the authoritative path), CODE_INTEL_ALLOWED and CODE_INTEL_REQUIRE_ROOT_ARG resolution, the per-agent prompt template and role suffixes (Bug Hunter A/B, Unified Auditor, Domain Critics, Design Critic, Impact Analyzer), the context-budget constraints, the standard / fast-path / all-cached-BHA / gated-by-verify branches, the static-table fallback (`arbitrate_status: "fallback"`), the spawn + collection contract, and agent-failure recovery.
 
-### Resolve Scope (via Python helper)
+The skill is invoked for both `MODE=local` and `MODE=github`, but standard-flow Task scheduling is mode-specific: GitHub mode dispatches reviewers synchronously, while local mode preserves parallel background dispatch plus blocking collection. The verifier fleet (`stage_23`) and the PLN-725 single-agent dispatch (`stage_11` / `stage_15`) are **not** in this skill; they are owned by the `code-review:verify-findings` and `code-review:singleton-dispatch` skills respectively.
 
-Run the `resolve-scope` subcommand to handle all scope resolution deterministically:
+GitHub headless mode has a walker-level guard in addition to the skill contract: standard-flow reviewers and retries must be dispatched synchronously, and the walker must not proceed to `stage_21_collect_findings`, emit a final summary, mark the review complete, or end the assistant turn while any GitHub reviewer remains outstanding. Watcher files, sleep loops, polling loops, background `TaskOutput` waits, and "I'll continue when notified" turns are forbidden substitutes for completing the synchronous reviewer response.
 
-```bash
-python3 <HELPERS> resolve-scope --mode <MODE> --setup-json <CR_DIR>/setup.json [--pr-number <N>] [--scope-args "<REMAINING_ARGS>"] [--base-ref-override <REF>] > <CR_DIR>/scope.json
-```
+Decomposition rationale: ~470 lines of reviewer-fleet dispatch content was extracted as a skill so the orchestration spine stays lean and the content no longer loads into orchestrator context during the deterministic prefix (stages 0-19) or on hygiene-only / full-cache-hit runs that never reach `stage_20`.
 
-Read `<CR_DIR>/scope.json` for: `DIFF_SCOPE`, `BASE_REF`, `HEAD_REF`, `REVIEW_BRANCH`, `DIFF_TIP`, `PR_NUMBER`, `PATH_FILTER`, `SCOPE_KIND`, `PR_AUTO_DETECTED`.
-
-The helper handles PR branch lookup (`gh pr view`), `git fetch`, `origin/` prefixes, `--base` overrides, path filter preservation, and scope kind classification.
-
-### Finalize Cache Path (must run here, after scope parsing)
-
-Now that `PR_NUMBER` and `MODE` are known, resolve the final `CACHE_DIR` using the `finalize-cache` subcommand:
-
-```bash
-python3 <HELPERS> finalize-cache --setup-json <CR_DIR>/setup.json --mode <MODE> --pr-number <PR_NUMBER> > <CR_DIR>/cache_config.json
-```
-
-Omit `--pr-number` if no PR number is set. Read `<CR_DIR>/cache_config.json` — it contains `{"cache_dir": "..."}`. Set `CACHE_DIR` from the `cache_dir` value (empty string means no cache). The subcommand handles global cache logic, `RUNNER_TEMP`, and `mkdir -p` internally.
-
-### Auto Incremental Mode (Phase 4 — local only)
-
-**After scope parsing and before `parse-diff`**, check for auto-incremental eligibility:
-
-Use `DIFF_TIP` from `scope.json` (set by `resolve-scope` based on scope kind). Do not re-derive it here.
-
-Store `PR_AUTO_DETECTED` from `scope.json` but do not print anything yet.
-
-Run the `auto-incremental` subcommand to evaluate eligibility:
-
-```bash
-python3 <HELPERS> auto-incremental \
-  --cache-dir <CACHE_DIR> \
-  --key "<REVIEW_BRANCH>:<BASE_REF>" \
-  --diff-tip <DIFF_TIP> \
-  --original-scope=<DIFF_SCOPE> \
-  --full-review <FULL_REVIEW> \
-  --since-last-review <SINCE_LAST_REVIEW> \
-  --mode <MODE> \
-  > <CR_DIR>/auto_incremental.json
-```
-
-**If the command exits non-zero**, read stderr and print the error message, then exit. Non-zero means a hard error (e.g., `--since-last-review` with no prior state, rebase detected with `--since-last-review`).
-
-**If exit code 0**, read `<CR_DIR>/auto_incremental.json` with the Read tool. It contains:
-```json
-{ "diff_scope": "abc123...HEAD" | null, "review_mode_line": "Review mode: ..." }
-```
-
-- If `diff_scope` is non-null: update `DIFF_SCOPE` to this value (incremental narrowing)
-- If `diff_scope` is null: keep `DIFF_SCOPE` unchanged (full review)
-- Set `REVIEW_MODE_LINE` from `review_mode_line`
-
-Print `<REVIEW_MODE_LINE>` (always, at the start of every run). Use the EXACT string from the JSON — do NOT improvise or rephrase.
-
-If `PR_AUTO_DETECTED` is true, print `"Auto-detected PR #<PR_NUMBER> for branch <REVIEW_BRANCH>."` immediately after `REVIEW_MODE_LINE`.
-
-### GitHub Mode: Get PR Metadata
-
-**Skip this section entirely if MODE=local.**
-
-Follow the "PR Metadata Resolution" section in `github-review.md` (already loaded in Task 2 for GitHub mode). It sets: `PR_NUMBER`, `HEAD_SHA`, `BASE_REF`, `HEAD_REF`, `OWNER`, `REPO_NAME`, `DIFF_SCOPE`, `DIFF_TIP`, and writes `<CR_DIR>/github_pr.json`.
-
-### Get Diff Data (Both Modes)
-
-Run the `parse-diff` subcommand to execute all git diff commands and produce structured JSON:
-
-```bash
-python3 <HELPERS> parse-diff --scope=<DIFF_SCOPE> > <CR_DIR>/diff_data.json
-```
-
-This runs `--name-only`, `--name-status`, `--numstat`, and `-U0` internally (batching `-U0` if >200 files), and writes a single JSON object to `<CR_DIR>/diff_data.json` with:
-- **files_to_review**: Array of changed file paths
-- **file_statuses**: `{ "path/file.ts": "added" | "modified" | "removed", ... }`
-- **file_loc**: `{ "path/file.ts": { "added": N, "removed": M }, ... }`
-- **total_loc**: Sum of all added + removed across all files
-- **changed_ranges**: `{ "path/file.ts": { "added": [[10,15]], "removed": [[20,22]] }, ... }`
-- **patch_lines**: Added/removed line content keyed by line number
-
-Read `<CR_DIR>/diff_data.json` with the Read tool and extract only the lightweight summary fields into orchestrator context (keeps `patch_lines` and `changed_ranges` out of context):
-- `files_to_review`: Array of changed file paths
-- `file_statuses`: Status per file
-- `file_loc`: LOC per file
-- `total_loc`: Sum of all added + removed
-
-Use these values for `total_loc` and file count reporting. The full diff data (including `patch_lines` and `changed_ranges`) remains in `<CR_DIR>/diff_data.json` for downstream scripts.
-
-Mark todo as `completed`.
-
-### Fetch Intent Context + Classify Intent (for Premise Reviewer)
-
-After `parse-diff` completes, fetch the stated motivation and classify intent:
-
-```bash
-python3 <HELPERS> fetch-intent --scope-kind <SCOPE_KIND> --cr-dir <CR_DIR> [--pr-number <PR_NUMBER>] [--base-ref <BASE_REF>] [--diff-tip <DIFF_TIP>]
-python3 <HELPERS> classify-intent --intent-context <CR_DIR>/intent_context.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/intent.json
-```
-
-Read `<CR_DIR>/intent.json` for the `INTENT` value (`feature`, `fix`, `refactor`, or `mixed`). This is passed to the `route` subcommand for Premise Reviewer model routing.
-
-The `fetch-intent` helper handles PR description retrieval (`gh pr view`), local branch commit messages (`git log`), and empty context for staged/file-path scopes. The Premise Reviewer reads `intent_context.json` directly.
+<!-- replaced-by-skill: code-review:spawn-reviewers — DO NOT add inline reviewer-fleet dispatch content here -->
 
 ---
 
-## Step 2.1: Compute Prompt Hash + Context Key (when caching is active)
+## Verifier Fleet (stage_23_verify_findings)
 
-**Skip this step if `CACHE_DIR` is empty.**
+When the walker reaches `stage_23_verify_findings`, invoke the `code-review:verify-findings` skill. The skill owns the full finding-verifier dispatch: reading `verify_manifest.json`, spawning one falsify-oriented verifier Task per `to_verify[]` entry (skipping `cache_hits[]`), the no-retry collection contract, and the `pending_verification[]` degradation when a verifier output is missing.
 
-Prompt assets (`shared_prompt.txt` and `bha_suffix.txt`) were already copied to `<CR_DIR>` by `prep-assets` in Task 2. Compute the prompt hash:
+The skill is invoked for both `MODE=local` and `MODE=github`, but Task scheduling is mode-specific: GitHub mode dispatches verifiers synchronously, while local mode preserves parallel background dispatch plus blocking collection. In `MODE=github` a missing verifier output for a BLOCKING/HIGH finding also raises a durable coverage-gap signal at `stage_24a_verify_consolidate` so an unverified high-severity finding cannot pass silently to an approved verdict.
 
-```bash
-python3 <HELPERS> compute-hashes \
-  --shared-prompt <CR_DIR>/shared_prompt.txt \
-  --bha-suffix <CR_DIR>/bha_suffix.txt \
-  --diff-tip <DIFF_TIP> \
-  --base-ref "<BASE_REF>" \
-  > <CR_DIR>/hashes.json
-```
+GitHub headless mode has a walker-level guard in addition to the skill contract: verifiers and retries must be dispatched synchronously, and the walker must not proceed to `stage_24a_verify_consolidate`, emit a final summary, mark the review complete, or end the assistant turn while any GitHub verifier remains outstanding. Watcher files, sleep loops, polling loops, background `TaskOutput` waits, and "I'll continue when notified" turns are forbidden substitutes for completing the synchronous verifier response.
 
-Read `<CR_DIR>/hashes.json` with the Read tool. It contains:
-```json
-{ "prompt_hash": "abc...", "context_key": "def..." }
-```
-Assign `PROMPT_HASH` and `CONTEXT_KEY` from the JSON.
-
-**Important:** The shared prompt is copied from the plugin in this step. Step 4a skips the copy if the file already exists (caching was active). If caching is NOT active, Step 4a copies the file instead.
+<!-- replaced-by-skill: code-review:verify-findings — DO NOT add inline verifier-fleet dispatch content here -->
 
 ---
 
-## Step 2.2: BHA Cache Check (when caching is active)
+## PLN-725 Single-Agent Dispatch
 
-**Skip this step if `CACHE_DIR` is empty.**
+The `run-prefix` loop's `next_action: "needs_singleton"` handler points here (and, in the per-stage fallback walk, so does Walker-Contract step 6). When `run-prefix` reports a singleton — or, in the fallback walk, when the stage just finished is `stage_11_extract_signals` or `stage_15_coverage_critic` — invoke the `code-review:singleton-dispatch` skill. The skill owns the full protocol: reading the prepare manifest's `status` (`cache_hit` / `skipped` → no dispatch; `needs_agent` → spawn one synchronous singleton Task), the by-convention `pln725_*.json` agent write target, and the fail-closed semantics the sibling consolidate stage relies on. In the `run-prefix` flow the manifest already exists on disk (the runner wrote it); after the skill writes `pln725_<singleton>.json`, re-invoke `run-prefix --resume-from <resume_stage>` per the loop.
 
-Check the BHA findings cache for files that haven't changed since the last review:
-
-```bash
-python3 <HELPERS> cache-check \
-  --cache-dir <CACHE_DIR> \
-  --diff-data <CR_DIR>/diff_data.json" \
-  --prompt-hash <PROMPT_HASH> \
-  --model-id "opus" \
-  --schema-version 1 \
-  --output-dir <CR_DIR> \
-  --global-cache <GLOBAL_CACHE> \
-  --context-key <CONTEXT_KEY> \
-  > /dev/null
-```
-
-This produces three files:
-- `<CR_DIR>/cache_result.json` — stats on cache hits/misses
-- `<CR_DIR>/agent_cached_bha.json` — cached BHA findings (glob-compatible with `agent_*`)
-- `<CR_DIR>/uncached_diff_data.json` — filtered diff_data with only uncached files
-
-Read `<CR_DIR>/cache_result.json` and store the `status_message` field as `CACHE_STATUS_MESSAGE`. Do NOT print it here -- it is printed later in Task 7 (hygiene-only exit) or Task 8 (after reading `route.json` and determining `fast_path`).
-
-If `CACHE_DIR` is empty, set `CACHE_STATUS_MESSAGE=""`.
+<!-- replaced-by-skill: code-review:singleton-dispatch — DO NOT add inline singleton-dispatch content here -->
 
 ---
 
-## Step 2.5: Deterministic Hygiene Checks
+## Hygiene Findings Format (Gate A render target)
 
-Mark todo "Run deterministic hygiene checks" as `in_progress`.
+Gate A step 3 ("render using the Hygiene Findings format below") points here. Gate A fires in **both** `MODE=local` and `MODE=github` so this format stays inline in the orchestration spine rather than living in any mode-specific skill.
 
-Run the `hygiene` subcommand to perform deterministic checks for CI artifacts, path leakage, gitignore drift, and sensitive files:
+Parse `<CR_DIR>/hygiene.json` and render:
 
-```bash
-python3 <HELPERS> hygiene --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/hygiene.json
-```
-
-The script handles all 4 checks (CI artifacts, path leakage, gitignore drift, sensitive files), severity routing (skip test/fixture/docs, auto-upgrade to HIGH for code/config files), and outputs findings in standard format. Store findings on disk at `<CR_DIR>/hygiene.json` for Step 5 merge/validation.
-
-Mark todo as `completed`.
-
-### Hygiene-Only Early Exit
-
-**If `HYGIENE_ONLY` is true**, skip all agent spawning and validation. Output hygiene findings directly and exit:
-
-```
-If CACHE_DIR is set and CACHE_STATUS_MESSAGE is non-empty, print CACHE_STATUS_MESSAGE.
-
-Mark todo "Present hygiene findings" as in_progress.
-
-Parse `<CR_DIR>/hygiene.json` and present findings in the local presentation format:
-
+```markdown
 # Hygiene Check Results
 
 **Scope:** [staged/branch/files]
@@ -472,790 +460,55 @@ Parse `<CR_DIR>/hygiene.json` and present findings in the local presentation for
 
 ## Repo Hygiene ([count])
 
-[List hygiene findings — same format as Local Mode: Present Results hygiene section]
+[List hygiene findings — one entry per finding, with **File**, **Issue**, **Recommendation**]
 
 ---
 
 **Summary:** [count] hygiene issues found. No LLM-based review was performed.
-
-If MODE=github, write the hygiene findings to .closedloop-ai/code-review-summary.md
-(same summary file path) and .closedloop-ai/code-review-findings.json (findings only
-contain hygiene items). No inline comments are posted for hygiene-only runs
-unless findings exist.
-
-Mark todo as completed. EXIT — do not proceed to Step 3 or beyond.
 ```
+
+Then mark "Present hygiene findings" `completed` and **EXIT**. Do NOT run footer or verdict — both depend on artifacts (`findings_validated.json`, `review_result.json`) that hygiene-only never produces, and `stage_28_verdict.on_failure == "abort"` would crash the walker. The GitHub-mode write (`.closedloop-ai/code-review-summary.md` + `.closedloop-ai/code-review-findings.json`) is owned by Gate A step 4 above; do NOT duplicate it here.
 
 ---
 
-## Step 3: Assess Scope and Route Models
+## Local-Mode Presenter (stage_29_present, MODE=local)
 
-Mark todo "Assess scope and route models" as `in_progress`.
+When `MODE=local` AND `stage_29_present` is reached, invoke the `code-review:present-local` skill. The skill owns the full local-mode pipeline: validation summary, BLOCKING/HIGH/MEDIUM sections, Justified Findings (PLN-721), Dismissed Findings (PLN-722), Verifier Stats footer (PLN-773), operator-flag descriptions, override precedence rule (stage_22b context), Validation Summary, and final Summary.
 
-Run the `route` subcommand to compute risk scores and model routing. Pass the `INTENT` value from `<CR_DIR>/intent.json` (classified in Task 5):
+The skill is scoped to local mode only. Gate A hygiene presentation (mode-agnostic) stays above; the `MODE=github` presenter path uses `github-review.md` (see below).
 
-```bash
-python3 <HELPERS> route --diff-data <CR_DIR>/diff_data.json --critic-gates .closedloop-ai/settings/critic-gates.json --intent <INTENT> > <CR_DIR>/route.json
-```
-
-Read `<CR_DIR>/route.json` with the Read tool.
-
-The script outputs:
-- **fast_path**: `true` when `total_loc <= 200`; `false` otherwise. Domain critics are folded into the fast-path agent as an additional pass rather than forcing standard flow.
-- **size_category**: "Small" (<=500), "Medium" (501-2000), or "Large" (2001+)
-- **models**: Model assignments for each agent role. `bug_hunter_a` is `{"default": "opus", "test_only": "sonnet"}`. `premise_reviewer` is "opus" (fix/refactor/mixed) or "sonnet" (feature). `fast_path_reviewer` is "sonnet".
-- **high_risk_files**: Top 5 files by risk score
-- **domain_critics**: Selected domain critics from critic-gates.json (max 1)
-- **max_bha_agents**: Maximum BHA partitions (9 minus non-BHA agents). Pass this to `--max-bha-agents` on the partition call.
-
-After reading `route.json`, branch on `fast_path`. See Task 8 summary for branching logic.
-
-Mark todo as `completed`.
+Decomposition rationale: ~270 lines of local-mode presentation content was extracted as a skill so the orchestration spine stays lean and future presenter changes ship in isolation from the orchestration flow.
 
 ---
 
-## Step 4A: Spawn Reviewer Agents (fast_path == false)
+<!-- replaced-by-skill: code-review:present-local — DO NOT add inline local-mode presenter content here -->
 
-**Skip this section if `fast_path` is true -- see [Step 4B](#step-4b-fast-path-single-agent-review-fast_path--true) instead.**
+## GitHub Mode: Present (stage_29_present, MODE=github)
 
-Mark todo "Spawn reviewer agents in parallel" as `in_progress`.
-
-**CONTEXT BUDGET WARNING:** The orchestrator must NOT read source files or fetch patches itself. All file reading and patch fetching is delegated to sub-agents. The orchestrator's context should contain ONLY: file lists, statuses, LOC counts, risk scores, and agent results (small JSON). If the orchestrator reads source files or fetches diffs, it will exhaust its context window on large PRs and fail.
-
-**Orchestrator context management:** The orchestrator's context window must have enough headroom to construct ALL sub-agent prompts. Context-heavy operations that cause "Prompt is too long" failures:
-- **Do NOT** perform LOC arithmetic or partition bin-packing in prose — use Bash (a short Python/Node one-liner)
-- **Do NOT** manually sort or enumerate file lists — use Bash to sort and partition
-- **Do NOT** load CLAUDE.md into orchestrator context — pass the file path to Bug Hunter B and let it read the file itself
-- **Do NOT** include CHANGED_RANGES data in agent prompts — agents read ranges from pre-extracted patch files
-- **Do NOT** capture `git diff` output into shell variables — pipe directly to files on disk (e.g., `git diff ... > <CR_DIR>/patches_p0.txt`)
-- Only the summary fields (file list, statuses, LOC counts) should be in orchestrator context — patches and findings stay on disk
-
-### Agent Type (CRITICAL — prevents context overflow AND permission issues)
-
-**ALL agents spawned by this command MUST use `subagent_type: "code:code-review-worker"` in the Task tool call.** This agent has `tools: Read, Write, Grep, Glob` in its definition, which grants background sub-agents file access permissions regardless of the user's `settings.json` allowlist. Do NOT use `subagent_type: "general-purpose"` — background agents with that type inherit only the session's `permissions.allow` list, which often lacks bare Read/Write/Grep/Glob, causing silent permission denials. Do NOT omit the subagent_type parameter — Claude Code will auto-select `code:code-reviewer`, which has a 130+ line system prompt and loads additional files at startup, bloating context by ~50K+ tokens.
-
-### Review Architecture
-
-| Agent | Instances | Model | Partitioned? | Focus |
-|-------|-----------|-------|-------------|-------|
-| **Bug Hunter A** | 1 per partition | Opus (impl) / Sonnet (test-only) | Yes | Diff-only: correctness, security, logic bugs, error handling |
-| **Bug Hunter B** | 1 total | Sonnet | No (full file list) | Cross-file: DRY, API contracts, pattern consistency, imports |
-| **Unified Auditor** | 1 total | Sonnet | No (full file list) | CLAUDE.md rules + architectural conventions |
-| **Domain Critic** | 0-1 | Sonnet | No (full file list) | From critic-gates.json (capped at 1) |
-| **Premise Reviewer** | 1 total | Per route.json | No (full file list) | Questions whether changes were necessary at all |
-
-**Cap enforcement is handled by the `partition` subcommand via `--max-bha-agents`.** The orchestrator reads the partition count from `partitions.json` and spawns one BHA agent per partition -- no further merging needed.
-
-### File Partitioning (Critical for Large Diffs)
-
-**Orchestrator pre-extracts patches to disk files.** Agents Read patch files instead of running `git diff` themselves. This eliminates sub-agent Bash dependencies (many projects have restrictive permission allowlists that block `Bash(git diff:*)`).
-
-**Partition files using the `partition` subcommand:**
-
-When caching is active (`CACHE_DIR` is set), partition only uncached files. Otherwise, partition all files:
-
-```bash
-# Caching active: use uncached_diff_data.json (from cache-check)
-python3 <HELPERS> partition --diff-data <CR_DIR>/uncached_diff_data.json --loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS> > <CR_DIR>/partitions.json
-
-# No caching: use full diff_data.json
-python3 <HELPERS> partition --diff-data <CR_DIR>/diff_data.json --loc-budget 500 --max-files 25 --max-bha-agents <MAX_BHA_AGENTS> > <CR_DIR>/partitions.json
-```
-
-Read `<CR_DIR>/partitions.json` with the Read tool.
-
-**Skip BHA when all files are cached.** If `uncached_diff_data.json` has an empty `files_to_review`, the partition output will have zero partitions. In that case, skip spawning BHA agents entirely — all BHA findings come from cache. BHB, Unified Auditor, and Domain Critic still run against the full `diff_data.json` and `patches_all.txt` — they are unaffected by caching.
-
-The script performs greedy bin-packing (sorted by LOC descending), splits oversized single files by hunks, and detects test files. It outputs:
-- **partitions**: Array of `{id, files, total_loc, is_test_only}` objects
-- Each `files[]` entry has the shape `{"file": <path>, "loc": <int>, "is_test": <bool>, "line_range": [start, end]?}`. The path is under the key `file` (NOT `path`). `line_range` is present only when a large file is split by hunks.
-- **test_file_paths**: Array of detected test file paths
-
-When constructing agent prompts, read each entry's `file` field for the path. Do NOT run ad-hoc Python one-liners against `partitions.json` — use the Read tool, then map `entry["file"]` directly into the prompt template.
-
-### Pre-Extract Patches to Disk (CRITICAL -- eliminates sub-agent Bash dependency)
-
-After partitioning, extract patches to disk files so agents can Read them without needing Bash permissions. Run this BEFORE spawning any agents:
-
-```bash
-python3 <HELPERS> extract-patches --partitions-file <CR_DIR>/partitions.json --diff-scope=<DIFF_SCOPE> --diff-data <CR_DIR>/diff_data.json --cr-dir <CR_DIR>
-```
-
-This creates `patches_p{N}.txt` (one per partition) and `patches_all.txt` (full diff from all files in `diff_data.json`). When caching is active, partitions contain only uncached files, but `patches_all.txt` includes ALL files since BHB/Auditor/Premise review the full diff.
-
-If a partition file entry has `line_range`, include that range in `<files_assigned>` for the agent and treat it as a hard scope fence.
-
-### Partition-to-Agent Mapping
-
-Partitions are computed ONCE. Agents are mapped as follows:
-
-- **Bug Hunter A**: one instance per partition (partitioned)
-- **Bug Hunter B**: single instance with ALL files (not partitioned)
-- **Unified Auditor**: single instance with ALL files (not partitioned)
-- **Domain Critic**: single instance with ALL files if triggered (not partitioned)
-- **Premise Reviewer**: single instance with ALL files (not partitioned), reads `patches_all.txt` and `intent_context.json`
-
-For BHB, Unified Auditor, Premise Reviewer, and Domain Critic, the `<files_assigned>` in their prompt lists ALL `files_to_review` (not a partition subset). They read the full diff from `<CR_DIR>/patches_all.txt`.
-
-**Total agents** = BHA instances (one per partition) + BHB (1) + Unified Auditor (1) + Premise Reviewer (1) + Domain Critic (0-1). Cap enforcement is handled by the `partition` subcommand.
-
-**BHA model selection per partition:**
-- If `partition.is_test_only` is true: use `route.json -> models.bug_hunter_a.test_only` (sonnet)
-- Otherwise: use `route.json -> models.bug_hunter_a.default` (opus)
-
-### Shared Prompt — Write to File (CRITICAL for context budget)
-
-The shared prompt is ~130 lines of static instructions (constraints, severity guidelines, examples, output format). Embedding it in every agent prompt would duplicate it 10-16× in the orchestrator's context (~40-50K wasted tokens). Instead, write it to a temp file ONCE, and have each agent read it.
-
-**CRITICAL**: The `mode: standalone` line MUST be present in every agent prompt (not in the shared file — it goes in the per-agent prompt). If missing, the code-reviewer agent defaults to loop mode which suppresses Critical/High findings.
-
-**CRITICAL**: Do NOT embed patch content in the agent prompt. Agents read pre-extracted patch files from disk. The orchestrator only passes the file list, statuses, and patch file path.
-
-**Step 4a:** Prompt assets (`shared_prompt.txt`, `bha_suffix.txt`) are already in `<CR_DIR>` from Task 2 (`prep-assets`). No copy needed.
-
-### Per-Agent Prompt Template (what the orchestrator embeds in each Task call)
-
-Each agent's prompt is ONLY the lightweight per-agent parts. The shared instructions are read from the temp file by the agent itself. This keeps the orchestrator's per-agent prompt to ~20 lines instead of ~155.
-
-The orchestrator assigns each agent a unique `AGENT_ID` (e.g., `bha_p0`, `bhb`, `auditor`, `premise`, `domain_0`). The agent writes its findings to `{CR_DIR}/agent_{AGENT_ID}.json`.
-
-**Important:** When constructing agent prompts, substitute the resolved `CR_DIR` path (e.g., `.closedloop-ai/code-review/cr-38291`) into `{CR_DIR}` — agents run in separate processes and do not have access to the orchestrator's shell variables.
-
-**Placeholder source mapping** (read these directly from the partition entry — do NOT run a Python one-liner to inspect the JSON):
-- `{filepath_N}` ← `partition["files"][N]["file"]` (key is `file`, NOT `path`)
-- `{loc_N}` ← `partition["files"][N]["loc"]`
-- `{status_N}` ← `diff_data["file_statuses"][filepath]` (added/modified/removed)
-- `{start_N}-{end_N}` ← `partition["files"][N]["line_range"]` (only emit the `[lines X-Y]` segment if `line_range` is present)
-
-```
-mode: standalone
-
-Review ONLY the changed code. Write findings to a file (not stdout).
-You may ONLY report findings for files in <files_assigned> below — no exceptions.
-If a file includes `[lines X-Y]` in <files_assigned>, report findings for that file only
-within `X..Y` (allow ±3 line tolerance for hunk boundaries).
-
-<output_file>{CR_DIR}/agent_{AGENT_ID}.json</output_file>
-
-<data>
-<patches_file>{CR_DIR}/patches_{PARTITION_OR_ALL}.txt</patches_file>
-
-<files_assigned count="{N}" total="{TOTAL}">
-- {filepath_1} ({status_1}, ~{loc_1} LOC) [lines {start_1}-{end_1} if provided]
-- {filepath_2} ({status_2}, ~{loc_2} LOC) [lines {start_2}-{end_2} if provided]
-...
-</files_assigned>
-</data>
-
-FIRST, Read the patches file above. Parse the patches to identify changed lines
-(lines starting with `+`, using `@@ ... +start,count @@` hunk headers for absolute line numbers).
-
-Read {CR_DIR}/shared_prompt.txt for review constraints, severity guidelines, examples, and output format. Follow those instructions exactly.
-
-{AGENT_SPECIFIC_SUFFIX}
-```
-
-For BHA agents, `{PARTITION_OR_ALL}` is `p{N}` (e.g., `patches_p0.txt`). For BHB, Unified Auditor, and Domain Critic, it is `all` (`patches_all.txt`).
-
-**Do NOT inline the shared prompt.** If you copy-paste the shared prompt into each agent's Task call instead of referencing the file, you will overflow the orchestrator's context on any PR with 10+ agents.
-
-### Agent-Specific Suffixes
-
-Append the appropriate suffix to the per-agent template above:
-
-**Bug Hunter A** (diff-only, model per routing table):
-```
-Read <CR_DIR>/bha_suffix.txt for your role and focus areas.
-
-Use Read, Grep, and Glob for codebase context. Do NOT use Bash.
-```
-
-The BHA suffix text is written ONCE in Step 2.1 (`<CR_DIR>/bha_suffix.txt`) as the single source of truth. The prompt hash covers this file so prompt changes invalidate the cache.
-
-**Bug Hunter B** (codebase-aware, model per routing table):
-```
-You are Bug Hunter B — a codebase-aware reviewer focused on cross-file issues.
-
-You will explore files outside your assigned list for CONTEXT — but every finding you report
-must be filed against a file in your <files_assigned> list. If you discover a bug in an
-unassigned file while exploring, discard it.
-
-Focus areas:
-- DRY: Use Grep to search for similar function/component names. Flag >60% structural
-  similarity with existing code. Cite the existing file path. The finding goes on YOUR assigned file (the new duplicate), not the existing one.
-- API contracts: Read service implementations to verify call correctness.
-  Check that parameters match (undefined vs null vs empty string matters).
-- Pattern consistency: Find existing examples of similar code, verify new code matches.
-- Import validation: Verify imports resolve to real modules.
-
-For DRY claims, one concrete example of prior art is sufficient (cite file path + function name).
-
-IMPORTANT: Read the repository root CLAUDE.md file before starting your review. Use it for
-DRY detection (check Learned Patterns for known conventions) and pattern consistency checks.
-```
-
-Do NOT embed the full CLAUDE.md in Bug Hunter B's prompt — it consumes orchestrator context. The agent reads the file itself via the Read tool.
-
-**Unified Auditor** (sonnet):
-```
-You are the Unified Auditor — you check changes against project rules and architectural conventions.
-
-Read all applicable CLAUDE.md files:
-- Repository root CLAUDE.md
-- Any directory-level CLAUDE.md files relevant to changed file paths
-
-For each changed file, check against:
-1. Rules tagged [mistake] in CLAUDE.md Learned Patterns — these are HIGH severity
-2. Rules tagged [convention] — these are MEDIUM severity
-3. Rules tagged [pattern] — these are MEDIUM severity (verify pattern is followed)
-4. Explicit rules in the main CLAUDE.md sections (Architecture, Type Definitions, etc.)
-5. Architectural conventions: data access patterns, type locations, service layer responsibilities, code organization
-
-For every finding, cite the exact rule text from CLAUDE.md.
-Use Grep and Glob to verify claims. Do NOT flag issues without searching first.
-```
-
-**Domain Critics** (from critic-gates.json, if selected in Step 3):
-
-All domain critics use `subagent_type: "code:code-review-worker"` and `model: "sonnet"`.
-
-For each selected domain critic, create a prompt:
-```
-You are a domain expert reviewer: {critic_name}.
-Review the assigned files for issues within your domain expertise.
-Read the repository CLAUDE.md for project context.
-Return findings in the standard JSON format.
-```
-
-**Guard:** If critic-gates.json references a critic name that doesn't map to a known
-subagent type, use `subagent_type: "code:code-review-worker"` (the default for all domain critics).
-
-**Premise Reviewer** (always runs, model per routing table `route.json -> models.premise_reviewer`, AGENT_ID `premise`):
-```
-You are the Premise Reviewer — you question whether the changes in this diff were necessary at all.
-
-FIRST, Read {CR_DIR}/intent_context.json to understand the author's stated motivation (PR title/body
-or commit messages). If the file has empty fields, infer intent from the diff content instead.
-
-Then Read the patches file and use Read, Grep, and Glob to investigate the EXISTING codebase.
-Your job is to find evidence that contradicts the stated motivation for these changes.
-
-Focus areas — flag ONLY when you have concrete proof:
-- Non-existent bug "fix": The author claims to fix a bug, but the original code was correct.
-  Verify the bug can actually trigger: trace the input source — is the "untrusted" input
-  actually self-authored config, a constant, or data the process itself writes? For security
-  claims specifically, evaluate the threat model: if an attacker must already have write access
-  to the input source, the vulnerability doesn't exist. Also flag internal contradictions where
-  the fix undermines its own premise (e.g., sanitizing "untrusted" input then passing it to
-  os.path.expandvars() — which re-introduces the exact exposure it claimed to prevent).
-- Redundant workaround: The problem the code works around is already handled by the framework,
-  library, or upstream code — verify by reading the relevant source
-- Phantom dead-code removal: Code was removed as "unused" but is still imported, referenced,
-  or dynamically invoked elsewhere — verify with Grep
-- Duplicate abstraction: A new helper/utility/wrapper was added, but an existing one with
-  equivalent functionality already exists — cite the existing implementation
-- Unnecessary perf optimization: The code adds caching, memoization, or batching for a path
-  that is not a bottleneck (e.g., called once at startup, processes <100 items)
-- Regressive fix: A change removes or restricts intentional behavior in the name of safety
-  or correctness, but the removed behavior was necessary for the feature to work. Check
-  whether the original code's behavior (e.g., shell pipelines, environment expansion, broad
-  permissions) was documented or relied upon by callers — if so, the fix introduces a
-  functional regression that outweighs any theoretical benefit.
-
-REASONING PROTOCOL -- complete for each potential finding:
-Before reporting that a change's premise is wrong, explicitly check the alternative:
-
-AUTHOR'S CLAIM: [What the author says this change does, from intent_context.json or diff]
-COUNTER-EVIDENCE: [Specific codebase evidence that contradicts the claim -- cite file:line]
-ALTERNATIVE CHECK: If the change IS justified, what evidence would support it?
-  - Searched for: [what you looked for to validate the author's premise]
-  - Found: [what you found -- cite file:line, or "no supporting evidence found"]
-CONCLUSION: [PREMISE REFUTED -- counter-evidence outweighs] or [PREMISE SUPPORTED -- discard finding]
-
-Only report findings where CONCLUSION = PREMISE REFUTED.
-
-Do NOT flag: correctness issues, style violations, DRY problems, CLAUDE.md compliance,
-naming conventions, or missing tests. Other agents cover those areas.
-
-IMPORTANT — Overrides to shared prompt constraints for the "Premise" category:
-The shared prompt requires findings to be "Introduced in this changeset" (constraint 3) and
-"The original author would likely fix it if aware" (constraint 4). For Premise findings,
-replace these with:
-  3. The changeset's stated motivation is contradicted by evidence you found in the codebase
-  4. The change is net-negative: it adds complexity, removes working code, or introduces risk
-     for a problem that does not exist
-All other shared prompt constraints (file in scope, discrete and actionable, concrete evidence)
-still apply.
-
-Severity rules (MANDATORY):
-- Use ONLY priority 0 (BLOCKING) or priority 1 (HIGH). Never use priority 2 or 3.
-  Premise findings are inherently about overall intent, not specific lines — P2+ findings
-  would be discarded by the line-range validation gate.
-- Confidence must be >= 0.7. If you are not confident the premise is wrong, do not report it.
-- category MUST be "Premise" for every finding.
-- For the `line` field, use the first added line in the primary file's changed range.
-- The `recommendation` field must state the actionable outcome plainly — e.g., "Revert this
-  change; the original code was correct" or "Decline — the security threat model is fictional
-  and the fix breaks shell pipeline support." Do not leave the reader to infer whether the PR
-  should be accepted or rejected.
-
-Use Read, Grep, and Glob for codebase context. Do NOT use Bash.
-```
-
-**Agent spawning and collection:**
-
-**Spawn ALL agents at once.** Use `run_in_background: true` on every agent. You can spawn all agents in a single message or across a few messages.
-
-**Agents write findings to files — NOT to their response.** Each agent writes its findings JSON to `<CR_DIR>/agent_{AGENT_ID}.json` and returns only a one-line status (`DONE findings=N file=...`). This means `TaskOutput` responses are ~50 tokens each instead of 2-5K tokens, so you can collect ALL agents at once without context overflow.
-
-**Write-denied fallback:** If an agent's Write tool is denied (restrictive project permissions), the agent outputs findings in `<findings_json>` tags in its response with `DONE findings=N file=WRITE_DENIED`. When collecting, if a response contains `WRITE_DENIED`, extract the JSON from the `<findings_json>` tags and write it to `<CR_DIR>/agent_{AGENT_ID}.json` yourself.
-
-**Collect all agents (MANDATORY — do NOT skip):** Call `TaskOutput` (block: true) for **every** spawned agent. You MUST collect ALL agents before proceeding to Step 5. Do NOT read disk files or start validation until every `TaskOutput` call has returned. Uncollected background tasks produce trailing "Agent completed" messages after you've already presented results.
-
-Call all `TaskOutput` calls in a **single message** (parallel) so they resolve together. Check each response:
-1. If `DONE findings=N file=...` (not WRITE_DENIED) — output file is on disk, nothing to do
-2. If `DONE findings=N file=WRITE_DENIED` — extract JSON from `<findings_json>` tags in the response and write to `<CR_DIR>/agent_{AGENT_ID}.json`
-3. If agent didn't report `DONE` — check if its output file exists on disk using Bash
-
-**Gate:** Only after ALL `TaskOutput` calls have returned may you mark this todo as `completed` and proceed to Step 5.
+Follow Steps 6 and 8 in `github-review.md` (loaded in stage 0c for GitHub mode). The workflow handles inline comment posting from `.closedloop-ai/code-review-findings.json` and summary rendering from `.closedloop-ai/code-review-summary.md`.
 
 ---
 
-## Step 4B: Fast-Path Single-Agent Review (fast_path == true)
+## Review Footer (stage_30_footer)
 
-**Skip this section if `fast_path` is false -- see [Step 4A](#step-4a-spawn-reviewer-agents-fast_path--false) instead.**
+The footer prints elapsed time, cache stats, and token usage, then names the checkout and commit the review read (ISS-9137). Stage 30's helper is `footer`; the walker calls it with the args declared in the run plan. The plan includes `--cache-result <CR_DIR>/cache_result.json` unconditionally — when cache was inactive or fast-path bypassed it, the file simply does not exist and the helper falls back to `"Cache: disabled"` via its existing OSError handling.
 
-Mark todo "Run fast-path review" as `in_progress`.
-
-The fast-path spawns a single agent that performs all review passes in one run. Use the standard per-agent prompt wrapper from Step 4A unchanged (`mode: standalone`, `<output_file>`, `<patches_file>`, `<files_assigned>`), with the fast-path-specific suffix below.
-
-### Fast-Path Agent
-
-- **`subagent_type`**: `"code:code-review-worker"`
-- **`model`**: from `route.json -> models.fast_path_reviewer` (not hardcoded)
-- **`run_in_background`**: `true`
-- **`AGENT_ID`**: `"fast"`
-- **`<output_file>`**: `{CR_DIR}/agent_fast.json`
-- **`<patches_file>`**: `{CR_DIR}/patches_all.txt`
-- **`<files_assigned>`**: ALL `files_to_review`
-
-The agent MUST read: `<CR_DIR>/patches_all.txt`, `<CR_DIR>/shared_prompt.txt`, `<CR_DIR>/bha_suffix.txt`, `<CR_DIR>/intent_context.json`, repository root `CLAUDE.md`, and any directory-level `CLAUDE.md` files relevant to changed paths.
-
-### Fast-Path Agent Suffix
-
-Replace `{AGENT_SPECIFIC_SUFFIX}` with:
-
-```
-You are the Fast Path Reviewer — a single agent performing all review passes for a small diff.
-
-Perform three scoped passes against the patches file, writing ALL findings to a single output file:
-
-=== PASS 1: Bug Hunter ===
-Read <CR_DIR>/bha_suffix.txt for your role and focus areas.
-Standard severity/priority rules apply.
-Use Read, Grep, and Glob for codebase context. Do NOT use Bash.
-
-=== PASS 2: Bug Hunter B / Unified Auditor ===
-You are Bug Hunter B — a codebase-aware reviewer focused on cross-file issues.
-
-You will explore files outside your assigned list for CONTEXT — but every finding you report
-must be filed against a file in your <files_assigned> list. If you discover a bug in an
-unassigned file while exploring, discard it.
-
-Focus areas:
-- DRY: Use Grep to search for similar function/component names. Flag >60% structural
-  similarity with existing code. Cite the existing file path. The finding goes on YOUR assigned file (the new duplicate), not the existing one.
-- API contracts: Read service implementations to verify call correctness.
-  Check that parameters match (undefined vs null vs empty string matters).
-- Pattern consistency: Find existing examples of similar code, verify new code matches.
-- Import validation: Verify imports resolve to real modules.
-
-For DRY claims, one concrete example of prior art is sufficient (cite file path + function name).
-
-IMPORTANT: Read the repository root CLAUDE.md file before starting your review. Use it for
-DRY detection (check Learned Patterns for known conventions) and pattern consistency checks.
-
-Then as the Unified Auditor — check changes against project rules and architectural conventions.
-
-Read all applicable CLAUDE.md files:
-- Repository root CLAUDE.md
-- Any directory-level CLAUDE.md files relevant to changed file paths
-
-For each changed file, check against:
-1. Rules tagged [mistake] in CLAUDE.md Learned Patterns — these are HIGH severity
-2. Rules tagged [convention] — these are MEDIUM severity
-3. Rules tagged [pattern] — these are MEDIUM severity (verify pattern is followed)
-4. Explicit rules in the main CLAUDE.md sections (Architecture, Type Definitions, etc.)
-5. Architectural conventions: data access patterns, type locations, service layer responsibilities, code organization
-
-For every finding, cite the exact rule text from CLAUDE.md.
-Use Grep and Glob to verify claims. Do NOT flag issues without searching first.
-
-Standard severity/priority rules apply for all pass 2 findings.
-
-=== PASS 3: Premise Reviewer ===
-You are the Premise Reviewer — you question whether the changes in this diff were necessary at all.
-
-FIRST, Read {CR_DIR}/intent_context.json to understand the author's stated motivation (PR title/body
-or commit messages). If the file has empty fields, infer intent from the diff content instead.
-
-Then Read the patches file and use Read, Grep, and Glob to investigate the EXISTING codebase.
-Your job is to find evidence that contradicts the stated motivation for these changes.
-
-Focus areas — flag ONLY when you have concrete proof:
-- Non-existent bug "fix": The author claims to fix a bug, but the original code was correct.
-  Verify the bug can actually trigger: trace the input source — is the "untrusted" input
-  actually self-authored config, a constant, or data the process itself writes? For security
-  claims specifically, evaluate the threat model: if an attacker must already have write access
-  to the input source, the vulnerability doesn't exist. Also flag internal contradictions where
-  the fix undermines its own premise (e.g., sanitizing "untrusted" input then passing it to
-  os.path.expandvars() — which re-introduces the exact exposure it claimed to prevent).
-- Redundant workaround: The problem the code works around is already handled by the framework,
-  library, or upstream code — verify by reading the relevant source
-- Phantom dead-code removal: Code was removed as "unused" but is still imported, referenced,
-  or dynamically invoked elsewhere — verify with Grep
-- Duplicate abstraction: A new helper/utility/wrapper was added, but an existing one with
-  equivalent functionality already exists — cite the existing implementation
-- Unnecessary perf optimization: The code adds caching, memoization, or batching for a path
-  that is not a bottleneck (e.g., called once at startup, processes <100 items)
-- Regressive fix: A change removes or restricts intentional behavior in the name of safety
-  or correctness, but the removed behavior was necessary for the feature to work. Check
-  whether the original code's behavior (e.g., shell pipelines, environment expansion, broad
-  permissions) was documented or relied upon by callers — if so, the fix introduces a
-  functional regression that outweighs any theoretical benefit.
-
-REASONING PROTOCOL -- complete for each potential finding:
-Before reporting that a change's premise is wrong, explicitly check the alternative:
-
-AUTHOR'S CLAIM: [What the author says this change does, from intent_context.json or diff]
-COUNTER-EVIDENCE: [Specific codebase evidence that contradicts the claim -- cite file:line]
-ALTERNATIVE CHECK: If the change IS justified, what evidence would support it?
-  - Searched for: [what you looked for to validate the author's premise]
-  - Found: [what you found -- cite file:line, or "no supporting evidence found"]
-CONCLUSION: [PREMISE REFUTED -- counter-evidence outweighs] or [PREMISE SUPPORTED -- discard finding]
-
-Only report findings where CONCLUSION = PREMISE REFUTED.
-
-Do NOT flag: correctness issues, style violations, DRY problems, CLAUDE.md compliance,
-naming conventions, or missing tests. Other agents cover those areas.
-
-IMPORTANT — The following constraints apply ONLY to findings emitted in this pass 3:
-- Overrides to shared prompt constraints for the "Premise" category:
-  The shared prompt requires findings to be "Introduced in this changeset" (constraint 3) and
-  "The original author would likely fix it if aware" (constraint 4). For Premise findings,
-  replace these with:
-    3. The changeset's stated motivation is contradicted by evidence you found in the codebase
-    4. The change is net-negative: it adds complexity, removes working code, or introduces risk
-       for a problem that does not exist
-  All other shared prompt constraints (file in scope, discrete and actionable, concrete evidence)
-  still apply.
-- Use ONLY priority 0 (BLOCKING) or priority 1 (HIGH). Never use priority 2 or 3.
-- Confidence must be >= 0.7. If you are not confident the premise is wrong, do not report it.
-- category MUST be "Premise" for every finding in this pass.
-- For the `line` field, use the first added line in the primary file's changed range.
-- The `recommendation` field must state the actionable outcome plainly.
-
-These Premise constraints do NOT apply to findings from passes 1 and 2.
-
-{DOMAIN_CRITIC_PASS}
-
-Use Read, Grep, and Glob for codebase context. Do NOT use Bash.
-```
-
-**Domain critic pass injection:** If `route.json -> domain_critics` is non-empty, replace `{DOMAIN_CRITIC_PASS}` with:
-
-```
-=== PASS 4: Domain Expert ({critic_name}) ===
-You are a domain expert reviewer: {critic_name}.
-Review the assigned files for issues within your domain expertise.
-Read the repository CLAUDE.md for project context.
-Standard severity/priority rules apply.
-```
-
-If `domain_critics` is empty, remove the `{DOMAIN_CRITIC_PASS}` placeholder entirely.
-
-### Fast-Path Spawn + Collection Contract
-
-- Spawn exactly one background task (`AGENT_ID: "fast"`). Task 10 collects it.
-- `DONE ... file=WRITE_DENIED` is a success path, not a failure. Extract `<findings_json>` from `TaskOutput` and write it to `<CR_DIR>/agent_fast.json`. Retry only when the task fails to return `DONE`, times out/crashes, or returns malformed findings with no usable output file.
-- On failure (not WRITE_DENIED): retry once with `model: "haiku"`, same `AGENT_ID: "fast"`, same output file `<CR_DIR>/agent_fast.json`. Delete any existing `agent_fast.json` before retrying. Do NOT create `agent_fast_retry.json`.
-- If retry also fails: warn and continue with zero fast-path findings.
-
----
-
-## Step 5: Collect, Normalize, and Validate Findings
-
-Mark todo "Collect, normalize, and validate findings" as `in_progress`.
-
-**All agent findings are on disk** in `<CR_DIR>/agent_*.json` files (each agent wrote its own file). Use the `collect-findings` helper to merge them.
-
-### Agent Failure Recovery
-
-If any agent failed (context overflow, subscription limits, timeout) or its output file is missing:
-
-1. **Log the failure**: Record which agent failed and why (e.g., `"Bug Hunter A partition 2: context overflow"`)
-2. **If failed agent is BHA (partitioned)**: halve the failed partition (LOC budget ÷ 2) and re-spawn with `model: "haiku"` and `subagent_type: "code:code-review-worker"` (smallest context footprint for recovery). The re-spawned agent writes to a new output file.
-3. **If failed agent is non-partitioned (BHB / Unified Auditor / Domain Critic)**: re-spawn the same role once with `model: "haiku"` and the same file assignment.
-4. **Second failure → skip with warning**: if the recovery attempt fails, log a warning (`"⚠️ {agent_name} skipped — {N} files not reviewed due to agent failures"`) and continue. Do NOT fall back to reviewing in the main conversation — this would load patches into the orchestrator's context and recreate the overflow problem on large PRs. Skipped scope must be listed in the output for manual follow-up.
-5. **Continue collecting**: do not block the pipeline on a single agent failure.
-
-### Steps 5.1-5.3: Mechanical Validation (Deterministic)
-
-**Merge all agent findings from disk.** Build a single JSON array by combining:
-1. **Agent findings** — on disk in `<CR_DIR>/agent_*.json` files (one per agent)
-2. **Hygiene findings** — extract the `"findings"` array from `<CR_DIR>/hygiene.json` (written in Step 2.5)
-
-Merge and validate:
-
-```bash
-python3 <HELPERS> collect-findings --cr-dir <CR_DIR> --hygiene <CR_DIR>/hygiene.json
-python3 <HELPERS> validate --findings <CR_DIR>/findings.json --diff-data <CR_DIR>/diff_data.json > <CR_DIR>/validate_output.json
-```
-
-The `collect-findings` helper merges all `agent_*.json` files + hygiene findings into `<CR_DIR>/findings.json`. Malformed agent files are skipped with a warning.
-
-The script performs all mechanical validation in one pass:
-1. **Severity normalization**: Critical→BLOCKING, High→HIGH, Low→discard, unknown→MEDIUM+warning
-2. **Default filling**: Priority from severity, confidence defaults to 1.0
-3. **File-in-scope check**: Discard findings for files not in the changeset
-4. **Line-in-changed-range ±3**: Check both added AND removed ranges (catches removed-guard bugs)
-5. **Confidence threshold**: P0/P1 never discard; P2/P3 discard if confidence < 0.5
-6. **Duplicate merge**: Same file + line ±3 + same category or recommendation
-7. **Root-cause dedup**: Jaccard similarity on issue text for same file + nearby lines
-8. **Cross-file grouping**: Findings in different files with same category + similar issue text are grouped — the highest-severity finding becomes primary with an `other_locations` array listing the secondary occurrences
-
-Output includes `validated` findings (some with `other_locations` for cross-file groups), `discarded` findings with reasons, `normalization_warnings`, and `stats` (including `cross_file_grouped` count).
-
-### Step 5.4: Final Consolidation
-
-The `validate` subcommand already handles deduplication and root-cause grouping. Use the `validated` findings from the validate output for the presentation/posting steps. Use `stats` and `discarded` for the validation summary.
-
-If `normalization_warnings > 0` in the validate output, include in the report:
-```
-⚠️ Severity normalization: N findings had non-standard severity values (mapped to MEDIUM).
-```
-
-Mark todo as `completed`.
-
----
-
-## Step 5.5: BHA Cache Update (fast_path == false AND CACHE_DIR set)
-
-**Skip this step if `fast_path` is true OR `CACHE_DIR` is empty.**
-
-After collecting all BHA findings, update the cache manifest so the next push/re-review can reuse results for unchanged files:
-
-```bash
-python3 <HELPERS> cache-update \
-  --cache-dir <CACHE_DIR> \
-  --diff-data <CR_DIR>/diff_data.json" \
-  --bha-dir <CR_DIR> \
-  --prompt-hash <PROMPT_HASH> \
-  --model-id "opus" \
-  --schema-version 1 \
-  --global-cache <GLOBAL_CACHE> \
-  --context-key <CONTEXT_KEY> \
-  --partitions-file <CR_DIR>/partitions.json" \
-  --exclude-test-partitions
-```
-
-This writes the updated manifest to `<CACHE_DIR>/manifest.json`. The `--exclude-test-partitions` flag skips caching files from `is_test_only=True` partitions (which were reviewed by Sonnet, not Opus). In GitHub mode, the `actions/cache` post-action saves this directory for subsequent workflow runs. In local mode, the `~/.claude/cr-cache-*` directory persists on disk across CLI sessions.
-
-**Important:** Use `diff_data.json` (full diff), NOT `uncached_diff_data.json`, so the update has patch hashes for all files.
-
----
-
-## GitHub Mode: Steps 6-8
-
-**If MODE=local, skip to "Local Mode: Present Results" below.**
-
-Follow Steps 6 and 8 in `github-review.md` (already loaded in Task 2 for GitHub mode).
-
----
-
-## Local Mode: Present Results
-
-**If MODE=github, skip (results posted as inline comments above).**
-
-Mark todo "Present findings by severity" as `in_progress`.
-
-Output in this format:
-
-```markdown
-# Code Review Results
-
-**Scope:** [staged/branch/files]
-**Files Reviewed:** [count]
-```
-
-**Reviewers and Model Routing lines are conditional on `fast_path`:**
-
-- **If `fast_path == false`:**
-```markdown
-**Reviewers:** Bug Hunter A, Bug Hunter B, Unified Auditor, Premise Reviewer
-[+ domain specialist if triggered]
-**Model Routing:** [Small/Medium/Large] — [model assignments summary]
-```
-
-- **If `fast_path == true`:**
-```markdown
-**Reviewers:** Fast Path Reviewer (single-agent mode)
-**Model Routing:** Fast path — <MODEL> single reviewer
-```
-
-Then continue with:
-
----
-
-## Repo Hygiene ([count])
-
-[List any hygiene findings from deterministic checks]
-
-### Finding Title
-**File:** `path/file.ts:line`
-**Issue:** [description]
-**Recommendation:** [fix]
-
----
-
-## BLOCKING ([count])
-
-[List all blocking issues]
-
-### Issue Title
-**File:** `path/file.ts:line`
-**Reported by:** [agent(s)]
-**Issue:** [description]
-**Recommendation:** [fix]
-
----
-
-## HIGH ([count])
-
-[List all high priority issues — same format]
-
----
-
-## MEDIUM ([count])
-
-[List all medium priority issues — same format]
-
----
-
-## Validation Summary
-
-- **Total findings from agents:** X
-- **Hygiene findings:** H
-- **Validated (confirmed):** A
-- **Discarded — file not changed:** B
-- **Discarded — line not changed:** C
-- **Discarded — low confidence:** D
-- **Discarded — rejected by validation:** E
-- **Duplicates merged:** F
-- **Cross-file grouped:** G (findings with `other_locations`)
-- **Downgraded to MEDIUM:** H
-
-### Discarded Findings
-[List discarded findings grouped by discard reason — helps track agent accuracy]
-
----
-
-## Summary
-
-| Severity | Count |
-|----------|-------|
-| Blocking | X |
-| High | Y |
-| Medium | Z |
-
-**Recommendation:** [action based on findings]
-```
-
-**Consolidated Finding Format** (when multiple findings share root cause):
-
-```markdown
-### Issue Title
-**File:** `path/file.ts:line`
-**Reported by:** [agent(s)]
-**Issue:** [description]
-
-**Other Locations** (N more):
-- `path/file.ts:87` — same pattern in `functionName()`
-- `path/file.ts:124` — same pattern in `otherFunction()`
-
-**Recommendation:** [fix]
-```
-
-If `normalization_warnings > 0`, append after the validation summary:
-```
-⚠️ Severity normalization: N findings had non-standard severity values (mapped to MEDIUM).
-```
-
-Mark todo as `completed`.
-
----
-
-## Review State Write (end of pipeline — local mode only)
-
-**After all agents complete successfully** (no skipped partitions, all findings collected), update the review state so the next run can use auto-incremental mode:
-
-```bash
-if [ <MODE> = "local" ] && [ -n <CACHE_DIR> ] && [ <DIFF_SCOPE> != "--cached" ]; then
-  # Use REVIEW_BRANCH (PR head branch or local branch) and DIFF_TIP (origin/HEAD_REF or HEAD)
-  python3 <HELPERS> review-state-write \
-    --cache-dir <CACHE_DIR> \
-    --key "<REVIEW_BRANCH>:<BASE_REF>" \
-    --ref <DIFF_TIP>
-fi
-```
-
-Only on fully successful runs. If agents failed or partitions were skipped, do NOT update the state.
-
-**Key:** `REVIEW_BRANCH` is the PR's head branch (when a PR number is given) or the local branch (when no PR). This ensures the state key matches the actual code being reviewed, not whatever branch the user happens to have checked out locally.
-
----
-
-## Review Footer (final output)
-
-As the very last output of the review, print a footer with timing, cache stats, and token usage.
-
-### Compute footer (timing + cache + tokens)
-
-Run the `footer` subcommand to compute elapsed time, cache stats, and token usage in one call:
-
-```bash
-python3 <HELPERS> footer \
-  --start-time <CR_START_TIME> \
-  --cache-result <CR_DIR>/cache_result.json \
-  --cr-dir <CR_DIR> \
-  > <CR_DIR>/footer.json
-```
-
-**Note:** Omit `--cache-result` if `CACHE_DIR` is empty (no caching active) OR if `fast_path` is true (cache was intentionally bypassed). The footer will show `"Cache: disabled"` as the existing fallback when `--cache-result` is absent. The `--cr-dir` flag lets footer read `review_mode_line` from `auto_incremental.json` automatically — no need to pass `--review-mode-line` explicitly.
-
-Read `<CR_DIR>/footer.json` with the Read tool. It contains:
-```json
-{ "footer_line": "**Review complete** — 8m 59s | Cache: 5/10 files (50%) | Full review | Tokens: ~281K effective (613 in, 5.6K out, 225K cache-write, 2.5M cache-read)" }
-```
-
-### Print the footer
-
-Print a markdown horizontal rule (`---`) followed by the `footer_line` value from the JSON. Example:
+Read `<CR_DIR>/footer.json` for `footer_line` and `reviewed_line` and print both, verbatim:
 
 ```markdown
 ---
 **Review complete** — 8m 59s | Cache: 5/10 files (50%) | Full review | Tokens: ~281K effective (613 in, 5.6K out, 225K cache-write, 2.5M cache-read)
+
+**Reviewed:** `/Users/me/src/repo` @ `1a2b3c4d5e6f`
 ```
 
-## PR Verdict
+Never hand-author or drop `reviewed_line`. It names `PR #N head` instead of a path when the PR head was isolated into a worktree (this stage removes that worktree), appends the pinned index tree for a staged review, and reads `checkout not recorded` when `scope.json` carried no valid `review_root_sha`. Print that line too: it means nothing vouches for which tree was read.
 
-Run the verdict helper to compute the deterministic verdict:
+---
 
-```bash
-python3 <HELPERS> verdict --validate-output <CR_DIR>/validate_output.json > <CR_DIR>/verdict.json
-```
+## PR Verdict (stage_28_verdict — printed last)
 
-Read `<CR_DIR>/verdict.json` and print the `tag` value as the absolute last line of output. This tag is parsed by the ClosedLoop UI to render a verdict banner.
+`stage_28_verdict` runs as a normal helper in the walker. It writes `<CR_DIR>/verdict.json` with three fields: `verdict` (legacy string: `approve` | `needs_attention` | `decline`), `canonical_verdict` (envelope form: `APPROVED` | `NEEDS_ATTENTION` | `CHANGES_REQUESTED`), and `reason`. After the footer prints, do not output any additional line; the verdict artifact is the contract; consumers read `verdict.json` directly.
 
 ---
 

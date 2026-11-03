@@ -1,0 +1,365 @@
+{
+ "title": "PRD-751 dependency graph",
+ "subtitle": "Test render from 2026-09-23 data.",
+ "me": "Daniel",
+ "nodes": [
+  {
+   "id": "ISS-10790",
+   "label": "shell",
+   "owner": "Matt",
+   "status": "IN PROGRESS",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10790"
+  },
+  {
+   "id": "ISS-10964",
+   "label": "Session page design",
+   "owner": "Matt",
+   "status": "TRIAGE",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10964"
+  },
+  {
+   "id": "ISS-10963",
+   "label": "Branch page design",
+   "owner": "Matt",
+   "status": "IN PROGRESS",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10963"
+  },
+  {
+   "id": "ISS-10794",
+   "label": "comments rail",
+   "owner": "Kris",
+   "status": "TODO",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10794"
+  },
+  {
+   "id": "ISS-10843",
+   "label": "Activity design",
+   "owner": "Matt",
+   "status": "IN REVIEW",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10843"
+  },
+  {
+   "id": "ISS-10789",
+   "label": "tab decision",
+   "owner": "Andrew",
+   "status": "DONE",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10789"
+  },
+  {
+   "id": "ISS-10791",
+   "label": "Artifact tab",
+   "owner": "Nenad",
+   "status": "TODO",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10791"
+  },
+  {
+   "id": "ISS-10792",
+   "label": "Details tab",
+   "owner": "Nenad",
+   "status": "TODO",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10792"
+  },
+  {
+   "id": "ISS-10995",
+   "label": "Details writes",
+   "owner": "Daniel",
+   "status": "BLOCKED",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10995"
+  },
+  {
+   "id": "ISS-10793",
+   "label": "Sessions tab",
+   "owner": "Nenad",
+   "status": "TODO",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10793"
+  },
+  {
+   "id": "ISS-10795",
+   "label": "tab routing",
+   "owner": "Kris",
+   "status": "BLOCKED",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10795"
+  },
+  {
+   "id": "ISS-10992",
+   "label": "collaborators API",
+   "owner": "Daniel",
+   "status": "TRIAGE",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10992"
+  },
+  {
+   "id": "ISS-10844",
+   "label": "Activity component",
+   "owner": "Matt",
+   "status": "TRIAGE",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10844"
+  },
+  {
+   "id": "ISS-10994",
+   "label": "Activity API",
+   "owner": "Daniel",
+   "status": "BLOCKED",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10994"
+  },
+  {
+   "id": "ISS-10796",
+   "label": "Session adoption",
+   "owner": "Daniel",
+   "status": "TODO",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10796"
+  },
+  {
+   "id": "ISS-10797",
+   "label": "Branch adoption",
+   "owner": "Daniel",
+   "status": "TODO",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10797"
+  },
+  {
+   "id": "ISS-10798",
+   "label": "composed stories",
+   "owner": "Nenad",
+   "status": "BLOCKED",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10798"
+  },
+  {
+   "id": "ISS-11004",
+   "label": "Session Activity",
+   "owner": "unassigned",
+   "status": "BLOCKED",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-11004"
+  },
+  {
+   "id": "ISS-10980",
+   "label": "Branch Activity",
+   "owner": "Daniel",
+   "status": "BLOCKED",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10980"
+  },
+  {
+   "id": "ISS-11003",
+   "label": "flag for everyone",
+   "owner": "Kris",
+   "status": "BLOCKED",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-11003"
+  },
+  {
+   "id": "ISS-10799",
+   "label": "retire old views",
+   "owner": "Daniel",
+   "status": "TODO",
+   "url": "https://app.closedloop.ai/closedloop-ai/issues/ISS-10799"
+  }
+ ],
+ "edges": [
+  {
+   "from": "ISS-10790",
+   "to": "ISS-10791"
+  },
+  {
+   "from": "ISS-10790",
+   "to": "ISS-10792"
+  },
+  {
+   "from": "ISS-10790",
+   "to": "ISS-10793"
+  },
+  {
+   "from": "ISS-10790",
+   "to": "ISS-10795"
+  },
+  {
+   "from": "ISS-10790",
+   "to": "ISS-10796"
+  },
+  {
+   "from": "ISS-10790",
+   "to": "ISS-10797"
+  },
+  {
+   "from": "ISS-10790",
+   "to": "ISS-10798"
+  },
+  {
+   "from": "ISS-10790",
+   "to": "ISS-10844"
+  },
+  {
+   "from": "ISS-10791",
+   "to": "ISS-10796"
+  },
+  {
+   "from": "ISS-10791",
+   "to": "ISS-10797"
+  },
+  {
+   "from": "ISS-10791",
+   "to": "ISS-10798"
+  },
+  {
+   "from": "ISS-10792",
+   "to": "ISS-10796"
+  },
+  {
+   "from": "ISS-10792",
+   "to": "ISS-10797"
+  },
+  {
+   "from": "ISS-10792",
+   "to": "ISS-10798"
+  },
+  {
+   "from": "ISS-10792",
+   "to": "ISS-10995"
+  },
+  {
+   "from": "ISS-10793",
+   "to": "ISS-10797"
+  },
+  {
+   "from": "ISS-10793",
+   "to": "ISS-10798"
+  },
+  {
+   "from": "ISS-10794",
+   "to": "ISS-10796"
+  },
+  {
+   "from": "ISS-10794",
+   "to": "ISS-10797"
+  },
+  {
+   "from": "ISS-10794",
+   "to": "ISS-10798"
+  },
+  {
+   "from": "ISS-10794",
+   "to": "ISS-10799"
+  },
+  {
+   "from": "ISS-10795",
+   "to": "ISS-10796"
+  },
+  {
+   "from": "ISS-10795",
+   "to": "ISS-10797"
+  },
+  {
+   "from": "ISS-10796",
+   "to": "ISS-10799"
+  },
+  {
+   "from": "ISS-10796",
+   "to": "ISS-11003"
+  },
+  {
+   "from": "ISS-10796",
+   "to": "ISS-11004"
+  },
+  {
+   "from": "ISS-10797",
+   "to": "ISS-10799"
+  },
+  {
+   "from": "ISS-10797",
+   "to": "ISS-10980"
+  },
+  {
+   "from": "ISS-10797",
+   "to": "ISS-11003"
+  },
+  {
+   "from": "ISS-10843",
+   "to": "ISS-10844"
+  },
+  {
+   "from": "ISS-10843",
+   "to": "ISS-10980"
+  },
+  {
+   "from": "ISS-10843",
+   "to": "ISS-10994"
+  },
+  {
+   "from": "ISS-10843",
+   "to": "ISS-11004"
+  },
+  {
+   "from": "ISS-10844",
+   "to": "ISS-10798"
+  },
+  {
+   "from": "ISS-10844",
+   "to": "ISS-10980"
+  },
+  {
+   "from": "ISS-10844",
+   "to": "ISS-11004"
+  },
+  {
+   "from": "ISS-10963",
+   "to": "ISS-10797"
+  },
+  {
+   "from": "ISS-10963",
+   "to": "ISS-10798"
+  },
+  {
+   "from": "ISS-10964",
+   "to": "ISS-10796"
+  },
+  {
+   "from": "ISS-10964",
+   "to": "ISS-10798"
+  },
+  {
+   "from": "ISS-10980",
+   "to": "ISS-10799"
+  },
+  {
+   "from": "ISS-10980",
+   "to": "ISS-11003"
+  },
+  {
+   "from": "ISS-10992",
+   "to": "ISS-10796"
+  },
+  {
+   "from": "ISS-10992",
+   "to": "ISS-10797"
+  },
+  {
+   "from": "ISS-10994",
+   "to": "ISS-10980"
+  },
+  {
+   "from": "ISS-10994",
+   "to": "ISS-11004"
+  },
+  {
+   "from": "ISS-10995",
+   "to": "ISS-10796"
+  },
+  {
+   "from": "ISS-10995",
+   "to": "ISS-10797"
+  },
+  {
+   "from": "ISS-11003",
+   "to": "ISS-10799"
+  },
+  {
+   "from": "ISS-11004",
+   "to": "ISS-11003"
+  }
+ ],
+ "column_labels": [
+  "foundations and design",
+  "components and APIs",
+  "Details writes, stories",
+  "adoption",
+  "activity wiring",
+  "flag for everyone",
+  "retirement"
+ ]
+}
