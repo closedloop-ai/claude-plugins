@@ -5871,28 +5871,31 @@ class TestSetup:
         ), patch("code_review_helpers.random.randint", return_value=12345):
             return cmd_setup(argparse.Namespace(mode="local", cr_dir_prefix=str(prefix)))
 
-    def test_creates_an_empty_coverage_gaps_file(self, tmp_path: Path) -> None:
-        assert self._setup_with_cr_dir(tmp_path / "cr-") == 0
-        gaps = json.loads((tmp_path / "cr-12345" / "coverage_gaps.json").read_text())
-        assert gaps == {"findings": []}
-
-    def test_never_overwrites_an_existing_coverage_gaps_file(self, tmp_path: Path) -> None:
-        cr_dir = tmp_path / "cr-12345"
-        cr_dir.mkdir()
-        existing = json.dumps({"findings": [{"id": "kept"}]})
-        (cr_dir / "coverage_gaps.json").write_text(existing)
-        assert self._setup_with_cr_dir(tmp_path / "cr-") == 0
-        assert (cr_dir / "coverage_gaps.json").read_text() == existing
-
-    def test_coverage_gaps_write_failure_warns_instead_of_aborting(
-        self, tmp_path: Path, capsys: Any,
+    def test_resume_does_not_count_arbitrate_complete_before_it_ran(
+        self, tmp_path: Path,
     ) -> None:
-        with patch.object(Path, "write_text", side_effect=OSError("disk full")):
-            rc = self._setup_with_cr_dir(tmp_path / "cr-")
-        assert rc == 0
-        captured = capsys.readouterr()
-        assert "could not create coverage gaps" in captured.err
-        assert json.loads(captured.out.strip())["cr_dir"] == f"{tmp_path / 'cr-'}12345"
+        """stage_16_arbitrate_budget's completion signal is its own
+        coverage_gaps.json. After setup and a consolidated coverage.json, a
+        resume past stage_16 whose arbitrate never ran must not skip it."""
+        from code_review_helpers import _rp_reconstruct_completed, _write_coverage_section
+
+        assert self._setup_with_cr_dir(tmp_path / "cr-") == 0
+        cr_dir = tmp_path / "cr-12345"
+        _write_coverage_section(cr_dir, "final", {"required": [], "best_effort": []})
+        stages_cfg = json.loads((Path(__file__).parent / "config" / "stages.json").read_text())
+        stage_list = stages_cfg if isinstance(stages_cfg, list) else stages_cfg["stages"]
+        arbitrate = next(st for st in stage_list if st["id"] == "stage_16_arbitrate_budget")
+        resolved = {
+            **arbitrate,
+            "expected_outputs": [
+                o.replace("{cr_dir}", str(cr_dir)) for o in arbitrate["expected_outputs"]
+            ],
+        }
+        target = {"id": "stage_19b_derive_spawn_spec", "expected_outputs": []}
+        assert (cr_dir / "coverage.json").exists()
+        assert not (cr_dir / "coverage_gaps.json").exists()
+        completed = _rp_reconstruct_completed([resolved, target], "stage_19b_derive_spawn_spec")
+        assert "stage_16_arbitrate_budget" not in completed
 
 
 # ---------------------------------------------------------------------------
@@ -20880,6 +20883,87 @@ class TestSpawnSpecGapsOnEveryReturnPath:
         assert spec["arbitrate_status"] == "fallback"
         assert self._spawn_spec_gaps(tmp_path) == []
 
+    def test_untagged_v3_13_0_gaps_are_replaced_by_their_producer(
+        self, tmp_path: Path,
+    ) -> None:
+        """A run directory from 3.13.0 holds gaps with no ``gap_producer`` and
+        ids all indexed from ``coverage-verifier_f0``. Each producer re-running
+        on 3.13.1 replaces its own legacy entry instead of adding a second."""
+        from code_review_helpers import (
+            _GAP_PRODUCER_ARBITRATE_BUDGET,
+            _GAP_PRODUCER_SPAWN_SPEC,
+            _GAP_PRODUCER_VERIFY_CONSOLIDATE,
+            _GAP_PRODUCER_VERIFY_SPAWN,
+            _make_coverage_gap_finding,
+            _make_unverified_findings_gap,
+            _write_coverage_gaps,
+        )
+
+        def legacy(finding: dict[str, Any]) -> dict[str, Any]:
+            finding = {k: v for k, v in finding.items() if k != "gap_producer"}
+            finding["id"] = "coverage-verifier_f0"
+            return finding
+
+        legacy_by_producer = {
+            _GAP_PRODUCER_ARBITRATE_BUDGET: legacy(_make_coverage_gap_finding(
+                {"reviewer": "dropped-critic"}, reason="budget_exceeded",
+                index=0, emitted_at="",
+            )),
+            _GAP_PRODUCER_SPAWN_SPEC: legacy(_make_coverage_gap_finding(
+                {"reviewer": "mystery"}, reason="spawn_unknown_reviewer",
+                index=0, emitted_at="",
+            )),
+            _GAP_PRODUCER_VERIFY_SPAWN: legacy(_make_coverage_gap_finding(
+                {"reviewer": "unified_auditor"}, reason="spawn_missing_required_agent",
+                index=0, emitted_at="",
+            )),
+            _GAP_PRODUCER_VERIFY_CONSOLIDATE: legacy(
+                _make_unverified_findings_gap(1, index=0, emitted_at=""),
+            ),
+        }
+        gaps_path = tmp_path / "coverage_gaps.json"
+        for producer in legacy_by_producer:
+            gaps_path.write_text(json.dumps({"findings": list(legacy_by_producer.values())}))
+            _write_coverage_gaps(gaps_path, [], producer=producer)
+            remaining = json.loads(gaps_path.read_text())["findings"]
+            assert remaining == [
+                f for p, f in legacy_by_producer.items() if p != producer
+            ], producer
+
+        # End to end: a 3.13.1 derive-spawn-spec re-run over that file keeps
+        # one spawn-spec gap, not the legacy one plus a new one.
+        gaps_path.write_text(json.dumps({"findings": list(legacy_by_producer.values())}))
+        _run_derive_spawn_spec(
+            tmp_path, self._PLAN, self._NO_PARTITIONS, {"fast_path": False, "models": {}},
+        )
+        findings = json.loads(gaps_path.read_text())["findings"]
+        assert len(findings) == 4
+        assert len(self._spawn_spec_gaps(tmp_path)) == 1
+
+    def test_review_root_refusal_leaves_coverage_gaps_untouched(
+        self, tmp_path: Path,
+    ) -> None:
+        import io
+        import sys as _sys
+
+        from code_review_helpers import cmd_derive_spawn_spec, cmd_derive_static_spec
+
+        gaps_path = tmp_path / "coverage_gaps.json"
+        before = json.dumps({"findings": [{"id": "x", "gap_producer": "spawn-spec"}]})
+        (tmp_path / "scope.json").write_text(json.dumps({"review_root": ""}))
+        p_path = tmp_path / "partitions.json"
+        p_path.write_text(json.dumps(self._NO_PARTITIONS))
+        for cmd in (cmd_derive_spawn_spec, cmd_derive_static_spec):
+            gaps_path.write_text(before)
+            old_stdout = _sys.stdout
+            _sys.stdout = io.StringIO()
+            try:
+                rc = cmd(argparse.Namespace(cr_dir=str(tmp_path), partitions=str(p_path)))
+            finally:
+                _sys.stdout = old_stdout
+            assert rc == 3
+            assert gaps_path.read_text() == before
+
     def test_resume_into_fast_path_clears_the_earlier_gap(self, tmp_path: Path) -> None:
         route = {"fast_path": False, "models": {}}
         _run_derive_spawn_spec(tmp_path, self._PLAN, self._NO_PARTITIONS, route)
@@ -26703,6 +26787,12 @@ class TestPartitionBhaCap:
 
     def test_explicit_flag_overrides(self, tmp_path: Path) -> None:
         assert self._cap(tmp_path, budget={"bha_partitions": 3}, explicit=4) == 4
+
+    def test_explicit_zero_is_floored_at_one_with_a_warning(
+        self, tmp_path: Path, capsys: Any,
+    ) -> None:
+        assert self._cap(tmp_path, budget={"bha_partitions": 3}, explicit=0) == 1
+        assert "--max-bha-agents 0 is below 1" in capsys.readouterr().err
 
     def test_standalone_call_uses_the_default(self, tmp_path: Path) -> None:
         assert self._cap(tmp_path, cr_dir=False, input_loc=1200) == 5

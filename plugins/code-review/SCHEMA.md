@@ -460,11 +460,16 @@ without that marker keeps `reason: "budget_capped"`.
 with `bucket == "required"` and a non-benign reason
 (everything except `deferred_pln723`, `no_partitions`, `docs_only`,
 `gated_by_verify`) produces a coverage-gap finding in
-`coverage_gaps.json`. `setup` creates the file empty when it is absent.
-Every writer tags its findings with `gap_producer` (`arbitrate-budget`,
-`spawn-spec`, `verify-spawn`, `verify-consolidate`) and, on every run and
-every return path, replaces only the findings carrying its own tag, so a
-resumed walk neither duplicates nor keeps one. Ids are
+`coverage_gaps.json`. arbitrate-budget always writes the file (it is
+`stage_16`'s completion signal); the other writers create it only when they
+have a finding, and readers treat an absent file as empty. Every writer
+tags its findings with `gap_producer` (`arbitrate-budget`, `spawn-spec`,
+`verify-spawn`, `verify-consolidate`) and, on every run and every return
+path past the review-root check, replaces only the findings carrying its
+own tag, so a resumed walk neither duplicates nor keeps one. An untagged
+finding, from a run directory written by 3.13.0 or earlier, is attributed
+to the producer whose shape it has (arbitrate-budget by default), so it is
+replaced too. Ids are
 `coverage-verifier-<gap_producer>_f<index>`, except arbitrate-budget's
 `coverage-verifier_f<index>`. `cmd_finalize_result` reads that file into the
 envelope's coverage-gap bucket where it contributes to the canonical
@@ -509,7 +514,8 @@ crashed at runtime. Both producers write to `coverage_gaps.json` so
 ```
 
 **Runtime gap invariant:** for each entry in `missing_required[]`,
-exactly one coverage-gap finding is appended to `coverage_gaps.json`
+exactly one coverage-gap finding is in `coverage_gaps.json` (verify-spawn
+replaces its own earlier findings on each run, including its no-op runs)
 with `source: "coverage-verifier"` and reason `spawn_missing_required_agent`.
 Missing best-effort agents are recorded for telemetry but emit no
 finding — best-effort omissions are budget-driven, not coverage gaps.
@@ -542,7 +548,7 @@ finding — best-effort omissions are budget-driven, not coverage gaps.
 | 19 | cache-check                  | `cache-check`            | `cache_result.json`                                            |
 | 19b| derive-spawn-spec (plan 05)  | `derive-spawn-spec`      | `spawn.json` (`spec` section)                                  |
 | 20 | spawn-reviewers              | (agent_fleet)            | `agent_<id>.json`                                              |
-| 20b| verify-spawn (plan 05)       | `verify-spawn`           | `spawn.json` (`verification` section) + `coverage_gaps.json` append |
+| 20b| verify-spawn (plan 05)       | `verify-spawn`           | `spawn.json` (`verification` section) + `coverage_gaps.json` (replaces its own entries) |
 | 21 | collect-findings             | `collect-findings`       | `findings.json` (with deterministic IDs)                       |
 | 22 | validate                     | `validate`               | `findings_validated.json`                                     |
 | 23 | verify-findings (plan 03)    | `verify-findings`        | `findings_verified.json`                                      |

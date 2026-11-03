@@ -274,7 +274,6 @@ class PrefixContext:
     overrides: dict[str, str] = field(default_factory=dict)
     #: Gate B route decision, populated after stage_19_cache_check.
     fast_path: bool = False
-    max_bha_agents: int | None = None
 
 
 def _resolve_token(token: str, ctx: PrefixContext) -> str:
@@ -537,8 +536,6 @@ def _run_route_gate_b(ctx: PrefixContext, parser: argparse.ArgumentParser) -> No
 
     route = _read_json(cr / "spawn.json").get("route", {})
     ctx.fast_path = bool(route.get("fast_path", False))
-    mba = route.get("max_bha_agents")
-    ctx.max_bha_agents = int(mba) if isinstance(mba, (int, float)) else None
     if ctx.fast_path:
         cached_bha = cr / "agent_cached_bha.json"
         if cached_bha.exists():
@@ -968,8 +965,6 @@ def _run_route_gate_b_subprocess(
     )
     route = _read_json(cr / "spawn.json").get("route", {})
     ctx.fast_path = bool(route.get("fast_path", False))
-    mba = route.get("max_bha_agents")
-    ctx.max_bha_agents = int(mba) if isinstance(mba, (int, float)) else None
     if ctx.fast_path:
         cached_bha = cr / "agent_cached_bha.json"
         if cached_bha.exists():

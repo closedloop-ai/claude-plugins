@@ -1879,12 +1879,18 @@ def _merge_trivial_partitions(
 
 
 def _resolve_partition_cap(args: argparse.Namespace, diff_data: dict[str, Any]) -> int:
-    """``--max-bha-agents`` when given (an explicit override); else
-    ``_partition_bha_cap`` over ``--cr-dir``; else ``DEFAULT_MAX_BHA_AGENTS``
-    for a standalone call with neither."""
+    """``--max-bha-agents`` when given (an explicit override, floored at 1
+    with a warning, like every other cap source); else ``_partition_bha_cap``
+    over ``--cr-dir``; else ``DEFAULT_MAX_BHA_AGENTS`` for a standalone call
+    with neither."""
     explicit = getattr(args, "max_bha_agents", None)
-    if explicit:
-        return int(explicit)
+    if explicit is not None:
+        if int(explicit) < 1:
+            print(
+                f"Warning: --max-bha-agents {explicit} is below 1; using 1",
+                file=sys.stderr,
+            )
+        return max(1, int(explicit))
     cr_dir = getattr(args, "cr_dir", None)
     if cr_dir:
         return _partition_bha_cap(Path(cr_dir), diff_data)
@@ -6397,14 +6403,6 @@ def cmd_setup(args: argparse.Namespace) -> int:
         suffix = random.randint(10000, 99999)
         cr_dir = f"{cr_dir_prefix}{suffix}"
         os.makedirs(cr_dir, exist_ok=True)
-        # Every stage after this writes coverage_gaps.json through
-        # _write_coverage_gaps; start the run with an empty one.
-        gaps_path = Path(cr_dir) / "coverage_gaps.json"
-        if not gaps_path.exists():
-            try:
-                gaps_path.write_text(json.dumps({"findings": []}, indent=2))
-            except OSError as exc:
-                print(f"Warning: could not create coverage gaps: {exc}", file=sys.stderr)
         output["cr_dir"] = cr_dir
 
     json.dump(output, sys.stdout, indent=2)
@@ -12833,13 +12831,15 @@ def _write_coverage_gaps(
     ``new_findings``, keeping every other producer's; return False when the
     write failed.
 
-    The only writer of the file after ``setup`` creates it. Each new finding
+    The file's only writer. Each new finding
     is tagged ``gap_producer: producer`` and existing ones are matched on
     that tag, so a stage that runs again on a resumed walk neither
     duplicates its gaps nor leaves a stale one behind; an empty
-    ``new_findings`` clears them, and writes nothing when the file is absent
-    unless ``create`` (arbitrate-budget, which reports the file as its
-    output). Producers: arbitrate-budget
+    ``new_findings`` clears them. An untagged finding, from a run directory
+    written before ``gap_producer`` existed, is attributed by
+    ``_gap_finding_producer``. When the file is absent and there is nothing
+    to write it stays absent, unless ``create`` (arbitrate-budget, whose
+    file is ``stage_16``'s completion signal). Producers: arbitrate-budget
     (``stage_16``), derive-spawn-spec / derive-static-spec (``stage_19b`` /
     ``stage_19c``), verify-spawn (``stage_20b``) and verify-consolidate
     (``stage_24a``). ``cmd_finalize_result`` reads every entry.
@@ -12848,7 +12848,7 @@ def _write_coverage_gaps(
     raw = existing.get("findings") if isinstance(existing, dict) else None
     kept = [
         f for f in (raw if isinstance(raw, list) else [])
-        if isinstance(f, dict) and f.get("gap_producer") != producer
+        if isinstance(f, dict) and _gap_finding_producer(f) != producer
     ]
     tagged = [{**f, "gap_producer": producer} for f in new_findings]
     if not kept and not tagged and not create and not gaps_path.exists():
@@ -12860,6 +12860,35 @@ def _write_coverage_gaps(
         print(f"Warning: could not write {producer} coverage gaps: {exc}", file=sys.stderr)
         return False
     return True
+
+
+_VERIFIER_MISSING_OUTPUT_MARKER = "coverage:verifier-missing-output"
+_LEGACY_VERIFY_SPAWN_EXPLANATION = " because spawn missing required agent "
+_LEGACY_SPAWN_SPEC_EXPLANATION = " because spawn "
+
+
+def _gap_finding_producer(finding: dict[str, Any]) -> str:
+    """The producer that owns a ``coverage_gaps.json`` finding.
+
+    Its ``gap_producer`` tag when present. A finding without one was written
+    by a 3.13.0-or-earlier run (compatibility for a resumed run directory),
+    and is attributed by the shape each producer emitted then: the
+    verifier-missing-output marker (verify-consolidate), the reason text
+    ``_make_coverage_gap_finding`` rendered for verify-spawn and the
+    spawn-spec stages, and arbitrate-budget for everything else, since it
+    was the file's original whole-file writer.
+    """
+    tag = finding.get("gap_producer")
+    if isinstance(tag, str) and tag:
+        return tag
+    if finding.get("system_marker") == _VERIFIER_MISSING_OUTPUT_MARKER:
+        return _GAP_PRODUCER_VERIFY_CONSOLIDATE
+    explanation = str(finding.get("explanation", ""))
+    if _LEGACY_VERIFY_SPAWN_EXPLANATION in explanation:
+        return _GAP_PRODUCER_VERIFY_SPAWN
+    if _LEGACY_SPAWN_SPEC_EXPLANATION in explanation:
+        return _GAP_PRODUCER_SPAWN_SPEC
+    return _GAP_PRODUCER_ARBITRATE_BUDGET
 
 
 def _make_coverage_gap_finding(
@@ -12948,7 +12977,7 @@ def _make_unverified_findings_gap(
             "finding_scope": "system",
             "file": None,
             "line": None,
-            "system_marker": "coverage:verifier-missing-output",
+            "system_marker": _VERIFIER_MISSING_OUTPUT_MARKER,
             "category": "Coverage",
             "severity": "HIGH",
             "priority": 1,
@@ -13562,8 +13591,8 @@ def _derive_spawn_agents_from_plan(
                     })
                     return
                 # Budget cap: arbitrate-budget's ``bha_partitions`` bounds
-                # the BHA fleet and is also the partitioner's
-                # ``--max-bha-agents``, so a positive cap is never below the
+                # the BHA fleet and is also the cap the partitioner applies
+                # (``_partition_bha_cap``), so a positive cap is never below the
                 # partition count unless partitions.json came from
                 # elsewhere. Docs-only is the deliberate exception: the cap
                 # is 0 while the partitioner ran with a floor of 1. When
@@ -13782,11 +13811,6 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     """
     cr_dir = Path(args.cr_dir)
     now_iso = datetime.now(timezone.utc).isoformat()
-    # Clear this stage's gaps from an earlier run first, so every return
-    # path below (fallback sentinel, fast path, refusal) leaves none stale.
-    _write_coverage_gaps(
-        cr_dir / "coverage_gaps.json", [], producer=_GAP_PRODUCER_SPAWN_SPEC,
-    )
 
     review_root, refusal_rc = _require_review_root_or_report(
         cr_dir, _read_optional_json(cr_dir / "scope.json", {}),
@@ -13794,6 +13818,27 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     if review_root is None:
         return refusal_rc
 
+    # One coverage-gaps write per run, on every return path past the
+    # refusal: an empty list clears this stage's gaps from an earlier run.
+    gap_findings: list[dict[str, Any]] = []
+    try:
+        return _derive_spawn_spec_for_root(args, cr_dir, review_root, now_iso, gap_findings)
+    finally:
+        _write_coverage_gaps(
+            cr_dir / "coverage_gaps.json", gap_findings,
+            producer=_GAP_PRODUCER_SPAWN_SPEC,
+        )
+
+
+def _derive_spawn_spec_for_root(
+    args: argparse.Namespace,
+    cr_dir: Path,
+    review_root: str,
+    now_iso: str,
+    gap_findings: list[dict[str, Any]],
+) -> int:
+    """``cmd_derive_spawn_spec`` past the review-root check; appends the stage's
+    coverage-gap findings to ``gap_findings`` for the caller to write."""
     coverage_plan = _read_coverage_state(cr_dir).get("final")
     if not isinstance(coverage_plan, dict):
         spec = _spawn_spec_fallback(
@@ -13931,10 +13976,7 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     spawn_gap_findings = _build_spawn_required_gap_findings(
         skipped, _SPAWN_BENIGN_REQUIRED_SKIPS, emitted_at=now_iso,
     )
-    _write_coverage_gaps(
-        cr_dir / "coverage_gaps.json", spawn_gap_findings,
-        producer=_GAP_PRODUCER_SPAWN_SPEC,
-    )
+    gap_findings.extend(spawn_gap_findings)
 
     bha_count = sum(1 for a in agents if a["reviewer"] == "bug_hunter_a")
     # Domain critics span both source values (``rule`` for
@@ -13998,11 +14040,6 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
     """
     cr_dir = Path(args.cr_dir)
     now_iso = datetime.now(timezone.utc).isoformat()
-    # Clear this stage's gaps from an earlier run first, so every return
-    # path below (fallback sentinel, fast path, refusal) leaves none stale.
-    _write_coverage_gaps(
-        cr_dir / "coverage_gaps.json", [], producer=_GAP_PRODUCER_SPAWN_SPEC,
-    )
 
     review_root, refusal_rc = _require_review_root_or_report(
         cr_dir, _read_optional_json(cr_dir / "scope.json", {}),
@@ -14010,6 +14047,27 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
     if review_root is None:
         return refusal_rc
 
+    # One coverage-gaps write per run, on every return path past the
+    # refusal: an empty list clears this stage's gaps from an earlier run.
+    gap_findings: list[dict[str, Any]] = []
+    try:
+        return _derive_static_spec_for_root(args, cr_dir, review_root, now_iso, gap_findings)
+    finally:
+        _write_coverage_gaps(
+            cr_dir / "coverage_gaps.json", gap_findings,
+            producer=_GAP_PRODUCER_SPAWN_SPEC,
+        )
+
+
+def _derive_static_spec_for_root(
+    args: argparse.Namespace,
+    cr_dir: Path,
+    review_root: str,
+    now_iso: str,
+    gap_findings: list[dict[str, Any]],
+) -> int:
+    """``cmd_derive_static_spec`` past the review-root check; appends the stage's
+    coverage-gap findings to ``gap_findings`` for the caller to write."""
     route = _read_spawn_state(cr_dir).get("route", {}) or {}
     if not isinstance(route, dict):
         route = {}
@@ -14072,15 +14130,13 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
         bha_partitions_cap=DEFAULT_MAX_BHA_AGENTS,
     )
     # A partition dropped as ``budget_capped`` holds files no reviewer will
-    # bug-hunt. The route's cap keeps that from happening; if it does, record
+    # bug-hunt. partition's LOC-based cap (``_partition_bha_cap``, at most
+    # DEFAULT_MAX_BHA_AGENTS) keeps that from happening; if it does, record
     # the gap the same way derive-spawn-spec does instead of dropping it silently.
     spawn_gap_findings = _build_spawn_required_gap_findings(
         skipped, _SPAWN_BENIGN_REQUIRED_SKIPS, emitted_at=now_iso,
     )
-    _write_coverage_gaps(
-        cr_dir / "coverage_gaps.json", spawn_gap_findings,
-        producer=_GAP_PRODUCER_SPAWN_SPEC,
-    )
+    gap_findings.extend(spawn_gap_findings)
 
     bha_count = sum(1 for a in agents if a["reviewer"] == "bug_hunter_a")
     spec = {
