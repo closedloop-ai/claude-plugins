@@ -150,3 +150,16 @@ and replaces one left running from another install. It also writes a
 `~/.local/bin/prd-graph-helper` launcher that follows plugin updates, which the
 page shows when the helper is not running. `scripts/check_graph.cjs` is a
 headless browser check of a rendered graph.
+
+### `erd-diagram`
+
+Builds or updates an interactive entity relationship diagram as one offline HTML
+file for a Postgres repository, using only the repository's schema code: a
+Prisma schema, a SQL schema dump, a folder of SQL migrations, or a model JSON
+the agent writes from other ORM code (format in `references/model-format.md`).
+It never connects to a database. With no arguments it asks for a style,
+`canvas-sidebar` or `schema-explorer`; passing an existing diagram updates it in
+place, keeping its title and domain groups, and a missing path stops with no
+changes. `scripts/dist/erd.mjs` and `scripts/dist/verify.mjs` are built from
+`tools/erd-diagram/` and need only Node 18; elkjs is bundled under the EPL 2.0
+(see `THIRD_PARTY_NOTICES.md`).
