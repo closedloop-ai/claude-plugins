@@ -7505,7 +7505,8 @@ def cmd_detect_injection(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 # Two-step LLM stage modelled on PLN-722's verifier:
 #   1. ``extract-signals-prepare`` — read diff_data.json + intent + taxonomy,
-#      compute the cache key, check the cache. On hit: write the final
+#      build the agent input bundle, compute the cache key from that
+#      bundle's content hash, check the cache. On hit: write the final
 #      ``extract_signals.json`` immediately. On miss: write the agent input
 #      bundle (diff summary + taxonomy reference) and the manifest the
 #      orchestrator uses to spawn a single Haiku agent.
@@ -7522,6 +7523,10 @@ SIGNAL_EXTRACTION_MODEL_DEFAULT = "haiku"
 SIGNAL_EXTRACTION_MARKER = "signal-extraction-failed"
 SIGNAL_TAXONOMY_FILENAME = "signal_taxonomy.json"
 SIGNAL_EXTRACTION_PROMPT_FILENAME = "signal_extraction_prompt.txt"
+# Recorded in the manifest when the agent input carries no changed files —
+# the shape a degraded parse-diff takes, so the run neither reads nor writes
+# the signals cache (ISS-8961 — a miss is always cheaper than a wrong hit).
+SIGNAL_CACHE_BYPASS_NO_FILES = "no-changed-files"
 
 # Cap on per-file excerpt size injected into the agent input. The taxonomy
 # is the agent's reference — the diff context is the evidence. We need
@@ -7611,6 +7616,28 @@ def _signal_extraction_prompt_hash(path: Path) -> str:
     Mirrors the taxonomy hash pattern in this same module.
     """
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def signal_input_hash(agent_input: dict[str, Any]) -> str:
+    """Content fingerprint of the exact bundle the extraction agent reads.
+
+    ``_build_signal_input`` is what the agent consumes — file list, per-file
+    excerpts, and the intent hint — so fingerprinting the whole bundle
+    covers every input the extraction is a function of. The hash MUST be
+    taken over the entire bundle, not the file list alone: two reviews of
+    the same branch touch the same paths with the same line counts and
+    differ only in excerpt content. Canonicalization is delegated to
+    ``_stable_json_hash``, the module's single owner of the deterministic
+    cache-key JSON rule (the builder already emits files and excerpts in a
+    deterministic order, and sorted keys make the rest order-independent).
+
+    ISS-8961: this is the component that makes the key diff-derived. A
+    ref name such as ``diff_tip`` is ``"HEAD"`` for every local branch
+    review, so a key built on it was constant across every review that
+    shared a cache directory — and a pooled worktree makes the cache
+    directory shared by construction.
+    """
+    return _stable_json_hash(agent_input)
 
 
 def signal_extraction_cache_key(
@@ -7835,6 +7862,20 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
         ``taxonomy_path``, ``prompt_path`` so the orchestrator can spawn
         a single Haiku agent.
 
+    ISS-8961: the bundle is built *before* the key so the key is derived
+    from the diff the agent will actually read.
+
+    A bundle with no changed files bypasses the cache in both directions —
+    miss now, no cache write later. Not because such a bundle is unkeyable
+    (it hashes fine, and two genuinely-empty reviews would legitimately
+    share an entry) but because it is the shape a *degraded* run takes: a
+    parse-diff that emitted empty ``file_statuses`` for a review that did
+    have changes is indistinguishable here from a real empty diff, and
+    caching it would persist that degraded extraction for the namespace TTL
+    and serve it to every later empty-looking run. The cost is that a real
+    zero-file review re-dispatches its Haiku extraction every time; a miss
+    is cheap and bounded, a wrong hit is neither.
+
     Always exits 0; structural failures (no diff_data, malformed
     taxonomy) print to stderr and return 1.
     """
@@ -7900,14 +7941,18 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
     agent_input = _build_signal_input(diff_data, intent_summary)
 
     taxonomy_hash = _taxonomy_hash(taxonomy_bytes)
-    key = signal_extraction_cache_key(
-        _stable_json_hash(agent_input), taxonomy_hash, prompt_hash,
+    keyable = bool(agent_input.get("files"))
+    input_hash = signal_input_hash(agent_input)
+    key = (
+        signal_extraction_cache_key(input_hash, taxonomy_hash, prompt_hash)
+        if keyable
+        else ""
     )
 
     output_path = cr_dir / "extract_signals.json"
 
     manifest_path = cr_dir / "extract_signals_manifest.json"
-    cached = _read_cached_signals(cache_dir, key)
+    cached = _read_cached_signals(cache_dir, key) if key else None
     if cached is not None:
         # Strip cache-only metadata before writing the canonical output.
         canonical = {k: v for k, v in cached.items() if k != "written_at"}
@@ -7920,6 +7965,7 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
         return _write_and_emit_manifest(manifest_path, {
             "status": "cache_hit",
             "cache_key": key,
+            "input_hash": input_hash,
             "taxonomy_hash": taxonomy_hash,
             "prompt_hash": prompt_hash,
             "output_path": str(output_path),
@@ -7935,9 +7981,10 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
     taxonomy_snapshot_path = cr_dir / "extract_signals_taxonomy.json"
     taxonomy_snapshot_path.write_bytes(taxonomy_bytes)
 
-    return _write_and_emit_manifest(manifest_path, {
+    manifest: dict[str, Any] = {
         "status": "needs_agent",
         "cache_key": key,
+        "input_hash": input_hash,
         "taxonomy_hash": taxonomy_hash,
         "prompt_hash": prompt_hash,
         "input_path": str(input_path),
@@ -7948,7 +7995,13 @@ def cmd_extract_signals_prepare(args: argparse.Namespace) -> int:
         "prompt_path": str(prompt_path),
         "output_path": str(output_path),
         "model": model,
-    })
+    }
+    if not keyable:
+        # An empty cache_key also stops consolidate writing this run into
+        # the cache, so a bundle with no diff identity is neither served
+        # from the cache nor served to a later lane.
+        manifest["cache_bypass_reason"] = SIGNAL_CACHE_BYPASS_NO_FILES
+    return _write_and_emit_manifest(manifest_path, manifest)
 
 
 def cmd_extract_signals_consolidate(args: argparse.Namespace) -> int:

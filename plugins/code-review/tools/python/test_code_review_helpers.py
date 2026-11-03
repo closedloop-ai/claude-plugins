@@ -14461,6 +14461,79 @@ class TestSignalExtractionCacheKey:
         b = signal_extraction_cache_key("ih", "tax", "ph2")
         assert a != b
 
+    def test_key_composition_is_pinned_to_a_literal_digest(self) -> None:
+        """ISS-8961: the input-hash slot is pinned, not re-derived.
+
+        The expected value is a frozen literal, deliberately duplicating
+        what the builder computes. A test that re-derived it through the
+        same helper would stay green if the input-hash component were
+        dropped back out of the tuple — which is exactly the regression
+        this pins.
+        """
+        from code_review_helpers import signal_extraction_cache_key
+        assert signal_extraction_cache_key("ih", "tax", "ph") == (
+            "5656eaf4b0b01d370f385acaefe929dad03b64a075164b90372555e18343030c"
+        )
+
+
+class TestSignalInputHash:
+    """ISS-8961: the diff-derived component of the signals cache key."""
+
+    def test_hash_is_pinned_to_a_literal_digest(self) -> None:
+        """Frozen literal, not a re-derivation of the canonical form."""
+        from code_review_helpers import signal_input_hash
+        bundle = {
+            "files": [{"path": "a.ts", "status": "modified"}],
+            "sample_diff_excerpts": [],
+            "intent": {},
+        }
+        assert signal_input_hash(bundle) == (
+            "cf79f0bd063b1da6299767f7f57e8f765b828daad50e7abf4ea5cdb8fa500c75"
+        )
+
+    def test_key_order_does_not_change_the_hash(self) -> None:
+        from code_review_helpers import signal_input_hash
+        a = signal_input_hash({"files": [], "intent": {}, "sample_diff_excerpts": []})
+        b = signal_input_hash({"intent": {}, "sample_diff_excerpts": [], "files": []})
+        assert a == b
+
+    def test_bundle_from_identical_diff_data_is_stable_across_builds(self) -> None:
+        """ISS-8961: a run-varying field in the bundle is a permanent miss.
+
+        The key is only useful if an unchanged diff rebuilds a byte-identical
+        bundle. If someone later adds a timestamp, absolute path, or run id
+        to ``_build_signal_input``, every review misses forever and re-runs
+        the Haiku extraction — a silent cost regression the golden harness
+        cannot catch, because it normalizes ``cache_key`` to a placeholder.
+        """
+        from code_review_helpers import _build_signal_input, signal_input_hash
+        diff_data = {
+            "file_statuses": {"b.ts": "M", "a.ts": "A"},
+            "file_loc": {"a.ts": {"added": 1, "removed": 0}, "b.ts": {"added": 1, "removed": 1}},
+            "patch_lines": {
+                "a.ts": {"added_lines": {"2": "x", "10": "y"}, "removed_lines": {}},
+                "b.ts": {"added_lines": {"1": "z"}, "removed_lines": {"4": "w"}},
+            },
+        }
+        intent = {"intent": "fix"}
+        first = signal_input_hash(_build_signal_input(diff_data, intent))
+        second = signal_input_hash(_build_signal_input(diff_data, intent))
+        assert first == second
+        # Key order in the source data must not move the digest either.
+        reordered = {
+            "patch_lines": diff_data["patch_lines"],
+            "file_loc": diff_data["file_loc"],
+            "file_statuses": {"a.ts": "A", "b.ts": "M"},
+        }
+        assert signal_input_hash(_build_signal_input(reordered, intent)) == first
+
+    def test_a_changed_excerpt_changes_the_hash(self) -> None:
+        from code_review_helpers import signal_input_hash
+        base = {"files": [{"path": "a.ts", "status": "modified"}], "intent": {}}
+        a = signal_input_hash({**base, "sample_diff_excerpts": [{"path": "a.ts", "added_sample": [{"line": "1", "content": "x"}]}]})
+        b = signal_input_hash({**base, "sample_diff_excerpts": [{"path": "a.ts", "added_sample": [{"line": "1", "content": "y"}]}]})
+        assert a != b
+
 
 class TestSignalExtractionValidator:
     """Per PLN-725 §2 contract enforced by validate_signal_extraction_output."""
@@ -14799,6 +14872,287 @@ class TestExtractSignalsPrepare:
         assert output["signals"][0]["name"] == "language_typescript"
         # Cache-only metadata is stripped from the canonical output.
         assert "written_at" not in output
+
+
+class TestPooledWorktreeSignalCacheIsolation:
+    """ISS-8961: a second lane in a reused worktree must not inherit lane 1's signals.
+
+    The production shape this reproduces: pooled worktrees give every lane in
+    a directory the same ``~/.claude/cr-cache-global-repo-<basename>`` cache,
+    and a local branch review's diff tip is the literal ``HEAD``. Both lanes
+    below therefore share a cache directory, and differ only in the diff —
+    which is precisely what the key must discriminate on.
+    """
+
+    def _lane_args(
+        self, cr_dir: Path, cache_dir: Path, diff_path: Path,
+    ) -> argparse.Namespace:
+        return argparse.Namespace(
+            cr_dir=str(cr_dir),
+            diff_data=str(diff_path),
+            prompt_hash="ph0",
+            cache_dir=str(cache_dir),
+            taxonomy=None,
+            prompt=None,
+            intent=None,
+            model="haiku",
+        )
+
+    def _write_diff_data(self, path: Path, file_path: str, added: str) -> Path:
+        path.write_text(json.dumps({
+            "file_statuses": {file_path: "M"},
+            "file_loc": {file_path: {"added": 1, "removed": 0}},
+            "patch_lines": {
+                file_path: {"added_lines": {"1": added}, "removed_lines": {}},
+            },
+        }))
+        return path
+
+    def test_second_lane_does_not_receive_first_lanes_signals(
+        self, tmp_path: Path,
+    ) -> None:
+        from code_review_helpers import (
+            cmd_extract_signals_consolidate,
+            cmd_extract_signals_prepare,
+        )
+        cache_dir = tmp_path / "cr-cache-global-repo-pool"
+        cache_dir.mkdir()
+
+        # Lane 1: reviews an auth diff and caches its extraction.
+        lane1_dir = tmp_path / "lane1"
+        lane1_dir.mkdir()
+        lane1_diff = self._write_diff_data(
+            lane1_dir / "diff_data.json",
+            "src/auth/login.ts",
+            "const session = await issueToken(user);",
+        )
+        assert cmd_extract_signals_prepare(
+            self._lane_args(lane1_dir, cache_dir, lane1_diff),
+        ) == 0
+        lane1_manifest = json.loads(
+            (lane1_dir / "extract_signals_manifest.json").read_text(),
+        )
+        assert lane1_manifest["status"] == "needs_agent"
+        agent_out = lane1_dir / "agent_extract_signals.json"
+        agent_out.write_text(json.dumps({"signals": [
+            {
+                "name": "auth_touching",
+                "evidence": "src/auth/login.ts:1 — issues a session token",
+                "confidence": 0.95,
+            },
+        ]}))
+        assert cmd_extract_signals_consolidate(argparse.Namespace(
+            cr_dir=str(lane1_dir),
+            agent_output=str(agent_out),
+            manifest=None,
+            taxonomy=None,
+            cache_dir=str(cache_dir),
+        )) == 0
+        lane1_signals = json.loads(
+            (lane1_dir / "extract_signals.json").read_text(),
+        )
+        assert [s["name"] for s in lane1_signals["signals"]] == ["auth_touching"]
+
+        # Lane 2: same pooled cache directory, different diff.
+        lane2_dir = tmp_path / "lane2"
+        lane2_dir.mkdir()
+        lane2_diff = self._write_diff_data(
+            lane2_dir / "diff_data.json",
+            "src/billing/invoice.py",
+            "total = sum(line.amount for line in invoice.lines)",
+        )
+        assert cmd_extract_signals_prepare(
+            self._lane_args(lane2_dir, cache_dir, lane2_diff),
+        ) == 0
+        lane2_manifest = json.loads(
+            (lane2_dir / "extract_signals_manifest.json").read_text(),
+        )
+
+        assert lane2_manifest["cache_key"] != lane1_manifest["cache_key"]
+        assert lane2_manifest["status"] == "needs_agent"
+        # The decisive assertion: lane 2 must not be handed lane 1's output.
+        assert not (lane2_dir / "extract_signals.json").exists()
+
+    def test_same_file_different_content_is_not_served_a_stale_hit(
+        self, tmp_path: Path,
+    ) -> None:
+        """The realistic pooled-lane shape: only the excerpt content differs.
+
+        The sibling test above varies the changed path too, so a key built
+        from the file list alone would still separate those two lanes. This
+        pair holds path, status, and line counts identical and varies only
+        the added line — which is what successive reviews of one branch look
+        like as it is amended. It fails unless the key covers the whole
+        agent-input bundle, excerpts included.
+        """
+        from code_review_helpers import cmd_extract_signals_prepare
+        cache_dir = tmp_path / "cr-cache-global-repo-pool"
+        cache_dir.mkdir()
+
+        keys: list[str] = []
+        for lane, added in (
+            ("lane1", "const s = await issueToken(user);"),
+            ("lane2", "const s = await issueToken(user, { ttl: 60 });"),
+        ):
+            lane_dir = tmp_path / lane
+            lane_dir.mkdir()
+            diff = self._write_diff_data(
+                lane_dir / "diff_data.json", "src/auth/login.ts", added,
+            )
+            assert cmd_extract_signals_prepare(
+                self._lane_args(lane_dir, cache_dir, diff),
+            ) == 0
+            manifest = json.loads(
+                (lane_dir / "extract_signals_manifest.json").read_text(),
+            )
+            # Same path, same status, same 1-added/0-removed counts.
+            bundle = json.loads(
+                (lane_dir / "extract_signals_input.json").read_text(),
+            )
+            assert [
+                (f["path"], f["status"], f["lines_added"], f["lines_removed"])
+                for f in bundle["files"]
+            ] == [("src/auth/login.ts", "M", 1, 0)]
+            keys.append(manifest["cache_key"])
+
+        assert keys[0] != keys[1]
+
+    def _prepare_lane(
+        self, tmp_path: Path, cache_dir: Path, lane: str, diff_data: dict[str, Any],
+    ) -> tuple[dict[str, Any], str]:
+        from code_review_helpers import cmd_extract_signals_prepare
+        lane_dir = tmp_path / lane
+        lane_dir.mkdir()
+        diff_path = lane_dir / "diff_data.json"
+        diff_path.write_text(json.dumps(diff_data))
+        assert cmd_extract_signals_prepare(
+            self._lane_args(lane_dir, cache_dir, diff_path),
+        ) == 0
+        manifest = json.loads((lane_dir / "extract_signals_manifest.json").read_text())
+        return manifest, (lane_dir / "extract_signals_input.json").read_text()
+
+    def test_a_26th_file_outside_the_excerpt_window_changes_the_key(
+        self, tmp_path: Path,
+    ) -> None:
+        """Only the top SIGNAL_EXCERPT_MAX_FILES files get excerpts, but every
+        file is listed in ``files``, so a change past the excerpt window still
+        reaches the agent and must move the key."""
+        from code_review_helpers import SIGNAL_EXCERPT_MAX_FILES
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+
+        def diff_with(extra: str) -> dict[str, Any]:
+            statuses = {f"src/f{i:02d}.ts": "M" for i in range(SIGNAL_EXCERPT_MAX_FILES)}
+            patch = {
+                path: {"added_lines": {str(n): "x" for n in range(1, 4)}, "removed_lines": {}}
+                for path in statuses
+            }
+            statuses[extra] = "A"
+            patch[extra] = {"added_lines": {"1": "y"}, "removed_lines": {}}
+            return {"file_statuses": statuses, "file_loc": {}, "patch_lines": patch}
+
+        first, first_input = self._prepare_lane(tmp_path, cache_dir, "a", diff_with("src/z1.ts"))
+        second, _ = self._prepare_lane(tmp_path, cache_dir, "b", diff_with("src/z2.ts"))
+        assert "src/z1.ts" not in [e["path"] for e in json.loads(first_input)["sample_diff_excerpts"]]
+        assert first["cache_key"] != second["cache_key"]
+
+    def test_a_21st_added_line_changes_the_key(self, tmp_path: Path) -> None:
+        """Lines past SIGNAL_EXCERPT_LINES_PER_FILE are not excerpted, but the
+        per-file counts and overflow tally the agent reads still move."""
+        from code_review_helpers import SIGNAL_EXCERPT_LINES_PER_FILE
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+
+        def diff_with(line_count: int) -> dict[str, Any]:
+            added = {str(n): f"line {n}" for n in range(1, line_count + 1)}
+            return {
+                "file_statuses": {"src/a.ts": "M"},
+                "file_loc": {},
+                "patch_lines": {"src/a.ts": {"added_lines": added, "removed_lines": {}}},
+            }
+
+        first, _ = self._prepare_lane(
+            tmp_path, cache_dir, "a", diff_with(SIGNAL_EXCERPT_LINES_PER_FILE),
+        )
+        second, _ = self._prepare_lane(
+            tmp_path, cache_dir, "b", diff_with(SIGNAL_EXCERPT_LINES_PER_FILE + 1),
+        )
+        assert first["cache_key"] != second["cache_key"]
+
+    def test_an_edit_the_agent_cannot_see_reuses_the_key_by_design(
+        self, tmp_path: Path,
+    ) -> None:
+        """Rewording a line past the excerpt cap leaves the agent's input
+        byte-identical, so a fresh extraction would read exactly what the
+        cached one read. The key tracks what the agent is given, not the
+        whole diff; this pins that the two bundles really are identical."""
+        from code_review_helpers import SIGNAL_EXCERPT_LINES_PER_FILE
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        last = SIGNAL_EXCERPT_LINES_PER_FILE + 1
+
+        def diff_with(last_line: str) -> dict[str, Any]:
+            added = {str(n): f"line {n}" for n in range(1, last)}
+            added[str(last)] = last_line
+            return {
+                "file_statuses": {"src/a.ts": "M"},
+                "file_loc": {},
+                "patch_lines": {"src/a.ts": {"added_lines": added, "removed_lines": {}}},
+            }
+
+        first, first_input = self._prepare_lane(tmp_path, cache_dir, "a", diff_with("old"))
+        second, second_input = self._prepare_lane(tmp_path, cache_dir, "b", diff_with("new"))
+        assert first_input == second_input
+        assert first["cache_key"] == second["cache_key"]
+
+    def test_unkeyable_input_bypasses_the_cache_in_both_directions(
+        self, tmp_path: Path,
+    ) -> None:
+        """No changed files means no diff identity: never serve, never store."""
+        from code_review_helpers import (
+            CACHE_NAMESPACE_SIGNALS,
+            SIGNAL_CACHE_BYPASS_NO_FILES,
+            cmd_extract_signals_consolidate,
+            cmd_extract_signals_prepare,
+        )
+        cache_dir = tmp_path / "cr-cache-global-repo-pool"
+        cache_dir.mkdir()
+        cr_dir = tmp_path / "lane"
+        cr_dir.mkdir()
+        diff_path = cr_dir / "diff_data.json"
+        diff_path.write_text(json.dumps({
+            "file_statuses": {}, "file_loc": {}, "patch_lines": {},
+        }))
+
+        assert cmd_extract_signals_prepare(
+            self._lane_args(cr_dir, cache_dir, diff_path),
+        ) == 0
+        manifest = json.loads((cr_dir / "extract_signals_manifest.json").read_text())
+        assert manifest["status"] == "needs_agent"
+        assert manifest["cache_key"] == ""
+        assert manifest["cache_bypass_reason"] == SIGNAL_CACHE_BYPASS_NO_FILES
+
+        agent_out = cr_dir / "agent_extract_signals.json"
+        agent_out.write_text(json.dumps({"signals": [
+            {
+                "name": "language_typescript",
+                "evidence": "x.ts:1 — TS file",
+                "confidence": 0.95,
+            },
+        ]}))
+        assert cmd_extract_signals_consolidate(argparse.Namespace(
+            cr_dir=str(cr_dir),
+            agent_output=str(agent_out),
+            manifest=None,
+            taxonomy=None,
+            cache_dir=str(cache_dir),
+        )) == 0
+        assert json.loads(
+            (cr_dir / "extract_signals.json").read_text(),
+        )["status"] == "ok"
+        # Nothing was written into the shared namespace for a later lane to hit.
+        namespace = cache_dir / CACHE_NAMESPACE_SIGNALS
+        assert not namespace.exists() or not list(namespace.glob("*.json"))
 
 
 class TestExtractSignalsConsolidate:
