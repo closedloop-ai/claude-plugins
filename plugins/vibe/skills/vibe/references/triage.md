@@ -45,7 +45,7 @@ Each step in `steps` is `required (policy)` with an `effective` value. Only
   the app, UI evidence is requested, or the writer asks) instead of at session
   start. It is never skipped.
 - `desktop`: `skip` means leave Desktop out; the evidence names no Desktop-relevant
-  surface (`apps/desktop`, `packages/app`, or a request that names Desktop).
+  surface (`apps/desktop/src/renderer`, `packages/app`, or a request that names Desktop).
 - A `defer` or `skip` is only recommended when touched paths are known. A class
   that rests on request text alone recommends nothing to leave out.
 

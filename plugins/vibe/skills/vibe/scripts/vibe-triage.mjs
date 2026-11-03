@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Deterministic task triage for a vibe session (PRD-823, WS1 T1): classify the
+// Deterministic task triage for a vibe session (PRD-823): classify the
 // request into one class and print the step manifest, with the reason and the
 // evidence for the class. No model, no network, no git: the same input always
 // gives the same manifest.
@@ -29,6 +29,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { DESKTOP_HOST, UI_PREFIXES } from "./area-paths.mjs";
 
 export const SCHEMA_VERSION = 1;
 
@@ -56,7 +57,7 @@ export const RECOMMENDABLE_STEPS = Object.freeze(["environment", "desktop"]);
 export const E2E_SOURCE = "pnpm test:lanes and the e2e path filter";
 
 // Who reads the final diff and the extra gates a class adds on top of the
-// handoff every class gets (plan section 4, task classes).
+// handoff every class gets.
 const CLASS_REVIEW = Object.freeze({
   [CLASSES.TrivialUi]: { scope: "consolidated-light", gates: [] },
   [CLASSES.UiFeature]: { scope: "consolidated-adversarial", gates: [] },
@@ -70,12 +71,9 @@ const CLASS_REVIEW = Object.freeze({
 const TEST_PATH = /(^|\/)(__tests__|__mocks__)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)e2e\/.*\.spec\.[jt]s$/;
 const PROTOTYPE_PATH = /^apps\/prototypes\//;
 const METRIC_PATH = /(^|\/)(metrics?|analytics|cost|reconcil\w*|aggregat\w*)(\/|[-.])/i;
-const UI_PATH = /\.(tsx|css|scss)$|^packages\/(app|design-system)\/|^apps\/(app|web|storybook)\/|^apps\/desktop\/src\/renderer\//;
+const UI_EXTENSION = /\.(tsx|css|scss)$/;
 const BACKEND_PATH = /^apps\/(api|mcp|relay|realtime|doc-sync)\/|^packages\/(database|api|github|ai|loops-api|cost)\/|^apps\/desktop\/src\/(main|server)\/|\.sql$|schema\.prisma$/;
 const DOCS_PATH = /(^|\/)(docs?|\.github|\.claude|\.agents|\.husky|\.dagger|scripts|e2e)\/|(^|\/)(AGENTS|CLAUDE|README|CHANGELOG)\.md$|\.mdx?$|\.ya?ml$|\.toml$|\.jsonc?$|\.sh$|(^|\/)\.[a-z]+rc(\.[a-z]+)?$/i;
-// Surfaces a Desktop session shows: the Electron app itself and the shared UI
-// package the target repository requires verifying on both web and Desktop.
-const DESKTOP_PATH = /^apps\/desktop\/|^packages\/app\//;
 
 const PROTOTYPE_WORDS = /\b(mock-?ups?|fake data|made-?up data|(build|make|create|design) (me )?(a|the) prototype)\b/i;
 const METRIC_WORDS = /\b(metrics?|reconcil\w*|cost|spend|tokens used|kpi|aggregate|rollup|totals?|percentages?)\b/i;
@@ -94,12 +92,15 @@ export function parsePathList(text) {
     .filter(Boolean);
 }
 
+const isUiPath = (file) => UI_EXTENSION.test(file) || UI_PREFIXES.some((prefix) => file.startsWith(prefix));
+const isDesktopHostPath = (file) => DESKTOP_HOST.some((prefix) => file.startsWith(prefix));
+
 /** Which kind of file `file` is: test, prototype, metric, ui, backend, docs or other. */
 export function pathKind(file) {
   if (TEST_PATH.test(file)) return "test";
   if (PROTOTYPE_PATH.test(file)) return "prototype";
-  if (METRIC_PATH.test(file) && (UI_PATH.test(file) || BACKEND_PATH.test(file))) return "metric";
-  if (UI_PATH.test(file)) return "ui";
+  if (METRIC_PATH.test(file) && (isUiPath(file) || BACKEND_PATH.test(file))) return "metric";
+  if (isUiPath(file)) return "ui";
   if (BACKEND_PATH.test(file)) return "backend";
   if (DOCS_PATH.test(file)) return "docs";
   return "other";
@@ -120,7 +121,7 @@ function classifyByPaths(paths) {
   if (kinds.every((kind) => kind === "prototype")) return { cls: CLASSES.Mockup, reason: ["every touched file is under apps/prototypes"] };
   const ui = kinds.filter((kind) => kind === "ui" || kind === "prototype").length;
   if (ui > 0) {
-    if (ui === 1 && !has("backend")) return { cls: CLASSES.TrivialUi, reason: ["one UI file and no backend file"], tentative: true };
+    if (ui === 1 && !has("backend")) return { cls: CLASSES.TrivialUi, reason: ["one UI file and no backend file"] };
     return { cls: CLASSES.UiFeature, reason: [has("backend") ? "UI and backend files are touched together" : "more than one UI file is touched"] };
   }
   if (has("backend")) return { cls: CLASSES.Backend, reason: ["only backend files are touched (no UI file)"] };
@@ -143,7 +144,7 @@ function classifyByText(text) {
   if (some("metric")) return { cls: CLASSES.DataMetric, reason: ["the request is about a number the product shows"], keywords };
   if (some("ui") && some("backend")) return { cls: CLASSES.UiFeature, reason: ["the request names UI and backend work together"], keywords };
   if (some("ui")) {
-    if (some("trivial") && !some("big")) return { cls: CLASSES.TrivialUi, reason: ["the request is a copy, style or spacing edit"], keywords, tentative: true };
+    if (some("trivial") && !some("big")) return { cls: CLASSES.TrivialUi, reason: ["the request is a copy, style or spacing edit"], keywords };
     return { cls: CLASSES.UiFeature, reason: ["the request names UI work"], keywords };
   }
   if (some("backend") && !some("docs")) return { cls: CLASSES.Backend, reason: ["the request names backend work and no UI"], keywords };
@@ -155,12 +156,12 @@ function classifyByText(text) {
 function desktopRelevance(cls, paths, text) {
   const evidence = [];
   const files = paths.filter((file) => pathKind(file) !== "test");
-  const desktopFiles = files.filter((file) => DESKTOP_PATH.test(file));
+  const desktopFiles = files.filter(isDesktopHostPath);
   if (desktopFiles.length) return { relevant: true, evidence: desktopFiles.map((file) => `path ${file}`) };
   const mentions = words(DESKTOP_WORDS, text);
   if (mentions.length) return { relevant: true, evidence: mentions.map((word) => `text "${word}"`) };
   if (files.length && cls !== CLASSES.Unknown && files.every((file) => ["ui", "backend", "docs", "metric"].includes(pathKind(file)))) {
-    return { relevant: false, evidence: [`no touched file is under apps/desktop or packages/app (${files.length} files)`] };
+    return { relevant: false, evidence: [`no touched file is under ${DESKTOP_HOST.join(" or ")} (${files.length} files)`] };
   }
   return { relevant: null, evidence };
 }
@@ -205,14 +206,7 @@ export function classify({ request = "", ticketText = "", paths = [], apply = fa
   const byPaths = paths.length ? classifyByPaths(paths) : null;
   const byText = classifyByText(text);
   const sources = byPaths ? ["paths"] : ["text"];
-  let chosen = byPaths ?? byText;
-  if (byPaths && byText.cls === CLASSES.DataMetric && chosen.cls !== CLASSES.DataMetric) {
-    sources.push("text");
-    chosen = { cls: CLASSES.DataMetric, reason: [...byText.reason, ...chosen.reason] };
-  } else if (byPaths && chosen.tentative && byText.cls === CLASSES.UiFeature) {
-    sources.push("text");
-    chosen = { cls: CLASSES.UiFeature, reason: [...byText.reason, ...chosen.reason] };
-  }
+  const chosen = byPaths ?? byText;
   const desktop = desktopRelevance(chosen.cls, paths, text);
   const steps = {};
   const skipped = [];

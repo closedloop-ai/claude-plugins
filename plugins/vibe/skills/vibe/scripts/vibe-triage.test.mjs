@@ -39,12 +39,40 @@ test("text decides before paths exist, and text that names no one area stays unk
   assert.equal(classify({ request: "The prototype decides the board lanes; the board header lists them" }).class, CLASSES.UiFeature, "a prototype the ticket cites is not a request for a mockup");
 });
 
-test("text alone never recommends leaving a step out (replay: title-only text mis-skipped 2 of 9 commits)", () => {
+test("text alone never recommends leaving a step out", () => {
   const manifest = classify({ request: "Add an audit entry to the write path of the documents API route" });
   assert.equal(manifest.class, CLASSES.Backend);
   assert.deepEqual(manifest.evidence.sources, ["text"]);
   for (const id of ["environment", "desktop"]) assert.equal(manifest.steps[id].recommendation.action, ACTIONS.Unknown, id);
   assert.deepEqual(manifest.skipped, []);
+});
+
+test("known paths decide the class; the request text never overrides them", () => {
+  const docs = classify({ paths: ["docs/guide.md"], request: "Update the runbook for the cost dashboard" });
+  assert.equal(docs.class, CLASSES.DocsConfig);
+  assert.deepEqual(docs.evidence.sources, ["paths"]);
+  assert.equal(docs.steps.desktop.recommendation.action, ACTIONS.Skip);
+  assert.equal(docs.steps.environment.recommendation.action, ACTIONS.Defer);
+  assert.deepEqual(docs.steps.extraGates.gates, []);
+  const column = ["apps/app/components/projects-board.tsx"];
+  const withPaths = classify({ paths: column, request: "Rename the Total column header on the Projects board" });
+  assert.equal(withPaths.class, CLASSES.TrivialUi);
+  assert.deepEqual(withPaths.steps.extraGates.gates, []);
+  const twoFiles = classify({ paths: [...column, "apps/app/components/projects-header.tsx"], request: "Show the cost total in the header" });
+  assert.equal(twoFiles.class, CLASSES.UiFeature);
+});
+
+test("a text-only request about a column header leaves nothing out, with no paths to decide it", () => {
+  const manifest = classify({ request: "Rename the Total column header on the Projects board" });
+  assert.deepEqual(manifest.evidence.sources, ["text"]);
+  assert.deepEqual(manifest.skipped, []);
+  for (const id of ["environment", "desktop"]) assert.ok([ACTIONS.Run, ACTIONS.Unknown].includes(manifest.steps[id].recommendation.action), id);
+});
+
+test("the Desktop relevance check reads the shared Desktop host list: renderer and packages/app, not the main process", () => {
+  assert.equal(classify({ paths: ["apps/desktop/src/main/a.ts", "apps/desktop/src/main/b.ts"] }).steps.desktop.recommendation.action, ACTIONS.Skip);
+  assert.equal(classify({ paths: ["apps/desktop/src/renderer/a.tsx", "apps/api/x.ts"] }).steps.desktop.recommendation.action, ACTIONS.Run);
+  assert.equal(pathKind("packages/app/x.ts"), "ui");
 });
 
 test("with touched paths, a backend session recommends deferring the environment and skipping Desktop, each logged with reason and evidence", () => {
