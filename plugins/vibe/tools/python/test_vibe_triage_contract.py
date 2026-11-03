@@ -1,4 +1,4 @@
-"""Contract checks for the triage manifest and the class pipeline skills (PRD-823, WS1).
+"""Contract checks for the triage manifest and the class pipeline skills (PRD-823).
 
 1. Each shared rule lives in exactly one file, `references/pipeline-core.md`, and every
    class pipeline skill cites every rule id without restating it.
@@ -10,7 +10,9 @@
 
 from __future__ import annotations
 
+import json
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -118,7 +120,6 @@ def test_switch_is_documented_off_by_default_and_awaits_the_owner() -> None:
     text = section(TRIAGE.read_text(), "## The switch")
     assert "`VIBE_TRIAGE_APPLY_RECOMMENDATIONS` is off by default" in text
     assert "every step's `effective` is `run`" in text
-    assert "ISS-13333, ISS-13334" in text
     assert "await the owner's ruling" in text
     script = SCRIPT.read_text()
     assert 'export const SWITCH_ENV = "VIBE_TRIAGE_APPLY_RECOMMENDATIONS"' in script
@@ -140,3 +141,23 @@ def test_vibe_skill_reads_effective_never_the_switch_and_keeps_todays_rules() ->
     reference = flat(TRIAGE.read_text())
     assert "mid-run upgrade rules are not part of this release" in reference
     assert "never skipped" in reference
+
+
+def classify(*args: str) -> dict:
+    result = subprocess.run(["node", str(SCRIPT), "classify", *args], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def test_ui_feature_skill_states_what_the_script_recommends_for_desktop() -> None:
+    web_only = classify("--paths", "apps/app/components/header.tsx,apps/app/components/footer.tsx")
+    assert web_only["class"] == "ui-feature"
+    assert web_only["steps"]["desktop"]["recommendation"]["action"] == "skip"
+    assert web_only["steps"]["environment"]["recommendation"]["action"] == "run"
+    host = classify("--paths", "packages/app/sessions/list.tsx,packages/app/sessions/row.tsx")
+    assert host["steps"]["desktop"]["recommendation"]["action"] == "run"
+    text_only = classify("--request", "Rename the header on the settings page")
+    assert text_only["steps"]["desktop"]["recommendation"]["action"] == "unknown"
+    skill = flat((SKILLS / "vibe-pipeline-ui-feature" / "SKILL.md").read_text())
+    assert "Neither is ever left out" not in skill
+    assert "a web-only multi-file UI change leaves Desktop out" in skill

@@ -12,6 +12,6 @@ this skill cites them and restates none.
 ## Specific to this class
 
 - Review scope: `consolidated-adversarial`.
-- Environment: recommended `run`; Desktop: recommended `run` when a Desktop-relevant surface is in the evidence, otherwise recorded `unknown` and run. Neither is ever left out, so the triage switch changes nothing for this class (PC-1).
+- Environment: recommended `run`, so the triage switch never defers it for this class. Desktop: recommended `run` when a Desktop-relevant surface is in the evidence, `skip` when touched paths are known and name none (a web-only change), `unknown` when the class rests on request text alone. With the switch on, a web-only multi-file UI change leaves Desktop out (PC-1).
 - Class `data-metric` also loads this skill and records the extra gate `logical-qa`, with Desktop recommended `run`.
 - The review scope and extra gates are recorded in the manifest for the consolidated reviewer; the handoff skill runs every review it runs today (PC-2).
