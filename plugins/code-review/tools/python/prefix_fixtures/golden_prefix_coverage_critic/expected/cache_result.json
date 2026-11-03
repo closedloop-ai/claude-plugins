@@ -1,0 +1,14 @@
+{
+  "cached_files": [],
+  "stats": {
+    "cached": 0,
+    "hit_rate_pct": 0.0,
+    "total_files": 1,
+    "uncached": 1
+  },
+  "status_kind": "first_run",
+  "status_message": "BHA Cache: first run -- building cache for next review",
+  "uncached_files": [
+    "src/auth.py"
+  ]
+}

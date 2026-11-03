@@ -1,0 +1,12 @@
+{
+  "files_to_review": ["src/app.ts"],
+  "file_statuses": {"src/app.ts": "modified"},
+  "file_loc": {"src/app.ts": {"added": 30, "removed": 5}},
+  "total_loc": 35,
+  "changed_ranges": {
+    "src/app.ts": {"added": [[1, 50]], "removed": [[60, 65]]}
+  },
+  "patch_lines": {
+    "src/app.ts": {"added_lines": {"42": "user = data.user"}, "removed_lines": {}}
+  }
+}

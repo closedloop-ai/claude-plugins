@@ -1,0 +1,9 @@
+{
+  "force_merged_count": 0,
+  "partition_count": 0,
+  "partition_mode": "partitioned",
+  "partitions": [],
+  "test_file_paths": [],
+  "total_changed_loc": 0,
+  "unified_threshold_loc": 5000
+}

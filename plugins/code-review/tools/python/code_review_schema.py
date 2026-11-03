@@ -1,0 +1,1376 @@
+#!/usr/bin/env python3
+"""
+Code Review Canonical Schema
+
+Defines the canonical Finding + ResultEnvelope schema (PLN-719 Foundation).
+
+This module is the single source of truth for:
+  - Schema version constant (SCHEMA_VERSION)
+  - Allowed values for finding_scope, severity, category, system_marker
+  - Finding ID format and assignment
+  - Producer-side validators for findings and the result envelope
+  - JSON Schema dicts (for documentation + machine validation)
+
+The dataclasses below are convenience types for Python callers. The wire
+format is JSON; producers may emit dicts directly and the validators check
+schema conformance.
+
+Plan reference: .closedloop-ai/plan-docs/00-foundation.md sections 1-4.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+# ---------------------------------------------------------------------------
+# Version
+# ---------------------------------------------------------------------------
+
+SCHEMA_VERSION = 2
+"""Integer schema version for Finding + ResultEnvelope. Bumped on breaking
+changes per section 12 of the foundation plan. v2 retired the ``Premise``
+finding category (and its verdict gates, telemetry sub-blocks, and verifier
+extra-strictness) when the premise reviewer was removed — no producer emits
+``category == "Premise"`` anymore, so it is no longer a valid category."""
+
+
+# ---------------------------------------------------------------------------
+# Enums (literal sets)
+# ---------------------------------------------------------------------------
+
+FINDING_SCOPES: frozenset[str] = frozenset({"diff", "system", "pr_metadata"})
+
+SEVERITIES: frozenset[str] = frozenset({"BLOCKING", "HIGH", "MEDIUM"})
+
+# Priorities — 0/1/2/3 mirror the P0/P1/P2/P3 tiers documented in the
+# shared reviewer prompt (tools/prompts/shared_prompt.txt §"SEVERITY +
+# PRIORITY"): P0 BLOCKING, P1 HIGH, P2 MEDIUM bugs/DRY, P3 MEDIUM
+# suggestions. The schema must accept every tier the prompt teaches —
+# excluding P3 forced reviewers to misclassify nice-to-haves as P2.
+PRIORITIES: frozenset[int] = frozenset({0, 1, 2, 3})
+
+# Categories — section 1 of the plan. "Hygiene" covers in-diff hygiene
+# findings; "Repo Hygiene" covers repo-level hygiene findings emitted by
+# the hygiene helper (e.g. .gitignore drift, sensitive-file detection).
+# "Code Quality" is the canonical category for DRY/maintainability/style
+# findings (MEDIUM-tier duplication, smell, or convention violations) —
+# documented as the example category in the shared reviewer prompt
+# (shared_prompt.txt) for MEDIUM DRY findings. "Documentation" covers
+# README/docstring/comment accuracy and completeness findings —
+# reviewers naturally emit this for stale, missing, or misleading docs
+# and we accept it as a first-class category rather than coercing it
+# under "Code Quality".
+CATEGORIES: frozenset[str] = frozenset({
+    "Correctness",
+    "Code Quality",
+    "Documentation",
+    "Hygiene",
+    "Repo Hygiene",
+    "ImpactAnalysis",
+    "TestQuality",
+    "Coverage",
+    "InjectionAttempt",
+    "CompanionChange",
+    "Security",
+})
+
+# Reviewer triggers — section 1 of the plan.
+REVIEWER_TRIGGERS: frozenset[str] = frozenset({
+    "core",
+    "always",
+    "extension",
+    "path_pattern",
+    "content_signal",
+    "change_class",
+    "signal",
+    "partition",
+})
+
+SOURCES: frozenset[str] = frozenset({
+    "agent",
+    "hygiene",
+    "injection-detector",
+    "companion-validator",
+    "coverage-verifier",
+    "signal-extractor",
+    "coverage-critic",
+})
+
+
+# ---------------------------------------------------------------------------
+# PLN-725 Phase 2 — Coverage manifest schema
+# ---------------------------------------------------------------------------
+# These constants describe the new ``coverage[]`` array in
+# ``critic-gates.json``. They are distinct from ``REVIEWER_TRIGGERS`` above
+# (which labels findings) — these label rule definitions.
+
+# Trigger types a rule may use to select a reviewer.
+COVERAGE_TRIGGER_TYPES: frozenset[str] = frozenset({
+    "always",
+    "extension",
+    "path_pattern",
+    "content_signal",
+    "change_class",
+    "signal",
+})
+
+# Triggers a ``required: true`` rule may depend on. LLM signals cannot
+# solely drive required selection — the determinism floor lives here.
+COVERAGE_DETERMINISTIC_TRIGGERS: frozenset[str] = frozenset({
+    "always",
+    "extension",
+    "path_pattern",
+    "content_signal",
+    "change_class",
+})
+
+COVERAGE_LLM_TRIGGERS: frozenset[str] = frozenset({
+    "signal",
+})
+
+# Where a rule applies. ``code-review`` rules drive the reviewer pool for
+# /code-review runs; ``plan-review`` for /plan critic gates; ``both`` for
+# rules that apply equally.
+COVERAGE_SCOPES: frozenset[str] = frozenset({
+    "code-review",
+    "plan-review",
+    "both",
+})
+
+# Always-add core required reviewers (PLN-725 §"Coverage Resolution").
+# These are added to every Coverage Plan regardless of rules firing.
+# ``test_quality`` is the reviewer slot reserved for PLN-723 (currently
+# best-effort in practice; will become a first-class reviewer in PLN-723).
+COVERAGE_CORE_REQUIRED: tuple[str, ...] = (
+    "bug_hunter_a",
+    "bug_hunter_b",
+    "unified_auditor",
+    "test_quality",
+)
+
+
+# Conditional core reviewers (FEA-1401 / PLN-726). Core reviewers that
+# ship with the plugin (not project-specific like critic-gates.json
+# entries) but are gated by tier band AND trigger evaluation. Added to
+# the Coverage Plan's ``best_effort`` bucket only when the invocation
+# depth meets ``min_depth`` AND at least one trigger fires — a
+# ``signal`` trigger matching the extracted signals or a
+# ``change_class`` trigger (e.g. the Impact Analyzer), or an
+# unconditional ``{"type": "always"}`` trigger that fires on the tier
+# band alone (e.g. the Design Critic).
+#
+# Entry shape:
+#   - reviewer:  reviewer name; must also be registered in
+#                ``_SPAWN_CORE_ROLES`` and the per-agent spawn block
+#                lookup in the code-review:spawn-reviewers skill.
+#   - triggers:  list of trigger dicts evaluated via
+#                ``_trigger_fires``. Any trigger firing is sufficient.
+#   - min_depth: lowest invocation tier at which this reviewer is
+#                eligible. Compared via ``_DEPTH_RANK``.
+#   - required:  always False today (LLM-driven signal triggers may
+#                not drive REQUIRED selection per PLN-725
+#                determinism enforcement). Reserved for future
+#                deterministic-trigger conditional core reviewers.
+#   - source:    bucket-entry ``source`` field; always ``"core"`` so
+#                the entry is distinguishable from project-specific
+#                ``critic-gates.json`` matches.
+#
+# The Impact Analyzer (FEA-1401) is the first entry: opus-grade
+# cross-file reviewer, runs only in ``--depth deep`` when the diff
+# emits ``exported_symbol_change`` or ``symbol_deletion`` signals, or
+# deletes a file outright (the deterministic ``file_deletion``
+# change_class, read from ``file_statuses`` — ISS-12737). It stays
+# best-effort and deep-only: at standard and shallow depth Bug Hunter B
+# and the fast-path reviewer own deletions.
+#
+# The Design Critic is the second entry: a software-design craftsmanship
+# reviewer that runs on EVERY ``--depth deep`` review (a single
+# ``{"type": "always"}`` trigger, so no signal is required — the tier
+# band alone gates it). It is ``source: "core"`` so it is exempt from
+# the per-source ``DOMAIN_CRITIC_CAP`` and survives arbitrate-budget's
+# best-effort prune (opted-in core reviewers always survive).
+COVERAGE_CORE_CONDITIONAL: tuple[dict[str, Any], ...] = (
+    {
+        "reviewer": "impact",
+        "triggers": (
+            {
+                "type": "signal",
+                "name": "exported_symbol_change",
+                "min_confidence": 0.8,
+            },
+            {
+                "type": "signal",
+                "name": "symbol_deletion",
+                "min_confidence": 0.85,
+            },
+            {"type": "change_class", "class": "file_deletion"},
+        ),
+        "min_depth": "deep",
+        "required": False,
+        "source": "core",
+    },
+    {
+        "reviewer": "design_critic",
+        "triggers": (
+            {"type": "always"},
+        ),
+        "min_depth": "deep",
+        "required": False,
+        "source": "core",
+    },
+)
+
+
+# ---------------------------------------------------------------------------
+# PLN-725 — Reviewer spawn spec
+# ---------------------------------------------------------------------------
+# These constants describe the ``spawn.json`` ``.spec`` section wire format
+# produced by ``stage_19b_derive_spawn_spec`` and consumed by
+# ``stage_20_spawn_reviewers``. See SCHEMA.md §6b for the full envelope
+# shape.
+
+# Top-level ``arbitrate_status``. ``ok`` = normal arbitration ran;
+# ``blocked_by_verify`` = the verify-stage BLOCKING gate fired upstream
+# and the plan passed through unbudgeted; ``fallback`` = derive failed
+# and the orchestrator must walk the static reviewer table in the
+# code-review:spawn-reviewers skill;
+# ``static`` (PLN-807) = the user explicitly chose shallow tier, the
+# spec was emitted by ``cmd_derive_static_spec`` without consulting a
+# coverage plan, and stage_20 treats it identically to ``fallback``
+# (use the spec verbatim, skip the bucket walk) — the distinct status
+# is a telemetry signal that distinguishes user intent from upstream
+# failure.
+SPAWN_SPEC_ARBITRATE_STATUSES: frozenset[str] = frozenset({
+    "ok",
+    "blocked_by_verify",
+    "fallback",
+    "static",
+})
+
+# Per-agent ``source`` field. Selects the prompt-suffix dispatch in the
+# code-review:spawn-reviewers skill; ``source: "core"`` further branches
+# on the ``reviewer`` field (bug_hunter_a → BHA, bug_hunter_b → BHB,
+# unified_auditor → Auditor). Non-core
+# domain reviewers
+# carry their plan-entry source through: ``"rule"`` means the entry
+# came from a deterministically matched critic-gates.json rule
+# (including migrated moduleCritics[] entries); ``"critic"`` means the
+# entry was LLM-proposed by coverage_critic. Both map to the Domain
+# Critic suffix at dispatch but presenters can distinguish them.
+SPAWN_SPEC_SOURCES: frozenset[str] = frozenset({
+    "core",
+    "rule",
+    "critic",
+    "fast_path",
+})
+
+# Provenance values for ``external_impact[].discovery`` (FEA-1401 graph
+# integration). ``grep`` (default) entries are reproducible via the
+# verifier's grep-replay of ``grep_query_used``; ``graph`` entries were
+# found on a path the grep replay cannot reproduce, and are verified
+# per-entry by file-read + snippet-hash, exempt from the grep-replay
+# completeness gate. Two branches set it: a code-intelligence substrate
+# surfaced a caller grep cannot reach (alias, re-export, dynamic
+# dispatch), or the session held no text-search tool at all, so no
+# replayable query exists for any entry. The value records HOW a
+# callsite was found, not which product found it; it stays stable
+# across substrates by design.
+EXTERNAL_IMPACT_DISCOVERY: frozenset[str] = frozenset({
+    "grep",
+    "graph",
+})
+
+# Per-agent ``bucket`` field. Mirrors the source bucket in
+# coverage_plan.json so presenters can group spawned agents by the rule
+# tier that selected them.
+SPAWN_SPEC_BUCKETS: frozenset[str] = frozenset({
+    "required",
+    "best_effort",
+    "fast_path",
+})
+
+# Reasons surfaced in ``skipped[]`` for reviewers the spec deliberately
+# did not spawn. Operators read these to understand why a reviewer is
+# absent from the fleet.
+SPAWN_SPEC_SKIP_REASONS: frozenset[str] = frozenset({
+    "deferred_pln723",         # test_quality slot reserved for PLN-723
+    "no_partitions",           # all files cached, or only deleted files left → no BHA
+    "docs_only",               # arbitrate-budget waived the BHA floor (docs-only diff)
+    "unknown_reviewer",        # closed-vocab violation: not core, not critic
+    "missing_reviewer_name",   # plan entry with blank/missing reviewer
+    "duplicate_agent_id",      # same agent_id produced twice (defense-in-depth)
+    "budget_capped",           # BHA partitions exceeded arbitrate-budget cap
+    "gated_by_verify",         # BLOCKING sanitization dropped non-core entries
+})
+
+# ``fallback_reason`` values when ``arbitrate_status == "fallback"``.
+# Each names a specific upstream-artifact failure the spawner can't
+# recover from observationally.
+SPAWN_SPEC_FALLBACK_REASONS: frozenset[str] = frozenset({
+    "coverage_plan_missing_or_malformed",
+    "partitions_missing_or_malformed",
+})
+
+
+# Canonical change_class values. Extensible — adding one requires
+# a detector in code_review_helpers.py (a ``CHANGE_CLASS_PATH_PATTERNS``
+# entry for path-based classes) and the documenting comment here.
+# ``file_deletion`` is the one class not derived from paths: it fires
+# when any ``file_statuses`` value is ``"removed"`` (ISS-12737).
+COVERAGE_CHANGE_CLASSES: frozenset[str] = frozenset({
+    "schema_change",
+    "infrastructure_change",
+    "build_config_change",
+    "dependency_change",
+    "file_deletion",
+})
+
+VERDICTS: frozenset[str] = frozenset({
+    "APPROVED",
+    "NEEDS_ATTENTION",
+    "CHANGES_REQUESTED",
+})
+
+# Naming note (intentional asymmetry across artifacts):
+#
+#   - ``review_result.json.verdict`` IS the canonical verdict
+#     (member of ``VERDICTS`` above). There is NO parallel
+#     ``review_result.json.canonical_verdict`` field — the envelope's
+#     ``verdict`` is the single source of truth for downstream
+#     consumers (present-local skill, github-review.md, /fix).
+#   - ``verdict.json`` (the stage_28_verdict artifact written by
+#     ``cmd_verdict``) carries BOTH ``verdict`` (the legacy enum
+#     ``approve|needs_attention|decline``) AND ``canonical_verdict``
+#     (the canonical enum). The dual-key shape keeps the legacy
+#     vocabulary alongside the canonical envelope vocabulary.
+#
+# A future contributor inspecting ``review_result.json`` and seeing
+# ``"canonical_verdict": null`` via ``jq`` should know: the field is
+# absent, by design, NOT unset. Read ``review_result.json.verdict``.
+
+VERIFIER_VERDICTS: frozenset[str] = frozenset({
+    "CONFIRMED",
+    "DOWNGRADE",
+    "TENTATIVE",
+    "REJECTED",
+    "JUSTIFIED-VALID",
+    "JUSTIFIED-INVALID",
+    # PLN-773 v2.10.0: operator override (--re-assert / --review-dismissed).
+    # A finding with verifier_verdict=RE_ASSERTED lives in verified[] and was
+    # promoted there by an operator override, bypassing fresh verification.
+    # The override is keyed on file-content hash so content drift invalidates.
+    "RE_ASSERTED",
+})
+
+REASONING_CERTIFICATE_KINDS: frozenset[str] = frozenset({
+    "impact",
+    "test_quality",
+    "sibling_pattern",
+    "bha",
+    "bhb",
+    "auditor",
+})
+
+
+# ---------------------------------------------------------------------------
+# Determinism tiers (PLN-719 Section 8)
+# ---------------------------------------------------------------------------
+#
+# Required-coverage policy follows from these tiers:
+#   - deterministic        : same inputs → same outputs, no model involved.
+#                            Required reviewers may depend on these.
+#   - reproducible_via_cache : same inputs → same outputs *if cache hit*;
+#                              otherwise LLM-driven. Required reviewers may
+#                              use these only as additive evidence.
+#   - llm_driven           : same inputs may produce different outputs.
+#                            Required-reviewer selection cannot depend on
+#                            llm_driven outputs.
+DETERMINISM_TIER_DETERMINISTIC = "deterministic"
+DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE = "reproducible_via_cache"
+DETERMINISM_TIER_LLM_DRIVEN = "llm_driven"
+
+DETERMINISM_TIERS: frozenset[str] = frozenset({
+    DETERMINISM_TIER_DETERMINISTIC,
+    DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE,
+    DETERMINISM_TIER_LLM_DRIVEN,
+})
+
+# Pipeline stage → determinism tier. Foundation owns this mapping; plan 05's
+# signal taxonomy and plan 03's verifier add additional entries when they ship.
+STAGE_DETERMINISM_TIERS: dict[str, str] = {
+    "setup": DETERMINISM_TIER_DETERMINISTIC,
+    "prep-assets": DETERMINISM_TIER_DETERMINISTIC,
+    "resolve-scope": DETERMINISM_TIER_DETERMINISTIC,
+    "finalize-cache": DETERMINISM_TIER_DETERMINISTIC,
+    "parse-diff": DETERMINISM_TIER_DETERMINISTIC,
+    "extract-patches": DETERMINISM_TIER_DETERMINISTIC,
+    "auto-incremental": DETERMINISM_TIER_DETERMINISTIC,
+    "fetch-intent": DETERMINISM_TIER_DETERMINISTIC,
+    "classify-intent": DETERMINISM_TIER_DETERMINISTIC,
+    "hygiene": DETERMINISM_TIER_DETERMINISTIC,
+    "validate-companions": DETERMINISM_TIER_DETERMINISTIC,
+    "arbitrate-budget": DETERMINISM_TIER_DETERMINISTIC,
+    "partition": DETERMINISM_TIER_DETERMINISTIC,
+    "compute-hashes": DETERMINISM_TIER_DETERMINISTIC,
+    "cache-check": DETERMINISM_TIER_DETERMINISTIC,
+    "collect-findings": DETERMINISM_TIER_DETERMINISTIC,
+    "validate": DETERMINISM_TIER_DETERMINISTIC,
+    # PLN-722 wrappers around the LLM-driven verify-findings fleet.
+    # The pre/post helpers do tier-selection and bucket-merging — both
+    # pure functions over their JSON inputs.
+    "verify-prepare": DETERMINISM_TIER_DETERMINISTIC,
+    "verify-consolidate": DETERMINISM_TIER_DETERMINISTIC,
+    "finalize-result": DETERMINISM_TIER_DETERMINISTIC,
+    "cache-update": DETERMINISM_TIER_DETERMINISTIC,
+    "review-state-write": DETERMINISM_TIER_DETERMINISTIC,
+    "verdict": DETERMINISM_TIER_DETERMINISTIC,
+    "footer": DETERMINISM_TIER_DETERMINISTIC,
+    # Plan 05's LLM-extracted signals.
+    "extract-signals": DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE,
+    "coverage-critic": DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE,
+    # Plan 03 verifier.
+    "verify-findings": DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE,
+    "verify-coverage": DETERMINISM_TIER_REPRODUCIBLE_VIA_CACHE,
+    # Plan 01 injection detection — LLM-driven on raw text.
+    "detect-injection": DETERMINISM_TIER_LLM_DRIVEN,
+    # All reviewer agents (bha/bhb/auditor/test_quality/impact) are
+    # LLM-driven; tracked by agent_id rather than by subcommand.
+}
+
+
+def stage_determinism_tier(subcommand: str) -> str | None:
+    """Return the determinism tier for a known pipeline subcommand, or None."""
+    return STAGE_DETERMINISM_TIERS.get(subcommand)
+
+
+def is_deterministic_stage(subcommand: str) -> bool:
+    """True iff the stage is in the deterministic tier."""
+    return stage_determinism_tier(subcommand) == DETERMINISM_TIER_DETERMINISTIC
+
+
+# ---------------------------------------------------------------------------
+# Cache namespaces (PLN-719 Section 9)
+# ---------------------------------------------------------------------------
+# Five canonical namespaces. Each namespace has an independent prompt_hash
+# domain and an independent hit-rate metric in telemetry.cache_hit_rate.
+CACHE_NAMESPACE_BHA = "bha"
+CACHE_NAMESPACE_SIGNALS = "signals"
+CACHE_NAMESPACE_COVERAGE_CRITIC = "coverage_critic"
+CACHE_NAMESPACE_VERIFICATIONS = "verifications"
+CACHE_NAMESPACE_OVERRIDES = "overrides"
+
+CACHE_NAMESPACES: frozenset[str] = frozenset({
+    CACHE_NAMESPACE_BHA,
+    CACHE_NAMESPACE_SIGNALS,
+    CACHE_NAMESPACE_COVERAGE_CRITIC,
+    CACHE_NAMESPACE_VERIFICATIONS,
+    CACHE_NAMESPACE_OVERRIDES,
+})
+
+# Per-namespace TTL in days (PLN-719 Section 9). Entries older than the
+# TTL are treated as a cache miss on read. Sweep-on-read is the canonical
+# enforcement point; explicit GC remains as a separate cleanup pass.
+CACHE_TTL_DAYS: dict[str, int] = {
+    CACHE_NAMESPACE_BHA: 30,
+    CACHE_NAMESPACE_SIGNALS: 7,
+    CACHE_NAMESPACE_COVERAGE_CRITIC: 7,
+    CACHE_NAMESPACE_VERIFICATIONS: 30,
+    CACHE_NAMESPACE_OVERRIDES: 90,
+}
+
+
+def cache_ttl_days(namespace: str) -> int | None:
+    """Return the canonical TTL in days for a cache namespace, or None if unknown."""
+    return CACHE_TTL_DAYS.get(namespace)
+
+
+# ---------------------------------------------------------------------------
+# Telemetry (PLN-719 Phase 9 / Section 11)
+# ---------------------------------------------------------------------------
+# The telemetry block is the single per-run metrics surface, embedded in
+# `review_result.json.telemetry`. The schema is forward-compatible: producers
+# may add new fields, but the canonical keys below must be present with
+# correct types. The orchestrator (or any helper that wraps a stage) is the
+# expected producer; finalize-result aggregates everything into the envelope.
+
+
+def empty_telemetry() -> dict[str, Any]:
+    """Return a zero-valued telemetry block conforming to the canonical schema.
+
+    Used as the base by finalize-result; any ``<cr_dir>/telemetry.json``
+    produced by upstream stages is deep-merged over these defaults.
+    """
+    return {
+        "duration_ms": 0,
+        "duration_by_stage_ms": {},
+        "estimated_cost_usd": 0.0,
+        "tokens": {
+            "input_uncached": 0,
+            "input_cached": 0,
+            "output": 0,
+            "by_model": {},
+        },
+        "cache_hit_rate": {},
+        "agent_failures": 0,
+        "schema_versions_seen": {
+            "finding": SCHEMA_VERSION,
+            "result": SCHEMA_VERSION,
+        },
+        "findings_counts": {},
+        "verification_stats": {},
+        "coverage_stats": {},
+    }
+
+
+def _is_nonneg_number(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
+
+
+def _is_nonneg_int(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
+def _validate_nonneg_number_map(
+    field: str, value: Any, *, value_kind: str = "number",
+) -> list[str]:
+    """Validate ``{str: non-negative number}`` and return prefixed errors."""
+    if not isinstance(value, dict):
+        return [f"telemetry.{field} must be an object"]
+    out: list[str] = []
+    checker = _is_nonneg_number if value_kind == "number" else _is_nonneg_int
+    for k, v in value.items():
+        if not isinstance(k, str):
+            out.append(f"telemetry.{field} keys must be strings")
+            break
+        if not checker(v):
+            out.append(f"telemetry.{field}[{k!r}] must be a non-negative {value_kind}")
+    return out
+
+
+def _validate_tokens_by_model(by_model: Any) -> list[str]:
+    if not isinstance(by_model, dict):
+        return ["telemetry.tokens.by_model must be an object"]
+    out: list[str] = []
+    for mk, mv in by_model.items():
+        if not isinstance(mk, str):
+            out.append("telemetry.tokens.by_model keys must be strings")
+            break
+        if isinstance(mv, dict):
+            # Check key-type and value-type independently so the error
+            # message points at the actual violation. A merged check
+            # conflates "non-string sub-key" with "negative integer value"
+            # and produces a misleading "keyed by string" suffix for value
+            # failures whose sub-key is already a valid string.
+            for sk, sv in mv.items():
+                if not isinstance(sk, str):
+                    out.append(
+                        f"telemetry.tokens.by_model[{mk!r}] sub-keys must "
+                        f"be strings (got {sk!r})",
+                    )
+                elif not _is_nonneg_int(sv):
+                    out.append(
+                        f"telemetry.tokens.by_model[{mk!r}][{sk!r}] must "
+                        "be a non-negative integer",
+                    )
+        elif not _is_nonneg_int(mv):
+            out.append(
+                f"telemetry.tokens.by_model[{mk!r}] must be a non-negative "
+                "integer or per-key object",
+            )
+    return out
+
+
+def _validate_tokens(tokens: Any) -> list[str]:
+    if not isinstance(tokens, dict):
+        return ["telemetry.tokens must be an object"]
+    out = [
+        f"telemetry.tokens.{key} must be a non-negative integer"
+        for key in ("input_uncached", "input_cached", "output")
+        if not _is_nonneg_int(tokens.get(key))
+    ]
+    out.extend(_validate_tokens_by_model(tokens.get("by_model")))
+    return out
+
+
+def _validate_cache_hit_rate(value: Any) -> list[str]:
+    if not isinstance(value, dict):
+        return ["telemetry.cache_hit_rate must be an object"]
+    out: list[str] = []
+    for ns, rate in value.items():
+        if not isinstance(ns, str):
+            out.append("telemetry.cache_hit_rate keys must be strings")
+            break
+        if not isinstance(rate, (int, float)) or isinstance(rate, bool):
+            out.append(f"telemetry.cache_hit_rate[{ns!r}] must be a number in [0, 1]")
+        elif rate < 0 or rate > 1:
+            out.append(f"telemetry.cache_hit_rate[{ns!r}] must be in [0, 1]")
+    return out
+
+
+def _validate_schema_versions_seen(value: Any) -> list[str]:
+    if not isinstance(value, dict):
+        return ["telemetry.schema_versions_seen must be an object"]
+    return [
+        f"telemetry.schema_versions_seen[{k!r}] must be int keyed by string"
+        for k, v in value.items()
+        if not isinstance(k, str) or not isinstance(v, int) or isinstance(v, bool)
+    ]
+
+
+def validate_telemetry(telemetry: Any) -> list[str]:
+    """Return list of validation errors for a telemetry block.
+
+    The required keys mirror ``empty_telemetry()`` so any envelope produced
+    by ``finalize-result`` is valid by construction. Unknown keys are
+    permitted (forward-compat); known keys must have the correct type and
+    non-negative numeric values where applicable.
+    """
+    if not isinstance(telemetry, dict):
+        return ["telemetry must be an object"]
+
+    errors: list[str] = []
+
+    if not _is_nonneg_number(telemetry.get("duration_ms")):
+        errors.append("telemetry.duration_ms must be a non-negative number")
+    errors.extend(_validate_nonneg_number_map(
+        "duration_by_stage_ms", telemetry.get("duration_by_stage_ms"),
+    ))
+    if not _is_nonneg_number(telemetry.get("estimated_cost_usd")):
+        errors.append("telemetry.estimated_cost_usd must be a non-negative number")
+    errors.extend(_validate_tokens(telemetry.get("tokens")))
+    errors.extend(_validate_cache_hit_rate(telemetry.get("cache_hit_rate")))
+    if not _is_nonneg_int(telemetry.get("agent_failures")):
+        errors.append("telemetry.agent_failures must be a non-negative integer")
+    errors.extend(_validate_schema_versions_seen(telemetry.get("schema_versions_seen")))
+
+    for opt in ("findings_counts", "verification_stats", "coverage_stats"):
+        if opt in telemetry and not isinstance(telemetry[opt], dict):
+            errors.append(f"telemetry.{opt} must be an object when present")
+
+    return errors
+
+
+# Telemetry keys whose dict value is one-level-merged when overlay supplies
+# a dict. Every other key — whether dict-valued or scalar — is overwritten
+# wholesale. The whitelist is the canonical contract: future schema fields
+# whose merge semantics matter must opt in explicitly. A new dict-typed
+# field that is NOT in this set will receive replace-semantics by default,
+# which is the safe default for fields whose merge behavior hasn't been
+# considered (e.g. a versioned-config block where partial overrides could
+# corrupt the document).
+TELEMETRY_DEEP_MERGE_KEYS: frozenset[str] = frozenset({
+    "duration_by_stage_ms",
+    "tokens",
+    "cache_hit_rate",
+    "schema_versions_seen",
+    "findings_counts",
+    "verification_stats",
+    "coverage_stats",
+})
+
+
+def merge_telemetry(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """Merge ``overlay`` into ``base`` for telemetry fields.
+
+    Used by finalize-result: ``base`` is ``empty_telemetry()``, ``overlay`` is
+    the contents of ``<cr_dir>/telemetry.json`` written by the orchestrator
+    (or any upstream stage). For keys in ``TELEMETRY_DEEP_MERGE_KEYS`` we
+    recurse one level so callers can populate ``tokens.input_uncached``
+    without overriding the whole ``tokens`` block. Every other key —
+    including dict-typed fields not on the whitelist — is overwritten
+    wholesale by ``overlay``.
+
+    Whitelisted keys preserve their type invariant: if ``overlay`` supplies a
+    non-dict (e.g. ``{"cache_hit_rate": null}``) for a whitelisted key, the
+    overlay is **ignored for that key** and the base dict value survives.
+    Otherwise a malformed overlay could corrupt the field's type and trip
+    downstream writers that assume the whitelist contract holds (e.g.
+    ``block["cache_hit_rate"][NAMESPACE] = rate`` in finalize-result).
+    """
+    out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in base.items()}
+    for k, v in overlay.items():
+        if k in TELEMETRY_DEEP_MERGE_KEYS:
+            if isinstance(v, dict) and isinstance(out.get(k), dict):
+                merged = dict(out[k])
+                for sk, sv in v.items():
+                    merged[sk] = sv
+                out[k] = merged
+            # Non-dict overlay for a whitelisted key: keep the base value
+            # so the type invariant survives. validate_telemetry on the
+            # final envelope still catches the malformed input upstream.
+        else:
+            out[k] = v
+    return out
+
+
+# ---------------------------------------------------------------------------
+# system_marker canonical enum (section 3 of the plan)
+# ---------------------------------------------------------------------------
+
+# Exact, non-templated system markers.
+SYSTEM_MARKERS_FIXED: frozenset[str] = frozenset({
+    # system category
+    "budget-exceeded",
+    "agent-failure",
+    "signal-extraction-failed",
+    "coverage-critic-failed",
+    "coverage-verify-blocking",
+    "schema-version",
+    # pr_metadata category
+    "pr_description",
+})
+
+# Templated markers: prefix + ":" + non-empty suffix.
+# Example: "coverage:database-architect", "commit:abc1234".
+SYSTEM_MARKER_TEMPLATES: dict[str, str] = {
+    "coverage": "system",       # coverage:{reviewer-name}
+    "commit": "pr_metadata",    # commit:{sha}
+}
+
+# Map of fixed marker -> finding_scope it belongs in.
+SYSTEM_MARKER_SCOPES: dict[str, str] = {
+    "budget-exceeded": "system",
+    "agent-failure": "system",
+    "signal-extraction-failed": "system",
+    "coverage-critic-failed": "system",
+    "coverage-verify-blocking": "system",
+    "schema-version": "system",
+    "pr_description": "pr_metadata",
+}
+
+_TEMPLATE_RE = re.compile(r"^([a-z][a-z0-9_-]*):(.+)$")
+
+
+def parse_system_marker(marker: str) -> tuple[str | None, str | None]:
+    """Return (prefix, suffix) for templated markers, else (None, None).
+
+    Examples:
+        parse_system_marker("coverage:database-architect") -> ("coverage", "database-architect")
+        parse_system_marker("budget-exceeded") -> (None, None)
+    """
+    match = _TEMPLATE_RE.match(marker)
+    if match:
+        return match.group(1), match.group(2)
+    return None, None
+
+
+def system_marker_scope(marker: str) -> str | None:
+    """Return the expected finding_scope for a system_marker, or None if unknown."""
+    if marker in SYSTEM_MARKERS_FIXED:
+        return SYSTEM_MARKER_SCOPES[marker]
+    prefix, suffix = parse_system_marker(marker)
+    if prefix and suffix and prefix in SYSTEM_MARKER_TEMPLATES:
+        return SYSTEM_MARKER_TEMPLATES[prefix]
+    return None
+
+
+def is_valid_system_marker(marker: str) -> bool:
+    """Check whether `marker` is one of the canonical system_marker values."""
+    return system_marker_scope(marker) is not None
+
+
+# ---------------------------------------------------------------------------
+# Finding ID generation
+# ---------------------------------------------------------------------------
+
+_FINDING_ID_RE = re.compile(r"^[a-z][a-z0-9_-]*_f\d+$")
+
+
+def make_finding_id(reviewer_id: str, index: int) -> str:
+    """Construct a deterministic finding id: '<reviewer_id>_f<index>'.
+
+    See section 4 of the foundation plan. The id is stable across re-runs of
+    the same reviewer on the same input.
+    """
+    if not reviewer_id:
+        raise ValueError("reviewer_id is required")
+    if index < 0:
+        raise ValueError("index must be >= 0")
+    if not re.match(r"^[a-z][a-z0-9_-]*$", reviewer_id):
+        raise ValueError(
+            f"reviewer_id must match [a-z][a-z0-9_-]*; got {reviewer_id!r}",
+        )
+    return f"{reviewer_id}_f{index}"
+
+
+def is_valid_finding_id(value: str) -> bool:
+    """Check whether `value` is a well-formed finding id."""
+    return bool(_FINDING_ID_RE.match(value))
+
+
+# ---------------------------------------------------------------------------
+# Dataclasses (typed convenience views; producers may emit dicts directly)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ReviewerTrigger:
+    type: str
+    evidence: str | None = None
+
+
+@dataclass
+class Evidence:
+    file: str
+    line: int
+    claim: str
+    snippet_hash: str
+
+
+@dataclass
+class ReasoningCertificate:
+    kind: str
+    fields: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class Justification:
+    text: str
+    source: str
+    addresses_specific_concern: bool
+    claimed_by_reviewer: str
+
+
+@dataclass
+class ExternalImpact:
+    file: str
+    line: int
+    impact_type: str
+    description: str
+    callsite_snippet: str
+    confidence: float
+    # Provenance of how the callsite was found (FEA-1401 graph integration).
+    # "grep" (default) → reproducible by replaying grep_query_used.
+    # "graph" → found on a path the grep replay cannot reproduce: either a
+    # code-intelligence substrate surfaced it (alias/re-export/dynamic
+    # dispatch grep cannot surface), or the session had no text-search
+    # tool at all so no replayable query exists; verified by per-entry
+    # file-read + content match, exempt from the grep-replay check.
+    discovery: str = "grep"
+
+
+@dataclass
+class EvidenceCheck:
+    claim: str
+    verified: bool
+    actual_read: str
+
+
+@dataclass
+class OtherLocation:
+    file: str
+    line: int
+    issue: str = ""
+
+
+@dataclass
+class CanonicalFinding:
+    """Typed view of a canonical finding (section 1 of the foundation plan).
+
+    Producers may emit this as a dict; see `to_dict` / `from_dict`.
+    """
+    id: str
+    reviewer: str
+    reviewer_trigger: ReviewerTrigger
+    source: str
+    emitted_at: str
+    finding_scope: Literal["diff", "system", "pr_metadata"]
+    category: str
+    severity: str
+    priority: int
+    confidence: float
+    issue: str
+    explanation: str
+    recommendation: str
+    code_snippet: str
+
+    # Anchor (depends on finding_scope)
+    file: str | None = None
+    line: int | None = None
+    system_marker: str | None = None
+
+    # Classification
+    subcategory: str | None = None
+
+    # Structured evidence
+    evidence: list[Evidence] = field(default_factory=list)
+
+    # Reasoning certificate
+    reasoning_certificate: ReasoningCertificate | None = None
+
+    # Justification (plan 02)
+    justified: bool = False
+    justification: Justification | None = None
+
+    # External impact (plan 06)
+    external_impact: list[ExternalImpact] = field(default_factory=list)
+    grep_query_used: str | None = None
+
+    # Verifier state (plan 03 populates)
+    verifier_verdict: str | None = None
+    verifier_severity: str | None = None
+    verifier_confidence: float | None = None
+    verifier_reasoning: str | None = None
+    verifier_model: str | None = None
+    verification_duration_ms: int | None = None
+    evidence_checks: list[EvidenceCheck] = field(default_factory=list)
+    rejection_class: str | None = None
+    human_review_recommended: bool = False
+
+    # Cross-file grouping
+    other_locations: list[OtherLocation] = field(default_factory=list)
+
+    # Validator-owned location tags (present and True only when the
+    # validator set them; reviewer-supplied values are stripped).
+    out_of_hunk_kept: bool = False  # in a diff file, outside its changed lines
+    out_of_diff: bool = False  # in a file outside the diff (ISS-12737)
+    # line was past the end of its file and moved to the one line matching
+    # code_snippet; holds the reviewer's original line
+    line_reanchored_from: int | None = None
+    # line is past the end of its file and code_snippet matched no single
+    # line: kept, but never posted inline
+    line_out_of_range: bool = False
+
+    # Schema version (per-finding, complements envelope version)
+    schema_version: int = SCHEMA_VERSION
+
+
+# ---------------------------------------------------------------------------
+# Producer-side validators
+# ---------------------------------------------------------------------------
+
+
+def validate_finding(finding: dict[str, Any]) -> list[str]:
+    """Return list of validation errors for a finding dict. Empty = valid.
+
+    Performs producer-side validation against the canonical schema. Used by
+    the `validate` and `finalize-result` subcommands.
+    """
+    errors: list[str] = []
+
+    def _err(msg: str) -> None:
+        errors.append(msg)
+
+    # Schema version
+    sv = finding.get("schema_version")
+    if sv is None:
+        _err("missing schema_version")
+    elif not isinstance(sv, int):
+        _err(f"schema_version must be int, got {type(sv).__name__}")
+
+    # ID
+    fid = finding.get("id")
+    if not fid:
+        _err("missing id")
+    elif not isinstance(fid, str):
+        _err(f"id must be str, got {type(fid).__name__}")
+    elif not is_valid_finding_id(fid):
+        _err(f"id {fid!r} does not match '<reviewer_id>_f<index>'")
+
+    # Provenance
+    reviewer = finding.get("reviewer")
+    if not reviewer or not isinstance(reviewer, str):
+        _err("missing or non-string reviewer")
+    src = finding.get("source")
+    if src not in SOURCES:
+        _err(f"source {src!r} not in {sorted(SOURCES)}")
+    trig = finding.get("reviewer_trigger")
+    if not isinstance(trig, dict):
+        _err("reviewer_trigger must be an object")
+    else:
+        ttype = trig.get("type")
+        if ttype not in REVIEWER_TRIGGERS:
+            _err(f"reviewer_trigger.type {ttype!r} not in {sorted(REVIEWER_TRIGGERS)}")
+
+    if not finding.get("emitted_at"):
+        _err("missing emitted_at")
+
+    # Finding scope + anchor
+    scope = finding.get("finding_scope")
+    if scope not in FINDING_SCOPES:
+        _err(f"finding_scope {scope!r} not in {sorted(FINDING_SCOPES)}")
+
+    file_val = finding.get("file")
+    marker = finding.get("system_marker")
+
+    if scope == "diff":
+        if not file_val or not isinstance(file_val, str):
+            _err("diff-scoped finding requires non-empty string file")
+        if marker is not None:
+            _err("diff-scoped finding must not set system_marker")
+    elif scope in ("system", "pr_metadata"):
+        if file_val is not None:
+            _err(f"{scope}-scoped finding must have file=null")
+        if not marker:
+            _err(f"{scope}-scoped finding requires system_marker")
+        elif not is_valid_system_marker(marker):
+            _err(f"system_marker {marker!r} is not in canonical enum")
+        else:
+            expected_scope = system_marker_scope(marker)
+            if expected_scope != scope:
+                _err(
+                    f"system_marker {marker!r} belongs to scope "
+                    f"{expected_scope!r}, not {scope!r}",
+                )
+
+    # Severity + priority + confidence
+    sev = finding.get("severity")
+    if sev not in SEVERITIES:
+        _err(f"severity {sev!r} not in {sorted(SEVERITIES)}")
+    pri = finding.get("priority")
+    if pri not in PRIORITIES:
+        _err(f"priority {pri!r} not in {sorted(PRIORITIES)}")
+    conf = finding.get("confidence")
+    if not isinstance(conf, (int, float)):
+        _err(f"confidence must be number, got {type(conf).__name__}")
+    elif not 0.0 <= float(conf) <= 1.0:
+        _err(f"confidence {conf} out of range [0.0, 1.0]")
+
+    # Category
+    cat = finding.get("category")
+    if cat not in CATEGORIES:
+        _err(f"category {cat!r} not in {sorted(CATEGORIES)}")
+
+    # Required content fields
+    for content_field in ("issue", "explanation", "recommendation"):
+        val = finding.get(content_field)
+        if val is None or not isinstance(val, str):
+            _err(f"missing or non-string {content_field}")
+
+    # code_snippet may be empty (system-scoped findings)
+    cs = finding.get("code_snippet")
+    if cs is None:
+        _err("missing code_snippet (use '' for system-scoped)")
+
+    # external_impact[] entry validation (FEA-1401 graph integration).
+    # The entry shape is otherwise informational (the JSON schema is
+    # array-only), but two fields get a deterministic gate:
+    #   1. discovery — closed vocabulary, so a typo can't slip a
+    #      graph-discovered callsite past the verifier's substrate-aware audit.
+    #   2. file path safety — the graph substrate broadened where these paths
+    #      come from (grep is confined to cwd; graph results are not), so a
+    #      deterministic in-repo check backstops the agent's prompt-level path
+    #      validation. An absolute or `..`-escaping path that survived to here
+    #      would be Read verbatim by the verifier's per-callsite audit (a plain
+    #      worker with unsandboxed Read), exposing out-of-checkout file content.
+    impacts = finding.get("external_impact")
+    if isinstance(impacts, list):
+        for i, entry in enumerate(impacts):
+            if not isinstance(entry, dict):
+                continue
+            disc = entry.get("discovery")
+            if disc is not None and disc not in EXTERNAL_IMPACT_DISCOVERY:
+                _err(
+                    f"external_impact[{i}].discovery {disc!r} not in "
+                    f"{sorted(EXTERNAL_IMPACT_DISCOVERY)}",
+                )
+            file_val = entry.get("file")
+            if isinstance(file_val, str) and file_val:
+                norm = file_val.replace("\\", "/")
+                if (
+                    norm.startswith("/")
+                    or ".." in norm.split("/")
+                    or re.match(r"^[A-Za-z]:", norm) is not None
+                ):
+                    _err(
+                        f"external_impact[{i}].file {file_val!r} must be a "
+                        "safe repo-relative path (no absolute paths, drive "
+                        "letters, or '..' traversal)",
+                    )
+
+    return errors
+
+
+def _validate_envelope_scalars(envelope: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    if not isinstance(envelope.get("schema_version"), int):
+        out.append("envelope schema_version must be int")
+    if not envelope.get("review_id"):
+        out.append("missing review_id")
+    if not envelope.get("diff_tip"):
+        out.append("missing diff_tip")
+    mode = envelope.get("mode")
+    if mode not in ("local", "github"):
+        out.append(f"mode {mode!r} must be 'local' or 'github'")
+    intent = envelope.get("intent")
+    if intent not in ("feature", "fix", "refactor", "mixed"):
+        out.append(f"intent {intent!r} must be one of feature|fix|refactor|mixed")
+    verdict = envelope.get("verdict")
+    if verdict not in VERDICTS:
+        out.append(f"verdict {verdict!r} not in {sorted(VERDICTS)}")
+    for key in ("review_root", "review_root_sha", "review_root_tree"):
+        value = envelope.get(key)
+        if value is not None and not isinstance(value, str):
+            out.append(f"{key} must be a string or null")
+    return out
+
+
+def _validate_envelope_buckets(envelope: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    for bucket in ("verified", "justified", "rejected"):
+        if bucket not in envelope:
+            out.append(f"missing findings bucket {bucket!r}")
+        elif not isinstance(envelope[bucket], list):
+            out.append(f"{bucket} must be a list")
+    pv = envelope.get("pending_verification")
+    if "pending_verification" in envelope and not isinstance(pv, list):
+        out.append("pending_verification must be a list when present")
+    return out
+
+
+def _validate_coverage_plan(cp: Any) -> list[str]:
+    if not isinstance(cp, dict):
+        return ["coverage_plan must be an object"]
+    out: list[str] = []
+    for key in ("required", "best_effort", "deferred_for_budget"):
+        if key not in cp:
+            out.append(f"coverage_plan missing {key!r}")
+        elif not isinstance(cp[key], list):
+            out.append(f"coverage_plan.{key} must be a list")
+    if "budget" not in cp or not isinstance(cp["budget"], dict):
+        out.append("coverage_plan.budget must be an object")
+    return out
+
+
+def _validate_envelope_findings(envelope: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    for bucket in ("verified", "justified", "rejected", "pending_verification"):
+        for i, finding in enumerate(envelope.get(bucket, []) or []):
+            out.extend(f"{bucket}[{i}]: {err}" for err in validate_finding(finding))
+    for i, finding in enumerate(envelope.get("coverage_gaps", []) or []):
+        out.extend(f"coverage_gaps[{i}]: {err}" for err in validate_finding(finding))
+    return out
+
+
+def validate_result_envelope(envelope: dict[str, Any]) -> list[str]:
+    """Return list of validation errors for a review_result envelope dict."""
+    errors: list[str] = []
+    errors.extend(_validate_envelope_scalars(envelope))
+    errors.extend(_validate_envelope_buckets(envelope))
+    errors.extend(_validate_coverage_plan(envelope.get("coverage_plan")))
+    if "coverage_gaps" not in envelope:
+        errors.append("missing coverage_gaps")
+    elif not isinstance(envelope["coverage_gaps"], list):
+        errors.append("coverage_gaps must be a list")
+    errors.extend(_validate_envelope_findings(envelope))
+
+    # Telemetry block. When absent, treat as the zero-valued default —
+    # finalize-result always emits one, but cached envelopes might not.
+    # When present, the block must conform to the canonical telemetry
+    # schema (required keys + correct types).
+    if "telemetry" in envelope:
+        errors.extend(validate_telemetry(envelope["telemetry"]))
+
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# Schema normalization: fill canonical fields on partially-shaped findings
+# emitted by reviewer agents and other producers that don't emit the
+# canonical schema natively.
+# ---------------------------------------------------------------------------
+
+
+def normalize_legacy_finding(
+    raw: dict[str, Any],
+    *,
+    reviewer: str = "unknown",
+    source: str = "agent",
+    index: int = 0,
+    emitted_at: str = "",
+) -> dict[str, Any]:
+    """Fill in canonical fields on a finding emitted by a non-canonical producer.
+
+    Used by `validate` and `collect-findings` to upgrade in-flight findings
+    that producers haven't emitted in canonical schema natively.
+
+    Does NOT replace fields that are already canonical; only fills gaps.
+    """
+    out = dict(raw)  # shallow copy
+
+    out.setdefault("schema_version", SCHEMA_VERSION)
+    out.setdefault("finding_scope", "diff")
+    out.setdefault("system_marker", None)
+    out.setdefault("source", source)
+    out.setdefault("reviewer", raw.get("reviewer", reviewer))
+    out.setdefault("emitted_at", emitted_at)
+    out.setdefault("reviewer_trigger", {"type": "core", "evidence": None})
+    out.setdefault("evidence", [])
+    out.setdefault("reasoning_certificate", None)
+    out.setdefault("justified", False)
+    out.setdefault("justification", None)
+    out.setdefault("external_impact", [])
+    out.setdefault("grep_query_used", None)
+    out.setdefault("verifier_verdict", None)
+    out.setdefault("verifier_severity", None)
+    out.setdefault("verifier_confidence", None)
+    out.setdefault("verifier_reasoning", None)
+    out.setdefault("verifier_model", None)
+    out.setdefault("verification_duration_ms", None)
+    out.setdefault("evidence_checks", [])
+    out.setdefault("rejection_class", None)
+    out.setdefault("human_review_recommended", False)
+    out.setdefault("other_locations", [])
+    out.setdefault("subcategory", None)
+    out.setdefault("code_snippet", out.get("code_snippet", ""))
+    out.setdefault("explanation", out.get("explanation", ""))
+    out.setdefault("recommendation", out.get("recommendation", ""))
+
+    # Synthesize id if missing
+    if not out.get("id"):
+        out["id"] = make_finding_id(out["reviewer"], index)
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# JSON Schema (for documentation + machine validation)
+# ---------------------------------------------------------------------------
+
+
+def finding_json_schema() -> dict[str, Any]:
+    """Return the JSON Schema (draft-07) for a Finding."""
+    return {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "CodeReviewFinding",
+        "type": "object",
+        "required": [
+            "schema_version", "id", "reviewer", "reviewer_trigger", "source",
+            "emitted_at", "finding_scope", "category", "severity", "priority",
+            "confidence", "issue", "explanation", "recommendation", "code_snippet",
+        ],
+        "properties": {
+            "schema_version": {"type": "integer"},
+            "id": {"type": "string", "pattern": _FINDING_ID_RE.pattern},
+            "reviewer": {"type": "string"},
+            "reviewer_trigger": {
+                "type": "object",
+                "required": ["type"],
+                "properties": {
+                    "type": {"enum": sorted(REVIEWER_TRIGGERS)},
+                    "evidence": {"type": ["string", "null"]},
+                },
+            },
+            "source": {"enum": sorted(SOURCES)},
+            "emitted_at": {"type": "string"},
+            "finding_scope": {"enum": sorted(FINDING_SCOPES)},
+            "file": {"type": ["string", "null"]},
+            "line": {"type": ["integer", "null"]},
+            "system_marker": {"type": ["string", "null"]},
+            "category": {"enum": sorted(CATEGORIES)},
+            "subcategory": {"type": ["string", "null"]},
+            "severity": {"enum": sorted(SEVERITIES)},
+            "priority": {"enum": sorted(PRIORITIES)},
+            "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            "issue": {"type": "string"},
+            "explanation": {"type": "string"},
+            "recommendation": {"type": "string"},
+            "code_snippet": {"type": "string"},
+            "evidence": {"type": "array"},
+            "reasoning_certificate": {"type": ["object", "null"]},
+            "justified": {"type": "boolean"},
+            "justification": {"type": ["object", "null"]},
+            "external_impact": {"type": "array"},
+            "grep_query_used": {"type": ["string", "null"]},
+            "verifier_verdict": {
+                "anyOf": [
+                    {"type": "null"},
+                    {"enum": sorted(VERIFIER_VERDICTS)},
+                ],
+            },
+            "verifier_severity": {"type": ["string", "null"]},
+            "verifier_confidence": {"type": ["number", "null"]},
+            "verifier_reasoning": {"type": ["string", "null"]},
+            "verifier_model": {"type": ["string", "null"]},
+            "verification_duration_ms": {"type": ["integer", "null"]},
+            "evidence_checks": {"type": "array"},
+            "rejection_class": {"type": ["string", "null"]},
+            "human_review_recommended": {"type": "boolean"},
+            "other_locations": {"type": "array"},
+            "out_of_hunk_kept": {"type": "boolean"},
+            "out_of_diff": {"type": "boolean"},
+            "line_reanchored_from": {"type": "integer"},
+            "line_out_of_range": {"type": "boolean"},
+        },
+    }
+
+
+def result_envelope_json_schema() -> dict[str, Any]:
+    """Return the JSON Schema (draft-07) for a ResultEnvelope."""
+    return {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "CodeReviewResultEnvelope",
+        "type": "object",
+        "required": [
+            "schema_version", "review_id", "diff_tip", "mode", "intent",
+            "verified", "justified", "rejected",
+            "coverage_plan", "coverage_gaps", "verdict",
+        ],
+        "properties": {
+            "schema_version": {"type": "integer"},
+            "review_id": {"type": "string"},
+            "pr_number": {"type": ["integer", "null"]},
+            "head_sha": {"type": ["string", "null"]},
+            "diff_tip": {"type": "string"},
+            "review_root": {"type": ["string", "null"]},
+            "review_root_sha": {"type": ["string", "null"]},
+            "review_root_tree": {"type": ["string", "null"]},
+            "review_branch": {"type": ["string", "null"]},
+            "base_ref": {"type": ["string", "null"]},
+            "diff_scope": {"type": ["string", "null"]},
+            "mode": {"enum": ["local", "github"]},
+            "intent": {"enum": ["feature", "fix", "refactor", "mixed"]},
+            "verified": {"type": "array"},
+            "justified": {"type": "array"},
+            "rejected": {"type": "array"},
+            "pending_verification": {"type": "array"},
+            "coverage_plan": {"type": "object"},
+            "coverage_gaps": {"type": "array"},
+            "verdict": {"enum": sorted(VERDICTS)},
+            "verdict_reason": {"type": "string"},
+            "stats": {"type": "object"},
+            "telemetry": {
+                "type": "object",
+                "required": [
+                    "duration_ms", "duration_by_stage_ms",
+                    "estimated_cost_usd", "tokens",
+                    "cache_hit_rate", "agent_failures",
+                    "schema_versions_seen",
+                ],
+                "properties": {
+                    "duration_ms": {"type": "number", "minimum": 0},
+                    "duration_by_stage_ms": {
+                        "type": "object",
+                        "additionalProperties": {"type": "number", "minimum": 0},
+                    },
+                    "estimated_cost_usd": {"type": "number", "minimum": 0},
+                    "tokens": {
+                        "type": "object",
+                        "required": ["input_uncached", "input_cached", "output", "by_model"],
+                        "properties": {
+                            "input_uncached": {"type": "integer", "minimum": 0},
+                            "input_cached": {"type": "integer", "minimum": 0},
+                            "output": {"type": "integer", "minimum": 0},
+                            "by_model": {"type": "object"},
+                        },
+                    },
+                    "cache_hit_rate": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "number", "minimum": 0, "maximum": 1,
+                        },
+                    },
+                    "agent_failures": {"type": "integer", "minimum": 0},
+                    "schema_versions_seen": {
+                        "type": "object",
+                        "additionalProperties": {"type": "integer"},
+                    },
+                    "findings_counts": {"type": "object"},
+                    "verification_stats": {"type": "object"},
+                    "coverage_stats": {"type": "object"},
+                },
+            },
+        },
+    }

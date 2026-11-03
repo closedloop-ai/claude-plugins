@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: pm-reference-card
+context:
+  history_file: history.jsonl
+  scaffold_script: scaffold.sh

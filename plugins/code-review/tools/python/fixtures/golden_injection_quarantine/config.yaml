@@ -1,0 +1,14 @@
+# PLN-720 fixture: prompt-injection detector quarantine end-to-end.
+# A high-severity injection payload in the PR description triggered
+# detect-injection (score ≥ 70), which:
+#   1. Rewrote intent_context.json with quarantine: true + redacted body
+#   2. Emitted a canonical InjectionAttempt finding to agent_injection-detector.json
+#   3. cmd_classify_intent short-circuited to intent: mixed, source: quarantine
+# The fixture verifies the finding flows through collect → validate →
+# finalize-result and lands in verified[] with verdict CHANGES_REQUESTED.
+description: "Prompt-injection High severity quarantine; single BLOCKING InjectionAttempt finding flows to CHANGES_REQUESTED."
+mode: local
+diff_tip: "abc1234"
+expected_verdict: CHANGES_REQUESTED
+expected_verified_count: 1
+expected_coverage_gap_count: 0

@@ -1,0 +1,11 @@
+{
+  "diff_scope": "main..HEAD",
+  "base_ref": "main",
+  "head_ref": "feature/x",
+  "review_branch": "feature/x",
+  "diff_tip": "deadbeef",
+  "scope_kind": "pr",
+  "pr_number": 42,
+  "path_filter": null,
+  "pr_auto_detected": false
+}

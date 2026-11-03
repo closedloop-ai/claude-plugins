@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fleet Orchestrator"
+  short_description: "Run parallel Codex and Claude workers on several PRs"
+  default_prompt: "Use $fleet-orchestrator to run these PRs with parallel workers while I do QA and merges."

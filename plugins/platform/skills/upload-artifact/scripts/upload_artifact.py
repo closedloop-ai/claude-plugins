@@ -15,23 +15,23 @@ Usage:
     export NEXT_PUBLIC_MCP_SERVER_URL=https://example.com/mcp
 
     # List available projects:
-    uv run --with 'mcp[cli]' scripts/upload_artifact.py \\
+    uv run --with 'mcp[cli]>=2,<3' scripts/upload_artifact.py \\
         --list-projects
 
     # Create document:
-    uv run --with 'mcp[cli]' scripts/upload_artifact.py \\
+    uv run --with 'mcp[cli]>=2,<3' scripts/upload_artifact.py \\
         --file /path/to/content.md \\
         --title "My PRD" \\
         --type PRD \\
         --project-id <PROJECT_ID>
 
     # New version of existing document:
-    uv run --with 'mcp[cli]' scripts/upload_artifact.py \\
+    uv run --with 'mcp[cli]>=2,<3' scripts/upload_artifact.py \\
         --file /path/to/content.md \\
         --artifact-id <DOCUMENT_ID_OR_SLUG>
 
     # Create + verify round-trip:
-    uv run --with 'mcp[cli]' scripts/upload_artifact.py \\
+    uv run --with 'mcp[cli]>=2,<3' scripts/upload_artifact.py \\
         --file /path/to/content.md \\
         --title "My PRD" \\
         --type PRD \\
@@ -45,9 +45,11 @@ import asyncio
 import json
 import os
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-import httpx
+import httpx2
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
@@ -71,11 +73,23 @@ _API_KEY_ENV_VAR = "CLOSEDLOOP_API_KEY"
 _MCP_URL_ENV_VAR = "NEXT_PUBLIC_MCP_SERVER_URL"
 
 
-def _build_http_client(api_key: str) -> httpx.AsyncClient:
-    return httpx.AsyncClient(
+def _build_http_client(api_key: str) -> httpx2.AsyncClient:
+    return httpx2.AsyncClient(
         headers={"Authorization": f"Bearer {api_key}"},
-        timeout=httpx.Timeout(120.0, read=300.0),
+        timeout=httpx2.Timeout(120.0, read=300.0),
     )
+
+
+@asynccontextmanager
+async def _connect(args: _Args) -> AsyncIterator[ClientSession]:
+    """Open an initialized MCP session over Streamable HTTP."""
+    async with _build_http_client(args.api_key) as http_client:
+        async with streamable_http_client(
+            args.url, http_client=http_client
+        ) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                yield session
 
 
 def _extract_text(result) -> str:
@@ -88,26 +102,15 @@ def _extract_text(result) -> str:
 
 async def list_projects(args: _Args) -> dict:
     """List all available projects."""
-    http_client = _build_http_client(args.api_key)
     try:
-        async with http_client, streamable_http_client(
-            args.url, http_client=http_client
-        ) as (read_stream, write_stream, _):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                result = await session.call_tool("list-projects", {})
-                if result.isError:
-                    return {
-                        "error": "list-projects failed",
-                        "details": [
-                            getattr(c, "text", str(c))
-                            for c in (result.content or [])
-                        ],
-                    }
-                text = _extract_text(result)
-                if not text:
-                    return {"error": "Empty response from list-projects"}
-                return json.loads(text)
+        async with _connect(args) as session:
+            result = await session.call_tool("list-projects", {})
+            if result.is_error:
+                return {"error": "list-projects failed", **_error_details(result)}
+            text = _extract_text(result)
+            if not text:
+                return {"error": "Empty response from list-projects"}
+            return json.loads(text)
     except (Exception, ExceptionGroup) as exc:
         return _format_exception(exc)
 
@@ -126,7 +129,7 @@ async def _version_document(
         "create-document-version",
         {"documentId": document_id, "content": content},
     )
-    if result.isError:
+    if result.is_error:
         return {"error": "create-document-version failed", **_error_details(result)}
     text = _extract_text(result)
     parsed = json.loads(text) if text else {}
@@ -136,6 +139,7 @@ async def _version_document(
         "artifact_id": document_id,
         "document_id": document_id,
         "slug": data.get("slug", parsed.get("slug") if isinstance(parsed, dict) else None),
+        **_read_operation_receipt(parsed),
         "content_length": len(content),
         "status": "success",
         "response": parsed,
@@ -159,7 +163,7 @@ async def _create_document(
         tool_args["workstreamId"] = args.workstream_id
 
     result = await session.call_tool("create-document", tool_args)
-    if result.isError:
+    if result.is_error:
         return {"error": "create-document failed", **_error_details(result)}
     text = _extract_text(result)
     if not text:
@@ -172,6 +176,7 @@ async def _create_document(
         "artifact_id": document_id,
         "document_id": document_id,
         "slug": data.get("slug", parsed.get("slug")),
+        **_read_operation_receipt(parsed),
         "content_length": len(content),
         "status": "success",
         "response": parsed,
@@ -187,25 +192,19 @@ async def upload(args: _Args) -> dict:
 
     content = file_path.read_text(encoding="utf-8")
 
-    http_client = _build_http_client(args.api_key)
     try:
-        async with http_client, streamable_http_client(
-            args.url, http_client=http_client
-        ) as (read_stream, write_stream, _):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
+        async with _connect(args) as session:
+            if args.artifact_id:
+                output = await _version_document(session, args.artifact_id, content)
+            else:
+                output = await _create_document(session, args, content)
 
-                if args.artifact_id:
-                    output = await _version_document(session, args.artifact_id, content)
-                else:
-                    output = await _create_document(session, args, content)
+            if "error" not in output and args.verify:
+                output["verify"] = await _verify_document(
+                    session, output["artifact_id"], len(content)
+                )
 
-                if "error" not in output and args.verify:
-                    output["verify"] = await _verify_document(
-                        session, output["artifact_id"], len(content)
-                    )
-
-                return output
+            return output
     except (Exception, ExceptionGroup) as exc:
         return _format_exception(exc)
 
@@ -223,13 +222,8 @@ async def _verify_document(
             "contentMaxChars": fetch_max,
         },
     )
-    if result.isError:
-        return {
-            "error": "get-document failed",
-            "details": [
-                getattr(c, "text", str(c)) for c in (result.content or [])
-            ],
-        }
+    if result.is_error:
+        return {"error": "get-document failed", **_error_details(result)}
     text = _extract_text(result)
     if not text:
         return {"error": "Empty response from get-document"}
@@ -246,6 +240,25 @@ async def _verify_document(
         "stored_match": actual_length == expected_length,
         "returned_match": returned_length == expected_length,
     }
+
+
+def _read_operation_receipt(parsed: object) -> dict:
+    """The write's operation receipt, or nothing when the response has none.
+
+    ISS-12714: printed in the result so the session that ran this script names
+    the write it made (PRD-800). The MCP server puts the receipt on the body
+    root and the REST API inside ``data``. It sits ahead of ``response`` so a
+    transcript that keeps only the head of a long result still holds it.
+    """
+    if not isinstance(parsed, dict):
+        return {}
+    receipt = parsed.get("operationReceipt")
+    if receipt is None:
+        data = parsed.get("data")
+        receipt = data.get("operationReceipt") if isinstance(data, dict) else None
+    if isinstance(receipt, dict) and isinstance(receipt.get("operationId"), str):
+        return {"operationReceipt": receipt}
+    return {}
 
 
 def _format_exception(exc: Exception | ExceptionGroup) -> dict:  # type: ignore[type-arg]

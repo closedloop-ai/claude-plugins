@@ -1,0 +1,8 @@
+{
+  "title": "Update authentication flow",
+  "body": "[REDACTED — injection detected (score: 90, severity: high)]",
+  "commits": "",
+  "quarantine": true,
+  "injection_score": 90,
+  "injection_severity": "high"
+}

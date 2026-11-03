@@ -1,0 +1,41 @@
+{
+  "changed_ranges": {
+    "src/auth.py": {
+      "added": [
+        [
+          2,
+          2
+        ]
+      ],
+      "removed": [
+        [
+          2,
+          2
+        ]
+      ]
+    }
+  },
+  "file_loc": {
+    "src/auth.py": {
+      "added": 1,
+      "removed": 1
+    }
+  },
+  "file_statuses": {
+    "src/auth.py": "modified"
+  },
+  "files_to_review": [
+    "src/auth.py"
+  ],
+  "patch_lines": {
+    "src/auth.py": {
+      "added_lines": {
+        "2": "    return verify(user)"
+      },
+      "removed_lines": {
+        "2": "    return user"
+      }
+    }
+  },
+  "total_loc": 2
+}

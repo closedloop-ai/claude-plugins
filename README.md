@@ -34,8 +34,9 @@ Multi-repository, adaptive self-learning, & artifact-bound phased workflow gates
 |--------|-------------|
 | [**bootstrap**](plugins/bootstrap/) | Project bootstrapping and initial setup |
 | [**code**](plugins/code/) | Code generation, implementation planning, and iterative development loop |
+| [**vibe**](plugins/vibe/) | Vibe sessions and ClosedLoop ticket workflows |
+| [**closedloop-core**](plugins/closedloop-core/) | Shared planning, intelligence, diagrams, review, QA, measurement, and PR monitoring |
 | [**code-review**](plugins/code-review/) | Automated code review with inline GitHub PR comments |
-| [**judges**](plugins/judges/) | LLM-as-judge evaluators for plan and code quality |
 | [**platform**](plugins/platform/) | Claude Code expert guidance, prompt engineering, and artifact management |
 | [**self-learning**](plugins/self-learning/) | Pattern capture and organizational knowledge sharing |
 
@@ -47,19 +48,34 @@ Multi-repository, adaptive self-learning, & artifact-bound phased workflow gates
 
 ## Quick Start
 
-**One-line install** — installs the five Symphony runtime plugins at user scope and keeps them auto-updated:
+**One-line install** — installs the four Symphony runtime plugins at user scope and keeps them auto-updated:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/closedloop-ai/claude-plugins/main/install.sh | bash
 ```
 
-The installer installs `code`, `code-review`, `judges`, `platform`, and `self-learning`, then verifies those runtime plugins are present with existing install paths and enabled user-scoped entries. It re-enables disabled user-scoped runtime plugins and attempts to remove stale project-scoped duplicates when Claude reports a usable `projectPath`. If Claude reports a project-scoped entry without a usable project path, the installer prints the project-directory uninstall command and still repairs the user-scoped install. The `bootstrap` plugin remains available in the marketplace for manual installation, but it is not part of the default runtime install.
+The installer installs `code`, `code-review`, `platform`, and `self-learning`, then verifies those runtime plugins are present with existing install paths and enabled user-scoped entries. It re-enables disabled user-scoped runtime plugins and attempts to remove stale project-scoped duplicates when Claude reports a usable `projectPath`. If Claude reports a project-scoped entry without a usable project path, the installer prints the project-directory uninstall command and still repairs the user-scoped install. The `bootstrap` plugin remains available in the marketplace for manual installation, but it is not part of the default runtime install.
 
 Or install interactively from within Claude Code:
 
 ```bash
 claude /plugin marketplace install closedloop
 ```
+
+### Codex example
+
+The `code`, `vibe`, `closedloop-core`, and `code-review` plugins include Codex
+manifests and marketplace entries:
+
+```bash
+codex plugin marketplace add https://github.com/closedloop-ai/claude-plugins
+codex plugin add closedloop-core@closedloop-ai
+codex plugin add vibe@closedloop-ai
+```
+
+Engineers can also install `code@closedloop-ai` and `code-review@closedloop-ai`.
+Codex requires core to be installed explicitly; Claude Code installs it through
+the `code`, `vibe`, and `platform` dependencies. Restart the app after installation.
 
 Then start using the plugins:
 
@@ -89,6 +105,20 @@ git config core.hooksPath .githooks
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, workflow, and code style guidelines.
+
+## Evals and production telemetry
+
+The `evals/code-review/` directory contains a small human-review eval set for
+review finding quality, finding verification, and inline PR comment drafting.
+The cases are harness-neutral so the same plugin behavior can be checked in
+Claude Code, Codex, or another agent workspace before release.
+
+If you publish plugins through Telvine, keep runtime telemetry metadata-only:
+`skill.invocation.start`, `skill.invocation.end`, and `skill.invocation.error`
+for skill behavior, plus `plugin.component.invoked` and
+`plugin.component.error` for commands, agents, tools, or other non-skill
+components. Do not emit prompts, repository file contents, connector payloads,
+tool arguments, GitHub tokens, inline comment bodies, or model outputs.
 
 ## Disclaimer
 Our claude code plugins are a low-key engineering preview of the agents that run the larger ClosedLoop platform. These agents should be used for testing in trusted environments.
