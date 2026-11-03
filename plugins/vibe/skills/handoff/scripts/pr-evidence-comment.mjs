@@ -32,6 +32,12 @@ export function renderEvidenceComment(evidence) {
   if (evidence.targetedInventory.laneReport.matches.length) {
     lines.push("", `Matching post-merge lanes: ${evidence.targetedInventory.laneReport.matches.map((lane) => `${lane.name}: \`${lane.command}\``).join("; ")}.`);
   }
+  if ((evidence.testIntegrityProofs ?? []).length) {
+    lines.push("", "## Test integrity mutations", "", "| Class | Test | Intentional regression | Observed result |", "| --- | --- | --- | --- |");
+    for (const proof of evidence.testIntegrityProofs) {
+      lines.push(`| ${proof.class} | \`${proof.path}\`: ${proof.case} | ${proof.mutation} | ${proof.observedFailure}; passed after restore with \`${proof.command}\` at \`${proof.commit}\` |`);
+    }
+  }
   if ((capability.unavailableSpecs ?? []).length) lines.push("", `Left for CI: ${capability.unavailableSpecs.map((spec) => `\`${spec}\``).join(", ")} via ${(capability.ciCoverage ?? []).join(", ")}.`);
   if ((capability.notRunLocally ?? []).length) lines.push("", `Host-incompatible visual baselines left for CI: ${capability.notRunLocally.map((spec) => `\`${spec}\``).join(", ")}.`);
   return `${lines.join("\n")}\n`;

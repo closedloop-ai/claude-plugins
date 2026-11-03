@@ -205,6 +205,22 @@ test("(h) a story-local copy of a component the diff deletes blocks (#8962)", ()
   assert.deepEqual(run({ base, head: { [copy]: "x\n" }, changeLog: `Story copy: ${copy}: operator ruling, 2026-10-21` }).rules, []);
 });
 
+test("an unregistered viewport name blocks while MINIMAL_VIEWPORTS and parameters options pass (#9531)", () => {
+  const file = "packages/app/shared/components/artifact-creation/artifact-creation-dialog.stories.tsx";
+  const base = { [file]: story({ title: "Composites/Artifacts/Creation", extra: "  argTypes: {}," }) };
+  const withViewport = (value, options = "") => `${base[file]}\nconst viewportMeta = { parameters: { viewport: { options: { ${options} } } } };\nexport const Mobile: Story = { globals: { viewport: { value: ${JSON.stringify(value)} } }, play: async () => {} };`;
+
+  const invalid = run({ base, head: { [file]: withViewport("390-844") } });
+  assert.deepEqual(invalid.rules, ["storybook-release", "story-viewport-unregistered"]);
+  assert.match(invalid.findings.at(-1).problem, /390-844.*MINIMAL_VIEWPORTS.*parameters\.viewport\.options/);
+
+  const builtin = run({ base, head: { [file]: withViewport("mobile2") } });
+  assert.ok(!builtin.rules.includes("story-viewport-unregistered"));
+
+  const custom = run({ base, head: { [file]: withViewport("390-844", '"390-844": { name: "Phone", styles: { width: "390px", height: "844px" } }') } });
+  assert.ok(!custom.rules.includes("story-viewport-unregistered"));
+});
+
 test("the repo's Storybook checks are required when a story or a listed path changes", () => {
   const checks = JSON.parse(EXAMPLE).checks.map((check) => check.command);
   const file = "apps/storybook/stories/a.stories.tsx";
