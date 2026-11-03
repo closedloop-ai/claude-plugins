@@ -221,7 +221,7 @@ test("an already published head makes no request", async () => {
 
 function publishRoutes(overrides = {}) {
   return [
-    ["vibe-sessions.mjs show", ok({ ok: true, session: { baseCommit: "b".repeat(40), localFixes: [{ path: "fix.ts" }], vercel: {} } })],
+    ["vibe-sessions.mjs show", overrides.show ?? ok({ ok: true, session: { baseCommit: "b".repeat(40), localFixes: [{ path: "fix.ts" }], vercel: {} } })],
     ["local-plans.mjs", overrides.plans ?? ok({ ok: true, committedLocalPlans: [] })],
     ["migration-publish.mjs", overrides.migrations ?? ok({ ok: true, problems: [] })],
     ["status --porcelain", overrides.status ?? ok(" M fix.ts\n")],
@@ -266,6 +266,30 @@ test("redeploy with no environment stops after the push", async () => {
   assert.equal(result.status, Status.Done);
   assert.equal(result.requested, false);
   assert.equal(result.progress, "pushed");
+});
+
+test("VIBE_REDEPLOY_UI_ONLY=1 skips the environment request only when no UI or backend path changed since the last deploy", async () => {
+  const deployed = "a".repeat(40);
+  const show = ok({ ok: true, session: { baseCommit: "b".repeat(40), localFixes: [{ path: "fix.ts" }], lastRequestId: "r0", vercel: { mode: "create", lastDeployedCommit: deployed } } });
+  const run = (changed, extra = []) => [...publishRoutes({ show }), [`diff --name-only ${deployed} HEAD`, changed], ...extra];
+  const requested = (calls) => calls.some((call) => call.line.includes("workflow view"));
+  const on = { VIBE_REDEPLOY_UI_ONLY: "1" };
+  const calls = [];
+  const docs = await createEnvCtl({ run: router(run(ok("docs/a.md\nREADME.md\n")), calls), env: on, ...clock() }).redeploy({ stdin: CTX, worktree: "/wt" });
+  assert.deepEqual([docs.status, docs.requested, docs.progress, docs.skippedRedeploy], [Status.Done, false, "pushed", { since: deployed, files: 2 }]);
+  assert.ok(calls.some((call) => call.line.includes("main-sync-push")), "the push still happens");
+  assert.ok(!requested(calls));
+  for (const file of ["apps/app/a.tsx", "packages/design-system/b.ts", "apps/api/route.ts", "packages/database/prisma/schema.prisma"]) {
+    const touched = [];
+    await createEnvCtl({ run: router(run(ok(`docs/a.md\n${file}\n`), [["workflow view", bad()]]), touched), env: on, ...clock() }).redeploy({ stdin: CTX, worktree: "/wt" });
+    assert.ok(requested(touched), file);
+  }
+  const off = [];
+  await createEnvCtl({ run: router(run(ok("docs/a.md\n"), [["workflow view", bad()]]), off), env: {}, ...clock() }).redeploy({ stdin: CTX, worktree: "/wt" });
+  assert.ok(requested(off), "off by default: the request is made as before");
+  const unknown = [];
+  await createEnvCtl({ run: router(run(bad("bad object"), [["workflow view", bad()]]), unknown), env: on, ...clock() }).redeploy({ stdin: CTX, worktree: "/wt" });
+  assert.ok(requested(unknown), "a diff git cannot compute never skips");
 });
 
 test("the pull request is opened only when origin is at the verified commit, and an open one is reused", () => {

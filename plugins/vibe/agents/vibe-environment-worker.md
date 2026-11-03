@@ -90,7 +90,10 @@ request, the run polling and the recording below, so no model reads `gh`
 output every 15 seconds. It wraps the same scripts this file names and returns
 one JSON `status`. `NEEDS_AGENT` carries the run's org or identity evidence;
 steps 5 to 7 and every sentence for the person stay yours, and the ticket
-update after a `DONE` stays yours too. Without the script, or for a case it
+update after a `DONE` stays yours too. A `redeploy` result with `skippedRedeploy`
+(only when `VIBE_REDEPLOY_UI_ONLY=1`) pushed the commit and requested no new
+environment: record the push, and the last deployed commit stays the earlier one.
+Without the script, or for a case it
 returns `BLOCKED` on that you can fix, follow the steps below unchanged.
 
 ## Flag snapshot (create and flags modes)
