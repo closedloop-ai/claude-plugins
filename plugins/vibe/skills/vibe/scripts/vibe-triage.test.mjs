@@ -69,7 +69,7 @@ test("a text-only request about a column header leaves nothing out, with no path
   for (const id of ["environment", "desktop"]) assert.ok([ACTIONS.Run, ACTIONS.Unknown].includes(manifest.steps[id].recommendation.action), id);
 });
 
-test("the Desktop relevance check reads the shared Desktop host list: renderer and packages/app, not the main process", () => {
+test("the Desktop relevance check reads the shared Desktop host list: any apps/desktop path or packages/app, the main process included", () => {
   assert.equal(classify({ paths: ["apps/desktop/src/main/a.ts", "apps/desktop/src/main/b.ts"] }).steps.desktop.recommendation.action, ACTIONS.Run);
   assert.equal(classify({ paths: ["apps/desktop/src/renderer/a.tsx", "apps/api/x.ts"] }).steps.desktop.recommendation.action, ACTIONS.Run);
   assert.equal(pathKind("packages/app/x.ts"), "ui");
