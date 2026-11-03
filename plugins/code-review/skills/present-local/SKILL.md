@@ -78,6 +78,17 @@ Then continue with:
 **Recommendation:** [fix]
 ```
 
+**Findings outside the diff (ISS-12737):** when a finding has
+`out_of_diff: true`, label its **File:** line so the reader knows the
+cited file is not part of this change — in every severity section. Say
+"caused by this change" only when `verifier_verdict` is `CONFIRMED`,
+`DOWNGRADE` or `RE_ASSERTED`; otherwise say "causation unconfirmed":
+
+```markdown
+**File:** `path/other.ts:line` — outside the diff — caused by this change
+**File:** `path/other.ts:line` — outside the diff — causation unconfirmed
+```
+
 **Impact Analyzer findings (FEA-1401):** when a finding has
 `category: "ImpactAnalysis"` AND non-empty `external_impact[]`,
 append an **Affected callsites** block AFTER `Recommendation`:
@@ -157,6 +168,7 @@ For each rejected finding:
 **Original reviewer:** {REVIEWER}
 **Verifier verdict:** REJECTED (rejection_class: `{REJECTION_CLASS}`)
 **Verifier confidence:** {VERIFIER_CONFIDENCE}
+[If rejection_class is `not_caused_by_diff`, add: **Why dismissed:** outside the diff, and the verifier found no change in this diff that caused it]
 
 **Original issue:** [verbatim from finding.issue]
 
@@ -190,9 +202,10 @@ Read `<CR_DIR>/review_result.json` → `stats.verification`. Render the footer b
 ```
 === Verifier Stats ===
 Findings verified: {stats.verification.verified_count}
-  - CONFIRMED + DOWNGRADE: {verified_count - tentative_count - re_asserted}
+  - CONFIRMED + DOWNGRADE: {verified_count - tentative_count - re_asserted - justified_invalid_count - skipped_count}
   - TENTATIVE:             {tentative_count}
   - RE_ASSERTED:           sum over by_reviewer[].re_asserted
+  - Not verified (skipped): {skipped_count}
 Findings dismissed: {stats.verification.rejected_count}
 Findings justified: {stats.verification.justified_valid_count + stats.verification.justified_invalid_count}
   - JUSTIFIED-VALID:   {stats.verification.justified_valid_count}
@@ -254,7 +267,7 @@ If `normalization_warnings > 0` in `findings_validated.json`, append this line d
 - **Total findings from agents:** X
 - **Hygiene findings:** H
 - **Validated (confirmed):** A
-- **Discarded — file not changed:** B
+- **Kept — outside the diff:** B *(reads `kept_out_of_diff`; these go to the verifier, which rejects them as `not_caused_by_diff` when this change did not cause them)*
 - **Discarded — line not changed:** C
 - **Discarded — low confidence:** D
 - **Discarded — rejected by validation:** E

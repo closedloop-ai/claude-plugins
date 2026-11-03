@@ -177,6 +177,13 @@
           ],
           "dest": "settings",
           "default": null
+        },
+        {
+          "flags": [
+            "--cr-dir"
+          ],
+          "dest": "cr_dir",
+          "default": null
         }
       ]
     },
@@ -294,14 +301,6 @@
             "--diff-data"
           ],
           "dest": "diff_data",
-          "default": null,
-          "required": true
-        },
-        {
-          "flags": [
-            "--diff-tip"
-          ],
-          "dest": "diff_tip",
           "default": null,
           "required": true
         },
@@ -507,14 +506,6 @@
           ],
           "dest": "extract_signals",
           "default": null
-        },
-        {
-          "flags": [
-            "--diff-tip"
-          ],
-          "dest": "diff_tip",
-          "default": null,
-          "required": true
         },
         {
           "flags": [

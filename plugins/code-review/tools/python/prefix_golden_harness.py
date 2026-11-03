@@ -1277,6 +1277,33 @@ def empty_diff_fixture() -> PrefixFixture:
     )
 
 
+def deleted_file_fixture() -> PrefixFixture:
+    """ISS-12737: a diff that only deletes a file → zero BHA partitions.
+
+    Deleting 250 lines clears ``FAST_PATH_MAX_LOC`` (route still counts
+    removed lines), so partition runs; it never assigns a ``removed`` file to
+    Bug Hunter A, so it emits zero partitions and derive-spawn-spec skips BHA
+    with ``no_partitions`` while the cross-file reviewers still spawn.
+    """
+    return PrefixFixture(
+        name="golden_prefix_deleted_file",
+        repo=FixtureRepoSpec(
+            base=Commit(
+                message="chore: initial project skeleton",
+                writes={
+                    "src/app.py": "def greet(name):\n    return name\n",
+                    "src/legacy.py": _numbered_lines("L", 250),
+                },
+            ),
+            head=Commit(
+                message="chore: drop the legacy constants module",
+                deletes=["src/legacy.py"],
+                date="2020-01-02T00:00:00 +0000",
+            ),
+        ),
+    )
+
+
 def _seed_cache_hit(home: Path, repo: Path, cr_dir: Path) -> None:
     """Warm the cache dir so ``cache-check`` reports ``src/constants.py`` cached.
 

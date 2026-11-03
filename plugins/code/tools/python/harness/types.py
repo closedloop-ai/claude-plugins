@@ -1,8 +1,8 @@
 """
 Harness type definitions: Command enum, request/result dataclasses, and JSON helpers.
 
-All dataclasses are frozen (immutable). TerminalFailure validates its subcode at
-construction time using the same regex enforced by run-loop.sh line 79.
+All dataclasses are frozen (immutable). TerminalFailure validates its status,
+subcode, and message at construction time.
 """
 
 from __future__ import annotations
@@ -104,10 +104,6 @@ class TurnResult:
 
 _SUBCODE_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")
 
-# Mirrors every constraint enforced by ``write_loop_user_visible_failure()`` in
-# run-loop.sh:55-87. Kept in sync with that function (the authoritative source):
-# the ``status`` allowlist matches its ``case "$code"`` block, and the message
-# length matches its 1-1000 char guard.
 _STATUS_ALLOWLIST = frozenset(
     {"RUNNER_ERROR", "PRE_RUN_VALIDATION_FAILED", "PLAN_STATE_UNAVAILABLE"}
 )
@@ -118,13 +114,11 @@ _MAX_MESSAGE_LEN = 1000
 class TerminalFailure:
     """Terminal failure returned by an adapter method.
 
-    Validates all three constraints enforced by
-    ``write_loop_user_visible_failure()`` in run-loop.sh:55-87, so a misbuilt
-    failure fails fast at construction instead of being rejected downstream when
-    bash writes the user-visible marker:
+    Validates three constraints so a misbuilt failure fails fast at
+    construction:
 
     - ``status`` must be one of ``RUNNER_ERROR``, ``PRE_RUN_VALIDATION_FAILED``,
-      ``PLAN_STATE_UNAVAILABLE`` (the bash ``code`` allowlist).
+      ``PLAN_STATE_UNAVAILABLE``.
     - ``subcode`` must match ``^[A-Z][A-Z0-9_]{2,63}$``.
     - ``message`` must be 1-1000 characters (non-empty, not over-long).
     """

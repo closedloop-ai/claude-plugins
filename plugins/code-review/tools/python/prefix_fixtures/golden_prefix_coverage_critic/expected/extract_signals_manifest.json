@@ -1,5 +1,8 @@
 {
   "cache_key": "<CACHE_KEY>",
+  "extra_inputs": [
+    "<CR_DIR>/extract_signals_taxonomy.json"
+  ],
   "input_path": "<CR_DIR>/extract_signals_input.json",
   "model": "haiku",
   "output_path": "<CR_DIR>/extract_signals.json",

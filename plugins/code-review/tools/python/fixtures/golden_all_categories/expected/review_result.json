@@ -69,7 +69,7 @@
       "justified_invalid_count": 0,
       "justified_valid_count": 0,
       "rejected_count": 0,
-      "skipped_count": 0,
+      "skipped_count": 4,
       "tentative_count": 0,
       "verified_count": 4
     }

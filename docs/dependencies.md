@@ -10,34 +10,17 @@ code-review (standalone)
 self-learning (standalone, depended on by code)
 
 bootstrap ──► code
-code ◄──────► judges  (mutual)
 code ────────► self-learning
 ```
 
 ## Per-Plugin Details
-
-### `code` → `judges`
-
-| Type | File | Reference |
-|---|---|---|
-| Skill invocation | `code/prompts/prompt.md` (lines 93, 239) | `judges:eval-cache` |
-| Skill invocation (shell) | `code/scripts/run-loop.sh` (lines 302, 337) | `judges:run-judges` |
 
 ### `code` → `self-learning`
 
 | Type | File | Reference |
 |---|---|---|
 | Skill declaration (YAML) | 8 agent files (`plan-draft-writer.md`, `plan-writer.md`, `plan-validator.md`, `cross-repo-coordinator.md`, `generic-discovery.md`, `code-reviewer.md`, `implementation-subagent.md`, `verification-subagent.md`) | `self-learning:learning-quality` |
-| Command invocation (shell) | `code/scripts/run-loop.sh` (line 489) | `/self-learning:process-learnings` |
-| Command invocation (shell) | `code/scripts/run-loop.sh` (line 522) | `/self-learning:export-closedloop-learnings` |
-| Hardcoded filesystem path | `code/scripts/run-loop.sh` (line 356) | `../../self-learning/tools/python` — calls 7 Python scripts: `pattern_relevance.py`, `merge_relevance.py`, `evaluate_goal.py`, `merge_goal_outcome.py`, `verify_citations.py`, `merge_build_result.py`, `compute_success_rates.py` |
 | Hardcoded filesystem path | `code/scripts/install-dependencies.sh` (line 10) | `self-learning/tools/python/requirements.txt` |
-
-### `judges` → `code`
-
-| Type | File | Reference |
-|---|---|---|
-| Agent reference | `judges/skills/eval-cache/SKILL.md` (lines 18, 41, 50) | `@code:plan-evaluator` |
 
 ### `code-review`
 
@@ -60,7 +43,5 @@ No outbound cross-plugin dependencies. Depended on by `code`.
 
 ## Key Observations
 
-1. **`code` is the hub** — depended on by `judges` and `bootstrap`, while itself depending on `judges` and `self-learning`.
-2. **`code` ↔ `judges` remains a circular dependency** — `code` invokes judge skills, while judges references `@code:plan-evaluator` and `@code:pre-explorer`.
-3. **`code` → `self-learning` is the deepest coupling** — `run-loop.sh` directly calls 7 Python scripts by hardcoded relative path, making `code`'s post-iteration pipeline inoperable without `self-learning`.
-4. **All dependencies are undeclared** — no `plugin.json` files specify a `dependencies` field.
+1. **`code` is the hub** — depended on by `bootstrap`, while itself depending on `self-learning`.
+2. **All dependencies are undeclared**: no `plugin.json` files specify a `dependencies` field.

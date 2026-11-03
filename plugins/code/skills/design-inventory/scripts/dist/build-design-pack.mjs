@@ -342,7 +342,7 @@ function normalizeShotPath(shotPath, shotsRoot) {
   return shotsTail(shotPath);
 }
 
-// src/cli.ts
+// ../shared/cli.ts
 import { pathToFileURL } from "node:url";
 function runWhenMain(metaUrl, main2) {
   const entry = process.argv[1];

@@ -1,0 +1,329 @@
+// Usage:
+//   node codex-session.mjs turn  <stateDir> <name> --prompt-file <file> [--cwd <dir>] [--ticket <slug>] [--model <m>] [--effort <e>] [--sandbox <mode>]
+//   node codex-session.mjs steer <stateDir> <name> --prompt-file <file>
+//   node codex-session.mjs last  <stateDir> <name> [--count <n>]
+//   node codex-session.mjs end   <stateDir> <name> --reason stopped|merged
+// `turn` starts a thread bound to --cwd when <stateDir>/<name>.json does not exist (a new session also needs
+// --model, --effort and a prompt that starts with `$vibe`, since every writer is a vibe session), otherwise resumes the thread it names, then starts a turn with the prompt file's text. `steer` adds the prompt to the active turn.
+// A new thread is named `<name> · <ticket>` (`<name>` without --ticket) and moved into the Codex app's "Fleet workers" sidebar section.
+// `end` records the writer stopped or merged in its state file, then archives its thread; it refuses a thread
+// with a running turn. A later `turn` on an ended session unarchives the thread first.
+// A prompt that hands over another writer's work (a `Done:` line) also needs a `Re-verify:` line: takeover
+// writers found a half-fixed thread, six broken tests and a 10 s per insert trigger behind "done" claims.
+// `last` prints the thread's status line and its last <n> agent messages (default 1).
+// The state file is the one codex-fleet-monitor reads for a `local|remote <name>` session line.
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import path, { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
+import {
+  connectViaProxy, daemonSocket, exitAfterTotalTimeout, isEntryPoint, summarize,
+} from '../../codex-fleet-monitor/scripts/liveness.mjs';
+import {
+  archiveEndedWorker, assertWorkerNotLive, END_REASONS, endRecord, labelWorkerThread, WORKER_THREAD_SOURCE,
+  workerThreadName,
+} from '../../codex-fleet-monitor/scripts/thread-sidebar.mjs';
+import { readSessionRecord } from '../../vibe/scripts/session-record.mjs';
+import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
+
+const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+
+const COMMANDS = new Set(['turn', 'steer', 'last', 'end']);
+const SANDBOXES = new Set(['read-only', 'workspace-write', 'danger-full-access']);
+const SANDBOX_POLICIES = {
+  'read-only': { type: 'readOnly' },
+  'workspace-write': { type: 'workspaceWrite' },
+  'danger-full-access': { type: 'dangerFullAccess' },
+};
+const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const EFFORT_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
+const VIBE_PROMPT = /^\s*\$vibe\b/;
+const DONE_CLAIMS = /^\s*Done:/m;
+const REVERIFY = /^\s*Re-verify:\s*\S/m;
+
+export function parseCli(argv) {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: {
+      'prompt-file': { type: 'string' },
+      cwd: { type: 'string' },
+      ticket: { type: 'string' },
+      reason: { type: 'string' },
+      model: { type: 'string' },
+      effort: { type: 'string' },
+      sandbox: { type: 'string' },
+      count: { type: 'string' },
+      'plugin-root': { type: 'string' },
+    },
+  });
+  const [command, stateDir, name, ...extra] = positionals;
+  if (!COMMANDS.has(command)) throw new Error(`command must be one of: ${[...COMMANDS].join(', ')}`);
+  if (!stateDir || !name || extra.length) throw new Error('expected <stateDir> <name>');
+  if (!NAME_PATTERN.test(name)) throw new Error('name must be letters, digits, dot, dash or underscore');
+  if (command === 'turn' || command === 'steer') {
+    if (!values['prompt-file']) throw new Error(`${command} needs --prompt-file`);
+  } else if (values['prompt-file'] !== undefined) throw new Error(`--prompt-file applies to turn and steer only`);
+  if (command === 'end' && !END_REASONS.includes(values.reason)) throw new Error(`end needs --reason ${END_REASONS.join('|')}`);
+  if (command !== 'end' && values.reason !== undefined) throw new Error('--reason applies to end only');
+  if (command !== 'turn') {
+    for (const key of ['cwd', 'ticket', 'model', 'effort', 'sandbox', 'plugin-root']) {
+      if (values[key] !== undefined) throw new Error(`--${key} applies to turn only`);
+    }
+  }
+  if (command !== 'last' && values.count !== undefined) throw new Error('--count applies to last only');
+  if (values.effort !== undefined && !EFFORT_PATTERN.test(values.effort)) throw new Error('effort must be an identifier such as high');
+  if (values.sandbox !== undefined && !SANDBOXES.has(values.sandbox)) throw new Error(`sandbox must be one of: ${[...SANDBOXES].join(', ')}`);
+  const count = values.count === undefined ? 1 : Number(values.count);
+  if (!Number.isSafeInteger(count) || count < 1) throw new Error('count must be a positive integer');
+  return {
+    command,
+    stateDir,
+    name,
+    promptFile: values['prompt-file'],
+    cwd: values.cwd === undefined ? undefined : resolve(values.cwd),
+    ticket: values.ticket,
+    reason: values.reason,
+    model: values.model,
+    effort: values.effort,
+    sandbox: values.sandbox,
+    count,
+    ...(values['plugin-root'] === undefined ? {} : { pluginRoot: resolve(values['plugin-root']) }),
+  };
+}
+
+export function statePath(stateDir, name) {
+  return `${stateDir}/${name}.json`;
+}
+
+/** Refuses a fleet writer whose exact worktree has no active vibe session record. */
+export function assertVibeSession(worktree) {
+  if (!worktree) throw new Error('a vibe writer needs a session worktree');
+  let record;
+  try {
+    record = readSessionRecord(worktree);
+  } catch {
+    throw new Error(`vibe session record cannot be read in ${worktree}`);
+  }
+  if (!record) throw new Error(`no vibe session record in ${worktree}; the first $vibe turn must create it before any resume`);
+  if (record.status !== 'active' || typeof record.branch !== 'string' || !record.branch
+    || typeof record.slug !== 'string' || !record.slug || typeof record.summary !== 'string' || !record.summary
+    || typeof record.operator !== 'object' || !record.operator || !/^[a-f0-9]{40}$/.test(record.baseCommit ?? '')
+    || !Number.isFinite(Date.parse(record.createdAt ?? ''))) {
+    throw new Error(`no active vibe session record in ${worktree}`);
+  }
+  const branch = execFileSync('git', ['-C', worktree, 'branch', '--show-current'], { encoding: 'utf8' }).trim();
+  if (branch !== record.branch) throw new Error(`vibe session branch ${record.branch} does not match ${branch}`);
+  return record;
+}
+
+/** A new `$vibe` turn creates its record; every saved thread must resume that exact session. */
+export function requireResumeSession(saved, requestedCwd) {
+  if (!saved) return null;
+  return assertVibeSession(saved.cwd ?? requestedCwd);
+}
+
+/** Returns the saved state, or null when the session has none yet. */
+export function loadState(stateDir, name) {
+  let text;
+  try {
+    text = readFileSync(statePath(stateDir, name), 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+  const state = JSON.parse(text);
+  if (typeof state?.threadId !== 'string' || !state.threadId || typeof state.cwd !== 'string' || !state.cwd) {
+    throw new Error(`${statePath(stateDir, name)} has no threadId and cwd`);
+  }
+  return state;
+}
+
+/** Write through a temp file and rename, so a crash never leaves the monitor a half-written state file. */
+export function saveState(stateDir, name, state) {
+  const target = statePath(stateDir, name);
+  const temp = `${target}.${process.pid}.tmp`;
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`);
+  renameSync(temp, target);
+}
+
+/**
+ * Merges the options into the saved state for the next turn. A session stays bound to the worktree it
+ * started in, so a different --cwd on an existing session is refused rather than silently moved.
+ */
+export function nextState(saved, options) {
+  if (saved && options.cwd && options.cwd !== saved.cwd) {
+    throw new Error(`session is bound to ${saved.cwd}; start a new session name for ${options.cwd}`);
+  }
+  if (!saved && !options.cwd) throw new Error('a new session needs --cwd');
+  if (saved && options.ticket && saved.ticket && options.ticket !== saved.ticket) {
+    throw new Error(`session is for ${saved.ticket}; start a new session name for ${options.ticket}`);
+  }
+  if (!saved && !options.effort) throw new Error('a new session needs --effort');
+  // Sessions started without a model once came up on a slower one and had to be restarted.
+  if (!saved && !options.model) throw new Error('a new session needs --model (set CODEX_MODEL in config.env)');
+  return {
+    threadId: saved?.threadId,
+    cwd: saved?.cwd ?? options.cwd,
+    model: options.model ?? saved?.model,
+    effort: options.effort ?? saved?.effort,
+    sandbox: options.sandbox ?? saved?.sandbox,
+    turns: saved?.turns ?? [],
+    ...((saved?.ticket ?? options.ticket) ? { ticket: saved?.ticket ?? options.ticket } : {}),
+    ...(saved?.ended ? { ended: saved.ended } : {}),
+    ...(saved?.archivedAt ? { archivedAt: saved.archivedAt } : {}),
+    ...(saved?.loadedSkill ? { loadedSkill: saved.loadedSkill } : {}),
+  };
+}
+
+/**
+ * Ends every turn and steer this client sends. A vibe session once wrote its parent orchestrator's capacity stop
+ * into its findings and its writer's brief as a "Human capacity-stop ruling" (2026-10-26): a driven session cannot
+ * tell whose words its user turn carries unless the turn says so.
+ */
+export const ORCHESTRATOR_PROVENANCE = 'From the fleet orchestrator, not the operator: its own directions are operational and are recorded as `(orchestrator)`, never as a human ruling; only operator words it quotes, with their source, are rulings.';
+
+function textInput(text) {
+  const sent = text.includes(ORCHESTRATOR_PROVENANCE) ? text : `${text}\n${ORCHESTRATOR_PROVENANCE}`;
+  return [{ type: 'text', text: sent, text_elements: [] }];
+}
+
+function defined(object) {
+  return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
+}
+
+/**
+ * Starts or resumes the thread, then starts a turn. approvalPolicy is always `never`: this client
+ * disconnects once the turn is accepted, so an approval request would have nobody to answer it.
+ * `warn` receives each sidebar step an older App Server could not apply.
+ */
+export async function startTurn(client, state, prompt, promptFile, { name, warn = () => {} } = {}) {
+  const threadOptions = defined({ cwd: state.cwd, model: state.model, sandbox: state.sandbox, approvalPolicy: 'never' });
+  let { threadId } = state;
+  const { ended, archivedAt, ...open } = state;
+  if (threadId) {
+    if (archivedAt) await client.request('thread/unarchive', { threadId });
+    await client.request('thread/resume', { threadId, ...threadOptions });
+  } else {
+    const started = await client.request('thread/start', { ...threadOptions, threadSource: WORKER_THREAD_SOURCE });
+    threadId = started?.thread?.id;
+    if (!threadId) throw new Error('App Server returned no thread id');
+    for (const warning of await labelWorkerThread(client, threadId, workerThreadName(name, state.ticket))) warn(warning);
+  }
+  const result = await client.request('turn/start', defined({
+    threadId,
+    input: textInput(prompt),
+    cwd: state.cwd,
+    model: state.model,
+    effort: state.effort,
+    sandboxPolicy: state.sandbox && SANDBOX_POLICIES[state.sandbox],
+    approvalPolicy: 'never',
+  }));
+  const turnId = result?.turn?.id;
+  if (!turnId) throw new Error('App Server returned no turn id');
+  return { ...open, threadId, turns: [...state.turns, { turnId, kind: 'turn', promptFile }] };
+}
+
+export async function readThread(client, threadId) {
+  const { thread } = await client.request('thread/read', { threadId, includeTurns: true });
+  return thread;
+}
+
+export async function steerTurn(client, state, prompt, promptFile) {
+  if (state.ended) throw new Error(`session ended (${state.ended.reason}); use turn to reopen it`);
+  const turn = (await readThread(client, state.threadId))?.turns?.at(-1);
+  if (turn?.status !== 'inProgress') throw new Error(`no active turn to steer (last turn is ${turn?.status ?? 'none'}); use turn`);
+  const result = await client.request('turn/steer', { threadId: state.threadId, expectedTurnId: turn.id, input: textInput(prompt) });
+  if (result?.turnId !== turn.id) throw new Error('App Server steered a different turn');
+  return { ...state, turns: [...state.turns, { turnId: turn.id, kind: 'steer', promptFile }] };
+}
+
+/** The status line codex-fleet-monitor prints, then the last `count` agent messages, oldest first. */
+export function lastMessages(name, thread, count) {
+  const messages = (thread?.turns ?? [])
+    .flatMap((turn) => (turn.items ?? []).filter((item) => item.type === 'agentMessage').map((item) => ({ turn, item })))
+    .slice(-count);
+  return [
+    summarize(name, thread),
+    ...messages.map(({ turn, item }) => `--- turn ${turn.id} ${turn.status}\n${item.text ?? ''}`),
+  ].join('\n');
+}
+
+/** Records the writer stopped or merged, then archives its thread; a running turn is refused before either. */
+export async function endSession(client, stateDir, name, saved, reason) {
+  let state = saved;
+  if (!state.ended) {
+    await assertWorkerNotLive(client, state.threadId);
+    state = { ...state, ended: endRecord(reason) };
+    saveState(stateDir, name, state);
+  }
+  if (!state.archivedAt) {
+    await archiveEndedWorker(client, state.threadId, state.ended);
+    state = { ...state, archivedAt: new Date().toISOString() };
+    saveState(stateDir, name, state);
+  }
+  return `${name} ended ${state.threadId} ${state.ended.reason}`;
+}
+
+export async function run(client, options, { warn = (text) => console.error(`codex-session: ${text}`) } = {}) {
+  const saved = loadState(options.stateDir, options.name);
+  if (options.command === 'last') {
+    if (!saved) throw new Error(`no session ${options.name} in ${options.stateDir}`);
+    return lastMessages(options.name, await readThread(client, saved.threadId), options.count);
+  }
+  if (options.command === 'end') {
+    if (!saved) throw new Error(`no session ${options.name} in ${options.stateDir}`);
+    return endSession(client, options.stateDir, options.name, saved, options.reason);
+  }
+  const prompt = readFileSync(options.promptFile, 'utf8');
+  if (!prompt.trim()) throw new Error(`${options.promptFile} is empty`);
+  if (options.command === 'turn' && !saved && !VIBE_PROMPT.test(prompt)) {
+    throw new Error(`a new session's prompt must start with $vibe; ${options.promptFile} does not`);
+  }
+  if (DONE_CLAIMS.test(prompt) && !REVERIFY.test(prompt)) {
+    throw new Error(`${options.promptFile} hands over "Done:" claims with no "Re-verify:" line; the writer re-verifies each with a test or a measurement before building on it`);
+  }
+  const promptFile = resolve(options.promptFile);
+  let state;
+  if (options.command === 'turn') state = await startTurn(client, nextState(saved, options), prompt, promptFile, { name: options.name, warn });
+  else {
+    if (!saved) throw new Error(`no session ${options.name} in ${options.stateDir}`);
+    state = await steerTurn(client, saved, prompt, promptFile);
+  }
+  // A fresh thread reads the installed skill on its first $vibe turn; this records that definition
+  // at spawn, which is not an observation of the read.
+  if (!saved) state.loadedSkill = loadedSkillEvidence(state.threadId, 'codex', options.pluginRoot ?? PLUGIN_ROOT, 'vibe', LoadBasis.InstalledAtSpawn);
+  saveState(options.stateDir, options.name, state);
+  const { turnId, kind } = state.turns.at(-1);
+  return `${options.name} ${kind} ${state.threadId} ${turnId}`;
+}
+
+async function main() {
+  exitAfterTotalTimeout();
+  let options;
+  try {
+    options = parseCli(process.argv.slice(2));
+    if (options.command === 'turn') {
+      const saved = loadState(options.stateDir, options.name);
+      requireResumeSession(saved, options.cwd);
+    }
+  } catch (error) {
+    console.error(`codex-session: ${error.message}`);
+    process.exit(2);
+  }
+  const client = connectViaProxy(daemonSocket());
+  let code = 0;
+  try {
+    await client.initialize();
+    console.log(await run(client, options));
+  } catch (error) {
+    console.error(`codex-session: ${error.message}`);
+    code = 1;
+  }
+  client.close();
+  process.exit(code);
+}
+
+if (isEntryPoint(import.meta.url)) await main();

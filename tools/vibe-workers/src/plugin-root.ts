@@ -1,0 +1,72 @@
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+/** Raised when a caller-supplied root cannot be the plugin these workers belong to. */
+export class AgentRootError extends Error {
+  constructor(readonly code: "AGENT_ROOT_INVALID" | "STALE_PLUGIN_ROOT", message: string) { super(message); }
+}
+
+const manifestPaths = [".claude-plugin/plugin.json", ".codex-plugin/plugin.json"] as const;
+
+/** Reads the plugin manifest from either supported runtime layout. */
+export function readPluginManifest(root: string): Record<string, unknown> {
+  for (const relative of manifestPaths) {
+    try { return JSON.parse(readFileSync(join(root, relative), "utf8")) as Record<string, unknown>; }
+    catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+  }
+  throw Object.assign(new Error("No vibe plugin manifest exists"), { code: "ENOENT" });
+}
+
+/** The installed plugin root that owns a bundled entry (`<root>/skills/vibe/scripts/dist/<entry>.mjs`). */
+export function installedPluginRoot(metaUrl: string): string {
+  const entry = dirname(fileURLToPath(metaUrl));
+  for (const candidate of [resolve(entry, "../../../.."), resolve(entry, "../../../plugins/vibe")]) {
+    try {
+      const root = realpathSync(candidate);
+      if (isPluginRoot(root)) return root;
+    } catch { /* Try the next supported source or bundle layout. */ }
+  }
+  throw new AgentRootError("AGENT_ROOT_INVALID", "The Claude worker entry is not inside the installed vibe plugin or its owning source tree");
+}
+
+/**
+ * Resolves the agent root a worker binds to. With nothing supplied it is the installed plugin root, or the
+ * persistent writer's recorded root when that ledger binding still exists. A supplied `<root>/agents` means
+ * `<root>` (the 2026-10-15 session passed it and every launch failed). A supplied root from another installed
+ * release is refused unless it is exactly the recorded binding a resumed writer must keep.
+ */
+export function resolveAgentRoot(supplied: string | undefined, installed: string, recorded?: string): string {
+  const fallback = recorded && existsSync(recorded) ? recorded : installed;
+  if (supplied === undefined) return fallback;
+  let root: string;
+  try { root = realpathSync(supplied); }
+  catch { throw new AgentRootError("AGENT_ROOT_INVALID", "The supplied agent root does not exist; omit agentRoot to use the installed plugin"); }
+  if (basename(root) === "agents" && isPluginRoot(dirname(root))) root = dirname(root);
+  if (!isPluginRoot(root)) {
+    throw new AgentRootError("AGENT_ROOT_INVALID", "The supplied agent root is not a vibe plugin root; omit agentRoot to use the installed plugin");
+  }
+  if (root === installed || root === recorded) return root;
+  const suppliedVersion = pluginVersion(root);
+  const installedVersion = pluginVersion(installed);
+  if (suppliedVersion && installedVersion && suppliedVersion !== installedVersion) {
+    throw new AgentRootError("STALE_PLUGIN_ROOT",
+      `The supplied agent root is vibe ${suppliedVersion}, but this launcher belongs to vibe ${installedVersion}; omit agentRoot`);
+  }
+  return root;
+}
+
+function isPluginRoot(root: string): boolean {
+  if (!existsSync(join(root, "agents"))) return false;
+  try { return readPluginManifest(root).name === "vibe"; }
+  catch { return false; }
+}
+
+function pluginVersion(root: string): string | undefined {
+  try {
+    const version = readPluginManifest(root).version;
+    return typeof version === "string" ? version : undefined;
+  } catch { return undefined; }
+}

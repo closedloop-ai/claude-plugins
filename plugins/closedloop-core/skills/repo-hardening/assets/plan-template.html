@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-fWlfE2ikBfPHs5eyRasxPvYOfV6CGOeukwQoHFe+WsE='; base-uri 'none'; form-action 'none'">
+<title>{{REPO}} hardening plan</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0 auto; max-width: 60rem; padding: 1.5rem 1rem 4rem; font: 15px/1.5 system-ui, sans-serif; color: #1b1b1b; background: #fbfbf9; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.2rem; margin: 2rem 0 .5rem; border-bottom: 1px solid #d8d6cf; padding-bottom: .25rem; }
+  h3 { font-size: 1rem; margin: 1.25rem 0 .25rem; }
+  .meta { color: #5b5b57; font-size: .9rem; }
+  .summary { padding: 1rem; border: 1px solid #d8d6cf; border-radius: 6px; background: #f3f2ec; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  th, td { text-align: left; vertical-align: top; padding: .35rem .5rem; border-bottom: 1px solid #e2e0d8; }
+  code, pre { font: .85em ui-monospace, SFMono-Regular, Menlo, monospace; }
+  pre { padding: .75rem; overflow-x: auto; background: #f0efe9; border-radius: 4px; }
+  details { margin: .5rem 0; }
+  summary { font-weight: 600; }
+  .sev { print-color-adjust: exact; -webkit-print-color-adjust: exact; display: inline-block; padding: 0 .4rem; border-radius: 3px; font-size: .8rem; font-weight: 600; margin-right: .4rem; }
+  .high { background: #f6d5d0; } .medium { background: #f7e7c4; } .low { background: #dcebd8; }
+  .tag { font-size: .8rem; color: #5b5b57; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: .2rem .75rem; margin: .5rem 0; }
+  dt { font-weight: 600; } dd { margin: 0; }
+  @media screen and (prefers-color-scheme: dark) {
+    body { color: #e6e4de; background: #161614; }
+    h2 { border-color: #3a3935; }
+    .summary { border-color: #3a3935; background: #1f1f1c; }
+    th, td { border-color: #2c2b28; }
+    pre { background: #222220; }
+    .meta, .tag { color: #a3a19a; }
+    .high { background: #6b2a24; } .medium { background: #6a5420; } .low { background: #2f5a2a; }
+  }
+  @media print {
+    body { max-width: none; padding: 0; background: #fff; color: #000; }
+    details { break-inside: avoid; }
+    details::details-content { content-visibility: visible; display: block; }
+    summary { list-style: none; }
+  }
+</style>
+<script>addEventListener("beforeprint", function () { document.querySelectorAll("details").forEach(function (d) { d.open = true; }); });</script>
+</head>
+<body>
+<h1>{{REPO}} hardening plan</h1>
+<p class="meta">Analyzed {{SOURCE}} at commit <code>{{SHA}}</code> on {{DATE}}. Scope: {{SCOPE}}</p>
+
+<div class="summary">
+  <h2 style="margin-top:0;border:0">Summary</h2>
+  <p>{{SUMMARY}}</p>
+  <ul>
+    <li><strong>F1.</strong> {{HEADLINE_FINDING}}</li>
+  </ul>
+  <p><strong>Recommended first unit:</strong> {{FIRST_UNIT}}</p>
+</div>
+
+<h2>What the repository already enforces</h2>
+<table>
+  <tr><th>Mechanism</th><th>Catches</th><th>Where</th><th>Rung</th></tr>
+  <tr><td>{{MECHANISM}}</td><td>{{CATCHES}}</td><td><code>{{PATH}}</code></td><td>{{RUNG}}</td></tr>
+</table>
+
+<h2>Findings</h2>
+<h3><span class="sev high">High</span> F1. {{CLASS_SENTENCE}}</h3>
+<dl>
+  <dt>Evidence</dt><dd><code>{{PRIMARY_EVIDENCE}}</code> <span class="tag">measured</span></dd>
+  <dt>Principle</dt><dd>{{PRINCIPLE}}</dd>
+  <dt>Existing rule</dt><dd>{{EXISTING_RULE_OR_NONE}}</dd>
+  <dt>Proposed rung</dt><dd>{{RUNG}} via {{MECHANISM}}, at <code>{{LOCATION}}</code></dd>
+  <dt>Why not higher</dt><dd>{{WHY_NOT_HIGHER}}</dd>
+  <dt>Proof</dt><dd>{{PROOF}}</dd>
+  <dt>Deletions enabled</dt><dd>{{DELETIONS}}</dd>
+</dl>
+<details>
+  <summary>More evidence</summary>
+  <ul>
+    <li><code>{{PATH}}:{{LINE}}</code> {{WHAT_IT_SHOWS}} <span class="tag">measured</span></li>
+    <li><a href="{{COMMIT_OR_PR_URL}}">{{SHORT_SHA_OR_PR}}</a> {{WHAT_IT_SHOWS}} <span class="tag">inferred</span></li>
+  </ul>
+  <pre>{{ESCAPED_EXCERPT}}</pre>
+</details>
+
+<h2>Sequence</h2>
+<h3>U1. {{UNIT_TITLE}} <span class="tag">quick win, small</span></h3>
+<dl>
+  <dt>Covers</dt><dd>F1</dd>
+  <dt>Goal and done check</dt><dd>{{DONE_CHECK}}</dd>
+  <dt>Changes</dt><dd>{{CHANGES}}</dd>
+  <dt>Deletes</dt><dd>{{DELETES}}</dd>
+  <dt>Proof for the PR</dt><dd>{{PROOF}}</dd>
+  <dt>Depends on</dt><dd>{{DEPENDENCIES_OR_NONE}}</dd>
+</dl>
+
+<h2>Quick wins versus structural changes</h2>
+<table>
+  <tr><th>Quick wins</th><th>Structural</th></tr>
+  <tr><td>{{QUICK_WIN_UNITS}}</td><td>{{STRUCTURAL_UNITS}}</td></tr>
+</table>
+
+<h2>What not to do</h2>
+<ul><li>{{TEMPTING_CHANGE}}: {{WHY_NOT}}</li></ul>
+
+<h2>Decisions for a human</h2>
+<h3>D1. {{DECISION}}</h3>
+<p>{{CONTEXT}}</p>
+<ol><li>{{OPTION_A}}</li><li>{{OPTION_B}}</li></ol>
+<p><strong>Recommendation:</strong> {{RECOMMENDATION}}</p>
+
+<h2>Not assessed</h2>
+<ul><li>{{AREA}}: {{WHAT_IT_WOULD_TAKE}}</li></ul>
+</body>
+</html>

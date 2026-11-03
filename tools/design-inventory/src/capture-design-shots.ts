@@ -31,7 +31,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 import { validateFindings, type JsonObject } from "./design-findings-schema.js";
-import { runWhenMain } from "./cli.js";
+import { runWhenMain } from "../../shared/cli.js";
 
 const HIGHLIGHT_CSS =
   ".cl-shot-highlight { outline: 3px solid #e11d48 !important; outline-offset: 2px; " +

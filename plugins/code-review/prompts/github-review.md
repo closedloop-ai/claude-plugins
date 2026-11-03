@@ -157,7 +157,7 @@ Write `.closedloop-ai/code-review-findings.json`:
 
 The `findings` array contains the envelope's `verified[]` only (NOT `rejected[]`, `justified[]`, or `pending_verification[]` — those have separate files; see 6c and 6d). When no envelope exists (verifier disabled / shadow mode), fall back to the legacy validate output. The workflow's `post-comments` step handles formatting, dedup against existing comments, and error handling.
 
-Write all verified findings verbatim — do NOT pre-filter out-of-hunk ones. `post-comments` skips findings tagged `out_of_hunk_kept` (and any line GitHub rejects with a 422 as out-of-diff) from inline posting and lets them surface in the summary instead, so they must remain in the findings file for the summary's findings list.
+Write all verified findings verbatim — do NOT pre-filter out-of-hunk or out-of-diff ones, and keep their `out_of_diff` / `out_of_hunk_kept` / `line_out_of_range` tags and `evidence[]`. `post-comments` skips findings tagged `out_of_hunk_kept` or `line_out_of_range` (a line past the end of its file that the validator could not re-anchor), plus any line GitHub rejects with a 422 as out-of-diff, from inline posting and lets them surface in the summary instead. A finding tagged `out_of_diff` (its file is outside the PR diff) is posted inline at the first `evidence[]` location that lies in the PR diff, with a comment body that opens with the affected `file:line`; with no such location it is summary-only too. A finding on a file the PR deletes posts on the diff's LEFT side, because its line is numbered in the old file (`post-comments` reads the file statuses from the same PR-files lookup). Either way they must remain in the findings file for the summary's findings list.
 
 **Impact Analyzer findings (FEA-1401).** Findings with
 `category: "ImpactAnalysis"` carry a populated `external_impact[]`
@@ -205,6 +205,7 @@ Write `.closedloop-ai/code-review-dismissed-summary.md` with a human-readable re
 **Original reviewer:** {REVIEWER}
 **Verifier verdict:** REJECTED ({REJECTION_CLASS})
 **Verifier confidence:** {VERIFIER_CONFIDENCE}
+[If REJECTION_CLASS is `not_caused_by_diff`, add: **Why dismissed:** outside the diff, and the verifier found no change in this diff that caused it]
 
 **Original issue:** {ISSUE}
 
@@ -285,9 +286,10 @@ Read `$CR_DIR/review_result.json` → `stats.verification`. If the block is not 
 <summary>{verified_count} verified · {rejected_count} dismissed · {justified_valid_count + justified_invalid_count} justified</summary>
 
 **Verifier outcomes**
-- CONFIRMED + DOWNGRADE: {verified_count - tentative_count - re_asserted}
+- CONFIRMED + DOWNGRADE: {verified_count - tentative_count - re_asserted - justified_invalid_count - skipped_count}
 - TENTATIVE: {tentative_count}
 - RE_ASSERTED: {sum over by_reviewer[].re_asserted}
+- Not verified (skipped): {skipped_count}
 - REJECTED: {rejected_count}
 
 **Justification (PLN-721)** — read from `stats.verification`
@@ -399,13 +401,15 @@ Then continue with the remaining summary content:
 1. **[P2] [file:line]** Title
 2. **[P3] [file:line]** Title
 
+For a finding tagged `out_of_diff`, append ` — outside the diff — caused by this change` to its line in whichever section it lands when its `verifier_verdict` is `CONFIRMED`, `DOWNGRADE` or `RE_ASSERTED`, and ` — outside the diff — causation unconfirmed` otherwise.
+
 ### Validation Stats
 
 Mirrors the local-mode Validation Summary so PR reviewers can see the same accuracy-audit signal (which reviewer discarded how many findings for what reason) without having to read local logs. Read `<CR_DIR>/findings_validated.json` for the discard-reason counts; an absent file means a pre-PLN-722 run — emit only the two lines marked **(always)** below and skip the rest.
 
 - **Total findings from agents:** X
 - **Validated (confirmed):** A
-- **Discarded — file not changed:** B
+- **Kept — outside the diff:** B *(reads `kept_out_of_diff`)*
 - **Discarded — out-of-hunk (low confidence):** C *(reads `discarded_out_of_hunk_low_confidence`)*
 - **Discarded — low confidence:** D
 - **Discarded — rejected by validation:** E

@@ -5,7 +5,9 @@ argument-hint: "[scope] [--github] [--base <ref>] [--since-last-review] [--full-
 
 # Shallow Code Review (PLN-807)
 
-This command is shorthand for `/start --depth shallow`. Follow every instruction in `${CLAUDE_PLUGIN_ROOT}/commands/start.md` verbatim, with one binding:
+This command is shorthand for `/start --depth shallow`. Follow every instruction in `${CLAUDE_PLUGIN_ROOT}/commands/start.md` verbatim, with two bindings:
+
+**`PLUGIN_ROOT` = `${CLAUDE_PLUGIN_ROOT}`** (Claude Code fills this in for this command). This is the caller binding start.md's stage 0b resolves first. Wherever start.md (or any file it tells you to read) writes `${CLAUDE_PLUGIN_ROOT}` or `<PLUGIN_ROOT>`, use this value. Do not try to read the plugin root from a Bash environment variable; it is not set there.
 
 **`DEPTH = "shallow"` for the entire run.** Pass `--depth shallow` to every helper that accepts the flag (notably `prepare-run`, `hygiene`, `review-state-read`, and `review-state-write`).
 
@@ -35,4 +37,4 @@ If the PR is > 3000 LOC, touches schema/migrations, or modifies public API surfa
 
 ## Execution
 
-Follow `start.md` from "0a. Resolve plugin root" through every gate and stage, with `DEPTH = "shallow"` substituted into every helper invocation. The run plan emitted by `prepare-run --depth shallow` includes the core pipeline minus 10 standard-only stages (signal extraction, coverage planning/critic, budget arbitrate, derive/verify spawn-spec). The walker behavior is otherwise unchanged. `stage_19c_derive_static_spec` runs in place of `stage_19b_derive_spawn_spec` and produces an `arbitrate_status: "static"` spec with BHA × N + BHB + unified_auditor.
+Follow `start.md` from "Stage 0 — Initialize Run Plan" through every gate and stage, with the `PLUGIN_ROOT` binding above and `DEPTH = "shallow"` substituted into every helper invocation. The run plan emitted by `prepare-run --depth shallow` includes the core pipeline minus 10 standard-only stages (signal extraction, coverage planning/critic, budget arbitrate, derive/verify spawn-spec). The walker behavior is otherwise unchanged. `stage_19c_derive_static_spec` runs in place of `stage_19b_derive_spawn_spec` and produces an `arbitrate_status: "static"` spec with BHA × N + BHB + unified_auditor.

@@ -5,6 +5,9 @@
     "coverage_plan_initial_hash": "<PLAN_INITIAL_HASH>",
     "coverage_state": "<CR_DIR>/coverage.json",
     "diff_summary_path": "<CR_DIR>/coverage_critic_diff_summary.json",
+    "extra_inputs": [
+      "<CR_DIR>/coverage_critic_diff_summary.json"
+    ],
     "input_path": "<CR_DIR>/coverage_critic_input.json",
     "model": "sonnet",
     "prompt_hash": "<PROMPT_HASH>",
