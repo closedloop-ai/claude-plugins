@@ -146,7 +146,8 @@ unless the brief or `VIBE_FORK_CHECKPOINT=1` switches it on; when on, return
 `NEEDS_PERSON` for each entry in its `blocking` list, and when off build as
 usual and let each `wouldBlock` entry stand as an unverified assumption in the
 handoff. Seed the table's `## Acceptance Criteria` section from the card's
-criteria. Before any claim about current `main`, run
+criteria. The locked card is not edited afterwards; criteria change in the
+decision table. Before any claim about current `main`, run
 `node <plugin-root>/skills/vibe/scripts/freshness.mjs --worktree "<wt>" --expect-path "<wt>"`.
 When its output has `fetchSkipped` the claim is about the session base, not
 current `main`; when it prints `escalate`, rerun it escalated if the claim

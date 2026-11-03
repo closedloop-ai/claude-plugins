@@ -1,11 +1,11 @@
-"""Contract checks for the Spec Card, fork checkpoint, file justification check, freshness, assumptions and evidence matrix.
+"""Contract checks for the Spec Card, fork checkpoint, file justification check, freshness, assumptions and audit rows.
 
 1. The rule lives once, in `references/spec-card.md`; the skills and workers point at it, and each rule has a script.
 2. The decision table stays mandatory, full and authored by the SAME writer; the card only seeds it.
 3. The fork checkpoint is off by default and changes no default behavior.
 4. The file check is a justification, never a cap: it never blocks and never removes required scope.
 5. The handoff Assumptions field is generated from the card and required by the live ticket check; the
-   evidence matrix extends `criteria-audit.mjs` with the audit's own MET/PARTIAL/MISSED words.
+   audit rows carry the verdict, type and ref in one table `criteria-audit.mjs` reads.
 """
 
 from __future__ import annotations
@@ -88,20 +88,31 @@ def test_assumptions_are_generated_never_upgraded_and_required_on_the_ticket() -
     assert "Fill the Handoff Assumptions line from the session's Spec Card, never freehand" in ticket
 
 
-def test_the_evidence_matrix_reuses_the_audit_vocabulary() -> None:
-    text = flat(section(SPEC_CARD.read_text(), "## Evidence matrix"))
+def test_the_audit_rows_hold_the_verdict_type_and_ref_in_one_place() -> None:
+    text = flat(section(SPEC_CARD.read_text(), "## Audit rows"))
     assert "`MET`, `PARTIAL` or `MISSED` (no other status words)" in text
+    assert "There is no separate evidence file" in text
     assert "a planned test is not evidence" in text
     audit = (HANDOFF / "scripts" / "criteria-audit.mjs").read_text()
     assert 'import { EVIDENCE_TYPES } from "../../vibe/scripts/spec-card.mjs";' in audit
-    assert "!values.evidence" in audit
+    assert "values.evidence" not in audit and "--evidence" not in audit
+    assert "--evidence" not in (HANDOFF / "scripts" / "handoff-gate.mjs").read_text()
     assert "REMOTE_PENDING" not in audit and "NOT_APPLICABLE" not in audit
+
+
+def test_the_card_seeds_the_decision_table_once() -> None:
+    text = rule()
+    assert "seeds the table's `## Acceptance Criteria` section and its Open Questions once" in text
+    assert "After seeding, the table is authoritative" in text
+    assert "A locked card is not edited after seeding" in text
+    assert "superseded" not in text.replace("`Superseded`", "")
 
 
 def test_skills_and_workers_point_at_the_rule() -> None:
     assert POINTER in flat((VIBE / "SKILL.md").read_text())
     assert POINTER in flat(QUALITY.read_text())
-    assert "--matrix <matrix> --evidence <evidence>`" in flat((HANDOFF / "SKILL.md").read_text())
+    assert "scripts/criteria-audit.mjs --ticket <body> --worktree" in flat((HANDOFF / "SKILL.md").read_text())
+    assert "--evidence <evidence>" not in flat((HANDOFF / "SKILL.md").read_text())
     requirements = flat(agent("vibe-requirements-worker"))
     assert POINTER in requirements
     assert "freshness.mjs --worktree <repo path>" in requirements

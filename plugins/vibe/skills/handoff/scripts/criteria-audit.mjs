@@ -5,27 +5,26 @@
 // flag-off path with the base, and the audit against the criteria ran only
 // after merge.
 //
-// Usage: criteria-audit.mjs --worktree <path> --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json> --evidence <evidence .json>
+// Usage: criteria-audit.mjs --worktree <path> --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json>
 //
 // The criteria are the ticket's `- Acceptance criteria:` checklist, numbered
 // AC-1, AC-2, ... in order.
 // The audit is a fresh-context reviewer's table given only those criteria and
-// the diff: one `| AC-n | MET|PARTIAL|MISSED | <evidence> |` row per
-// criterion. Every criterion must be MET. Later work is classified by
-// qa-impact.mjs, which reruns this audit only when its affected scope changed.
+// the diff: one `| AC-n | MET|PARTIAL|MISSED | <type> | <ref> |` row per
+// criterion, so the verdict, its evidence type and its ref live in one place
+// (vibe/references/spec-card.md, "Audit rows"). Every criterion needs a MET row
+// whose type is test, script, screenshot or api-read and whose ref names the
+// evidence; a criterion with no such row blocks "done", and so does any
+// PARTIAL or MISSED row. A test ref must name a file that exists at the
+// worktree's HEAD. Later work is classified by qa-impact.mjs, which reruns this
+// audit only when its affected scope changed.
 // The matrix: {"surfaces": [...], "inputs": [...], "flags": ["on", "off"] or [],
 // "rows": [{"criterion", "surface", "input", "flag", "evidence"}]}. Every
 // criterion x surface x input x flag cell needs a row with evidence; `"input":
 // "*"` covers every input only with evidence starting `not input-driven:`.
 // A flag-off cell's evidence starts `no behavior change:` (a story,
 // accessibility or snapshot diff against the base) or `ruling:` (the human
-// source). The evidence file is the requirement-to-evidence matrix
-// (vibe/references/spec-card.md, "Evidence matrix"): {"rows": [{"criterion",
-// "type", "ref", "verdict"}]} with the audit's MET/PARTIAL/MISSED verdicts. Every
-// criterion needs a MET row whose type is test, script, screenshot or api-read
-// and whose ref names the evidence; a criterion with no such row blocks "done",
-// and so does any PARTIAL or MISSED row. A test ref must name a file that exists
-// at the worktree's HEAD. Prints {"ok","problems"}; exits 1 on any problem.
+// source). Prints {"ok","problems"}; exits 1 on any problem.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -38,7 +37,7 @@ const CRITERIA_HEADING = /^(#{1,6})\s+Acceptance criteria\b/i;
 const HEADING = /^(#{1,6})\s/;
 const CHECKBOX = /^\s+-\s*\[([ xX])\]\s*(\S.*)$/;
 const TOP_CHECKBOX = /^\s*[-*]\s*\[([ xX])\]\s*(\S.*)$/;
-const AUDIT_ROW = /^\|\s*(AC-\d+)\s*\|\s*(MET|PARTIAL|MISSED)\s*\|\s*(.*?)\s*\|\s*$/gm;
+const AUDIT_ROW = /^\|\s*(AC-\d+)\s*\|\s*(MET|PARTIAL|MISSED)\s*\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$/gm;
 const FLAG_OFF_EVIDENCE = /^(?:no behavior change:|ruling:)\s*\S/;
 const ANY_INPUT_EVIDENCE = /^not input-driven:\s*\S/;
 
@@ -78,14 +77,23 @@ export function criteriaStates(ticket) {
   return criteria;
 }
 
-/** Problems with the audit table against the criteria. */
-export function auditProblems(audit, criteria) {
+/** Criteria with no valid MET row, rows that are not MET or are unproven, and rows for criteria the ticket does not list. */
+export function auditProblems(audit, criteria, worktree = null) {
+  const rows = [...audit.matchAll(AUDIT_ROW)].map((match) => ({ criterion: match[1], verdict: match[2], type: match[3], ref: match[4] }));
   const problems = [];
-  const rows = new Map([...audit.matchAll(AUDIT_ROW)].map((match) => [match[1], { verdict: match[2], evidence: match[3] }]));
   for (const { id } of criteria) {
-    const row = rows.get(id);
-    if (!row) problems.push(`${id}: not audited`);
-    else if (row.verdict !== "MET") problems.push(`${id}: ${row.verdict}${row.evidence ? ` (${row.evidence})` : ""}`);
+    const entries = rows.filter((row) => row.criterion === id);
+    if (entries.length === 0) {
+      problems.push(`${id}: not audited`);
+      continue;
+    }
+    const rowProblems = entries.flatMap((row) => auditRowProblems(id, row, worktree));
+    problems.push(...rowProblems);
+    if (rowProblems.length === 0 && !entries.some((row) => row.verdict === "MET")) problems.push(`${id}: no MET audit row`);
+  }
+  const known = new Set(criteria.map(({ id }) => id));
+  for (const row of rows) {
+    if (!known.has(row.criterion)) problems.push(`${row.criterion}: audit row for a criterion the ticket does not list`);
   }
   return problems;
 }
@@ -122,34 +130,10 @@ export function matrixProblems(matrix, criteria) {
   return problems;
 }
 
-/** Criteria with no MET evidence row, and rows that are unfilled, unproven or not MET. */
-export function evidenceProblems(evidence, criteria, worktree = null) {
-  const rows = Array.isArray(evidence?.rows) ? evidence.rows : [];
-  const filled = (value) => typeof value === "string" && value.trim() !== "";
-  const problems = [];
-  for (const { id } of criteria) {
-    const entries = rows.filter((row) => row?.criterion === id);
-    if (entries.length === 0) {
-      problems.push(`${id}: no evidence row; map it to a test, script, screenshot or API read`);
-      continue;
-    }
-    const rowProblems = entries.flatMap((row) => evidenceRowProblems(id, row, filled, worktree));
-    problems.push(...rowProblems);
-    if (rowProblems.length === 0 && !entries.some((row) => row.verdict === "MET")) problems.push(`${id}: no MET evidence row`);
-  }
-  const known = new Set(criteria.map(({ id }) => id));
-  for (const row of rows) {
-    if (!known.has(row?.criterion)) problems.push(`${row?.criterion ?? "a row"}: evidence for a criterion the ticket does not list`);
-  }
-  return problems;
-}
-
-function evidenceRowProblems(id, row, filled, worktree) {
+function auditRowProblems(id, row, worktree) {
+  if (row.verdict !== "MET") return [`${id}: ${row.verdict}${row.ref ? ` (${row.ref})` : ""}`];
   if (!EVIDENCE_TYPES.includes(row.type)) return [`${id}: evidence type must be one of ${EVIDENCE_TYPES.join(", ")}`];
-  if (row.verdict === null || row.verdict === undefined) return [`${id}: ${row.type} evidence not filled in`];
-  if (!["MET", "PARTIAL", "MISSED"].includes(row.verdict)) return [`${id}: verdict must be MET, PARTIAL or MISSED`];
-  if (row.verdict !== "MET") return [`${id}: ${row.verdict} (${filled(row.ref) ? row.ref : row.type})`];
-  if (!filled(row.ref)) return [`${id}: MET needs a ref naming the ${row.type}`];
+  if (row.ref.trim() === "") return [`${id}: MET needs a ref naming the ${row.type}`];
   if (row.type === "test" && worktree !== null) {
     const file = row.ref.split(/::|#/)[0].trim();
     if (!existsAtHead(worktree, file)) return [`${id}: the test ${file} does not exist at HEAD; a planned test is not evidence`];
@@ -167,16 +151,15 @@ function existsAtHead(worktree, file) {
 }
 
 function main(argv) {
-  const { values } = parseArgs({ args: argv, options: { worktree: { type: "string" }, ticket: { type: "string" }, audit: { type: "string" }, matrix: { type: "string" }, evidence: { type: "string" } } });
-  if (!values.worktree || !values.ticket || !values.audit || !values.matrix || !values.evidence) {
-    throw new Error("Usage: criteria-audit.mjs --worktree <path> --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json> --evidence <evidence .json>");
+  const { values } = parseArgs({ args: argv, options: { worktree: { type: "string" }, ticket: { type: "string" }, audit: { type: "string" }, matrix: { type: "string" } } });
+  if (!values.worktree || !values.ticket || !values.audit || !values.matrix) {
+    throw new Error("Usage: criteria-audit.mjs --worktree <path> --ticket <ticket body .md> --audit <audit .md> --matrix <matrix .json>");
   }
   const criteria = ticketCriteria(readFileSync(values.ticket, "utf8"));
   const problems = [
     ...(criteria.length === 0 ? ["the ticket has no acceptance criteria checklist"] : []),
-    ...auditProblems(readFileSync(values.audit, "utf8"), criteria),
+    ...auditProblems(readFileSync(values.audit, "utf8"), criteria, values.worktree),
     ...matrixProblems(JSON.parse(readFileSync(values.matrix, "utf8")), criteria),
-    ...evidenceProblems(JSON.parse(readFileSync(values.evidence, "utf8")), criteria, values.worktree),
   ];
   process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, criteria: criteria.map(({ id }) => id), problems }, null, 2)}\n`);
   return problems.length === 0 ? 0 : 1;

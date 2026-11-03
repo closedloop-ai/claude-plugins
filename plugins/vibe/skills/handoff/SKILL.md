@@ -642,10 +642,9 @@ release. The queue settles later collisions (ISS-13321).
 
 Before the first commit/push, after independent review and running-app
 verification, audit the uncommitted candidate:
-`scripts/criteria-audit.mjs --ticket <body> --worktree "<wt>" --audit <audit> --matrix <matrix> --evidence <evidence>`
-(every criterion also needs a MET row mapping it to a test, script, screenshot or API read in the
-requirement-to-evidence matrix, `../vibe/references/spec-card.md`, "Evidence matrix";
-`../vibe/scripts/spec-card.mjs evidence-skeleton` prints its rows; a test ref names a file that exists in the worktree)
+`scripts/criteria-audit.mjs --ticket <body> --worktree "<wt>" --audit <audit> --matrix <matrix>`
+(every audit row carries the verdict, its evidence type and its ref, `../vibe/references/spec-card.md`, "Audit rows";
+`../vibe/scripts/spec-card.mjs audit-skeleton` prints the rows; a test ref names a file that exists at HEAD)
 `node scripts/rulings-check.mjs --ticket <body> --record <QA record> --plan <each linked PLN's get-document JSON> --plan-body <its latest text>`
 `node scripts/rollout-gate.mjs --worktree "<wt>" --ticket <body> --slug <ticket> --prd <PRD body> --prd-slug <PRD>`.
 Record each rollout requirement as `Rollout: <id>:` with code or a ticket/PRD-specific
@@ -904,13 +903,13 @@ Claude launcher JSON file is not a native receipt.
 Rerun a reviewer
 after a source change, then capture its new result; an old source receipt
 cannot pass. Pass the four receipts (guardrails, adversarial, Storybook
-decomposer and final verifier), criteria audit, matrix and evidence-matrix paths, and verifier evidence path to
+decomposer and final verifier), criteria audit and matrix paths, and verifier evidence path to
 the PR worker. A hand-written empty findings list is never a receipt. Any
 current blocking finding prevents the PR, even if someone marks it waived.
 After composing the final PR body, the PR worker runs `handoff-gate.mjs`
 immediately before `gh pr create` with the body, verifier evidence, receipts,
-current fetched base, and when available the criteria ticket, audit,
-matrix and evidence matrix. This gate rechecks mergeability, acceptance criteria, the PR body,
+current fetched base, and when available the criteria ticket, audit
+and matrix. This gate rechecks mergeability, acceptance criteria, the PR body,
 verifier evidence and machine-produced reviewer findings,
 then records a private witness bound to the source. A later source change
 invalidates it; finish the affected handoff steps and rerun this gate. The

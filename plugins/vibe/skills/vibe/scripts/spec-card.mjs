@@ -7,17 +7,20 @@
 //   spec-card.mjs path --worktree <path>
 //   spec-card.mjs budget --card <card.json> --worktree <path> --base <sha>
 //   spec-card.mjs assumptions <card.json> [--worktree <path> --base <sha>]
-//   spec-card.mjs evidence-skeleton <card.json>
+//   spec-card.mjs audit-skeleton <card.json>
 //
 // check prints {ok, problems, wouldBlock (unanswered questions and unquestioned product-impacting assumptions), blocking, checkpoint, engineeringDecisions}; exits 1 on a problem,
 //   and on an unanswered blocking question only when the fork checkpoint is switched on.
+// save refuses to change a card once it is locked: the card seeds the session decision table once, and criteria
+//   change in the decision table after that (references/spec-card.md).
+// audit-skeleton prints the audit table rows (criteria-audit.mjs) for the card's criteria, for the reviewer to fill in.
 // budget prints the justification report and always exits 0 on a readable card: it never blocks.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { parseArgs } from "node:util";
+import { isDeepStrictEqual, parseArgs } from "node:util";
 
 export const EVIDENCE_TYPES = ["test", "script", "screenshot", "api-read"];
 export const ASSUMPTION_TAGS = ["grounded", "unverified"];
@@ -42,6 +45,7 @@ export function cardProblems(card, stage = "draft") {
   const wouldBlock = [];
   const engineeringDecisions = [];
   if (card?.version !== 1) problems.push("version must be 1");
+  if (card?.superseded !== undefined) problems.push("superseded is not part of the card: change criteria in the session decision table");
   const criteria = list(card?.criteria);
   const criterionIds = new Set();
   for (const criterion of criteria) {
@@ -197,33 +201,19 @@ export function assumptionsText(card, report = null) {
 }
 
 /**
- * One evidence row per criterion for the reviewer to fill in; unknown values are null, never guessed. The audit
- * numbers the ticket's checklist by position (criteria-audit.mjs), so `criterion` is the position in card order
- * and `cardId` the card's own id; they differ once a locked criterion was removed through `superseded`.
+ * The audit table for the card's criteria, one row each for the fresh-context reviewer to fill in. The audit numbers
+ * the ticket's checklist by position (criteria-audit.mjs), so the rows are numbered by position in card order.
  */
-export function evidenceSkeleton(card) {
-  return {
-    rows: list(card?.criteria).map((criterion, index) => ({ criterion: `AC-${index + 1}`, cardId: criterion.id, type: criterion.evidence ?? null, ref: null, verdict: null })),
-  };
+export function auditSkeleton(card) {
+  const rows = list(card?.criteria).map((criterion, index) => `| AC-${index + 1} | VERDICT | ${criterion.evidence ?? "TYPE"} | REF |`);
+  return `${["| Criterion | Verdict | Type | Ref |", "|---|---|---|---|", ...rows].join("\n")}\n`;
 }
 
-/** A locked card's criteria and assumptions change only through a `superseded` entry that names a source. */
+/** A locked card is not edited: criteria and assumptions change in the decision table after the card has seeded it. */
 export function lockedChangeProblems(previous, next) {
-  const superseded = new Set(list(next?.superseded).filter((entry) => isText(entry?.id) && isText(entry?.source)).map((entry) => entry.id));
-  const problems = [];
-  const byId = (items) => new Map(list(items).map((item) => [item?.id, item]));
-  for (const [kind, before, after] of [["criterion", previous?.criteria, next?.criteria], ["assumption", previous?.assumptions, next?.assumptions]]) {
-    const current = byId(after);
-    for (const [id, item] of byId(before)) {
-      const now = current.get(id);
-      if (superseded.has(id)) continue;
-      if (!now) problems.push(`${id}: the locked ${kind} was removed with no superseded entry naming a source`);
-      else if (item.text !== now.text || (kind === "assumption" && item.tag !== now.tag)) {
-        problems.push(`${id}: the locked ${kind} was changed with no superseded entry naming a source`);
-      }
-    }
-  }
-  return problems;
+  const { stage: _previousStage, ...before } = previous ?? {};
+  const { stage: _nextStage, ...after } = next ?? {};
+  return isDeepStrictEqual(before, after) ? [] : ["a locked card is not edited after it seeds the decision table; change criteria in the decision table"];
 }
 
 function git(worktree, args) {
@@ -240,7 +230,7 @@ function changedFiles(worktree, base) {
 }
 
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"));
-const USAGE = "Usage: spec-card.mjs check <card.json> [--stage draft|locked] [--checkpoint] | save --worktree <path> --stage draft|locked <card.json> | path --worktree <path> | budget --card <card.json> --worktree <path> --base <sha> | assumptions <card.json> [--worktree <path> --base <sha>] | evidence-skeleton <card.json>";
+const USAGE = "Usage: spec-card.mjs check <card.json> [--stage draft|locked] [--checkpoint] | save --worktree <path> --stage draft|locked <card.json> | path --worktree <path> | budget --card <card.json> --worktree <path> --base <sha> | assumptions <card.json> [--worktree <path> --base <sha>] | audit-skeleton <card.json>";
 
 function main(argv) {
   const { values, positionals } = parseArgs({
@@ -288,8 +278,8 @@ function main(argv) {
     process.stdout.write(assumptionsText(card, report));
     return 0;
   }
-  if (command === "evidence-skeleton" && cardArg) {
-    print(evidenceSkeleton(readJson(cardArg)));
+  if (command === "audit-skeleton" && cardArg) {
+    process.stdout.write(auditSkeleton(readJson(cardArg)));
     return 0;
   }
   throw new Error(USAGE);

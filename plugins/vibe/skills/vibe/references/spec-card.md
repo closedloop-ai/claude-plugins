@@ -6,7 +6,7 @@ meets it. It merges what the requirements worker returns and what the writer
 plans before code into one record, so the same facts are not restated in a
 brief, a plan and a table. This file is the one canonical statement of the
 card, the fork checkpoint, the file justification check, the freshness check
-and the evidence matrix. The skills and workers point here. Every rule below is
+and the audit rows. The skills and workers point here. Every rule below is
 enforced by a script (`scripts/spec-card.mjs`, `scripts/freshness.mjs`,
 `../handoff/scripts/criteria-audit.mjs`); a rule without its script is not in
 force.
@@ -14,8 +14,11 @@ force.
 The card does not replace the session decision table. The table stays
 mandatory, full and authored only by the SAME writer before any code, for
 every request (`quality-loop.md`, "Session decision table before code"). The
-card seeds the table's `## Acceptance Criteria` section and its Open
-Questions; it never stands in for its rows, edge cases or alignment passes.
+card is a draft that seeds the table's `## Acceptance Criteria` section and its
+Open Questions once; it never stands in for its rows, edge cases or alignment
+passes. After seeding, the table is authoritative: a change to a criterion is
+made in the decision table (a `Superseded` entry with its source), never by
+editing the card.
 
 ## Where it lives and who writes it
 
@@ -23,16 +26,19 @@ One JSON file per session, in the session's Git metadata beside the change
 log, written only by `node scripts/spec-card.mjs save --worktree <wt> --stage
 draft|locked <card>` (`spec-card.mjs path --worktree <wt>` prints where). It
 is never committed and never put in `/tmp`. `save` validates the card and
-refuses to change a locked one except through `superseded`.
+refuses to change a locked one.
 
 | Stage | Author | Content |
 |---|---|---|
 | `draft` | `vibe-requirements-worker`, returned as JSON in its result because no session exists yet; the writer saves it | `criteria`, `assumptions`, `openQuestions` |
-| `locked` | the SAME writer, after owner prep and before the first line of code | adds `plan`; seeds the decision table from the card |
+| `locked` | the SAME writer, after owner prep and before the first line of code | adds `plan`; seeds the decision table from the card, once |
 
-After `locked`, a criterion or assumption changes only through a `superseded`
-entry (`{id, source}`, the source a human statement), as the table does with
-`Superseded`; the card is never silently edited to agree with the code.
+A locked card is not edited after seeding: `save` refuses any change to it
+(an identical save is accepted) and the card carries no post-seed
+supersessions. A criterion or assumption that changes afterwards is changed
+in the decision table, with its `Superseded` entry. The card's `check`,
+`budget` and `assumptions` keep reading the locked card as the record of what
+was seeded.
 
 ## Schema
 
@@ -81,8 +87,7 @@ entry (`{id, source}`, the source a human statement), as the table does with
       { "path": "extra/file.ts", "cites": "AC-2" },
       { "path": "other/file.ts", "requirement": "the quoted requirement", "source": "PRD-9" }
     ]
-  },
-  "superseded": [{ "id": "AC-1", "source": "who and where" }]
+  }
 }
 ```
 
@@ -93,9 +98,10 @@ entry (`{id, source}`, the source a human statement), as the table does with
   valid, at draft and locked: a session started from a plain description has
   none until the person's requests add them, and the card never carries an
   invented one. `criteria-audit.mjs` numbers the ticket's checklist by
-  position, so the ticket lists the criteria in card order; once a criterion
-  has been removed through `superseded` the card's ids have a gap and the
-  audit's do not, which `evidence-skeleton` bridges (see "Evidence matrix").
+  position, so the ticket lists the criteria in card order; `audit-skeleton`
+  numbers its rows the same way (see "Audit rows"). Criteria changed in the
+  decision table after seeding are numbered by the ticket's checklist, not by
+  the card.
 - `tag` is `grounded` only with a `basis` that traces to a human statement or
   to code read in this checkout (`quality-loop.md`, "Communication and product
   questions": text the session wrote is never a source). Anything else is
@@ -196,19 +202,20 @@ without a citation. An unverified assumption stays visibly unverified in the
 ticket; handoff never upgrades it to grounded. `live-ticket-check.mjs` refuses
 a Handoff section with no Assumptions line.
 
-## Evidence matrix
+## Audit rows
 
-Before the session is called done, each criterion maps to evidence in the file
-`criteria-audit.mjs` requires as `--evidence`:
-`{"rows": [{"criterion", "type", "ref", "verdict"}]}`.
-`spec-card.mjs evidence-skeleton <card>` prints it with one row per criterion,
-`criterion` numbered by position in card order (the audit's numbering) and
-`cardId` the card's own id, the intended `type`, and `ref` and `verdict` null
-for the fresh-context reviewer to fill in. `type` is `test`, `script`, `screenshot` or `api-read`;
-`ref` names the test file, the script run, the capture or the read; `verdict`
-is the audit's `MET`, `PARTIAL` or `MISSED` (no other status words). A criterion
-with no `MET` row of a known type and a `ref`, or with any `PARTIAL` or `MISSED`
-row, blocks done. A `test` ref must name a file that exists at HEAD: a planned
-test is not evidence, and the session writes tests only when the person asked
-for a pull request, so a criterion whose intended test does not exist is met by
-a script, screenshot or API read, or stays unmet and blocks.
+Before the session is called done, each criterion gets one row in the audit
+table `criteria-audit.mjs` reads, which holds the verdict, its evidence type
+and its ref in one place: `| AC-n | MET | <type> | <ref> |`. There is no
+separate evidence file. `spec-card.mjs audit-skeleton <card>` prints the table
+with one row per criterion, numbered by position in card order (the audit's
+numbering) and the intended type, for the fresh-context reviewer to fill in.
+`type` is `test`, `script`, `screenshot` or `api-read`; `ref` names the test
+file, the script run, the capture or the read; the verdict is `MET`, `PARTIAL`
+or `MISSED` (no other status words). A criterion with no `MET` row of a known
+type and a `ref`, or with any `PARTIAL` or `MISSED` row, blocks done; on a
+`PARTIAL` or `MISSED` row the last column says what is missing. A `test` ref
+must name a file that exists at HEAD: a planned test is not evidence, and the
+session writes tests only when the person asked for a pull request, so a
+criterion whose intended test does not exist is met by a script, screenshot or
+API read, or stays unmet and blocks.

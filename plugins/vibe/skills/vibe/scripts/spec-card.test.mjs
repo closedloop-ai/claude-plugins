@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { assumptionsText, budgetReport, cardProblems, checkpointEnabled, evidenceSkeleton, lockedChangeProblems } from "./spec-card.mjs";
+import { assumptionsText, budgetReport, cardProblems, checkpointEnabled, auditSkeleton, lockedChangeProblems } from "./spec-card.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./spec-card.mjs", import.meta.url));
 const OPTIONS = [{ label: "A", summary: "one end-to-end way" }, { label: "B", summary: "another end-to-end way" }];
@@ -160,22 +160,23 @@ test("the handoff text lists unanswered product questions, including a product f
   assert.match(assumptionsText(card({ openQuestions: [] })), /Not answered before code:\n- None/);
 });
 
-test("the evidence skeleton has one row per criterion with unknown values left null", () => {
-  assert.deepEqual(evidenceSkeleton(card()), { rows: [{ criterion: "AC-1", cardId: "AC-1", type: "test", ref: null, verdict: null }, { criterion: "AC-2", cardId: "AC-2", type: "screenshot", ref: null, verdict: null }] });
+test("the audit skeleton has one row per criterion in the audit's row format, numbered by position", () => {
+  assert.equal(auditSkeleton(card()), "| Criterion | Verdict | Type | Ref |\n|---|---|---|---|\n| AC-1 | VERDICT | test | REF |\n| AC-2 | VERDICT | screenshot | REF |\n");
+  const reordered = card({ criteria: [card().criteria[0], { id: "AC-3", text: "a third thing", source: "ISS-1", evidence: "api-read" }] });
+  assert.match(auditSkeleton(reordered), /\| AC-2 \| VERDICT \| api-read \| REF \|/);
 });
 
-test("after a superseded criterion leaves the card, the skeleton rows follow the audit's positional numbering and keep the card id", () => {
-  const gapped = card({ criteria: [card().criteria[0], { id: "AC-3", text: "a third thing", source: "ISS-1", evidence: "api-read" }], superseded: [{ id: "AC-2", source: "Dana, in chat" }] });
-  assert.deepEqual(evidenceSkeleton(gapped).rows.map((row) => [row.criterion, row.cardId]), [["AC-1", "AC-1"], ["AC-2", "AC-3"]]);
-});
-
-test("a locked card changes only through a superseded entry that names a source", () => {
+test("a locked card is not edited after it seeds the decision table; an identical save is not an edit", () => {
   const before = card();
   const edited = card({ criteria: [{ ...before.criteria[0], text: "reworded to agree with the code" }, before.criteria[1]] });
-  assert.deepEqual(lockedChangeProblems(before, edited), ["AC-1: the locked criterion was changed with no superseded entry naming a source"]);
-  assert.deepEqual(lockedChangeProblems(before, { ...edited, superseded: [{ id: "AC-1", source: "Dana, 2026-10-28" }] }), []);
-  assert.deepEqual(lockedChangeProblems(before, { ...edited, superseded: [{ id: "AC-1" }] }).length, 1);
-  assert.deepEqual(lockedChangeProblems(before, card({ criteria: [before.criteria[0]] })), ["AC-2: the locked criterion was removed with no superseded entry naming a source"]);
+  assert.deepEqual(lockedChangeProblems(before, edited), ["a locked card is not edited after it seeds the decision table; change criteria in the decision table"]);
+  assert.equal(lockedChangeProblems(before, card({ criteria: [before.criteria[0]] })).length, 1);
+  assert.equal(lockedChangeProblems(before, { ...card(), assumptions: [] }).length, 1);
+  assert.deepEqual(lockedChangeProblems({ ...before, stage: "locked" }, card()), []);
+});
+
+test("a card carrying a superseded list is a problem: criteria change in the decision table", () => {
+  assert.match(cardProblems(card({ superseded: [{ id: "AC-1", source: "Dana, in chat" }] })).problems.join(), /superseded is not part of the card/);
 });
 
 test("save writes the card into the git dir and refuses to edit a locked one", () => {
@@ -194,7 +195,8 @@ test("save writes the card into the git dir and refuses to edit a locked one", (
     const reworded = card({ criteria: [{ ...card().criteria[0], text: "changed" }, card().criteria[1]] });
     const refused = run("locked", reworded);
     assert.equal(refused.status, 1);
-    assert.match(refused.stdout, /no superseded entry/);
+    assert.match(refused.stdout, /not edited after it seeds the decision table/);
+    assert.equal(run("locked", card()).status, 0, "an identical save is accepted");
     assert.equal(run("draft", card()).status, 1);
   } finally {
     rmSync(dir, { recursive: true, force: true });
