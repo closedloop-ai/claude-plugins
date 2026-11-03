@@ -70,7 +70,7 @@ test("a text-only request about a column header leaves nothing out, with no path
 });
 
 test("the Desktop relevance check reads the shared Desktop host list: renderer and packages/app, not the main process", () => {
-  assert.equal(classify({ paths: ["apps/desktop/src/main/a.ts", "apps/desktop/src/main/b.ts"] }).steps.desktop.recommendation.action, ACTIONS.Skip);
+  assert.equal(classify({ paths: ["apps/desktop/src/main/a.ts", "apps/desktop/src/main/b.ts"] }).steps.desktop.recommendation.action, ACTIONS.Run);
   assert.equal(classify({ paths: ["apps/desktop/src/renderer/a.tsx", "apps/api/x.ts"] }).steps.desktop.recommendation.action, ACTIONS.Run);
   assert.equal(pathKind("packages/app/x.ts"), "ui");
 });

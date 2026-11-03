@@ -29,7 +29,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { DESKTOP_HOST, UI_PREFIXES } from "./area-paths.mjs";
+import { UI_PREFIXES } from "./area-paths.mjs";
 
 export const SCHEMA_VERSION = 1;
 
@@ -93,7 +93,10 @@ export function parsePathList(text) {
 }
 
 const isUiPath = (file) => UI_EXTENSION.test(file) || UI_PREFIXES.some((prefix) => file.startsWith(prefix));
-const isDesktopHostPath = (file) => DESKTOP_HOST.some((prefix) => file.startsWith(prefix));
+// Any file under apps/desktop/ can change what Desktop does (its main process included), so this is wider than
+// the shared DESKTOP_HOST list of the surfaces Desktop renders.
+const DESKTOP_RELEVANT_PREFIXES = ["apps/desktop/", "packages/app/"];
+const isDesktopHostPath = (file) => DESKTOP_RELEVANT_PREFIXES.some((prefix) => file.startsWith(prefix));
 
 /** Which kind of file `file` is: test, prototype, metric, ui, backend, docs or other. */
 export function pathKind(file) {
@@ -161,7 +164,7 @@ function desktopRelevance(cls, paths, text) {
   const mentions = words(DESKTOP_WORDS, text);
   if (mentions.length) return { relevant: true, evidence: mentions.map((word) => `text "${word}"`) };
   if (files.length && cls !== CLASSES.Unknown && files.every((file) => ["ui", "backend", "docs", "metric"].includes(pathKind(file)))) {
-    return { relevant: false, evidence: [`no touched file is under ${DESKTOP_HOST.join(" or ")} (${files.length} files)`] };
+    return { relevant: false, evidence: [`no touched file is under ${DESKTOP_RELEVANT_PREFIXES.join(" or ")} (${files.length} files)`] };
   }
   return { relevant: null, evidence };
 }
