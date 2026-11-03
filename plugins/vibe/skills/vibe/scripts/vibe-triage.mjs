@@ -29,7 +29,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { UI_PREFIXES } from "./area-paths.mjs";
+import { BACKEND_PATH, UI_PREFIXES } from "./area-paths.mjs";
 
 export const SCHEMA_VERSION = 1;
 
@@ -72,7 +72,6 @@ const TEST_PATH = /(^|\/)(__tests__|__mocks__)\/|\.(test|spec)\.[cm]?[jt]sx?$|(^
 const PROTOTYPE_PATH = /^apps\/prototypes\//;
 const METRIC_PATH = /(^|\/)(metrics?|analytics|cost|reconcil\w*|aggregat\w*)(\/|[-.])/i;
 const UI_EXTENSION = /\.(tsx|css|scss)$/;
-const BACKEND_PATH = /^apps\/(api|mcp|relay|realtime|doc-sync)\/|^packages\/(database|api|github|ai|loops-api|cost)\/|^apps\/desktop\/src\/(main|server)\/|\.sql$|schema\.prisma$/;
 const DOCS_PATH = /(^|\/)(docs?|\.github|\.claude|\.agents|\.husky|\.dagger|scripts|e2e)\/|(^|\/)(AGENTS|CLAUDE|README|CHANGELOG)\.md$|\.mdx?$|\.ya?ml$|\.toml$|\.jsonc?$|\.sh$|(^|\/)\.[a-z]+rc(\.[a-z]+)?$/i;
 
 const PROTOTYPE_WORDS = /\b(mock-?ups?|fake data|made-?up data|(build|make|create|design) (me )?(a|the) prototype)\b/i;

@@ -91,6 +91,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { BACKEND_PATH } from "../../vibe/scripts/area-paths.mjs";
 import { withStableSource } from "../../vibe/scripts/tested-head.mjs";
 import { committedLocalPlans, isLocalPlanPath, LOCAL_PLAN_PREFIX } from "../../vibe/scripts/local-plans.mjs";
 import { isOwnedPrototypeSession, requirePrototypePublication } from "../../vibe/scripts/prototype-session.mjs";
@@ -131,18 +132,6 @@ const ALLOWED_PREFIXES = [
 ];
 const FORBIDDEN_PREFIXES = ["packages/golden-sessions/", ".github/"];
 const FORBIDDEN_BASENAMES = new Set(["AGENTS.md", "CLAUDE.md", "AGENTS.override.md"]);
-const BACKEND_PREFIXES = [
-  "apps/api/",
-  "apps/mcp/",
-  "apps/relay/",
-  "apps/realtime/",
-  "packages/api/",
-  "packages/database/",
-  "apps/desktop/src/main/",
-  "apps/desktop/src/server/",
-  "apps/desktop/prisma/",
-];
-const BACKEND_SEGMENTS = ["/prisma/", "/migrations/"];
 
 const HANDOFF_ONLY_RULES = new Set(["frozen-render"]);
 const STORY_PATTERN = /\.stories\.tsx?$/;
@@ -435,10 +424,7 @@ const result = withStableSource(worktree, () => {
   }
 
   function isBackend(filePath) {
-    return (
-      BACKEND_PREFIXES.some((prefix) => filePath.startsWith(prefix)) ||
-      BACKEND_SEGMENTS.some((segment) => `/${filePath}`.includes(segment))
-    );
+    return BACKEND_PATH.test(filePath);
   }
 
   /**
