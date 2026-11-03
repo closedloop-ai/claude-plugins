@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - Local all-buckets build, not a released version: origin/main 1.1.30 (176516b) merged with the WS2 Spec Card, WS1 triage (to f977c42), WS3 scripts and WS4 review and WS8 load-aware execution branches. WS0 measurement is omitted and nothing here depends on it. Every default-off switch stays off. `handoff-gate.mjs` now takes and passes `--evidence` to `criteria-audit.mjs` (adapting WS2's evidence matrix to main's gate). Their per-branch notes follow.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 6,142 words longer than in 1.1.30 (origin/main 176516b).
 
 #### From WS2 Spec Card: vibe v1.1.16
 

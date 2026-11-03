@@ -627,7 +627,7 @@ release. The queue settles later collisions (ISS-13321).
 
 Before the first commit/push, after independent review and running-app
 verification, audit the uncommitted candidate:
-`scripts/criteria-audit.mjs --worktree "<wt>" --ticket <body> --audit <audit> --matrix <matrix> --evidence <evidence>`
+`scripts/criteria-audit.mjs --ticket <body> --worktree "<wt>" --audit <audit> --matrix <matrix> --evidence <evidence>`
 (every criterion also needs a MET row mapping it to a test, script, screenshot or API read in the
 requirement-to-evidence matrix, `../vibe/references/spec-card.md`, "Evidence matrix";
 `../vibe/scripts/spec-card.mjs evidence-skeleton` prints its rows; a test ref names a file that exists in the worktree)
