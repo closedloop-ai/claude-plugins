@@ -57,14 +57,17 @@ process.stdin.on("data", (chunk) => {
 }
 
 function run(codex, extra = []) {
-  return spawnSync(process.execPath, [SCRIPT, "check", "--codex", codex, "--timeout-ms", "15000", ...extra], { encoding: "utf8" });
+  return spawnSync(process.execPath, [SCRIPT, "check", "--codex", codex, "--timeout-ms", "15000", "--work-dir", fixtureRoot, ...extra], { encoding: "utf8" });
 }
 
 test("a reached limit stops the session with exit 3 and reports when it resets", () => {
   const { file, log } = fakeCodex("reached", { result: reachedLimits });
   const result = run(file);
   assert.equal(result.status, STOP_EXIT, result.stderr);
-  assert.deepEqual(JSON.parse(result.stdout), {
+  const { readAt, source, ...decision } = JSON.parse(result.stdout);
+  assert.ok(Number.isFinite(Date.parse(readAt)));
+  assert.equal(source, "codex-usage");
+  assert.deepEqual(decision, {
     status: "stop",
     state: "LIMIT-SPENDING-CREDITS",
     rateLimitReachedType: "rate_limit_reached",
@@ -118,10 +121,12 @@ test("a reached limit continues while ordinary usage is still allowed", () => {
 
 test("an unreadable answer is unknown, never a guessed ok or stop", async () => {
   const { file } = fakeCodex("error", { error: { code: -32_000, message: "not signed in" } });
-  assert.deepEqual(await checkUsage({ codex: file, timeoutMs: 15_000 }), {
-    status: UsageStatus.Unknown, reason: "account/rateLimits/read failed: not signed in",
-  });
-  const missing = await checkUsage({ codex: path.join(fixtureRoot, "no-such-codex"), timeoutMs: 15_000 });
+  const failed = await checkUsage({ codex: file, timeoutMs: 15_000, workDir: fixtureRoot });
+  assert.equal(failed.status, UsageStatus.Unknown);
+  assert.equal(failed.reason, "account/rateLimits/read failed: not signed in");
+  assert.ok(Number.isFinite(Date.parse(failed.readAt)));
+  assert.equal(failed.source, "codex-usage");
+  const missing = await checkUsage({ codex: path.join(fixtureRoot, "no-such-codex"), timeoutMs: 15_000, workDir: fixtureRoot });
   assert.equal(missing.status, UsageStatus.Unknown);
   assert.match(missing.reason, /ENOENT/);
   assert.deepEqual(decideUsage({}), { status: UsageStatus.Unknown, reason: "The App Server returned no rate limits." });

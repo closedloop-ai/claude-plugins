@@ -21,6 +21,7 @@ CODEX_EFFORT=<the high effort level, not the maximum>
 HEAVY_SLOTS=<concurrent heavy checks this machine can take>
 MAX_LOAD_PER_CORE=1.5                       # a heavy slot refuses this machine above this load per core
 MOVE_AT_PERCENT=<codex-usage band at which to move writers off a machine>
+USAGE_STALE_SECONDS=1800                   # reader freshness limit; absent defaults to 30 minutes
 
 # The target repo's own names for the program practices
 GREEN_REF=<the ref post-merge CI advances when main is healthy>

@@ -16,6 +16,11 @@ snapshot() {
     print -r -- "event ${event:t} ${digest%% *}"
   done
 }
+# Read times and sources belong in usage reports, but they are not material watcher changes. Compare a fingerprint
+# with those fields removed, then retain the newest full snapshot so a later real event reports current read times.
+snapshot_key() {
+  print -r -- "$1" | sed -E '/^(codex|claude)-usage /s/ read=[^ ]+ source=[^ ]+//'
+}
 # One watcher per work dir. A second copy (one started with `&` in a foreground shell, then started again)
 # double-reports every event and outlives the turn that started it, so it is refused, not run.
 lock=$W/watch.lock
@@ -39,14 +44,19 @@ beat() {
 beat
 # Compare against the last snapshot the previous run saw, so a change between runs is still reported.
 if [ -s $W/last-snapshot.txt ]; then base=$(cat $W/last-snapshot.txt); else base=$(snapshot); echo "$base" > $W/last-snapshot.txt; fi
+base_key=$(snapshot_key "$base")
 for _ in $(seq 1 $T); do
   sleep $I
   # Each tick runs a recovery pass first (recover.mjs), so a transient failure is resumed without you.
   now=$(snapshot 1)
+  now_key=$(snapshot_key "$now")
   beat
-  if [ -n "$now" ] && [ "$now" != "$base" ]; then
+  if [ -n "$now" ] && [ "$now_key" != "$base_key" ]; then
     echo "$now" > $W/last-snapshot.txt; beat ",\"exitedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""; echo EVENT; diff <(echo "$base") <(echo "$now") | grep '^[<>]'; exit 0
   fi
+  echo "$now" > $W/last-snapshot.txt
+  base=$now
+  base_key=$now_key
 done
 beat ",\"exitedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""
 echo "HEARTBEAT no change for ${H}s: read every teammate message and each idle writer's question, then re-arm"; cat $W/last-snapshot.txt
