@@ -90,7 +90,9 @@ def test_consolidated_reviewer_reads_the_two_reviewers_checklists_instead_of_cop
     assert "tools: Read, Grep, Glob, Bash, Skill" in agent
     for named in ("vibe-guardrails-reviewer.md", "vibe-adversarial-reviewer.md", "NOT-CHECKED", "checks_skipped"):
         assert named in agent
-    assert "Edit" not in re.search(r"^tools:.*$", agent, re.MULTILINE).group(0)
+    tools_line = re.search(r"^tools:.*$", agent, re.MULTILINE)
+    assert tools_line is not None
+    assert "Edit" not in tools_line.group(0)
 
 
 ADVERSARIAL = ROOT / "agents" / "vibe-adversarial-reviewer.md"

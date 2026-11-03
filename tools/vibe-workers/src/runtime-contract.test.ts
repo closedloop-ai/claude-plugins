@@ -14,8 +14,8 @@ const requiredReads: Readonly<Record<string, readonly string[]>> = {
   "vibe-ticket-worker": ["get_document"],
 };
 const workers = [
-  "vibe-adversarial-reviewer", "vibe-backend-worker", "vibe-change-worker", "vibe-environment-worker",
-  "vibe-guardrails-reviewer", "vibe-handoff-summarizer", "vibe-primitive-worker", "vibe-prototype-worker",
+  "vibe-adversarial-reviewer", "vibe-backend-worker", "vibe-change-worker", "vibe-consolidated-reviewer",
+  "vibe-environment-worker", "vibe-guardrails-reviewer", "vibe-handoff-summarizer", "vibe-primitive-worker", "vibe-prototype-worker",
   "vibe-requirements-worker", "vibe-setup-worker", "vibe-storybook-decomposer", "vibe-ticket-worker",
   "vibe-verify-worker",
 ] as const;
