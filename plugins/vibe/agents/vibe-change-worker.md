@@ -140,14 +140,17 @@ running the session for approval.
 
 Lock the Spec Card before code (`../skills/vibe/references/spec-card.md`): add
 its `plan` (owner files, files deliberately not touched) and save it with
-`node ../skills/vibe/scripts/spec-card.mjs save --worktree "<wt>" --stage locked <card>`.
+`node <plugin-root>/skills/vibe/scripts/spec-card.mjs save --worktree "<wt>" --stage locked <card>`.
 Run `spec-card.mjs check <card> --stage locked`: the fork checkpoint is off
 unless the brief or `VIBE_FORK_CHECKPOINT=1` switches it on; when on, return
 `NEEDS_PERSON` for each entry in its `blocking` list, and when off build as
 usual and let each `wouldBlock` entry stand as an unverified assumption in the
 handoff. Seed the table's `## Acceptance Criteria` section from the card's
 criteria. Before any claim about current `main`, run
-`node ../skills/vibe/scripts/freshness.mjs --worktree "<wt>" --expect-path "<wt>"`.
+`node <plugin-root>/skills/vibe/scripts/freshness.mjs --worktree "<wt>" --expect-path "<wt>"`.
+When its output has `fetchSkipped` the claim is about the session base, not
+current `main`; when it prints `escalate`, rerun it escalated if the claim
+needs current `main` (`../skills/vibe/references/spec-card.md`, "Freshness").
 Before `DONE`, run `spec-card.mjs budget`: it never blocks and never removes
 required scope; give every uncited file a `plan.justifications` entry that
 cites a criterion or a sourced requirement, or take it out of the diff when

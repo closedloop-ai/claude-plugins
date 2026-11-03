@@ -70,7 +70,9 @@ def test_the_file_check_is_a_justification_and_never_a_cap() -> None:
 def test_freshness_runs_its_own_fetch() -> None:
     text = flat(section(SPEC_CARD.read_text(), "## Freshness"))
     assert "a cached `origin/main` is never evidence" in text
-    assert "leaves `originMain` null and exits 1" in text
+    assert "leaves `originMain` null" in text
+    assert "`fetchSkipped: true`" in text and "`sessionBase`" in text
+    assert "With no recorded base a failed fetch exits 1" in text
     assert (VIBE / "scripts" / "freshness.mjs").is_file()
 
 

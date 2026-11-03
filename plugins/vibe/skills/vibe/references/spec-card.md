@@ -8,8 +8,8 @@ brief, a plan and a table. This file is the one canonical statement of the
 card, the fork checkpoint, the file justification check, the freshness check
 and the evidence matrix. The skills and workers point here. Every rule below is
 enforced by a script (`scripts/spec-card.mjs`, `scripts/freshness.mjs`,
-`../handoff/scripts/criteria-audit.mjs`); instructions alone changed nothing in
-replay, so a rule without its script is not in force.
+`../handoff/scripts/criteria-audit.mjs`); a rule without its script is not in
+force.
 
 The card does not replace the session decision table. The table stays
 mandatory, full and authored only by the SAME writer before any code, for
@@ -88,8 +88,14 @@ entry (`{id, source}`, the source a human statement), as the table does with
 
 - `criteria` are the criteria `quality-loop.md`, "Acceptance criteria before
   ready" defines: quoted exactly, never invented, narrowed or strengthened,
-  with the same `AC-n` ids the table and `criteria-audit.mjs` use. `evidence`
-  is the intended evidence type: `test`, `script`, `screenshot` or `api-read`.
+  with the same `AC-n` ids the table uses. `evidence` is the intended evidence
+  type: `test`, `script`, `screenshot` or `api-read`. An empty `criteria` list is
+  valid, at draft and locked: a session started from a plain description has
+  none until the person's requests add them, and the card never carries an
+  invented one. `criteria-audit.mjs` numbers the ticket's checklist by
+  position, so the ticket lists the criteria in card order; once a criterion
+  has been removed through `superseded` the card's ids have a gap and the
+  audit's do not, which `evidence-skeleton` bridges (see "Evidence matrix").
 - `tag` is `grounded` only with a `basis` that traces to a human statement or
   to code read in this checkout (`quality-loop.md`, "Communication and product
   questions": text the session wrote is never a source). Anything else is
@@ -123,10 +129,12 @@ decision` (`ticket-template.md`, "Engineering decisions"), with the options.
 
 **The checkpoint is off by default (open decision, not ruled).** Whether the
 pre-code question blocks code by default, or only for product-impacting
-unverified items, is the owner's call (the plan's S2 decision). Until it is
-made nothing changes: with the checkpoint off, `spec-card.mjs check` lists the
-unanswered entries as `wouldBlock`, exits 0 for them, and the writer builds as
-it does today, recording each as an assumption in the handoff. The checkpoint
+unverified items, is the owner's call. Until it is made nothing changes: with
+the checkpoint off, `spec-card.mjs check` lists the unanswered entries as
+`wouldBlock` (an unverified product-impacting assumption with no question yet
+is listed by its assumption id), exits 0 for them, `save` is not affected, and
+the writer builds as it does today, recording each as an assumption in the
+handoff. The checkpoint
 switches on with `--checkpoint` or `VIBE_FORK_CHECKPOINT=1`; then `check` fills
 `blocking` with the unanswered entries and exits 1, and the writer returns
 `NEEDS_PERSON` for each before code. The checkpoint does not widen who may be
@@ -142,9 +150,7 @@ entry continues while it waits.
 The `locked` plan lists the files the change owns (`plan.ownerFiles`) and the
 files it deliberately leaves alone (`plan.notTouched`). Requirements come
 first: every criterion is met before the diff is judged small. There is no cap
-on files or lines: replay of caps showed they save about one percent of lines
-and every cap tested blocked required work. The check is a justification, and
-it never blocks.
+on files or lines. The check is a justification, and it never blocks.
 
 Every changed file outside `ownerFiles` needs a `plan.justifications` entry
 that cites an acceptance criterion on the card (`cites: "AC-n"`) or a product
@@ -167,16 +173,24 @@ file is unchanged, that a failure also happens on main), run
 `node scripts/freshness.mjs --worktree <wt> --expect-path <wt>`. It prints the
 checkout path, `HEAD`, the freshly fetched `origin/main` SHA, and how far HEAD
 is ahead of and behind it. It runs the fetch itself: a cached `origin/main` is
-never evidence. A fetch that fails leaves `originMain` null and exits 1, and
-the claim is then stated as unverified against current main, naming the
-checkout and HEAD it was made on. Quote the path and both SHAs beside the claim.
+never evidence. A fetch that fails (Codex's default sandbox has no network)
+leaves `originMain` null. If the session recorded the commit it branched from,
+the script reports `fetchSkipped: true`, takes the counts against that
+`sessionBase` and exits 0; the claim is then about the session's base, not
+current `main`, and says so. In the Codex sandbox the output also carries
+`"escalate":true` with a `justification`: run the same command again escalated
+(`preflight.md`, "Commands the sandbox blocks") when the claim needs current
+`main`. With no recorded base a failed fetch exits 1 and the claim is stated as
+unverified against current main, naming the checkout and HEAD it was made on.
+Quote the path and the SHAs beside the claim.
 
 ## Assumptions at handoff
 
 The handoff's Assumptions field on the live ticket is generated from the card,
 never written freehand: `node scripts/spec-card.mjs assumptions <card>
 --worktree <wt> --base <sha>` prints the grounded and unverified assumptions,
-what would falsify each, the questions answered and their sources, the files
+what would falsify each, the questions answered and their sources, the
+product questions still unanswered with their recommendation, the files
 deliberately not changed, and the files changed outside the plan with and
 without a citation. An unverified assumption stays visibly unverified in the
 ticket; handoff never upgrades it to grounded. `live-ticket-check.mjs` refuses
@@ -188,8 +202,9 @@ Before the session is called done, each criterion maps to evidence in the file
 `criteria-audit.mjs` requires as `--evidence`:
 `{"rows": [{"criterion", "type", "ref", "verdict"}]}`.
 `spec-card.mjs evidence-skeleton <card>` prints it with one row per criterion,
-the intended `type`, and `ref` and `verdict` null for the fresh-context
-reviewer to fill in. `type` is `test`, `script`, `screenshot` or `api-read`;
+`criterion` numbered by position in card order (the audit's numbering) and
+`cardId` the card's own id, the intended `type`, and `ref` and `verdict` null
+for the fresh-context reviewer to fill in. `type` is `test`, `script`, `screenshot` or `api-read`;
 `ref` names the test file, the script run, the capture or the read; `verdict`
 is the audit's `MET`, `PARTIAL` or `MISSED` (no other status words). A criterion
 with no `MET` row of a known type and a `ref`, or with any `PARTIAL` or `MISSED`
