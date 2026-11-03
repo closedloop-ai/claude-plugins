@@ -5,7 +5,7 @@
     "high_risk_files": [
       "src/constants.py"
     ],
-    "max_bha_agents": 7,
+    "max_bha_agents": 1,
     "models": {
       "bug_hunter_a": {
         "default": "opus",

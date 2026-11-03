@@ -433,20 +433,40 @@ does not duplicate it. Presenters use `gated_by_verify` to surface
 
 **BHA budget cap invariant:** the BHA descriptor count is bounded by
 `coverage_plan.budget.bha_partitions` (the post-arbitrate cap), not
-by the count of partitions in `partitions.json`. When the partitioner
-emitted more partitions than the budget reserved, the first `cap`
-partitions spawn and the rest land in `skipped[]` with
-`reason: "budget_capped"`. A cap of 0 suppresses all BHA spawns
-regardless of partition count. When arbitrate-budget set the cap to 0
-because the diff is docs-only (`coverage_plan.budget.docs_only: true`),
+by the count of partitions in `partitions.json`. On standard and deep,
+arbitrate-budget runs before `stage_17_partition`, and `partition`, given
+no `--max-bha-agents`, reads that same `budget.bha_partitions` from
+`<cr_dir>/coverage.json` and applies it as its cap, floored at 1. On
+shallow, which runs no arbitrate-budget, it applies the LOC count
+(`ceil(total_loc / 1200)`, at least 1, at most `DEFAULT_MAX_BHA_AGENTS`)
+over the full `<cr_dir>/diff_data.json`, which is within
+`derive-static-spec`'s `DEFAULT_MAX_BHA_AGENTS` cap. An explicit
+`--max-bha-agents` overrides both.
+`route` reports that LOC count as `max_bha_agents` for telemetry only. With
+a cache dir active the partitioner reads `uncached_diff_data.json` and
+still force-merges down to the same cap, so the partition count never
+exceeds it. Docs-only is the intentional exception: arbitrate-budget
+reserves 0 while the partitioner runs with 1. If a `partitions.json` holds
+more partitions than a positive cap (one not produced by that partitioner
+run), the first `cap` partitions spawn and the rest land in `skipped[]`
+with `reason: "budget_capped"`, a required coverage gap in both
+`derive-spawn-spec` and `derive-static-spec`. A cap of 0 suppresses all
+BHA spawns regardless of partition count. When arbitrate-budget set the
+cap to 0 because the diff is docs-only (`coverage_plan.budget.docs_only: true`),
 the single skipped entry carries `reason: "docs_only"`; a cap of 0
 without that marker keeps `reason: "budget_capped"`.
 
 **Required coverage-gap invariant:** every entry in `skipped[]`
 with `bucket == "required"` and a non-benign reason
 (everything except `deferred_pln723`, `no_partitions`, `docs_only`,
-`gated_by_verify`) produces a coverage-gap finding appended to
-`coverage_gaps.json`. `cmd_finalize_result` reads that file into the
+`gated_by_verify`) produces a coverage-gap finding in
+`coverage_gaps.json`. `setup` creates the file empty when it is absent.
+Every writer tags its findings with `gap_producer` (`arbitrate-budget`,
+`spawn-spec`, `verify-spawn`, `verify-consolidate`) and, on every run and
+every return path, replaces only the findings carrying its own tag, so a
+resumed walk neither duplicates nor keeps one. Ids are
+`coverage-verifier-<gap_producer>_f<index>`, except arbitrate-budget's
+`coverage-verifier_f<index>`. `cmd_finalize_result` reads that file into the
 envelope's coverage-gap bucket where it contributes to the canonical
 verdict. The runtime symmetric pair to this derive-time check is
 `stage_20b_verify_spawn` (see §6c).
@@ -472,7 +492,7 @@ crashed at runtime. Both producers write to `coverage_gaps.json` so
   "present_agents": ["auditor", "bha_p0", "bhb", "domain_0"],
   "missing_agents": [],            // every missing descriptor (required + best_effort)
   "missing_required": [],          // subset of missing_agents with bucket == "required"
-  "missing_required_gaps": 0,      // coverage_gaps.json findings appended
+  "missing_required_gaps": 0,      // coverage_gaps.json findings written (gap_producer: "verify-spawn")
   "generated_at": "<ISO-8601>"
 }
 ```
@@ -604,7 +624,7 @@ process, the `depends_on` `completed` set is reconstructed from artifacts on dis
 | `ran_stages`           | string[]        | Stage ids executed (or `continue`-failed) this segment, in order.       |
 | `message`              | string \| null  | Short diagnostic on `error`, else null.                                 |
 | `fast_path`            | bool            | Gate B routing decision. Present **only** on `ready_for_reviewers`.      |
-| `max_bha_agents`       | int \| null     | Gate B Bug-Hunter-A agent cap. Present **only** on `ready_for_reviewers`.|
+| `max_bha_agents`       | int \| null     | Gate B `route`'s LOC-based Bug Hunter A count, for telemetry; not the partitioner's cap. Present **only** on `ready_for_reviewers`.|
 | `cache_status_message` | string \| null  | `cache_result.json.status_message` to print. Present on `ready_for_reviewers` and `hygiene_exit`. |
 
 `next_action`, `resume_stage`, `singleton`, `failed_stage`, `ran_stages`, and
@@ -625,8 +645,9 @@ with `.get()`, not direct indexing.
 
 On `ready_for_reviewers` the runner has already run Gate B `route` (writing
 `spawn.json.route`) and — unless `fast_path` — `stage_17_partition` (with the
-`--loc-budget 500 --max-files 25 --max-bha-agents <N>` augmentation, and the
-`uncached_diff_data.json` swap when a cache dir is active). In `fast_path` mode
+`--loc-budget 500 --max-files 25` augmentation, partition reading its Bug
+Hunter A cap from `--cr-dir`, and the `uncached_diff_data.json` swap when a
+cache dir is active). In `fast_path` mode
 partition is skipped (no `partitions.json` / `patches_p<N>.txt`) and any cached
 BHA replay artifact is deleted. The `fast_path` / `max_bha_agents` /
 `cache_status_message` fields let the orchestrator print the routing + cache

@@ -1797,6 +1797,100 @@ def _write_per_partition_patches(
     return written
 
 
+def _force_merge_to_cap(partitions: list[dict[str, Any]], cap: int) -> int:
+    """Merge partitions in place until at most ``cap`` remain; return the
+    number of merges.
+
+    Each step merges the pair with the smallest combined LOC, ignoring the
+    LOC budget and ``max_files``, so the partitions stay balanced. When a
+    same-type pair (impl with impl, test with test) ties that minimum it
+    wins, keeping a test-only partition on the test-only model.
+    """
+    def loc(part: dict[str, Any]) -> int:
+        return int(part.get("total_loc") or 0)
+
+    merges = 0
+    while len(partitions) > max(cap, 1):
+        partitions.sort(key=loc)
+        idx_a, idx_b = 0, 1
+        smallest = loc(partitions[0]) + loc(partitions[1])
+        if partitions[0].get("is_test_only") != partitions[1].get("is_test_only"):
+            for is_test in (True, False):
+                same = [
+                    i for i, part in enumerate(partitions)
+                    if bool(part.get("is_test_only")) == is_test
+                ]
+                if len(same) >= 2 and loc(partitions[same[0]]) + loc(partitions[same[1]]) == smallest:
+                    idx_a, idx_b = same[0], same[1]
+                    break
+        part_b = partitions.pop(idx_b)
+        part_a = partitions.pop(idx_a)
+        merged_files = list(part_a.get("files") or []) + list(part_b.get("files") or [])
+        partitions.append({
+            "id": 0,
+            "files": merged_files,
+            "total_loc": loc(part_a) + loc(part_b),
+            "is_test_only": all(f.get("is_test", False) for f in merged_files),
+        })
+        merges += 1
+    return merges
+
+
+def _merge_trivial_partitions(
+    partitions: list[dict[str, Any]], max_files: int,
+) -> list[dict[str, Any]]:
+    """Merge partitions below ``TRIVIAL_PARTITION_THRESHOLD`` LOC into the
+    smallest normal partition of the same type (any type as a fallback);
+    a trivial partition with no target within ``max_files`` is kept."""
+    trivial = [p for p in partitions if p["total_loc"] < TRIVIAL_PARTITION_THRESHOLD]
+    normal = [p for p in partitions if p["total_loc"] >= TRIVIAL_PARTITION_THRESHOLD]
+
+    for triv in trivial:
+        triv_is_test = triv["is_test_only"]
+        triv_files = triv["files"]
+        triv_loc = triv["total_loc"]
+
+        # Find best merge target: prefer same-type, fallback to any
+        same_type_targets = [
+            p for p in normal if p["is_test_only"] == triv_is_test and len(p["files"]) + len(triv_files) <= max_files
+        ]
+        any_type_targets = [
+            p for p in normal if len(p["files"]) + len(triv_files) <= max_files
+        ]
+
+        target = None
+        if same_type_targets:
+            # Merge into smallest same-type
+            target = min(same_type_targets, key=lambda p: p["total_loc"])
+        elif any_type_targets:
+            # Fallback: merge into smallest any-type
+            target = min(any_type_targets, key=lambda p: p["total_loc"])
+
+        if target is not None:
+            target["files"] = target["files"] + triv_files
+            target["total_loc"] += triv_loc
+            # Recompute is_test_only
+            target["is_test_only"] = all(f.get("is_test", False) for f in target["files"])
+        else:
+            # No valid merge target — keep trivial partition as-is
+            normal.append(triv)
+
+    return normal
+
+
+def _resolve_partition_cap(args: argparse.Namespace, diff_data: dict[str, Any]) -> int:
+    """``--max-bha-agents`` when given (an explicit override); else
+    ``_partition_bha_cap`` over ``--cr-dir``; else ``DEFAULT_MAX_BHA_AGENTS``
+    for a standalone call with neither."""
+    explicit = getattr(args, "max_bha_agents", None)
+    if explicit:
+        return int(explicit)
+    cr_dir = getattr(args, "cr_dir", None)
+    if cr_dir:
+        return _partition_bha_cap(Path(cr_dir), diff_data)
+    return DEFAULT_MAX_BHA_AGENTS
+
+
 def cmd_partition(args: argparse.Namespace) -> int:
     """Execute partition subcommand.
 
@@ -1979,7 +2073,7 @@ def cmd_partition(args: argparse.Namespace) -> int:
 
     _flush_partition()
 
-    max_bha_agents: int = getattr(args, "max_bha_agents", DEFAULT_MAX_BHA_AGENTS) or DEFAULT_MAX_BHA_AGENTS
+    max_bha_agents = _resolve_partition_cap(args, diff_data)
 
     # Pass 1 -- Mixed-partition split
     # For each partition with both test and non-test files where impl LOC >= threshold, split.
@@ -2007,6 +2101,11 @@ def cmd_partition(args: argparse.Namespace) -> int:
         else:
             new_partitions.append(part)
     partitions = new_partitions
+
+    # Pass 3 -- Trivial merge, before Pass 2a and the force-merge so a
+    # folded trivial partition neither holds a max_bha_agents slot nor
+    # drives a budget merge.
+    partitions = _merge_trivial_partitions(partitions, max_files)
 
     # Pass 2a -- Budget-respecting merges (all same-type pairs)
     # Enumerate ALL same-type partition pairs, merge the lowest-total-LOC pair
@@ -2046,59 +2145,7 @@ def cmd_partition(args: argparse.Namespace) -> int:
 
     # Pass 2b -- Unconditional cap enforcement (force-merge fallback)
     # When Phase 2a cannot reduce further, ignore budget and max_files constraints.
-    # Sort by total_loc ascending, merge the two smallest partitions (any type).
-    force_merged_count = 0
-    while len(partitions) > max_bha_agents:
-        partitions.sort(key=lambda p: p["total_loc"])
-        part_a = partitions.pop(0)
-        part_b = partitions.pop(0)
-        merged_files = part_a["files"] + part_b["files"]
-        is_test_only = all(f.get("is_test", False) for f in merged_files)
-        new_part = {
-            "id": 0,
-            "files": merged_files,
-            "total_loc": part_a["total_loc"] + part_b["total_loc"],
-            "is_test_only": is_test_only,
-        }
-        partitions.append(new_part)
-        force_merged_count += 1
-
-    # Pass 3 -- Trivial merge
-    # Merge partitions below TRIVIAL_PARTITION_THRESHOLD into same-type normal partitions.
-    trivial = [p for p in partitions if p["total_loc"] < TRIVIAL_PARTITION_THRESHOLD]
-    normal = [p for p in partitions if p["total_loc"] >= TRIVIAL_PARTITION_THRESHOLD]
-
-    for triv in trivial:
-        triv_is_test = triv["is_test_only"]
-        triv_files = triv["files"]
-        triv_loc = triv["total_loc"]
-
-        # Find best merge target: prefer same-type, fallback to any
-        same_type_targets = [
-            p for p in normal if p["is_test_only"] == triv_is_test and len(p["files"]) + len(triv_files) <= max_files
-        ]
-        any_type_targets = [
-            p for p in normal if len(p["files"]) + len(triv_files) <= max_files
-        ]
-
-        target = None
-        if same_type_targets:
-            # Merge into smallest same-type
-            target = min(same_type_targets, key=lambda p: p["total_loc"])
-        elif any_type_targets:
-            # Fallback: merge into smallest any-type
-            target = min(any_type_targets, key=lambda p: p["total_loc"])
-
-        if target is not None:
-            target["files"] = target["files"] + triv_files
-            target["total_loc"] += triv_loc
-            # Recompute is_test_only
-            target["is_test_only"] = all(f.get("is_test", False) for f in target["files"])
-        else:
-            # No valid merge target — keep trivial partition as-is
-            normal.append(triv)
-
-    partitions = normal
+    force_merged_count = _force_merge_to_cap(partitions, max_bha_agents)
 
     # Renumber IDs sequentially
     for idx, part in enumerate(partitions):
@@ -2256,7 +2303,9 @@ def cmd_route(args: argparse.Namespace) -> int:
 
     # Domain critics
     file_context = " ".join(files_to_review).lower()
-    max_domain_critics = min(review_budget, 1)
+    # Clamped at 0: a negative budget would turn the slice below into a
+    # tail-drop that keeps all but the last |budget| critics.
+    max_domain_critics = max(0, min(review_budget, 1))
     selected_domain_critics: list[str] = []
 
     for module in module_critics:
@@ -2269,7 +2318,7 @@ def cmd_route(args: argparse.Namespace) -> int:
 
     selected_domain_critics = sorted(set(selected_domain_critics))[:max_domain_critics]
 
-    max_bha_agents = 9 - 2 - len(selected_domain_critics)  # 2 = BHB + Auditor
+    max_bha_agents = _max_bha_partitions_by_loc(diff_data)
 
     fast_path = total_loc <= FAST_PATH_MAX_LOC
 
@@ -4198,24 +4247,23 @@ def cmd_verify_consolidate(args: argparse.Namespace) -> int:
     # Scoped to github deliberately: local mode renders pending_verification[]
     # to a human at stage_29_present (human-in-the-loop), whereas github mode
     # auto-posts a verdict with no human gate — so the loud signal matters there.
-    if mode == "github" and missing_high_or_blocking > 0:
-        gaps_path = cr_dir / "coverage_gaps.json"
-        existing_gaps = _read_optional_json(gaps_path, None)
-        gap_index = (
-            len(existing_gaps.get("findings", []) or [])
-            if isinstance(existing_gaps, dict)
-            else 0
-        )
-        _append_to_coverage_gaps(
-            gaps_path,
-            [
-                _make_unverified_findings_gap(
-                    missing_high_or_blocking,
-                    index=gap_index,
-                    emitted_at=datetime.now(timezone.utc).isoformat(),
-                ),
-            ],
-        )
+    # Written on every run (empty when there is nothing to report) so a
+    # re-run replaces, rather than duplicates or keeps, an earlier gap.
+    unverified_gaps = (
+        [
+            _make_unverified_findings_gap(
+                missing_high_or_blocking,
+                index=0,
+                emitted_at=datetime.now(timezone.utc).isoformat(),
+            ),
+        ]
+        if mode == "github" and missing_high_or_blocking > 0
+        else []
+    )
+    _write_coverage_gaps(
+        cr_dir / "coverage_gaps.json", unverified_gaps,
+        producer=_GAP_PRODUCER_VERIFY_CONSOLIDATE,
+    )
 
     output = {
         "verified": verified,
@@ -6349,6 +6397,14 @@ def cmd_setup(args: argparse.Namespace) -> int:
         suffix = random.randint(10000, 99999)
         cr_dir = f"{cr_dir_prefix}{suffix}"
         os.makedirs(cr_dir, exist_ok=True)
+        # Every stage after this writes coverage_gaps.json through
+        # _write_coverage_gaps; start the run with an empty one.
+        gaps_path = Path(cr_dir) / "coverage_gaps.json"
+        if not gaps_path.exists():
+            try:
+                gaps_path.write_text(json.dumps({"findings": []}, indent=2))
+            except OSError as exc:
+                print(f"Warning: could not create coverage gaps: {exc}", file=sys.stderr)
         output["cr_dir"] = cr_dir
 
     json.dump(output, sys.stdout, indent=2)
@@ -12261,10 +12317,11 @@ def _rp_augment_partition_args(
     """Apply Gate B's partition augmentation (start.md Gate B step 4).
 
     For the standard (non-fast-path) flow the walker passes
-    ``--loc-budget 500 --max-files 25 --max-bha-agents <N>`` on top of the plan
-    args, and — when a cache dir is active — swaps ``--diff-data`` to
-    ``uncached_diff_data.json`` so partitions only contain files that missed the
-    cache.
+    ``--loc-budget 500 --max-files 25`` on top of the plan args, and — when a
+    cache dir is active — swaps ``--diff-data`` to ``uncached_diff_data.json``
+    so partitions only contain files that missed the cache. ``partition``
+    derives its Bug Hunter A cap from ``--cr-dir`` itself
+    (``_partition_bha_cap``).
     """
     out = list(resolved)
     cache_dir = _rp_resolve_token("<CACHE_DIR>", ctx)
@@ -12275,8 +12332,6 @@ def _rp_augment_partition_args(
             for a in out
         ]
     out += ["--loc-budget", "500", "--max-files", "25"]
-    if ctx.max_bha_agents is not None:
-        out += ["--max-bha-agents", str(ctx.max_bha_agents)]
     return out
 
 
@@ -12711,12 +12766,100 @@ def _is_docs_only(diff_data: dict[str, Any]) -> bool:
 
 
 def _max_bha_partitions_by_loc(diff_data: dict[str, Any]) -> int:
-    """Cap BHA partitions by changed-LOC budget (mirrors partition heuristics)."""
+    """The LOC-derived Bug Hunter A count: one per
+    ``REBALANCE_LOC_BUDGET`` changed lines, at least 1, at most
+    ``DEFAULT_MAX_BHA_AGENTS``.
+
+    ``arbitrate-budget`` reserves it as ``budget.bha_partitions``, which
+    ``partition`` applies as its cap on standard and deep
+    (``_partition_bha_cap``). Shallow runs no arbitrate-budget, so there
+    ``partition`` applies this value directly. ``route`` reports it as
+    ``max_bha_agents`` for telemetry only. All of them read the full
+    ``diff_data.json``.
+    """
     total_loc = int(diff_data.get("total_loc") or 0)
-    if total_loc <= 0:
-        return 1
     by_budget = max(1, (total_loc + REBALANCE_LOC_BUDGET - 1) // REBALANCE_LOC_BUDGET)
     return min(by_budget, DEFAULT_MAX_BHA_AGENTS)
+
+
+def _budget_bha_partitions(budget: Any) -> int | None:
+    """``budget.bha_partitions`` from an arbitrated plan's ``budget``, or
+    None when it is absent or not an int (a bool is rejected)."""
+    value = budget.get("bha_partitions") if isinstance(budget, dict) else None
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def _partition_bha_cap(cr_dir: Path, diff_data: dict[str, Any]) -> int:
+    """The Bug Hunter A cap ``partition`` applies when ``--max-bha-agents``
+    is not given.
+
+    On standard and deep this is ``coverage.json`` ``final.budget.bha_partitions``,
+    the count arbitrate-budget reserved, so the partitioner never produces
+    more partitions than BHA agents get spawned. When that value is absent
+    (shallow runs no arbitrate-budget) it falls back to
+    ``_max_bha_partitions_by_loc`` over ``<cr_dir>/diff_data.json``, the full
+    diff even when the partitioner reads the uncached subset, or over
+    ``diff_data`` when that file is missing. Floored at 1: a docs-only
+    budget of 0 still partitions, and derive-spawn-spec's ``docs_only`` skip
+    keeps BHA from spawning.
+    """
+    final = _read_coverage_state(cr_dir).get("final")
+    reserved = _budget_bha_partitions(final.get("budget") if isinstance(final, dict) else None)
+    if reserved is not None:
+        return max(1, reserved)
+    full = _read_optional_json(cr_dir / "diff_data.json", None)
+    return max(1, _max_bha_partitions_by_loc(full if isinstance(full, dict) else diff_data))
+
+
+# ``gap_producer`` values, one per stage that writes ``coverage_gaps.json``.
+# derive-spawn-spec and derive-static-spec share one: a run executes exactly
+# one of them.
+_GAP_PRODUCER_ARBITRATE_BUDGET = "arbitrate-budget"
+_GAP_PRODUCER_SPAWN_SPEC = "spawn-spec"
+_GAP_PRODUCER_VERIFY_SPAWN = "verify-spawn"
+_GAP_PRODUCER_VERIFY_CONSOLIDATE = "verify-consolidate"
+
+
+def _write_coverage_gaps(
+    gaps_path: Path,
+    new_findings: list[dict[str, Any]],
+    *,
+    producer: str,
+    create: bool = False,
+) -> bool:
+    """Replace ``producer``'s findings in ``coverage_gaps.json`` with
+    ``new_findings``, keeping every other producer's; return False when the
+    write failed.
+
+    The only writer of the file after ``setup`` creates it. Each new finding
+    is tagged ``gap_producer: producer`` and existing ones are matched on
+    that tag, so a stage that runs again on a resumed walk neither
+    duplicates its gaps nor leaves a stale one behind; an empty
+    ``new_findings`` clears them, and writes nothing when the file is absent
+    unless ``create`` (arbitrate-budget, which reports the file as its
+    output). Producers: arbitrate-budget
+    (``stage_16``), derive-spawn-spec / derive-static-spec (``stage_19b`` /
+    ``stage_19c``), verify-spawn (``stage_20b``) and verify-consolidate
+    (``stage_24a``). ``cmd_finalize_result`` reads every entry.
+    """
+    existing = _read_optional_json(gaps_path, None)
+    raw = existing.get("findings") if isinstance(existing, dict) else None
+    kept = [
+        f for f in (raw if isinstance(raw, list) else [])
+        if isinstance(f, dict) and f.get("gap_producer") != producer
+    ]
+    tagged = [{**f, "gap_producer": producer} for f in new_findings]
+    if not kept and not tagged and not create and not gaps_path.exists():
+        return True
+    try:
+        with open(gaps_path, "w") as f:
+            json.dump({"findings": kept + tagged}, f, indent=2)
+    except OSError as exc:
+        print(f"Warning: could not write {producer} coverage gaps: {exc}", file=sys.stderr)
+        return False
+    return True
 
 
 def _make_coverage_gap_finding(
@@ -12725,17 +12868,25 @@ def _make_coverage_gap_finding(
     reason: str,
     index: int,
     emitted_at: str,
+    producer: str | None = None,
 ) -> dict[str, Any]:
-    """Build a canonical system-scoped coverage-gap finding for a dropped reviewer."""
+    """Build a canonical system-scoped coverage-gap finding for a dropped reviewer.
+
+    ``producer`` (a ``_GAP_PRODUCER_*`` value) prefixes the id,
+    ``coverage-verifier-<producer>_f<index>``, so ids from different
+    producers never collide. Without it the id is
+    ``coverage-verifier_f<index>``, arbitrate-budget's.
+    """
     reviewer_name = str(reviewer_entry.get("reviewer") or reviewer_entry.get("name") or "unknown")
     marker = (
         "budget-exceeded"
         if reason == "budget_exceeded"
         else f"coverage:{reviewer_name}"
     )
+    id_prefix = f"coverage-verifier-{producer}" if producer else "coverage-verifier"
     return normalize_legacy_finding(
         {
-            "id": make_finding_id("coverage-verifier", index),
+            "id": make_finding_id(id_prefix, index),
             "reviewer": "coverage-verifier",
             "source": "coverage-verifier",
             "schema_version": SCHEMA_VERSION,
@@ -12788,7 +12939,9 @@ def _make_unverified_findings_gap(
     """
     return normalize_legacy_finding(
         {
-            "id": make_finding_id("coverage-verifier", index),
+            "id": make_finding_id(
+                f"coverage-verifier-{_GAP_PRODUCER_VERIFY_CONSOLIDATE}", index,
+            ),
             "reviewer": "coverage-verifier",
             "source": "coverage-verifier",
             "schema_version": SCHEMA_VERSION,
@@ -12914,11 +13067,9 @@ def cmd_arbitrate_budget(args: argparse.Namespace) -> int:
     def _gaps_target(findings: list[dict[str, Any]]) -> tuple[int, Path]:
         # coverage_gaps.json stays standalone (multi-writer).
         gaps_path = cr_dir / "coverage_gaps.json"
-        try:
-            with open(gaps_path, "w") as f:
-                json.dump({"findings": findings}, f, indent=2)
-        except OSError as exc:
-            print(f"Error writing coverage_gaps: {exc}", file=sys.stderr)
+        if not _write_coverage_gaps(
+            gaps_path, findings, producer=_GAP_PRODUCER_ARBITRATE_BUDGET, create=True,
+        ):
             return 1, gaps_path
         return 0, gaps_path
 
@@ -13334,6 +13485,17 @@ def _spawn_bha_model(
     return str(bha_models or "opus")
 
 
+# Required-bucket skip reasons that are intentional omissions, not coverage
+# gaps. Shared by derive-spawn-spec and derive-static-spec so the two tiers
+# report the same skips as gaps.
+_SPAWN_BENIGN_REQUIRED_SKIPS: frozenset[str] = frozenset({
+    "deferred_pln723",      # PLN-723 placeholder slot
+    "no_partitions",        # all files cached, or only deleted files left
+    "docs_only",            # arbitrate-budget waived the BHA floor
+    "gated_by_verify",      # BLOCKING sanitization
+})
+
+
 def _derive_spawn_agents_from_plan(
     coverage_plan: dict[str, Any],
     partitions: list[dict[str, Any]],
@@ -13350,12 +13512,13 @@ def _derive_spawn_agents_from_plan(
     anything else lands in ``skipped[]`` with reason ``unknown_reviewer``
     so the orchestrator surfaces the gap.
 
-    ``bha_partitions_cap`` honors the post-arbitrate budget. When the
-    partitioner produced N partitions but arbitrate-budget reserved
-    only K < N slots for BHA (the route-level ``max_bha_agents`` cap
-    and the post-arbitrate cap are computed at different times and
-    can diverge), the first K partitions are spawned and the rest
-    land in ``skipped[]`` with ``reason: "budget_capped"``. A cap of 0
+    ``bha_partitions_cap`` honors the post-arbitrate budget. The
+    partitioner applies that same budget as its cap
+    (``_partition_bha_cap``), so N partitions never exceed K slots in a
+    normal run. If they do (a ``partitions.json`` produced another way),
+    the first K partitions are spawned and the rest land in ``skipped[]``
+    with ``reason: "budget_capped"``, which the callers report as a
+    required coverage gap. A cap of 0
     suppresses all BHA spawns: with ``docs_only`` (arbitrate-budget
     waived the BHA floor) the one skipped entry carries
     ``reason: "docs_only"``; without it the zero is a cap and keeps
@@ -13398,16 +13561,16 @@ def _derive_spawn_agents_from_plan(
                         "reason": "no_partitions",
                     })
                     return
-                # Budget cap: arbitrate-budget computes a final
-                # ``bha_partitions`` count that may be < the number of
-                # partitions on disk (the route-level
-                # ``max_bha_agents`` and the post-arbitrate cap are
-                # computed at different times and can diverge). When
-                # the cap is 0, no BHA agents spawn at all. When the cap is positive
-                # but < len(partitions), the first cap partitions
-                # spawn (partitions are bin-packed by the partitioner
-                # in roughly diff-LOC order, so prefix-take is the
-                # safest cap policy without re-running the bin-pack).
+                # Budget cap: arbitrate-budget's ``bha_partitions`` bounds
+                # the BHA fleet and is also the partitioner's
+                # ``--max-bha-agents``, so a positive cap is never below the
+                # partition count unless partitions.json came from
+                # elsewhere. Docs-only is the deliberate exception: the cap
+                # is 0 while the partitioner ran with a floor of 1. When
+                # the cap is 0, no BHA agents spawn at all. When the cap is
+                # positive but < len(partitions), the first cap partitions
+                # spawn and the rest are reported as ``budget_capped``
+                # coverage gaps.
                 effective_partitions = partitions
                 dropped_for_cap: list[dict[str, Any]] = []
                 if bha_partitions_cap is not None:
@@ -13619,6 +13782,11 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     """
     cr_dir = Path(args.cr_dir)
     now_iso = datetime.now(timezone.utc).isoformat()
+    # Clear this stage's gaps from an earlier run first, so every return
+    # path below (fallback sentinel, fast path, refusal) leaves none stale.
+    _write_coverage_gaps(
+        cr_dir / "coverage_gaps.json", [], producer=_GAP_PRODUCER_SPAWN_SPEC,
+    )
 
     review_root, refusal_rc = _require_review_root_or_report(
         cr_dir, _read_optional_json(cr_dir / "scope.json", {}),
@@ -13736,13 +13904,14 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
                         "source": str(entry.get("source", "") or ""),
                     })
 
-    # Budget cap on BHA (#fix-1). arbitrate-budget computes a final
-    # ``bha_partitions`` that honors the LOC cap + total reviewer cap;
-    # the partitioner runs separately and may emit more partitions.
-    # Pass the cap into the resolver so the spawn-spec never exceeds
-    # the post-arbitrate fleet size.
-    bha_cap_raw = budget.get("bha_partitions")
-    bha_cap: int | None = int(bha_cap_raw) if isinstance(bha_cap_raw, int) else None
+    # Budget cap on BHA (#fix-1). ``budget.bha_partitions`` is also the
+    # partitioner's cap (``_partition_bha_cap``), so it
+    # covers the partition count; passing it keeps the spec within the
+    # post-arbitrate fleet if a partitions.json from elsewhere does not, and
+    # the excess is reported as a ``budget_capped`` coverage gap. A docs-only
+    # diff is the intentional exception: the cap is 0 and BHA is skipped
+    # with ``reason: "docs_only"``.
+    bha_cap = _budget_bha_partitions(budget)
 
     agents, skipped = _derive_spawn_agents_from_plan(
         plan_for_spawn, partitions, models,
@@ -13756,21 +13925,16 @@ def cmd_derive_spawn_spec(args: argparse.Namespace) -> int:
     # path used to fail-closed (orchestrator-level coverage-gap on
     # missing required reviewer). The spawn-spec path now emits the
     # same canonical Coverage finding so finalize-result picks it up
-    # via coverage_gaps.json. Benign reasons (test_quality deferral,
-    # all-cached no_partitions, the docs_only BHA floor waiver,
-    # gated_by_verify suppression) are explicitly excluded — those are intentional omissions, not
-    # coverage gaps.
-    _SPAWN_BENIGN_REQUIRED_SKIPS = {
-        "deferred_pln723",      # PLN-723 placeholder slot
-        "no_partitions",        # all files cached, or only deleted files left
-        "docs_only",            # arbitrate-budget waived the BHA floor
-        "gated_by_verify",      # BLOCKING sanitization
-    }
+    # via coverage_gaps.json. The reasons in _SPAWN_BENIGN_REQUIRED_SKIPS
+    # (deferred_pln723, no_partitions, docs_only, gated_by_verify) are
+    # intentional omissions, not coverage gaps, and are excluded.
     spawn_gap_findings = _build_spawn_required_gap_findings(
         skipped, _SPAWN_BENIGN_REQUIRED_SKIPS, emitted_at=now_iso,
     )
-    if spawn_gap_findings:
-        _append_to_coverage_gaps(cr_dir / "coverage_gaps.json", spawn_gap_findings)
+    _write_coverage_gaps(
+        cr_dir / "coverage_gaps.json", spawn_gap_findings,
+        producer=_GAP_PRODUCER_SPAWN_SPEC,
+    )
 
     bha_count = sum(1 for a in agents if a["reviewer"] == "bug_hunter_a")
     # Domain critics span both source values (``rule`` for
@@ -13834,6 +13998,11 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
     """
     cr_dir = Path(args.cr_dir)
     now_iso = datetime.now(timezone.utc).isoformat()
+    # Clear this stage's gaps from an earlier run first, so every return
+    # path below (fallback sentinel, fast path, refusal) leaves none stale.
+    _write_coverage_gaps(
+        cr_dir / "coverage_gaps.json", [], producer=_GAP_PRODUCER_SPAWN_SPEC,
+    )
 
     review_root, refusal_rc = _require_review_root_or_report(
         cr_dir, _read_optional_json(cr_dir / "scope.json", {}),
@@ -13902,6 +14071,16 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
         static_plan, partitions, models,
         bha_partitions_cap=DEFAULT_MAX_BHA_AGENTS,
     )
+    # A partition dropped as ``budget_capped`` holds files no reviewer will
+    # bug-hunt. The route's cap keeps that from happening; if it does, record
+    # the gap the same way derive-spawn-spec does instead of dropping it silently.
+    spawn_gap_findings = _build_spawn_required_gap_findings(
+        skipped, _SPAWN_BENIGN_REQUIRED_SKIPS, emitted_at=now_iso,
+    )
+    _write_coverage_gaps(
+        cr_dir / "coverage_gaps.json", spawn_gap_findings,
+        producer=_GAP_PRODUCER_SPAWN_SPEC,
+    )
 
     bha_count = sum(1 for a in agents if a["reviewer"] == "bug_hunter_a")
     spec = {
@@ -13917,7 +14096,7 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
             "domain_critic_count": 0,
             "from_required": len(agents),
             "from_best_effort": 0,
-            "required_coverage_gaps": 0,
+            "required_coverage_gaps": len(spawn_gap_findings),
         },
         "generated_at": now_iso,
     }
@@ -13926,7 +14105,7 @@ def cmd_derive_static_spec(args: argparse.Namespace) -> int:
 
 def _build_spawn_required_gap_findings(
     skipped: list[dict[str, Any]],
-    benign_reasons: set[str],
+    benign_reasons: frozenset[str],
     *,
     emitted_at: str,
 ) -> list[dict[str, Any]]:
@@ -13966,40 +14145,11 @@ def _build_spawn_required_gap_findings(
                 reason=f"spawn_{reason}",
                 index=idx,
                 emitted_at=emitted_at,
+                producer=_GAP_PRODUCER_SPAWN_SPEC,
             ),
         )
         idx += 1
     return findings
-
-
-def _append_to_coverage_gaps(
-    gaps_path: Path, new_findings: list[dict[str, Any]],
-) -> None:
-    """Append findings to ``coverage_gaps.json`` preserving existing entries.
-
-    Three producers write this file. ``arbitrate-budget`` is the
-    original (writing the ``budget_exceeded`` findings); ``derive-spawn-spec``
-    is the second (writing the ``spawn_*`` reason findings); both run before
-    ``stage_21_collect_findings`` which globs ``agent_*.json``.
-    ``verify-consolidate`` (``stage_24a``, FEA-3154) is the third, appending a
-    single ``coverage:verifier-missing-output`` finding in github mode when a
-    BLOCKING/HIGH finding had no verifier output — it runs after
-    collect-findings but before ``stage_25_finalize_result``. All three are
-    picked up by ``cmd_finalize_result``, which reads ``coverage_gaps.json``
-    directly. The append-not-overwrite contract keeps every producer's
-    findings visible in the final envelope.
-    """
-    existing = _read_optional_json(gaps_path, None)
-    if isinstance(existing, dict):
-        merged = list(existing.get("findings", []) or [])
-    else:
-        merged = []
-    merged.extend(new_findings)
-    try:
-        with open(gaps_path, "w") as f:
-            json.dump({"findings": merged}, f, indent=2)
-    except OSError as exc:
-        print(f"Warning: could not append spawn coverage gaps: {exc}", file=sys.stderr)
 
 
 def _write_spawn_spec(
@@ -14087,6 +14237,9 @@ def cmd_verify_spawn(args: argparse.Namespace) -> int:
     now_iso = datetime.now(timezone.utc).isoformat()
 
     def _emit_no_op(reason: str) -> int:
+        _write_coverage_gaps(
+            cr_dir / "coverage_gaps.json", [], producer=_GAP_PRODUCER_VERIFY_SPAWN,
+        )
         verification = {
             "verified": False,
             "reason": reason,
@@ -14167,12 +14320,12 @@ def cmd_verify_spawn(args: argparse.Namespace) -> int:
                 reason="spawn_missing_required_agent",
                 index=idx,
                 emitted_at=now_iso,
+                producer=_GAP_PRODUCER_VERIFY_SPAWN,
             ),
         )
-    if findings:
-        _append_to_coverage_gaps(
-            cr_dir / "coverage_gaps.json", findings,
-        )
+    _write_coverage_gaps(
+        cr_dir / "coverage_gaps.json", findings, producer=_GAP_PRODUCER_VERIFY_SPAWN,
+    )
 
     verification = {
         "verified": True,

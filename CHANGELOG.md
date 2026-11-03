@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code-review v3.13.1
+
+#### Fixed
+- `partition`'s Bug Hunter A cap now matches the number of Bug Hunter A agents the spawn spec reserves. When `--max-bha-agents` is omitted, `partition` reads `arbitrate-budget`'s `budget.bha_partitions` from `--cr-dir`, floored at 1. On shallow, which runs no `arbitrate-budget`, it uses the LOC-based count (`ceil(total_loc / 1200)`, at most 5) over the full `diff_data.json`. `run-prefix` no longer passes the flag; it used to pass route's `9 - 2 - <domain critics>` (7 with no critic) against 5 reserved agents. A partition's files are no longer dropped as `budget_capped`. That reason remains, with its required coverage gap, for a `partitions.json` produced some other way. An explicit `--max-bha-agents` still overrides the derived cap, and `route` still reports a `max_bha_agents`, now the LOC-based count, for telemetry only.
+- `route` clamps `defaults.reviewBudget` from `critic-gates.json` at 0, so a negative value selects no domain critics instead of all but the last few.
+- The partitioner folds trivial partitions (under 20 LOC) into another partition with room under `--max-files` before its budget-respecting merge and its force-merge. A folded trivial partition no longer takes a Bug Hunter A slot or causes another partition to double. When the force-merge's smallest pair mixes impl and test, an impl-only or test-only pair with the same combined LOC now wins, so test-only partitions stay on the test-only model.
+- `derive-static-spec` records a required coverage gap for a skipped required reviewer, matching `derive-spawn-spec` and using the same set of benign skip reasons.
+- `setup` creates an empty `coverage_gaps.json` when the run directory has none. Every writer of the file (`arbitrate-budget`, the spawn-spec stages, `verify-spawn`, `verify-consolidate`) tags its findings with `gap_producer` and replaces only its own on every run and every return path. A resumed walk therefore neither duplicates a gap nor keeps a stale one, and `arbitrate-budget` no longer erases other producers' gaps. Finding ids from the spawn-spec stages, `verify-spawn` and `verify-consolidate` carry the producer (e.g. `coverage-verifier-verify-spawn_f0`), so they no longer collide with `arbitrate-budget`'s `coverage-verifier_f<N>`.
+
 ### vibe v1.1.31
 
 #### Fixed
