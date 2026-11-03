@@ -1,4 +1,4 @@
-"""Contract checks for WS8 load-aware execution (PRD-823, ISS-13584 to ISS-13587).
+"""Contract checks for Load-aware execution (PRD-823, ISS-13584 to ISS-13587).
 
 1. run-bounded.mjs is the one choke point; the budget, admission and pool scripts are wired in.
 2. Every default lives in ONE frozen object, and every new behavior has an environment switch
@@ -147,10 +147,10 @@ def test_the_flags_the_skill_uses_exist_in_verify_run_and_the_worker_can_join() 
     assert "Without the script, run the checks below unchanged." in worker
 
 
-def test_versions_and_notes_say_1_1_29() -> None:
+def test_versions_and_notes_say_1_1_32() -> None:
     for manifest in (".claude-plugin", ".codex-plugin"):
         assert json.loads((PLUGIN_ROOT / manifest / "plugin.json").read_text())["version"] == "1.1.32", manifest
     assert "Version `1.1.32`" in (PLUGIN_ROOT / "README.md").read_text()
     changelog = (PLUGIN_ROOT.parents[1] / "CHANGELOG.md").read_text()
     assert "### vibe v1.1.32" in changelog
-    assert "WS8 load-aware execution" in changelog
+    assert "Load-aware execution" in changelog
