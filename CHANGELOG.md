@@ -4,6 +4,13 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.31
+
+#### Fixed
+- Upgrade resume nightly cases record known-bad historical releases as expected failures and require a successful current Claude and Codex resume. Codex request two is finalized before scoring, and complete Claude terminal diagnostics are retained.
+- Current upgrade proofs use the sealed candidate plugin bytes and version, while historical proofs keep their exact released Git refs.
+- Claude worker startup waits for the first system init through the overall turn deadline. Only a pending connection starts the bounded retry window, preserving the same writer identity and turn cap.
+
 ### vibe v1.1.30
 
 #### Added

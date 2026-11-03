@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveAgentRoot } from "./plugin-root.js";
+import * as worker from "./claude-worker.js";
 import { bundleDirectory, fixture, graph, liveReads, readProof } from "./test-fixtures.js";
 
 const installedRoot = resolve(bundleDirectory, "../../../..");
@@ -88,6 +89,49 @@ describe("launcher agent root (operator ruling, 2026-10-15)", () => {
 });
 
 describe("launcher sign-in and connection prechecks (operator ruling, 2026-10-15)", () => {
+  it("ISS-13563 AC3 accepts a first init after fifteen seconds and bounds pending retries", async () => {
+    const arm = (worker as unknown as { armMcpInitWatchdog?: (startupTimeoutMs: number | null,
+      onTimeout: () => void) => ReturnType<typeof setTimeout> | undefined }).armMcpInitWatchdog;
+    expect(typeof arm).toBe("function");
+    vi.useFakeTimers();
+    try {
+      const events: string[] = [];
+      const turn = setTimeout(() => events.push("turn deadline"), 30_000);
+      const first = arm!(null, () => events.push("missing graph"));
+      setTimeout(() => events.push("first init connected"), 16_000);
+      await vi.advanceTimersByTimeAsync(16_000);
+      expect(first).toBeUndefined();
+      expect(events).toEqual(["first init connected"]);
+      clearTimeout(turn);
+      const retry = arm!(5_000, () => events.push("pending retry expired"));
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(events).toEqual(["first init connected"]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(events).toEqual(["first init connected", "pending retry expired"]);
+      clearTimeout(retry);
+    } finally { vi.useRealTimers(); }
+  });
+  it("ISS-13563 keeps one overall turn deadline across pending MCP attempts", () => {
+    const budget = (worker as unknown as { remainingWorkerTurnBudget?: (input: {
+      turnDeadline: number; readinessDeadline: number; now: number;
+    }) => { turnTimeoutMs: number; startupTimeoutMs: number } }).remainingWorkerTurnBudget;
+    expect(typeof budget).toBe("function");
+    expect(budget!({ turnDeadline: 10_000, readinessDeadline: 3_000, now: 1_000 }))
+      .toEqual({ turnTimeoutMs: 9_000, startupTimeoutMs: 2_000 });
+    expect(budget!({ turnDeadline: 10_000, readinessDeadline: 3_000, now: 2_500 }))
+      .toEqual({ turnTimeoutMs: 7_500, startupTimeoutMs: 500 });
+    expect(budget!({ turnDeadline: 10_000, readinessDeadline: 3_000, now: 10_001 }))
+      .toEqual({ turnTimeoutMs: 0, startupTimeoutMs: 0 });
+  });
+  it("ISS-13563 admits the first attempt after one millisecond of a valid turn", () => {
+    const canStart = (worker as unknown as { canStartWorkerAttempt?: (budget: {
+      turnTimeoutMs: number; startupTimeoutMs: number;
+    }) => boolean }).canStartWorkerAttempt;
+    expect(typeof canStart).toBe("function");
+    expect(canStart!({ turnTimeoutMs: 999, startupTimeoutMs: 999 })).toBe(true);
+    expect(canStart!({ turnTimeoutMs: 1, startupTimeoutMs: 1 })).toBe(true);
+    expect(canStart!({ turnTimeoutMs: 0, startupTimeoutMs: 0 })).toBe(false);
+  });
   it("stops before any worker or writer state when the Claude CLI is signed out, with one plain step", () => {
     const value = setup();
     const result = launch(value, { agentRoot: value.agentRoot, input: "Build it" }, { FAKE_CLAUDE_SIGNED_OUT: "1" });
@@ -120,6 +164,38 @@ describe("launcher sign-in and connection prechecks (operator ruling, 2026-10-15
     // The brief is already piped at spawn, so the fixture may have recorded it; the process itself must be gone.
     for (const proof of proofCount(value) ? readProof(value.metadata) : []) expect(() => process.kill(proof.pid, 0)).toThrow();
   }, 20000);
+  it("ISS-13563 waits for a pending graph startup and keeps one writer identity", () => {
+    const value = setup();
+    const result = launch(value, { agentRoot: value.agentRoot, input: "Build it",
+      timeoutMs: 5000 }, { FAKE_CLAUDE_PENDING_ONCE: "1" });
+    expect(result.status, JSON.stringify(result.json)).toBe(0);
+    const starts = readFileSync(join(value.metadata, "fake-mcp-starts.jsonl"), "utf8").trim()
+      .split("\n").map((line) => JSON.parse(line) as { id: string; pending: boolean });
+    expect(starts.map((item) => item.pending)).toEqual([true, false]);
+    expect(new Set(starts.map((item) => item.id)).size).toBe(1);
+    const proof = readProof(value.metadata);
+    expect(proof).toHaveLength(1);
+    expect(proof[0]?.args).toContain("--resume");
+  });
+  it("ISS-13563 refuses a graph that stays pending within the startup bound", () => {
+    const value = setup();
+    const result = launch(value, { agentRoot: value.agentRoot, input: "Build it",
+      timeoutMs: 2500 }, { FAKE_CLAUDE_PENDING_FOREVER: "1" });
+    expect(result.status).toBe(1);
+    expect(result.json.code).toBe("MCP_TOOLS_MISSING");
+    expect(String(result.json.summary)).toContain("pending");
+    expect(proofCount(value)).toBe(0);
+  });
+  it("ISS-13563 refuses a failed graph without a startup retry", () => {
+    const value = setup();
+    const result = launch(value, { agentRoot: value.agentRoot, input: "Build it" },
+      { FAKE_CLAUDE_FAILED_SERVER: "1" });
+    expect(result.status).toBe(1);
+    expect(result.json.code).toBe("MCP_TOOLS_MISSING");
+    expect(readFileSync(join(value.metadata, "fake-mcp-starts.jsonl"), "utf8").trim().split("\n"))
+      .toHaveLength(1);
+    expect(proofCount(value)).toBe(0);
+  });
   it("launches when Claude reports the granted MCP operations with hyphens", () => {
     const value = setup();
     const result = launch(value, { agentRoot: value.agentRoot, agentName: "vibe-requirements-worker",

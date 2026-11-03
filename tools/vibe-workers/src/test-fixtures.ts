@@ -58,13 +58,26 @@ if (args[0] === '--version') {
 const option = key => args[args.indexOf(key) + 1];
 const id = option(args.includes('--resume') ? '--resume' : '--session-id');
 const dropped = (process.env.FAKE_CLAUDE_DROP_SERVER || '').split(',').filter(Boolean);
-let initTools = (option('--tools') || '').split(',').filter(tool => !dropped.some(server => tool.startsWith('mcp__' + server + '__')));
+const startsFile = path.join(process.cwd(), '.git', 'fake-mcp-starts.jsonl');
+const trackStartup = process.env.FAKE_CLAUDE_PENDING_FOREVER === '1'
+  || process.env.FAKE_CLAUDE_PENDING_ONCE === '1' || process.env.FAKE_CLAUDE_FAILED_SERVER === '1';
+const starts = trackStartup && fs.existsSync(startsFile)
+  ? fs.readFileSync(startsFile, 'utf8').trim().split('\n').filter(Boolean).length : 0;
+const pending = process.env.FAKE_CLAUDE_PENDING_FOREVER === '1'
+  || (process.env.FAKE_CLAUDE_PENDING_ONCE === '1' && starts === 0);
+const failedServer = process.env.FAKE_CLAUDE_FAILED_SERVER === '1';
+if (trackStartup) fs.appendFileSync(startsFile, JSON.stringify({ id, pending, failedServer }) + '\n');
+let initTools = (option('--tools') || '').split(',').filter(tool =>
+  !(pending || failedServer || dropped.includes('custom_graph')) || !tool.startsWith('mcp__custom_graph__'));
 if (process.env.FAKE_CLAUDE_HYPHENATE_MCP === '1') {
   initTools = [...new Set(initTools.map(tool => tool.startsWith('mcp__')
     ? tool.slice(0, tool.lastIndexOf('__') + 2) + tool.slice(tool.lastIndexOf('__') + 2).replaceAll('_', '-')
     : tool))];
 }
-process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_id: id, tools: initTools }) + '\n');
+const mcpStatus = pending ? 'pending' : failedServer ? 'failed' : dropped.includes('custom_graph') ? null : 'connected';
+process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_id: id, tools: initTools,
+  mcp_servers: mcpStatus ? [{ name: 'custom_graph', status: mcpStatus }] : [] }) + '\n');
+if (pending || failedServer) { setInterval(() => {}, 1000); return; }
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', chunk => input += chunk);

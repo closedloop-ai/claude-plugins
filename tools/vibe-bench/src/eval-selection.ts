@@ -25,6 +25,8 @@ export interface ReleaseReference {
 export interface UpgradeTransition {
   target: ReleaseReference;
   prior: ReleaseReference;
+  /** Historical outcome fixed by the release proof; omitted legacy manifests mean pass. */
+  expected?: { claude: "pass" | "fail"; codex: "pass" | "fail" };
 }
 
 function filesBelow(root: string): string[] {
@@ -90,12 +92,21 @@ export function statefulCaseDefinition(caseDir: string, id: string): EvalCaseDef
   }
   const transitions = value.transitions.map((item, index): UpgradeTransition => {
     if (!item || typeof item !== "object" || Array.isArray(item) ||
-        Object.keys(item as Record<string, unknown>).sort().join(",") !== "prior,target") {
+        !["prior,target", "expected,prior,target"].includes(
+          Object.keys(item as Record<string, unknown>).sort().join(","))) {
       throw new Error(`eval-stateful-transition-${index}-invalid`);
     }
     const record = item as Record<string, unknown>;
+    const expected = record.expected;
+    if (expected !== undefined && (!expected || typeof expected !== "object" ||
+        Array.isArray(expected) || Object.keys(expected).sort().join(",") !== "claude,codex" ||
+        !["pass", "fail"].includes((expected as Record<string, unknown>).claude as string) ||
+        !["pass", "fail"].includes((expected as Record<string, unknown>).codex as string))) {
+      throw new Error(`eval-stateful-transition-${index}-expected-invalid`);
+    }
     return { target: releaseReference(record.target, `target-${index}`),
-      prior: releaseReference(record.prior, `prior-${index}`) };
+      prior: releaseReference(record.prior, `prior-${index}`),
+      ...(expected ? { expected: expected as UpgradeTransition["expected"] } : {}) };
   });
   if (new Set(transitions.map((item) => item.target.ref)).size !== transitions.length ||
       transitions.some((item) => item.target.ref === item.prior.ref)) {

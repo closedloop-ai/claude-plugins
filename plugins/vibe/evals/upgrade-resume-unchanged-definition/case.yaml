@@ -10,6 +10,7 @@
   },
   "transitions": [
     {
+      "expected": { "claude": "fail", "codex": "pass" },
       "target": {
         "version": "1.1.23",
         "ref": "802afdc075b4ca8442a5644975ef3571f98c38d2"
@@ -20,6 +21,7 @@
       }
     },
     {
+      "expected": { "claude": "pass", "codex": "pass" },
       "target": {
         "version": "1.1.25",
         "ref": "f45882fb9118cca457221e48e7cef850557f8246"

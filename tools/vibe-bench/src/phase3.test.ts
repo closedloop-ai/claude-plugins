@@ -1114,6 +1114,8 @@ for (const code of ["AUTH_UNAVAILABLE", "INSTALL_INVALID", "TIMEOUT",
         `eval-stateful-infrastructure:${code}:upgrade-resume-changed-definition`);
       assert.deepEqual(failedCases(output.result, "claude"), []);
       assert.equal(runner.calls.length, 1, "infrastructure does not enter a paid retry wave");
+      assert.equal(runner.calls[0]?.currentSnapshot?.sha, sha,
+        "the stateful runner receives the sealed candidate snapshot");
       const catalog = evalCaseCatalog(join(REPO_ROOT, "plugins/vibe"))
         .filter((item) => selectedCases.includes(item.id));
       assert.throws(() => buildEvalBaseline({ results: [output.result], catalog,
