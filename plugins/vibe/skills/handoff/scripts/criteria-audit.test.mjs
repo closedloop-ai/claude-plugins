@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -68,9 +69,15 @@ test("a test ref must name a file that exists at HEAD", () => {
   const criteria = ticketCriteria(TICKET).slice(0, 1);
   const dir = mkdtempSync(path.join(tmpdir(), "criteria-evidence-"));
   try {
+    const git = (...args) => execFileSync("git", ["-C", dir, "-c", "user.email=a@b.c", "-c", "user.name=t", ...args], { stdio: "ignore" });
+    git("init", "-q");
     writeFileSync(path.join(dir, "drag.spec.ts"), "");
+    git("add", "drag.spec.ts");
+    git("commit", "-qm", "test");
+    writeFileSync(path.join(dir, "untracked.spec.ts"), "");
     const rows = (ref) => ({ rows: [{ criterion: "AC-1", type: "test", ref, verdict: "MET" }] });
     assert.deepEqual(evidenceProblems(rows("drag.spec.ts::drags a row"), criteria, dir), []);
+    assert.deepEqual(evidenceProblems(rows("untracked.spec.ts"), criteria, dir), ["AC-1: the test untracked.spec.ts does not exist at HEAD; a planned test is not evidence"]);
     assert.deepEqual(evidenceProblems(rows("missing.spec.ts"), criteria, dir), ["AC-1: the test missing.spec.ts does not exist at HEAD; a planned test is not evidence"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });

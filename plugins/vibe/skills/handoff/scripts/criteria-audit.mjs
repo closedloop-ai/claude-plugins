@@ -27,10 +27,9 @@
 // and so does any PARTIAL or MISSED row. A test ref must name a file that exists
 // at the worktree's HEAD. Prints {"ok","problems"}; exits 1 on any problem.
 
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { existsSync } from "node:fs";
-import path from "node:path";
 import { parseArgs } from "node:util";
 import { EVIDENCE_TYPES } from "../../vibe/scripts/spec-card.mjs";
 
@@ -153,9 +152,18 @@ function evidenceRowProblems(id, row, filled, worktree) {
   if (!filled(row.ref)) return [`${id}: MET needs a ref naming the ${row.type}`];
   if (row.type === "test" && worktree !== null) {
     const file = row.ref.split(/::|#/)[0].trim();
-    if (!existsSync(path.join(worktree, file))) return [`${id}: the test ${file} does not exist at HEAD; a planned test is not evidence`];
+    if (!existsAtHead(worktree, file)) return [`${id}: the test ${file} does not exist at HEAD; a planned test is not evidence`];
   }
   return [];
+}
+
+function existsAtHead(worktree, file) {
+  try {
+    execFileSync("git", ["-C", worktree, "cat-file", "-e", `HEAD:${file}`], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function main(argv) {
