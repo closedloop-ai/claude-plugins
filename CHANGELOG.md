@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Changed
 - `criteria-audit.mjs` reads the verdict, evidence type and ref from one audit row, `| AC-n | MET | <type> | <ref> |`, so there is no separate evidence file and no `--evidence` argument on it, on `handoff-gate.mjs` or in the handoff skill. A criterion needs a `MET` row of type `test`, `script`, `screenshot` or `api-read` with a ref; a missing, `PARTIAL` or `MISSED` row blocks done, and a test ref must name a file that exists at HEAD.
 - The brief returns `likelyFiles` for triage paths, and handoff reads the triage manifest's review output.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about WORDS words longer than in 1.1.31 (origin/main 985b3a6).
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 6,816 words longer than in 1.1.31 (origin/main 985b3a6).
 
 ### vibe v1.1.31
 
