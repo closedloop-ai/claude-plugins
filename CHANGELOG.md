@@ -31,6 +31,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The brief returns `likelyFiles` for triage paths, and handoff reads the triage manifest's review output.
 - Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 6,816 words longer than in 1.1.32 (origin/main fccc4da).
 
+### closedloop-core v1.6.0
+
+#### Added
+- New `erd-diagram` skill that builds or updates an interactive, offline HTML entity relationship diagram for a Postgres repository from its schema code alone: a Prisma schema or folder, a SQL schema dump, a folder of SQL migrations replayed in path order, or a model JSON written from other ORM code. It never connects to a database. Two styles: `canvas-sidebar` (every table on one canvas with a domain-grouped table list) and `schema-explorer` (overview, focused table view, per-domain diagrams). Passing an existing diagram updates it in place and reports new and removed tables; a missing path stops with no changes.
+- `scripts/dist/erd.mjs` (detect, extract, validate-model, draft-domains, inspect, export-domains, build, update) and `scripts/dist/verify.mjs` (a headless render check) are bundled from `tools/erd-diagram/`, with elkjs inlined for layout, so the skill needs only Node 18.
+
+### closedloop-core v1.5.4
+
+#### Fixed
+- `prd-dependency-graph` reads the BLOCKS links of the scope document itself, not only those of its PRODUCES children. A ticket the root document blocks is drawn with an arrow from the root, and a ticket that blocks the root is followed upstream like any other outside blocker, honouring `outside_blockers_depth`. Previously a link that touched only the root, such as a PRD blocking a ticket outside the scope, was never drawn.
+
 ### code-review v3.13.1
 
 #### Fixed

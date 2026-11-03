@@ -1,11 +1,12 @@
 // Shared esbuild driver for the TypeScript tool packages under tools/.
 // Each package's build.mjs passes in its own esbuild `build` (tools/shared has
 // no node_modules of its own), the bundle output directory inside the owning
-// plugin, and the source entry files to bundle.
+// plugin, and the source entry files to bundle. `extra` adds esbuild options for one
+// package, such as minifyWhitespace for a bundle that inlines a large prebuilt library.
 import { readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-export async function buildBundles({ build, toolDir, outdir, isEntry, banner }) {
+export async function buildBundles({ build, toolDir, outdir, isEntry, banner, extra = {} }) {
   // Clean stale bundles before building so renamed/deleted sources leave no orphans.
   let cleaned = 0;
   try {
@@ -36,6 +37,7 @@ export async function buildBundles({ build, toolDir, outdir, isEntry, banner }) 
     target: "node18",
     outExtension: { ".js": ".mjs" },
     banner: { js: banner },
+    ...extra,
   });
   console.log(`built ${entries.length} entries to ${outdir}`);
 }

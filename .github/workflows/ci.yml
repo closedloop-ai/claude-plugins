@@ -199,6 +199,9 @@ jobs:
           - tool: guided-manual-qa
             dist: plugins/closedloop-core/skills/guided-manual-qa/scripts/dist
             min_bundles: 1
+          - tool: erd-diagram
+            dist: plugins/closedloop-core/skills/erd-diagram/scripts/dist
+            min_bundles: 2
           - tool: vibe-workers
             dist: plugins/vibe/skills/vibe/scripts/dist
             min_bundles: 2
