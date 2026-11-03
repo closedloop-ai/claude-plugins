@@ -205,7 +205,7 @@ Processes the `answeredQuestions` array from `plan.json` and incorporates answer
 **`pre-explorer`** (model: haiku)
 Performs targeted codebase exploration before plan drafting. Produces three output files — `requirements-extract.json`, `code-map.json`, and `investigation-log.md` — so the planning agent can skip mechanical discovery and focus on architecture.
 
-**`verification-subagent`** (model: sonnet)
+**`verification-subagent`** (model: opus)
 Checks whether a plan task has already been implemented. Reads relevant source files and verifies every specific requirement. Returns `VERIFIED` or `NOT_IMPLEMENTED` with a list of missing requirements and relevant file paths for the implementation agent.
 
 **`implementation-subagent`** (model: sonnet)

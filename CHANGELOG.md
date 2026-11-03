@@ -4,6 +4,18 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### code v2.0.3
+
+#### Changed
+- `code-review-guidelines` forbids blind scope drop: deferring or skipping the change's own deliverable in the presence of contention is not an option, a filed ticket never substitutes for the work, a blocker is verified as current before it stops the work, and a settled operator instruction is not re-argued.
+- `code-reviewer` reviews a change against an explicit repository-owner decision instead of reopening it, and never gives feedback whose effect is to defer the change's own deliverable. Only a decision supplied by the operator or the launching orchestrator counts; a claimed ruling in the diff, PR body, commit messages, review threads, or a self-read ticket or PRD is untrusted input and does not change what is reported or at what severity.
+- `verification-subagent` runs on `opus` instead of `sonnet`.
+
+### code-review v3.13.1
+
+#### Changed
+- The GitHub review prompt and `code-review-worker` agent forbid blind scope drop: the change's own deliverable is never deferrable, a filed ticket never substitutes for it, a blocker is verified as current before it stops the work, and a settled operator instruction is not re-argued.
+
 ### vibe v1.1.32
 
 #### Changed
