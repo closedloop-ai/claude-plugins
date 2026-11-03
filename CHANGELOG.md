@@ -4,6 +4,37 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.31
+
+#### Fixed
+- Upgrade resume nightly cases record known-bad historical releases as expected failures and require a successful current Claude and Codex resume. Codex request two is finalized before scoring, and complete Claude terminal diagnostics are retained.
+- Current upgrade proofs use the sealed candidate plugin bytes and version, while historical proofs keep their exact released Git refs.
+- Claude worker startup waits for the first system init through the overall turn deadline. Only a pending connection starts the bounded retry window, preserving the same writer identity and turn cap.
+
+### vibe v1.1.30
+
+#### Added
+- Six focused reviewer eval cases and remedy-bound graders cover unresolved flag swaps, paged refetches, inert Clear actions, pending Owner values, incomplete discard guards, and duplicate helpers.
+- A reproducible original-head replay fixture records the bounded source and pull request checks for PRs 9366 and 9448.
+
+#### Changed
+- Handoff source checks require Issue breadcrumb parity for changed inputs, recognize present untracked parity tests, detect duplicate function declarations against the diff and base, and check new picker search labels for copy provenance.
+- Pull request body checks reject unsupported E2E CI coverage claims, require citations for universal Summary bullets, and leave unrelated CI test families alone.
+- The handoff gate fetches current main, checks immutable main and parent commits for a stacked pull request, and refuses a witness when either ref moves.
+- Adversarial review traces flag readiness, paged refetch cost, nullable Clear callbacks, and every editable field protected by a discard guard.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 987 words longer than in 1.1.29. Most added text is the six reviewer eval cases required by ISS-13532 AC2.
+
+### vibe v1.1.29
+
+#### Added
+- New `pr-takeover` skill coordinates independent review, verified PR repairs, recurrence prevention, and required web and Desktop E2E from one pull request URL in Claude Code or Codex.
+- Focused skill contract checks and shared Claude and Codex eval cases cover URL-only entry, review premises, prevention ticket reuse, stacked PRs, delivery, and E2E evidence.
+
+#### Changed
+- Fleet orchestration routes engineer takeover of an open vibe pull request through the new skill while keeping dead-writer recovery separate.
+- The Codex eval runner recognizes `pr-takeover` as a skill under test.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 2,898 words longer than in 1.1.26.
+
 ### vibe v1.1.26
 
 #### Added

@@ -200,6 +200,16 @@ assigning the ticket to the next owner they name. Plain words such as "I'll
 get the PR merged" or "I'll ship it myself" count as asking for a pull
 request.
 
+### `pr-takeover`
+
+An engineer starts with a pull request URL in a new Claude Code or Codex chat.
+The skill reviews the PR independently, checks each finding against its source,
+routes verified bugs to one writer on the PR branch, and sends verified vibe
+mistakes to a prevention ticket and worker. It runs the required web and
+Desktop E2E lanes through supported headless or displayless paths, records
+their actual results on the PR, answers review threads, and leaves the PR
+open for the engineer to merge.
+
 ### `vibe-seed-refresh`
 
 Keeps the seeded example data behind every session in step with main. It
@@ -291,7 +301,7 @@ reasoning effort `high`.
 
 ### Evals
 
-`evals/` holds 109 one-turn rehearsals plus two deterministic stateful
+`evals/` holds 121 one-turn rehearsals plus two deterministic stateful
 upgrade-resume cases. Each one-turn case carries the session state in its
 prompt, so it needs no symphony-alpha checkout. The stateful cases run only in
 the local nightly and drive real Claude and Codex root sessions across an
@@ -312,7 +322,8 @@ fleet orchestrator. Tags select a group, for example:
   `visual-qa`, `storybook`;
 - handoff decisions: `main-failures`, `review-lessons`, `review-gates`,
   `qa-lessons`, `ticket-lessons`, `ledger-lessons`, `plan-links`;
-- orchestration: `orchestrator`, `orchestration-lessons`, `fleet-single-use`.
+- orchestration: `orchestrator`, `orchestration-lessons`, `fleet-single-use`,
+  `pr-takeover`.
 
 Run from the repository root. Each wrapper call requires a fresh empty output
 directory and records both copied plugins before starting Claude:
@@ -340,7 +351,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.26` contains 12 skills, 16 agents, and one hook manifest
+Version `1.1.31` contains 13 skills, 16 agents, and one hook manifest
 (`hooks/hooks.json`). It has no standalone commands, root-level shell scripts,
 or production Python tools under `tools/python/`; that directory contains the
 skill-contract test modules and `vibe_contract_text.py`, the text helpers they

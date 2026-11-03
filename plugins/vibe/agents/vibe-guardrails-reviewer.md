@@ -142,7 +142,9 @@ path merely because another rule describes how its content should look.
      or consumed, `rg` the children and the owning feature package for a
      local function, map or constant doing the same job (a local partition
      or group builder, a duplicated band or status icon map, a private copy
-     of a shared helper). Each is blocking.
+     of a shared helper). Each is blocking. For a `duplicate-helper` diff
+     finding, cite both the added function and the identical function in
+     another changed file or the base tree; the added copy is the finding.
    - Leftovers (`design-pass.md`, "Red flags"): list every file the diff
      deleted, renamed or extracted from with
      `git -C <wt> diff --name-status -M <base>`, and every export it removed.

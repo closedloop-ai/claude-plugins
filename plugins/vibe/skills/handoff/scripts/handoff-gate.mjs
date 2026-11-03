@@ -61,6 +61,10 @@ export function handoffGateProblem(worktree, { base, bodyFile } = {}) {
     if (base && base.replace(/^origin\//, "") !== record.base?.name) return "PR base does not match the handoff gate";
     const currentBase = resolvePrBase(worktree, base);
     if (record.base?.name !== currentBase.name || record.base?.oid !== currentBase.oid) return "handoff gate is stale for the PR base";
+    if (currentBase.name !== "main") {
+      const currentMain = resolvePrBase(worktree, "main");
+      if (record.main?.oid !== currentMain.oid) return "handoff gate is stale for current main";
+    }
     if (!bodyFile || realpathSync(bodyFile) !== record.evidence?.body?.path) return "PR body file does not match the handoff gate";
     for (const key of EVIDENCE_KEYS) {
       const saved = record.evidence?.[key];
@@ -74,14 +78,35 @@ export function handoffGateProblem(worktree, { base, bodyFile } = {}) {
   }
 }
 
-/** Git's merge engine checks the current base without changing the worktree. */
-export function mergeabilityProblem(worktree, base) {
-  let resolved;
-  try { resolved = resolvePrBase(worktree, base); }
-  catch (error) { return error.message; }
-  const result = spawnSync("git", ["-C", worktree, "merge-tree", "--write-tree", resolved.ref, "HEAD"], { encoding: "utf8" });
-  if (result.status !== 0) return `branch does not merge cleanly with ${resolved.name}: ${result.stderr || result.stdout}`;
+/** Resolve both refs once so the merge check and its witness use the same immutable commits. */
+function mergeTargets(worktree, base) {
+  const resolvedBase = resolvePrBase(worktree, base);
+  const resolvedMain = resolvedBase.name === "main" ? null : resolvePrBase(worktree, "main");
+  return { base: resolvedBase, main: resolvedMain };
+}
+
+/** Git's merge engine checks exact commits, never mutable remote ref names. */
+function checkedMergeProblem(worktree, targets) {
+  const selected = [targets.base, ...(targets.main ? [targets.main] : [])];
+  for (const target of selected) {
+    const result = spawnSync("git", ["-C", worktree, "merge-tree", "--write-tree", target.oid, "HEAD"], { encoding: "utf8" });
+    if (result.status !== 0) return `branch does not merge cleanly with ${target.name}: ${result.stderr || result.stdout}`;
+  }
   return null;
+}
+
+/** A read-only preflight; publication uses recordHandoffGate, which fetches main first. */
+export function mergeabilityProblem(worktree, base) {
+  try { return checkedMergeProblem(worktree, mergeTargets(worktree, base)); }
+  catch (error) { return `current base or main cannot be verified: ${error.message}`; }
+}
+
+/** Refresh the actual main branch before a publication witness can be recorded. */
+function fetchCurrentMain(worktree) {
+  const result = spawnSync("git", ["-C", worktree, "fetch", "--quiet", "origin", "refs/heads/main:refs/remotes/origin/main"], { encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(`current main fetch failed: ${String(result.stderr || result.error?.message || result.stdout).trim().split("\n")[0]}`);
+  }
 }
 
 /** A current blocking review finding must be fixed and independently rechecked. */
@@ -99,7 +124,9 @@ export function reviewFindingProblems(report, source) {
 export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts, audit, matrix }, { runScript = spawnSync } = {}) {
   const witness = gatePath(worktree);
   if (existsSync(witness)) unlinkSync(witness);
-  const mergeProblem = mergeabilityProblem(worktree, base);
+  fetchCurrentMain(worktree);
+  const targets = mergeTargets(worktree, base);
+  const mergeProblem = checkedMergeProblem(worktree, targets);
   if (mergeProblem) throw new Error(mergeProblem);
   const source = sourceIdentity(worktree);
   const verified = reviewReceiptProblems(readReviewReceipts(receipts), source);
@@ -126,8 +153,12 @@ export function recordHandoffGate({ worktree, body, runs, ticket, base, receipts
   const evidenceInputs = { body, runs, ticket, audit, matrix };
   const evidence = Object.fromEntries(EVIDENCE_KEYS.filter(key => evidenceInputs[key]).map(key => [key, evidenceFingerprint(evidenceInputs[key])]));
   const boundReceipts = receipts.map(evidenceFingerprint);
-  const resolvedBase = resolvePrBase(worktree, base);
-  writeFileSync(witness, `${JSON.stringify({ branch, source, base: resolvedBase, evidence, receipts: boundReceipts, inventoryPassed: true, prBodyPassed: true, prEvidencePassed: true, reviewPassed: true })}\n`, { mode: 0o600 });
+  const finalMergeProblem = checkedMergeProblem(worktree, targets);
+  if (finalMergeProblem) throw new Error(finalMergeProblem);
+  const current = mergeTargets(worktree, base);
+  if (current.base.oid !== targets.base.oid) throw new Error("PR base moved during the handoff gate");
+  if (current.main?.oid !== targets.main?.oid) throw new Error("current main moved during the handoff gate");
+  writeFileSync(witness, `${JSON.stringify({ branch, source, base: targets.base, main: targets.main, evidence, receipts: boundReceipts, inventoryPassed: true, prBodyPassed: true, prEvidencePassed: true, reviewPassed: true })}\n`, { mode: 0o600 });
   return { branch, source };
 }
 

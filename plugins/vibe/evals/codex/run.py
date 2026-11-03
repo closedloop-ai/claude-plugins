@@ -25,7 +25,7 @@ EVALS = Path(__file__).resolve().parents[1]
 PLUGIN = EVALS.parent
 MANIFESTS = (".codex-plugin/plugin.json", ".claude-plugin/plugin.json")
 PERSONAS = {"exec-": "executive-", "pm-": "product-manager-", "orch-": "orchestrator-"}
-SKILLS = ("fleet-orchestrator", "handoff", "vibe")
+SKILLS = ("pr-takeover", "fleet-orchestrator", "handoff", "vibe")
 ACTIVE_PROCESSES: set[subprocess.Popen[str]] = set()
 ACTIVE_PROCESSES_LOCK = threading.Lock()
 
@@ -87,6 +87,15 @@ def role_text(text: str) -> str:
         r"(?i)(my name is )[A-Z][a-z]+ [A-Z][a-z]+", r"\1the product manager", text
     )
     return text
+
+
+def rewrite_skill_invocations(prompt: str) -> str:
+    """Map the shared Claude Skill syntax to the installed Codex skill syntax."""
+    return re.sub(
+        r"\(`vibe:(vibe|handoff|fleet-orchestrator|pr-takeover)`\)",
+        lambda match: "(`$" + match[1] + "`)",
+        prompt,
+    )
 
 
 def cases(root: Path = EVALS) -> list[dict[str, Any]]:
@@ -588,9 +597,7 @@ def run_case(
             "Load the instructions with the Skill tool",
             "Load the installed Codex skill instructions",
         )
-        prompt = re.sub(
-            r"\(`vibe:(vibe|handoff|fleet-orchestrator)`\)", lambda m: "(`$" + m[1] + "`)", prompt
-        )
+        prompt = rewrite_skill_invocations(prompt)
         header = case["meta"].get("append_system_prompt", "")
         history = case["source"] / "history.jsonl"
         if history.exists():

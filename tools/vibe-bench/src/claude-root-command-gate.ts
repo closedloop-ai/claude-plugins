@@ -51,6 +51,18 @@ export function claudeRootCommandDecision(input: HookInput, config: GateConfig):
   if (basename(script) === "writer-state.mjs") {
     if (!action || !new Set(["status", "enqueue", "claim", "take-input", "finish", "migrate"])
       .has(action)) return decision("deny", "Upgrade eval writer-state action is not allowed");
+    if (action === "migrate") {
+      const valid = payload.runtime === "claude" && payload.agentName === "vibe-change-worker" &&
+        typeof payload.agentRoot === "string" && typeof payload.previousWorkerId === "string" &&
+        payload.previousWorkerId.length > 0 && typeof payload.previousDigest === "string" &&
+        /^[a-f0-9]{64}$/.test(payload.previousDigest);
+      if (!valid) return decision("deny", "Upgrade eval migration payload is incomplete");
+      try {
+        if (realpathSync(`${payload.agentRoot}/skills/vibe/scripts/dist/writer-state.mjs`) !== script) {
+          return decision("deny", "Upgrade eval migration root does not match the script");
+        }
+      } catch { return decision("deny", "Upgrade eval migration root does not exist"); }
+    }
   } else if (basename(script) === "claude-worker.mjs") {
     if (action) return decision("deny", "Upgrade eval launcher takes no positional arguments");
   } else return decision("deny", "Upgrade eval script is not a production writer entry");

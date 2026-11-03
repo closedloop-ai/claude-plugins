@@ -333,6 +333,7 @@ export async function runLocalEvals(options: LocalEvalOptions,
       })));
   const statefulSuites = partition.stateful.length ? await (options.statefulRunner ??
     new SystemUpgradeResumeRunner()).run({ repo: options.repo, pluginSha: options.pluginSha,
+      currentSnapshot: snapshot,
       runRoot: join(options.runRoot, "stateful"), claudeExecutable: options.claudeExecutable,
       codexExecutable: options.codexExecutable, cases: partition.stateful, runtimes,
       targetRef: options.statefulTargetRef, signal: options.signal }) : {};

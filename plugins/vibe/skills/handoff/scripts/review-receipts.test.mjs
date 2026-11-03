@@ -1,14 +1,30 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { sourceIdentity } from "../../vibe/scripts/tested-head.mjs";
 import { captureNativeReviewReceipt, captureReviewReceipt, REVIEW_ROLES, reviewReceiptProblems } from "./review-receipts.mjs";
 import { finalMarker } from "../../fleet-orchestrator/scripts/helpers.mjs";
-import { handoffGateProblem, recordHandoffGate } from "./handoff-gate.mjs";
+import { gatePath, handoffGateProblem, mergeabilityProblem, recordHandoffGate } from "./handoff-gate.mjs";
 import { LoadBasis, loadedSkillEvidence } from "../../vibe/scripts/loaded-skill.mjs";
+
+function gateReceipts(worktree) {
+  const source = sourceIdentity(worktree);
+  const gitDir = execFileSync("git", ["-C", worktree, "rev-parse", "--absolute-git-dir"], { encoding: "utf8" }).trim();
+  return REVIEW_ROLES.map((role, index) => {
+    const sessionId = `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
+    const tracePath = path.join(gitDir, `stack-${role}.jsonl`);
+    writeFileSync(tracePath, `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "mcp__closedloop_graph__code_symbols" }] } })}\n${JSON.stringify({ type: "result", session_id: sessionId })}\n`);
+    const resultFile = path.join(gitDir, `stack-${role}-result.json`);
+    writeFileSync(resultFile, JSON.stringify({ runtime: "claude", agentName: role, status: "DONE", sessionId,
+      requestId: `stack-${index}`, tracePath, source, graphToolAliases: ["mcp__closedloop_graph__code_symbols"], data: { findings: [] } }));
+    const outFile = path.join(gitDir, `stack-${role}-receipt.json`);
+    captureReviewReceipt({ worktree, resultFile, outFile, role });
+    return outFile;
+  });
+}
 
 test("review receipts require all launcher roles, completion identity, graph use and current findings", () => {
   const worktree = mkdtempSync(path.join(tmpdir(), "review-receipts-"));
@@ -68,6 +84,10 @@ test("Codex native FINAL helper artifacts reach the same four-role handoff gate"
   execFileSync("git", ["-C", worktree, "add", "."]);
   execFileSync("git", ["-C", worktree, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-qm", "base"]);
   execFileSync("git", ["-C", worktree, "update-ref", "refs/remotes/origin/main", "HEAD"]);
+  const nativeOrigin = path.join(worktree, ".git", "origin.git");
+  execFileSync("git", ["init", "--bare", "-q", nativeOrigin]);
+  execFileSync("git", ["-C", worktree, "remote", "add", "origin", nativeOrigin]);
+  execFileSync("git", ["-C", worktree, "push", "-q", "origin", "HEAD:refs/heads/main"]);
   const source = sourceIdentity(worktree);
   const capabilities = path.join(orchDir, "capabilities.json");
   writeFileSync(capabilities, JSON.stringify([{ name: "mcp__custom_graph__sync_status", service: "graph", operation: "sync_status", access: "read" }]));
@@ -121,4 +141,133 @@ test("Codex native FINAL helper artifacts reach the same four-role handoff gate"
   const changed = JSON.parse(readFileSync(receipts[0], "utf8"));
   writeFileSync(changed.trace.path, "changed after native receipt\n");
   assert.match(handoffGateProblem(worktree, { base: "main", bodyFile: body }) ?? "", /review|evidence/);
+});
+
+test("AC-001 DT-12 R4 R5: stacked gate checks and stores one main identity", (t) => {
+  const worktree = mkdtempSync(path.join(tmpdir(), "stacked-main-merge-"));
+  t.after(() => rmSync(worktree, { recursive: true, force: true }));
+  const git = (...args) => execFileSync("git", ["-C", worktree, ...args], { encoding: "utf8" }).trim();
+  execFileSync("git", ["init", "-q", "-b", "vibe/stack", worktree]);
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "Test");
+  writeFileSync(path.join(worktree, "toolbar.tsx"), "export const role = 'plain';\n");
+  git("add", ".");
+  git("commit", "-qm", "base");
+  const base = git("rev-parse", "HEAD");
+  const stackOrigin = path.join(worktree, ".git", "origin.git");
+  execFileSync("git", ["init", "--bare", "-q", stackOrigin]);
+  git("remote", "add", "origin", stackOrigin);
+  writeFileSync(path.join(worktree, "parent.ts"), "export const parent = true;\n");
+  git("add", ".");
+  git("commit", "-qm", "parent");
+  git("update-ref", "refs/remotes/origin/parent", "HEAD");
+  git("push", "-q", "origin", "HEAD:refs/heads/parent");
+  writeFileSync(path.join(worktree, "toolbar.tsx"), "export const role = 'button';\n");
+  git("add", ".");
+  git("commit", "-qm", "stack child");
+  git("switch", "-q", "-c", "main", base);
+  writeFileSync(path.join(worktree, "toolbar.tsx"), "export const role = 'toolbar';\n");
+  git("add", ".");
+  git("commit", "-qm", "main toolbar");
+  const mainSha = git("rev-parse", "HEAD");
+  git("update-ref", "refs/remotes/origin/main", "HEAD");
+  git("push", "-q", "origin", "HEAD:refs/heads/main");
+  git("switch", "-q", "vibe/stack");
+  assert.match(mergeabilityProblem(worktree, "parent") ?? "", /main/);
+  assert.match(mergeabilityProblem(worktree, "main") ?? "", /main/);
+  const body = path.join(worktree, ".git", "stack-body.md");
+  const runs = path.join(worktree, ".git", "stack-runs.json");
+  writeFileSync(body, "Stacked PR body\n");
+  writeFileSync(runs, "{}\n");
+  const acceptedInventory = () => ({ status: 0, stdout: JSON.stringify({ ok: true, blocking: { prBody: true, prEvidence: true } }), stderr: "" });
+  assert.throws(() => recordHandoffGate({ worktree, base: "parent", body, runs, receipts: [] }, { runScript: acceptedInventory }), /main/);
+  assert.equal(existsSync(gatePath(worktree)), false, "a parent-clean stack that conflicts with main writes no witness");
+  execFileSync("git", ["--git-dir", stackOrigin, "update-ref", "refs/heads/main", base]);
+  git("update-ref", "refs/remotes/origin/main", base);
+  assert.equal(mergeabilityProblem(worktree, "parent"), null);
+  const receipts = gateReceipts(worktree);
+  recordHandoffGate({ worktree, base: "parent", body, runs, receipts }, { runScript: acceptedInventory });
+  assert.equal(JSON.parse(readFileSync(gatePath(worktree), "utf8")).main.oid, base);
+  assert.equal(handoffGateProblem(worktree, { base: "parent", bodyFile: body }), null);
+  git("update-ref", "refs/remotes/origin/main", mainSha);
+  assert.match(handoffGateProblem(worktree, { base: "parent" }) ?? "", /stale for current main/);
+  git("switch", "-q", "-c", "clean-main", base);
+  writeFileSync(path.join(worktree, "note-b.txt"), "main B\n");
+  git("add", ".");
+  git("commit", "-qm", "clean main B");
+  const mainB = git("rev-parse", "HEAD");
+  writeFileSync(path.join(worktree, "note-c.txt"), "main C\n");
+  git("add", ".");
+  git("commit", "-qm", "clean main C");
+  const mainC = git("rev-parse", "HEAD");
+  git("switch", "-q", "vibe/stack");
+  git("update-ref", "refs/remotes/origin/main", base);
+  const bin = path.join(worktree, ".git", "bin");
+  mkdirSync(bin);
+  const count = path.join(bin, "merge-count");
+  writeFileSync(count, "0");
+  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+  const wrapper = path.join(bin, "git");
+  writeFileSync(wrapper, `#!/bin/sh
+"${realGit}" "$@"
+status=$?
+if [ "$3" = "merge-tree" ] && { [ "$5" = "refs/remotes/origin/main" ] || [ "$5" = "${base}" ]; }; then
+  n=$(cat "${count}")
+  n=$((n + 1))
+  printf '%s' "$n" > "${count}"
+  if [ "$n" -eq 1 ]; then "${realGit}" -C "${worktree}" update-ref refs/remotes/origin/main "${mainB}"; fi
+  if [ "$n" -eq 2 ]; then "${realGit}" -C "${worktree}" update-ref refs/remotes/origin/main "${mainC}"; fi
+fi
+exit "$status"
+`);
+  chmodSync(wrapper, 0o700);
+  const oldPath = process.env.PATH;
+  try {
+    process.env.PATH = `${bin}:${oldPath}`;
+    assert.throws(() => recordHandoffGate({ worktree, base: "parent", body, runs, receipts }, { runScript: acceptedInventory }), /main.*moved/);
+  } finally {
+    process.env.PATH = oldPath;
+  }
+  assert.equal(existsSync(gatePath(worktree)), false, "a moved main ref cannot leave a witness for an unchecked OID");
+  git("update-ref", "-d", "refs/remotes/origin/main");
+  assert.match(mergeabilityProblem(worktree, "parent") ?? "", /main/);
+});
+
+test("S5 DT-12: publication gate refreshes a stale local main before checking compatibility", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "stacked-fetch-main-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const worktree = path.join(dir, "source");
+  const remote = path.join(dir, "origin.git");
+  const git = (...args) => execFileSync("git", ["-C", worktree, ...args], { encoding: "utf8" }).trim();
+  execFileSync("git", ["init", "-q", "-b", "vibe/stale", worktree]);
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "Test");
+  writeFileSync(path.join(worktree, "toolbar.tsx"), "export const role = 'plain';\n");
+  git("add", ".");
+  git("commit", "-qm", "base");
+  const base = git("rev-parse", "HEAD");
+  execFileSync("git", ["init", "--bare", "-q", remote]);
+  git("remote", "add", "origin", remote);
+  git("push", "-q", "origin", "HEAD:refs/heads/parent");
+  git("update-ref", "refs/remotes/origin/parent", base);
+  git("switch", "-q", "-c", "main", base);
+  writeFileSync(path.join(worktree, "toolbar.tsx"), "export const role = 'toolbar';\n");
+  git("add", ".");
+  git("commit", "-qm", "main toolbar");
+  const remoteMain = git("rev-parse", "HEAD");
+  git("push", "-q", "origin", "HEAD:refs/heads/main");
+  git("switch", "-q", "vibe/stale");
+  writeFileSync(path.join(worktree, "toolbar.tsx"), "export const role = 'button';\n");
+  git("add", ".");
+  git("commit", "-qm", "feature toolbar");
+  git("update-ref", "refs/remotes/origin/main", base);
+  const receipts = gateReceipts(worktree);
+  const body = path.join(worktree, ".git", "body.md");
+  const runs = path.join(worktree, ".git", "runs.json");
+  writeFileSync(body, "PR body\n");
+  writeFileSync(runs, "{}\n");
+  const acceptedInventory = () => ({ status: 0, stdout: JSON.stringify({ ok: true, blocking: { prBody: true, prEvidence: true } }), stderr: "" });
+  assert.throws(() => recordHandoffGate({ worktree, base: "parent", body, runs, receipts }, { runScript: acceptedInventory }), /main/);
+  assert.equal(existsSync(gatePath(worktree)), false);
+  assert.equal(git("rev-parse", "refs/remotes/origin/main"), remoteMain);
 });
