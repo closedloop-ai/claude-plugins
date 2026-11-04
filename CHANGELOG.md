@@ -4,6 +4,19 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.38
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 309 words longer than in 1.1.37.
+- The Claude worker accepts an explicit top-level `testsRequired` grant for the persistent writer in request, fix and handoff turns. Raw request text cannot grant test-authoring authority, and handoff inventory continues to admit authored tests only in the pull-request phase.
+
+#### Fixed
+- Handoff inventory reads allowed and forbidden paths from the target repository's committed root-level `vibe-handoff-paths.json`. It rejects missing, nested, invalid, duplicate and session-edited declarations instead of applying a Symphony-specific path list to other repositories.
+- For sessions whose captured base predates the declaration, inventory verifies the remote's advertised default branch and fetched commit, then uses that commit for comparison and policy reads. A locally repointed or stale fetched ref cannot select a different policy; an unverified ref fails before inventory classification.
+- PR creation checks keep substitutions, child shells, SSH calls and pipelines in their own cwd and variable scope, so a later local PR uses the right worktree. They recognize bounded literal eval and shell payloads, including supported printf string flags, width, precision, repeated formats, unused arguments, stopping escapes and known prefixes before unsupported directives, without executing unknown payloads. Attached redirections, line continuations, SSH options and GitHub CLI repo options remain visible. Literal shell function bodies are inspected when called, not when defined.
+- Heredoc bodies, comments, arithmetic and quoted file text no longer trigger the PR guard or hide a later real call. Concrete non-Vibe worktrees in fleet conversations can open PRs; Vibe targets still require the handoff gate.
+- Scratch Docker, E2E slot and kill guards ignore heredoc or quoted data while continuing to inspect executable substitutions. A nested remote E2E call must pass its identity flag inside the shell command string; a later positional argument does not count.
+
 ### closedloop-core v1.6.2
 
 #### Fixed

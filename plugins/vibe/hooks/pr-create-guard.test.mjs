@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -11,6 +11,187 @@ import { PRE_TOOL_USE_ROUTES } from "./pre-tool-use.mjs";
 import { createsPullRequest, prCreateGuard, vibeWorktree } from "./pr-create-guard.mjs";
 import { readHookSkill, recordHookSkill } from "./hook-session-scope.mjs";
 import { pluginVersionPromptStart } from "./plugin-version-guard.mjs";
+
+test("PR guard separates payload words from direct and nested commands", (t) => {
+  const home = mkdtempSync(path.join(tmpdir(), "pr-command-home-"));
+  const vibe = mkdtempSync(path.join(tmpdir(), "pr-command-vibe-"));
+  const ordinary = mkdtempSync(path.join(tmpdir(), "pr-command-ordinary-"));
+  t.after(() => { rmSync(home, { recursive: true, force: true }); rmSync(vibe, { recursive: true, force: true });
+    rmSync(ordinary, { recursive: true, force: true }); });
+  execFileSync("git", ["init", "-q", "-b", "vibe/example", vibe]);
+  execFileSync("git", ["init", "-q", "-b", "fix/ordinary", ordinary]);
+  recordHookSkill("fleet-pr", "vibe:fleet-orchestrator", home);
+  const guard = (cwd, command) => prCreateGuard({ cwd, session_id: "fleet-pr", transcript_path: null,
+    tool_input: { command } }, home);
+  for (const command of [
+    "cat > body.md <<'EOF'\ngh pr create --fill\nEOF",
+    "git commit -F - <<'EOF'\ngh pr create --fill\nEOF",
+    "cat > body.md <<'EOF'\n$(gh pr create --fill)\nEOF",
+    "echo \"$(cat <<'EOF'\ngh pr create --fill\nEOF)\"",
+    "printf '%s\\n' 'gh pr create --fill' > body.md",
+    "echo 'gh pr create --fill' > body.md",
+    "git commit -m 'gh pr create --fill was discussed'",
+  ]) assert.equal(guard(vibe, command), null, command);
+  for (const command of ["gh pr create --fill", "bash -c 'gh pr create --fill'",
+    "sh -c 'gh pr create --fill'", "zsh -lc 'gh pr create --fill'", "eval 'gh pr create --fill'"]) {
+    assert.equal(guard(vibe, command)?.decision, "deny", command);
+  }
+  assert.equal(guard(ordinary, `cd ${vibe} && gh pr create --fill`)?.decision, "deny");
+  assert.equal(guard(vibe, "cat <<'EOF'\nbody text\nEOF\ngh pr create --fill")?.decision, "deny");
+  assert.equal(guard(vibe, "cat <<EOF\n$(gh pr create --fill)\nEOF")?.decision, "deny");
+  assert.equal(guard(vibe, "echo \"$(cat <<'EOF'\nbody text\nEOF\ngh pr create --fill)\"")?.decision, "deny");
+  assert.equal(guard(vibe, 'echo "$(gh pr create --fill)"')?.decision, "deny");
+  assert.equal(guard(vibe, "ssh host 'gh pr create --fill'")?.decision, "deny");
+  assert.match(guard(vibe, 'cd "$UNKNOWN" && gh pr create --fill')?.reason ?? "", /UNKNOWN|unresolved/);
+  assert.equal(guard(vibe, `W=${ordinary}; cd "$W" && gh pr create --fill`), null,
+    "a concrete non-vibe target in a fleet conversation must pass");
+  assert.equal(guard(vibe, `export W=${ordinary}; cd "$W" && gh pr create --fill`), null);
+  assert.equal(guard(vibe, `ssh host 'echo done'; cd ${ordinary} && gh pr create --fill`), null,
+    "an unrelated remote read cannot turn a later local PR into a remote call");
+  assert.equal(prCreateGuard({ cwd: vibe, session_id: "unscoped", transcript_path: null,
+    tool_input: { command: "gh pr create --fill" } }, home)?.decision, "deny",
+  "a vibe branch is scoped even when no skill marker is active");
+  for (const command of [
+    `echo "$(gh pr create --fill)" && cd ${ordinary}`,
+    `echo $(cd ${ordinary}) && gh pr create --fill`,
+    `echo \`cd ${ordinary}\` && gh pr create --fill`,
+    `bash -c 'cd ${ordinary}' && gh pr create --fill`,
+    `sh -c 'cd ${ordinary}' && gh pr create --fill`,
+    `zsh -lc 'cd ${ordinary}' && gh pr create --fill`,
+    `(cd ${ordinary}); gh pr create --fill`,
+    "(gh pr create --fill)",
+    `cd ${ordinary} | cat; gh pr create --fill`,
+    "echo safe | gh pr create --fill",
+    "eval -- 'gh pr create --fill'",
+    "CMD='gh pr create --fill'; eval \"$CMD\"",
+    "export CMD='gh pr create --fill'; eval \"$CMD\"",
+    "CMD=$(printf 'gh pr create --fill'); eval \"$CMD\"",
+    "CMD=$(echo gh pr create --fill); eval \"$CMD\"",
+    "CMD=$(echo -n gh pr create --fill); eval \"$CMD\"",
+    "CMD=$(printf '%s%s' gh ' pr create --fill'); eval \"$CMD\"",
+    "CMD=$(echo -e 'gh pr create --fill\\c ignored'); eval \"$CMD\"",
+    "CMD=$(printf '%b ignored' 'gh pr create --fill\\c later'); eval \"$CMD\"",
+    "CMD=$(printf '%s ' gh pr create --fill); eval \"$CMD\"",
+    "CMD=$(printf '%b' 'g\\x68 pr create --fill'); eval \"$CMD\"",
+    "CMD=$(printf '%c%s' g 'h pr create --fill'); eval \"$CMD\"",
+    "CMD=$(printf '%4s pr create --fill' gh); eval \"$CMD\"",
+    "CMD=$(printf '%*s pr create --fill' 4 gh); eval \"$CMD\"",
+    "CMD=$(printf '%-4s pr create --fill' gh); eval \"$CMD\"",
+    "CMD=$(printf '%4.2s pr create --fill' ghzz); eval \"$CMD\"",
+    "CMD=$(printf '%*.*s pr create --fill' 4 2 ghzz); eval \"$CMD\"",
+    "CMD=$(printf '%4b pr create --fill' 'g\\x68'); eval \"$CMD\"",
+    "CMD=$(printf '%4c%s pr create --fill' g h); eval \"$CMD\"",
+    "CMD=$(printf '%+4s pr create --fill' gh); eval \"$CMD\"",
+    "CMD=$(printf '%02s pr create --fill' gh); eval \"$CMD\"",
+    "CMD=$(printf 'gh pr create --fill' ignored); eval \"$CMD\"",
+    "CMD=$(printf 'gh pr create --fill # %d' 1); eval \"$CMD\"",
+    "CMD=$(printf 'gh pr create --fill # %f' 1); eval \"$CMD\"",
+    "CMD=$(printf 'gh pr create --fill # %q' value); eval \"$CMD\"",
+    "CMD=$(printf 'gh pr create\\n--fill'); eval \"$CMD\"",
+    "CMD=$(printf 'g\\x68 pr create --fill'); eval \"$CMD\"",
+    "CMD=$(echo -e 'g\\x68 pr create --fill'); eval \"$CMD\"",
+    "CMD=$(printf 'g\\0150 pr create --fill'); eval \"$CMD\"",
+    "CMD=$(printf '\\u0067h pr create --fill'); eval \"$CMD\"",
+    "export CMD=$(printf 'gh pr create --fill'); eval \"$CMD\"",
+    "CMD='gh pr create --fill'; bash -c \"$CMD\"",
+    "CMD='gh pr create --fill'; sh -c \"$CMD\"",
+    "CMD='gh pr create --fill'; zsh -lc \"$CMD\"",
+    "bash -c \"$(printf 'gh pr create --fill')\"",
+    "sh -c \"$(printf 'gh pr create --fill')\"",
+    "eval \"$(printf 'gh pr create --fill')\"",
+    "GH=gh; \"$GH\" pr create --fill",
+    "gh</dev/null pr create --fill",
+    "gh 2>&1 pr create --fill",
+    "gh 1>&2 pr create --fill",
+    "gh 2>/tmp/gh.log pr create --fill",
+    "gh>out.txt pr create --fill",
+    "gh -R closedloop-ai/claude-plugins pr create --fill",
+    "gh --repo=closedloop-ai/claude-plugins pr create --fill",
+    "ssh -E /tmp/ssh.log host 'gh pr create --fill'",
+    "ssh -B 127.0.0.1 host 'gh pr create --fill'",
+    "# <<EOF\ngh pr create --fill",
+    "echo $((1 << 2)); gh pr create --fill",
+    "echo \"$((1 << 2))\"; gh pr create --fill",
+    "echo $(( $(gh pr create --fill) + 1 ))",
+    "gh " + "\\" + "\n" + "pr create --fill",
+    "gh pr " + "\\" + "\n" + "create --fill",
+  ]) assert.equal(guard(vibe, command)?.decision, "deny", command);
+  for (const option of ["-I", "-w", "-c", "-e", "-m", "-O", "-P"]) {
+    assert.equal(guard(vibe, `ssh ${option} value host 'gh pr create --fill'`)?.decision, "deny", option);
+  }
+  for (const command of [
+    `cd ${ordinary} && echo "$(gh pr create --fill)"`,
+    `(cd ${ordinary} && gh pr create --fill)`,
+    "CMD='printf safe'; eval \"$CMD\"",
+    "CMD=$(printf safe); eval \"$CMD\"",
+    "CMD=$(echo safe); eval \"$CMD\"",
+    "CMD=$(echo -n safe); eval \"$CMD\"",
+    "CMD=$(echo -E safe); eval \"$CMD\"",
+    "CMD=$(printf '%s%s' sa fe); eval \"$CMD\"",
+    "CMD=$(echo -e 'safe\\c gh pr create'); eval \"$CMD\"",
+    "CMD=$(printf '%b gh pr create' 'safe\\c'); eval \"$CMD\"",
+    "CMD=$(printf '%s ' printf safe); eval \"$CMD\"",
+    "CMD=$(printf '%b' 'safe\\x20word'); eval \"$CMD\"",
+    "CMD=$(printf '%c%s' s afe); eval \"$CMD\"",
+    "CMD=$(printf '%4s' safe); eval \"$CMD\"",
+    "CMD=$(printf '%*s' 4 safe); eval \"$CMD\"",
+    "CMD=$(printf '%4.2s' safe); eval \"$CMD\"",
+    "CMD=$(printf '%*.*s' 4 2 safe); eval \"$CMD\"",
+    "CMD=$(printf '%04s pr create --fill' gh); eval \"$CMD\"",
+    "CMD=$(printf '' 'gh pr create --fill'); eval \"$CMD\"",
+    "CMD=$(printf \"\" 'gh pr create --fill'); eval \"$CMD\"",
+    "bash -c '' 'gh pr create --fill'",
+    "sh -c \"\" 'gh pr create --fill'",
+    "gh '' pr create --fill",
+    "CMD=$(printf 'printf safe' ignored); eval \"$CMD\"",
+    "CMD=$(printf 'printf safe # %d' 1); eval \"$CMD\"",
+    "CMD=$(printf 'gh pr create%d' 1); eval \"$CMD\"",
+    "CMD=$(printf 'safe\\x20data'); eval \"$CMD\"",
+    "CMD=$(printf 'printf %%s safe'); eval \"$CMD\"",
+    "CMD=$(cat ./cmd.txt); eval \"$CMD\"",
+    "CMD='printf safe'; bash -c \"$CMD\"",
+    "eval 'printf %s $HOME'",
+    "bash -c \"$(cat ./cmd.txt)\"",
+    "bash -c \"$(printf safe)\"",
+    "eval \"$UNKNOWN\"",
+    "eval -- 'printf safe'",
+    "cat <<\\EOF\n$(gh pr create --fill)\nEOF",
+    "cat <<E\"OF\"\n$(gh pr create --fill)\nEOF",
+    "f() { gh pr create --fill; }",
+    "f() { printf safe; }",
+    "f; f() { gh pr create --fill; }",
+    "function f { gh pr create --fill; }",
+    "function f() { gh pr create --fill; }",
+    "f; function f { gh pr create --fill; }",
+    "f() { gh pr create --fill; } | cat; f",
+    "bash -c 'f() { gh pr create --fill; }'; f",
+    "f() { gh pr create --fill; }; bash -c 'f'",
+    "cat <<'EOF'\nf() { gh pr create --fill; }\nEOF\nf",
+  ]) assert.equal(guard(vibe, command), null, command);
+  for (const command of [
+    "cat <<\\EOF\n$(gh pr create --fill)\nEOF\ngh pr create --fill",
+    "cat <<E\"OF\"\n$(gh pr create --fill)\nEOF\ngh pr create --fill",
+  ]) assert.equal(guard(vibe, command)?.decision, "deny", command);
+  assert.equal(guard(vibe, "f() { gh pr create --fill; }; f")?.decision, "deny");
+  assert.equal(guard(vibe, "function f { gh pr create --fill; }; f")?.decision, "deny");
+  assert.equal(guard(vibe, "function f() { gh pr create --fill; }; f")?.decision, "deny");
+  assert.equal(guard(vibe, `f() { cd ${ordinary}; }; f; gh pr create --fill`), null);
+  assert.equal(guard(vibe, `function f { cd ${ordinary}; }; f; gh pr create --fill`), null);
+  const chain = (last) => Array.from({ length: 12 }, (_, index) =>
+    `f${index}() { ${index === 11 ? last : `f${index + 1}`}; }`).join('; ') + '; f0';
+  assert.equal(guard(vibe, chain('gh pr create --fill'))?.decision, 'deny');
+  assert.equal(guard(vibe, chain('printf safe')), null);
+  assert.equal(guard(vibe, 'f() { f; }; f'), null, 'a function cycle without PR work is not itself a PR');
+  assert.equal(guard(vibe, 'f() { gh pr create --fill; f; }; f')?.decision, 'deny');
+  const spaces = ' '.repeat(5000);
+  assert.equal(guard(vibe, `CMD=$(printf '%s%s' '${spaces}' 'gh pr create --fill'); eval "$CMD"`)?.decision, 'deny');
+  assert.equal(guard(vibe, `CMD=$(printf '%s%s' '${spaces}' safe); eval "$CMD"`), null);
+  assert.match(guard(vibe, `ssh host 'export W=${ordinary}'; cd "$W" && gh pr create --fill`)?.reason ?? "", /unresolved.*W/);
+  assert.equal(guard(vibe, `{ cd ${ordinary}; }; gh pr create --fill`), null);
+  assert.equal(guard(vibe, `if true; then cd ${ordinary}; fi; gh pr create --fill`), null);
+  assert.equal(guard(vibe, `if false; then cd ${ordinary}; fi; gh pr create --fill`)?.decision, "deny");
+  assert.equal(guard(vibe, `cd ${ordinary} <<EOF\n$(gh pr create --fill)\nEOF`)?.decision, "deny");
+});
 
 test("vibe PR creation requires a current handoff witness", () => {
   const worktree = mkdtempSync(path.join(tmpdir(), "vibe-pr-create-"));

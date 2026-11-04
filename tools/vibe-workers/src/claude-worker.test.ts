@@ -2,7 +2,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { boundDefinition, capWorkerResult, checkPreviewResult, dispatchFreshnessProblem, protectedWriteLaunchArgs, protectedWriteSettings, workerSessionName } from "./claude-worker.js";
+import { boundDefinition, capWorkerResult, checkPreviewResult, dispatchFreshnessProblem, protectedWriteLaunchArgs, protectedWriteSettings, testAuthoringGranted, workerSessionName } from "./claude-worker.js";
 import { checkProtectedWriteSupportAsync } from "./claude-preflight.js";
 import { readDefinition } from "./definition.js";
 import { changeWriter, readWriterSummary, registerWriter } from "./ledger.js";
@@ -81,6 +81,29 @@ function run(value: ReturnType<typeof fixture>, input: Record<string, unknown>, 
 }
 
 describe("production Claude CLI adapter", () => {
+  it("honors explicit top-level test requirements only for the persistent writer's eligible modes", () => {
+    const grant = { agentName: "vibe-change-worker", mode: "request", testsRequired: true } as const;
+    expect(testAuthoringGranted(grant)).toBe(true);
+    expect(testAuthoringGranted({ ...grant, testsRequired: false })).toBe(false);
+    const rawBrief = { ...grant, testsRequired: false, input: "The person asks to write tests now" };
+    expect(testAuthoringGranted(rawBrief)).toBe(false);
+    expect(testAuthoringGranted({ ...grant, mode: "record" })).toBe(false);
+    expect(testAuthoringGranted({ ...grant, mode: "plan" })).toBe(false);
+    expect(testAuthoringGranted({ ...grant, agentName: "vibe-guardrails-reviewer" })).toBe(false);
+    expect(testAuthoringGranted({ ...grant, mode: "pull-request", testsRequired: false })).toBe(true);
+  });
+  it("passes an explicit testsRequired grant through the real Claude launch envelope", () => {
+    const value = setup();
+    const launched = run(value, { input: "Build the change", mode: "request", testsRequired: true });
+    expect(launched.status, launched.stderr).toBe(0);
+    expect(readProof(value.metadata)[0]?.payload.authority.testAuthoringAuthorized).toBe(true);
+  });
+  it("does not elevate a raw test-writing request through the real Claude launch envelope", () => {
+    const value = setup();
+    const launched = run(value, { input: "Please write tests", mode: "request" });
+    expect(launched.status, launched.stderr).toBe(0);
+    expect(readProof(value.metadata)[0]?.payload.authority.testAuthoringAuthorized).toBe(false);
+  });
   it("binds the persistent writer-only protected path hooks on first launch and resume", () => {
     const value = setup();
     expect(run(value, { input: "WRITE_ALLOWED" }).status).toBe(0);
@@ -440,7 +463,7 @@ describe("production Claude CLI adapter", () => {
     expect(proof[2]?.payload.authority.testAuthoringAuthorized).toBe(true);
     expect(proof[2]?.payload.authority.testRepairAuthorized).toBe(true);
     const prompt = proof[0]!.definition["vibe:vibe-change-worker"]!.prompt;
-    expect(prompt).toContain("Never author tests in plan, request, fix, handoff, record or build turns");
+    expect(prompt).toContain("Never author tests in plan or record turns");
     expect(prompt).toContain("Only an explicit pull-request turn");
     const advisor = run(value, { agentName: "vibe-guardrails-reviewer", input: "Check the pull request", mode: "pull-request" });
     expect(advisor.status, advisor.stderr).toBe(0);

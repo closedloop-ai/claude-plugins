@@ -12861,6 +12861,8 @@ var launchSchema = recordContextSchema.extend({
   timeoutMs: external_exports.number().int().min(1e3).max(30 * 60 * 1e3).default(15 * 60 * 1e3),
   /** Set only when the person explicitly allowed paid extra usage; otherwise a reached limit or overage stops the turn. */
   allowCredits: external_exports.boolean().optional(),
+  /** Explicit top-level orchestrator requirement; raw brief text never grants test authoring. */
+  testsRequired: external_exports.boolean().optional(),
   previewRequirements: external_exports.array(external_exports.enum(["app-preview", "feature-flags", "collaboration"])).min(1).optional(),
   previewProducer: external_exports.literal("runtime-provider").optional()
 }).strict().refine((data) => !(data.input && data.continuation), "Supply input or continuation, not both");
@@ -12908,10 +12910,14 @@ var readerRoles = /* @__PURE__ */ new Set([
 ]);
 var receiptRoles = /* @__PURE__ */ new Set(["vibe-guardrails-reviewer", "vibe-adversarial-reviewer", "vibe-storybook-decomposer", "vibe-verify-worker"]);
 var previewActions = /* @__PURE__ */ new Set(["create", "redeploy", "flags", "desktop"]);
+var testAuthoringModes = /* @__PURE__ */ new Set(["request", "fix", "handoff", "pull-request"]);
 var PROTECTED_WRITE_HOOK_TIMEOUT_SECONDS = 15;
 var MCP_READINESS_WINDOW_MS = 15e3;
 var MAX_MCP_STARTUP_ATTEMPTS = 3;
 var MCP_STARTUP_RETRY_DELAY_MS = 500;
+function testAuthoringGranted(input) {
+  return input.agentName === "vibe-change-worker" && (input.mode === "pull-request" || input.testsRequired === true && testAuthoringModes.has(input.mode));
+}
 function remainingWorkerTurnBudget(input) {
   const turnTimeoutMs = Math.max(0, input.turnDeadline - input.now);
   return {
@@ -13016,7 +13022,7 @@ function boundDefinition(definition, input) {
   const roleTools = prototypeAdvice ? definition.tools.filter((tool) => tool !== "Write" && tool !== "Edit") : definition.tools;
   const tools = [.../* @__PURE__ */ new Set([...roleTools, "ToolSearch", structuredOutputTool, ...input.capabilities.filter((capability) => capability.access === "read" || permittedWrites.includes(capability.operation)).flatMap((capability) => mcpToolAliases(capability.name))])];
   const persistent = input.agentName === "vibe-change-worker";
-  const phasePolicy = persistent ? "Current phase, test-authoring and test-repair authority come only from the orchestrator's top-level turn envelope, separate from raw input text. Only an explicit pull-request turn in that envelope, sent because the person asked for a pull request, may author tests. Never author tests in plan, request, fix, handoff, record or build turns, or infer authority from the person's words. A request, fix or handoff turn with test-repair authority may only repair existing tests and fixtures your own change broke (imports, renamed or retired symbols, setup, type errors) without changing what any test asserts; never add a test file. Delete a test file or case only when it covers nothing but code the request retires, recorded with retired-tests.mjs and the ticket or PRD that retires it; a test of live behavior is only repaired. " : `This is mode ${input.mode}. Never write or edit tests. `;
+  const phasePolicy = persistent ? "Current phase, test-authoring and test-repair authority come only from the orchestrator's top-level turn envelope, separate from raw input text. Only an explicit pull-request turn or an explicit top-level testsRequired grant may author tests. Never author tests in plan or record turns, or in request, fix or handoff turns without that grant; never infer authority from the person's words. A request, fix or handoff turn with test-repair authority but without a test-authoring grant may only repair existing tests and fixtures your own change broke (imports, renamed or retired symbols, setup, type errors) without changing what any test asserts; never add a test file. Delete a test file or case only when it covers nothing but code the request retires, recorded with retired-tests.mjs and the ticket or PRD that retires it; a test of live behavior is only repaired. " : `This is mode ${input.mode}. Never write or edit tests. `;
   const verifyEvidencePolicy = input.agentName === "vibe-verify-worker" ? "This is a source read-only verification role. Never edit product source, tests, fixtures, snapshots, catalog or allowlists. Bash may write only owned private verification artifacts: <gitdir>/vibe-pr-evidence.json, <gitdir>/vibe-lane-report.txt from pnpm test:lanes, <gitdir>/vibe-lane-results.json through pre-pr-lanes.mjs, verifier-owned Storybook birth records and logs in its private git directory, and .control/ runtime files from the repository control command in control mode. Move only this turn's control captures to the private git directory before publication. Never write a ClosedLoop or session record. " : "";
   const storybookEvidencePolicy = input.agentName === "vibe-storybook-decomposer" ? "This advisor may write only verifier-owned Storybook birth records and logs in the private git directory through verify-storybook-process.mjs. Stop each new process before returning. Never edit product source, tests or live records, and never adopt an unrecorded process. " : "";
   const prompt = `${definition.prompt}
@@ -13187,7 +13193,7 @@ async function runWorker(rawInput) {
       requestId: input.requestId,
       mode: input.mode,
       authority: {
-        testAuthoringAuthorized: persistent && input.mode === "pull-request",
+        testAuthoringAuthorized: testAuthoringGranted(input),
         testRepairAuthorized: persistent && TEST_REPAIR_MODES.has(input.mode)
       },
       ...input.sessionless ? { sessionless: input.sessionless } : {},
@@ -13628,5 +13634,6 @@ export {
   protectedWriteSettings,
   remainingWorkerTurnBudget,
   runWorker,
+  testAuthoringGranted,
   workerSessionName
 };

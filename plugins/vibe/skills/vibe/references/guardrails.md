@@ -87,6 +87,12 @@ These rules bind every worker in both harnesses.
 
 ## What may change
 
+Handoff path permissions come from one committed root-level
+`vibe-handoff-paths.json` owned by the target repository. A nested declaration
+does not count. A session may not add, edit, or delete any file with that name;
+the inventory uses the captured base or verified fetched default policy and
+blocks an undeclared repository.
+
 For an owned `prototype/<slug>` mockup session, the repository's canonical
 `<repo-root>/.claude/skills/prototype/SKILL.md` owns sandbox rules instead of
 the full-app rules in this section. Its allowed host paths are exactly
@@ -506,7 +512,7 @@ on for them; both keys follow "Feature flags".
 
 ## Tests
 
-No worker authors a test in vibe or handoff: no new `*.test.*` or `*.spec.*`
+Without an explicit top-level pull-request or `testsRequired` grant, no worker authors a test in vibe or handoff: no new `*.test.*` or `*.spec.*`
 file, nothing new under `__tests__/` or `e2e/`, no new case, assertion,
 snapshot or fixture, and no deleted test of live behavior. This holds in the
 build loop and at handoff alike. The edits
@@ -572,10 +578,12 @@ of work: each behavior and stable row ID that needs a test, and the files to
 cover (`ticket-template.md`). Engineering writes those tests in its pull
 request, alongside the tests for every frozen row.
 
-The only exception: when the person explicitly asks for a pull request to be
+The exception: when the person explicitly asks for a pull request to be
 raised, full tests for every change in the session are required before it
-opens. That request is the only thing that authorizes test writing, and only
-the SAME persistent writer writes them, in an explicit `pull-request` turn.
+opens. An explicit top-level `testsRequired` grant also authorizes the SAME
+persistent writer in a request, fix or handoff turn; raw brief text does not.
+Handoff inventory still admits authored tests only in the pull-request phase;
+the typed worker-envelope grant does not widen that path gate.
 Verify, backend, primitive, prototype and Storybook helpers never author
 tests. Record phase, criteria and test paths in the session change log so
 reviewers can tell those tests from forbidden test changes.
@@ -585,8 +593,8 @@ through review and merge themselves IS that explicit request. Words such as "rai
 PR merged", "I'll get it merged", "I'll ship it myself" and "I want to take it
 through review" all ask for a pull request and take handoff's requested pull
 request path, as does choosing the pull request in handoff's question about
-how the session ends. Nothing else does: the rule that tests are written only
-on that request is unchanged. Never offer to send the person the branch to
+how the session ends. Other test work needs the explicit top-level
+`testsRequired` grant. Never offer to send the person the branch to
 merge; a bare branch is not something they can act on.
 
 Do not create source writers per unit, specialty or fix, or additional feature
