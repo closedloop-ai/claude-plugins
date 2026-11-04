@@ -245,7 +245,9 @@ def fetch_graph(cfg, api):
     own BLOCKS links count as the scope's: what it blocks is shown, and what blocks it is followed
     upstream like any other outside blocker.
 
-    Outside tickets that an in-scope ticket blocks are shown one layer deep.
+    Outside tickets that an in-scope ticket blocks are shown one layer deep, and so are their
+    other blockers, so a downstream ticket never looks as if it waits on the scope alone. Nothing
+    is followed from those blockers, and they are left out when outside blockers are off.
     Outside blockers are followed upstream `outside_blockers_depth` layers
     (default 1; "all" follows the chain to its roots).
 
@@ -301,6 +303,16 @@ def fetch_graph(cfg, api):
             if limit is not None and level >= limit:
                 break
             frontier = sorted(found)
+        downstream = sorted({d for s, d in edges if s in scope and d not in scope})
+        read_links([slug for slug in downstream if slug not in links_of])
+        if limit != 0:
+            for slug in downstream:
+                for link in links_of[slug]:
+                    s, d = endpoints(link)
+                    if s and d == slug and s not in nodes:
+                        node = endpoint_node(link.get("source") or {}, app_base)
+                        node["external"] = True
+                        nodes[s] = node
         read_links(sorted(slug for slug in nodes if slug not in links_of))
     for link_list in links_of.values():
         for link in link_list:
