@@ -10,7 +10,7 @@
 // guardrail check, and no redeploy or handoff commit includes them.
 //
 // A target repository declares its own allowed and forbidden paths in one
-// committed vibe-handoff-paths.json. The declaration is read from the captured
+// committed root-level vibe-handoff-paths.json. It is read from the captured
 // base commit, or a newer fetched origin default branch if that base predates
 // the declaration, so a session cannot expand its own permissions.
 // Shrink-only source-gate allowlist edits retain their existing exception.
@@ -328,7 +328,7 @@ const result = withStableSource(worktree, () => {
 
   /** Use the captured base first, then a fetched newer default branch only for a missing declaration. */
   function readPathPolicy() {
-    const required = `Declare exactly one committed ${PATH_POLICY_BASENAME} in the target repository with version, allowedPrefixes, allowedFiles, forbiddenPrefixes, forbiddenBasenames and rootTests`;
+    const required = `Declare exactly one committed ${PATH_POLICY_BASENAME} at the target repository root with version, allowedPrefixes, allowedFiles, forbiddenPrefixes, forbiddenBasenames and rootTests`;
     const base = readPathPolicyAt(baseCommit, "base", required);
     if (!base.missing) return base;
     let defaultCommit;
@@ -359,6 +359,10 @@ const result = withStableSource(worktree, () => {
         problem: `${required}; found ${files.length} in ${kind} ${commit}.` };
     }
     const file = files[0];
+    if (file !== PATH_POLICY_BASENAME) {
+      return { policy: null, file, source: { kind, commit },
+        problem: `${required}; found ${file} in ${kind} ${commit}, but the declaration must be at repository root (${PATH_POLICY_BASENAME}).` };
+    }
     try {
       const policy = JSON.parse(git(["show", `${commit}:${file}`]));
       const problem = pathPolicyProblemFor(policy);

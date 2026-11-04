@@ -112,7 +112,7 @@ function session(t) {
   t.after(fixture.cleanup);
   const checkout = path.join(fixture.home, "Documents", "Closedloop.ai - Active Work", "symphony-alpha");
   makeCheckout({ root: fixture.root, home: fixture.home, checkout, files: {
-    ...BASE, "apps/app/vibe-handoff-paths.json": SYMPHONY_PATH_POLICY } });
+    ...BASE, "vibe-handoff-paths.json": SYMPHONY_PATH_POLICY } });
   const created = runNode(SESSIONS, ["new", "--repo", checkout, "--slug", "links", "--summary", "links", "--mode", "seeded",
     "--operator-id", "user-operator", "--operator-email", "operator@example.com"], fixture.home);
   assert.equal(created.status, 0, created.stderr);

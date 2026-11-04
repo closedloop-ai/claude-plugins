@@ -119,6 +119,12 @@ for engineering. The worker can write tests when its top-level turn explicitly
 requires them. Handoff inventory admits newly authored tests only in the
 pull-request phase, where full tests pass before the pull request opens.
 
+**Paths come from the target repository.** Each target declares its handoff
+paths in repo-root `vibe-handoff-paths.json`, including this plugin repository.
+Inventory reads the committed declaration from the target's captured base or
+verified fetched default branch. A nested declaration does not count, and a
+session diff cannot add, edit, or delete any file with that name.
+
 **A complete record.** The live ClosedLoop ticket links the document the
 session started from, the session's implementation plan (published as a
 linked PLN), the decision table, the environment and its production flag

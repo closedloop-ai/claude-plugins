@@ -72,7 +72,7 @@ function setup(t, slug, files) {
   t.after(fixture.cleanup);
   const checkout = path.join(fixture.home, "Documents", "Closedloop.ai - Active Work", "symphony-alpha");
   makeCheckout({ root: fixture.root, home: fixture.home, checkout, files: {
-    "apps/app/vibe-handoff-paths.json": SYMPHONY_PATH_POLICY,
+    "vibe-handoff-paths.json": SYMPHONY_PATH_POLICY,
     "apps/app/page.tsx": "export const page = 1;\n", ...files } });
   const created = runNode(
     SESSIONS,

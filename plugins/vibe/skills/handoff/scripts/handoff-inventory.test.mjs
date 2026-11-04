@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -33,7 +33,7 @@ function setup(t, slug, extraFiles = {}, { repoName = "symphony-alpha", remoteUr
       "apps/web/content/docs/meta.json": "{\"pages\":[]}\n",
       "docs/runbooks/bulk-actions.md": "Runbook.\n",
       [ALLOWLIST]: allowlist([FOCUS_RING, HEX]),
-      ...(declared ? { "apps/app/vibe-handoff-paths.json": SYMPHONY_PATH_POLICY } : {}),
+      ...(declared ? { "vibe-handoff-paths.json": SYMPHONY_PATH_POLICY } : {}),
       ...extraFiles,
     },
     ...(remoteUrl ? { remoteUrl } : {}),
@@ -56,15 +56,8 @@ function useMasterDefault({ home, checkout, origin, worktree }) {
   git(worktree, ["remote", "set-head", "origin", "-a"], home);
 }
 
-const PATH_POLICY = "plugins/vibe/vibe-handoff-paths.json";
-const CLAUDE_PLUGIN_POLICY = JSON.stringify({
-  version: 1,
-  allowedPrefixes: ["plugins/", "tools/", "evals/", "docs/"],
-  allowedFiles: ["CHANGELOG.md"],
-  forbiddenPrefixes: [".github/"],
-  forbiddenBasenames: ["AGENTS.md", "CLAUDE.md", "AGENTS.override.md"],
-  rootTests: false,
-});
+const PATH_POLICY = "vibe-handoff-paths.json";
+const CLAUDE_PLUGIN_POLICY = readFileSync(path.resolve(HERE, "../../../../..", PATH_POLICY), "utf8");
 
 test("target repository declaration admits claude-plugins source, tools, evals, changelog and docs", (t) => {
   const { home, worktree } = setup(t, "claude-paths", { [PATH_POLICY]: CLAUDE_PLUGIN_POLICY }, {
@@ -75,12 +68,82 @@ test("target repository declaration admits claude-plugins source, tools, evals, 
   for (const file of paths) write(worktree, file, "changed\n");
   const result = runNode(INVENTORY, ["--worktree", worktree, "--phase", "pull-request"], home);
   assert.equal(result.json.blocking.forbiddenPaths, true, JSON.stringify(result.json));
+  assert.equal(result.json.pathPolicyFile, PATH_POLICY);
+  assert.equal(result.json.pathPolicySource.kind, "base");
   assert.deepEqual(result.json.forbidden, []);
   assert.deepEqual(result.json.outsideAllowed, []);
   write(worktree, "plugins/vibe/AGENTS.md", "changed\n");
   const blocked = runNode(INVENTORY, ["--worktree", worktree, "--phase", "pull-request"], home);
   assert.equal(blocked.json.blocking.forbiddenPaths, false);
   assert.deepEqual(blocked.json.forbidden, [{ path: "plugins/vibe/AGENTS.md", status: "A" }]);
+});
+
+test("root declaration uses the verified origin default when the captured base lacks one", (t) => {
+  const { home, checkout, worktree } = setup(t, "claude-root-rollout", {}, {
+    repoName: "claude-plugins", declared: false,
+  });
+  write(worktree, "plugins/vibe/skills/handoff/scripts/allowed.mjs", "export {};");
+  write(checkout, PATH_POLICY, CLAUDE_PLUGIN_POLICY);
+  git(checkout, ["add", PATH_POLICY], home);
+  git(checkout, ["commit", "-m", "Declare root handoff paths"], home);
+  git(checkout, ["push", "origin", "main"], home);
+  git(worktree, ["fetch", "origin", "main"], home);
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.blocking.forbiddenPaths, true, JSON.stringify(result.json));
+  assert.equal(result.json.pathPolicyFile, PATH_POLICY);
+  assert.equal(result.json.pathPolicySource.kind, "origin-default");
+  assert.deepEqual(result.json.forbidden, []);
+  assert.deepEqual(result.json.outsideAllowed, []);
+});
+
+test("added, modified and deleted root declarations cannot self-authorize", (t) => {
+  const declared = setup(t, "claude-root-edit", { [PATH_POLICY]: CLAUDE_PLUGIN_POLICY }, {
+    repoName: "claude-plugins", declared: false,
+  });
+  const { home, worktree } = declared;
+  const expanded = JSON.stringify({ ...JSON.parse(CLAUDE_PLUGIN_POLICY), allowedPrefixes: ["plugins/", "tools/", "evals/", "docs/", "rogue/"] });
+  write(worktree, PATH_POLICY, expanded);
+  write(worktree, "rogue/escape.ts", "export {};");
+  const modified = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(modified.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(modified.json.forbidden, [{ path: PATH_POLICY, status: "M" }]);
+  assert.deepEqual(modified.json.outsideAllowed, [{ path: "rogue/escape.ts", status: "A" }]);
+  git(worktree, ["rm", "-f", "-q", PATH_POLICY], home);
+  const deleted = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(deleted.json.blocking.forbiddenPaths, false);
+  assert.deepEqual(deleted.json.forbidden, [{ path: PATH_POLICY, status: "D" }]);
+
+  const undeclared = setup(t, "claude-root-add", {}, {
+    repoName: "claude-plugins", declared: false,
+  });
+  write(undeclared.worktree, PATH_POLICY, CLAUDE_PLUGIN_POLICY);
+  write(undeclared.worktree, "plugins/vibe/allowed.mjs", "export {};");
+  const added = runNode(INVENTORY, ["--worktree", undeclared.worktree], undeclared.home);
+  assert.equal(added.json.blocking.forbiddenPaths, false);
+  assert.match(added.json.pathPolicyProblem, /Declare exactly one committed vibe-handoff-paths\.json/);
+  assert.deepEqual(added.json.forbidden, [{ path: PATH_POLICY, status: "A" }]);
+});
+
+test("a sole nested declaration fails closed and names the required root location", (t) => {
+  const { home, worktree } = setup(t, "nested-only-policy", {
+    "plugins/vibe/vibe-handoff-paths.json": CLAUDE_PLUGIN_POLICY,
+  }, { repoName: "claude-plugins", declared: false });
+  write(worktree, "plugins/vibe/allowed.mjs", "export {};\n");
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.equal(result.json.pathPolicyFile, "plugins/vibe/vibe-handoff-paths.json");
+  assert.match(result.json.pathPolicyProblem, /repository root.*vibe-handoff-paths\.json|vibe-handoff-paths\.json.*repository root/);
+});
+
+test("a root declaration alongside a nested declaration fails closed as a duplicate", (t) => {
+  const { home, worktree } = setup(t, "root-and-nested-policy", {
+    [PATH_POLICY]: CLAUDE_PLUGIN_POLICY,
+    "plugins/vibe/vibe-handoff-paths.json": CLAUDE_PLUGIN_POLICY,
+  }, { repoName: "claude-plugins", declared: false });
+  write(worktree, "plugins/vibe/allowed.mjs", "export {};\n");
+  const result = runNode(INVENTORY, ["--worktree", worktree], home);
+  assert.equal(result.json.blocking.forbiddenPaths, false);
+  assert.match(result.json.pathPolicyProblem, /found 2/);
 });
 
 test("missing target declaration blocks even an otherwise allowed path and names the needed file", (t) => {
@@ -123,8 +186,8 @@ test("a declared non-main default branch allows its repository paths", (t) => {
 test("a pre-declaration session reads the fetched default branch policy after its base lacks one", (t) => {
   const { home, checkout, worktree } = setup(t, "declaration-rollout", {}, { declared: false });
   write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
-  write(checkout, "apps/app/vibe-handoff-paths.json", SYMPHONY_PATH_POLICY);
-  git(checkout, ["add", "apps/app/vibe-handoff-paths.json"], home);
+  write(checkout, "vibe-handoff-paths.json", SYMPHONY_PATH_POLICY);
+  git(checkout, ["add", "vibe-handoff-paths.json"], home);
   git(checkout, ["commit", "-m", "Declare unchanged handoff paths"], home);
   git(checkout, ["push", "origin", "main"], home);
   git(worktree, ["fetch", "origin", "main"], home);
@@ -144,13 +207,13 @@ test("a pre-declaration session reads the fetched default branch policy after it
 
 test("a nondefault comparison base cannot supply fallback policy", (t) => {
   const { home, checkout, worktree } = setup(t, "nondefault-policy", {}, { declared: false });
-  write(checkout, "apps/app/vibe-handoff-paths.json", SYMPHONY_PATH_POLICY);
-  git(checkout, ["add", "apps/app/vibe-handoff-paths.json"], home);
+  write(checkout, "vibe-handoff-paths.json", SYMPHONY_PATH_POLICY);
+  git(checkout, ["add", "vibe-handoff-paths.json"], home);
   git(checkout, ["commit", "-m", "Declare default branch policy"], home);
   git(checkout, ["push", "origin", "main"], home);
   git(checkout, ["checkout", "-b", "preview"], home);
-  write(checkout, "apps/app/vibe-handoff-paths.json", CLAUDE_PLUGIN_POLICY);
-  git(checkout, ["add", "apps/app/vibe-handoff-paths.json"], home);
+  write(checkout, "vibe-handoff-paths.json", CLAUDE_PLUGIN_POLICY);
+  git(checkout, ["add", "vibe-handoff-paths.json"], home);
   git(checkout, ["commit", "-m", "Add divergent preview policy"], home);
   git(checkout, ["push", "origin", "preview"], home);
   git(worktree, ["fetch", "origin", "main", "preview"], home);
@@ -171,13 +234,13 @@ test("a nondefault comparison base cannot supply fallback policy", (t) => {
 test("an unconfigured comparison base ignores a locally repointed origin HEAD", (t) => {
   const { home, checkout, worktree } = setup(t, "repointed-comparison", {}, { declared: false });
   const oldBase = git(worktree, ["rev-parse", "HEAD"], home);
-  write(checkout, "apps/app/vibe-handoff-paths.json", SYMPHONY_PATH_POLICY);
-  git(checkout, ["add", "apps/app/vibe-handoff-paths.json"], home);
+  write(checkout, "vibe-handoff-paths.json", SYMPHONY_PATH_POLICY);
+  git(checkout, ["add", "vibe-handoff-paths.json"], home);
   git(checkout, ["commit", "-m", "Declare default policy"], home);
   git(checkout, ["push", "origin", "main"], home);
   git(checkout, ["checkout", "-b", "preview", oldBase], home);
-  write(checkout, "apps/app/vibe-handoff-paths.json", CLAUDE_PLUGIN_POLICY);
-  git(checkout, ["add", "apps/app/vibe-handoff-paths.json"], home);
+  write(checkout, "vibe-handoff-paths.json", CLAUDE_PLUGIN_POLICY);
+  git(checkout, ["add", "vibe-handoff-paths.json"], home);
   git(checkout, ["commit", "-m", "Declare permissive preview policy"], home);
   git(checkout, ["push", "origin", "preview"], home);
   git(worktree, ["fetch", "origin", "main", "preview"], home);
@@ -194,14 +257,14 @@ test("an unconfigured comparison base ignores a locally repointed origin HEAD", 
 test("remote default verification pins one commit despite a tracking-ref swap", (t) => {
   const { root, home, checkout, worktree } = setup(t, "tracking-ref-race", {}, { declared: false });
   const oldBase = git(worktree, ["rev-parse", "HEAD"], home);
-  write(checkout, "apps/app/vibe-handoff-paths.json", SYMPHONY_PATH_POLICY);
-  git(checkout, ["add", "apps/app/vibe-handoff-paths.json"], home);
+  write(checkout, "vibe-handoff-paths.json", SYMPHONY_PATH_POLICY);
+  git(checkout, ["add", "vibe-handoff-paths.json"], home);
   git(checkout, ["commit", "-m", "Declare default policy"], home);
   git(checkout, ["push", "origin", "main"], home);
   const defaultSha = git(worktree, ["rev-parse", "origin/main"], home);
   git(checkout, ["checkout", "-b", "preview", oldBase], home);
-  write(checkout, "apps/app/vibe-handoff-paths.json", CLAUDE_PLUGIN_POLICY);
-  git(checkout, ["add", "apps/app/vibe-handoff-paths.json"], home);
+  write(checkout, "vibe-handoff-paths.json", CLAUDE_PLUGIN_POLICY);
+  git(checkout, ["add", "vibe-handoff-paths.json"], home);
   git(checkout, ["commit", "-m", "Declare permissive preview policy"], home);
   git(checkout, ["push", "origin", "preview"], home);
   git(worktree, ["fetch", "origin", "main", "preview"], home);
@@ -223,7 +286,7 @@ test("remote default verification pins one commit despite a tracking-ref swap", 
 
 test("symphony declaration retains the old allowed and forbidden decisions", (t) => {
   const { home, worktree } = setup(t, "symphony-declared", {
-    "apps/app/vibe-handoff-paths.json": SYMPHONY_PATH_POLICY,
+    "vibe-handoff-paths.json": SYMPHONY_PATH_POLICY,
   });
   write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
   const allowed = runNode(INVENTORY, ["--worktree", worktree], home);
@@ -235,7 +298,7 @@ test("symphony declaration retains the old allowed and forbidden decisions", (t)
 });
 
 test("a worktree edit cannot broaden its committed target policy", (t) => {
-  const policy = "apps/app/vibe-handoff-paths.json";
+  const policy = "vibe-handoff-paths.json";
   const { home, worktree } = setup(t, "policy-base", { [policy]: SYMPHONY_PATH_POLICY });
   write(worktree, policy, CLAUDE_PLUGIN_POLICY);
   write(worktree, "tools/rogue.ts", "export {};\n");
@@ -253,12 +316,12 @@ test("an allowed source directory cannot add a second handoff declaration", (t) 
   assert.deepEqual(result.json.forbidden, [
     { path: "packages/app/vibe-handoff-paths.json", status: "A" },
   ]);
-  git(worktree, ["rm", "-q", "apps/app/vibe-handoff-paths.json"], home);
+  git(worktree, ["rm", "-q", "vibe-handoff-paths.json"], home);
   const deleted = runNode(INVENTORY, ["--worktree", worktree], home);
   assert.equal(deleted.json.blocking.forbiddenPaths, false);
   assert.deepEqual(deleted.json.forbidden, [
-    { path: "apps/app/vibe-handoff-paths.json", status: "D" },
     { path: "packages/app/vibe-handoff-paths.json", status: "A" },
+    { path: "vibe-handoff-paths.json", status: "D" },
   ]);
 });
 
@@ -278,14 +341,14 @@ test("a forged private test grant cannot admit authored tests before pull-reques
 
 test("malformed or duplicate declarations fail closed with a target-owned diagnostic", (t) => {
   const { home, checkout, worktree } = setup(t, "policy-invalid", {
-    "apps/app/vibe-handoff-paths.json": "{}",
+    "vibe-handoff-paths.json": "{}",
   });
   write(worktree, "apps/app/page.tsx", "export const page = 2;\n");
   const malformed = runNode(INVENTORY, ["--worktree", worktree], home);
   assert.equal(malformed.json.blocking.forbiddenPaths, false);
   assert.match(malformed.json.pathPolicyProblem, /allowedPrefixes/);
-  write(checkout, "apps/app/vibe-handoff-paths.json", SYMPHONY_PATH_POLICY);
-  git(checkout, ["add", "apps/app/vibe-handoff-paths.json"], home);
+  write(checkout, "vibe-handoff-paths.json", SYMPHONY_PATH_POLICY);
+  git(checkout, ["add", "vibe-handoff-paths.json"], home);
   git(checkout, ["commit", "-m", "Repair policy on default branch"], home);
   git(checkout, ["push", "origin", "main"], home);
   git(worktree, ["fetch", "origin", "main"], home);
@@ -294,7 +357,7 @@ test("malformed or duplicate declarations fail closed with a target-owned diagno
   assert.equal(stillMalformed.json.pathPolicySource.kind, "base");
   assert.match(stillMalformed.json.pathPolicyProblem, /allowedPrefixes/);
   const duplicate = setup(t, "policy-duplicate", {
-    "apps/app/vibe-handoff-paths.json": SYMPHONY_PATH_POLICY,
+    "vibe-handoff-paths.json": SYMPHONY_PATH_POLICY,
     "packages/app/vibe-handoff-paths.json": SYMPHONY_PATH_POLICY,
   });
   write(duplicate.worktree, "apps/app/page.tsx", "export const page = 2;\n");

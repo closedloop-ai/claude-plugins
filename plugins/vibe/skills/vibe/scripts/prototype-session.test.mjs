@@ -18,7 +18,7 @@ function setup(t, files = {}) {
   t.after(fixture.cleanup);
   const checkout = path.join(fixture.home, "checkout with spaces");
   makeCheckout({ ...fixture, checkout, files: {
-    "apps/app/vibe-handoff-paths.json": SYMPHONY_PATH_POLICY, ...files } });
+    "vibe-handoff-paths.json": SYMPHONY_PATH_POLICY, ...files } });
   const created = runNode(SESSIONS, ["new-prototype", "--repo", checkout,
     "--slug", "board-mockup", "--summary", "Board mockup", ...OPERATOR], fixture.home);
   assert.equal(created.status, 0, JSON.stringify(created.json));

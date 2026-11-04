@@ -223,6 +223,10 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   In Codex, carry the same explicit requirement in the root-controlled turn
   envelope. Handoff inventory still admits authored tests only in its
   pull-request phase; this envelope grant does not change that path gate.
+  Handoff paths come from the target repository's committed root-level
+  `vibe-handoff-paths.json`. Inventory rejects nested declarations and every
+  session edit to a file with that name, and fails closed when the target has
+  no root declaration.
   Leave `agentRoot` out: the launcher binds its own installed plugin root,
   or a resumed writer's recorded root, so a guessed or
   remembered path can never point it at the wrong place (a supplied

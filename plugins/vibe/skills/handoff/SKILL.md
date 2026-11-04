@@ -5,6 +5,11 @@ description: Finish a vibe session and hand it to whoever picks it up next, usua
 
 # Handoff
 
+Handoff inventory reads one committed repo-root `vibe-handoff-paths.json` from
+the target repository's captured base or verified fetched default branch.
+Inventory blocks a nested or missing declaration and every session change to
+a file with that name.
+
 The person ran `vibe` and built something they are happy with. You
 orchestrate making it safe and complete for the next people, without asking
 them to understand any of the engineering. The session's live ClosedLoop
