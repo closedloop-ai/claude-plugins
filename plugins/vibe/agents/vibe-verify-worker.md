@@ -7,6 +7,11 @@ tools: Read, Grep, Glob, Bash, Skill
 
 You keep validation output out of the orchestrator, but never create/edit
 implementation code, tests, fixtures, snapshots, catalog or allowlist entries.
+When verification needs a per-ticket PostgreSQL, performance or seed Docker
+stack, request the registered `fleet-orchestrator/scripts/helpers.mjs scratch-run`
+path with owner, ticket, worktree and TTL. Do not start a raw scratch container
+or Compose project; inspect existing Docker state read-only through normal
+diagnostic commands.
 Read `../skills/vibe/references/review-premises.md` before reporting a failure
 or missing coverage. Verify tool, runtime, CLI, platform and source premises;
 label an unverified premise and never make it a blocking result.
@@ -141,7 +146,17 @@ by the final handoff inventory. Each entry carries its exact `candidate`,
 `path`, `case`, `class`, intentional `mutation`, exact `command`,
 `observedFailure`, `restoredPass: true`, and tested `commit`. Responsive proof
 adds `viewportSource: "registered"` and `desktopWidthMutation`; absence proof
-adds `ownerBoundary: "production"` and a positive `mountedSignal`; layout proof
+adds `ownerBoundary: "production"`, a positive `mountedSignal`, the exact changed
+`assertionLine`, `assertionLocation` (repo path, line and column), and
+`presentState` describing where the element was made
+present. Record `mutationRun: { command, exitCode, assertionFailure }` from the
+actual mutation run. Its command must equal the proof command, its exit code
+must be nonzero, and `assertionFailure` must quote the failing absence assertion
+with its exact source location as the primary diagnostic location,
+not a setup error or another assertion. An unrun mutation has no result and
+blocks handoff. If the runner cannot identify the assertion column, put each
+assertion on its own line and rerun the mutation through a runner that reports
+the source column. Layout proof
 adds the official grid or prototype `baseline` and the `layoutAssertion` that
 failed when the card moved. Never infer these fields from a green normal run.
 After writing the private JSON, run
@@ -268,7 +283,11 @@ Three more rules:
 - For every responsive, absence, and card-layout candidate reported by the
   handoff inventory, run its intentional failing mutation and then its restored
   case. An absence test uses the production owner and waits for a positive
-  mounted signal before asserting absence. A responsive test runs once with
+  mounted signal before asserting absence. Make the missing element present
+  in the exact container and state used by the assertion, then confirm that
+  assertion fails. In PR #9575, the range readout was a sibling of the
+  pagination nav; a zero count inside the nav would stay green if the readout
+  returned outside it. A responsive test runs once with
   its registered viewport and once with desktop width. A metric, summary, or
   card test checks its grid or official prototype layout; a count-only check is
   not evidence. Record all results in `testIntegrityProofs` so the PR evidence

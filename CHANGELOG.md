@@ -4,19 +4,87 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.33
+### vibe v1.1.38
 
 #### Added
 - Spec Card (`references/spec-card.md`, `scripts/spec-card.mjs` with `check`, `save`, `path`, `budget`, `assumptions` and `audit-skeleton`) and `scripts/freshness.mjs`. The requirements worker returns a `draft` card of criteria, assumptions and open questions; the writer locks it with its plan before code and it seeds the session decision table once. A locked card is not edited afterwards: criteria change in the decision table. The fork checkpoint is off by default (`--checkpoint` or `VIBE_FORK_CHECKPOINT=1` turns it on). `budget` reports files outside the plan as cited or uncited and never blocks. `freshness.mjs` falls back to the recorded session base when the fetch cannot run. The handoff Assumptions line is generated from the card and required by `live-ticket-check.mjs`.
 - Triage manifest and class pipeline skills; triage reads the shared UI and Desktop host path lists, and the handoff inventory reads the triage backend list from `area-paths`.
 - Consolidated reviewer role with a review-scope escalation script, `guardrails-gate`, the lane-evidence cache keyed on tree, base, config and scope, and an off-by-default switch that skips the fleet's duplicate review chain. The adversarial reviewer is trimmed and fed the consumer pack and gate table.
 - Scripts `setup-ctl`, `env-ctl`, `graph-pack`, `req-gather`, `verify-run`, `inventory` bundle, `prototype-share` and `ticket-ctl` offline body templating.
-- Load-aware execution: a cross-run worker budget for heavy commands, waiting for capacity with one retry on load failures, a bounded pool for independent verify lanes, and background verify runs joined at handoff.
+- Load-aware execution, off by default: `VIBE_HEAVY_BUDGET=on` gives heavy commands a cross-run worker budget, waiting for capacity (`VIBE_HEAVY_WAIT=off` skips it) and one retry on load failures (`VIBE_HEAVY_RETRY=off` skips it), all inside the command's `seconds`. Without it `run-bounded.mjs` and `verify-run.mjs` behave as before and the verify lanes run serially; `VIBE_VERIFY_POOL=serial` keeps them serial with the budget on. `run-bounded.mjs` forwards SIGTERM and SIGINT to the command's process group. Background verify runs are joined at handoff.
 
 #### Changed
-- `criteria-audit.mjs` reads the verdict, evidence type and ref from one audit row, `| AC-n | MET | <type> | <ref> |`, so there is no separate evidence file and no `--evidence` argument on it, on `handoff-gate.mjs` or in the handoff skill. A criterion needs a `MET` row of type `test`, `script`, `screenshot` or `api-read` with a ref; a missing, `PARTIAL` or `MISSED` row blocks done, and a test ref must name a file that exists at HEAD.
+- `verify-run.mjs` blocks every lane when `pre-pr-lanes.mjs check` prints no summary line (a crash or timeout) instead of reading it as all lanes recorded, and a required check that is a no-op with its reason counts toward `ok`.
+- The guardrails reviewer reads the `guardrails-gate` findings as additions: it still runs all numbered checks, and a check the findings file does not name is not checked.
+- `BACKEND_PATH` again matches `apps/desktop/prisma/` and any `prisma` or `migrations` path segment; `pre-pr-lanes.mjs run` writes its records under a lock.
+- `criteria-audit.mjs` reads the verdict, evidence type and ref from one audit row, `| AC-n | MET | <type> | <ref> |`, so there is no separate evidence file and no `--evidence` argument on it, on `handoff-gate.mjs` or in the handoff skill. A criterion needs a `MET` row of type `test`, `script`, `screenshot` or `api-read` with a ref; a missing, `PARTIAL` or `MISSED` row blocks done, and a test ref must name a file that exists: in the worktree at a candidate audit, at HEAD at `handoff-gate.mjs` (`--at head`). `source-trace` is a fifth evidence type, its ref the file and line the trace ends at.
 - The brief returns `likelyFiles` for triage paths, and handoff reads the triage manifest's review output.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 6,816 words longer than in 1.1.32 (origin/main fccc4da).
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 6,909 words longer than in 1.1.37 (origin/main at the merge).
+
+### closedloop-core v1.6.2
+
+#### Fixed
+- `prd-dependency-graph` only ever moves `~/.local/bin/prd-graph-helper` and the running refresh helper to a newer installed release. Previously any copy of the skill that ran, including a session still on an older release or a repository checkout, rewrote the launcher to point at itself and replaced a newer running helper. An installed release now rewrites the launcher only over a checkout, a removed install or a release no newer than its own, and replaces a running helper only when it is older, a checkout, removed, or too old to report its script. A checkout writes the launcher only when there is none, and the launcher runs a checkout only when no release is installed.
+
+#### Added
+- `refresh_server.py --take-over` replaces the running helper with the copy it runs from, even an older release or a checkout, for testing the skill, and leaves the launcher unchanged.
+
+### closedloop-core v1.6.1
+
+#### Fixed
+- `prd-dependency-graph` draws the other blockers of each ticket the scope blocks, one layer deep and dashed as outside the scope, with their arrows into that ticket. Previously a downstream ticket looked as if it waited on the scope alone, because a blocker that did not itself block the scope was never added, even with `outside_blockers_depth` set to `"all"`. Nothing is followed from those blockers, and they are left out when outside blockers are off.
+
+### vibe v1.1.37
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.36.
+
+#### Fixed
+- Detached E2E test cleanup verifies the spawned process group before signalling it, satisfying the existing signal-safety contract.
+- Release notes for vibe 1.1.35 and 1.1.36 name the complete Markdown scope used by the word-count contract.
+
+### vibe v1.1.36
+
+#### Added
+- Review-class guards reject unchecked subprocess output parsing, default-on runtime switches, incomplete real-path classifiers, and critical rules moved out of always-loaded skill files.
+- Guard baselines expose existing offenders as shrink-only entries, and mutation tests prove each guard fails when its defect returns.
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.35.
+
+### vibe v1.1.35
+
+#### Fixed
+- Absence assertion proofs now record a mutation run that makes the element present in the asserted state and fails the exact assertion. Missing or unrun proofs block handoff, including locator changes inside multiline assertions.
+- The verifier and reviewers check container scope so an assertion cannot pass merely because its locator never contains the element.
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 364 words longer than in 1.1.34.
+
+### vibe v1.1.34
+
+#### Added
+- Registered scratch Compose stacks carry an owner token and finite TTL, label their services and named Docker resources, and refuse recognizable raw per-ticket Docker starts.
+- Containerized E2E builds check the Docker backing filesystem after taking the E2E lock or fleet slot and refuse a build below 64 GB decimal free; `--no-build` and ordinary heavy checks continue without the Docker disk gate.
+
+#### Changed
+- Handoff and fleet records bind a published pull request to its exact worktree. Terminal cleanup removes only a clean, inactive checkout after rechecking its branch, head, remote and session state; it clears known generated directories and retains unknown local work.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 574 words longer than in 1.1.33.
+
+#### Fixed
+- Generated E2E runs reconcile exact project containers, volumes, networks and locally built image tags after normal exit or interruption. Builds reuse an identity-recorded vibe Buildx builder at default parallelism and prune only its cache to a 28 GB retained-size cap while retaining foreign and shared resources.
+- Handoff source gates keep internal helpers private and give cleanup candidates an explicit deterministic tie-break.
+- Scratch wrappers accept only Compose-generated project-qualified volume and network names, and detached combined Docker flags remain subject to scratch registration.
+
+### vibe v1.1.33
+
+#### Changed
+- Fleet Codex and Claude usage probes atomically persist successful and failed readings with their read time and source. State stays bounded to the latest reading, latest good reading and 100 recent readings per runtime and machine. A shared status command reports the latest reading and age, with a configurable 30 minute stale threshold.
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 232 words longer than in 1.1.32.
+
+#### Fixed
+- Fleet routing requires a fresh usage reading before choosing a runtime or machine, board status flags stale usage, and a failed re-read keeps the last successful reading time visible.
+- Usage read times remain visible in reports without making the watcher emit an event when only the timestamp changes.
 
 ### closedloop-core v1.6.0
 

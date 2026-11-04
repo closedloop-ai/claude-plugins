@@ -269,6 +269,38 @@ test("touch records final-merge mode for the publication main-sync and refuses o
   assert.notEqual(refused.status, 0);
 });
 
+test("root handoff records a verified PR head outside the retiring worktree", (t) => {
+  const { root, home, worktree } = newSession(t, "retire-pr");
+  const branch = git(worktree, ["branch", "--show-current"], home);
+  git(worktree, ["push", "-q", "-u", "origin", "HEAD"], home);
+  const head = git(worktree, ["rev-parse", "HEAD"], home);
+  const bin = path.join(root, "gh-retirement-stub");
+  mkdirSync(bin);
+  const pr = { number: 42, state: "OPEN", head: { sha: head, ref: branch,
+    repo: { full_name: "closedloop-ai/symphony-alpha" } }, base: { repo: { full_name: "closedloop-ai/symphony-alpha" } } };
+  writeFileSync(path.join(bin, "gh"), `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify(pr)}'\n`, { mode: 0o755 });
+  const bad = runNode(SCRIPT, ["touch", "--worktree", worktree, "--status", "handed-off",
+    "--pr-repo", "closedloop-ai/symphony-alpha", "--pr-number", "42", "--pr-head", "0".repeat(40)], home,
+  { PATH: `${bin}${path.delimiter}${process.env.PATH}` });
+  assert.equal(bad.status, 1, "wrong head cannot create a retirement witness");
+  const sweepLock = path.join(home, '.codex', 'vibe', 'cleanup', 'sweep.lock');
+  mkdirSync(sweepLock, { recursive: true });
+  const result = runNode(SCRIPT, ["touch", "--worktree", worktree, "--status", "handed-off",
+    "--pr-repo", "closedloop-ai/symphony-alpha", "--pr-number", "42", "--pr-head", head], home,
+  { PATH: `${bin}${path.delimiter}${process.env.PATH}` });
+  assert.equal(result.status, 0, result.json.error);
+  assert.deepEqual(result.json.session.pullRequest, { repo: "closedloop-ai/symphony-alpha", number: 42, head });
+  assert.match(result.json.session.retirementWarning, /cleanup sweep holds/,
+    'session handoff persists even while the cleanup ledger is busy');
+  rmSync(sweepLock, { recursive: true });
+  const retried = runNode(SCRIPT, ["touch", "--worktree", worktree, "--status", "handed-off",
+    "--pr-repo", "closedloop-ai/symphony-alpha", "--pr-number", "42", "--pr-head", head], home,
+  { PATH: `${bin}${path.delimiter}${process.env.PATH}` });
+  assert.equal(retried.status, 0, retried.json.error);
+  const external = path.join(home, ".codex", "vibe", "cleanup", "records");
+  assert.equal(existsSync(external), true, "retirement witness survives worktree removal");
+});
+
 test("touch sets the operator on a record written before it existed and keeps it otherwise", (t) => {
   const { home, worktree } = newSession(t, "older");
   const file = recordFile(worktree, home);

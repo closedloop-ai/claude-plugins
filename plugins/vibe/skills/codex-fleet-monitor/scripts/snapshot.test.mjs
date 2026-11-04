@@ -52,13 +52,15 @@ function fixture() {
   return { root, work, run };
 }
 
+const withoutUsageReadMetadata = (text) => text.replace(/ read=[^\s]+ source=[^\s]+/g, '');
+
 test('a blank gh read keeps the last value for each key, so it is not an event', TIMEOUT, () => {
   const f = fixture();
   const good = f.run('ok');
   assert.match(good, /^open-prs acme\/app 5 7 $/m);
   assert.match(good, /^pr acme\/app#42 OPEN abcdef12 APPROVED MERGEABLE comments=2 reviews=1 inline=3 threads=0 checks=/m);
-  assert.equal(f.run('fail'), good);
-  assert.equal(f.run('ok'), good);
+  assert.equal(withoutUsageReadMetadata(f.run('fail')), withoutUsageReadMetadata(good));
+  assert.equal(withoutUsageReadMetadata(f.run('ok')), withoutUsageReadMetadata(good));
 });
 
 test('the recovery events log is a snapshot line, so a recovery action wakes the watcher', TIMEOUT, () => {
@@ -125,7 +127,7 @@ test('an approved PR with unresolved review threads is BLOCKED, apart from its r
   writeFileSync(join(f.root, 'threads'), '2\n');
   const blocked = f.run('ok');
   assert.match(blocked, /^pr acme\/app#42 OPEN abcdef12 APPROVED MERGEABLE comments=2 reviews=1 inline=3 threads=2 checks=.*pass.* BLOCKED\(unresolved threads\)$/m);
-  assert.equal(f.run('fail'), blocked, 'a failed read keeps the block');
+  assert.equal(withoutUsageReadMetadata(f.run('fail')), withoutUsageReadMetadata(blocked), 'a failed read keeps the block');
   writeFileSync(join(f.root, 'threads'), '0\n');
   const clear = f.run('ok');
   assert.match(clear, /^pr acme\/app#42 .* threads=0 checks=/m);
@@ -153,7 +155,7 @@ test('an open PR needing its writer with no push for 45 minutes is STALE-PR, how
 test('the Claude usage line reads claude -p /usage on the Codex bands, at most once per CLAUDE_USAGE_SECONDS', TIMEOUT, () => {
   const f = fixture();
   writeFileSync(join(f.root, 'claude-usage'), 'Current session: 51% used \u00b7 resets Oct 22 at 12:39pm (America/Chicago)\nCurrent week (all models): 69% used \u00b7 resets Oct 27 at 9am (America/Chicago)\n');
-  assert.match(f.run('ok'), /^claude-usage local session=under80% week=under80%$/m);
+  assert.match(f.run('ok'), /^claude-usage local session=under80% week=under80% read=\S+ source=snapshot$/m);
   writeFileSync(join(f.root, 'claude-usage'), 'Current session: 91% used \u00b7 resets Oct 22 at 12:39pm (America/Chicago)\nCurrent week (all models): 69% used\n');
   assert.match(f.run('ok'), /^claude-usage local session=under80%/m, 'the cached line holds within the interval');
 });

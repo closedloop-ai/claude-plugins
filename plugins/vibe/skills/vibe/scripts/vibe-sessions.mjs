@@ -17,6 +17,7 @@
 //                                     [--live-plan PLN-123] [--live-plan-status DRAFT|APPROVED|EXECUTED]
 //                                     [--mode seeded|blank] [--stack <json>] [--main-merge deferred|final]
 //                                     [--clerk-org-id org_...]
+//                                     [--pr-repo <owner/repo> --pr-number <n> --pr-head <sha>]
 //                                     [--operator-id <id> --operator-email <email> [--operator-name <name>]]
 //   vibe-sessions.mjs flag-snapshot   --worktree <path> --file <snapshot.json> [--replace]
 //   vibe-sessions.mjs desktop-auth    --worktree <path> --file <auth-claim.json>
@@ -111,6 +112,7 @@ import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublicat
 import { captureSessionProcessIdentities, stopSessionProcesses } from "./session-processes.mjs";
 import { adoptStartupQuestions } from "./session-questions.mjs";
 import { git, readSessionRecord, sessionLiveTicket, writeSessionRecord as writeRecord } from "./session-record.mjs";
+import { registerWorktreeRetirement, sweepOwnedCleanups } from "./owned-cleanup.mjs";
 import {
   buildDispatchInputs,
   DISPATCH_WORKFLOW,
@@ -194,6 +196,9 @@ const { positionals, values } = parseArgs({
     "live-plan": { type: "string" },
     "live-plan-status": { type: "string" },
     "main-merge": { type: "string" },
+    "pr-repo": { type: "string" },
+    "pr-number": { type: "string" },
+    "pr-head": { type: "string" },
     file: { type: "string" },
     thread: { type: "string" },
     transcript: { type: "string" },
@@ -230,6 +235,10 @@ try {
 }
 
 async function run(command) {
+  if (["repo", "list", "new", "new-prototype"].includes(command)) {
+    try { await sweepOwnedCleanups({ deadline: Date.now() + 2_000, maxRecords: 2 }); }
+    catch { /* Session entry never fails because an unrelated deferred cleanup did. */ }
+  }
   switch (command) {
     case "repo":
       return { repo: resolveRepo() };
@@ -475,6 +484,32 @@ function touchSession() {
   if (mainMerge !== undefined && !Object.values(MainMerge).includes(mainMerge)) {
     throw new Error(`--main-merge must be one of: ${Object.values(MainMerge).join(", ")}.`);
   }
+  const prFields = [values["pr-repo"], values["pr-number"], values["pr-head"]];
+  let pullRequest = record.pullRequest ?? null;
+  let retirement = null;
+  if (prFields.some((part) => part !== undefined)) {
+    if (prFields.some((part) => !part) || values.status !== SessionStatus.HandedOff) {
+      throw new Error("PR identity requires --status handed-off and --pr-repo, --pr-number, --pr-head together.");
+    }
+    const number = Number(values["pr-number"]);
+    if (!Number.isSafeInteger(number) || number <= 0 || !/^[a-f0-9]{40}$/i.test(values["pr-head"])) {
+      throw new Error("PR number and head must be exact.");
+    }
+    const raw = execFileSync("gh", ["api", `repos/${values["pr-repo"]}/pulls/${number}`],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 });
+    const live = JSON.parse(raw);
+    const branch = git(worktree, ["branch", "--show-current"]);
+    const head = git(worktree, ["rev-parse", "HEAD"]);
+    if (live.number !== number || live.base?.repo?.full_name !== values["pr-repo"]
+      || live.head?.ref !== branch || live.head?.sha !== head || head !== values["pr-head"]) {
+      throw new Error("The returned PR does not match the session's published branch and head.");
+    }
+    const commonDir = git(worktree, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    retirement = { worktree, repo: path.dirname(commonDir),
+      pr: { repo: values["pr-repo"], number, head, branch, state: live.merged_at ? 'MERGED' : String(live.state).toUpperCase() },
+      proof: { kind: 'vibe' }, ticket: record.liveTicket ?? record.ticket };
+    pullRequest = { repo: values["pr-repo"], number, head };
+  }
   const now = new Date().toISOString();
   const updated = {
     ...record,
@@ -488,11 +523,17 @@ function touchSession() {
     livePlanStatus: livePlanStatus ?? record.livePlanStatus,
     clerkOrgId: values["clerk-org-id"] ? requireClerkOrgId(values["clerk-org-id"]) : record.clerkOrgId,
     stack: values.stack ? captureSessionProcessIdentities(worktree, JSON.parse(values.stack), { previous: record.stack }) : record.stack,
+    pullRequest,
     ...(mainMerge ?? record.mainMerge ? { mainMerge: mainMerge ?? record.mainMerge } : {}),
     lastActiveAt: now,
   };
   writeRecord(worktree, updated);
-  return { worktree, ...updated };
+  let retirementWarning;
+  if (retirement) {
+    try { registerWorktreeRetirement(retirement); }
+    catch (error) { retirementWarning = String(error instanceof Error ? error.message : error); }
+  }
+  return { worktree, ...updated, ...(retirementWarning ? { retirementWarning } : {}) };
 }
 
 function showSession() {

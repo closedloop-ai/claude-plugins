@@ -96,7 +96,7 @@ def test_consolidated_reviewer_reads_the_two_reviewers_checklists_instead_of_cop
 
 
 ADVERSARIAL = ROOT / "agents" / "vibe-adversarial-reviewer.md"
-ADVERSARIAL_BASELINE_BYTES = 11513  # local all-buckets build: main 1.1.30 is 11562 (its added attacks), less the ISS-13353 trim; was 10638 on 1.1.26
+ADVERSARIAL_BASELINE_BYTES = 12006  # main 1.1.37 is 12094, which carries the mutation-proof rule for absence assertions (#382); this is that file less the ISS-13353 trim. Was 11513 before that rule joined.
 # One distinctive phrase per genuinely adversarial attack that must survive the trim.
 RETAINED_ATTACKS = {
     "shared components": "every consumer",

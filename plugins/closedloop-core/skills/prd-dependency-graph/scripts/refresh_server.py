@@ -38,10 +38,12 @@ in place, `--once <graph-id>` refreshes an older graph from its config, and
 """
 
 import argparse
+import ast
 import contextlib
 import hashlib
 import hmac
 import importlib
+import inspect
 import json
 import os
 import re
@@ -245,7 +247,9 @@ def fetch_graph(cfg, api):
     own BLOCKS links count as the scope's: what it blocks is shown, and what blocks it is followed
     upstream like any other outside blocker.
 
-    Outside tickets that an in-scope ticket blocks are shown one layer deep.
+    Outside tickets that an in-scope ticket blocks are shown one layer deep, and so are their
+    other blockers, so a downstream ticket never looks as if it waits on the scope alone. Nothing
+    is followed from those blockers, and they are left out when outside blockers are off.
     Outside blockers are followed upstream `outside_blockers_depth` layers
     (default 1; "all" follows the chain to its roots).
 
@@ -301,6 +305,16 @@ def fetch_graph(cfg, api):
             if limit is not None and level >= limit:
                 break
             frontier = sorted(found)
+        downstream = sorted({d for s, d in edges if s in scope and d not in scope})
+        read_links([slug for slug in downstream if slug not in links_of])
+        if limit != 0:
+            for slug in downstream:
+                for link in links_of[slug]:
+                    s, d = endpoints(link)
+                    if s and d == slug and s not in nodes:
+                        node = endpoint_node(link.get("source") or {}, app_base)
+                        node["external"] = True
+                        nodes[s] = node
         read_links(sorted(slug for slug in nodes if slug not in links_of))
     for link_list in links_of.values():
         for link in link_list:
@@ -990,6 +1004,9 @@ def main():
     parser.add_argument("--include-plans", action="store_true", help="with --new: include implementation plans")
     parser.add_argument("--ensure", action="store_true",
                         help="start the helper in the background if it is not running, then exit")
+    parser.add_argument("--take-over", action="store_true",
+                        help="replace the running helper with this copy even when it is older or a checkout "
+                             "(for testing the skill); the launcher is left unchanged")
     args = parser.parse_args()
     try:
         if args.export_config:
@@ -997,16 +1014,16 @@ def main():
             return
         if args.ensure:
             install_launcher()
-            print(ensure_helper(args.port))
+            print(ensure_helper(args.port, args.take_over))
             return
         if args.new:
             install_launcher()  # first, so the page's start command can name it
             create(args)
-            print(ensure_helper(args.port))
+            print(ensure_helper(args.port, args.take_over))
             return
         if args.once:
             install_launcher()
-            print(ensure_helper(once(args)))
+            print(ensure_helper(once(args), args.take_over))
             return
     except Refused as err:
         raise SystemExit(f"error: {err}") from None
@@ -1021,15 +1038,34 @@ def main():
         pass
 
 
-def launcher_body() -> str:
-    """Return a launcher that resolves the newest surviving plugin cache at execution time."""
+INSTALL_PARTS = ("plugins", "cache", "closedloop-ai", "closedloop-core")
+
+
+def version_key(name):
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?", name)
+    if not match:
+        return (-1, -1, -1, 0, name)
+    prerelease = match.group(4)
+    return (*(int(match.group(i)) for i in range(1, 4)), 1 if prerelease is None else 0, prerelease or "")
+
+
+def install_version(script: Path) -> str | None:
+    """The release of an installed plugin-cache copy of this script, or None for a checkout."""
     try:
-        fallback_version = json.loads((SCRIPT.parents[3] / ".claude-plugin" / "plugin.json")
-                                      .read_text(encoding="utf-8")).get("version")
-    except (OSError, ValueError, AttributeError):
-        fallback_version = None
-    if not isinstance(fallback_version, str):
-        fallback_version = "0.0.0-dev"
+        plugin = script.parents[3]  # <plugin>/skills/prd-dependency-graph/scripts/refresh_server.py
+    except IndexError:
+        return None
+    if plugin.parent.parts[-len(INSTALL_PARTS):] != INSTALL_PARTS or version_key(plugin.name)[:3] == (-1, -1, -1):
+        return None
+    return plugin.name
+
+
+def launcher_body() -> str:
+    """Return a launcher that resolves the newest surviving plugin cache at execution time.
+
+    Its fallback is the copy that wrote it. An installed fallback competes with the caches on version
+    and wins a tie; a checkout fallback (FALLBACK_VERSION None) runs only when no release is installed.
+    """
     return f'''#!/usr/bin/env python3
 {LAUNCHER_MARK}: written by the prd-dependency-graph skill; resolves plugin updates at runtime.
 import os
@@ -1038,26 +1074,18 @@ import sys
 from pathlib import Path
 
 FALLBACK = {str(SCRIPT)!r}
-FALLBACK_VERSION = {fallback_version!r}
-PLUGIN_CACHE = Path("plugins/cache/closedloop-ai/closedloop-core")
+FALLBACK_VERSION = {install_version(SCRIPT)!r}
+PLUGIN_CACHE = Path({"/".join(INSTALL_PARTS)!r})
 HELPER = Path("skills/prd-dependency-graph/scripts/refresh_server.py")
 
 
-def version_key(name):
-    match = re.fullmatch(r"(\\d+)\\.(\\d+)\\.(\\d+)(?:-([0-9A-Za-z.-]+))?", name)
-    if not match:
-        return (-1, -1, -1, 0, name)
-    prerelease = match.group(4)
-    return (*(int(match.group(i)) for i in range(1, 4)), 1 if prerelease is None else 0, prerelease or "")
-
+{inspect.getsource(version_key)}
 
 roots = [
     Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex"),
     Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude"),
 ]
 candidates = []
-if Path(FALLBACK).is_file():
-    candidates.append((version_key(FALLBACK_VERSION), 1, FALLBACK))
 for root in roots:
     cache = root.expanduser() / PLUGIN_CACHE
     try:
@@ -1068,6 +1096,8 @@ for root in roots:
         helper = install / HELPER
         if helper.is_file():
             candidates.append((version_key(install.name), 0, str(helper)))
+if Path(FALLBACK).is_file() and (FALLBACK_VERSION is not None or not candidates):
+    candidates.append((version_key(FALLBACK_VERSION or "0.0.0"), 1, FALLBACK))
 
 if not candidates:
     raise SystemExit("prd-graph-helper: no installed dependency-graph helper was found; run the skill once to repair it")
@@ -1076,8 +1106,38 @@ os.execv(sys.executable, [sys.executable, script, *sys.argv[1:]])
 '''
 
 
+def launcher_fallback(text: str) -> Path | None:
+    """The FALLBACK path an existing launcher names, or None when it cannot be read."""
+    match = re.search(r"^FALLBACK = (.+)$", text, re.MULTILINE)
+    try:
+        value = ast.literal_eval(match.group(1)) if match else None
+    except (ValueError, SyntaxError):
+        return None
+    return Path(value) if isinstance(value, str) else None
+
+
+def supersedes_launcher(current: str) -> bool:
+    """Whether this copy may replace a launcher that `current` holds.
+
+    Only an installed release may, and only over a checkout, a removed install or a release no newer
+    than its own. A checkout never replaces a launcher; an older release never downgrades one.
+    """
+    ours = install_version(SCRIPT)
+    if ours is None:
+        return False
+    fallback = launcher_fallback(current)
+    theirs = install_version(fallback) if fallback else None
+    if theirs is None or fallback is None or not fallback.is_file():
+        return True
+    return version_key(ours) >= version_key(theirs)
+
+
 def install_launcher() -> None:
-    """Write ~/.local/bin/prd-graph-helper without pinning it to one cache version."""
+    """Write ~/.local/bin/prd-graph-helper without pinning it to one cache version.
+
+    A copy that does not supersede the current launcher (see supersedes_launcher) leaves it alone, so
+    an older session or a checkout can never move the launcher back.
+    """
     launcher = render_graph.LAUNCHER
     body = launcher_body()
     try:
@@ -1085,7 +1145,7 @@ def install_launcher() -> None:
             current = launcher.read_text(encoding="utf-8", errors="replace")
             if LAUNCHER_MARK not in current:
                 return  # someone else's file; leave it alone
-            if current == body:
+            if current == body or not supersedes_launcher(current):
                 return
         launcher.parent.mkdir(parents=True, exist_ok=True)
         launcher.write_text(body, encoding="utf-8")
@@ -1134,11 +1194,34 @@ def wait_for(predicate, seconds):
     return predicate()
 
 
-def ensure_helper(port):
-    """Make sure this install's helper is serving `port`, starting or replacing one as needed."""
+def replaces_helper(running: str | None, take_over: bool = False) -> bool:
+    """Whether this copy should replace the helper running `running` (its /health script path).
+
+    An installed release replaces an older release, a checkout, a helper whose install was removed and
+    one too old to report its script. It never replaces a newer or equal release, and a checkout
+    replaces nothing unless the developer asks for it with --take-over.
+    """
+    if take_over or not running:
+        return True
+    path = Path(running)
+    if not path.is_file():
+        return True
+    ours, theirs = install_version(SCRIPT), install_version(path)
+    if ours is None:
+        return False
+    if theirs is None:
+        return True
+    return version_key(ours) > version_key(theirs)
+
+
+def ensure_helper(port, take_over=False):
+    """Make sure a helper at least as new as this install is serving `port`, starting one as needed."""
     health = helper_health(port)
     if health and health.get("script") == str(SCRIPT):
         return f"refresh helper already running on 127.0.0.1:{port}"
+    if health and not replaces_helper(health.get("script"), take_over):
+        return (f"using the refresh helper already running on 127.0.0.1:{port} ({health.get('script')}); "
+                "this copy is not newer, so it leaves it in place (--take-over replaces it)")
     if health:
         pid = listening_pid(port, health)
         if not pid or not is_refresh_helper(pid):
