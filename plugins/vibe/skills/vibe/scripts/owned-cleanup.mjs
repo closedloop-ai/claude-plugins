@@ -511,7 +511,7 @@ export async function sweepOwnedCleanups({ home = os.homedir(), readPr = current
       .map((name) => ({ name, file: path.join(e2eDir, name), key: 'locks/' + name })) : []),
     ...(existsSync(cleanupDir(home)) ? readdirSync(cleanupDir(home)).filter((name) => /^e2e-cleanup-[\w-]+\.json$/i.test(name))
       .map((name) => ({ name, file: path.join(cleanupDir(home), name), key: 'cleanup/' + name })) : []),
-  ].sort((left, right) => left.key.localeCompare(right.key)).filter(({ file, key }) => {
+  ].sort((left, right) => left.key.localeCompare(right.key) || left.file.localeCompare(right.file)).filter(({ file, key }) => {
     try {
       if (regularJson(file).state === 'complete') { rmSync(file); delete e2eBackoff[key]; return false; }
     } catch { /* Unreadable records stay visible. */ }

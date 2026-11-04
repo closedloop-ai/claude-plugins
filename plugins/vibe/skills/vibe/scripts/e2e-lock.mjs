@@ -517,7 +517,7 @@ async function runChildGate([gate, command, ...args]) {
 }
 
 /** Bounded cleanup CLI entry shared by root handoff and fleet terminal events. */
-export async function runCleanupSweep(argv) {
+async function runCleanupSweep(argv) {
   const { positionals, values } = parseArgs({ args: argv, allowPositionals: true,
     options: { 'orch-dir': { type: 'string' }, where: { type: 'string' }, 'state-dir': { type: 'string' } } });
   const [action] = positionals;

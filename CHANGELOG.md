@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Fixed
 - Generated E2E runs reconcile exact project containers, volumes, networks and locally built image tags after normal exit or interruption. Builds reuse an identity-recorded vibe Buildx builder at default parallelism and prune only its cache to a 28 GB retained-size cap while retaining foreign and shared resources.
+- Handoff source gates keep internal helpers private and give cleanup candidates an explicit deterministic tie-break.
 
 ### vibe v1.1.33
 

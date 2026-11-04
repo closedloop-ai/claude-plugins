@@ -124,7 +124,7 @@ function composeIdentities(words, composeAt) {
 }
 
 /** Creation identities only: image, explicit name, Compose project and service, never incidental paths or arguments. */
-export function scratchDockerCreation(words) {
+function scratchDockerCreation(words) {
   const executable = path.basename(words[0] ?? '');
   if (executable === 'docker-compose') return composeIdentities(words, 0);
   if (executable !== 'docker') return [];
@@ -135,7 +135,7 @@ export function scratchDockerCreation(words) {
 }
 
 /** PreToolUse refusal for recognizable raw scratch starts in this conversation. */
-export function scratchCreationGuard(event) {
+function scratchCreationGuard(event) {
   const problem = scratchCreationProblem(event?.tool_input?.command, conversationSkill(event));
   return problem ? deny(problem) : null;
 }
