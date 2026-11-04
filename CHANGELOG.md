@@ -16,6 +16,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Heredoc bodies, comments, arithmetic and quoted file text no longer trigger the PR guard or hide a later real call. Concrete non-Vibe worktrees in fleet conversations can open PRs; Vibe targets still require the handoff gate.
 - Scratch Docker, E2E slot and kill guards ignore heredoc or quoted data while continuing to inspect executable substitutions. A nested remote E2E call must pass its identity flag inside the shell command string; a later positional argument does not count.
 
+### closedloop-core v1.6.2
+
+#### Fixed
+- `prd-dependency-graph` only ever moves `~/.local/bin/prd-graph-helper` and the running refresh helper to a newer installed release. Previously any copy of the skill that ran, including a session still on an older release or a repository checkout, rewrote the launcher to point at itself and replaced a newer running helper. An installed release now rewrites the launcher only over a checkout, a removed install or a release no newer than its own, and replaces a running helper only when it is older, a checkout, removed, or too old to report its script. A checkout writes the launcher only when there is none, and the launcher runs a checkout only when no release is installed.
+
+#### Added
+- `refresh_server.py --take-over` replaces the running helper with the copy it runs from, even an older release or a checkout, for testing the skill, and leaves the launcher unchanged.
+
+### closedloop-core v1.6.1
+
+#### Fixed
+- `prd-dependency-graph` draws the other blockers of each ticket the scope blocks, one layer deep and dashed as outside the scope, with their arrows into that ticket. Previously a downstream ticket looked as if it waited on the scope alone, because a blocker that did not itself block the scope was never added, even with `outside_blockers_depth` set to `"all"`. Nothing is followed from those blockers, and they are left out when outside blockers are off.
+
 ### vibe v1.1.37
 
 #### Changed
