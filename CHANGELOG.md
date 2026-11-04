@@ -4,11 +4,17 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.35
+### vibe v1.1.36
 
 #### Added
 - Review-class guards reject unchecked subprocess output parsing, default-on runtime switches, incomplete real-path classifiers, and critical rules moved out of always-loaded skill files.
 - Guard baselines expose existing offenders as shrink-only entries, and mutation tests prove each guard fails when its defect returns.
+
+### vibe v1.1.35
+
+#### Fixed
+- Absence assertion proofs now record a mutation run that makes the element present in the asserted state and fails the exact assertion. Missing or unrun proofs block handoff, including locator changes inside multiline assertions.
+- The verifier and reviewers check container scope so an assertion cannot pass merely because its locator never contains the element.
 
 ### vibe v1.1.34
 

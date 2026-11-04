@@ -82,7 +82,14 @@ closedloop-graph is required, per `../skills/vibe/references/closedloop-graph.md
    building is not an instruction to author tests early; check the missing
    tests list covers every behavior that lacks an existing test, report
    failures of existing live contracts, and review a requested pull
-   request's tests for production-path coverage.
+   request's tests for production-path coverage. For each changed absence
+   assertion, inspect its `testIntegrityProofs` mutation run and the asserted
+   locator. An absence assertion inside a container that never holds the
+   element cannot fail. PR #9575 counted the range readout inside the
+   pagination nav even though the readout was its sibling. Require evidence
+   that the element was made present in the asserted container and state and
+   that this exact assertion failed, with a nonzero mutation exit code and a
+   restored pass. An unrun proof is a blocking finding.
 6. Accessibility and interaction: keyboard traps, focus lost after an action,
    controls that do nothing, including a Clear row whose nullable selection
    callback ignores `null`; trace the actual callback or show that Clear is
