@@ -113,11 +113,11 @@ reads it itself, turns what it shows into criteria mapped to tokens and
 components, and compares a screenshot of each touched screen with it, in light
 and in dark wherever the screen supports both, before saying it is ready.
 
-**Tests are never weakened.** During a session no tests are written. The
-writer repairs an existing test its change broke without changing what the
-test asserts, and handoff lists the missing tests for engineering. Full tests
-are written only when the person asks for a pull request, and they pass before
-it opens.
+**Tests are never weakened.** The writer repairs an existing test its change
+broke without changing what the test asserts, and handoff lists missing tests
+for engineering. The worker can write tests when its top-level turn explicitly
+requires them. Handoff inventory admits newly authored tests only in the
+pull-request phase, where full tests pass before the pull request opens.
 
 **A complete record.** The live ClosedLoop ticket links the document the
 session started from, the session's implementation plan (published as a

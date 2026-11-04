@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.35
+
+#### Changed
+- The Claude worker accepts an explicit top-level `testsRequired` grant for the persistent writer in request, fix and handoff turns. Raw request text cannot grant test-authoring authority, and handoff inventory continues to admit authored tests only in the pull-request phase.
+
+#### Fixed
+- Handoff inventory reads allowed and forbidden paths from a declaration committed by the target repository. It rejects missing, invalid, duplicate and session-edited declarations instead of applying a Symphony-specific path list to other repositories.
+- For sessions whose captured base predates the declaration, inventory verifies the remote's advertised default branch and fetched commit, then uses that commit for comparison and policy reads. A locally repointed tracking ref cannot select a different policy.
+
 ### vibe v1.1.34
 
 #### Added
