@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "subprocessStatus": [
+    "plugins/vibe/shared/process-identity.mjs:result-stdout",
+    "plugins/vibe/skills/fleet-orchestrator/scripts/helpers.mjs:result-stdout",
+    "plugins/vibe/skills/handoff/scripts/e2e-capability-probe.mjs:info-stdout"
+  ],
+  "defaultOnSwitches": [],
+  "configurationEnvironment": [
+    "FLEET_HOME",
+    "FLEET_SUPERVISOR_LOCK",
+    "VIBE_E2E_DOCKER",
+    "VIBE_E2E_FOREIGN_COMPOSE",
+    "VIBE_LATEST_BASE_URL",
+    "VIBE_POSTHOG_PAGE_URL"
+  ],
+  "reviewedDefaultOnSwitches": []
+}
