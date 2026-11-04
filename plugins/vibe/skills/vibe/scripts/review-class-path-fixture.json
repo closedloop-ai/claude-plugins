@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "generatedFrom": "git ls-tree -r --name-only cc5070530a5bf35ec6afd58d007064d1d898c68e",
+  "paths": [
+    {
+      "id": "desktop-prisma-migration-lock",
+      "path": "apps/desktop/prisma/migrations/migration_lock.toml",
+      "backend": true,
+      "ui": false,
+      "deployRelevant": true
+    },
+    {
+      "id": "desktop-prisma-seed-coverage",
+      "path": "apps/desktop/prisma/seed-coverage/Agent.json",
+      "backend": true,
+      "ui": false,
+      "deployRelevant": true
+    },
+    {
+      "id": "shared-auth-package",
+      "path": "packages/auth/client.ts",
+      "backend": false,
+      "ui": false,
+      "deployRelevant": true
+    },
+    {
+      "id": "root-package",
+      "path": "package.json",
+      "backend": false,
+      "ui": false,
+      "deployRelevant": true
+    },
+    {
+      "id": "root-lockfile",
+      "path": "pnpm-lock.yaml",
+      "backend": false,
+      "ui": false,
+      "deployRelevant": true
+    },
+    {
+      "id": "app-ui",
+      "path": "apps/app/app/(authenticated)/[orgSlug]/agents/[slug]/page.tsx",
+      "backend": false,
+      "ui": true,
+      "deployRelevant": true
+    }
+  ]
+}
