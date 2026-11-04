@@ -217,8 +217,14 @@ This skill only works in a `closedloop-ai/symphony-alpha` checkout.
   native dispatch is the bootstrap in section 1. Send the launcher one JSON
   object on stdin: `{"worktree", "agentName", "mode", "requestId", "input"
   (or "continuation"), "capabilities"}` plus the record and sessionless fields
-  below when they apply. Leave `agentRoot` out: the launcher binds its own
-  installed plugin root, or a resumed writer's recorded root, so a guessed or
+  below when they apply. When the session brief or orchestrator explicitly
+  requires tests outside a pull-request turn, pass `"testsRequired": true`
+  for the persistent change writer; the launcher never infers it from raw text.
+  In Codex, carry the same explicit requirement in the root-controlled turn
+  envelope. Handoff inventory still admits authored tests only in its
+  pull-request phase; this envelope grant does not change that path gate.
+  Leave `agentRoot` out: the launcher binds its own installed plugin root,
+  or a resumed writer's recorded root, so a guessed or
   remembered path can never point it at the wrong place (a supplied
   `<root>/agents` is read as `<root>`; another release's root is refused as
   `STALE_PLUGIN_ROOT`). `capabilities` lists every closedloop-graph read and
@@ -300,7 +306,7 @@ stops until core is explicitly installed and enabled.
 | `vibe-requirements-worker` | read a ClosedLoop ticket (and its PRD, plan, related tickets) or a description and turn it into a brief, plus the route and FEATURE_MAP id where the relevant code lives, for change workers; in reference mode, research an outside product the person named and list the behaviors to build |
 | `vibe-ticket-worker` | create the session's live ticket and link the document it started from, publish the session's plan as its PLN after each request, and fill its record sections when you ask |
 | `vibe-environment-worker` | stand up the session's Vercel environment, redeploy it, or refresh its flag snapshot |
-| `vibe-change-worker` | the SAME persistent writer for all planning, source implementation, backend/primitive/prototype/Storybook work, fixes, repairs of existing tests its change broke and the handoff missing tests list (tests only for a requested pull request) |
+| `vibe-change-worker` | the SAME persistent writer for all planning, source implementation, backend/primitive/prototype/Storybook work, fixes, repairs of existing tests its change broke and the handoff missing tests list (test authoring only with a top-level pull-request or `testsRequired` grant) |
 | `vibe-backend-worker` | read-only backend/contract advice for that writer |
 | `vibe-primitive-worker` | read-only component/spec advice for that writer |
 | `vibe-storybook-decomposer` | read-only Storybook placement owner: before the writer creates, retitles or moves a story or adds a shared component, the precedent search and Placement block it records in its local plan |

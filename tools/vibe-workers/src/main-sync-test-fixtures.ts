@@ -41,6 +41,8 @@ export function syncFixture(source = "committed-good") {
   git(["config", "user.name", "Fixture"]); git(["config", "user.email", "fixture@example.invalid"]);
   write(".gitignore", ".closedloop-ai/\n.control/\nnode_modules/\n");
   write("apps/app/probe.ts", `export const answer = '${source}';\n`);
+  write("apps/app/vibe-handoff-paths.json", readFileSync(new URL(
+    "../../../plugins/vibe/skills/vibe/scripts/fixtures/symphony-vibe-handoff-paths.json", import.meta.url), "utf8"));
   write("package.json", JSON.stringify({ scripts: { "test:affected": "fixture", "typecheck:affected": "sh scripts/typecheck-affected.sh",
     "check:source-gates": "fixture", "test:lanes": "fixture", verify: "fixture", test: "fixture" } }));
   write("scripts/lint/affected-test-lanes.ts", String.raw`

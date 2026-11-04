@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "allowedPrefixes": [
+    "apps/app/",
+    "packages/app/",
+    "packages/design-system/",
+    "apps/desktop/src/renderer/",
+    "apps/storybook/",
+    "apps/api/",
+    "packages/api/",
+    "packages/database/",
+    "apps/desktop/src/main/",
+    "apps/desktop/prisma/"
+  ],
+  "allowedFiles": [],
+  "forbiddenPrefixes": ["packages/golden-sessions/", ".github/"],
+  "forbiddenBasenames": ["AGENTS.md", "CLAUDE.md", "AGENTS.override.md"],
+  "rootTests": true
+}

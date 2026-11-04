@@ -6,7 +6,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { capabilityProbeProblems, ciCheckProblems, evidenceProblems, knownMainFailureProblems, pullRequestFacts, requiredLanes, selectionProblems, STACKED_BASE_STATEMENT, targetedEvidenceProblems, templateHeadingProblems } from "./pr-facts.mjs";
 import { NOT_RUN_NO_DESKTOP_HARNESS, NOT_RUN_NO_IDENTITY } from "../../vibe/scripts/pre-pr-lanes.mjs";
-import { git, makeCheckout, makeHome, runNode } from "../../vibe/scripts/test-fixtures.mjs";
+import { git, makeCheckout, makeHome, runNode, SYMPHONY_PATH_POLICY } from "../../vibe/scripts/test-fixtures.mjs";
 import { qaImpactRequest } from "./qa-impact.mjs";
 import { sourceIdentity } from '../../vibe/scripts/tested-head.mjs';
 
@@ -111,7 +111,8 @@ function session(t) {
   const fixture = makeHome("pr-facts-");
   t.after(fixture.cleanup);
   const checkout = path.join(fixture.home, "Documents", "Closedloop.ai - Active Work", "symphony-alpha");
-  makeCheckout({ root: fixture.root, home: fixture.home, checkout, files: BASE });
+  makeCheckout({ root: fixture.root, home: fixture.home, checkout, files: {
+    ...BASE, "apps/app/vibe-handoff-paths.json": SYMPHONY_PATH_POLICY } });
   const created = runNode(SESSIONS, ["new", "--repo", checkout, "--slug", "links", "--summary", "links", "--mode", "seeded",
     "--operator-id", "user-operator", "--operator-email", "operator@example.com"], fixture.home);
   assert.equal(created.status, 0, created.stderr);

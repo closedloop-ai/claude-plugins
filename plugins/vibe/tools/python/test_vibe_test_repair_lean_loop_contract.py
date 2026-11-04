@@ -62,7 +62,7 @@ def test_guardrails_allow_repairs_that_change_no_assertion() -> None:
         assert required in rule, required
     tests = section(GUARDRAILS.read_text(), "## Tests")
     assert NO_ENGINEERING_QUESTIONS in tests
-    assert "No worker authors a test in vibe or handoff" in tests
+    assert "Without an explicit top-level pull-request or `testsRequired` grant, no worker authors a test in vibe or handoff" in tests
     assert "and no deleted test of live behavior" in tests
 
 
@@ -102,7 +102,8 @@ def test_the_inventory_lists_repairs_and_rejects_authored_test_files() -> None:
 
 def test_the_launcher_grants_repair_authority_separately_from_test_authoring() -> None:
     launcher = (WORKERS_SRC / "claude-worker.ts").read_text()
-    assert 'testAuthoringAuthorized: persistent && input.mode === "pull-request"' in launcher
+    assert 'testAuthoringAuthorized: testAuthoringGranted(input)' in launcher
+    assert 'input.testsRequired === true && testAuthoringModes.has(input.mode)' in launcher
     assert "testRepairAuthorized: persistent && TEST_REPAIR_MODES.has(input.mode)" in launcher
     assert repair_modes(launcher) == {"request", "fix", "handoff", "pull-request"}
     bundle = LAUNCHER_BUNDLE.read_text()
