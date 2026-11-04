@@ -10,7 +10,6 @@ import http.client
 import json
 import os
 import pwd
-import shutil
 import signal
 import socket
 import subprocess
@@ -19,7 +18,7 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import API_KEY, SCRIPTS, embedded, new_graph, refresh_body
+from conftest import API_KEY, embedded, installed_copy, new_graph, refresh_body
 
 EVIL = "https://evil.example"
 REAL_HOME = pwd.getpwuid(os.getuid()).pw_dir  # the account's home, whatever HOME the test sets
@@ -266,13 +265,11 @@ def test_refresh_errors_name_the_file_as_requested_not_a_symlink_target(helper, 
 
 def test_ensure_recognizes_and_replaces_a_helper_from_another_install(tmp_path):
     # Real processes on a free port with a scratch HOME: an older install's helper is running, and
-    # --ensure from this install must still read its script and pid from /health and take over.
+    # --ensure from a newer install must still read its script and pid from /health and take over.
     home = tmp_path / "home"
     home.mkdir()
-    other = tmp_path / "other-install" / "scripts"
-    shutil.copytree(SCRIPTS, other, ignore=shutil.ignore_patterns("__pycache__"))
-    old_script = (other / "refresh_server.py").resolve()
-    new_script = (SCRIPTS / "refresh_server.py").resolve()
+    old_script = installed_copy(tmp_path / "codex-home", "1.0.0").resolve()
+    new_script = installed_copy(tmp_path / "claude-home", "2.0.0").resolve()
     env = dict(os.environ, HOME=str(home), CLOSEDLOOP_API_KEY=API_KEY)
     port = _free_port()
     old = subprocess.Popen([sys.executable, str(old_script), "--port", str(port)], env=env,

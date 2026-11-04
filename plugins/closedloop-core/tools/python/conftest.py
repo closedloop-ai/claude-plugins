@@ -8,6 +8,7 @@ the real machine, and the ClosedLoop API is replaced by an in-memory stub.
 import http.client
 import importlib
 import json
+import shutil
 import sys
 import threading
 import urllib.request
@@ -115,10 +116,12 @@ def graph(tmp_path, monkeypatch, api):
     server = importlib.import_module("refresh_server")
     monkeypatch.setattr(server, "Api", api.client)
     monkeypatch.setattr(server, "api_key", lambda: API_KEY)
-    monkeypatch.setattr(server, "ensure_helper", lambda port: "helper not started in tests")
+    real_ensure_helper = server.ensure_helper
+    monkeypatch.setattr(server, "ensure_helper", lambda port, take_over=False: "helper not started in tests")
     monkeypatch.setattr(server, "GATE", server.Gate())
     monkeypatch.setattr(urllib.request, "urlopen", _no_network)
-    yield SimpleNamespace(server=server, render=server.render_graph, home=home, api=api)
+    yield SimpleNamespace(server=server, render=server.render_graph, home=home, api=api,
+                          ensure_helper=real_ensure_helper)
     for name in ("render_graph", "refresh_server"):
         sys.modules.pop(name, None)
 
@@ -167,6 +170,27 @@ def helper(graph):
     """A helper serving on a free loopback port in this process; yields a request function."""
     with serving(graph.server) as request:
         yield request
+
+
+def cache_dir(root, version):
+    """Where an installed release of closedloop-core lives under a Codex or Claude home."""
+    return root / "plugins" / "cache" / "closedloop-ai" / "closedloop-core" / version
+
+
+def fake_cached_helper(root, version):
+    """A stand-in installed helper that prints its version and arguments, for launcher tests."""
+    script = cache_dir(root, version) / "skills" / "prd-dependency-graph" / "scripts" / "refresh_server.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("import json, sys\nprint(json.dumps({'version': %r, 'args': sys.argv[1:]}))\n" % version,
+                      encoding="utf-8")
+    return script
+
+
+def installed_copy(root, version):
+    """A real copy of the skill's scripts, installed as release `version` under `root`."""
+    scripts = cache_dir(root, version) / "skills" / "prd-dependency-graph" / "scripts"
+    shutil.copytree(SCRIPTS, scripts, ignore=shutil.ignore_patterns("__pycache__"))
+    return scripts / "refresh_server.py"
 
 
 def new_graph(graph, scope, *, output=None, embed_into=None, graph_id=None, outside_depth="1"):
