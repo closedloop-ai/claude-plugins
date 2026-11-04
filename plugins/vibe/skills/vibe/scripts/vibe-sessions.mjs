@@ -482,6 +482,7 @@ function touchSession() {
   }
   const prFields = [values["pr-repo"], values["pr-number"], values["pr-head"]];
   let pullRequest = record.pullRequest ?? null;
+  let retirement = null;
   if (prFields.some((part) => part !== undefined)) {
     if (prFields.some((part) => !part) || values.status !== SessionStatus.HandedOff) {
       throw new Error("PR identity requires --status handed-off and --pr-repo, --pr-number, --pr-head together.");
@@ -500,9 +501,9 @@ function touchSession() {
       throw new Error("The returned PR does not match the session's published branch and head.");
     }
     const commonDir = git(worktree, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-    registerWorktreeRetirement({ worktree, repo: path.dirname(commonDir),
+    retirement = { worktree, repo: path.dirname(commonDir),
       pr: { repo: values["pr-repo"], number, head, branch, state: live.merged_at ? 'MERGED' : String(live.state).toUpperCase() },
-      proof: { kind: 'vibe' }, ticket: record.liveTicket ?? record.ticket });
+      proof: { kind: 'vibe' }, ticket: record.liveTicket ?? record.ticket };
     pullRequest = { repo: values["pr-repo"], number, head };
   }
   const now = new Date().toISOString();
@@ -523,7 +524,12 @@ function touchSession() {
     lastActiveAt: now,
   };
   writeRecord(worktree, updated);
-  return { worktree, ...updated };
+  let retirementWarning;
+  if (retirement) {
+    try { registerWorktreeRetirement(retirement); }
+    catch (error) { retirementWarning = String(error instanceof Error ? error.message : error); }
+  }
+  return { worktree, ...updated, ...(retirementWarning ? { retirementWarning } : {}) };
 }
 
 function showSession() {

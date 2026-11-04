@@ -3,8 +3,7 @@ import { existsSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { readProcessIdentity } from '../../../shared/process-identity.mjs';
 import { dockerResult, dockerRun, markPending, OWNERSHIP_VERSION as VERSION, refreshMarker, writeAtomic } from './owned-state.mjs';
-import { recordBuiltTags, removeOwnedCache, removeOwnedRunState, removeRunOwnedBuilder,
-  verifiedBuilder, verifyOwnedCache, verifyOwnedRunState } from './owned-builder.mjs';
+import { pruneOwnedBuilder, recordBuiltTags, removeOwnedRunState, verifiedBuilder, verifyOwnedRunState } from './owned-builder.mjs';
 
 /** Reserve private service tags; only the child shim's selected waves can create them. */
 export function plannedLocalTags(docker, project, worktree, command, args = [], env = process.env) {
@@ -206,7 +205,8 @@ function defaultChildAlive(child) {
 }
 
 function inspectContainersForImage(image, project, run) {
-  const ids = dockerResult(['container', 'ls', '-aq', '--no-trunc'], run).split('\n').filter(Boolean);
+  const ids = dockerResult(['container', 'ls', '-aq', '--no-trunc', '--filter', `ancestor=${image.id}`], run)
+    .split('\n').filter(Boolean);
   for (const id of ids) {
     const raw = dockerResult(['container', 'inspect', id], run);
     const container = JSON.parse(raw)[0];
@@ -220,7 +220,13 @@ function inspectContainersForImage(image, project, run) {
 /** Reconcile only post-reservation project witnesses and exact built tags; partial retries stay idempotent. */
 export function reconcileGeneratedE2E(record, { run = dockerRun, ownerAlive = () => false, childAlive = defaultChildAlive,
   lockHeld = () => false,
-  allowCurrentOwner = false, home } = {}) {
+  allowCurrentOwner = false, pruneBuilder = true, home, deadline = Infinity, clock = Date.now } = {}) {
+  const rawRun = run;
+  run = (args) => {
+    const remaining = deadline - clock();
+    if (remaining <= 0) throw new Error('cleanup deadline reached before Docker command');
+    return rawRun(args, { timeoutMs: Math.min(30_000, remaining) });
+  };
   if (record?.version !== VERSION || record.kind !== 'e2e' || !/^[a-f0-9]{32}$/i.test(record.token ?? '')
     || record.project !== `vibe-e2e-${record.token}` || record.absentAtReservation !== true
     || !Number.isFinite(Date.parse(record.startedAt ?? '')) || !record.owner?.identity
@@ -257,11 +263,6 @@ export function reconcileGeneratedE2E(record, { run = dockerRun, ownerAlive = ()
   }
   const images = [];
   if (record.builder?.builtTagsFile) recordBuiltTags(record);
-  if (record.builder && record.state !== 'cleaning') {
-    for (const tag of record.requiredBuiltTags ?? []) {
-      if (!imageWitness(tag, run)) throw new Error('Built service tag is missing from the local image store');
-    }
-  }
   const isPrivateTag = (tag) => typeof tag === 'string' && tag.startsWith(record.project + '-')
     && /^[a-z0-9][a-z0-9_-]*$/.test(tag.slice(record.project.length + 1));
   for (const tag of record.plannedTags) {
@@ -296,7 +297,6 @@ export function reconcileGeneratedE2E(record, { run = dockerRun, ownerAlive = ()
     images.push(currentImage);
   }
   if (record.builder) verifiedBuilder(record, run);
-  if (record.cache) verifyOwnedCache(record);
   if (record.runState) verifyOwnedRunState(record);
   // Freeze the complete discovery before deleting anything. The existing
   // removal primitive re-lists the project and refuses additions after freeze.
@@ -318,18 +318,15 @@ export function reconcileGeneratedE2E(record, { run = dockerRun, ownerAlive = ()
   }
   record.cleanupStage = 'tags';
   if (record.file) writeAtomic(record.file, record);
-  removeRunOwnedBuilder(record, run);
-  record.cleanupStage = 'builder';
-  if (record.file) writeAtomic(record.file, record);
-  removeOwnedCache(record);
-  record.cleanupStage = 'cache';
+  if (pruneBuilder && record.builder) pruneOwnedBuilder(record, run);
+  record.cleanupStage = 'builder-cache';
   if (record.file) writeAtomic(record.file, record);
   removeOwnedRunState(record);
   record.cleanupStage = 'run-state';
   if (record.file) writeAtomic(record.file, record);
   if (record.file) rmSync(path.join(path.dirname(record.file), `e2e-gate-${record.token}.ready`), { force: true });
   record.state = 'complete';
-  if (record.file) writeAtomic(record.file, record);
+  if (record.file) rmSync(record.file, { force: true });
   if (home) refreshMarker(home);
   return { removed };
 }

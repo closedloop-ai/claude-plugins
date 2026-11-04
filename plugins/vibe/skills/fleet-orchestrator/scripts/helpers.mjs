@@ -315,12 +315,12 @@ export function read(orchDir) {
 }
 
 /** Acquire the helper ledger lock and return its identity-checked release callback. */
-export async function acquireLedgerLock(orchDir) {
+export async function acquireLedgerLock(orchDir, { waitMs = 30_000, clock = Date.now } = {}) {
   const dir = path.join(orchDir, 'helpers.lock');
   const owner = { pid: process.pid, identity: readIdentity(process.pid), token: randomUUID() };
   if (!owner.identity) throw new Error('helper ledger process identity is unreadable');
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
+  const deadline = clock() + waitMs;
+  while (clock() < deadline) {
     try {
       mkdirSync(dir);
       writeFileSync(path.join(dir, 'owner.json'), JSON.stringify(owner), { mode: 0o600 });
@@ -583,10 +583,22 @@ async function main(argv) {
   } else {
     const entry = ledger[name] ?? {};
     if (entry.kind === 'scratch') {
-      if (now < Date.parse(entry.expiresAt ?? '') || !scratchLeaseTerminal(entry)) {
+      if (!values.owner && (now < Date.parse(entry.expiresAt ?? '') || !scratchLeaseTerminal(entry))) {
         throw new Error('Scratch stop requires elapsed TTL and terminal writer lease');
       }
-      const settled = reconcileExpiredScratchHelpers({ [name]: entry }, now);
+      if (values.owner) {
+        if (values.owner !== entry.owner) throw new Error('scratch stop owner differs from its recorded owner');
+        const grace = values["grace-seconds"] === undefined ? DEFAULT_GRACE_SECONDS : Number(values["grace-seconds"]);
+        const groups = new Set(entry.groups ?? []);
+        const targets = (entry.pids ?? []).map((pid) => ({ pid, group: groups.has(pid), identity: entry.identities?.[pid] }));
+        const survivors = await endProcesses(targets, grace);
+        if (survivors.length || targets.some((target) => pendingRecordedProcess(target))) {
+          process.stdout.write(`ALIVE ${name} ${survivors.join(" ")}\n`);
+          return 1;
+        }
+      }
+      const settled = reconcileExpiredScratchHelpers({ [name]: entry }, now,
+        values.owner ? { explicitOwner: values.owner } : {});
       if (!entry.stoppedAt) throw new Error(settled.findings.join('; ') || 'Scratch ownership could not be reconciled');
       write(orchDir, ledger);
       return 0;

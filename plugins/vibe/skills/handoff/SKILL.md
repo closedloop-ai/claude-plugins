@@ -909,14 +909,13 @@ head, and record all three through the root-owned transition:
 The command reads the live PR and refuses a different repository, branch or
 head. For an owner-assignment handoff without a PR, use
 `node ../vibe/scripts/vibe-sessions.mjs touch --worktree "<wt>" --status handed-off`.
-The PR worker never writes session state.
-Then
-and stop local Storybook and Desktop with
+The PR worker never writes session state. Then stop local Storybook and Desktop with
 `node ../vibe/scripts/vibe-sessions.mjs stop --worktree "<wt>"`, which signals
 only a recorded process it proves is still the session's own (ISS-13321).
 Run `node ../vibe/scripts/e2e-lock.mjs cleanup-sweep sweep` from a retained checkout
-after the stop; a live PR leaves its retirement record pending for the
-machine-local supervisor. The sweep never removes the executing checkout.
+after the stop; a live PR leaves its retirement record pending for a fleet
+supervisor or the next explicit vibe cleanup sweep. The sweep never removes
+the executing checkout.
 
 Tell them, in a few lines, each as a link that opens it
 (`../vibe/references/plain-words.md`, "Links to what the person should look

@@ -65,8 +65,8 @@ export function refreshMarker(home) {
 }
 
 /** Run one bounded Docker command for owner verification and cleanup. */
-export function dockerRun(args) {
-  return spawnSync(process.env.VIBE_E2E_DOCKER || 'docker', args, { encoding: 'utf8', timeout: 30_000 });
+export function dockerRun(args, { timeoutMs = 30_000 } = {}) {
+  return spawnSync(process.env.VIBE_E2E_DOCKER || 'docker', args, { encoding: 'utf8', timeout: timeoutMs });
 }
 
 /** Return stdout for a successful Docker command and preserve its exact failure. */

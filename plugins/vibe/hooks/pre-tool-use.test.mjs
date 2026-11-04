@@ -23,13 +23,17 @@ const BY_NAME_KILL = sh("p" + "kill", "-f", "vitest");
 const FORCE_PUSH = sh("git push", "-f", "origin fix/x");
 
 test('raw recognizable scratch Docker creation is refused while reads and wrapped E2E remain available', () => {
-  for (const command of ['docker run --name iss-42-postgres postgres:16', 'docker compose -p iss-42-perf up -d']) {
+  for (const command of ['docker run --name iss-42-postgres postgres:16', 'docker compose -p iss-42-perf up -d',
+    'docker container run -d postgres:16', 'docker create --name scratch-db alpine',
+    'docker compose run postgres', 'docker compose create seed', 'docker-compose -p iss-7 up -d']) {
     assert.match(scratchCreationProblem(command, 'vibe') ?? '', /registered scratch/i, command);
   }
   assert.match(scratchCreationProblem('node helpers.mjs scratch-run; docker run --name iss-42-postgres postgres:16', 'vibe') ?? '',
     /registered scratch/, 'a wrapper name elsewhere in the command cannot bypass the raw start');
   for (const command of ['docker ps', 'docker volume inspect data', 'node helpers.mjs scratch-run --ticket ticket-one',
-    'node e2e-lock.mjs run --head abc e2e/run-containerized.sh']) {
+    'node e2e-lock.mjs run --head abc e2e/run-containerized.sh',
+    'docker run --rm alpine /tmp/iss-42/postgres --version',
+    'docker compose -f /tmp/iss-42/postgres.yml up -d app']) {
     assert.equal(scratchCreationProblem(command, 'vibe'), null, command);
   }
   assert.equal(scratchCreationProblem('docker run --name iss-42-postgres postgres:16', null), null);

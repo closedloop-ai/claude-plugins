@@ -48,6 +48,7 @@ acquire() {
     if [ -f "$candidate/pid" ] && ! kill -0 "$(cat "$candidate/pid")" 2>/dev/null; then rm -rf "$candidate"; fi
     if mkdir "$candidate" 2>/dev/null; then
       echo $$ >"$candidate/pid"
+      pwd -P >"$candidate/cwd"
       printf '%s pid %s since %s\n' "$owner" $$ "$(date '+%Y-%m-%d %H:%M')" >"$candidate/owner"
       lock=$candidate
       return 0
@@ -75,7 +76,10 @@ done
 if [ -n "$preflight_node" ]; then
   node "$preflight_node" check <&0
   status=$?
-  [ "$status" -eq 0 ] || exit "$status"
+  if [ "$status" -ne 0 ]; then
+    echo "slot-lock: containerized E2E disk admission refused the command" >&2
+    exit 78
+  fi
 fi
 
 # The command runs in the background so a signal reaches the traps at once instead of after it exits;

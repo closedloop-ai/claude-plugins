@@ -253,6 +253,10 @@ test('typed local and remote E2E build slots route a post-acquisition disk prefl
   assert.equal(remote.status, 0, remote.stderr);
   const installed = join(PLUGIN_ROOT, 'skills', 'vibe', 'scripts', 'e2e-lock.mjs');
   assert.ok(f.argv(remote).includes(installed), 'remote slot invokes the version-checked installed helper');
+  const refused = f.run(['remote', 'slot', 'heavy', 'writer', f.root, '--containerized-e2e-build',
+    'node', 'e2e/run-containerized.sh'], { FAKE_REMOTE_PLUGIN_ROOT: join(f.root, 'missing-vibe') });
+  assert.equal(refused.status, 78);
+  assert.match(refused.stderr, /remote vibe plugin is missing or not version/);
 });
 
 test('deterministic runner and Dagger e-2-e build shapes get preflight; --no-build skips it', TIMEOUT, () => {

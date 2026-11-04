@@ -36,14 +36,13 @@ test('Docker Desktop active socket selects its host data folder', () => {
   assert.deepEqual(p.calls.find(([binary]) => binary === 'df')?.[1], ['-Pk', DATA]);
 });
 
-test('native visible DockerRootDir is measured; unmapped VM roots refuse a host proxy', () => {
+test('native roots are measured and local VM sockets fall back to the host home containing their disks', () => {
   const native = measureDockerDisk({ home: HOME, ...probe() });
   assert.ok(native, 'host-visible DockerRootDir must be measured');
   assert.equal(native.path, ROOT);
-  assert.throws(() => measureDockerDisk({ home: HOME, ...probe({ rootVisible: false }) }),
-    /no verified local backing path/);
-  assert.throws(() => measureDockerDisk({ home: HOME, ...probe({ endpoint: 'unix:///home/user/.colima/default/docker.sock' }) }),
-    /no verified local backing path/);
+  assert.equal(measureDockerDisk({ home: HOME, ...probe({ rootVisible: false }) }).path, HOME);
+  assert.equal(measureDockerDisk({ home: HOME,
+    ...probe({ rootVisible: false, endpoint: 'unix:///home/user/.colima/default/docker.sock' }) }).path, HOME);
 });
 
 test('tcp and ssh Docker contexts never borrow local free-space measurements', () => {

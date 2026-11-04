@@ -47,8 +47,13 @@ export function measureDockerDisk({ home = os.homedir(), run = systemRun, exists
     const settings = JSON.parse(output('curl', ['-s', '--unix-socket', socket, 'http://localhost/app/settings'], run));
     backing = settings?.vm?.resources?.dataFolder;
     if (typeof backing !== 'string' || !exists(backing)) throw new Error('Docker Desktop data folder is unreadable');
-  } else if (socketPath === '/var/run/docker.sock' && exists(root)) {
+  } else if (exists(root)) {
     backing = root;
+  } else if (exists(home)) {
+    // Dory, Colima and OrbStack expose a local Unix socket while DockerRootDir
+    // lives inside their VM. The repository's own prepush contract measures
+    // the host home filesystem that contains those VM disks.
+    backing = home;
   } else {
     throw new Error('Docker context has no verified local backing path: ' + endpoint);
   }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -29,9 +29,12 @@ function fixture(t) {
     if (action === 'ls') {
       const prefix = `${kind}:`;
       const filterAt = rest.indexOf('--filter');
-      const wanted = filterAt >= 0 ? rest[filterAt + 1]?.replace('label=com.docker.compose.project=', '') : null;
+      const filter = filterAt >= 0 ? rest[filterAt + 1] : null;
+      const wanted = filter?.replace('label=com.docker.compose.project=', '');
+      const ancestor = filter?.replace('ancestor=', '');
       return { status: 0, stdout: [...resources.entries()].filter(([key, value]) => key.startsWith(prefix)
-        && (!wanted || (kind === 'container' ? value.Config?.Labels : value.Labels)?.['com.docker.compose.project'] === wanted))
+        && (!filter || (filter.startsWith('ancestor=') ? value.Image === ancestor
+          : (kind === 'container' ? value.Config?.Labels : value.Labels)?.['com.docker.compose.project'] === wanted)))
         .map(([key]) => key.slice(prefix.length)).join('\n') };
     }
     if (action === 'inspect') {
@@ -91,7 +94,7 @@ test('crash before exit recovers stopped containers, volumes, networks and built
   assert.equal(f.resources.size + f.images.size, 0, 'post-reservation exact project is recovered');
 });
 
-test('scheduled sweep recovers a crashed pre-reserved E2E project under the E2E lock', async (t) => {
+test('scheduled sweep recovers a crashed pre-reserved E2E project without taking the machine lock', async (t) => {
   const f = fixture(t);
   const ownerToken = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
   const file = path.join(f.dir, '.codex', 'vibe', 'locks', `e2e-cleanup-${ownerToken}.json`);
@@ -100,12 +103,16 @@ test('scheduled sweep recovers a crashed pre-reserved E2E project under the E2E 
     startedAt: STARTED, plannedTags: [f.tag], file }, { run: f.run, home: f.dir });
   record.potentialBuiltTags = [f.tag];
   writeFileSync(file, JSON.stringify(record));
+  const liveLock = path.join(f.dir, '.codex', 'vibe', 'locks', 'e2e-stack');
+  mkdirSync(liveLock);
+  writeFileSync(path.join(liveLock, 'owner.json'), JSON.stringify({ pid: process.pid, token: 'other-live-run' }));
   f.addResources();
   assert.equal(record.resources, undefined);
   const result = await sweepOwnedCleanups({ home: f.dir, docker: f.run });
   assert.equal(f.resources.size + f.images.size, 0);
   assert.ok(result.removed.includes(f.tag));
-  assert.equal(JSON.parse(readFileSync(file, 'utf8')).state, 'complete');
+  assert.equal(existsSync(file), false, 'completed records do not consume future sweep visits');
+  assert.equal(existsSync(liveLock), true, 'unique-project sweep does not take or release the machine lock');
 });
 
 test('partial cleanup retries remaining exact witnesses without broadening ownership', (t) => {
@@ -295,6 +302,18 @@ test('retagged image and foreign container references preserve the owned tag', (
   assert.throws(() => foreign.reconcile(other), /foreign or live container/);
   assert.equal(foreign.images.has(foreign.tag), true);
   assert.equal(foreign.resources.has(`container:${'f'.repeat(64)}`), true);
+});
+
+test('image reference checks use an ancestor filter and every Docker call is capped by the shared deadline', (t) => {
+  const f = fixture(t);
+  const record = f.reserve();
+  f.addResources();
+  const timeouts = [];
+  const bounded = (args, options = {}) => { timeouts.push(options.timeoutMs); return f.run(args); };
+  f.reconcile(record, { run: bounded, deadline: 750, clock: () => 0 });
+  assert.ok(f.calls.some((args) => args[0] === 'container' && args[1] === 'ls'
+    && args.includes('--filter') && args.includes('ancestor=' + f.imageId)));
+  assert.ok(timeouts.length > 0 && timeouts.every((value) => value <= 750));
 });
 
 test('live owner or lock and legacy reservation without proof stay pending', (t) => {

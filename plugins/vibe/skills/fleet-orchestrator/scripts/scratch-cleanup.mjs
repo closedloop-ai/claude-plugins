@@ -47,19 +47,21 @@ export function scratchLeaseTerminal(helper) {
 /** Reconcile expired, creation-labelled scratch stacks without touching active leases. */
 export function reconcileExpiredScratchHelpers(ledger, now, { capture = captureOwnedDockerResources,
   cleanup = removeOwnedDockerResources, alive = isAlive, identityOf = readIdentity,
-  leaseTerminal = scratchLeaseTerminal,
+  leaseTerminal = scratchLeaseTerminal, explicitOwner = null,
   lockHeld = (worktree) => Boolean(sameWorktreeEntry(defaultLockDir(), worktree)) } = {}) {
   const findings = [];
   let changed = false;
   for (const [name, helper] of helperEntries(ledger)) {
-    if (helper.kind !== "scratch" || helper.stoppedAt || now < Date.parse(helper.expiresAt ?? "")) continue;
+    if (helper.kind !== "scratch" || helper.stoppedAt
+      || explicitOwner === null && now < Date.parse(helper.expiresAt ?? "")) continue;
     const label = `${name} owner ${helper.owner ?? "unknown"} ticket ${helper.ticket ?? "unknown"}`;
     try {
       if (!helper.owner || !helper.ticket || !helper.worktree || !helper.project || !helper.ownerToken
         || !helper.writerLease || !Number.isFinite(Date.parse(helper.startedAt)) || !Number.isFinite(Date.parse(helper.expiresAt))) {
         throw new Error("scratch ownership or TTL is incomplete");
       }
-      if (!leaseTerminal(helper)) throw new Error('scratch writer lease remains active');
+      if (explicitOwner !== null && explicitOwner !== helper.owner) throw new Error('scratch stop owner differs from its recorded owner');
+      if (explicitOwner === null && !leaseTerminal(helper)) throw new Error('scratch writer lease remains active');
       if ((helper.pids ?? []).some((pid) => pendingRecordedProcess({ pid, identity: helper.identities?.[pid] }, alive, identityOf))
         || lockHeld(helper.worktree)) throw new Error("scratch process or lock remains active");
       const current = capture({ project: helper.project });
@@ -112,14 +114,26 @@ export function registerScratchProgram(orchDir, home = os.homedir()) {
 export async function sweepScratchHelpers(orchDir, { now = Date.now(), deadline = Date.now() + 30_000,
   clock = Date.now, maxRecords = 20, home = os.homedir(), ...checks } = {}) {
   if (clock() >= deadline || maxRecords <= 0) return { removed: [], leftover: [], visited: 0 };
-  const release = await acquireLedgerLock(orchDir);
+  const initial = read(orchDir);
+  const due = helperEntries(initial).filter(([, helper]) => helper.kind === 'scratch' && !helper.stoppedAt
+    && now >= Date.parse(helper.expiresAt ?? '')).map(([name]) => name);
+  const allScratch = helperEntries(initial).filter(([, helper]) => helper.kind === 'scratch');
+  if (!due.length) {
+    if (allScratch.length && allScratch.every(([, helper]) => helper.stoppedAt)) rmSync(scratchProgramFile(orchDir, home), { force: true });
+    return { removed: [], leftover: [], visited: 0 };
+  }
+  let release;
+  try { release = await acquireLedgerLock(orchDir, { waitMs: Math.min(1_000, Math.max(1, deadline - clock())), clock }); }
+  catch { return { removed: [], leftover: ['LEFTOVER scratch helper ledger is busy'], visited: 0 }; }
   try {
     const ledger = read(orchDir);
-    const names = helperEntries(ledger).filter(([, helper]) => helper.kind === 'scratch').map(([name]) => name).sort();
+    const names = helperEntries(ledger).filter(([, helper]) => helper.kind === 'scratch' && !helper.stoppedAt
+      && now >= Date.parse(helper.expiresAt ?? '')).map(([name]) => name).sort();
     const cursorFile = path.join(orchDir, 'scratch.cursor');
     let offset = 0;
     try { offset = Number(JSON.parse(readFileSync(cursorFile, 'utf8')).next) || 0; } catch { /* First pass. */ }
     let visited = 0;
+    let changed = false;
     const removed = [];
     const leftover = [];
     for (let index = 0; index < Math.min(maxRecords, names.length); index += 1) {
@@ -128,6 +142,7 @@ export async function sweepScratchHelpers(orchDir, { now = Date.now(), deadline 
       visited += 1;
       const wasStopped = Boolean(ledger[name].stoppedAt);
       const result = reconcileExpiredScratchHelpers({ [name]: ledger[name] }, now, checks);
+      changed ||= result.changed;
       leftover.push(...result.findings);
       if (!wasStopped && ledger[name].stoppedAt) removed.push(name);
     }
@@ -136,8 +151,9 @@ export async function sweepScratchHelpers(orchDir, { now = Date.now(), deadline 
       writeFileSync(temp, JSON.stringify({ next: (offset + visited) % names.length }), { mode: 0o600, flag: 'wx' });
       renameSync(temp, cursorFile);
     }
-    write(orchDir, ledger);
-    if (names.every((name) => ledger[name].stoppedAt)) rmSync(scratchProgramFile(orchDir, home), { force: true });
+    if (changed) write(orchDir, ledger);
+    const remainingScratch = helperEntries(ledger).filter(([, helper]) => helper.kind === 'scratch');
+    if (remainingScratch.length && remainingScratch.every(([, helper]) => helper.stoppedAt)) rmSync(scratchProgramFile(orchDir, home), { force: true });
     return { removed, leftover, visited };
   } finally { release(); }
 }

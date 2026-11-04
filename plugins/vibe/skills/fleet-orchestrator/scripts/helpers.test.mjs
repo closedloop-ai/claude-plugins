@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -12,7 +12,7 @@ import { evidenceFingerprint } from '../../handoff/scripts/handoff-evidence.mjs'
 import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
 import { endProcesses, finalMarker, isAlive, orphans, parsePids, pendingE2eCleanups, readIdentity,
   reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
-import { reconcileExpiredScratchHelpers } from './scratch-cleanup.mjs';
+import { reconcileExpiredScratchHelpers, sweepScratchHelpers } from './scratch-cleanup.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, '..', '..', '..');
@@ -218,15 +218,34 @@ test('scratch helper start requires owner, exact project, finite TTL and label p
 test('generic stopped and pr-terminal paths cannot bypass scratch TTL and writer lease', async (t) => {
   const dir = tempDir(t);
   const ledgerFile = path.join(dir, 'helpers.json');
+  const child = spawn('sleep', ['30']);
+  const childExited = new Promise((resolve) => child.once('close', resolve));
+  t.after(() => killOwned(child.pid));
+  const identity = readIdentity(child.pid);
+  assert.ok(identity);
   const scratch = { kind: 'scratch', owner: 'writer', ticket: 'ticket-one', ownerToken: 'token',
     project: 'scratch-one', worktree: '/owned', startedAt: '2026-11-03T00:00:00Z',
     expiresAt: '2099-11-03T00:00:00Z', writerLease: { kind: 'vibe', createdAt: '2026-11-03T00:00:00Z' },
+    pids: [child.pid], identities: { [child.pid]: identity },
     dockerResources: { project: 'scratch-one', containers: [], volumes: [], networks: [] } };
   writeFileSync(ledgerFile, JSON.stringify({ scratch }));
   const stopped = run([dir, 'stopped', 'scratch']);
   assert.notEqual(stopped.status, 0);
   assert.match(stopped.stderr, /Scratch stop requires elapsed TTL and terminal writer lease/);
   assert.equal(JSON.parse(readFileSync(ledgerFile, 'utf8')).scratch.stoppedAt, undefined);
+  const docker = path.join(dir, 'docker');
+  writeFileSync(docker, '#!/bin/sh\ncase "$1 $2" in "container ls"|"volume ls"|"network ls") exit 0;; esac\nexit 2\n', { mode: 0o755 });
+  const explicit = (owner) => spawnSync(process.execPath, [path.join(HERE, 'helpers.mjs'), dir, 'stopped', 'scratch', '--owner', owner],
+    { encoding: 'utf8', env: { ...process.env, VIBE_E2E_DOCKER: docker } });
+  const wrong = explicit('other-writer');
+  assert.notEqual(wrong.status, 0);
+  assert.match(wrong.stderr, /owner differs/);
+  const owned = explicit('writer');
+  assert.equal(owned.status, 0, owned.stderr);
+  assert.ok(JSON.parse(readFileSync(ledgerFile, 'utf8')).scratch.stoppedAt, 'recorded owner can retire before TTL');
+  await childExited;
+  assert.throws(() => process.kill(child.pid, 0), { code: 'ESRCH' }, 'explicit owner stop drains recorded processes');
+  delete scratch.stoppedAt;
   let removed = false;
   const legacy = { scratch: { ...scratch, ending: 'pr-terminal', repo: 'acme/repo', pr: '42' } };
   const result = await reconcileTerminalHelpers(legacy, { prState: async () => 'terminal',
@@ -278,6 +297,32 @@ test('expired scratch PostgreSQL/perf/seed stacks reconcile only exact owner-lab
     assert.equal(removed.length, 1, category);
     assert.ok(ledger[category].stoppedAt, category);
   }
+});
+
+test('first scratch resource capture still requires the recorded owner token label', () => {
+  const ledger = { scratch: { kind: 'scratch', owner: 'writer', ticket: 'ticket-one', ownerToken: 'owner-one',
+    project: 'scratch-one', worktree: '/owned', startedAt: '2026-11-03T00:00:00Z',
+    expiresAt: '2026-11-03T00:10:00Z', writerLease: { kind: 'vibe', createdAt: '2026-11-03T00:00:00Z' }, pids: [] } };
+  let removed = false;
+  const result = reconcileExpiredScratchHelpers(ledger, Date.parse('2026-11-03T00:11:00Z'), {
+    capture: () => ({ project: 'scratch-one', containers: [], volumes: [{ id: 'data', created: '2026-11-03T00:00:01Z',
+      project: 'scratch-one', ownerToken: 'foreign' }], networks: [] }),
+    cleanup: () => { removed = true; }, alive: () => false, lockHeld: () => false, leaseTerminal: () => true,
+  });
+  assert.equal(removed, false);
+  assert.equal(ledger.scratch.stoppedAt, undefined);
+  assert.match(result.findings.join(' '), /owner and creation proof/);
+});
+
+test('a not-yet-due scratch program neither rewrites nor waits on the helper ledger', async (t) => {
+  const dir = tempDir(t);
+  const ledgerFile = path.join(dir, 'helpers.json');
+  writeFileSync(ledgerFile, JSON.stringify({ scratch: { kind: 'scratch', expiresAt: '2099-11-03T00:00:00Z' } }));
+  const old = new Date('2026-01-01T00:00:00Z');
+  utimesSync(ledgerFile, old, old);
+  const result = await sweepScratchHelpers(dir, { now: Date.parse('2026-11-03T00:00:00Z') });
+  assert.deepEqual(result, { removed: [], leftover: [], visited: 0 });
+  assert.equal(statSync(ledgerFile).mtimeMs, old.getTime());
 });
 
 test('scratch TTL cannot remove a live lease, foreign label or changed witness', () => {

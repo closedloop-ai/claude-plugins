@@ -1,9 +1,13 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync,
   rmdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { cleanupDir, dockerResult, dockerRun, writeAtomic } from './owned-state.mjs';
+import { cleanupDir, dockerResult, dockerRun, regularJson, writeAtomic } from './owned-state.mjs';
 
-function inspectBuilderPart(kind, name, run) {
+const BUILDER_NAME = 'vibe-build';
+const BUILDER_VERSION = 1;
+export const BUILDER_CACHE_CAP = '28GB';
+
+function inspectBuilderPart(kind, name, run, builderName = BUILDER_NAME) {
   const result = run([kind, 'inspect', name]);
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -16,29 +20,30 @@ function inspectBuilderPart(kind, name, run) {
   const value = JSON.parse(String(result.stdout ?? ''))[0];
   const id = kind === 'container' ? value?.Id : value?.Name;
   const created = kind === 'container' ? value?.Created : value?.CreatedAt;
-  if ((kind === 'container' && !/^[a-f0-9]{64}$/i.test(id ?? '')) || kind === 'volume' && id !== name
+  if ((kind === 'container' && (!/^[a-f0-9]{64}$/i.test(id ?? '')
+      || value?.Config?.Labels?.['com.docker.buildx.builder'] !== builderName)) || kind === 'volume' && id !== name
     || !Number.isFinite(Date.parse(created ?? ''))) throw new Error('Builder part has no exact identity witness');
   return { name, id, created };
 }
 
 export function verifiedBuilder(record, run) {
   const builder = record.builder;
-  if (!builder?.name || builder.name !== 'vibe-build-' + record.token || builder.absentAtReservation !== true) {
-    throw new Error('Builder has no run-owned reservation');
+  if (!builder?.shared || builder.name !== BUILDER_NAME || !builder.recordFile) {
+    throw new Error('Builder has no persistent vibe ownership record');
   }
+  const saved = regularJson(builder.recordFile);
+  if (saved.version !== BUILDER_VERSION || saved.kind !== 'vibe-builder' || saved.state !== 'ready'
+    || saved.name !== BUILDER_NAME || saved.containerName !== builder.containerName || saved.volumeName !== builder.volumeName
+    || JSON.stringify(saved.container) !== JSON.stringify(builder.container)
+    || JSON.stringify(saved.volume) !== JSON.stringify(builder.volume)) throw new Error('Persistent builder ownership record changed');
   const container = inspectBuilderPart('container', builder.containerName, run);
   const volume = inspectBuilderPart('volume', builder.volumeName, run);
-  if (!container && !volume) return null;
-  if (!container || !volume || Date.parse(container.created) <= Date.parse(record.startedAt)
-    || Date.parse(volume.created) <= Date.parse(record.startedAt)) throw new Error('Builder identity changed or predates run');
-  if (builder.container && (builder.container.id !== container.id || builder.container.created !== container.created)
-    || builder.volume && (builder.volume.id !== volume.id || builder.volume.created !== volume.created)) {
-    throw new Error('Builder identity witness changed');
-  }
+  if (!container || !volume || builder.container.id !== container.id || builder.container.created !== container.created
+    || builder.volume.id !== volume.id || builder.volume.created !== volume.created) throw new Error('Builder identity witness changed');
   return { container, volume };
 }
 
-/** Create one activity-scoped builder and Turbo root without selecting Docker's global builder. */
+/** Reuse one persistently recorded vibe builder without selecting Docker's global builder. */
 export function prepareRunOwnedBuild(record, { run = dockerRun, home, buildIntent = true } = {}) {
   if (!buildIntent || record?.kind !== 'e2e' || !record.absentAtReservation
     || record.project !== 'vibe-e2e-' + record.token || !/^[a-f0-9]{32}$/i.test(record.token ?? '')
@@ -47,46 +52,76 @@ export function prepareRunOwnedBuild(record, { run = dockerRun, home, buildInten
   const match = /v(\d+)\.(\d+)(?:\.|\b)/.exec(version);
   if (!match || Number(match[1]) === 0 && Number(match[2]) < 14) throw new Error('Buildx 0.14 or newer is required for default-load');
   if (!dockerResult(['compose', 'build', '--help'], run).includes('--builder')) throw new Error('Compose selected-builder support is required');
-  const name = 'vibe-build-' + record.token;
+  const name = BUILDER_NAME;
   const containerName = 'buildx_buildkit_' + name + '0';
   const volumeName = containerName + '_state';
-  if (inspectBuilderPart('container', containerName, run) || inspectBuilderPart('volume', volumeName, run)) {
-    throw new Error('Per-run builder name or state already exists');
+  const stateRoot = home ? cleanupDir(home) : path.dirname(record.file);
+  const builderFile = path.join(stateRoot, 'vibe-builder.json');
+  let owned;
+  try { owned = regularJson(builderFile); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+  if (!owned) {
+    if (inspectBuilderPart('container', containerName, run) || inspectBuilderPart('volume', volumeName, run)) {
+      throw new Error('Persistent builder exists without a vibe ownership record');
+    }
+    owned = { version: BUILDER_VERSION, kind: 'vibe-builder', state: 'creating', name, containerName, volumeName,
+      absentAtReservation: true, createdAt: new Date().toISOString() };
+    writeAtomic(builderFile, owned);
+    const created = dockerResult(['buildx', 'create', '--driver', 'docker-container', '--driver-opt',
+      'default-load=true', '--name', name, '--bootstrap'], run);
+    if (created !== name) throw new Error('Buildx returned a different builder name');
+    const container = inspectBuilderPart('container', containerName, run);
+    const volume = inspectBuilderPart('volume', volumeName, run);
+    if (!container || !volume || Date.parse(container.created) + 1_000 < Date.parse(owned.createdAt)
+      || Date.parse(volume.created) + 1_000 < Date.parse(owned.createdAt)) throw new Error('Builder did not create exact post-reservation state');
+    owned = { ...owned, state: 'ready', container, volume };
+    writeAtomic(builderFile, owned);
+  } else {
+    if (owned.version !== BUILDER_VERSION || owned.kind !== 'vibe-builder' || owned.name !== name
+      || owned.containerName !== containerName || owned.volumeName !== volumeName || owned.absentAtReservation !== true) {
+      throw new Error('Persistent builder ownership record is unsupported');
+    }
+    if (owned.state === 'creating') {
+      let container = inspectBuilderPart('container', containerName, run);
+      let volume = inspectBuilderPart('volume', volumeName, run);
+      if (!container && !volume) {
+        owned.createdAt = new Date().toISOString();
+        writeAtomic(builderFile, owned);
+        const created = dockerResult(['buildx', 'create', '--driver', 'docker-container', '--driver-opt',
+          'default-load=true', '--name', name, '--bootstrap'], run);
+        if (created !== name) throw new Error('Buildx returned a different builder name');
+        container = inspectBuilderPart('container', containerName, run);
+        volume = inspectBuilderPart('volume', volumeName, run);
+      }
+      if (!container || !volume || Date.parse(container.created) + 1_000 < Date.parse(owned.createdAt)
+        || Date.parse(volume.created) + 1_000 < Date.parse(owned.createdAt)) throw new Error('Incomplete persistent builder creation is not owned');
+      owned = { ...owned, state: 'ready', container, volume };
+      writeAtomic(builderFile, owned);
+    }
+    if (owned.state !== 'ready') throw new Error('Persistent builder is not ready');
   }
-  const root = path.join(home ? cleanupDir(home) : path.dirname(record.file), 'run-state', record.token);
+  const root = path.join(stateRoot, 'run-state', record.token);
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const rootStat = lstatSync(root);
   record.runState = { path: root, dev: rootStat.dev, ino: rootStat.ino };
-  const config = path.join(root, 'buildkitd.toml');
-  writeFileSync(config, 'debug = false\n[worker.oci]\ngc = true\nmax-parallelism = 1\n', { mode: 0o600, flag: 'wx' });
-  const cachePath = path.join(root, 'turbo-cache');
-  mkdirSync(cachePath, { mode: 0o700 });
-  const cacheStat = lstatSync(cachePath);
-  record.builder = { name, containerName, volumeName, absentAtReservation: true };
-  record.cache = { path: cachePath, dev: cacheStat.dev, ino: cacheStat.ino };
+  record.builder = { shared: true, recordFile: builderFile, name, containerName, volumeName,
+    container: owned.container, volume: owned.volume };
   record.requiredBuiltTags ??= [];
   if (record.file) writeAtomic(record.file, record);
-  const created = dockerResult(['buildx', 'create', '--driver', 'docker-container', '--driver-opt',
-    'default-load=true', '--buildkitd-config', config, '--name', name, '--bootstrap'], run);
-  if (created !== name) throw new Error('Buildx returned a different builder name');
-  const parts = verifiedBuilder(record, run);
-  if (!parts) throw new Error('Builder did not create its exact container and state volume');
-  record.builder = { ...record.builder, ...parts };
-  if (record.file) writeAtomic(record.file, record);
-  return { builder: record.builder, cache: record.cache };
+  verifiedBuilder(record, run);
+  return { builder: record.builder };
 }
 
-/** Existing Docker/Turbo child contracts, scoped to this one run only. */
+/** Select only the recorded vibe builder and the current run's Docker shim. */
 export function ownedBuildEnvironment(record, env = process.env) {
-  if (!record?.builder?.container || !record?.cache?.path) throw new Error('Owned build environment needs exact builder and cache witnesses');
-  return { ...env, BUILDX_BUILDER: record.builder.name, TURBO_CACHE_DIR: record.cache.path,
+  if (!record?.builder?.container || !record?.runState?.path) throw new Error('Owned build environment needs exact builder and run-state witnesses');
+  return { ...env, BUILDX_BUILDER: record.builder.name,
     ...(record.builder.shimDir ? { PATH: record.builder.shimDir + path.delimiter + (env.PATH ?? '') } : {}) };
 }
 
 /** A child-only Docker adapter pins every Compose build wave with --builder. */
 export function installOwnedBuildShim(record, dockerBinary) {
   if (!record?.builder?.container || !path.isAbsolute(dockerBinary)) throw new Error('Build shim needs an exact builder and Docker executable');
-  const shimDir = path.join(path.dirname(record.cache.path), 'bin');
+  const shimDir = path.join(record.runState.path, 'bin');
   mkdirSync(shimDir, { mode: 0o700 });
   const shim = path.join(shimDir, 'docker');
   const builtTagsFile = path.join(record.runState.path, 'built-tags.jsonl');
@@ -182,28 +217,6 @@ export function recordBuiltTags(record) {
   return record.builtTags;
 }
 
-export function verifyOwnedCache(record) {
-  const saved = record.cache;
-  if (!saved) return false;
-  let current;
-  try { current = lstatSync(saved.path); }
-  catch (error) { if (error?.code === 'ENOENT') return false; throw error; }
-  if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== saved.dev || current.ino !== saved.ino
-    || realpathSync(saved.path) !== saved.path
-    || !saved.path.endsWith(path.join('run-state', record.token, 'turbo-cache'))) {
-    throw new Error('Owned local cache root changed identity or became a symlink');
-  }
-  return true;
-}
-
-export function removeOwnedCache(record) {
-  if (!record.cache) return;
-  if (!verifyOwnedCache(record)) { record.cache = null; return; }
-  const saved = record.cache;
-  rmSync(saved.path, { recursive: true });
-  record.cache = null;
-}
-
 export function verifyOwnedRunState(record) {
   const saved = record.runState;
   let current;
@@ -228,26 +241,22 @@ export function removeOwnedRunState(record) {
   if (!record.runState) return;
   if (!verifyOwnedRunState(record)) { record.runState = null; return; }
   const root = record.runState.path;
-  const allowed = new Set(['buildkitd.toml', 'bin', 'built-tags.jsonl', 'owned-images.json']);
+  const allowed = new Set(['bin', 'built-tags.jsonl', 'owned-images.json']);
   if (readdirSync(root).some((name) => !allowed.has(name))) throw new Error('Run-owned state contains unknown files');
   if (existsSync(path.join(root, 'bin'))) {
     if (readdirSync(path.join(root, 'bin')).some((name) => name !== 'docker')) throw new Error('Run-owned shim directory contains unknown files');
     rmSync(path.join(root, 'bin', 'docker'), { force: true });
     rmdirSync(path.join(root, 'bin'));
   }
-  rmSync(path.join(root, 'buildkitd.toml'), { force: true });
   rmSync(path.join(root, 'built-tags.jsonl'), { force: true });
   rmSync(path.join(root, 'owned-images.json'), { force: true });
   rmdirSync(root);
   record.runState = null;
 }
 
-export function removeRunOwnedBuilder(record, run) {
+/** Prune only the exact persistent vibe builder to its fixed retained cache cap. */
+export function pruneOwnedBuilder(record, run = dockerRun) {
   if (!record.builder) return;
-  const parts = verifiedBuilder(record, run);
-  if (parts) {
-    dockerResult(['buildx', 'rm', record.builder.name], run);
-    if (verifiedBuilder(record, run)) throw new Error('Owned builder remains after removal');
-  }
-  record.builder = null;
+  verifiedBuilder(record, run);
+  dockerResult(['buildx', 'prune', '--builder', record.builder.name, '--force', '--keep-storage', BUILDER_CACHE_CAP], run);
 }

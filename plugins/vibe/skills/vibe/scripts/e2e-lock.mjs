@@ -80,6 +80,7 @@ const DEFAULT_WAIT_SECONDS = 3600;
 const POLL_MS = 5_000;
 const OWNER_FILE = "owner.json";
 const OWNERLESS_GRACE_MS = 60_000;
+const SIGNAL_DRAIN_MS = 10_000;
 const COMPOSE_PREFIX = "vibe-e2e-";
 
 /** The machine-wide lock folder, shared by every worktree and both harnesses. */
@@ -94,7 +95,7 @@ export function tryAcquire(lockDir, owner) {
     return { acquired: true, holder: owner };
   }
   const holder = readHolder(lockDir);
-  if (holder ? isAlive(holder.pid) : isRecent(lockDir)) {
+  if (holder ? isAlive(holder.pid) || pendingChildGroupAlive(lockDir, holder) : isRecent(lockDir)) {
     return { acquired: false, holder };
   }
   // Remove only the stale lock that was just read, never one a peer took in the meantime.
@@ -104,6 +105,18 @@ export function tryAcquire(lockDir, owner) {
   return createLock(lockDir, owner)
     ? { acquired: true, holder: owner }
     : { acquired: false, holder: readHolder(lockDir) };
+}
+
+/** A dead wrapper cannot release its lock while its recorded detached command group is still alive. */
+function pendingChildGroupAlive(lockDir, holder) {
+  try {
+    const record = JSON.parse(readFileSync(path.join(path.dirname(lockDir), `e2e-cleanup-${holder.token}.json`), 'utf8'));
+    if (record.owner?.token !== holder.token || !Number.isSafeInteger(record.child?.pgid) || record.child.pgid <= 1) return false;
+    process.kill(-record.child.pgid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
 }
 
 /** Releases the lock only when this owner still holds it. */
@@ -278,16 +291,26 @@ function runCommand(command, args, env, record) {
       child.once("close", () => reject(error));
       return;
     }
+    let drainTimer;
     const forward = (signal) => {
       if (record && child.pid > 1) { try { process.kill(-child.pid, signal); } catch { /* Group exited. */ } }
       else child.kill(signal);
+      if (!drainTimer && record && child.pid > 1) {
+        drainTimer = setTimeout(() => {
+          try { process.kill(-child.pid, 'SIGKILL'); } catch { /* Group drained within the bound. */ }
+        }, SIGNAL_DRAIN_MS);
+        drainTimer.unref();
+      }
     };
     process.on("SIGINT", forward);
     process.on("SIGTERM", forward);
+    process.on("SIGHUP", forward);
     child.once("error", reject);
     child.once("close", (code, signal) => {
       process.off("SIGINT", forward);
       process.off("SIGTERM", forward);
+      process.off("SIGHUP", forward);
+      if (drainTimer) clearTimeout(drainTimer);
       resolve(code ?? 128 + (os.constants.signals[signal] ?? 0));
     });
   });
@@ -305,7 +328,7 @@ async function main(argv) {
   const lockDir = path.resolve(values["lock-dir"] ?? defaultLockDir());
   if (action === "status") {
     const holder = readHolder(lockDir);
-    const held = holder && isAlive(holder.pid);
+    const held = holder && (isAlive(holder.pid) || pendingChildGroupAlive(lockDir, holder));
     process.stdout.write(`${JSON.stringify(held ? { status: "held", holder } : { status: "free" })}\n`);
     return 0;
   }
@@ -444,7 +467,10 @@ async function main(argv) {
   } finally {
     try {
       if (dockerReady) {
-        reconcileGeneratedE2E(cleanupRecord, { allowCurrentOwner: true, home: managedHome });
+        try { reconcileGeneratedE2E(cleanupRecord, { allowCurrentOwner: true, home: managedHome }); }
+        catch (error) {
+          process.stderr.write(`LEFTOVER ${composeProject}: ${String(error instanceof Error ? error.message : error)}\n`);
+        }
       }
       if (outcome) {
         const gitDir = execFileSync('git', ['-C', worktree, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim();
@@ -476,8 +502,21 @@ async function runChildGate([gate, command, ...args]) {
       if (/^[a-f0-9]{32}$/i.test(token) && gate.endsWith(`e2e-gate-${token}.ready`)) {
         return new Promise((resolve, reject) => {
           const child = spawn(command, args, { stdio: 'inherit', env: process.env });
+          let drainTimer;
+          const forward = (signal) => {
+            try { child.kill(signal); } catch { /* Child already exited. */ }
+            if (!drainTimer) {
+              drainTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, SIGNAL_DRAIN_MS);
+              drainTimer.unref();
+            }
+          };
+          for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, forward);
           child.once('error', reject);
-          child.once('close', (code, signal) => resolve(code ?? 128 + (os.constants.signals[signal] ?? 0)));
+          child.once('close', (code, signal) => {
+            for (const name of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.off(name, forward);
+            if (drainTimer) clearTimeout(drainTimer);
+            resolve(code ?? 128 + (os.constants.signals[signal] ?? 0));
+          });
         });
       }
     } catch (error) { if (error?.code !== 'ENOENT') throw error; }

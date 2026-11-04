@@ -12,10 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - Handoff and fleet records bind a published pull request to its exact worktree. Terminal cleanup removes only a clean, inactive checkout after rechecking its branch, head, remote and session state; it clears known generated directories and retains unknown local work.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 481 words longer than in 1.1.33.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 524 words longer than in 1.1.33.
 
 #### Fixed
-- Generated E2E runs reconcile exact project containers, volumes, networks and locally built image tags after normal exit or interruption. Each build uses a run-owned Buildx builder and local Turbo cache, which cleanup removes after the Docker resources while retaining foreign and shared resources.
+- Generated E2E runs reconcile exact project containers, volumes, networks and locally built image tags after normal exit or interruption. Builds reuse an identity-recorded vibe Buildx builder at default parallelism and prune only its cache to a 28 GB retained-size cap while retaining foreign and shared resources.
 
 ### vibe v1.1.33
 

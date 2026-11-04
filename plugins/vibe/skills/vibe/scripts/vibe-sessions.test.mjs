@@ -283,11 +283,20 @@ test("root handoff records a verified PR head outside the retiring worktree", (t
     "--pr-repo", "closedloop-ai/symphony-alpha", "--pr-number", "42", "--pr-head", "0".repeat(40)], home,
   { PATH: `${bin}${path.delimiter}${process.env.PATH}` });
   assert.equal(bad.status, 1, "wrong head cannot create a retirement witness");
+  const sweepLock = path.join(home, '.codex', 'vibe', 'cleanup', 'sweep.lock');
+  mkdirSync(sweepLock, { recursive: true });
   const result = runNode(SCRIPT, ["touch", "--worktree", worktree, "--status", "handed-off",
     "--pr-repo", "closedloop-ai/symphony-alpha", "--pr-number", "42", "--pr-head", head], home,
   { PATH: `${bin}${path.delimiter}${process.env.PATH}` });
   assert.equal(result.status, 0, result.json.error);
   assert.deepEqual(result.json.session.pullRequest, { repo: "closedloop-ai/symphony-alpha", number: 42, head });
+  assert.match(result.json.session.retirementWarning, /cleanup sweep holds/,
+    'session handoff persists even while the cleanup ledger is busy');
+  rmSync(sweepLock, { recursive: true });
+  const retried = runNode(SCRIPT, ["touch", "--worktree", worktree, "--status", "handed-off",
+    "--pr-repo", "closedloop-ai/symphony-alpha", "--pr-number", "42", "--pr-head", head], home,
+  { PATH: `${bin}${path.delimiter}${process.env.PATH}` });
+  assert.equal(retried.status, 0, retried.json.error);
   const external = path.join(home, ".codex", "vibe", "cleanup", "records");
   assert.equal(existsSync(external), true, "retirement witness survives worktree removal");
 });

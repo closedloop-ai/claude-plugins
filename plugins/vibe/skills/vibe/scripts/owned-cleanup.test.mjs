@@ -24,6 +24,12 @@ function fixture(t) {
   git(home, 'init', '-q', '--bare', '--initial-branch=main', bare);
   git(home, 'init', '-q', '--initial-branch=main', seed);
   writeFileSync(path.join(seed, 'README.md'), 'base\n');
+  mkdirSync(path.join(seed, 'scripts'));
+  writeFileSync(path.join(seed, 'scripts', 'setup-local-env.sh'), '#!/bin/sh\nTARGETS=(\n  "apps/app/.env.local"\n)\n');
+  writeFileSync(path.join(seed, '.gitignore'), [
+    'node_modules/', '**/node_modules/', '.husky/_/', 'apps/app/.env.local', '.closedloop-ai/.env.setup',
+    '.closedloop-ai/vibe-plans/', '.biome-noscan.jsonc', 'tsconfig.tsbuildinfo', '',
+  ].join('\n'));
   git(seed, 'add', '.');
   git(seed, 'commit', '-qm', 'base');
   git(seed, 'push', '-q', bare, 'main');
@@ -75,6 +81,29 @@ test('registered terminal PR retires only its exact published worktree and prese
   assert.equal(git(f.repo, 'branch', '--list', 'vibe/test'), 'vibe/test');
   assert.equal(git(f.repo, 'ls-remote', '--heads', 'origin', 'vibe/test').endsWith('refs/heads/vibe/test'), true);
   assert.equal(hasPendingOwnedCleanups({ home: f.home }), false, 'empty ledger costs the supervisor only a marker read');
+});
+
+test('bootstrapped symphony outputs are regenerable while unknown ignored content still blocks retirement', async (t) => {
+  const f = fixture(t);
+  for (const file of ['.husky/_/pre-commit', 'apps/app/.env.local', '.closedloop-ai/.env.setup',
+    '.closedloop-ai/vibe-plans/session.md', '.biome-noscan.jsonc', 'tsconfig.tsbuildinfo',
+    'containers/claude-runner/node_modules/package']) {
+    mkdirSync(path.dirname(path.join(f.worktree, file)), { recursive: true });
+    writeFileSync(path.join(f.worktree, file), 'generated');
+  }
+  mkdirSync(path.join(f.worktree, 'node_modules'));
+  writeFileSync(path.join(f.worktree, 'node_modules', 'package'), 'generated');
+  assert.ok(f.register());
+  const retired = await f.sweep();
+  assert.deepEqual(retired.removed, [f.worktree], JSON.stringify(retired));
+
+  const g = fixture(t);
+  writeFileSync(path.join(g.repo, '.git', 'info', 'exclude'), 'private-cache/\n');
+  mkdirSync(path.join(g.worktree, 'private-cache'));
+  writeFileSync(path.join(g.worktree, 'private-cache', 'human'), 'keep');
+  assert.ok(g.register());
+  assert.deepEqual((await g.sweep()).removed, []);
+  assert.equal(readFileSync(path.join(g.worktree, 'private-cache', 'human'), 'utf8'), 'keep');
 });
 
 test('manual bounded sweep repairs a persisted retirement record whose pending marker was lost', async (t) => {
@@ -224,6 +253,8 @@ test('worktree state changing after generated-file cleanup blocks non-forced rem
   const result = await f.sweep({ head: f.pr.head }, { beforeRemove: () => writeFileSync(path.join(f.worktree, 'draft.txt'), 'new work') });
   assert.deepEqual(result.removed, []);
   assert.equal(readFileSync(path.join(f.worktree, 'draft.txt'), 'utf8'), 'new work');
+  assert.equal(readFileSync(path.join(f.worktree, 'node_modules', 'generated'), 'utf8'), 'safe',
+    'generated content is not deleted before the final dirty-work check');
 });
 
 test('a missing vibe session record or changed fleet session witness cannot authorize removal', async (t) => {
@@ -264,6 +295,19 @@ test('dirty, untracked, unpushed, open PR and changed PR identity retain the wor
   }
 });
 
+test('every refused worktree cleanup backs off instead of repeating GitHub reads each supervisor tick', async (t) => {
+  const f = fixture(t);
+  assert.ok(f.register());
+  writeFileSync(path.join(f.worktree, 'README.md'), 'dirty\n');
+  let reads = 0;
+  const readPr = async () => { reads += 1; return { ...f.pr, state: 'MERGED' }; };
+  await sweepOwnedCleanups({ home: f.home, readPr, now: 0, deadline: Date.now() + 30_000,
+    processCwds: () => [], slotHeld: () => false });
+  await sweepOwnedCleanups({ home: f.home, readPr: async () => { throw new Error('backoff was ignored'); },
+    now: 1_000, deadline: Date.now() + 30_000, processCwds: () => [], slotHeld: () => false });
+  assert.equal(reads, 1);
+});
+
 test('live process or lock, missing remote, foreign worktree and PID reuse leave the worktree alone', async (t) => {
   const f = fixture(t);
   assert.ok(f.register());
@@ -285,6 +329,18 @@ test('live process or lock, missing remote, foreign worktree and PID reuse leave
   assert.equal(existsSync(foreign), true);
 });
 
+test('a process cwd or fleet slot rooted in the worktree blocks retirement', async (t) => {
+  const f = fixture(t);
+  assert.ok(f.register());
+  await f.sweep({}, { processCwds: () => [4242], slotHeld: () => false });
+  assert.equal(existsSync(f.worktree), true, 'process cwd keeps the checkout');
+
+  const g = fixture(t);
+  assert.ok(g.register());
+  await g.sweep({}, { processCwds: () => [], slotHeld: () => true });
+  assert.equal(existsSync(g.worktree), true, 'slot owner keeps the checkout');
+});
+
 test('legacy, malformed and future-version records remain visible without deletion authority', async (t) => {
   const f = fixture(t);
   const dir = path.join(f.home, '.codex', 'vibe', 'cleanup');
@@ -303,7 +359,11 @@ test('legacy, malformed and future-version records remain visible without deleti
   assert.ok(pending.some((item) => item.includes('malformed.json')), 'malformed record is visible');
   assert.ok(pending.some((item) => item.includes('future.json')), 'version-skewed record is visible');
   assert.ok(pending.some((item) => item.includes('future-record.json')), 'future record remains visible');
-  await f.sweep();
+  const first = await sweepOwnedCleanups({ home: f.home, forceDiscovery: true, now: 0, deadline: Date.now() + 30_000 });
+  assert.ok(first.leftover.some((line) => line.includes('e2e-cleanup-legacy.json')));
+  assert.ok(first.leftover.some((line) => line.includes('e2e-cleanup-original.json')));
+  const second = await sweepOwnedCleanups({ home: f.home, forceDiscovery: true, now: 1_000, deadline: Date.now() + 30_000 });
+  assert.equal(second.leftover.some((line) => line.includes('e2e-cleanup-legacy.json')), false);
   assert.equal(existsSync(f.worktree), true, 'untrusted records never authorize deletion');
 });
 
@@ -317,13 +377,33 @@ test('bounded cursor advances only past records actually visited before a deadli
   writeFileSync(path.join(dir, 'pending'), '{}');
   let ticks = 0;
   const first = await sweepOwnedCleanups({ home: f.home, deadline: 30_000,
-    clock: () => ticks++ < 2 ? 0 : 31_000 });
+    clock: () => ticks++ < 3 ? 0 : 31_000 });
   assert.equal(first.leftover.some((line) => line.includes('a.json')), true);
   assert.equal(first.leftover.some((line) => line.includes('b.json')), false);
   const cursor = JSON.parse(readFileSync(path.join(dir, 'sweep.cursor'), 'utf8'));
   assert.equal(cursor.next, 1, 'the unvisited second record is next');
   const second = await sweepOwnedCleanups({ home: f.home, deadline: 30_000, clock: () => 0, maxRecords: 1 });
   assert.equal(second.leftover.some((line) => line.includes('b.json')), true);
+});
+
+test('completed worktree and E2E records are deleted before they can consume a bounded visit', async (t) => {
+  const f = fixture(t);
+  const cleanup = path.join(f.home, '.codex', 'vibe', 'cleanup');
+  const records = path.join(cleanup, 'records');
+  const locks = path.join(f.home, '.codex', 'vibe', 'locks');
+  mkdirSync(records, { recursive: true });
+  mkdirSync(locks, { recursive: true });
+  const complete = path.join(records, 'a.json');
+  const pending = path.join(records, 'b.json');
+  const e2e = path.join(locks, 'e2e-cleanup-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.json');
+  writeFileSync(complete, JSON.stringify({ version: 1, kind: 'worktree', state: 'complete' }));
+  writeFileSync(pending, JSON.stringify({ version: 99, kind: 'worktree', state: 'pending' }));
+  writeFileSync(e2e, JSON.stringify({ version: 1, kind: 'e2e', state: 'complete' }));
+  writeFileSync(path.join(cleanup, 'pending'), '{}');
+  const result = await sweepOwnedCleanups({ home: f.home, maxRecords: 1, deadline: Date.now() + 30_000 });
+  assert.equal(existsSync(complete), false);
+  assert.equal(existsSync(e2e), false);
+  assert.ok(result.leftover.some((line) => line.includes('b.json')), 'pending work receives the visit');
 });
 
 test('scheduled bounded sweep visits registered scratch programs within the shared budget', async (t) => {
@@ -394,6 +474,10 @@ test('timed-out PR read backs off so scratch and E2E progress on the next tick',
     scratchSweep: async () => { scratchVisits += 1; return { visited: 1, removed: [], leftover: [] }; } });
   assert.equal(scratchVisits, 1);
   assert.ok(second.leftover.some((line) => line.includes('Legacy E2E reservation')));
+  const third = await sweepOwnedCleanups({ home: f.home, now: 2_000, deadline: Date.now() + 30_000,
+    scratchSweep: async () => ({ visited: 0, removed: [], leftover: [] }) });
+  assert.equal(third.leftover.some((line) => line.includes('Legacy E2E reservation')), false,
+    'legacy record is reported once per backoff window');
 });
 
 test('worktree retirement waits for scratch TTL cleanup so its lease proof survives', async (t) => {
@@ -412,6 +496,6 @@ test('worktree retirement waits for scratch TTL cleanup so its lease proof survi
   assert.deepEqual(waiting.removed, []);
   assert.equal(existsSync(f.worktree), true, 'scratch lease proof stays available until expiry');
   writeFileSync(file, JSON.stringify({ scratch: { kind: 'scratch', worktree: f.worktree, stoppedAt: '2026-11-03T00:00:00Z' } }));
-  const retired = await f.sweep();
+  const retired = await f.sweep({}, { now: Date.now() + 31 * 60_000 });
   assert.deepEqual(retired.removed, [f.worktree]);
 });

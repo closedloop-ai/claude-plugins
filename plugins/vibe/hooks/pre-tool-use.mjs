@@ -47,21 +47,74 @@ export function preToolUse(event, report) {
   return mergeResults("PreToolUse", runGuards(guards, event, report));
 }
 
-if (isMain(import.meta.url)) runHookScript("pre-tool-use", preToolUse);
-
 /** Recognize a raw per-ticket PostgreSQL/perf/seed launch, never a Docker read. */
 export function scratchCreationProblem(command, scope) {
   if (!['vibe', 'fleet-orchestrator'].includes(scope) || typeof command !== 'string') return null;
   const scratch = /\b(?:iss[-_]?\d+|scratch|postgres|postgresql|perf|seed|minio|ca-store)\b/i;
   for (const { words } of commandSegments(command, { expandShellPayloads: true })) {
-    if (path.basename(words[0] ?? '') !== 'docker') continue;
-    const raw = words.join(' ');
-    if (words[1] === 'run' && scratch.test(raw)
-      || words[1] === 'compose' && words.includes('up') && scratch.test(raw)) {
+    if (scratchDockerCreation(words).some((identity) => scratch.test(identity))) {
       return 'registered scratch stack required: use helpers.mjs scratch-run with owner, ticket, worktree and TTL before Docker creation';
     }
   }
   return null;
+}
+
+const RUN_VALUE_OPTIONS = new Set(['--name', '--env', '-e', '--volume', '-v', '--mount', '--network', '--label', '-l',
+  '--publish', '-p', '--workdir', '-w', '--user', '-u', '--entrypoint', '--hostname', '-h', '--platform']);
+const COMPOSE_VALUE_OPTIONS = new Set(['--project-name', '-p', '--file', '-f', '--profile', '--env-file', '--project-directory']);
+
+function optionValue(words, index, options) {
+  const word = words[index];
+  if (!word?.startsWith('-')) return 0;
+  if (word.includes('=')) return 1;
+  return options.has(word) ? 2 : 1;
+}
+
+function runIdentities(words, actionAt) {
+  const identities = [];
+  for (let index = actionAt + 1; index < words.length;) {
+    const word = words[index];
+    if (word === '--name' && words[index + 1]) identities.push(words[index + 1]);
+    else if (word?.startsWith('--name=')) identities.push(word.slice('--name='.length));
+    const consumed = optionValue(words, index, RUN_VALUE_OPTIONS);
+    if (consumed) { index += consumed; continue; }
+    identities.push(word);
+    break;
+  }
+  return identities;
+}
+
+function composeIdentities(words, composeAt) {
+  const identities = [];
+  let actionAt = -1;
+  for (let index = composeAt + 1; index < words.length;) {
+    const word = words[index];
+    if ((word === '--project-name' || word === '-p') && words[index + 1]) identities.push(words[index + 1]);
+    else if (word?.startsWith('--project-name=')) identities.push(word.slice('--project-name='.length));
+    if (['up', 'run', 'create'].includes(word)) { actionAt = index; break; }
+    const consumed = optionValue(words, index, COMPOSE_VALUE_OPTIONS);
+    index += consumed || 1;
+  }
+  if (actionAt < 0) return [];
+  for (let index = actionAt + 1; index < words.length;) {
+    const consumed = optionValue(words, index, COMPOSE_VALUE_OPTIONS);
+    if (consumed) { index += consumed; continue; }
+    identities.push(words[index]);
+    index += 1;
+    if (words[actionAt] === 'run') break;
+  }
+  return identities;
+}
+
+/** Creation identities only: image, explicit name, Compose project and service, never incidental paths or arguments. */
+export function scratchDockerCreation(words) {
+  const executable = path.basename(words[0] ?? '');
+  if (executable === 'docker-compose') return composeIdentities(words, 0);
+  if (executable !== 'docker') return [];
+  if (['run', 'create'].includes(words[1])) return runIdentities(words, 1);
+  if (words[1] === 'container' && ['run', 'create'].includes(words[2])) return runIdentities(words, 2);
+  if (words[1] === 'compose') return composeIdentities(words, 1);
+  return [];
 }
 
 /** PreToolUse refusal for recognizable raw scratch starts in this conversation. */
@@ -69,3 +122,5 @@ export function scratchCreationGuard(event) {
   const problem = scratchCreationProblem(event?.tool_input?.command, conversationSkill(event));
   return problem ? deny(problem) : null;
 }
+
+if (isMain(import.meta.url)) runHookScript("pre-tool-use", preToolUse);
