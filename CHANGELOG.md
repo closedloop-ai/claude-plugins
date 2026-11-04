@@ -4,6 +4,12 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.35
+
+#### Fixed
+- Absence assertion proofs now record a mutation run that makes the element present in the asserted state and fails the exact assertion. Missing or unrun proofs block handoff, including locator changes inside multiline assertions.
+- The verifier and reviewers check container scope so an assertion cannot pass merely because its locator never contains the element.
+
 ### vibe v1.1.34
 
 #### Added
