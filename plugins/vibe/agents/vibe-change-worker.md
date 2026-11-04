@@ -557,7 +557,10 @@ suppression for green. Two more rules bind every test you write there:
   a failing precondition mutation before it is complete. Run a responsive case
   at desktop width; restore the absent control; and mount the production owner,
   never a mock that cannot render the control. An absence assertion runs only
-  after a positive signal proves that owner mounted. Record the exact mutation,
+  after a positive signal proves that owner mounted. Place the missing element
+  inside the exact locator and state the assertion searches, then confirm that
+  assertion fails. In PR #9575, a pagination readout rendered beside the nav,
+  so a zero count inside that nav could never detect its return. Record the exact mutation,
   command, observed failure and restored pass for handoff's
   `testIntegrityProofs` evidence.
 - A metric, summary, or card layout test must assert the established container
