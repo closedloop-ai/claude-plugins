@@ -4,6 +4,15 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.37
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.36.
+
+#### Fixed
+- Detached E2E test cleanup verifies the spawned process group before signalling it, satisfying the existing signal-safety contract.
+- Release notes for vibe 1.1.35 and 1.1.36 name the complete Markdown scope used by the word-count contract.
+
 ### vibe v1.1.36
 
 #### Added
