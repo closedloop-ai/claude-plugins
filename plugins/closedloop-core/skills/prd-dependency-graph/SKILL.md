@@ -31,7 +31,7 @@ Your job is to pick the scope and options, run them, name the columns, and check
 - **The scope document** (a PRD or other document with ticket children) is drawn as the root box, with a dotted **PRODUCES** arrow to each in-scope ticket. A project scope has no root. PRODUCES arrows are not counted as BLOCKS links.
 - **RELATES_TO** and other link types are never drawn, even when a ticket reads like a blocker. If the user expects a dependency the graph does not show, check the link type with the API and tell them. Changing a link in ClosedLoop is the user's call.
 - **Tickets outside the scope** are drawn dashed, and the legend reads "outside <scope>":
-  - tickets that in-scope tickets block are shown one layer deep;
+  - tickets that in-scope tickets block are shown one layer deep, together with their other blockers, so a downstream ticket never looks as if it waits on the scope alone. Nothing is followed from those other blockers, and they are left out when outside blockers are off (depth 0);
   - tickets that block the scope are followed upstream `outside_blockers_depth` layers (default 1; `"all"` follows the chain to its roots).
 - **The root's own BLOCKS links** count as the scope's: a ticket the scope document blocks is drawn with an arrow from the root, and a ticket that blocks the scope document is followed upstream like any other outside blocker.
 - **Links between tickets on the graph:** once the tickets above are chosen, every BLOCKS link between two of them is drawn, wherever they sit. A ticket that the scope blocks and that also blocks another such ticket gets that arrow, and it is part of both tickets' hover and pinned chains. These links never add a ticket to the graph.

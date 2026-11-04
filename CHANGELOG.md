@@ -4,6 +4,11 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.6.1
+
+#### Fixed
+- `prd-dependency-graph` draws the other blockers of each ticket the scope blocks, one layer deep and dashed as outside the scope, with their arrows into that ticket. Previously a downstream ticket looked as if it waited on the scope alone, because a blocker that did not itself block the scope was never added, even with `outside_blockers_depth` set to `"all"`. Nothing is followed from those blockers, and they are left out when outside blockers are off.
+
 ### vibe v1.1.37
 
 #### Changed
