@@ -4,6 +4,14 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### closedloop-core v1.6.2
+
+#### Fixed
+- `prd-dependency-graph` only ever moves `~/.local/bin/prd-graph-helper` and the running refresh helper to a newer installed release. Previously any copy of the skill that ran, including a session still on an older release or a repository checkout, rewrote the launcher to point at itself and replaced a newer running helper. An installed release now rewrites the launcher only over a checkout, a removed install or a release no newer than its own, and replaces a running helper only when it is older, a checkout, removed, or too old to report its script. A checkout writes the launcher only when there is none, and the launcher runs a checkout only when no release is installed.
+
+#### Added
+- `refresh_server.py --take-over` replaces the running helper with the copy it runs from, even an older release or a checkout, for testing the skill, and leaves the launcher unchanged.
+
 ### closedloop-core v1.6.1
 
 #### Fixed
