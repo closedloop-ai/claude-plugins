@@ -112,7 +112,7 @@ import { isOwnedPrototypeSession, PROTOTYPE_BRANCH_PREFIX, savePrototypePublicat
 import { captureSessionProcessIdentities, stopSessionProcesses } from "./session-processes.mjs";
 import { adoptStartupQuestions } from "./session-questions.mjs";
 import { git, readSessionRecord, sessionLiveTicket, writeSessionRecord as writeRecord } from "./session-record.mjs";
-import { registerWorktreeRetirement } from "./e2e-lock.mjs";
+import { registerWorktreeRetirement } from "./owned-cleanup.mjs";
 import {
   buildDispatchInputs,
   DISPATCH_WORKFLOW,

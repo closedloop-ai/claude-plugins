@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { recordSupervisorUsage } from './supervise.mjs';
+import { readUsageReadings } from './usage-state.mjs';
 
 const SUPERVISE = fileURLToPath(new URL('./supervise.mjs', import.meta.url));
 
@@ -48,6 +50,15 @@ async function stop(child) {
   child.kill('SIGTERM');
   await exited;
 }
+
+test('the supervisor persists its usage reading with time and source', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-supervise-usage-'));
+  const result = { rateLimits: { primary: { usedPercent: 42 } } };
+  const reading = await recordSupervisorUsage(dir, { read: async () => ({ result, readAt: '2026-11-03T18:00:00.000Z' }) });
+  assert.equal(reading.source, 'supervisor');
+  assert.equal(reading.readAt, '2026-11-03T18:00:00.000Z');
+  assert.deepEqual(readUsageReadings(dir), [reading]);
+});
 
 test('a pass stuck on a daemon that never answers times out with an EVENT, and the loop goes on', { timeout: 30_000 }, async () => {
   const f = fixture('hang', { PASS_TIMEOUT_SECONDS: '1' });

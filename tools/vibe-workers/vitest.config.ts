@@ -8,4 +8,5 @@ import { defineConfig } from "vitest/config";
 // (ISS-13171). src/test-budget.test.ts keeps this cap and lets a per-test timeout only shrink.
 export const MAX_WORKERS = 3;
 
-export default defineConfig({ test: { maxWorkers: MAX_WORKERS } });
+// Pinned release commits are fetched once here, never inside a timed test or hook (ISS-13662).
+export default defineConfig({ test: { maxWorkers: MAX_WORKERS, globalSetup: ["./src/global-setup.ts"] } });

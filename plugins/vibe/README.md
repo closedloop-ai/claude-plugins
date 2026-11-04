@@ -226,7 +226,9 @@ requests, one writer on one pull request, or a session with no writer
 (design, research, analysis). It covers who may write where, state that
 survives a reboot or compaction, Codex budget rules, a Claude takeover of a
 stopped Codex writer, CPU and shared e2e stack locks across machines,
-agent-first QA and a lessons ledger. `fleet.sh` starts, steers, reads and ends
+agent-first QA and a lessons ledger. Runtime and machine routing requires a
+fresh usage reading, with stale readings re-read before work moves. `fleet.sh`
+starts, steers, reads and ends
 Codex threads on this machine or over ssh; each new thread is named for its
 writer and grouped in the Codex app's "Fleet workers" sidebar section, and an
 ended one is archived.
@@ -237,7 +239,12 @@ Watches a fleet of Codex threads and the pull requests they produce, and exits
 on the first change: a session going idle, stalling or failing, a merge
 conflict, new review comments, settled check changes or a new pull request. A
 turn left open by a silent usage limit shows as `STALLED` instead of looking
-busy forever. It prints a usage line per machine, resumes a turn that failed
+busy forever. It persists each Codex and Claude usage read, including failed
+reads, with its read time and source in bounded, atomically replaced state.
+Its status command prints the latest reading and age per runtime and machine
+and flags readings older than 30 minutes by default, while usage lines still
+wake the watcher only on material changes such as a band change. It resumes a
+turn that failed
 on a transient provider error after a backoff, and `supervise.sh` runs that
 recovery on each host with no orchestrator awake.
 
@@ -351,7 +358,7 @@ Run the matching Codex suite from the repository root with
 
 ### Runtime files
 
-Version `1.1.33` contains 13 skills, 16 agents, and one hook manifest
+Version `1.1.34` contains 13 skills, 16 agents, and one hook manifest
 (`hooks/hooks.json`). It has no standalone commands, root-level shell scripts,
 or production Python tools under `tools/python/`; that directory contains the
 skill-contract test modules and `vibe_contract_text.py`, the text helpers they

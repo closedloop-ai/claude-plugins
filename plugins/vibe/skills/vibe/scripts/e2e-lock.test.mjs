@@ -5,9 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BUSY_EXIT, DUPLICATE_EXIT, captureOwnedDockerResources, composeProjectFor, defaultLockDir, installOwnedBuildShim,
-  plannedLocalTags, readHolder, recordBuiltTags, release, removeOwnedDockerResources, reserveGeneratedE2E,
+import { BUSY_EXIT, DUPLICATE_EXIT, composeProjectFor, defaultLockDir, readHolder, release,
   runningForeignCompose, sameWorktreeEntry, tryAcquire } from "./e2e-lock.mjs";
+import { installOwnedBuildShim, recordBuiltTags } from "./owned-builder.mjs";
+import { captureOwnedDockerResources, plannedLocalTags, removeOwnedDockerResources,
+  reserveGeneratedE2E } from "./owned-docker.mjs";
 import { sourceIdentity } from './tested-head.mjs';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "e2e-lock.mjs");

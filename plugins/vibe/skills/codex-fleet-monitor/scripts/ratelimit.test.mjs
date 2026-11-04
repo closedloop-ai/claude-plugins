@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { classifyUsage, highUsagePercent, UsageState, usageLine } from './ratelimit.mjs';
+import { classifyUsage, highUsagePercent, rateLimitReading, UsageState, usageLine } from './ratelimit.mjs';
 
 const reached = (extra = {}, credits = { hasCredits: false }) => ({
   rateLimits: { primary: { usedPercent: 100 }, rateLimitReachedType: 'rate_limit_reached', credits },
@@ -53,4 +53,13 @@ test('the high band starts at USAGE_HIGH_PERCENT when it is set', () => {
   const response = { rateLimits: { primary: { usedPercent: 65 } } };
   assert.equal(usageLine('local', response, 60), 'codex-usage local HIGH(60%) ok resets=0');
   assert.equal(usageLine('local', response), 'codex-usage local under80% ok resets=0');
+});
+
+test('a persistable reading carries its read time and source, including unknown results', () => {
+  const readAt = '2026-11-03T18:00:00.000Z';
+  assert.deepEqual(rateLimitReading('remote', { result: { rateLimits: { primary: { usedPercent: 42 } } }, readAt }, { source: 'snapshot' }), {
+    runtime: 'codex', machine: 'remote', source: 'snapshot', status: 'ok', readAt,
+    line: `codex-usage remote under80% ok resets=0 read=${readAt} source=snapshot`,
+  });
+  assert.equal(rateLimitReading('local', { result: {}, readAt }, { source: 'codex-usage' }).status, 'readfail');
 });

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { hasPendingOwnedCleanups, pendingOwnedCleanups, registerFleetWriterRetirements,
-  registerWorktreeRetirement, remainingCleanupBudget, sweepOwnedCleanups } from './e2e-lock.mjs';
+  registerWorktreeRetirement, remainingCleanupBudget, sweepOwnedCleanups } from './owned-cleanup.mjs';
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],

@@ -4,7 +4,8 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileS
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { reconcileGeneratedE2E, reserveGeneratedE2E, sweepOwnedCleanups } from './e2e-lock.mjs';
+import { reconcileGeneratedE2E, reserveGeneratedE2E } from './owned-docker.mjs';
+import { sweepOwnedCleanups } from './owned-cleanup.mjs';
 
 const CONTAINER = 'a'.repeat(64);
 const NETWORK = 'b'.repeat(64);

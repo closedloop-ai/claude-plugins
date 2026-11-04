@@ -6,12 +6,13 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { historyOrigin } from './history-origin.mjs';
-import { removeOwnedDockerResources } from '../../vibe/scripts/e2e-lock.mjs';
+import { removeOwnedDockerResources } from '../../vibe/scripts/owned-docker.mjs';
 import { sourceIdentity } from '../../vibe/scripts/tested-head.mjs';
 import { evidenceFingerprint } from '../../handoff/scripts/handoff-evidence.mjs';
 import { LoadBasis, loadedSkillEvidence } from '../../vibe/scripts/loaded-skill.mjs';
-import { endProcesses, finalMarker, isAlive, orphans, parsePids, pendingE2eCleanups, readIdentity, reconcileExpiredScratchHelpers,
+import { endProcesses, finalMarker, isAlive, orphans, parsePids, pendingE2eCleanups, readIdentity,
   reconcileTerminalHelpers, stopCandidates } from './helpers.mjs';
+import { reconcileExpiredScratchHelpers } from './scratch-cleanup.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, '..', '..', '..');

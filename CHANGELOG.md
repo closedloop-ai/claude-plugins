@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.33
+### vibe v1.1.34
 
 #### Added
 - Registered scratch Compose stacks carry an owner token and finite TTL, label their services and named Docker resources, and refuse recognizable raw per-ticket Docker starts.
@@ -12,10 +12,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 #### Changed
 - Handoff and fleet records bind a published pull request to its exact worktree. Terminal cleanup removes only a clean, inactive checkout after rechecking its branch, head, remote and session state; it clears known generated directories and retains unknown local work.
-- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 481 words longer than in 1.1.32.
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 481 words longer than in 1.1.33.
 
 #### Fixed
 - Generated E2E runs reconcile exact project containers, volumes, networks and locally built image tags after normal exit or interruption. Each build uses a run-owned Buildx builder and local Turbo cache, which cleanup removes after the Docker resources while retaining foreign and shared resources.
+
+### vibe v1.1.33
+
+#### Changed
+- Fleet Codex and Claude usage probes atomically persist successful and failed readings with their read time and source. State stays bounded to the latest reading, latest good reading and 100 recent readings per runtime and machine. A shared status command reports the latest reading and age, with a configurable 30 minute stale threshold.
+- Across all plugin Markdown, including eval prompts and graders, vibe is about 232 words longer than in 1.1.32.
+
+#### Fixed
+- Fleet routing requires a fresh usage reading before choosing a runtime or machine, board status flags stale usage, and a failed re-read keeps the last successful reading time visible.
+- Usage read times remain visible in reports without making the watcher emit an event when only the timestamp changes.
+
+### closedloop-core v1.6.0
+
+#### Added
+- New `erd-diagram` skill that builds or updates an interactive, offline HTML entity relationship diagram for a Postgres repository from its schema code alone: a Prisma schema or folder, a SQL schema dump, a folder of SQL migrations replayed in path order, or a model JSON written from other ORM code. It never connects to a database. Two styles: `canvas-sidebar` (every table on one canvas with a domain-grouped table list) and `schema-explorer` (overview, focused table view, per-domain diagrams). Passing an existing diagram updates it in place and reports new and removed tables; a missing path stops with no changes.
+- `scripts/dist/erd.mjs` (detect, extract, validate-model, draft-domains, inspect, export-domains, build, update) and `scripts/dist/verify.mjs` (a headless render check) are bundled from `tools/erd-diagram/`, with elkjs inlined for layout, so the skill needs only Node 18.
+
+### closedloop-core v1.5.4
+
+#### Fixed
+- `prd-dependency-graph` reads the BLOCKS links of the scope document itself, not only those of its PRODUCES children. A ticket the root document blocks is drawn with an arrow from the root, and a ticket that blocks the root is followed upstream like any other outside blocker, honouring `outside_blockers_depth`. Previously a link that touched only the root, such as a PRD blocking a ticket outside the scope, was never drawn.
 
 ### code-review v3.13.1
 

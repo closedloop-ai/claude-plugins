@@ -10,6 +10,7 @@ One fleet home per machine holds everything (`FLEET_HOME`, default `~/fleet-orch
   current                                                    the active program's slug
   programs/<slug>/
     sessions.txt  prs.txt  board.md  watcher and monitor files (codex-fleet-monitor)
+    usage-readings.json         bounded latest, last-good and recent Codex and Claude reads
     sessions/<name>.json        written by fleet.sh; a remote session leaves <name>.remote.json
     prompts/<name>-<nn>-<slug>.md   every prompt sent to any worker, written before sending
     requests/  findings/  evidence/

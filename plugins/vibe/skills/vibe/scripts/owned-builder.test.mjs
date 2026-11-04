@@ -3,8 +3,9 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { ownedBuildEnvironment, prepareRunOwnedBuild, reconcileGeneratedE2E, reserveGeneratedE2E,
-  sweepOwnedCleanups } from './e2e-lock.mjs';
+import { ownedBuildEnvironment, prepareRunOwnedBuild } from './owned-builder.mjs';
+import { reconcileGeneratedE2E, reserveGeneratedE2E } from './owned-docker.mjs';
+import { sweepOwnedCleanups } from './owned-cleanup.mjs';
 
 const STARTED = '2026-11-03T00:00:00Z';
 const CREATED = '2026-11-03T00:00:01Z';

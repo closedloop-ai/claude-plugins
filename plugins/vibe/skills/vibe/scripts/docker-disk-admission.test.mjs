@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { isContainerizedBuild, measureDockerDisk, requireDockerDisk } from './e2e-lock.mjs';
+import { isContainerizedBuild, measureDockerDisk, requireDockerDisk } from './docker-disk-admission.mjs';
 
 const HOME = '/fixture/home';
 const ROOT = '/docker/native-root';

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { runScratchStack, scratchOverlay } from './helpers.mjs';
+import { runScratchStack, scratchOverlay } from './scratch-cleanup.mjs';
 
 test('scratch overlay labels services, named volumes and networks and refuses local image builds', () => {
   const config = { services: { postgres: { image: 'postgres:16' }, seed: { image: 'seed:1' } },

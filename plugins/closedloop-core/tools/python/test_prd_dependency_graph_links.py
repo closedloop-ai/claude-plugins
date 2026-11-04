@@ -3,6 +3,8 @@
 PRD-7 has one ticket, A (ISS-10). A blocks X, Y and Z (ISS-11, ISS-12, ISS-13), which are outside
 the scope, and Y blocks Z. B1 and B2 (ISS-20, ISS-21) block A from outside; B1 also blocks B2 and Y.
 W (ISS-14) blocks Z and V (ISS-15) waits on Z; neither touches the scope, so neither is drawn.
+The root tests add links on PRD-7 itself: it blocks R (ISS-30), Q (ISS-31) blocks it, and P (ISS-32)
+blocks Q.
 """
 
 import re
@@ -75,8 +77,8 @@ def test_links_between_drawn_tickets_outside_the_scope_are_drawn(world, tmp_path
     # Only links are added; the tickets drawn are the ones the scope reaches, as before.
     assert "ISS-14" not in tickets and "ISS-15" not in tickets
     assert tickets == {x for e in expected for x in e}
-    # Each drawn ticket's links are read once, and no ticket outside the graph is queried.
-    assert sorted(world.api.link_queries) == sorted(tickets)
+    # Each drawn ticket's links, and the root's, are read once, and nothing outside the graph is queried.
+    assert sorted(world.api.link_queries) == sorted(tickets | {"PRD-7"})
 
 
 def test_a_refresh_from_the_page_draws_a_new_link_between_downstream_tickets(world, helper, tmp_path):
@@ -109,3 +111,54 @@ def test_switching_on_the_full_chain_keeps_links_between_drawn_tickets(world, he
     cfg = embedded(world, page, "prd-7")
     assert edges_of(cfg) == SCOPE_EDGES | BLOCKER_EDGES
     assert "new link: ISS-20 blocks ISS-12" in cfg["last_refresh"]["changes"]
+
+
+ROOT_EDGES = {("PRD-7", "ISS-30"), ("ISS-31", "PRD-7")}
+
+
+@pytest.fixture
+def root_world(world):
+    api = world.api
+    for slug, name in (("ISS-30", "Waits on the PRD"), ("ISS-31", "Blocks the PRD"), ("ISS-32", "Blocks Q")):
+        api.tickets[slug] = (name, "Lee", "TODO")
+    api.blocks.extend([("PRD-7", "ISS-30"), ("ISS-31", "PRD-7"), ("ISS-32", "ISS-31")])
+    return world
+
+
+@pytest.mark.parametrize(("depth", "expected"), [("0", SCOPE_EDGES | {("PRD-7", "ISS-30")}),
+                                                 ("1", SCOPE_EDGES | BLOCKER_EDGES | ROOT_EDGES),
+                                                 ("all", SCOPE_EDGES | BLOCKER_EDGES | ROOT_EDGES
+                                                  | {("ISS-32", "ISS-31")})])
+def test_the_root_documents_own_blocks_links_are_drawn(root_world, tmp_path, depth, expected):
+    page = tmp_path / "graph.html"
+
+    new_graph(root_world, "PRD-7", output=page, outside_depth=depth)
+
+    cfg = embedded(root_world, page, "prd-7")
+    text = page.read_text(encoding="utf-8")
+    assert edges_of(cfg) == expected
+    assert drawn_edges(text) == expected
+    assert legend_count(text) == len(expected)
+    root = next(n for n in cfg["nodes"] if n["id"] == "PRD-7")
+    assert root.get("root") is True and not root.get("external")
+    assert {(e["from"], e["to"]) for e in cfg["produces"]} == {("PRD-7", "ISS-10")}
+    outside = {n["id"] for n in cfg["nodes"] if n.get("external")}
+    assert "ISS-30" in outside
+    assert ("ISS-31" in outside) == (depth != "0")
+    assert "PRD-7" in upstream(expected, "ISS-30")
+    assert ("ISS-31" in upstream(expected, "PRD-7")) == (depth != "0")
+
+
+def test_a_refresh_from_the_page_draws_a_new_link_on_the_root(world, helper, tmp_path):
+    page = tmp_path / "graph.html"
+    new_graph(world, "PRD-7", output=page)
+    world.api.tickets["ISS-30"] = ("Waits on the PRD", "Lee", "TODO")
+    world.api.blocks.append(("PRD-7", "ISS-30"))
+
+    resp = helper("POST", "/v2/refresh", refresh_body(page, graph_id="prd-7", scope="PRD-7"))
+
+    assert resp.status == 200
+    cfg = embedded(world, page, "prd-7")
+    assert ("PRD-7", "ISS-30") in edges_of(cfg)
+    assert "new link: PRD-7 blocks ISS-30" in cfg["last_refresh"]["changes"]
+    assert "ISS-30 added (Waits on the PRD, Lee, TODO)" in cfg["last_refresh"]["changes"]
