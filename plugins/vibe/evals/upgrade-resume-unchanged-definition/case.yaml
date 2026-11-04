@@ -5,8 +5,8 @@
   "deterministic": true,
   "definition": "unchanged",
   "nightlyPrior": {
-    "version": "1.1.24",
-    "ref": "f8517d50715dd8569ceee44f5a9452cbf8fc18f5"
+    "version": "1.1.38",
+    "ref": "62171a10b45ac2c1579720db529559e2b4f833a3"
   },
   "transitions": [
     {

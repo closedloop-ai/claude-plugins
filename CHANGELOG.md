@@ -4,6 +4,19 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
+### vibe v1.1.39
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.38.
+- The unchanged-definition upgrade-resume eval case compares against the 1.1.38 release as its nightly prior instead of 1.1.24.
+- Local Claude evals, including stateful upgrade cases, run through a run-owned Claude wrapper that passes `--setting-sources ''` and `--strict-mcp-config` with an exact MCP allowlist, so user and project MCP registrations stay out of the run. Stateful upgrade cases serve their granted read-only `closedloop-graph` operations from a local deterministic stub instead of the live service.
+- A stateful upgrade cell that fails on transient infrastructure (auth, install, model availability, timeout or sandbox refusal) is retried once. Every attempt's evidence is kept under `attempts/<n>/`, and the cell's wall time is summed across attempts along with agent cost and tokens when every attempt reports them.
+
+#### Fixed
+- Codex eval regex graders honor every declared `flags` letter (`a`, `i`, `m`, `s`, `u`, `x`) instead of only `i`, and reject unknown flags. A multiline grader such as `split-keys-blocking` now matches a finding on a later reply line.
+- Stateful upgrade cases fail as a harness error when the case's declared writer definition premise (unchanged or changed) does not match the `vibe-change-worker` agent definitions of the prior and target releases.
+- When stateful cases hit an infrastructure failure, the local eval result keeps the merged case results alongside the invalid reason, reports that reason in the runtime table, and marks the run unsuccessful.
+
 ### vibe v1.1.38
 
 #### Changed

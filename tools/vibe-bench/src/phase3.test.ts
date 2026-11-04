@@ -910,12 +910,12 @@ test("focused Claude evals stage selected cases with their shared fixtures", () 
 });
 
 function claudeNative(vibePath = "/snapshot/vibe", corePath = "/snapshot/core", passed = true,
-  caseIds: string[] = [CASE]) {
+  caseIds: string[] = [CASE], version = "1.2.3", coreVersion = "1.5.3") {
   return {
     schemaVersion: 1, claudeVersion: "2.1.311", durationSeconds: 12, costUsd: 0.1,
     partial: false, suite: { ablation: "none", modelOverride: "claude-sonnet-5-5", plugins: [
-      { name: "vibe", version: "1.2.3", path: vibePath },
-      { name: "closedloop-core", version: "1.5.3", path: corePath },
+      { name: "vibe", version, path: vibePath },
+      { name: "closedloop-core", version: coreVersion, path: corePath },
     ] }, cases: caseIds.map((name) => ({ name, runsPerCase: 1, arms: { with: [{ passed, error: null,
       costUsd: 0.1 / caseIds.length, judgeCostUsd: 0.02 / caseIds.length,
       skippedPaidGraders: false, graders: [{ name: "route", passed, scored: true }] }] } })),
@@ -1023,8 +1023,13 @@ class FakeCommands implements EvalCommands {
       const caseIds = readdirSync(evalRoot, { withFileTypes: true })
         .filter((entry) => entry.isDirectory() && existsSync(join(evalRoot, entry.name, "prompt.md")))
         .map((entry) => entry.name).sort();
+      const corePath = join(dirname(vibePath), "closedloop-core");
+      const version = JSON.parse(readFileSync(join(vibePath, ".claude-plugin/plugin.json"), "utf8"))
+        .version as string;
+      const coreVersion = JSON.parse(readFileSync(join(corePath, ".claude-plugin/plugin.json"), "utf8"))
+        .version as string;
       writeFileSync(resultFile, JSON.stringify(claudeNative(vibePath, join(dirname(vibePath),
-        "closedloop-core"), true, caseIds)));
+        "closedloop-core"), true, caseIds, version, coreVersion)));
       return { status: 0, stdout: "", stderr: "" };
     }
     const vibePath = args[args.indexOf("--plugin") + 1];
@@ -1101,7 +1106,7 @@ for (const code of ["AUTH_UNAVAILABLE", "INSTALL_INVALID", "TIMEOUT",
       const sha = execFileSync("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"],
         { encoding: "utf8" }).trim();
       const runner = new InfrastructureStatefulRunner(code);
-      const selectedCases = ["upgrade-resume-changed-definition",
+      const selectedCases = [CASE, "upgrade-resume-changed-definition",
         "upgrade-resume-unchanged-definition"];
       const output = await runLocalEvals({ repo: REPO_ROOT, pluginSha: sha,
         runRoot: join(root, "run"), outputDir: join(root, "results"),
@@ -1109,11 +1114,18 @@ for (const code of ["AUTH_UNAVAILABLE", "INSTALL_INVALID", "TIMEOUT",
         uvExecutable: "fixture-uv", snapshotMode: "worktree", selectedCases,
         runtimes: ["claude", "codex"], statefulRunner: runner }, new FakeCommands());
       const claude = output.result.runtimes.find((item) => item.runtime === "claude")!;
-      assert.equal(claude.result, null);
+      assert.ok(claude.result, "completed ordinary and stateful evidence stays in the runtime record");
+      assert.deepEqual(claude.result.cases.map((item) => item.id), [...selectedCases].sort());
+      assert.equal(claude.result.cases.find((item) => item.id === CASE)?.passed, true);
       assert.equal(claude.invalidReason,
         `eval-stateful-infrastructure:${code}:upgrade-resume-changed-definition`);
+      const report = readFileSync(output.reportFile, "utf8");
+      assert.match(report, new RegExp(
+        `eval-stateful-infrastructure:${code}:upgrade-resume-changed-definition`));
+      assert.match(report, /\| claude \| .* \| 2 \| 1 \|/);
       assert.deepEqual(failedCases(output.result, "claude"), []);
-      assert.equal(runner.calls.length, 1, "infrastructure does not enter a paid retry wave");
+      assert.equal(runner.calls.length, 1,
+        "the stateful runner owns the bounded cell retry rather than a paid full-suite wave");
       assert.equal(runner.calls[0]?.currentSnapshot?.sha, sha,
         "the stateful runner receives the sealed candidate snapshot");
       const catalog = evalCaseCatalog(join(REPO_ROOT, "plugins/vibe"))

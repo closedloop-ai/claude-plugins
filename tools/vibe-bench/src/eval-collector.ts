@@ -216,11 +216,12 @@ export function finalizeLocalEval(input: Omit<LocalEvalResult, "schemaVersion" |
   const runtimes = [...input.runtimes].sort((left, right) => left.runtime.localeCompare(right.runtime));
   for (const record of runtimes) {
     if (record.result) {
-      if (record.invalidReason || record.result.runtime !== record.runtime) {
+      if (record.result.runtime !== record.runtime || (record.invalidReason !== null &&
+          !record.invalidReason.startsWith("eval-stateful-infrastructure:"))) {
         throw new Error("eval-runtime-record-conflict");
       }
       exactCoverage(record.result.cases.map((item) => item.id), input.selectedCases);
-      const expectedExit = record.result.failed === 0 ? 0 : 1;
+      const expectedExit = record.invalidReason || record.result.failed > 0 ? 1 : 0;
       if (record.exitCode !== expectedExit) throw new Error("eval-runtime-exit-mismatch");
     } else if (!record.invalidReason) {
       throw new Error("eval-runtime-invalid-reason-missing");
@@ -234,7 +235,7 @@ export function finalizeLocalEval(input: Omit<LocalEvalResult, "schemaVersion" |
     deterministicOnly: input.deterministicOnly,
     selectedCases: [...input.selectedCases],
     runtimes,
-    success: runtimes.every((item) => item.result?.failed === 0),
+    success: runtimes.every((item) => item.invalidReason === null && item.result?.failed === 0),
   };
   return { ...payload, resultHash: hash(payload) };
 }
@@ -254,7 +255,7 @@ export function buildLocalEvalReport(result: LocalEvalResult): string {
   ];
   for (const record of result.runtimes) {
     const suite = record.result;
-    lines.push(`| ${record.runtime} | ${suite ? "complete" : record.invalidReason} | ` +
+    lines.push(`| ${record.runtime} | ${record.invalidReason ?? (suite ? "complete" : "incomplete")} | ` +
       `${suite?.passed ?? 0} | ${suite?.failed ?? result.selectedCases.length} | ` +
       `${suite?.agentCostUsd ?? "unavailable"} | ${suite?.judgeCostUsd ?? "unavailable"} | ` +
       `${suite?.costUsd ?? "unavailable"} | ` +
