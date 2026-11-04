@@ -4,12 +4,21 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { tierEvidenceProblems } from "./e2e-tier.mjs";
 import { targetedEvidenceProblems } from "./pr-facts.mjs";
+import { testIntegrityProofShapeProblems } from "./test-integrity.mjs";
+
+function tableCell(value) {
+  return String(value).replace(/\|/g, "\\|").replace(/\r\n?|\n/g, "<br>");
+}
 
 /** Render a reviewable comment only from complete pre-PR evidence. */
 export function renderEvidenceComment(evidence) {
   const commit = evidence?.targetedInventory?.commit;
   const e2eSpecs = (Array.isArray(evidence?.targetedInventory?.entries) ? evidence.targetedInventory.entries : []).filter((entry) => entry?.kind === "e2e").map((entry) => entry.path);
-  const problems = [...targetedEvidenceProblems(evidence, commit), ...tierEvidenceProblems(evidence?.e2eCapability, e2eSpecs)];
+  const problems = [
+    ...targetedEvidenceProblems(evidence, commit),
+    ...tierEvidenceProblems(evidence?.e2eCapability, e2eSpecs),
+    ...testIntegrityProofShapeProblems(evidence),
+  ];
   if (problems.length) throw new Error(`pre-PR evidence is incomplete:\n${problems.map((problem) => `- ${problem}`).join("\n")}`);
   const capability = evidence.e2eCapability;
   const probe = capability.container;
@@ -35,7 +44,10 @@ export function renderEvidenceComment(evidence) {
   if ((evidence.testIntegrityProofs ?? []).length) {
     lines.push("", "## Test integrity mutations", "", "| Class | Test | Intentional regression | Observed result |", "| --- | --- | --- | --- |");
     for (const proof of evidence.testIntegrityProofs) {
-      lines.push(`| ${proof.class} | \`${proof.path}\`: ${proof.case} | ${proof.mutation} | ${proof.observedFailure}; passed after restore with \`${proof.command}\` at \`${proof.commit}\` |`);
+      const failure = proof.class === "absence"
+        ? `${proof.mutationRun.assertionFailure} (exit ${proof.mutationRun.exitCode})`
+        : proof.observedFailure;
+      lines.push(`| ${tableCell(proof.class)} | \`${tableCell(proof.path)}\`: ${tableCell(proof.case)} | ${tableCell(proof.mutation)} | ${tableCell(failure)}; passed after restore with \`${tableCell(proof.command)}\` at \`${tableCell(proof.commit)}\` |`);
     }
   }
   if ((capability.unavailableSpecs ?? []).length) lines.push("", `Left for CI: ${capability.unavailableSpecs.map((spec) => `\`${spec}\``).join(", ")} via ${(capability.ciCoverage ?? []).join(", ")}.`);

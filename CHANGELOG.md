@@ -4,7 +4,7 @@ All notable changes to the claude-plugins project will be documented in this fil
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries are listed newest-first; each plugin section is treated as released when merged to `main`.
 
-### vibe v1.1.35
+### vibe v1.1.38
 
 #### Changed
 - The Claude worker accepts an explicit top-level `testsRequired` grant for the persistent writer in request, fix and handoff turns. Raw request text cannot grant test-authoring authority, and handoff inventory continues to admit authored tests only in the pull-request phase.
@@ -15,6 +15,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - PR creation checks keep substitutions, child shells, SSH calls and pipelines in their own cwd and variable scope, so a later local PR uses the right worktree. They recognize bounded literal eval and shell payloads, including supported printf string flags, width, precision, repeated formats, unused arguments, stopping escapes and known prefixes before unsupported directives, without executing unknown payloads. Attached redirections, line continuations, SSH options and GitHub CLI repo options remain visible. Literal shell function bodies are inspected when called, not when defined.
 - Heredoc bodies, comments, arithmetic and quoted file text no longer trigger the PR guard or hide a later real call. Concrete non-Vibe worktrees in fleet conversations can open PRs; Vibe targets still require the handoff gate.
 - Scratch Docker, E2E slot and kill guards ignore heredoc or quoted data while continuing to inspect executable substitutions. A nested remote E2E call must pass its identity flag inside the shell command string; a later positional argument does not count.
+
+### vibe v1.1.37
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.36.
+
+#### Fixed
+- Detached E2E test cleanup verifies the spawned process group before signalling it, satisfying the existing signal-safety contract.
+- Release notes for vibe 1.1.35 and 1.1.36 name the complete Markdown scope used by the word-count contract.
+
+### vibe v1.1.36
+
+#### Added
+- Review-class guards reject unchecked subprocess output parsing, default-on runtime switches, incomplete real-path classifiers, and critical rules moved out of always-loaded skill files.
+- Guard baselines expose existing offenders as shrink-only entries, and mutation tests prove each guard fails when its defect returns.
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 0 words longer than in 1.1.35.
+
+### vibe v1.1.35
+
+#### Fixed
+- Absence assertion proofs now record a mutation run that makes the element present in the asserted state and fails the exact assertion. Missing or unrun proofs block handoff, including locator changes inside multiline assertions.
+- The verifier and reviewers check container scope so an assertion cannot pass merely because its locator never contains the element.
+
+#### Changed
+- Across all plugin Markdown, including eval prompts and graders, as measured by `plugins/vibe/skills/fleet-orchestrator/scripts/instruction-words.mjs`, vibe is about 364 words longer than in 1.1.34.
 
 ### vibe v1.1.34
 

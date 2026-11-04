@@ -608,6 +608,14 @@ existing test compiling, and a recorded retired-only deletion removes only a
 test whose code the request retired. Neither vibe nor handoff opens a pull
 request on its own.
 
+An absence assertion is invalid when it searches a container that never holds
+the element, so it stays green even when the element appears. PR #9575 counted
+the range readout inside a pagination nav, but the readout rendered beside the
+nav. Every new or changed absence assertion needs an executed mutation proof
+in the existing `testIntegrityProofs` record: make the element present in the
+asserted container and state, observe that exact assertion fail, then restore
+and pass. A green normal run or an unrun mutation is not proof.
+
 ## Checks
 
 Never add a check nobody asked for: a new gate, validator, lint rule, CI

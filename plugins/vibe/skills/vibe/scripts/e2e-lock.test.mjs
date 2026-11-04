@@ -688,7 +688,10 @@ test('a dead wrapper cannot yield the lock while its recorded command group is a
   const lockDir = path.join(dir, 'e2e-stack');
   mkdirSync(lockDir, { recursive: true });
   const child = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
-  t.after(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} });
+  t.after(() => {
+    const group = child.pid;
+    if (group > 1) { try { process.kill(-group, 'SIGKILL'); } catch { /* Group already exited. */ } }
+  });
   const token = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
   writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({ pid: DEAD_PID, token }));
   writeFileSync(path.join(dir, `e2e-cleanup-${token}.json`), JSON.stringify({ owner: { token }, child: { pgid: child.pid } }));
