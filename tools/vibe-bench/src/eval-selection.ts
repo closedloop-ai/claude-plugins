@@ -11,7 +11,7 @@ export interface EvalCaseDefinition {
   deterministic?: true;
   kind?: "upgrade-resume";
   definition?: "unchanged" | "changed";
-  nightlyPrior?: ReleaseReference;
+  nightlyPrior?: NightlyPriorReference;
   transitions?: UpgradeTransition[];
 }
 
@@ -19,6 +19,11 @@ export interface EvalCaseDefinition {
 export interface ReleaseReference {
   version: string;
   ref: string;
+}
+
+/** A current-subject prior with the offline-checkable writer definition digest. */
+export interface NightlyPriorReference extends ReleaseReference {
+  writerDigestSha256: string;
 }
 
 /** Fixed historical proof transition for one writer-definition relation. */
@@ -72,6 +77,20 @@ function releaseReference(value: unknown, field: string): ReleaseReference {
   return { version: record.version, ref: record.ref };
 }
 
+function nightlyPriorReference(value: unknown): NightlyPriorReference {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("eval-stateful-nightly-prior-invalid");
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).sort().join(",") !== "ref,version,writerDigestSha256" ||
+      typeof record.writerDigestSha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(record.writerDigestSha256)) {
+    throw new Error("eval-stateful-nightly-prior-invalid");
+  }
+  const release = releaseReference({ ref: record.ref, version: record.version }, "nightly-prior");
+  return { ...release, writerDigestSha256: record.writerDigestSha256 };
+}
+
 /** Parse the dependency-free JSON subset of YAML used by stateful case manifests. */
 export function statefulCaseDefinition(caseDir: string, id: string): EvalCaseDefinition | null {
   const manifest = join(caseDir, "case.yaml");
@@ -114,7 +133,7 @@ export function statefulCaseDefinition(caseDir: string, id: string): EvalCaseDef
   }
   return { id, skill: "vibe", contentHash: evalCaseContentHash(caseDir), deterministic: true,
     kind: "upgrade-resume", definition: value.definition, nightlyPrior:
-      releaseReference(value.nightlyPrior, "nightly-prior"), transitions };
+      nightlyPriorReference(value.nightlyPrior), transitions };
 }
 
 /** Discover the complete case catalog and its derived `skill:<name>` ownership. */

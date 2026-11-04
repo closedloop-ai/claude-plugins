@@ -6,7 +6,8 @@
   "definition": "unchanged",
   "nightlyPrior": {
     "version": "1.1.38",
-    "ref": "62171a10b45ac2c1579720db529559e2b4f833a3"
+    "ref": "62171a10b45ac2c1579720db529559e2b4f833a3",
+    "writerDigestSha256": "432f79d8ce42e4787c52b2ceb782142b58753a7b3a45c0fdc9f1deae31dadcc2"
   },
   "transitions": [
     {

@@ -232,9 +232,15 @@ function definitionDigest(release: PluginReleaseArchive): string {
 }
 
 /** Fail as a harness error when a case's definition premise is false. */
-export function assertUpgradeDefinitionPremise(item: Pick<EvalCaseDefinition, "id" | "definition">,
+export function assertUpgradeDefinitionPremise(
+  item: Pick<EvalCaseDefinition, "id" | "definition" | "nightlyPrior">,
   prior: PluginReleaseArchive, target: PluginReleaseArchive): void {
-  const matches = definitionDigest(prior) === definitionDigest(target);
+  const priorDigest = definitionDigest(prior);
+  if (item.nightlyPrior?.ref === prior.sha &&
+      item.nightlyPrior.writerDigestSha256 !== priorDigest) {
+    throw new Error(`eval-stateful-nightly-prior-digest-mismatch:${item.id}:${prior.version}`);
+  }
+  const matches = priorDigest === definitionDigest(target);
   if ((item.definition === "unchanged") !== matches) {
     throw new Error(`eval-stateful-definition-premise-mismatch:${item.id}:` +
       `${prior.version}:${target.version}`);

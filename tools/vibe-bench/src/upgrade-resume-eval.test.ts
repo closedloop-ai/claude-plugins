@@ -148,18 +148,11 @@ test("ISS-13720 definition premise mismatch is a harness error", () => {
       { id: "changed", definition: "changed" }, prior, changed));
     assert.throws(() => assertUpgradeDefinitionPremise(
       { id: "stale", definition: "unchanged" }, prior, changed), /definition-premise-mismatch/);
+    assert.throws(() => assertUpgradeDefinitionPremise(
+      { id: "wrong-stored-digest", definition: "unchanged", nightlyPrior: {
+        version: prior.version, ref: prior.sha, writerDigestSha256: "f".repeat(64),
+      } }, prior, same), /nightly-prior-digest-mismatch:wrong-stored-digest/);
   } finally { rmSync(root, { recursive: true, force: true }); }
-});
-
-test("ISS-13720 unchanged nightly prior matches the current writer definition", () => {
-  const item = evalCaseCatalog(join(REPO, "plugins/vibe"))
-    .find((candidate) => candidate.id === "upgrade-resume-unchanged-definition");
-  assert.ok(item?.nightlyPrior);
-  assert.equal(item.nightlyPrior.version, "1.1.38");
-  const prior = execFileSync("git", ["-C", REPO, "show",
-    `${item.nightlyPrior.ref}:plugins/vibe/agents/vibe-change-worker.md`]);
-  const current = readFileSync(join(REPO, "plugins/vibe/agents/vibe-change-worker.md"));
-  assert.deepEqual(prior, current);
 });
 
 test("AC1 released archive builds Claude cache roots and retains exact release bytes", () => {
@@ -901,6 +894,7 @@ test("AC6 fixed manifests include both runtime cases and current-subject priors"
     .filter((item) => item.kind === "upgrade-resume");
   assert.deepEqual(cases.map((item) => item.definition), ["changed", "unchanged"]);
   assert.ok(cases.every((item) => item.deterministic === true && item.nightlyPrior &&
+    /^[a-f0-9]{64}$/.test(item.nightlyPrior.writerDigestSha256) &&
     item.transitions && item.transitions.length >= 2));
   assert.ok(cases.find((item) => item.definition === "changed")?.transitions
     ?.some((item) => item.target.version === "1.1.24"));

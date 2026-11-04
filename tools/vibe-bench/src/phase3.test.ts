@@ -123,7 +123,8 @@ test("AC7 promptless deterministic cases join both discovery surfaces", () => {
     writeFileSync(join(stateful, "case.yaml"), JSON.stringify({
       schemaVersion: 1, kind: "upgrade-resume", skill: "vibe", deterministic: true,
       definition: "unchanged",
-      nightlyPrior: { version: "1.1.24", ref: "b".repeat(40) },
+      nightlyPrior: { version: "1.1.24", ref: "b".repeat(40),
+        writerDigestSha256: "c".repeat(64) },
       transitions: [
         { target: { version: "1.1.23", ref: "c".repeat(40) },
           prior: { version: "1.1.22", ref: "d".repeat(40) } },
@@ -1230,7 +1231,8 @@ test("local driver snapshots one committed tree and writes one immutable dual-ru
       "---\ntags: []\n---\n/vibe:vibe\nfixture\n");
     writeFileSync(join(repo, "plugins/vibe/evals/upgrade-resume-unchanged-definition/case.yaml"),
       JSON.stringify({ schemaVersion: 1, kind: "upgrade-resume", skill: "vibe", deterministic: true,
-        definition: "unchanged", nightlyPrior: { version: "1.1.24", ref: "b".repeat(40) },
+        definition: "unchanged", nightlyPrior: { version: "1.1.24", ref: "b".repeat(40),
+          writerDigestSha256: "c".repeat(64) },
         transitions: [
           { target: { version: "1.1.23", ref: "c".repeat(40) },
             prior: { version: "1.1.22", ref: "d".repeat(40) } },

@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 #### Fixed
 - Codex eval regex graders honor every declared `flags` letter (`a`, `i`, `m`, `s`, `u`, `x`) instead of only `i`, and reject unknown flags. A multiline grader such as `split-keys-blocking` now matches a finding on a later reply line.
 - Stateful upgrade cases fail as a harness error when the case's declared writer definition premise (unchanged or changed) does not match the `vibe-change-worker` agent definitions of the prior and target releases.
+- Each stateful upgrade case's `nightlyPrior` now records `writerDigestSha256`, the SHA-256 of that release's `vibe-change-worker.md`. The case manifest parser rejects a nightly prior without a valid 64-character hex digest, the harness fails with `eval-stateful-nightly-prior-digest-mismatch` when the archived prior's writer definition hashes differently, and the unchanged-definition check compares the current writer definition to the stored digest without reading git history, so it passes in a shallow clone.
 - When stateful cases hit an infrastructure failure, the local eval result keeps the merged case results alongside the invalid reason, reports that reason in the runtime table, and marks the run unsuccessful.
 
 ### vibe v1.1.38
