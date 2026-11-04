@@ -518,11 +518,24 @@ def deterministic(
             target = meta.get("target", {})
             file = work / target["path"] if target.get("source") == "file" else None
             text = file.read_text() if file and file.exists() else "" if file else reply
-            matched = bool(
-                re.search(
-                    meta["pattern"], text, re.I if "i" in meta.get("flags", "") else 0
+            declared_flags = meta.get("flags", "")
+            flag_values = {
+                "a": re.A,
+                "i": re.I,
+                "m": re.M,
+                "s": re.S,
+                "u": re.U,
+                "x": re.X,
+            }
+            unknown_flags = set(declared_flags) - set(flag_values)
+            if unknown_flags:
+                raise ValueError(
+                    "unsupported grader regex flags: " + "".join(sorted(unknown_flags))
                 )
-            )
+            regex_flags = re.NOFLAG
+            for flag in declared_flags:
+                regex_flags |= flag_values[flag]
+            matched = bool(re.search(meta["pattern"], text, regex_flags))
             passed = (
                 matched if meta.get("match", "contains") == "contains" else not matched
             )

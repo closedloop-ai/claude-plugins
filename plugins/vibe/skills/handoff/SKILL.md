@@ -1,9 +1,14 @@
 ---
 name: handoff
-description: Finish a vibe session and hand it to whoever picks it up next, usually design and then engineering. Through workers, completes internal scope and Storybook checks, runs lint, typecheck and the existing tests without writing any (it lists the missing tests for engineering), lists the existing product docs pages a human needs to update without editing any, reviews the integrated result and fixes confirmed findings, and verifies each touched screen in the running web app and Desktop with the repo's control skill. Settles in plain words how the session ends: a pull request the person takes through review and merge (plain-language intent such as "I'll get the PR merged" counts as asking for one), or passing it to someone, asking for a name or email only then. Checks the live ticket is complete, publishes the final app environment or canonical prototype preview, then either opens the requested pull request as its last step with the ticket left with the person, or assigns the ticket to the next owner, status left In Progress either way. When the person later asks for changes on that pull request, resumes the session so the same writer fixes it, reruns the guardrails review and checks, pushes to the same branch, refreshes the pull request body and answers each review thread with the fixing commit. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
+description: Finish a vibe session and hand it to whoever picks it up next, usually design and then engineering. Through workers, completes internal scope and Storybook checks, runs lint, typecheck and the existing tests, listing the missing tests for engineering unless a top-level test-authoring grant applies. Lists the existing product docs pages a human needs to update without editing any, reviews the integrated result and fixes confirmed findings, and verifies each touched screen in the running web app and Desktop with the repo's control skill. Settles in plain words how the session ends: a pull request the person takes through review and merge (plain-language intent such as "I'll get the PR merged" counts as asking for one), or passing it to someone, asking for a name or email only then. Checks the live ticket is complete, publishes the final app environment or canonical prototype preview, then either opens the requested pull request as its last step with the ticket left with the person, or assigns the ticket to the next owner, status left In Progress either way. When the person later asks for changes on that pull request, resumes the session so the same writer fixes it, reruns the guardrails review and checks, pushes to the same branch, refreshes the pull request body and answers each review thread with the fixing commit. Use when someone says "handoff", "hand this off", "send this to engineering", or "I'm done with this". Pairs with the vibe skill.
 ---
 
 # Handoff
+
+Handoff inventory reads one committed repo-root `vibe-handoff-paths.json` from
+the target repository's captured base or verified fetched default branch.
+Inventory blocks a nested or missing declaration and every session change to
+a file with that name.
 
 The person ran `vibe` and built something they are happy with. You
 orchestrate making it safe and complete for the next people, without asking
@@ -66,7 +71,7 @@ fix and never stops the handoff: it is recorded for engineering and the handoff
 goes on (`../vibe/references/quality-loop.md`, "Failures already on main").
 Only a failure the session caused blocks.
 
-Handoff authors no tests (`../vibe/references/guardrails.md`, "Tests"). It runs the existing affected tests; on a failure the SAME persistent `vibe-change-worker` fixes the session's own code, never what the test asserts, and repairs only an existing test or fixture the change broke ("Repair, don't author"). Tests still needed go on the live ticket under Missing tests. Verification/review helpers are read-only, and no check is weakened. Never ask the person about tests or any other engineering choice.
+Handoff authors no tests without an explicit top-level test-authoring grant (`../vibe/references/guardrails.md`, "Tests"). It runs the existing affected tests; on a failure the SAME persistent `vibe-change-worker` fixes the session's own code, never what the test asserts, and, without that grant, repairs only an existing test or fixture the change broke ("Repair, don't author"). Tests still needed go on the live ticket under Missing tests. Verification/review helpers are read-only, and no check is weakened. Never ask the person about tests or any other engineering choice.
 
 The build loop is lean (`../vibe/references/quality-loop.md`, "Lean build
 loop"), so the guardrails and adversarial reviews, browser E2E, visual QA, logical QA and product-contract QA run here. Handoff opens a pull request only when the person asks for one ("A
@@ -141,7 +146,7 @@ change worker has not handled is refused with `NEEDS_CHANGE`.
 | Step | Worker |
 |---|---|
 | Summary | `vibe-handoff-summarizer` |
-| ALL source fixes, behavior answers, the missing tests list, the feature docs record and the frozen behavior rows (tests only for a requested pull request) | the SAME persistent `vibe-change-worker` context |
+| ALL source fixes, behavior answers, the missing tests list, the feature docs record and the frozen behavior rows (test authoring only under an explicit top-level grant) | the SAME persistent `vibe-change-worker` context |
 | Judgment guardrails, shared-owner placement, and red flags | `vibe-guardrails-reviewer` |
 | Commits | you, with `../vibe/scripts/commit-worktree.mjs` |
 | Storybook placement and advice only | read-only `vibe-storybook-decomposer`; the SAME writer applies it |

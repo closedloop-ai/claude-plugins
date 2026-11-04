@@ -7,7 +7,11 @@ import path from "node:path";
 const ENV_ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)(\+?=)(.*)$/;
 const WRAPPERS = new Set(["sudo", "command", "exec", "nohup", "time", "builtin", "env"]);
 const SHELLS = new Set(['bash', 'sh', 'zsh']);
-const SSH_VALUED = new Set(['-p', '-i', '-o', '-J', '-F', '-l', '-S', '-W', '-L', '-R', '-D', '-b']);
+const CONTROL = new Set(['{', '}', 'if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'while', 'until',
+  'for', 'case', 'esac']);
+const MAX_NESTED_SHELL_DEPTH = 64;
+const SSH_VALUED = new Set(['-p', '-i', '-o', '-J', '-F', '-l', '-S', '-W', '-L', '-R', '-D', '-b',
+  '-E', '-B', '-I', '-w', '-c', '-e', '-m', '-O', '-P']);
 const envSplit = value => {
   const quote = value[0];
   return shellWords((quote === '"' || quote === "'") && value.at(-1) === quote ? value.slice(1, -1) : value);
@@ -57,45 +61,83 @@ function shellWords(value) {
   const words = [];
   let word = '';
   let quote = null;
-  const finish = () => { if (word) words.push(word); word = ''; };
+  let started = false;
+  const finish = () => { if (started) words.push(word); word = ''; started = false; };
   for (let index = 0; index < value.length; index += 1) {
     const char = value[index];
     if (quote) {
       if (char === quote) quote = null;
       else if (char === '\\' && quote === '"' && index + 1 < value.length) word += value[++index];
       else word += char;
-    } else if (char === '"' || char === "'") quote = char;
+    } else if (char === '"' || char === "'") { quote = char; started = true; }
     else if (/\s/.test(char)) finish();
-    else if (char === '\\' && index + 1 < value.length) word += value[++index];
-    else word += char;
+    else if (char === '\\' && index + 1 < value.length) { word += value[++index]; started = true; }
+    else { word += char; started = true; }
   }
   finish();
   return words;
 }
 
+/** Keep executable words while removing attached redirection operators and their targets. */
 function commandWords(segment) {
-  return shellWords(segment).filter(word => word && !/[<>]/.test(word));
-}
-
-function splitCommandText(command) {
-  const segments = [];
-  const embedded = [];
   let text = '';
   let quote = null;
-  const finish = () => { if (text.trim()) segments.push(text.trim()); text = ''; };
+  for (let index = 0; index < segment.length; index += 1) {
+    const char = segment[index];
+    if (quote) {
+      text += char;
+      if (char === '\\' && quote === '"' && index + 1 < segment.length) text += segment[++index];
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") { quote = char; text += char; continue; }
+    if (char === '\\' && index + 1 < segment.length) { text += char + segment[++index]; continue; }
+    if (char !== '<' && char !== '>') { text += char; continue; }
+    text = text.replace(/(^|\s)\d+$/, '$1') + ' ';
+    while (segment[index + 1] === char || segment[index + 1] === '&') index += 1;
+    while (segment[index + 1] === ' ' || segment[index + 1] === '\t') index += 1;
+    if (segment[index + 1] === '"' || segment[index + 1] === "'") {
+      const marker = segment[++index];
+      while (index + 1 < segment.length && segment[index + 1] !== marker) index += 1;
+      if (segment[index + 1] === marker) index += 1;
+    } else {
+      while (index + 1 < segment.length && !/[\s;|&()<>]/.test(segment[index + 1])) index += 1;
+    }
+  }
+  return shellWords(text);
+}
+
+/** Ordered command and scope events; substitutions stay attached until their host command executes. */
+function splitCommandText(command) {
+  const events = [];
+  let text = '';
+  let quote = null;
+  let substitutions = [];
+  const finish = () => {
+    if (text.trim() || substitutions.length) events.push({ kind: 'command', text: text.trim(), substitutions });
+    text = '';
+    substitutions = [];
+  };
   for (let index = 0; index < command.length; index += 1) {
     const char = command[index];
     if (quote) {
       const pair = command.slice(index, index + 2);
+      if (quote === '"' && command.slice(index, index + 3) === '$((') {
+        const end = arithmeticEnd(command, index);
+        substitutions.push(...arithmeticSubstitutions(command, index, end));
+        text += '0';
+        index = end;
+        continue;
+      }
       if (quote === '"' && pair === '$(') {
         const substitution = commandSubstitution(command, index + 2, ')');
-        if (substitution.text.trim()) embedded.push(substitution.text.trim());
+        if (substitution.text.trim()) substitutions.push(substitution.text.trim());
         index = substitution.end;
         continue;
       }
       if (quote === '"' && char === '`') {
         const substitution = commandSubstitution(command, index + 1, '`');
-        if (substitution.text.trim()) embedded.push(substitution.text.trim());
+        if (substitution.text.trim()) substitutions.push(substitution.text.trim());
         index = substitution.end;
         continue;
       }
@@ -106,13 +148,55 @@ function splitCommandText(command) {
     }
     if (char === '"' || char === "'") { quote = char; text += char; continue; }
     if (char === '\\' && index + 1 < command.length) { text += char + command[++index]; continue; }
+    if (command.slice(index, index + 3) === '$((') {
+      const end = arithmeticEnd(command, index);
+      substitutions.push(...arithmeticSubstitutions(command, index, end));
+      text += '0';
+      index = end;
+      continue;
+    }
     const pair = command.slice(index, index + 2);
-    if (pair === '&&' || pair === '||' || pair === '$(') { finish(); index += 1; continue; }
-    if (';|&\n()`'.includes(char)) { finish(); continue; }
+    if (pair === '$(' || char === '`') {
+      const substitution = commandSubstitution(command, index + (pair === '$(' ? 2 : 1), pair === '$(' ? ')' : '`');
+      if (substitution.text.trim()) substitutions.push(substitution.text.trim());
+      index = substitution.end;
+      continue;
+    }
+    if (pair === '&&' || pair === '||') { finish(); events.push({ kind: 'separator' }); index += 1; continue; }
+    if (char === '(') { finish(); events.push({ kind: 'open' }); continue; }
+    if (char === ')') { finish(); events.push({ kind: 'close' }); continue; }
+    if (char === '|') { finish(); events.push({ kind: 'pipe' }); continue; }
+    if (char === '&' && (command[index - 1] === '>' || command[index - 1] === '<')) {
+      text += char; continue;
+    }
+    if (';&\n'.includes(char)) { finish(); events.push({ kind: 'separator' }); continue; }
     text += char;
   }
   finish();
-  return [...segments, ...embedded];
+  return events;
+}
+
+/** Find the closing arithmetic expansion so its shift operator is never read as a heredoc. */
+function arithmeticEnd(command, start) {
+  let depth = 2;
+  for (let index = start + 3; index < command.length; index += 1) {
+    if (command[index] === '(') depth += 1;
+    else if (command[index] === ')' && --depth === 0) return index;
+  }
+  return command.length - 1;
+}
+
+function arithmeticSubstitutions(command, start, end) {
+  const nested = [];
+  for (let index = start + 3; index < end; index += 1) {
+    const pair = command.slice(index, index + 2);
+    if (pair === '$(' || command[index] === '`') {
+      const value = commandSubstitution(command, index + (pair === '$(' ? 2 : 1), pair === '$(' ? ')' : '`');
+      if (value.text.trim()) nested.push(value.text.trim());
+      index = value.end;
+    }
+  }
+  return nested;
 }
 
 function commandSubstitution(command, start, terminator) {
@@ -137,22 +221,142 @@ function commandSubstitution(command, start, terminator) {
   return { text, end: command.length - 1 };
 }
 
-function expandSegment(segment, depth, expandShellPayloads) {
+/** Remove here-document data while retaining substitutions that an unquoted delimiter executes. */
+function withoutHeredocBodies(command) {
+  const pending = [];
+  const output = [];
+  let quote = null;
+  for (const line of command.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
+    if (pending.length) {
+      const current = pending[0];
+      const body = line.replace(/\n$/, '');
+      const delimiterLine = current.stripTabs ? body.replace(/^\t+/, '') : body;
+      if (delimiterLine === current.delimiter) pending.shift();
+      else if (!current.quoted) {
+        for (const executable of heredocSubstitutions(body)) {
+          const insertion = ` $(${executable})`;
+          const owner = output[current.ownerIndex];
+          output[current.ownerIndex] = owner.slice(0, current.insertionIndex) + insertion
+            + owner.slice(current.insertionIndex);
+          for (const marker of pending) {
+            if (marker.ownerIndex === current.ownerIndex && marker.insertionIndex >= current.insertionIndex) {
+              marker.insertionIndex += insertion.length;
+            }
+          }
+        }
+      }
+      if (line.endsWith('\n')) output.push('\n');
+      continue;
+    }
+    let visible = line;
+    for (let index = 0; index < line.length; index += 1) {
+      const char = line[index];
+      if (quote) {
+        if (char === '\\' && quote === '"') { index += 1; continue; }
+        if (char === quote) quote = null;
+        continue;
+      }
+      if (line.slice(index, index + 3) === '$((') { index = arithmeticEnd(line, index); continue; }
+      if (char === '#' && (index === 0 || /[\s;|&()]/.test(line[index - 1]))) {
+        visible = line.slice(0, index) + (line.endsWith('\n') ? '\n' : '');
+        break;
+      }
+      if (char === '\\') { index += 1; continue; }
+      if (char === "'" || char === '"') { quote = char; continue; }
+      if (line.slice(index, index + 2) !== '<<' || line[index + 2] === '<') continue;
+      let cursor = index + 2;
+      const stripTabs = line[cursor] === '-';
+      if (stripTabs) cursor += 1;
+      while (line[cursor] === ' ' || line[cursor] === '\t') cursor += 1;
+      let delimiter = '';
+      let markerQuote = null;
+      let quoted = false;
+      while (cursor < line.length) {
+        const marker = line[cursor];
+        if (markerQuote) {
+          if (marker === markerQuote) { markerQuote = null; cursor += 1; continue; }
+          if (marker === '\\' && markerQuote === '"' && cursor + 1 < line.length) {
+            delimiter += line[cursor + 1]; cursor += 2; continue;
+          }
+          delimiter += marker; cursor += 1; continue;
+        }
+        if (/[\s;|&()<>]/.test(marker)) break;
+        if (marker === "'" || marker === '"') { markerQuote = marker; quoted = true; cursor += 1; continue; }
+        if (marker === '\\' && cursor + 1 < line.length) {
+          delimiter += line[cursor + 1]; quoted = true; cursor += 2; continue;
+        }
+        delimiter += marker; cursor += 1;
+      }
+      if (delimiter && !markerQuote) {
+        pending.push({ delimiter, stripTabs, quoted, ownerIndex: output.length, insertionIndex: cursor });
+        index = cursor - 1;
+      }
+    }
+    output.push(visible);
+  }
+  return normalizeContinuations(output.join(''));
+}
+
+/** Remove shell line continuations after heredoc data has already been discarded. */
+function normalizeContinuations(command) {
+  let text = '';
+  let quote = null;
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index];
+    if (char === '\\' && command[index + 1] === '\n' && quote !== "'") { index += 1; continue; }
+    if (char === "'" || char === '"') {
+      if (quote === char) quote = null;
+      else if (!quote) quote = char;
+    }
+    text += char;
+  }
+  return text;
+}
+
+function heredocSubstitutions(body) {
+  const commands = [];
+  for (let index = 0; index < body.length; index += 1) {
+    if (body[index] === '\\') { index += 1; continue; }
+    const pair = body.slice(index, index + 2);
+    if (pair === '$(' || body[index] === '`') {
+      const substitution = commandSubstitution(body, index + (pair === '$(' ? 2 : 1), pair === '$(' ? ')' : '`');
+      if (substitution.text.trim()) commands.push(substitution.text);
+      index = substitution.end;
+    }
+  }
+  return commands;
+}
+
+/** Expand executable wrappers in their own scope, while eval retains the caller's scope. */
+function expandSegment(segment, depth, expandShellPayloads, remote, scope, childScope,
+  substitutions, inheritedSubstitution, functions, functionStack) {
+  const hasSubstitution = inheritedSubstitution || substitutions.length > 0;
   const words = commandWords(segment);
   const prefix = commandPrefix(words);
   const current = words.slice(prefix.index);
-  if (current.length === 0 || depth > 8) return current.length ? [{ env: prefix.env, words: current }] : [];
-  if (!expandShellPayloads) return [{ env: prefix.env, words: current }];
+  const controls = [];
+  while (CONTROL.has(current[0])) controls.push(current.shift());
+  if (current.length === 0) return controls.length || Object.keys(prefix.env).length
+    ? [{ env: prefix.env, words: current, controls, remote, scope, hasSubstitution, substitutions }] : [];
+  if (!expandShellPayloads) return [{ env: prefix.env, words: current, controls, remote, scope, hasSubstitution, substitutions }];
   const program = path.basename(current[0]);
+  if (functions.has(program)) {
+    if (functionStack.includes(program)) return [];
+    return expandCommand(functions.get(program), depth, true, remote, scope, childScope,
+      hasSubstitution, functions, [...functionStack, program]);
+  }
   if (program === 'ssh') {
     let index = 1;
     while (current[index]?.startsWith('-')) {
       const option = current[index++];
+      if (option === '--') break;
       if (SSH_VALUED.has(option)) index += 1;
     }
     index += 1;
     const payload = current.slice(index).join(' ');
-    return payload ? expandCommand(payload, depth + 1, true) : [{ env: prefix.env, words: current }];
+    return payload ? expandCommand(payload, depth + 1, true, true, childScope(scope), childScope,
+      hasSubstitution, new Map(), [])
+      : [{ env: prefix.env, words: current, controls, remote, scope, hasSubstitution, substitutions }];
   }
   if (SHELLS.has(program)) {
     let index = 1;
@@ -162,16 +366,142 @@ function expandSegment(segment, depth, expandShellPayloads) {
       if (/c/.test(option.replace(/^[-+]+/, ''))) executes = true;
       if (['-o', '+o', '-O', '+O', '--rcfile', '--init-file'].includes(option)) index += 1;
     }
-    if (executes && index < current.length) return expandCommand(current.slice(index).join(' '), depth + 1, true);
+    if (executes) {
+      const payload = current[index] ?? '';
+      if (/^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)$/.test(payload)
+        || (!payload && substitutions.length)) {
+        return [{ env: prefix.env, words: current, controls, remote, scope, hasSubstitution, substitutions,
+          wrapperPayload: payload, wrapper: program }];
+      }
+      if (payload) return expandCommand(payload, depth + 1, true, remote,
+        childScope(scope), childScope, hasSubstitution, new Map(), []);
+    }
   }
-  return [{ env: prefix.env, words: current }];
+  if (program === 'eval' && (current.length > 1 || substitutions.length)) {
+    const payload = current.slice(current[1] === '--' ? 2 : 1).join(' ');
+    if (/^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)$/.test(payload)
+      || (!payload && substitutions.length)) {
+      return [{ env: prefix.env, words: current, controls, remote, scope, hasSubstitution, substitutions,
+        evalPayload: payload }];
+    }
+    return payload ? expandCommand(payload, depth + 1, true, remote, scope, childScope,
+      hasSubstitution, functions, functionStack) : [];
+  }
+  return [{ env: prefix.env, words: current, controls, remote, scope, hasSubstitution, substitutions }];
 }
 
-function expandCommand(command, depth = 0, expandShellPayloads = false) {
-  return splitCommandText(command).flatMap(segment => expandSegment(segment, depth, expandShellPayloads));
+/** Replace literal function definitions with ordered registration markers, never executed bodies. */
+function extractFunctions(command) {
+  if (!/\bfunction\b|[A-Za-z_][A-Za-z0-9_]*\s*\(\s*\)\s*\{/.test(command)) {
+    return { text: command, definitions: [] };
+  }
+  const definitions = [];
+  let text = '';
+  let quote = null;
+  let comment = false;
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index];
+    if (comment) {
+      text += char;
+      if (char === '\n') comment = false;
+      continue;
+    }
+    if (quote) {
+      text += char;
+      if (char === '\\' && quote === '"' && index + 1 < command.length) text += command[++index];
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '\\' && index + 1 < command.length) { text += char + command[++index]; continue; }
+    if (char === "'" || char === '"') { quote = char; text += char; continue; }
+    if (char === '#' && (index === 0 || /[\s;|&(){}]/.test(command[index - 1]))) {
+      comment = true; text += char; continue;
+    }
+    if (!/[A-Za-z_]/.test(char)) { text += char; continue; }
+    const boundary = Math.max(...[';', '|', '&', '\n', '(', '{'].map((marker) => text.lastIndexOf(marker)));
+    const commandStart = text.slice(boundary + 1).trim() === '';
+    const signature = commandStart
+      ? /^(?:function[ \t]+([A-Za-z_][A-Za-z0-9_]*)(?:[ \t]*\([ \t]*\))?|([A-Za-z_][A-Za-z0-9_]*)[ \t]*\([ \t]*\))[ \t]*\{/.exec(command.slice(index))
+      : null;
+    if (signature) {
+      const open = index + signature[0].length - 1;
+      const close = functionBraceEnd(command, open);
+      if (close >= 0) {
+        const number = definitions.push({ name: signature[1] ?? signature[2], body: command.slice(open + 1, close) }) - 1;
+        text += ` __VIBE_FUNC_DEF_${number}__ `;
+        index = close;
+        continue;
+      }
+    }
+    text += char;
+  }
+  return { text, definitions };
 }
 
-/** `{ env, words }` for each simple command in `command`. */
+function functionBraceEnd(command, open) {
+  let depth = 1;
+  let quote = null;
+  for (let index = open + 1; index < command.length; index += 1) {
+    const char = command[index];
+    if (quote) {
+      if (char === '\\' && quote === '"') index += 1;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '\\') { index += 1; continue; }
+    if (char === "'" || char === '"') { quote = char; continue; }
+    if (char === '{') depth += 1;
+    if (char === '}' && --depth === 0) return index;
+  }
+  return -1;
+}
+
+/** Emit execution order and isolate command substitutions, parentheses and pipeline stages. */
+function expandCommand(command, depth, expandShellPayloads, remote, rootScope, childScope,
+  inheritedSubstitution = false, functions = new Map(), functionStack = []) {
+  if (depth > MAX_NESTED_SHELL_DEPTH) return [{ env: {}, words: [], controls: [], remote,
+    scope: rootScope, hasSubstitution: inheritedSubstitution, substitutions: [],
+    unresolvedExecutable: 'nested shell expansion depth exceeded' }];
+  const extracted = extractFunctions(withoutHeredocBodies(command));
+  const events = splitCommandText(extracted.text);
+  const scopes = [rootScope];
+  const functionScopes = [functions];
+  const segments = [];
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index];
+    if (event.kind === 'open') {
+      scopes.push(childScope(scopes.at(-1)));
+      functionScopes.push(new Map(functionScopes.at(-1)));
+      continue;
+    }
+    if (event.kind === 'close') {
+      if (scopes.length > 1) { scopes.pop(); functionScopes.pop(); }
+      continue;
+    }
+    if (event.kind !== 'command') continue;
+    const parent = scopes.at(-1);
+    const pipeline = events[index - 1]?.kind === 'pipe' || events[index + 1]?.kind === 'pipe';
+    const scope = pipeline ? childScope(parent) : parent;
+    const visibleFunctions = pipeline ? new Map(functionScopes.at(-1)) : functionScopes.at(-1);
+    const definition = /^__VIBE_FUNC_DEF_(\d+)__$/.exec(event.text);
+    if (definition) {
+      const entry = extracted.definitions[Number(definition[1])];
+      if (entry) visibleFunctions.set(entry.name, entry.body);
+      continue;
+    }
+    for (const payload of event.substitutions) {
+      segments.push(...expandCommand(payload, depth + 1, true, remote, childScope(scope), childScope,
+        false, new Map(visibleFunctions), functionStack));
+    }
+    segments.push(...expandSegment(event.text, depth, expandShellPayloads, remote, scope, childScope,
+      event.substitutions, inheritedSubstitution, visibleFunctions, functionStack));
+  }
+  return segments;
+}
+
+/** Ordered executable commands with child scope and remote metadata for the guards. */
 export function commandSegments(command, { expandShellPayloads = false } = {}) {
-  return expandCommand(command, 0, expandShellPayloads);
+  let sequence = 0;
+  const childScope = (parent) => `${parent}/${++sequence}`;
+  return expandCommand(command, 0, expandShellPayloads, false, 'root', childScope);
 }

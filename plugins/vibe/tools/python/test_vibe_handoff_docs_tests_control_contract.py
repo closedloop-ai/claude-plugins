@@ -73,16 +73,17 @@ def test_handoff_lists_docs_pages_and_leaves_internal_docs_to_engineering() -> N
         assert "or `docs/`" not in text, name
         assert "internal docs under `docs/`" not in text, name
 
-def test_the_inventory_has_no_internal_docs_allowance() -> None:
+def test_the_inventory_reads_target_owned_docs_policy() -> None:
     inventory = INVENTORY.read_text()
-    assert "Nothing agent-written goes into public docs (operator ruling, 2026-10-16)" in inventory
-    assert '{ prefix: "docs/"' not in inventory
+    assert "Target-specific docs rules belong in that repository's declaration" in inventory
+    assert "const ALLOWED_PREFIXES" not in inventory
+    assert "PATH_POLICY_BASENAME" in inventory
     assert "HANDOFF_DOCS" not in inventory
 
 
-def test_no_worker_writes_tests_in_vibe_or_handoff() -> None:
+def test_only_the_explicit_top_level_envelope_authorizes_test_writing() -> None:
     rule = section(GUARDRAILS.read_text(), "## Tests")
-    for required in ("No worker authors a test in vibe or handoff",
+    for required in ("Without an explicit top-level pull-request or `testsRequired` grant, no worker authors a test in vibe or handoff",
                      "in the build loop and at handoff alike", "The edits allowed are a repair and a retired-only deletion",
                      "Handoff runs the existing affected tests",
                      "fixes the session's own code, never what the test asserts",
@@ -98,7 +99,7 @@ def test_no_worker_writes_tests_in_vibe_or_handoff() -> None:
                      "runs the existing affected tests", "never what a test asserts",
                      "lists every missing test as engineering's scope of work"):
         assert required in loop, required
-    assert "A handoff turn never does" in section(QUALITY.read_text(), "## One persistent writer and a serial queue")
+    assert "top-level `testsRequired` grant on a request, fix or handoff turn" in section(QUALITY.read_text(), "## One persistent writer and a serial queue")
     for name in ("vibe-verify-worker", "vibe-backend-worker", "vibe-storybook-decomposer",
                  "vibe-adversarial-reviewer", "vibe-prototype-worker", "vibe-environment-worker"):
         text = flat(agent(name)).lower()
@@ -153,14 +154,15 @@ def test_only_an_explicit_pull_request_request_authorizes_full_tests() -> None:
     assert "full tests for every change in the session" in writer
 
 
-def test_the_launcher_grants_test_authority_only_to_a_pull_request_turn() -> None:
+def test_the_launcher_grants_test_authority_from_an_explicit_top_level_turn() -> None:
     launcher = (WORKERS_SRC / "claude-worker.ts").read_text()
-    assert 'testAuthoringAuthorized: persistent && input.mode === "pull-request"' in launcher
+    assert 'testAuthoringAuthorized: testAuthoringGranted(input)' in launcher
+    assert 'input.testsRequired === true && testAuthoringModes.has(input.mode)' in launcher
     assert 'input.mode === "handoff" }' not in launcher
     assert '"pull-request"' in (WORKERS_SRC / "record-context.ts").read_text()
     bundle = LAUNCHER_BUNDLE.read_text()
-    assert 'testAuthoringAuthorized: persistent && input.mode === "pull-request"' in bundle
-    assert "Never author tests in plan, request, fix, handoff, record or build turns" in bundle
+    assert 'testAuthoringAuthorized: testAuthoringGranted(input)' in bundle
+    assert "Never author tests in plan or record turns" in bundle
 
 
 def test_handoff_verifies_running_apps_with_the_control_skill() -> None:

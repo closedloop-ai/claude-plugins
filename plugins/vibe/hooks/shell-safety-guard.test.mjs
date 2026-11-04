@@ -74,6 +74,18 @@ test("e2e-slot.sh uses the deployed wrapper's --head, owner, command interface",
   assert.match(e2eSlotProblem(`~/vibe-remote/e2e-slot.sh --head 0123abc --source-hash ${'a'.repeat(64)} ISS-1 run`) ?? '', /does not accept --source-hash/);
   assert.ok(e2eSlotProblem(`e2e-slot.sh ISS-1 run --head 0123abc`), 'identity flags passed to the child command do not bind the wrapper');
   assert.equal(e2eSlotProblem('cat ~/vibe-remote/e2e-slot.sh'), null);
+  assert.equal(e2eSlotProblem("cat <<'EOF'\ne2e-slot.sh ISS-1 run\nEOF"), null,
+    'heredoc body is not an E2E slot invocation');
+  assert.match(e2eSlotProblem("cat <<EOF\n$(e2e-slot.sh ISS-1 run)\nEOF") ?? '', /--head/,
+    'an unquoted heredoc still executes command substitutions');
+  for (const command of ["# <<EOF\ne2e-slot.sh ISS-1 run",
+    "echo $((1 << 2)); e2e-slot.sh ISS-1 run", "e2e-slot.sh</dev/null ISS-1 run"]) {
+    assert.match(e2eSlotProblem(command) ?? '', /--head/, command);
+  }
+  for (const command of ["cat <<\\EOF\ne2e-slot.sh ISS-1 run\nEOF",
+    "cat <<E\"OF\"\ne2e-slot.sh ISS-1 run\nEOF"]) {
+    assert.equal(e2eSlotProblem(command), null, command);
+  }
   const message = e2eSlotProblem('e2e-slot.sh ISS-1 run');
   assert.doesNotMatch(message, /pushed|before the push/);
 });
@@ -83,9 +95,13 @@ test('nested remote shell options cannot bypass E2E identity', () => {
   assert.match(e2eSlotProblem(`${prefix} ISS-1 run\"'`) ?? '', /--head/);
   const flags = `--head 0123abc`;
   for (const command of [`${prefix} ${flags} ISS-1 run\"'`,
-    `ssh -p 2222 host 'bash -l -c "zsh -o errexit -lic ~/vibe-remote/e2e-slot.sh ${flags} ISS-1 run"'`]) {
+    String.raw`ssh -p 2222 host 'bash -l -c "zsh -o errexit -lic \"~/vibe-remote/e2e-slot.sh ${flags} ISS-1 run\""'`]) {
     assert.equal(e2eSlotProblem(command), null, command);
   }
+  // ISS-13701 AC-4: zsh -c executes one command-string argument. A later --head becomes $0,
+  // not the slot's flag (https://zsh.sourceforge.io/Doc/Release/Invocation.html).
+  const unquoted = `ssh -p 2222 host 'bash -l -c "zsh -o errexit -lic ~/vibe-remote/e2e-slot.sh ${flags} ISS-1 run"'`;
+  assert.match(e2eSlotProblem(unquoted) ?? '', /--head <sha>/);
   assert.equal(e2eSlotProblem("printf '%s\\n' 'zsh -lic e2e-slot.sh ISS-1 run'"), null, 'quoted data is not an invocation');
   assert.equal(watcherLaunchProblem({ command: "ssh host 'zsh -lic \"scripts/watch.sh orch\"'" }), null, 'only the e2e identity guard expands remote shell payloads');
 });

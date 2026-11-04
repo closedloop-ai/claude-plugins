@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { git, makeCheckout, makeHome, portableSurfaceChecker, runNode } from "./test-fixtures.mjs";
+import { git, makeCheckout, makeHome, portableSurfaceChecker, runNode, SYMPHONY_PATH_POLICY } from "./test-fixtures.mjs";
 import { checkLiveTicket, parseSections, TICKET_SECTIONS } from "../../handoff/scripts/live-ticket-check.mjs";
 import { isOwnedPrototypeSession, validatePrototypePublication } from "./prototype-session.mjs";
 
@@ -17,7 +17,8 @@ function setup(t, files = {}) {
   const fixture = makeHome("vibe-prototype-");
   t.after(fixture.cleanup);
   const checkout = path.join(fixture.home, "checkout with spaces");
-  makeCheckout({ ...fixture, checkout, files });
+  makeCheckout({ ...fixture, checkout, files: {
+    "vibe-handoff-paths.json": SYMPHONY_PATH_POLICY, ...files } });
   const created = runNode(SESSIONS, ["new-prototype", "--repo", checkout,
     "--slug", "board-mockup", "--summary", "Board mockup", ...OPERATOR], fixture.home);
   assert.equal(created.status, 0, JSON.stringify(created.json));

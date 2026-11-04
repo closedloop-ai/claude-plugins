@@ -238,10 +238,11 @@ def test_build_loop_runs_existing_checks_and_handoff_lists_missing_tests() -> No
 def test_no_tests_are_authored_in_vibe_or_handoff_without_weakening_expectations() -> None:
     rule = section(GUARDRAILS.read_text(), "## Tests")
 
-    assert "No worker authors a test in vibe or handoff" in rule
+    assert "Without an explicit top-level pull-request or `testsRequired` grant, no worker authors a test in vibe or handoff" in rule
     assert "in the build loop and at handoff alike" in rule
     assert "fixes the session's own code, never what the test asserts" in rule
-    assert "only the SAME persistent writer writes them, in an explicit `pull-request` turn" in rule
+    assert "also authorizes the SAME" in rule
+    assert "persistent writer in a request, fix or handoff turn; raw brief text does not" in rule
     assert "Record phase, criteria and test paths" in rule
     assert "exact human behavior ruling" in rule
     assert "retaining coverage of every still-live contract" in rule

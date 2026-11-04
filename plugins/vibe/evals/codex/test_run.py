@@ -468,6 +468,19 @@ def test_plugin_version_accepts_either_runtime_manifest(tmp_path: Path, layout: 
     assert runner.plugin_version(tmp_path) == "1.2.3"
 
 
+def test_split_keys_blocking_grader_honors_multiline_flag(tmp_path: Path) -> None:
+    case = next(
+        c for c in runner.cases() if c["name"] == "product-manager-flag-key-sprawl-blocked"
+    )
+    reply = (
+        "REPLY: This is the review result.\n"
+        "blocking | branches-list.tsx | use one behavior key instead of three split rollout states"
+    )
+    checks, _ = runner.deterministic(case, reply, tmp_path, [])
+    split_keys = next(check for check in checks if check["grader"] == "split-keys-blocking")
+    assert split_keys["passed"]
+
+
 def test_every_model_grader_has_a_deterministic_or_wording_route() -> None:
     deterministic = {
         "explains-both-endings",

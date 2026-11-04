@@ -44,6 +44,19 @@ test('raw recognizable scratch Docker creation is refused while reads and wrappe
     assert.equal(scratchCreationProblem(command, 'vibe'), null, command);
   }
   assert.equal(scratchCreationProblem('docker run --name iss-42-postgres postgres:16', null), null);
+  assert.equal(scratchCreationProblem("cat <<'EOF'\ndocker run --name iss-42-postgres postgres:16\nEOF", 'vibe'), null,
+    'heredoc body is data, not a Docker invocation');
+  assert.match(scratchCreationProblem("cat <<EOF\n$(docker run --name iss-42-postgres postgres:16)\nEOF", 'vibe') ?? '',
+    /registered scratch/, 'an unquoted heredoc still executes command substitutions');
+  for (const command of ["# <<EOF\ndocker run --name iss-42-postgres postgres:16",
+    "echo $((1 << 2)); docker run --name iss-42-postgres postgres:16",
+    "docker</dev/null run --name iss-42-postgres postgres:16"]) {
+    assert.match(scratchCreationProblem(command, 'vibe') ?? '', /registered scratch/, command);
+  }
+  for (const command of ["cat <<\\EOF\ndocker run --name iss-42-postgres postgres:16\nEOF",
+    "cat <<E\"OF\"\ndocker run --name iss-42-postgres postgres:16\nEOF"]) {
+    assert.equal(scratchCreationProblem(command, 'vibe'), null, command);
+  }
 });
 
 test('the routed Bash hook denies scratch creation only in an active vibe conversation', (t) => {

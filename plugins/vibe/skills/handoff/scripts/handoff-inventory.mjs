@@ -9,16 +9,15 @@
 // they are listed under `localFixes` and left out of `changedFiles` and every
 // guardrail check, and no redeploy or handoff commit includes them.
 //
-// A session may edit nothing under `scripts/` except a source-gate allowlist
-// edit that only removes entries or lowers counts (allowlist-shrink.mjs);
-// those are listed under `shrinkOnlyAllowlists`.
+// A target repository declares its own allowed and forbidden paths in one
+// committed root-level vibe-handoff-paths.json. It is read from the captured
+// base commit, or a newer fetched origin default branch if that base predates
+// the declaration, so a session cannot expand its own permissions.
+// Shrink-only source-gate allowlist edits retain their existing exception.
 //
-// Nothing agent-written goes into public docs (operator ruling, 2026-10-16):
-// any change under apps/web/content/docs/ or the internal docs/ folder stays
-// in `outsideAllowed` in every phase.
+// Target-specific docs rules belong in that repository's declaration.
 //
-// Root web and Desktop test specs are admitted only in the pull-request phase,
-// which only the person's explicit request for a pull request opens.
+// Root web and Desktop test specs are admitted only in the pull-request phase.
 //
 // In the build and handoff phases a test file may only be repaired: an
 // existing test or fixture modified so the tree compiles after the session's
@@ -118,27 +117,14 @@ const BRANCH_PREFIX = "vibe/";
 
 // The sole implementation writer owns frontend and backend changes (ISS-12135);
 // an engineer reviews both before merge.
-const ALLOWED_PREFIXES = [
-  "apps/app/",
-  "packages/app/",
-  "packages/design-system/",
-  "apps/desktop/src/renderer/",
-  "apps/storybook/",
-  "apps/api/",
-  "packages/api/",
-  "packages/database/",
-  "apps/desktop/src/main/",
-  "apps/desktop/prisma/",
-];
-const FORBIDDEN_PREFIXES = ["packages/golden-sessions/", ".github/"];
-const FORBIDDEN_BASENAMES = new Set(["AGENTS.md", "CLAUDE.md", "AGENTS.override.md"]);
+const PATH_POLICY_BASENAME = "vibe-handoff-paths.json";
 
 const HANDOFF_ONLY_RULES = new Set(["frozen-render"]);
 const STORY_PATTERN = /\.stories\.tsx?$/;
 const COMPONENT_PATTERN = /\/components\/.+\.tsx$/;
 const STORY_PATHSPECS = ["*.stories.ts", "*.stories.tsx"];
-// Tests are written only when the person explicitly asks for a pull request
-// (operator ruling, 2026-10-13); earlier phases may only repair existing
+// Tests are admitted here when the person explicitly asks for a pull request;
+// otherwise earlier phases may only repair existing
 // tests and fixtures the session's change broke (operator ruling,
 // 2026-10-13, after the PRD-720 live test) or delete a recorded retired-only
 // test (operator ruling, 2026-10-13).
@@ -170,6 +156,7 @@ const worktree = path.resolve(values.worktree);
 const result = withStableSource(worktree, () => {
   const branch = git(["rev-parse", "--abbrev-ref", "HEAD"]);
   const record = readSessionRecord(worktree);
+  let verifiedDefault;
   const prototype = isOwnedPrototypeSession(record, branch);
   if (!branch.startsWith(BRANCH_PREFIX) && !prototype) {
     fail(`${worktree} is on ${branch}, not a vibe branch (${BRANCH_PREFIX}*).`);
@@ -182,7 +169,10 @@ const result = withStableSource(worktree, () => {
   }
   const localFixTickets = localFixTicketsByPath(record);
   const mainSync = record?.status === "active" && record?.operator ? readMainSyncProvenance(worktree) : undefined;
-  const baseCommit = mainSync?.mainSha ?? git(["merge-base", "HEAD", `origin/${baseBranch()}`]);
+  let comparison;
+  const baseCommit = mainSync?.mainSha ?? git(["merge-base", "HEAD", getComparison().operand]);
+  const { policy: pathPolicy, file: pathPolicyFile, problem: pathPolicyProblem,
+    source: pathPolicySource } = readPathPolicy();
   const allChangedFiles = listChangedFiles(baseCommit);
   const localPlans = allChangedFiles.filter((file) => isLocalPlanPath(file.path));
   const trackedLocalPlans = [...new Set([
@@ -221,7 +211,7 @@ const result = withStableSource(worktree, () => {
   const diffRulesBlocking = diffRules.blocking.filter((finding) => !deferredToHandoff.includes(finding));
 
   const blocking = {
-    forbiddenPaths: forbidden.length === 0 && outsideAllowed.length === 0,
+    forbiddenPaths: !pathPolicyProblem && forbidden.length === 0 && outsideAllowed.length === 0,
     hasChanges: changedFiles.length > 0,
     storiesInV2Taxonomy: v1Stories.length === 0,
     existingStoryTitlesKept: retitledStories.every((story) => story.replacement !== null),
@@ -244,6 +234,9 @@ const result = withStableSource(worktree, () => {
     ...(prototype ? { prototype: record.prototype } : {}),
     ...(publicationProblem ? { publicationProblem } : {}),
     baseCommit,
+    pathPolicyFile,
+    ...(pathPolicySource ? { pathPolicySource } : {}),
+    ...(pathPolicyProblem ? { pathPolicyProblem } : {}),
     ...(mainSync ? { mainSync } : {}),
     ...(mainSync?.featureTestHistory.length ? { featureTestHistory: mainSync.featureTestHistory } : {}),
     blocking,
@@ -268,13 +261,18 @@ const result = withStableSource(worktree, () => {
     ...prFacts,
   };
   return result;
-  function git(args) {
+  function git(args, timeoutMs) {
     return execFileSync("git", args, {
       cwd: worktree,
       encoding: "utf8",
       maxBuffer: GIT_MAX_BUFFER,
+      ...(timeoutMs ? { timeout: timeoutMs } : {}),
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
+  }
+
+  function getComparison() {
+    return comparison ??= comparisonBase();
   }
 
   function readPullRequestFacts() {
@@ -293,7 +291,7 @@ const result = withStableSource(worktree, () => {
       include: new Set(changedFiles.map((file) => file.path)),
       prs,
       ownBranch: branch,
-      prBase: baseBranch(),
+      prBase: getComparison().branch,
       ticketText: values.ticket ? readFileSync(values.ticket, "utf8") : undefined,
       body: values.body ? readFileSync(values.body, "utf8") : undefined,
       runs: values.runs ? JSON.parse(readFileSync(values.runs, "utf8")) : undefined,
@@ -320,9 +318,89 @@ const result = withStableSource(worktree, () => {
 
   function isForbidden(filePath) {
     return (
-      FORBIDDEN_PREFIXES.some((prefix) => filePath.startsWith(prefix)) ||
-      FORBIDDEN_BASENAMES.has(path.basename(filePath))
+      path.posix.basename(filePath) === PATH_POLICY_BASENAME ||
+      (pathPolicy?.forbiddenPrefixes.some((prefix) => filePath.startsWith(prefix)) ?? false) ||
+      (pathPolicy?.forbiddenBasenames.includes(path.basename(filePath)) ?? false)
     );
+  }
+
+  /** Use the captured base first, then a fetched newer default branch only for a missing declaration. */
+  function readPathPolicy() {
+    const required = `Declare exactly one committed ${PATH_POLICY_BASENAME} at the target repository root with version, allowedPrefixes, allowedFiles, forbiddenPrefixes, forbiddenBasenames and rootTests`;
+    const base = readPathPolicyAt(baseCommit, "base", required);
+    if (!base.missing) return base;
+    let defaultCommit;
+    let defaultBranch;
+    try {
+      const advertised = advertisedRemoteDefault();
+      defaultBranch = advertised.branch;
+      defaultCommit = advertised.commit;
+      git(["merge-base", "--is-ancestor", baseCommit, defaultCommit]);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
+      return { policy: null, file: null, source: null,
+        problem: `${required}; absent in base ${baseCommit} and no verified fetched descendant ${defaultBranch ? `origin/${defaultBranch}` : "remote HEAD"} is available: ${reason}.` };
+    }
+    const current = readPathPolicyAt(defaultCommit, "origin-default", required);
+    if (!current.missing) return current;
+    return { policy: null, file: null, source: null,
+      problem: `${required}; absent in base ${baseCommit} and fetched origin/${defaultBranch} at ${defaultCommit}.` };
+  }
+
+  /** Distinguish an absent declaration from a malformed one at one immutable commit. */
+  function readPathPolicyAt(commit, kind, required) {
+    const files = git(["ls-tree", "-rz", "--name-only", commit]).split("\0")
+      .filter((file) => path.posix.basename(file) === PATH_POLICY_BASENAME);
+    if (files.length === 0) return { policy: null, file: null, problem: null, source: null, missing: true };
+    if (files.length !== 1) {
+      return { policy: null, file: null, source: { kind, commit },
+        problem: `${required}; found ${files.length} in ${kind} ${commit}.` };
+    }
+    const file = files[0];
+    if (file !== PATH_POLICY_BASENAME) {
+      return { policy: null, file, source: { kind, commit },
+        problem: `${required}; found ${file} in ${kind} ${commit}, but the declaration must be at repository root (${PATH_POLICY_BASENAME}).` };
+    }
+    try {
+      const policy = JSON.parse(git(["show", `${commit}:${file}`]));
+      const problem = pathPolicyProblemFor(policy);
+      return problem ? { policy: null, file, source: { kind, commit }, problem: `${file}: ${problem}. ${required}.` }
+        : { policy, file, source: { kind, commit }, problem: null };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
+      return { policy: null, file, source: { kind, commit }, problem: `${file}: ${reason}. ${required}.` };
+    }
+  }
+
+  /** Reject partial or permissive policy shapes before any path classification. */
+  function pathPolicyProblemFor(policy) {
+    const keys = ["version", "allowedPrefixes", "allowedFiles", "forbiddenPrefixes", "forbiddenBasenames", "rootTests"];
+    if (!policy || typeof policy !== "object" || Array.isArray(policy) ||
+      Object.keys(policy).sort().join("|") !== keys.sort().join("|")) {
+      return `expected fields ${keys.join(", ")}`;
+    }
+    if (policy.version !== 1 || typeof policy.rootTests !== "boolean") {
+      return "version must be 1 and rootTests must be a boolean";
+    }
+    for (const field of ["allowedPrefixes", "allowedFiles", "forbiddenPrefixes", "forbiddenBasenames"]) {
+      if (!Array.isArray(policy[field]) || !policy[field].every((entry) => safePolicyPath(entry,
+        field.endsWith("Prefixes") ? "prefix" : field === "forbiddenBasenames" ? "basename" : "file"))) {
+        return `${field} must contain literal repository-relative paths`;
+      }
+    }
+    if (policy.allowedPrefixes.length + policy.allowedFiles.length === 0) {
+      return "declare at least one allowed prefix or file";
+    }
+    return null;
+  }
+
+  /** Accept literal relative paths only, with no glob or traversal grammar. */
+  function safePolicyPath(value, kind) {
+    if (typeof value !== "string" || !value || value.startsWith("/") || /[\\\0*?\[\]]/.test(value)) return false;
+    if ((kind === "prefix") !== value.endsWith("/")) return false;
+    if (kind === "basename" && value.includes("/")) return false;
+    const segments = value.replace(/\/$/, "").split("/");
+    return segments.every((segment) => segment && segment !== "." && segment !== "..");
   }
 
   /** A modified shrink-only allowlist whose working-tree copy only shrinks the base copy. */
@@ -367,22 +445,24 @@ const result = withStableSource(worktree, () => {
         );
       } catch { return false; }
     }
-    return ALLOWED_PREFIXES.some((prefix) => filePath.startsWith(prefix));
+    return (pathPolicy?.allowedPrefixes.some((prefix) => filePath.startsWith(prefix)) ?? false) ||
+      (pathPolicy?.allowedFiles.includes(filePath) ?? false);
   }
 
   function isPullRequestTest(file) {
-    return isAllowedPath(file) || (isRootTest(file.path) && TEST_SPEC_PATTERN.test(file.path));
+    return isAllowedPath(file) || (pathPolicy?.rootTests && isRootTest(file.path) && TEST_SPEC_PATTERN.test(file.path));
   }
 
   /** An existing test or fixture modified in place; never an added or deleted file or an updated snapshot. */
   function isTestRepair(file) {
     return file.status === "M" && isTestFile(file.path) && !isSnapshot(file.path) &&
-      (isRootTest(file.path) || isAllowedPath(file));
+      ((pathPolicy?.rootTests && isRootTest(file.path)) || isAllowedPath(file));
   }
 
   /** A deleted test file the writer recorded as covering only code the request retires. */
   function isRetiredDeletion(file) {
-    return file.status === "D" && retiredFiles.has(file.path) && (isRootTest(file.path) || isAllowedPath(file));
+    return file.status === "D" && retiredFiles.has(file.path) &&
+      ((pathPolicy?.rootTests && isRootTest(file.path)) || isAllowedPath(file));
   }
 
   function findComponentsWithoutStories(files) {
@@ -402,12 +482,35 @@ const result = withStableSource(worktree, () => {
       .map((file) => file.path);
   }
 
-  function baseBranch() {
+  function comparisonBase() {
     try {
-      return git(["config", "--get", "vibe.baseRef"]) || "main";
-    } catch {
-      return "main";
+      const configured = git(["config", "--get", "vibe.baseRef"]);
+      if (configured) return { branch: configured, operand: `origin/${configured}` };
+    } catch {}
+    try {
+      const advertised = advertisedRemoteDefault();
+      return { branch: advertised.branch, operand: advertised.commit };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
+      fail(`Cannot verify the target repository's remote default branch for ${PATH_POLICY_BASENAME}: ${reason}. Fetch origin or set vibe.baseRef for comparison.`);
     }
+  }
+
+  /** Verify the remote-advertised default and its commit before trusting a fetched tracking ref. */
+  function advertisedRemoteDefault() {
+    if (verifiedDefault) return verifiedDefault;
+    const lines = git(["ls-remote", "--symref", "origin", "HEAD"], 15_000).split("\n");
+    const symbolic = lines.map((line) => /^ref: refs\/heads\/([^\s]+)\tHEAD$/.exec(line)).find(Boolean);
+    const commit = lines.map((line) => /^([a-f0-9]{40,64})\tHEAD$/.exec(line)).find(Boolean)?.[1];
+    if (!symbolic || !commit) throw new Error("origin did not advertise a branch HEAD and commit");
+    const branch = symbolic[1];
+    git(["check-ref-format", "--branch", branch]);
+    const fetched = git(["rev-parse", `refs/remotes/origin/${branch}`]);
+    if (fetched !== commit) {
+      throw new Error(`fetched origin/${branch} does not match the remote's advertised HEAD; fetch origin first`);
+    }
+    verifiedDefault = { branch, commit };
+    return verifiedDefault;
   }
 
   function localFixTicketsByPath(sessionRecord) {
